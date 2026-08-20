@@ -218,26 +218,32 @@ $('btnImport').onclick = async () => {
 
   const lines = raw.split('\n').filter(l => l.trim() !== '');
   const batch = writeBatch(db);
-  let imported = 0, skipped = 0;
+  let imported = 0, skipped = 0, noEmail = 0;
+  const missing = [];
 
   for (const line of lines) {
     const c = line.split('\t');
     const code = String(c[0] || '').trim();
 
-    // דילוג על שורת כותרות או שורה בלי קוד תקין
-    if (!/^\d{3,6}$/.test(code)) { skipped++; continue; }
+    // דילוג על שורת כותרות, שורות ריקות וקודים לא תקינים.
+    // הקוד יכול להכיל אותיות (למשל nir2895).
+    if (!/^[A-Za-z0-9_\-]{2,15}$/.test(code)) { skipped++; continue; }
+
+    // שורת הבדיקה האוטומטית - לא מייבאים
+    if (code === '9999') { skipped++; continue; }
 
     const first   = String(c[1] || '').trim();
     const last    = String(c[2] || '').trim();
     const display = String(c[3] || '').trim() || (first + ' ' + last).trim();
-    const email   = String(c[5] || '').trim().toLowerCase();
+    const emailRaw = String(c[5] || '').trim().toLowerCase();
     const status  = String(c[7] || '').trim();
 
-    if (!isValidEmail(email)) {
-      log('⚠ ' + code + ' ' + display + ' — אין מייל תקין, דולג', 'warn');
-      skipped++;
-      continue;
-    }
+    if (!display) { skipped++; continue; }
+
+    // מי שאין לו מייל תקין מיובא בכל זאת, עם מייל ריק.
+    // הוא לא יוכל להיכנס עד שיתווסף לו מייל - וזו הרשימה שצריך להשלים.
+    const email = isValidEmail(emailRaw) ? emailRaw : '';
+    if (!email) { noEmail++; missing.push(code + '  ' + display); }
 
     batch.set(doc(db, 'stations', STATION_ID, 'pending_users', code), {
       personal_code: code,
@@ -262,8 +268,14 @@ $('btnImport').onclick = async () => {
   try {
     await batch.commit();
     log('');
-    log('✓ הושלם. יובאו ' + imported + ' כבאים. דולגו ' + skipped + ' שורות.', 'ok');
-    log('כל כבאי יכול עכשיו להיכנס דרך דף הכניסה ולבחור סיסמה.', 'ok');
+    log('✓ הושלם. יובאו ' + imported + ' כבאים.', 'ok');
+    if (noEmail > 0) {
+      log('');
+      log('⚠ ' + noEmail + ' כבאים ללא מייל — לא יוכלו להיכנס עד שיתווסף להם מייל:', 'warn');
+      missing.forEach(m => log('   ' + m, 'warn'));
+    }
+    log('');
+    log('שאר הכבאים יכולים להיכנס דרך דף הכניסה ולבחור סיסמה.', 'ok');
   } catch (e) {
     log('✗ שגיאה בכתיבה: ' + e.message, 'err');
   }
