@@ -69,6 +69,19 @@
     <div class="msg" id="authMsg"></div>
   </div>
 
+  <!-- אין הרשאה -->
+  <div class="card hide" id="denyCard">
+    <div style="text-align:center;line-height:1.9">
+      <div style="font-size:34px">🔒</div>
+      <div style="font-size:17px;font-weight:600">אין לך הרשאה לדף הזה</div>
+      <div style="font-size:13px;color:var(--muted)">
+        הדף מיועד לרכז/ת משאבי אנוש ולקצינים בלבד.
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px" id="denyWho"></div>
+    </div>
+    <button id="btnOutDeny" class="ghost" style="width:100%">התנתק</button>
+  </div>
+
   <!-- אזור עבודה -->
   <div id="work" class="hide">
     <div class="card">
@@ -167,12 +180,14 @@ $('btnIn').onclick = async () => {
 };
 
 $('btnOut').onclick = () => signOut(auth);
+$('btnOutDeny').onclick = () => signOut(auth);
 $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
   if (!user) {
     $('authCard').classList.remove('hide');
     $('work').classList.add('hide');
+    $('denyCard').classList.add('hide');
     return;
   }
 
@@ -190,12 +205,16 @@ onAuthStateChanged(auth, async user => {
   }
 
   if (!roleOk) {
-    await signOut(auth);
-    $('authCard').classList.remove('hide');
+    // חשוב: לא מנתקים אוטומטית. ניתוק כאן היה מפיל גם לשוניות
+    // אחרות של המערכת, כי Firebase משתף התחברות בין לשוניות.
+    $('authCard').classList.add('hide');
     $('work').classList.add('hide');
-    msg('authMsg', 'אין לך הרשאה לדף הזה.', 'err');
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + user.email;
     return;
   }
+
+  $('denyCard').classList.add('hide');
 
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
