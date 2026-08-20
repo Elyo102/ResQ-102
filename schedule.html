@@ -8,7 +8,10 @@
   :root{
     --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
     --muted:#9aa0a6; --accent:#e8590c;
-    --crewA:#2f6f4e; --crewB:#3a5f8a; --crewC:#6b4a7d;
+    /* צבעי המשמרות - זהים למערכת הקיימת:
+       א' אדום #980000 · ב' ירוק #38761d · ג' כחול #0000ff
+       מוארים לקריאות על רקע כהה */
+    --crewA:#e06c6c; --crewB:#6cc47f; --crewC:#6c9ce0;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
@@ -44,7 +47,8 @@
   .day.mine{border-color:var(--accent);background:#2a1a10}
   .day.mine .c{color:var(--accent)}
   .day.today{outline:2px solid var(--txt);outline-offset:-2px}
-  .day.A .c{color:#7bc47f} .day.B .c{color:#8ab4e8} .day.C .c{color:#c79bdb}
+  .day.A .c{color:var(--crewA)} .day.B .c{color:var(--crewB)} .day.C .c{color:var(--crewC)}
+  .day.A{border-color:#4a2626} .day.B{border-color:#264a2e} .day.C{border-color:#26364a}
   .day.mine.A .c,.day.mine.B .c,.day.mine.C .c{color:var(--accent)}
 
   .sum{display:flex;gap:10px;margin-top:12px}
@@ -113,9 +117,9 @@
       </div>
 
       <div class="legend">
-        <span><i class="dot" style="background:#7bc47f"></i>א'</span>
-        <span><i class="dot" style="background:#8ab4e8"></i>ב'</span>
-        <span><i class="dot" style="background:#c79bdb"></i>ג'</span>
+        <span><i class="dot" style="background:var(--crewA)"></i>א'</span>
+        <span><i class="dot" style="background:var(--crewB)"></i>ב'</span>
+        <span><i class="dot" style="background:var(--crewC)"></i>ג'</span>
         <span><i class="dot" style="background:var(--accent)"></i>שלי</span>
       </div>
     </div>
