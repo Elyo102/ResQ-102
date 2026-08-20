@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תחנה 102 — כניסה</title>
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:26px;width:100%;max-width:400px}
+  h1{font-size:21px;margin:0 0 4px;text-align:center}
+  .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:22px}
+  .tabs{display:flex;gap:6px;margin-bottom:20px}
+  .tab{flex:1;padding:9px;text-align:center;font-size:14px;cursor:pointer;
+       border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  input{width:100%;padding:11px;background:#111316;color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:15px;
+        font-family:inherit}
+  button{width:100%;background:var(--accent);color:#fff;border:0;border-radius:6px;
+        padding:12px;font-size:15px;cursor:pointer;margin-top:20px;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .link{background:none;border:0;color:var(--muted);font-size:13px;
+        cursor:pointer;margin-top:14px;text-decoration:underline;font-family:inherit}
+  .msg{margin-top:16px;padding:11px;border-radius:6px;font-size:13px;
+       line-height:1.6;display:none}
+  .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
+  .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
+  .hide{display:none}
+  .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .profile{text-align:center;line-height:2}
+  .profile .big{font-size:19px;font-weight:600}
+  .profile .row{color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <h1>תחנה 102</h1>
+  <div class="sub">מערכת ניהול כוח אדם</div>
+
+  <!-- ============ מסך כניסה ============ -->
+  <div id="authView">
+    <div class="tabs">
+      <div class="tab on" id="tabLogin">כניסה</div>
+      <div class="tab" id="tabFirst">כניסה ראשונה</div>
+    </div>
+
+    <!-- כניסה רגילה -->
+    <div id="paneLogin">
+      <label>מייל</label>
+      <input type="email" id="loginEmail" autocomplete="username">
+      <label>סיסמה</label>
+      <input type="password" id="loginPass" autocomplete="current-password">
+      <button id="btnLogin">כניסה</button>
+      <button class="link" id="btnForgot">שכחתי סיסמה</button>
+    </div>
+
+    <!-- כניסה ראשונה -->
+    <div id="paneFirst" class="hide">
+      <label>קוד אישי</label>
+      <input type="text" id="fCode" inputmode="numeric" maxlength="6">
+      <label>מייל</label>
+      <input type="email" id="fEmail" autocomplete="username">
+      <label>בחר סיסמה (לפחות 6 תווים)</label>
+      <input type="password" id="fPass" autocomplete="new-password">
+      <label>אימות סיסמה</label>
+      <input type="password" id="fPass2" autocomplete="new-password">
+      <button id="btnFirst">צור סיסמה והיכנס</button>
+      <div class="note">
+        הזן את הקוד האישי והמייל שרשומים לך במערכת. מכאן והלאה תיכנס
+        עם מייל וסיסמה — הקוד האישי נשאר כמספר העובד שלך.
+      </div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <!-- ============ מסך אחרי כניסה ============ -->
+  <div id="homeView" class="hide">
+    <div class="profile">
+      <div class="big" id="pName"></div>
+      <div class="row" id="pRole"></div>
+      <div class="row" id="pCrew"></div>
+      <div class="row" id="pCode"></div>
+    </div>
+    <button id="btnLogout">התנתק</button>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+         signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const $ = id => document.getElementById(id);
+
+const ROLE_HE = {
+  firefighter: 'לוחם אש',
+  commander: 'קצין / מפקד משמרת',
+  hr_coordinator: 'רכז/ת משאבי אנוש'
+};
+const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
+
+// דגל נעילה: בזמן כניסה ראשונה, Firebase מדווח על "משתמש מחובר"
+// עוד לפני שנוצר מסמך הכבאי. בלי הדגל הזה, המאזין למטה היה מנתק
+// את המשתמש באמצע התהליך.
+let onboarding = false;
+
+function show(text, kind){
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg ' + kind;
+}
+function clearMsg(){ $('msg').className = 'msg'; }
+
+// ---------- מעבר בין לשוניות ----------
+
+$('tabLogin').onclick = () => {
+  $('tabLogin').classList.add('on');
+  $('tabFirst').classList.remove('on');
+  $('paneLogin').classList.remove('hide');
+  $('paneFirst').classList.add('hide');
+  clearMsg();
+};
+$('tabFirst').onclick = () => {
+  $('tabFirst').classList.add('on');
+  $('tabLogin').classList.remove('on');
+  $('paneFirst').classList.remove('hide');
+  $('paneLogin').classList.add('hide');
+  clearMsg();
+};
+
+// ---------- כניסה רגילה ----------
+
+$('btnLogin').onclick = async () => {
+  const btn = $('btnLogin');
+  clearMsg();
+  const email = $('loginEmail').value.trim().toLowerCase();
+  const pass  = $('loginPass').value;
+  if (!email || !pass) { show('נא למלא מייל וסיסמה.', 'err'); return; }
+
+  btn.disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    if (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ||
+        e.code === 'auth/user-not-found') {
+      show('מייל או סיסמה שגויים. אם זו הפעם הראשונה — עבור ללשונית "כניסה ראשונה".', 'err');
+    } else if (e.code === 'auth/too-many-requests') {
+      show('יותר מדי ניסיונות. נסה שוב בעוד כמה דקות.', 'err');
+    } else {
+      show('שגיאה: ' + e.code, 'err');
+    }
+  }
+  btn.disabled = false;
+};
+
+$('btnForgot').onclick = async () => {
+  const email = $('loginEmail').value.trim().toLowerCase();
+  if (!email) { show('הזן מייל בשדה למעלה ולחץ שוב.', 'err'); return; }
+  try {
+    await sendPasswordResetEmail(auth, email);
+    show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
+  } catch (e) {
+    show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
+  }
+};
+
+// ---------- כניסה ראשונה ----------
+
+$('btnFirst').onclick = async () => {
+  const btn = $('btnFirst');
+  clearMsg();
+
+  const code  = $('fCode').value.trim();
+  const email = $('fEmail').value.trim().toLowerCase();
+  const pass  = $('fPass').value;
+  const pass2 = $('fPass2').value;
+
+  if (!code || !email || !pass) { show('נא למלא את כל השדות.', 'err'); return; }
+  if (pass !== pass2)           { show('הסיסמאות אינן תואמות.', 'err'); return; }
+  if (pass.length < 6)          { show('הסיסמה חייבת להיות באורך 6 תווים לפחות.', 'err'); return; }
+
+  btn.disabled = true;
+  onboarding = true;
+  let created = null;
+
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    created = cred.user;
+
+    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', code);
+    const snap = await getDoc(pendingRef);
+
+    if (!snap.exists()) {
+      throw new Error('NO_MATCH');
+    }
+    const p = snap.data();
+    if (String(p.email || '').toLowerCase() !== email) {
+      throw new Error('NO_MATCH');
+    }
+
+    await setDoc(doc(db, 'stations', STATION_ID, 'users', created.uid), {
+      personal_code: p.personal_code,
+      full_name:     p.full_name,
+      email:         email,
+      phone:         p.phone || '',
+      crew:          p.crew || '',
+      role:          p.role,
+      position:      p.position || '',
+      is_active:     p.is_active !== false,
+      last_login:    serverTimestamp(),
+      created_at:    serverTimestamp()
+    });
+
+    await deleteDoc(pendingRef);
+
+    onboarding = false;
+    await loadProfile(created);
+
+  } catch (e) {
+    // ניקוי: אם נוצר חשבון אבל הקוד לא תאם - מוחקים אותו כדי
+    // שהכבאי יוכל לנסות שוב עם אותו מייל
+    if (created) {
+      try { await deleteUser(created); } catch (ignore) {}
+    }
+    onboarding = false;
+    if (e.message === 'NO_MATCH') {
+      show('הקוד האישי והמייל לא תואמים למה שרשום במערכת. בדוק שוב, או פנה לרכז/ת משאבי אנוש.', 'err');
+    } else if (e.code === 'auth/email-already-in-use') {
+      show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה" והתחבר עם הסיסמה שבחרת.', 'err');
+    } else if (e.code === 'auth/invalid-email') {
+      show('כתובת המייל אינה תקינה.', 'err');
+    } else {
+      show('שגיאה: ' + (e.code || e.message), 'err');
+    }
+  }
+  btn.disabled = false;
+};
+
+// ---------- מצב התחברות ----------
+
+$('btnLogout').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  if (onboarding) return; // באמצע כניסה ראשונה - לא להתערב
+  if (!user) {
+    $('authView').classList.remove('hide');
+    $('homeView').classList.add('hide');
+    return;
+  }
+  loadProfile(user);
+});
+
+async function loadProfile(user){
+  let snap;
+  try {
+    snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+  } catch (e) {
+    show('שגיאה בטעינת הפרופיל: ' + e.message, 'err');
+    return;
+  }
+
+  if (!snap || !snap.exists()) {
+    // חשבון קיים ב-Auth אבל בלי מסמך משתמש
+    await signOut(auth);
+    show('החשבון קיים אך טרם חובר לכבאי. עבור ל"כניסה ראשונה" והזן קוד אישי.', 'err');
+    return;
+  }
+
+  const u = snap.data();
+  $('pName').textContent = u.full_name;
+  $('pRole').textContent = ROLE_HE[u.role] || u.role;
+  $('pCrew').textContent = CREW_HE[u.crew] || '';
+  $('pCode').textContent = 'קוד אישי: ' + u.personal_code;
+
+  $('authView').classList.add('hide');
+  $('homeView').classList.remove('hide');
+
+  try {
+    await setDoc(doc(db, 'stations', STATION_ID, 'users', user.uid),
+                 { last_login: serverTimestamp() }, { merge: true });
+  } catch (ignore) {}
+}
+</script>
+</body>
+</html>
