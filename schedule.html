@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תחנה 102 — הסידור שלי</title>
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#2f6f4e; --crewB:#3a5f8a; --crewC:#6b4a7d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;padding:14px}
+  .wrap{max-width:560px;margin:0 auto}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .top .me{font-size:15px;font-weight:600}
+  .top .sub{font-size:12px;color:var(--muted)}
+  .lnk{background:none;border:0;color:var(--muted);font-size:13px;cursor:pointer;
+       text-decoration:underline;font-family:inherit;padding:0}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:14px;margin-bottom:12px}
+
+  .next{display:flex;align-items:center;gap:12px}
+  .next .big{font-size:26px;font-weight:700;color:var(--accent);line-height:1}
+  .next .txt{font-size:13px;color:var(--muted);line-height:1.7}
+  .next .txt b{color:var(--txt)}
+
+  .nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .nav button{background:transparent;border:1px solid var(--line);color:var(--txt);
+        border-radius:6px;padding:6px 14px;font-size:16px;cursor:pointer;font-family:inherit}
+  .nav .mo{font-size:16px;font-weight:600}
+
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .dow{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
+  .day{aspect-ratio:1;border:1px solid var(--line);border-radius:6px;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;
+       font-size:13px;background:#191c20;position:relative}
+  .day.pad{border:0;background:transparent}
+  .day .n{font-weight:600}
+  .day .c{font-size:10px;color:var(--muted);margin-top:2px}
+  .day.mine{border-color:var(--accent);background:#2a1a10}
+  .day.mine .c{color:var(--accent)}
+  .day.today{outline:2px solid var(--txt);outline-offset:-2px}
+  .day.A .c{color:#7bc47f} .day.B .c{color:#8ab4e8} .day.C .c{color:#c79bdb}
+  .day.mine.A .c,.day.mine.B .c,.day.mine.C .c{color:var(--accent)}
+
+  .sum{display:flex;gap:10px;margin-top:12px}
+  .sum div{flex:1;background:#191c20;border:1px solid var(--line);border-radius:8px;
+        padding:10px;text-align:center}
+  .sum .v{font-size:20px;font-weight:700}
+  .sum .k{font-size:11px;color:var(--muted);margin-top:2px}
+
+  .legend{display:flex;gap:14px;justify-content:center;margin-top:12px;font-size:11px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:4px}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+  .center{text-align:center;color:var(--muted);padding:26px 0;font-size:14px}
+  .hide{display:none}
+  input{width:100%;padding:11px;background:#111316;color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:15px;font-family:inherit}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  button.main{width:100%;background:var(--accent);color:#fff;border:0;border-radius:6px;
+        padding:12px;font-size:15px;cursor:pointer;margin-top:18px;font-family:inherit}
+  .err{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;
+       background:#3a1d1d;color:#ef9a9a;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- כניסה -->
+  <div id="authView" class="card">
+    <div style="text-align:center;font-size:19px;font-weight:600;margin-bottom:4px">תחנה 102</div>
+    <div style="text-align:center;font-size:13px;color:var(--muted);margin-bottom:14px">הסידור שלי</div>
+    <label>מייל</label>
+    <input type="email" id="email" autocomplete="username">
+    <label>סיסמה</label>
+    <input type="password" id="pass" autocomplete="current-password">
+    <button class="main" id="btnIn">כניסה</button>
+    <div class="err" id="authErr"></div>
+  </div>
+
+  <!-- תצוגה -->
+  <div id="mainView" class="hide">
+
+    <div class="top">
+      <div>
+        <div class="me" id="meName"></div>
+        <div class="sub" id="meSub"></div>
+      </div>
+      <button class="lnk" id="btnOut">התנתק</button>
+    </div>
+
+    <div class="card">
+      <div class="next" id="nextBox"></div>
+    </div>
+
+    <div class="card">
+      <div class="nav">
+        <button id="prev">‹</button>
+        <div class="mo" id="moLabel"></div>
+        <button id="next">›</button>
+      </div>
+      <div class="grid" id="dows"></div>
+      <div class="grid" id="grid"></div>
+
+      <div class="sum">
+        <div><div class="v" id="sumShifts">—</div><div class="k">משמרות בחודש</div></div>
+        <div><div class="v" id="sumHours">—</div><div class="k">שעות</div></div>
+      </div>
+
+      <div class="legend">
+        <span><i class="dot" style="background:#7bc47f"></i>א'</span>
+        <span><i class="dot" style="background:#8ab4e8"></i>ב'</span>
+        <span><i class="dot" style="background:#c79bdb"></i>ג'</span>
+        <span><i class="dot" style="background:var(--accent)"></i>שלי</span>
+      </div>
+    </div>
+
+    <div class="card" id="noRot" style="display:none">
+      <div class="center">עדיין לא הוגדר מחזור סידור בתחנה.</div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, collection, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
+         nextShift, shiftTimes, sameDay, daysBetween }
+  from './rotation.js';
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const $ = id => document.getElementById(id);
+
+const ROLE_HE = {
+  firefighter: 'לוחם אש',
+  commander: 'קצין / מפקד משמרת',
+  hr_coordinator: 'רכז/ת משאבי אנוש'
+};
+const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
+
+let me = null;
+let rotations = [];
+let viewYear, viewMonth;
+
+// ---------- כניסה ----------
+
+$('btnIn').onclick = async () => {
+  const btn = $('btnIn');
+  btn.disabled = true;
+  $('authErr').style.display = 'none';
+  try {
+    await signInWithEmailAndPassword(auth, $('email').value.trim().toLowerCase(), $('pass').value);
+  } catch (e) {
+    $('authErr').textContent = 'מייל או סיסמה שגויים.';
+    $('authErr').style.display = 'block';
+  }
+  btn.disabled = false;
+};
+
+$('btnOut').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, async user => {
+  if (!user) {
+    $('authView').classList.remove('hide');
+    $('mainView').classList.add('hide');
+    return;
+  }
+
+  try {
+    const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+    if (!s.exists()) {
+      $('authErr').textContent = 'החשבון אינו מקושר לכבאי. פנה לרכז/ת משאבי אנוש.';
+      $('authErr').style.display = 'block';
+      return;
+    }
+    me = s.data();
+  } catch (e) {
+    $('authErr').textContent = 'שגיאה בטעינת הפרופיל.';
+    $('authErr').style.display = 'block';
+    return;
+  }
+
+  try {
+    const rs = await getDocs(collection(db, 'stations', STATION_ID, 'rotations'));
+    rotations = rs.docs.map(d => d.data());
+  } catch (ignore) { rotations = []; }
+
+  $('meName').textContent = me.full_name;
+  $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
+                            (me.crew ? ' · ' + CREW_HE[me.crew] : '');
+
+  $('authView').classList.add('hide');
+  $('mainView').classList.remove('hide');
+
+  const now = new Date();
+  viewYear  = now.getFullYear();
+  viewMonth = now.getMonth();
+
+  renderNext();
+  render();
+});
+
+// ---------- המשמרת הבאה ----------
+
+function renderNext(){
+  const box = $('nextBox');
+
+  if (!rotations.length) {
+    $('noRot').style.display = 'block';
+    box.innerHTML = '<div class="txt">אין מחזור מוגדר.</div>';
+    return;
+  }
+  if (!me.crew) {
+    box.innerHTML = '<div class="txt">לא משויך למשמרת. פנה לרכז/ת משאבי אנוש.</div>';
+    return;
+  }
+
+  const today = new Date();
+  const d = nextShift(rotations, me.crew, today);
+  if (!d) { box.innerHTML = '<div class="txt">לא נמצאה משמרת קרובה.</div>'; return; }
+
+  const diff = daysBetween(today, d);
+  const when = diff === 0 ? 'היום' : (diff === 1 ? 'מחר' : 'בעוד ' + diff + ' ימים');
+  const t = shiftTimes(rotations[0], me.role, false);
+
+  box.innerHTML =
+    '<div class="big">' + d.getDate() + '.' + (d.getMonth() + 1) + '</div>' +
+    '<div class="txt">המשמרת הבאה שלך — <b>' + when + '</b><br>' +
+    'יום ' + DOWS[d.getDay()] + ' · ' + t.label + ' · ' + t.hours + ' שעות</div>';
+}
+
+// ---------- לוח החודש ----------
+
+function render(){
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear;
+
+  const dows = $('dows');
+  dows.innerHTML = '';
+  DOWS.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'dow';
+    el.textContent = d;
+    dows.appendChild(el);
+  });
+
+  const grid = $('grid');
+  grid.innerHTML = '';
+
+  const first = new Date(viewYear, viewMonth, 1);
+  const last  = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const today = new Date();
+
+  for (let i = 0; i < first.getDay(); i++) {
+    const pad = document.createElement('div');
+    pad.className = 'day pad';
+    grid.appendChild(pad);
+  }
+
+  for (let d = 1; d <= last; d++) {
+    const date = new Date(viewYear, viewMonth, d);
+    const crew = crewOnDate(rotations, date);
+
+    const el = document.createElement('div');
+    el.className = 'day' + (crew ? ' ' + crew : '') +
+                   (crew && crew === me.crew ? ' mine' : '') +
+                   (sameDay(date, today) ? ' today' : '');
+    el.innerHTML = '<div class="n">' + d + '</div>' +
+                   '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>';
+    grid.appendChild(el);
+  }
+
+  if (me.crew && rotations.length) {
+    const shifts = shiftsInMonth(rotations, me.crew, me.role, viewYear, viewMonth);
+    $('sumShifts').textContent = shifts.length;
+    $('sumHours').textContent  = hoursInMonth(rotations, me.crew, me.role, viewYear, viewMonth);
+  } else {
+    $('sumShifts').textContent = '—';
+    $('sumHours').textContent  = '—';
+  }
+}
+
+$('prev').onclick = () => {
+  viewMonth--;
+  if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+  render();
+};
+$('next').onclick = () => {
+  viewMonth++;
+  if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+  render();
+};
+</script>
+</body>
+</html>
