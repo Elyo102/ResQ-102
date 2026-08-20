@@ -94,9 +94,9 @@
   <!-- ============ ממתין לאישור ============ -->
   <div id="waitView" class="hide">
     <div class="wait">
-      <div class="icon">⏳</div>
-      <div class="ttl">הבקשה נשלחה</div>
-      <div class="txt">
+      <div class="icon" id="waitIcon">⏳</div>
+      <div class="ttl" id="waitTtl">הבקשה נשלחה</div>
+      <div class="txt" id="waitTxt">
         הבקשה שלך ממתינה לאישור רכז/ת משאבי אנוש.<br>
         תקבל גישה מלאה מיד לאחר האישור.
       </div>
@@ -288,7 +288,7 @@ $('btnFirst').onclick = async () => {
     });
     onboarding = false;
     btn.disabled = false;
-    showView('wait');
+    showWaiting();
   } catch (e) {
     if (created) { try { await deleteUser(created); } catch (ignore) {} }
     onboarding = false;
@@ -308,6 +308,22 @@ onAuthStateChanged(auth, user => {
   loadProfile(user);
 });
 
+function showNotLinked(){
+  $('waitIcon').textContent = '🔒';
+  $('waitTtl').textContent  = 'החשבון אינו מקושר לכבאי';
+  $('waitTxt').innerHTML    = 'המייל הזה אינו משויך לאף כבאי בתחנה.<br>' +
+                              'התנתק והירשם עם הקוד האישי שלך.';
+  showView('wait');
+}
+
+function showWaiting(){
+  $('waitIcon').textContent = '⏳';
+  $('waitTtl').textContent  = 'הבקשה נשלחה';
+  $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור רכז/ת משאבי אנוש.<br>' +
+                              'תקבל גישה מלאה מיד לאחר האישור.';
+  showView('wait');
+}
+
 async function loadProfile(user){
   let snap = null;
   try {
@@ -315,17 +331,16 @@ async function loadProfile(user){
   } catch (ignore) {}
 
   if (!snap || !snap.exists()) {
-    // אין מסמך כבאי - אולי יש בקשה ממתינה
     let req = null;
     try {
       req = await getDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid));
     } catch (ignore) {}
 
-    if (req && req.exists()) { showView('wait'); return; }
+    if (req && req.exists()) { showWaiting(); return; }
 
-    await signOut(auth);
-    showView('auth');
-    show('החשבון קיים אך אינו מקושר לכבאי. עבור ל"הרשמה" והזן קוד אישי.', 'err');
+    // חשוב: לא מנתקים אוטומטית. ניתוק כאן היה מפיל גם לשוניות
+    // אחרות של המערכת, כי Firebase משתף התחברות בין לשוניות.
+    showNotLinked();
     return;
   }
 
