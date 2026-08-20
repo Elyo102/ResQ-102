@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תחנה 102 — אישור בקשות</title>
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c; --ok:#2e7d32; --err:#c62828;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+  .wrap{max-width:720px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:18px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;padding:10px;background:#111316;color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  button{background:var(--accent);color:#fff;border:0;border-radius:6px;
+        padding:10px 18px;font-size:14px;cursor:pointer;margin-top:14px;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button.ok{background:var(--ok)}
+  button.no{background:transparent;border:1px solid #6b3535;color:#ef9a9a}
+  .req{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;
+       background:#191c20}
+  .req .nm{font-size:16px;font-weight:600;margin-bottom:8px}
+  .req .ln{font-size:13px;color:var(--muted);line-height:1.9}
+  .req .ln b{color:var(--txt);font-weight:500}
+  .match{margin-top:10px;padding:9px;border-radius:6px;font-size:13px;line-height:1.6}
+  .match.found{background:#1d3a20;color:#a5d6a7}
+  .match.none{background:#3a1d1d;color:#ef9a9a}
+  .acts{display:flex;gap:10px}
+  .acts button{flex:1}
+  .hide{display:none}
+  .who{font-size:13px;color:var(--muted)}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:24px 0}
+  .msg{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;display:none}
+  .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
+  .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>אישור בקשות הרשמה</h1>
+  <div class="sub">תחנת כיבוי אילת</div>
+
+  <!-- כניסה -->
+  <div class="card" id="authCard">
+    <label>מייל</label>
+    <input type="email" id="email" autocomplete="username">
+    <label>סיסמה</label>
+    <input type="password" id="pass" autocomplete="current-password">
+    <button id="btnIn">כניסה</button>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <!-- אזור עבודה -->
+  <div id="work" class="hide">
+    <div class="card">
+      <div class="who" id="who"></div>
+      <button id="btnOut" class="ghost">התנתק</button>
+    </div>
+    <div class="card">
+      <div id="list"><div class="empty">טוען...</div></div>
+      <button id="btnRefresh" class="ghost">רענן רשימה</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
+         getDocs, query, where, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const $ = id => document.getElementById(id);
+
+const ROLE_HE = {
+  firefighter: 'לוחם אש',
+  commander: 'קצין / מפקד משמרת',
+  hr_coordinator: 'רכז/ת משאבי אנוש'
+};
+const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
+
+function msg(el, text, kind){
+  const m = $(el);
+  m.textContent = text;
+  m.className = 'msg ' + (kind || '');
+}
+
+// ---------- כניסה ----------
+
+$('btnIn').onclick = async () => {
+  const btn = $('btnIn');
+  btn.disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, $('email').value.trim().toLowerCase(), $('pass').value);
+  } catch (e) {
+    msg('authMsg', 'מייל או סיסמה שגויים.', 'err');
+  }
+  btn.disabled = false;
+};
+
+$('btnOut').onclick = () => signOut(auth);
+$('btnRefresh').onclick = () => loadRequests();
+
+onAuthStateChanged(auth, async user => {
+  if (!user) {
+    $('authCard').classList.remove('hide');
+    $('work').classList.add('hide');
+    return;
+  }
+
+  const isSuper = String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  let roleOk = isSuper, label = 'מנהל מערכת';
+
+  if (!isSuper) {
+    try {
+      const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+      if (s.exists() && (s.data().role === 'hr_coordinator' || s.data().role === 'commander')) {
+        roleOk = true;
+        label = s.data().full_name + ' — ' + (ROLE_HE[s.data().role] || '');
+      }
+    } catch (ignore) {}
+  }
+
+  if (!roleOk) {
+    await signOut(auth);
+    $('authCard').classList.remove('hide');
+    $('work').classList.add('hide');
+    msg('authMsg', 'אין לך הרשאה לדף הזה.', 'err');
+    return;
+  }
+
+  $('who').textContent = 'מחובר: ' + label;
+  $('authCard').classList.add('hide');
+  $('work').classList.remove('hide');
+  loadRequests();
+});
+
+// ---------- טעינת בקשות ----------
+
+async function loadRequests(){
+  const list = $('list');
+  list.innerHTML = '<div class="empty">טוען...</div>';
+
+  let snaps;
+  try {
+    const q = query(collection(db, 'stations', STATION_ID, 'registration_requests'),
+                    where('status', '==', 'pending'));
+    snaps = await getDocs(q);
+  } catch (e) {
+    list.innerHTML = '<div class="empty">שגיאה בטעינה: ' + (e.code || e.message) + '</div>';
+    return;
+  }
+
+  if (snaps.empty) {
+    list.innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const d of snaps.docs) {
+    const r = d.data();
+    const box = document.createElement('div');
+    box.className = 'req';
+
+    // שליפת הרשומה מרשימת התחנה לפי הקוד שהוזן
+    let roster = null;
+    try {
+      const rs = await getDoc(doc(db, 'stations', STATION_ID, 'pending_users', r.claimed_code));
+      if (rs.exists()) roster = rs.data();
+    } catch (ignore) {}
+
+    const matchHtml = roster
+      ? '<div class="match found">נמצא ברשימת התחנה: <b>' + esc(roster.full_name) + '</b>' +
+        ' · ' + (ROLE_HE[roster.role] || roster.role) +
+        (roster.crew ? ' · ' + CREW_HE[roster.crew] : '') + '</div>'
+      : '<div class="match none">הקוד לא נמצא ברשימת התחנה. אשר רק אם אתה מזהה את האדם.</div>';
+
+    box.innerHTML =
+      '<div class="nm">' + esc(r.full_name) + '</div>' +
+      '<div class="ln">קוד אישי: <b>' + esc(r.claimed_code) + '</b></div>' +
+      '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
+      (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
+      matchHtml +
+      '<div class="acts">' +
+        '<button class="ok" data-act="ok">אשר</button>' +
+        '<button class="no" data-act="no">דחה</button>' +
+      '</div>';
+
+    box.querySelector('[data-act="ok"]').onclick = () => approve(d.id, r, roster, box);
+    box.querySelector('[data-act="no"]').onclick = () => reject(d.id, box);
+    list.appendChild(box);
+  }
+}
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------- אישור ----------
+
+async function approve(uid, r, roster, box){
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    await setDoc(doc(db, 'stations', STATION_ID, 'users', uid), {
+      personal_code: r.claimed_code,
+      full_name:     roster ? roster.full_name : r.full_name,
+      email:         r.email,
+      phone:         r.phone || (roster ? roster.phone : '') || '',
+      crew:          roster ? (roster.crew || '') : '',
+      role:          roster ? roster.role : 'firefighter',
+      position:      roster ? (roster.position || '') : '',
+      is_active:     true,
+      last_login:    null,
+      created_at:    serverTimestamp()
+    });
+
+    if (roster) {
+      try {
+        await deleteDoc(doc(db, 'stations', STATION_ID, 'pending_users', r.claimed_code));
+      } catch (ignore) {}
+    }
+
+    await deleteDoc(doc(db, 'stations', STATION_ID, 'registration_requests', uid));
+    box.remove();
+    if (!$('list').querySelector('.req')) {
+      $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+    }
+  } catch (e) {
+    alert('שגיאה באישור: ' + (e.code || e.message));
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+// ---------- דחייה ----------
+
+async function reject(uid, box){
+  if (!confirm('לדחות את הבקשה?')) return;
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    await deleteDoc(doc(db, 'stations', STATION_ID, 'registration_requests', uid));
+    box.remove();
+    if (!$('list').querySelector('.req')) {
+      $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+    }
+  } catch (e) {
+    alert('שגיאה בדחייה: ' + (e.code || e.message));
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+</script>
+</body>
+</html>
