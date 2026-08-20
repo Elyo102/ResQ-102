@@ -40,6 +40,10 @@
   .profile{text-align:center;line-height:2}
   .profile .big{font-size:19px;font-weight:600}
   .profile .row{color:var(--muted);font-size:14px}
+  .wait{text-align:center;line-height:1.8}
+  .wait .icon{font-size:38px;margin-bottom:10px}
+  .wait .ttl{font-size:18px;font-weight:600;margin-bottom:8px}
+  .wait .txt{color:var(--muted);font-size:14px}
 </style>
 </head>
 <body>
@@ -52,10 +56,9 @@
   <div id="authView">
     <div class="tabs">
       <div class="tab on" id="tabLogin">כניסה</div>
-      <div class="tab" id="tabFirst">כניסה ראשונה</div>
+      <div class="tab" id="tabFirst">הרשמה</div>
     </div>
 
-    <!-- כניסה רגילה -->
     <div id="paneLogin">
       <label>מייל</label>
       <input type="email" id="loginEmail" autocomplete="username">
@@ -65,24 +68,40 @@
       <button class="link" id="btnForgot">שכחתי סיסמה</button>
     </div>
 
-    <!-- כניסה ראשונה -->
     <div id="paneFirst" class="hide">
       <label>קוד אישי</label>
-      <input type="text" id="fCode" inputmode="numeric" maxlength="6">
+      <input type="text" id="fCode" maxlength="15">
+      <label>שם מלא</label>
+      <input type="text" id="fName">
       <label>מייל</label>
       <input type="email" id="fEmail" autocomplete="username">
+      <label>טלפון</label>
+      <input type="tel" id="fPhone" inputmode="tel">
       <label>בחר סיסמה (לפחות 6 תווים)</label>
       <input type="password" id="fPass" autocomplete="new-password">
       <label>אימות סיסמה</label>
       <input type="password" id="fPass2" autocomplete="new-password">
-      <button id="btnFirst">צור סיסמה והיכנס</button>
+      <button id="btnFirst">הירשם</button>
       <div class="note">
-        הזן את הקוד האישי והמייל שרשומים לך במערכת. מכאן והלאה תיכנס
-        עם מייל וסיסמה — הקוד האישי נשאר כמספר העובד שלך.
+        הזן את הקוד האישי שלך מהמערכת הקיימת. אם הפרטים תואמים לרשימת
+        התחנה — תיכנס מיד. אחרת הבקשה תועבר לאישור רכז/ת משאבי אנוש.
       </div>
     </div>
 
     <div class="msg" id="msg"></div>
+  </div>
+
+  <!-- ============ ממתין לאישור ============ -->
+  <div id="waitView" class="hide">
+    <div class="wait">
+      <div class="icon">⏳</div>
+      <div class="ttl">הבקשה נשלחה</div>
+      <div class="txt">
+        הבקשה שלך ממתינה לאישור רכז/ת משאבי אנוש.<br>
+        תקבל גישה מלאה מיד לאחר האישור.
+      </div>
+    </div>
+    <button id="btnLogoutWait">התנתק</button>
   </div>
 
   <!-- ============ מסך אחרי כניסה ============ -->
@@ -120,9 +139,7 @@ const ROLE_HE = {
 };
 const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
 
-// דגל נעילה: בזמן כניסה ראשונה, Firebase מדווח על "משתמש מחובר"
-// עוד לפני שנוצר מסמך הכבאי. בלי הדגל הזה, המאזין למטה היה מנתק
-// את המשתמש באמצע התהליך.
+// נעילה: בזמן הרשמה Firebase מדווח "מחובר" לפני שנוצר מסמך הכבאי.
 let onboarding = false;
 
 function show(text, kind){
@@ -132,7 +149,13 @@ function show(text, kind){
 }
 function clearMsg(){ $('msg').className = 'msg'; }
 
-// ---------- מעבר בין לשוניות ----------
+function showView(name){
+  $('authView').classList.toggle('hide', name !== 'auth');
+  $('waitView').classList.toggle('hide', name !== 'wait');
+  $('homeView').classList.toggle('hide', name !== 'home');
+}
+
+// ---------- לשוניות ----------
 
 $('tabLogin').onclick = () => {
   $('tabLogin').classList.add('on');
@@ -164,7 +187,7 @@ $('btnLogin').onclick = async () => {
   } catch (e) {
     if (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ||
         e.code === 'auth/user-not-found') {
-      show('מייל או סיסמה שגויים. אם זו הפעם הראשונה — עבור ללשונית "כניסה ראשונה".', 'err');
+      show('מייל או סיסמה שגויים. אם עדיין לא נרשמת — עבור ללשונית "הרשמה".', 'err');
     } else if (e.code === 'auth/too-many-requests') {
       show('יותר מדי ניסיונות. נסה שוב בעוד כמה דקות.', 'err');
     } else {
@@ -179,26 +202,26 @@ $('btnForgot').onclick = async () => {
   if (!email) { show('הזן מייל בשדה למעלה ולחץ שוב.', 'err'); return; }
   try {
     await sendPasswordResetEmail(auth, email);
-    show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
-  } catch (e) {
-    show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
-  }
+  } catch (ignore) {}
+  show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
 };
 
-// ---------- כניסה ראשונה ----------
+// ---------- הרשמה ----------
 
 $('btnFirst').onclick = async () => {
   const btn = $('btnFirst');
   clearMsg();
 
   const code  = $('fCode').value.trim();
+  const name  = $('fName').value.trim();
   const email = $('fEmail').value.trim().toLowerCase();
+  const phone = $('fPhone').value.trim();
   const pass  = $('fPass').value;
   const pass2 = $('fPass2').value;
 
-  if (!code || !email || !pass) { show('נא למלא את כל השדות.', 'err'); return; }
-  if (pass !== pass2)           { show('הסיסמאות אינן תואמות.', 'err'); return; }
-  if (pass.length < 6)          { show('הסיסמה חייבת להיות באורך 6 תווים לפחות.', 'err'); return; }
+  if (!code || !name || !email || !pass) { show('נא למלא קוד אישי, שם, מייל וסיסמה.', 'err'); return; }
+  if (pass !== pass2) { show('הסיסמאות אינן תואמות.', 'err'); return; }
+  if (pass.length < 6) { show('הסיסמה חייבת להיות באורך 6 תווים לפחות.', 'err'); return; }
 
   btn.disabled = true;
   onboarding = true;
@@ -207,83 +230,102 @@ $('btnFirst').onclick = async () => {
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     created = cred.user;
-
-    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', code);
-    const snap = await getDoc(pendingRef);
-
-    if (!snap.exists()) {
-      throw new Error('NO_MATCH');
-    }
-    const p = snap.data();
-    if (String(p.email || '').toLowerCase() !== email) {
-      throw new Error('NO_MATCH');
-    }
-
-    await setDoc(doc(db, 'stations', STATION_ID, 'users', created.uid), {
-      personal_code: p.personal_code,
-      full_name:     p.full_name,
-      email:         email,
-      phone:         p.phone || '',
-      crew:          p.crew || '',
-      role:          p.role,
-      position:      p.position || '',
-      is_active:     p.is_active !== false,
-      last_login:    serverTimestamp(),
-      created_at:    serverTimestamp()
-    });
-
-    await deleteDoc(pendingRef);
-
-    onboarding = false;
-    await loadProfile(created);
-
   } catch (e) {
-    // ניקוי: אם נוצר חשבון אבל הקוד לא תאם - מוחקים אותו כדי
-    // שהכבאי יוכל לנסות שוב עם אותו מייל
-    if (created) {
-      try { await deleteUser(created); } catch (ignore) {}
-    }
     onboarding = false;
-    if (e.message === 'NO_MATCH') {
-      show('הקוד האישי והמייל לא תואמים למה שרשום במערכת. בדוק שוב, או פנה לרכז/ת משאבי אנוש.', 'err');
-    } else if (e.code === 'auth/email-already-in-use') {
-      show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה" והתחבר עם הסיסמה שבחרת.', 'err');
+    btn.disabled = false;
+    if (e.code === 'auth/email-already-in-use') {
+      show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה".', 'err');
     } else if (e.code === 'auth/invalid-email') {
       show('כתובת המייל אינה תקינה.', 'err');
     } else {
-      show('שגיאה: ' + (e.code || e.message), 'err');
+      show('שגיאה: ' + e.code, 'err');
     }
+    return;
   }
-  btn.disabled = false;
+
+  // מסלול א': הקוד והמייל תואמים לרשימת התחנה - כניסה מיידית
+  let matched = false;
+  try {
+    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', code);
+    const snap = await getDoc(pendingRef);
+    if (snap.exists() && String(snap.data().email || '').toLowerCase() === email) {
+      const p = snap.data();
+      await setDoc(doc(db, 'stations', STATION_ID, 'users', created.uid), {
+        personal_code: p.personal_code,
+        full_name:     p.full_name,
+        email:         email,
+        phone:         phone || p.phone || '',
+        crew:          p.crew || '',
+        role:          p.role,
+        position:      p.position || '',
+        is_active:     p.is_active !== false,
+        last_login:    serverTimestamp(),
+        created_at:    serverTimestamp()
+      });
+      await deleteDoc(pendingRef);
+      matched = true;
+    }
+  } catch (ignore) {
+    // קריאה נדחתה = המייל בגיליון ריק או שונה. ממשיכים למסלול ב'.
+  }
+
+  if (matched) {
+    onboarding = false;
+    btn.disabled = false;
+    await loadProfile(created);
+    return;
+  }
+
+  // מסלול ב': יצירת בקשה שממתינה לאישור
+  try {
+    await setDoc(doc(db, 'stations', STATION_ID, 'registration_requests', created.uid), {
+      claimed_code: code,
+      full_name:    name,
+      email:        email,
+      phone:        phone,
+      status:       'pending',
+      created_at:   serverTimestamp()
+    });
+    onboarding = false;
+    btn.disabled = false;
+    showView('wait');
+  } catch (e) {
+    if (created) { try { await deleteUser(created); } catch (ignore) {} }
+    onboarding = false;
+    btn.disabled = false;
+    show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
+  }
 };
 
 // ---------- מצב התחברות ----------
 
 $('btnLogout').onclick = () => signOut(auth);
+$('btnLogoutWait').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, user => {
-  if (onboarding) return; // באמצע כניסה ראשונה - לא להתערב
-  if (!user) {
-    $('authView').classList.remove('hide');
-    $('homeView').classList.add('hide');
-    return;
-  }
+  if (onboarding) return;
+  if (!user) { showView('auth'); return; }
   loadProfile(user);
 });
 
 async function loadProfile(user){
-  let snap;
+  let snap = null;
   try {
     snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
-  } catch (e) {
-    show('שגיאה בטעינת הפרופיל: ' + e.message, 'err');
-    return;
-  }
+  } catch (ignore) {}
 
   if (!snap || !snap.exists()) {
-    // חשבון קיים ב-Auth אבל בלי מסמך משתמש
+    // אין מסמך כבאי - אולי יש בקשה ממתינה
+    let req = null;
+    try {
+      req = await getDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid));
+    } catch (ignore) {}
+
+    if (req && req.exists()) { showView('wait'); return; }
+
     await signOut(auth);
-    show('החשבון קיים אך טרם חובר לכבאי. עבור ל"כניסה ראשונה" והזן קוד אישי.', 'err');
+    showView('auth');
+    show('החשבון קיים אך אינו מקושר לכבאי. עבור ל"הרשמה" והזן קוד אישי.', 'err');
     return;
   }
 
@@ -292,9 +334,7 @@ async function loadProfile(user){
   $('pRole').textContent = ROLE_HE[u.role] || u.role;
   $('pCrew').textContent = CREW_HE[u.crew] || '';
   $('pCode').textContent = 'קוד אישי: ' + u.personal_code;
-
-  $('authView').classList.add('hide');
-  $('homeView').classList.remove('hide');
+  showView('home');
 
   try {
     await setDoc(doc(db, 'stations', STATION_ID, 'users', user.uid),
