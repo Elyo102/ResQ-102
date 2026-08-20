@@ -43,6 +43,14 @@
   .msg{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;display:none}
   .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
   .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
+  h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
+  select{width:100%;padding:10px;background:#111316;color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  .two{display:flex;gap:12px}
+  .two>div{flex:1}
+  .rotstate{font-size:13px;color:var(--muted);background:#191c20;border:1px solid var(--line);
+        border-radius:6px;padding:11px;line-height:1.8;margin-bottom:6px}
+  .rotstate b{color:var(--txt)}
 </style>
 </head>
 <body>
@@ -68,8 +76,49 @@
       <button id="btnOut" class="ghost">התנתק</button>
     </div>
     <div class="card">
+      <h2>בקשות הרשמה</h2>
       <div id="list"><div class="empty">טוען...</div></div>
       <button id="btnRefresh" class="ghost">רענן רשימה</button>
+    </div>
+
+    <div class="card">
+      <h2>מחזור הסידור</h2>
+      <div id="rotState" class="rotstate">טוען...</div>
+
+      <label>תאריך עוגן — יום שאתה יודע בוודאות מי עבד בו</label>
+      <input type="date" id="anchorDate">
+
+      <label>איזו משמרת עבדה בתאריך הזה</label>
+      <select id="anchorCrew">
+        <option value="A">משמרת א'</option>
+        <option value="B">משמרת ב'</option>
+        <option value="C">משמרת ג'</option>
+      </select>
+
+      <div class="two">
+        <div>
+          <label>תחילת משמרת</label>
+          <input type="time" id="shiftStart" value="07:00">
+        </div>
+        <div>
+          <label>סיום משמרת</label>
+          <input type="time" id="shiftEnd" value="07:00">
+        </div>
+      </div>
+
+      <div class="two">
+        <div>
+          <label>תחילת משמרת - ראש משמרת</label>
+          <input type="time" id="cmdStart" value="06:45">
+        </div>
+        <div>
+          <label>סיום משמרת - יטבתה</label>
+          <input type="time" id="specEnd" value="08:00">
+        </div>
+      </div>
+
+      <button id="btnRot">שמור מחזור</button>
+      <div class="msg" id="rotMsg"></div>
     </div>
   </div>
 
@@ -81,8 +130,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
-         getDocs, query, where, serverTimestamp }
+         getDocs, query, where, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -96,7 +146,6 @@ const ROLE_HE = {
   commander: 'קצין / מפקד משמרת',
   hr_coordinator: 'רכז/ת משאבי אנוש'
 };
-const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
 
 function msg(el, text, kind){
   const m = $(el);
@@ -152,6 +201,7 @@ onAuthStateChanged(auth, async user => {
   $('authCard').classList.add('hide');
   $('work').classList.remove('hide');
   loadRequests();
+  loadRotation();
 });
 
 // ---------- טעינת בקשות ----------
@@ -267,6 +317,124 @@ async function reject(uid, box){
     box.querySelectorAll('button').forEach(b => b.disabled = false);
   }
 }
+
+// =====================================================================
+//  מחזור הסידור
+// =====================================================================
+
+async function loadRotation(){
+  const box = $('rotState');
+  let snaps;
+  try {
+    snaps = await getDocs(collection(db, 'stations', STATION_ID, 'rotations'));
+  } catch (e) {
+    box.textContent = 'שגיאה בטעינה: ' + (e.code || e.message);
+    return;
+  }
+
+  if (snaps.empty) {
+    box.innerHTML = 'עדיין לא הוגדר מחזור. מלא את השדות למטה ושמור.';
+    const t = new Date();
+    $('anchorDate').value = toKey(t);
+    return;
+  }
+
+  const rots = snaps.docs.map(d => d.data());
+  const base = rots[0];
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+  const cToday = crewOnDate(rots, today);
+  const cTomor = crewOnDate(rots, tomorrow);
+
+  box.innerHTML =
+    'מחזור פעיל · ' + rots.length + ' משמרות · עוגן ' + base.anchor_date + '<br>' +
+    'היום: <b>' + (CREW_HE[cToday] || '—') + '</b> · ' +
+    'מחר: <b>' + (CREW_HE[cTomor] || '—') + '</b><br>' +
+    'משמרת ' + (base.shift_start || '') + '–' + (base.shift_end || '') +
+    ' · ראש משמרת מ-' + (base.commander_start || '') +
+    ' · יטבתה עד ' + (base.special_end || '');
+
+  $('anchorDate').value = base.anchor_date || '';
+  $('anchorCrew').value = crewOnDate(rots, base.anchor_date ? new Date(base.anchor_date + 'T00:00:00') : today) || 'A';
+  $('shiftStart').value = base.shift_start || '07:00';
+  $('shiftEnd').value   = base.shift_end || '07:00';
+  $('cmdStart').value   = base.commander_start || '06:45';
+  $('specEnd').value    = base.special_end || '08:00';
+}
+
+// חישוב מספר שעות בין שתי שעות ביממה של 24 שעות
+function hoursSpan(start, end){
+  const s = start.split(':'), e = end.split(':');
+  const sm = Number(s[0]) * 60 + Number(s[1]);
+  const em = Number(e[0]) * 60 + Number(e[1]);
+  let diff = em - sm;
+  if (diff <= 0) diff += 1440;   // חוצה חצות
+  return Math.round((1440 - 0 + diff - 1440) / 60 * 100) / 100 || 24;
+}
+
+// אורך משמרת מלאה: מהתחלה עד הסיום ביום שלמחרת
+function fullShiftHours(start, end){
+  const s = start.split(':'), e = end.split(':');
+  const sm = Number(s[0]) * 60 + Number(s[1]);
+  const em = Number(e[0]) * 60 + Number(e[1]);
+  let mins = (1440 - sm) + em;
+  return Math.round(mins / 60 * 100) / 100;
+}
+
+$('btnRot').onclick = async () => {
+  const btn = $('btnRot');
+  const anchor = $('anchorDate').value;
+  const crew   = $('anchorCrew').value;
+  const sStart = $('shiftStart').value;
+  const sEnd   = $('shiftEnd').value;
+  const cStart = $('cmdStart').value;
+  const spEnd  = $('specEnd').value;
+
+  if (!anchor || !sStart || !sEnd) {
+    msg('rotMsg', 'נא למלא תאריך עוגן ושעות משמרת.', 'err');
+    return;
+  }
+
+  btn.disabled = true;
+  msg('rotMsg', '', '');
+
+  // המשמרת שנבחרה מקבלת מיקום 0, והשאר אחריה לפי הסדר א-ב-ג
+  const startIdx = CREWS.indexOf(crew);
+
+  const shiftHours = fullShiftHours(sStart, sEnd);
+  const cmdHours   = fullShiftHours(cStart, sEnd);
+  const specHours  = fullShiftHours(sStart, spEnd);
+
+  try {
+    const batch = writeBatch(db);
+    for (let i = 0; i < CREWS.length; i++) {
+      const c = CREWS[(startIdx + i) % CREWS.length];
+      batch.set(doc(db, 'stations', STATION_ID, 'rotations', c), {
+        crew: c,
+        position_in_cycle: i,
+        cycle_days: CREWS.length,
+        anchor_date: anchor,
+        shift_start: sStart,
+        shift_end: sEnd,
+        shift_hours: shiftHours,
+        commander_start: cStart,
+        commander_shift_hours: cmdHours,
+        special_end: spEnd,
+        special_shift_hours: specHours,
+        is_active: true,
+        updated_at: serverTimestamp()
+      });
+    }
+    await batch.commit();
+    msg('rotMsg', 'המחזור נשמר. לוחם ' + shiftHours + ' שעות · ראש משמרת ' +
+        cmdHours + ' · יטבתה ' + specHours + '.', 'ok');
+    loadRotation();
+  } catch (e) {
+    msg('rotMsg', 'שגיאה בשמירה: ' + (e.code || e.message), 'err');
+  }
+  btn.disabled = false;
+};
 </script>
 </body>
 </html>
