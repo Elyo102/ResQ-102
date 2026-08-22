@@ -108,7 +108,14 @@ async function checkWho(user){
   $('who').innerHTML = '';
 
   if (!user) {
-    line('who', 'מצב', 'לא מחובר — היכנס דרך login.html ואז חזור לכאן', 'bad');
+    line('who', 'מצב', 'לא מחובר. שאר הבדיקות ייכשלו עד שתיכנס — זה תקין.', 'bad');
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.innerHTML = '<a href="./login.html?next=check.html" ' +
+                  'style="display:inline-block;background:var(--accent);color:#fff;' +
+                  'text-decoration:none;border-radius:6px;padding:11px 20px;' +
+                  'font-size:15px;margin-top:6px">כניסה למערכת</a>';
+    $('who').appendChild(d);
     return null;
   }
 
