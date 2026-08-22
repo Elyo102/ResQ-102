@@ -448,18 +448,28 @@ async function approve(uid, r, box){
       shift: shf ? shf.value : ''
     });
 
-    box.innerHTML = '<div class="nm">' + esc(r.full_name) + '</div>' +
-      '<div class="match found">אושר · ' +
-      (ROLE_HE[res.data.role] || res.data.role) +
-      '<br><b>הכבאי צריך להתנתק ולהתחבר מחדש כדי שהתפקיד ייכנס לתוקף.</b>' +
-      '</div>';
+    // מספר העובד מוצג גדול ונשאר על המסך עד שסוגרים אותו ידנית.
+    // הגרסה הקודמת מחקה את הכרטיס אחרי 4 שניות — והמספר, שהוא
+    // הפרט היחיד שהמאשר חייב למסור לכבאי, נעלם איתו.
+    box.innerHTML =
+      '<div class="nm">' + esc(r.full_name) + '</div>' +
+      '<div class="match found" style="line-height:1.9">' +
+        'אושר · ' + esc(ROLE_HE[res.data.role] || res.data.role) +
+        '<div style="margin:10px 0;font-size:13px">מספר העובד שהוקצה</div>' +
+        '<div style="font-size:30px;font-weight:700;letter-spacing:3px;direction:ltr">' +
+          esc(res.data.emp) +
+        '</div>' +
+        '<div style="margin-top:10px"><b>מסור את המספר לכבאי.</b><br>' +
+        'הוא צריך להתנתק ולהתחבר מחדש כדי שהתפקיד ייכנס לתוקף.</div>' +
+      '</div>' +
+      '<button data-f="done" style="width:100%">הבנתי · סגור</button>';
 
-    setTimeout(function(){
+    box.querySelector('[data-f="done"]').onclick = function(){
       box.remove();
       if (!$('list').querySelector('.req')) {
         $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
       }
-    }, 4000);
+    };
 
   } catch (e) {
     const code = e.code || '';
@@ -655,7 +665,9 @@ $('btnUsers').onclick = async () => {
         '<div class="ln">תפקיד: <b>' + esc(roleTxt) + '</b></div>' +
         (c.stationId ? '<div class="ln">תחנה: <b>' + esc(c.stationId) + '</b></div>' : '') +
         (c.shift ? '<div class="ln">משמרת: <b>' + esc(CREW_HE[c.shift] || c.shift) + '</b></div>' : '') +
-        (c.code ? '<div class="ln">קוד אישי: <b>' + esc(c.code) + '</b></div>' : '') +
+        (c.emp ? '<div class="ln">מספר עובד: <b>' + esc(c.emp) + '</b></div>' : '') +
+        (c.districtId ? '<div class="ln">מחוז: <b>' +
+           esc(DIST_HE[c.districtId] || c.districtId) + '</b></div>' : '') +
         (u.email_verified
           ? '<div class="match found">המייל מאומת</div>'
           : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
