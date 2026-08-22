@@ -119,7 +119,7 @@ async function resolveUser(data) {
 //
 //   users      הכל, כולל מספר עובד. נקרא על ידי הכבאי עצמו וסגל.
 //   roster     שם, תפקיד, משמרת. נקרא על ידי אנשי התחנה.
-//   directory  שם, תפקיד, תחנה, מחוז. נקרא על ידי כל כבאי בארץ.
+//   directory  חיפוש עובד — שם, תפקיד, תחנה, מחוז. כל כבאי בארץ.
 //
 // ההפרדה קיימת כי כללי Firestore לא יכולים לחסום שדה בודד —
 // או שכל המסמך נקרא, או שלא.
@@ -147,7 +147,7 @@ async function writeProfile(uid, p) {
     updated_at: FV.serverTimestamp()
   }, { merge: true });
 
-  // "איפה עובד חבר שעשה איתי קורס" — בלי מספר עובד, מייל או טלפון.
+  // חיפוש עובד. בלי מספר עובד, בלי מייל, בלי טלפון.
   batch.set(db.doc('directory/' + uid), {
     full_name:  p.full_name || '',
     role:       p.role,
