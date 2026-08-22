@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תחנה 102 — בדיקת מערכת</title>
+<style>
+  :root{ --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+         --muted:#9aa0a6; --accent:#e8590c; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:16px;margin-bottom:12px}
+  .row{border-bottom:1px solid var(--line);padding:10px 0;font-size:14px;
+       line-height:1.7}
+  .row:last-child{border-bottom:0}
+  .k{color:var(--muted);font-size:12px}
+  .v{font-family:Consolas,monospace;direction:ltr;text-align:right;
+     white-space:pre-wrap;word-break:break-all;font-size:13px}
+  .ok{color:#7bc47f} .bad{color:#ef9a9a} .warn{color:#ffcc80}
+  input{width:100%;padding:10px;background:#111316;color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:14px;
+        font-family:inherit;margin-top:6px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:6px;
+         padding:10px 18px;font-size:14px;cursor:pointer;margin-top:12px;
+         font-family:inherit}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  h2{font-size:15px;margin:0 0 10px;color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>בדיקת מערכת</h1>
+  <div class="sub">
+    בודק את המערכת החיה ומדווח. צלם ושלח — זה כל מה שצריך כדי לאתר תקלה.<br>
+    הפעולה היחידה שהוא מבצע היא בנייה מחדש של מפתח החיפוש, ורק אם אתה
+    מנהל-על. היא בטוחה וניתנת לחזרה.
+  </div>
+
+  <div class="card">
+    <h2>1 · מי מחובר</h2>
+    <div id="who"><div class="row">בודק...</div></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · ספריית החיפוש</h2>
+    <div id="dir"><div class="row">בודק...</div></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · חיפוש בפועל</h2>
+    <label class="k">מה לחפש</label>
+    <input type="text" id="q" value="יונה">
+    <button id="btnRun">הרץ בדיקת חיפוש</button>
+    <div id="search"></div>
+  </div>
+
+  <div class="card">
+    <h2>4 · פונקציות השרת</h2>
+    <div id="fns"><div class="row">בודק...</div></div>
+  </div>
+
+  <button class="ghost" id="btnAgain">בדוק הכל מחדש</button>
+</div>
+
+<script type="module">
+import { firebaseConfig } from './firebase-config.js';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, getDocs, query, where, limit }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+
+const $ = id => document.getElementById(id);
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function line(box, key, value, cls){
+  const d = document.createElement('div');
+  d.className = 'row';
+  d.innerHTML = '<div class="k">' + esc(key) + '</div>' +
+                '<div class="v ' + (cls || '') + '">' + esc(value) + '</div>';
+  $(box).appendChild(d);
+}
+
+async function checkWho(user){
+  $('who').innerHTML = '';
+
+  if (!user) {
+    line('who', 'מצב', 'לא מחובר — היכנס דרך login.html ואז חזור לכאן', 'bad');
+    return null;
+  }
+
+  let t = {};
+  try { t = await user.getIdTokenResult(true); } catch (e) {}
+  const c = t.claims || {};
+
+  line('who', 'מייל', user.email || '(אין)', user.email ? 'ok' : 'bad');
+  line('who', 'מייל בטוקן (הכללים דורשים את זה)',
+       c.email || '(חסר)', c.email ? 'ok' : 'bad');
+  line('who', 'שיטת הכניסה', (c.firebase && c.firebase.sign_in_provider) || '?');
+  line('who', 'מייל מאומת', String(user.emailVerified));
+  line('who', 'תפקיד', c.role || '(אין)');
+  line('who', 'מספר עובד', c.emp || '(אין)');
+  line('who', 'תחנה', c.stationId || '(אין)');
+  line('who', 'מחוז', c.districtId || '(אין)');
+  line('who', 'משמרת', c.shift || '(אין)');
+  line('who', 'מנהל-על', String(c.super === true));
+  return c;
+}
+
+async function checkDirectory(){
+  $('dir').innerHTML = '';
+
+  let snaps;
+  try {
+    snaps = await getDocs(query(collection(db, 'directory'), limit(20)));
+  } catch (e) {
+    line('dir', 'קריאת הספרייה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+    line('dir', 'משמעות',
+         'כללי האבטחה חסמו את הקריאה. בדוק את שורת "מייל בטוקן" למעלה.', 'warn');
+    return;
+  }
+
+  line('dir', 'רשומות בספרייה', String(snaps.size),
+       snaps.size ? 'ok' : 'bad');
+
+  if (!snaps.size) {
+    line('dir', 'משמעות', 'אף אחד לא נרשם ואושר, או שהכתיבה לספרייה נכשלה.', 'warn');
+    return;
+  }
+
+  let withKey = 0;
+  const sample = [];
+  snaps.forEach(function (d) {
+    const p = d.data() || {};
+    const arr = p.name_prefixes;
+    if (Array.isArray(arr) && arr.length) withKey++;
+    if (sample.length < 3) {
+      sample.push((p.full_name || '(בלי שם)') + '  →  ' +
+                  (Array.isArray(arr) ? arr.length + ' מפתחות' : 'אין מפתח'));
+    }
+  });
+
+  line('dir', 'מהן יש מפתח חיפוש', withKey + ' מתוך ' + snaps.size,
+       withKey === snaps.size ? 'ok' : 'bad');
+
+  if (withKey < snaps.size) {
+    line('dir', 'משמעות',
+         'צריך ללחוץ "בנה מחדש את מפתח החיפוש" במסך הניהול — ' +
+         'ולפני זה לוודא ש-deploy.bat רץ.', 'warn');
+  }
+
+  sample.forEach(function (s, i) { line('dir', 'דוגמה ' + (i + 1), s); });
+}
+
+async function runSearch(){
+  $('search').innerHTML = '';
+  const raw = $('q').value.trim();
+  const key = raw.toLowerCase().replace(/["'`׳״]/g, '');
+
+  line('search', 'המחרוזת שנשלחת למסד', JSON.stringify(key));
+
+  try {
+    const snaps = await getDocs(query(
+      collection(db, 'directory'),
+      where('name_prefixes', 'array-contains', key),
+      limit(25)
+    ));
+    line('search', 'תוצאות', String(snaps.size), snaps.size ? 'ok' : 'bad');
+    snaps.forEach(function (d) {
+      line('search', 'נמצא', (d.data() || {}).full_name || '(בלי שם)', 'ok');
+    });
+    if (!snaps.size) {
+      line('search', 'משמעות',
+           'השאילתה עברה בהצלחה אבל אין התאמה. או שהמפתח לא נבנה, ' +
+           'או שאין אף אחד בשם הזה.', 'warn');
+    }
+  } catch (e) {
+    line('search', 'השאילתה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+}
+
+async function checkFunctions(){
+  $('fns').innerHTML = '';
+
+  // whoAmI פתוחה לכל מחובר — בדיקה שהפונקציות בכלל נפרסו.
+  try {
+    const res = await httpsCallable(fns, 'whoAmI')({});
+    line('fns', 'whoAmI', 'עונה · השרת חי', 'ok');
+    const s = res.data && res.data.claims_on_server;
+    line('fns', 'הרשאות כפי שהשרת רואה אותן',
+         s ? JSON.stringify(s) : '(אין)');
+  } catch (e) {
+    line('fns', 'whoAmI נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+    line('fns', 'משמעות', 'ייתכן ש-deploy.bat לא רץ, או שאתה לא מחובר.', 'warn');
+    return;
+  }
+
+  // reindexDirectory קיימת רק בגרסת השרת החדשה.
+  // permission-denied = הפונקציה קיימת אבל אתה לא מנהל-על. זה תקין.
+  try {
+    await httpsCallable(fns, 'reindexDirectory')({});
+    line('fns', 'reindexDirectory', 'קיימת · ורצה עכשיו בהצלחה', 'ok');
+  } catch (e) {
+    const code = String(e.code || '');
+    if (code.indexOf('permission-denied') !== -1) {
+      line('fns', 'reindexDirectory',
+           'קיימת בשרת (נחסמה כי אתה לא מנהל-על — זה תקין)', 'ok');
+    } else if (code.indexOf('not-found') !== -1 ||
+               code.indexOf('internal') !== -1) {
+      line('fns', 'reindexDirectory', 'לא קיימת בשרת · ' + code, 'bad');
+      line('fns', 'משמעות', 'deploy.bat לא רץ, או שהוא נכשל.', 'warn');
+    } else {
+      line('fns', 'reindexDirectory', code + ' ' + (e.message || ''), 'warn');
+    }
+  }
+}
+
+async function runAll(user){
+  await checkWho(user);
+  await checkDirectory();
+  await checkFunctions();
+  await runSearch();
+}
+
+$('btnRun').onclick  = () => runSearch();
+$('btnAgain').onclick = () => runAll(auth.currentUser);
+
+onAuthStateChanged(auth, function (user) { runAll(user); });
+</script>
+</body>
+</html>
