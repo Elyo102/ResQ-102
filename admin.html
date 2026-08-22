@@ -252,7 +252,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=4';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -262,10 +262,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=3';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=4';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=3';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=3';
+  from './stations.js?v=4';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=4';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

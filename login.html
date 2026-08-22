@@ -38,6 +38,9 @@
        line-height:1.6;display:none}
   .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
   .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
+  /* מצב ניטרלי גלוי. בלעדיו הודעות כמו "לא נמצאו תוצאות" נכתבו
+     לאלמנט שנשאר display:none — והמסך נראה כאילו שום דבר לא קרה. */
+  .msg.info{display:block;background:#23262c;color:#b9c0c8}
   .hide{display:none !important}
   .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
   .profile{text-align:center;line-height:2}
@@ -243,10 +246,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=4';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=3';
-import { renderNav, clearNav } from './nav.js?v=3';
+  from './stations.js?v=4';
+import { renderNav, clearNav } from './nav.js?v=4';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -716,12 +719,14 @@ $('btnDoSearch').onclick = async () => {
 
   btn.disabled = true;
   $('sMsg').className = 'msg';
+  $('sMsg').textContent = '';
   box.innerHTML = '';
 
   try {
     // חיפוש לפי כל מילה בשם, לא רק לפי תחילת השם המלא.
     // "חודרה" ו"טויטו" הם בדיוק מה שאנשים מקלידים, והחיפוש
     // הישן לא היה מוצא אותם.
+    const raw = q;
     const key = q.toLowerCase().replace(/["'`׳״]/g, '');
 
     if (key.length < 2) {
@@ -738,8 +743,8 @@ $('btnDoSearch').onclick = async () => {
     ));
 
     if (snaps.empty) {
-      $('sMsg').textContent = 'לא נמצאו תוצאות.';
-      $('sMsg').className = 'msg';
+      $('sMsg').textContent = 'לא נמצאו תוצאות עבור "' + raw + '".';
+      $('sMsg').className = 'msg info';
       btn.disabled = false;
       return;
     }

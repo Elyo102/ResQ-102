@@ -493,9 +493,17 @@ exports.setUserRole = onCall(async (req) => {
     if (cur.exists) existing = cur.data() || {};
   } catch (ignore) {}
 
+  // רשומה בלי שם אינה ניתנת למציאה בחיפוש עובד, והמסכים מציגים
+  // במקומה כתובת מייל. עדיף להיכשל כאן מאשר ליצור כבאי אנונימי.
+  const fullName = String(d.full_name || existing.full_name || '').trim();
+  if (!fullName) {
+    throw new HttpsError('invalid-argument',
+      'חסר שם מלא. הזן אותו בטופס — בלעדיו הכבאי לא יימצא בחיפוש.');
+  }
+
   await writeProfile(user.uid, {
     emp:        emp,
-    full_name:  String(d.full_name || existing.full_name || ''),
+    full_name:  fullName,
     email:      String(user.email || '').toLowerCase(),
     phone:      String(d.phone || existing.phone || ''),
     role:       role,
