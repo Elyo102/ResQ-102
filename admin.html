@@ -95,6 +95,48 @@
     </div>
 
     <div class="card">
+      <h2>משתמשים והרשאות</h2>
+      <div class="rotstate" id="usrState">לחץ "טען" כדי לראות מי רשום ומה התפקיד שלו.</div>
+      <button id="btnUsers">טען רשימת משתמשים</button>
+      <div id="usrList"></div>
+
+      <h2 style="margin-top:26px">הענקת תפקיד ידנית</h2>
+      <div class="rotstate">
+        לשימוש כשצריך לתקן תפקיד או להגדיר מישהו שלא עבר דרך בקשת הרשמה.
+      </div>
+
+      <label>מייל המשתמש</label>
+      <input type="email" id="rEmail" autocomplete="off">
+
+      <div class="two">
+        <div>
+          <label>תפקיד</label>
+          <select id="rRole">
+            <option value="firefighter">לוחם אש</option>
+            <option value="commander">קצין / מפקד משמרת</option>
+            <option value="hr_coordinator">רכז/ת משאבי אנוש</option>
+            <option value="none">הסרת כל ההרשאות</option>
+          </select>
+        </div>
+        <div>
+          <label>משמרת</label>
+          <select id="rShift">
+            <option value="">ללא</option>
+            <option value="A">משמרת א'</option>
+            <option value="B">משמרת ב'</option>
+            <option value="C">משמרת ג'</option>
+          </select>
+        </div>
+      </div>
+
+      <label>קוד אישי</label>
+      <input type="text" id="rCode" maxlength="15">
+
+      <button id="btnRole">הגדר תפקיד</button>
+      <div class="msg" id="roleMsg"></div>
+    </div>
+
+    <div class="card">
       <h2>מחזור הסידור</h2>
       <div id="rotState" class="rotstate">טוען...</div>
 
@@ -145,11 +187,21 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
          getDocs, query, where, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+
+// הפונקציות יושבות באזור europe-west1, קרוב למסד שב-eur3.
+// בלי לציין אזור, ה-SDK פונה ל-us-central1 ומקבל 404.
+const fns = getFunctions(app, 'europe-west1');
+
+const callApprove  = httpsCallable(fns, 'approveRegistration');
+const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
+const callSetRole  = httpsCallable(fns, 'setUserRole');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
@@ -191,17 +243,27 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  const isSuper = String(user.email || '').toLowerCase() === SUPER_ADMIN;
-  let roleOk = isSuper, label = 'מנהל מערכת';
+  // התפקיד נקרא מהטוקן, לא ממסמך ב-Firestore.
+  // זו אותה מקור אמת שכללי האבטחה קוראים ממנו, ולכן אי אפשר
+  // להגיע למצב שהממשק מראה מסך ניהול והשרת דוחה כל פעולה.
+  let claims = {};
+  try {
+    const t = await user.getIdTokenResult();
+    claims = t.claims || {};
+  } catch (ignore) {}
 
-  if (!isSuper) {
-    try {
-      const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
-      if (s.exists() && (s.data().role === 'hr_coordinator' || s.data().role === 'commander')) {
-        roleOk = true;
-        label = s.data().full_name + ' — ' + (ROLE_HE[s.data().role] || '');
-      }
-    } catch (ignore) {}
+  const verified = user.emailVerified === true;
+  const isSuper  = claims.super === true ||
+                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
+
+  let roleOk = verified && isSuper;
+  let label  = 'מנהל מערכת';
+
+  if (verified && !isSuper &&
+      (claims.role === 'hr_coordinator' || claims.role === 'commander')) {
+    roleOk = true;
+    label  = (ROLE_HE[claims.role] || claims.role) +
+             (claims.stationId ? ' · ' + claims.stationId : '');
   }
 
   if (!roleOk) {
@@ -210,7 +272,9 @@ onAuthStateChanged(auth, async user => {
     $('authCard').classList.add('hide');
     $('work').classList.add('hide');
     $('denyCard').classList.remove('hide');
-    $('denyWho').textContent = 'מחובר כ־' + user.email;
+    $('denyWho').textContent = verified
+      ? 'מחובר כ־' + user.email + ' · אין הרשאת ניהול'
+      : 'מחובר כ־' + user.email + ' · המייל טרם אומת';
     return;
   }
 
@@ -289,33 +353,44 @@ function esc(s){
 
 async function approve(uid, r, roster, box){
   box.querySelectorAll('button').forEach(b => b.disabled = true);
+
+  // כל האישור עובר לשרת. הדפדפן לא כותב תפקיד ולא נוגע
+  // ברשימת התחנה — הוא רק מבקש. הפונקציה מצליבה את הקוד
+  // האישי מול הרשימה, כותבת את התפקיד לטוקן, ורושמת ביומן.
   try {
-    await setDoc(doc(db, 'stations', STATION_ID, 'users', uid), {
-      personal_code: r.claimed_code,
-      full_name:     roster ? roster.full_name : r.full_name,
-      email:         r.email,
-      phone:         r.phone || (roster ? roster.phone : '') || '',
-      crew:          roster ? (roster.crew || '') : '',
-      role:          roster ? roster.role : 'firefighter',
-      position:      roster ? (roster.position || '') : '',
-      is_active:     true,
-      last_login:    null,
-      created_at:    serverTimestamp()
+    const res = await callApprove({
+      uid:       uid,
+      stationId: STATION_ID,
+      code:      r.claimed_code
     });
 
-    if (roster) {
-      try {
-        await deleteDoc(doc(db, 'stations', STATION_ID, 'pending_users', r.claimed_code));
-      } catch (ignore) {}
+    box.innerHTML = '<div class="nm">' + esc(r.full_name) + '</div>' +
+      '<div class="match found">אושר · ' +
+      (ROLE_HE[res.data.role] || res.data.role) +
+      '<br><b>הכבאי צריך להתנתק ולהתחבר מחדש כדי שהתפקיד ייכנס לתוקף.</b>' +
+      '</div>';
+
+    setTimeout(function(){
+      box.remove();
+      if (!$('list').querySelector('.req')) {
+        $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+      }
+    }, 4000);
+
+  } catch (e) {
+    const code = e.code || '';
+    let text = e.message || String(e);
+
+    if (code.indexOf('not-found') !== -1) {
+      text = 'הקוד האישי ' + r.claimed_code + ' לא נמצא ברשימת התחנה. ' +
+             'הוסף אותו לרשימה ונסה שוב.';
+    } else if (code.indexOf('permission-denied') !== -1) {
+      text = 'אין לך הרשאה לאשר. רק מנהל המערכת יכול.';
+    } else if (code.indexOf('internal') !== -1) {
+      text = 'שגיאת שרת. ייתכן שהפונקציות עדיין לא נפרסו.';
     }
 
-    await deleteDoc(doc(db, 'stations', STATION_ID, 'registration_requests', uid));
-    box.remove();
-    if (!$('list').querySelector('.req')) {
-      $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
-    }
-  } catch (e) {
-    alert('שגיאה באישור: ' + (e.code || e.message));
+    alert('האישור נכשל: ' + text);
     box.querySelectorAll('button').forEach(b => b.disabled = false);
   }
 }
@@ -451,6 +526,102 @@ $('btnRot').onclick = async () => {
     loadRotation();
   } catch (e) {
     msg('rotMsg', 'שגיאה בשמירה: ' + (e.code || e.message), 'err');
+  }
+  btn.disabled = false;
+};
+// =====================================================================
+//  משתמשים והרשאות
+//
+//  המקור לתפקיד הוא הטוקן, לא מסמך ב-Firestore. לכן המסך הזה
+//  שואל את השרת מה הוא רואה, ולא סורק אוסף users.
+//
+//  ההבדל חשוב: מסמך יכול להיות מעודכן בזמן שהטוקן ישן, ואז
+//  הממשק מראה תפקיד שכללי האבטחה לא מכירים.
+// =====================================================================
+
+$('btnUsers').onclick = async () => {
+  const btn = $('btnUsers');
+  const box = $('usrList');
+  btn.disabled = true;
+  $('usrState').textContent = 'טוען...';
+  box.innerHTML = '';
+
+  try {
+    const res = await callListUsers();
+    const users = res.data.users || [];
+
+    if (!users.length) {
+      $('usrState').textContent = 'אין משתמשים רשומים.';
+      btn.disabled = false;
+      return;
+    }
+
+    $('usrState').textContent = users.length + ' משתמשים רשומים.';
+
+    users.forEach(function (u) {
+      const c = u.claims || {};
+      const row = document.createElement('div');
+      row.className = 'req';
+
+      const roleTxt = c.super === true
+        ? 'מנהל מערכת'
+        : (ROLE_HE[c.role] || (c.role ? c.role : 'ללא תפקיד'));
+
+      row.innerHTML =
+        '<div class="nm">' + esc(u.email) + '</div>' +
+        '<div class="ln">תפקיד: <b>' + esc(roleTxt) + '</b></div>' +
+        (c.stationId ? '<div class="ln">תחנה: <b>' + esc(c.stationId) + '</b></div>' : '') +
+        (c.shift ? '<div class="ln">משמרת: <b>' + esc(CREW_HE[c.shift] || c.shift) + '</b></div>' : '') +
+        (c.code ? '<div class="ln">קוד אישי: <b>' + esc(c.code) + '</b></div>' : '') +
+        (u.email_verified
+          ? '<div class="match found">המייל מאומת</div>'
+          : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
+
+      box.appendChild(row);
+    });
+
+  } catch (e) {
+    $('usrState').textContent = 'שגיאה: ' + (e.message || e.code);
+  }
+  btn.disabled = false;
+};
+
+$('btnRole').onclick = async () => {
+  const btn   = $('btnRole');
+  const email = $('rEmail').value.trim().toLowerCase();
+  const role  = $('rRole').value;
+  const shift = $('rShift').value;
+  const code  = $('rCode').value.trim();
+
+  if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
+  if (role !== 'none' && !code) {
+    msg('roleMsg', 'נא להזין קוד אישי.', 'err');
+    return;
+  }
+
+  if (role === 'none' &&
+      !confirm('להסיר את כל ההרשאות של ' + email + '?')) return;
+
+  btn.disabled = true;
+  msg('roleMsg', 'שולח...', '');
+
+  try {
+    const res = await callSetRole({
+      email:     email,
+      role:      role,
+      stationId: STATION_ID,
+      shift:     shift,
+      code:      code
+    });
+    msg('roleMsg', res.data.message, 'ok');
+    $('rEmail').value = '';
+    $('rCode').value = '';
+  } catch (e) {
+    let text = e.message || String(e);
+    if (String(e.code || '').indexOf('not-found') !== -1) {
+      text = 'לא נמצא משתמש עם המייל הזה. הוא צריך להירשם קודם.';
+    }
+    msg('roleMsg', 'נכשל: ' + text, 'err');
   }
   btn.disabled = false;
 };

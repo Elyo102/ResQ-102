@@ -2,7 +2,7 @@ rules_version = '2';
 
 // =====================================================================
 //  תחנה 102 — כללי אבטחה
-//  גרסה 2.0 — מבוססת Custom Claims
+//  גרסה 2.2 — מבוססת Custom Claims
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
@@ -67,9 +67,82 @@ service cloud.firestore {
       return isSuper() || (inStation(sid) && claim('role') == 'hr_coordinator');
     }
 
-    function myCode() {
-      return claim('code');
+    // מספר עובד. המערכת מקצה אותו באישור ההרשמה, והוא מזהה
+    // את הכבאי בכל הדיווחים שלו. הוא גם משמש כהגנה מפני זדון,
+    // ולכן אינו גלוי לכבאים אחרים.
+    function myEmp() {
+      return claim('emp');
     }
+
+    // מחוז. תחנת אילת שייכת למחוז דרום.
+    //
+    // ההיררכיה לא מקוננת בנתיב בכוונה: נתיב כמו
+    // districts/{d}/stations/{s} היה נועל את השיוך, ומעבר תחנה
+    // בין מחוזות היה דורש להזיז את כל הנתונים שלה.
+    //
+    // במקום זה המחוז הוא שדה על מסמך התחנה, ו-claim על המשתמש.
+    // ההשוואה ביניהם לא עולה אף קריאת מסמך.
+    function myDistrict() {
+      return claim('districtId');
+    }
+
+    function districtStaff() {
+      return isSuper()
+             || (signedIn()
+                 && claim('role') == 'district_commander'
+                 && myDistrict() != ''
+                 && myDistrict() == resource.data.district);
+    }
+
+    // ---------- בקשות הרשמה ----------
+    //
+    // עברו לשורש, לא תחת התחנה: משתמש חדש עדיין בלי שיוך, ולכן
+    // אין לו דרך חוקית לכתוב לתוך נתיב של תחנה מסוימת.
+    //
+    // הכבאי ממלא שם, מייל, טלפון, מחוז ותחנה.
+    // מספר עובד לא מוזן — המערכת מקצה אותו באישור.
+
+    match /registration_requests/{uid} {
+      allow create: if signedIn()
+                    && request.auth.uid == uid
+                    && request.resource.data.email == request.auth.token.email.lower()
+                    && request.resource.data.status == 'pending';
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow read, write:  if isSuper();
+    }
+
+
+    // ---------- מפתח כניסה ומוני מערכת ----------
+    // נקראים ונכתבים על ידי השרת בלבד. חסומים ללקוח לגמרי.
+
+    match /emp_index/{emp} {
+      allow read, write: if false;
+    }
+
+    match /login_attempts/{emp} {
+      allow read, write: if false;
+    }
+
+    match /meta/{docId} {
+      allow read, write: if false;
+    }
+
+
+    // ---------- ספרייה ארצית ----------
+    //
+    // "איפה עובד חבר שעשה איתי קורס?" — כל כבאי במדינה יכול
+    // לחפש ולראות: שם, תפקיד, משמרת, תחנה, מחוז.
+    //
+    // מה שלא נמצא כאן בכוונה: מספר עובד, מייל, טלפון.
+    // הספרייה נועדה לשיוך מקצועי, לא לפרטים אישיים.
+    //
+    // נכתבת על ידי השרת בלבד.
+
+    match /directory/{uid} {
+      allow read:  if signedIn();
+      allow write: if false;
+    }
+
 
     // ---------- כללי שכר (גלובלי) ----------
 
@@ -105,26 +178,20 @@ service cloud.firestore {
       }
 
 
-      // ---------- בקשות הרשמה ----------
-      // משתמש חדש עדיין בלי תפקיד ובלי שיוך לתחנה, ולכן
-      // התנאי כאן נשען על ה-uid שלו בלבד.
-
-      match /registration_requests/{uid} {
-        allow create: if signedIn()
-                      && request.auth.uid == uid
-                      && request.resource.data.email == request.auth.token.email.lower()
-                      && request.resource.data.status == 'pending';
-        allow read, delete: if signedIn() && request.auth.uid == uid;
-        allow read, write:  if staff(sid);
-      }
-
-
       // ---------- משתמשים ----------
       // יצירה ומחיקה בשרת בלבד. Cloud Functions עוקפות כללים,
       // ולכן false כאן לא חוסם אותן — רק את הלקוח.
 
+      // מספר העובד משמש גם כאמצעי הגנה מפני זדון, ולכן הוא סוד.
+      //
+      // בגרסה הקודמת כל חבר תחנה קרא את מסמכי כולם, כולל מספרי
+      // העובד — מה שאיפס את ערך ההגנה שלהם. עכשיו כבאי קורא
+      // את עצמו בלבד, וסגל קורא את כולם.
+      //
+      // רשימת אנשי התחנה לתצוגה מגיעה מאוסף roster נפרד.
       match /users/{uid} {
-        allow read: if member(sid);
+        allow read: if staff(sid)
+                    || (signedIn() && request.auth.uid == uid);
 
         allow create, delete: if false;
 
@@ -134,10 +201,20 @@ service cloud.firestore {
                       && request.auth.uid == uid
                       && request.resource.data.role          == resource.data.role
                       && request.resource.data.crew          == resource.data.crew
-                      && request.resource.data.personal_code == resource.data.personal_code
+                      && request.resource.data.employee_number == resource.data.employee_number
                       && request.resource.data.is_active     == resource.data.is_active;
 
         allow update: if hr(sid);
+      }
+
+
+      // ---------- רשימת אנשי התחנה לתצוגה ----------
+      // שם, תפקיד ומשמרת בלבד. בלי מספר עובד, טלפון או מייל.
+      // נכתב על ידי השרת בלבד.
+
+      match /roster/{uid} {
+        allow read:  if member(sid);
+        allow write: if false;
       }
 
 
@@ -172,29 +249,29 @@ service cloud.firestore {
       // ---------- נוכחות ----------
       // הכבאי כותב רק את עצמו, ורק כל עוד הרישום לא אושר.
       //
-      // שני השדות user_code ו-status נעולים בעדכון: בלי זה
+      // שני השדות emp_number ו-status נעולים בעדכון: בלי זה
       // כבאי יכול לאשר לעצמו שעות ולעקוף את הקצין, או לשייך
-      // רישום שלו לקוד של כבאי אחר.
+      // רישום שלו למספר עובד של כבאי אחר.
 
       match /attendance/{docId} {
         allow read: if staff(sid)
-                    || (member(sid) && resource.data.user_code == myCode());
+                    || (member(sid) && resource.data.emp_number == myEmp());
 
         allow create: if staff(sid)
                       || (member(sid)
-                          && request.resource.data.user_code == myCode()
+                          && request.resource.data.emp_number == myEmp()
                           && request.resource.data.status != 'approved');
 
         allow update: if staff(sid)
                       || (member(sid)
-                          && resource.data.user_code == myCode()
-                          && request.resource.data.user_code == resource.data.user_code
+                          && resource.data.emp_number == myEmp()
+                          && request.resource.data.emp_number == resource.data.emp_number
                           && resource.data.status != 'approved'
                           && request.resource.data.status != 'approved');
 
         allow delete: if staff(sid)
                       || (member(sid)
-                          && resource.data.user_code == myCode()
+                          && resource.data.emp_number == myEmp()
                           && resource.data.status != 'approved');
       }
 
@@ -208,19 +285,32 @@ service cloud.firestore {
       match /swaps/{swapId} {
         allow read: if member(sid);
 
+        // מסלול האישור, לפי אלדד 22.8.2026:
+        //
+        //   sent            הבקשה נשלחה
+        //   under_review    ראש המשמרת של המבקש קיבל ובוחן
+        //   approved_first  ראש משמרת א' אישר, ממתין לראש משמרת ב'
+        //   approved        שני ראשי המשמרות אישרו
+        //   rejected        נדחתה, עם או בלי נימוק
+        //   cancelled       המבקש ביטל
+        //
+        // תיקון מהותי: קודם הונח שהכבאי שמקבל את הבקשה הוא זה
+        // שמאשר. בפועל ראשי המשמרות מאשרים, לא הכבאי. לכן זכות
+        // העדכון עברה לסגל בלבד.
+        //
+        // המבקש יכול רק לבטל, וגם זה רק כל עוד לא אושרה סופית.
+
         allow create: if member(sid)
-                      && request.resource.data.requester_code == myCode()
-                      && request.resource.data.status == 'pending_target';
+                      && request.resource.data.requester_emp == myEmp()
+                      && request.resource.data.status == 'sent';
 
         allow update: if staff(sid)
                       || (member(sid)
-                          && resource.data.target_code == myCode()
-                          && request.resource.data.requester_code == resource.data.requester_code
-                          && request.resource.data.target_code == resource.data.target_code
-                          && request.resource.data.status != 'approved')
-                      || (member(sid)
-                          && resource.data.requester_code == myCode()
-                          && request.resource.data.status == 'cancelled');
+                          && resource.data.requester_emp == myEmp()
+                          && resource.data.status != 'approved'
+                          && request.resource.data.status == 'cancelled'
+                          && request.resource.data.requester_emp == resource.data.requester_emp
+                          && request.resource.data.target_emp == resource.data.target_emp);
 
         allow delete: if staff(sid);
       }
@@ -230,9 +320,9 @@ service cloud.firestore {
 
       match /documents/{docId} {
         allow read: if hr(sid)
-                    || (member(sid) && resource.data.user_code == myCode());
+                    || (member(sid) && resource.data.emp_number == myEmp());
         allow create: if member(sid)
-                      && request.resource.data.user_code == myCode();
+                      && request.resource.data.emp_number == myEmp();
         allow update, delete: if hr(sid);
       }
 
