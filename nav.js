@@ -104,7 +104,7 @@ export function renderNav(claims, current, who) {
 
   const brand = document.createElement('div');
   brand.className = 'brand';
-  brand.innerHTML = 'תחנה <b>102</b>';
+  brand.innerHTML = '<b>ResQ</b> \u00b7 102';
   nav.appendChild(brand);
 
   // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע

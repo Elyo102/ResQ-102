@@ -169,16 +169,16 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=8';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=9';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=8';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=9';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
-  from './rotation.js?v=8';
+  from './rotation.js?v=9';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
