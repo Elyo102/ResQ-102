@@ -45,6 +45,16 @@
   .wait .ttl{font-size:18px;font-weight:600;margin-bottom:8px}
   .wait .txt{color:var(--muted);font-size:14px}
 </style>
+<style>
+  .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
+  .pw-rules i{ font-style:normal; color:var(--muted) }
+  .pw-rules i.ok{ color:#7bc47f }
+  .res{ border-bottom:1px solid var(--line); padding:11px 2px }
+  .res:last-child{ border-bottom:0 }
+  .res .n{ font-size:15px; font-weight:600 }
+  .res .d{ font-size:13px; color:var(--muted); margin-top:2px }
+  .back{ background:none; border:1px solid var(--line); color:var(--muted); margin-top:16px }
+</style>
 </head>
 <body>
 <div class="card">
@@ -52,7 +62,7 @@
   <h1>תחנה 102</h1>
   <div class="sub">מערכת ניהול כוח אדם</div>
 
-  <!-- ============ מסך כניסה ============ -->
+  <!-- ============ כניסה והרשמה ============ -->
   <div id="authView">
     <div class="tabs">
       <div class="tab on" id="tabLogin">כניסה</div>
@@ -60,31 +70,57 @@
     </div>
 
     <div id="paneLogin">
-      <label>מייל</label>
-      <input type="email" id="loginEmail" autocomplete="username">
+      <label>מספר עובד</label>
+      <input type="text" id="loginEmp" inputmode="numeric" autocomplete="username">
       <label>סיסמה</label>
       <input type="password" id="loginPass" autocomplete="current-password">
       <button id="btnLogin">כניסה</button>
       <button class="link" id="btnForgot">שכחתי סיסמה</button>
+      <div class="note">
+        עוד לא אושרת? אפשר להיכנס גם עם המייל שאיתו נרשמת, כדי לראות
+        את מצב הבקשה.
+      </div>
     </div>
 
     <div id="paneFirst" class="hide">
-      <label>קוד אישי</label>
-      <input type="text" id="fCode" maxlength="15">
       <label>שם מלא</label>
-      <input type="text" id="fName">
+      <input type="text" id="fName" autocomplete="name">
+
       <label>מייל</label>
-      <input type="email" id="fEmail" autocomplete="username">
+      <input type="email" id="fEmail" autocomplete="email">
+
       <label>טלפון</label>
-      <input type="tel" id="fPhone" inputmode="tel">
-      <label>בחר סיסמה (לפחות 6 תווים)</label>
+      <input type="tel" id="fPhone" inputmode="tel" autocomplete="tel">
+
+      <label>מחוז</label>
+      <select id="fDistrict">
+        <option value="">בחר מחוז</option>
+        <option value="south">דרום</option>
+        <option value="center">מרכז</option>
+        <option value="north">צפון</option>
+        <option value="jerusalem">ירושלים</option>
+        <option value="haifa">חוף</option>
+        <option value="dan">דן</option>
+      </select>
+
+      <label>תחנה</label>
+      <input type="text" id="fStation" placeholder="למשל: תחנת כיבוי אילת">
+
+      <label>בחר סיסמה</label>
       <input type="password" id="fPass" autocomplete="new-password">
+      <div class="pw-rules" id="pwRules">
+        <i id="pw1">8 תווים לפחות</i> ·
+        <i id="pw2">אות גדולה</i> ·
+        <i id="pw3">אות קטנה</i> ·
+        <i id="pw4">ספרה</i>
+      </div>
+
       <label>אימות סיסמה</label>
       <input type="password" id="fPass2" autocomplete="new-password">
-      <button id="btnFirst">הירשם</button>
+
+      <button id="btnFirst">שלח בקשה</button>
       <div class="note">
-        הזן את הקוד האישי שלך מהמערכת הקיימת. אם הפרטים תואמים לרשימת
-        התחנה — תיכנס מיד. אחרת הבקשה תועבר לאישור רכז/ת משאבי אנוש.
+        מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
       </div>
     </div>
 
@@ -97,57 +133,65 @@
       <div class="icon" id="waitIcon">⏳</div>
       <div class="ttl" id="waitTtl">הבקשה נשלחה</div>
       <div class="txt" id="waitTxt">
-        הבקשה שלך ממתינה לאישור רכז/ת משאבי אנוש.<br>
-        תקבל גישה מלאה מיד לאחר האישור.
+        הבקשה שלך ממתינה לאישור מנהל המערכת.<br>
+        עם האישור יוקצה לך מספר עובד.<br><br>
+        <b>אחרי שתאושר — התנתק והתחבר מחדש.</b>
       </div>
     </div>
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
-  <!-- ============ אימות מייל ============ -->
-  <div id="verifyView" class="hide">
-    <div class="wait">
-      <div class="icon">📧</div>
-      <div class="ttl">אמת את כתובת המייל</div>
-      <div class="txt">
-        שלחנו קישור אימות אל<br>
-        <b id="vEmail"></b><br><br>
-        פתח את המייל, לחץ על הקישור, וחזור לכאן.<br>
-        אם המייל לא הגיע — בדוק בתיקיית הספאם.
-      </div>
-    </div>
-    <button id="btnVerified">אימתתי — המשך</button>
-    <button class="link" id="btnResend">שלח לי את המייל שוב</button>
-    <button class="link" id="btnLogoutVerify">התנתק</button>
-    <div class="msg" id="vMsg"></div>
-  </div>
-
-  <!-- ============ השלמת פרטים ============ -->
-  <div id="linkView" class="hide">
-    <div class="wait" style="margin-bottom:6px">
-      <div class="ttl">השלמת פרטים</div>
-      <div class="txt">כדי לקשר את החשבון שלך לכבאי בתחנה.</div>
-    </div>
-    <label>קוד אישי</label>
-    <input type="text" id="lCode" maxlength="15">
-    <label>שם מלא</label>
-    <input type="text" id="lName">
-    <label>טלפון</label>
-    <input type="tel" id="lPhone" inputmode="tel">
-    <button id="btnLink">המשך</button>
-    <button class="link" id="btnLogoutLink">התנתק</button>
-    <div class="msg" id="lMsg"></div>
-  </div>
-
-  <!-- ============ מסך אחרי כניסה ============ -->
+  <!-- ============ מסך ראשי ============ -->
   <div id="homeView" class="hide">
     <div class="profile">
       <div class="big" id="pName"></div>
       <div class="row" id="pRole"></div>
       <div class="row" id="pCrew"></div>
-      <div class="row" id="pCode"></div>
+      <div class="row" id="pStation"></div>
+      <div class="row" id="pEmp"></div>
     </div>
-    <button id="btnLogout">התנתק</button>
+    <button id="btnSearch">חיפוש עובד</button>
+    <button class="link" id="btnChangePw">שינוי סיסמה</button>
+    <button class="link" id="btnLogout">התנתק</button>
+  </div>
+
+  <!-- ============ חיפוש עובד ============ -->
+  <div id="searchView" class="hide">
+    <h2 style="font-size:19px;margin:0 0 4px">חיפוש עובד</h2>
+    <div class="sub">שם, תפקיד, משמרת, תחנה ומחוז.</div>
+
+    <label>שם מלא או תחילת שם</label>
+    <input type="text" id="qName" autocomplete="off">
+    <button id="btnDoSearch">חפש</button>
+
+    <div id="results"></div>
+    <button class="back" id="btnSearchBack">חזרה</button>
+    <div class="msg" id="sMsg"></div>
+  </div>
+
+  <!-- ============ שינוי סיסמה ============ -->
+  <div id="pwView" class="hide">
+    <h2 style="font-size:19px;margin:0 0 4px">שינוי סיסמה</h2>
+    <div class="sub">תצטרך להזין את הסיסמה הנוכחית.</div>
+
+    <label>סיסמה נוכחית</label>
+    <input type="password" id="pwOld" autocomplete="current-password">
+
+    <label>סיסמה חדשה</label>
+    <input type="password" id="pwNew" autocomplete="new-password">
+    <div class="pw-rules">
+      <i id="cp1">8 תווים לפחות</i> ·
+      <i id="cp2">אות גדולה</i> ·
+      <i id="cp3">אות קטנה</i> ·
+      <i id="cp4">ספרה</i>
+    </div>
+
+    <label>אימות סיסמה חדשה</label>
+    <input type="password" id="pwNew2" autocomplete="new-password">
+
+    <button id="btnSavePw">שמור סיסמה</button>
+    <button class="back" id="btnPwBack">חזרה</button>
+    <div class="msg" id="pwMsg"></div>
   </div>
 
 </div>
@@ -155,103 +199,140 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-         signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser,
-         sendEmailVerification, reload }
+import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
+         createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+         deleteUser, updatePassword, reauthenticateWithCredential,
+         EmailAuthProvider, setPersistence, browserLocalPersistence }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+import { getFirestore, doc, getDoc, setDoc, collection, query, where,
+         orderBy, limit, getDocs, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
+// הפונקציות יושבות ב-europe-west1, קרוב למסד שב-eur3.
+// בלי לציין אזור, ה-SDK פונה ל-us-central1 ומקבל 404.
+const fns = getFunctions(app, 'europe-west1');
+const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
+const callReset = httpsCallable(fns, 'requestPasswordReset');
+
+// הכניסה נשמרת על המכשיר. הכבאי מזין סיסמה פעם אחת, וממכשיר
+// אחר יידרש שוב. הנחת העבודה: לטלפון האישי יש כבר נעילה משלו.
+setPersistence(auth, browserLocalPersistence).catch(function(){});
+
 const $ = id => document.getElementById(id);
 
 const ROLE_HE = {
-  firefighter: 'לוחם אש',
-  commander: 'קצין / מפקד משמרת',
-  hr_coordinator: 'רכז/ת משאבי אנוש'
+  firefighter:        'לוחם אש',
+  commander:          'קצין / מפקד משמרת',
+  hr_coordinator:     'רכז/ת משאבי אנוש',
+  district_commander: 'מפקד מחוז',
+  super_admin:        'מנהל מערכת'
 };
 const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
+const DIST_HE = {
+  south: 'מחוז דרום', center: 'מחוז מרכז', north: 'מחוז צפון',
+  jerusalem: 'מחוז ירושלים', haifa: 'מחוז חוף', dan: 'מחוז דן'
+};
 
-// נעילה: בזמן הרשמה Firebase מדווח "מחובר" לפני שנוצר מסמך הכבאי.
 let onboarding = false;
 
 function show(text, kind){
-  const m = $('msg');
-  m.textContent = text;
-  m.className = 'msg ' + kind;
+  const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
 }
 function clearMsg(){ $('msg').className = 'msg'; }
 
 function showView(name){
-  $('authView').classList.toggle('hide',   name !== 'auth');
-  $('waitView').classList.toggle('hide',   name !== 'wait');
-  $('homeView').classList.toggle('hide',   name !== 'home');
-  $('verifyView').classList.toggle('hide', name !== 'verify');
-  $('linkView').classList.toggle('hide',   name !== 'link');
+  ['authView','waitView','homeView','searchView','pwView'].forEach(function(v){
+    $(v).classList.toggle('hide', v !== name + 'View');
+  });
 }
 
-// ---------- זיכרון מקומי לפרטי ההרשמה ----------
-// בין ההרשמה לאימות המייל אי אפשר לכתוב ל-Firestore, כי הכללים
-// חוסמים משתמש לא מאומת. לכן הפרטים נשמרים זמנית בדפדפן.
-// אם המשתמש יאמת בדפדפן אחר - נבקש ממנו אותם שוב במסך "השלמת פרטים".
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-const ONBOARD_KEY = 'st102_onboard';
+// ---------- מדיניות סיסמה ----------
+// שמונה תווים, אות גדולה, אות קטנה וספרה. המערכת מחזיקה נתוני
+// שכר ומחלה — זה ההפרש בין סיסמה שנשברת בשניות לאחת שלא.
 
-function saveOnboard(data){
-  try { localStorage.setItem(ONBOARD_KEY, JSON.stringify(data)); } catch (ignore) {}
+function pwCheck(p){
+  return {
+    len:   p.length >= 8,
+    upper: /[A-Z]/.test(p),
+    lower: /[a-z]/.test(p),
+    digit: /[0-9]/.test(p)
+  };
 }
-function readOnboard(){
-  try { return JSON.parse(localStorage.getItem(ONBOARD_KEY) || 'null'); }
-  catch (ignore) { return null; }
+function pwOk(p){
+  const c = pwCheck(p);
+  return c.len && c.upper && c.lower && c.digit;
 }
-function clearOnboard(){
-  try { localStorage.removeItem(ONBOARD_KEY); } catch (ignore) {}
+function paintRules(p, ids){
+  const c = pwCheck(p);
+  const on = [c.len, c.upper, c.lower, c.digit];
+  ids.forEach(function(id, i){ $(id).className = on[i] ? 'ok' : ''; });
 }
+$('fPass').oninput = function(){ paintRules(this.value, ['pw1','pw2','pw3','pw4']); };
+$('pwNew').oninput = function(){ paintRules(this.value, ['cp1','cp2','cp3','cp4']); };
 
 // ---------- לשוניות ----------
 
 $('tabLogin').onclick = () => {
-  $('tabLogin').classList.add('on');
-  $('tabFirst').classList.remove('on');
-  $('paneLogin').classList.remove('hide');
-  $('paneFirst').classList.add('hide');
+  $('tabLogin').classList.add('on'); $('tabFirst').classList.remove('on');
+  $('paneLogin').classList.remove('hide'); $('paneFirst').classList.add('hide');
   clearMsg();
 };
 $('tabFirst').onclick = () => {
-  $('tabFirst').classList.add('on');
-  $('tabLogin').classList.remove('on');
-  $('paneFirst').classList.remove('hide');
-  $('paneLogin').classList.add('hide');
+  $('tabFirst').classList.add('on'); $('tabLogin').classList.remove('on');
+  $('paneFirst').classList.remove('hide'); $('paneLogin').classList.add('hide');
   clearMsg();
 };
 
-// ---------- כניסה רגילה ----------
+// ---------- כניסה ----------
+//
+// השדה מקבל מספר עובד או מייל.
+//
+// מספר עובד הוא הדרך הרגילה. מייל נשאר פתוח כי בין ההרשמה
+// לאישור עוד אין מספר עובד, והכבאי צריך דרך לראות שהבקשה
+// שלו ממתינה.
 
 $('btnLogin').onclick = async () => {
   const btn = $('btnLogin');
   clearMsg();
-  const email = $('loginEmail').value.trim().toLowerCase();
-  const pass  = $('loginPass').value;
-  if (!email || !pass) { show('נא למלא מייל וסיסמה.', 'err'); return; }
+
+  const id   = $('loginEmp').value.trim();
+  const pass = $('loginPass').value;
+  if (!id || !pass) { show('נא למלא מספר עובד וסיסמה.', 'err'); return; }
 
   btn.disabled = true;
   try {
-    await signInWithEmailAndPassword(auth, email, pass);
-  } catch (e) {
-    if (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ||
-        e.code === 'auth/user-not-found') {
-      show('מייל או סיסמה שגויים. אם עדיין לא נרשמת — עבור ללשונית "הרשמה".', 'err');
-    } else if (e.code === 'auth/too-many-requests') {
-      show('יותר מדי ניסיונות. נסה שוב בעוד כמה דקות.', 'err');
+    if (id.indexOf('@') !== -1) {
+      await signInWithEmailAndPassword(auth, id.toLowerCase(), pass);
     } else {
-      show('שגיאה: ' + e.code, 'err');
+      const res = await callLogin({ emp: id, password: pass });
+      await signInWithCustomToken(auth, res.data.token);
+    }
+  } catch (e) {
+    const code = String(e.code || '');
+    if (code.indexOf('resource-exhausted') !== -1) {
+      show(e.message, 'err');
+    } else if (code.indexOf('internal') !== -1) {
+      show('שגיאת שרת. ייתכן שהמערכת עדיין לא נפרסה במלואה.', 'err');
+    } else {
+      show('מספר עובד או סיסמה שגויים.', 'err');
     }
   }
   btn.disabled = false;
 };
+
+// ---------- שכחתי פרטים ----------
 
 $('btnForgot').onclick = async () => {
   const id = $('loginEmp').value.trim();
@@ -259,40 +340,35 @@ $('btnForgot').onclick = async () => {
 
   const btn = $('btnForgot');
   btn.disabled = true;
-
-  try {
-    await callReset({ id: id });
-  } catch (ignore) {}
-
+  try { await callReset({ id: id }); } catch (ignore) {}
   btn.disabled = false;
 
-  // תשובה זהה בכל מקרה, כדי שלא יהיה אפשר לסרוק מספרי עובד
-  // ולגלות מי רשום. המייל עצמו יכיל את מספר העובד וקישור
-  // לבחירת סיסמה חדשה.
+  // תשובה זהה בכל מקרה, כדי שלא יהיה אפשר לסרוק מספרי עובד.
   show('אם הפרטים קיימים במערכת, נשלח מייל עם מספר העובד וקישור לבחירת סיסמה חדשה.', 'ok');
 };
 
 // ---------- הרשמה ----------
-//
-// שינוי מהותי: ההרשמה כבר לא כותבת ל-Firestore.
-// כללי האבטחה דורשים מייל מאומת, ובזמן ההרשמה המייל עדיין לא מאומת.
-// לכן ההרשמה רק יוצרת חשבון ושולחת מייל אימות, והקישור לכבאי
-// בתחנה קורה בכניסה הראשונה שאחרי האימות.
 
 $('btnFirst').onclick = async () => {
   const btn = $('btnFirst');
   clearMsg();
 
-  const code  = $('fCode').value.trim();
-  const name  = $('fName').value.trim();
-  const email = $('fEmail').value.trim().toLowerCase();
-  const phone = $('fPhone').value.trim();
-  const pass  = $('fPass').value;
-  const pass2 = $('fPass2').value;
+  const name     = $('fName').value.trim();
+  const email    = $('fEmail').value.trim().toLowerCase();
+  const phone    = $('fPhone').value.trim();
+  const district = $('fDistrict').value;
+  const station  = $('fStation').value.trim();
+  const pass     = $('fPass').value;
+  const pass2    = $('fPass2').value;
 
-  if (!code || !name || !email || !pass) { show('נא למלא קוד אישי, שם, מייל וסיסמה.', 'err'); return; }
+  if (!name || !email || !district || !station) {
+    show('נא למלא שם, מייל, מחוז ותחנה.', 'err'); return;
+  }
   if (pass !== pass2) { show('הסיסמאות אינן תואמות.', 'err'); return; }
-  if (pass.length < 6) { show('הסיסמה חייבת להיות באורך 6 תווים לפחות.', 'err'); return; }
+  if (!pwOk(pass)) {
+    show('הסיסמה חייבת להיות באורך 8 תווים לפחות, ולכלול אות גדולה, אות קטנה וספרה.', 'err');
+    return;
+  }
 
   btn.disabled = true;
   onboarding = true;
@@ -302,8 +378,7 @@ $('btnFirst').onclick = async () => {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     created = cred.user;
   } catch (e) {
-    onboarding = false;
-    btn.disabled = false;
+    onboarding = false; btn.disabled = false;
     if (e.code === 'auth/email-already-in-use') {
       show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה".', 'err');
     } else if (e.code === 'auth/invalid-email') {
@@ -314,136 +389,30 @@ $('btnFirst').onclick = async () => {
     return;
   }
 
-  saveOnboard({ code: code, name: name, phone: phone, email: email });
-
   try {
-    await sendEmailVerification(created);
-  } catch (e) {
-    // אם שליחת האימות נכשלה, החשבון נשאר תקוע. עדיף למחוק ולהתחיל מחדש.
-    try { await deleteUser(created); } catch (ignore) {}
-    clearOnboard();
-    onboarding = false;
-    btn.disabled = false;
-    show('לא הצלחנו לשלוח מייל אימות: ' + (e.code || e.message) + '. נסה שוב.', 'err');
-    return;
-  }
-
-  onboarding = false;
-  btn.disabled = false;
-  showVerify(created);
-};
-
-// ---------- מסך אימות מייל ----------
-
-function showVerify(user){
-  $('vEmail').textContent = user.email || '';
-  $('vMsg').className = 'msg';
-  showView('verify');
-}
-
-$('btnResend').onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
-  const m = $('vMsg');
-  try {
-    await sendEmailVerification(user);
-    m.textContent = 'המייל נשלח שוב. בדוק גם בתיקיית הספאם.';
-    m.className = 'msg ok';
-  } catch (e) {
-    m.textContent = e.code === 'auth/too-many-requests'
-      ? 'נשלחו יותר מדי מיילים. המתן כמה דקות ונסה שוב.'
-      : 'שגיאה בשליחה: ' + (e.code || e.message);
-    m.className = 'msg err';
-  }
-};
-
-$('btnVerified').onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
-  const btn = $('btnVerified');
-  const m = $('vMsg');
-  btn.disabled = true;
-  try {
-    await reload(user);
-    // חשוב: בלי רענון כפוי, ה-token עדיין נושא email_verified=false
-    // וכללי האבטחה ידחו את הבקשה למרות שהמשתמש כבר אימת.
-    await user.getIdToken(true);
-  } catch (ignore) {}
-  btn.disabled = false;
-
-  if (auth.currentUser && auth.currentUser.emailVerified) {
-    m.className = 'msg';
-    await route(auth.currentUser);
-  } else {
-    m.textContent = 'המייל עדיין לא מאומת. לחץ על הקישור שבמייל ואז נסה שוב.';
-    m.className = 'msg err';
-  }
-};
-
-// ---------- מסך השלמת פרטים ----------
-
-$('btnLink').onclick = async () => {
-  const btn = $('btnLink');
-  const m   = $('lMsg');
-  const code  = $('lCode').value.trim();
-  const name  = $('lName').value.trim();
-  const phone = $('lPhone').value.trim();
-
-  if (!code || !name) {
-    m.textContent = 'נא למלא קוד אישי ושם מלא.';
-    m.className = 'msg err';
-    return;
-  }
-
-  btn.disabled = true;
-  const user = auth.currentUser;
-  saveOnboard({ code: code, name: name, phone: phone, email: user.email });
-  await submitJoinRequest(user, { code: code, name: name, phone: phone });
-  btn.disabled = false;
-};
-
-// ---------- שליחת בקשת הצטרפות ----------
-//
-// שינוי מהותי מול הגרסה הקודמת.
-//
-// קודם, האפליקציה בדקה בעצמה את הקוד האישי מול רשימת התחנה
-// ויצרה למשתמש מסמך עם תפקיד. זה נסגר: כללי האבטחה החדשים
-// לא מרשים ללקוח לקרוא את רשימת התחנה ולא ליצור לעצמו תפקיד.
-//
-// למה זה נכון: אם הדפדפן קובע מי אתה, מספיק לשנות שם משתנה
-// כדי להפוך לקצין. עכשיו הקוד האישי נבדק בשרת, והתפקיד נכתב
-// לטוקן על ידי Cloud Function בלבד.
-//
-// המחיר: כל כבאי חדש ממתין לאישור מנהל. זו החלטה מודעת.
-
-async function submitJoinRequest(user, details){
-  const email = (user.email || '').toLowerCase();
-  const m = $('lMsg');
-
-  try {
-    await setDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid), {
-      claimed_code: details.code,
-      full_name:    details.name,
-      email:        email,
-      phone:        details.phone || '',
-      status:       'pending',
-      created_at:   serverTimestamp()
+    await setDoc(doc(db, 'registration_requests', created.uid), {
+      full_name:  name,
+      email:      email,
+      phone:      phone,
+      districtId: district,
+      stationId:  station,
+      status:     'pending',
+      created_at: serverTimestamp()
     });
-    clearOnboard();
+    onboarding = false; btn.disabled = false;
     showWaiting();
   } catch (e) {
-    m.textContent = 'שגיאה בשליחת הבקשה: ' + (e.code || e.message);
-    m.className = 'msg err';
-    showView('link');
+    // אם הבקשה לא נשמרה, החשבון נשאר תקוע בלי שום דבר מאחוריו.
+    if (created) { try { await deleteUser(created); } catch (ignore) {} }
+    onboarding = false; btn.disabled = false;
+    show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
   }
-}
+};
 
-// ---------- מצב התחברות ----------
+// ---------- ניתוב ----------
 
-$('btnLogout').onclick       = () => { clearOnboard(); signOut(auth); };
-$('btnLogoutWait').onclick   = () => { clearOnboard(); signOut(auth); };
-$('btnLogoutVerify').onclick = () => { clearOnboard(); signOut(auth); };
-$('btnLogoutLink').onclick   = () => { clearOnboard(); signOut(auth); };
+$('btnLogout').onclick     = () => signOut(auth);
+$('btnLogoutWait').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, user => {
   if (onboarding) return;
@@ -451,39 +420,32 @@ onAuthStateChanged(auth, user => {
   route(user);
 });
 
-// מחליט לאיזה מסך המשתמש שייך כרגע.
 async function route(user){
-  if (!user.emailVerified) { showVerify(user); return; }
-
-  let snap = null;
+  let claims = {};
   try {
-    snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+    const t = await user.getIdTokenResult();
+    claims = t.claims || {};
   } catch (ignore) {}
 
-  if (snap && snap.exists()) { await loadProfile(user); return; }
+  // בלי מספר עובד בטוקן — או שהבקשה ממתינה, או שטרם נשלחה.
+  if (!claims.emp) {
+    let req = null;
+    try { req = await getDoc(doc(db, 'registration_requests', user.uid)); }
+    catch (ignore) {}
 
-  let req = null;
-  try {
-    req = await getDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid));
-  } catch (ignore) {}
-  if (req && req.exists()) { showWaiting(); return; }
-
-  // אין מסמך כבאי ואין בקשה - צריך לשלוח בקשת הצטרפות.
-  const saved = readOnboard();
-  if (saved && saved.code) {
-    await submitJoinRequest(user, saved);
-  } else {
-    // אימת בדפדפן אחר, או שהזיכרון המקומי נמחק. נבקש שוב.
-    $('lMsg').className = 'msg';
-    showView('link');
+    if (req && req.exists()) { showWaiting(); return; }
+    showNotLinked();
+    return;
   }
+
+  await loadProfile(user, claims);
 }
 
 function showNotLinked(){
   $('waitIcon').textContent = '🔒';
-  $('waitTtl').textContent  = 'החשבון אינו מקושר לכבאי';
-  $('waitTxt').innerHTML    = 'המייל הזה אינו משויך לאף כבאי בתחנה.<br>' +
-                              'התנתק והירשם עם הקוד האישי שלך.';
+  $('waitTtl').textContent  = 'החשבון אינו משויך';
+  $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
+                              'התנתק והירשם מחדש.';
   showView('wait');
 }
 
@@ -491,31 +453,160 @@ function showWaiting(){
   $('waitIcon').textContent = '⏳';
   $('waitTtl').textContent  = 'הבקשה נשלחה';
   $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
-                              'תקבל גישה מלאה מיד לאחר האישור.<br><br>' +
+                              'עם האישור יוקצה לך מספר עובד.<br><br>' +
                               '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
   showView('wait');
 }
 
-async function loadProfile(user){
-  let snap = null;
+// ---------- בקרת גישה ----------
+//
+// נרשמת התחברות אחרונה בלבד — כתיבה אחת בכניסה, בעלות אפסית.
+//
+// "מחובר ברגע זה" נשקל ונפסל: הוא דורש דיווח מחזורי מכל דפדפן,
+// ובקנה מידה ארצי זה עולה עשרות שקלים בחודש על נתון שאפשר
+// לחיות בלעדיו.
+
+async function markLogin(uid, sid, info){
   try {
-    snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
-  } catch (ignore) {}
-
-  if (!snap || !snap.exists()) { showNotLinked(); return; }
-
-  const u = snap.data();
-  $('pName').textContent = u.full_name;
-  $('pRole').textContent = ROLE_HE[u.role] || u.role;
-  $('pCrew').textContent = CREW_HE[u.crew] || '';
-  $('pCode').textContent = 'קוד אישי: ' + u.personal_code;
-  showView('home');
-
-  try {
-    await setDoc(doc(db, 'stations', STATION_ID, 'users', user.uid),
-                 { last_login: serverTimestamp() }, { merge: true });
+    await setDoc(doc(db, 'stations', sid, 'presence', uid), {
+      last_login: serverTimestamp(),
+      emp:        info.emp || '',
+      full_name:  info.full_name || '',
+      crew:       info.crew || ''
+    }, { merge: true });
   } catch (ignore) {}
 }
+
+async function loadProfile(user, claims){
+  const sid = claims.stationId || STATION_ID;
+
+  let u = null;
+  try {
+    const snap = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
+    if (snap.exists()) u = snap.data();
+  } catch (ignore) {}
+
+  $('pName').textContent    = u ? u.full_name : (user.email || '');
+  $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';
+  $('pCrew').textContent    = CREW_HE[claims.shift] || '';
+  $('pStation').textContent = (u && u.station ? u.station : sid) +
+    (claims.districtId ? ' · ' + (DIST_HE[claims.districtId] || claims.districtId) : '');
+  $('pEmp').textContent     = 'מספר עובד: ' + claims.emp;
+
+  markLogin(user.uid, sid, {
+    emp:       claims.emp,
+    full_name: u ? u.full_name : '',
+    crew:      claims.shift || ''
+  });
+
+  showView('home');
+}
+
+// ---------- חיפוש עובד ----------
+
+$('btnSearch').onclick     = () => { $('sMsg').className = 'msg'; showView('search'); };
+$('btnSearchBack').onclick = () => showView('home');
+
+$('btnDoSearch').onclick = async () => {
+  const btn = $('btnDoSearch');
+  const q   = $('qName').value.trim();
+  const box = $('results');
+
+  if (!q) {
+    $('sMsg').textContent = 'נא להזין שם.';
+    $('sMsg').className = 'msg err';
+    return;
+  }
+
+  btn.disabled = true;
+  $('sMsg').className = 'msg';
+  box.innerHTML = '';
+
+  try {
+    // חיפוש לפי תחילת שם. הגבול העליון עם התו הגבוה ביותר גורם
+    // ל-Firestore להחזיר את כל מי ששמו מתחיל במחרוזת שהוקלדה.
+    const snaps = await getDocs(query(
+      collection(db, 'directory'),
+      where('full_name', '>=', q),
+      where('full_name', '<=', q + '\uf8ff'),
+      orderBy('full_name'),
+      limit(25)
+    ));
+
+    if (snaps.empty) {
+      $('sMsg').textContent = 'לא נמצאו תוצאות.';
+      $('sMsg').className = 'msg';
+      btn.disabled = false;
+      return;
+    }
+
+    snaps.forEach(function (d) {
+      const p = d.data();
+      const row = document.createElement('div');
+      row.className = 'res';
+      row.innerHTML =
+        '<div class="n">' + esc(p.full_name) + '</div>' +
+        '<div class="d">' +
+          esc(ROLE_HE[p.role] || p.role || '') +
+          (p.crew ? ' · ' + esc(CREW_HE[p.crew] || p.crew) : '') +
+          (p.station ? ' · ' + esc(p.station) : '') +
+          (p.district ? ' · ' + esc(DIST_HE[p.district] || p.district) : '') +
+        '</div>';
+      box.appendChild(row);
+    });
+  } catch (e) {
+    $('sMsg').textContent = 'שגיאה בחיפוש: ' + (e.code || e.message);
+    $('sMsg').className = 'msg err';
+  }
+  btn.disabled = false;
+};
+
+// ---------- שינוי סיסמה ----------
+
+$('btnChangePw').onclick = () => { $('pwMsg').className = 'msg'; showView('pw'); };
+$('btnPwBack').onclick   = () => showView('home');
+
+$('btnSavePw').onclick = async () => {
+  const btn = $('btnSavePw');
+  const old = $('pwOld').value;
+  const nw  = $('pwNew').value;
+  const nw2 = $('pwNew2').value;
+
+  function m(t, k){ $('pwMsg').textContent = t; $('pwMsg').className = 'msg ' + k; }
+
+  if (!old || !nw) { m('נא למלא את שני השדות.', 'err'); return; }
+  if (nw !== nw2)  { m('הסיסמאות החדשות אינן תואמות.', 'err'); return; }
+  if (!pwOk(nw))   {
+    m('הסיסמה חייבת להיות באורך 8 תווים לפחות, ולכלול אות גדולה, אות קטנה וספרה.', 'err');
+    return;
+  }
+
+  const user = auth.currentUser;
+  if (!user || !user.email) { m('לא מחובר.', 'err'); return; }
+
+  btn.disabled = true;
+  try {
+    // Firebase דורש הזדהות מחדש לפני שינוי סיסמה, כדי שמי שמצא
+    // טלפון פתוח לא יוכל להשתלט על החשבון.
+    const cred = EmailAuthProvider.credential(user.email, old);
+    await reauthenticateWithCredential(user, cred);
+    await updatePassword(user, nw);
+
+    m('הסיסמה שונתה.', 'ok');
+    $('pwOld').value = ''; $('pwNew').value = ''; $('pwNew2').value = '';
+    paintRules('', ['cp1','cp2','cp3','cp4']);
+  } catch (e) {
+    const c = String(e.code || '');
+    if (c.indexOf('wrong-password') !== -1 || c.indexOf('invalid-credential') !== -1) {
+      m('הסיסמה הנוכחית שגויה.', 'err');
+    } else if (c.indexOf('weak-password') !== -1) {
+      m('הסיסמה חלשה מדי.', 'err');
+    } else {
+      m('שגיאה: ' + (e.code || e.message), 'err');
+    }
+  }
+  btn.disabled = false;
+};
 </script>
 </body>
 </html>

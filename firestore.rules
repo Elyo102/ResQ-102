@@ -2,7 +2,7 @@ rules_version = '2';
 
 // =====================================================================
 //  תחנה 102 — כללי אבטחה
-//  גרסה 2.4 — מבוססת Custom Claims
+//  גרסה 2.5 — מבוססת Custom Claims
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
@@ -224,6 +224,49 @@ service cloud.firestore {
                       && request.resource.data.is_active     == resource.data.is_active;
 
         allow update: if hr(sid);
+      }
+
+
+      // ---------- תחנות קצה ----------
+      // תחנה אזורית מכילה כמה תחנות קצה במרחב שלה.
+      // באילת: ראשית, שחמון, תמנע, יטבתה.
+
+      match /sub_stations/{subId} {
+        allow read:  if member(sid);
+        allow write: if staff(sid);
+      }
+
+
+      // ---------- משמרות ----------
+      // מסמך לכל משמרת — א, ב, ג — ותחתיו כל מה ששייך לה.
+
+      match /shifts/{crew} {
+        allow read:  if member(sid);
+        allow write: if staff(sid);
+
+        match /{document=**} {
+          allow read:  if member(sid);
+          allow write: if staff(sid);
+        }
+      }
+
+
+      // ---------- בקרת גישה ----------
+      // מי מחובר עכשיו ומתי התחבר לאחרונה.
+      //
+      // הכבאי מדווח על עצמו בלבד, ורק שדה זמן. הוא לא יכול
+      // לכתוב על אחרים ולא לזייף התחברות של מישהו אחר.
+      //
+      // הסגל רואה את כל התחנה — זה קובץ בקרת הגישה.
+
+      match /presence/{uid} {
+        allow read: if staff(sid)
+                    || (signedIn() && request.auth.uid == uid);
+
+        allow write: if signedIn()
+                     && request.auth.uid == uid
+                     && request.resource.data.keys().hasOnly(
+                          ['last_seen', 'last_login', 'emp', 'full_name', 'crew']);
       }
 
 
