@@ -304,6 +304,61 @@ service cloud.firestore {
       }
 
 
+      // ---------- כשירויות ----------
+      // מערך הכשירויות שייך לתחנה ולא למערכת: כל תחנה מחזיקה
+      // מערך אחר, ותחנה שנפתחת מחר לא יורשת את זה של אילת.
+      //
+      // כל אנשי התחנה קוראים — כבאי צריך לדעת מי כשיר למה
+      // כשהוא במשמרת. רק סגל עורך.
+
+      match /quals/{qid} {
+        allow read: if member(sid);
+
+        allow create, update: if staff(sid)
+          && request.resource.data.keys().hasOnly(
+               ['name', 'order', 'active', 'created_at', 'updated_at', 'by'])
+          && request.resource.data.get('name', '') is string
+          && request.resource.data.get('name', '').size() > 0
+          && request.resource.data.get('name', '').size() <= 40;
+
+        allow delete: if staff(sid);
+      }
+
+      // הכשירויות של אדם. אוסף נפרד ולא שדה על roster, כי roster
+      // נכתב בשרת בלבד — פתיחתו לכתיבה מהדפדפן הייתה מאפשרת
+      // לשנות שם, תפקיד ומשמרת של כל אחד.
+      //
+      // כבאי לא כותב כאן, גם לא על עצמו: אחרת הוא מעניק לעצמו
+      // כשירות ונספר בקו האדום על יכולת שאין לו.
+
+      match /member_quals/{uid} {
+        allow read: if member(sid);
+
+        allow create, update: if staff(sid)
+          && request.resource.data.keys().hasOnly(['quals', 'updated_at', 'by'])
+          && request.resource.data.get('quals', []) is list
+          && request.resource.data.get('quals', []).size() <= 60;
+
+        allow delete: if staff(sid);
+      }
+
+      // הגדרות התחנה. כרגע קו אדום בלבד: סף מספרי אחד לתחנה,
+      // ומינימום לכל כשירות.
+
+      match /config/{docId} {
+        allow read: if member(sid);
+
+        allow create, update: if staff(sid)
+          && request.resource.data.keys().hasOnly(
+               ['min_headcount', 'min_quals', 'updated_at', 'by'])
+          && request.resource.data.get('min_headcount', 0) is int
+          && request.resource.data.get('min_headcount', 0) >= 0
+          && request.resource.data.get('min_headcount', 0) <= 200;
+
+        allow delete: if staff(sid);
+      }
+
+
       // ---------- מוצבים, רכבים, מחזורי סידור ----------
 
       match /units/{unitId} {

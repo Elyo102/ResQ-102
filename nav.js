@@ -14,6 +14,7 @@
 const ITEMS = [
   { href: 'login.html',    label: 'הבית',        who: 'any',    dot: '#e8590c' },
   { href: 'schedule.html', label: 'סידור עבודה', who: 'member', dot: '#4d94ff' },
+  { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c' },
   { href: 'access.html',   label: 'בקרת גישה',   who: 'staff',  dot: '#35c46b' },
   { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
   { href: 'check.html',    label: 'בדיקת מערכת', who: 'super',  dot: '#9aa0a6' }
