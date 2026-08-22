@@ -54,6 +54,47 @@
 </style>
 </head>
 <body>
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh;
+           overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .x{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+              color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+// מציג שגיאות על המסך במקום להשאיר אותן בקונסולה.
+// בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
+// והמסך נראה תקין לגמרי.
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
 <div class="wrap">
 
   <h1>אישור בקשות הרשמה</h1>
