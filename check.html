@@ -231,10 +231,13 @@ async function checkFunctions(){
   }
 }
 
+// הסדר חשוב: בדיקת הפונקציות מריצה בנייה מחדש של מפתח החיפוש
+// (למנהל-על בלבד). אם ספריית החיפוש נבדקת לפניה, הדוח מציג
+// מצב שכבר לא נכון — וזה בדיוק מה שבלבל ב-22.8.
 async function runAll(user){
   await checkWho(user);
-  await checkDirectory();
   await checkFunctions();
+  await checkDirectory();
   await runSearch();
 }
 

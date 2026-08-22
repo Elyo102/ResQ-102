@@ -246,7 +246,7 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
+import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
          EmailAuthProvider, setPersistence, browserLocalPersistence }
@@ -368,8 +368,10 @@ $('btnLogin').onclick = async () => {
     if (id.indexOf('@') !== -1) {
       await signInWithEmailAndPassword(auth, id.toLowerCase(), pass);
     } else {
+      // השרת מאמת את מספר העובד ואת הסיסמה, ומחזיר את המייל
+      // המשויך. הכניסה עצמה נעשית כאן, בדרך הרגילה.
       const res = await callLogin({ emp: id, password: pass });
-      await signInWithCustomToken(auth, res.data.token);
+      await signInWithEmailAndPassword(auth, res.data.email, pass);
     }
   } catch (e) {
     const code = String(e.code || '');
