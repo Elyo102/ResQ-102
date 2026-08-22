@@ -638,13 +638,21 @@ $('btnDoSearch').onclick = async () => {
   box.innerHTML = '';
 
   try {
-    // חיפוש לפי תחילת שם. הגבול העליון עם התו הגבוה ביותר גורם
-    // ל-Firestore להחזיר את כל מי ששמו מתחיל במחרוזת שהוקלדה.
+    // חיפוש לפי כל מילה בשם, לא רק לפי תחילת השם המלא.
+    // "חודרה" ו"טויטו" הם בדיוק מה שאנשים מקלידים, והחיפוש
+    // הישן לא היה מוצא אותם.
+    const key = q.toLowerCase().replace(/["'`׳״]/g, '');
+
+    if (key.length < 2) {
+      $('sMsg').textContent = 'נא להזין לפחות שני תווים.';
+      $('sMsg').className = 'msg err';
+      btn.disabled = false;
+      return;
+    }
+
     const snaps = await getDocs(query(
       collection(db, 'directory'),
-      where('full_name', '>=', q),
-      where('full_name', '<=', q + '\uf8ff'),
-      orderBy('full_name'),
+      where('name_prefixes', 'array-contains', key),
       limit(25)
     ));
 
@@ -655,7 +663,13 @@ $('btnDoSearch').onclick = async () => {
       return;
     }
 
-    snaps.forEach(function (d) {
+    const rows = snaps.docs.slice();
+    rows.sort(function (a, b) {
+      return String(a.data().full_name || '')
+        .localeCompare(String(b.data().full_name || ''), 'he');
+    });
+
+    rows.forEach(function (d) {
       const p = d.data();
       const row = document.createElement('div');
       row.className = 'res';

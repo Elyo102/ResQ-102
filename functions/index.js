@@ -167,6 +167,39 @@ async function allocateEmployeeNumber() {
   });
 }
 
+// Firestore לא יודע לחפש "מכיל". הוא יודע רק "שווה" ו"מתחיל ב".
+//
+// הגרסה הראשונה חיפשה לפי תחילת השם המלא בלבד — ולכן מי שחיפש
+// "חודרה" או "טויטו" לא מצא כלום, וזו בדיוק הדרך שבה אנשים
+// מחפשים אחד את השני. הפתרון: שומרים מראש את כל הקידומות של
+// כל מילה בשם, ומחפשים התאמה מדויקת ברשימה הזו.
+//
+// שם ממוצע מייצר כ-12 ערכים. זול בכתיבה, מיידי בקריאה, ובלי
+// שירות חיפוש חיצוני.
+function namePrefixes(fullName) {
+  const words = String(fullName || '')
+    .toLowerCase()
+    .replace(/["'`׳״]/g, '')
+    .split(/[\s\-־]+/)
+    .filter(function (w) { return w.length > 0; });
+
+  const out = {};
+  words.forEach(function (w) {
+    // מ-2 תווים ומעלה. תו בודד היה מחזיר חצי תחנה.
+    for (let i = 2; i <= w.length && i <= 12; i++) {
+      out[w.slice(0, i)] = true;
+    }
+  });
+
+  // גם השם המלא כמחרוזת אחת, למי שמקליד שם ושם משפחה יחד.
+  const joined = words.join(' ');
+  for (let i = 2; i <= joined.length && i <= 20; i++) {
+    out[joined.slice(0, i)] = true;
+  }
+
+  return Object.keys(out);
+}
+
 async function resolveUser(data) {
   if (data.uid)   return admin.auth().getUser(String(data.uid));
   if (data.email) return admin.auth().getUserByEmail(String(data.email).toLowerCase());
@@ -207,13 +240,14 @@ async function writeProfile(uid, p) {
 
   // חיפוש עובד. בלי מספר עובד, בלי מייל, בלי טלפון.
   batch.set(db.doc('directory/' + uid), {
-    full_name:  p.full_name || '',
-    role:       p.role,
-    crew:       p.shift || '',
-    station:    p.stationId,
-    district:   p.districtId || '',
-    is_active:  true,
-    updated_at: FV.serverTimestamp()
+    full_name:     p.full_name || '',
+    name_prefixes: namePrefixes(p.full_name),
+    role:          p.role,
+    crew:          p.shift || '',
+    station:       p.stationId,
+    district:      p.districtId || '',
+    is_active:     true,
+    updated_at:    FV.serverTimestamp()
   }, { merge: true });
 
   // מפתח כניסה: מספר עובד אל המשתמש. נקרא רק בשרת.
@@ -699,4 +733,51 @@ exports.whoAmI = onCall(async (req) => {
     claims_on_server: user.customClaims || {},
     note: 'אם שתי הרשימות שונות — הטוקן ישן. צריך getIdToken(true).'
   };
+});
+
+// ---------------------------------------------------------------------
+//  9. בנייה מחדש של מפתח החיפוש
+//
+//  רשומות שנכתבו לפני שמפתח החיפוש קיים אינן ניתנות למציאה.
+//  הפונקציה הזו עוברת על הספרייה ומוסיפה להן אותו. אפשר להריץ
+//  אותה שוב ושוב — היא כותבת את אותו ערך ולא משנה שום נתון אחר.
+// ---------------------------------------------------------------------
+
+exports.reindexDirectory = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+
+  const snaps = await db.collection('directory').get();
+  if (snaps.empty) return { ok: true, scanned: 0, updated: 0 };
+
+  const audit = await openAudit(auth, 'reindex_directory', null,
+                               { count: snaps.size });
+
+  let updated = 0;
+  let batch = db.batch();
+  let inBatch = 0;
+
+  for (const d of snaps.docs) {
+    const name = String((d.data() || {}).full_name || '');
+    if (!name) continue;
+
+    batch.set(d.ref, {
+      name_prefixes: namePrefixes(name),
+      updated_at:    FV.serverTimestamp()
+    }, { merge: true });
+
+    updated++;
+    inBatch++;
+
+    // מגבלת Firestore היא 500 פעולות לאצווה.
+    if (inBatch === 400) {
+      await batch.commit();
+      batch = db.batch();
+      inBatch = 0;
+    }
+  }
+
+  if (inBatch > 0) await batch.commit();
+  await sealAudit(audit, { updated: updated });
+
+  return { ok: true, scanned: snaps.size, updated: updated };
 });

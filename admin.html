@@ -141,6 +141,8 @@
       <h2>משתמשים והרשאות</h2>
       <div class="rotstate" id="usrState">לחץ "טען" כדי לראות מי רשום ומה התפקיד שלו.</div>
       <button id="btnUsers">טען רשימת משתמשים</button>
+      <button id="btnReindex" class="ghost" style="margin-inline-start:8px">בנה מחדש את מפתח החיפוש</button>
+      <div class="msg" id="reindexMsg"></div>
       <div id="usrList"></div>
 
       <h2 style="margin-top:26px">הענקת תפקיד ידנית</h2>
@@ -257,6 +259,7 @@ const fns = getFunctions(app, 'europe-west1');
 const callApprove  = httpsCallable(fns, 'approveRegistration');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
+const callReindex  = httpsCallable(fns, 'reindexDirectory');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
@@ -631,6 +634,23 @@ $('btnRot').onclick = async () => {
 //  ההבדל חשוב: מסמך יכול להיות מעודכן בזמן שהטוקן ישן, ואז
 //  הממשק מראה תפקיד שכללי האבטחה לא מכירים.
 // =====================================================================
+
+// רשומות שנכתבו לפני שמפתח החיפוש קיים אינן ניתנות למציאה
+// ב"חיפוש עובד". הכפתור הזה מוסיף להן אותו. בטוח להריץ שוב ושוב.
+$('btnReindex').onclick = async () => {
+  const btn = $('btnReindex');
+  btn.disabled = true;
+  msg('reindexMsg', 'בונה...', '');
+  try {
+    const res = await callReindex({});
+    msg('reindexMsg',
+        'נסרקו ' + res.data.scanned + ' רשומות, עודכנו ' + res.data.updated + '. ' +
+        'החיפוש מעודכן.', 'ok');
+  } catch (e) {
+    msg('reindexMsg', 'נכשל: ' + (e.message || e.code), 'err');
+  }
+  btn.disabled = false;
+};
 
 $('btnUsers').onclick = async () => {
   const btn = $('btnUsers');
