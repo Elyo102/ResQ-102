@@ -155,6 +155,19 @@
 
       <div class="two">
         <div>
+          <label>שם מלא</label>
+          <input type="text" id="rName" autocomplete="off"
+                 placeholder="ריק = לא משנה את השם הקיים">
+        </div>
+        <div>
+          <label>טלפון</label>
+          <input type="tel" id="rPhone" inputmode="tel" autocomplete="off"
+                 placeholder="ריק = לא משנה">
+        </div>
+      </div>
+
+      <div class="two">
+        <div>
           <label>תפקיד</label>
           <select id="rRole">
             <option value="firefighter">לוחם אש</option>
@@ -717,6 +730,8 @@ $('btnRole').onclick = async () => {
   const shift = $('rShift').value;
   const emp   = $('rEmp').value.trim();
   const dist  = $('rDistrict').value;
+  const name  = $('rName').value.trim();
+  const phone = $('rPhone').value.trim();
 
   if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
   if (role !== 'none' && !emp) {
@@ -737,11 +752,15 @@ $('btnRole').onclick = async () => {
       stationId:  STATION_ID,
       districtId: dist,
       shift:      shift,
-      emp:        emp
+      emp:        emp,
+      full_name:  name,
+      phone:      phone
     });
     msg('roleMsg', res.data.message, 'ok');
     $('rEmail').value = '';
-    $('rEmp').value = '';
+    $('rEmp').value   = '';
+    $('rName').value  = '';
+    $('rPhone').value = '';
   } catch (e) {
     let text = e.message || String(e);
     if (String(e.code || '').indexOf('not-found') !== -1) {
