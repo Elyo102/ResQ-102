@@ -84,6 +84,24 @@ service cloud.firestore {
       return isSuper() || (inStation(sid) && claim('role') == 'hr_coordinator');
     }
 
+    // ---------- נעילת מפקד משמרת למשמרת שלו ----------
+    //
+    // מפקד משמרת ב' מנהל את ב'. הוא עדיין שואל אנשים מכל התחנה —
+    // המאגר כלל-תחנתי — אבל הלוח שהוא עורך הוא שלו בלבד.
+    //
+    // רכז כוח אדם ומנהל-על אינם נעולים: תפקידם להשוות בין
+    // משמרות ולסדר ביניהן.
+    //
+    // מי שאין לו שיוך משמרת אינו ננעל. אחרת מפקד שטרם שויך
+    // היה חסום מכל שלוש המשמרות, בלי שום דרך לראות שזו הסיבה.
+    function myShift() {
+      return claim('shift');
+    }
+
+    function seesShift(sid, crew) {
+      return isSuper() || hr(sid) || myShift() == '' || myShift() == crew;
+    }
+
     // מספר עובד. המערכת מקצה אותו באישור ההרשמה, והוא מזהה
     // את הכבאי בכל הדיווחים שלו. הוא גם משמש כהגנה מפני זדון,
     // ולכן אינו גלוי לכבאים אחרים.
@@ -260,12 +278,12 @@ service cloud.firestore {
       // מסמך לכל משמרת — א, ב, ג — ותחתיו כל מה ששייך לה.
 
       match /shifts/{crew} {
-        allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow read:  if member(sid) && seesShift(sid, crew);
+        allow write: if staff(sid) && seesShift(sid, crew);
 
         match /{document=**} {
-          allow read:  if member(sid);
-          allow write: if staff(sid);
+          allow read:  if member(sid) && seesShift(sid, crew);
+          allow write: if staff(sid) && seesShift(sid, crew);
         }
       }
 

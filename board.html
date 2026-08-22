@@ -226,6 +226,7 @@
       <button class="sw A" data-crew="A">א׳</button>
       <button class="sw B" data-crew="B">ב׳</button>
       <button class="sw C" data-crew="C">ג׳</button>
+      <span class="lbl" id="scope"></span>
 
       <div class="sep"></div>
 
@@ -248,9 +249,10 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=11';
-import { stationName } from './stations.js?v=11';
-import { renderNav, renderStuckNav } from './nav.js?v=11';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=12';
+import { stationName } from './stations.js?v=12';
+import { renderNav, renderStuckNav } from './nav.js?v=12';
+import { boardState, summaryText, visibleCrews } from './readiness.js?v=12';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -315,6 +317,7 @@ function uid(p){
 }
 
 let SID = '', CAN_EDIT = false, CREW = 'A';
+let MY_CREWS = CREWS.slice();   // אילו משמרות מותר לי לראות
 let board  = { vehicles: [], command: [] };
 let assign = {};          // slotId -> uid
 let people = [];          // כל אנשי התחנה הפעילים
@@ -344,7 +347,11 @@ onAuthStateChanged(auth, async user => {
   }
 
   CAN_EDIT = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
-  CREW = CREWS.indexOf(c.shift) !== -1 ? c.shift : 'A';
+
+  // מפקד משמרת מנהל את המשמרת שלו. הכפתורים של האחרות לא
+  // מוסתרים אלא לא נוצרים — כפתור שהשרת ידחה גרוע מכפתור שאין.
+  MY_CREWS = visibleCrews(c);
+  CREW = MY_CREWS.indexOf(c.shift) !== -1 ? c.shift : MY_CREWS[0];
 
   $('work').classList.remove('hide');
   $('stName').textContent = stationName(SID) || SID;
@@ -463,23 +470,20 @@ function assignedElsewhere(u, exceptSlot){
     return sid2 !== exceptSlot && assign[sid2] === u;
   });
 }
-function allSlots(){
-  const out = board.command.map(c => ({ id: c.id, job: c.rank, req: c.req || '' }));
-  board.vehicles.forEach(function (v) {
-    (v.slots || []).forEach(function (s) {
-      out.push({ id: s.id, job: s.job, req: s.req || '' });
-    });
-  });
-  return out;
-}
+
 
 // ---------- ציור ----------
 
 function render(){
   CREWS.forEach(function (c) {
     const b = document.querySelector('.sw[data-crew="' + c + '"]');
-    if (b) b.className = 'sw ' + c + (c === CREW ? ' on' : '');
+    if (!b) return;
+    if (MY_CREWS.indexOf(c) === -1) { b.classList.add('hide'); return; }
+    b.className = 'sw ' + c + (c === CREW ? ' on' : '');
   });
+  $('scope').textContent = MY_CREWS.length === 1
+    ? 'אתה מנהל את משמרת ' + (CREW_HE[CREW] || CREW) + ' בלבד'
+    : '';
   renderChain();
   renderFleet();
   renderVerdict();
@@ -596,30 +600,21 @@ function renderFleet(){
   });
 }
 
+// החישוב עצמו יושב ב-readiness.js, ביחד עם זה של סידור העבודה
+// ומסך הכשירויות. שלושתם חייבים לענות אותו דבר.
 function renderVerdict(){
-  const slots = allSlots();
-  const open = slots.filter(s => !assign[s.id]).length;
-  const wrong = slots.filter(s => s.req && assign[s.id] &&
-                                  !hasQual(assign[s.id], s.req)).length;
+  const bs = boardState(board, assign, held);
 
-  const bad = open > 0 || wrong > 0;
-  $('verdict').className = 'verdict ' + (bad ? 'bad' : 'ok');
-  $('verdict').textContent = bad ? 'לא כשירה' : 'כשירה';
+  $('verdict').className = 'verdict ' + (bs.below ? 'bad' : 'ok');
+  $('verdict').textContent = !bs.configured ? 'אין מבנה'
+                                            : (bs.below ? 'לא כשירה' : 'כשירה');
 
-  const parts = [];
-  if (open) {
-    parts.push(open === 1 ? '<b>משבצת אחת</b> לא מאוישת'
-                          : '<b>' + open + '</b> משבצות לא מאוישות');
-  }
-  if (wrong) {
-    parts.push(wrong === 1 ? '<b>שיבוץ אחד</b> בלי הכשירות הנדרשת'
-                           : '<b>' + wrong + '</b> שיבוצים בלי הכשירות הנדרשת');
-  }
-  if (!parts.length) {
-    parts.push('כל <b>' + slots.length + '</b> המשבצות מאוישות ומתאימות');
-  }
-  $('why').className = 'why ' + (bad ? '' : 'ok');
-  $('why').innerHTML = parts.join(' · ');
+  const txt = summaryText(null, bs, qualName);
+  $('why').className = 'why ' + (bs.below ? '' : 'ok');
+  $('why').innerHTML = !bs.configured
+    ? 'הוסף רכבים ומשבצות כדי שהמערכת תדע מה נדרש.'
+    : (txt ? txt.split(' · ').map(s => '<b>' + esc(s) + '</b>').join(' · ')
+           : 'כל <b>' + bs.total + '</b> המשבצות מאוישות ומתאימות');
 }
 
 // ---------- חלונית ----------
@@ -815,7 +810,10 @@ $('btnAddVeh').onclick = () => {
 
 CREWS.forEach(function (c) {
   const b = document.querySelector('.sw[data-crew="' + c + '"]');
-  if (b) b.onclick = async () => { CREW = c; msg('', ''); await loadCrew(); };
+  if (b) b.onclick = async () => {
+    if (MY_CREWS.indexOf(c) === -1) return;
+    CREW = c; msg('', ''); await loadCrew();
+  };
 });
 </script>
 </body>

@@ -80,6 +80,30 @@
   .day.mine .c{background:transparent}
 
   .day.today{outline:2px solid var(--txt);outline-offset:2px}
+
+  /* יום שהמשמרת שלו אינה כשירה. סימון פינתי קטן ולא צבע מילוי:
+     הצבע כבר תפוס לזהות המשמרת, ואם נצבע גם כשירות באותו כלי
+     אי אפשר יהיה לקרוא אף אחד מהשניים. */
+  .day.unfit::after{content:'';position:absolute;top:5px;inset-inline-end:5px;
+                    width:7px;height:7px;border-radius:50%;
+                    background:var(--bad,#ef5350);
+                    box-shadow:0 0 0 2px #191c20}
+  .day.mine.unfit::after{box-shadow:0 0 0 2px rgba(0,0,0,.35)}
+
+  .fit{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .fit .p{flex:1 1 150px;border:1px solid var(--line);border-radius:9px;
+          padding:9px 11px;background:#191c20}
+  .fit .p.bad{border-color:#ef5350;background:#241618}
+  .fit .p .h{display:flex;align-items:center;gap:7px;font-size:13px;
+             font-weight:700;margin-bottom:3px}
+  .fit .p .tag{font-size:11px;font-weight:800;border-radius:5px;padding:2px 7px;
+               color:#fff}
+  .fit .p .tag.A{background:var(--crewA)}
+  .fit .p .tag.B{background:var(--crewB);color:#0d1f12}
+  .fit .p .tag.C{background:var(--crewC)}
+  .fit .p .s{font-size:12px;color:#f0b2b2;line-height:1.6}
+  .fit .p .s.ok{color:var(--muted)}
+  .fit .note{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.7}
   @media (max-width:420px){
     .day .n{font-size:14px}
     .day .c{font-size:10px;padding:2px 5px}
@@ -138,6 +162,12 @@
       <div class="next" id="nextBox"></div>
     </div>
 
+    <div class="card" id="fitCard" style="display:none">
+      <div style="font-size:14px;font-weight:700;margin-bottom:9px">כשירות המשמרות</div>
+      <div class="fit" id="fitBoxes"></div>
+      <div class="note" id="fitNote"></div>
+    </div>
+
     <div class="card">
       <div class="nav">
         <button id="prev">‹</button>
@@ -158,6 +188,7 @@
         <span><i class="dot" style="background:var(--crewC)"></i>ג'</span>
         <span><i class="dot" style="background:var(--crewC);
               border:2px solid var(--txt)"></i>המשמרת שלי</span>
+        <span><i class="dot" style="background:#ef5350"></i>לא כשירה</span>
       </div>
     </div>
 
@@ -169,16 +200,18 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=11';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=12';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=11';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=12';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
-  from './rotation.js?v=11';
+  from './rotation.js?v=12';
+import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
+  from './readiness.js?v=12';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -224,6 +257,12 @@ const DOWS = ['ראשון','שני','שלישי','רביעי','חמישי','שי
 let me = null;
 let rotations = [];
 let viewYear, viewMonth;
+
+// כשירות המשמרות. נטענת פעם אחת ומחושבת פעם אחת לכל משמרת —
+// לא לכל יום. שלושים יום של אותה משמרת הם אותה תשובה.
+let fit = {};        // crew -> {rl, bs, verdict}
+let qualNames = {};  // qid -> שם
+let myCrews = CREWS.slice();
 
 // ---------- כניסה ----------
 
@@ -297,7 +336,105 @@ onAuthStateChanged(auth, async user => {
 
   renderNext();
   render();
+
+  // הכשירות נטענת אחרי הלוח, לא לפניו. אם הקריאה איטית או
+  // נכשלת, הסידור עצמו כבר על המסך — הוא לא ממתין לה.
+  myCrews = visibleCrews(claims);
+  await loadFitness(claims.stationId || STATION_ID);
+  renderFitness();
+  render();
 });
+
+// ---------- כשירות ----------
+
+async function loadFitness(sid){
+  const people = [], held = {};
+  let redline = null, board = null;
+  const assigns = {};
+
+  try {
+    const qs = await getDocs(collection(db, 'stations', sid, 'quals'));
+    qs.forEach(d => { qualNames[d.id] = (d.data() || {}).name || ''; });
+  } catch (ignore) {}
+
+  try {
+    const rs = await getDocs(collection(db, 'stations', sid, 'roster'));
+    rs.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      people.push({ uid: d.id, crew: v.crew || '' });
+    });
+  } catch (ignore) {}
+
+  try {
+    const ms = await getDocs(collection(db, 'stations', sid, 'member_quals'));
+    ms.forEach(d => {
+      const v = d.data() || {};
+      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+    });
+  } catch (ignore) {}
+
+  try {
+    const r = await getDoc(doc(db, 'stations', sid, 'config', 'redline'));
+    if (r.exists()) redline = r.data();
+  } catch (ignore) {}
+
+  try {
+    const b = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
+    if (b.exists()) board = b.data();
+  } catch (ignore) {}
+
+  // רק המשמרות שמותר לי לראות. קריאה למשמרת אחרת תיחסם בשרת,
+  // ואין טעם לשלוח בקשה שאני יודע מראש שתידחה.
+  for (const crew of myCrews) {
+    try {
+      const s = await getDoc(doc(db, 'stations', sid, 'shifts', crew));
+      assigns[crew] = (s.exists() && (s.data() || {}).assign) || {};
+    } catch (ignore) { assigns[crew] = {}; }
+  }
+
+  fit = {};
+  myCrews.forEach(function (crew) {
+    const rl = redlineState(people, held, redline, crew);
+    const bs = boardState(board, assigns[crew], held);
+    fit[crew] = { rl: rl, bs: bs, verdict: crewReady(rl, bs) };
+  });
+}
+
+function qualName(id){ return qualNames[id] || id; }
+
+function renderFitness(){
+  const known = myCrews.some(c => fit[c] && fit[c].verdict.known);
+  if (!known) { $('fitCard').style.display = 'none'; return; }
+
+  $('fitCard').style.display = '';
+  const box = $('fitBoxes');
+  box.innerHTML = '';
+
+  myCrews.forEach(function (crew) {
+    const f = fit[crew];
+    if (!f) return;
+    const bad = !f.verdict.ready;
+    const txt = summaryText(f.rl, f.bs, qualName);
+
+    const d = document.createElement('div');
+    d.className = 'p' + (bad ? ' bad' : '');
+    d.innerHTML =
+      '<div class="h"><span class="tag ' + crew + '">' +
+        (CREW_HE[crew] || crew) + '</span>' +
+        (bad ? 'לא כשירה' : 'כשירה') + '</div>' +
+      '<div class="s' + (bad ? '' : ' ok') + '">' +
+        (txt || 'הכל מאויש ומתאים') + '</div>';
+    box.appendChild(d);
+  });
+
+  $('fitNote').textContent =
+    (myCrews.length === 1
+      ? 'מוצגת המשמרת שלך בלבד. '
+      : '') +
+    'מחושב לפי הנתונים של היום ומוצג על כל יום בלוח. ' +
+    'שינוי בשיבוץ או בכשירויות משנה גם את הימים הבאים.';
+}
 
 // ---------- המשמרת הבאה ----------
 
@@ -360,10 +497,18 @@ function render(){
     const date = new Date(viewYear, viewMonth, d);
     const crew = crewOnDate(rotations, date);
 
+    const f = crew ? fit[crew] : null;
+    const unfit = !!(f && f.verdict.known && !f.verdict.ready);
+
     const el = document.createElement('div');
     el.className = 'day' + (crew ? ' ' + crew : '') +
                    (crew && crew === me.crew ? ' mine' : '') +
+                   (unfit ? ' unfit' : '') +
                    (sameDay(date, today) ? ' today' : '');
+    if (unfit) {
+      el.title = 'משמרת ' + (CREW_HE[crew] || crew) + ' — לא כשירה · ' +
+                 summaryText(f.rl, f.bs, qualName);
+    }
     el.innerHTML = '<div class="n">' + d + '</div>' +
                    '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>';
     grid.appendChild(el);
