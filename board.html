@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — ציוות וכשירות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:16px 20px }
+  .wrap{ max-width:1720px; margin:0 auto }
+
+  .top{ display:flex; align-items:flex-end; justify-content:space-between;
+        gap:20px; flex-wrap:wrap; margin-bottom:12px }
+  h1{ font-size:20px; margin:0 }
+  .sub{ color:var(--muted); font-size:12.5px; margin-top:2px }
+
+  .tabs{ display:flex; gap:4px; flex-wrap:wrap }
+  .tabs a{ padding:9px 16px; font-size:14px; color:var(--muted);
+           text-decoration:none; border-bottom:2px solid transparent;
+           white-space:nowrap }
+  .tabs a.on{ color:var(--txt); border-bottom-color:var(--accent); font-weight:600 }
+
+  .bar{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+        border:1px solid var(--line); background:var(--card);
+        border-radius:10px; padding:10px 14px; margin-bottom:12px }
+  .lbl{ font-size:12.5px; color:var(--muted) }
+  .sw{ border:1px solid var(--line); background:transparent; color:var(--muted);
+       border-radius:8px; padding:7px 17px; font-size:15px; font-weight:700;
+       cursor:pointer; font-family:inherit }
+  .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:#fff }
+  .sw.on.B{ background:var(--crewB); border-color:var(--crewB); color:#0d1f12 }
+  .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:#fff }
+  .sep{ width:1px; align-self:stretch; background:var(--line); margin:0 2px }
+  .verdict{ font-size:15px; font-weight:800; border-radius:8px; padding:6px 14px;
+            white-space:nowrap }
+  .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:#2a1a1a }
+  .verdict.ok{ color:var(--good); border:1px solid #2f4a33; background:#16241a }
+  .why{ font-size:13px; color:#f0b2b2; line-height:1.7 }
+  .why b{ color:#fff }
+  .why.ok{ color:var(--muted) }
+  .why.ok b{ color:var(--txt) }
+  .spacer{ flex:1 }
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
+        font-family:inherit; white-space:nowrap }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  .chain{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
+          margin-bottom:12px }
+  .node{ border:1px solid var(--line); border-radius:10px; background:var(--card);
+         padding:9px 13px; display:flex; align-items:baseline; gap:9px;
+         flex-wrap:wrap; cursor:default }
+  .node.head{ border-color:var(--accent); background:#241a13 }
+  .node.click{ cursor:pointer }
+  .node.click:hover{ border-color:#3d444d }
+  .node .rank{ font-size:11.5px; color:var(--muted); white-space:nowrap }
+  .node .who{ font-size:15px; font-weight:700 }
+  .node.empty .who{ color:var(--warn) }
+  .node .meta{ font-size:11.5px; color:var(--muted) }
+
+  .fleet{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px }
+  @media (max-width:1100px){
+    .fleet{ grid-template-columns:1fr }
+    .chain{ grid-template-columns:1fr 1fr }
+  }
+  .veh{ border:1px solid var(--line); border-radius:12px; background:var(--card);
+        overflow:hidden }
+  .veh > .hd{ display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+              padding:10px 14px; border-bottom:1px solid var(--line);
+              background:#191c21 }
+  .veh .nm{ font-size:15px; font-weight:800 }
+  .veh .role{ font-size:11.5px; color:var(--muted); border:1px solid var(--line);
+              border-radius:20px; padding:1px 9px }
+  .veh .cnt{ font-size:11.5px; color:var(--muted) }
+  .veh .cnt.bad{ color:var(--bad) }
+  .veh .tools{ margin-inline-start:auto; display:flex; gap:6px }
+  .veh .tools .btn{ padding:4px 9px; font-size:11.5px }
+
+  .srow{ display:flex; align-items:center; gap:10px; padding:9px 14px;
+         border-bottom:1px solid #24272c }
+  .srow:last-child{ border-bottom:0 }
+  .srow.bad{ background:#241618 }
+  .srow.click{ cursor:pointer }
+  .srow.click:hover{ background:#20242a }
+  .srow.bad.click:hover{ background:#2b1a1c }
+  .job{ font-size:11.5px; color:var(--muted); width:104px; flex:none;
+        line-height:1.35 }
+  .who{ font-size:14.5px; font-weight:600; flex:1; min-width:0;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .who .none{ color:var(--warn); font-weight:600 }
+  .who .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px;
+            color:#fff; margin-inline-start:7px; vertical-align:middle }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
+  .cw.C{ background:var(--crewC) }
+  .req{ font-size:11px; font-weight:600; border:1px solid var(--line);
+        border-radius:20px; padding:1px 9px; color:var(--muted);
+        white-space:nowrap; flex:none; max-width:150px; overflow:hidden;
+        text-overflow:ellipsis }
+  .req.hit{ border-color:#2f4a33; color:var(--good) }
+  .req.miss{ border-color:var(--bad); color:var(--bad) }
+  .x{ flex:none; color:var(--muted); font-size:15px; cursor:pointer;
+      padding:0 4px; line-height:1 }
+  .x:hover{ color:var(--bad) }
+
+  .foot{ color:var(--muted); font-size:12px; margin-top:12px; line-height:1.8 }
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .hide{ display:none !important }
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:18px; margin-bottom:16px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  /* ---------- חלונית ---------- */
+  #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
+       display:none; align-items:flex-start; justify-content:center;
+       padding:6vh 16px; overflow:auto }
+  #ov.on{ display:flex }
+  .dlg{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+        width:100%; max-width:520px; padding:18px }
+  .dlg h3{ margin:0 0 3px; font-size:17px }
+  .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:14px;
+              line-height:1.7 }
+  .dlg label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 5px }
+  .dlg input, .dlg select{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  .dlg .acts{ display:flex; gap:8px; margin-top:16px; flex-wrap:wrap }
+  .dlg .acts .btn{ padding:10px 18px; font-size:14px }
+  .plist{ max-height:44vh; overflow:auto; margin-top:10px;
+          border:1px solid var(--line); border-radius:8px }
+  .pit{ display:flex; align-items:center; gap:9px; padding:10px 12px;
+        border-bottom:1px solid #24272c; cursor:pointer }
+  .pit:last-child{ border-bottom:0 }
+  .pit:hover{ background:#20242a }
+  .pit .pn{ font-size:14.5px; font-weight:600; flex:1; min-width:0;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .pit .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
+             padding:1px 9px; color:var(--muted); white-space:nowrap }
+  .pit .tag.hit{ border-color:#2f4a33; color:var(--good) }
+  .pit .tag.miss{ border-color:var(--bad); color:var(--bad) }
+  .pit .tag.busy{ border-color:var(--warn); color:var(--warn) }
+  .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh;
+           overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+
+  <div class="top">
+    <div>
+      <h1>ניהול משמרת</h1>
+      <div class="sub" id="stName">—</div>
+    </div>
+    <div class="tabs">
+      <a href="./schedule.html">סידור עבודה</a>
+      <a href="./board.html" class="on">ציוות וכשירות</a>
+      <a href="./quals.html">כשירויות אישיות</a>
+      <a href="./quals.html#redline">קו אדום</a>
+    </div>
+  </div>
+
+  <!-- אין הרשאה -->
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין מה להציג כאן.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="bar">
+      <span class="lbl">משמרת</span>
+      <button class="sw A" data-crew="A">א׳</button>
+      <button class="sw B" data-crew="B">ב׳</button>
+      <button class="sw C" data-crew="C">ג׳</button>
+
+      <div class="sep"></div>
+
+      <span class="verdict ok" id="verdict">—</span>
+      <span class="why ok" id="why"></span>
+
+      <span class="spacer"></span>
+      <button class="btn hide" id="btnAddVeh">＋ רכב</button>
+    </div>
+
+    <div class="chain" id="chain"></div>
+    <div class="fleet" id="fleet"></div>
+
+    <div class="foot" id="foot"></div>
+    <div class="msg" id="msg"></div>
+  </div>
+</div>
+
+<!-- ---------- חלונית ---------- -->
+<div id="ov"><div class="dlg" id="dlg"></div></div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=11';
+import { stationName } from './stations.js?v=11';
+import { renderNav, renderStuckNav } from './nav.js?v=11';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const CREWS   = ['A', 'B', 'C'];
+const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
+
+// ברירת המחדל של אילת, לפי מה שאלדד מסר. נכתבת פעם אחת לתחנה
+// שאין לה עדיין מבנה, וממנה והלאה היא נתון של התחנה — נערכת
+// ונמחקת כמו כל דבר אחר.
+const SEED = {
+  command: [
+    { id: 'c1', rank: 'מפקד משמרת',     req: '' },
+    { id: 'c2', rank: 'סגן מפקד משמרת', req: '' },
+    { id: 'c3', rank: 'קצין אשכול',     req: '' },
+    { id: 'c4', rank: 'קצין חומ״ס',     req: '' }
+  ],
+  vehicles: [
+    { id: 'v1', name: 'רכב אלמוג', role: 'חומ״ס', slots: [
+      { id: 's11', job: 'נהג מפעיל משאבה', req: '' },
+      { id: 's12', job: 'כבאי בכיר',       req: '' },
+      { id: 's13', job: 'אחראי חומ״ס',     req: '' },
+      { id: 's14', job: 'ר. משמרת',        req: '' }
+    ]},
+    { id: 'v2', name: 'רכב געש', role: 'חילוץ', slots: [
+      { id: 's21', job: 'נהג מפעיל משאבה', req: '' },
+      { id: 's22', job: 'כבאי',            req: '' },
+      { id: 's23', job: 'מפעיל סולם',      req: '' },
+      { id: 's24', job: 'ר. משמרת',        req: '' }
+    ]},
+    { id: 'v3', name: 'רכב סער', role: 'כיבוי', slots: [
+      { id: 's31', job: 'כבאי בכיר',  req: '' },
+      { id: 's32', job: 'מתניע מנוף', req: '' },
+      { id: 's33', job: 'חובש',       req: '' },
+      { id: 's34', job: 'ר. משמרת',   req: '' }
+    ]}
+  ]
+};
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind){
+  const m = $('msg');
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+function uid(p){
+  return p + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+}
+
+let SID = '', CAN_EDIT = false, CREW = 'A';
+let board  = { vehicles: [], command: [] };
+let assign = {};          // slotId -> uid
+let people = [];          // כל אנשי התחנה הפעילים
+let quals  = [];          // [{id,name}]
+let held   = {};          // uid -> [qid]
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=board.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  CAN_EDIT = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  CREW = CREWS.indexOf(c.shift) !== -1 ? c.shift : 'A';
+
+  $('work').classList.remove('hide');
+  $('stName').textContent = stationName(SID) || SID;
+  renderNav(c, 'board.html', user.email || '');
+
+  if (CAN_EDIT) $('btnAddVeh').classList.remove('hide');
+  $('foot').textContent = CAN_EDIT
+    ? 'לחיצה על שורה משבצת אדם · לחיצה על ✎ עורכת את המשבצת · המאגר כלל-תחנתי, גם ממשמרות אחרות'
+    : 'לצפייה בלבד. השיבוץ נערך על ידי מפקד משמרת, רכז כוח אדם ומנהל המערכת.';
+
+  await loadStatic();
+  await loadCrew();
+});
+
+// ---------- טעינה ----------
+
+async function loadStatic(){
+  try {
+    const qs = await getDocs(collection(db, 'stations', SID, 'quals'));
+    quals = [];
+    qs.forEach(d => {
+      const v = d.data() || {};
+      quals.push({ id: d.id, name: v.name || '', order: Number(v.order || 0) });
+    });
+    quals.sort((a, b) => a.order - b.order);
+  } catch (ignore) {}
+
+  try {
+    const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
+    people = [];
+    rs.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      people.push({ uid: d.id, full_name: v.full_name || '', crew: v.crew || '' });
+    });
+    people.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את רשימת אנשי התחנה. (' + (e.code || e.message) + ')', 'err');
+  }
+
+  try {
+    const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
+    held = {};
+    ms.forEach(d => {
+      const v = d.data() || {};
+      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+    });
+  } catch (ignore) {}
+
+  try {
+    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
+    if (b.exists()) {
+      const v = b.data() || {};
+      board = {
+        vehicles: Array.isArray(v.vehicles) ? v.vehicles : [],
+        command:  Array.isArray(v.command)  ? v.command  : []
+      };
+    } else {
+      board = JSON.parse(JSON.stringify(SEED));
+      if (CAN_EDIT) await saveBoard('המבנה ההתחלתי נוצר. אפשר לשנות הכל.');
+    }
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
+  }
+}
+
+// השיבוץ נפרד לכל משמרת, ולכן נטען מחדש בכל החלפה.
+async function loadCrew(){
+  assign = {};
+  try {
+    const s = await getDoc(doc(db, 'stations', SID, 'shifts', CREW));
+    if (s.exists()) {
+      const v = s.data() || {};
+      assign = (v.assign && typeof v.assign === 'object') ? v.assign : {};
+    }
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את השיבוץ של משמרת ' + CREW_HE[CREW] +
+        '. (' + (e.code || e.message) + ')', 'err');
+  }
+  render();
+}
+
+async function saveBoard(okText){
+  await setDoc(doc(db, 'stations', SID, 'config', 'board'), {
+    vehicles: board.vehicles, command: board.command,
+    updated_at: serverTimestamp(), by: auth.currentUser.uid
+  });
+  if (okText) msg(okText, 'ok');
+}
+
+async function saveAssign(okText){
+  await setDoc(doc(db, 'stations', SID, 'shifts', CREW),
+               { assign: assign, updated_at: serverTimestamp(),
+                 by: auth.currentUser.uid },
+               { merge: true });
+  if (okText) msg(okText, 'ok');
+}
+
+// ---------- עזר ----------
+
+function person(u){
+  const p = people.filter(x => x.uid === u)[0];
+  return p || null;
+}
+function qualName(id){
+  const q = quals.filter(x => x.id === id)[0];
+  return q ? q.name : '';
+}
+function hasQual(u, qid){
+  return !qid || (held[u] || []).indexOf(qid) !== -1;
+}
+// אדם ששובץ כבר במשבצת אחרת באותה משמרת. לא נחסם — לפעמים
+// אותו אדם באמת מופיע בשתי משבצות — אבל חייב להיות מסומן.
+function assignedElsewhere(u, exceptSlot){
+  return Object.keys(assign).some(function (sid2) {
+    return sid2 !== exceptSlot && assign[sid2] === u;
+  });
+}
+function allSlots(){
+  const out = board.command.map(c => ({ id: c.id, job: c.rank, req: c.req || '' }));
+  board.vehicles.forEach(function (v) {
+    (v.slots || []).forEach(function (s) {
+      out.push({ id: s.id, job: s.job, req: s.req || '' });
+    });
+  });
+  return out;
+}
+
+// ---------- ציור ----------
+
+function render(){
+  CREWS.forEach(function (c) {
+    const b = document.querySelector('.sw[data-crew="' + c + '"]');
+    if (b) b.className = 'sw ' + c + (c === CREW ? ' on' : '');
+  });
+  renderChain();
+  renderFleet();
+  renderVerdict();
+}
+
+function renderChain(){
+  const box = $('chain');
+  box.innerHTML = '';
+  board.command.forEach(function (c, i) {
+    const u = assign[c.id] || '';
+    const p = u ? person(u) : null;
+    const div = document.createElement('div');
+    div.className = 'node' + (i === 0 ? ' head' : '') + (p ? '' : ' empty') +
+                    (CAN_EDIT ? ' click' : '');
+    div.innerHTML =
+      '<span class="rank">' + esc(c.rank) + '</span>' +
+      '<span class="who">' + (p ? esc(p.full_name) : 'לא מאויש') + '</span>' +
+      '<span class="meta">' + (
+        !c.req ? '' :
+        !p     ? 'דורש ' + esc(qualName(c.req)) :
+        (hasQual(u, c.req) ? '✓ ' : '✗ ') + esc(qualName(c.req))
+      ) + '</span>';
+    if (CAN_EDIT) div.onclick = () => pickPerson(c.id, c.rank, c.req || '');
+    box.appendChild(div);
+  });
+}
+
+function renderFleet(){
+  const box = $('fleet');
+  box.innerHTML = '';
+
+  if (!board.vehicles.length) {
+    box.innerHTML = '<div class="card"><div class="note">' +
+      'אין עדיין רכבים. ' +
+      (CAN_EDIT ? 'לחץ "＋ רכב" כדי להוסיף.' : 'מפקד המשמרת יוסיף אותם.') +
+      '</div></div>';
+    return;
+  }
+
+  board.vehicles.forEach(function (v) {
+    const slots = v.slots || [];
+    const filled = slots.filter(s => assign[s.id]).length;
+
+    const card = document.createElement('div');
+    card.className = 'veh';
+
+    const hd = document.createElement('div');
+    hd.className = 'hd';
+    hd.innerHTML =
+      '<span class="nm">' + esc(v.name) + '</span>' +
+      (v.role ? '<span class="role">' + esc(v.role) + '</span>' : '') +
+      '<span class="cnt' + (filled < slots.length ? ' bad' : '') + '">' +
+        filled + ' מתוך ' + slots.length + '</span>';
+
+    if (CAN_EDIT) {
+      const tools = document.createElement('div');
+      tools.className = 'tools';
+      const e1 = document.createElement('button');
+      e1.className = 'btn'; e1.textContent = '✎';
+      e1.title = 'שם הרכב';
+      e1.onclick = () => editVehicle(v);
+      const e2 = document.createElement('button');
+      e2.className = 'btn'; e2.textContent = '＋ משבצת';
+      e2.onclick = () => editSlot(v, null);
+      tools.appendChild(e1); tools.appendChild(e2);
+      hd.appendChild(tools);
+    }
+    card.appendChild(hd);
+
+    slots.forEach(function (s) {
+      const u = assign[s.id] || '';
+      const p = u ? person(u) : null;
+      const miss = !!(s.req && p && !hasQual(u, s.req));
+
+      const row = document.createElement('div');
+      row.className = 'srow' + (miss ? ' bad' : '') + (CAN_EDIT ? ' click' : '');
+
+      const job = document.createElement('span');
+      job.className = 'job';
+      job.textContent = s.job || '—';
+
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.innerHTML = p
+        ? esc(p.full_name) +
+          (p.crew && p.crew !== CREW
+            ? '<span class="cw ' + esc(p.crew) + '">' + (CREW_HE[p.crew] || p.crew) + '</span>'
+            : '')
+        : '<span class="none">לא מאויש</span>';
+
+      const req = document.createElement('span');
+      if (s.req) {
+        req.className = 'req ' + (p ? (miss ? 'miss' : 'hit') : '');
+        req.textContent = (p ? (miss ? '✗ ' : '✓ ') : '') + qualName(s.req);
+        req.title = qualName(s.req);
+      } else {
+        req.className = 'req';
+        req.textContent = '—';
+      }
+
+      row.appendChild(job); row.appendChild(who); row.appendChild(req);
+
+      if (CAN_EDIT) {
+        row.onclick = () => pickPerson(s.id, s.job, s.req || '');
+        const pen = document.createElement('span');
+        pen.className = 'x'; pen.textContent = '✎'; pen.title = 'ערוך משבצת';
+        pen.onclick = (ev) => { ev.stopPropagation(); editSlot(v, s); };
+        row.appendChild(pen);
+      }
+      card.appendChild(row);
+    });
+
+    box.appendChild(card);
+  });
+}
+
+function renderVerdict(){
+  const slots = allSlots();
+  const open = slots.filter(s => !assign[s.id]).length;
+  const wrong = slots.filter(s => s.req && assign[s.id] &&
+                                  !hasQual(assign[s.id], s.req)).length;
+
+  const bad = open > 0 || wrong > 0;
+  $('verdict').className = 'verdict ' + (bad ? 'bad' : 'ok');
+  $('verdict').textContent = bad ? 'לא כשירה' : 'כשירה';
+
+  const parts = [];
+  if (open) {
+    parts.push(open === 1 ? '<b>משבצת אחת</b> לא מאוישת'
+                          : '<b>' + open + '</b> משבצות לא מאוישות');
+  }
+  if (wrong) {
+    parts.push(wrong === 1 ? '<b>שיבוץ אחד</b> בלי הכשירות הנדרשת'
+                           : '<b>' + wrong + '</b> שיבוצים בלי הכשירות הנדרשת');
+  }
+  if (!parts.length) {
+    parts.push('כל <b>' + slots.length + '</b> המשבצות מאוישות ומתאימות');
+  }
+  $('why').className = 'why ' + (bad ? '' : 'ok');
+  $('why').innerHTML = parts.join(' · ');
+}
+
+// ---------- חלונית ----------
+
+function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+$('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
+
+function openOv(html){
+  $('dlg').innerHTML = html;
+  $('ov').classList.add('on');
+}
+
+// בחירת אדם. הרשימה כלל-תחנתית במכוון: מי שמשובץ במשמרת אחרת
+// עדיין יכול לאייש משבצת כאן, וזה בדיוק המצב שבו צריך אותו.
+function pickPerson(slotId, jobLabel, req){
+  const cur = assign[slotId] || '';
+  openOv(
+    '<h3>' + esc(jobLabel || 'משבצת') + '</h3>' +
+    '<div class="hint">משמרת ' + CREW_HE[CREW] +
+      (req ? ' · דורש <b>' + esc(qualName(req)) + '</b>' : '') +
+      '<br>הרשימה כוללת את כל אנשי התחנה, גם ממשמרות אחרות.</div>' +
+    '<input type="text" id="pq" placeholder="חיפוש שם" autocomplete="off">' +
+    '<div class="plist" id="plist"></div>' +
+    '<div class="acts">' +
+      (cur ? '<button class="btn" id="pclear">פנה את המשבצת</button>' : '') +
+      '<button class="btn" id="pcancel">סגור</button>' +
+    '</div>'
+  );
+
+  const draw = function () {
+    const term = String($('pq').value || '').trim().toLowerCase();
+    const list = people.filter(p =>
+      !term || String(p.full_name).toLowerCase().indexOf(term) !== -1);
+
+    const box = $('plist');
+    box.innerHTML = '';
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">לא נמצא אף אחד בשם הזה.</div>';
+      return;
+    }
+    list.slice(0, 60).forEach(function (p) {
+      const it = document.createElement('div');
+      it.className = 'pit';
+      let tags = '';
+      if (p.crew) {
+        tags += '<span class="tag">משמרת ' + esc(CREW_HE[p.crew] || p.crew) + '</span>';
+      }
+      if (req) {
+        tags += hasQual(p.uid, req)
+          ? '<span class="tag hit">✓ ' + esc(qualName(req)) + '</span>'
+          : '<span class="tag miss">✗ ' + esc(qualName(req)) + '</span>';
+      }
+      if (assignedElsewhere(p.uid, slotId)) {
+        tags += '<span class="tag busy">כבר משובץ</span>';
+      }
+      it.innerHTML = '<span class="pn">' + esc(p.full_name || '(בלי שם)') +
+                     '</span>' + tags;
+      it.onclick = async () => {
+        assign[slotId] = p.uid;
+        closeOv();
+        render();
+        try { await saveAssign('שובץ: ' + (p.full_name || '')); }
+        catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+      };
+      box.appendChild(it);
+    });
+  };
+
+  $('pq').addEventListener('input', draw);
+  draw();
+  $('pq').focus();
+
+  if ($('pclear')) $('pclear').onclick = async () => {
+    delete assign[slotId];
+    closeOv();
+    render();
+    try { await saveAssign('המשבצת פונתה.'); }
+    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  $('pcancel').onclick = closeOv;
+}
+
+function qualOptions(sel){
+  let h = '<option value="">ללא דרישה</option>';
+  quals.forEach(function (q) {
+    h += '<option value="' + esc(q.id) + '"' + (q.id === sel ? ' selected' : '') +
+         '>' + esc(q.name) + '</option>';
+  });
+  return h;
+}
+
+function editVehicle(v){
+  openOv(
+    '<h3>רכב</h3>' +
+    '<div class="hint">השם והייעוד מופיעים בראש הכרטיס.</div>' +
+    '<label>שם הרכב</label>' +
+    '<input type="text" id="vn" maxlength="30" value="' + esc(v.name) + '">' +
+    '<label>ייעוד</label>' +
+    '<input type="text" id="vr" maxlength="20" value="' + esc(v.role || '') + '">' +
+    '<div class="acts">' +
+      '<button class="btn go" id="vsave">שמור</button>' +
+      '<button class="btn" id="vdel">מחק רכב</button>' +
+      '<button class="btn" id="vcancel">ביטול</button>' +
+    '</div>'
+  );
+  $('vsave').onclick = async () => {
+    const n = String($('vn').value || '').trim();
+    if (!n) { msg('צריך שם לרכב.', 'err'); return; }
+    v.name = n; v.role = String($('vr').value || '').trim();
+    closeOv(); render();
+    try { await saveBoard('הרכב עודכן.'); }
+    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  $('vdel').onclick = async () => {
+    (v.slots || []).forEach(s => { delete assign[s.id]; });
+    board.vehicles = board.vehicles.filter(x => x.id !== v.id);
+    closeOv(); render();
+    try { await saveBoard('הרכב נמחק.'); await saveAssign(); }
+    catch (e) { msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  $('vcancel').onclick = closeOv;
+}
+
+// slot === null פירושו הוספה
+function editSlot(v, slot){
+  const isNew = !slot;
+  openOv(
+    '<h3>' + (isNew ? 'משבצת חדשה' : 'משבצת') + '</h3>' +
+    '<div class="hint">ב-' + esc(v.name) + '. התפקיד נכתב חופשי. ' +
+      'הכשירות נבחרת מהמערך של התחנה — היא מה שנבדק מול האדם ששובץ.</div>' +
+    '<label>תפקיד</label>' +
+    '<input type="text" id="sj" maxlength="30" value="' +
+      esc(isNew ? '' : slot.job) + '">' +
+    '<label>כשירות נדרשת</label>' +
+    '<select id="sr">' + qualOptions(isNew ? '' : (slot.req || '')) + '</select>' +
+    '<div class="acts">' +
+      '<button class="btn go" id="ssave">שמור</button>' +
+      (isNew ? '' : '<button class="btn" id="sdel">מחק משבצת</button>') +
+      '<button class="btn" id="scancel">ביטול</button>' +
+    '</div>'
+  );
+  $('ssave').onclick = async () => {
+    const j = String($('sj').value || '').trim();
+    if (!j) { msg('צריך שם תפקיד.', 'err'); return; }
+    const r = $('sr').value || '';
+    if (isNew) {
+      v.slots = v.slots || [];
+      v.slots.push({ id: uid('s'), job: j, req: r });
+    } else {
+      slot.job = j; slot.req = r;
+    }
+    closeOv(); render();
+    try { await saveBoard(isNew ? 'המשבצת נוספה.' : 'המשבצת עודכנה.'); }
+    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  if (!isNew) $('sdel').onclick = async () => {
+    delete assign[slot.id];
+    v.slots = (v.slots || []).filter(x => x.id !== slot.id);
+    closeOv(); render();
+    try { await saveBoard('המשבצת נמחקה.'); await saveAssign(); }
+    catch (e) { msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  $('scancel').onclick = closeOv;
+}
+
+$('btnAddVeh').onclick = () => {
+  openOv(
+    '<h3>רכב חדש</h3>' +
+    '<div class="hint">הרכב נוסף לשלוש המשמרות. השיבוץ נפרד לכל אחת.</div>' +
+    '<label>שם הרכב</label>' +
+    '<input type="text" id="vn" maxlength="30" placeholder="רכב סער">' +
+    '<label>ייעוד</label>' +
+    '<input type="text" id="vr" maxlength="20" placeholder="כיבוי">' +
+    '<div class="acts">' +
+      '<button class="btn go" id="vsave">הוסף</button>' +
+      '<button class="btn" id="vcancel">ביטול</button>' +
+    '</div>'
+  );
+  $('vsave').onclick = async () => {
+    const n = String($('vn').value || '').trim();
+    if (!n) { msg('צריך שם לרכב.', 'err'); return; }
+    board.vehicles.push({
+      id: uid('v'), name: n,
+      role: String($('vr').value || '').trim(), slots: []
+    });
+    closeOv(); render();
+    try { await saveBoard('הרכב נוסף. עכשיו אפשר להוסיף לו משבצות.'); }
+    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  };
+  $('vcancel').onclick = closeOv;
+};
+
+CREWS.forEach(function (c) {
+  const b = document.querySelector('.sw[data-crew="' + c + '"]');
+  if (b) b.onclick = async () => { CREW = c; msg('', ''); await loadCrew(); };
+});
+</script>
+</body>
+</html>

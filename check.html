@@ -72,7 +72,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=10';
+import { firebaseConfig } from './firebase-config.js?v=11';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -80,7 +80,7 @@ import { getFirestore, collection, getDocs, query, where, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { renderStuckNav, renderNav } from './nav.js?v=10';
+import { renderStuckNav, renderNav } from './nav.js?v=11';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

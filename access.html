@@ -108,7 +108,7 @@
   <div class="sub">מי רשום בתחנה, ותאריך הכניסה האחרון שלו.</div>
 
   <!-- כניסה -->
-  <div class="card" id="authCard">
+  <div class="card hide" id="authCard">
     <div class="state">הכניסה למסך הזה מותרת לסגל התחנה ולמנהל המערכת.</div>
     <label>מספר עובד או מייל</label>
     <input type="text" id="who" autocomplete="username">
@@ -162,9 +162,9 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=10';
-import { STATIONS, stationName } from './stations.js?v=10';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=10';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=11';
+import { STATIONS, stationName } from './stations.js?v=11';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=11';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }

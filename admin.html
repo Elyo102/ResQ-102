@@ -106,7 +106,7 @@
   <div class="sub">תחנת כיבוי אילת</div>
 
   <!-- כניסה -->
-  <div class="card" id="authCard">
+  <div class="card hide" id="authCard">
     <label>מייל</label>
     <input type="email" id="email" autocomplete="username">
     <label>סיסמה</label>
@@ -268,7 +268,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=10';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=11';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -278,10 +278,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=10';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=11';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=10';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=10';
+  from './stations.js?v=11';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=11';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
