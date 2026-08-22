@@ -68,7 +68,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=5';
+import { firebaseConfig } from './firebase-config.js?v=7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -76,7 +76,7 @@ import { getFirestore, collection, getDocs, query, where, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { renderStuckNav } from './nav.js?v=5';
+import { renderStuckNav, renderNav } from './nav.js?v=7';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -135,7 +135,8 @@ async function checkDirectory(){
   } catch (e) {
     line('dir', 'קריאת הספרייה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
     line('dir', 'משמעות',
-         'כללי האבטחה חסמו את הקריאה. בדוק את שורת "מייל בטוקן" למעלה.', 'warn');
+         'כללי האבטחה חסמו את הקריאה. הספרייה פתוחה רק למי שאושר ' +
+         'ויש לו מספר עובד, או למנהל מערכת.', 'warn');
     return;
   }
 
@@ -238,7 +239,12 @@ async function checkFunctions(){
 // (למנהל-על בלבד). אם ספריית החיפוש נבדקת לפניה, הדוח מציג
 // מצב שכבר לא נכון — וזה בדיוק מה שבלבל ב-22.8.
 async function runAll(user){
-  await checkWho(user);
+  const c = await checkWho(user);
+  if (c) renderNav(c, 'check.html', (user && user.email) || '');
+  await runRest(c);
+}
+
+async function runRest(){
   await checkFunctions();
   await checkDirectory();
   await runSearch();

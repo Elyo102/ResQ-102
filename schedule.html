@@ -117,6 +117,8 @@
     <div class="err" id="authErr"></div>
   </div>
 
+  <div class="card center hide" id="blocked"></div>
+
   <!-- תצוגה -->
   <div id="mainView" class="hide">
 
@@ -163,16 +165,16 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=5';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=7';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
-  from './rotation.js?v=5';
+  from './rotation.js?v=7';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -185,6 +187,15 @@ const $ = id => document.getElementById(id);
 // הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
 // לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
 // מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+// מסך חסימה גלוי, במקום הודעה שנכתבת לתוך טופס כניסה מת.
+function showBlocked(text){
+  $('authView').classList.add('hide');
+  $('mainView').classList.add('hide');
+  const box = $('blocked');
+  box.textContent = text;
+  box.classList.remove('hide');
+}
+
 function goSignIn(){
   const back = encodeURIComponent(location.pathname.split('/').pop() || '');
   location.replace('./login.html?next=' + back);
@@ -234,24 +245,36 @@ onAuthStateChanged(auth, async user => {
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
   try {
-    const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+    // התחנה מגיעה מהטוקן. הקבוע שימש כברירת מחדל בלבד, וכל כבאי
+    // שאינו באילת היה נתקע כאן במסך שגיאה בלי דרך המשך.
+    const sid = claims.stationId || STATION_ID;
+    const s = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
     if (!s.exists()) {
       renderStuckNav(user.email || '');
-      $('authErr').textContent = 'החשבון אינו מקושר לכבאי. פנה לרכז/ת משאבי אנוש.';
-      $('authErr').style.display = 'block';
+      showBlocked('החשבון אינו משויך לכבאי בתחנה הזו. פנה למנהל המערכת.');
       return;
     }
     me = s.data();
   } catch (e) {
-    $('authErr').textContent = 'שגיאה בטעינת הפרופיל.';
-    $('authErr').style.display = 'block';
+    renderStuckNav(user.email || '');
+    showBlocked('שגיאה בטעינת הפרופיל: ' + (e.code || e.message || ''));
     return;
   }
 
   try {
-    const rs = await getDocs(collection(db, 'stations', STATION_ID, 'rotations'));
+    const rs = await getDocs(
+      collection(db, 'stations', claims.stationId || STATION_ID, 'rotations'));
     rotations = rs.docs.map(d => d.data());
-  } catch (ignore) { rotations = []; }
+  } catch (e) {
+    // הבחנה חשובה: "אין מחזור" ו"אין לך הרשאה לקרוא" נראים אותו
+    // דבר כשבולעים את השגיאה, ומי שנחסם חושב שהתחנה לא הוגדרה.
+    rotations = [];
+    if (String(e.code || '').indexOf('permission-denied') !== -1) {
+      renderStuckNav(user.email || '');
+      showBlocked('אין לך הרשאה לקרוא את סידור התחנה הזו.');
+      return;
+    }
+  }
 
   $('meName').textContent = me.full_name;
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +

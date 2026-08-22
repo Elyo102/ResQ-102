@@ -34,6 +34,7 @@
         line-height:1.6; display:none }
   .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
   .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
   .hide{ display:none }
 
   .tbl{ width:100%; border-collapse:collapse; margin-top:14px; font-size:14px }
@@ -157,9 +158,9 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=5';
-import { STATIONS, stationName } from './stations.js?v=5';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=7';
+import { STATIONS, stationName } from './stations.js?v=7';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }
@@ -280,11 +281,11 @@ onAuthStateChanged(auth, async user => {
   STATIONS.forEach(function (st) {
     const on = st.id === want;
     if (on) found = true;
-    html += '<option value="' + st.id + '"' + (on ? ' selected' : '') +
-            '>' + st.name + '</option>';
+    html += '<option value="' + esc(st.id) + '"' + (on ? ' selected' : '') +
+            '>' + esc(st.name) + '</option>';
   });
   if (want && !found) {
-    html += '<option value="' + want + '" selected>' + want +
+    html += '<option value="' + esc(want) + '" selected>' + esc(want) +
             ' — לא ברשימה</option>';
   }
   $('sid').innerHTML = html;
@@ -309,7 +310,7 @@ async function load(){
 
   const btn = $('btnLoad');
   btn.disabled = true;
-  msg('msg', 'טוען...', '');
+  msg('msg', 'טוען...', 'info');
   $('tbl').classList.add('hide');
   $('rows').innerHTML = '';
   $('summary').innerHTML = '';
@@ -318,7 +319,13 @@ async function load(){
 
   try {
     const us = await getDocs(collection(db, 'stations', sid, 'users'));
-    us.forEach(d => users.push(Object.assign({ uid: d.id }, d.data())));
+    // is_active=false נכתב בעת עזיבה. בלי הסינון הזה מי שהוסרו לו
+    // ההרשאות המשיך להופיע כאן עם טלפון ומייל.
+    us.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      users.push(Object.assign({ uid: d.id }, v));
+    });
   } catch (e) {
     msg('msg', 'אין הרשאה לקרוא את התחנה הזו, או שהיא לא קיימת. (' +
         (e.code || e.message) + ')', 'err');
@@ -332,7 +339,7 @@ async function load(){
   } catch (ignore) {}
 
   if (!users.length) {
-    msg('msg', 'אין כבאים רשומים בתחנה הזו.', '');
+    msg('msg', 'אין כבאים רשומים בתחנה הזו.', 'info');
     btn.disabled = false;
     return;
   }

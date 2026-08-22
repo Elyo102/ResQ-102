@@ -19,14 +19,22 @@ const ITEMS = [
   { href: 'check.html',    label: 'בדיקת מערכת', who: 'super',  dot: '#9aa0a6' }
 ];
 
-const STAFF_ROLES = ['commander', 'hr_coordinator', 'district_commander'];
+// מה שהשרת מתיר בפועל. מפקד מחוז אינו staff באף כלל אבטחה
+// היום — הצגת הכפתורים לו הייתה שולחת אותו לשלושה מסכים
+// שכולם נחסמים, ואחד מהם אף מציג הודעה שגויה.
+const STAFF_ROLES = ['commander', 'hr_coordinator'];
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';
   if (who === 'any')    return true;
   if (who === 'super')  return isSuper;
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(claims.role) !== -1;
-  if (who === 'member') return isSuper || !!claims.role;
+  // בדיוק אותה רשימה כמו member() בכללי האבטחה. מפקד מחוז אינו
+  // כלול, ולכן אסור להציג לו "סידור עבודה" — הוא ייחסם בשרת.
+  if (who === 'member') {
+    return isSuper ||
+           ['firefighter', 'commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+  }
   return false;
 }
 

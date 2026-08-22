@@ -246,10 +246,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=7';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=5';
-import { renderNav, clearNav } from './nav.js?v=5';
+  from './stations.js?v=7';
+import { renderNav, clearNav } from './nav.js?v=7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -582,6 +582,10 @@ function showWho(user){
   $('waitWho').textContent = 'מחובר כרגע: ' + (user && user.email ? user.email : '—');
 }
 
+// מי שממתין לאישור עדיין צריך דרך חזרה הביתה — בלי תפקיד, אבל
+// לא בלי ניווט.
+function claims0(){ return {}; }
+
 // הסרגל מופיע רק אחרי כניסה. במסך הכניסה עצמו אין לאן לנווט.
 function navFor(claims, user, name){
   document.body.classList.add('with-nav');
@@ -599,6 +603,7 @@ function showNotLinked(user){
   $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
                               'התנתק והירשם מחדש.';
   showWho(user);
+  navFor(claims0(), user, '');
 
   // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
   const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
@@ -618,6 +623,7 @@ function showWaiting(user){
                               'עם האישור יוקצה לך מספר עובד.<br><br>' +
                               '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
   showWho(user);
+  navFor(claims0(), user, '');
   $('btnBootstrap').classList.add('hide');
   showView('wait');
 }
@@ -749,7 +755,17 @@ $('btnDoSearch').onclick = async () => {
       return;
     }
 
-    const rows = snaps.docs.slice();
+    const rows = snaps.docs.filter(function (d) {
+      return (d.data() || {}).is_active !== false;
+    });
+
+    if (!rows.length) {
+      $('sMsg').textContent = 'לא נמצאו תוצאות עבור "' + raw + '".';
+      $('sMsg').className = 'msg info';
+      btn.disabled = false;
+      return;
+    }
+
     rows.sort(function (a, b) {
       return String(a.data().full_name || '')
         .localeCompare(String(b.data().full_name || ''), 'he');

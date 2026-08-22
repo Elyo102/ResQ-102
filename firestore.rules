@@ -44,6 +44,15 @@ service cloud.firestore {
       return request.auth.token.get(key, '');
     }
 
+    // הרשמה פתוחה לכל אחד, ולכן "מחובר" אינו "עובד". בלי ההבחנה
+    // הזו כל אדם בעולם היה נרשם בכתובת חד-פעמית וקורא את ספריית
+    // העובדים הארצית — שם, תפקיד, משמרת ותחנה של כל כבאי במדינה.
+    //
+    // מספר עובד קיים בטוקן רק אחרי אישור מנהל.
+    function approved() {
+      return signedIn() && claim('emp') != '';
+    }
+
     // מנהל-על. שדה ה-super מגיע מהפונקציה bootstrapSuperAdmin.
     // בדיקת המייל היא רשת ביטחון: אם ה-claim נמחק בטעות,
     // מנהל המערכת עדיין יכול להיכנס ולתקן. חייב להיות זהה
@@ -164,7 +173,7 @@ service cloud.firestore {
     // נכתב על ידי השרת בלבד.
 
     match /directory/{uid} {
-      allow read:  if signedIn();
+      allow read:  if approved() || isSuper();
       allow write: if false;
     }
 
@@ -172,7 +181,7 @@ service cloud.firestore {
     // ---------- כללי שכר (גלובלי) ----------
 
     match /salary_rules/{versionId} {
-      allow read:  if signedIn();
+      allow read:  if approved() || isSuper();
       allow write: if isSuper();
     }
 
@@ -188,7 +197,11 @@ service cloud.firestore {
     // ---------- התחנה ----------
 
     match /stations/{sid} {
-      allow read:  if member(sid) || inDistrict(resource.data.district);
+      // השדה נקרא districtId בכל המערכת; הגרסה הקודמת חיפשה
+      // district ולכן נכשלה תמיד. שים לב שמסמך התחנה עצמו אינו
+      // נוצר היום — כל עוד כך, מפקד מחוז עדיין ייחסם, כי resource
+      // הוא null. זה נשאר פתוח עד שניצור את מסמכי התחנות.
+      allow read:  if member(sid) || inDistrict(resource.data.get('districtId', ''));
       allow write: if isSuper();
 
 
@@ -269,10 +282,15 @@ service cloud.firestore {
         allow read: if staff(sid)
                     || (signedIn() && request.auth.uid == uid);
 
-        allow write: if signedIn()
+        // הגרסה הקודמת אפשרה לכל מחובר לכתוב לכל תחנה בארץ, ולציין
+        // מספר עובד ושם של מישהו אחר, ותאריך כניסה מומצא — בקובץ
+        // שכל מטרתו היא בקרת גישה.
+        allow write: if member(sid)
                      && request.auth.uid == uid
                      && request.resource.data.keys().hasOnly(
-                          ['last_seen', 'last_login', 'emp', 'full_name', 'crew']);
+                          ['last_seen', 'last_login', 'emp', 'full_name', 'crew'])
+                     && request.resource.data.get('emp', myEmp()) == myEmp()
+                     && request.resource.data.get('last_login', request.time) == request.time;
       }
 
 
@@ -323,24 +341,25 @@ service cloud.firestore {
 
       match /attendance/{docId} {
         allow read: if staff(sid)
-                    || (member(sid) && resource.data.emp_number == myEmp());
+                    || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
         allow create: if staff(sid)
                       || (member(sid)
-                          && request.resource.data.emp_number == myEmp()
-                          && request.resource.data.status != 'approved');
+                          && request.resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.keys().hasAll(['status'])
+                          && request.resource.data.get('status', '') != 'approved');
 
         allow update: if staff(sid)
                       || (member(sid)
-                          && resource.data.emp_number == myEmp()
-                          && request.resource.data.emp_number == resource.data.emp_number
-                          && resource.data.status != 'approved'
-                          && request.resource.data.status != 'approved');
+                          && resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
+                          && resource.data.get('status', '') != 'approved'
+                          && request.resource.data.get('status', '') != 'approved');
 
         allow delete: if staff(sid)
                       || (member(sid)
-                          && resource.data.emp_number == myEmp()
-                          && resource.data.status != 'approved');
+                          && resource.data.get('emp_number', '') == myEmp()
+                          && resource.data.get('status', '') != 'approved');
       }
 
 
@@ -369,16 +388,16 @@ service cloud.firestore {
         // המבקש יכול רק לבטל, וגם זה רק כל עוד לא אושרה סופית.
 
         allow create: if member(sid)
-                      && request.resource.data.requester_emp == myEmp()
-                      && request.resource.data.status == 'sent';
+                      && request.resource.data.get('requester_emp', '') == myEmp()
+                      && request.resource.data.get('status', '') == 'sent';
 
         allow update: if staff(sid)
                       || (member(sid)
-                          && resource.data.requester_emp == myEmp()
-                          && resource.data.status != 'approved'
-                          && request.resource.data.status == 'cancelled'
-                          && request.resource.data.requester_emp == resource.data.requester_emp
-                          && request.resource.data.target_emp == resource.data.target_emp);
+                          && resource.data.get('requester_emp', '') == myEmp()
+                          && resource.data.get('status', '') != 'approved'
+                          && request.resource.data.get('status', '') == 'cancelled'
+                          && request.resource.data.get('requester_emp', '') == resource.data.get('requester_emp', '')
+                          && request.resource.data.get('target_emp', '') == resource.data.get('target_emp', ''));
 
         allow delete: if staff(sid);
       }
@@ -388,9 +407,9 @@ service cloud.firestore {
 
       match /documents/{docId} {
         allow read: if hr(sid)
-                    || (member(sid) && resource.data.emp_number == myEmp());
+                    || (member(sid) && resource.data.get('emp_number', '') == myEmp());
         allow create: if member(sid)
-                      && request.resource.data.emp_number == myEmp();
+                      && request.resource.data.get('emp_number', '') == myEmp();
         allow update, delete: if hr(sid);
       }
 

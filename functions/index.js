@@ -17,6 +17,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -32,6 +33,10 @@ const VALID_ROLES = [
   'firefighter', 'commander', 'hr_coordinator', 'district_commander'
 ];
 const VALID_SHIFTS = ['A', 'B', 'C'];
+
+// המחוזות מאומתים בשרת. עד עכשיו הרשימה חיה רק בקוד הדפדפן,
+// כלומר כל מחרוזת שהגיעה מהטופס נכנסה כמות שהיא להרשאות.
+const KNOWN_DISTRICTS = ['south', 'center', 'north', 'jerusalem', 'haifa', 'dan'];
 
 // המפתח הציבורי של אפליקציית הווב. מופיע ממילא ב-firebase-config.js
 // ונשלח לכל דפדפן — הוא מזהה את הפרויקט, לא מעניק גישה.
@@ -97,13 +102,10 @@ function button(href, text) {
          'font-size:15px;margin:8px 0">' + text + '</a>';
 }
 
+// Math.random אינו מחולל אקראיות קריפטוגרפית — אפשר לשחזר את
+// מצבו מכמה פלטים, ומופעי הפונקציות ממוחזרים בין קריאות.
 function randomToken() {
-  const c = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < 40; i++) {
-    out += c.charAt(Math.floor(Math.random() * c.length));
-  }
-  return out;
+  return crypto.randomBytes(24).toString('hex');
 }
 
 // ---------------------------------------------------------------------
@@ -226,6 +228,27 @@ function namePrefixes(fullName) {
   return Object.keys(out);
 }
 
+// מכבה אדם בכל המקומות שבהם הוא מופיע: ספרייה, תחנה, רשימת
+// התחנה, ומפתח הכניסה לפי מספר עובד.
+async function deactivateEverywhere(uid, before) {
+  const off = { is_active: false, updated_at: FV.serverTimestamp() };
+  const sid = String((before || {}).stationId || '');
+  const emp = String((before || {}).emp || '');
+
+  await db.doc('directory/' + uid).set(off, { merge: true }).catch(function () {});
+
+  if (sid) {
+    await db.doc('stations/' + sid + '/users/'  + uid).set(off, { merge: true })
+            .catch(function () {});
+    await db.doc('stations/' + sid + '/roster/' + uid).set(off, { merge: true })
+            .catch(function () {});
+  }
+
+  if (emp) {
+    await db.doc('emp_index/' + emp).delete().catch(function () {});
+  }
+}
+
 async function resolveUser(data) {
   if (data.uid)   return admin.auth().getUser(String(data.uid));
   if (data.email) return admin.auth().getUserByEmail(String(data.email).toLowerCase());
@@ -300,7 +323,14 @@ exports.bootstrapSuperAdmin = onCall(async (req) => {
   }
 
   const audit = await openAudit(auth, 'bootstrap_super_admin', auth.uid, { email: email });
-  await admin.auth().setCustomUserClaims(auth.uid, { super: true, role: 'super_admin' });
+
+  // מיזוג ולא דריסה. אלדד הוא לוחם אש וגם מנהל; דריסה הייתה
+  // מוחקת לו מספר עובד, תחנה, מחוז ומשמרת בלחיצה אחת.
+  const cur = (await admin.auth().getUser(auth.uid)).customClaims || {};
+  const merged = Object.assign({}, cur, { super: true });
+  if (!merged.role) merged.role = 'super_admin';
+  await admin.auth().setCustomUserClaims(auth.uid, merged);
+
   await sealAudit(audit);
 
   return {
@@ -331,6 +361,13 @@ exports.approveRegistration = onCall(async (req) => {
   }
   const r = reqSnap.data();
 
+  // הבקשה נקראת מחדש ברגע האישור. אם הכבאי מחק ויצר אותה מחדש
+  // בזמן שהמסך היה פתוח, הערכים כאן אינם מה שהמאשר ראה.
+  if (String(r.status || '') !== 'pending') {
+    throw new HttpsError('failed-precondition',
+      'הבקשה כבר טופלה או שונתה. רענן את הרשימה ונסה שוב.');
+  }
+
   const stationId  = String(d.stationId  || r.stationId  || '');
   const districtId = String(d.districtId || r.districtId || '');
   const role       = VALID_ROLES.indexOf(d.role) !== -1 ? d.role : 'firefighter';
@@ -338,6 +375,17 @@ exports.approveRegistration = onCall(async (req) => {
 
   if (!stationId)  throw new HttpsError('invalid-argument', 'חסרה תחנה.');
   if (!districtId) throw new HttpsError('invalid-argument', 'חסר מחוז.');
+  if (KNOWN_DISTRICTS.indexOf(districtId) === -1) {
+    throw new HttpsError('invalid-argument', 'מחוז לא מוכר: ' + districtId);
+  }
+
+  // שם חסר יוצר כבאי אנונימי שלא נמצא בחיפוש ומוצג בכל מסך
+  // ככתובת מייל. אותה בדיקה כבר קיימת בהענקת תפקיד ידנית.
+  const fullName = String(d.full_name || r.full_name || '').trim();
+  if (!fullName) {
+    throw new HttpsError('invalid-argument',
+      'לבקשה אין שם מלא. הוסף אותו לפני האישור.');
+  }
   if (role === 'district_commander' && !districtId) {
     throw new HttpsError('invalid-argument', 'מפקד מחוז חייב שיוך למחוז.');
   }
@@ -351,11 +399,14 @@ exports.approveRegistration = onCall(async (req) => {
   if (wanted) {
     if (!validEmp(wanted)) {
       throw new HttpsError('invalid-argument',
-        'מספר עובד חייב להיות 3 עד 6 ספרות, ולא להתחיל באפס.');
+        'מספר עובד חייב להיות עד 6 ספרות, ולא להתחיל באפס.');
     }
-    if (await empTaken(wanted)) {
+    // "תפוס" רק אם הוא שייך למישהו אחר. אישור חוזר של אותו אדם
+    // עם אותו מספר הוא פעולה לגיטימית.
+    const takenSnap = await db.doc('emp_index/' + wanted).get();
+    if (takenSnap.exists && String(takenSnap.data().uid || '') !== uid) {
       throw new HttpsError('already-exists',
-        'מספר העובד ' + wanted + ' כבר תפוס. בחר אחר או השאר ריק.');
+        'מספר העובד ' + wanted + ' כבר שייך למישהו אחר. בחר אחר או השאר ריק.');
     }
     emp = wanted;
   } else {
@@ -383,9 +434,16 @@ exports.approveRegistration = onCall(async (req) => {
 
   await admin.auth().setCustomUserClaims(uid, claims);
 
+  // מספר עובד קודם, אם המשתמש כבר אושר פעם: בלי המחיקה הזו שני
+  // מספרים היו פותחים את אותו חשבון.
+  const prevEmp = String((user.customClaims || {}).emp || '');
+  if (prevEmp && prevEmp !== emp) {
+    await db.doc('emp_index/' + prevEmp).delete().catch(function () {});
+  }
+
   await writeProfile(uid, {
     emp:        emp,
-    full_name:  r.full_name || '',
+    full_name:  fullName,
     email:      String(user.email || '').toLowerCase(),
     phone:      r.phone || '',
     role:       role,
@@ -420,6 +478,16 @@ exports.setUserRole = onCall(async (req) => {
   const before = user.customClaims || {};
   const role   = String(d.role || '');
 
+  // הבדיקה הזו חייבת לקדום למסלול 'none'. בגרסה הקודמת היא ישבה
+  // אחריו — ולכן מנהל שבחר לעצמו "הסרת כל ההרשאות" ננעל מחוץ
+  // למערכת בלי אזהרה, כי המסלול הזה חוזר לפני שהיא נבדקת.
+  const removingSuper =
+    before.super === true && (role === 'none' || d.super === false);
+  if (removingSuper && user.uid === auth.uid) {
+    throw new HttpsError('failed-precondition',
+      'אי אפשר להסיר את הרשאת הניהול מעצמך. בקש ממנהל אחר.');
+  }
+
   if (role === 'none') {
     const audit = await openAudit(auth, 'clear_role', user.uid, { email: user.email });
     await admin.auth().setCustomUserClaims(user.uid, null);
@@ -428,15 +496,16 @@ exports.setUserRole = onCall(async (req) => {
     // כללי Firestore עד לתפוגתו — עד שעה.
     await admin.auth().revokeRefreshTokens(user.uid);
 
-    await db.doc('directory/' + user.uid)
-            .set({ is_active: false, updated_at: FV.serverTimestamp() }, { merge: true })
-            .catch(function () {});
+    // עזיבה אמיתית, לא רק ניקוי הרשאות. בגרסה הקודמת מספר העובד
+    // המשיך לפתוח כניסה, והרשומה המשיכה להופיע בבקרת הגישה עם
+    // טלפון ומייל — כלומר עובד שעזב נשאר גלוי ופעיל למראית עין.
+    await deactivateEverywhere(user.uid, before);
 
     await sealAudit(audit);
     return {
       ok: true,
       uid: user.uid,
-      message: 'ההרשאות הוסרו. טוקן קיים עשוי להישאר תקף עד שעה.'
+      message: 'ההרשאות הוסרו והשיוך נוקה. טוקן קיים עשוי להישאר תקף עד שעה.'
     };
   }
 
@@ -538,11 +607,31 @@ exports.setUserRole = onCall(async (req) => {
     await db.doc('emp_index/' + oldEmp).delete().catch(function () {});
   }
 
+  // תחנה שהשתנתה: הרשומה הישנה נשארה קריאה לסגל התחנה הישנה,
+  // עם טלפון ומייל, גם אחרי שהכבאי עבר. מכבים אותה.
+  const oldSid = String(before.stationId || '');
+  if (oldSid && oldSid !== stationId) {
+    const off = { is_active: false, updated_at: FV.serverTimestamp() };
+    await db.doc('stations/' + oldSid + '/users/'  + user.uid).set(off, { merge: true })
+            .catch(function () {});
+    await db.doc('stations/' + oldSid + '/roster/' + user.uid).set(off, { merge: true })
+            .catch(function () {});
+  }
+
+  // בלי ביטול טוקני הרענון, הרשאה שהוסרה ממשיכה לעבוד עד שעה —
+  // והכללים קוראים אך ורק את הטוקן, בלי בדיקה נוספת בשרת.
+  //
+  // יוצא דופן: עריכה עצמית. ביטול כאן היה מנתק את המנהל מהמערכת
+  // באמצע העבודה, בלי שביקש.
+  if (user.uid !== auth.uid) {
+    await admin.auth().revokeRefreshTokens(user.uid).catch(function () {});
+  }
+
   await sealAudit(audit, { emp_before: oldEmp || null, emp_after: emp });
 
   return {
     ok: true, uid: user.uid, emp: emp,
-    message: 'התפקיד הוגדר. המשתמש צריך להתנתק ולהתחבר מחדש.'
+    message: 'התפקיד הוגדר. המשתמש צריך להתנתק ולהתחבר מחדש כדי שהשינוי ייכנס לתוקף.'
   };
 });
 
@@ -566,6 +655,12 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
 
   if (!emp || !password) {
     throw new HttpsError('invalid-argument', 'נא להזין מספר עובד וסיסמה.');
+  }
+
+  // בלי הבדיקה הזו, מספר עובד עם לוכסן היה נכנס לנתיב מסמך
+  // ויוצר מסמכים במקומות שרירותיים, או מפיל את הפונקציה.
+  if (!validEmp(emp)) {
+    throw new HttpsError('unauthenticated', 'מספר עובד או סיסמה שגויים.');
   }
 
   const lockRef = db.doc('login_attempts/' + emp);
@@ -644,22 +739,30 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   return { ok: true, email: email, uid: uid };
 });
 
-async function noteFailedLogin(ref, lock, emp, email) {
-  const failed = Number(lock.failed || 0) + 1;
-  const data = { failed: failed, last_failed_at: FV.serverTimestamp() };
+// המונה חייב להיות טרנזקציה. בגרסה הקודמת הוא נקרא פעם אחת
+// בתחילת הבקשה, וכל הבקשות המקבילות כתבו את אותו ערך — כך שמאה
+// ניסיונות בו-זמנית נספרו כאחד, והנעילה לא הופעלה לעולם.
+async function noteFailedLogin(ref, lockIgnored, emp, email) {
+  const locked = await db.runTransaction(async function (tx) {
+    const snap   = await tx.get(ref);
+    const failed = Number((snap.exists ? snap.data().failed : 0) || 0) + 1;
 
-  if (failed < MAX_FAILED_LOGINS) {
-    await ref.set(data, { merge: true });
-    return;
-  }
+    if (failed < MAX_FAILED_LOGINS) {
+      tx.set(ref, { failed: failed, last_failed_at: FV.serverTimestamp() },
+             { merge: true });
+      return false;
+    }
 
-  data.locked_until = admin.firestore.Timestamp.fromMillis(
-    Date.now() + LOCKOUT_MINUTES * 60000
-  );
-  data.failed = 0;
-  await ref.set(data, { merge: true });
+    tx.set(ref, {
+      failed: 0,
+      last_failed_at: FV.serverTimestamp(),
+      locked_until: admin.firestore.Timestamp.fromMillis(
+        Date.now() + LOCKOUT_MINUTES * 60000)
+    }, { merge: true });
+    return true;
+  });
 
-  if (!email) return;
+  if (!locked || !email) return;
 
   // המייל יוצא רק לכתובת השמורה. מי שמנסה לנחש סיסמאות לא
   // מקבל אותו, ולכן הכפתור לא מחליש את ההגנה.

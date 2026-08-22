@@ -43,6 +43,7 @@
   .msg{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;display:none}
   .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
   .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
+  .msg.info{display:block;background:#23262c;color:#b9c0c8}
   h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
   select{width:100%;padding:10px;background:#111316;color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
@@ -116,7 +117,7 @@
       <div style="font-size:34px">🔒</div>
       <div style="font-size:17px;font-weight:600">אין לך הרשאה לדף הזה</div>
       <div style="font-size:13px;color:var(--muted)">
-        הדף מיועד לרכז/ת משאבי אנוש ולקצינים בלבד.
+        הדף מיועד למנהל המערכת בלבד.
       </div>
       <div style="font-size:12px;color:var(--muted);margin-top:8px" id="denyWho"></div>
     </div>
@@ -131,13 +132,13 @@
       <div class="who" id="who"></div>
       <button id="btnOut" class="ghost">התנתק</button>
     </div>
-    <div class="card">
+    <div class="card" id="reqCard">
       <h2>בקשות הרשמה</h2>
       <div id="list"><div class="empty">טוען...</div></div>
       <button id="btnRefresh" class="ghost">רענן רשימה</button>
     </div>
 
-    <div class="card">
+    <div class="card" id="usersCard">
       <h2>משתמשים והרשאות</h2>
       <div class="rotstate" id="usrState">לחץ "טען" כדי לראות מי רשום ומה התפקיד שלו.</div>
       <button id="btnUsers">טען רשימת משתמשים</button>
@@ -263,7 +264,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -273,10 +274,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=5';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=7';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=5';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=5';
+  from './stations.js?v=7';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=7';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -401,15 +402,17 @@ onAuthStateChanged(auth, async user => {
   const isSuper  = claims.super === true ||
                    String(user.email || '').toLowerCase() === SUPER_ADMIN;
 
-  let roleOk = verified && isSuper;
-  let label  = 'מנהל מערכת';
-
-  if (verified && !isSuper &&
-      (claims.role === 'hr_coordinator' || claims.role === 'commander')) {
-    roleOk = true;
-    label  = (ROLE_HE[claims.role] || claims.role) +
-             (claims.stationId ? ' · ' + claims.stationId : '');
-  }
+  // אישור בקשות ושינוי תפקידים דורשים מנהל-על בשרת. עריכת מחזור
+  // הסידור דורשת סגל בלבד — כך קובעים כללי האבטחה. לכן הדף נפתח
+  // לשניהם, וכל מקטע מוצג רק למי שרשאי להשתמש בו.
+  //
+  // אימות מייל היה כאן תנאי סף והוסר מהמערכת ב-22.8 — התנאי נשאר
+  // בקוד והשאיר מנהלים בחוץ.
+  const isStaff = claims.role === 'commander' ||
+                  claims.role === 'hr_coordinator';
+  const roleOk  = isSuper || isStaff;
+  const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
+                  (claims.stationId ? ' · ' + stationName(claims.stationId) : '');
 
   if (!roleOk) {
     // חשוב: לא מנתקים אוטומטית. ניתוק כאן היה מפיל גם לשוניות
@@ -418,11 +421,9 @@ onAuthStateChanged(auth, async user => {
     $('work').classList.add('hide');
     $('denyCard').classList.remove('hide');
     renderStuckNav(user.email || '');
-    $('denyWho').textContent = verified
-      ? 'מחובר כ־' + user.email + ' · אין הרשאת ניהול'
-      : 'מחובר כ־' + user.email + ' · המייל טרם אומת';
-    // אימות מייל הוא תנאי סף. בלי כפתור כאן אין שום דרך לצאת מהמצב.
-    $('btnVerify').classList.toggle('hide', verified);
+    $('denyWho').textContent = 'מחובר כ־' + user.email + ' · אין הרשאת ניהול';
+    // אימות מייל אינו תנאי סף יותר, ולכן הכפתור כאן רק היה מטעה.
+    $('btnVerify').classList.add('hide');
     return;
   }
 
@@ -432,7 +433,12 @@ onAuthStateChanged(auth, async user => {
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
   $('work').classList.remove('hide');
-  loadRequests();
+
+  // מקטעים למנהל-על בלבד.
+  $('reqCard').classList.toggle('hide', !isSuper);
+  $('usersCard').classList.toggle('hide', !isSuper);
+
+  if (isSuper) loadRequests();
   loadRotation();
 });
 
@@ -468,6 +474,7 @@ async function loadRequests(){
 
       '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
       (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
+      (r.stationId ? '<div class="ln">תחנה מבוקשת: <b>' + esc(stationName(r.stationId)) + '</b></div>' : '') +
       (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
       '<label style="margin-top:10px">תחנה</label>' +
       '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
@@ -531,7 +538,12 @@ async function approve(uid, r, box){
       role:  sel ? sel.value : 'firefighter',
       shift: shf ? shf.value : '',
       emp:   emp ? emp.value.trim() : '',
-      stationId: sta ? sta.value : ''
+      stationId: sta ? sta.value : '',
+      // המחוז נגזר מהתחנה שנבחרה. בלי זה, שינוי תחנה באישור היה
+      // משאיר את המחוז המקורי מהבקשה ויוצר שיוך סותר.
+      districtId: (STATIONS.filter(function (x) {
+        return x.id === (sta ? sta.value : '');
+      })[0] || {}).districtId || r.districtId || ''
     });
 
     // מספר העובד מוצג גדול ונשאר על המסך עד שסוגרים אותו ידנית.
@@ -723,7 +735,7 @@ $('btnRot').onclick = async () => {
 $('btnReindex').onclick = async () => {
   const btn = $('btnReindex');
   btn.disabled = true;
-  msg('reindexMsg', 'בונה...', '');
+  msg('reindexMsg', 'בונה...', 'info');
   try {
     const res = await callReindex({});
     msg('reindexMsg',
@@ -766,7 +778,7 @@ $('btnUsers').onclick = async () => {
       row.innerHTML =
         '<div class="nm">' + esc(u.email) + '</div>' +
         '<div class="ln">תפקיד: <b>' + esc(roleTxt) + '</b></div>' +
-        (c.stationId ? '<div class="ln">תחנה: <b>' + esc(c.stationId) + '</b></div>' : '') +
+        (c.stationId ? '<div class="ln">תחנה: <b>' + esc(stationName(c.stationId)) + '</b></div>' : '') +
         (c.shift ? '<div class="ln">משמרת: <b>' + esc(CREW_HE[c.shift] || c.shift) + '</b></div>' : '') +
         (c.emp ? '<div class="ln">מספר עובד: <b>' + esc(c.emp) + '</b></div>' : '') +
         (c.districtId ? '<div class="ln">מחוז: <b>' +
@@ -808,7 +820,7 @@ $('btnRole').onclick = async () => {
       !confirm('להסיר את כל ההרשאות של ' + email + '?')) return;
 
   btn.disabled = true;
-  msg('roleMsg', 'שולח...', '');
+  msg('roleMsg', 'שולח...', 'info');
 
   try {
     const res = await callSetRole({
