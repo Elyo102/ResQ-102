@@ -68,19 +68,35 @@ function requireSuperAdmin(req) {
 
 // כל שינוי הרשאה נרשם. מערכת שמחזיקה נתוני שכר ומחלה חייבת
 // להיות מסוגלת לענות על "מי נתן למי גישה, ומתי".
+//
+// תוקן 22.8.2026 בעקבות סקירת ChatGPT.
+//
+// הגרסה הקודמת בלעה כישלון והמשיכה. המשמעות: אם הכתיבה ליומן
+// נכשלה, ההרשאה הייתה משתנה בכל זאת — בלי שום עקבות. במערכת
+// שכר זה בדיוק התרחיש שאי אפשר לחיות איתו.
+//
+// עכשיו הרישום נכשל בקול, והקורא חייב לעצור לפני שהוא משנה משהו.
 async function writeAudit(actorAuth, action, target, details) {
+  const ref = await db.collection('admin_audit').add({
+    action:       action,
+    actor_uid:    actorAuth.uid,
+    actor_email:  String(actorAuth.token.email || '').toLowerCase(),
+    target_uid:   target || null,
+    details:      details || {},
+    at:           admin.firestore.FieldValue.serverTimestamp(),
+    outcome:      'started'
+  });
+  return ref;
+}
+
+// מסמן את רשומת היומן כהושלמה. אם הסימון נכשל, הפעולה כבר
+// בוצעה — אבל נשארת ביומן רשומה במצב started, וזה סימן חקירה
+// ולא שקט מטעה.
+async function sealAudit(ref, extra) {
   try {
-    await db.collection('admin_audit').add({
-      action:       action,
-      actor_uid:    actorAuth.uid,
-      actor_email:  String(actorAuth.token.email || '').toLowerCase(),
-      target_uid:   target || null,
-      details:      details || {},
-      at:           admin.firestore.FieldValue.serverTimestamp()
-    });
+    await ref.set(Object.assign({ outcome: 'done' }, extra || {}), { merge: true });
   } catch (e) {
-    // כישלון ברישום לא מפיל את הפעולה עצמה, אבל כן נרשם ללוג.
-    console.error('audit write failed', e);
+    console.error('audit seal failed', e);
   }
 }
 
@@ -109,12 +125,15 @@ exports.bootstrapSuperAdmin = onCall(async (req) => {
     throw new HttpsError('permission-denied', 'החשבון הזה אינו מנהל המערכת.');
   }
 
+  // היומן נכתב לפני השינוי. אם הוא נכשל, שום דבר לא משתנה.
+  const audit = await writeAudit(auth, 'bootstrap_super_admin', auth.uid, { email: email });
+
   await admin.auth().setCustomUserClaims(auth.uid, {
     super: true,
     role:  'super_admin'
   });
 
-  await writeAudit(auth, 'bootstrap_super_admin', auth.uid, { email: email });
+  await sealAudit(audit);
 
   return {
     ok: true,
@@ -142,9 +161,17 @@ exports.setUserRole = onCall(async (req) => {
   }
 
   if (role === 'none') {
+    const audit = await writeAudit(auth, 'clear_role', user.uid, { email: user.email });
     await admin.auth().setCustomUserClaims(user.uid, null);
-    await writeAudit(auth, 'clear_role', user.uid, { email: user.email });
-    return { ok: true, uid: user.uid, message: 'ההרשאות הוסרו.' };
+    // מבטל גם את טוקני הרענון, כדי שהמשתמש לא יוכל להנפיק טוקן חדש.
+    // שים לב: טוקן שכבר הונפק נשאר תקף מול כללי Firestore עד לתפוגתו.
+    await admin.auth().revokeRefreshTokens(user.uid);
+    await sealAudit(audit);
+    return {
+      ok: true,
+      uid: user.uid,
+      message: 'ההרשאות הוסרו. טוקן קיים עשוי להישאר תקף עד שעה.'
+    };
   }
 
   const stationId = String(d.stationId || '');
@@ -174,6 +201,12 @@ exports.setUserRole = onCall(async (req) => {
   // מנהל-על שמקבל גם תפקיד בתחנה שומר על מעמדו
   if (before.super === true) claims.super = true;
 
+  const audit = await writeAudit(auth, 'set_role', user.uid, {
+    email:  user.email,
+    before: before,
+    after:  claims
+  });
+
   await admin.auth().setCustomUserClaims(user.uid, claims);
 
   // שיקוף למסמך התצוגה. לא מקור האמת — רק כדי שהממשק יוכל
@@ -187,11 +220,7 @@ exports.setUserRole = onCall(async (req) => {
     updated_at:    admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
-  await writeAudit(auth, 'set_role', user.uid, {
-    email:  user.email,
-    before: before,
-    after:  claims
-  });
+  await sealAudit(audit);
 
   return {
     ok: true,
@@ -231,6 +260,10 @@ exports.approveRegistration = onCall(async (req) => {
   const role  = VALID_ROLES.indexOf(p.role) !== -1 ? p.role : 'firefighter';
   const shift = VALID_SHIFTS.indexOf(p.crew) !== -1 ? p.crew : '';
 
+  const audit = await writeAudit(auth, 'approve_registration', uid, {
+    email: user.email, stationId: stationId, code: code, role: role, shift: shift
+  });
+
   await admin.auth().setCustomUserClaims(uid, {
     role:      role,
     stationId: stationId,
@@ -256,9 +289,7 @@ exports.approveRegistration = onCall(async (req) => {
           .delete()
           .catch(function () {});
 
-  await writeAudit(auth, 'approve_registration', uid, {
-    email: user.email, stationId: stationId, code: code, role: role, shift: shift
-  });
+  await sealAudit(audit);
 
   return { ok: true, uid: uid, role: role, message: 'הבקשה אושרה.' };
 });
