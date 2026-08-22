@@ -254,12 +254,22 @@ $('btnLogin').onclick = async () => {
 };
 
 $('btnForgot').onclick = async () => {
-  const email = $('loginEmail').value.trim().toLowerCase();
-  if (!email) { show('הזן מייל בשדה למעלה ולחץ שוב.', 'err'); return; }
+  const id = $('loginEmp').value.trim();
+  if (!id) { show('הזן מספר עובד או מייל בשדה למעלה ולחץ שוב.', 'err'); return; }
+
+  const btn = $('btnForgot');
+  btn.disabled = true;
+
   try {
-    await sendPasswordResetEmail(auth, email);
+    await callReset({ id: id });
   } catch (ignore) {}
-  show('אם המייל רשום במערכת, נשלח אליו קישור לאיפוס סיסמה.', 'ok');
+
+  btn.disabled = false;
+
+  // תשובה זהה בכל מקרה, כדי שלא יהיה אפשר לסרוק מספרי עובד
+  // ולגלות מי רשום. המייל עצמו יכיל את מספר העובד וקישור
+  // לבחירת סיסמה חדשה.
+  show('אם הפרטים קיימים במערכת, נשלח מייל עם מספר העובד וקישור לבחירת סיסמה חדשה.', 'ok');
 };
 
 // ---------- הרשמה ----------

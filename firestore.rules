@@ -2,7 +2,7 @@ rules_version = '2';
 
 // =====================================================================
 //  תחנה 102 — כללי אבטחה
-//  גרסה 2.2 — מבוססת Custom Claims
+//  גרסה 2.4 — מבוססת Custom Claims
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
@@ -24,10 +24,18 @@ service cloud.firestore {
 
     // ---------- זהות ----------
 
+    // אימות מייל ירד מהדרישה ב-22.8.2026, במודע.
+    //
+    // הוא נוסף כדי למנוע מצב שמישהו נרשם עם המייל של כבאי אחר
+    // ויורש את תפקידו. מאז זה כבר לא אפשרי: אף אחד לא מקבל
+    // תפקיד אוטומטית — רק מנהל-על מאשר, והתפקיד נכתב בשרת.
+    //
+    // להשאיר אותו היה מחייב כל כבאי לפתוח מייל ולאמת לפני שהוא
+    // בכלל יכול להגיש בקשה — חיכוך בלי תמורה ביטחונית.
+    //
+    // המייל עדיין נדרש, ועדיין משמש לשחזור סיסמה.
     function signedIn() {
-      return request.auth != null
-             && request.auth.token.email != null
-             && request.auth.token.email_verified == true;
+      return request.auth != null && request.auth.token.email != null;
     }
 
     // קריאת claim בבטחה. משתמש חדש שעוד לא קיבל תפקיד פשוט
@@ -124,6 +132,17 @@ service cloud.firestore {
     }
 
     match /meta/{docId} {
+      allow read, write: if false;
+    }
+
+    // תור המיילים היוצאים ואסימוני שחרור נעילה.
+    // נכתבים על ידי השרת, נקראים על ידי תוסף השליחה. חסומים ללקוח.
+
+    match /mail/{docId} {
+      allow read, write: if false;
+    }
+
+    match /unlock_tokens/{token} {
       allow read, write: if false;
     }
 

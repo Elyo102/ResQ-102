@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תחנה 102 — שחרור נעילה</title>
+<style>
+  :root{ --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+         --muted:#9aa0a6; --accent:#e8590c; }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+        font-family:"Segoe UI",Arial,sans-serif; min-height:100vh;
+        display:flex; align-items:center; justify-content:center;
+        padding:16px; direction:rtl }
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:14px; padding:30px; width:100%; max-width:420px;
+         text-align:center }
+  h1{ font-size:21px; margin:0 0 4px }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:26px }
+  .icon{ font-size:42px; margin-bottom:12px }
+  .ttl{ font-size:18px; font-weight:600; margin-bottom:10px }
+  .txt{ color:var(--muted); font-size:14px; line-height:1.8 }
+  a.btn{ display:inline-block; background:var(--accent); color:#fff;
+         text-decoration:none; padding:12px 24px; border-radius:8px;
+         font-size:15px; margin-top:22px }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>תחנה 102</h1>
+  <div class="sub">מערכת ניהול כוח אדם</div>
+
+  <div class="icon" id="icon">⏳</div>
+  <div class="ttl" id="ttl">משחרר את הנעילה...</div>
+  <div class="txt" id="txt">רגע אחד.</div>
+  <a class="btn" id="go" style="display:none" href="login.html">למסך הכניסה</a>
+</div>
+
+<script type="module">
+import { firebaseConfig } from './firebase-config.js';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const app = initializeApp(firebaseConfig);
+const fns = getFunctions(app, 'europe-west1');
+
+const $ = id => document.getElementById(id);
+
+function done(icon, ttl, txt, showBtn){
+  $('icon').textContent = icon;
+  $('ttl').textContent  = ttl;
+  $('txt').innerHTML    = txt;
+  if (showBtn) $('go').style.display = 'inline-block';
+}
+
+const token = new URLSearchParams(location.search).get('t');
+
+if (!token) {
+  done('⚠️', 'קישור חסר',
+       'הכתובת אינה כוללת קוד שחרור.<br>פתח את הקישור מהמייל שקיבלת.', true);
+} else {
+  try {
+    await httpsCallable(fns, 'unlockAccount')({ token: token });
+    done('✅', 'הנעילה שוחררה',
+         'אפשר לנסות להיכנס שוב.<br><br>' +
+         '<b>אם לא אתה ניסית להיכנס</b> — מישהו מנסה להגיע לחשבון שלך. ' +
+         'שנה סיסמה בהקדם.', true);
+  } catch (e) {
+    const c = String(e.code || '');
+    if (c.indexOf('deadline-exceeded') !== -1) {
+      done('⌛', 'הקישור פג תוקף',
+           'קישור שחרור תקף לשעה אחת.<br>הנעילה משתחררת מעצמה תוך 15 דקות.', true);
+    } else if (c.indexOf('not-found') !== -1) {
+      done('⚠️', 'הקישור כבר נוצל',
+           'כל קישור שחרור תקף לשימוש אחד בלבד.', true);
+    } else {
+      done('⚠️', 'לא הצלחנו לשחרר',
+           (e.message || 'שגיאה לא צפויה.') + '<br>הנעילה משתחררת מעצמה תוך 15 דקות.', true);
+    }
+  }
+}
+</script>
+</body>
+</html>

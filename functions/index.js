@@ -45,8 +45,66 @@ const EMP_START = 100001;
 const MAX_FAILED_LOGINS = 8;
 const LOCKOUT_MINUTES   = 15;
 
+// כתובת האתר, לבניית קישורים במיילים.
+const SITE_URL = 'https://elyo102.github.io/station-102-Fire';
+
+// קישור שחרור נעילה תקף לשעה. אחריה צריך לחכות או לבקש חדש.
+const UNLOCK_TOKEN_MINUTES = 60;
+
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+
+// ---------------------------------------------------------------------
+//  שליחת מייל
+//
+//  Firebase Auth יודע לשלוח רק מיילים משלו — אימות ואיפוס.
+//  כדי לשלוח מייל עם תוכן שלנו, המסמך נכתב לאוסף mail, ותוסף
+//  Trigger Email של Firebase שולח אותו בפועל.
+//
+//  המבנה כאן הוא בדיוק מה שהתוסף מצפה לו. עד שהוא יותקן,
+//  המיילים נצברים באוסף ולא נשלחים — שום דבר לא נשבר.
+// ---------------------------------------------------------------------
+
+async function sendMail(to, subject, html) {
+  if (!to) return;
+  try {
+    await db.collection('mail').add({
+      to: [to],
+      message: { subject: subject, html: html },
+      created_at: FV.serverTimestamp()
+    });
+  } catch (e) {
+    console.error('mail queue failed', e);
+  }
+}
+
+function mailShell(title, bodyHtml) {
+  return '<div dir="rtl" style="font-family:Arial,sans-serif;background:#f4f6f8;' +
+         'padding:24px"><div style="max-width:520px;margin:0 auto;background:#fff;' +
+         'border-radius:12px;padding:26px">' +
+         '<h2 style="margin:0 0 4px;color:#222">תחנה 102</h2>' +
+         '<div style="color:#888;font-size:13px;margin-bottom:20px">מערכת ניהול כוח אדם</div>' +
+         '<h3 style="margin:0 0 12px;color:#222">' + title + '</h3>' +
+         bodyHtml +
+         '<div style="margin-top:26px;padding-top:14px;border-top:1px solid #eee;' +
+         'color:#999;font-size:12px">מייל אוטומטי. אין להשיב עליו.</div>' +
+         '</div></div>';
+}
+
+function button(href, text) {
+  return '<a href="' + href + '" style="display:inline-block;background:#e8590c;' +
+         'color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;' +
+         'font-size:15px;margin:8px 0">' + text + '</a>';
+}
+
+function randomToken() {
+  const c = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < 40; i++) {
+    out += c.charAt(Math.floor(Math.random() * c.length));
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------
 //  עזרים
@@ -394,7 +452,8 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   const generic = 'מספר עובד או סיסמה שגויים.';
 
   if (!idxSnap.exists) {
-    await noteFailedLogin(lockRef, lock);
+    // מספר עובד לא קיים. נספר את הניסיון, אבל אין למי לשלוח מייל.
+    await noteFailedLogin(lockRef, lock, emp, '');
     throw new HttpsError('unauthenticated', generic);
   }
 
@@ -419,7 +478,7 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   }
 
   if (!res.ok) {
-    await noteFailedLogin(lockRef, lock);
+    await noteFailedLogin(lockRef, lock, emp, email);
     throw new HttpsError('unauthenticated', generic);
   }
 
@@ -431,51 +490,145 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   return { ok: true, token: token };
 });
 
-async function noteFailedLogin(ref, lock) {
+async function noteFailedLogin(ref, lock, emp, email) {
   const failed = Number(lock.failed || 0) + 1;
   const data = { failed: failed, last_failed_at: FV.serverTimestamp() };
 
-  if (failed >= MAX_FAILED_LOGINS) {
-    data.locked_until = admin.firestore.Timestamp.fromMillis(
-      Date.now() + LOCKOUT_MINUTES * 60000
-    );
-    data.failed = 0;
+  if (failed < MAX_FAILED_LOGINS) {
+    await ref.set(data, { merge: true });
+    return;
   }
+
+  data.locked_until = admin.firestore.Timestamp.fromMillis(
+    Date.now() + LOCKOUT_MINUTES * 60000
+  );
+  data.failed = 0;
   await ref.set(data, { merge: true });
+
+  if (!email) return;
+
+  // המייל יוצא רק לכתובת השמורה. מי שמנסה לנחש סיסמאות לא
+  // מקבל אותו, ולכן הכפתור לא מחליש את ההגנה.
+  const token = randomToken();
+  await db.doc('unlock_tokens/' + token).set({
+    emp:        emp,
+    created_at: FV.serverTimestamp(),
+    expires_at: admin.firestore.Timestamp.fromMillis(
+      Date.now() + UNLOCK_TOKEN_MINUTES * 60000
+    )
+  });
+
+  const body =
+    '<p style="font-size:15px;color:#333;line-height:1.8">' +
+    'החשבון שלך ננעל לאחר ' + MAX_FAILED_LOGINS + ' ניסיונות כניסה שגויים.<br>' +
+    'הנעילה תשתחרר מעצמה בעוד ' + LOCKOUT_MINUTES + ' דקות.</p>' +
+    '<p style="font-size:15px;color:#333;line-height:1.8">' +
+    'אם זה היית אתה ואתה רוצה לנסות שוב עכשיו:</p>' +
+    button(SITE_URL + '/unlock.html?t=' + token, 'שחרור הנעילה') +
+    '<p style="font-size:13px;color:#888;line-height:1.8">' +
+    'הקישור תקף לשעה אחת ולשימוש יחיד.<br><br>' +
+    '<b style="color:#c0392b">אם זה לא היית אתה</b> — מישהו מנסה להיכנס לחשבון שלך. ' +
+    'אל תלחץ על הכפתור, ושנה סיסמה בהקדם.</p>';
+
+  await sendMail(email, 'תחנה 102 — החשבון שלך ננעל',
+                 mailShell('נעילת חשבון', body));
 }
 
 // ---------------------------------------------------------------------
-//  5. שחזור סיסמה לפי מספר עובד
-//     שולח את הקישור למייל השמור, ולא מגלה מהו.
+//  5. שכחתי פרטים
+//
+//  המייל שנשלח מכיל את מספר העובד וקישור לבחירת סיסמה חדשה.
+//
+//  הסיסמה עצמה לא נשלחת ולא יכולה להישלח: Firebase שומר טביעה
+//  חד-כיוונית שלה, ואי אפשר לחשב ממנה בחזרה את הסיסמה. גם אילו
+//  היה אפשר — סיסמה במייל נשארת בתיבה ובגיבויים לנצח.
 // ---------------------------------------------------------------------
 
 exports.requestPasswordReset = onCall(async (req) => {
-  const emp = String((req.data || {}).emp || '').trim();
-  if (!emp) throw new HttpsError('invalid-argument', 'נא להזין מספר עובד.');
+  const id = String((req.data || {}).id || '').trim();
+  if (!id) throw new HttpsError('invalid-argument', 'נא להזין מספר עובד או מייל.');
 
-  const idxSnap = await db.doc('emp_index/' + emp).get();
-
-  // תשובה זהה בין קיים ללא קיים, כדי שלא יהיה אפשר לסרוק מספרים.
+  // תשובה זהה בכל מקרה, כדי שלא יהיה אפשר לסרוק מספרי עובד
+  // ולגלות מי רשום במערכת.
   const answer = {
     ok: true,
-    message: 'אם מספר העובד קיים במערכת, נשלח קישור לאיפוס לכתובת השמורה.'
+    message: 'אם הפרטים קיימים במערכת, נשלח מייל לכתובת השמורה.'
   };
 
-  if (!idxSnap.exists) return answer;
+  let email = '';
+  let emp   = '';
 
-  const email = String(idxSnap.data().email || '');
-  if (!email) return answer;
+  if (id.indexOf('@') !== -1) {
+    email = id.toLowerCase();
+    try {
+      const u = await admin.auth().getUserByEmail(email);
+      const c = u.customClaims || {};
+      emp = String(c.emp || '');
+    } catch (e) { return answer; }
+  } else {
+    const idx = await db.doc('emp_index/' + id).get();
+    if (!idx.exists) return answer;
+    email = String(idx.data().email || '');
+    emp   = id;
+    if (!email) return answer;
+  }
 
+  let link = '';
   try {
-    // Firebase שולח את המייל בעצמו כשמפעילים תבנית איפוס.
-    // כאן רק מוודאים שהחשבון קיים; השליחה בפועל מתבצעת מהלקוח
-    // עם sendPasswordResetEmail על הכתובת הזו.
-    await admin.auth().getUserByEmail(email);
+    link = await admin.auth().generatePasswordResetLink(email);
   } catch (e) {
     return answer;
   }
 
-  return Object.assign({ email: email }, answer);
+  const body =
+    (emp
+      ? '<p style="font-size:15px;color:#333;line-height:1.8">מספר העובד שלך הוא:<br>' +
+        '<span style="font-size:26px;font-weight:bold;color:#e8590c;letter-spacing:2px">' +
+        emp + '</span></p>'
+      : '') +
+    '<p style="font-size:15px;color:#333;line-height:1.8">' +
+    'לבחירת סיסמה חדשה, לחץ כאן:</p>' +
+    button(link, 'בחירת סיסמה חדשה') +
+    '<p style="font-size:13px;color:#888;line-height:1.8">' +
+    'הסיסמה הקודמת שלך אינה ניתנת לשחזור — המערכת אינה שומרת אותה, ' +
+    'ולכן צריך לבחור חדשה.<br>' +
+    'אם לא ביקשת את המייל הזה, אפשר להתעלם ממנו.</p>';
+
+  await sendMail(email, 'תחנה 102 — מספר עובד ואיפוס סיסמה',
+                 mailShell('הפרטים שלך', body));
+
+  return answer;
+});
+
+// ---------------------------------------------------------------------
+//  5ב. שחרור נעילה
+//     הקישור נשלח למייל השמור בלבד, ולכן רק בעל החשבון יכול
+//     להשתמש בו. חד-פעמי, ותקף לשעה.
+// ---------------------------------------------------------------------
+
+exports.unlockAccount = onCall(async (req) => {
+  const token = String((req.data || {}).token || '').trim();
+  if (!token) throw new HttpsError('invalid-argument', 'קישור לא תקין.');
+
+  const ref  = db.doc('unlock_tokens/' + token);
+  const snap = await ref.get();
+
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'הקישור אינו תקף או שכבר נעשה בו שימוש.');
+  }
+
+  const t = snap.data();
+  if (t.expires_at && t.expires_at.toMillis() < Date.now()) {
+    await ref.delete().catch(function () {});
+    throw new HttpsError('deadline-exceeded', 'הקישור פג תוקף. בקש קישור חדש.');
+  }
+
+  await db.doc('login_attempts/' + t.emp)
+          .set({ failed: 0, locked_until: null }, { merge: true });
+
+  await ref.delete().catch(function () {});
+
+  return { ok: true, message: 'הנעילה שוחררה. אפשר לנסות להיכנס שוב.' };
 });
 
 // ---------------------------------------------------------------------
