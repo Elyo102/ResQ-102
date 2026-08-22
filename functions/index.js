@@ -39,7 +39,7 @@ const WEB_API_KEY = 'AIzaSyDY13rUZCN0q2Izo8i59JHKmWvnu_0Tw7Q';
 
 // מספרי עובד ארציים, לא לפי תחנה — כדי שמספר יזהה אדם אחד בכל
 // המדינה גם אחרי מעבר בין תחנות או מחוזות.
-const EMP_START = 100001;
+const EMP_START = 1;
 
 // הגנה מפני ניחוש סיסמאות בכניסה עם מספר עובד.
 const MAX_FAILED_LOGINS = 8;
@@ -155,16 +155,42 @@ async function sealAudit(ref, extra) {
   }
 }
 
+// מספר עובד תקין: 1 עד 6 ספרות, בלי אפס מוביל.
+//
+// מתחילים מ-1 בכוונה. מספר שכבאי לא זוכר הוא מספר שהוא לא
+// יקליד, והמספר הזה נועד להיות מוקלד כל בוקר. הסוד הוא
+// הסיסמה, לא המספר — ולכן אין ערך באורך מלאכותי.
+function validEmp(v) {
+  return /^[1-9][0-9]{0,5}$/.test(String(v || ''));
+}
+
+async function empTaken(emp) {
+  const snap = await db.doc('emp_index/' + emp).get();
+  return snap.exists;
+}
+
 // הקצאת מספר עובד. טרנזקציה, כדי ששני אישורים במקביל לא יקבלו
 // את אותו מספר.
+//
+// המונה מדלג על מספרים תפוסים. זה נחוץ כי במעבר מהמערכת הישנה
+// כבאים שומרים את הקוד האישי שהם כבר מכירים — 1990, 1711, 4492 —
+// והמונה חייב לעקוף אותם ולא לדרוס אף אחד.
 async function allocateEmployeeNumber() {
   const ref = db.doc('meta/emp_counter');
-  return db.runTransaction(async function (tx) {
-    const snap = await tx.get(ref);
-    const next = snap.exists ? Number(snap.data().next || EMP_START) : EMP_START;
-    tx.set(ref, { next: next + 1, updated_at: FV.serverTimestamp() }, { merge: true });
-    return String(next);
-  });
+
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const candidate = await db.runTransaction(async function (tx) {
+      const snap = await tx.get(ref);
+      const next = snap.exists ? Number(snap.data().next || EMP_START) : EMP_START;
+      tx.set(ref, { next: next + 1, updated_at: FV.serverTimestamp() }, { merge: true });
+      return String(next);
+    });
+
+    if (!(await empTaken(candidate))) return candidate;
+  }
+
+  throw new HttpsError('resource-exhausted',
+    'לא נמצא מספר עובד פנוי. פנה למנהל המערכת.');
 }
 
 // Firestore לא יודע לחפש "מכיל". הוא יודע רק "שווה" ו"מתחיל ב".
@@ -316,7 +342,25 @@ exports.approveRegistration = onCall(async (req) => {
     throw new HttpsError('invalid-argument', 'מפקד מחוז חייב שיוך למחוז.');
   }
 
-  const emp = await allocateEmployeeNumber();
+  // המאשר יכול לקבוע מספר עובד. במעבר מהמערכת הישנה זה מה
+  // שמאפשר לכבאי לשמור את הקוד האישי שהוא כבר מכיר, במקום
+  // ללמוד מספר חדש בלי סיבה. ריק = הקצאה אוטומטית.
+  let emp;
+  const wanted = String(d.emp || '').trim();
+
+  if (wanted) {
+    if (!validEmp(wanted)) {
+      throw new HttpsError('invalid-argument',
+        'מספר עובד חייב להיות 3 עד 6 ספרות, ולא להתחיל באפס.');
+    }
+    if (await empTaken(wanted)) {
+      throw new HttpsError('already-exists',
+        'מספר העובד ' + wanted + ' כבר תפוס. בחר אחר או השאר ריק.');
+    }
+    emp = wanted;
+  } else {
+    emp = await allocateEmployeeNumber();
+  }
 
   const claims = {
     role:       role,
@@ -408,6 +452,18 @@ exports.setUserRole = onCall(async (req) => {
 
   if (!stationId) throw new HttpsError('invalid-argument', 'חסרה תחנה.');
   if (!emp)       throw new HttpsError('invalid-argument', 'למשתמש אין מספר עובד.');
+  if (!validEmp(emp)) {
+    throw new HttpsError('invalid-argument',
+      'מספר עובד חייב להיות 1 עד 6 ספרות, ולא להתחיל באפס.');
+  }
+
+  // אם המספר תפוס על ידי מישהו אחר — עוצרים. אם הוא תפוס על ידי
+  // המשתמש הזה עצמו, זה פשוט אותו מספר ואין בעיה.
+  const idxSnap = await db.doc('emp_index/' + emp).get();
+  if (idxSnap.exists && String(idxSnap.data().uid || '') !== user.uid) {
+    throw new HttpsError('already-exists',
+      'מספר העובד ' + emp + ' כבר שייך למישהו אחר.');
+  }
   if (shift && VALID_SHIFTS.indexOf(shift) === -1) {
     throw new HttpsError('invalid-argument', 'משמרת לא מוכרת: ' + shift);
   }
@@ -428,18 +484,35 @@ exports.setUserRole = onCall(async (req) => {
 
   await admin.auth().setCustomUserClaims(user.uid, claims);
 
+  // שם וטלפון נשמרים אם לא נמסרו במפורש. בלי זה, תיקון תפקיד
+  // או שינוי מספר עובד היה מוחק לכבאי את השם והטלפון — כי
+  // writeProfile כותב את כל השדות, וריק דורס.
+  let existing = {};
+  try {
+    const cur = await db.doc('stations/' + stationId + '/users/' + user.uid).get();
+    if (cur.exists) existing = cur.data() || {};
+  } catch (ignore) {}
+
   await writeProfile(user.uid, {
     emp:        emp,
-    full_name:  String(d.full_name || ''),
+    full_name:  String(d.full_name || existing.full_name || ''),
     email:      String(user.email || '').toLowerCase(),
-    phone:      String(d.phone || ''),
+    phone:      String(d.phone || existing.phone || ''),
     role:       role,
     shift:      shift,
     stationId:  stationId,
     districtId: districtId
   });
 
-  await sealAudit(audit);
+  // שינוי מספר עובד משאיר מאחור את מפתח הכניסה הישן. בלי המחיקה
+  // הזו שני מספרים היו מכניסים לאותו חשבון — מבלבל בבקרה, וגם
+  // משטח תקיפה מיותר.
+  const oldEmp = String(before.emp || '');
+  if (oldEmp && oldEmp !== emp) {
+    await db.doc('emp_index/' + oldEmp).delete().catch(function () {});
+  }
+
+  await sealAudit(audit, { emp_before: oldEmp || null, emp_after: emp });
 
   return {
     ok: true, uid: user.uid, emp: emp,
