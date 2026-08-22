@@ -115,6 +115,7 @@
             <option value="firefighter">לוחם אש</option>
             <option value="commander">קצין / מפקד משמרת</option>
             <option value="hr_coordinator">רכז/ת משאבי אנוש</option>
+            <option value="district_commander">מפקד מחוז</option>
             <option value="none">הסרת כל ההרשאות</option>
           </select>
         </div>
@@ -129,8 +130,18 @@
         </div>
       </div>
 
-      <label>קוד אישי</label>
-      <input type="text" id="rCode" maxlength="15">
+      <label>מספר עובד</label>
+      <input type="text" id="rEmp" inputmode="numeric">
+
+      <label>מחוז</label>
+      <select id="rDistrict">
+        <option value="south">דרום</option>
+        <option value="center">מרכז</option>
+        <option value="north">צפון</option>
+        <option value="jerusalem">ירושלים</option>
+        <option value="haifa">חוף</option>
+        <option value="dan">דן</option>
+      </select>
 
       <button id="btnRole">הגדר תפקיד</button>
       <div class="msg" id="roleMsg"></div>
@@ -207,9 +218,15 @@ const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
 
 const ROLE_HE = {
-  firefighter: 'לוחם אש',
-  commander: 'קצין / מפקד משמרת',
-  hr_coordinator: 'רכז/ת משאבי אנוש'
+  firefighter:        'לוחם אש',
+  commander:          'קצין / מפקד משמרת',
+  hr_coordinator:     'רכז/ת משאבי אנוש',
+  district_commander: 'מפקד מחוז',
+  super_admin:        'מנהל מערכת'
+};
+const DIST_HE = {
+  south: 'דרום', center: 'מרכז', north: 'צפון',
+  jerusalem: 'ירושלים', haifa: 'חוף', dan: 'דן'
 };
 
 function msg(el, text, kind){
@@ -295,7 +312,7 @@ async function loadRequests(){
 
   let snaps;
   try {
-    const q = query(collection(db, 'stations', STATION_ID, 'registration_requests'),
+    const q = query(collection(db, 'registration_requests'),
                     where('status', '==', 'pending'));
     snaps = await getDocs(q);
   } catch (e) {
@@ -314,31 +331,35 @@ async function loadRequests(){
     const box = document.createElement('div');
     box.className = 'req';
 
-    // שליפת הרשומה מרשימת התחנה לפי הקוד שהוזן
-    let roster = null;
-    try {
-      const rs = await getDoc(doc(db, 'stations', STATION_ID, 'pending_users', r.claimed_code));
-      if (rs.exists()) roster = rs.data();
-    } catch (ignore) {}
-
-    const matchHtml = roster
-      ? '<div class="match found">נמצא ברשימת התחנה: <b>' + esc(roster.full_name) + '</b>' +
-        ' · ' + (ROLE_HE[roster.role] || roster.role) +
-        (roster.crew ? ' · ' + CREW_HE[roster.crew] : '') + '</div>'
-      : '<div class="match none">הקוד לא נמצא ברשימת התחנה. אשר רק אם אתה מזהה את האדם.</div>';
-
     box.innerHTML =
       '<div class="nm">' + esc(r.full_name) + '</div>' +
-      '<div class="ln">קוד אישי: <b>' + esc(r.claimed_code) + '</b></div>' +
+
       '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
       (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
-      matchHtml +
+      (r.stationId ? '<div class="ln">תחנה: <b>' + esc(r.stationId) + '</b></div>' : '') +
+      (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
+      '<div class="two" style="margin-top:10px">' +
+        '<div><label>תפקיד</label>' +
+        '<select data-f="role">' +
+          '<option value="firefighter">לוחם אש</option>' +
+          '<option value="commander">קצין / מפקד משמרת</option>' +
+          '<option value="hr_coordinator">רכז/ת משאבי אנוש</option>' +
+          '<option value="district_commander">מפקד מחוז</option>' +
+        '</select></div>' +
+        '<div><label>משמרת</label>' +
+        '<select data-f="shift">' +
+          '<option value="">ללא</option>' +
+          '<option value="A">משמרת א\'</option>' +
+          '<option value="B">משמרת ב\'</option>' +
+          '<option value="C">משמרת ג\'</option>' +
+        '</select></div>' +
+      '</div>' +
       '<div class="acts">' +
         '<button class="ok" data-act="ok">אשר</button>' +
         '<button class="no" data-act="no">דחה</button>' +
       '</div>';
 
-    box.querySelector('[data-act="ok"]').onclick = () => approve(d.id, r, roster, box);
+    box.querySelector('[data-act="ok"]').onclick = () => approve(d.id, r, box);
     box.querySelector('[data-act="no"]').onclick = () => reject(d.id, box);
     list.appendChild(box);
   }
@@ -351,17 +372,22 @@ function esc(s){
 
 // ---------- אישור ----------
 
-async function approve(uid, r, roster, box){
+async function approve(uid, r, box){
   box.querySelectorAll('button').forEach(b => b.disabled = true);
 
   // כל האישור עובר לשרת. הדפדפן לא כותב תפקיד ולא נוגע
   // ברשימת התחנה — הוא רק מבקש. הפונקציה מצליבה את הקוד
   // האישי מול הרשימה, כותבת את התפקיד לטוקן, ורושמת ביומן.
   try {
+    const sel = box.querySelector('[data-f="role"]');
+    const shf = box.querySelector('[data-f="shift"]');
+
+    // התחנה והמחוז מגיעים מהבקשה עצמה, בשרת. כאן נקבעים רק
+    // התפקיד והמשמרת, ומספר העובד מוקצה אוטומטית.
     const res = await callApprove({
-      uid:       uid,
-      stationId: STATION_ID,
-      code:      r.claimed_code
+      uid:   uid,
+      role:  sel ? sel.value : 'firefighter',
+      shift: shf ? shf.value : ''
     });
 
     box.innerHTML = '<div class="nm">' + esc(r.full_name) + '</div>' +
@@ -382,8 +408,7 @@ async function approve(uid, r, roster, box){
     let text = e.message || String(e);
 
     if (code.indexOf('not-found') !== -1) {
-      text = 'הקוד האישי ' + r.claimed_code + ' לא נמצא ברשימת התחנה. ' +
-             'הוסף אותו לרשימה ונסה שוב.';
+      text = 'הבקשה לא נמצאה. ייתכן שכבר טופלה — רענן את הרשימה.';
     } else if (code.indexOf('permission-denied') !== -1) {
       text = 'אין לך הרשאה לאשר. רק מנהל המערכת יכול.';
     } else if (code.indexOf('internal') !== -1) {
@@ -401,7 +426,7 @@ async function reject(uid, box){
   if (!confirm('לדחות את הבקשה?')) return;
   box.querySelectorAll('button').forEach(b => b.disabled = true);
   try {
-    await deleteDoc(doc(db, 'stations', STATION_ID, 'registration_requests', uid));
+    await deleteDoc(doc(db, 'registration_requests', uid));
     box.remove();
     if (!$('list').querySelector('.req')) {
       $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
@@ -591,11 +616,12 @@ $('btnRole').onclick = async () => {
   const email = $('rEmail').value.trim().toLowerCase();
   const role  = $('rRole').value;
   const shift = $('rShift').value;
-  const code  = $('rCode').value.trim();
+  const emp   = $('rEmp').value.trim();
+  const dist  = $('rDistrict').value;
 
   if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
-  if (role !== 'none' && !code) {
-    msg('roleMsg', 'נא להזין קוד אישי.', 'err');
+  if (role !== 'none' && !emp) {
+    msg('roleMsg', 'נא להזין מספר עובד.', 'err');
     return;
   }
 
@@ -607,15 +633,16 @@ $('btnRole').onclick = async () => {
 
   try {
     const res = await callSetRole({
-      email:     email,
-      role:      role,
-      stationId: STATION_ID,
-      shift:     shift,
-      code:      code
+      email:      email,
+      role:       role,
+      stationId:  STATION_ID,
+      districtId: dist,
+      shift:      shift,
+      emp:        emp
     });
     msg('roleMsg', res.data.message, 'ok');
     $('rEmail').value = '';
-    $('rCode').value = '';
+    $('rEmp').value = '';
   } catch (e) {
     let text = e.message || String(e);
     if (String(e.code || '').indexOf('not-found') !== -1) {
