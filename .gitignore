@@ -1,0 +1,40 @@
+# ============================================================
+# Station 102 - files that must never reach GitHub
+# ============================================================
+
+# --- secrets ---
+*adminsdk*.json
+*service-account*.json
+*serviceaccount*.json
+firebase-adminsdk-*.json
+credentials.json
+token.json
+.env
+.env.*
+*.key
+*.pem
+
+# --- node ---
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# --- firebase ---
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+*.local
+
+# --- claude working files ---
+_claude-report.txt
+
+# --- windows / onedrive ---
+Thumbs.db
+desktop.ini
+~$*
+*.tmp
+
+# --- editors ---
+.vscode/
+.idea/
+*.swp
