@@ -472,7 +472,25 @@ exports.setUserRole = onCall(async (req) => {
     role: role, stationId: stationId, districtId: districtId,
     shift: shift, emp: emp
   };
-  if (before.super === true) claims.super = true;
+
+  // ניהול המערכת הוא תוספת לתפקיד, לא תחליף לו. אלדד הוא לוחם
+  // אש במשמרת ג' וגם מנהל המערכת — ואין סיבה שיחזיק שני חשבונות
+  // ויתחלף ביניהם בכל פעולה.
+  //
+  // הגרסה הקודמת קיבעה את הניהול לחשבון אחד קבוע בקוד, וזו
+  // הייתה טעות תכנון.
+  let wantSuper = before.super === true;
+  if (d.super === true)  wantSuper = true;
+  if (d.super === false) wantSuper = false;
+
+  // אי אפשר להסיר מעצמך את הניהול. אחרת די בלחיצה אחת כדי
+  // להישאר בלי אף מנהל במערכת, בלי דרך חזרה.
+  if (!wantSuper && before.super === true && user.uid === auth.uid) {
+    throw new HttpsError('failed-precondition',
+      'אי אפשר להסיר את הרשאת הניהול מעצמך. בקש ממנהל אחר.');
+  }
+
+  if (wantSuper) claims.super = true;
 
   if (JSON.stringify(claims).length > 900) {
     throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי.');

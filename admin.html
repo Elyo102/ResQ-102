@@ -194,6 +194,17 @@
       <label>תחנה</label>
       <select id="rStation"></select>
 
+      <label>ניהול המערכת</label>
+      <select id="rSuper">
+        <option value="keep">להשאיר כמו שהוא</option>
+        <option value="yes">גם מנהל מערכת</option>
+        <option value="no">לא מנהל מערכת</option>
+      </select>
+      <div class="ln" style="font-size:12px">
+        ניהול הוא תוספת לתפקיד. כבאי יכול להיות לוחם אש וגם מנהל,
+        באותו חשבון ובאותה כניסה.
+      </div>
+
       <label>מחוז</label>
       <select id="rDistrict">
         <option value="south">דרום</option>
@@ -252,7 +263,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=4';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=5';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -262,10 +273,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=4';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=5';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=4';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=4';
+  from './stations.js?v=5';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=5';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -785,6 +796,7 @@ $('btnRole').onclick = async () => {
   const name  = $('rName').value.trim();
   const phone = $('rPhone').value.trim();
   const sta   = $('rStation').value;
+  const sup   = $('rSuper').value;
 
   if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
   if (role !== 'none' && !emp) {
@@ -807,13 +819,15 @@ $('btnRole').onclick = async () => {
       shift:      shift,
       emp:        emp,
       full_name:  name,
-      phone:      phone
+      phone:      phone,
+      super:      sup === 'yes' ? true : (sup === 'no' ? false : undefined)
     });
     msg('roleMsg', res.data.message, 'ok');
     $('rEmail').value = '';
     $('rEmp').value   = '';
     $('rName').value  = '';
     $('rPhone').value = '';
+    $('rSuper').value = 'keep';
   } catch (e) {
     let text = e.message || String(e);
     if (String(e.code || '').indexOf('not-found') !== -1) {
