@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>תחנה 102 — אישור בקשות</title>
+<title>ResQ — ניהול</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
 <style>
   :root{
     --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
@@ -264,7 +268,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=7';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=8';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -274,10 +278,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=7';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=8';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=7';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=7';
+  from './stations.js?v=8';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=8';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>תחנה 102 — בדיקת מערכת</title>
+<title>ResQ — בדיקת מערכת</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
 <style>
   :root{ --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
          --muted:#9aa0a6; --accent:#e8590c; }
@@ -68,7 +72,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=7';
+import { firebaseConfig } from './firebase-config.js?v=8';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -76,7 +80,7 @@ import { getFirestore, collection, getDocs, query, where, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { renderStuckNav, renderNav } from './nav.js?v=7';
+import { renderStuckNav, renderNav } from './nav.js?v=8';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

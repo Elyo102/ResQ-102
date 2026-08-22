@@ -1,5 +1,5 @@
 // =====================================================================
-//  תחנה 102 — Cloud Functions
+//  ResQ-102 — Cloud Functions
 //  שכבת היסוד: זהות, תפקידים ומספרי עובד
 //
 //  שלושה עקרונות
@@ -51,7 +51,7 @@ const MAX_FAILED_LOGINS = 8;
 const LOCKOUT_MINUTES   = 15;
 
 // כתובת האתר, לבניית קישורים במיילים.
-const SITE_URL = 'https://elyo102.github.io/station-102-Fire';
+const SITE_URL = 'https://elyo102.github.io/ResQ-102';
 
 // קישור שחרור נעילה תקף לשעה. אחריה צריך לחכות או לבקש חדש.
 const UNLOCK_TOKEN_MINUTES = 60;
@@ -87,8 +87,8 @@ function mailShell(title, bodyHtml) {
   return '<div dir="rtl" style="font-family:Arial,sans-serif;background:#f4f6f8;' +
          'padding:24px"><div style="max-width:520px;margin:0 auto;background:#fff;' +
          'border-radius:12px;padding:26px">' +
-         '<h2 style="margin:0 0 4px;color:#222">תחנה 102</h2>' +
-         '<div style="color:#888;font-size:13px;margin-bottom:20px">מערכת ניהול כוח אדם</div>' +
+         '<h2 style="margin:0 0 4px;color:#222">ResQ</h2>' +
+         '<div style="color:#888;font-size:13px;margin-bottom:20px">ניהול תחנה · תחנה 102</div>' +
          '<h3 style="margin:0 0 12px;color:#222">' + title + '</h3>' +
          bodyHtml +
          '<div style="margin-top:26px;padding-top:14px;border-top:1px solid #eee;' +
@@ -787,7 +787,7 @@ async function noteFailedLogin(ref, lockIgnored, emp, email) {
     '<b style="color:#c0392b">אם זה לא היית אתה</b> — מישהו מנסה להיכנס לחשבון שלך. ' +
     'אל תלחץ על הכפתור, ושנה סיסמה בהקדם.</p>';
 
-  await sendMail(email, 'תחנה 102 — החשבון שלך ננעל',
+  await sendMail(email, 'ResQ — החשבון שלך ננעל',
                  mailShell('נעילת חשבון', body));
 }
 
@@ -851,7 +851,7 @@ exports.requestPasswordReset = onCall(async (req) => {
     'ולכן צריך לבחור חדשה.<br>' +
     'אם לא ביקשת את המייל הזה, אפשר להתעלם ממנו.</p>';
 
-  await sendMail(email, 'תחנה 102 — מספר עובד ואיפוס סיסמה',
+  await sendMail(email, 'ResQ — מספר עובד ואיפוס סיסמה',
                  mailShell('הפרטים שלך', body));
 
   return answer;
