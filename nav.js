@@ -8,12 +8,15 @@
 // וגם אם יקליד את הכתובת ידנית, כללי האבטחה בשרת יעצרו אותו.
 // ההסתרה כאן היא נוחות, לא הגנה.
 
+// נקודת הצבע היא זיהוי מהיר של מדור, לא קישוט. כפתור צבעוני
+// שלם לכל מדור היה גורם לארבעה כפתורים להתחרות זה בזה, ואז
+// אף אחד לא בולט.
 const ITEMS = [
-  { href: 'login.html',    label: 'הבית',        who: 'any'   },
-  { href: 'schedule.html', label: 'סידור עבודה', who: 'member'},
-  { href: 'access.html',   label: 'בקרת גישה',   who: 'staff' },
-  { href: 'admin.html',    label: 'ניהול',       who: 'staff' },
-  { href: 'check.html',    label: 'בדיקת מערכת', who: 'super' }
+  { href: 'login.html',    label: 'הבית',        who: 'any',    dot: '#e8590c' },
+  { href: 'schedule.html', label: 'סידור עבודה', who: 'member', dot: '#4d94ff' },
+  { href: 'access.html',   label: 'בקרת גישה',   who: 'staff',  dot: '#35c46b' },
+  { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
+  { href: 'check.html',    label: 'בדיקת מערכת', who: 'super',  dot: '#9aa0a6' }
 ];
 
 const STAFF_ROLES = ['commander', 'hr_coordinator', 'district_commander'];
@@ -31,20 +34,37 @@ function styleOnce() {
   if (document.getElementById('navStyle')) return;
   const st = document.createElement('style');
   st.id = 'navStyle';
+  // גובה הכפתור 44 פיקסלים — המינימום שאצבע פוגעת בו באמינות
+  // על מסך טלפון, וכבאי לא ייגש למערכת ממחשב.
   st.textContent = [
-    '#appNav{position:sticky;top:0;z-index:900;display:flex;gap:6px;',
+    '#appNav{position:sticky;top:0;z-index:900;display:flex;gap:8px;',
     '  align-items:center;flex-wrap:wrap;',
-    '  background:#1a1d21;border-bottom:1px solid #2c3036;',
-    '  padding:8px 14px;margin:-18px -18px 18px;',
+    '  background:#1e2126;border-bottom:1px solid #2c3036;',
+    '  padding:12px 16px;margin:-18px -18px 18px;',
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
-    '#appNav .brand{font-weight:700;font-size:15px;color:#e8eaed;',
-    '  margin-inline-end:10px;white-space:nowrap}',
-    '#appNav a{color:#9aa0a6;text-decoration:none;font-size:14px;',
-    '  padding:7px 12px;border-radius:6px;white-space:nowrap}',
-    '#appNav a:hover{background:#24282d;color:#e8eaed}',
-    '#appNav a.on{background:#e8590c;color:#fff}',
-    '#appNav .me{margin-inline-start:auto;color:#9aa0a6;font-size:12.5px;',
-    '  white-space:nowrap}'
+    '#appNav .brand{font-weight:800;font-size:17px;color:#e8eaed;',
+    '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
+    '#appNav .brand b{color:#e8590c;font-weight:800}',
+    '#appNav a{display:inline-flex;align-items:center;gap:8px;',
+    '  color:#b9c0c8;text-decoration:none;font-size:15.5px;font-weight:600;',
+    '  padding:11px 18px;border-radius:10px;white-space:nowrap;',
+    '  background:#23262c;border:1px solid #2c3036;',
+    '  transition:transform .12s ease,background .12s ease,color .12s ease}',
+    '#appNav a:hover{transform:translateY(-1px);background:#2c3036;color:#e8eaed}',
+    '#appNav a:focus-visible{outline:2px solid #e8590c;outline-offset:2px}',
+    '#appNav a i{width:8px;height:8px;border-radius:50%;flex:none}',
+    '#appNav a.on{background:#e8590c;border-color:#e8590c;color:#fff;',
+    '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
+    '#appNav a.on i{background:#fff}',
+    '#appNav .me{margin-inline-start:auto;color:#9aa0a6;font-size:13px;',
+    '  white-space:nowrap}',
+    '@media (prefers-reduced-motion:reduce){',
+    '  #appNav a{transition:none}',
+    '  #appNav a:hover{transform:none}}',
+    '@media (max-width:520px){',
+    '  #appNav{gap:6px;padding:10px 12px}',
+    '  #appNav a{font-size:14px;padding:10px 13px}',
+    '  #appNav .me{width:100%;margin-inline-start:0;order:9;padding-top:2px}}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -63,14 +83,19 @@ export function renderNav(claims, current, who) {
 
   const brand = document.createElement('div');
   brand.className = 'brand';
-  brand.textContent = 'תחנה 102';
+  brand.innerHTML = 'תחנה <b>102</b>';
   nav.appendChild(brand);
 
   ITEMS.forEach(function (it) {
     if (!allowed(it.who, claims)) return;
     const a = document.createElement('a');
     a.href = './' + it.href;
-    a.textContent = it.label;
+
+    const dot = document.createElement('i');
+    dot.style.background = it.dot;
+    a.appendChild(dot);
+    a.appendChild(document.createTextNode(it.label));
+
     if (it.href === current) a.className = 'on';
     nav.appendChild(a);
   });

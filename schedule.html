@@ -11,11 +11,12 @@
     /* צבעי המשמרות - זהים למערכת הקיימת:
        א' אדום #980000 · ב' ירוק #38761d · ג' כחול #0000ff
        מוארים לקריאות על רקע כהה */
-    --crewA:#e06c6c; --crewB:#6cc47f; --crewC:#6c9ce0;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --crewA-bg:#3a1c19; --crewB-bg:#14301f; --crewC-bg:#16263f;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
-       font-family:"Segoe UI",Arial,sans-serif;padding:14px}
+       font-family:"Segoe UI",Arial,sans-serif;padding:18px}
   .wrap{max-width:560px;margin:0 auto}
   .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
   .top .me{font-size:15px;font-weight:600}
@@ -36,20 +37,49 @@
         border-radius:6px;padding:6px 14px;font-size:16px;cursor:pointer;font-family:inherit}
   .nav .mo{font-size:16px;font-weight:600}
 
-  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-  .dow{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
-  .day{aspect-ratio:1;border:1px solid var(--line);border-radius:6px;
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+
+  /* שורת הימים היא כותרת, לא הערת שוליים. גם שמות מלאים ולא
+     אותיות: «ג» כשם יום ו«ג'» כשם משמרת באותו מסך היו מבלבלים. */
+  #dows{background:#23262c;border:1px solid var(--line);border-radius:9px;
+        padding:9px 0;margin-bottom:8px;gap:5px}
+  .dow{font-size:14px;font-weight:700;color:var(--txt);text-align:center;
+       line-height:1.2}
+  .dow.rest{color:var(--accent)}
+  @media (max-width:420px){
+    .dow{font-size:11.5px}
+    #dows{padding:7px 0}
+  }
+  .day{aspect-ratio:1;border:1px solid var(--line);border-radius:9px;
        display:flex;flex-direction:column;align-items:center;justify-content:center;
-       font-size:13px;background:#191c20;position:relative}
+       gap:5px;font-size:13px;background:#191c20;position:relative}
   .day.pad{border:0;background:transparent}
-  .day .n{font-weight:600}
-  .day .c{font-size:10px;color:var(--muted);margin-top:2px}
-  .day.mine{border-color:var(--accent);background:#2a1a10}
-  .day.mine .c{color:var(--accent)}
-  .day.today{outline:2px solid var(--txt);outline-offset:-2px}
-  .day.A .c{color:var(--crewA)} .day.B .c{color:var(--crewB)} .day.C .c{color:var(--crewC)}
-  .day.A{border-color:#4a2626} .day.B{border-color:#264a2e} .day.C{border-color:#26364a}
-  .day.mine.A .c,.day.mine.B .c,.day.mine.C .c{color:var(--accent)}
+  .day .n{font-weight:700;font-size:16px;line-height:1;
+          font-variant-numeric:tabular-nums}
+
+  /* תג המשמרת. האות נשארת תמיד, גם כשיש צבע: כ-8% מהגברים
+     אינם מבחינים בין אדום לירוק, וא' מול ב' הן בדיוק הזוג הזה.
+     הצבע מזרז את הקריאה, האות מחזיקה את המידע. */
+  .day .c{font-size:11px;font-weight:800;line-height:1;
+          padding:3px 7px;border-radius:5px;border:1px solid transparent}
+  .day.A .c{color:var(--crewA);background:var(--crewA-bg);border-color:var(--crewA)}
+  .day.B .c{color:var(--crewB);background:var(--crewB-bg);border-color:var(--crewB)}
+  .day.C .c{color:var(--crewC);background:var(--crewC-bg);border-color:var(--crewC)}
+
+  /* המשמרת שלי — רמת הדגשה שנייה: מילוי ומסגרת עבה.
+     אם כל שלוש המשמרות צבועות באותה עוצמה הלוח הופך לפסיפס
+     ואי אפשר לסרוק אותו. */
+  .day.mine{border-width:2px}
+  .day.mine.A{background:var(--crewA-bg);border-color:var(--crewA)}
+  .day.mine.B{background:var(--crewB-bg);border-color:var(--crewB)}
+  .day.mine.C{background:var(--crewC-bg);border-color:var(--crewC)}
+  .day.mine .c{background:transparent}
+
+  .day.today{outline:2px solid var(--txt);outline-offset:2px}
+  @media (max-width:420px){
+    .day .n{font-size:14px}
+    .day .c{font-size:10px;padding:2px 5px}
+  }
 
   .sum{display:flex;gap:10px;margin-top:12px}
   .sum div{flex:1;background:#191c20;border:1px solid var(--line);border-radius:8px;
@@ -120,7 +150,8 @@
         <span><i class="dot" style="background:var(--crewA)"></i>א'</span>
         <span><i class="dot" style="background:var(--crewB)"></i>ב'</span>
         <span><i class="dot" style="background:var(--crewC)"></i>ג'</span>
-        <span><i class="dot" style="background:var(--accent)"></i>שלי</span>
+        <span><i class="dot" style="background:var(--crewC);
+              border:2px solid var(--txt)"></i>המשמרת שלי</span>
       </div>
     </div>
 
@@ -138,6 +169,7 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { renderNav, clearNav } from './nav.js';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
   from './rotation.js';
@@ -155,7 +187,7 @@ const ROLE_HE = {
 };
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
-const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
+const DOWS = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
 
 let me = null;
 let rotations = [];
@@ -180,10 +212,14 @@ $('btnOut').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, async user => {
   if (!user) {
+    clearNav();
     $('authView').classList.remove('hide');
     $('mainView').classList.add('hide');
     return;
   }
+
+  let claims = {};
+  try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
   try {
     const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
@@ -207,6 +243,10 @@ onAuthStateChanged(auth, async user => {
   $('meName').textContent = me.full_name;
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
                             (me.crew ? ' · ' + CREW_HE[me.crew] : '');
+
+  renderNav(claims, 'schedule.html',
+            (me.full_name || user.email || '') +
+            (claims.emp ? ' · מס׳ ' + claims.emp : ''));
 
   $('authView').classList.add('hide');
   $('mainView').classList.remove('hide');
@@ -255,9 +295,10 @@ function render(){
 
   const dows = $('dows');
   dows.innerHTML = '';
-  DOWS.forEach(d => {
+  DOWS.forEach(function (d, i) {
     const el = document.createElement('div');
-    el.className = 'dow';
+    // שישי ושבת בכתום, כדי שסוף השבוע ייקרא בלי לספור עמודות.
+    el.className = 'dow' + (i >= 5 ? ' rest' : '');
     el.textContent = d;
     dows.appendChild(el);
   });

@@ -568,10 +568,14 @@ function showWho(user){
 }
 
 // הסרגל מופיע רק אחרי כניסה. במסך הכניסה עצמו אין לאן לנווט.
-function navFor(claims, user){
+function navFor(claims, user, name){
   document.body.classList.add('with-nav');
-  renderNav(claims || {}, 'login.html',
-            (user && user.email) ? user.email : '');
+  claims = claims || {};
+  // שם ומספר עובד, לא מייל. «eldad50@gmail.com» לא אומר כלום
+  // למי שמסתכל על המסך; «אלדד יונה · מס׳ 1» כן.
+  const who = (name || (user && user.email) || '') +
+              (claims.emp ? ' · מס׳ ' + claims.emp : '');
+  renderNav(claims, 'login.html', who);
 }
 
 function showNotLinked(user){
@@ -665,7 +669,7 @@ async function loadProfile(user, claims){
   $('pEmp').textContent     = claims.emp ? ('מספר עובד: ' + claims.emp) : '';
 
   $('lnkAdmin').classList.toggle('hide', !isSuper);
-  navFor(claims, user);
+  navFor(claims, user, u ? u.full_name : '');
 
   if (claims.emp && claims.stationId) {
     markLogin(user.uid, sid, {
