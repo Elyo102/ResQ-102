@@ -180,6 +180,12 @@ const db   = getFirestore(app);
 
 const $ = id => document.getElementById(id);
 
+// הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
+// רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
+// נחסם, לא היה תפריט בכלל ולא הייתה דרך לצאת מהמסך.
+renderStuckNav('');
+
+
 const ROLE_HE = {
   firefighter: 'לוחם אש',
   commander: 'קצין / מפקד משמרת',

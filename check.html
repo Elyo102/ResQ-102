@@ -76,6 +76,7 @@ import { getFirestore, collection, getDocs, query, where, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import { renderStuckNav } from './nav.js';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -83,6 +84,8 @@ const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 
 const $ = id => document.getElementById(id);
+
+renderStuckNav('');
 
 function esc(s){
   return String(s == null ? '' : s)

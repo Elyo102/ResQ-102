@@ -176,6 +176,12 @@ const fns  = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+// הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
+// רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
+// נחסם, לא היה תפריט בכלל ולא הייתה דרך לצאת מהמסך.
+renderStuckNav('');
+
 const $ = id => document.getElementById(id);
 
 const ROLE_HE = {
