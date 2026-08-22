@@ -35,7 +35,7 @@
        line-height:1.6;display:none}
   .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
   .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
-  .hide{display:none}
+  .hide{display:none !important}
   .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
   .profile{text-align:center;line-height:2}
   .profile .big{font-size:19px;font-weight:600}
@@ -178,7 +178,10 @@
         עם האישור יוקצה לך מספר עובד.<br><br>
         <b>אחרי שתאושר — התנתק והתחבר מחדש.</b>
       </div>
+      <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
     </div>
+    <div class="msg" id="bootMsg"></div>
+    <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
@@ -192,6 +195,9 @@
       <div class="row" id="pEmp"></div>
     </div>
     <button id="btnSearch">חיפוש עובד</button>
+    <a id="lnkAdmin" class="hide" href="./admin.html"
+       style="display:block;text-align:center;margin-top:10px;color:#ff6a00;font-size:14px">
+       ניהול המערכת ואישור בקשות ←</a>
     <button class="link" id="btnChangePw">שינוי סיסמה</button>
     <button class="link" id="btnLogout">התנתק</button>
   </div>
@@ -260,6 +266,11 @@ const db   = getFirestore(app);
 const fns = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 const callReset = httpsCallable(fns, 'requestPasswordReset');
+const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
+
+// חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
+// וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
+const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 
 // הכניסה נשמרת על המכשיר. הכבאי מזין סיסמה פעם אחת, וממכשיר
 // אחר יידרש שוב. הנחת העבודה: לטלפון האישי יש כבר נעילה משלו.
@@ -468,36 +479,82 @@ async function route(user){
     claims = t.claims || {};
   } catch (ignore) {}
 
+  // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
+  if (claims.super === true || claims.role === 'super_admin') {
+    await loadProfile(user, claims);
+    return;
+  }
+
   // בלי מספר עובד בטוקן — או שהבקשה ממתינה, או שטרם נשלחה.
   if (!claims.emp) {
     let req = null;
     try { req = await getDoc(doc(db, 'registration_requests', user.uid)); }
     catch (ignore) {}
 
-    if (req && req.exists()) { showWaiting(); return; }
-    showNotLinked();
+    if (req && req.exists()) { showWaiting(user); return; }
+    showNotLinked(user);
     return;
   }
 
   await loadProfile(user, claims);
 }
 
-function showNotLinked(){
+// מציג במפורש עם איזה חשבון הדפדפן מחובר. בלי זה אי אפשר לדעת
+// אם הבעיה היא הרשאות או פשוט חשבון אחר.
+function showWho(user){
+  $('waitWho').textContent = 'מחובר כרגע: ' + (user && user.email ? user.email : '—');
+}
+
+function showNotLinked(user){
   $('waitIcon').textContent = '🔒';
   $('waitTtl').textContent  = 'החשבון אינו משויך';
   $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
                               'התנתק והירשם מחדש.';
+  showWho(user);
+
+  // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
+  const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  $('btnBootstrap').classList.toggle('hide', !isBoot);
+  if (isBoot) {
+    $('waitTxt').innerHTML = 'זהו חשבון ההקמה של המערכת, והוא עדיין לא הופעל.<br>' +
+                             'לחץ על הכפתור למטה כדי להפוך אותו למנהל מערכת.';
+  }
+
   showView('wait');
 }
 
-function showWaiting(){
+function showWaiting(user){
   $('waitIcon').textContent = '⏳';
   $('waitTtl').textContent  = 'הבקשה נשלחה';
   $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
                               'עם האישור יוקצה לך מספר עובד.<br><br>' +
                               '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
+  showWho(user);
+  $('btnBootstrap').classList.add('hide');
   showView('wait');
 }
+
+$('btnBootstrap').onclick = async () => {
+  const btn = $('btnBootstrap');
+  const m   = $('bootMsg');
+  btn.disabled = true;
+  btn.textContent = 'מפעיל...';
+  m.className = 'msg';
+
+  try {
+    await callBoot({});
+    // הטוקן הישן עדיין לא מכיל את ההרשאה. רענון כפוי, ואז ניתוב מחדש.
+    await auth.currentUser.getIdToken(true);
+    m.textContent = 'הופעל. טוען...';
+    m.className = 'msg ok';
+    await route(auth.currentUser);
+  } catch (e) {
+    m.textContent = (e && e.message) ? e.message : 'ההפעלה נכשלה.';
+    m.className = 'msg err';
+    btn.disabled = false;
+    btn.textContent = 'הפעל את חשבון מנהל המערכת';
+  }
+};
 
 // ---------- בקרת גישה ----------
 //
@@ -527,18 +584,26 @@ async function loadProfile(user, claims){
     if (snap.exists()) u = snap.data();
   } catch (ignore) {}
 
+  const isSuper = claims.super === true || claims.role === 'super_admin';
+
   $('pName').textContent    = u ? u.full_name : (user.email || '');
   $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';
   $('pCrew').textContent    = CREW_HE[claims.shift] || '';
-  $('pStation').textContent = (u && u.station ? u.station : sid) +
-    (claims.districtId ? ' · ' + (DIST_HE[claims.districtId] || claims.districtId) : '');
-  $('pEmp').textContent     = 'מספר עובד: ' + claims.emp;
+  // למנהל המערכת אין תחנה ואין מספר עובד — לא מציגים שדות ריקים.
+  $('pStation').textContent = isSuper && !claims.stationId ? '' :
+    ((u && u.station ? u.station : sid) +
+     (claims.districtId ? ' · ' + (DIST_HE[claims.districtId] || claims.districtId) : ''));
+  $('pEmp').textContent     = claims.emp ? ('מספר עובד: ' + claims.emp) : '';
 
-  markLogin(user.uid, sid, {
-    emp:       claims.emp,
-    full_name: u ? u.full_name : '',
-    crew:      claims.shift || ''
-  });
+  $('lnkAdmin').classList.toggle('hide', !isSuper);
+
+  if (claims.emp && claims.stationId) {
+    markLogin(user.uid, sid, {
+      emp:       claims.emp,
+      full_name: u ? u.full_name : '',
+      crew:      claims.shift || ''
+    });
+  }
 
   showView('home');
 }

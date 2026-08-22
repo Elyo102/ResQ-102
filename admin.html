@@ -120,6 +120,8 @@
       </div>
       <div style="font-size:12px;color:var(--muted);margin-top:8px" id="denyWho"></div>
     </div>
+    <div class="msg" id="denyMsg"></div>
+    <button id="btnVerify" class="hide" style="width:100%">שלח לי שוב מייל אימות</button>
     <button id="btnOutDeny" class="ghost" style="width:100%">התנתק</button>
   </div>
 
@@ -234,7 +236,8 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+         sendEmailVerification }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
          getDocs, query, where, serverTimestamp, writeBatch }
@@ -291,6 +294,18 @@ $('btnIn').onclick = async () => {
 
 $('btnOut').onclick = () => signOut(auth);
 $('btnOutDeny').onclick = () => signOut(auth);
+
+$('btnVerify').onclick = async () => {
+  const b = $('btnVerify');
+  b.disabled = true;
+  try {
+    await sendEmailVerification(auth.currentUser);
+    msg('denyMsg', 'נשלח מייל אימות. פתח אותו, לחץ על הקישור, וחזור לכאן ורענן.', 'ok');
+  } catch (e) {
+    msg('denyMsg', 'שליחת המייל נכשלה: ' + (e.code || e.message), 'err');
+    b.disabled = false;
+  }
+};
 $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
@@ -333,6 +348,8 @@ onAuthStateChanged(auth, async user => {
     $('denyWho').textContent = verified
       ? 'מחובר כ־' + user.email + ' · אין הרשאת ניהול'
       : 'מחובר כ־' + user.email + ' · המייל טרם אומת';
+    // אימות מייל הוא תנאי סף. בלי כפתור כאן אין שום דרך לצאת מהמצב.
+    $('btnVerify').classList.toggle('hide', verified);
     return;
   }
 
