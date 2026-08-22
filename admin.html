@@ -191,6 +191,9 @@
       <label>מספר עובד</label>
       <input type="text" id="rEmp" inputmode="numeric">
 
+      <label>תחנה</label>
+      <select id="rStation"></select>
+
       <label>מחוז</label>
       <select id="rDistrict">
         <option value="south">דרום</option>
@@ -260,6 +263,9 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js';
+import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
+  from './stations.js';
+import { renderNav, clearNav } from './nav.js';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -284,10 +290,34 @@ const ROLE_HE = {
   district_commander: 'מפקד מחוז',
   super_admin:        'מנהל מערכת'
 };
-const DIST_HE = {
-  south: 'דרום', center: 'מרכז', north: 'צפון',
-  jerusalem: 'ירושלים', haifa: 'חוף', dan: 'דן'
-};
+const DIST_HE = DISTRICTS.reduce(function (acc, d) {
+  acc[d.id] = d.name.replace('מחוז ', '');
+  return acc;
+}, {});
+
+// אפשרויות תחנה לרשימה נפתחת. ערך שאינו ברשימה — למשל תחנה
+// שנוצרה בטעות מטקסט חופשי — נוסף כאפשרות משלו, כדי שהמאשר
+// יראה אותו ויוכל לתקן במקום שייעלם בשקט.
+function stationOptions(selected){
+  let html = '';
+  let found = false;
+
+  STATIONS.forEach(function (st) {
+    const on = st.id === selected;
+    if (on) found = true;
+    html += '<option value="' + esc(st.id) + '"' + (on ? ' selected' : '') +
+            '>' + esc(st.name) + '</option>';
+  });
+
+  if (selected && !found) {
+    html += '<option value="' + esc(selected) + '" selected>' +
+            esc(selected) + ' — לא ברשימה, מומלץ לתקן</option>';
+  }
+  if (!selected) {
+    html = '<option value="" selected>בחר תחנה</option>' + html;
+  }
+  return html;
+}
 
 function msg(el, text, kind){
   const m = $(el);
@@ -326,6 +356,7 @@ $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
   if (!user) {
+    clearNav();
     $('authCard').classList.remove('hide');
     $('work').classList.add('hide');
     $('denyCard').classList.add('hide');
@@ -371,6 +402,7 @@ onAuthStateChanged(auth, async user => {
 
   $('denyCard').classList.add('hide');
 
+  renderNav(claims, 'admin.html', user.email || '');
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
   $('work').classList.remove('hide');
@@ -410,8 +442,9 @@ async function loadRequests(){
 
       '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
       (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
-      (r.stationId ? '<div class="ln">תחנה: <b>' + esc(r.stationId) + '</b></div>' : '') +
       (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
+      '<label style="margin-top:10px">תחנה</label>' +
+      '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
       '<div class="two" style="margin-top:10px">' +
         '<div><label>תפקיד</label>' +
         '<select data-f="role">' +
@@ -463,6 +496,7 @@ async function approve(uid, r, box){
     const sel = box.querySelector('[data-f="role"]');
     const shf = box.querySelector('[data-f="shift"]');
     const emp = box.querySelector('[data-f="emp"]');
+    const sta = box.querySelector('[data-f="station"]');
 
     // התחנה והמחוז מגיעים מהבקשה עצמה, בשרת. כאן נקבעים רק
     // התפקיד והמשמרת, ומספר העובד מוקצה אוטומטית.
@@ -470,7 +504,8 @@ async function approve(uid, r, box){
       uid:   uid,
       role:  sel ? sel.value : 'firefighter',
       shift: shf ? shf.value : '',
-      emp:   emp ? emp.value.trim() : ''
+      emp:   emp ? emp.value.trim() : '',
+      stationId: sta ? sta.value : ''
     });
 
     // מספר העובד מוצג גדול ונשאר על המסך עד שסוגרים אותו ידנית.
@@ -723,6 +758,8 @@ $('btnUsers').onclick = async () => {
   btn.disabled = false;
 };
 
+$('rStation').innerHTML = stationOptions(STATION_ID);
+
 $('btnRole').onclick = async () => {
   const btn   = $('btnRole');
   const email = $('rEmail').value.trim().toLowerCase();
@@ -732,6 +769,7 @@ $('btnRole').onclick = async () => {
   const dist  = $('rDistrict').value;
   const name  = $('rName').value.trim();
   const phone = $('rPhone').value.trim();
+  const sta   = $('rStation').value;
 
   if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
   if (role !== 'none' && !emp) {
@@ -749,7 +787,7 @@ $('btnRole').onclick = async () => {
     const res = await callSetRole({
       email:      email,
       role:       role,
-      stationId:  STATION_ID,
+      stationId:  sta || STATION_ID,
       districtId: dist,
       shift:      shift,
       emp:        emp,

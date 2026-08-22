@@ -12,7 +12,10 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;
-       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+       min-height:100vh;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;padding:16px}
+  body.with-nav{justify-content:flex-start;padding-top:0}
+  body.with-nav .card{margin-top:26px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
         padding:26px;width:100%;max-width:400px}
   h1{font-size:21px;margin:0 0 4px;text-align:center}
@@ -136,16 +139,12 @@
       <label>מחוז</label>
       <select id="fDistrict">
         <option value="">בחר מחוז</option>
-        <option value="south">דרום</option>
-        <option value="center">מרכז</option>
-        <option value="north">צפון</option>
-        <option value="jerusalem">ירושלים</option>
-        <option value="haifa">חוף</option>
-        <option value="dan">דן</option>
       </select>
 
       <label>תחנה</label>
-      <input type="text" id="fStation" placeholder="למשל: תחנת כיבוי אילת">
+      <select id="fStation">
+        <option value="">קודם בחר מחוז</option>
+      </select>
 
       <label>בחר סיסמה</label>
       <input type="password" id="fPass" autocomplete="new-password">
@@ -245,6 +244,9 @@
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { DISTRICTS, stationsInDistrict, stationName, districtName }
+  from './stations.js';
+import { renderNav, clearNav } from './nav.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -286,10 +288,58 @@ const ROLE_HE = {
   super_admin:        'מנהל מערכת'
 };
 const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
-const DIST_HE = {
-  south: 'מחוז דרום', center: 'מחוז מרכז', north: 'מחוז צפון',
-  jerusalem: 'מחוז ירושלים', haifa: 'מחוז חוף', dan: 'מחוז דן'
-};
+const DIST_HE = DISTRICTS.reduce(function (acc, d) {
+  acc[d.id] = d.name;
+  return acc;
+}, {});
+
+// ---------- רשימות מחוז ותחנה ----------
+//
+// עד עכשיו התחנה הייתה שדה טקסט חופשי. שני כבאים שהקלידו
+// "אילת" ו-"תחנת אילת" נחתו בשתי תחנות שונות במסד, ולא ראו
+// אחד את השני בשום מסך. עכשיו אפשר לבחור רק מתוך רשימה.
+
+function fillDistricts(){
+  const sel = $('fDistrict');
+  sel.innerHTML = '<option value="">בחר מחוז</option>';
+  DISTRICTS.forEach(function (d) {
+    const o = document.createElement('option');
+    o.value = d.open ? d.id : '';
+    o.textContent = d.open ? d.name : d.name + ' — בקרוב';
+    o.disabled = !d.open;
+    sel.appendChild(o);
+  });
+}
+
+function fillStations(districtId){
+  const sel = $('fStation');
+  sel.innerHTML = '';
+
+  if (!districtId) {
+    sel.innerHTML = '<option value="">קודם בחר מחוז</option>';
+    return;
+  }
+
+  const list = stationsInDistrict(districtId);
+  if (!list.length) {
+    sel.innerHTML = '<option value="">אין עדיין תחנות במחוז הזה</option>';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">בחר תחנה</option>';
+  list.forEach(function (st) {
+    const o = document.createElement('option');
+    o.value = st.id;
+    o.textContent = st.name;
+    sel.appendChild(o);
+  });
+
+  // תחנה יחידה במחוז — נבחרת מאליה. אין טעם לבקש בחירה מרשימה של אחד.
+  if (list.length === 1) sel.value = list[0].id;
+}
+
+fillDistricts();
+$('fDistrict').onchange = function () { fillStations(this.value); };
 
 let onboarding = false;
 
@@ -420,7 +470,7 @@ $('btnFirst').onclick = async () => {
   const email    = $('fEmail').value.trim().toLowerCase();
   const phone    = $('fPhone').value.trim();
   const district = $('fDistrict').value;
-  const station  = $('fStation').value.trim();
+  const station  = $('fStation').value;
   const pass     = $('fPass').value;
   const pass2    = $('fPass2').value;
 
@@ -479,7 +529,8 @@ $('btnLogoutWait').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, user => {
   if (onboarding) return;
-  if (!user) { showView('auth'); return; }
+  if (!user) { clearNav(); document.body.classList.remove('with-nav');
+               showView('auth'); return; }
   route(user);
 });
 
@@ -514,6 +565,13 @@ async function route(user){
 // אם הבעיה היא הרשאות או פשוט חשבון אחר.
 function showWho(user){
   $('waitWho').textContent = 'מחובר כרגע: ' + (user && user.email ? user.email : '—');
+}
+
+// הסרגל מופיע רק אחרי כניסה. במסך הכניסה עצמו אין לאן לנווט.
+function navFor(claims, user){
+  document.body.classList.add('with-nav');
+  renderNav(claims || {}, 'login.html',
+            (user && user.email) ? user.email : '');
 }
 
 function showNotLinked(user){
@@ -602,11 +660,12 @@ async function loadProfile(user, claims){
   $('pCrew').textContent    = CREW_HE[claims.shift] || '';
   // למנהל המערכת אין תחנה ואין מספר עובד — לא מציגים שדות ריקים.
   $('pStation').textContent = isSuper && !claims.stationId ? '' :
-    ((u && u.station ? u.station : sid) +
+    (stationName((u && u.station) ? u.station : sid) +
      (claims.districtId ? ' · ' + (DIST_HE[claims.districtId] || claims.districtId) : ''));
   $('pEmp').textContent     = claims.emp ? ('מספר עובד: ' + claims.emp) : '';
 
   $('lnkAdmin').classList.toggle('hide', !isSuper);
+  navFor(claims, user);
 
   if (claims.emp && claims.stationId) {
     markLogin(user.uid, sid, {
@@ -680,7 +739,7 @@ $('btnDoSearch').onclick = async () => {
         '<div class="d">' +
           esc(ROLE_HE[p.role] || p.role || '') +
           (p.crew ? ' · ' + esc(CREW_HE[p.crew] || p.crew) : '') +
-          (p.station ? ' · ' + esc(p.station) : '') +
+          (p.station ? ' · ' + esc(stationName(p.station)) : '') +
           (p.district ? ' · ' + esc(DIST_HE[p.district] || p.district) : '') +
         '</div>';
       box.appendChild(row);

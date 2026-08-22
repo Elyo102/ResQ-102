@@ -126,7 +126,7 @@
       <div class="state" id="whoAmI"></div>
 
       <label>תחנה</label>
-      <input type="text" id="sid">
+      <select id="sid"></select>
 
       <div class="sum" id="summary"></div>
 
@@ -158,6 +158,8 @@
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { STATIONS, stationName } from './stations.js';
+import { renderNav, clearNav } from './nav.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }
@@ -225,6 +227,7 @@ $('btnOutDeny').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, async user => {
   if (!user) {
+    clearNav();
     $('authCard').classList.remove('hide');
     $('work').classList.add('hide');
     $('denyCard').classList.add('hide');
@@ -251,10 +254,28 @@ onAuthStateChanged(auth, async user => {
   $('denyCard').classList.add('hide');
   $('work').classList.remove('hide');
 
+  renderNav(c, 'access.html', user.email || '');
+
   $('whoAmI').textContent = 'מחובר: ' +
     (isSuper ? 'מנהל מערכת' : (ROLE_HE[c.role] || c.role));
 
-  $('sid').value = c.stationId || STATION_ID;
+  // רשימה קבועה, ולא הקלדה חופשית. ערך שאינו ברשימה — למשל
+  // תחנה שנוצרה בטעות — עדיין מוצג, כדי שאפשר יהיה לראות מה
+  // יושב שם ולא שייעלם מהעין.
+  const want = c.stationId || STATION_ID;
+  let html = '';
+  let found = false;
+  STATIONS.forEach(function (st) {
+    const on = st.id === want;
+    if (on) found = true;
+    html += '<option value="' + st.id + '"' + (on ? ' selected' : '') +
+            '>' + st.name + '</option>';
+  });
+  if (want && !found) {
+    html += '<option value="' + want + '" selected>' + want +
+            ' — לא ברשימה</option>';
+  }
+  $('sid').innerHTML = html;
   load();
 });
 
@@ -271,7 +292,7 @@ function fmt(ts){
 }
 
 async function load(){
-  const sid = $('sid').value.trim();
+  const sid = $('sid').value;
   if (!sid) { msg('msg', 'נא להזין תחנה.', 'err'); return; }
 
   const btn = $('btnLoad');
