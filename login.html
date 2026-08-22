@@ -243,10 +243,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js';
-import { renderNav, clearNav } from './nav.js';
+  from './stations.js?v=3';
+import { renderNav, clearNav } from './nav.js?v=3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -524,6 +524,18 @@ $('btnFirst').onclick = async () => {
 
 // ---------- ניתוב ----------
 
+// רשימה סגורה של יעדים. בלעדיה, פרמטר בכתובת היה יכול להפנות
+// כבאי לאתר חיצוני שנראה כמו המערכת.
+const RETURNABLE = ['schedule.html', 'access.html', 'admin.html', 'check.html'];
+
+function returnToCaller(){
+  let next = '';
+  try { next = new URLSearchParams(location.search).get('next') || ''; }
+  catch (ignore) {}
+  if (RETURNABLE.indexOf(next) === -1) return;
+  location.replace('./' + next);
+}
+
 $('btnLogout').onclick     = () => signOut(auth);
 $('btnLogoutWait').onclick = () => signOut(auth);
 
@@ -670,6 +682,10 @@ async function loadProfile(user, claims){
 
   $('lnkAdmin').classList.toggle('hide', !isSuper);
   navFor(claims, user, u ? u.full_name : '');
+
+  // מי שנשלח לכאן ממסך אחר — מוחזר אליו אחרי הכניסה, במקום
+  // להישאר תקוע במסך הבית ולנווט שוב ביד.
+  returnToCaller();
 
   if (claims.emp && claims.stationId) {
     markLogin(user.uid, sid, {

@@ -157,9 +157,9 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js';
-import { STATIONS, stationName } from './stations.js';
-import { renderNav, clearNav, renderStuckNav } from './nav.js';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
+import { STATIONS, stationName } from './stations.js?v=3';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }
@@ -176,6 +176,17 @@ const fns  = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+// אין מסך כניסה בכל דף. יש אחד, והוא login.html.
+//
+// הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
+// לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
+// מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+function goSignIn(){
+  const back = encodeURIComponent(location.pathname.split('/').pop() || '');
+  location.replace('./login.html?next=' + back);
+}
+
 
 // הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
 // רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
@@ -232,13 +243,7 @@ $('btnOutDeny').onclick = () => signOut(auth);
 // כך אין מצב שהמסך נפתח והשרת דוחה כל שאילתה.
 
 onAuthStateChanged(auth, async user => {
-  if (!user) {
-    clearNav();
-    $('authCard').classList.remove('hide');
-    $('work').classList.add('hide');
-    $('denyCard').classList.add('hide');
-    return;
-  }
+  if (!user) { goSignIn(); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}

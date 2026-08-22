@@ -252,7 +252,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -262,10 +262,10 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=3';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js';
-import { renderNav, clearNav, renderStuckNav } from './nav.js';
+  from './stations.js?v=3';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=3';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -281,6 +281,17 @@ const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+// אין מסך כניסה בכל דף. יש אחד, והוא login.html.
+//
+// הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
+// לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
+// מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+function goSignIn(){
+  const back = encodeURIComponent(location.pathname.split('/').pop() || '');
+  location.replace('./login.html?next=' + back);
+}
+
 
 // הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
 // רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
@@ -362,10 +373,7 @@ $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
   if (!user) {
-    clearNav();
-    $('authCard').classList.remove('hide');
-    $('work').classList.add('hide');
-    $('denyCard').classList.add('hide');
+    goSignIn();
     return;
   }
 

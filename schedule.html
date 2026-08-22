@@ -163,22 +163,33 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=3';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
-  from './rotation.js';
+  from './rotation.js?v=3';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
 const $ = id => document.getElementById(id);
+
+// אין מסך כניסה בכל דף. יש אחד, והוא login.html.
+//
+// הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
+// לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
+// מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+function goSignIn(){
+  const back = encodeURIComponent(location.pathname.split('/').pop() || '');
+  location.replace('./login.html?next=' + back);
+}
+
 
 // הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
 // רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
@@ -217,12 +228,7 @@ $('btnIn').onclick = async () => {
 $('btnOut').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, async user => {
-  if (!user) {
-    clearNav();
-    $('authView').classList.remove('hide');
-    $('mainView').classList.add('hide');
-    return;
-  }
+  if (!user) { goSignIn(); return; }
 
   let claims = {};
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
