@@ -159,7 +159,7 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
 import { STATIONS, stationName } from './stations.js';
-import { renderNav, clearNav } from './nav.js';
+import { renderNav, clearNav, renderStuckNav } from './nav.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }
@@ -246,6 +246,7 @@ onAuthStateChanged(auth, async user => {
     $('authCard').classList.add('hide');
     $('work').classList.add('hide');
     $('denyCard').classList.remove('hide');
+    renderStuckNav(user.email || '');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
     return;
   }

@@ -45,6 +45,12 @@ function styleOnce() {
     '#appNav .brand{font-weight:800;font-size:17px;color:#e8eaed;',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
     '#appNav .brand b{color:#e8590c;font-weight:800}',
+    '#appNav button.back{display:inline-flex;align-items:center;gap:6px;',
+    '  background:transparent;border:1px solid #3a3f47;color:#b9c0c8;',
+    '  font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;',
+    '  padding:10px 14px;border-radius:10px;white-space:nowrap}',
+    '#appNav button.back:hover{background:#2c3036;color:#e8eaed}',
+    '#appNav button.back:focus-visible{outline:2px solid #e8590c;outline-offset:2px}',
     '#appNav a{display:inline-flex;align-items:center;gap:8px;',
     '  color:#b9c0c8;text-decoration:none;font-size:15.5px;font-weight:600;',
     '  padding:11px 18px;border-radius:10px;white-space:nowrap;',
@@ -86,6 +92,17 @@ export function renderNav(claims, current, who) {
   brand.innerHTML = 'תחנה <b>102</b>';
   nav.appendChild(brand);
 
+  // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע
+  // מכפתור שלא קיים.
+  if (window.history.length > 1) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'back';
+    back.textContent = '→ חזרה';
+    back.onclick = function () { window.history.back(); };
+    nav.appendChild(back);
+  }
+
   ITEMS.forEach(function (it) {
     if (!allowed(it.who, claims)) return;
     const a = document.createElement('a');
@@ -113,4 +130,10 @@ export function renderNav(claims, current, who) {
 export function clearNav() {
   const old = document.getElementById('appNav');
   if (old) old.remove();
+}
+
+// סרגל מינימלי למסכי "אין הרשאה". בלעדיו המשתמש תקוע עם
+// כפתור התנתקות בלבד, ואין לו דרך לחזור למסך הבית.
+export function renderStuckNav(who) {
+  renderNav({}, '', who);
 }

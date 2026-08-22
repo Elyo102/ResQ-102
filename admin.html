@@ -265,7 +265,7 @@ import { getFunctions, httpsCallable }
 import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
   from './stations.js';
-import { renderNav, clearNav } from './nav.js';
+import { renderNav, clearNav, renderStuckNav } from './nav.js';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -392,6 +392,7 @@ onAuthStateChanged(auth, async user => {
     $('authCard').classList.add('hide');
     $('work').classList.add('hide');
     $('denyCard').classList.remove('hide');
+    renderStuckNav(user.email || '');
     $('denyWho').textContent = verified
       ? 'מחובר כ־' + user.email + ' · אין הרשאת ניהול'
       : 'מחובר כ־' + user.email + ' · המייל טרם אומת';

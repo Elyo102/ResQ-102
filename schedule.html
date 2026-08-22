@@ -169,7 +169,7 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav } from './nav.js';
+import { renderNav, clearNav, renderStuckNav } from './nav.js';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween }
   from './rotation.js';
@@ -224,6 +224,7 @@ onAuthStateChanged(auth, async user => {
   try {
     const s = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
     if (!s.exists()) {
+      renderStuckNav(user.email || '');
       $('authErr').textContent = 'החשבון אינו מקושר לכבאי. פנה לרכז/ת משאבי אנוש.';
       $('authErr').style.display = 'block';
       return;
