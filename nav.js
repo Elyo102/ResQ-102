@@ -37,15 +37,21 @@ function styleOnce() {
   // גובה הכפתור 44 פיקסלים — המינימום שאצבע פוגעת בו באמינות
   // על מסך טלפון, וכבאי לא ייגש למערכת ממחשב.
   st.textContent = [
+    // align-self:stretch נחוץ כי בדף הכניסה הגוף הוא flex ממורכז,
+    // ובלעדיו הסרגל היה מתכווץ לרוחב התוכן שלו.
     '#appNav{position:sticky;top:0;z-index:900;display:flex;gap:8px;',
-    '  align-items:center;flex-wrap:wrap;',
+    '  align-items:center;flex-wrap:wrap;box-sizing:border-box;',
+    '  align-self:stretch;flex:none;',
     '  background:#1e2126;border-bottom:1px solid #2c3036;',
     '  padding:12px 16px;margin:-18px -18px 18px;',
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
     '#appNav .brand{font-weight:800;font-size:17px;color:#e8eaed;',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
     '#appNav .brand b{color:#e8590c;font-weight:800}',
+    // כללי הרוחב והשוליים כתובים במפורש: לדפים יש חוקים גורפים
+    // כמו button{width:100%} שאחרת בולעים את הכפתור לשורה שלמה.
     '#appNav button.back{display:inline-flex;align-items:center;gap:6px;',
+    '  width:auto;margin:0;flex:none;',
     '  background:transparent;border:1px solid #3a3f47;color:#b9c0c8;',
     '  font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;',
     '  padding:10px 14px;border-radius:10px;white-space:nowrap}',
@@ -54,6 +60,7 @@ function styleOnce() {
     '#appNav a{display:inline-flex;align-items:center;gap:8px;',
     '  color:#b9c0c8;text-decoration:none;font-size:15.5px;font-weight:600;',
     '  padding:11px 18px;border-radius:10px;white-space:nowrap;',
+    '  width:auto;margin:0;flex:none;',
     '  background:#23262c;border:1px solid #2c3036;',
     '  transition:transform .12s ease,background .12s ease,color .12s ease}',
     '#appNav a:hover{transform:translateY(-1px);background:#2c3036;color:#e8eaed}',
