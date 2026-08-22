@@ -159,7 +159,7 @@ import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
          signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser,
          sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, serverTimestamp }
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
@@ -388,44 +388,28 @@ $('btnLink').onclick = async () => {
   btn.disabled = true;
   const user = auth.currentUser;
   saveOnboard({ code: code, name: name, phone: phone, email: user.email });
-  await runOnboarding(user, { code: code, name: name, phone: phone });
+  await submitJoinRequest(user, { code: code, name: name, phone: phone });
   btn.disabled = false;
 };
 
-// ---------- קישור החשבון לכבאי בתחנה ----------
-// רץ רק אחרי שהמייל אומת, כי רק אז כללי האבטחה מרשים גישה.
+// ---------- שליחת בקשת הצטרפות ----------
+//
+// שינוי מהותי מול הגרסה הקודמת.
+//
+// קודם, האפליקציה בדקה בעצמה את הקוד האישי מול רשימת התחנה
+// ויצרה למשתמש מסמך עם תפקיד. זה נסגר: כללי האבטחה החדשים
+// לא מרשים ללקוח לקרוא את רשימת התחנה ולא ליצור לעצמו תפקיד.
+//
+// למה זה נכון: אם הדפדפן קובע מי אתה, מספיק לשנות שם משתנה
+// כדי להפוך לקצין. עכשיו הקוד האישי נבדק בשרת, והתפקיד נכתב
+// לטוקן על ידי Cloud Function בלבד.
+//
+// המחיר: כל כבאי חדש ממתין לאישור מנהל. זו החלטה מודעת.
 
-async function runOnboarding(user, details){
+async function submitJoinRequest(user, details){
   const email = (user.email || '').toLowerCase();
+  const m = $('lMsg');
 
-  // מסלול א': הקוד והמייל תואמים לרשימת התחנה - כניסה מיידית
-  try {
-    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', details.code);
-    const snap = await getDoc(pendingRef);
-    if (snap.exists() && String(snap.data().email || '').toLowerCase() === email) {
-      const p = snap.data();
-      await setDoc(doc(db, 'stations', STATION_ID, 'users', user.uid), {
-        personal_code: p.personal_code,
-        full_name:     p.full_name,
-        email:         email,
-        phone:         details.phone || p.phone || '',
-        crew:          p.crew || '',
-        role:          p.role,
-        position:      p.position || '',
-        is_active:     p.is_active !== false,
-        last_login:    serverTimestamp(),
-        created_at:    serverTimestamp()
-      });
-      try { await deleteDoc(pendingRef); } catch (ignore) {}
-      clearOnboard();
-      await loadProfile(user);
-      return;
-    }
-  } catch (ignore) {
-    // קריאה נדחתה = המייל בגיליון ריק או שונה. ממשיכים למסלול ב'.
-  }
-
-  // מסלול ב': יצירת בקשה שממתינה לאישור
   try {
     await setDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid), {
       claimed_code: details.code,
@@ -438,7 +422,6 @@ async function runOnboarding(user, details){
     clearOnboard();
     showWaiting();
   } catch (e) {
-    const m = $('lMsg');
     m.textContent = 'שגיאה בשליחת הבקשה: ' + (e.code || e.message);
     m.className = 'msg err';
     showView('link');
@@ -475,10 +458,10 @@ async function route(user){
   } catch (ignore) {}
   if (req && req.exists()) { showWaiting(); return; }
 
-  // אין מסמך כבאי ואין בקשה - זו הכניסה הראשונה אחרי האימות.
+  // אין מסמך כבאי ואין בקשה - צריך לשלוח בקשת הצטרפות.
   const saved = readOnboard();
   if (saved && saved.code) {
-    await runOnboarding(user, saved);
+    await submitJoinRequest(user, saved);
   } else {
     // אימת בדפדפן אחר, או שהזיכרון המקומי נמחק. נבקש שוב.
     $('lMsg').className = 'msg';
@@ -497,8 +480,9 @@ function showNotLinked(){
 function showWaiting(){
   $('waitIcon').textContent = '⏳';
   $('waitTtl').textContent  = 'הבקשה נשלחה';
-  $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור רכז/ת משאבי אנוש.<br>' +
-                              'תקבל גישה מלאה מיד לאחר האישור.';
+  $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
+                              'תקבל גישה מלאה מיד לאחר האישור.<br><br>' +
+                              '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
   showView('wait');
 }
 
