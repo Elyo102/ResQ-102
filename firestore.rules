@@ -2,7 +2,7 @@ rules_version = '2';
 
 // =====================================================================
 //  תחנה 102 — כללי אבטחה
-//  גרסה 2.5 — מבוססת Custom Claims
+//  גרסה 2.6 — מבוססת Custom Claims
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
@@ -94,12 +94,18 @@ service cloud.firestore {
       return claim('districtId');
     }
 
-    function districtStaff() {
+    // הפונקציה מקבלת את המחוז כפרמטר ולא קוראת את resource.
+    //
+    // תוקן 22.8.2026 אחרי שהמהדר של Firebase סימן
+    // "Invalid variable name: resource" — הגרסה הקודמת ניסתה
+    // לקרוא את המסמך מתוך פונקציה כללית, ושם resource לא קיים.
+    // הוא זמין רק בתוך כלל שמתייחס למסמך מסוים.
+    function inDistrict(did) {
       return isSuper()
              || (signedIn()
                  && claim('role') == 'district_commander'
                  && myDistrict() != ''
-                 && myDistrict() == resource.data.district);
+                 && myDistrict() == did);
     }
 
     // ---------- בקשות הרשמה ----------
@@ -182,7 +188,7 @@ service cloud.firestore {
     // ---------- התחנה ----------
 
     match /stations/{sid} {
-      allow read:  if member(sid);
+      allow read:  if member(sid) || inDistrict(resource.data.district);
       allow write: if isSuper();
 
 
