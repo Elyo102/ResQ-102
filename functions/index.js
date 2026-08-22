@@ -474,7 +474,8 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
       }
     );
   } catch (e) {
-    throw new HttpsError('internal', 'שגיאת רשת באימות. נסה שוב.');
+    throw new HttpsError('internal',
+      'שלב 1 (אימות סיסמה) נכשל: ' + (e && e.message ? e.message : String(e)));
   }
 
   if (!res.ok) {
@@ -485,7 +486,21 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   await lockRef.set({ failed: 0, locked_until: null }, { merge: true });
 
   const uid = String(idxSnap.data().uid || '');
-  const token = await admin.auth().createCustomToken(uid);
+  if (!uid) {
+    throw new HttpsError('failed-precondition',
+      'רשומת הכניסה של מספר העובד הזה פגומה. פנה למנהל המערכת.');
+  }
+
+  // חתימת טוקן דורשת מחשבון השירות של הפונקציות הרשאת
+  // iam.serviceAccounts.signBlob, שאינה ניתנת כברירת מחדל.
+  // בלי המסר המדויק הזה הכישלון נראה כמו "שגיאה פנימית" סתמית.
+  let token;
+  try {
+    token = await admin.auth().createCustomToken(uid);
+  } catch (e) {
+    throw new HttpsError('internal',
+      'שלב 2 (יצירת טוקן) נכשל: ' + (e && e.message ? e.message : String(e)));
+  }
 
   return { ok: true, token: token };
 });
