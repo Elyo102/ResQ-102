@@ -1,0 +1,297 @@
+rules_version = '2';
+
+// =====================================================================
+//  תחנה 102 - כללי אבטחה
+//  גרסה 1.1
+//
+//  עיקרון: הכל סגור כברירת מחדל. כל הרשאה נפתחת במפורש.
+//  מזהה מסמך המשתמש = ה-UID של Firebase Auth.
+//
+//  ---------------------------------------------------------------
+//  מה השתנה בגרסה 1.1 (שלושה תיקוני אבטחה)
+//  כל מקום מסומן בקוד עם  [תיקון 1] / [תיקון 2] / [תיקון 3]
+//
+//  [תיקון 1]  דרישת אימות מייל.
+//             בלי זה: מי שיודע את המייל של כבאי שטרם נרשם יכול
+//             להירשם בשמו ולקבל את התפקיד שלו.
+//             *** קרא את האזהרה ליד התיקון לפני שאתה מעלה! ***
+//
+//  [תיקון 2]  נעילת נוכחות.
+//             בלי זה: כבאי יכול לאשר לעצמו נוכחות בלי קצין,
+//             או לשייך רישום שלו לקוד של כבאי אחר.
+//
+//  [תיקון 3]  נעילת החלפות משמרת.
+//             בלי זה: מי שמקבל בקשת החלפה יכול לשנות בה הכל.
+//  ---------------------------------------------------------------
+// =====================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- פונקציות עזר ----------
+
+    // [תיקון 1] - אימות מייל
+    //
+    // בלי השורה email_verified, מי שיודע את כתובת המייל של כבאי
+    // שטרם נרשם יכול להירשם בשמו ולקבל את התפקיד והמשמרת שלו -
+    // כי Firebase לא מאמת בעלות על מייל בהרשמה, והכללים משווים
+    // מחרוזת מייל בלבד.
+    //
+    // הופעל ב-22.8.2026, בזמן שהמערכת עוד לא פורסמה ואין משתמשים
+    // פעילים. זו הסיבה שאפשר היה להפעיל אותו בלי סיכון.
+    //
+    // חובה: האפליקציה צריכה לשלוח מייל אימות בהרשמה
+    // (sendEmailVerification) ולהסביר למשתמש שהוא חייב ללחוץ על
+    // הקישור לפני הכניסה הראשונה. בלי זה אף אחד לא ייכנס.
+
+    function isSignedIn() {
+      return request.auth != null
+             && request.auth.token.email != null
+             && request.auth.token.email_verified == true;
+    }
+
+    // מנהל-על: המייל הראשי של המערכת. נעילה קשיחה, לא נגזרת ממסמך.
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.email.lower() == 'fire102.shits@gmail.com';
+    }
+
+    function myUser(sid) {
+      return get(/databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid)).data;
+    }
+
+    function myUserExists(sid) {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid));
+    }
+
+    function myRole(sid) {
+      return myUser(sid).role;
+    }
+
+    function myCode(sid) {
+      return myUser(sid).personal_code;
+    }
+
+    // סגל: קצין משמרת או רכז/ת משאבי אנוש.
+    // מנהל-העל נכלל בהגדרות היסוד כי אין לו מסמך כבאי - בלי זה
+    // הוא מקבל הרשאת כתיבה אך לא קריאה, ונופל על permission-denied.
+    function isStaff(sid) {
+      return isSuperAdmin() ||
+             (myUserExists(sid) &&
+              (myRole(sid) == 'commander' || myRole(sid) == 'hr_coordinator'));
+    }
+
+    function isHr(sid) {
+      return isSuperAdmin() ||
+             (myUserExists(sid) && myRole(sid) == 'hr_coordinator');
+    }
+
+    // חבר בתחנה - כל מי שיש לו מסמך משתמש פעיל בתחנה הזו
+    function isMember(sid) {
+      return isSuperAdmin() ||
+             (myUserExists(sid) && myUser(sid).is_active == true);
+    }
+
+
+    // ---------- כללי השכר (גלובלי, קריאה לכולם) ----------
+
+    match /salary_rules/{versionId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+
+    // ---------- מסמך התחנה ----------
+
+    match /stations/{sid} {
+      allow read: if isMember(sid) || isSuperAdmin();
+      allow write: if isSuperAdmin();
+
+
+      // ---------- משתמשים ממתינים (לפני כניסה ראשונה) ----------
+      // הכבאי יכול לקרוא רק את הרשומה שהמייל בה זהה למייל שלו.
+      // אי אפשר לסרוק את הרשימה ואי אפשר לראות רשומות של אחרים.
+
+      match /pending_users/{code} {
+        allow read, delete: if isSignedIn() &&
+                               resource.data.email == request.auth.token.email.lower();
+        allow read, write: if isSuperAdmin() || isHr(sid);
+      }
+
+
+      // ---------- בקשות הרשמה ----------
+      // כבאי שאין לו מייל בגיליון, או שהמייל לא תואם, יוצר בקשה.
+      // הוא רואה רק את הבקשה של עצמו ולא מקבל שום גישה לנתוני התחנה
+      // עד שרכז/ת משאבי אנוש מאשר/ת אותו.
+
+      match /registration_requests/{uid} {
+        allow create: if isSignedIn()
+                      && request.auth.uid == uid
+                      && request.resource.data.email == request.auth.token.email.lower()
+                      && request.resource.data.status == 'pending';
+        allow read, delete: if isSignedIn() && request.auth.uid == uid;
+        allow read, write: if isStaff(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- משתמשים ----------
+
+      match /users/{uid} {
+        // כל חבר בתחנה רואה את רשימת אנשי התחנה (שם, משמרת, תפקיד)
+        allow read: if isMember(sid) || isSuperAdmin();
+
+        // יצירה בכניסה ראשונה: רק על עצמי, ורק אם הנתונים תואמים
+        // בדיוק לרשומה הממתינה. ככה אי אפשר "לשדרג את עצמי" לרכז
+        // משאבי אנוש או להתחזות לקוד של מישהו אחר.
+        allow create: if isSignedIn()
+                      && request.auth.uid == uid
+                      && request.resource.data.email == request.auth.token.email.lower()
+                      && exists(/databases/$(database)/documents/stations/$(sid)/pending_users/$(request.resource.data.personal_code))
+                      && get(/databases/$(database)/documents/stations/$(sid)/pending_users/$(request.resource.data.personal_code)).data.email == request.auth.token.email.lower()
+                      && request.resource.data.role == get(/databases/$(database)/documents/stations/$(sid)/pending_users/$(request.resource.data.personal_code)).data.role
+                      && request.resource.data.crew == get(/databases/$(database)/documents/stations/$(sid)/pending_users/$(request.resource.data.personal_code)).data.crew;
+
+        // עדכון עצמי: רק שדות לא רגישים. תפקיד, משמרת וקוד אישי
+        // לא ניתנים לשינוי על ידי המשתמש עצמו - רק על ידי HR.
+        allow update: if isSignedIn()
+                      && request.auth.uid == uid
+                      && request.resource.data.role == resource.data.role
+                      && request.resource.data.crew == resource.data.crew
+                      && request.resource.data.personal_code == resource.data.personal_code
+                      && request.resource.data.is_active == resource.data.is_active;
+
+        allow write: if isHr(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- מוצבים ורכבים ----------
+
+      match /units/{unitId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+      match /vehicles/{vehicleId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- מחזורי הסידור ----------
+
+      match /rotations/{rotationId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+      match /shift_overrides/{overrideId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+      match /postings/{postingId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- נוכחות בפועל ----------
+      // הכבאי כותב רק את עצמו, ורק אם החודש לא ננעל.
+
+      match /attendance/{docId} {
+        allow read: if isStaff(sid) ||
+                       (isMember(sid) && resource.data.user_code == myCode(sid));
+
+        // [תיקון 2א] - ביצירה, כבאי לא יכול לפתוח רישום כבר-מאושר
+        allow create: if isStaff(sid) ||
+                         (isMember(sid)
+                          && request.resource.data.user_code == myCode(sid)
+                          && request.resource.data.status != 'approved');
+
+        // [תיקון 2ב] - update ו-delete הופרדו.
+        //
+        // הכלל הקודם בדק רק את הערך הישן של user_code ולא הגן על status,
+        // ולכן כבאי יכול היה:
+        //   א. לשנות status ל-'approved' ולעקוף את הקצין
+        //   ב. לשנות user_code לקוד של כבאי אחר ולהזריק שעות לדוח שלו
+        //
+        // עכשיו שני השדות נעולים: הם חייבים להישאר בדיוק כפי שהיו.
+        allow update: if isStaff(sid) ||
+                         (isMember(sid)
+                          && resource.data.user_code == myCode(sid)
+                          && request.resource.data.user_code == resource.data.user_code
+                          && resource.data.status != 'approved'
+                          && request.resource.data.status != 'approved');
+
+        allow delete: if isStaff(sid) ||
+                         (isMember(sid)
+                          && resource.data.user_code == myCode(sid)
+                          && resource.data.status != 'approved');
+      }
+
+
+      // ---------- החלפות משמרת ----------
+
+      match /swaps/{swapId} {
+        allow read: if isMember(sid);
+        allow create: if isMember(sid) &&
+                         request.resource.data.requester_code == myCode(sid) &&
+                         request.resource.data.status == 'pending_target';
+        // [תיקון 3] - נעילת ההחלפה
+        //
+        // קודם, מי שקיבל את הבקשה יכול היה לשנות בה כל שדה - כולל
+        // להחליף את זהות המבקש, או לקפוץ ישר לסטטוס מאושר בלי הקצין.
+        //
+        // עכשיו: שמות שני הצדדים נעולים, והוא לא יכול לאשר סופית.
+        //
+        // *** שים לב ***  אני לא יודע מה שמות הסטטוסים האמיתיים
+        // באפליקציה שלך - ראיתי רק 'pending_target' ו-'cancelled'.
+        // אם הסטטוס הסופי אצלך לא נקרא 'approved', תגיד לי את השם
+        // הנכון ואתקן. אם תשאיר שם שגוי - ההגנה הזו לא תעבוד.
+        allow update: if isStaff(sid) ||
+                         (isMember(sid)
+                          && resource.data.target_code == myCode(sid)
+                          && request.resource.data.requester_code == resource.data.requester_code
+                          && request.resource.data.target_code == resource.data.target_code
+                          && request.resource.data.status != 'approved') ||
+                         (isMember(sid) && resource.data.requester_code == myCode(sid)
+                          && request.resource.data.status == 'cancelled');
+        allow delete: if isStaff(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- מסמכים ----------
+
+      match /documents/{docId} {
+        allow read: if isHr(sid) ||
+                       (isMember(sid) && resource.data.user_code == myCode(sid));
+        allow create: if isMember(sid) &&
+                         request.resource.data.user_code == myCode(sid);
+        allow update, delete: if isHr(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- אירועי אבטחה ----------
+
+      match /security_events/{eventId} {
+        allow read: if isMember(sid);
+        allow write: if isStaff(sid) || isSuperAdmin();
+      }
+
+
+      // ---------- דוחות חודשיים ----------
+
+      match /monthly_reports/{monthKey} {
+        allow read: if isMember(sid);
+        allow write: if isHr(sid) || isSuperAdmin();
+      }
+    }
+
+
+    // ---------- ברירת מחדל: הכל חסום ----------
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

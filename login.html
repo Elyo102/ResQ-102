@@ -104,6 +104,41 @@
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
+  <!-- ============ אימות מייל ============ -->
+  <div id="verifyView" class="hide">
+    <div class="wait">
+      <div class="icon">📧</div>
+      <div class="ttl">אמת את כתובת המייל</div>
+      <div class="txt">
+        שלחנו קישור אימות אל<br>
+        <b id="vEmail"></b><br><br>
+        פתח את המייל, לחץ על הקישור, וחזור לכאן.<br>
+        אם המייל לא הגיע — בדוק בתיקיית הספאם.
+      </div>
+    </div>
+    <button id="btnVerified">אימתתי — המשך</button>
+    <button class="link" id="btnResend">שלח לי את המייל שוב</button>
+    <button class="link" id="btnLogoutVerify">התנתק</button>
+    <div class="msg" id="vMsg"></div>
+  </div>
+
+  <!-- ============ השלמת פרטים ============ -->
+  <div id="linkView" class="hide">
+    <div class="wait" style="margin-bottom:6px">
+      <div class="ttl">השלמת פרטים</div>
+      <div class="txt">כדי לקשר את החשבון שלך לכבאי בתחנה.</div>
+    </div>
+    <label>קוד אישי</label>
+    <input type="text" id="lCode" maxlength="15">
+    <label>שם מלא</label>
+    <input type="text" id="lName">
+    <label>טלפון</label>
+    <input type="tel" id="lPhone" inputmode="tel">
+    <button id="btnLink">המשך</button>
+    <button class="link" id="btnLogoutLink">התנתק</button>
+    <div class="msg" id="lMsg"></div>
+  </div>
+
   <!-- ============ מסך אחרי כניסה ============ -->
   <div id="homeView" class="hide">
     <div class="profile">
@@ -121,7 +156,8 @@
 import { firebaseConfig, STATION_ID } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-         signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser }
+         signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser,
+         sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -150,9 +186,29 @@ function show(text, kind){
 function clearMsg(){ $('msg').className = 'msg'; }
 
 function showView(name){
-  $('authView').classList.toggle('hide', name !== 'auth');
-  $('waitView').classList.toggle('hide', name !== 'wait');
-  $('homeView').classList.toggle('hide', name !== 'home');
+  $('authView').classList.toggle('hide',   name !== 'auth');
+  $('waitView').classList.toggle('hide',   name !== 'wait');
+  $('homeView').classList.toggle('hide',   name !== 'home');
+  $('verifyView').classList.toggle('hide', name !== 'verify');
+  $('linkView').classList.toggle('hide',   name !== 'link');
+}
+
+// ---------- זיכרון מקומי לפרטי ההרשמה ----------
+// בין ההרשמה לאימות המייל אי אפשר לכתוב ל-Firestore, כי הכללים
+// חוסמים משתמש לא מאומת. לכן הפרטים נשמרים זמנית בדפדפן.
+// אם המשתמש יאמת בדפדפן אחר - נבקש ממנו אותם שוב במסך "השלמת פרטים".
+
+const ONBOARD_KEY = 'st102_onboard';
+
+function saveOnboard(data){
+  try { localStorage.setItem(ONBOARD_KEY, JSON.stringify(data)); } catch (ignore) {}
+}
+function readOnboard(){
+  try { return JSON.parse(localStorage.getItem(ONBOARD_KEY) || 'null'); }
+  catch (ignore) { return null; }
+}
+function clearOnboard(){
+  try { localStorage.removeItem(ONBOARD_KEY); } catch (ignore) {}
 }
 
 // ---------- לשוניות ----------
@@ -207,6 +263,11 @@ $('btnForgot').onclick = async () => {
 };
 
 // ---------- הרשמה ----------
+//
+// שינוי מהותי: ההרשמה כבר לא כותבת ל-Firestore.
+// כללי האבטחה דורשים מייל מאומת, ובזמן ההרשמה המייל עדיין לא מאומת.
+// לכן ההרשמה רק יוצרת חשבון ושולחת מייל אימות, והקישור לכבאי
+// בתחנה קורה בכניסה הראשונה שאחרי האימות.
 
 $('btnFirst').onclick = async () => {
   const btn = $('btnFirst');
@@ -225,8 +286,8 @@ $('btnFirst').onclick = async () => {
 
   btn.disabled = true;
   onboarding = true;
-  let created = null;
 
+  let created = null;
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     created = cred.user;
@@ -243,18 +304,111 @@ $('btnFirst').onclick = async () => {
     return;
   }
 
-  // מסלול א': הקוד והמייל תואמים לרשימת התחנה - כניסה מיידית
-  let matched = false;
+  saveOnboard({ code: code, name: name, phone: phone, email: email });
+
   try {
-    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', code);
+    await sendEmailVerification(created);
+  } catch (e) {
+    // אם שליחת האימות נכשלה, החשבון נשאר תקוע. עדיף למחוק ולהתחיל מחדש.
+    try { await deleteUser(created); } catch (ignore) {}
+    clearOnboard();
+    onboarding = false;
+    btn.disabled = false;
+    show('לא הצלחנו לשלוח מייל אימות: ' + (e.code || e.message) + '. נסה שוב.', 'err');
+    return;
+  }
+
+  onboarding = false;
+  btn.disabled = false;
+  showVerify(created);
+};
+
+// ---------- מסך אימות מייל ----------
+
+function showVerify(user){
+  $('vEmail').textContent = user.email || '';
+  $('vMsg').className = 'msg';
+  showView('verify');
+}
+
+$('btnResend').onclick = async () => {
+  const user = auth.currentUser;
+  if (!user) return;
+  const m = $('vMsg');
+  try {
+    await sendEmailVerification(user);
+    m.textContent = 'המייל נשלח שוב. בדוק גם בתיקיית הספאם.';
+    m.className = 'msg ok';
+  } catch (e) {
+    m.textContent = e.code === 'auth/too-many-requests'
+      ? 'נשלחו יותר מדי מיילים. המתן כמה דקות ונסה שוב.'
+      : 'שגיאה בשליחה: ' + (e.code || e.message);
+    m.className = 'msg err';
+  }
+};
+
+$('btnVerified').onclick = async () => {
+  const user = auth.currentUser;
+  if (!user) return;
+  const btn = $('btnVerified');
+  const m = $('vMsg');
+  btn.disabled = true;
+  try {
+    await reload(user);
+    // חשוב: בלי רענון כפוי, ה-token עדיין נושא email_verified=false
+    // וכללי האבטחה ידחו את הבקשה למרות שהמשתמש כבר אימת.
+    await user.getIdToken(true);
+  } catch (ignore) {}
+  btn.disabled = false;
+
+  if (auth.currentUser && auth.currentUser.emailVerified) {
+    m.className = 'msg';
+    await route(auth.currentUser);
+  } else {
+    m.textContent = 'המייל עדיין לא מאומת. לחץ על הקישור שבמייל ואז נסה שוב.';
+    m.className = 'msg err';
+  }
+};
+
+// ---------- מסך השלמת פרטים ----------
+
+$('btnLink').onclick = async () => {
+  const btn = $('btnLink');
+  const m   = $('lMsg');
+  const code  = $('lCode').value.trim();
+  const name  = $('lName').value.trim();
+  const phone = $('lPhone').value.trim();
+
+  if (!code || !name) {
+    m.textContent = 'נא למלא קוד אישי ושם מלא.';
+    m.className = 'msg err';
+    return;
+  }
+
+  btn.disabled = true;
+  const user = auth.currentUser;
+  saveOnboard({ code: code, name: name, phone: phone, email: user.email });
+  await runOnboarding(user, { code: code, name: name, phone: phone });
+  btn.disabled = false;
+};
+
+// ---------- קישור החשבון לכבאי בתחנה ----------
+// רץ רק אחרי שהמייל אומת, כי רק אז כללי האבטחה מרשים גישה.
+
+async function runOnboarding(user, details){
+  const email = (user.email || '').toLowerCase();
+
+  // מסלול א': הקוד והמייל תואמים לרשימת התחנה - כניסה מיידית
+  try {
+    const pendingRef = doc(db, 'stations', STATION_ID, 'pending_users', details.code);
     const snap = await getDoc(pendingRef);
     if (snap.exists() && String(snap.data().email || '').toLowerCase() === email) {
       const p = snap.data();
-      await setDoc(doc(db, 'stations', STATION_ID, 'users', created.uid), {
+      await setDoc(doc(db, 'stations', STATION_ID, 'users', user.uid), {
         personal_code: p.personal_code,
         full_name:     p.full_name,
         email:         email,
-        phone:         phone || p.phone || '',
+        phone:         details.phone || p.phone || '',
         crew:          p.crew || '',
         role:          p.role,
         position:      p.position || '',
@@ -262,51 +416,75 @@ $('btnFirst').onclick = async () => {
         last_login:    serverTimestamp(),
         created_at:    serverTimestamp()
       });
-      await deleteDoc(pendingRef);
-      matched = true;
+      try { await deleteDoc(pendingRef); } catch (ignore) {}
+      clearOnboard();
+      await loadProfile(user);
+      return;
     }
   } catch (ignore) {
     // קריאה נדחתה = המייל בגיליון ריק או שונה. ממשיכים למסלול ב'.
   }
 
-  if (matched) {
-    onboarding = false;
-    btn.disabled = false;
-    await loadProfile(created);
-    return;
-  }
-
   // מסלול ב': יצירת בקשה שממתינה לאישור
   try {
-    await setDoc(doc(db, 'stations', STATION_ID, 'registration_requests', created.uid), {
-      claimed_code: code,
-      full_name:    name,
+    await setDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid), {
+      claimed_code: details.code,
+      full_name:    details.name,
       email:        email,
-      phone:        phone,
+      phone:        details.phone || '',
       status:       'pending',
       created_at:   serverTimestamp()
     });
-    onboarding = false;
-    btn.disabled = false;
+    clearOnboard();
     showWaiting();
   } catch (e) {
-    if (created) { try { await deleteUser(created); } catch (ignore) {} }
-    onboarding = false;
-    btn.disabled = false;
-    show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
+    const m = $('lMsg');
+    m.textContent = 'שגיאה בשליחת הבקשה: ' + (e.code || e.message);
+    m.className = 'msg err';
+    showView('link');
   }
-};
+}
 
 // ---------- מצב התחברות ----------
 
-$('btnLogout').onclick = () => signOut(auth);
-$('btnLogoutWait').onclick = () => signOut(auth);
+$('btnLogout').onclick       = () => { clearOnboard(); signOut(auth); };
+$('btnLogoutWait').onclick   = () => { clearOnboard(); signOut(auth); };
+$('btnLogoutVerify').onclick = () => { clearOnboard(); signOut(auth); };
+$('btnLogoutLink').onclick   = () => { clearOnboard(); signOut(auth); };
 
 onAuthStateChanged(auth, user => {
   if (onboarding) return;
   if (!user) { showView('auth'); return; }
-  loadProfile(user);
+  route(user);
 });
+
+// מחליט לאיזה מסך המשתמש שייך כרגע.
+async function route(user){
+  if (!user.emailVerified) { showVerify(user); return; }
+
+  let snap = null;
+  try {
+    snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
+  } catch (ignore) {}
+
+  if (snap && snap.exists()) { await loadProfile(user); return; }
+
+  let req = null;
+  try {
+    req = await getDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid));
+  } catch (ignore) {}
+  if (req && req.exists()) { showWaiting(); return; }
+
+  // אין מסמך כבאי ואין בקשה - זו הכניסה הראשונה אחרי האימות.
+  const saved = readOnboard();
+  if (saved && saved.code) {
+    await runOnboarding(user, saved);
+  } else {
+    // אימת בדפדפן אחר, או שהזיכרון המקומי נמחק. נבקש שוב.
+    $('lMsg').className = 'msg';
+    showView('link');
+  }
+}
 
 function showNotLinked(){
   $('waitIcon').textContent = '🔒';
@@ -330,19 +508,7 @@ async function loadProfile(user){
     snap = await getDoc(doc(db, 'stations', STATION_ID, 'users', user.uid));
   } catch (ignore) {}
 
-  if (!snap || !snap.exists()) {
-    let req = null;
-    try {
-      req = await getDoc(doc(db, 'stations', STATION_ID, 'registration_requests', user.uid));
-    } catch (ignore) {}
-
-    if (req && req.exists()) { showWaiting(); return; }
-
-    // חשוב: לא מנתקים אוטומטית. ניתוק כאן היה מפיל גם לשוניות
-    // אחרות של המערכת, כי Firebase משתף התחברות בין לשוניות.
-    showNotLinked();
-    return;
-  }
+  if (!snap || !snap.exists()) { showNotLinked(); return; }
 
   const u = snap.data();
   $('pName').textContent = u.full_name;
