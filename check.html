@@ -97,6 +97,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div class="card">
+    <h2>נתוני הדגמה</h2>
+    <div class="note" id="seedNote">
+      מערכת שזה עתה נפרסה ריקה, ומסך ריק נראה בדיוק כמו מסך
+      שנכשל בטעינה. הכפתור ממלא את המערכת בכשירויות, סבב, לוח
+      ציוות, אבטחות, תקלות וטפסים — <b>עם האנשים האמיתיים
+      מהסגל שלך</b>, כדי שתראה גם שהמסכים עובדים וגם שהם
+      קריאים.
+      <br><br>
+      כל רשומה מסומנת, והמחיקה מוחקת בדיוק אותן. סגל, משתמשים
+      והרשאות לא נוגעים בהם.
+    </div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap">
+      <button id="btnSeed">צור נתוני הדגמה</button>
+      <button class="ghost" id="btnWipe">מחק נתוני הדגמה</button>
+    </div>
+    <div id="seed"></div>
+  </div>
+
+  <div class="card">
     <h2>בדיקת פריסה</h2>
     <div class="note" id="depNote">
       אחרי <b>deploy.bat</b>. עובר על כל אוסף, כל פונקציה וכל אינדקס,
@@ -116,12 +135,13 @@ import { firebaseConfig } from './firebase-config.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          deleteDoc, query, where, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { renderStuckNav, renderNav } from './nav.js?v=20';
+import * as SEED from './seed.js?v=20';
 import { initPWA } from './pwa.js?v=20';
 
 const app  = initializeApp(firebaseConfig);
@@ -214,6 +234,120 @@ const FUNCTIONS = [
   { name: 'listUsersWithClaims', he: 'רשימת משתמשים', args: {} },
   { name: 'reindexDirectory',    he: 'בניית ספרייה',  args: {}, heavy: true }
 ];
+
+// ---------- נתוני הדגמה ----------
+
+let seedBusy = false;
+
+async function myStation(){
+  const user = auth.currentUser;
+  if (!user) return null;
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (e) {}
+  return c.stationId || 'eilat_102';
+}
+
+// הסגל האמיתי. בלעדיו אין למי לשבץ אבטחה, ואין טעם ליצור
+// נתונים שמצביעים על אף אחד.
+async function roster(sid){
+  const out = [];
+  try {
+    const s = await getDocs(collection(db, 'stations', sid, 'roster'));
+    s.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      out.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
+                 emp: String(v.emp || v.emp_number || '') });
+    });
+  } catch (e) {}
+  return out;
+}
+
+$('btnSeed').onclick = async () => {
+  if (seedBusy) return;
+  seedBusy = true;
+  const b = $('btnSeed'); b.disabled = true;
+  $('seed').innerHTML = '';
+
+  const sid = await myStation();
+  if (!sid) { line('seed','מצב','צריך להיות מחובר.','bad');
+              b.disabled = false; seedBusy = false; return; }
+
+  const people = await roster(sid);
+  if (people.length < 2) {
+    line('seed', 'סגל', 'נמצאו ' + people.length + ' אנשים בסגל. ' +
+         'צריך לפחות שניים — אשר נרשמים במסך הגישה ואז חזור לכאן.', 'bad');
+    b.disabled = false; seedBusy = false; return;
+  }
+  line('seed', 'סגל', people.length + ' אנשים · ' +
+       people.slice(0,4).map(p => p.name).join(', ') +
+       (people.length > 4 ? ' ועוד' : ''), 'ok');
+
+  const stamp = { [SEED.MARK]: true, created_key: new Date().toISOString() };
+  let made = 0, failed = 0;
+  const put = async (path, id, data) => {
+    try {
+      if (id) await setDoc(doc(db, 'stations', sid, ...path, id),
+                           Object.assign({}, data, stamp), { merge: true });
+      else    await addDoc(collection(db, 'stations', sid, ...path),
+                           Object.assign({}, data, stamp));
+      made++;
+    } catch (e) { failed++; console.warn(path.join('/') + ': ' + e.code); }
+  };
+
+  // הגדרות
+  for (const q of SEED.QUALS) await put(['quals'], q.id, q);
+  for (const t of SEED.SITES) await put(['sub_stations'], t.id, t);
+  for (const v of SEED.ANCHORS) await put(['vehicles'], null, v);
+  for (const r of SEED.rotations()) await put(['rotations'], r.crew, r);
+  await put(['config'], 'redline', SEED.REDLINE);
+  await put(['config'], 'board', SEED.board());
+  line('seed', 'הגדרות', 'כשירויות, תחנות משנה, רכבי עיגון, סבב, ' +
+       'קו אדום ולוח ציוות', 'ok');
+
+  // תנועה
+  for (const g of SEED.guards(people))      await put(['guards'], null, g);
+  for (const f of SEED.faults(people))      await put(['faults'], null, f);
+  for (const s2 of SEED.submissions(people)) await put(['submissions'], null, s2);
+  for (const w of SEED.swaps(people))       await put(['swaps'], null, w);
+  line('seed', 'תנועה', 'אבטחות, תקלות, טפסים והחלפה פתוחה', 'ok');
+
+  line('seed', 'סיכום', made + ' רשומות נוצרו' +
+       (failed ? ' · ' + failed + ' נכשלו — כנראה חוק שחוסם. ' +
+        'הרץ בדיקת פריסה למטה כדי לראות איזה.' : '') +
+       '. עכשיו פתח את המסכים ותראה אם הם נראים נכון.',
+       failed ? 'warn' : 'ok');
+
+  b.disabled = false; seedBusy = false;
+};
+
+$('btnWipe').onclick = async () => {
+  if (seedBusy) return;
+  if (!window.confirm('למחוק את כל נתוני ההדגמה?\n\n' + SEED.KEEPS)) return;
+  seedBusy = true;
+  const b = $('btnWipe'); b.disabled = true;
+  $('seed').innerHTML = '';
+
+  const sid = await myStation();
+  if (!sid) { b.disabled = false; seedBusy = false; return; }
+
+  let gone = 0, stuck = 0;
+  for (const col of SEED.WIPE) {
+    try {
+      const s = await getDocs(collection(db, 'stations', sid, col));
+      for (const d of s.docs) {
+        if (!(d.data() || {})[SEED.MARK]) continue;   // לא שלנו — לא נוגעים
+        try { await deleteDoc(doc(db, 'stations', sid, col, d.id)); gone++; }
+        catch (e) { stuck++; }
+      }
+    } catch (e) {}
+  }
+  line('seed', 'נמחק', gone + ' רשומות' +
+       (stuck ? ' · ' + stuck + ' לא נמחקו (חוק חוסם מחיקה)' : ''),
+       stuck ? 'warn' : 'ok');
+  line('seed', 'נשאר', SEED.KEEPS, 'ok');
+  b.disabled = false; seedBusy = false;
+};
 
 let depBusy = false;
 
