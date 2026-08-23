@@ -6,7 +6,16 @@
 <title>ResQ — ציוות וכשירות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,12 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
-    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
-  }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
         font-family:"Segoe UI",Arial,sans-serif; padding:16px 20px }
@@ -44,24 +47,24 @@
   .sw{ border:1px solid var(--line); background:transparent; color:var(--muted);
        border-radius:8px; padding:7px 17px; font-size:15px; font-weight:700;
        cursor:pointer; font-family:inherit }
-  .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:#fff }
-  .sw.on.B{ background:var(--crewB); border-color:var(--crewB); color:#0d1f12 }
-  .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:#fff }
+  .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:var(--on-accent) }
+  .sw.on.B{ background:var(--crewB); border-color:var(--crewB); color:var(--crewB-on) }
+  .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:var(--on-accent) }
   .sep{ width:1px; align-self:stretch; background:var(--line); margin:0 2px }
   .verdict{ font-size:15px; font-weight:800; border-radius:8px; padding:6px 14px;
             white-space:nowrap }
-  .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:#2a1a1a }
-  .verdict.ok{ color:var(--good); border:1px solid #2f4a33; background:#16241a }
-  .why{ font-size:13px; color:#f0b2b2; line-height:1.7 }
-  .why b{ color:#fff }
+  .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:var(--bad-bg) }
+  .verdict.ok{ color:var(--good); border:1px solid var(--good-bd); background:var(--good-bg) }
+  .why{ font-size:13px; color:var(--soft-bad); line-height:1.7 }
+  .why b{ color:var(--on-accent) }
   .why.ok{ color:var(--muted) }
   .why.ok b{ color:var(--txt) }
   .spacer{ flex:1 }
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
         font-family:inherit; white-space:nowrap }
-  .btn:hover{ color:var(--txt); border-color:#3d444d }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   .chain{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
@@ -69,9 +72,9 @@
   .node{ border:1px solid var(--line); border-radius:10px; background:var(--card);
          padding:9px 13px; display:flex; align-items:baseline; gap:9px;
          flex-wrap:wrap; cursor:default }
-  .node.head{ border-color:var(--accent); background:#241a13 }
+  .node.head{ border-color:var(--accent); background:var(--warn-bg) }
   .node.click{ cursor:pointer }
-  .node.click:hover{ border-color:#3d444d }
+  .node.click:hover{ border-color:var(--line-hover) }
   .node .rank{ font-size:11.5px; color:var(--muted); white-space:nowrap }
   .node .who{ font-size:15px; font-weight:700 }
   .node.empty .who{ color:var(--warn) }
@@ -88,29 +91,29 @@
      עדיין במשמרת — אבל ברור שהרכב לא יוצא. */
   .waiver{ margin-top:9px }
   .waiver .wline{ padding:10px 13px; border-radius:9px; font-size:12.5px;
-                  line-height:1.7; background:#241f13; border:1px solid #5a4a2b;
+                  line-height:1.7; background:var(--warn-bg); border:1px solid var(--warn);
                   color:#e8c78a }
-  .waiver .wline.approved{ background:#16241a; border-color:#2f4a33; color:#a5d6a7 }
-  .waiver .wline.rejected{ background:#241618; border-color:#5a2b2d; color:#f0b2b2 }
-  .verdict.warn{ color:#e0a23c; border:1px solid #e0a23c; background:#241f13 }
+  .waiver .wline.approved{ background:var(--good-bg); border-color:var(--good-bd); color:var(--ok-fg) }
+  .waiver .wline.rejected{ background:var(--bad-bg); border-color:var(--bad-bd); color:var(--soft-bad) }
+  .verdict.warn{ color:var(--warn); border:1px solid var(--warn); background:var(--warn-bg) }
 
   .vehwarn{ margin-top:9px; padding:10px 13px; border-radius:9px;
-            background:#241618; border:1px solid #5a2b2d; color:#f0b2b2;
+            background:var(--bad-bg); border:1px solid var(--bad-bd); color:var(--soft-bad);
             font-size:12.5px; line-height:1.7 }
-  .vehwarn b{ color:#fff }
+  .vehwarn b{ color:var(--on-accent) }
   .veh.blocked{ border-color:var(--bad) }
-  .veh.blocked > .hd{ background:#2a1618 }
+  .veh.blocked > .hd{ background:var(--bad-bg) }
   .veh.blocked .slots{ opacity:.45 }
   .veh .fault{ display:flex; align-items:flex-start; gap:8px;
                padding:9px 14px; font-size:12.5px; line-height:1.7;
-               background:#241618; border-bottom:1px solid var(--line);
-               color:#f0b2b2 }
-  .veh .fault.limit{ background:#241f13; color:#e8c78a }
-  .veh .fault b{ color:#fff }
+               background:var(--bad-bg); border-bottom:1px solid var(--line);
+               color:var(--soft-bad) }
+  .veh .fault.limit{ background:var(--warn-bg); color:#e8c78a }
+  .veh .fault b{ color:var(--on-accent) }
   .veh .fault .who{ color:var(--muted); font-size:11.5px }
   .veh > .hd{ display:flex; align-items:center; gap:9px; flex-wrap:wrap;
               padding:10px 14px; border-bottom:1px solid var(--line);
-              background:#191c21 }
+              background:var(--panel) }
   .veh .nm{ font-size:15px; font-weight:800 }
   .veh .role{ font-size:11.5px; color:var(--muted); border:1px solid var(--line);
               border-radius:20px; padding:1px 9px }
@@ -120,26 +123,26 @@
   .veh .tools .btn{ padding:4px 9px; font-size:11.5px }
 
   .srow{ display:flex; align-items:center; gap:10px; padding:9px 14px;
-         border-bottom:1px solid #24272c }
+         border-bottom:1px solid var(--line-soft) }
   .srow:last-child{ border-bottom:0 }
-  .srow.bad{ background:#241618 }
+  .srow.bad{ background:var(--bad-bg) }
   .srow.click{ cursor:pointer }
-  .srow.click:hover{ background:#20242a }
-  .srow.bad.click:hover{ background:#2b1a1c }
+  .srow.click:hover{ background:var(--panel) }
+  .srow.bad.click:hover{ background:var(--bad-bg) }
   .job{ font-size:11.5px; color:var(--muted); width:104px; flex:none;
         line-height:1.35 }
   .who{ font-size:14.5px; font-weight:600; flex:1; min-width:0;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .who .none{ color:var(--warn); font-weight:600 }
   .who .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px;
-            color:#fff; margin-inline-start:7px; vertical-align:middle }
-  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
+            color:var(--on-accent); margin-inline-start:7px; vertical-align:middle }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:var(--crewB-on) }
   .cw.C{ background:var(--crewC) }
   .req{ font-size:11px; font-weight:600; border:1px solid var(--line);
         border-radius:20px; padding:1px 9px; color:var(--muted);
         white-space:nowrap; flex:none; max-width:150px; overflow:hidden;
         text-overflow:ellipsis }
-  .req.hit{ border-color:#2f4a33; color:var(--good) }
+  .req.hit{ border-color:var(--good-bd); color:var(--good) }
   .req.miss{ border-color:var(--bad); color:var(--bad) }
   .x{ flex:none; color:var(--muted); font-size:15px; cursor:pointer;
       padding:0 4px; line-height:1 }
@@ -148,9 +151,9 @@
   .foot{ color:var(--muted); font-size:12px; margin-top:12px; line-height:1.8 }
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
-  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
-  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
-  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .hide{ display:none !important }
   .card{ background:var(--card); border:1px solid var(--line);
          border-radius:12px; padding:18px; margin-bottom:16px }
@@ -167,7 +170,7 @@
   .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:14px;
               line-height:1.7 }
   .dlg label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 5px }
-  .dlg input, .dlg select{ width:100%; padding:10px; background:#111316;
+  .dlg input, .dlg select{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
         font-size:15px; font-family:inherit }
   .dlg .acts{ display:flex; gap:8px; margin-top:16px; flex-wrap:wrap }
@@ -175,14 +178,14 @@
   .plist{ max-height:44vh; overflow:auto; margin-top:10px;
           border:1px solid var(--line); border-radius:8px }
   .pit{ display:flex; align-items:center; gap:9px; padding:10px 12px;
-        border-bottom:1px solid #24272c; cursor:pointer }
+        border-bottom:1px solid var(--line-soft); cursor:pointer }
   .pit:last-child{ border-bottom:0 }
-  .pit:hover{ background:#20242a }
+  .pit:hover{ background:var(--panel) }
   .pit .pn{ font-size:14.5px; font-weight:600; flex:1; min-width:0;
             overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .pit .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
              padding:1px 9px; color:var(--muted); white-space:nowrap }
-  .pit .tag.hit{ border-color:#2f4a33; color:var(--good) }
+  .pit .tag.hit{ border-color:var(--good-bd); color:var(--good) }
   .pit .tag.miss{ border-color:var(--bad); color:var(--bad) }
   .pit .tag.busy{ border-color:var(--warn); color:var(--warn) }
   .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
@@ -190,18 +193,6 @@
 </head>
 <body>
 
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh;
-           overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-               color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>

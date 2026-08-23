@@ -6,7 +6,16 @@
 <title>ResQ — ניהול</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,10 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c; --ok:#2e7d32; --err:#c62828;
-  }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;padding:18px}
@@ -28,55 +33,43 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
         padding:18px;margin-bottom:14px}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
-  input{width:100%;padding:10px;background:#111316;color:var(--txt);
+  input{width:100%;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
-  button{background:var(--accent);color:#fff;border:0;border-radius:6px;
+  button{background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
         padding:10px 18px;font-size:14px;cursor:pointer;margin-top:14px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
   button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
   button.ok{background:var(--ok)}
-  button.no{background:transparent;border:1px solid #6b3535;color:#ef9a9a}
+  button.no{background:transparent;border:1px solid var(--bad-bd);color:var(--err-fg)}
   .req{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;
-       background:#191c20}
+       background:var(--panel)}
   .req .nm{font-size:16px;font-weight:600;margin-bottom:8px}
   .req .ln{font-size:13px;color:var(--muted);line-height:1.9}
   .req .ln b{color:var(--txt);font-weight:500}
   .match{margin-top:10px;padding:9px;border-radius:6px;font-size:13px;line-height:1.6}
-  .match.found{background:#1d3a20;color:#a5d6a7}
-  .match.none{background:#3a1d1d;color:#ef9a9a}
+  .match.found{background:var(--ok-bg);color:var(--ok-fg)}
+  .match.none{background:var(--err-bg);color:var(--err-fg)}
   .acts{display:flex;gap:10px}
   .acts button{flex:1}
   .hide{display:none}
   .who{font-size:13px;color:var(--muted)}
   .empty{color:var(--muted);font-size:14px;text-align:center;padding:24px 0}
   .msg{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;display:none}
-  .msg.err{display:block;background:#3a1d1d;color:#ef9a9a}
-  .msg.ok{display:block;background:#1d3a20;color:#a5d6a7}
-  .msg.info{display:block;background:#23262c;color:#b9c0c8}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
+  .msg.info{display:block;background:var(--chip);color:var(--dim)}
   h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
-  select{width:100%;padding:10px;background:#111316;color:var(--txt);
+  select{width:100%;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
   .two{display:flex;gap:12px}
   .two>div{flex:1}
-  .rotstate{font-size:13px;color:var(--muted);background:#191c20;border:1px solid var(--line);
+  .rotstate{font-size:13px;color:var(--muted);background:var(--panel);border:1px solid var(--line);
         border-radius:6px;padding:11px;line-height:1.8;margin-bottom:6px}
   .rotstate b{color:var(--txt)}
 </style>
 </head>
 <body>
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh;
-           overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .x{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-              color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>

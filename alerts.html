@@ -6,7 +6,16 @@
 <title>ResQ — התראות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,12 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
-    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
-  }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
@@ -36,23 +39,23 @@
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
-  .btn:hover{ color:var(--txt); border-color:#3d444d }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
-  select, textarea, input{ width:100%; padding:10px; background:#111316;
+  select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
         font-size:15px; font-family:inherit }
   textarea{ min-height:84px; resize:vertical }
 
   .state{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
           border:1px solid var(--line); border-radius:10px; padding:13px;
-          background:#191c20; margin-bottom:4px }
-  .state.on{ border-color:#2f4a33; background:#16241a }
-  .state.off{ border-color:var(--warn); background:#241f13 }
-  .state.no{ border-color:var(--bad); background:#241618 }
+          background:var(--panel); margin-bottom:4px }
+  .state.on{ border-color:var(--good-bd); background:var(--good-bg) }
+  .state.off{ border-color:var(--warn); background:var(--warn-bg) }
+  .state.no{ border-color:var(--bad); background:var(--bad-bg) }
   .state .big{ font-size:15px; font-weight:800 }
   .state.on .big{ color:var(--good) }
   .state.off .big{ color:var(--warn) }
@@ -60,7 +63,7 @@
   .state .why{ font-size:12.5px; color:var(--muted); line-height:1.7; flex:1 1 220px }
 
   .pref{ display:flex; align-items:flex-start; gap:11px; padding:11px 0;
-         border-bottom:1px solid #24272c }
+         border-bottom:1px solid var(--line-soft) }
   .pref:last-child{ border-bottom:0 }
   .pref input{ width:auto; margin:2px 0 0 }
   .pref .t{ flex:1 }
@@ -70,44 +73,44 @@
                padding:1px 9px; color:var(--muted); white-space:nowrap }
 
   .dev{ display:flex; align-items:center; gap:9px; padding:9px 0;
-        border-bottom:1px solid #24272c; font-size:13px }
+        border-bottom:1px solid var(--line-soft); font-size:13px }
   .dev:last-child{ border-bottom:0 }
   .dev .nm{ flex:1 }
   .dev .this{ font-size:11px; color:var(--good) }
 
   .bc{ border:1px solid var(--line); border-radius:10px; padding:12px;
-       margin-top:10px; background:#191c20; font-size:13px; line-height:1.8 }
+       margin-top:10px; background:var(--panel); font-size:13px; line-height:1.8 }
   .bc .hd{ font-size:12px; color:var(--muted); margin-bottom:4px }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
-  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
-  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
-  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
-  .card.red{ border-color:#5a2b2d; background:#221518 }
-  .btn.boom{ background:#c62828; border-color:#c62828; color:#fff }
-  .btn.boom:hover{ background:#d32f2f; border-color:#d32f2f; color:#fff }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .card.red{ border-color:var(--bad-bd); background:var(--bad-bg) }
+  .btn.boom{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
+  .btn.boom:hover{ background:var(--bad); border-color:var(--bad); color:var(--on-accent) }
 
   .plist{ max-height:230px; overflow:auto; border:1px solid var(--line);
-          border-radius:9px; margin-top:8px; background:#111316 }
+          border-radius:9px; margin-top:8px; background:var(--input) }
   .plist .p{ display:flex; align-items:center; gap:10px; padding:9px 11px;
-             border-bottom:1px solid #24272c; font-size:13.5px; cursor:pointer }
+             border-bottom:1px solid var(--line-soft); font-size:13.5px; cursor:pointer }
   .plist .p:last-child{ border-bottom:0 }
-  .plist .p:hover{ background:#181b1f }
+  .plist .p:hover{ background:var(--panel) }
   .plist .p input{ width:auto; margin:0; flex:none }
   .plist .p .nm{ flex:1 }
   .plist .p .cw{ color:var(--muted); font-size:12px; white-space:nowrap }
   .picked{ margin-top:8px; font-size:12.5px; color:var(--muted); line-height:1.7 }
 
-  .co{ border:1px solid #5a2b2d; border-radius:11px; padding:13px;
-       margin-top:10px; background:#1d1315 }
+  .co{ border:1px solid var(--bad-bd); border-radius:11px; padding:13px;
+       margin-top:10px; background:var(--bad-bg) }
   .co .hd{ font-size:12.5px; color:var(--muted); margin-bottom:5px }
   .co .tx{ font-size:14.5px; font-weight:600; line-height:1.65;
            white-space:pre-wrap; word-break:break-word }
   .co .tally{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px }
   .co .tally span{ font-size:12px; border:1px solid var(--line);
                    border-radius:20px; padding:3px 11px }
-  .co .who{ font-size:12.5px; color:#b9c0c8; line-height:1.8; margin-top:9px }
+  .co .who{ font-size:12.5px; color:var(--dim); line-height:1.8; margin-top:9px }
   .co .who b{ color:var(--muted); font-weight:600 }
 
   .hide{ display:none !important }
@@ -115,17 +118,6 @@
 </head>
 <body>
 
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-               color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
@@ -164,7 +156,7 @@
   <div id="work" class="hide">
 
     <div class="card red hide" id="coCard">
-      <h2 style="color:#ef5350">קריאת פתע</h2>
+      <h2 style="color:var(--bad)">קריאת פתע</h2>
       <div class="note" style="margin-bottom:4px">
         קופצת על המסך של כל מי שברשימה, גם למי שכיבה התראות,
         וממשיכה לקפוץ עד שהוא עונה מגיע או לא זמין.
@@ -747,8 +739,8 @@ function renderLive(list){
         (v.active === false ? ' · סגורה' : '') + '</div>' +
       '<div class="tx">' + esc(v.text || '') + '</div>' +
       '<div class="tally">' +
-        '<span style="color:#66bb6a">מגיעים ' + coming.length + '</span>' +
-        '<span style="color:#ef5350">לא זמינים ' + no.length + '</span>' +
+        '<span style="color:var(--good)">מגיעים ' + coming.length + '</span>' +
+        '<span style="color:var(--bad)">לא זמינים ' + no.length + '</span>' +
         '<span>לא ענו ' + (silent < 0 ? 0 : silent) + '</span>' +
       '</div>' +
       (coming.length ? '<div class="who"><b>מגיעים:</b> ' +

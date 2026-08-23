@@ -6,7 +6,16 @@
 <title>ResQ — שחרור נעילה</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,8 +24,6 @@
 
 
 <style>
-  :root{ --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-         --muted:#9aa0a6; --accent:#e8590c; }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt);
         font-family:"Segoe UI",Arial,sans-serif; min-height:100vh;
@@ -30,7 +37,7 @@
   .icon{ font-size:42px; margin-bottom:12px }
   .ttl{ font-size:18px; font-weight:600; margin-bottom:10px }
   .txt{ color:var(--muted); font-size:14px; line-height:1.8 }
-  a.btn{ display:inline-block; background:var(--accent); color:#fff;
+  a.btn{ display:inline-block; background:var(--accent); color:var(--on-accent);
          text-decoration:none; padding:12px 24px; border-radius:8px;
          font-size:15px; margin-top:22px }
 </style>

@@ -6,7 +6,16 @@
 <title>ResQ — אנליטיקה</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,11 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
-  }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
@@ -33,25 +37,25 @@
          border-radius:12px; padding:16px; margin-bottom:14px }
 
   .win{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:16px }
-  .win button{ width:auto; margin:0; background:#23262c; border:1px solid var(--line);
+  .win button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                color:var(--muted); border-radius:9px; padding:8px 15px;
                font-family:inherit; font-size:13.5px; font-weight:600; cursor:pointer }
-  .win button.on{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .win button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
 
   /* ---------- כותרת מסקנה ---------- */
   .lead{ border:1px solid var(--line); border-inline-start:4px solid var(--accent);
-         border-radius:10px; padding:14px 16px; background:#191c20;
+         border-radius:10px; padding:14px 16px; background:var(--panel);
          font-size:14.5px; line-height:1.75; margin-bottom:14px }
-  .lead b{ color:#fff }
-  .lead.bad{ border-inline-start-color:var(--bad); background:#241618 }
-  .lead.ok{ border-inline-start-color:var(--good); background:#16241a }
+  .lead b{ color:var(--on-accent) }
+  .lead.bad{ border-inline-start-color:var(--bad); background:var(--bad-bg) }
+  .lead.ok{ border-inline-start-color:var(--good); background:var(--good-bg) }
 
   /* ---------- טבלת רכבים ---------- */
   .tblwrap{ overflow-x:auto; margin-top:10px }
   table{ width:100%; border-collapse:collapse; font-size:13.5px; min-width:640px }
   th{ text-align:start; padding:9px 11px; color:var(--muted); font-size:11.5px;
       font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap }
-  td{ padding:10px 11px; border-bottom:1px solid #24272c; vertical-align:middle }
+  td{ padding:10px 11px; border-bottom:1px solid var(--line-soft); vertical-align:middle }
   tr:last-child td{ border-bottom:0 }
   td.n{ font-variant-numeric:tabular-nums; white-space:nowrap }
   td .nm{ font-weight:700 }
@@ -59,7 +63,7 @@
 
   /* פס יחסי בתוך התא. מספר לבד לא מראה יחס, וטבלה של
      מספרים דורשת שהעין תשווה אותם בעצמה. */
-  .bar{ height:7px; background:#2a2e36; border-radius:99px; overflow:hidden;
+  .bar{ height:7px; background:var(--track); border-radius:99px; overflow:hidden;
         min-width:60px; margin-top:5px }
   .bar i{ display:block; height:100%; border-radius:99px; background:var(--accent) }
   .bar i.bad{ background:var(--bad) }
@@ -70,11 +74,11 @@
   .load .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
              max-width:190px }
   .load .nm i{ font-style:normal; color:var(--muted); font-size:11.5px }
-  .load .tr{ height:10px; background:#2a2e36; border-radius:99px; overflow:hidden;
+  .load .tr{ height:10px; background:var(--track); border-radius:99px; overflow:hidden;
              display:flex }
   .load .tr span{ height:100% }
-  .load .tr .off{ background:#e0a23c }
-  .load .tr .sh{ background:#4d94ff }
+  .load .tr .off{ background:var(--warn) }
+  .load .tr .sh{ background:var(--crewC) }
   .load .tr .sw{ background:#26a69a }
   .load .n{ font-variant-numeric:tabular-nums; color:var(--muted);
             font-size:12.5px; white-space:nowrap }
@@ -90,17 +94,6 @@
 </head>
 <body>
 
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-               color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
@@ -156,8 +149,8 @@
       <div id="lLead"></div>
       <div class="load" id="lList"></div>
       <div class="key">
-        <span><i style="background:#e0a23c"></i> אבטחה ביום חופש</span>
-        <span><i style="background:#4d94ff"></i> אבטחה בתוך המשמרת</span>
+        <span><i style="background:var(--warn)"></i> אבטחה ביום חופש</span>
+        <span><i style="background:var(--crewC)"></i> אבטחה בתוך המשמרת</span>
         <span><i style="background:#26a69a"></i> כניסה בהחלפה</span>
       </div>
     </div>

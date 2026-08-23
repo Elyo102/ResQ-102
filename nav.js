@@ -61,34 +61,34 @@ function styleOnce() {
     '#appNav{position:sticky;top:0;z-index:900;display:flex;gap:8px;',
     '  align-items:center;flex-wrap:wrap;box-sizing:border-box;',
     '  align-self:stretch;flex:none;',
-    '  background:#1e2126;border-bottom:1px solid #2c3036;',
+    '  background:var(--card);border-bottom:1px solid var(--line);',
     '  padding:12px 16px;margin:-18px -18px 18px;',
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
-    '#appNav .brand{font-weight:800;font-size:17px;color:#e8eaed;',
+    '#appNav .brand{font-weight:800;font-size:17px;color:var(--txt);',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
-    '#appNav .brand b{color:#e8590c;font-weight:800}',
+    '#appNav .brand b{color:var(--accent);font-weight:800}',
     // כללי הרוחב והשוליים כתובים במפורש: לדפים יש חוקים גורפים
     // כמו button{width:100%} שאחרת בולעים את הכפתור לשורה שלמה.
     '#appNav button.back{display:inline-flex;align-items:center;gap:6px;',
     '  width:auto;margin:0;flex:none;',
-    '  background:transparent;border:1px solid #3a3f47;color:#b9c0c8;',
+    '  background:transparent;border:1px solid var(--line-hover);color:var(--dim);',
     '  font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;',
     '  padding:10px 14px;border-radius:10px;white-space:nowrap}',
-    '#appNav button.back:hover{background:#2c3036;color:#e8eaed}',
-    '#appNav button.back:focus-visible{outline:2px solid #e8590c;outline-offset:2px}',
+    '#appNav button.back:hover{background:var(--line);color:var(--txt)}',
+    '#appNav button.back:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
     '#appNav a{display:inline-flex;align-items:center;gap:8px;',
-    '  color:#b9c0c8;text-decoration:none;font-size:15.5px;font-weight:600;',
+    '  color:var(--dim);text-decoration:none;font-size:15.5px;font-weight:600;',
     '  padding:11px 18px;border-radius:10px;white-space:nowrap;',
     '  width:auto;margin:0;flex:none;',
-    '  background:#23262c;border:1px solid #2c3036;',
+    '  background:var(--chip);border:1px solid var(--line);',
     '  transition:transform .12s ease,background .12s ease,color .12s ease}',
-    '#appNav a:hover{transform:translateY(-1px);background:#2c3036;color:#e8eaed}',
-    '#appNav a:focus-visible{outline:2px solid #e8590c;outline-offset:2px}',
+    '#appNav a:hover{transform:translateY(-1px);background:var(--line);color:var(--txt)}',
+    '#appNav a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
     '#appNav a i{width:8px;height:8px;border-radius:50%;flex:none}',
-    '#appNav a.on{background:#e8590c;border-color:#e8590c;color:#fff;',
+    '#appNav a.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);',
     '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
-    '#appNav a.on i{background:#fff}',
-    '#appNav .me{margin-inline-start:auto;color:#9aa0a6;font-size:13px;',
+    '#appNav a.on i{background:var(--on-accent)}',
+    '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
     '@media (prefers-reduced-motion:reduce){',
     '  #appNav a{transition:none}',
@@ -143,6 +143,8 @@ export function renderNav(claims, current, who) {
     nav.appendChild(a);
   });
 
+  nav.appendChild(themeButton());
+
   if (who) {
     const m = document.createElement('div');
     m.className = 'me';
@@ -151,6 +153,58 @@ export function renderNav(claims, current, who) {
   }
 
   document.body.insertBefore(nav, document.body.firstChild);
+}
+
+// ---------- בהיר / כהה ----------
+//
+// שלושה מצבים ולא שניים: "לפי הטלפון" הוא ברירת המחדל, ורק
+// מי שרוצה משהו אחר בוחר. מתג של שני מצבים היה מכריח כל אחד
+// לבחור, ואז מי שהחליף פעם אחת נשאר תקוע בבחירה גם כשהטלפון
+// שלו כבר עבר למצב אחר.
+//
+// הבחירה נשמרת במכשיר בלבד. היא העדפה של עין, לא נתון של
+// המערכת, ואין סיבה שתיסע בין מכשירים.
+
+// תווית טקסט ולא סמל. סמלי שמש וירח אינם קיימים בכל גופן
+// מערכת, ומי שהגופן שלו לא מכיר אותם רואה ריבוע ריק —
+// כפתור שאי אפשר לדעת מה הוא עושה.
+const MODES = [
+  { id: 'auto',  label: 'אוטו׳', he: 'לפי הטלפון' },
+  { id: 'dark',  label: 'כהה',   he: 'כהה תמיד' },
+  { id: 'light', label: 'בהיר',  he: 'בהיר תמיד' }
+];
+
+export function readTheme() {
+  try { return localStorage.getItem('resq_theme') || 'auto'; }
+  catch (e) { return 'auto'; }
+}
+
+export function applyTheme(mode) {
+  const r = document.documentElement;
+  if (mode === 'dark' || mode === 'light') r.setAttribute('data-theme', mode);
+  else r.removeAttribute('data-theme');
+  try { localStorage.setItem('resq_theme', mode); } catch (e) {}
+}
+
+function themeButton() {
+  const cur = readTheme();
+  const m = MODES.filter(function (x) { return x.id === cur; })[0] || MODES[0];
+
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.id = 'themeBtn';
+  b.textContent = m.label;
+  b.title = 'תצוגה: ' + m.he + ' — לחץ להחלפה';
+  b.setAttribute('aria-label', b.title);
+  b.onclick = function () {
+    const i = MODES.findIndex(function (x) { return x.id === readTheme(); });
+    const next = MODES[(i + 1) % MODES.length];
+    applyTheme(next.id);
+    b.textContent = next.label;
+    b.title = 'תצוגה: ' + next.he + ' — לחץ להחלפה';
+    b.setAttribute('aria-label', b.title);
+  };
+  return b;
 }
 
 export function clearNav() {

@@ -6,7 +6,16 @@
 <title>ResQ — סידור עבודה</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,15 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    /* צבעי המשמרות - זהים למערכת הקיימת:
-       א' אדום #980000 · ב' ירוק #38761d · ג' כחול #0000ff
-       מוארים לקריאות על רקע כהה */
-    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
-    --crewA-bg:#3a1c19; --crewB-bg:#14301f; --crewC-bg:#16263f;
-  }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;padding:18px}
@@ -54,7 +54,7 @@
 
   /* שורת הימים היא כותרת, לא הערת שוליים. גם שמות מלאים ולא
      אותיות: «ג» כשם יום ו«ג'» כשם משמרת באותו מסך היו מבלבלים. */
-  #dows{background:#23262c;border:1px solid var(--line);border-radius:9px;
+  #dows{background:var(--chip);border:1px solid var(--line);border-radius:9px;
         padding:9px 0;margin-bottom:8px;gap:5px}
   .dow{font-size:15.5px;font-weight:700;color:var(--txt);text-align:center;
        line-height:1.2}
@@ -66,7 +66,7 @@
   .day{aspect-ratio:1.25;min-height:72px;
        border:1px solid var(--line);border-radius:10px;
        display:flex;flex-direction:column;align-items:center;justify-content:center;
-       gap:6px;font-size:13px;background:#191c20;position:relative}
+       gap:6px;font-size:13px;background:var(--panel);position:relative}
   .day.pad{border:0;background:transparent}
   /* אבטחה. נקודה בפינה — היום כבר נושא צבע משמרת, ועוד רקע
      היה מתחרה בו. */
@@ -100,50 +100,50 @@
      אי אפשר יהיה לקרוא אף אחד מהשניים. */
   .day.unfit::after{content:'';position:absolute;top:5px;inset-inline-end:5px;
                     width:7px;height:7px;border-radius:50%;
-                    background:var(--bad,#ef5350);
-                    box-shadow:0 0 0 2px #191c20}
+                    background:var(--bad,var(--bad));
+                    box-shadow:0 0 0 2px var(--panel)}
   .day.mine.unfit::after{box-shadow:0 0 0 2px rgba(0,0,0,.35)}
 
   /* יום עם חריגה. משולש קטן בפינה הנגדית לנקודת הכשירות,
      כדי ששני הסימונים לא יתנגשו על אותו יום. */
   .day.ovr::before{content:'';position:absolute;top:0;inset-inline-start:0;
                    border-width:0 0 12px 12px;border-style:solid;
-                   border-color:transparent transparent #e0a23c transparent;
+                   border-color:transparent transparent var(--warn) transparent;
                    border-start-start-radius:9px}
-  .day.ovr.swap::before{border-bottom-color:#c77dff}
+  .day.ovr.swap::before{border-bottom-color:var(--pick)}
 
   .ovr-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
   .ovr-form .wide{grid-column:1 / -1}
-  .ovr-form select,.ovr-form input{width:100%;padding:9px;background:#111316;
+  .ovr-form select,.ovr-form input{width:100%;padding:9px;background:var(--input);
        color:var(--txt);border:1px solid var(--line);border-radius:6px;
        font-size:14px;font-family:inherit}
   .ovr-list{margin-top:12px}
   .ovr-row{display:flex;align-items:center;gap:9px;padding:8px 0;
-           border-bottom:1px solid #24272c;font-size:13px}
+           border-bottom:1px solid var(--line-soft);font-size:13px}
   .ovr-row:last-child{border-bottom:0}
   .ovr-row .d{font-variant-numeric:tabular-nums;font-weight:700;width:64px;flex:none}
   .ovr-row .k{color:var(--muted);flex:none}
   .ovr-row .n{color:var(--muted);flex:1;min-width:0;overflow:hidden;
               text-overflow:ellipsis;white-space:nowrap}
   .ovr-row .x{color:var(--muted);cursor:pointer;padding:0 6px}
-  .ovr-row .x:hover{color:#ef5350}
+  .ovr-row .x:hover{color:var(--bad)}
   .btn-s{background:transparent;border:1px solid var(--line);color:var(--muted);
          border-radius:6px;padding:9px 16px;font-size:13px;cursor:pointer;
          font-family:inherit;margin-top:10px}
-  .btn-s.go{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn-s.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 
   .fit{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
   .fit .p{flex:1 1 150px;border:1px solid var(--line);border-radius:9px;
-          padding:9px 11px;background:#191c20}
-  .fit .p.bad{border-color:#ef5350;background:#241618}
+          padding:9px 11px;background:var(--panel)}
+  .fit .p.bad{border-color:var(--bad);background:var(--bad-bg)}
   .fit .p .h{display:flex;align-items:center;gap:7px;font-size:13px;
              font-weight:700;margin-bottom:3px}
   .fit .p .tag{font-size:11px;font-weight:800;border-radius:5px;padding:2px 7px;
-               color:#fff}
+               color:var(--on-accent)}
   .fit .p .tag.A{background:var(--crewA)}
-  .fit .p .tag.B{background:var(--crewB);color:#0d1f12}
+  .fit .p .tag.B{background:var(--crewB);color:var(--crewB-on)}
   .fit .p .tag.C{background:var(--crewC)}
-  .fit .p .s{font-size:12px;color:#f0b2b2;line-height:1.6}
+  .fit .p .s{font-size:12px;color:var(--soft-bad);line-height:1.6}
   .fit .p .s.ok{color:var(--muted)}
   .fit .note{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.7}
   /* טלפון: חוזרים לריבוע. ריבוע רחב על מסך צר גוזל גובה
@@ -164,7 +164,7 @@
      נראים כמו באנר, לא כמו סיכום. */
   .sum{display:flex;gap:10px;margin-top:14px;max-width:420px;
        margin-inline-start:auto;margin-inline-end:auto}
-  .sum div{flex:1;background:#191c20;border:1px solid var(--line);border-radius:8px;
+  .sum div{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;
         padding:10px;text-align:center}
   .sum .v{font-size:20px;font-weight:700}
   .sum .k{font-size:11px;color:var(--muted);margin-top:2px}
@@ -175,13 +175,13 @@
 
   .center{text-align:center;color:var(--muted);padding:26px 0;font-size:14px}
   .hide{display:none}
-  input{width:100%;padding:11px;background:#111316;color:var(--txt);
+  input{width:100%;padding:11px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:15px;font-family:inherit}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
-  button.main{width:100%;background:var(--accent);color:#fff;border:0;border-radius:6px;
+  button.main{width:100%;background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
         padding:12px;font-size:15px;cursor:pointer;margin-top:18px;font-family:inherit}
   .err{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;
-       background:#3a1d1d;color:#ef9a9a;display:none}
+       background:var(--err-bg);color:var(--err-fg);display:none}
 </style>
 </head>
 <body>
@@ -242,8 +242,8 @@
         <span><i class="dot" style="background:var(--crewC)"></i>ג'</span>
         <span><i class="dot" style="background:var(--crewC);
               border:2px solid var(--txt)"></i>המשמרת שלי</span>
-        <span><i class="dot" style="background:#ef5350"></i>לא כשירה</span>
-        <span><i class="dot" style="background:#e0a23c"></i>חריגה</span>
+        <span><i class="dot" style="background:var(--bad)"></i>לא כשירה</span>
+        <span><i class="dot" style="background:var(--warn)"></i>חריגה</span>
       </div>
     </div>
 

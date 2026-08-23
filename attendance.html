@@ -6,7 +6,16 @@
 <title>ResQ — דוח נוכחות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,12 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
-    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
-  }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
@@ -36,20 +39,20 @@
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600 }
-  .btn:hover{ color:var(--txt); border-color:#3d444d }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
-  .btn.stop{ background:#c62828; border-color:#c62828; color:#fff }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.stop{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
   .btn.sm{ padding:6px 12px; font-size:12.5px }
 
   .mo{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
   .mo .lbl{ font-size:17px; font-weight:700; min-width:132px; text-align:center }
-  .mo button{ background:#191c20; border:1px solid var(--line); color:var(--txt);
+  .mo button{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
               border-radius:8px; width:38px; height:38px; font-size:19px;
               cursor:pointer; font-family:inherit }
 
   .tot{ display:flex; gap:12px; flex-wrap:wrap; align-items:stretch }
-  .tot div{ flex:1 1 130px; background:#191c20; border:1px solid var(--line);
+  .tot div{ flex:1 1 130px; background:var(--panel); border:1px solid var(--line);
             border-radius:9px; padding:12px; text-align:center }
   .tot .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
   .tot .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
@@ -58,19 +61,19 @@
   .state{ display:inline-block; font-size:12px; font-weight:700; border-radius:20px;
           padding:3px 12px; border:1px solid var(--line); color:var(--muted) }
   .state.submitted{ border-color:var(--warn); color:var(--warn) }
-  .state.approved{ border-color:#2f4a33; color:var(--good) }
+  .state.approved{ border-color:var(--good-bd); color:var(--good) }
 
   table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
   th{ text-align:right; color:var(--muted); font-weight:600; font-size:11.5px;
       padding:7px 5px; border-bottom:1px solid var(--line); white-space:nowrap }
-  td{ padding:9px 5px; border-bottom:1px solid #24272c; vertical-align:middle }
+  td{ padding:9px 5px; border-bottom:1px solid var(--line-soft); vertical-align:middle }
   tr:last-child td{ border-bottom:0 }
   tr.sug td{ opacity:.55 }
-  tr.run td{ background:#241a13 }
+  tr.run td{ background:var(--warn-bg) }
   .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
   .dw{ color:var(--muted); font-size:11.5px }
-  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; color:#fff }
-  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
+  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; color:var(--on-accent) }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:var(--crewB-on) }
   .cw.C{ background:var(--crewC) }
   .hh{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
   /* טווח שעות הוא ביטוי משמאל לימין. בלי הבידוד הזה הדפדפן
@@ -83,9 +86,9 @@
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
-  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
-  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
-  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .hide{ display:none !important }
   .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
 
@@ -98,13 +101,12 @@
   .dlg h3{ margin:0 0 3px; font-size:17px }
   .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:12px; line-height:1.7 }
   .dlg label{ display:block; font-size:12.5px; color:var(--muted); margin:11px 0 4px }
-  .dlg input, .dlg select, .dlg textarea{ width:100%; padding:10px; background:#111316;
+  .dlg input, .dlg select, .dlg textarea{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
         font-size:15px; font-family:inherit }
   /* בלי זה, אייקון השעון של שדה הזמן מצויר בשחור על רקע שחור
      והמשתמש לא רואה שיש שם כפתור בכלל. color-scheme אומר
      לדפדפן לצייר את הפקדים המובנים בגרסה הכהה שלהם. */
-  .dlg input[type="time"], .dlg input[type="date"]{ color-scheme:dark }
   .dlg input[type="time"]::-webkit-calendar-picker-indicator,
   .dlg input[type="date"]::-webkit-calendar-picker-indicator{
     filter:invert(1) brightness(1.6); opacity:.85; cursor:pointer }
@@ -113,17 +115,17 @@
   .three{ display:grid; grid-template-columns:1fr 1fr 1.1fr; gap:9px }
   @media (max-width:430px){ .three{ grid-template-columns:1fr 1fr } }
   .seg{ border:1px solid var(--line); border-radius:9px; padding:2px 11px 12px;
-        margin-top:9px; background:#191c20 }
+        margin-top:9px; background:var(--panel) }
   .chk{ display:flex !important; align-items:center; gap:8px; cursor:pointer;
         font-size:13.5px !important; color:var(--txt) !important; margin:13px 0 0 !important }
   .chk input{ width:auto !important; margin:0 }
   .shapeNote{ font-size:12px; color:var(--muted); line-height:1.7; margin-top:6px }
-  .ot{ border:1px solid var(--warn); background:#241f13; border-radius:9px;
+  .ot{ border:1px solid var(--warn); background:var(--warn-bg); border-radius:9px;
        padding:2px 12px 13px; margin-top:12px }
   .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
-  .otHead b{ color:#fff }
+  .otHead b{ color:var(--on-accent) }
   .sum-line{ display:flex; justify-content:space-between; gap:12px;
-             padding:8px 0; border-bottom:1px solid #24272c; font-size:13.5px }
+             padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .sum-line:last-child{ border-bottom:0 }
   .sum-line b{ font-variant-numeric:tabular-nums }
   .sum-big{ font-size:30px; font-weight:800; text-align:center;
@@ -136,17 +138,6 @@
 </head>
 <body>
 
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-               color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>

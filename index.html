@@ -6,20 +6,29 @@
 <title>ResQ — תחנה 102</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 
 <!-- הפניה אוטומטית למסך הכניסה. בלי הקובץ הזה, הכתובת הראשית
      של האתר מחזירה שגיאת 404, כי אין בריפו קובץ index. -->
 <meta http-equiv="refresh" content="0; url=login.html">
 <link rel="canonical" href="login.html">
 <style>
-  body{margin:0;background:#15171a;color:#e8eaed;
+  body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;
        min-height:100vh;display:flex;align-items:center;
        justify-content:center;text-align:center;padding:16px}
-  a{color:#e8590c}
+  a{color:var(--accent)}
   .t{font-size:19px;margin-bottom:8px}
-  .s{color:#9aa0a6;font-size:14px}
+  .s{color:var(--muted);font-size:14px}
 </style>
 </head>
 <body>

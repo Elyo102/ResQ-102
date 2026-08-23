@@ -6,7 +6,16 @@
 <title>ResQ — יומן ואבטחות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
-<meta name="theme-color" content="#0f1b33">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,12 +24,6 @@
 
 
 <style>
-  :root{
-    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
-    --muted:#9aa0a6; --accent:#e8590c;
-    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
-    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
-  }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
@@ -37,12 +40,9 @@
   @media (min-width:900px){ .cols{ grid-template-columns:1.5fr 1fr } }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
-  select, textarea, input{ width:100%; padding:10px; background:#111316;
+  select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
         font-size:15px; font-family:inherit }
-  input[type=time], input[type=date]{ color-scheme:dark }
-  input[type=time]::-webkit-calendar-picker-indicator,
-  input[type=date]::-webkit-calendar-picker-indicator{ filter:invert(1) opacity(.7) }
   textarea{ min-height:60px; resize:vertical }
   .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
   .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px }
@@ -50,47 +50,47 @@
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
-  .btn:hover{ color:var(--txt); border-color:#3d444d }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
-  .btn.ok{ background:#2e7d32; border-color:#2e7d32; color:#fff }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
   .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   /* ---------- כרטיס אבטחה ---------- */
   .g{ border:1px solid var(--line); border-radius:11px; padding:14px;
-      margin-top:11px; background:#191c20 }
-  .g.mine{ border-color:#2f4a33; background:#16241a }
+      margin-top:11px; background:var(--panel) }
+  .g.mine{ border-color:var(--good-bd); background:var(--good-bg) }
   .g .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
   .g .ttl{ font-size:16px; font-weight:700; flex:1 1 190px }
   .g .when{ font-size:13px; color:var(--muted); direction:ltr;
             unicode-bidi:isolate; font-variant-numeric:tabular-nums }
   .g .meta{ font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.7 }
   .g .slots{ display:flex; gap:7px; flex-wrap:wrap; margin-top:10px }
-  .g .who{ font-size:12.5px; background:#23262c; border:1px solid var(--line);
+  .g .who{ font-size:12.5px; background:var(--chip); border:1px solid var(--line);
            border-radius:20px; padding:3px 11px }
   .g .who.empty{ color:var(--muted); border-style:dashed }
   .g .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
 
   .tag{ font-size:11px; font-weight:700; border-radius:20px;
         padding:2px 10px; white-space:nowrap }
-  .tag.off{ background:#2b2313; color:#e0a23c }
-  .tag.shift{ background:#1b2733; color:#7ab4ff }
+  .tag.off{ background:var(--warn-bg); color:var(--warn) }
+  .tag.shift{ background:var(--crewC-bg); color:var(--crewC) }
 
   /* ---------- לוח עומס ---------- */
   .bal{ display:grid; grid-template-columns:auto 1fr auto; gap:7px 11px;
         align-items:center; margin-top:10px; font-size:13px }
   .bal .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px }
   .bal .nm i{ font-style:normal; color:var(--muted); font-size:11.5px }
-  .bal .tr{ height:9px; background:#2a2e36; border-radius:99px; overflow:hidden }
+  .bal .tr{ height:9px; background:var(--track); border-radius:99px; overflow:hidden }
   .bal .fl{ height:100%; border-radius:99px; background:var(--accent) }
-  .bal .fl.zero{ background:#3a3f47 }
+  .bal .fl.zero{ background:var(--line-hover) }
   .bal .n{ font-variant-numeric:tabular-nums; color:var(--muted);
            font-size:12.5px; white-space:nowrap }
   .bal .n b{ color:var(--txt) }
 
   /* ---------- המלצה ---------- */
   .rec{ display:flex; align-items:center; gap:10px; padding:9px 0;
-        border-bottom:1px solid #24272c; font-size:13.5px }
+        border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .rec:last-child{ border-bottom:0 }
   .rec input{ width:auto; margin:0; flex:none }
   .rec .nm{ flex:1; min-width:0 }
@@ -98,46 +98,35 @@
   .rec .nm em{ display:block; font-style:normal; font-size:11.5px;
                color:var(--muted); margin-top:1px }
   .rec.blocked{ opacity:.5 }
-  .rec .sg{ font-size:11px; color:#66bb6a; white-space:nowrap }
+  .rec .sg{ font-size:11px; color:var(--good); white-space:nowrap }
 
   /* ---------- לוג ---------- */
   .tblwrap{ overflow-x:auto; margin-top:10px }
   table{ width:100%; border-collapse:collapse; font-size:13px; min-width:520px }
   th{ text-align:start; padding:8px 10px; color:var(--muted); font-size:11.5px;
       font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap }
-  td{ padding:8px 10px; border-bottom:1px solid #24272c; vertical-align:top }
+  td{ padding:8px 10px; border-bottom:1px solid var(--line-soft); vertical-align:top }
   tr:last-child td{ border-bottom:0 }
   td.d{ direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums;
         white-space:nowrap }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
-  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
-  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
-  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
 
   .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
-  .tabs button{ width:auto; margin:0; background:#23262c; border:1px solid var(--line);
+  .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
                 font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
-  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
 
   .hide{ display:none !important }
 </style>
 </head>
 <body>
 
-<style>
-  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
-           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
-           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
-           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
-  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
-  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
-                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-               color:#fff; font-size:18px }
-</style>
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
@@ -289,7 +278,7 @@
 <div id="ov" style="position:fixed;inset:0;background:rgba(0,0,0,.72);
      z-index:1000;display:none;align-items:center;justify-content:center;padding:18px;
      overflow:auto">
-  <div id="dlg" style="background:#1e2126;border:1px solid #2c3036;border-radius:13px;
+  <div id="dlg" style="background:var(--card);border:1px solid var(--line);border-radius:13px;
        max-width:560px;width:100%;padding:20px;direction:rtl"></div>
 </div>
 
@@ -613,8 +602,8 @@ function guardCard(g, forMe){
   if (isAssigned(g, ME.uid)) {
     const s = document.createElement('span');
     s.className = 'who';
-    s.style.background = '#1d3a20';
-    s.style.borderColor = '#2f4a33';
+    s.style.background = 'var(--ok-bg)';
+    s.style.borderColor = 'var(--good-bd)';
     s.textContent = '✓ אתה משובץ';
     acts.appendChild(s);
   }
@@ -763,7 +752,7 @@ function openAssign(g){
   const d = $('dlg');
   const cur = assignedOf(g);
   d.innerHTML =
-    '<h2 style="font-size:17px;color:#e8590c;margin:0 0 3px">' +
+    '<h2 style="font-size:17px;color:var(--accent);margin:0 0 3px">' +
       esc(g.title || '') + '</h2>' +
     '<div class="note" style="margin-bottom:12px">' +
       esc(dmy(g.date)) + ' · ' + esc(g.start) + '–' + esc(g.end) +
@@ -778,8 +767,8 @@ function openAssign(g){
         : 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.') +
     '</div>' +
     '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
-      'border:1px solid #2c3036;border-radius:9px;padding:2px 12px;' +
-      'background:#111316"></div>' +
+      'border:1px solid var(--line);border-radius:9px;padding:2px 12px;' +
+      'background:var(--input)"></div>' +
     '<div id="dlgMsg" class="msg"></div>' +
     '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
       '<button class="btn go" id="dlgSave">שמור שיבוץ</button>' +
