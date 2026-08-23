@@ -69,9 +69,84 @@ function validTime(s) {
   return /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(s || ''));
 }
 
+// אורך קטע זמן אחד.
+//
+// dayOffset = בכמה ימים היציאה מאוחרת מהכניסה. 0 = אותו יום,
+// 1 = למחרת, 2 = מחרתיים.
+//
+// למה זה חייב להיות מפורש: כניסה 07:00 ויציאה 09:00 יכולה
+// להיות שעתיים או 26 שעות, ואין דרך להבדיל מהמספרים בלבד.
+// הכלל הישן — "אם היציאה קטנה או שווה לכניסה, הוסף יממה" —
+// מחזיר שעתיים בשני המקרים, ומי שנשאר יממה ועוד שעתיים
+// מקבל שכר על שעתיים בלי שאיש ישים לב.
+//
+// בלי dayOffset נשמר הכלל הישן, כדי שרשומות שכבר נשמרו
+// ימשיכו להתנהג כפי שהתנהגו.
+export function segmentHours(start, end, dayOffset) {
+  if (!validTime(start) || !validTime(end)) return null;
+  const s = String(start).split(':').map(Number);
+  const e = String(end).split(':').map(Number);
+  let diff = (e[0] * 60 + e[1]) - (s[0] * 60 + s[1]);
+
+  if (dayOffset == null || dayOffset === '') {
+    if (diff <= 0) diff += 24 * 60;
+  } else {
+    diff += Number(dayOffset) * 24 * 60;
+    if (diff <= 0) return null;
+  }
+  return Math.round((diff / 60) * 100) / 100;
+}
+
+// כמה ימים לדלג, לפי מה שנשמר. ברירת מחדל: הכלל הישן.
+export function guessDayOffset(start, end) {
+  if (!validTime(start) || !validTime(end)) return 0;
+  const s = String(start).split(':').map(Number);
+  const e = String(end).split(':').map(Number);
+  return ((e[0] * 60 + e[1]) - (s[0] * 60 + s[1])) <= 0 ? 1 : 0;
+}
+
+// צורת המשמרת. שלוש צורות, ואלדד הגדיר אותן במילים שלו:
+//
+//   regular    כניסה ויציאה. עד יממה.
+//   continued  המשך משמרת — יציאה למחרת, תמיד מעל 24 שעות.
+//   split      משמרת מפוצלת — שתי כניסות ושתי יציאות באותו
+//              יום, והסך הוא סכום שני הקטעים.
+//
+// הצורה נשמרת כשדה ולא מנוחשת מהשעות. 07:00 עד 09:00 יכולה
+// להיות שעתיים או 26 שעות, ורק הצורה מבדילה ביניהן.
+export const SHAPES = [
+  { id: 'regular',   he: 'משמרת רגילה' },
+  { id: 'continued', he: 'המשך משמרת — מעל 24 שעות' },
+  { id: 'split',     he: 'משמרת מפוצלת — שני קטעים' }
+];
+
+export function shapeHe(id) {
+  const s = SHAPES.filter(function (x) { return x.id === id; })[0];
+  return s ? s.he : id;
+}
+
+// צורתה של רשומה קיימת. רשומות ישנות אינן נושאות shape,
+// ולכן היא נגזרת ממה שיש בהן.
+export function shapeOf(rec) {
+  const r = rec || {};
+  if (r.shape) return r.shape;
+  if (isSplit(r)) return 'split';
+  if (Number(r.end_day || 0) >= 1 && segmentHours(r.start, r.end, r.end_day) > 24) {
+    return 'continued';
+  }
+  return 'regular';
+}
+
+export function isSplit(rec) {
+  const r = rec || {};
+  return !!(r.start2 && r.end2);
+}
+
 // מחזיר שעות, או null אם חסר מידע.
 //
-// rec:       { day_type, start, end }
+// rec:       { day_type, start, end, start2, end2 }
+//            start2/end2 = קטע שני של משמרת מפוצלת. שני הקטעים
+//            נסכמים. יום עם קטע אחד נשאר בדיוק כפי שהיה.
 // siteHours: אורך משמרת קבוע של תחנת הקצה, או 0/undefined.
 //            יטבתה = 25.
 export function calcHours(rec, siteHours) {
@@ -81,16 +156,57 @@ export function calcHours(rec, siteHours) {
   if (r.day_type === 'sick')     return SICK_HOURS;
   if (r.day_type === 'reserve')  return RESERVE_HOURS;
 
+  // אורך קבוע של תחנת קצה גובר גם על פיצול. יטבתה היא 25 שעות
+  // בהגדרה, ולא סכום של מה שדווח.
   const fixed = Number(siteHours || 0);
   if (fixed > 0) return fixed;
 
-  if (!validTime(r.start) || !validTime(r.end)) return null;
+  const h1 = segmentHours(r.start, r.end, r.end_day);
+  if (h1 == null) return null;
+  if (!isSplit(r)) return h1;
 
-  const s = String(r.start).split(':').map(Number);
-  const e = String(r.end).split(':').map(Number);
-  let diff = (e[0] * 60 + e[1]) - (s[0] * 60 + s[1]);
-  if (diff <= 0) diff += 24 * 60;      // חציית חצות
-  return Math.round((diff / 60) * 100) / 100;
+  const h2 = segmentHours(r.start2, r.end2, r.end_day2);
+  if (h2 == null) return null;
+  return Math.round((h1 + h2) * 100) / 100;
+}
+
+
+// ---------- שעות נוספות ----------
+//
+// שעה נוספת היא כל שעה מעל אורך המשמרת שהסידור קבע לאותו יום.
+// באילת זה 24, ובתחנת קצה עם אורך קבוע זה האורך שלה — כך
+// שמשמרת יטבתה של 25 אינה שעה נוספת, היא פשוט משמרת יטבתה.
+//
+// ימים בלי שעות — חופש, מחלה, מילואים — אינם מייצרים שעות
+// נוספות: הם ממילא מספר קבוע.
+
+export function expectedHours(rec, siteHours, shiftHours) {
+  const r = rec || {};
+  if (!needsTimes(r.day_type)) return null;
+  const fixed = Number(siteHours || 0);
+  if (fixed > 0) return fixed;
+  return Number(shiftHours || 24);
+}
+
+export function overtimeHours(rec, siteHours, shiftHours) {
+  const exp = expectedHours(rec, siteHours, shiftHours);
+  if (exp == null) return 0;
+  const actual = calcHours(rec, siteHours);
+  if (actual == null) return 0;
+  const ot = Math.round((actual - exp) * 100) / 100;
+  return ot > 0 ? ot : 0;
+}
+
+// נימוק חובה. אלדד: כל שעה מעל אורך המשמרת בסידור, והשמירה
+// נחסמת בלי הסבר — כדי שהמפקד יקבל דוח שכל חריגה בו מוסברת,
+// ולא רשימת מספרים שצריך לרדוף אחריה בטלפון.
+export function needsReason(rec, siteHours, shiftHours) {
+  return overtimeHours(rec, siteHours, shiftHours) > 0;
+}
+
+export function reasonMissing(rec, siteHours, shiftHours) {
+  return needsReason(rec, siteHours, shiftHours)
+         && !String((rec || {}).overtime_reason || '').trim();
 }
 
 // סך חודשי. מחושב מהרשומות בכל פעם ולא נשמר בשום מקום.
@@ -106,6 +222,42 @@ export function monthTotal(records, siteHoursOf) {
     const h = calcHours(r, f(r && r.sub_station));
     return sum + (h || 0);
   }, 0) * 100) / 100;
+}
+
+// סיכום חודשי לתצוגה לפני שליחה לאישור: כמה שעות, כמה ימים
+// מכל סוג, ואילו ימים חרגו ומה הנימוק שנרשם להם.
+export function monthSummary(records, siteHoursOf, shiftHoursOf) {
+  const f = siteHoursOf  || function () { return 0; };
+  const g = shiftHoursOf || function () { return 24; };
+  const recs = (records || []).slice().sort(function (a, b) {
+    return String(a.date).localeCompare(String(b.date));
+  });
+
+  const byType = {};
+  const overtime = [];
+  let split = 0;
+
+  recs.forEach(function (r) {
+    const site = f(r.sub_station);
+    byType[r.day_type] = (byType[r.day_type] || 0) + 1;
+    if (isSplit(r)) split++;
+    const ot = overtimeHours(r, site, g(r.date));
+    if (ot > 0) {
+      overtime.push({ date: r.date, hours: ot,
+                      reason: String(r.overtime_reason || '').trim() });
+    }
+  });
+
+  return {
+    days: recs.length,
+    hours: monthTotal(recs, f),
+    byType: byType,
+    split: split,
+    overtime: overtime,
+    overtimeHours: Math.round(overtime.reduce(function (s, o) {
+      return s + o.hours; }, 0) * 100) / 100,
+    unexplained: overtime.filter(function (o) { return !o.reason; })
+  };
 }
 
 // ברירת המחדל של תחנות הקצה באילת. נכתבת פעם אחת לתחנה שאין

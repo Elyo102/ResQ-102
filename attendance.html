@@ -67,8 +67,12 @@
   .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
   .cw.C{ background:var(--crewC) }
   .hh{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
+  /* טווח שעות הוא ביטוי משמאל לימין. בלי הבידוד הזה הדפדפן
+     הופך את סדר הצדדים ו-07:00–08:00 מוצג כ-08:00–07:00. */
+  .rng{ direction:ltr; unicode-bidi:isolate; display:inline-block }
   .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
         padding:1px 9px; color:var(--muted); white-space:nowrap }
+  .tag.no{ border-color:var(--bad); color:var(--bad) }
   .scroll{ overflow-x:auto }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
@@ -93,6 +97,27 @@
         font-size:15px; font-family:inherit }
   .dlg textarea{ min-height:64px; resize:vertical }
   .two{ display:grid; grid-template-columns:1fr 1fr; gap:9px }
+  .three{ display:grid; grid-template-columns:1fr 1fr 1.1fr; gap:9px }
+  @media (max-width:430px){ .three{ grid-template-columns:1fr 1fr } }
+  .seg{ border:1px solid var(--line); border-radius:9px; padding:2px 11px 12px;
+        margin-top:9px; background:#191c20 }
+  .chk{ display:flex !important; align-items:center; gap:8px; cursor:pointer;
+        font-size:13.5px !important; color:var(--txt) !important; margin:13px 0 0 !important }
+  .chk input{ width:auto !important; margin:0 }
+  .shapeNote{ font-size:12px; color:var(--muted); line-height:1.7; margin-top:6px }
+  .ot{ border:1px solid var(--warn); background:#241f13; border-radius:9px;
+       padding:2px 12px 13px; margin-top:12px }
+  .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
+  .otHead b{ color:#fff }
+  .sum-line{ display:flex; justify-content:space-between; gap:12px;
+             padding:8px 0; border-bottom:1px solid #24272c; font-size:13.5px }
+  .sum-line:last-child{ border-bottom:0 }
+  .sum-line b{ font-variant-numeric:tabular-nums }
+  .sum-big{ font-size:30px; font-weight:800; text-align:center;
+            font-variant-numeric:tabular-nums; margin:4px 0 2px }
+  .sum-bad{ color:var(--bad) }
+  .sum-ot{ font-size:12.5px; color:var(--muted); line-height:1.8; margin-top:8px }
+  .sum-ot .no{ color:var(--bad) }
   .acts{ display:flex; gap:8px; margin-top:15px; flex-wrap:wrap }
 </style>
 </head>
@@ -162,7 +187,8 @@
 
       <div class="row">
         <button class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
-        <button class="btn hide" id="btnSubmit">שלח לאישור</button>
+        <button class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
+        <button class="btn" id="btnView">הצג סיכום חודשי</button>
         <button class="btn hide" id="btnUnsubmit">בטל שליחה</button>
         <button class="btn hide" id="btnApprove">אשר את החודש</button>
         <button class="btn hide" id="btnReopen">פתח מחדש</button>
@@ -219,8 +245,10 @@ import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
 import { renderNav, renderStuckNav } from './nav.js?v=13';
 import { crewOnDate, isCrewWorking, overrideOn, overrideKindHe, shiftTimes,
          CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=13';
-import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal,
-         recordId, monthKey, daysInMonth, dateKey } from './hours.js?v=13';
+import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
+         recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
+         overtimeHours, reasonMissing, SHAPES, shapeOf, shapeHe }
+  from './hours.js?v=14';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -476,6 +504,7 @@ function renderRows(sug){
     const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
                           sub_station: '' };
     const hrs = calcHours(view, siteHoursOf(view.sub_station));
+    const ot  = overtimeHours(view, siteHoursOf(view.sub_station), shiftHoursFor());
     const running = !!(rec && rec.start && !rec.end);
 
     const tr = document.createElement('tr');
@@ -490,9 +519,19 @@ function renderRows(sug){
               esc(overrideKindHe(ov.kind)) + '</span>' : '') + '</td>' +
       '<td>' + esc(dayTypeHe(view.day_type)) +
         (isSug ? ' <span class="tag">לפי הסידור</span>' : '') +
-        (running ? ' <span class="tag">פתוחה</span>' : '') + '</td>' +
+        (running ? ' <span class="tag">פתוחה</span>' : '') +
+        (needsTimes(view.day_type) && shapeOf(view) !== 'regular'
+          ? ' <span class="tag">' +
+            (shapeOf(view) === 'split' ? 'מפוצלת' : 'המשך משמרת') + '</span>' : '') +
+        (ot > 0 ? ' <span class="tag' + (view.overtime_reason ? '' : ' no') +
+                  '" title="' + esc(view.overtime_reason || 'חסר נימוק') + '">' +
+                  ot + ' ש״נ</span>' : '') + '</td>' +
       '<td class="hh">' + (needsTimes(view.day_type)
-          ? esc(view.start || '—') + '–' + esc(running ? '…' : (view.end || '—')) : '—') + '</td>' +
+          ? '<span class="rng">' + esc(view.start || '—') + '–' +
+              esc(running ? '…' : (view.end || '—')) + '</span>' +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
+              esc(view.end2) + '</span>' : '')
+          : '—') + '</td>' +
       '<td>' + (view.sub_station ? esc(siteName(view.sub_station)) : '—') + '</td>' +
       '<td class="hh">' + (hrs == null ? '—' : hrs) + '</td>';
 
@@ -598,16 +637,35 @@ function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
 $('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
 
+// כמה שעות הסידור קבע ליום הזה. כרגע אורך אחיד לתחנה; כשיהיו
+// אורכים שונים לימים שונים, זה המקום היחיד שישתנה.
+function shiftHoursFor(){
+  const t = shiftTimes(rotations[0], ME.role, false);
+  return Number(t.hours) || 24;
+}
+
+function dayOptions(sel){
+  return [0, 1, 2].map(function (n) {
+    const he = n === 0 ? 'אותו יום' : (n === 1 ? 'למחרת' : 'מחרתיים');
+    return '<option value="' + n + '"' + (Number(sel) === n ? ' selected' : '') +
+           '>' + he + '</option>';
+  }).join('');
+}
+
 function editDay(key, rec){
   if (locked()) return;
   const bt = baseTimes();
   const v = rec || { day_type: 'regular', start: bt.start, end: bt.end,
                      sub_station: '', notes: '' };
   const p = key.split('-');
+  const shape0 = rec ? shapeOf(rec) : 'regular';
 
   const types = DAY_TYPES.map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
     '>' + t.he + '</option>').join('');
+  const shapes = SHAPES.map(s =>
+    '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
+    '>' + s.he + '</option>').join('');
   const siteOpts = '<option value="">בלי תחנת קצה</option>' + sites.map(s =>
     '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
     '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
@@ -617,12 +675,37 @@ function editDay(key, rec){
     '<h3>' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
     '<div class="hint" id="dHint"></div>' +
     '<label>סוג היום</label><select id="dType">' + types + '</select>' +
-    '<div id="dTimes"><div class="two">' +
-      '<div><label>כניסה</label><input type="time" id="dStart" value="' +
-        esc(v.start || '') + '"></div>' +
-      '<div><label>יציאה</label><input type="time" id="dEnd" value="' +
-        esc(v.end || '') + '"></div>' +
-    '</div></div>' +
+
+    '<div id="dTimes">' +
+      '<label>צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
+      '<div class="shapeNote" id="dShapeNote"></div>' +
+
+      '<div class="seg">' +
+        '<div class="two">' +
+          '<div><label id="lStart">כניסה</label>' +
+            '<input type="time" id="dStart" value="' + esc(v.start || '') + '"></div>' +
+          '<div><label id="lEnd">יציאה</label>' +
+            '<input type="time" id="dEnd" value="' + esc(v.end || '') + '"></div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="seg hide" id="dSeg2">' +
+        '<div class="two">' +
+          '<div><label>כניסה שנייה</label>' +
+            '<input type="time" id="dStart2" value="' + esc(v.start2 || '') + '"></div>' +
+          '<div><label>יציאה שנייה</label>' +
+            '<input type="time" id="dEnd2" value="' + esc(v.end2 || '') + '"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div id="dOtBox" class="ot hide">' +
+      '<div class="otHead" id="dOtHead"></div>' +
+      '<label>נימוק לשעות הנוספות · חובה</label>' +
+      '<input type="text" id="dOtReason" maxlength="120" value="' +
+        esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
+    '</div>' +
+
     '<label>תחנת קצה</label><select id="dSite">' + siteOpts + '</select>' +
     '<label>הערות</label><textarea id="dNotes" maxlength="200">' +
       esc(v.notes || '') + '</textarea>' +
@@ -633,33 +716,113 @@ function editDay(key, rec){
     '</div>';
   $('ov').classList.add('on');
 
+  // הצורה קובעת את חישוב היממות, ולא ניחוש מהשעות.
+  //
+  //   regular    הכלל הישן: אם היציאה קטנה או שווה לכניסה,
+  //              המשמרת חצתה חצות. תמיד עד 24 שעות.
+  //   continued  היציאה תמיד למחרת. תמיד מעל 24.
+  //   split      שני קטעים באותו יום, והסך הוא הסכום.
+  function current(){
+    const sh = $('dShape').value;
+    return {
+      day_type: $('dType').value,
+      shape: sh,
+      start: $('dStart').value,
+      end:   $('dEnd').value,
+      end_day: sh === 'continued' ? 1 : guessDayOffset($('dStart').value, $('dEnd').value),
+      start2: sh === 'split' ? $('dStart2').value : '',
+      end2:   sh === 'split' ? $('dEnd2').value : '',
+      end_day2: sh === 'split'
+                  ? guessDayOffset($('dStart2').value, $('dEnd2').value) : 0,
+      sub_station: $('dSite').value,
+      overtime_reason: $('dOtReason').value.trim()
+    };
+  }
+
+  const NOTES = {
+    regular:   'כניסה ויציאה. יציאה מוקדמת מהכניסה נחשבת למחרת.',
+    continued: 'היציאה למחרת. כל יום כזה גדול מ-24 שעות ולכן ' +
+               'תמיד יש בו שעות נוספות שדורשות נימוק.',
+    split:     'שתי כניסות ושתי יציאות באותו יום. הסך הוא סכום ' +
+               'שני הקטעים.'
+  };
+
   const sync = function () {
-    const t = $('dType').value;
+    const t  = $('dType').value;
+    const sh = $('dShape').value;
+
     $('dTimes').style.display = needsTimes(t) ? '' : 'none';
-    const fixed = siteHoursOf($('dSite').value);
-    const h = calcHours({ day_type: t, start: $('dStart').value,
-                          end: $('dEnd').value }, fixed);
+    $('dSeg2').classList.toggle('hide', sh !== 'split');
+    $('dShapeNote').textContent = NOTES[sh] || '';
+    $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
+    $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
+                            : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');
+
+    const cur   = current();
+    const fixed = siteHoursOf(cur.sub_station);
+    const h     = calcHours(cur, fixed);
+    const ot    = overtimeHours(cur, fixed, shiftHoursFor());
+
     $('dHint').innerHTML = 'שעות שיישמרו: <b>' + (h == null ? '—' : h) + '</b>' +
       (fixed ? ' · תחנת קצה עם אורך משמרת קבוע' : '');
+
+    $('dOtBox').classList.toggle('hide', ot <= 0);
+    if (ot > 0) {
+      $('dOtHead').innerHTML = '<b>' + ot + '</b> שעות מעל אורך המשמרת (' +
+        shiftHoursFor() + '). בלי נימוק אי אפשר לשמור.';
+    }
   };
-  $('dType').onchange = sync;
-  $('dSite').onchange = sync;
-  $('dStart').oninput = sync;
-  $('dEnd').oninput = sync;
+
+  ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
+  ['dStart','dEnd','dStart2','dEnd2'].forEach(id => { $(id).oninput = sync; });
   sync();
 
   $('dSave').onclick = async () => {
-    const t = $('dType').value;
-    const start = needsTimes(t) ? $('dStart').value : '';
-    const end   = needsTimes(t) ? $('dEnd').value : '';
-    if (needsTimes(t) && (!start || !end)) {
+    const cur = current();
+    const t   = cur.day_type;
+    const sh  = cur.shape;
+
+    if (needsTimes(t) && (!cur.start || !cur.end)) {
       msg('בסוג הזה צריך כניסה ויציאה.', 'err'); return;
     }
+    if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
+      msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
+    }
+
+    const fixed = siteHoursOf(cur.sub_station);
+    const h = calcHours(cur, fixed);
+    if (needsTimes(t) && h == null) {
+      msg('השעות לא מסתדרות. בדוק אותן שוב.', 'err'); return;
+    }
+
+    // "המשך משמרת" הוא לפי הגדרתו מעל יממה. אם המספרים אומרים
+    // אחרת, הצורה שנבחרה שגויה — ובלי הבדיקה הזו הרשומה נשמרת
+    // עם 24 שעות שנראות כמו משמרת רגילה.
+    if (needsTimes(t) && sh === 'continued' && !fixed && h <= 24) {
+      msg('המשך משמרת הוא מעל 24 שעות. כאן יצא ' + h +
+          '. בחר "משמרת רגילה", או תקן את השעות.', 'err');
+      return;
+    }
+    if (reasonMissing(cur, fixed, shiftHoursFor())) {
+      msg('יש שעות נוספות ביום הזה. צריך לכתוב נימוק.', 'err');
+      $('dOtReason').focus();
+      return;
+    }
+
     try {
       const base = rec ? Object.assign({}, rec) : newRecord(key);
       await saveRecord(key, Object.assign(base, {
-        day_type: t, start: start, end: end,
-        sub_station: $('dSite').value, notes: $('dNotes').value.trim()
+        day_type: t,
+        shape:  needsTimes(t) ? sh : 'regular',
+        start:  needsTimes(t) ? cur.start : '',
+        end:    needsTimes(t) ? cur.end : '',
+        end_day:  needsTimes(t) ? cur.end_day : 0,
+        start2:   needsTimes(t) ? cur.start2 : '',
+        end2:     needsTimes(t) ? cur.end2 : '',
+        end_day2: needsTimes(t) ? cur.end_day2 : 0,
+        sub_station: cur.sub_station,
+        overtime_reason: cur.overtime_reason,
+        notes: $('dNotes').value.trim()
       }));
       closeOv(); msg('היום נשמר.', 'ok'); render();
     } catch (e) {
@@ -679,6 +842,7 @@ function editDay(key, rec){
   $('dCancel').onclick = closeOv;
 }
 
+
 // ---------- שליחה ואישור ----------
 
 async function writeReport(patch){
@@ -695,13 +859,92 @@ async function writeReport(patch){
   report = body;
 }
 
-$('btnSubmit').onclick = async () => {
-  try {
-    await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
-    msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
-    render();
-  } catch (e) { msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
-};
+// לפני שליחה — סיכום על המסך. הכבאי מאשר מה שהוא רואה, ולא
+// לוחץ "שלח" על משהו שהוא לא בדק. זה גם המקום היחיד שבו
+// יתגלה לו שיש יום עם שעות נוספות בלי נימוק, לפני שהמפקד
+// יגלה את זה במקומו.
+function submitPreview(){
+  const st = (report && report.status) || 'draft';
+  const saved = Object.keys(records).sort().map(k => records[k]);
+  const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
+  const sug = suggestedDays();
+
+  const typeLines = DAY_TYPES
+    .filter(t => s.byType[t.id])
+    .map(t => '<div class="sum-line"><span>' + t.he + '</span><b>' +
+              s.byType[t.id] + ' ימים</b></div>').join('');
+
+  const otLines = s.overtime.length
+    ? '<div class="sum-ot">' + s.overtime.map(function (o) {
+        const p2 = o.date.split('-');
+        return '<div>' + Number(p2[2]) + '.' + Number(p2[1]) + ' · ' + o.hours +
+               ' שעות נוספות · ' + (o.reason
+                 ? esc(o.reason)
+                 : '<span class="no">חסר נימוק</span>') + '</div>';
+      }).join('') + '</div>'
+    : '';
+
+  $('dlg').innerHTML =
+    '<h3>בדקתי ואישרתי את הדיווחים שלי</h3>' +
+    '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
+      ' · ' + esc(ME.full_name || '') + ' · מס׳ ' + esc(ME.emp) + '</div>' +
+
+    '<div class="sum-big">' + s.hours + '</div>' +
+    '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
+
+    '<div class="sum-line"><span>ימים שדווחו</span><b>' + s.days + '</b></div>' +
+    typeLines +
+    (s.split ? '<div class="sum-line"><span>משמרות מפוצלות</span><b>' +
+                s.split + '</b></div>' : '') +
+    (s.overtimeHours ? '<div class="sum-line"><span>שעות נוספות</span><b>' +
+                s.overtimeHours + '</b></div>' : '') +
+    (sug.length ? '<div class="sum-line sum-bad"><span>ימים בסידור שלא דיווחת</span><b>' +
+                sug.length + '</b></div>' : '') +
+    otLines +
+
+    (s.unexplained.length
+      ? '<div class="ot" style="margin-top:14px"><div class="otHead">' +
+        '<b>' + s.unexplained.length + '</b> ימים עם שעות נוספות בלי נימוק. ' +
+        'צריך להשלים אותם לפני שליחה.</div></div>'
+      : '') +
+
+    (sug.length && !s.unexplained.length
+      ? '<div class="hint" style="margin-top:14px">יש ' + sug.length +
+        ' ימים שהסידור אומר שעבדת בהם ולא דיווחת. אפשר לשלוח בכל זאת.</div>'
+      : '') +
+
+    (st === 'approved'
+      ? '<div class="hint" style="margin-top:14px">החודש אושר ונעול.</div>'
+      : st === 'submitted'
+      ? '<div class="hint" style="margin-top:14px">הדוח כבר נשלח וממתין לאישור.</div>'
+      : '') +
+
+    '<div class="acts">' +
+      ((st === 'draft' && !s.unexplained.length)
+        ? '<button class="btn go" id="pSend">אישור ושליחה</button>' : '') +
+      '<button class="btn" id="pBack">חזרה לדוח</button>' +
+    '</div>';
+  $('ov').classList.add('on');
+
+  if ($('pSend')) $('pSend').onclick = async () => {
+    $('pSend').disabled = true;
+    try {
+      await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
+      closeOv();
+      msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
+      render();
+    } catch (e) {
+      msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      $('pSend').disabled = false;
+    }
+  };
+  $('pBack').onclick = closeOv;
+}
+
+$('btnSubmit').onclick = submitPreview;
+
+// אותו סיכום, לצפייה בלבד, בכל רגע — גם אחרי שליחה ואישור.
+$('btnView').onclick = submitPreview;
 
 $('btnUnsubmit').onclick = async () => {
   try {
