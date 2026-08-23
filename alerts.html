@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — התראות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:760px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  select, textarea, input{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  textarea{ min-height:84px; resize:vertical }
+
+  .state{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+          border:1px solid var(--line); border-radius:10px; padding:13px;
+          background:#191c20; margin-bottom:4px }
+  .state.on{ border-color:#2f4a33; background:#16241a }
+  .state.off{ border-color:var(--warn); background:#241f13 }
+  .state.no{ border-color:var(--bad); background:#241618 }
+  .state .big{ font-size:15px; font-weight:800 }
+  .state.on .big{ color:var(--good) }
+  .state.off .big{ color:var(--warn) }
+  .state.no .big{ color:var(--bad) }
+  .state .why{ font-size:12.5px; color:var(--muted); line-height:1.7; flex:1 1 220px }
+
+  .pref{ display:flex; align-items:flex-start; gap:11px; padding:11px 0;
+         border-bottom:1px solid #24272c }
+  .pref:last-child{ border-bottom:0 }
+  .pref input{ width:auto; margin:2px 0 0 }
+  .pref .t{ flex:1 }
+  .pref .n{ font-size:14.5px; font-weight:600 }
+  .pref .d{ font-size:12px; color:var(--muted); line-height:1.6; margin-top:2px }
+  .pref .must{ font-size:11px; border:1px solid var(--line); border-radius:20px;
+               padding:1px 9px; color:var(--muted); white-space:nowrap }
+
+  .dev{ display:flex; align-items:center; gap:9px; padding:9px 0;
+        border-bottom:1px solid #24272c; font-size:13px }
+  .dev:last-child{ border-bottom:0 }
+  .dev .nm{ flex:1 }
+  .dev .this{ font-size:11px; color:var(--good) }
+
+  .bc{ border:1px solid var(--line); border-radius:10px; padding:12px;
+       margin-top:10px; background:#191c20; font-size:13px; line-height:1.8 }
+  .bc .hd{ font-size:12px; color:var(--muted); margin-bottom:4px }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .hide{ display:none !important }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>התראות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="card">
+      <h2>המכשיר הזה</h2>
+      <div class="note" style="margin-bottom:10px">
+        התראה מגיעה לטלפון גם כשהאפליקציה סגורה. צריך לאשר פעם אחת
+        בכל מכשיר.
+      </div>
+      <div class="state" id="pState">
+        <span class="big" id="pBig">בודק…</span>
+        <span class="why" id="pWhy"></span>
+      </div>
+      <button class="btn go" id="btnOn">הפעל התראות במכשיר הזה</button>
+      <button class="btn hide" id="btnOff">כבה במכשיר הזה</button>
+      <div class="msg" id="pMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>מה לקבל</h2>
+      <div class="note" style="margin-bottom:6px">
+        מה שנוגע אליך ישירות מגיע תמיד. את השאר אפשר לכבות.
+      </div>
+      <div id="prefs"></div>
+      <button class="btn" id="btnSavePrefs">שמור</button>
+      <div class="msg" id="prefMsg"></div>
+    </div>
+
+    <div class="card hide" id="devCard">
+      <h2>המכשירים שלי</h2>
+      <div class="note" style="margin-bottom:6px">
+        כל מכשיר שאישרת בו התראות. מכשיר שאיבדת — כדאי להסיר.
+      </div>
+      <div id="devList"></div>
+    </div>
+
+    <div class="card hide" id="sendCard">
+      <h2>שליחת הודעה</h2>
+      <div class="note" id="sendNote">—</div>
+      <label>אל מי</label>
+      <select id="target"></select>
+      <label>ההודעה</label>
+      <textarea id="text" maxlength="400" placeholder="מחר תרגיל בשעה 08:00. להגיע עם ציוד מלא."></textarea>
+      <button class="btn go" id="btnSend">שלח</button>
+      <div class="msg" id="sendMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>הודעות אחרונות</h2>
+      <div id="bcList"></div>
+    </div>
+
+    <div class="card hide" id="keyCard">
+      <h2>מפתח ההתראות</h2>
+      <div class="note" style="margin-bottom:6px">
+        נוצר בקונסולה של Firebase: Project settings ← Cloud Messaging ←
+        Web configuration ← Generate key pair. מודבק כאן פעם אחת.
+        בלעדיו אף מכשיר לא יוכל להירשם.
+      </div>
+      <input type="text" id="vapid" placeholder="B...">
+      <button class="btn" id="btnKey">שמור מפתח</button>
+      <div class="msg" id="keyMsg"></div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
+import { renderNav, renderStuckNav } from './nav.js?v=18';
+import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
+         enablePush, deviceLabel } from './push.js?v=18';
+import { CREW_HE } from './rotation.js?v=18';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
+         query, orderBy, limit, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'pMsg');
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, ROLE = '', IS_SUPER = false;
+let prefs = defaultPrefs(), tokens = [], vapid = '', myToken = '';
+let messaging = null;
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=alerts.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  IS_SUPER = c.super === true ||
+             String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = IS_SUPER ||
+    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (IS_SUPER ? STATION_ID : '');
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  ROLE = c.role || '';
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '',
+         full_name: '', email: user.email || '' };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'alerts.html', user.email || '');
+
+  if (IS_SUPER) $('keyCard').classList.remove('hide');
+
+  try { messaging = MSG.getMessaging(app); } catch (ignore) {}
+
+  await loadAll();
+  setupSend();
+  renderPrefs();
+  renderState();
+  await loadBroadcasts();
+
+  // התראה שמגיעה בזמן שהמסך פתוח.
+  if (messaging) {
+    try {
+      MSG.onMessage(messaging, function (p) {
+        const d = (p && p.data) || {};
+        msg('התראה: ' + (d.title || '') + ' — ' + (d.body || ''), 'info', 'pMsg');
+      });
+    } catch (ignore) {}
+  }
+});
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  try {
+    const k = await getDoc(doc(db, 'stations', SID, 'config', 'push'));
+    if (k.exists()) vapid = String((k.data() || {}).vapid_key || '');
+    if (IS_SUPER) $('vapid').value = vapid;
+  } catch (ignore) {}
+
+  try {
+    const t = await getDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid));
+    if (t.exists()) {
+      const v = t.data() || {};
+      tokens = Array.isArray(v.tokens) ? v.tokens : [];
+      prefs = Object.assign(defaultPrefs(), v.prefs || {});
+    }
+  } catch (ignore) {}
+}
+
+async function saveTokens(okText){
+  await setDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid), {
+    uid: ME.uid, emp: ME.emp, crew: ME.crew, role: ROLE,
+    full_name: ME.full_name,
+    tokens: tokens, prefs: prefs,
+    updated_at: serverTimestamp()
+  }, { merge: true });
+  if (okText) msg(okText, 'ok');
+}
+
+// ---------- מצב המכשיר ----------
+
+function renderState(){
+  const el = $('pState');
+  const has = tokens.some(t => t.token === myToken) && myToken;
+
+  if (!pushSupported()) {
+    el.className = 'state no';
+    $('pBig').textContent = 'לא נתמך';
+    $('pWhy').textContent = 'הדפדפן הזה לא תומך בהתראות פוש. באייפון ' +
+      'צריך להוסיף את האתר למסך הבית ולפתוח אותו משם.';
+    $('btnOn').classList.add('hide');
+    return;
+  }
+
+  const perm = permissionState();
+  if (perm === 'denied') {
+    el.className = 'state no';
+    $('pBig').textContent = 'חסום';
+    $('pWhy').textContent = 'חסמת התראות מהאתר. צריך לפתוח את הגדרות ' +
+      'האתר בדפדפן, לאפשר התראות, ואז לרענן.';
+    $('btnOn').classList.add('hide');
+    return;
+  }
+
+  if (has) {
+    el.className = 'state on';
+    $('pBig').textContent = 'פעיל';
+    $('pWhy').textContent = 'המכשיר הזה רשום ויקבל התראות.';
+    $('btnOn').classList.add('hide');
+    $('btnOff').classList.remove('hide');
+  } else {
+    el.className = 'state off';
+    $('pBig').textContent = 'כבוי';
+    $('pWhy').textContent = vapid
+      ? 'המכשיר הזה עדיין לא רשום.'
+      : 'חסר מפתח התראות. מנהל המערכת צריך להזין אותו.';
+    $('btnOn').classList.remove('hide');
+    $('btnOff').classList.add('hide');
+  }
+
+  renderDevices();
+}
+
+function renderDevices(){
+  if (!tokens.length) { $('devCard').classList.add('hide'); return; }
+  $('devCard').classList.remove('hide');
+  const box = $('devList');
+  box.innerHTML = '';
+  tokens.forEach(function (t, i) {
+    const row = document.createElement('div');
+    row.className = 'dev';
+    row.innerHTML = '<span class="nm">' + esc(t.label || 'מכשיר') +
+      (t.token === myToken ? ' <span class="this">· המכשיר הזה</span>' : '') +
+      '</span>';
+    const b = document.createElement('button');
+    b.className = 'btn sm'; b.textContent = 'הסר';
+    b.onclick = async () => {
+      tokens.splice(i, 1);
+      try { await saveTokens('המכשיר הוסר.'); renderState(); }
+      catch (e) { msg('ההסרה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    };
+    row.appendChild(b);
+    box.appendChild(row);
+  });
+}
+
+$('btnOn').onclick = async () => {
+  const b = $('btnOn'); b.disabled = true; msg('', '');
+  const res = await enablePush(MSG, messaging, vapid);
+  if (!res.ok) { msg(res.why, 'err'); b.disabled = false; return; }
+
+  myToken = res.token;
+  if (!tokens.some(t => t.token === myToken)) {
+    tokens.push({ token: myToken, label: deviceLabel(), added: Date.now() });
+  }
+  try {
+    await saveTokens('התראות הופעלו במכשיר הזה.');
+    renderState();
+  } catch (e) {
+    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+$('btnOff').onclick = async () => {
+  tokens = tokens.filter(t => t.token !== myToken);
+  try { await saveTokens('המכשיר הזה כבוי.'); renderState(); }
+  catch (e) { msg('הכיבוי נכשל. (' + (e.code || e.message) + ')', 'err'); }
+};
+
+// ---------- העדפות ----------
+
+function renderPrefs(){
+  const box = $('prefs');
+  box.innerHTML = '';
+  ALERT_TYPES.forEach(function (t) {
+    const row = document.createElement('div');
+    row.className = 'pref';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'pf_' + t.id;
+    cb.checked = t.must ? true : prefs[t.id] !== false;
+    cb.disabled = t.must;
+
+    const d = document.createElement('div');
+    d.className = 't';
+    d.innerHTML = '<div class="n">' + esc(t.he) + '</div>' +
+                  '<div class="d">' + esc(t.note) + '</div>';
+
+    row.appendChild(cb);
+    row.appendChild(d);
+    if (t.must) {
+      const m = document.createElement('span');
+      m.className = 'must'; m.textContent = 'תמיד';
+      row.appendChild(m);
+    }
+    box.appendChild(row);
+  });
+}
+
+$('btnSavePrefs').onclick = async () => {
+  ALERT_TYPES.forEach(function (t) {
+    prefs[t.id] = t.must ? true : $('pf_' + t.id).checked;
+  });
+  try { await saveTokens(); msg('ההעדפות נשמרו.', 'ok', 'prefMsg'); }
+  catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'prefMsg'); }
+};
+
+// ---------- שליחת הודעה ----------
+//
+// מי שולח למי, לפי אלדד:
+//   מפקד משמרת   למשמרת שלו
+//   רכז כוח אדם  לכל התחנה
+//   מנהל-על      לכל התחנה
+//   כבאי         לכבאים במשמרת שלו
+//
+// הבחירה כאן היא נוחות. האכיפה האמיתית בפונקציית השליחה.
+
+function setupSend(){
+  const opts = [];
+  if (IS_SUPER || ROLE === 'hr_coordinator') {
+    opts.push({ v: 'station', he: 'כל התחנה' });
+    ['A','B','C'].forEach(c => opts.push({ v: 'crew:' + c,
+      he: 'משמרת ' + (CREW_HE[c] || c) }));
+  } else if (ROLE === 'commander' && ME.crew) {
+    opts.push({ v: 'crew:' + ME.crew,
+      he: 'המשמרת שלי — ' + (CREW_HE[ME.crew] || ME.crew) });
+  } else if (ME.crew) {
+    opts.push({ v: 'crew:' + ME.crew,
+      he: 'הכבאים במשמרת שלי — ' + (CREW_HE[ME.crew] || ME.crew) });
+  }
+
+  if (!opts.length) return;
+
+  $('sendCard').classList.remove('hide');
+  $('target').innerHTML = opts.map(o =>
+    '<option value="' + esc(o.v) + '">' + esc(o.he) + '</option>').join('');
+
+  $('sendNote').textContent =
+    (IS_SUPER || ROLE === 'hr_coordinator')
+      ? 'אתה יכול לשלוח לכל התחנה או למשמרת אחת.'
+      : ROLE === 'commander'
+      ? 'אתה יכול לשלוח לאנשי המשמרת שלך.'
+      : 'אתה יכול לשלוח לכבאים במשמרת שלך.';
+
+  $('btnSend').onclick = send;
+}
+
+async function send(){
+  const text = $('text').value.trim();
+  if (!text) { msg('צריך לכתוב הודעה.', 'err', 'sendMsg'); return; }
+
+  const target = $('target').value;
+  const label = $('target').options[$('target').selectedIndex].textContent;
+  if (!window.confirm('לשלוח את ההודעה אל ' + label + '?\n\n' + text)) return;
+
+  const b = $('btnSend'); b.disabled = true;
+  try {
+    const res = await httpsCallable(fns, 'sendBroadcast')({ target: target, text: text });
+    const d = res.data || {};
+    msg('נשלח ל-' + d.people + ' אנשים · ' + d.devices + ' מכשירים.' +
+        (d.devices ? '' : ' אף אחד מהם עוד לא הפעיל התראות.'), 'ok', 'sendMsg');
+    $('text').value = '';
+    await loadBroadcasts();
+  } catch (e) {
+    msg('השליחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'sendMsg');
+  }
+  b.disabled = false;
+}
+
+async function loadBroadcasts(){
+  const box = $('bcList');
+  box.innerHTML = '';
+  let list = [];
+  try {
+    const qs = await getDocs(query(collection(db, 'stations', SID, 'broadcasts'),
+                                   orderBy('created_key', 'desc'), limit(15)));
+    qs.forEach(d => list.push(d.data() || {}));
+  } catch (ignore) {}
+
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">אין הודעות.</div>';
+    return;
+  }
+  list.forEach(function (m) {
+    const el = document.createElement('div');
+    el.className = 'bc';
+    const when = String(m.created_key || '').slice(0, 16).replace('T', ' ');
+    el.innerHTML = '<div class="hd">' + esc(m.by_name || '') +
+      (m.target_he ? ' → ' + esc(m.target_he) : '') +
+      (when ? ' · ' + esc(when) : '') + '</div>' + esc(m.text || '');
+    box.appendChild(el);
+  });
+}
+
+// ---------- מפתח ----------
+
+$('btnKey').onclick = async () => {
+  const k = $('vapid').value.trim();
+  if (!k) { msg('צריך מפתח.', 'err', 'keyMsg'); return; }
+  try {
+    await setDoc(doc(db, 'stations', SID, 'config', 'push'),
+                 { vapid_key: k, updated_at: serverTimestamp(), by: ME.uid });
+    vapid = k;
+    msg('המפתח נשמר. עכשיו אפשר להפעיל התראות.', 'ok', 'keyMsg');
+    renderState();
+  } catch (e) {
+    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'keyMsg');
+  }
+};
+</script>
+</body>
+</html>

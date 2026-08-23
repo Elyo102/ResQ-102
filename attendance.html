@@ -250,14 +250,15 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
-import { renderNav, renderStuckNav } from './nav.js?v=16';
-import { crewOnDate, isCrewWorking, overrideOn, overrideKindHe, shiftTimes,
-         CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=16';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
+import { renderNav, renderStuckNav } from './nav.js?v=18';
+import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
+         overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
+  from './rotation.js?v=18';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=16';
+  from './hours.js?v=18';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -294,6 +295,7 @@ let rotations = [], overrides = {}, sites = [];
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
 let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
+let swaps   = [];          // החלפות מאושרות שנוגעות אליי
 
 function siteHoursOf(id){
   const s = sites.filter(x => x.id === id)[0];
@@ -388,6 +390,18 @@ async function loadStatic(){
     });
   } catch (ignore) {}
 
+  // החלפות מאושרות. אדם שהחליף לא עובד ביום שלו, וכן עובד
+  // ביום של מי שהחליף איתו — ושני הימים חייבים להופיע נכון
+  // במילוי מראש, אחרת הדוח מתחיל שגוי.
+  try {
+    const sw = await getDocs(collection(db, 'stations', SID, 'swaps'));
+    swaps = [];
+    sw.forEach(d => {
+      const v = d.data() || {};
+      if (v.status === 'approved') swaps.push(v);
+    });
+  } catch (ignore) {}
+
   try {
     const ss = await getDocs(collection(db, 'stations', SID, 'sub_stations'));
     sites = [];
@@ -449,7 +463,7 @@ function suggestedDays(){
   const last = daysInMonth(viewYear, viewMonth);
   for (let d = 1; d <= last; d++) {
     const date = new Date(viewYear, viewMonth, d);
-    if (!isCrewWorking(rotations, ME.crew, date, overrides)) continue;
+    if (!personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid)) continue;
     const key = dateKey(viewYear, viewMonth, d);
     if (records[key]) continue;
     out.push(key);
@@ -530,6 +544,7 @@ function renderRows(sug){
     const date = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
     const ov = overrideOn(overrides, date);
     const crew = crewOnDate(rotations, date, overrides);
+    const eff = swapEffect(swaps, ME.uid, key);
     const bt = baseTimes();
 
     const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
@@ -547,7 +562,8 @@ function renderRows(sug){
         (crew ? ' <span class="cw ' + crew + '" title="' + esc(CREW_HE[crew] || crew) +
                 '">' + (CREW_SHORT[crew] || crew) + '</span>' : '') +
         (ov ? ' <span class="tag" title="' + esc(ov.note || '') + '">' +
-              esc(overrideKindHe(ov.kind)) + '</span>' : '') + '</td>' +
+              esc(overrideKindHe(ov.kind)) + '</span>' : '') +
+        (eff === 'in' ? ' <span class="tag">נכנסת בהחלפה</span>' : '') + '</td>' +
       '<td>' + esc(dayTypeHe(view.day_type)) +
         (isSug ? ' <span class="tag">לפי הסידור</span>' : '') +
         (running ? ' <span class="tag">פתוחה</span>' : '') +
@@ -701,7 +717,8 @@ $('btnSync').onclick = async () => {
     for (let d = 1; d <= last; d++) {
       const date = new Date(viewYear, viewMonth, d);
       const key  = dateKey(viewYear, viewMonth, d);
-      const working = ME.crew && isCrewWorking(rotations, ME.crew, date, overrides);
+      const working = ME.crew &&
+        personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid);
       const rec = records[key];
 
       if (working && !rec) {

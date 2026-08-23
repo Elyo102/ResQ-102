@@ -18,6 +18,7 @@ const ITEMS = [
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166' },
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1' },
   { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c' },
+  { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5' },
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b' },
   { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6' }

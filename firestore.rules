@@ -400,6 +400,14 @@ service cloud.firestore {
             && request.resource.data.get('hour_limit', 0) >= 0
             && request.resource.data.get('hour_limit', 0) <= 1000
           ) || (
+            // מפתח ה-VAPID להתראות פוש. נוצר בקונסולה של Firebase.
+            // הוא ציבורי מטבעו — הדפדפן של כל משתמש מקבל אותו —
+            // ולכן קריאה פתוחה לחברי התחנה. כתיבה למנהל-על בלבד.
+            docId == 'push'
+            && isSuper()
+            && request.resource.data.keys().hasOnly(
+                 ['vapid_key', 'updated_at', 'by'])
+          ) || (
             docId == 'board'
             && request.resource.data.keys().hasOnly(
                  ['vehicles', 'command', 'updated_at', 'by'])
@@ -481,6 +489,42 @@ service cloud.firestore {
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && resource.data.get('status', '') != 'approved');
+      }
+
+
+      // ---------- מזהי מכשיר להתראות ----------
+      //
+      // כל אחד כותב וקורא את שלו בלבד. אין למי מהסגל סיבה
+      // לקרוא מזהי מכשיר של אחרים: השליחה קורית בשרת, שעוקף
+      // את הכללים האלה ממילא.
+      //
+      // מזהה מכשיר הוא מפתח לשליחת התראה למכשיר מסוים. דליפה
+      // שלו מאפשרת לשלוח הודעות לטלפון של כבאי בשם המערכת.
+
+      match /push_tokens/{uid} {
+        allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+
+      // הודעות שנשלחו ביד. נשמרות כדי שיהיה תיעוד מי שלח מה
+      // ולמי — הודעה לכל המשמרת היא פעולה ניהולית, לא צ׳אט.
+      //
+      // מי רשאי לשלוח, לפי אלדד:
+      //   מפקד משמרת   למשמרת שלו
+      //   רכז כוח אדם  לכל התחנה
+      //   מנהל-על      לכל התחנה
+      //   כבאי         לכבאים במשמרת שלו
+      //
+      // האכיפה האמיתית היא בפונקציית השליחה בשרת. הכלל כאן
+      // מונע כתיבת תיעוד מזויף.
+
+      match /broadcasts/{msgId} {
+        allow read: if member(sid);
+        allow create: if member(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('text', '') is string
+                      && request.resource.data.get('text', '').size() > 0
+                      && request.resource.data.get('text', '').size() <= 400;
+        allow update, delete: if isSuper();
       }
 
 

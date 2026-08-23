@@ -118,6 +118,46 @@ export function isCrewWorking(rotations, crew, date, overrides) {
 }
 
 
+// ---------- החלפות מאושרות ----------
+//
+// חריגה משנה מי עובד ברמת המשמרת. החלפה משנה את זה ברמת
+// האדם: כל השאר במשמרת עובדים, ושניים התחלפו ביניהם.
+//
+// בלי השכבה הזו האישור נרשם ולא קורה כלום — הסידור ממשיך
+// להראות את מי שיצא, ודוח הנוכחות ממשיך למלא לו את היום
+// מראש. זה בדיוק המצב שבו המערכת אומרת דבר אחד והמציאות
+// אומרת אחר.
+//
+// swaps = מערך מסמכי swaps. רק status === 'approved' נספר.
+
+export function swapEffect(swaps, uid, dateKey) {
+  if (!swaps || !uid || !dateKey) return null;
+  for (let i = 0; i < swaps.length; i++) {
+    const s = swaps[i];
+    if (!s || s.status !== 'approved') continue;
+
+    if (dateKey === s.from_date) {
+      if (uid === s.from_uid) return 'out';
+      if (uid === s.to_uid)   return 'in';
+    }
+    if (dateKey === s.to_date) {
+      if (uid === s.to_uid)   return 'out';
+      if (uid === s.from_uid) return 'in';
+    }
+  }
+  return null;
+}
+
+// האם אדם מסוים עובד בתאריך מסוים — אחרי מחזור, חריגות
+// והחלפות מאושרות. זו השאלה שכל מסך באמת שואל.
+export function personWorks(rotations, crew, date, overrides, swaps, uid) {
+  const eff = swapEffect(swaps, uid, toKey(date));
+  if (eff === 'out') return false;
+  if (eff === 'in')  return true;
+  return isCrewWorking(rotations, crew, date, overrides);
+}
+
+
 // ---------- שעות המשמרת לפי תפקיד ----------
 
 // מחזיר { start, end, hours, label }

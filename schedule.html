@@ -248,20 +248,21 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=16';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=18';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
-         OVERRIDE_KINDS, overrideKindHe, overrideOn }
-  from './rotation.js?v=16';
+         OVERRIDE_KINDS, overrideKindHe, overrideOn,
+         personWorks, swapEffect }
+  from './rotation.js?v=18';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=16';
+  from './readiness.js?v=18';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -314,6 +315,7 @@ let fit = {};        // crew -> {rl, bs, verdict}
 let qualNames = {};  // qid -> שם
 let myCrews = CREWS.slice();
 let overrides = {};      // 'YYYY-MM-DD' -> {kind, crew, extra_crews, note}
+let mySwaps = [];        // החלפות מאושרות
 let canEditOvr = false;
 let SID = '';
 
@@ -376,6 +378,14 @@ onAuthStateChanged(auth, async user => {
   }
 
   await loadOverrides();
+  try {
+    const sw = await getDocs(collection(db, 'stations', SID, 'swaps'));
+    mySwaps = [];
+    sw.forEach(d => {
+      const v = d.data() || {};
+      if (v.status === 'approved') mySwaps.push(v);
+    });
+  } catch (ignore) {}
 
   $('meName').textContent = me.full_name;
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
@@ -700,14 +710,22 @@ function render(){
     const f = crew ? fit[crew] : null;
     const unfit = !!(f && f.verdict.known && !f.verdict.ready);
 
+    const eff  = swapEffect(mySwaps, auth.currentUser ? auth.currentUser.uid : '', toKey(date));
+    const mineToday = me.crew &&
+      personWorks(rotations, me.crew, date, overrides, mySwaps,
+                  auth.currentUser ? auth.currentUser.uid : '');
+
     const el = document.createElement('div');
     el.className = 'day' + (crew ? ' ' + crew : '') +
-                   (crew && crew === me.crew ? ' mine' : '') +
+                   (mineToday ? ' mine' : '') +
                    (unfit ? ' unfit' : '') +
                    (ov ? ' ovr' + (ov.kind === 'swap' ? ' swap' : '') : '') +
                    (sameDay(date, today) ? ' today' : '');
+    if (eff) {
+      el.title = (eff === 'in' ? 'אתה נכנס בהחלפה' : 'אתה לא עובד — החלפה מאושרת') + '\n';
+    }
     if (ov) {
-      el.title = overrideKindHe(ov.kind) +
+      el.title = (el.title || '') + overrideKindHe(ov.kind) +
                  (ov.note ? ' · ' + ov.note : '') +
                  (unfit ? '\n' : '');
     }

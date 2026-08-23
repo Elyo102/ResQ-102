@@ -1423,3 +1423,346 @@ exports.runReportNow = onCall(async (req) => {
   const out = await buildAndSendMonthly(mk);
   return Object.assign({ ok: true, month: mk }, out);
 });
+
+
+// =====================================================================
+//  התראות פוש
+// =====================================================================
+//
+// שלוש דרכים שהתראה נולדת:
+//
+//   אוטומטית    שינוי מצב בהחלפה או בדוח חודשי מפעיל טריגר
+//   מתוזמנת     תזכורת דיווח שעות, ארבעה ימים לפני סוף החודש
+//   ידנית       מפקד או כבאי כותב הודעה ושולח
+//
+// התזכורת החודשית נלקחה מהמערכת שכבאי אילת משתמשים בה. שם היא
+// מייל שנשלח ב-dailyReminderCheck_ כשנשארו בדיוק ארבעה ימים
+// לסוף החודש. אותו יום, אותו נוסח, ערוץ אחר.
+
+const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+
+const PUSH_STATION = 'eilat_102';
+
+// שולח לרשימת uid. מסנן לפי העדפות, מנקה מזהי מכשיר מתים,
+// ולעולם לא מפיל את הפעולה שקראה לו: התראה שלא יצאה היא
+// מטרד, אבל החלפה שלא אושרה בגללה היא תקלה.
+async function pushToUsers(sid, uids, type, title, body, url, important) {
+  const unique = Array.from(new Set((uids || []).filter(Boolean)));
+  if (!unique.length) return { people: 0, devices: 0 };
+
+  let people = 0, devices = 0;
+
+  for (const uid of unique) {
+    let snap;
+    try {
+      snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();
+    } catch (e) { continue; }
+    if (!snap.exists) continue;
+
+    const v = snap.data() || {};
+    const prefs = v.prefs || {};
+
+    // סוגים שנוגעים ישירות למשתמש נשלחים תמיד. השאר לפי בחירתו.
+    const must = type === 'swap_mine' || type === 'report_mine';
+    if (!must && prefs[type] === false) continue;
+
+    const list = Array.isArray(v.tokens) ? v.tokens : [];
+    if (!list.length) continue;
+
+    const toks = list.map(t => t && t.token).filter(Boolean);
+    if (!toks.length) continue;
+
+    let res;
+    try {
+      res = await admin.messaging().sendEachForMulticast({
+        tokens: toks,
+        data: {
+          title: String(title || 'ResQ'),
+          body: String(body || ''),
+          url: String(url || './login.html'),
+          tag: String(type || 'resq'),
+          important: important ? '1' : '0'
+        },
+        webpush: { headers: { Urgency: important ? 'high' : 'normal' } }
+      });
+    } catch (e) {
+      console.error('push failed for ' + uid + ': ' + e.message);
+      continue;
+    }
+
+    let sent = 0;
+    const dead = [];
+    res.responses.forEach(function (r, i) {
+      if (r.success) { sent++; return; }
+      const code = (r.error && r.error.code) || '';
+      // מזהה שנמחק או לא רשום — המכשיר כבר לא קיים. מנקים,
+      // אחרת הרשימה מתמלאת במזהים מתים והשליחה מאטה בהדרגה.
+      if (code.indexOf('registration-token-not-registered') !== -1 ||
+          code.indexOf('invalid-argument') !== -1) {
+        dead.push(toks[i]);
+      }
+    });
+
+    if (dead.length) {
+      const left = list.filter(t => dead.indexOf(t.token) === -1);
+      await db.doc('stations/' + sid + '/push_tokens/' + uid)
+        .set({ tokens: left, updated_at: FV.serverTimestamp() }, { merge: true })
+        .catch(() => {});
+    }
+
+    if (sent) { people++; devices += sent; }
+  }
+
+  return { people, devices };
+}
+
+async function uidsInCrew(sid, crew) {
+  const out = [];
+  try {
+    const rs = await db.collection('stations/' + sid + '/roster').get();
+    rs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      if (crew && v.crew !== crew) return;
+      out.push(d.id);
+    });
+  } catch (e) {}
+  return out;
+}
+
+async function commandersOf(sid, crew) {
+  const out = [];
+  try {
+    const rs = await db.collection('stations/' + sid + '/users').get();
+    rs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      if (v.role === 'hr_coordinator') { out.push(d.id); return; }
+      if (v.role === 'commander' && (!crew || v.crew === crew)) out.push(d.id);
+    });
+  } catch (e) {}
+  return out;
+}
+
+const CREW_HE_S = { A: "א'", B: "ב'", C: "ג'" };
+function dmyS(k) {
+  const p = String(k || '').split('-');
+  return p.length === 3 ? Number(p[2]) + '.' + Number(p[1]) : String(k || '');
+}
+
+// ---------- החלפות ----------
+//
+// כל מעבר מצב מייצר התראה אחת, למי שהכדור עבר אליו.
+// אין התראה על מצב שלא השתנה — עדכון של שדה צדדי לא אמור
+// לצלצל בטלפון של אף אחד.
+
+exports.onSwapChange = onDocumentWritten(
+  'stations/{sid}/swaps/{swapId}',
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.exists
+      ? event.data.before.data() : null;
+    const after = event.data && event.data.after && event.data.after.exists
+      ? event.data.after.data() : null;
+    if (!after) return;
+
+    const sid = event.params.sid;
+    const was = before ? before.status : '';
+    const now = after.status;
+    if (was === now) return;
+
+    const url = './swaps.html';
+    const both = [after.from_uid, after.to_uid];
+
+    if (now === 'peer') {
+      await pushToUsers(sid, [after.to_uid], 'swap_mine',
+        'בקשת החלפה',
+        after.from_name + ' מבקש להחליף איתך — ' + dmyS(after.from_date) +
+        ' מול ' + dmyS(after.to_date),
+        url, true);
+      return;
+    }
+
+    if (now === 'cmd_from') {
+      await pushToUsers(sid, [after.from_uid], 'swap_mine',
+        'ההחלפה התקדמה',
+        after.to_name + ' הסכים. הבקשה עברה למפקד המשמרת.', url);
+      await pushToUsers(sid, await commandersOf(sid, after.from_crew),
+        'swap_approve', 'החלפה ממתינה לאישורך',
+        after.from_name + ' ⇄ ' + after.to_name + ' · ' + dmyS(after.from_date),
+        url);
+      return;
+    }
+
+    if (now === 'cmd_to') {
+      await pushToUsers(sid, both, 'swap_mine',
+        'ההחלפה אושרה בשלב הראשון',
+        'אושר ע״י ' + (after.from_appr_name || 'מפקד המשמרת') +
+        '. ממתין למפקד משמרת ' + (CREW_HE_S[after.to_crew] || after.to_crew) + '.',
+        url);
+      await pushToUsers(sid, await commandersOf(sid, after.to_crew),
+        'swap_approve', 'החלפה ממתינה לאישורך',
+        after.from_name + ' ⇄ ' + after.to_name + ' · ' + dmyS(after.to_date),
+        url);
+      return;
+    }
+
+    if (now === 'approved') {
+      await pushToUsers(sid, both, 'swap_mine',
+        'ההחלפה אושרה',
+        'אושר ע״י ' + (after.from_appr_name || '—') + ' ו' +
+        (after.to_appr_name || '—') + '. הסידור עודכן.',
+        url, true);
+      return;
+    }
+
+    if (now === 'rejected') {
+      await pushToUsers(sid, both, 'swap_mine',
+        'ההחלפה נדחתה',
+        'נדחה ע״י ' + (after.reject_name || '—') +
+        (after.reject_reason ? ' — ' + after.reject_reason : ''),
+        url, true);
+      return;
+    }
+  });
+
+// ---------- דוח חודשי ----------
+
+exports.onReportChange = onDocumentWritten(
+  'stations/{sid}/monthly_reports/{docId}',
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.exists
+      ? event.data.before.data() : null;
+    const after = event.data && event.data.after && event.data.after.exists
+      ? event.data.after.data() : null;
+    if (!after) return;
+
+    const sid = event.params.sid;
+    const was = before ? before.status : '';
+    const now = after.status;
+    if (was === now) return;
+
+    const url = './attendance.html';
+    const mk = after.month || '';
+
+    if (now === 'submitted') {
+      await pushToUsers(sid, await commandersOf(sid, after.crew),
+        'report_submit', 'דוח נוכחות הוגש',
+        (after.full_name || '') + ' · ' + mk + ' · ' +
+        (after.total_hours != null ? after.total_hours + ' שעות' : ''),
+        url);
+      return;
+    }
+
+    if (now === 'approved') {
+      await pushToUsers(sid, [after.uid], 'report_mine',
+        'הדוח שלך אושר',
+        mk + ' אושר ע״י ' + (after.approved_by_name || 'המפקד') + '.', url, true);
+      return;
+    }
+
+    if (now === 'draft' && was === 'approved') {
+      await pushToUsers(sid, [after.uid], 'report_mine',
+        'הדוח שלך נפתח מחדש',
+        mk + ' נפתח ע״י ' + (after.reopened_by_name || 'המפקד') +
+        '. אפשר לתקן ולשלוח שוב.', url, true);
+      return;
+    }
+  });
+
+// ---------- תזכורת דיווח שעות ----------
+//
+// ארבעה ימים לפני סוף החודש, כמו במערכת הקיימת. הפונקציה רצה
+// כל יום ובודקת בעצמה — כמו dailyReminderCheck_ שם — כי אין
+// ביטוי cron ל"ארבעה ימים לפני הסוף" בחודש באורך משתנה.
+
+exports.hoursReminder = onSchedule({
+  schedule: '0 17 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const now = new Date();
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  if (last - now.getDate() !== 4) return;
+
+  const sid = PUSH_STATION;
+  const uids = await uidsInCrew(sid, '');
+  const res = await pushToUsers(sid, uids, 'reminder',
+    'תזכורת דיווח שעות',
+    'נשארו ארבעה ימים לסוף החודש. ודא שדיווחת את כל המשמרות שלך.',
+    './attendance.html');
+  console.log('hoursReminder: ' + res.people + ' people, ' +
+              res.devices + ' devices');
+});
+
+// ---------- שליחה ידנית ----------
+//
+// ההרשאה נאכפת כאן ולא במסך:
+//   מנהל-על ורכז כוח אדם  כל התחנה או משמרת נבחרת
+//   מפקד משמרת            המשמרת שלו בלבד
+//   כבאי                  המשמרת שלו בלבד
+//
+// כבאי יכול לשלוח למשמרת שלו במכוון — כך אלדד הגדיר. זה לא
+// צ׳אט: כל הודעה נשמרת עם שם השולח ועם היעד, וכל אחד בתחנה
+// רואה את ההיסטוריה.
+
+exports.sendBroadcast = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const isSuper = t.super === true ||
+                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const role = t.role || '';
+  const myCrew = t.shift || '';
+
+  const text = String((req.data || {}).text || '').trim();
+  const target = String((req.data || {}).target || '').trim();
+  if (!text) throw new HttpsError('invalid-argument', 'צריך לכתוב הודעה.');
+  if (text.length > 400) throw new HttpsError('invalid-argument', 'ההודעה ארוכה מדי.');
+
+  const wide = isSuper || role === 'hr_coordinator';
+  let crew = '', targetHe = '';
+
+  if (target === 'station') {
+    if (!wide) throw new HttpsError('permission-denied',
+      'רק רכז כוח אדם ומנהל המערכת שולחים לכל התחנה.');
+    targetHe = 'כל התחנה';
+  } else if (target.indexOf('crew:') === 0) {
+    crew = target.slice(5);
+    if (['A', 'B', 'C'].indexOf(crew) === -1) {
+      throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
+    }
+    if (!wide && crew !== myCrew) {
+      throw new HttpsError('permission-denied',
+        'אפשר לשלוח רק למשמרת שלך.');
+    }
+    targetHe = 'משמרת ' + (CREW_HE_S[crew] || crew);
+  } else {
+    throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
+  }
+
+  if (!wide && role !== 'commander' && role !== 'firefighter') {
+    throw new HttpsError('permission-denied', 'אין לך הרשאה לשלוח הודעות.');
+  }
+
+  let name = '';
+  try {
+    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
+    if (u.exists) name = (u.data() || {}).full_name || '';
+  } catch (e) {}
+
+  const uids = (await uidsInCrew(sid, crew)).filter(u => u !== auth.uid);
+  const res = await pushToUsers(sid, uids, 'broadcast',
+    name || 'הודעה מהתחנה', text, './alerts.html');
+
+  await db.collection('stations/' + sid + '/broadcasts').add({
+    by_uid: auth.uid, by_name: name, by_role: role,
+    target: target, target_he: targetHe,
+    text: text, people: res.people, devices: res.devices,
+    created_key: new Date().toISOString(),
+    created_at: FV.serverTimestamp()
+  }).catch(() => {});
+
+  return { ok: true, people: res.people, devices: res.devices };
+});
