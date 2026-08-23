@@ -527,6 +527,54 @@ service cloud.firestore {
         allow update, delete: if isSuper();
       }
 
+      // ---------- אבטחות ----------
+      //
+      // אבטחה היא הצבת כוח באירוע. שלוש פעולות, שלוש רמות:
+      //
+      //   קריאה   כל חבר תחנה. אבטחה אינה סוד, וכל אחד צריך
+      //           לראות מה פתוח כדי להירשם
+      //   פתיחה   סגל בלבד — מפקד, רכז כוח אדם, מנהל-על
+      //   שיבוץ   דרך פונקציית שרת בלבד
+      //
+      // הרשמה עצמית עוברת גם היא דרך השרת (guardSignup), ולכן
+      // הכלל כאן חוסם כתיבה ישירה של signups מהדפדפן. הסיבה:
+      // הרשמה משנה מסמך משותף, ומשתמש שיכול לכתוב לתוכו יכול
+      // גם למחוק את ההרשמות של האחרים.
+      //
+      // אבטחה שאין עליה שיבוץ פתוחה לעריכה בידי הסגל. משיש
+      // שיבוץ — רק השרת נוגע, אחרת מפקד יכול לשנות תאריך מתחת
+      // לרגליים של מי שכבר תכנן את היום שלו.
+
+      match /guards/{gId} {
+        allow read: if member(sid);
+
+        allow create: if staff(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('title', '') is string
+                      && request.resource.data.get('title', '').size() > 0
+                      && request.resource.data.get('title', '').size() <= 80
+                      && request.resource.data.get('date', '') is string
+                      && request.resource.data.get('date', '').size() == 10
+                      && request.resource.data.get('slots', 0) is int
+                      && request.resource.data.get('slots', 0) > 0
+                      && request.resource.data.get('slots', 0) <= 20
+                      && request.resource.data.get('assigned', []).size() == 0;
+
+        // עריכה מהדפדפן רק כשאין עדיין משובצים, ורק לשדות
+        // התיאור. signups ו-assigned נכתבים בשרת בלבד.
+        allow update: if staff(sid)
+                      && resource.data.get('assigned', []).size() == 0
+                      && request.resource.data.diff(resource.data)
+                           .affectedKeys().hasOnly([
+                             'title','kind','place','date','start','end',
+                             'slots','need_quals','notes','status'
+                           ]);
+
+        allow delete: if staff(sid)
+                      && resource.data.get('assigned', []).size() == 0;
+      }
+
+
       // ---------- קריאת פתע ----------
       //
       // הזעקה. נוצרת אך ורק בפונקציית sendCallout בשרת — הכלל

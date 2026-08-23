@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — יומן ואבטחות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1100px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .cols{ display:grid; grid-template-columns:1fr; gap:14px }
+  @media (min-width:900px){ .cols{ grid-template-columns:1.5fr 1fr } }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  select, textarea, input{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  input[type=time], input[type=date]{ color-scheme:dark }
+  input[type=time]::-webkit-calendar-picker-indicator,
+  input[type=date]::-webkit-calendar-picker-indicator{ filter:invert(1) opacity(.7) }
+  textarea{ min-height:60px; resize:vertical }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn.ok{ background:#2e7d32; border-color:#2e7d32; color:#fff }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  /* ---------- כרטיס אבטחה ---------- */
+  .g{ border:1px solid var(--line); border-radius:11px; padding:14px;
+      margin-top:11px; background:#191c20 }
+  .g.mine{ border-color:#2f4a33; background:#16241a }
+  .g .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
+  .g .ttl{ font-size:16px; font-weight:700; flex:1 1 190px }
+  .g .when{ font-size:13px; color:var(--muted); direction:ltr;
+            unicode-bidi:isolate; font-variant-numeric:tabular-nums }
+  .g .meta{ font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.7 }
+  .g .slots{ display:flex; gap:7px; flex-wrap:wrap; margin-top:10px }
+  .g .who{ font-size:12.5px; background:#23262c; border:1px solid var(--line);
+           border-radius:20px; padding:3px 11px }
+  .g .who.empty{ color:var(--muted); border-style:dashed }
+  .g .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px;
+        padding:2px 10px; white-space:nowrap }
+  .tag.off{ background:#2b2313; color:#e0a23c }
+  .tag.shift{ background:#1b2733; color:#7ab4ff }
+
+  /* ---------- לוח עומס ---------- */
+  .bal{ display:grid; grid-template-columns:auto 1fr auto; gap:7px 11px;
+        align-items:center; margin-top:10px; font-size:13px }
+  .bal .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px }
+  .bal .nm i{ font-style:normal; color:var(--muted); font-size:11.5px }
+  .bal .tr{ height:9px; background:#2a2e36; border-radius:99px; overflow:hidden }
+  .bal .fl{ height:100%; border-radius:99px; background:var(--accent) }
+  .bal .fl.zero{ background:#3a3f47 }
+  .bal .n{ font-variant-numeric:tabular-nums; color:var(--muted);
+           font-size:12.5px; white-space:nowrap }
+  .bal .n b{ color:var(--txt) }
+
+  /* ---------- המלצה ---------- */
+  .rec{ display:flex; align-items:center; gap:10px; padding:9px 0;
+        border-bottom:1px solid #24272c; font-size:13.5px }
+  .rec:last-child{ border-bottom:0 }
+  .rec input{ width:auto; margin:0; flex:none }
+  .rec .nm{ flex:1; min-width:0 }
+  .rec .nm b{ font-weight:600 }
+  .rec .nm em{ display:block; font-style:normal; font-size:11.5px;
+               color:var(--muted); margin-top:1px }
+  .rec.blocked{ opacity:.5 }
+  .rec .sg{ font-size:11px; color:#66bb6a; white-space:nowrap }
+
+  /* ---------- לוג ---------- */
+  .tblwrap{ overflow-x:auto; margin-top:10px }
+  table{ width:100%; border-collapse:collapse; font-size:13px; min-width:520px }
+  th{ text-align:start; padding:8px 10px; color:var(--muted); font-size:11.5px;
+      font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:8px 10px; border-bottom:1px solid #24272c; vertical-align:top }
+  tr:last-child td{ border-bottom:0 }
+  td.d{ direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums;
+        white-space:nowrap }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+
+  .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
+  .tabs button{ width:auto; margin:0; background:#23262c; border:1px solid var(--line);
+                color:var(--muted); border-radius:9px; padding:9px 16px;
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:#fff }
+
+  .hide{ display:none !important }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>יומן ואבטחות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="tabs">
+      <button id="tabOpen" class="on">קרובות</button>
+      <button id="tabMine">שלי</button>
+      <button id="tabLoad">חלוקת עומס</button>
+      <button id="tabLog">לוג יציאות</button>
+    </div>
+
+    <!-- ========== קרובות ========== -->
+    <div id="viewOpen">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>אבטחות קרובות</h2>
+            <div class="note" id="openNote">—</div>
+            <div id="openList"></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="card hide" id="newCard">
+            <h2>אבטחה חדשה</h2>
+            <div class="note" style="margin-bottom:2px">
+              המערכת תשבץ אותה ביומן לפי התאריך, ותדע לבד איזו
+              משמרת עובדת אז.
+            </div>
+            <label>מה האירוע</label>
+            <input type="text" id="nTitle" maxlength="80" placeholder="משחק ליגה · טוטו טרנר">
+            <label>סוג</label>
+            <select id="nKind"></select>
+            <label>מקום</label>
+            <input type="text" id="nPlace" maxlength="80" placeholder="אצטדיון טוטו טרנר">
+            <label>תאריך</label>
+            <input type="date" id="nDate">
+            <div class="row3">
+              <div><label>משעה</label><input type="time" id="nStart" value="18:00"></div>
+              <div><label>עד שעה</label><input type="time" id="nEnd" value="23:00"></div>
+              <div><label>כמה אנשים</label><input type="number" id="nSlots" min="1" max="20" value="2"></div>
+            </div>
+            <label>כשירות נדרשת (לא חובה)</label>
+            <select id="nQual"></select>
+            <label>הערות</label>
+            <textarea id="nNotes" maxlength="300" placeholder="להגיע עם רכב סער"></textarea>
+            <button class="btn go" id="btnNew">פתח אבטחה</button>
+            <div class="msg" id="newMsg"></div>
+          </div>
+
+          <div class="card">
+            <h2>איך זה עובד</h2>
+            <div class="note">
+              נרשמת לאבטחה — זו הבעת עניין, לא מקום שמור. המפקד רואה
+              את כל הנרשמים לצד לוח חלוקת העומס, ומשבץ.
+              <br><br>
+              אבטחה שנופלת ביום שאתה במשמרת נבלעת ב-24 השעות שלך —
+              אין שעות נוספות ואין שכר נוסף. אבטחה ביום החופש שלך
+              נכנסת לדוח כסוג יום <b>אבטחה</b> עם השעות בפועל.
+              <br><br>
+              לוח העומס סופר בעיקר את אלה שביום חופש. שם הנטל האמיתי.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== שלי ========== -->
+    <div id="viewMine" class="hide">
+      <div class="card">
+        <h2>האבטחות שלי</h2>
+        <div class="note" id="mineNote">—</div>
+        <div id="mineList"></div>
+      </div>
+    </div>
+
+    <!-- ========== חלוקת עומס ========== -->
+    <div id="viewLoad" class="hide">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>מי יצא ולכמה</h2>
+            <div class="note" style="margin-bottom:6px">
+              שנה אחורה. הפס מודד אבטחות ביום חופש — הנטל האמיתי.
+              המספר בסוגריים הוא אבטחות בתוך המשמרת.
+            </div>
+            <div class="bal" id="balList"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2>מי הכי פחות עמוס</h2>
+            <div class="note" style="margin-bottom:6px">
+              שמות לפי סדר, מהכי פחות לכי הכי הרבה. זו ההמלצה
+              לאבטחה הבאה כשאין נרשמים.
+            </div>
+            <div id="rankList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== לוג ========== -->
+    <div id="viewLog" class="hide">
+      <div class="card">
+        <h2>לוג יציאות</h2>
+        <div class="note">שורה לכל יציאה של אדם לאבטחה. החדשות למעלה.</div>
+        <div class="tblwrap"><table id="logTbl"></table></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========== חלון שיבוץ ========== -->
+<div id="ov" style="position:fixed;inset:0;background:rgba(0,0,0,.72);
+     z-index:1000;display:none;align-items:center;justify-content:center;padding:18px;
+     overflow:auto">
+  <div id="dlg" style="background:#1e2126;border:1px solid #2c3036;border-radius:13px;
+       max-width:560px;width:100%;padding:20px;direction:rtl"></div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { renderNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
+import { CREW_HE } from './rotation.js?v=19';
+import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
+         assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
+         dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
+         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=19';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'newMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_MANAGE = false;
+let people = [], guards = [], quals = [], held = {};
+let rotations = [], overrides = {}, swaps = [], busy = {};
+let loadMap = {}, ctx = {};
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=guards.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  // מי פותח אבטחות ומשבץ. זהה ל-staff() בכללי האבטחה.
+  CAN_MANAGE = isSuper || ['commander','hr_coordinator'].indexOf(c.role) !== -1;
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '', full_name: '' };
+
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'guards.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  if (CAN_MANAGE) $('newCard').classList.remove('hide');
+  setupNew();
+  await loadAll();
+});
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  const grab = async (name, fn) => {
+    try { const s = await getDocs(collection(db, 'stations', SID, name)); fn(s); }
+    catch (ignore) {}
+  };
+
+  people = [];
+  await grab('roster', s => s.forEach(d => {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
+                  emp: String(v.emp || v.emp_number || '') });
+  }));
+  people.sort((a,b) => String(a.name).localeCompare(String(b.name),'he'));
+
+  guards = [];
+  await grab('guards', s => s.forEach(d =>
+    guards.push(Object.assign({ id: d.id }, d.data() || {}))));
+  guards.sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+
+  quals = [];
+  await grab('quals', s => s.forEach(d =>
+    quals.push(Object.assign({ id: d.id }, d.data() || {}))));
+
+  held = {};
+  await grab('member_quals', s => s.forEach(d => {
+    const v = d.data() || {};
+    held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+  }));
+
+  rotations = [];
+  await grab('rotations', s => s.forEach(d =>
+    rotations.push(Object.assign({ id: d.id }, d.data() || {}))));
+
+  overrides = {};
+  await grab('shift_overrides', s => s.forEach(d => {
+    const v = d.data() || {};
+    if (v.date) overrides[v.date] = v;
+  }));
+
+  swaps = [];
+  await grab('swaps', s => s.forEach(d => {
+    const v = d.data() || {};
+    if (v.status === 'approved') swaps.push(v);
+  }));
+
+  // מי לא זמין ובאיזה תאריך — נלמד מהנוכחות שכבר דווחה.
+  busy = {};
+  await grab('attendance', s => s.forEach(d => {
+    const v = d.data() || {};
+    const why = v.day_type === 'vacation' ? 'בחופש'
+              : v.day_type === 'sick'     ? 'במחלה'
+              : v.day_type === 'reserve'  ? 'במילואים' : '';
+    if (!why || !v.date || !v.uid) return;
+    if (!busy[v.date]) busy[v.date] = {};
+    busy[v.date][v.uid] = why;
+  }));
+
+  ctx = { rotations, overrides, swaps, guards };
+  loadMap = loadByPerson(people, guards, ctx, defaultSince());
+
+  renderOpen(); renderMine(); renderLoad(); renderLog();
+}
+
+function qualName(id){
+  const q = quals.filter(x => x.id === id)[0];
+  return q ? (q.name || q.he || id) : id;
+}
+// שם, ולא מזהה. מי ששובץ ואחר כך יצא מהסגל עדיין מופיע
+// באבטחות ישנות — מזהה גולמי על המסך נראה כמו תקלה, ואילו
+// "לא בסגל" הוא מידע.
+function nameOf(uid){
+  const p = people.filter(x => x.uid === uid)[0];
+  return (p && p.name) ? p.name : 'לא בסגל';
+}
+
+// ---------- לשוניות ----------
+
+const VIEWS = [['tabOpen','viewOpen'],['tabMine','viewMine'],
+               ['tabLoad','viewLoad'],['tabLog','viewLog']];
+VIEWS.forEach(function (v) {
+  $(v[0]).onclick = function () {
+    VIEWS.forEach(function (x) {
+      $(x[0]).classList.toggle('on', x[0] === v[0]);
+      $(x[1]).classList.toggle('hide', x[1] !== v[1]);
+    });
+  };
+});
+
+// ---------- אבטחה חדשה ----------
+
+function setupNew(){
+  $('nKind').innerHTML = GUARD_KINDS.map(k =>
+    '<option value="' + esc(k.id) + '">' + esc(k.he) + '</option>').join('');
+  const t = new Date(); t.setDate(t.getDate() + 7);
+  $('nDate').value = toKey(t);
+  $('btnNew').onclick = createGuard;
+}
+
+function fillQualSelect(){
+  $('nQual').innerHTML = '<option value="">ללא דרישה</option>' +
+    quals.map(q => '<option value="' + esc(q.id) + '">' +
+                   esc(q.name || q.id) + '</option>').join('');
+}
+
+async function createGuard(){
+  const title = $('nTitle').value.trim();
+  const date  = $('nDate').value;
+  const start = $('nStart').value, end = $('nEnd').value;
+  const slots = Number($('nSlots').value || 0);
+
+  if (!title) { msg('צריך לכתוב מה האירוע.', 'err'); return; }
+  if (!date)  { msg('צריך תאריך.', 'err'); return; }
+  if (!start || !end) { msg('צריך שעת התחלה ושעת סיום.', 'err'); return; }
+  if (!(slots > 0)) { msg('כמה אנשים צריך?', 'err'); return; }
+
+  const q = $('nQual').value;
+  const b = $('btnNew'); b.disabled = true;
+  try {
+    await addDoc(collection(db, 'stations', SID, 'guards'), {
+      title: title, kind: $('nKind').value, place: $('nPlace').value.trim(),
+      date: date, start: start, end: end, slots: slots,
+      need_quals: q ? [q] : [], notes: $('nNotes').value.trim(),
+      status: 'open', signups: {}, assigned: [],
+      by_uid: ME.uid, by_name: ME.full_name || '',
+      created_key: new Date().toISOString(),
+      created_at: serverTimestamp()
+    });
+    msg('האבטחה נפתחה ומופיעה ביומן.', 'ok');
+    $('nTitle').value = ''; $('nPlace').value = ''; $('nNotes').value = '';
+    await loadAll();
+  } catch (e) {
+    msg('הפתיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+// ---------- ציור אבטחה ----------
+
+function guardCard(g, forMe){
+  const el = document.createElement('div');
+  el.className = 'g' + (isAssigned(g, ME.uid) ? ' mine' : '');
+
+  const hrs = guardHours(g);
+  const duty = dutyKind(ctx, ME.uid, ME.crew, String(g.date || ''));
+  const asg = assignedOf(g);
+  const room = openSlots(g);
+
+  const head = document.createElement('div');
+  head.className = 'top';
+  head.innerHTML =
+    '<span class="ttl">' + esc(g.title || '') + '</span>' +
+    '<span class="when">' + esc(dmy(g.date)) + ' · ' +
+      esc(g.start || '') + '–' + esc(g.end || '') +
+      (hrs ? ' · ' + hrs + ' ש׳' : '') + '</span>' +
+    '<span class="tag ' + (duty === 'off' ? 'off' : 'shift') + '">' +
+      esc(DUTY_HE[duty]) + '</span>';
+  el.appendChild(head);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const bits = [kindHe(g.kind)];
+  if (g.place) bits.push(g.place);
+  bits.push('<span style="color:' + stateColor(g.status) + '">' +
+            esc(stateHe(g.status)) + '</span>');
+  if ((g.need_quals || []).length) {
+    bits.push('דרוש: ' + g.need_quals.map(qualName).map(esc).join(', '));
+  }
+  meta.innerHTML = bits.join(' · ') + (g.notes ? '<br>' + esc(g.notes) : '');
+  el.appendChild(meta);
+
+  const slots = document.createElement('div');
+  slots.className = 'slots';
+  asg.forEach(function (u) {
+    const s = document.createElement('span');
+    s.className = 'who';
+    s.textContent = nameOf(u);
+    slots.appendChild(s);
+  });
+  for (let i = 0; i < room; i++) {
+    const s = document.createElement('span');
+    s.className = 'who empty';
+    s.textContent = 'מקום פנוי';
+    slots.appendChild(s);
+  }
+  el.appendChild(slots);
+
+  const nSign = signupsOf(g).length;
+  if (nSign) {
+    const sg = document.createElement('div');
+    sg.className = 'meta';
+    sg.style.marginTop = '8px';
+    sg.textContent = nSign + ' נרשמו: ' +
+      signupsOf(g).map(s => s.name || nameOf(s.uid)).join(', ');
+    el.appendChild(sg);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+
+  const past = String(g.date || '') < toKey(new Date());
+  const live = g.status === 'open' || g.status === 'staffed';
+
+  if (live && !past && !isAssigned(g, ME.uid)) {
+    const b = document.createElement('button');
+    b.className = 'btn sm' + (isSignedUp(g, ME.uid) ? '' : ' ok');
+    b.textContent = isSignedUp(g, ME.uid) ? 'בטל הרשמה' : 'אני מעוניין';
+    b.onclick = () => toggleSignup(g, b);
+    acts.appendChild(b);
+  }
+  if (isAssigned(g, ME.uid)) {
+    const s = document.createElement('span');
+    s.className = 'who';
+    s.style.background = '#1d3a20';
+    s.style.borderColor = '#2f4a33';
+    s.textContent = '✓ אתה משובץ';
+    acts.appendChild(s);
+  }
+  if (CAN_MANAGE && live) {
+    const b = document.createElement('button');
+    b.className = 'btn sm go';
+    b.textContent = 'שבץ';
+    b.onclick = () => openAssign(g);
+    acts.appendChild(b);
+  }
+  if (acts.children.length) el.appendChild(acts);
+
+  return el;
+}
+
+async function toggleSignup(g, btn){
+  btn.disabled = true;
+  const on = isSignedUp(g, ME.uid);
+  try {
+    await httpsCallable(fns, 'guardSignup')(
+      { id: g.id, join: !on });
+    await loadAll();
+  } catch (e) {
+    btn.disabled = false;
+    alert('ההרשמה נכשלה. (' + (e.code || e.message) + ')');
+  }
+}
+
+// ---------- קרובות ----------
+
+function renderOpen(){
+  fillQualSelect();
+  const box = $('openList');
+  box.innerHTML = '';
+  const today = toKey(new Date());
+  const list = guards.filter(g => String(g.date || '') >= today &&
+                                  g.status !== 'cancelled');
+  $('openNote').textContent = list.length
+    ? list.length + ' אבטחות מהיום והלאה.'
+    : 'אין אבטחות קרובות.';
+  list.forEach(g => box.appendChild(guardCard(g)));
+}
+
+// ---------- שלי ----------
+
+function renderMine(){
+  const box = $('mineList');
+  box.innerHTML = '';
+  const list = guards.filter(g => isAssigned(g, ME.uid) || isSignedUp(g, ME.uid));
+  list.sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
+
+  const mine = loadMap[ME.uid] || { off:0, shift:0, hours:0 };
+  $('mineNote').textContent =
+    'בשנה האחרונה: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
+    ' שעות) · ' + mine.shift + ' בתוך המשמרת.';
+
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">' +
+      'לא נרשמת ולא שובצת לאף אבטחה.</div>';
+    return;
+  }
+  list.forEach(g => box.appendChild(guardCard(g, true)));
+}
+
+// ---------- חלוקת עומס ----------
+
+function renderLoad(){
+  const rank = fairnessRank(loadMap);
+  const max = Math.max(1, ...rank.map(r => r.off));
+
+  const bal = $('balList');
+  bal.innerHTML = '';
+  // הכי עמוס למעלה — כאן השאלה היא מי לוקח יותר מדי.
+  rank.slice().reverse().forEach(function (r) {
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.innerHTML = esc(r.name || r.uid) +
+      (r.crew ? ' <i>' + esc(CREW_HE[r.crew] || r.crew) + '</i>' : '');
+    const tr = document.createElement('div');
+    tr.className = 'tr';
+    const fl = document.createElement('div');
+    fl.className = 'fl' + (r.off ? '' : ' zero');
+    fl.style.width = Math.round((r.off / max) * 100) + '%';
+    tr.appendChild(fl);
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.innerHTML = '<b>' + r.off + '</b>' + (r.shift ? ' (' + r.shift + ')' : '');
+    bal.appendChild(nm); bal.appendChild(tr); bal.appendChild(n);
+  });
+
+  const box = $('rankList');
+  box.innerHTML = '';
+  rank.slice(0, 12).forEach(function (r, i) {
+    const el = document.createElement('div');
+    el.className = 'rec';
+    el.innerHTML =
+      '<span class="n" style="min-width:20px">' + (i + 1) + '</span>' +
+      '<span class="nm"><b>' + esc(r.name || r.uid) + '</b>' +
+      '<em>' + esc(whyPicked(r)) + '</em></span>';
+    box.appendChild(el);
+  });
+  if (!rank.length) {
+    box.innerHTML = '<div class="note">לא נטענה רשימת סגל.</div>';
+  }
+}
+
+// ---------- לוג ----------
+
+function renderLog(){
+  const rows = logRows(guards, people, ctx);
+  const t = $('logTbl');
+  t.innerHTML =
+    '<thead><tr><th>תאריך</th><th>אירוע</th><th>מי</th>' +
+    '<th>משמרת</th><th>שעות</th><th>סוג</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="note">עוד לא יצא אף אחד.</td></tr>';
+  }
+  rows.slice(0, 200).forEach(function (r) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="d">' + esc(dmy(r.date)) + '</td>' +
+      '<td>' + esc(r.title) + (r.place ? ' <span class="note">· ' +
+        esc(r.place) + '</span>' : '') + '</td>' +
+      '<td>' + esc(r.name) + '</td>' +
+      '<td>' + esc(CREW_HE[r.crew] || r.crew || '') + '</td>' +
+      '<td class="d">' + (r.hours == null ? '' : r.hours) + '</td>' +
+      '<td><span class="tag ' + (r.duty === 'off' ? 'off' : 'shift') + '">' +
+        esc(DUTY_HE[r.duty]) + '</span></td>';
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+}
+
+// ---------- שיבוץ ----------
+
+let dlgPick = {};
+
+function openAssign(g){
+  dlgPick = {};
+  const rows = recommend(g, people, loadMap, ctx, busy,
+    { needQuals: g.need_quals || [], memberQuals: held });
+  const auto = autoPick(g, rows);
+  auto.forEach(u => dlgPick[u] = true);
+
+  const d = $('dlg');
+  const cur = assignedOf(g);
+  d.innerHTML =
+    '<h2 style="font-size:17px;color:#e8590c;margin:0 0 3px">' +
+      esc(g.title || '') + '</h2>' +
+    '<div class="note" style="margin-bottom:12px">' +
+      esc(dmy(g.date)) + ' · ' + esc(g.start) + '–' + esc(g.end) +
+      ' · ' + g.slots + ' מקומות</div>' +
+    (cur.length
+      ? '<div class="note" style="margin-bottom:10px">משובצים כבר: ' +
+        cur.map(nameOf).map(esc).join(', ') + '</div>'
+      : '') +
+    '<div class="note" style="margin-bottom:6px">' +
+      (signupsOf(g).length
+        ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
+        : 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.') +
+    '</div>' +
+    '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
+      'border:1px solid #2c3036;border-radius:9px;padding:2px 12px;' +
+      'background:#111316"></div>' +
+    '<div id="dlgMsg" class="msg"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
+      '<button class="btn go" id="dlgSave">שמור שיבוץ</button>' +
+      '<button class="btn" id="dlgClose">סגור</button>' +
+    '</div>';
+
+  const list = $('dlgList');
+  rows.forEach(function (r) {
+    const el = document.createElement('label');
+    el.className = 'rec' + (r.blocked ? ' blocked' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!dlgPick[r.uid];
+    cb.disabled = r.blocked;
+    cb.onchange = function () {
+      if (cb.checked) dlgPick[r.uid] = true; else delete dlgPick[r.uid];
+    };
+    el.appendChild(cb);
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.innerHTML = '<b>' + esc(r.name) + '</b>' +
+      (r.crew ? ' <span class="note">' + esc(CREW_HE[r.crew] || r.crew) +
+        '</span>' : '') +
+      '<em>' + esc(whyPicked(r)) + '</em>';
+    el.appendChild(nm);
+    if (r.signed) {
+      const s = document.createElement('span');
+      s.className = 'sg'; s.textContent = 'נרשם';
+      el.appendChild(s);
+    }
+    // האם האבטחה נופלת ביום המשמרת שלו או ביום החופש שלו.
+    // זה משנה למי שמשבץ: הוצאת אדם מיום החופש שלו היא בקשה,
+    // ובתוך המשמרת זו פשוט משימה.
+    const dt = document.createElement('span');
+    dt.className = 'tag ' + (r.duty === 'off' ? 'off' : 'shift');
+    dt.textContent = DUTY_HE[r.duty];
+    el.appendChild(dt);
+    list.appendChild(el);
+  });
+  if (!rows.length) {
+    list.innerHTML = '<div class="note" style="padding:12px">' +
+      'אין אף אחד להציע.</div>';
+  }
+
+  $('dlgClose').onclick = closeDlg;
+  $('dlgSave').onclick = () => saveAssign(g);
+  $('ov').style.display = 'flex';
+}
+
+function closeDlg(){ $('ov').style.display = 'none'; }
+$('ov').onclick = function (e) { if (e.target === $('ov')) closeDlg(); };
+
+async function saveAssign(g){
+  const picked = Object.keys(dlgPick);
+  const all = assignedOf(g).concat(picked.filter(u => !isAssigned(g, u)));
+  if (all.length > Number(g.slots || 0)) {
+    msg('בחרת ' + all.length + ' לתוך ' + g.slots + ' מקומות. ' +
+        'הסר מישהו או הגדל את מספר המקומות.', 'err', 'dlgMsg');
+    return;
+  }
+  const b = $('dlgSave'); b.disabled = true;
+  try {
+    await httpsCallable(fns, 'assignGuard')({ id: g.id, uids: all });
+    closeDlg();
+    await loadAll();
+  } catch (e) {
+    b.disabled = false;
+    msg('השיבוץ נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'dlgMsg');
+  }
+}
+</script>
+</body>
+</html>

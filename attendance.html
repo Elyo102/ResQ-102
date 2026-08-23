@@ -253,6 +253,7 @@
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
 import { renderNav, renderStuckNav } from './nav.js?v=19';
 import { watchCallouts } from './callout.js?v=19';
+import { isAssigned as guardHasMe } from './guards.js?v=19';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
   from './rotation.js?v=19';
@@ -293,6 +294,7 @@ function msg(text, kind, box){
 let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '';
 let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [];
+let myGuards = [];   // אבטחות שאני משובץ אליהן
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
 let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
@@ -360,6 +362,16 @@ async function loadStatic(){
   try {
     const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));
     rotations = rs.docs.map(d => d.data());
+  } catch (ignore) {}
+
+  try {
+    const gs = await getDocs(collection(db, 'stations', SID, 'guards'));
+    myGuards = [];
+    gs.forEach(d => {
+      const v = Object.assign({ id: d.id }, d.data() || {});
+      if (v.status === 'cancelled') return;
+      if (guardHasMe(v, ME.uid)) myGuards.push(v);
+    });
   } catch (ignore) {}
 
   try {
@@ -476,6 +488,21 @@ function suggestedDays(){
 function baseTimes(){
   const t = shiftTimes(rotations[0], ME.role, false);
   return { start: t.start, end: t.end };
+}
+
+// האם אני עובד בתאריך הזה לפי הסבב וההחלפות המאושרות. אותה
+// פונקציה בדיוק שמסך הסידור משתמש בה — שני המסכים חייבים
+// להסכים, אחרת אבטחה תיראה "יום חופש" באחד ו"בתוך המשמרת"
+// בשני.
+function workingOn(key){
+  const p = String(key).split('-').map(Number);
+  if (p.length !== 3) return false;
+  const date = new Date(p[0], p[1] - 1, p[2]);
+  return personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid) === true;
+}
+
+function myGuardOn(key){
+  return myGuards.filter(g => String(g.date || '') === String(key))[0] || null;
 }
 
 function render(){
@@ -814,8 +841,19 @@ function dayOptions(sel){
 function editDay(key, rec){
   if (locked()) return;
   const bt = baseTimes();
-  const v = rec || { day_type: 'regular', start: bt.start, end: bt.end,
-                     sub_station: mySite, notes: '' };
+
+  // אבטחה ביום הזה. אם הכבאי משובץ לאבטחה ביום שאינו יום
+  // המשמרת שלו, זה כמעט תמיד מה שהוא בא לדווח — ולכן השדות
+  // ממולאים מראש משם. הוא עדיין יכול לשנות הכל.
+  const g = myGuardOn(key);
+  const dflt = (g && !workingOn(key))
+    ? { day_type: 'guard', start: g.start || bt.start, end: g.end || bt.end,
+        sub_station: mySite, notes: (g.title || '') +
+          (g.place ? ' · ' + g.place : '') }
+    : { day_type: 'regular', start: bt.start, end: bt.end,
+        sub_station: mySite, notes: '' };
+
+  const v = rec || dflt;
   const p = key.split('-');
   const shape0 = rec ? shapeOf(rec) : 'regular';
 

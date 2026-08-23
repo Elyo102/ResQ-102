@@ -58,6 +58,10 @@
        display:flex;flex-direction:column;align-items:center;justify-content:center;
        gap:5px;font-size:13px;background:#191c20;position:relative}
   .day.pad{border:0;background:transparent}
+  /* אבטחה. נקודה בפינה — היום כבר נושא צבע משמרת, ועוד רקע
+     היה מתחרה בו. */
+  .day .gd{position:absolute;inset-block-start:5px;inset-inline-start:5px;
+           width:7px;height:7px;border-radius:50%;background:#7cb342}
   .day .n{font-weight:700;font-size:16px;line-height:1;
           font-variant-numeric:tabular-nums}
 
@@ -257,6 +261,7 @@ import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { renderNav, clearNav, renderStuckNav } from './nav.js?v=19';
 import { watchCallouts } from './callout.js?v=19';
+import { isAssigned as guardHasMe } from './guards.js?v=19';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
          OVERRIDE_KINDS, overrideKindHe, overrideOn,
@@ -317,6 +322,7 @@ let qualNames = {};  // qid -> שם
 let myCrews = CREWS.slice();
 let overrides = {};      // 'YYYY-MM-DD' -> {kind, crew, extra_crews, note}
 let mySwaps = [];        // החלפות מאושרות
+let myGuards = [];       // אבטחות שאני משובץ אליהן
 let canEditOvr = false;
 let SID = '';
 
@@ -385,6 +391,19 @@ onAuthStateChanged(auth, async user => {
     sw.forEach(d => {
       const v = d.data() || {};
       if (v.status === 'approved') mySwaps.push(v);
+    });
+  } catch (ignore) {}
+
+  // אבטחות. הן נשמרות עם תאריך בלבד, ולכן הן נופלות ליומן
+  // מעצמן — אין כאן שיבוץ ידני ואין לוח נפרד לתחזק.
+  try {
+    const uid = auth.currentUser ? auth.currentUser.uid : '';
+    const gs = await getDocs(collection(db, 'stations', SID, 'guards'));
+    myGuards = [];
+    gs.forEach(d => {
+      const v = Object.assign({ id: d.id }, d.data() || {});
+      if (v.status === 'cancelled') return;
+      if (guardHasMe(v, uid)) myGuards.push(v);
     });
   } catch (ignore) {}
 
@@ -736,8 +755,21 @@ function render(){
       el.title = (el.title || '') + 'משמרת ' + (CREW_HE[crew] || crew) +
                  ' — לא כשירה · ' + summaryText(f.rl, f.bs, qualName);
     }
+    // אבטחה ביום הזה. נקודה קטנה בפינה, וההסבר בתיאור —
+    // הריבוע קטן מכדי לשאת טקסט, וכוכבית בלי הסבר היא חידה.
+    const gToday = myGuards.filter(g => String(g.date || '') === toKey(date));
+    if (gToday.length) {
+      el.classList.add('guard');
+      el.title = (el.title || '') +
+        (el.title ? '\n' : '') +
+        gToday.map(g => 'אבטחה · ' + (g.title || '') + ' · ' +
+          (g.start || '') + '–' + (g.end || '') +
+          (mineToday ? ' (בתוך המשמרת)' : ' (יום חופש)')).join('\n');
+    }
+
     el.innerHTML = '<div class="n">' + d + '</div>' +
-                   '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>';
+                   '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>' +
+                   (gToday.length ? '<div class="gd"></div>' : '');
     grid.appendChild(el);
   }
 

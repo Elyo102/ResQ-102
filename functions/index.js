@@ -1466,7 +1466,7 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
     // קריאת פתע נמצאת ברשימה הזו מסיבה אחרת: היא הזעקה, ומי
     // שכיבה התראות עדיין צריך להגיע לתחנה.
     const must = type === 'swap_mine' || type === 'report_mine' ||
-                 type === 'callout';
+                 type === 'callout'   || type === 'guard_mine';
     if (!must && prefs[type] === false) continue;
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
@@ -1944,3 +1944,212 @@ exports.closeCallout = onCall(async (req) => {
                   closed_by: auth.uid }, { merge: true });
   return { ok: true };
 });
+
+
+// =====================================================================
+//  אבטחות
+// =====================================================================
+//
+// אבטחה היא הצבת כוח באירוע — משחק, הופעה, עבודות חמות.
+//
+// שתי פעולות עוברות דרך השרת ולא דרך הדפדפן, ולכל אחת סיבה:
+//
+//   guardSignup   הרשמה משנה מסמך משותף. משתמש שיכול לכתוב
+//                 לתוכו ישירות יכול גם למחוק את ההרשמות של
+//                 האחרים — בטעות או לא
+//   assignGuard   השיבוץ הוא ההחלטה. הוא מפעיל התראות, והוא
+//                 מה שקובע למי נספרת האבטחה בחלוקת העומס
+//
+// ההבחנה שקובעת הכל: אבטחה שנופלת ביום שהכבאי ממילא במשמרת
+// נבלעת ב-24 השעות שלו — אין שעות נוספות ואין שכר נוסף.
+// אבטחה ביום החופש שלו היא יציאה מהבית. הצד הזה של השרת לא
+// מחשב את ההבחנה (היא נגזרת מהסבב בצד הלקוח), אבל הנוסח של
+// ההתראה כן מזכיר את התאריך, כדי שהכבאי יידע מיד במה מדובר.
+
+async function guardDoc(sid, id) {
+  const ref = db.doc('stations/' + sid + '/guards/' + id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'האבטחה לא נמצאה.');
+  return { ref, v: snap.data() || {} };
+}
+
+function guardWhen(v) {
+  const d = dmyS(v.date);
+  const t = (v.start || '') + '–' + (v.end || '');
+  return d + ' ' + t;
+}
+
+exports.guardSignup = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const isSuper = t.super === true ||
+                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const role = t.role || '';
+  if (!isSuper && ['firefighter','commander','hr_coordinator'].indexOf(role) === -1) {
+    throw new HttpsError('permission-denied', 'אין לך הרשאה.');
+  }
+
+  const id = String((req.data || {}).id || '').trim();
+  const join = (req.data || {}).join !== false;
+  if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה אבטחה.');
+
+  const { ref, v } = await guardDoc(sid, id);
+  if (v.status === 'cancelled') {
+    throw new HttpsError('failed-precondition', 'האבטחה בוטלה.');
+  }
+  // מי שכבר שובץ לא מבטל את עצמו בלחיצה. שיבוץ הוא החלטה של
+  // המפקד, וביטול שלו עובר דרכו.
+  const assigned = Array.isArray(v.assigned) ? v.assigned : [];
+  if (assigned.indexOf(auth.uid) !== -1) {
+    throw new HttpsError('failed-precondition',
+      'אתה כבר משובץ. ביטול עובר דרך מפקד המשמרת.');
+  }
+
+  let name = '';
+  try {
+    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
+    if (u.exists) name = (u.data() || {}).full_name || '';
+  } catch (e) {}
+
+  const patch = {};
+  patch['signups.' + auth.uid] = join
+    ? { name: name, crew: t.shift || '', at: new Date().toISOString() }
+    : FV.delete();
+  await ref.update(patch);
+
+  return { ok: true, joined: join };
+});
+
+
+exports.assignGuard = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const isSuper = t.super === true ||
+                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const role = t.role || '';
+  if (!isSuper && role !== 'commander' && role !== 'hr_coordinator') {
+    throw new HttpsError('permission-denied',
+      'שיבוץ לאבטחה שמור למפקד משמרת ולרכז כוח אדם.');
+  }
+
+  const d = req.data || {};
+  const id = String(d.id || '').trim();
+  if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה אבטחה.');
+
+  const raw = Array.isArray(d.uids) ? d.uids : [];
+  const want = Array.from(new Set(raw.map(String).filter(Boolean)));
+
+  const { ref, v } = await guardDoc(sid, id);
+  if (v.status === 'cancelled') {
+    throw new HttpsError('failed-precondition', 'האבטחה בוטלה.');
+  }
+
+  const slots = Number(v.slots || 0);
+  if (want.length > slots) {
+    throw new HttpsError('invalid-argument',
+      'נבחרו ' + want.length + ' אנשים ל-' + slots + ' מקומות.');
+  }
+
+  // רק סגל פעיל בתחנה. uid שנשלח מהדפדפן ואינו ברשימה נופל.
+  const live = await uidsInCrew(sid, '');
+  const uids = want.filter(u => live.indexOf(u) !== -1);
+  if (uids.length !== want.length) {
+    throw new HttpsError('invalid-argument',
+      'חלק מהנבחרים אינם סגל פעיל בתחנה.');
+  }
+
+  const before = Array.isArray(v.assigned) ? v.assigned : [];
+  const added   = uids.filter(u => before.indexOf(u) === -1);
+  const removed = before.filter(u => uids.indexOf(u) === -1);
+
+  let name = '';
+  try {
+    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
+    if (u.exists) name = (u.data() || {}).full_name || '';
+  } catch (e) {}
+
+  await ref.set({
+    assigned: uids,
+    status: uids.length >= slots ? 'staffed' : 'open',
+    assigned_by: auth.uid, assigned_by_name: name,
+    assigned_at: FV.serverTimestamp()
+  }, { merge: true });
+
+  const when = guardWhen(v);
+  if (added.length) {
+    await pushToUsers(sid, added, 'guard_mine',
+      'שובצת לאבטחה',
+      (v.title || 'אבטחה') + ' · ' + when +
+        (v.place ? ' · ' + v.place : ''),
+      './guards.html', true);
+  }
+  if (removed.length) {
+    await pushToUsers(sid, removed, 'guard_mine',
+      'הוסרת משיבוץ',
+      (v.title || 'אבטחה') + ' · ' + when + ' — אינך משובץ יותר.',
+      './guards.html');
+  }
+
+  return { ok: true, assigned: uids.length, added: added.length,
+           removed: removed.length };
+});
+
+
+// אבטחה חדשה נפתחה — מודיעים למי שיכול להירשם.
+//
+// לכל התחנה ולא רק למשמרת: אבטחה ביום חופש היא בהגדרה יום
+// שהמשמרת שלך לא עובדת בו, ולכן צמצום לפי משמרת היה מסתיר
+// אותה בדיוק ממי שהיא רלוונטית לו.
+exports.onGuardOpen = onDocumentWritten(
+  'stations/{sid}/guards/{gId}',
+  async (event) => {
+    const sid = event.params.sid;
+    const before = event.data && event.data.before && event.data.before.data();
+    const after  = event.data && event.data.after  && event.data.after.data();
+    if (!after || before) return;                 // רק יצירה חדשה
+    if (after.status === 'cancelled') return;
+
+    const uids = (await uidsInCrew(sid, '')).filter(u => u !== after.by_uid);
+    if (!uids.length) return;
+
+    await pushToUsers(sid, uids, 'guard_open',
+      'אבטחה חדשה — ' + (after.title || ''),
+      guardWhen(after) + (after.place ? ' · ' + after.place : '') +
+        ' · ' + (after.slots || 0) + ' מקומות. פתוח להרשמה.',
+      './guards.html');
+  });
+
+
+// תזכורת ערב לפני, 19:00. מי ששובץ למחר מקבל תזכורת אחת.
+exports.guardReminder = onSchedule(
+  { schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
+    region: 'europe-west1' },
+  async () => {
+    const sid = PUSH_STATION;
+    const t = new Date(Date.now() + 24 * 3600 * 1000);
+    const key = t.toISOString().slice(0, 10);
+
+    let snap;
+    try {
+      snap = await db.collection('stations/' + sid + '/guards')
+        .where('date', '==', key).get();
+    } catch (e) { console.error('guardReminder: ' + e.message); return; }
+
+    for (const d of snap.docs) {
+      const v = d.data() || {};
+      if (v.status === 'cancelled') continue;
+      const uids = Array.isArray(v.assigned) ? v.assigned : [];
+      if (!uids.length) continue;
+      await pushToUsers(sid, uids, 'guard_mine',
+        'מחר: ' + (v.title || 'אבטחה'),
+        (v.start || '') + '–' + (v.end || '') +
+          (v.place ? ' · ' + v.place : ''),
+        './guards.html', true);
+    }
+  });

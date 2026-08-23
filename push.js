@@ -31,12 +31,16 @@ export const ALERT_TYPES = [
     note: 'בקשה שהגיעה אליך, אישור או דחייה של בקשה שלך' },
   { id: 'report_mine', he: 'הדוח החודשי שלי',           must: true,
     note: 'אושר, נפתח מחדש, או נדרש תיקון' },
+  { id: 'guard_mine',  he: 'אבטחה שאני משובץ אליה',     must: true,
+    note: 'שובצת, הוסרת, או תזכורת ערב לפני' },
 
   // ניתנות לכיבוי.
   { id: 'swap_approve', he: 'החלפות שממתינות לאישורי',  must: false,
     note: 'למפקד משמרת בלבד' },
   { id: 'report_submit', he: 'דוחות שהוגשו לאישורי',    must: false,
     note: 'למפקד משמרת ולרכז כוח אדם' },
+  { id: 'guard_open',   he: 'אבטחה חדשה נפתחה',          must: false,
+    note: 'פתוחה להרשמה. לכל התחנה, לא רק למשמרת' },
   { id: 'redline',      he: 'המשמרת ירדה מתחת לקו האדום', must: false,
     note: 'למפקד משמרת' },
   { id: 'scan',         he: 'ממצאים מהסריקה הלילית',    must: false,

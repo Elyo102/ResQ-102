@@ -15,6 +15,14 @@
         { "fieldPath": "uids", "arrayConfig": "CONTAINS" },
         { "fieldPath": "created_key", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "guards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
