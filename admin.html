@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -267,7 +267,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -277,12 +277,12 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=30';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=31';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=30';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
+  from './stations.js?v=31';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -416,8 +416,11 @@ onAuthStateChanged(auth, async user => {
   //
   // אימות מייל היה כאן תנאי סף והוסר מהמערכת ב-22.8 — התנאי נשאר
   // בקוד והשאיר מנהלים בחוץ.
-  const isStaff = claims.role === 'commander' ||
-                  claims.role === 'hr_coordinator';
+  // אותה רשימה כמו staff() בכללי האבטחה וכמו nav.js. שני
+  // התפקידים שנוספו ב-23.8 לא הגיעו לכאן, והסרגל הציג להם
+  // כפתור שמוביל למסך "אין הרשאה".
+  const isStaff = ['deputy', 'commander', 'station_commander',
+                   'hr_coordinator'].indexOf(claims.role) !== -1;
   const roleOk  = isSuper || isStaff;
   const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
                   (claims.stationId ? ' · ' + stationName(claims.stationId) : '');

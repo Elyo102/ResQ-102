@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -257,18 +257,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { renderNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
-import { isAssigned as guardHasMe } from './guards.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { renderNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
+import { isAssigned as guardHasMe } from './guards.js?v=31';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=30';
+  from './rotation.js?v=31';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=30';
+  from './hours.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -300,7 +300,7 @@ function msg(text, kind, box){
   m.className = 'msg ' + (text ? (kind || '') : '');
 }
 
-let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '';
+let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '', IS_SUPER = false;
 let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [];
 let myGuards = [];   // אבטחות שאני משובץ אליהן
@@ -341,6 +341,7 @@ onAuthStateChanged(auth, async user => {
   }
 
   MY_SHIFT = c.shift || '';
+  IS_SUPER = isSuper;
   CAN_APPROVE = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
 
   ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '',
@@ -1227,10 +1228,22 @@ async function loadApprovals(){
   body.innerHTML = '';
   let list = [];
   try {
-    const qs = await getDocs(query(
-      collection(db, 'stations', SID, 'monthly_reports'),
-      where('status', '==', 'submitted')
-    ));
+    // **מסננים לפי משמרת בשאילתה עצמה, לא בתצוגה.**
+    //
+    // ההערה מתחת אומרת "מוצגים אנשי משמרת X בלבד" — והיא
+    // הניחה שהכללים מסננים. הם לא: שאילתה נדחית כולה אם מסמך
+    // אחד בתוצאה נכשל. מפקד משמרת א׳ נחסם ברגע שהיה דוח ממתין
+    // אחד ממשמרת ב׳, וראה "לא הצלחתי לקרוא את רשימת הדוחות"
+    // במקום את הדוחות שלו.
+    const wide = IS_SUPER ||
+      ['hr_coordinator', 'station_commander'].indexOf(ME.role) !== -1;
+    const qref = wide
+      ? query(collection(db, 'stations', SID, 'monthly_reports'),
+              where('status', '==', 'submitted'))
+      : query(collection(db, 'stations', SID, 'monthly_reports'),
+              where('status', '==', 'submitted'),
+              where('crew', '==', MY_SHIFT || '\u0000'));
+    const qs = await getDocs(qref);
     qs.forEach(d => list.push(Object.assign({ id: d.id }, d.data() || {})));
   } catch (e) {
     msg('לא הצלחתי לקרוא את רשימת הדוחות. (' + (e.code || e.message) + ')',

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -283,20 +283,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { renderNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
-import { CREW_HE } from './rotation.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { renderNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
+import { CREW_HE } from './rotation.js?v=31';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=30';
+         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
@@ -322,7 +322,7 @@ function msg(text, kind, box){
   m.className = 'msg ' + (text ? (kind || '') : '');
 }
 
-let SID = '', ME = null, CAN_MANAGE = false;
+let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
 let people = [], guards = [], quals = [], held = {};
 let rotations = [], overrides = {}, swaps = [], busy = {};
 let loadMap = {}, ctx = {};
@@ -351,7 +351,12 @@ onAuthStateChanged(auth, async user => {
 
   // מי פותח אבטחות ומשבץ. זהה ל-staff() בכללי האבטחה.
   CAN_MANAGE = isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1;
-  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '', full_name: '' };
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '',
+         role: c.role || '', full_name: '' };
+  // מי רשאי לקרוא את הנוכחות של כל התחנה — אותה קבוצה
+  // בדיוק כמו בכלל האבטחה של attendance.
+  WIDE = isSuper ||
+    ['hr_coordinator', 'station_commander'].indexOf(c.role) !== -1;
 
   try {
     const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
@@ -384,10 +389,14 @@ async function loadAll(){
   // לרשת, ולכן כל השמונה יוצאות באותו רגע. מחכים להן פעם
   // אחת ב-flush.
   const jobs = [];
-  const grab = (name, fn) => {
+  // ref אופציונלי: אוסף שקריאה גורפת שלו נדחית זקוק לשאילתה
+  // מסוננת. ראה את ההערה אצל attendance למטה.
+  const grab = (name, fn, ref) => {
     jobs.push((async () => {
-      try { const s = await getDocs(collection(db, 'stations', SID, name)); fn(s); }
-      catch (ignore) {}
+      try {
+        const s = await getDocs(ref || collection(db, 'stations', SID, name));
+        fn(s);
+      } catch (ignore) {}
     })());
   };
   const flush = () => Promise.all(jobs);
@@ -431,6 +440,13 @@ async function loadAll(){
   }));
 
   // מי לא זמין ובאיזה תאריך — נלמד מהנוכחות שכבר דווחה.
+  //
+  // **הקריאה חייבת להיות מסוננת.** כללי Firestore אינם מסננים:
+  // שאילתה נדחית כולה אם מסמך אחד בתוצאה נכשל בכלל. קריאה
+  // גורפת של attendance נדחתה אצל כל מי שאינו רכז כוח אדם או
+  // מפקד תחנה — כלומר אצל כל מפקד משמרת — ו-grab בלע את
+  // השגיאה. התוצאה: busy נשאר ריק, ואדם בחופש מאושר הוצג
+  // כזמין לשיבוץ לאבטחה.
   busy = {};
   await grab('attendance', s => s.forEach(d => {
     const v = d.data() || {};
@@ -440,7 +456,9 @@ async function loadAll(){
     if (!why || !v.date || !v.uid) return;
     if (!busy[v.date]) busy[v.date] = {};
     busy[v.date][v.uid] = why;
-  }));
+  }), WIDE ? null
+     : query(collection(db, 'stations', SID, 'attendance'),
+             where('crew', '==', ME.crew || '\u0000')));
 
   await flush();
 

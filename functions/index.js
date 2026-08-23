@@ -953,6 +953,138 @@ exports.unlockAccount = onCall(async (req) => {
 });
 
 // ---------------------------------------------------------------------
+//  הצטרפות עם קוד תחנה — כניסה מיידית
+// ---------------------------------------------------------------------
+//
+//  אלדד ביקש שהעובד יבחר משמרת בפתיחת החשבון וייכנס מיד, בלי
+//  להמתין לאישור.
+//
+//  **למה זה לא יכול להיות פתוח לכל אחד.** ההרשמה פתוחה לכל
+//  כתובת מייל בעולם. אישור אוטומטי בלי שום תנאי היה נותן לכל
+//  זר שנרשם תפקיד firefighter בתחנה 102 — כלומר גישה לסידור
+//  המלא, לסגל, לכל התקלות ולמצב הכשירות של הצי. זה לא סיכון
+//  תיאורטי: הכתובת ציבורית.
+//
+//  לכן תנאי אחד: **קוד תחנה**. אלדד מוסר אותו לאנשיו, וכל מי
+//  שמקליד אותו נכנס מיד עם המשמרת שבחר. מי שאין לו את הקוד
+//  ממשיך למסלול הישן — בקשה ממתינה שאלדד מאשר.
+//
+//  הקוד מוגבל בקצב: חמישה ניסיונות כושלים מאותו חשבון נועלים
+//  אותו לשעה. בלי זה אפשר לנחש קוד בן שש ספרות בכמה שעות.
+
+const JOIN_DOC = 'config/join';
+const JOIN_MAX_TRIES = 5;
+const JOIN_LOCK_MIN  = 60;
+
+exports.joinWithCode = onCall(async (req) => {
+  const auth = requireAuth(req);
+  const d = req.data || {};
+  const code  = String(d.code || '').trim();
+  const shift = String(d.shift || '').trim();
+  const name  = String(d.full_name || '').trim();
+  const phone = String(d.phone || '').trim();
+
+  if (!code) throw new HttpsError('invalid-argument', 'חסר קוד תחנה.');
+  if (!name) throw new HttpsError('invalid-argument', 'חסר שם מלא.');
+  if (shift && VALID_SHIFTS.indexOf(shift) === -1) {
+    throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
+  }
+
+  // כבר יש לו תפקיד — אין מה לעשות, ולכן גם אין מה לנעול.
+  if (String((auth.token || {}).emp || '')) {
+    throw new HttpsError('failed-precondition',
+      'החשבון שלך כבר משויך לתחנה.');
+  }
+
+  const tryRef = db.doc('join_attempts/' + auth.uid);
+  const trySnap = await tryRef.get().catch(function () { return null; });
+  const tv = (trySnap && trySnap.exists ? trySnap.data() : {}) || {};
+  const until = tv.locked_until ? tv.locked_until.toMillis() : 0;
+  if (until && until > Date.now()) {
+    throw new HttpsError('resource-exhausted',
+      'יותר מדי ניסיונות. נסה שוב בעוד שעה, או פנה למנהל המערכת.');
+  }
+
+  const jSnap = await db.doc(JOIN_DOC).get().catch(function () { return null; });
+  const jv = (jSnap && jSnap.exists ? jSnap.data() : {}) || {};
+
+  if (jv.active !== true || !jv.code) {
+    throw new HttpsError('failed-precondition',
+      'הצטרפות עם קוד סגורה כרגע. הבקשה שלך תמתין לאישור מנהל.');
+  }
+
+  if (String(jv.code) !== code) {
+    const n = Number(tv.fails || 0) + 1;
+    const lock = n >= JOIN_MAX_TRIES;
+    await tryRef.set({
+      fails: lock ? 0 : n,
+      locked_until: lock
+        ? admin.firestore.Timestamp.fromMillis(Date.now() + JOIN_LOCK_MIN * 60000)
+        : null,
+      last_at: FV.serverTimestamp()
+    }, { merge: true }).catch(function () {});
+    throw new HttpsError('permission-denied',
+      lock ? 'הקוד שגוי. החשבון ננעל לשעה.'
+           : 'קוד תחנה שגוי. נותרו ' + (JOIN_MAX_TRIES - n) + ' ניסיונות.');
+  }
+
+  const stationId  = String(jv.stationId  || STATION_ID);
+  const districtId = String(jv.districtId || 'south');
+
+  const audit = await openAudit(auth, 'join_with_code', auth.uid,
+                               { station: stationId, shift: shift });
+
+  const emp = await allocateEmployeeNumber();
+
+  await admin.auth().setCustomUserClaims(auth.uid, {
+    role: 'firefighter', stationId: stationId,
+    districtId: districtId, shift: shift, emp: emp
+  });
+
+  await writeProfile(auth.uid, {
+    emp: emp, full_name: name, email: String(auth.token.email || '').toLowerCase(),
+    phone: phone, role: 'firefighter', shift: shift,
+    stationId: stationId, districtId: districtId
+  });
+
+  // הבקשה הממתינה מיותרת עכשיו — מי שנכנס לא צריך לחכות
+  // לאישור, ורשומה שנשארת שם היא עבודה שאלדד יעשה לחינם.
+  await db.doc('registration_requests/' + auth.uid).delete().catch(function () {});
+  await tryRef.delete().catch(function () {});
+
+  await sealAudit(audit, { emp: emp, shift: shift });
+  return { ok: true, emp: emp, shift: shift, stationId: stationId };
+});
+
+// קביעת הקוד — מנהל-על בלבד.
+exports.setJoinCode = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const code = String(d.code || '').trim();
+  const active = d.active === true;
+
+  if (active && code.length < 4) {
+    throw new HttpsError('invalid-argument', 'הקוד חייב להיות באורך 4 תווים לפחות.');
+  }
+
+  const audit = await openAudit(auth, 'set_join_code', null, { active: active });
+  await db.doc(JOIN_DOC).set({
+    code: code, active: active,
+    stationId: STATION_ID, districtId: 'south',
+    updated_by: auth.uid, updated_at: FV.serverTimestamp()
+  }, { merge: true });
+  await sealAudit(audit, { active: active });
+  return { ok: true, active: active };
+});
+
+exports.getJoinCode = onCall(async (req) => {
+  requireSuperAdmin(req);
+  const snap = await db.doc(JOIN_DOC).get().catch(function () { return null; });
+  const v = (snap && snap.exists ? snap.data() : {}) || {};
+  return { code: String(v.code || ''), active: v.active === true };
+});
+
+// ---------------------------------------------------------------------
 //  קליטת סגל — ייבוא מרוכז
 // ---------------------------------------------------------------------
 //
@@ -1069,7 +1201,7 @@ exports.bulkImport = onCall({ timeoutSeconds: 540 }, async (req) => {
     updated: out.filter(r => r.state === 'updated').length,
     failed:  out.filter(r => r.state === 'failed').length
   };
-  await closeAudit(audit, 'ok', sum);
+  await sealAudit(audit, sum);
 
   return { ok: true, dry: dry, summary: sum, rows: out };
 });
@@ -1110,7 +1242,7 @@ exports.setSilentMode = onCall(async (req) => {
   }, { merge: true });
 
   _rt = null;   // מאלץ קריאה מחדש, אחרת המטמון היה משהה את השינוי בחצי דקה
-  await closeAudit(audit, 'ok', { silent: on });
+  await sealAudit(audit, { silent: on });
   return { ok: true, silent: on, allow: allow, mode: on ? 'trial' : 'live' };
 });
 

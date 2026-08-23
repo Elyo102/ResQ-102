@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -274,20 +274,21 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { stationName } from './stations.js?v=30';
-import { renderNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { stationName } from './stations.js?v=31';
+import { renderNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=30';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=31';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=30';
-import { SITE_SEED } from './hours.js?v=30';
+  from './faults.js?v=31';
+import { SITE_SEED } from './hours.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, serverTimestamp }
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);

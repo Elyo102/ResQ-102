@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -60,6 +60,32 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .cw.B{ background:var(--crewB-bg); color:var(--crewB) }
   .cw.C{ background:var(--crewC-bg); color:var(--crewC) }
 
+  .crew{ margin-top:20px }
+  .crew:first-of-type{ margin-top:4px }
+  .crew h3{ display:flex; align-items:center; gap:10px; margin:0 0 4px;
+            font-size:15px; font-weight:800 }
+  .crew h3 .bar{ width:5px; height:19px; border-radius:3px; flex:none }
+  .crew h3 .n{ margin-inline-start:auto; font-size:12px; font-weight:700;
+               color:var(--muted); font-variant-numeric:tabular-nums }
+  .crew.A h3{ color:var(--crewA) } .crew.A h3 .bar{ background:var(--crewA) }
+  .crew.B h3{ color:var(--crewB) } .crew.B h3 .bar{ background:var(--crewB) }
+  .crew.C h3{ color:var(--crewC) } .crew.C h3 .bar{ background:var(--crewC) }
+  .crew.X h3{ color:var(--muted) } .crew.X h3 .bar{ background:var(--muted) }
+
+  .p{ display:flex; align-items:center; gap:11px; padding:11px 2px;
+      border-bottom:1px solid var(--line-soft) }
+  .p:last-child{ border-bottom:0 }
+  .p .nm{ flex:1; font-size:15px; font-weight:600 }
+  .p .nm em{ display:block; font-style:normal; font-size:12.5px;
+             color:var(--muted); font-weight:400; margin-top:2px }
+  /* מפקדים ראשונים בכל משמרת, ומודגשים. מי שמחפש בחפיפה
+     מחפש את מי שאחראי, ולא את מי שהאלפבית העלה למעלה. */
+  .p.lead .nm{ font-weight:800 }
+  .p .rk{ font-size:11px; font-weight:700; border-radius:20px;
+          padding:2px 10px; white-space:nowrap; border:1px solid var(--line);
+          color:var(--muted) }
+  .p.lead .rk{ border-color:var(--accent); color:var(--accent) }
+
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
   .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
@@ -99,16 +125,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <h2 id="resHead">תוצאות</h2>
       <div id="results"></div>
     </div>
+
+    <div class="card" id="rosterCard">
+      <h2>סגל התחנה</h2>
+      <div class="note" id="rosterNote">טוען…</div>
+      <div id="roster"></div>
+    </div>
   </div>
 
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { DISTRICTS, stationName } from './stations.js?v=30';
-import { renderNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { DISTRICTS, stationName } from './stations.js?v=31';
+import { renderNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -180,10 +212,82 @@ onAuthStateChanged(auth, async user => {
   $('work').classList.remove('hide');
   renderNav(c, 'people.html', user.email || '');
   watchCallouts(db, SID, user.uid, { name: user.email || '' });
-  $('qName').focus();
+  loadRoster();
 });
 
 $('btnOutDeny').onclick = () => signOut(auth);
+
+// ---------- סגל התחנה, מקובץ לפי משמרת ----------
+//
+// **למה זה נפתח מלא ולא מחכה לחיפוש.** השאלה השכיחה אינה
+// "איפה פלוני" אלא "מי במשמרת ב׳" — בחפיפה, בשיבוץ אבטחה,
+// ובכל פעם שמחפשים מחליף. מסך שדורש להקליד שם קודם עונה על
+// השאלה הנדירה ומסתיר את השכיחה.
+//
+// הקריאה היא מ-roster, שנקרא לכל חבר תחנה ומכיל שם, תפקיד
+// ומשמרת בלבד — בלי מספר עובד, בלי מייל ובלי טלפון.
+
+const CREW_ORDER = ['A', 'B', 'C', ''];
+const CREW_TITLE = { A: "משמרת א׳", B: "משמרת ב׳", C: "משמרת ג׳",
+                     '': 'בלי שיוך משמרת' };
+// סדר בתוך המשמרת: מי שאחראי קודם, ואז לפי אלף-בית.
+const RANK = { station_commander: 0, commander: 1, deputy: 2,
+               hr_coordinator: 3, firefighter: 4 };
+
+async function loadRoster(){
+  const box = $('roster');
+  try {
+    const snap = await getDocs(collection(db, 'stations', SID, 'roster'));
+    const all = [];
+    snap.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      all.push({ uid: d.id, name: v.full_name || '',
+                 role: v.role || 'firefighter', crew: v.crew || '' });
+    });
+
+    if (!all.length) {
+      $('rosterNote').textContent = 'לא נמצאו עובדים.';
+      box.innerHTML = ''; return;
+    }
+
+    $('rosterNote').innerHTML = '<b>' + all.length + ' עובדים</b> · ' +
+      CREW_ORDER.filter(c => all.some(p => p.crew === c))
+        .map(c => CREW_TITLE[c] + ' ' + all.filter(p => p.crew === c).length)
+        .join(' · ');
+
+    box.innerHTML = '';
+    CREW_ORDER.forEach(function (c) {
+      const list = all.filter(p => p.crew === c);
+      if (!list.length) return;
+      list.sort(function (a, b) {
+        const r = (RANK[a.role] == null ? 9 : RANK[a.role]) -
+                  (RANK[b.role] == null ? 9 : RANK[b.role]);
+        if (r) return r;
+        return String(a.name).localeCompare(String(b.name), 'he');
+      });
+
+      const sec = document.createElement('div');
+      sec.className = 'crew ' + (c || 'X');
+      sec.innerHTML = '<h3><span class="bar"></span>' +
+        esc(CREW_TITLE[c]) + '<span class="n">' + list.length + '</span></h3>';
+
+      list.forEach(function (p) {
+        const lead = p.role !== 'firefighter';
+        const el = document.createElement('div');
+        el.className = 'p' + (lead ? ' lead' : '');
+        el.innerHTML = '<span class="nm">' + esc(p.name) + '</span>' +
+          (lead ? '<span class="rk">' + esc(ROLE_HE[p.role] || p.role) +
+                  '</span>' : '');
+        sec.appendChild(el);
+      });
+      box.appendChild(sec);
+    });
+  } catch (e) {
+    $('rosterNote').textContent = 'לא הצלחתי לקרוא את הסגל. (' +
+      (e.code || e.message || '') + ')';
+  }
+}
 
 // ---------- חיפוש ----------
 

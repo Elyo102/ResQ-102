@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -161,13 +161,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { STATIONS, stationName } from './stations.js?v=30';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { STATIONS, stationName } from './stations.js?v=31';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
+import { getAuth, signInWithEmailAndPassword,
          signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, getDocs }
@@ -235,8 +235,12 @@ $('btnIn').onclick = async () => {
     if (id.indexOf('@') !== -1) {
       await signInWithEmailAndPassword(auth, id.toLowerCase(), pw);
     } else {
+      // loginWithEmployeeNumber מחזיר את כתובת המייל, לא אסימון.
+      // מסלול האסימון הוסר מהשרת; הקוד כאן נשאר מאחור, ולכן
+      // **סיסמה נכונה דווחה כשגויה** — res.data.token היה
+      // undefined והכניסה נכשלה בשקט. login.html כבר תוקן.
       const res = await callLogin({ emp: id, password: pw });
-      await signInWithCustomToken(auth, res.data.token);
+      await signInWithEmailAndPassword(auth, res.data.email, pw);
     }
   } catch (e) {
     msg('authMsg', 'מספר עובד או סיסמה שגויים.', 'err');
@@ -259,8 +263,14 @@ onAuthStateChanged(auth, async user => {
 
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
-  const isStaff = c.role === 'commander' || c.role === 'hr_coordinator' ||
-                  c.role === 'district_commander';
+  // אותה רשימה בדיוק כמו staff() בכללי האבטחה וכמו nav.js.
+  //
+  // הגרסה הקודמת פספסה את סגן מפקד המשמרת ואת מפקד התחנה —
+  // הסרגל הציג להם את הכפתור והמסך חסם אותם. וכללה מפקד מחוז,
+  // שאינו staff באף כלל: הוא עבר את השער כאן ואז נכשל בקריאה
+  // הראשונה מהשרת.
+  const isStaff = ['deputy', 'commander', 'station_commander',
+                   'hr_coordinator'].indexOf(c.role) !== -1;
 
   if (!isSuper && !isStaff) {
     $('authCard').classList.add('hide');

@@ -27,7 +27,12 @@ export const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
 export function visibleCrews(claims) {
   const c = claims || {};
   const isSuper = c.super === true || c.role === 'super_admin';
-  if (isSuper || c.role === 'hr_coordinator') return CREWS.slice();
+  // מפקד התחנה רואה את שלוש המשמרות — כך קובע seesShift()
+  // בכללי האבטחה, וההערה למעלה כבר הבטיחה זהות. בלעדיו הוא
+  // היה רואה רק את משמרתו, והוא **התפקיד היחיד** שמאשר
+  // ירידה מתחת לקו האדום.
+  if (isSuper || c.role === 'hr_coordinator' ||
+      c.role === 'station_commander') return CREWS.slice();
   if (CREWS.indexOf(c.shift) !== -1) return [c.shift];
   return CREWS.slice();
 }

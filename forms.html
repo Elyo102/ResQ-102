@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -231,19 +231,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
-import { renderNav, renderStuckNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
-import { CREW_HE } from './rotation.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { renderNav, renderStuckNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
+import { CREW_HE } from './rotation.js?v=31';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
          subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
-         awayHe, callableWhileAway, summaryOf } from './forms.js?v=30';
+         awayHe, callableWhileAway, summaryOf } from './forms.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         writeBatch, serverTimestamp }
+         query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
@@ -325,12 +325,43 @@ async function loadAll(){
   // שתי הקריאות במקביל. אין ביניהן תלות.
   subs = []; people = [];
   const safe = p => p.catch(function () { return null; });
-  const [ss, rs] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', SID, 'submissions'))),
-    safe(getDocs(collection(db, 'stations', SID, 'roster')))
-  ]);
+  // **קריאה מסוננת, לא קריאה גורפת.**
+  //
+  // כללי Firestore אינם מסננים — שאילתה נדחית **כולה** אם מסמך
+  // אחד בתוצאה נכשל בכלל. קריאה גורפת של submissions נדחתה
+  // אצל כבאי כבר בטופס הראשון שאינו שלו, ואצל מפקד משמרת
+  // בטופס הראשון ממשמרת אחרת — ו-safe() בלע את השגיאה, כך
+  // ששלוש הלשוניות הוצגו ריקות בלי שום הודעה.
+  //
+  // מי שרואה הכל ממילא קורא גורף; לשאר בונים שתי שאילתות
+  // שתואמות בדיוק את מה שהכלל מתיר.
+  // IS_WIDE כבר מוגדר למעלה כ"מנהל-על, מפקד תחנה או רכז כוח
+  // אדם" — בדיוק קבוצת מי שהכלל מתיר לו לקרוא הכל.
+  const subQueries = IS_WIDE
+    ? [ getDocs(collection(db, 'stations', SID, 'submissions')) ]
+    : [ getDocs(query(collection(db, 'stations', SID, 'submissions'),
+                      where('by_uid', '==', ME.uid))) ]
+        .concat(CAN_APPROVE && ME.crew
+          ? [ getDocs(query(collection(db, 'stations', SID, 'submissions'),
+                            where('crew', '==', ME.crew),
+                            where('is_private', '==', false))) ]
+          : []);
 
-  if (ss) ss.forEach(d => subs.push(Object.assign({ id: d.id }, d.data() || {})));
+  const results = await Promise.all(
+    subQueries.map(safe).concat([safe(getDocs(collection(db, 'stations', SID, 'roster')))]));
+  const rs = results.pop();
+
+  // שתי השאילתות עלולות להחזיר את אותו מסמך (טופס שלי במשמרת
+  // שלי). איחוד לפי מזהה, אחרת הוא יופיע פעמיים ברשימה.
+  const seen = {};
+  results.forEach(function (qs) {
+    if (!qs) return;
+    qs.forEach(function (d) {
+      if (seen[d.id]) return;
+      seen[d.id] = true;
+      subs.push(Object.assign({ id: d.id }, d.data() || {}));
+    });
+  });
   subs.sort((a,b) => String(b.created_key||'').localeCompare(String(a.created_key||'')));
 
   if (rs) rs.forEach(d => {

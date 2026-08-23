@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=30">
+<link rel="stylesheet" href="./theme.css?v=31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -265,6 +265,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <option value="">קודם בחר מחוז</option>
       </select>
 
+      <label>משמרת</label>
+      <select id="fShift">
+        <option value="">בחר משמרת</option>
+        <option value="A">משמרת א׳</option>
+        <option value="B">משמרת ב׳</option>
+        <option value="C">משמרת ג׳</option>
+        <option value="none">לא משובץ למשמרת</option>
+      </select>
+      <div class="note" style="margin-top:6px">
+        המשמרת קובעת את הסידור, את השעות ואת מי מאשר לך בקשות.
+        אם טעית — פנה לראש המשמרת.
+      </div>
+
+      <label>קוד תחנה <span style="opacity:.7">(לא חובה)</span></label>
+      <input type="text" id="fCode" autocomplete="off" inputmode="numeric">
+      <div class="note" style="margin-top:6px">
+        קיבלת קוד מראש המשמרת? הקלד אותו — והחשבון ייפתח מיד.
+        בלי קוד הבקשה תמתין לאישור מנהל.
+      </div>
+
       <label>בחר סיסמה</label>
       <input type="password" id="fPass" autocomplete="new-password">
       <div class="pw-rules" id="pwRules">
@@ -353,13 +373,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=30';
-import { renderNav, clearNav } from './nav.js?v=30';
-import { initPWA } from './pwa.js?v=30';
-import { APP_VERSION, APP_DATE } from './version.js?v=30';
-import { watchCallouts } from './callout.js?v=30';
+  from './stations.js?v=31';
+import { renderNav, clearNav } from './nav.js?v=31';
+import { initPWA } from './pwa.js?v=31';
+import { APP_VERSION, APP_DATE } from './version.js?v=31';
+import { watchCallouts } from './callout.js?v=31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -593,11 +613,13 @@ $('btnFirst').onclick = async () => {
   const phone    = $('fPhone').value.trim();
   const district = $('fDistrict').value;
   const station  = $('fStation').value;
+  const shift    = $('fShift').value;
+  const joinCode = $('fCode').value.trim();
   const pass     = $('fPass').value;
   const pass2    = $('fPass2').value;
 
-  if (!name || !email || !district || !station) {
-    show('נא למלא שם, מייל, מחוז ותחנה.', 'err'); return;
+  if (!name || !email || !district || !station || !shift) {
+    show('נא למלא שם, מייל, מחוז, תחנה ומשמרת.', 'err'); return;
   }
   if (pass !== pass2) { show('הסיסמאות אינן תואמות.', 'err'); return; }
   if (!pwOk(pass)) {
@@ -631,9 +653,37 @@ $('btnFirst').onclick = async () => {
       phone:      phone,
       districtId: district,
       stationId:  station,
+      // המשמרת שהעובד בחר. 'none' נשמר כמחרוזת ריקה — כך
+      // הכללים והשרת מטפלים בו כמי שאינו נעול לאף משמרת,
+      // ולא כמשמרת בשם "none".
+      shift:      shift === 'none' ? '' : shift,
       status:     'pending',
       created_at: serverTimestamp()
     });
+    // עם קוד — כניסה מיידית. בלי קוד, או אם הקוד נדחה, נשארים
+    // במסלול הישן: הבקשה כבר נשמרה ואלדד יאשר אותה.
+    if (joinCode) {
+      show('בודק את הקוד…', 'info');
+      try {
+        await httpsCallable(fns, 'joinWithCode')({
+          code: joinCode, shift: shift === 'none' ? '' : shift,
+          full_name: name, phone: phone
+        });
+        // ההרשאות נכתבו בשרת; הטוקן שביד עדיין נושא את הישנות.
+        await created.getIdToken(true);
+        onboarding = false; btn.disabled = false;
+        location.replace('./login.html');
+        return;
+      } catch (ce) {
+        onboarding = false; btn.disabled = false;
+        showWaiting();
+        show('הבקשה נשמרה, אבל הקוד לא התקבל: ' +
+             (ce.message || ce.code || '') +
+             ' — הבקשה תמתין לאישור מנהל.', 'info');
+        return;
+      }
+    }
+
     onboarding = false; btn.disabled = false;
     showWaiting();
   } catch (e) {
