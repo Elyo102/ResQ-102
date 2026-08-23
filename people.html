@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — אנשים</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=25">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:760px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  input{ width:100%; padding:11px; background:var(--input); color:var(--txt);
+         border:1px solid var(--line); border-radius:7px; font-size:16px;
+         font-family:inherit }
+  input:focus{ outline:2px solid var(--accent); outline-offset:1px }
+
+  button{ width:100%; margin-top:14px; padding:12px; border-radius:8px;
+          border:1px solid var(--accent); background:var(--accent);
+          color:var(--on-accent); font-size:15px; font-weight:700;
+          font-family:inherit; cursor:pointer }
+  button:disabled{ opacity:.55; cursor:not-allowed }
+  button.ghost{ background:transparent; border-color:var(--line);
+                color:var(--muted); font-weight:600 }
+  button.ghost:hover{ color:var(--txt); border-color:var(--line-hover) }
+
+  .res{ border-bottom:1px solid var(--line-soft); padding:12px 2px }
+  .res:last-child{ border-bottom:0 }
+  .res .n{ font-size:15.5px; font-weight:700 }
+  .res .d{ font-size:13px; color:var(--muted); margin-top:3px; line-height:1.6 }
+  .res .cw{ font-size:11px; font-weight:700; border-radius:20px;
+            padding:1px 9px; margin-inline-start:6px; white-space:nowrap }
+  .cw.A{ background:var(--crewA-bg); color:var(--crewA) }
+  .cw.B{ background:var(--crewB-bg); color:var(--crewB) }
+  .cw.C{ background:var(--crewC-bg); color:var(--crewC) }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+</style>
+</head>
+<body>
+<div id="errBar"></div>
+<div class="wrap">
+
+  <div id="denyCard" class="card hide">
+    <h2>אין הרשאה</h2>
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין ספר אנשים להציג.</div>
+    <button class="ghost" id="btnOutDeny">התנתק</button>
+  </div>
+
+  <div id="work" class="hide">
+    <h1>אנשים</h1>
+    <div class="sub">ספר האנשים של הכבאות — שם, תפקיד, משמרת, תחנה ומחוז.</div>
+
+    <div class="card">
+      <label for="qName">שם, או חלק ממנו</label>
+      <input type="text" id="qName" autocomplete="off" enterkeyhint="search"
+             placeholder="למשל: חודרה">
+      <div class="note" style="margin-top:6px">
+        אפשר להקליד שם משפחה בלבד. החיפוש מוצא כל מילה בשם, לא רק
+        את תחילתו.
+      </div>
+      <button id="btnDoSearch">חפש</button>
+      <div class="msg" id="sMsg"></div>
+    </div>
+
+    <div class="card hide" id="resCard">
+      <h2 id="resHead">תוצאות</h2>
+      <div id="results"></div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=25';
+import { DISTRICTS, stationName } from './stations.js?v=25';
+import { renderNav, renderStuckNav } from './nav.js?v=25';
+import { initPWA } from './pwa.js?v=25';
+import { watchCallouts } from './callout.js?v=25';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, query, where, limit, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;');
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+const ROLE_HE = {
+  firefighter: 'כבאי',
+  deputy: 'סגן מפקד משמרת',
+  commander: 'מפקד משמרת',
+  station_commander: 'מפקד תחנה',
+  hr_coordinator: 'רכז כוח אדם',
+  district_commander: 'מפקד מחוז',
+  super_admin: 'מנהל מערכת'
+};
+const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
+const DIST_HE = DISTRICTS.reduce(function (acc, d) {
+  acc[d.id] = d.he; return acc;
+}, {});
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+let SID = '';
+
+initPWA({ offer: false });
+
+window.addEventListener('error', function (e) {
+  const b = $('errBar');
+  b.innerHTML = '<span class="xx" onclick="this.parentNode.style.display=\'none\'">×</span>' +
+    '<b>שגיאה במסך</b><code>' + esc(e.message || '') + '</code>';
+  b.style.display = 'block';
+});
+
+// ---------- הרשאה ----------
+//
+// ספר האנשים פתוח לכל מי שמשויך לתחנה. אין כאן החלטה מבצעית
+// ואין נתון אישי מעבר למה שממילא כתוב על הדלת — שם, תפקיד
+// ומשמרת. חיפוש שסגור לכבאי הוא חיפוש שאף אחד לא משתמש בו.
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=people.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  $('work').classList.remove('hide');
+  renderNav(c, 'people.html', user.email || '');
+  watchCallouts(db, SID, user.uid, { name: user.email || '' });
+  $('qName').focus();
+});
+
+$('btnOutDeny').onclick = () => signOut(auth);
+
+// ---------- חיפוש ----------
+
+// Enter מחפש. בטלפון זה הכפתור היחיד שהאצבע כבר עליו אחרי
+// ההקלדה, ובלעדיו צריך לסגור את המקלדת כדי להגיע לכפתור.
+$('qName').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); run(); }
+});
+$('btnDoSearch').onclick = run;
+
+async function run(){
+  const btn = $('btnDoSearch');
+  const raw = $('qName').value.trim();
+  const box = $('results');
+
+  const fail = (t, cls) => {
+    $('sMsg').textContent = t;
+    $('sMsg').className = 'msg ' + (cls || 'err');
+    $('resCard').classList.add('hide');
+    btn.disabled = false;
+  };
+
+  if (!raw) return fail('נא להזין שם.');
+
+  // הגרשיים מוסרים כי מקלידים אותם בלי עקביות — "חומ״ס"
+  // ו"חומס" צריכים להביא את אותה תוצאה.
+  const key = raw.toLowerCase().replace(/["'`׳״]/g, '');
+  if (key.length < 2) return fail('נא להזין לפחות שני תווים.');
+
+  btn.disabled = true;
+  $('sMsg').className = 'msg';
+  $('sMsg').textContent = '';
+  box.innerHTML = '';
+
+  try {
+    const snaps = await getDocs(query(
+      collection(db, 'directory'),
+      where('name_prefixes', 'array-contains', key),
+      limit(25)
+    ));
+
+    const rows = snaps.docs.filter(d => (d.data() || {}).is_active !== false);
+    if (!rows.length) {
+      return fail('לא נמצאו תוצאות עבור "' + raw + '".', 'info');
+    }
+
+    rows.sort((a, b) => String(a.data().full_name || '')
+      .localeCompare(String(b.data().full_name || ''), 'he'));
+
+    $('resHead').textContent = rows.length === 1
+      ? 'תוצאה אחת' : rows.length + ' תוצאות';
+
+    rows.forEach(function (d) {
+      const p = d.data();
+      const row = document.createElement('div');
+      row.className = 'res';
+      const bits = [
+        ROLE_HE[p.role] || p.role || '',
+        p.station ? stationName(p.station) : '',
+        p.district ? (DIST_HE[p.district] || p.district) : ''
+      ].filter(Boolean);
+      row.innerHTML =
+        '<div class="n">' + esc(p.full_name) +
+          (p.crew ? '<span class="cw ' + esc(p.crew) + '">' +
+                    esc(CREW_HE[p.crew] || p.crew) + '</span>' : '') +
+        '</div>' +
+        '<div class="d">' + esc(bits.join(' · ')) + '</div>';
+      box.appendChild(row);
+    });
+
+    $('resCard').classList.remove('hide');
+  } catch (e) {
+    return fail('שגיאה בחיפוש: ' + (e.code || e.message));
+  }
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=21">
+<link rel="stylesheet" href="./theme.css?v=25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -48,6 +48,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         padding:12px;font-size:15px;cursor:pointer;margin-top:20px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
+  /* כרטיס הגרסה. יושב במקום שבו היה "חיפוש עובד" — מסך
+     הבית הוא המקום שכולם רואים, וזו השורה שרוצים להקריא
+     בטלפון כשמישהו שואל "על איזו גרסה אתה". */
+  .ver{ border:1px solid var(--line); border-radius:10px; padding:12px 13px;
+        margin-top:16px; background:var(--panel); text-align:start }
+  .ver .vrow{ display:flex; align-items:baseline; gap:10px; font-size:13px;
+              color:var(--muted) }
+  .ver .vrow b{ margin-inline-start:auto; color:var(--txt); font-size:14px;
+                font-variant-numeric:tabular-nums }
+  .ver .note{ font-size:12px; color:var(--muted); line-height:1.6;
+              margin-top:7px }
+  .ver .note.new{ color:var(--accent); font-weight:700 }
+  .ver button{ margin-top:9px }
   .link{background:none;border:0;color:var(--muted);font-size:13px;
         cursor:pointer;margin-top:14px;text-decoration:underline;font-family:inherit}
   .msg{margin-top:16px;padding:11px;border-radius:6px;font-size:13px;
@@ -299,26 +312,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="row" id="pStation"></div>
       <div class="row" id="pEmp"></div>
     </div>
-    <button id="btnSearch">חיפוש עובד</button>
+    <div class="ver">
+      <div class="vrow"><span>גרסת האפליקציה</span><b id="verNow">…</b></div>
+      <div class="note" id="verMsg">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
+        הוא לרגע שבו אתה רוצה לוודא.</div>
+      <button class="link" id="btnUpdate">בדוק עדכון</button>
+    </div>
     <a id="lnkAdmin" class="hide" href="./admin.html"
        style="display:block;text-align:center;margin-top:10px;color:#ff6a00;font-size:14px">
        ניהול המערכת ואישור בקשות ←</a>
     <button class="link" id="btnChangePw">שינוי סיסמה</button>
     <button class="link" id="btnLogout">התנתק</button>
-  </div>
-
-  <!-- ============ חיפוש עובד ============ -->
-  <div id="searchView" class="hide">
-    <h2 style="font-size:19px;margin:0 0 4px">חיפוש עובד</h2>
-    <div class="sub">שם, תפקיד, משמרת, תחנה ומחוז.</div>
-
-    <label>שם מלא או תחילת שם</label>
-    <input type="text" id="qName" autocomplete="off">
-    <button id="btnDoSearch">חפש</button>
-
-    <div id="results"></div>
-    <button class="back" id="btnSearchBack">חזרה</button>
-    <div class="msg" id="sMsg"></div>
   </div>
 
   <!-- ============ שינוי סיסמה ============ -->
@@ -349,12 +353,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=21';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=25';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=21';
-import { renderNav, clearNav } from './nav.js?v=21';
-import { initPWA } from './pwa.js?v=21';
-import { watchCallouts } from './callout.js?v=21';
+  from './stations.js?v=25';
+import { renderNav, clearNav } from './nav.js?v=25';
+import { initPWA } from './pwa.js?v=25';
+import { APP_VERSION, APP_DATE } from './version.js?v=25';
+import { watchCallouts } from './callout.js?v=25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -460,7 +465,7 @@ function show(text, kind){
 function clearMsg(){ $('msg').className = 'msg'; }
 
 function showView(name){
-  ['bootView','authView','waitView','homeView','searchView','pwView']
+  ['bootView','authView','waitView','homeView','pwView']
     .forEach(function(v){
       $(v).classList.toggle('hide', v !== name + 'View');
     });
@@ -833,89 +838,57 @@ async function loadProfile(user, claims){
   showView('home');
 }
 
-// ---------- חיפוש עובד ----------
+// ---------- גרסה ועדכון ----------
+//
+// version.js נטען דרך המטמון ולכן מספרו הוא הגרסה **הרצה**.
+// version.json נטען עם no-store ולכן מספרו הוא הגרסה
+// **שבשרת**. שונים — יש עדכון.
+//
+// זו הסיבה שהבדיקה הזו אמינה גם כשהכל נראה תקין: היא לא
+// שואלת את הדפדפן מה הוא חושב, היא משווה שני מספרים משני
+// מקורות שונים.
 
-$('btnSearch').onclick     = () => { $('sMsg').className = 'msg'; showView('search'); };
-$('btnSearchBack').onclick = () => showView('home');
+$('verNow').textContent = APP_VERSION + ' · ' + APP_DATE;
 
-$('btnDoSearch').onclick = async () => {
-  const btn = $('btnDoSearch');
-  const q   = $('qName').value.trim();
-  const box = $('results');
+$('btnUpdate').onclick = async function () {
+  const b = $('btnUpdate'), m = $('verMsg');
+  b.disabled = true;
+  m.className = 'note';
+  m.textContent = 'בודק מול השרת…';
 
-  if (!q) {
-    $('sMsg').textContent = 'נא להזין שם.';
-    $('sMsg').className = 'msg err';
+  let server = null;
+  try {
+    // no-store, ו-t=… כדי שגם מטמון ביניים לא יחזיר עותק ישן.
+    const r = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    server = await r.json();
+  } catch (e) {
+    m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+    b.disabled = false;
     return;
   }
 
-  btn.disabled = true;
-  $('sMsg').className = 'msg';
-  $('sMsg').textContent = '';
-  box.innerHTML = '';
-
-  try {
-    // חיפוש לפי כל מילה בשם, לא רק לפי תחילת השם המלא.
-    // "חודרה" ו"טויטו" הם בדיוק מה שאנשים מקלידים, והחיפוש
-    // הישן לא היה מוצא אותם.
-    const raw = q;
-    const key = q.toLowerCase().replace(/["'`׳״]/g, '');
-
-    if (key.length < 2) {
-      $('sMsg').textContent = 'נא להזין לפחות שני תווים.';
-      $('sMsg').className = 'msg err';
-      btn.disabled = false;
-      return;
-    }
-
-    const snaps = await getDocs(query(
-      collection(db, 'directory'),
-      where('name_prefixes', 'array-contains', key),
-      limit(25)
-    ));
-
-    if (snaps.empty) {
-      $('sMsg').textContent = 'לא נמצאו תוצאות עבור "' + raw + '".';
-      $('sMsg').className = 'msg info';
-      btn.disabled = false;
-      return;
-    }
-
-    const rows = snaps.docs.filter(function (d) {
-      return (d.data() || {}).is_active !== false;
-    });
-
-    if (!rows.length) {
-      $('sMsg').textContent = 'לא נמצאו תוצאות עבור "' + raw + '".';
-      $('sMsg').className = 'msg info';
-      btn.disabled = false;
-      return;
-    }
-
-    rows.sort(function (a, b) {
-      return String(a.data().full_name || '')
-        .localeCompare(String(b.data().full_name || ''), 'he');
-    });
-
-    rows.forEach(function (d) {
-      const p = d.data();
-      const row = document.createElement('div');
-      row.className = 'res';
-      row.innerHTML =
-        '<div class="n">' + esc(p.full_name) + '</div>' +
-        '<div class="d">' +
-          esc(ROLE_HE[p.role] || p.role || '') +
-          (p.crew ? ' · ' + esc(CREW_HE[p.crew] || p.crew) : '') +
-          (p.station ? ' · ' + esc(stationName(p.station)) : '') +
-          (p.district ? ' · ' + esc(DIST_HE[p.district] || p.district) : '') +
-        '</div>';
-      box.appendChild(row);
-    });
-  } catch (e) {
-    $('sMsg').textContent = 'שגיאה בחיפוש: ' + (e.code || e.message);
-    $('sMsg').className = 'msg err';
+  if (!server || String(server.v) === String(APP_VERSION)) {
+    m.textContent = 'אתה על הגרסה האחרונה.';
+    b.disabled = false;
+    return;
   }
-  btn.disabled = false;
+
+  m.className = 'note new';
+  m.textContent = 'יש גרסה חדשה (' + server.v + '). מעדכן…';
+
+  // סדר הפעולות חשוב. מוחקים את המטמון **לפני** הרענון,
+  // אחרת הדפדפן מגיש שוב בדיוק את הקבצים הישנים ושום דבר
+  // לא משתנה — וזה נראה בדיוק כמו כפתור שבור.
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+  } catch (ignore) {}
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+  } catch (ignore) {}
+
+  window.location.reload();
 };
 
 // ---------- שינוי סיסמה ----------

@@ -27,18 +27,19 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v22';
+const CACHE = 'resq-v25';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
   './login.html', './schedule.html', './board.html', './attendance.html',
   './guards.html', './faults.html', './forms.html', './swaps.html',
-  './quals.html', './alerts.html', './stats.html', './index.html',
+  './quals.html', './alerts.html', './stats.html', './people.html',
+  './index.html',
   './nav.js', './rotation.js', './readiness.js', './hours.js',
   './guards.js', './faults.js', './forms.js', './stats.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
-  './theme.css', './forms.js', './pwa.js',
+  './theme.css', './pwa.js', './version.js',
   './manifest.json', './resq-192.png', './favicon.ico'
 ];
 
@@ -68,6 +69,10 @@ self.addEventListener('fetch', function (e) {
   // שמורה מהם היא נתון ישן שמתחזה לנוכחי.
   if (url.origin !== self.location.origin) return;
   if (/firestore|googleapis|identitytoolkit/.test(url.href)) return;
+  // מספר הגרסה לעולם לא נשמר. כל המנגנון של "יש עדכון" מבוסס
+  // על כך שהקובץ הזה מגיע מהשרת — עותק שמור שלו היה גורם
+  // לאפליקציה לדווח "אתה מעודכן" בדיוק כשהיא לא.
+  if (/\/version\.json/.test(url.pathname)) return;
 
   e.respondWith(
     fetch(req).then(function (res) {

@@ -22,6 +22,7 @@ const ITEMS = [
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1' },
   { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c' },
   { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5' },
+  { href: 'people.html',   label: 'אנשים',       who: 'member', dot: '#8d6e63' },
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b' },
   { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8' },
@@ -47,6 +48,66 @@ function allowed(who, claims) {
      'hr_coordinator'].indexOf(claims.role) !== -1;
   }
   return false;
+}
+
+// ---------- מסלול הניווט ----------
+//
+// **למה לא window.history.back().**
+//
+// אלדד: "כל לחיצה על חזרה מחזירה אותי למסך הכניסה." זה נכון,
+// וזו לא תקלה בכפתור — זו התנהגות ההיסטוריה של הדפדפן כאן.
+// שלושה דברים במערכת קוראים ל-location.replace, שמחליף את
+// הרשומה הנוכחית במקום להוסיף אחת:
+//
+//   index.html   מפנה ל-login.html
+//   login.html   מפנה למסך שביקשת אחרי התחברות
+//   כל מסך       מפנה ל-login אם אין התחברות
+//
+// אחרי כל אלה ההיסטוריה של הדפדפן מכילה לעיתים רשומה אחת
+// בלבד, ו-back() יוצא מהאפליקציה או נופל חזרה למסך הכניסה.
+// באפליקציה על מסך הבית זה מחמיר, כי כל פתיחה מתחילה
+// היסטוריה נקייה.
+//
+// לכן המסלול נשמר כאן, ולא נלקח מהדפדפן. הוא נמחק כשסוגרים
+// את האפליקציה — זו דרך ולא העדפה, ואין סיבה שתשרוד.
+
+const TRAIL = 'resq_trail';
+
+function readTrail() {
+  try { return JSON.parse(sessionStorage.getItem(TRAIL) || '[]'); }
+  catch (e) { return []; }
+}
+
+function writeTrail(a) {
+  try { sessionStorage.setItem(TRAIL, JSON.stringify(a.slice(-12))); }
+  catch (e) {}
+}
+
+// המסלול הוא **דרך ולא יומן**: אם חזרת למסך שכבר היית בו,
+// הזנב נחתך. בלי זה מעבר הלוך-ושוב בין שני מסכים היה בונה
+// רשימה אינסופית, ו"חזרה" היה לוקח צעד אחורה בתוך לולאה
+// במקום לצאת ממנה.
+function track(current) {
+  if (!current) return readTrail();
+  const t = readTrail();
+  const i = t.indexOf(current);
+  if (i !== -1) t.length = i + 1;
+  else t.push(current);
+  writeTrail(t);
+  return t;
+}
+
+function labelOf(href) {
+  const it = ITEMS.filter(function (x) { return x.href === href; })[0];
+  return it ? it.label : '';
+}
+
+function goBack() {
+  const t = readTrail();
+  t.pop();                        // המסך הנוכחי
+  const to = t.pop() || 'login.html';   // היעד — יוסיף את עצמו מחדש
+  writeTrail(t);
+  window.location.href = './' + to;
 }
 
 function styleOnce() {
@@ -162,12 +223,13 @@ export function renderNav(claims, current, who) {
 
   // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע
   // מכפתור שלא קיים.
-  if (window.history.length > 1) {
+  const trail = track(current);
+  if (trail.length > 1) {
     const back = document.createElement('button');
     back.type = 'button';
     back.className = 'back';
-    back.textContent = '→ חזרה';
-    back.onclick = function () { window.history.back(); };
+    back.textContent = '→ ' + (labelOf(trail[trail.length - 2]) || 'חזרה');
+    back.onclick = goBack;
     nav.appendChild(back);
   }
 

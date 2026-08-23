@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=21">
+<link rel="stylesheet" href="./theme.css?v=25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -257,18 +257,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=21';
-import { renderNav, renderStuckNav } from './nav.js?v=21';
-import { initPWA } from './pwa.js?v=21';
-import { watchCallouts } from './callout.js?v=21';
-import { isAssigned as guardHasMe } from './guards.js?v=21';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=25';
+import { renderNav, renderStuckNav } from './nav.js?v=25';
+import { initPWA } from './pwa.js?v=25';
+import { watchCallouts } from './callout.js?v=25';
+import { isAssigned as guardHasMe } from './guards.js?v=25';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=21';
+  from './rotation.js?v=25';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=21';
+  from './hours.js?v=25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

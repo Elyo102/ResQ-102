@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=21">
+<link rel="stylesheet" href="./theme.css?v=25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -254,13 +254,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=21';
-import { renderNav, renderStuckNav } from './nav.js?v=21';
-import { initPWA } from './pwa.js?v=21';
-import { watchCallouts } from './callout.js?v=21';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=25';
+import { renderNav, renderStuckNav } from './nav.js?v=25';
+import { initPWA } from './pwa.js?v=25';
+import { watchCallouts } from './callout.js?v=25';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=21';
-import { CREW_HE } from './rotation.js?v=21';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=25';
+import { CREW_HE } from './rotation.js?v=25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
