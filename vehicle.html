@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=26">
+<link rel="stylesheet" href="./theme.css?v=27">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -156,6 +156,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <h2>רכב</h2>
       <div class="chips" id="vehChips"></div>
       <div class="note" id="vehState">—</div>
+      <div class="row" id="importRow"></div>
+      <div class="msg" id="impMsg"></div>
     </div>
 
     <div class="card">
@@ -188,17 +190,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=26';
-import { renderNav, renderStuckNav } from './nav.js?v=26';
-import { initPWA } from './pwa.js?v=26';
-import { watchCallouts } from './callout.js?v=26';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=27';
+import { renderNav, renderStuckNav } from './nav.js?v=27';
+import { initPWA } from './pwa.js?v=27';
+import { watchCallouts } from './callout.js?v=27';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=26';
+  from './vmap.js?v=27';
 import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
-  from './faults.js?v=26';
+  from './faults.js?v=27';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -307,6 +309,7 @@ async function loadAll(){
 
 function render(){
   renderVehicles();
+  renderImport();
   renderSides();
   renderStage();
   renderList();
@@ -342,6 +345,59 @@ function renderVehicles(){
     '<b style="color:' + st.color + '">' + esc(st.he) + '</b> · ' +
     'סט תמונות ' + cov.done + ' מתוך ' + cov.total +
     (miss ? ' · ' + esc(miss) : '');
+}
+
+// ---------- ייבוא סט מצורף ----------
+//
+// ארבע התמונות של 41 ארוזות בקובץ נפרד, כי אין לי דרך לכתוב
+// ל-Firestore — רק הדפדפן של אלדד, מחובר כמשתמש, יכול.
+//
+// **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
+// פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
+// פתיחה של המסך, לכולם, לנצח.
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=27' };
+
+function renderImport(){
+  const box = $('importRow');
+  box.innerHTML = '';
+  if (!CAN_MANAGE || !vid) return;
+
+  // מוצג רק כשלרכב הנבחר אין אף תמונה. אחרי הייבוא הכפתור
+  // נעלם מעצמו, ואי אפשר לדרוס בטעות סט קיים.
+  if (coverage(views, vid).done > 0) return;
+
+  const v = fleet.filter(x => x.id === vid)[0];
+  const b = document.createElement('button');
+  b.className = 'btn go';
+  b.textContent = 'ייבא את סט התמונות המצורף (' + BUNDLE.label + ')';
+  b.onclick = async function (){
+    if (!window.confirm('הסט המצורף הוא של ' + BUNDLE.label + '.\n\n' +
+        'הוא ייכנס לרכב "' + ((v && v.name) || vid) + '".\n\n' +
+        'אם זה לא אותו רכב — בטל, ובחר את הרכב הנכון.\n\nלייבא?')) return;
+    b.disabled = true;
+    msg('טוען את הסט…', 'info', 'impMsg');
+    try {
+      const mod = await import(BUNDLE.src);
+      let n = 0;
+      for (const sd of SIDES) {
+        const data = mod.SET[sd.id];
+        if (!data) continue;
+        await setDoc(doc(db, 'stations', SID, 'vehicle_views', viewId(vid, sd.id)), {
+          vehicle_id: vid, side: sd.id, photo: data, w: 1400, h: 1050,
+          by_uid: ME.uid, by_name: ME.name,
+          created_key: new Date().toISOString(), created_at: serverTimestamp()
+        });
+        n++;
+        msg(n + ' מתוך ' + SIDES.length + ' הועלו…', 'info', 'impMsg');
+      }
+      msg(n + ' תמונות נשמרו.', 'ok', 'impMsg');
+      await loadAll();
+    } catch (e) {
+      b.disabled = false;
+      msg('הייבוא נכשל. (' + (e.code || e.message || '') + ')', 'err', 'impMsg');
+    }
+  };
+  box.appendChild(b);
 }
 
 function renderSides(){
