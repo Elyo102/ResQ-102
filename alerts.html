@@ -78,6 +78,32 @@
   .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
   .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
   .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .card.red{ border-color:#5a2b2d; background:#221518 }
+  .btn.boom{ background:#c62828; border-color:#c62828; color:#fff }
+  .btn.boom:hover{ background:#d32f2f; border-color:#d32f2f; color:#fff }
+
+  .plist{ max-height:230px; overflow:auto; border:1px solid var(--line);
+          border-radius:9px; margin-top:8px; background:#111316 }
+  .plist .p{ display:flex; align-items:center; gap:10px; padding:9px 11px;
+             border-bottom:1px solid #24272c; font-size:13.5px; cursor:pointer }
+  .plist .p:last-child{ border-bottom:0 }
+  .plist .p:hover{ background:#181b1f }
+  .plist .p input{ width:auto; margin:0; flex:none }
+  .plist .p .nm{ flex:1 }
+  .plist .p .cw{ color:var(--muted); font-size:12px; white-space:nowrap }
+  .picked{ margin-top:8px; font-size:12.5px; color:var(--muted); line-height:1.7 }
+
+  .co{ border:1px solid #5a2b2d; border-radius:11px; padding:13px;
+       margin-top:10px; background:#1d1315 }
+  .co .hd{ font-size:12.5px; color:var(--muted); margin-bottom:5px }
+  .co .tx{ font-size:14.5px; font-weight:600; line-height:1.65;
+           white-space:pre-wrap; word-break:break-word }
+  .co .tally{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px }
+  .co .tally span{ font-size:12px; border:1px solid var(--line);
+                   border-radius:20px; padding:3px 11px }
+  .co .who{ font-size:12.5px; color:#b9c0c8; line-height:1.8; margin-top:9px }
+  .co .who b{ color:var(--muted); font-weight:600 }
+
   .hide{ display:none !important }
 </style>
 </head>
@@ -131,6 +157,38 @@
 
   <div id="work" class="hide">
 
+    <div class="card red hide" id="coCard">
+      <h2 style="color:#ef5350">קריאת פתע</h2>
+      <div class="note" style="margin-bottom:4px">
+        קופצת על המסך של כל מי שברשימה, גם למי שכיבה התראות,
+        וממשיכה לקפוץ עד שהוא עונה מגיע או לא זמין.
+        לא לשימוש שוטף — להודעה רגילה יש כרטיס למטה.
+      </div>
+      <label>את מי מזעיקים</label>
+      <select id="coTarget"></select>
+
+      <div id="coPick" class="hide">
+        <label>חיפוש שם או מספר עובד</label>
+        <input type="text" id="coSearch" placeholder="הקלד כדי לסנן">
+        <div class="picked" id="coPicked">לא נבחר אף אחד.</div>
+        <div class="plist" id="coList"></div>
+      </div>
+
+      <label>מה כתוב בקריאה</label>
+      <textarea id="coMsg" maxlength="300"
+        placeholder="שריפה במתחם התעשייה. התייצבות מיידית בתחנה."></textarea>
+      <button class="btn boom" id="coSend">הזעק</button>
+      <div class="msg" id="coSendMsg"></div>
+    </div>
+
+    <div class="card hide" id="coLiveCard">
+      <h2>קריאות פתוחות</h2>
+      <div class="note" style="margin-bottom:6px">
+        מי ענה, ומי עוד לא. מתעדכן לבד.
+      </div>
+      <div id="coLive"></div>
+    </div>
+
     <div class="card">
       <h2>המכשיר הזה</h2>
       <div class="note" style="margin-bottom:10px">
@@ -183,9 +241,11 @@
     <div class="card hide" id="keyCard">
       <h2>מפתח ההתראות</h2>
       <div class="note" style="margin-bottom:6px">
-        נוצר בקונסולה של Firebase: Project settings ← Cloud Messaging ←
-        Web configuration ← Generate key pair. מודבק כאן פעם אחת.
-        בלעדיו אף מכשיר לא יוכל להירשם.
+        המפתח של התחנה כבר מוטמע במערכת ואין צורך לגעת כאן.
+        השדה נחוץ רק אם יוצרים מפתח חדש בקונסולה של Firebase
+        (Project settings ← Cloud Messaging ← Web configuration).
+        מפתח שנשמר כאן גובר על המוטמע, ומכשירים שנרשמו עם
+        המפתח הישן יצטרכו להירשם מחדש.
       </div>
       <input type="text" id="vapid" placeholder="B...">
       <button class="btn" id="btnKey">שמור מפתח</button>
@@ -196,16 +256,17 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
-import { renderNav, renderStuckNav } from './nav.js?v=18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { renderNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel } from './push.js?v=18';
-import { CREW_HE } from './rotation.js?v=18';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=19';
+import { CREW_HE } from './rotation.js?v=19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
-         query, orderBy, limit, serverTimestamp }
+         query, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
@@ -232,7 +293,7 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
-let prefs = defaultPrefs(), tokens = [], vapid = '', myToken = '';
+let prefs = defaultPrefs(), tokens = [], vapid = DEFAULT_VAPID, myToken = '';
 let messaging = null;
 
 // ---------- הרשאה ----------
@@ -268,6 +329,7 @@ onAuthStateChanged(auth, async user => {
   $('whoSub').textContent = (ME.full_name || user.email) +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'alerts.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
   if (IS_SUPER) $('keyCard').classList.remove('hide');
 
@@ -275,6 +337,7 @@ onAuthStateChanged(auth, async user => {
 
   await loadAll();
   setupSend();
+  await setupCallout();
   renderPrefs();
   renderState();
   await loadBroadcasts();
@@ -294,8 +357,13 @@ onAuthStateChanged(auth, async user => {
 
 async function loadAll(){
   try {
+    // מסמך ההגדרות גובר על המפתח שבקוד, אבל רק אם יש בו משהו.
+    // מסמך ריק לא אמור לכבות התראות שעובדות.
     const k = await getDoc(doc(db, 'stations', SID, 'config', 'push'));
-    if (k.exists()) vapid = String((k.data() || {}).vapid_key || '');
+    if (k.exists()) {
+      const saved = String((k.data() || {}).vapid_key || '').trim();
+      if (saved) vapid = saved;
+    }
     if (IS_SUPER) $('vapid').value = vapid;
   } catch (ignore) {}
 
@@ -448,6 +516,230 @@ $('btnSavePrefs').onclick = async () => {
   try { await saveTokens(); msg('ההעדפות נשמרו.', 'ok', 'prefMsg'); }
   catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'prefMsg'); }
 };
+
+// ---------- קריאת פתע ----------
+//
+// שני הבדלים מהודעה רגילה, ושניהם מכוונים:
+//
+//   1. הרשימה הידנית פתוחה לכל התחנה, גם למפקד משמרת. אירוע
+//      שמצריך הזעקה לא עוצר בגבול המשמרת, ומי שמזעיק בוחר
+//      אנשים בשמם — לא לוחץ כפתור אחד שמעיר תשעים איש.
+//   2. הזעקת משמרת שלמה שאינה שלך שמורה לרכז כוח אדם ולמנהל
+//      המערכת. אותו כלל בדיוק בשרת.
+
+let roster = [], picked = {}, coStop = null;
+
+function canCallout(){
+  return IS_SUPER || ROLE === 'commander' || ROLE === 'hr_coordinator';
+}
+
+async function setupCallout(){
+  if (!canCallout()) return;
+  $('coCard').classList.remove('hide');
+
+  const wide = IS_SUPER || ROLE === 'hr_coordinator';
+  const opts = [];
+  if (ME.crew) {
+    opts.push({ v: 'crew:' + ME.crew,
+      he: 'המשמרת שלי — ' + (CREW_HE[ME.crew] || ME.crew) });
+  }
+  if (wide) {
+    ['A','B','C'].forEach(function (c) {
+      if (c === ME.crew) return;
+      opts.push({ v: 'crew:' + c, he: 'משמרת ' + (CREW_HE[c] || c) });
+    });
+    opts.push({ v: 'station', he: 'כל התחנה' });
+  }
+  opts.push({ v: 'people', he: 'אנשים שאבחר בשמם' });
+
+  $('coTarget').innerHTML = opts.map(o =>
+    '<option value="' + esc(o.v) + '">' + esc(o.he) + '</option>').join('');
+
+  $('coTarget').onchange = function () {
+    $('coPick').classList.toggle('hide', $('coTarget').value !== 'people');
+  };
+  $('coSearch').oninput = renderPickList;
+  $('coSend').onclick = sendCallout;
+
+  // הסגל כולו, לרשימה הידנית.
+  try {
+    const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
+    roster = [];
+    rs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      if (d.id === ME.uid) return;
+      roster.push({ uid: d.id, name: v.full_name || '',
+                    emp: String(v.emp || v.emp_number || ''),
+                    crew: v.crew || '' });
+    });
+    roster.sort((a, b) => String(a.name).localeCompare(String(b.name), 'he'));
+  } catch (ignore) {}
+  renderPickList();
+
+  watchMyCallouts();
+}
+
+function renderPickList(){
+  const box = $('coList');
+  const term = String($('coSearch').value || '').trim();
+  box.innerHTML = '';
+
+  const list = roster.filter(function (p) {
+    if (!term) return true;
+    return p.name.indexOf(term) !== -1 || p.emp.indexOf(term) !== -1;
+  });
+
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding:11px">' +
+      (roster.length ? 'אין התאמה.' : 'לא נטענה רשימת סגל.') + '</div>';
+    renderPicked();
+    return;
+  }
+
+  list.slice(0, 200).forEach(function (p) {
+    const row = document.createElement('label');
+    row.className = 'p';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!picked[p.uid];
+    cb.onchange = function () {
+      if (cb.checked) picked[p.uid] = p; else delete picked[p.uid];
+      renderPicked();
+    };
+    row.appendChild(cb);
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = p.name + (p.emp ? ' · ' + p.emp : '');
+    row.appendChild(nm);
+    const cw = document.createElement('span');
+    cw.className = 'cw';
+    cw.textContent = p.crew ? (CREW_HE[p.crew] || p.crew) : '';
+    row.appendChild(cw);
+    box.appendChild(row);
+  });
+  renderPicked();
+}
+
+function renderPicked(){
+  const names = Object.keys(picked).map(k => picked[k].name);
+  $('coPicked').textContent = names.length
+    ? 'נבחרו ' + names.length + ': ' + names.join(', ')
+    : 'לא נבחר אף אחד.';
+}
+
+async function sendCallout(){
+  const text = $('coMsg').value.trim();
+  if (!text) { msg('צריך לכתוב מה הקריאה.', 'err', 'coSendMsg'); return; }
+
+  const target = $('coTarget').value;
+  const uids = Object.keys(picked);
+  if (target === 'people' && !uids.length) {
+    msg('בחר לפחות אדם אחד.', 'err', 'coSendMsg'); return;
+  }
+
+  const label = target === 'people'
+    ? uids.length + ' אנשים'
+    : $('coTarget').options[$('coTarget').selectedIndex].textContent;
+
+  // קריאת פתע מעירה אנשים. אישור אחד לפני שהיא יוצאת.
+  if (!window.confirm('להזעיק ' + label + '?\n\n' + text +
+      '\n\nההודעה תקפוץ על המסך שלהם גם אם כיבו התראות.')) return;
+
+  const b = $('coSend'); b.disabled = true;
+  try {
+    const res = await httpsCallable(fns, 'sendCallout')(
+      { target: target, text: text, uids: uids });
+    const d = res.data || {};
+    msg('הקריאה יצאה ל-' + d.sent + ' אנשים · ' +
+        d.devices + ' מכשירים קיבלו פוש.' +
+        (d.devices < d.sent
+          ? ' מי שלא הפעיל התראות יראה אותה כשייכנס למערכת.' : ''),
+        'ok', 'coSendMsg');
+    $('coMsg').value = '';
+    picked = {}; renderPickList();
+  } catch (e) {
+    msg('ההזעקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'coSendMsg');
+  }
+  b.disabled = false;
+}
+
+// הקריאות שאני פתחתי, עם התשובות בזמן אמת.
+function watchMyCallouts(){
+  if (coStop) { try { coStop(); } catch (ignore) {} }
+  try {
+    coStop = onSnapshot(
+      query(collection(db, 'stations', SID, 'callouts'),
+            orderBy('created_key', 'desc'), limit(10)),
+      function (snap) {
+        const list = [];
+        snap.forEach(function (d) {
+          const v = d.data() || {};
+          if (v.by_uid !== ME.uid && !IS_SUPER && ROLE !== 'hr_coordinator') return;
+          list.push({ id: d.id, v: v });
+        });
+        renderLive(list);
+      },
+      function (err) { console.warn('callouts: ' + (err && err.message)); });
+  } catch (ignore) {}
+}
+
+function renderLive(list){
+  const box = $('coLive');
+  if (!list.length) { $('coLiveCard').classList.add('hide'); return; }
+  $('coLiveCard').classList.remove('hide');
+  box.innerHTML = '';
+
+  list.forEach(function (it) {
+    const v = it.v;
+    const uids = Array.isArray(v.uids) ? v.uids : [];
+    const acks = v.acks || {};
+    const coming = [], no = [];
+    Object.keys(acks).forEach(function (u) {
+      const a = acks[u] || {};
+      (a.resp === 'coming' ? coming : no).push(a.name || u);
+    });
+    const silent = uids.length - coming.length - no.length;
+
+    const el = document.createElement('div');
+    el.className = 'co';
+    const when = String(v.created_key || '').slice(0, 16).replace('T', ' ');
+    el.innerHTML =
+      '<div class="hd">' + esc(v.by_name || '') +
+        (v.target_he ? ' → ' + esc(v.target_he) : '') +
+        (when ? ' · ' + esc(when) : '') +
+        (v.active === false ? ' · סגורה' : '') + '</div>' +
+      '<div class="tx">' + esc(v.text || '') + '</div>' +
+      '<div class="tally">' +
+        '<span style="color:#66bb6a">מגיעים ' + coming.length + '</span>' +
+        '<span style="color:#ef5350">לא זמינים ' + no.length + '</span>' +
+        '<span>לא ענו ' + (silent < 0 ? 0 : silent) + '</span>' +
+      '</div>' +
+      (coming.length ? '<div class="who"><b>מגיעים:</b> ' +
+        esc(coming.join(', ')) + '</div>' : '') +
+      (no.length ? '<div class="who"><b>לא זמינים:</b> ' +
+        esc(no.join(', ')) + '</div>' : '');
+
+    if (v.active !== false) {
+      const b = document.createElement('button');
+      b.className = 'btn sm';
+      b.style.marginTop = '11px';
+      b.textContent = 'סגור קריאה';
+      b.onclick = async () => {
+        if (!window.confirm('לסגור את הקריאה? היא תפסיק לקפוץ למי שעוד לא ענה.')) return;
+        b.disabled = true;
+        try { await httpsCallable(fns, 'closeCallout')({ id: it.id }); }
+        catch (e) {
+          b.disabled = false;
+          msg('הסגירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'coSendMsg');
+        }
+      };
+      el.appendChild(b);
+    }
+    box.appendChild(el);
+  });
+}
 
 // ---------- שליחת הודעה ----------
 //

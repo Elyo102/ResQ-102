@@ -250,15 +250,16 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
-import { renderNav, renderStuckNav } from './nav.js?v=18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { renderNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=18';
+  from './rotation.js?v=19';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=18';
+  from './hours.js?v=19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -342,6 +343,7 @@ onAuthStateChanged(auth, async user => {
   $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'attendance.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
   const now = new Date();
   viewYear = now.getFullYear();

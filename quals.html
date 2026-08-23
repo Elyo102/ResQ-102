@@ -213,9 +213,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
-import { renderNav, renderStuckNav } from './nav.js?v=18';
-import { redlineState, visibleCrews } from './readiness.js?v=18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { renderNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
+import { redlineState, visibleCrews } from './readiness.js?v=19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -300,6 +301,7 @@ onAuthStateChanged(auth, async user => {
   $('denyCard').classList.add('hide');
   $('work').classList.remove('hide');
   renderNav(c, 'quals.html', user.email || '');
+  watchCallouts(db, SID, user.uid, { name: user.email || '' });
 
   $('peopleNote').textContent = CAN_EDIT
     ? 'לחץ "ערוך" כדי לסמן כשירויות. נשמר מיד.'

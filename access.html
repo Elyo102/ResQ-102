@@ -162,9 +162,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
-import { STATIONS, stationName } from './stations.js?v=18';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { STATIONS, stationName } from './stations.js?v=19';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signInWithCustomToken,
          signOut, onAuthStateChanged }
@@ -272,6 +273,7 @@ onAuthStateChanged(auth, async user => {
   $('work').classList.remove('hide');
 
   renderNav(c, 'access.html', user.email || '');
+  watchCallouts(db, c.stationId || STATION_ID, user.uid, { name: user.email || '' });
 
   $('whoAmI').textContent = 'מחובר: ' +
     (isSuper ? 'מנהל מערכת' : (ROLE_HE[c.role] || c.role));

@@ -1463,7 +1463,10 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
     const prefs = v.prefs || {};
 
     // סוגים שנוגעים ישירות למשתמש נשלחים תמיד. השאר לפי בחירתו.
-    const must = type === 'swap_mine' || type === 'report_mine';
+    // קריאת פתע נמצאת ברשימה הזו מסיבה אחרת: היא הזעקה, ומי
+    // שכיבה התראות עדיין צריך להגיע לתחנה.
+    const must = type === 'swap_mine' || type === 'report_mine' ||
+                 type === 'callout';
     if (!must && prefs[type] === false) continue;
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
@@ -1765,4 +1768,179 @@ exports.sendBroadcast = onCall(async (req) => {
   }).catch(() => {});
 
   return { ok: true, people: res.people, devices: res.devices };
+});
+
+
+// ---------- קריאת פתע ----------
+//
+// הודעה רגילה מגיעה למי שרוצה לקבל אותה. קריאת פתע מגיעה לכולם
+// ברשימה, גם למי שכיבה התראות, וקופצת על המסך במקום להמתין
+// בשורת ההתראות. זה כלי הזעקה, לא כלי הודעות — ולכן:
+//
+//   * מי ששולח            מפקד משמרת, רכז כוח אדם, מנהל מערכת
+//   * מי שמקבל            משמרת שלמה, או רשימת אנשים נבחרת
+//   * אי אפשר לכבות       הסוג 'callout' עוקף את ההעדפות
+//   * חייב תשובה          מגיע או לא זמין, נשמר על המסמך
+//
+// מפקד משמרת מזעיק את המשמרת שלו, ובבחירה ידנית — כל אדם
+// בתחנה. הבחירה הידנית פתוחה לכל התחנה במכוון: אירוע שמצריך
+// הזעקה לא עוצר בגבול המשמרת. השם של מי שהזעיק נשמר על כל
+// קריאה, וזו הבקרה — לא הצרה של הרשימה.
+
+const CALLOUT_ROLE_HE = {
+  commander: 'מפקד משמרת',
+  hr_coordinator: 'רכז כוח אדם',
+  super_admin: 'מנהל מערכת',
+  firefighter: 'כבאי'
+};
+
+function hhmmIL(d) {
+  try {
+    return new Intl.DateTimeFormat('he-IL', {
+      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem'
+    }).format(d);
+  } catch (e) { return ''; }
+}
+
+exports.sendCallout = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const isSuper = t.super === true ||
+                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const role = t.role || '';
+  const myCrew = t.shift || '';
+
+  if (!isSuper && role !== 'commander' && role !== 'hr_coordinator') {
+    throw new HttpsError('permission-denied',
+      'קריאת פתע שמורה למפקד משמרת ולרכז כוח אדם.');
+  }
+
+  const d = req.data || {};
+  const text = String(d.text || '').trim();
+  if (!text) throw new HttpsError('invalid-argument', 'צריך לכתוב מה הקריאה.');
+  if (text.length > 300) {
+    throw new HttpsError('invalid-argument',
+      'קריאת פתע קצרה מ-300 תווים. מה שארוך מזה לא נקרא בריצה.');
+  }
+
+  const wide = isSuper || role === 'hr_coordinator';
+  const target = String(d.target || '').trim();
+  let uids = [], targetHe = '', crew = '';
+
+  if (target.indexOf('crew:') === 0) {
+    crew = target.slice(5);
+    if (['A', 'B', 'C'].indexOf(crew) === -1) {
+      throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
+    }
+    // הזעקת משמרת שלמה שאינה שלך היא החלטה של רכז כוח אדם או
+    // של מנהל המערכת. מפקד שצריך אנשים ממשמרת אחרת בוחר אותם
+    // בשמם — כך יש לו כוונה, ולא לחיצה אחת שמעירה תשעים איש.
+    if (!wide && crew !== myCrew) {
+      throw new HttpsError('permission-denied',
+        'אפשר להזעיק את המשמרת שלך. לאנשים ממשמרת אחרת — בחר אותם בשמם.');
+    }
+    uids = await uidsInCrew(sid, crew);
+    targetHe = 'משמרת ' + (CREW_HE_S[crew] || crew);
+
+  } else if (target === 'people') {
+    const raw = Array.isArray(d.uids) ? d.uids : [];
+    const want = Array.from(new Set(raw.map(String).filter(Boolean)));
+    if (!want.length) throw new HttpsError('invalid-argument', 'לא נבחרו אנשים.');
+    if (want.length > 120) {
+      throw new HttpsError('invalid-argument', 'יותר מדי אנשים בבחירה אחת.');
+    }
+    // מסננים מול הסגל בפועל: uid שאינו בתחנה או שאינו פעיל
+    // לא נכנס לרשימה, גם אם נשלח מהדפדפן.
+    const live = await uidsInCrew(sid, '');
+    uids = want.filter(u => live.indexOf(u) !== -1);
+    if (!uids.length) {
+      throw new HttpsError('invalid-argument',
+        'אף אחד מהנבחרים אינו סגל פעיל בתחנה.');
+    }
+    targetHe = uids.length + ' אנשים בבחירה ידנית';
+
+  } else if (target === 'station') {
+    if (!wide) throw new HttpsError('permission-denied',
+      'הזעקת כל התחנה שמורה לרכז כוח אדם ולמנהל המערכת.');
+    uids = await uidsInCrew(sid, '');
+    targetHe = 'כל התחנה';
+
+  } else {
+    throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
+  }
+
+  // המזעיק לא מזעיק את עצמו.
+  uids = uids.filter(u => u !== auth.uid);
+  if (!uids.length) {
+    throw new HttpsError('invalid-argument', 'אין למי לשלוח.');
+  }
+
+  let name = '';
+  try {
+    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
+    if (u.exists) name = (u.data() || {}).full_name || '';
+  } catch (e) {}
+
+  const now = new Date();
+  const roleHe = isSuper ? CALLOUT_ROLE_HE.super_admin
+                         : (CALLOUT_ROLE_HE[role] || '');
+  const whenHe = hhmmIL(now);
+
+  // כותבים קודם, שולחים אחר כך. אם השליחה תיפול, הקריאה עדיין
+  // תקפוץ למי שהאפליקציה פתוחה אצלו — וזה עדיף על כלום.
+  const ref = db.collection('stations/' + sid + '/callouts').doc();
+  await ref.set({
+    by_uid: auth.uid, by_name: name, by_role: role,
+    by_role_he: roleHe, by_crew: myCrew,
+    target: target, target_he: targetHe, crew: crew,
+    text: text, uids: uids, acks: {}, active: true,
+    when_he: whenHe,
+    created_key: now.toISOString(),
+    created_at: FV.serverTimestamp()
+  });
+
+  const res = await pushToUsers(sid, uids, 'callout',
+    'קריאת פתע · ' + (name || 'מפקד'),
+    text, './login.html', true);
+
+  await ref.set({ people: res.people, devices: res.devices },
+                { merge: true }).catch(() => {});
+
+  return { ok: true, id: ref.id, sent: uids.length,
+           people: res.people, devices: res.devices };
+});
+
+
+// סוגר קריאה. הקריאה מפסיקה לקפוץ למי שעוד לא ענה, וההיסטוריה
+// נשארת עם התשובות שכן התקבלו.
+exports.closeCallout = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const isSuper = t.super === true ||
+                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const role = t.role || '';
+
+  const id = String((req.data || {}).id || '').trim();
+  if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה קריאה.');
+
+  const ref = db.doc('stations/' + sid + '/callouts/' + id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'הקריאה לא נמצאה.');
+
+  const v = snap.data() || {};
+  const mine = v.by_uid === auth.uid;
+  if (!mine && !isSuper && role !== 'hr_coordinator') {
+    throw new HttpsError('permission-denied',
+      'רק מי שפתח את הקריאה יכול לסגור אותה.');
+  }
+
+  await ref.set({ active: false, closed_at: FV.serverTimestamp(),
+                  closed_by: auth.uid }, { merge: true });
+  return { ok: true };
 });

@@ -268,7 +268,7 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -278,10 +278,11 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=18';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=19';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=18';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=18';
+  from './stations.js?v=19';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=19';
+import { watchCallouts } from './callout.js?v=19';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -434,6 +435,7 @@ onAuthStateChanged(auth, async user => {
   $('denyCard').classList.add('hide');
 
   renderNav(claims, 'admin.html', user.email || '');
+  watchCallouts(db, claims.stationId || STATION_ID, user.uid, { name: user.email || '' });
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
   $('work').classList.remove('hide');

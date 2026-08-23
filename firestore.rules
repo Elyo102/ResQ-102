@@ -527,6 +527,30 @@ service cloud.firestore {
         allow update, delete: if isSuper();
       }
 
+      // ---------- קריאת פתע ----------
+      //
+      // הזעקה. נוצרת אך ורק בפונקציית sendCallout בשרת — הכלל
+      // כאן חוסם יצירה מהדפדפן לגמרי, כי קריאת פתע עוקפת את
+      // העדפות ההתראות של כל מי שברשימה, ולכן היא הדבר האחרון
+      // שמותר לזייף.
+      //
+      // מה שכן מותר מהדפדפן: לענות. כל אדם כותב מפתח אחד בלבד
+      // בתוך acks, את המפתח ששמו עליו, ולא נוגע בשום שדה אחר.
+      // כך אי אפשר לענות בשם חבר, ואי אפשר לשנות את נוסח
+      // הקריאה אחרי שיצאה.
+
+      match /callouts/{coId} {
+        allow read: if member(sid);
+        allow create, delete: if false;
+
+        allow update: if member(sid)
+                      && request.resource.data.diff(resource.data)
+                           .affectedKeys().hasOnly(['acks'])
+                      && request.resource.data.get('acks', {})
+                           .diff(resource.data.get('acks', {}))
+                           .affectedKeys().hasOnly([request.auth.uid]);
+      }
+
 
       // ---------- החלפות משמרת ----------
       // שמות שני הצדדים נעולים, והמקבל לא יכול לאשר סופית.

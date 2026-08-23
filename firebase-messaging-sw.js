@@ -40,7 +40,12 @@ messaging.onBackgroundMessage(function (payload) {
     lang: 'he',
     tag: d.tag || 'resq',
     data: { url: d.url || './login.html' },
-    requireInteraction: d.important === '1'
+    // התראה דחופה נשארת על המסך עד שנוגעים בה, ומרטיטה.
+    // קריאת פתע היא המקרה שבשבילו זה קיים.
+    requireInteraction: d.important === '1',
+    renotify: d.important === '1',
+    vibrate: d.important === '1'
+      ? [300, 120, 300, 120, 500] : undefined
   });
 });
 
