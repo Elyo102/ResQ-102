@@ -258,7 +258,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
       <span class="spacer"></span>
       <span class="lbl" id="sitesLbl"></span>
-      <button class="btn hide" id="btnSites">תחנות קצה</button>
+      <button class="btn hide" id="btnSites">תחנות</button>
       <button class="btn hide" id="btnAddVeh">＋ רכב</button>
     </div>
 
@@ -689,7 +689,7 @@ function renderFleet(){
       job.textContent = s.job || '—';
       if (s.site && siteName(s.site)) {
         job.textContent += ' · ' + siteName(s.site);
-        job.title = 'תחנת קצה: ' + siteName(s.site);
+        job.title = 'תחנה: ' + siteName(s.site);
       }
 
       const who = document.createElement('span');
@@ -932,7 +932,7 @@ function pickPerson(slotId, jobLabel, req){
 }
 
 function siteOptions(sel){
-  let h = '<option value="">בלי תחנת קצה</option>';
+  let h = '<option value="">בלי תחנה</option>';
   sites.forEach(function (s) {
     h += '<option value="' + esc(s.id) + '"' + (s.id === sel ? ' selected' : '') +
          '>' + esc(s.name) +
@@ -961,12 +961,12 @@ $('btnSites').onclick = () => {
   }).join('');
 
   openOv(
-    '<h3>תחנות קצה</h3>' +
+    '<h3>תחנות</h3>' +
     '<div class="hint">שם, ואורך משמרת קבוע בשעות. 0 פירושו שהשעות ' +
       'מחושבות מהכניסה והיציאה. יטבתה = 25.</div>' +
     '<div id="siteRows">' + rows + '</div>' +
     '<div class="addrow" style="display:flex;gap:10px;margin-top:14px">' +
-      '<input type="text" id="newSite" maxlength="20" placeholder="תחנת קצה חדשה">' +
+      '<input type="text" id="newSite" maxlength="20" placeholder="תחנה חדשה">' +
       '<input type="number" id="newSiteH" class="num" min="0" max="48" step="0.25" value="0">' +
     '</div>' +
     '<div class="acts">' +
@@ -1080,7 +1080,7 @@ function editSlot(v, slot){
       esc(isNew ? '' : slot.job) + '">' +
     '<label>כשירות נדרשת</label>' +
     '<select id="sr">' + qualOptions(isNew ? '' : (slot.req || '')) + '</select>' +
-    '<label>תחנת קצה</label>' +
+    '<label>תחנה</label>' +
     '<select id="ss">' + siteOptions(isNew ? '' : (slot.site || '')) + '</select>' +
     '<div class="acts">' +
       '<button class="btn go" id="ssave">שמור</button>' +
