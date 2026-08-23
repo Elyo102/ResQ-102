@@ -1097,9 +1097,21 @@ exports.setSilentMode = onCall(async (req) => {
     updated_by: auth.uid, updated_at: FV.serverTimestamp()
   }, { merge: true });
 
+  // מסמך שני, ציבורי, עם שדה אחד: ניסוי או חי.
+  //
+  // **למה בכלל שני מסמכים.** את המצב צריך לקרוא כל כבאי, כדי
+  // שפס "מצב ניסוי" יופיע לו על המסך. את רשימת הפטורים אסור
+  // שיקרא — היא מגלה מי כן מקבל התראות כשכולם חושבים שהמערכת
+  // שקטה. שדה בודד אי אפשר לחסום בכלל אבטחה: או שכל המסמך
+  // נקרא, או שלא. לכן שניים.
+  await db.doc('config/mode').set({
+    mode: on ? 'trial' : 'live',
+    since: FV.serverTimestamp()
+  }, { merge: true });
+
   _rt = null;   // מאלץ קריאה מחדש, אחרת המטמון היה משהה את השינוי בחצי דקה
   await closeAudit(audit, 'ok', { silent: on });
-  return { ok: true, silent: on, allow: allow };
+  return { ok: true, silent: on, allow: allow, mode: on ? 'trial' : 'live' };
 });
 
 exports.getSilentMode = onCall(async (req) => {
@@ -1111,9 +1123,26 @@ exports.getSilentMode = onCall(async (req) => {
     const c = await db.collection('silenced').count().get();
     blocked = c.data().count;
   } catch (e) {}
+  // כמה חשבונות קיימים, וכמה מהם כבר נכנסו פעם אחת. בלי
+  // המספרים האלה "להפוך לחי" היא החלטה בעיניים עצומות.
+  let accounts = 0, signedIn = 0;
+  try {
+    let pageToken = undefined;
+    do {
+      const page = await admin.auth().listUsers(1000, pageToken);
+      page.users.forEach(function (u) {
+        accounts++;
+        if (u.metadata && u.metadata.lastSignInTime) signedIn++;
+      });
+      pageToken = page.pageToken;
+    } while (pageToken);
+  } catch (e) {}
+
   return { silent: v.silent === true,
+           mode: v.silent === true ? 'trial' : 'live',
            allow: Array.isArray(v.silent_allow) ? v.silent_allow : [],
-           blocked: blocked };
+           blocked: blocked,
+           accounts: accounts, signed_in: signedIn };
 });
 
 // ---------------------------------------------------------------------

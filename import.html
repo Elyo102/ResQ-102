@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=28">
+<link rel="stylesheet" href="./theme.css?v=29">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ResQ">
@@ -89,6 +89,44 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .hide{ display:none !important }
 
+  /* ---------- המתג ----------
+     מתג פיזי ולא זוג כפתורים: "הפעל / כבה" מכריח לקרוא שתי
+     תוויות ולהסיק מהן מה המצב הנוכחי. מתג מראה את המצב
+     בצורתו, ולחיצה אחת הופכת אותו. */
+  .master{ display:flex; align-items:center; gap:18px; padding:20px;
+           border:2px solid var(--line); border-radius:14px;
+           background:var(--panel); margin-top:12px; flex-wrap:wrap }
+  .master.trial{ border-color:var(--warn) }
+  .master.live{ border-color:var(--go) }
+
+  .knob{ width:96px; height:50px; border-radius:99px; flex:none;
+         border:2px solid var(--line); background:var(--track);
+         position:relative; cursor:pointer; padding:0;
+         transition:background .18s ease, border-color .18s ease }
+  .knob::after{ content:""; position:absolute; top:3px;
+        inset-inline-start:3px; width:40px; height:40px; border-radius:50%;
+        background:var(--card); box-shadow:0 2px 8px rgba(0,0,0,.35);
+        transition:inset-inline-start .18s ease }
+  .master.live .knob{ background:var(--go); border-color:var(--go) }
+  .master.live .knob::after{ inset-inline-start:49px }
+  .knob:focus-visible{ outline:3px solid var(--accent); outline-offset:3px }
+  .knob:disabled{ opacity:.5; cursor:wait }
+
+  .master .txt{ flex:1 1 240px }
+  .master .txt .big{ font-size:21px; font-weight:800; line-height:1.2 }
+  .master.trial .txt .big{ color:var(--warn) }
+  .master.live  .txt .big{ color:var(--go) }
+  .master .txt .s{ font-size:13.5px; color:var(--muted); margin-top:5px;
+                   line-height:1.7 }
+
+  .ready{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px }
+  .ready div{ flex:1 1 120px; background:var(--card);
+              border:1px solid var(--line); border-radius:9px;
+              padding:11px; text-align:center }
+  .ready .v{ font-size:22px; font-weight:800;
+             font-variant-numeric:tabular-nums }
+  .ready .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+
   .sum{ display:flex; gap:12px; flex-wrap:wrap; margin-top:12px }
   .sum div{ flex:1 1 110px; background:var(--panel); border:1px solid var(--line);
             border-radius:9px; padding:12px; text-align:center }
@@ -110,24 +148,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <h1>קליטת סגל</h1>
     <div class="sub" id="srcNote">—</div>
 
-    <!-- ============ מצב שקט ============ -->
+    <!-- ============ המתג ============ -->
     <div class="card">
-      <h2>מצב שקט</h2>
+      <h2>מצב המערכת</h2>
       <div class="note">
-        חוסם כל התראה וכל מייל לכל המערכת, חוץ ממך. כל חסימה נרשמת,
-        כדי שבסוף הניסוי תדע מה היה נשלח.
+        מתג אחד. במצב ניסוי שום התראה ושום מייל לא יוצאים לאף אחד
+        חוץ ממך, וכל חסימה נרשמת. במצב חי הכל עובד כרגיל.
       </div>
-      <div class="sw">
-        <div class="lbl">
-          <div class="t">התראות לכלל התחנה</div>
-          <div class="s" id="swNote">בודק…</div>
+
+      <div class="master trial" id="master">
+        <button class="knob" id="knob" role="switch"
+                aria-checked="false" aria-label="מצב המערכת"></button>
+        <div class="txt">
+          <div class="big" id="mState">בודק…</div>
+          <div class="s" id="mNote">—</div>
         </div>
-        <div class="state" id="swState">—</div>
       </div>
-      <div class="row">
-        <button class="btn go" id="btnSilentOn">הפעל מצב שקט</button>
-        <button class="btn" id="btnSilentOff">כבה — התראות יוצאות לכולם</button>
-      </div>
+
+      <div class="ready" id="ready"></div>
       <div class="msg" id="swMsg"></div>
     </div>
 
@@ -186,9 +224,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=28';
-import { renderNav, renderStuckNav } from './nav.js?v=28';
-import { ROSTER, SOURCE, SKIPPED, SKIPPED_WHY } from './roster-import.js?v=28';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=29';
+import { renderNav, renderStuckNav } from './nav.js?v=29';
+import { ROSTER, SOURCE, SKIPPED, SKIPPED_WHY } from './roster-import.js?v=29';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -292,32 +330,57 @@ async function loadSilent(){
     const r = await httpsCallable(fns, 'getSilentMode')({});
     paintSilent(r.data || {});
   } catch (e) {
-    $('swNote').textContent = 'לא הצלחתי לקרוא את המצב. (' +
-      (e.code || e.message || '') + ')';
-    $('swState').textContent = '?';
+    $('mState').textContent = 'לא ידוע';
+    $('mNote').textContent = 'לא הצלחתי לקרוא את המצב מהשרת. (' +
+      (e.code || e.message || '') + ') — כנראה הפונקציות עוד לא נפרסו.';
   }
 }
 
+let SILENT = true;
+
 function paintSilent(v){
-  const on = v.silent === true;
-  $('swState').textContent = on ? 'שקט' : 'פעיל';
-  $('swState').className = 'state ' + (on ? 'on' : 'off');
-  $('swNote').innerHTML = on
-    ? 'אף אחד לא מקבל התראות או מיילים, חוץ מ־' +
-      esc((v.allow || []).join(', ') || 'אף אחד') + '.' +
-      (v.blocked ? ' <b>' + v.blocked + '</b> התראות נחסמו עד כה.' : '')
-    : 'כל ההתראות והמיילים יוצאים כרגיל, לכל 28 האנשים.';
+  const trial = v.silent === true;
+  SILENT = trial;
+
+  $('master').className = 'master ' + (trial ? 'trial' : 'live');
+  $('knob').setAttribute('aria-checked', trial ? 'false' : 'true');
+  $('mState').textContent = trial ? 'מצב ניסוי' : 'המערכת חיה';
+  $('mNote').innerHTML = trial
+    ? 'שום התראה ושום מייל לא יוצאים — חוץ מ־<b>' +
+      esc((v.allow || []).join(', ') || 'אף אחד') + '</b>.' +
+      (v.blocked ? ' עד כה נחסמו <b>' + v.blocked + '</b> התראות.' : '') +
+      '<br>הרם את המתג כשאתה מוכן להפעיל את המערכת לכל התחנה.'
+    : 'התראות ומיילים יוצאים לכל מי שנקלט. קריאת פתע תקפיץ להם ' +
+      'את המסך.<br>הורד את המתג כדי לחזור למצב ניסוי.';
+
+  // המספרים שמאחורי ההחלטה. "כמה נכנסו" הוא הנתון שקובע — מערכת
+  // חיה שאיש עוד לא נכנס אליה שולחת התראות למי שלא יודע שיש לו
+  // חשבון.
+  const acc = v.accounts || 0, si = v.signed_in || 0;
+  $('ready').innerHTML =
+    '<div><div class="v">' + acc + '</div><div class="k">חשבונות קיימים</div></div>' +
+    '<div><div class="v" style="color:' +
+      (si > 1 ? 'var(--good)' : 'var(--warn)') + '">' + si +
+      '</div><div class="k">כבר נכנסו פעם אחת</div></div>' +
+    '<div><div class="v" style="color:var(--muted)">' + (v.blocked || 0) +
+      '</div><div class="k">התראות שנחסמו</div></div>';
 }
 
-$('btnSilentOn').onclick  = () => setSilent(true);
-$('btnSilentOff').onclick = () => setSilent(false);
+$('knob').onclick = () => setSilent(!SILENT ? true : false);
 
 async function setSilent(on){
+  // האזהרה מפרטת מה בדיוק מתחיל לקרות, ולא "האם אתה בטוח".
+  // "בטוח" זו שאלה שכולם עונים עליה כן בלי לקרוא.
   if (!on && !window.confirm(
-      'כיבוי מצב שקט מפעיל התראות ומיילים אמיתיים לכל מי שנקלט.\n\n' +
-      'קריאת פתע תקפיץ להם את המסך, ותקלה שתיפתח תשלח התראה ' +
-      'למפקד המשמרת שלהם.\n\nלכבות?')) return;
+      'המערכת עוברת למצב חי.\n\n' +
+      'מרגע זה:\n' +
+      '· קריאת פתע תקפיץ מסך מלא לכל מי שהוזעק\n' +
+      '· תקלה שתיפתח תשלח התראה למפקד המשמרת\n' +
+      '· בקשות והחלפות ישלחו מיילים\n\n' +
+      'לכל מי שנקלט, גם אם עוד לא נכנס למערכת פעם אחת.\n\n' +
+      'להפעיל?')) return;
 
+  $('knob').disabled = true;
   msg('שומר…', 'info', 'swMsg');
   try {
     // הרשימה הפטורה: גם ה-uid וגם המייל. השליחות עובדות
@@ -326,13 +389,13 @@ async function setSilent(on){
     const r = await httpsCallable(fns, 'setSilentMode')({
       silent: on, allow: on ? [ME.uid, ME.email] : []
     });
-    msg(on ? 'מצב שקט פעיל. רק אתה מקבל.' : 'מצב שקט כבוי.',
-        'ok', 'swMsg');
-    paintSilent({ silent: r.data.silent, allow: r.data.allow, blocked: 0 });
+    msg(on ? 'מצב ניסוי. רק אתה מקבל התראות.'
+           : 'המערכת חיה. התראות יוצאות לכולם.', 'ok', 'swMsg');
     await loadSilent();
   } catch (e) {
     msg('נכשל. (' + (e.code || e.message || '') + ')', 'err', 'swMsg');
   }
+  $('knob').disabled = false;
 }
 
 // ---------- ההרצה ----------

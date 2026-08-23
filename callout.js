@@ -153,8 +153,59 @@ export function ackCallout(db, sid, calloutId, uid, name, answer) {
 //
 // אין כאן סגירה בלי תשובה: אין כפתור X ואין לחיצה על הרקע.
 // הדרך היחידה החוצה היא לענות — וזו כל הנקודה.
+// ------------------------------------------------------------------
+//  פס מצב ניסוי
+// ------------------------------------------------------------------
+//
+//  **למה הפס הזה קיים.** במצב ניסוי אף התראה לא יוצאת. בלי
+//  סימן על המסך, מפקד שישלח קריאת פתע ולא יראה תגובה יסיק
+//  שההזעקה שבורה — ויתקשר לכולם בטלפון. "שקט" ו"שבור" נראים
+//  אותו דבר בדיוק, וזה ההבדל היחיד שאפשר להראות.
+//
+//  **ולמה הוא יושב כאן.** watchCallouts נקראת מכל מסך במערכת,
+//  ויש לה כבר db. הוספת הפס לכל מסך בנפרד הייתה שבע-עשרה
+//  עריכות שאחת מהן נשכחת — והמסך שנשכח הוא זה שמישהו יעבוד
+//  בו כשהוא ישכח שהמערכת שקטה.
+
+let modeStop = null;
+
+function modeBar(mode) {
+  const on = mode === 'trial';
+  let el = document.getElementById('modeBar');
+
+  if (!on) { if (el) el.remove(); document.body.style.paddingTop = ''; return; }
+  if (el) return;
+
+  el = document.createElement('div');
+  el.id = 'modeBar';
+  el.setAttribute('role', 'status');
+  el.innerHTML = '<b>מצב ניסוי</b> · התראות ומיילים חסומים לכל התחנה. ' +
+                 'שום דבר לא יוצא החוצה.';
+  el.style.cssText = [
+    'position:sticky', 'top:0', 'z-index:950',
+    'background:var(--warn-bg)', 'color:var(--warn)',
+    'border-bottom:2px solid var(--warn)',
+    'padding:9px 16px', 'font-size:13px', 'font-weight:600',
+    'line-height:1.6', 'direction:rtl', 'text-align:center',
+    'font-family:"Segoe UI",Arial,sans-serif',
+    'margin:-18px -18px 0'
+  ].join(';');
+  document.body.insertBefore(el, document.body.firstChild);
+}
+
+export function watchMode(db) {
+  if (!db || modeStop) return;
+  try {
+    modeStop = onSnapshot(doc(db, 'config', 'mode'), function (d) {
+      const v = (d.exists() ? d.data() : {}) || {};
+      modeBar(v.mode || 'live');
+    }, function () {});
+  } catch (e) {}
+}
+
 export function watchCallouts(db, sid, uid, opts) {
   if (!db || !sid || !uid) return function () {};
+  watchMode(db);
   const o = opts || {};
   let shownId = '';
 

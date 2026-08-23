@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=28">
+<link rel="stylesheet" href="./theme.css?v=29">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -283,15 +283,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=28';
-import { renderNav, renderStuckNav } from './nav.js?v=28';
-import { initPWA } from './pwa.js?v=28';
-import { watchCallouts } from './callout.js?v=28';
-import { CREW_HE } from './rotation.js?v=28';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=29';
+import { renderNav, renderStuckNav } from './nav.js?v=29';
+import { initPWA } from './pwa.js?v=29';
+import { watchCallouts } from './callout.js?v=29';
+import { CREW_HE } from './rotation.js?v=29';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=28';
+         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=29';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
