@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -282,6 +288,7 @@ import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=20';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
   from './stations.js?v=20';
 import { renderNav, clearNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 
 const app  = initializeApp(firebaseConfig);
@@ -316,6 +323,7 @@ function goSignIn(){
 renderStuckNav('');
 
 const $ = id => document.getElementById(id);
+initPWA({ offer: false });
 
 const ROLE_HE = {
   firefighter:        'לוחם אש',

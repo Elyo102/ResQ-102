@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -346,6 +352,7 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { CREW_HE } from './rotation.js?v=20';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
@@ -368,6 +375,7 @@ const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
+initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -427,33 +435,31 @@ onAuthStateChanged(auth, async user => {
 // ---------- טעינה ----------
 
 async function loadAll(){
-  faults = [];
-  try {
-    const s = await getDocs(collection(db, 'stations', SID, 'faults'));
-    s.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
-  } catch (ignore) {}
-
+  // ארבע קריאות במקביל ולא בזה אחר זה. אף אחת מהן אינה
+  // תלויה בקודמת, וההמתנה הסדרתית הייתה כ-800 מילישניות של
+  // מסך ריק מטלפון סלולרי.
+  faults = []; anchors = []; handovers = {};
   let boardVehicles = [];
-  try {
-    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
-    if (b.exists()) boardVehicles = (b.data() || {}).vehicles || [];
-  } catch (ignore) {}
 
-  anchors = [];
-  try {
-    const s = await getDocs(collection(db, 'stations', SID, 'vehicles'));
-    s.forEach(d => {
-      const v = d.data() || {};
-      if (v.kind && v.kind !== 'anchor') return;
-      anchors.push(Object.assign({ id: d.id }, v));
-    });
-  } catch (ignore) {}
+  const safe = p => p.catch(function () { return null; });
 
-  handovers = {};
-  try {
-    const s2 = await getDocs(collection(db, 'stations', SID, 'handovers'));
-    s2.forEach(d => { handovers[d.id] = Object.assign({ id: d.id }, d.data() || {}); });
-  } catch (ignore) {}
+  const [fs_, bd, vs, hs] = await Promise.all([
+    safe(getDocs(collection(db, 'stations', SID, 'faults'))),
+    safe(getDoc(doc(db, 'stations', SID, 'config', 'board'))),
+    safe(getDocs(collection(db, 'stations', SID, 'vehicles'))),
+    safe(getDocs(collection(db, 'stations', SID, 'handovers')))
+  ]);
+
+  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
+  if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
+  if (vs) vs.forEach(d => {
+    const v = d.data() || {};
+    if (v.kind && v.kind !== 'anchor') return;
+    anchors.push(Object.assign({ id: d.id }, v));
+  });
+  if (hs) hs.forEach(d => {
+    handovers[d.id] = Object.assign({ id: d.id }, d.data() || {});
+  });
 
   fleet = mergeFleet(boardVehicles, anchors);
 

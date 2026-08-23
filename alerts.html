@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -258,6 +264,7 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
          enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=20';
@@ -280,6 +287,7 @@ const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
+initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -671,10 +679,13 @@ async function sendCallout(){
     const res = await httpsCallable(fns, 'sendCallout')(
       { target: target, text: text, uids: uids });
     const d = res.data || {};
+    const away = Array.isArray(d.skipped_away) ? d.skipped_away : [];
     msg('הקריאה יצאה ל-' + d.sent + ' אנשים · ' +
         d.devices + ' מכשירים קיבלו פוש.' +
         (d.devices < d.sent
-          ? ' מי שלא הפעיל התראות יראה אותה כשייכנס למערכת.' : ''),
+          ? ' מי שלא הפעיל התראות יראה אותה כשייכנס למערכת.' : '') +
+        (away.length
+          ? ' לא הוזעקו — בחופשה מחוץ לאילת: ' + away.join(', ') + '.' : ''),
         'ok', 'coSendMsg');
     $('coMsg').value = '';
     picked = {}; renderPickList();

@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -276,6 +282,7 @@ import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { renderNav, clearNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { isAssigned as guardHasMe } from './guards.js?v=20';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
@@ -291,6 +298,7 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 const $ = id => document.getElementById(id);
+initPWA({ offer: false });
 
 // אין מסך כניסה בכל דף. יש אחד, והוא login.html.
 //

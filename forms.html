@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — טפסים</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1000px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+  .cols{ display:grid; grid-template-columns:1fr; gap:14px }
+  @media (min-width:900px){ .cols{ grid-template-columns:1fr 1fr } }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  label b{ color:var(--txt); font-weight:600 }
+  label i{ font-style:normal; color:var(--bad) }
+  select, textarea, input{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  input[type=time], input[type=date]{ color-scheme:dark }
+  input[type=time]::-webkit-calendar-picker-indicator,
+  input[type=date]::-webkit-calendar-picker-indicator{ filter:invert(1) opacity(.7) }
+  textarea{ min-height:76px; resize:vertical }
+  .fnote{ font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.6 }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn.ok{ background:#2e7d32; border-color:#2e7d32; color:#fff }
+  .btn.no{ background:#c62828; border-color:#c62828; color:#fff }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
+  .tabs button{ width:auto; margin:0; background:#23262c; border:1px solid var(--line);
+                color:var(--muted); border-radius:9px; padding:9px 16px;
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:#fff }
+
+  /* ---------- הגשה ---------- */
+  .s{ border:1px solid var(--line); border-radius:11px; padding:13px;
+      margin-top:11px; background:#191c20; border-inline-start-width:4px }
+  .s.submitted{ border-inline-start-color:var(--warn) }
+  .s.approved{ border-inline-start-color:var(--good) }
+  .s.rejected{ border-inline-start-color:var(--bad) }
+  .s.cancelled{ border-inline-start-color:#5a6270; opacity:.65 }
+  .s .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
+  .s .ttl{ font-size:15.5px; font-weight:700; flex:1 1 170px }
+  .s .vals{ margin-top:8px; font-size:13.5px; line-height:1.8 }
+  .s .vals b{ color:var(--muted); font-weight:600 }
+  .s .rep{ font-size:12px; color:var(--muted); margin-top:8px;
+           padding-top:8px; border-top:1px solid #24272c; line-height:1.7 }
+  .s .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px }
+  .s .sig{ margin-top:9px }
+  .s .sig img{ height:56px; background:#fff; border-radius:6px; padding:3px;
+               display:block }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px;
+        padding:2px 10px; white-space:nowrap; border:1px solid var(--line) }
+  .lock{ font-size:11px; color:#c77dff; border:1px solid #4a3560;
+         border-radius:20px; padding:2px 10px }
+
+  /* ---------- חתימה ---------- */
+  .sigbox{ margin-top:6px }
+  .sigbox canvas{ width:100%; height:150px; background:#fff;
+                  border:1px solid var(--line); border-radius:9px;
+                  touch-action:none; display:block; cursor:crosshair }
+  .sigbox .row{ display:flex; gap:8px; align-items:center; margin-top:7px }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none; white-space:pre-line }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .hide{ display:none !important }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>טפסים</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="tabs">
+      <button id="tabNew" class="on">מילוי טופס</button>
+      <button id="tabMine">הטפסים שלי</button>
+      <button id="tabAppr" class="hide">ממתין לאישורי</button>
+      <button id="tabAway">מי בחופשה</button>
+    </div>
+
+    <!-- ========== טופס חדש ========== -->
+    <div id="viewNew">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>מילוי טופס</h2>
+            <label>איזה טופס</label>
+            <select id="fPick"></select>
+            <div class="note" id="fNote" style="margin-top:6px">—</div>
+            <div id="fFields"></div>
+
+            <div id="sigWrap" class="hide">
+              <label>חתימה <i>*</i></label>
+              <div class="note">חתום באצבע או בעכבר. החתימה נשמרת עם השם והשעה.</div>
+              <div class="sigbox">
+                <canvas id="sig" width="600" height="220"></canvas>
+                <div class="row">
+                  <button class="btn sm" id="sigClear">נקה</button>
+                  <span class="note" id="sigState">לא נחתם.</span>
+                </div>
+              </div>
+            </div>
+
+            <button class="btn go" id="btnSubmit">הגש</button>
+            <div class="msg" id="newMsg"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2>איך זה עובד</h2>
+            <div class="note">
+              הטופס מוגש לראש המשמרת שלך או לסגנו. באישור, מה שצריך
+              לקרות קורה לבד — בקשת חופשה מאושרת נכנסת לדוח השעות
+              כימי חופש, ואתה לא צריך לדווח אותם שוב.
+              <br><br>
+              טופס שנחתם — החתימה, השם והשעה נשמרים יחד ואי אפשר
+              לשנות אותם אחר כך.
+              <br><br>
+              <b>דוח פציעה סגור:</b> רואים אותו רק אתה, ראש המשמרת,
+              מפקד התחנה ורכז כוח אדם.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== שלי ========== -->
+    <div id="viewMine" class="hide">
+      <div class="card">
+        <h2>הטפסים שלי</h2>
+        <div class="note" id="mineNote">—</div>
+        <div id="mineList"></div>
+        <div class="msg" id="mineMsg"></div>
+      </div>
+    </div>
+
+    <!-- ========== לאישורי ========== -->
+    <div id="viewAppr" class="hide">
+      <div class="card">
+        <h2>ממתין לאישורי</h2>
+        <div class="note" id="apprNote">—</div>
+        <div id="apprList"></div>
+        <div class="msg" id="apprMsg"></div>
+      </div>
+    </div>
+
+    <!-- ========== מי בחופשה ========== -->
+    <div id="viewAway" class="hide">
+      <div class="card">
+        <h2>מי בחופשה</h2>
+        <div class="note">
+          חופשות מאושרות. מי שבחו״ל או מחוץ לאילת אינו זמין להזעקה,
+          וקריאת פתע לא תכלול אותו.
+        </div>
+        <label>תאריך</label>
+        <input type="date" id="awayDate">
+        <div id="awayList"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
+import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
+import { watchCallouts } from './callout.js?v=20';
+import { CREW_HE } from './rotation.js?v=20';
+import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
+         subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
+         awayHe, callableWhileAway, summaryOf } from './forms.js?v=20';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'newMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_APPROVE = false, IS_WIDE = false;
+let subs = [], people = [];
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=forms.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter','deputy','commander','station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  // ראש משמרת או סגנו מאשרים — כך אלדד הגדיר.
+  CAN_APPROVE = isSuper ||
+    ['commander','deputy','station_commander','hr_coordinator']
+      .indexOf(c.role) !== -1;
+  IS_WIDE = isSuper || c.role === 'station_commander' ||
+            c.role === 'hr_coordinator';
+
+  ME = { uid: user.uid, crew: c.shift || '', emp: String(c.emp || ''),
+         full_name: '', role: c.role || '' };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'forms.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  if (CAN_APPROVE) $('tabAppr').classList.remove('hide');
+  $('awayDate').value = toKey(new Date());
+  $('awayDate').oninput = renderAway;
+  setupForm();
+  await loadAll();
+});
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  // שתי הקריאות במקביל. אין ביניהן תלות.
+  subs = []; people = [];
+  const safe = p => p.catch(function () { return null; });
+  const [ss, rs] = await Promise.all([
+    safe(getDocs(collection(db, 'stations', SID, 'submissions'))),
+    safe(getDocs(collection(db, 'stations', SID, 'roster')))
+  ]);
+
+  if (ss) ss.forEach(d => subs.push(Object.assign({ id: d.id }, d.data() || {})));
+  subs.sort((a,b) => String(b.created_key||'').localeCompare(String(a.created_key||'')));
+
+  if (rs) rs.forEach(d => {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '' });
+  });
+
+  renderMine(); renderAppr(); renderAway();
+}
+
+// ---------- לשוניות ----------
+
+const VIEWS = [['tabNew','viewNew'],['tabMine','viewMine'],
+               ['tabAppr','viewAppr'],['tabAway','viewAway']];
+VIEWS.forEach(function (v) {
+  $(v[0]).onclick = function () {
+    VIEWS.forEach(function (x) {
+      $(x[0]).classList.toggle('on', x[0] === v[0]);
+      $(x[1]).classList.toggle('hide', x[1] !== v[1]);
+    });
+  };
+});
+
+// ---------- הטופס ----------
+
+function setupForm(){
+  $('fPick').innerHTML = BUILTIN_FORMS.map(f =>
+    '<option value="' + esc(f.id) + '">' + esc(f.he) + '</option>').join('');
+  $('fPick').onchange = drawFields;
+  $('btnSubmit').onclick = submitForm;
+  drawFields();
+  initSig();
+}
+
+function curForm(){ return formById(BUILTIN_FORMS, $('fPick').value); }
+
+// השדות נבנים מההגדרה ולא כתובים ב-HTML. כשהטפסים הרשמיים
+// יגיעו, מחליפים את ההגדרה ב-forms.js וזה הכל.
+function drawFields(){
+  const f = curForm();
+  const box = $('fFields');
+  box.innerHTML = '';
+  msg('', '');
+  if (!f) return;
+
+  $('fNote').textContent = f.note || '';
+  $('sigWrap').classList.toggle('hide', !f.sign);
+  clearSig();
+
+  (f.fields || []).forEach(function (fl) {
+    const lab = document.createElement('label');
+    lab.innerHTML = '<b>' + esc(fl.he) + '</b>' + (fl.req ? ' <i>*</i>' : '');
+    box.appendChild(lab);
+
+    let el;
+    if (fl.type === 'long') {
+      el = document.createElement('textarea');
+    } else if (fl.type === 'pick') {
+      el = document.createElement('select');
+      el.innerHTML = '<option value="">— בחר —</option>' +
+        (fl.opts || []).map(o => '<option value="' + esc(o) + '">' +
+                                 esc(o) + '</option>').join('');
+    } else if (fl.type === 'yesno') {
+      el = document.createElement('select');
+      el.innerHTML = '<option value="">— בחר —</option>' +
+        '<option value="כן">כן</option><option value="לא">לא</option>';
+    } else {
+      el = document.createElement('input');
+      el.type = fl.type === 'date' ? 'date'
+              : fl.type === 'time' ? 'time'
+              : fl.type === 'number' ? 'number' : 'text';
+    }
+    el.id = 'fld_' + fl.id;
+    box.appendChild(el);
+
+    if (fl.note) {
+      const n = document.createElement('div');
+      n.className = 'fnote';
+      n.textContent = fl.note;
+      box.appendChild(n);
+    }
+  });
+}
+
+function readValues(f){
+  const out = {};
+  (f.fields || []).forEach(function (fl) {
+    const el = $('fld_' + fl.id);
+    if (el) out[fl.id] = String(el.value || '').trim();
+  });
+  return out;
+}
+
+// ---------- חתימה ----------
+//
+// קנבס. הנקודות נשמרות כתמונה קטנה, לא כווקטור — מה שנשמר
+// הוא ראיה, ותמונה קשה יותר לשנות בטעות.
+
+let sigCtx = null, sigDrawn = false;
+
+function initSig(){
+  const c = $('sig');
+  sigCtx = c.getContext('2d');
+  clearSig();
+
+  let down = false;
+  const pos = e => {
+    const r = c.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: (p.clientX - r.left) * (c.width / r.width),
+             y: (p.clientY - r.top)  * (c.height / r.height) };
+  };
+  const start = e => { down = true; sigCtx.beginPath();
+                       const p = pos(e); sigCtx.moveTo(p.x, p.y);
+                       e.preventDefault(); };
+  const move  = e => { if (!down) return;
+                       const p = pos(e); sigCtx.lineTo(p.x, p.y);
+                       sigCtx.stroke(); sigDrawn = true;
+                       $('sigState').textContent = 'נחתם.';
+                       e.preventDefault(); };
+  const end   = () => { down = false; };
+
+  c.addEventListener('mousedown', start);
+  c.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  c.addEventListener('touchstart', start, { passive: false });
+  c.addEventListener('touchmove',  move,  { passive: false });
+  c.addEventListener('touchend',   end);
+
+  $('sigClear').onclick = clearSig;
+}
+
+function clearSig(){
+  if (!sigCtx) return;
+  const c = $('sig');
+  sigCtx.fillStyle = '#fff';
+  sigCtx.fillRect(0, 0, c.width, c.height);
+  sigCtx.strokeStyle = '#111';
+  sigCtx.lineWidth = 3;
+  sigCtx.lineCap = 'round';
+  sigCtx.lineJoin = 'round';
+  sigDrawn = false;
+  const st = $('sigState');
+  if (st) st.textContent = 'לא נחתם.';
+}
+
+function sigData(){
+  if (!sigDrawn) return '';
+  return $('sig').toDataURL('image/png');
+}
+
+// ---------- הגשה ----------
+
+async function submitForm(){
+  const f = curForm();
+  if (!f) return;
+  const values = readValues(f);
+
+  const errs = validate(f, values);
+  if (f.sign && !sigDrawn) errs.push('חסרה חתימה.');
+  if (errs.length) { msg(errs.join('\n'), 'err'); return; }
+
+  const b = $('btnSubmit'); b.disabled = true;
+  try {
+    const now = new Date();
+    await addDoc(collection(db, 'stations', SID, 'submissions'), {
+      form_id: f.id, form_he: f.he,
+      values: values,
+      signature: f.sign ? sigData() : '',
+      is_private: !!f.private,
+      status: 'submitted',
+      by_uid: ME.uid, by_name: ME.full_name || '',
+      by_emp: ME.emp, crew: ME.crew || '',
+      created_key: now.toISOString(),
+      created_at: serverTimestamp()
+    });
+    msg('הטופס הוגש. ראש המשמרת יקבל התראה.', 'ok');
+    drawFields();
+    await loadAll();
+  } catch (e) {
+    msg('ההגשה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+// ---------- כרטיס ----------
+
+function subCard(s, forAppr){
+  const f = formById(BUILTIN_FORMS, s.form_id);
+  const el = document.createElement('div');
+  el.className = 's ' + (s.status || 'submitted');
+
+  el.innerHTML =
+    '<div class="top">' +
+      '<span class="ttl">' + esc(s.form_he || (f && f.he) || '') + '</span>' +
+      (s.is_private ? '<span class="lock">סגור</span>' : '') +
+      '<span class="tag" style="color:' + subColor(s.status) + '">' +
+        esc(subHe(s.status)) + '</span>' +
+    '</div>' +
+    '<div class="note">' + esc(summaryOf(f, s)) + '</div>';
+
+  const vals = document.createElement('div');
+  vals.className = 'vals';
+  vals.innerHTML = (f ? f.fields : []).map(function (fl) {
+    const v = (s.values || {})[fl.id];
+    if (!v) return '';
+    const show = fl.type === 'date' ? dmy(v) : v;
+    return '<b>' + esc(fl.he) + ':</b> ' + esc(show);
+  }).filter(Boolean).join('<br>');
+  el.appendChild(vals);
+
+  if (s.signature) {
+    const sg = document.createElement('div');
+    sg.className = 'sig';
+    const im = document.createElement('img');
+    im.src = s.signature;
+    im.alt = 'חתימה';
+    sg.appendChild(im);
+    el.appendChild(sg);
+  }
+
+  const rep = document.createElement('div');
+  rep.className = 'rep';
+  const when = String(s.created_key || '');
+  rep.textContent = 'הוגש: ' + (s.by_name || '') +
+    (when ? ' · ' + dmy(when.slice(0,10)) + ' ' + when.slice(11,16) : '') +
+    (s.crew ? ' · משמרת ' + (CREW_HE[s.crew] || s.crew) : '') +
+    (s.decided_by_name
+      ? ' · ' + (s.status === 'approved' ? 'אושר' : 'נדחה') +
+        ' ע״י ' + s.decided_by_name : '');
+  el.appendChild(rep);
+
+  if (s.decide_note) {
+    const dn = document.createElement('div');
+    dn.className = 'rep';
+    dn.style.borderTop = '0'; dn.style.paddingTop = '2px';
+    dn.textContent = 'הערת המאשר: ' + s.decide_note;
+    el.appendChild(dn);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+
+  if (forAppr && isPending(s)) {
+    acts.appendChild(btn('אשר', 'sm ok', () => decide(s, 'approved')));
+    acts.appendChild(btn('דחה', 'sm no', () => decide(s, 'rejected')));
+  }
+  // המגיש מבטל כל עוד לא הוכרע.
+  if (!forAppr && isPending(s) && s.by_uid === ME.uid) {
+    acts.appendChild(btn('בטל בקשה', 'sm', () => decide(s, 'cancelled')));
+  }
+  if (acts.children.length) el.appendChild(acts);
+  return el;
+}
+
+function btn(text, cls, fn){
+  const b = document.createElement('button');
+  b.className = 'btn ' + cls;
+  b.textContent = text; b.onclick = fn;
+  return b;
+}
+
+// ---------- הכרעה ----------
+
+async function decide(s, status){
+  const box = status === 'cancelled' ? 'mineMsg' : 'apprMsg';
+  let note = '';
+  if (status === 'rejected') {
+    note = window.prompt('למה נדחתה? (יוצג למגיש)', '') || '';
+    if (note === null) return;
+  }
+  try {
+    await setDoc(doc(db, 'stations', SID, 'submissions', s.id), {
+      status: status,
+      decide_note: String(note).slice(0, 300),
+      decided_by: ME.uid, decided_by_name: ME.full_name || '',
+      decided_key: new Date().toISOString()
+    }, { merge: true });
+
+    // חופשה מאושרת נכנסת לדוח השעות מעצמה. בלי זה הכבאי
+    // מדווח את אותם ימים פעם שנייה, וחצי מהם נשכחים.
+    if (status === 'approved' && s.form_id === 'leave') {
+      await fillLeave(s);
+    }
+    await loadAll();
+    msg(status === 'approved' ? 'אושר.' :
+        status === 'rejected' ? 'נדחה.' : 'בוטל.', 'ok', box);
+  } catch (e) {
+    msg('העדכון נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', box);
+  }
+}
+
+async function fillLeave(s){
+  const v = s.values || {};
+  const days = daysInRange(v.from, v.to);
+  if (!days.length) return;
+  try {
+    const batch = writeBatch(db);
+    days.forEach(function (k) {
+      const id = String(s.by_emp || s.by_uid) + '_' + k;
+      batch.set(doc(db, 'stations', SID, 'attendance', id), {
+        emp_number: String(s.by_emp || ''), uid: s.by_uid,
+        full_name: s.by_name || '', crew: s.crew || '',
+        date: k, month: k.slice(0, 7),
+        day_type: 'vacation', day_type_he: 'חופש',
+        hours: 24, from_form: s.id,
+        notes: 'חופשה מאושרת · ' + (v.where || ''),
+        updated_at: serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
+  } catch (e) {
+    // כישלון כאן לא מבטל את האישור. הבקשה אושרה, והמילוי
+    // האוטומטי הוא נוחות — לא התנאי.
+    msg('אושר, אבל מילוי ימי החופש בדוח נכשל. (' +
+        (e.code || e.message) + ') אפשר למלא ידנית.', 'info', 'apprMsg');
+  }
+}
+
+// ---------- תצוגות ----------
+
+function renderMine(){
+  const list = subs.filter(s => s.by_uid === ME.uid);
+  const box = $('mineList');
+  box.innerHTML = '';
+  $('mineNote').textContent = list.length
+    ? list.length + ' טפסים.'
+    : 'עוד לא הגשת טפסים.';
+  list.forEach(s => box.appendChild(subCard(s, false)));
+}
+
+function renderAppr(){
+  if (!CAN_APPROVE) return;
+  // ראש משמרת רואה את המשמרת שלו. מפקד תחנה ורכז — הכל.
+  const list = subs.filter(function (s) {
+    if (!isPending(s)) return false;
+    if (s.by_uid === ME.uid) return false;
+    return IS_WIDE || !ME.crew || s.crew === ME.crew;
+  });
+  const box = $('apprList');
+  box.innerHTML = '';
+  $('apprNote').textContent = IS_WIDE
+    ? 'כל התחנה · ' + list.length + ' ממתינים.'
+    : 'משמרת ' + (CREW_HE[ME.crew] || ME.crew) + ' · ' +
+      list.length + ' ממתינים.';
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">' +
+                    'אין טפסים שממתינים לך.</div>';
+    return;
+  }
+  list.forEach(s => box.appendChild(subCard(s, true)));
+}
+
+function renderAway(){
+  const key = $('awayDate').value || toKey(new Date());
+  const map = awayOn(subs, key);
+  const box = $('awayList');
+  box.innerHTML = '';
+  const uids = Object.keys(map);
+  if (!uids.length) {
+    box.innerHTML = '<div class="note" style="padding-top:10px">' +
+      'אף אחד לא בחופשה מאושרת ביום הזה.</div>';
+    return;
+  }
+  uids.forEach(function (u) {
+    const a = map[u];
+    const el = document.createElement('div');
+    el.className = 's ' + (a.callable ? 'approved' : 'rejected');
+    el.innerHTML =
+      '<div class="top"><span class="ttl">' + esc(a.name || u) + '</span>' +
+      '<span class="tag" style="color:' +
+        (a.callable ? '#66bb6a' : '#ef5350') + '">' +
+        esc(a.where) + '</span></div>' +
+      '<div class="note">' + esc(awayHe(a.where)) + '</div>';
+    box.appendChild(el);
+  });
+}
+</script>
+</body>
+</html>

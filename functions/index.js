@@ -1801,6 +1801,15 @@ exports.sendBroadcast = onCall(async (req) => {
 // הזעקה לא עוצר בגבול המשמרת. השם של מי שהזעיק נשמר על כל
 // קריאה, וזו הבקרה — לא הצרה של הרשימה.
 
+// שמות סוגי התקלה בעברית. משוכפל מ-faults.js כי השרת אינו
+// מייבא מודולים של הדפדפן — שינוי בשם צריך להיעשות בשניהם.
+const FAULT_KIND_HE = {
+  vehicle: 'תקלת רכב', damage: 'פגיעה ברכב', gear: 'תקלת ציוד',
+  building: 'תקלת מבנה', task_st: 'משימת תחזוקת תחנה',
+  task_eq: 'משימת תחזוקת ציוד', note: 'מסר'
+};
+function kindHeS(k) { return FAULT_KIND_HE[k] || 'תקלה'; }
+
 const CALLOUT_ROLE_HE = {
   commander: 'מפקד משמרת',
   hr_coordinator: 'רכז כוח אדם',
@@ -1890,6 +1899,44 @@ exports.sendCallout = onCall(async (req) => {
 
   // המזעיק לא מזעיק את עצמו.
   uids = uids.filter(u => u !== auth.uid);
+
+  // מי שבחופשה מאושרת מחוץ לאילת אינו ניתן להזעקה. זו כל
+  // הסיבה שטופס החופשה שואל איפה הכבאי נמצא — בלי השימוש
+  // הזה השדה היה נתון שאיש לא קורא.
+  //
+  // הזעקה לאדם שנמצא ביוון אינה רק חסרת תועלת: היא מלמדת
+  // את כולם שקריאת פתע לא תמיד רלוונטית, וזה בדיוק מה
+  // שהורג כלי הזעקה.
+  const awayNames = [];
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const ls = await db.collection('stations/' + sid + '/submissions')
+      .where('form_id', '==', 'leave')
+      .where('status', '==', 'approved').get();
+    const blocked = {};
+    ls.forEach(function (d) {
+      const v = d.data() || {};
+      const val = v.values || {};
+      if (!val.from || !val.to) return;
+      if (String(today) < String(val.from) || String(today) > String(val.to)) return;
+      if (String(val.where || '') === 'באילת') return;   // עדיין ניתן להזעקה
+      blocked[v.by_uid] = v.by_name || '';
+    });
+    uids = uids.filter(function (u) {
+      if (blocked[u] == null) return true;
+      awayNames.push(blocked[u] || u);
+      return false;
+    });
+  } catch (e) {
+    // כישלון כאן לא עוצר הזעקה. עדיף להזעיק אדם שבחופשה
+    // מאשר לא להזעיק אף אחד.
+    console.warn('leave filter: ' + e.message);
+  }
+
+  if (!uids.length && awayNames.length) {
+    throw new HttpsError('failed-precondition',
+      'כל מי שברשימה בחופשה מחוץ לאילת: ' + awayNames.join(', '));
+  }
   if (!uids.length) {
     throw new HttpsError('invalid-argument', 'אין למי לשלוח.');
   }
@@ -1926,7 +1973,8 @@ exports.sendCallout = onCall(async (req) => {
                 { merge: true }).catch(() => {});
 
   return { ok: true, id: ref.id, sent: uids.length,
-           people: res.people, devices: res.devices };
+           people: res.people, devices: res.devices,
+           skipped_away: awayNames };
 });
 
 
@@ -2189,6 +2237,33 @@ exports.onFaultBlocking = onDocumentWritten(
     const before = event.data && event.data.before && event.data.before.data();
     const after  = event.data && event.data.after  && event.data.after.data();
     if (!after) return;
+
+    // תקלה חדשה על רכב או ציוד — התראה תמיד, גם קלה.
+    //
+    // אלדד: "תמיד התראה למפקד משמרת וסגנו על תקלות ברכבים
+    // וציוד." למי בדיוק: מפקד וסגן של המשמרת **שדיווחה** —
+    // מי שנמצא בתחנה עכשיו ויכול לגשת לרכב. מפקד התחנה מקבל
+    // הכל ממילא דרך commandersOf.
+    //
+    // מי שנכנס מחר לא מקבל התראה, וזה בכוונה: הוא יראה את זה
+    // בדף החפיפה, שנבנה בדיוק בשביל זה. התראה בשלוש לפנות
+    // בוקר על פנס שרוף אצל מי שישן בבית היא הדרך המהירה
+    // ביותר לגרום לו לכבות התראות.
+    const HW = ['vehicle', 'damage', 'gear', 'building'];
+    if (!before && HW.indexOf(after.kind) !== -1) {
+      const crew = after.crew || '';
+      const who = (await commandersOf(sid, crew))
+        .filter(u => u !== after.by_uid);
+      if (who.length) {
+        const what = after.kind === 'damage' ? 'פגיעה' : 'תקלה';
+        await pushToUsers(sid, who, 'fault_new',
+          what + ' חדשה — ' + (after.vehicle_name || kindHeS(after.kind)),
+          (after.title || '') + ' · דווח ע״י ' + (after.by_name || '') +
+            (after.severity === 'unset' && after.kind !== 'damage'
+              ? ' · ממתינה לקביעת חומרה' : ''),
+          './faults.html');
+      }
+    }
 
     const wasBlocking = !!(before && before.severity === 'blocking' &&
                            before.status !== 'fixed');

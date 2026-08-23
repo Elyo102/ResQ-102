@@ -456,6 +456,52 @@ service cloud.firestore {
         allow write: if staff(sid);
       }
 
+      // ---------- טפסים ----------
+      //
+      // בקשת חופשה, דוח אי החתמת כרטיס, דוח פציעה, דוח נזק.
+      // ראש המשמרת או סגנו מאשרים.
+      //
+      // דוח פציעה הוא מידע רפואי על אדם, ולכן is_private חוסם
+      // אותו מכל מי שאינו: המגיש עצמו, סגל המשמרת שלו, מפקד
+      // התחנה, ורכז כוח אדם. כבאי אחר לא רואה אותו, ומפקד של
+      // משמרת אחרת לא רואה אותו.
+      //
+      // מה שנעול אחרי ההגשה: המגיש, השדות והחתימה. אין טעם
+      // בחתימה שאפשר לצרף אחריה טקסט אחר.
+
+      match /submissions/{subId} {
+        allow read: if resource.data.get('by_uid', '') == request.auth.uid
+                    || (resource.data.get('is_private', false) == false
+                        && staff(sid)
+                        && seesCrewData(sid, resource.data.get('crew', '')))
+                    || (resource.data.get('is_private', false) == true
+                        && (hr(sid) || stationCommander(sid)
+                            || (staff(sid)
+                                && myShift() != ''
+                                && myShift() == resource.data.get('crew', ''))));
+
+        allow create: if member(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('status', '') == 'submitted'
+                      && request.resource.data.get('form_id', '') != ''
+                      && request.resource.data.get('signature', '').size() <= 400000;
+
+        // הכרעה: הסגל של אותה משמרת, או ביטול בידי המגיש.
+        allow update: if ((staff(sid)
+                           && seesCrewData(sid, resource.data.get('crew', ''))
+                           && request.resource.data.get('status', '') in
+                              ['approved', 'rejected'])
+                          || (resource.data.get('by_uid', '') == request.auth.uid
+                              && request.resource.data.get('status', '') == 'cancelled'))
+                      && resource.data.get('status', '') == 'submitted'
+                      && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
+                      && request.resource.data.get('values', {}) == resource.data.get('values', {})
+                      && request.resource.data.get('signature', '') == resource.data.get('signature', '');
+
+        allow delete: if isSuper();
+      }
+
+
       // ---------- היתר לרדת מתחת לקו האדום ----------
       //
       // ראש המשמרת או סגנו מבקשים; מפקד התחנה מאשר. שני שלבים

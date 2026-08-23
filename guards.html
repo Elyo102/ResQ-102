@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -290,6 +296,7 @@
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { CREW_HE } from './rotation.js?v=20';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
@@ -312,6 +319,7 @@ const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
+initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -375,10 +383,25 @@ onAuthStateChanged(auth, async user => {
 // ---------- טעינה ----------
 
 async function loadAll(){
-  const grab = async (name, fn) => {
-    try { const s = await getDocs(collection(db, 'stations', SID, name)); fn(s); }
-    catch (ignore) {}
+  // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
+  //
+  // הגרסה הקודמת חיכתה לכל אוסף לפני שביקשה את הבא. שמונה
+  // אוספים כפול כ-200 מילישניות הלוך-חזור מטלפון סלולרי הם
+  // כמעט שתי שניות של מסך ריק — והנתונים אינם תלויים זה בזה,
+  // אז ההמתנה הייתה מיותרת לגמרי.
+  //
+  // grab מפעיל מיד ואוסף את ההבטחה. הקריאות באתר הקריאה
+  // נשארו עם await, וזה בסדר: await על undefined אינו הליכה
+  // לרשת, ולכן כל השמונה יוצאות באותו רגע. מחכים להן פעם
+  // אחת ב-flush.
+  const jobs = [];
+  const grab = (name, fn) => {
+    jobs.push((async () => {
+      try { const s = await getDocs(collection(db, 'stations', SID, name)); fn(s); }
+      catch (ignore) {}
+    })());
   };
+  const flush = () => Promise.all(jobs);
 
   people = [];
   await grab('roster', s => s.forEach(d => {
@@ -387,12 +410,10 @@ async function loadAll(){
     people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
                   emp: String(v.emp || v.emp_number || '') });
   }));
-  people.sort((a,b) => String(a.name).localeCompare(String(b.name),'he'));
 
   guards = [];
   await grab('guards', s => s.forEach(d =>
     guards.push(Object.assign({ id: d.id }, d.data() || {}))));
-  guards.sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
 
   quals = [];
   await grab('quals', s => s.forEach(d =>
@@ -431,6 +452,11 @@ async function loadAll(){
     if (!busy[v.date]) busy[v.date] = {};
     busy[v.date][v.uid] = why;
   }));
+
+  await flush();
+
+  people.sort((a,b) => String(a.name).localeCompare(String(b.name),'he'));
+  guards.sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
 
   ctx = { rotations, overrides, swaps, guards };
   loadMap = loadByPerson(people, guards, ctx, defaultSince());

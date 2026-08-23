@@ -1,0 +1,39 @@
+{
+  "name": "ResQ · תחנה 102",
+  "short_name": "ResQ",
+  "description": "ניהול כוח אדם, ציוות וכשירות לתחנת כיבוי אש",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "./login.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#15171a",
+  "theme_color": "#0f1b33",
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "./resq-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./resq-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./resq-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "דיווח תקלה",
+      "short_name": "תקלה",
+      "url": "./faults.html",
+      "icons": [{ "src": "./resq-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "דיווח שעות",
+      "short_name": "נוכחות",
+      "url": "./attendance.html",
+      "icons": [{ "src": "./resq-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "סידור עבודה",
+      "short_name": "סידור",
+      "url": "./schedule.html",
+      "icons": [{ "src": "./resq-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

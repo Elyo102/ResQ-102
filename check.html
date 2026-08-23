@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{ --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
@@ -83,6 +89,18 @@
     <div id="runOut"></div>
   </div>
 
+  <div class="card">
+    <h2>בדיקת פריסה</h2>
+    <div class="note" id="depNote">
+      אחרי <b>deploy.bat</b>. עובר על כל אוסף, כל פונקציה וכל אינדקס,
+      וכותב מסמך בדיקה אחד לכל אוסף כדי לוודא שגם הכתיבה עובדת —
+      ומוחק אותו מיד. קריאה לבדה לא מגלה כלל כתיבה שבור.
+    </div>
+    <button id="btnDeploy">הרץ בדיקת פריסה מלאה</button>
+    <div id="depSum"></div>
+    <div id="dep"></div>
+  </div>
+
   <button class="ghost" id="btnAgain">בדוק הכל מחדש</button>
 </div>
 
@@ -91,11 +109,13 @@ import { firebaseConfig } from './firebase-config.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, getDocs, query, where, limit }
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
+         deleteDoc, query, where, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { renderStuckNav, renderNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -105,6 +125,7 @@ const fns  = getFunctions(app, 'europe-west1');
 const $ = id => document.getElementById(id);
 
 renderStuckNav('');
+initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -116,6 +137,217 @@ function line(box, key, value, cls){
   d.className = 'row';
   d.innerHTML = '<div class="k">' + esc(key) + '</div>' +
                 '<div class="v ' + (cls || '') + '">' + esc(value) + '</div>';
+  $(box).appendChild(d);
+}
+
+// =====================================================================
+//  בדיקת פריסה
+// =====================================================================
+//
+// מה שהמסך הזה בא לפתור: שמונה מודולים נפרסים בבת אחת, ועד
+// היום הדרך היחידה לדעת מה עובד הייתה לפתוח כל מסך ולנסות.
+// שעה של עבודה, ובסופה "משהו לא עובד" בלי לדעת מה.
+//
+// שלוש שכבות, וכל אחת מגלה משהו שהאחרות לא:
+//
+//   קריאה    האם החוק מתיר לקרוא. מגלה אוסף חסום
+//   כתיבה    כותב מסמך בדיקה ומוחק אותו מיד. **זו השכבה
+//            היחידה שמגלה כלל כתיבה שבור** — וזה בדיוק סוג
+//            השגיאה שחוסמת כבאי באמצע משמרת
+//   שאילתה   האם האינדקס נבנה. אינדקס חסר נראה בדיוק כמו
+//            הרשאה חסרה מהדפדפן, וזו טעות אבחון יקרה
+//
+// מסמכי הבדיקה מסומנים __selfcheck ומוחקים את עצמם. אם
+// המחיקה נכשלה — הבדיקה אומרת זאת במפורש ומראה מה למחוק.
+
+const MARK = '__selfcheck';
+
+// האוספים, ומה מצופה מכל אחד. writable=false פירושו שהכלל
+// אמור **לדחות** כתיבה מהדפדפן — וכישלון כתיבה שם הוא הצלחה.
+const COLLECTIONS = [
+  { name: 'roster',           he: 'סגל',              writable: false },
+  { name: 'users',            he: 'משתמשים',          writable: false },
+  { name: 'quals',            he: 'כשירויות',         writable: true  },
+  { name: 'member_quals',     he: 'כשירויות אישיות',  writable: true  },
+  { name: 'rotations',        he: 'סבב משמרות',       writable: true  },
+  { name: 'shift_overrides',  he: 'חריגות סידור',     writable: true  },
+  { name: 'sub_stations',     he: 'תחנות משנה',       writable: true  },
+  { name: 'vehicles',         he: 'רכבי עיגון',       writable: true  },
+  { name: 'attendance',       he: 'נוכחות',           writable: true  },
+  { name: 'monthly_reports',  he: 'דוחות חודשיים',    writable: true  },
+  { name: 'swaps',            he: 'החלפות',           writable: true  },
+  { name: 'guards',           he: 'אבטחות',           writable: true  },
+  { name: 'faults',           he: 'תקלות',            writable: true  },
+  { name: 'handovers',        he: 'מסירות אחריות',    writable: true  },
+  { name: 'redline_waivers',  he: 'היתרי קו אדום',    writable: true  },
+  { name: 'broadcasts',       he: 'הודעות',           writable: true  },
+  { name: 'callouts',         he: 'קריאות פתע',       writable: false },
+  { name: 'push_tokens',      he: 'מכשירי התראות',    writable: true  },
+  { name: 'scans',            he: 'סריקות לילה',      writable: false },
+  { name: 'hr_reports',       he: 'דוחות משאבי אנוש', writable: false }
+];
+
+// שאילתות שדורשות אינדקס מורכב. אינדקס שלא נבנה מחזיר
+// failed-precondition, ורק הבדיקה הזו מבדילה אותו מהרשאה.
+const INDEXED = [
+  { he: 'קריאות פתע לפי נמען',
+    build: (sid, uid) => query(collection(db, 'stations', sid, 'callouts'),
+      where('uids', 'array-contains', uid), orderBy('created_key', 'desc'), limit(1)) },
+  { he: 'נוכחות לפי עובד וחודש',
+    build: (sid, uid, emp) => query(collection(db, 'stations', sid, 'attendance'),
+      where('emp_number', '==', String(emp || '0')),
+      where('month', '==', '2026-01'), limit(1)) },
+  { he: 'אבטחות לפי תאריך ומצב',
+    build: (sid) => query(collection(db, 'stations', sid, 'guards'),
+      where('date', '==', '2099-01-01'), where('status', '==', 'open'), limit(1)) }
+];
+
+const FUNCTIONS = [
+  { name: 'whoAmI',        he: 'זהות',            args: {} },
+  { name: 'listUsersWithClaims', he: 'רשימת משתמשים', args: {} },
+  { name: 'reindexDirectory',    he: 'בניית ספרייה',  args: {}, heavy: true }
+];
+
+let depBusy = false;
+
+$('btnDeploy').onclick = async () => {
+  if (depBusy) return;
+  depBusy = true;
+  const b = $('btnDeploy'); b.disabled = true;
+  $('dep').innerHTML = ''; $('depSum').innerHTML = '';
+
+  const user = auth.currentUser;
+  if (!user) { line('dep', 'מצב', 'צריך להיות מחובר.', 'bad');
+               b.disabled = false; depBusy = false; return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (e) {}
+  const sid = c.stationId || 'eilat_102';
+  const tally = { ok: 0, bad: 0, warn: 0 };
+
+  function say(box, k, v, cls){
+    line(box, k, v, cls);
+    if (cls === 'bad') tally.bad++;
+    else if (cls === 'warn') tally.warn++;
+    else tally.ok++;
+  }
+
+  // ---------- אוספים ----------
+  head('dep', 'אוספים — קריאה וכתיבה');
+  const leftovers = [];
+  for (const col of COLLECTIONS) {
+    let readOk = false, readWhy = '';
+    try { await getDocs(query(collection(db, 'stations', sid, col.name), limit(1)));
+          readOk = true; }
+    catch (e) { readWhy = e.code || e.message; }
+
+    if (!readOk) {
+      say('dep', col.he, 'קריאה נחסמה · ' + readWhy, 'bad');
+      continue;
+    }
+
+    // כתיבה. המסמך מסומן, ונמחק מיד.
+    const id = MARK + '_' + Date.now();
+    const ref = doc(db, 'stations', sid, col.name, id);
+    let wrote = false, writeWhy = '';
+    try {
+      await setDoc(ref, { [MARK]: true, by_uid: user.uid,
+                          created_key: new Date().toISOString() });
+      wrote = true;
+    } catch (e) { writeWhy = e.code || e.message; }
+
+    if (wrote) {
+      try { await deleteDoc(ref); }
+      catch (e) { leftovers.push(col.name + '/' + id); }
+    }
+
+    if (col.writable && wrote) say('dep', col.he, 'קריאה ✓ · כתיבה ✓', 'ok');
+    else if (col.writable && !wrote)
+      say('dep', col.he, 'קריאה ✓ · כתיבה נחסמה · ' + writeWhy, 'bad');
+    else if (!col.writable && !wrote)
+      say('dep', col.he, 'קריאה ✓ · כתיבה חסומה כמצופה', 'ok');
+    else
+      say('dep', col.he, 'קריאה ✓ · כתיבה עברה — והכלל אמור היה לחסום אותה', 'bad');
+  }
+
+  if (leftovers.length) {
+    line('dep', 'שאריות', 'לא נמחקו: ' + leftovers.join(' · ') +
+         ' — מחק ידנית בקונסולה.', 'warn');
+    tally.warn++;
+  }
+
+  // ---------- אינדקסים ----------
+  head('dep', 'אינדקסים');
+  for (const ix of INDEXED) {
+    try {
+      await getDocs(ix.build(sid, user.uid, c.emp));
+      say('dep', ix.he, 'נבנה ✓', 'ok');
+    } catch (e) {
+      const code = e.code || '';
+      if (String(code).indexOf('failed-precondition') !== -1) {
+        say('dep', ix.he, 'האינדקס עוד לא נבנה. חכה דקה־שתיים אחרי ' +
+            'הפריסה ונסה שוב.', 'warn');
+      } else {
+        say('dep', ix.he, 'נכשל · ' + (code || e.message), 'bad');
+      }
+    }
+  }
+
+  // ---------- פונקציות ----------
+  head('dep', 'פונקציות ענן');
+  for (const fn of FUNCTIONS) {
+    try {
+      await httpsCallable(fns, fn.name)(fn.args);
+      say('dep', fn.he + ' (' + fn.name + ')', 'עונה ✓', 'ok');
+    } catch (e) {
+      const code = e.code || '';
+      // permission-denied פירושו שהפונקציה נפרסה ועובדת — היא
+      // פשוט דחתה אותי. זו הצלחה, לא כישלון.
+      if (String(code).indexOf('permission-denied') !== -1 ||
+          String(code).indexOf('unauthenticated') !== -1) {
+        say('dep', fn.he + ' (' + fn.name + ')', 'נפרסה ✓ (דחתה את הבקשה)', 'ok');
+      } else if (String(code).indexOf('not-found') !== -1 ||
+                 String(code).indexOf('internal') !== -1) {
+        say('dep', fn.he + ' (' + fn.name + ')',
+            'לא נפרסה או נפלה · ' + code, 'bad');
+      } else {
+        say('dep', fn.he + ' (' + fn.name + ')', 'תשובה חריגה · ' + code, 'warn');
+      }
+    }
+  }
+
+  // ---------- התראות ----------
+  head('dep', 'התראות');
+  try {
+    const t = await getDoc(doc(db, 'stations', sid, 'push_tokens', user.uid));
+    const n = t.exists() ? ((t.data() || {}).tokens || []).length : 0;
+    say('dep', 'המכשיר הזה', n ? n + ' מכשירים רשומים ✓'
+                               : 'אף מכשיר לא רשום — פתח את מסך ההתראות',
+        n ? 'ok' : 'warn');
+  } catch (e) { say('dep', 'המכשיר הזה', 'נכשל · ' + (e.code || e.message), 'bad'); }
+
+  // ---------- סיכום ----------
+  const total = tally.ok + tally.bad + tally.warn;
+  $('depSum').innerHTML =
+    '<div class="row"><div class="k">סיכום</div><div class="v ' +
+    (tally.bad ? 'bad' : tally.warn ? 'warn' : 'ok') + '">' +
+    tally.ok + ' תקינים · ' + tally.warn + ' אזהרות · ' +
+    tally.bad + ' כשלים · מתוך ' + total +
+    (tally.bad ? ' — שלח לי את הרשימה ואני מתקן.'
+               : tally.warn ? ' — האזהרות לרוב נפתרות בהמתנה של דקה.'
+               : ' — הפריסה תקינה.') + '</div></div>';
+
+  b.disabled = false; depBusy = false;
+};
+
+function head(box, text){
+  const d = document.createElement('div');
+  d.className = 'row';
+  d.style.borderTop = '1px solid #2c3036';
+  d.style.marginTop = '10px';
+  d.style.paddingTop = '10px';
+  d.innerHTML = '<div class="k" style="font-weight:800;color:#e8590c">' +
+                esc(text) + '</div><div class="v"></div>';
   $(box).appendChild(d);
 }
 

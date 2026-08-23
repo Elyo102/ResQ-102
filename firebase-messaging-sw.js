@@ -10,6 +10,99 @@
 // ישתנה, צריך לשנות בשני מקומות, וזו העלות של איך שדפדפנים
 // בנויים.
 
+// ------------------------------------------------------------------
+//  מטמון — האפליקציה על מסך הבית
+// ------------------------------------------------------------------
+//
+// למה כאן ולא ב-Service Worker נפרד: דפדפן מרשה **עובד אחד
+// לכל תחום**. רישום עובד שני על אותו תחום היה מבטל את הראשון,
+// וההתראות היו מפסיקות לעבוד בלי שאיש ישים לב.
+//
+// אסטרטגיה: רשת קודם, מטמון כגיבוי.
+//
+// כבאי שנכנס לסידור בשלוש לפנות בוקר חייב לראות את הסידור
+// **הנוכחי**. מטמון-קודם היה מהיר יותר ומציג לו לפעמים סידור
+// של אתמול — וסידור ישן גרוע מטעינה איטית.
+//
+// המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
+// הודעה ברורה מאשר דף שגיאה של הדפדפן.
+
+const CACHE = 'resq-v20';
+
+// רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
+// מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
+const SHELL = [
+  './login.html', './schedule.html', './board.html', './attendance.html',
+  './guards.html', './faults.html', './forms.html', './swaps.html',
+  './quals.html', './alerts.html', './stats.html', './index.html',
+  './nav.js', './rotation.js', './readiness.js', './hours.js',
+  './guards.js', './faults.js', './forms.js', './stats.js',
+  './push.js', './callout.js', './stations.js', './firebase-config.js',
+  './manifest.json', './resq-192.png', './favicon.ico'
+];
+
+self.addEventListener('install', function (e) {
+  // addAll נכשל כולו אם קובץ אחד חסר. כאן כל קובץ נשמר
+  // בנפרד, כדי שקובץ שהוסר לא ישבור את ההתקנה כולה.
+  e.waitUntil(caches.open(CACHE).then(function (c) {
+    return Promise.all(SHELL.map(function (u) {
+      return c.add(u).catch(function () {});
+    }));
+  }).then(function () { return self.skipWaiting(); }));
+});
+
+self.addEventListener('activate', function (e) {
+  e.waitUntil(caches.keys().then(function (keys) {
+    return Promise.all(keys.filter(function (k) { return k !== CACHE; })
+                           .map(function (k) { return caches.delete(k); }));
+  }).then(function () { return self.clients.claim(); }));
+});
+
+self.addEventListener('fetch', function (e) {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+  // Firestore, Auth ו-Functions לעולם לא נשמרים. תשובה
+  // שמורה מהם היא נתון ישן שמתחזה לנוכחי.
+  if (url.origin !== self.location.origin) return;
+  if (/firestore|googleapis|identitytoolkit/.test(url.href)) return;
+
+  e.respondWith(
+    fetch(req).then(function (res) {
+      if (res && res.status === 200 && res.type === 'basic') {
+        const copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(req).then(function (hit) {
+        if (hit) return hit;
+        // דף שלא במטמון ואין רשת. הודעה בעברית עדיפה על
+        // מסך הדינוזאור.
+        if (req.mode === 'navigate') {
+          return new Response(
+            '<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8">' +
+            '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+            '<body style="margin:0;background:#15171a;color:#e8eaed;' +
+            'font-family:Segoe UI,Arial,sans-serif;display:flex;' +
+            'align-items:center;justify-content:center;height:100vh;' +
+            'text-align:center;padding:24px">' +
+            '<div><div style="font-size:44px;margin-bottom:12px">📡</div>' +
+            '<div style="font-size:19px;font-weight:700;margin-bottom:8px">' +
+            'אין חיבור לרשת</div>' +
+            '<div style="font-size:14px;color:#9aa0a6;line-height:1.7">' +
+            'המסך הזה עוד לא נשמר במכשיר.<br>' +
+            'התחבר לרשת ונסה שוב.</div></div></body></html>',
+            { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+        return new Response('', { status: 504 });
+      });
+    })
+  );
+});
+
+
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 

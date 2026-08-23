@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="preload" as="image" href="./resq-banner.jpg">
 
 <style>
@@ -354,6 +360,7 @@ import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
   from './stations.js?v=20';
 import { renderNav, clearNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
@@ -387,6 +394,7 @@ const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 setPersistence(auth, browserLocalPersistence).catch(function(){});
 
 const $ = id => document.getElementById(id);
+initPWA({ offer: true });
 
 const ROLE_HE = {
   firefighter:        'לוחם אש',

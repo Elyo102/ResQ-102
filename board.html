@@ -7,6 +7,12 @@
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#0f1b33">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
 
 <style>
   :root{
@@ -280,6 +286,7 @@
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { stationName } from './stations.js?v=20';
 import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { initPWA } from './pwa.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
 import { boardState, summaryText, visibleCrews,
          waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=20';
@@ -342,6 +349,7 @@ const SEED = {
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
+initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
