@@ -26,6 +26,7 @@ const ITEMS = [
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b' },
   { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8' },
+  { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a' },
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6' }
 ];
 
