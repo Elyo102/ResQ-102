@@ -90,6 +90,34 @@
                     box-shadow:0 0 0 2px #191c20}
   .day.mine.unfit::after{box-shadow:0 0 0 2px rgba(0,0,0,.35)}
 
+  /* יום עם חריגה. משולש קטן בפינה הנגדית לנקודת הכשירות,
+     כדי ששני הסימונים לא יתנגשו על אותו יום. */
+  .day.ovr::before{content:'';position:absolute;top:0;inset-inline-start:0;
+                   border-width:0 0 12px 12px;border-style:solid;
+                   border-color:transparent transparent #e0a23c transparent;
+                   border-start-start-radius:9px}
+  .day.ovr.swap::before{border-bottom-color:#c77dff}
+
+  .ovr-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .ovr-form .wide{grid-column:1 / -1}
+  .ovr-form select,.ovr-form input{width:100%;padding:9px;background:#111316;
+       color:var(--txt);border:1px solid var(--line);border-radius:6px;
+       font-size:14px;font-family:inherit}
+  .ovr-list{margin-top:12px}
+  .ovr-row{display:flex;align-items:center;gap:9px;padding:8px 0;
+           border-bottom:1px solid #24272c;font-size:13px}
+  .ovr-row:last-child{border-bottom:0}
+  .ovr-row .d{font-variant-numeric:tabular-nums;font-weight:700;width:64px;flex:none}
+  .ovr-row .k{color:var(--muted);flex:none}
+  .ovr-row .n{color:var(--muted);flex:1;min-width:0;overflow:hidden;
+              text-overflow:ellipsis;white-space:nowrap}
+  .ovr-row .x{color:var(--muted);cursor:pointer;padding:0 6px}
+  .ovr-row .x:hover{color:#ef5350}
+  .btn-s{background:transparent;border:1px solid var(--line);color:var(--muted);
+         border-radius:6px;padding:9px 16px;font-size:13px;cursor:pointer;
+         font-family:inherit;margin-top:10px}
+  .btn-s.go{background:var(--accent);border-color:var(--accent);color:#fff}
+
   .fit{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
   .fit .p{flex:1 1 150px;border:1px solid var(--line);border-radius:9px;
           padding:9px 11px;background:#191c20}
@@ -189,7 +217,27 @@
         <span><i class="dot" style="background:var(--crewC);
               border:2px solid var(--txt)"></i>המשמרת שלי</span>
         <span><i class="dot" style="background:#ef5350"></i>לא כשירה</span>
+        <span><i class="dot" style="background:#e0a23c"></i>חריגה</span>
       </div>
+    </div>
+
+    <div class="card hide" id="ovrCard">
+      <div style="font-size:14px;font-weight:700;margin-bottom:3px">חריגות בסידור</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        המחזור הוא נוסחה שלא נשברת. חריגה גוברת עליו — בלוח,
+        בסימון הכשירות ובמילוי דוח הנוכחות.
+      </div>
+
+      <div class="ovr-form">
+        <select id="ovKind"></select>
+        <input type="date" id="ovDate">
+        <select id="ovCrew" class="wide"></select>
+        <input type="text" id="ovNote" class="wide" maxlength="60" placeholder="סיבה (לא חובה)">
+      </div>
+      <button class="btn-s go" id="ovAdd">הוסף חריגה</button>
+
+      <div class="ovr-list" id="ovList"></div>
+      <div class="err" id="ovErr"></div>
     </div>
 
     <div class="card" id="noRot" style="display:none">
@@ -200,18 +248,20 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=12';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, collection, getDocs }
+import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
+         serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=12';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=13';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
-         nextShift, shiftTimes, sameDay, daysBetween }
-  from './rotation.js?v=12';
+         nextShift, shiftTimes, sameDay, daysBetween, toKey,
+         OVERRIDE_KINDS, overrideKindHe, overrideOn }
+  from './rotation.js?v=13';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=12';
+  from './readiness.js?v=13';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -263,6 +313,9 @@ let viewYear, viewMonth;
 let fit = {};        // crew -> {rl, bs, verdict}
 let qualNames = {};  // qid -> שם
 let myCrews = CREWS.slice();
+let overrides = {};      // 'YYYY-MM-DD' -> {kind, crew, extra_crews, note}
+let canEditOvr = false;
+let SID = '';
 
 // ---------- כניסה ----------
 
@@ -304,9 +357,12 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
+  SID = claims.stationId || STATION_ID;
+  canEditOvr = claims.super === true || claims.role === 'super_admin' ||
+               ['commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+
   try {
-    const rs = await getDocs(
-      collection(db, 'stations', claims.stationId || STATION_ID, 'rotations'));
+    const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));
     rotations = rs.docs.map(d => d.data());
   } catch (e) {
     // הבחנה חשובה: "אין מחזור" ו"אין לך הרשאה לקרוא" נראים אותו
@@ -318,6 +374,8 @@ onAuthStateChanged(auth, async user => {
       return;
     }
   }
+
+  await loadOverrides();
 
   $('meName').textContent = me.full_name;
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
@@ -334,6 +392,11 @@ onAuthStateChanged(auth, async user => {
   viewYear  = now.getFullYear();
   viewMonth = now.getMonth();
 
+  if (canEditOvr) {
+    $('ovrCard').classList.remove('hide');
+    setupOvrForm();
+  }
+
   renderNext();
   render();
 
@@ -344,6 +407,142 @@ onAuthStateChanged(auth, async user => {
   renderFitness();
   render();
 });
+
+// ---------- חריגות ----------
+
+async function loadOverrides(){
+  overrides = {};
+  try {
+    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
+    os.forEach(function (d) {
+      const v = d.data() || {};
+      overrides[d.id] = {
+        kind: v.kind || 'holiday',
+        crew: v.crew || '',
+        extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
+        note: v.note || ''
+      };
+    });
+  } catch (ignore) {}
+}
+
+function setupOvrForm(){
+  $('ovKind').innerHTML = OVERRIDE_KINDS
+    .map(k => '<option value="' + k.id + '">' + k.he + '</option>').join('');
+
+  const crewOpts = '<option value="">בלי שינוי במשמרת</option>' +
+    CREWS.map(c => '<option value="' + c + '">משמרת ' + CREW_HE[c] + '</option>').join('');
+  $('ovCrew').innerHTML = crewOpts;
+
+  const today = new Date();
+  $('ovDate').value = today.getFullYear() + '-' +
+    String(today.getMonth() + 1).padStart(2, '0') + '-' +
+    String(today.getDate()).padStart(2, '0');
+
+  $('ovKind').onchange = syncOvrForm;
+  syncOvrForm();
+  $('ovAdd').onclick = addOverride;
+  renderOvrList();
+}
+
+// החלפה חייבת לומר מי עובד. כוננות מוסיפה משמרות. חג ואימון
+// לא נוגעים במי עובד — ולכן שדה המשמרת בהם רק מבלבל.
+function syncOvrForm(){
+  const kind = $('ovKind').value;
+  const sel  = $('ovCrew');
+  if (kind === 'swap') {
+    sel.style.display = '';
+    sel.options[0].textContent = 'בחר מי עובד במקום';
+  } else if (kind === 'standby') {
+    sel.style.display = '';
+    sel.options[0].textContent = 'איזו משמרת מתווספת';
+  } else {
+    sel.style.display = 'none';
+    sel.value = '';
+  }
+}
+
+function ovErr(text){
+  const e = $('ovErr');
+  e.textContent = text || '';
+  e.style.display = text ? 'block' : 'none';
+}
+
+async function addOverride(){
+  ovErr('');
+  const date = $('ovDate').value;
+  const kind = $('ovKind').value;
+  const crew = $('ovCrew').value;
+  const note = $('ovNote').value.trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { ovErr('צריך תאריך.'); return; }
+  if (kind === 'swap' && !crew) { ovErr('בהחלפה צריך לבחור מי עובד.'); return; }
+  if (kind === 'standby' && !crew) { ovErr('בכוננות צריך לבחור איזו משמרת מתווספת.'); return; }
+
+  const rec = {
+    kind: kind,
+    crew: kind === 'swap' ? crew : '',
+    extra_crews: kind === 'standby' ? [crew] : [],
+    note: note
+  };
+
+  $('ovAdd').disabled = true;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'shift_overrides', date),
+                 Object.assign({ date: date, updated_at: serverTimestamp(),
+                                 by: auth.currentUser.uid }, rec));
+    overrides[date] = rec;
+    $('ovNote').value = '';
+    renderOvrList();
+    renderNext();
+    render();
+  } catch (e) {
+    ovErr('השמירה נכשלה. (' + (e.code || e.message) + ')');
+  }
+  $('ovAdd').disabled = false;
+}
+
+async function removeOverride(date){
+  try {
+    await deleteDoc(doc(db, 'stations', SID, 'shift_overrides', date));
+    delete overrides[date];
+    renderOvrList();
+    renderNext();
+    render();
+  } catch (e) {
+    ovErr('המחיקה נכשלה. (' + (e.code || e.message) + ')');
+  }
+}
+
+function renderOvrList(){
+  const box = $('ovList');
+  box.innerHTML = '';
+  const keys = Object.keys(overrides).sort();
+  if (!keys.length) {
+    box.innerHTML = '<div style="font-size:12.5px;color:var(--muted);' +
+                    'padding-top:10px">אין חריגות מוגדרות.</div>';
+    return;
+  }
+  keys.forEach(function (k) {
+    const o = overrides[k];
+    const p = k.split('-');
+    const row = document.createElement('div');
+    row.className = 'ovr-row';
+    row.innerHTML =
+      '<span class="d">' + Number(p[2]) + '.' + Number(p[1]) + '</span>' +
+      '<span class="k">' + overrideKindHe(o.kind) +
+        (o.crew ? ' · ' + CREW_HE[o.crew] : '') +
+        (o.extra_crews && o.extra_crews.length
+          ? ' · + ' + o.extra_crews.map(c => CREW_HE[c]).join(', ') : '') +
+      '</span>' +
+      '<span class="n">' + (o.note || '') + '</span>';
+    const x = document.createElement('span');
+    x.className = 'x'; x.textContent = '✕'; x.title = 'מחק';
+    x.onclick = () => removeOverride(k);
+    row.appendChild(x);
+    box.appendChild(row);
+  });
+}
 
 // ---------- כשירות ----------
 
@@ -452,7 +651,7 @@ function renderNext(){
   }
 
   const today = new Date();
-  const d = nextShift(rotations, me.crew, today);
+  const d = nextShift(rotations, me.crew, today, overrides);
   if (!d) { box.innerHTML = '<div class="txt">לא נמצאה משמרת קרובה.</div>'; return; }
 
   const diff = daysBetween(today, d);
@@ -495,7 +694,8 @@ function render(){
 
   for (let d = 1; d <= last; d++) {
     const date = new Date(viewYear, viewMonth, d);
-    const crew = crewOnDate(rotations, date);
+    const crew = crewOnDate(rotations, date, overrides);
+    const ov   = overrideOn(overrides, date);
 
     const f = crew ? fit[crew] : null;
     const unfit = !!(f && f.verdict.known && !f.verdict.ready);
@@ -504,10 +704,16 @@ function render(){
     el.className = 'day' + (crew ? ' ' + crew : '') +
                    (crew && crew === me.crew ? ' mine' : '') +
                    (unfit ? ' unfit' : '') +
+                   (ov ? ' ovr' + (ov.kind === 'swap' ? ' swap' : '') : '') +
                    (sameDay(date, today) ? ' today' : '');
+    if (ov) {
+      el.title = overrideKindHe(ov.kind) +
+                 (ov.note ? ' · ' + ov.note : '') +
+                 (unfit ? '\n' : '');
+    }
     if (unfit) {
-      el.title = 'משמרת ' + (CREW_HE[crew] || crew) + ' — לא כשירה · ' +
-                 summaryText(f.rl, f.bs, qualName);
+      el.title = (el.title || '') + 'משמרת ' + (CREW_HE[crew] || crew) +
+                 ' — לא כשירה · ' + summaryText(f.rl, f.bs, qualName);
     }
     el.innerHTML = '<div class="n">' + d + '</div>' +
                    '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>';
@@ -515,9 +721,11 @@ function render(){
   }
 
   if (me.crew && rotations.length) {
-    const shifts = shiftsInMonth(rotations, me.crew, me.role, viewYear, viewMonth);
+    const shifts = shiftsInMonth(rotations, me.crew, me.role,
+                                 viewYear, viewMonth, overrides);
     $('sumShifts').textContent = shifts.length;
-    $('sumHours').textContent  = hoursInMonth(rotations, me.crew, me.role, viewYear, viewMonth);
+    $('sumHours').textContent  = hoursInMonth(rotations, me.crew, me.role,
+                                              viewYear, viewMonth, overrides);
   } else {
     $('sumShifts').textContent = '—';
     $('sumHours').textContent  = '—';

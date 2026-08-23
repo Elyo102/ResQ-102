@@ -234,6 +234,8 @@
       <span class="why ok" id="why"></span>
 
       <span class="spacer"></span>
+      <span class="lbl" id="sitesLbl"></span>
+      <button class="btn hide" id="btnSites">תחנות קצה</button>
       <button class="btn hide" id="btnAddVeh">＋ רכב</button>
     </div>
 
@@ -249,10 +251,11 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=12';
-import { stationName } from './stations.js?v=12';
-import { renderNav, renderStuckNav } from './nav.js?v=12';
-import { boardState, summaryText, visibleCrews } from './readiness.js?v=12';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
+import { stationName } from './stations.js?v=13';
+import { renderNav, renderStuckNav } from './nav.js?v=13';
+import { boardState, summaryText, visibleCrews } from './readiness.js?v=13';
+import { SITE_SEED } from './hours.js?v=13';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -322,6 +325,7 @@ let board  = { vehicles: [], command: [] };
 let assign = {};          // slotId -> uid
 let people = [];          // כל אנשי התחנה הפעילים
 let quals  = [];          // [{id,name}]
+let sites  = [];          // [{id,name,fixed_hours,order}]
 let held   = {};          // uid -> [qid]
 
 // ---------- הרשאה ----------
@@ -357,7 +361,10 @@ onAuthStateChanged(auth, async user => {
   $('stName').textContent = stationName(SID) || SID;
   renderNav(c, 'board.html', user.email || '');
 
-  if (CAN_EDIT) $('btnAddVeh').classList.remove('hide');
+  if (CAN_EDIT) {
+    $('btnAddVeh').classList.remove('hide');
+    $('btnSites').classList.remove('hide');
+  }
   $('foot').textContent = CAN_EDIT
     ? 'לחיצה על שורה משבצת אדם · לחיצה על ✎ עורכת את המשבצת · המאגר כלל-תחנתי, גם ממשמרות אחרות'
     : 'לצפייה בלבד. השיבוץ נערך על ידי מפקד משמרת, רכז כוח אדם ומנהל המערכת.';
@@ -399,6 +406,29 @@ async function loadStatic(){
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
+  } catch (ignore) {}
+
+  try {
+    const ss = await getDocs(collection(db, 'stations', SID, 'sub_stations'));
+    sites = [];
+    ss.forEach(d => {
+      const v = d.data() || {};
+      sites.push({ id: d.id, name: v.name || '',
+                   fixed_hours: Number(v.fixed_hours || 0),
+                   order: Number(v.order || 0) });
+    });
+    sites.sort((a, b) => a.order - b.order);
+    if (!sites.length && CAN_EDIT) {
+      const batch = writeBatch(db);
+      SITE_SEED.forEach(function (s) {
+        batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
+          name: s.name, fixed_hours: s.fixed_hours, order: s.order,
+          updated_at: serverTimestamp(), by: auth.currentUser.uid
+        });
+        sites.push(Object.assign({}, s));
+      });
+      await batch.commit();
+    }
   } catch (ignore) {}
 
   try {
@@ -481,6 +511,9 @@ function render(){
     if (MY_CREWS.indexOf(c) === -1) { b.classList.add('hide'); return; }
     b.className = 'sw ' + c + (c === CREW ? ' on' : '');
   });
+  $('sitesLbl').textContent = sites.length
+    ? sites.map(s => s.name + (s.fixed_hours ? ' ' + s.fixed_hours + 'ש' : '')).join(' · ')
+    : '';
   $('scope').textContent = MY_CREWS.length === 1
     ? 'אתה מנהל את משמרת ' + (CREW_HE[CREW] || CREW) + ' בלבד'
     : '';
@@ -564,6 +597,10 @@ function renderFleet(){
       const job = document.createElement('span');
       job.className = 'job';
       job.textContent = s.job || '—';
+      if (s.site && siteName(s.site)) {
+        job.textContent += ' · ' + siteName(s.site);
+        job.title = 'תחנת קצה: ' + siteName(s.site);
+      }
 
       const who = document.createElement('span');
       who.className = 'who';
@@ -698,6 +735,102 @@ function pickPerson(slotId, jobLabel, req){
   $('pcancel').onclick = closeOv;
 }
 
+function siteOptions(sel){
+  let h = '<option value="">בלי תחנת קצה</option>';
+  sites.forEach(function (s) {
+    h += '<option value="' + esc(s.id) + '"' + (s.id === sel ? ' selected' : '') +
+         '>' + esc(s.name) +
+         (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') + '</option>';
+  });
+  return h;
+}
+
+function siteName(id){
+  const s = sites.filter(x => x.id === id)[0];
+  return s ? s.name : '';
+}
+
+// תחנות הקצה של אילת: ראשית, שחמון, תמנע, יטבתה.
+// "אורך משמרת קבוע" הוא מה שהופך את יטבתה ל-25 שעות. במערכת
+// הקיימת המספר הזה קבוע בקוד ומזוהה לפי טקסט חופשי בהערות —
+// שגיאת כתיב אחת מאבדת 25 שעות בשקט.
+$('btnSites').onclick = () => {
+  let rows = sites.map(function (s) {
+    return '<div class="qrow" data-id="' + esc(s.id) + '">' +
+      '<input type="text" class="sn" maxlength="20" value="' + esc(s.name) + '">' +
+      '<input type="number" class="sh num" min="0" max="48" step="0.25" ' +
+        'value="' + Number(s.fixed_hours || 0) + '" title="אורך משמרת קבוע. 0 = לפי השעות">' +
+      '<button class="btn sd" type="button">מחק</button>' +
+    '</div>';
+  }).join('');
+
+  openOv(
+    '<h3>תחנות קצה</h3>' +
+    '<div class="hint">שם, ואורך משמרת קבוע בשעות. 0 פירושו שהשעות ' +
+      'מחושבות מהכניסה והיציאה. יטבתה = 25.</div>' +
+    '<div id="siteRows">' + rows + '</div>' +
+    '<div class="addrow" style="display:flex;gap:10px;margin-top:14px">' +
+      '<input type="text" id="newSite" maxlength="20" placeholder="תחנת קצה חדשה">' +
+      '<input type="number" id="newSiteH" class="num" min="0" max="48" step="0.25" value="0">' +
+    '</div>' +
+    '<div class="acts">' +
+      '<button class="btn go" id="stAdd">הוסף</button>' +
+      '<button class="btn go" id="stSave">שמור הכל</button>' +
+      '<button class="btn" id="stCancel">סגור</button>' +
+    '</div>'
+  );
+
+  $('siteRows').querySelectorAll('.sd').forEach(function (b) {
+    b.onclick = function () { b.parentNode.remove(); };
+  });
+
+  $('stAdd').onclick = function () {
+    const n = String($('newSite').value || '').trim();
+    if (!n) return;
+    const h = Math.max(0, Number($('newSiteH').value) || 0);
+    const id = uid('st');
+    const d = document.createElement('div');
+    d.className = 'qrow'; d.dataset.id = id;
+    d.innerHTML = '<input type="text" class="sn" maxlength="20" value="' + esc(n) + '">' +
+      '<input type="number" class="sh num" min="0" max="48" step="0.25" value="' + h + '">' +
+      '<button class="btn sd" type="button">מחק</button>';
+    d.querySelector('.sd').onclick = function () { d.remove(); };
+    $('siteRows').appendChild(d);
+    $('newSite').value = ''; $('newSiteH').value = '0';
+  };
+
+  $('stSave').onclick = async () => {
+    const rows2 = Array.from($('siteRows').children);
+    const next = rows2.map(function (r, i) {
+      return { id: r.dataset.id,
+               name: String(r.querySelector('.sn').value || '').trim(),
+               fixed_hours: Math.max(0, Number(r.querySelector('.sh').value) || 0),
+               order: i + 1 };
+    }).filter(s => s.name);
+
+    const gone = sites.filter(s => !next.some(n => n.id === s.id));
+    try {
+      const batch = writeBatch(db);
+      next.forEach(function (s) {
+        batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
+          name: s.name, fixed_hours: s.fixed_hours, order: s.order,
+          updated_at: serverTimestamp(), by: auth.currentUser.uid
+        });
+      });
+      gone.forEach(function (s) {
+        batch.delete(doc(db, 'stations', SID, 'sub_stations', s.id));
+      });
+      await batch.commit();
+      sites = next;
+      closeOv(); render();
+      msg('תחנות הקצה נשמרו.', 'ok');
+    } catch (e) {
+      msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    }
+  };
+  $('stCancel').onclick = closeOv;
+};
+
 function qualOptions(sel){
   let h = '<option value="">ללא דרישה</option>';
   quals.forEach(function (q) {
@@ -751,6 +884,8 @@ function editSlot(v, slot){
       esc(isNew ? '' : slot.job) + '">' +
     '<label>כשירות נדרשת</label>' +
     '<select id="sr">' + qualOptions(isNew ? '' : (slot.req || '')) + '</select>' +
+    '<label>תחנת קצה</label>' +
+    '<select id="ss">' + siteOptions(isNew ? '' : (slot.site || '')) + '</select>' +
     '<div class="acts">' +
       '<button class="btn go" id="ssave">שמור</button>' +
       (isNew ? '' : '<button class="btn" id="sdel">מחק משבצת</button>') +
@@ -761,11 +896,12 @@ function editSlot(v, slot){
     const j = String($('sj').value || '').trim();
     if (!j) { msg('צריך שם תפקיד.', 'err'); return; }
     const r = $('sr').value || '';
+    const st = $('ss').value || '';
     if (isNew) {
       v.slots = v.slots || [];
-      v.slots.push({ id: uid('s'), job: j, req: r });
+      v.slots.push({ id: uid('s'), job: j, req: r, site: st });
     } else {
-      slot.job = j; slot.req = r;
+      slot.job = j; slot.req = r; slot.site = st;
     }
     closeOv(); render();
     try { await saveBoard(isNew ? 'המשבצת נוספה.' : 'המשבצת עודכנה.'); }

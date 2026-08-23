@@ -102,6 +102,15 @@ service cloud.firestore {
       return isSuper() || hr(sid) || myShift() == '' || myShift() == crew;
     }
 
+    // כמו seesShift, אבל על נתון שכבר קיים ושדה המשמרת שלו
+    // עלול להיות ריק — רשומה ישנה, או אדם בלי שיוך. רשומה
+    // בלי משמרת נראית לכל הסגל, כי אין לפי מה לנעול אותה,
+    // ולנעול הכל היה מסתיר נתונים בלי שאיש יבין למה.
+    function seesCrewData(sid, crew) {
+      return isSuper() || hr(sid) || crew == ''
+             || myShift() == '' || myShift() == crew;
+    }
+
     // מספר עובד. המערכת מקצה אותו באישור ההרשמה, והוא מזהה
     // את הכבאי בכל הדיווחים שלו. הוא גם משמש כהגנה מפני זדון,
     // ולכן אינו גלוי לכבאים אחרים.
@@ -433,24 +442,35 @@ service cloud.firestore {
       // כבאי יכול לאשר לעצמו שעות ולעקוף את הקצין, או לשייך
       // רישום שלו למספר עובד של כבאי אחר.
 
+      // מזהה הרשומה: {מספר עובד}_{YYYY-MM-DD}. יום אחד לאדם,
+      // כמו במערכת שרצה היום.
+      //
+      // הנעילה אחרי אישור עובדת דרך השדה status על כל רשומה
+      // ולא דרך קריאת מסמך הדוח החודשי: לקובץ הזה אין אף
+      // קריאת get(), במכוון, ולא נשבור את זה בשביל נעילה אחת.
+      // המאשר כותב 'approved' על כל רשומות החודש בפעולה אחת.
+
       match /attendance/{docId} {
-        allow read: if staff(sid)
+        allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
-        allow create: if staff(sid)
+        allow create: if (staff(sid)
+                          && seesCrewData(sid, request.resource.data.get('crew', '')))
                       || (member(sid)
                           && request.resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.keys().hasAll(['status'])
                           && request.resource.data.get('status', '') != 'approved');
 
-        allow update: if staff(sid)
+        allow update: if (staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', '')))
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') != 'approved'
                           && request.resource.data.get('status', '') != 'approved');
 
-        allow delete: if staff(sid)
+        allow delete: if (staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', '')))
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && resource.data.get('status', '') != 'approved');
@@ -518,9 +538,36 @@ service cloud.firestore {
 
       // ---------- דוחות חודשיים ----------
 
-      match /monthly_reports/{monthKey} {
-        allow read:  if member(sid);
-        allow write: if hr(sid);
+      // דוח חודשי לאדם. מזהה: {מספר עובד}_{YYYY-MM}.
+      //
+      //   draft      נפתח מעצמו ברגע שהכבאי מדווח יום ראשון
+      //   submitted  הכבאי שלח לאישור
+      //   approved   המפקד או רכז כוח אדם אישרו
+      //
+      // הכבאי יכול לשלוח ולחזור בו, ולא יכול לאשר לעצמו.
+      // מפקד משמרת מאשר את האנשים שלו; רכז כוח אדם ומנהל-על
+      // מאשרים את כל התחנה — כדי שסוף חודש לא ייתקע כשמפקד
+      // בחופשה.
+
+      match /monthly_reports/{docId} {
+        allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
+                    || (member(sid) && resource.data.get('emp_number', '') == myEmp());
+
+        allow create: if (staff(sid)
+                          && seesCrewData(sid, request.resource.data.get('crew', '')))
+                      || (member(sid)
+                          && request.resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.get('status', '') != 'approved');
+
+        allow update: if (staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', '')))
+                      || (member(sid)
+                          && resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
+                          && resource.data.get('status', '') != 'approved'
+                          && request.resource.data.get('status', '') != 'approved');
+
+        allow delete: if staff(sid);
       }
     }
 

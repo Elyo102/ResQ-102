@@ -44,11 +44,52 @@ export function sameDay(a, b) {
 }
 
 
+// ---------- חריגות ----------
+//
+// המחזור הוא נוסחה מושלמת שלא נשברת לעולם. המציאות נשברת:
+// משמרת מחליפה משמרת, חג, יום אימון, כוננות מיוחדת.
+//
+// חריגה גוברת על המחזור בכל מקום שבו שואלים "מי עובד היום" —
+// הלוח, סימון הכשירות, ומילוי דוח הנוכחות מראש. אם היא תגבור
+// רק במקום אחד, שני המסכים יראו ימים שונים לאותו אדם.
+//
+// המפה מגיעה כ-{ 'YYYY-MM-DD': {kind, crew, extra_crews, note} }.
+//
+//   swap      crew = מי עובד במקום מי שהמחזור קבע
+//   holiday   חג. crew ריק = המחזור הרגיל, אבל היום מסומן
+//   training  אימון. אותו דבר, סימון אחר
+//   standby   כוננות. extra_crews = משמרות נוספות באותו יום
+
+export const OVERRIDE_KINDS = [
+  { id: 'swap',     he: 'משמרת מחליפה משמרת', picksCrew: true  },
+  { id: 'holiday',  he: 'חג או מועד',          picksCrew: false },
+  { id: 'training', he: 'אימון או הדרכה',      picksCrew: false },
+  { id: 'standby',  he: 'כוננות מיוחדת',       picksCrew: false }
+];
+
+export function overrideKindHe(id) {
+  const k = OVERRIDE_KINDS.filter(function (x) { return x.id === id; })[0];
+  return k ? k.he : id;
+}
+
+export function overrideOn(overrides, date) {
+  if (!overrides) return null;
+  return overrides[toKey(date)] || null;
+}
+
+
 // ---------- הלב: איזו משמרת עובדת בתאריך נתון ----------
 
 // rotations = מערך של מסמכי rotations מ-Firestore
+// overrides = מפה אופציונלית של חריגות לפי תאריך
 // מחזיר את אות המשמרת ('A'/'B'/'C') או null אם אין מחזור פעיל.
-export function crewOnDate(rotations, date) {
+export function crewOnDate(rotations, date, overrides) {
+  // חריגה שקובעת מי עובד גוברת על הנוסחה. היא נבדקת לפני
+  // המחזור ולא אחריו — אחרת יום שהמחזור לא מכיר בכלל
+  // (למשל תחנה בלי מחזור מוגדר) היה מחזיר null למרות שיש חריגה.
+  const ov = overrideOn(overrides, date);
+  if (ov && ov.crew && CREWS.indexOf(ov.crew) !== -1) return ov.crew;
+
   if (!rotations || !rotations.length) return null;
 
   const active = rotations.filter(r => r.is_active !== false);
@@ -68,8 +109,12 @@ export function crewOnDate(rotations, date) {
 }
 
 // האם משמרת מסוימת עובדת בתאריך נתון
-export function isCrewWorking(rotations, crew, date) {
-  return crewOnDate(rotations, date) === crew;
+export function isCrewWorking(rotations, crew, date, overrides) {
+  if (crewOnDate(rotations, date, overrides) === crew) return true;
+  // כוננות מיוחדת: יותר ממשמרת אחת באותו יום.
+  const ov = overrideOn(overrides, date);
+  return !!(ov && Array.isArray(ov.extra_crews) &&
+            ov.extra_crews.indexOf(crew) !== -1);
 }
 
 
@@ -108,7 +153,7 @@ export function shiftTimes(rotation, role, special) {
 // ---------- כל המשמרות של אדם בחודש ----------
 
 // מחזיר מערך של אובייקטים: { date, key, crew, times }
-export function shiftsInMonth(rotations, crew, role, year, month) {
+export function shiftsInMonth(rotations, crew, role, year, month, overrides) {
   const out = [];
   if (!crew) return out;
 
@@ -117,11 +162,13 @@ export function shiftsInMonth(rotations, crew, role, year, month) {
 
   for (let d = 1; d <= last; d++) {
     const date = new Date(year, month, d);
-    if (crewOnDate(rotations, date) === crew) {
+    if (isCrewWorking(rotations, crew, date, overrides)) {
+      const ov = overrideOn(overrides, date);
       out.push({
         date: date,
         key: toKey(date),
         crew: crew,
+        override: ov,
         times: shiftTimes(base, role, false)
       });
     }
@@ -130,20 +177,20 @@ export function shiftsInMonth(rotations, crew, role, year, month) {
 }
 
 // סך השעות בחודש
-export function hoursInMonth(rotations, crew, role, year, month) {
-  return shiftsInMonth(rotations, crew, role, year, month)
+export function hoursInMonth(rotations, crew, role, year, month, overrides) {
+  return shiftsInMonth(rotations, crew, role, year, month, overrides)
     .reduce((sum, s) => sum + s.times.hours, 0);
 }
 
 
 // ---------- המשמרת הבאה ----------
 
-export function nextShift(rotations, crew, fromDate) {
+export function nextShift(rotations, crew, fromDate, overrides) {
   if (!crew) return null;
   const start = fromDate || new Date();
   for (let i = 0; i < 40; i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    if (crewOnDate(rotations, d) === crew) return d;
+    if (isCrewWorking(rotations, crew, d, overrides)) return d;
   }
   return null;
 }

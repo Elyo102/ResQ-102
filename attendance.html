@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — דוח נוכחות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:820px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600 }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn.stop{ background:#c62828; border-color:#c62828; color:#fff }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .btn.sm{ padding:6px 12px; font-size:12.5px }
+
+  .mo{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
+  .mo .lbl{ font-size:17px; font-weight:700; min-width:132px; text-align:center }
+  .mo button{ background:#191c20; border:1px solid var(--line); color:var(--txt);
+              border-radius:8px; width:38px; height:38px; font-size:19px;
+              cursor:pointer; font-family:inherit }
+
+  .tot{ display:flex; gap:12px; flex-wrap:wrap; align-items:stretch }
+  .tot div{ flex:1 1 130px; background:#191c20; border:1px solid var(--line);
+            border-radius:9px; padding:12px; text-align:center }
+  .tot .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
+  .tot .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+  .tot .v.soft{ color:var(--warn) }
+
+  .state{ display:inline-block; font-size:12px; font-weight:700; border-radius:20px;
+          padding:3px 12px; border:1px solid var(--line); color:var(--muted) }
+  .state.submitted{ border-color:var(--warn); color:var(--warn) }
+  .state.approved{ border-color:#2f4a33; color:var(--good) }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
+  th{ text-align:right; color:var(--muted); font-weight:600; font-size:11.5px;
+      padding:7px 5px; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:9px 5px; border-bottom:1px solid #24272c; vertical-align:middle }
+  tr:last-child td{ border-bottom:0 }
+  tr.sug td{ opacity:.55 }
+  tr.run td{ background:#241a13 }
+  .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
+  .dw{ color:var(--muted); font-size:11.5px }
+  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; color:#fff }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
+  .cw.C{ background:var(--crewC) }
+  .hh{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
+  .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
+        padding:1px 9px; color:var(--muted); white-space:nowrap }
+  .scroll{ overflow-x:auto }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .hide{ display:none !important }
+  .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
+
+  #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
+       display:none; align-items:flex-start; justify-content:center;
+       padding:5vh 14px; overflow:auto }
+  #ov.on{ display:flex }
+  .dlg{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+        width:100%; max-width:460px; padding:18px }
+  .dlg h3{ margin:0 0 3px; font-size:17px }
+  .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:12px; line-height:1.7 }
+  .dlg label{ display:block; font-size:12.5px; color:var(--muted); margin:11px 0 4px }
+  .dlg input, .dlg select, .dlg textarea{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  .dlg textarea{ min-height:64px; resize:vertical }
+  .two{ display:grid; grid-template-columns:1fr 1fr; gap:9px }
+  .acts{ display:flex; gap:8px; margin-top:15px; flex-wrap:wrap }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>דוח נוכחות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין דוח להציג.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="card">
+      <div class="mo">
+        <button id="prev" title="חודש קודם">‹</button>
+        <div class="lbl" id="moLabel">—</div>
+        <button id="next" title="חודש הבא">›</button>
+        <span class="state" id="state">טיוטה</span>
+      </div>
+
+      <div class="tot">
+        <div><div class="v" id="tHours">0</div><div class="k">שעות שנשמרו</div></div>
+        <div><div class="v" id="tDays">0</div><div class="k">ימים שדווחו</div></div>
+        <div><div class="v soft" id="tSug">0</div><div class="k">ימים לפי הסידור שטרם נשמרו</div></div>
+      </div>
+
+      <div class="row">
+        <button class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
+        <button class="btn hide" id="btnSubmit">שלח לאישור</button>
+        <button class="btn hide" id="btnUnsubmit">בטל שליחה</button>
+        <button class="btn hide" id="btnApprove">אשר את החודש</button>
+        <button class="btn hide" id="btnReopen">פתח מחדש</button>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card" id="timerCard">
+      <h2>שעון משמרת</h2>
+      <div class="note" id="timerNote">—</div>
+      <div class="row">
+        <button class="btn go" id="btnStart">התחל משמרת</button>
+        <button class="btn stop hide" id="btnStop">סיים משמרת</button>
+        <button class="btn sm" id="btnManual">דיווח ידני</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ימי החודש</h2>
+      <div class="note">
+        ימים שהמשמרת שלך עובדת בהם מופיעים מראש לפי הסידור, כולל חריגות.
+        לחיצה על שורה פותחת עריכה.
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנת קצה</th>
+                <th class="hh">סה״כ</th><th></th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card hide" id="apprCard">
+      <h2>דוחות שממתינים לאישור</h2>
+      <div class="note" id="apprNote">—</div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>שם</th><th>משמרת</th><th>חודש</th><th class="hh">שעות</th><th></th></tr></thead>
+          <tbody id="apprRows"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="apprMsg"></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="ov"><div class="dlg" id="dlg"></div></div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
+import { renderNav, renderStuckNav } from './nav.js?v=13';
+import { crewOnDate, isCrewWorking, overrideOn, overrideKindHe, shiftTimes,
+         CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=13';
+import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal,
+         recordId, monthKey, daysInMonth, dateKey } from './hours.js?v=13';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+         query, where, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'msg');
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '';
+let viewYear, viewMonth;
+let rotations = [], overrides = {}, sites = [];
+let records = {};          // 'YYYY-MM-DD' -> record
+let report  = null;        // מסמך הדוח החודשי
+
+function siteHoursOf(id){
+  const s = sites.filter(x => x.id === id)[0];
+  return s ? Number(s.fixed_hours || 0) : 0;
+}
+function siteName(id){
+  const s = sites.filter(x => x.id === id)[0];
+  return s ? s.name : '';
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=attendance.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID || !c.emp) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  MY_SHIFT = c.shift || '';
+  CAN_APPROVE = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '',
+         role: c.role || '', full_name: '' };
+
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'attendance.html', user.email || '');
+
+  const now = new Date();
+  viewYear = now.getFullYear();
+  viewMonth = now.getMonth();
+
+  await loadStatic();
+  await loadMonth();
+  if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
+});
+
+// ---------- טעינה ----------
+
+async function loadStatic(){
+  try {
+    const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));
+    rotations = rs.docs.map(d => d.data());
+  } catch (ignore) {}
+
+  try {
+    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
+    overrides = {};
+    os.forEach(d => {
+      const v = d.data() || {};
+      overrides[d.id] = { kind: v.kind || '', crew: v.crew || '',
+                          extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
+                          note: v.note || '' };
+    });
+  } catch (ignore) {}
+
+  try {
+    const ss = await getDocs(collection(db, 'stations', SID, 'sub_stations'));
+    sites = [];
+    ss.forEach(d => {
+      const v = d.data() || {};
+      sites.push({ id: d.id, name: v.name || '',
+                   fixed_hours: Number(v.fixed_hours || 0),
+                   order: Number(v.order || 0) });
+    });
+    sites.sort((a, b) => a.order - b.order);
+  } catch (ignore) {}
+}
+
+async function loadMonth(){
+  const mk = monthKey(viewYear, viewMonth);
+  records = {};
+
+  // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
+  // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
+  // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
+  try {
+    const qs = await getDocs(query(
+      collection(db, 'stations', SID, 'attendance'),
+      where('emp_number', '==', ME.emp),
+      where('month', '==', mk)
+    ));
+    qs.forEach(function (d) {
+      const v = d.data() || {};
+      records[v.date] = Object.assign({ id: d.id }, v);
+    });
+  } catch (e) {
+    const code = String(e.code || '');
+    if (code.indexOf('failed-precondition') !== -1) {
+      msg('חסר אינדקס במסד. הרץ deploy.bat — הוא פורס גם אינדקסים.', 'err');
+    } else {
+      msg('לא הצלחתי לקרוא את הדוח. (' + (e.code || e.message) + ')', 'err');
+    }
+  }
+
+  report = null;
+  try {
+    const r = await getDoc(doc(db, 'stations', SID, 'monthly_reports',
+                               ME.emp + '_' + mk));
+    if (r.exists()) report = r.data();
+  } catch (ignore) {}
+
+  render();
+}
+
+// ---------- ציור ----------
+
+function locked(){
+  return !!(report && report.status === 'approved');
+}
+
+function suggestedDays(){
+  const out = [];
+  if (!ME.crew) return out;
+  const last = daysInMonth(viewYear, viewMonth);
+  for (let d = 1; d <= last; d++) {
+    const date = new Date(viewYear, viewMonth, d);
+    if (!isCrewWorking(rotations, ME.crew, date, overrides)) continue;
+    const key = dateKey(viewYear, viewMonth, d);
+    if (records[key]) continue;
+    out.push(key);
+  }
+  return out;
+}
+
+function baseTimes(){
+  const t = shiftTimes(rotations[0], ME.role, false);
+  return { start: t.start, end: t.end };
+}
+
+function render(){
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear;
+
+  const list = Object.keys(records).sort();
+  const saved = list.map(k => records[k]);
+  const total = monthTotal(saved, siteHoursOf);
+  const sug = suggestedDays();
+
+  $('tHours').textContent = total;
+  $('tDays').textContent  = saved.length;
+  $('tSug').textContent   = sug.length;
+
+  const st = (report && report.status) || 'draft';
+  $('state').className = 'state ' + st;
+  $('state').textContent = st === 'approved' ? 'מאושר'
+                        : st === 'submitted' ? 'ממתין לאישור' : 'טיוטה';
+
+  $('btnFill').classList.toggle('hide', !sug.length || locked() || st === 'submitted');
+  $('btnSubmit').classList.toggle('hide', st !== 'draft' || !saved.length);
+  $('btnUnsubmit').classList.toggle('hide', st !== 'submitted');
+  $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
+  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && st === 'approved'));
+
+  renderTimer();
+  renderRows(sug);
+}
+
+function renderTimer(){
+  const today = new Date();
+  const key = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const rec = records[key];
+  const running = !!(rec && rec.start && !rec.end);
+
+  $('btnStart').classList.toggle('hide', running || locked());
+  $('btnStop').classList.toggle('hide', !running);
+
+  if (locked()) {
+    $('timerNote').textContent = 'החודש אושר ונעול. פנה למפקד כדי לפתוח אותו.';
+  } else if (running) {
+    $('timerNote').textContent = 'משמרת פתוחה מ-' + rec.start + '. לחץ "סיים" כשתסיים.';
+  } else if (rec) {
+    $('timerNote').textContent = 'היום כבר מדווח: ' + dayTypeHe(rec.day_type) +
+      (rec.start ? ' · ' + rec.start + '–' + rec.end : '');
+  } else {
+    $('timerNote').textContent = 'לחיצה על "התחל" רושמת את השעה עכשיו על היום הנוכחי.';
+  }
+}
+
+function renderRows(sug){
+  const body = $('rows');
+  body.innerHTML = '';
+
+  const keys = Object.keys(records).concat(sug).sort();
+  if (!keys.length) {
+    body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);' +
+      'text-align:center;padding:18px">אין ימים בחודש הזה.</td></tr>';
+    return;
+  }
+
+  keys.forEach(function (key) {
+    const rec = records[key];
+    const isSug = !rec;
+    const p = key.split('-');
+    const date = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    const ov = overrideOn(overrides, date);
+    const crew = crewOnDate(rotations, date, overrides);
+    const bt = baseTimes();
+
+    const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
+                          sub_station: '' };
+    const hrs = calcHours(view, siteHoursOf(view.sub_station));
+    const running = !!(rec && rec.start && !rec.end);
+
+    const tr = document.createElement('tr');
+    tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '');
+
+    tr.innerHTML =
+      '<td><span class="d">' + Number(p[2]) + '.' + Number(p[1]) + '</span> ' +
+        '<span class="dw">' + DOWS[date.getDay()] + '</span>' +
+        (crew ? ' <span class="cw ' + crew + '" title="' + esc(CREW_HE[crew] || crew) +
+                '">' + (CREW_SHORT[crew] || crew) + '</span>' : '') +
+        (ov ? ' <span class="tag" title="' + esc(ov.note || '') + '">' +
+              esc(overrideKindHe(ov.kind)) + '</span>' : '') + '</td>' +
+      '<td>' + esc(dayTypeHe(view.day_type)) +
+        (isSug ? ' <span class="tag">לפי הסידור</span>' : '') +
+        (running ? ' <span class="tag">פתוחה</span>' : '') + '</td>' +
+      '<td class="hh">' + (needsTimes(view.day_type)
+          ? esc(view.start || '—') + '–' + esc(running ? '…' : (view.end || '—')) : '—') + '</td>' +
+      '<td>' + (view.sub_station ? esc(siteName(view.sub_station)) : '—') + '</td>' +
+      '<td class="hh">' + (hrs == null ? '—' : hrs) + '</td>';
+
+    const td = document.createElement('td');
+    if (!locked()) {
+      const b = document.createElement('button');
+      b.className = 'btn sm';
+      b.textContent = isSug ? 'שמור' : 'ערוך';
+      b.onclick = () => editDay(key, rec);
+      td.appendChild(b);
+    }
+    tr.appendChild(td);
+    body.appendChild(tr);
+  });
+}
+
+// ---------- שמירה ----------
+
+function newRecord(key, patch){
+  const mk = monthKey(viewYear, viewMonth);
+  return Object.assign({
+    emp_number: ME.emp, uid: ME.uid, full_name: ME.full_name,
+    crew: ME.crew, date: key, month: mk,
+    day_type: 'regular', start: '', end: '', sub_station: '', notes: '',
+    status: 'draft'
+  }, patch || {});
+}
+
+async function saveRecord(key, rec){
+  const body = Object.assign({}, rec);
+  delete body.id;
+  body.hours = calcHours(body, siteHoursOf(body.sub_station));
+  body.updated_at = serverTimestamp();
+  await setDoc(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), body);
+  records[key] = Object.assign({ id: recordId(ME.emp, key) }, body);
+}
+
+$('btnFill').onclick = async () => {
+  const sug = suggestedDays();
+  if (!sug.length) return;
+  const b = $('btnFill'); b.disabled = true;
+  try {
+    const bt = baseTimes();
+    const batch = writeBatch(db);
+    sug.forEach(function (key) {
+      const rec = newRecord(key, { day_type: 'regular', start: bt.start, end: bt.end });
+      rec.hours = calcHours(rec, 0);
+      rec.updated_at = serverTimestamp();
+      batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), rec);
+      records[key] = rec;
+    });
+    await batch.commit();
+    msg(sug.length + ' ימים נשמרו לפי הסידור. אפשר לתקן כל אחד מהם.', 'ok');
+    render();
+  } catch (e) {
+    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+$('btnStart').onclick = async () => {
+  const now = new Date();
+  const key = dateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const hh = String(now.getHours()).padStart(2, '0') + ':' +
+             String(now.getMinutes()).padStart(2, '0');
+  try {
+    const rec = records[key]
+      ? Object.assign({}, records[key], { start: hh, end: '' })
+      : newRecord(key, { start: hh, end: '' });
+    await saveRecord(key, rec);
+    msg('המשמרת התחילה ב-' + hh + '.', 'ok');
+    render();
+  } catch (e) {
+    msg('לא הצלחתי לפתוח משמרת. (' + (e.code || e.message) + ')', 'err');
+  }
+};
+
+$('btnStop').onclick = async () => {
+  const now = new Date();
+  const key = dateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const rec = records[key];
+  if (!rec) return;
+  const hh = String(now.getHours()).padStart(2, '0') + ':' +
+             String(now.getMinutes()).padStart(2, '0');
+  try {
+    await saveRecord(key, Object.assign({}, rec, { end: hh }));
+    msg('המשמרת נסגרה ב-' + hh + '.', 'ok');
+    render();
+  } catch (e) {
+    msg('לא הצלחתי לסגור משמרת. (' + (e.code || e.message) + ')', 'err');
+  }
+};
+
+$('btnManual').onclick = () => {
+  const now = new Date();
+  editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
+          records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
+};
+
+// ---------- חלונית עריכה ----------
+
+function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+$('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
+
+function editDay(key, rec){
+  if (locked()) return;
+  const bt = baseTimes();
+  const v = rec || { day_type: 'regular', start: bt.start, end: bt.end,
+                     sub_station: '', notes: '' };
+  const p = key.split('-');
+
+  const types = DAY_TYPES.map(t =>
+    '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
+    '>' + t.he + '</option>').join('');
+  const siteOpts = '<option value="">בלי תחנת קצה</option>' + sites.map(s =>
+    '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
+    '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
+    '</option>').join('');
+
+  $('dlg').innerHTML =
+    '<h3>' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
+    '<div class="hint" id="dHint"></div>' +
+    '<label>סוג היום</label><select id="dType">' + types + '</select>' +
+    '<div id="dTimes"><div class="two">' +
+      '<div><label>כניסה</label><input type="time" id="dStart" value="' +
+        esc(v.start || '') + '"></div>' +
+      '<div><label>יציאה</label><input type="time" id="dEnd" value="' +
+        esc(v.end || '') + '"></div>' +
+    '</div></div>' +
+    '<label>תחנת קצה</label><select id="dSite">' + siteOpts + '</select>' +
+    '<label>הערות</label><textarea id="dNotes" maxlength="200">' +
+      esc(v.notes || '') + '</textarea>' +
+    '<div class="acts">' +
+      '<button class="btn go" id="dSave">שמור</button>' +
+      (rec ? '<button class="btn" id="dDel">מחק את היום</button>' : '') +
+      '<button class="btn" id="dCancel">ביטול</button>' +
+    '</div>';
+  $('ov').classList.add('on');
+
+  const sync = function () {
+    const t = $('dType').value;
+    $('dTimes').style.display = needsTimes(t) ? '' : 'none';
+    const fixed = siteHoursOf($('dSite').value);
+    const h = calcHours({ day_type: t, start: $('dStart').value,
+                          end: $('dEnd').value }, fixed);
+    $('dHint').innerHTML = 'שעות שיישמרו: <b>' + (h == null ? '—' : h) + '</b>' +
+      (fixed ? ' · תחנת קצה עם אורך משמרת קבוע' : '');
+  };
+  $('dType').onchange = sync;
+  $('dSite').onchange = sync;
+  $('dStart').oninput = sync;
+  $('dEnd').oninput = sync;
+  sync();
+
+  $('dSave').onclick = async () => {
+    const t = $('dType').value;
+    const start = needsTimes(t) ? $('dStart').value : '';
+    const end   = needsTimes(t) ? $('dEnd').value : '';
+    if (needsTimes(t) && (!start || !end)) {
+      msg('בסוג הזה צריך כניסה ויציאה.', 'err'); return;
+    }
+    try {
+      const base = rec ? Object.assign({}, rec) : newRecord(key);
+      await saveRecord(key, Object.assign(base, {
+        day_type: t, start: start, end: end,
+        sub_station: $('dSite').value, notes: $('dNotes').value.trim()
+      }));
+      closeOv(); msg('היום נשמר.', 'ok'); render();
+    } catch (e) {
+      msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    }
+  };
+
+  if (rec) $('dDel').onclick = async () => {
+    try {
+      await deleteDoc(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)));
+      delete records[key];
+      closeOv(); msg('היום נמחק.', 'ok'); render();
+    } catch (e) {
+      msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    }
+  };
+  $('dCancel').onclick = closeOv;
+}
+
+// ---------- שליחה ואישור ----------
+
+async function writeReport(patch){
+  const mk = monthKey(viewYear, viewMonth);
+  const saved = Object.keys(records).sort();
+  const body = Object.assign({
+    emp_number: ME.emp, uid: ME.uid, full_name: ME.full_name,
+    crew: ME.crew, month: mk,
+    days: saved,
+    total_hours: monthTotal(saved.map(k => records[k]), siteHoursOf),
+    updated_at: serverTimestamp()
+  }, patch);
+  await setDoc(doc(db, 'stations', SID, 'monthly_reports', ME.emp + '_' + mk), body);
+  report = body;
+}
+
+$('btnSubmit').onclick = async () => {
+  try {
+    await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
+    msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
+    render();
+  } catch (e) { msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+};
+
+$('btnUnsubmit').onclick = async () => {
+  try {
+    await writeReport({ status: 'draft' });
+    msg('השליחה בוטלה.', 'ok'); render();
+  } catch (e) { msg('הביטול נכשל. (' + (e.code || e.message) + ')', 'err'); }
+};
+
+// אישור נועל את הרשומות עצמן, לא רק את מסמך הדוח. כללי האבטחה
+// אינם קוראים מסמך אחר כדי להחליט — אין בהם אף get() — ולכן
+// הנעילה חייבת לשבת על כל רשומה.
+async function setMonthStatus(emp, mk, days, status){
+  const batch = writeBatch(db);
+  (days || []).forEach(function (key) {
+    batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
+              { status: status, updated_at: serverTimestamp() }, { merge: true });
+  });
+  await batch.commit();
+}
+
+$('btnApprove').onclick = () => approveMonth(ME.emp, monthKey(viewYear, viewMonth),
+                                            Object.keys(records).sort(), 'msg');
+$('btnReopen').onclick  = () => reopenMonth(ME.emp, monthKey(viewYear, viewMonth),
+                                            Object.keys(records).sort(), 'msg');
+
+async function approveMonth(emp, mk, days, box){
+  try {
+    await setMonthStatus(emp, mk, days, 'approved');
+    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
+    await setDoc(ref, { status: 'approved', approved_by: ME.uid,
+                        approved_by_name: ME.full_name,
+                        approved_at: serverTimestamp() }, { merge: true });
+    msg('החודש אושר ונעול.', 'ok', box);
+    if (emp === ME.emp) await loadMonth();
+    if (CAN_APPROVE) loadApprovals();
+  } catch (e) {
+    msg('האישור נכשל. (' + (e.code || e.message) + ')', 'err', box);
+  }
+}
+
+async function reopenMonth(emp, mk, days, box){
+  try {
+    await setMonthStatus(emp, mk, days, 'draft');
+    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
+    await setDoc(ref, { status: 'draft', reopened_by: ME.uid,
+                        reopened_by_name: ME.full_name,
+                        reopened_at: serverTimestamp() }, { merge: true });
+    msg('החודש נפתח מחדש.', 'ok', box);
+    if (emp === ME.emp) await loadMonth();
+    if (CAN_APPROVE) loadApprovals();
+  } catch (e) {
+    msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+  }
+}
+
+// ---------- רשימת האישורים ----------
+
+async function loadApprovals(){
+  const body = $('apprRows');
+  body.innerHTML = '';
+  let list = [];
+  try {
+    const qs = await getDocs(query(
+      collection(db, 'stations', SID, 'monthly_reports'),
+      where('status', '==', 'submitted')
+    ));
+    qs.forEach(d => list.push(Object.assign({ id: d.id }, d.data() || {})));
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את רשימת הדוחות. (' + (e.code || e.message) + ')',
+        'err', 'apprMsg');
+    return;
+  }
+
+  $('apprNote').textContent = MY_SHIFT && ME.role === 'commander'
+    ? 'מוצגים אנשי משמרת ' + (CREW_HE[MY_SHIFT] || MY_SHIFT) + ' בלבד.'
+    : 'כל התחנה.';
+
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);' +
+      'text-align:center;padding:16px">אין דוחות שממתינים לאישור.</td></tr>';
+    return;
+  }
+
+  list.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
+  list.forEach(function (r) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + esc(r.full_name || r.emp_number) + '</td>' +
+      '<td>' + (r.crew ? '<span class="cw ' + esc(r.crew) + '">' +
+        esc(CREW_SHORT[r.crew] || r.crew) + '</span>' : '—') + '</td>' +
+      '<td class="d">' + esc(r.month || '') + '</td>' +
+      '<td class="hh">' + (r.total_hours != null ? r.total_hours : '—') + '</td>';
+    const td = document.createElement('td');
+    const b = document.createElement('button');
+    b.className = 'btn go sm';
+    b.textContent = 'אשר';
+    b.onclick = () => approveMonth(r.emp_number, r.month, r.days || [], 'apprMsg');
+    td.appendChild(b);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  });
+}
+
+// ---------- ניווט חודשים ----------
+
+$('prev').onclick = async () => {
+  viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+  msg('', ''); await loadMonth();
+};
+$('next').onclick = async () => {
+  viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+  msg('', ''); await loadMonth();
+};
+</script>
+</body>
+</html>
