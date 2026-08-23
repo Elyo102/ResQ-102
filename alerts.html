@@ -256,12 +256,12 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
-import { renderNav, renderStuckNav } from './nav.js?v=19';
-import { watchCallouts } from './callout.js?v=19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
+import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { watchCallouts } from './callout.js?v=20';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=19';
-import { CREW_HE } from './rotation.js?v=19';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=20';
+import { CREW_HE } from './rotation.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -529,6 +529,14 @@ $('btnSavePrefs').onclick = async () => {
 
 let roster = [], picked = {}, coStop = null;
 
+// שם לפי מזהה, מתוך הסגל. מי שכבר לא בסגל מקבל תווית ולא
+// מזהה גולמי — מזהה על המסך נראה כמו תקלה.
+function rosterName(uid){
+  if (uid === ME.uid) return ME.full_name || 'אני';
+  const p = roster.filter(x => x.uid === uid)[0];
+  return (p && p.name) ? p.name : 'לא בסגל';
+}
+
 function canCallout(){
   return IS_SUPER || ROLE === 'commander' || ROLE === 'hr_coordinator';
 }
@@ -695,10 +703,14 @@ function renderLive(list){
     const v = it.v;
     const uids = Array.isArray(v.uids) ? v.uids : [];
     const acks = v.acks || {};
+    // השם נלקח מהסגל לפי ה-uid, ולא מתוך התשובה עצמה.
+    // המשתמש כותב את הרשומה של עצמו, ולכן הוא יכול לכתוב בה
+    // כל שם — הדבר היחיד שהשרת מאמת הוא שהמפתח הוא שלו.
+    // ה-uid הוא האמת; מה שכתוב לידו הוא רק נוחות.
     const coming = [], no = [];
     Object.keys(acks).forEach(function (u) {
       const a = acks[u] || {};
-      (a.resp === 'coming' ? coming : no).push(a.name || u);
+      (a.resp === 'coming' ? coming : no).push(rosterName(u));
     });
     const silent = uids.length - coming.length - no.length;
 

@@ -429,9 +429,82 @@ service cloud.firestore {
         allow write: if staff(sid);
       }
 
+      // רכבי עיגון — רכבים קטנים למשימות לוגיסטיות. רכבי כיבוי
+      // וחילוץ אינם כאן; הם מוגדרים בתוך config/board, כי שם הם
+      // נושאים משבצות ותפקידים. כל רכב חי במקום אחד בדיוק.
       match /vehicles/{vehicleId} {
         allow read:  if member(sid);
         allow write: if staff(sid);
+      }
+
+      // ---------- מסירת אחריות ----------
+      //
+      // זו חתימה, לא רשומה רגילה. אלדד הגדיר: מפקד משמרת או
+      // סגנו מאשר קבלת אחריות, ונרשם בלוג מי מסר למי ומתי.
+      //
+      // ולכן הכלל היחיד שחשוב כאן: **אין update ואין delete.**
+      // רשומה שאפשר לערוך בדיעבד אינה חתימה אלא הערה. מפקד
+      // שחתם על משמרת שהתבררה כבעייתית לא יוכל לשנות את
+      // השעה או להעביר את השם.
+      //
+      // תיקון של רישום שגוי נעשה ברישום חדש, לא במחיקה — כך
+      // גם הטעות וגם התיקון נשארים גלויים.
+      //
+      // מי שחותם: הסגל בלבד. השם נעול למי שכתב.
+
+      match /handovers/{hoId} {
+        allow read: if member(sid);
+
+        allow create: if staff(sid)
+                      && request.resource.data.get('to_uid', '') == request.auth.uid
+                      && request.resource.data.get('crew', '') != ''
+                      && request.resource.data.get('date', '') != ''
+                      && request.resource.data.get('accepted_key', '') != ''
+                      && request.resource.data.get('assessment', '').size() <= 600;
+
+        allow update, delete: if false;
+      }
+
+      // ---------- תקלות וחפיפת משמרת ----------
+      //
+      // כל כבאי מדווח תקלה, וזו הנקודה: מי שרואה את הנזילה הוא
+      // מי שעומד ליד הרכב, לא מי שיושב במשרד. לכן create פתוח
+      // לכל חבר תחנה, ושם המדווח ננעל למי שכתב.
+      //
+      // סגירה: הסגל סוגר הכל; מי שפתח סוגר את שלו. כבאי שדיווח
+      // בטעות לא צריך לחפש מפקד כדי לבטל.
+      //
+      // מה שאי אפשר לשנות אחרי הפתיחה: מי דיווח ומתי. זו כל
+      // הנקודה של חפיפת משמרת — רישום שלא זז.
+
+      match /faults/{faultId} {
+        allow read: if member(sid);
+
+        allow create: if member(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('title', '') is string
+                      && request.resource.data.get('title', '').size() > 0
+                      && request.resource.data.get('title', '').size() <= 80
+                      && request.resource.data.get('desc', '').size() <= 600
+                      && request.resource.data.get('status', '') == 'open';
+
+        allow update: if (staff(sid) || resource.data.get('by_uid', '') == request.auth.uid)
+                      && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
+                      && request.resource.data.get('by_name', '') == resource.data.get('by_name', '')
+                      && request.resource.data.get('created_key', '') == resource.data.get('created_key', '')
+                      && request.resource.data.get('title', '') == resource.data.get('title', '');
+
+        allow delete: if isSuper();
+
+        // צילומים. נשמרים כמסמך נפרד תחת התקלה כדי שמסמך התקלה
+        // יישאר קטן ושהתמונה תיטען רק כשמסתכלים בה.
+        match /photos/{photoId} {
+          allow read: if member(sid);
+          allow create: if member(sid)
+                        && request.resource.data.get('by_uid', '') == request.auth.uid;
+          allow update: if false;
+          allow delete: if staff(sid);
+        }
       }
 
       match /rotations/{rotationId} {
@@ -586,17 +659,32 @@ service cloud.firestore {
       // בתוך acks, את המפתח ששמו עליו, ולא נוגע בשום שדה אחר.
       // כך אי אפשר לענות בשם חבר, ואי אפשר לשנות את נוסח
       // הקריאה אחרי שיצאה.
+      //
+      // שלוש בדיקות, וכל אחת סוגרת פרצה אחרת:
+      //
+      //   uids       רק מי שהקריאה נשלחה אליו יכול לענות. בלי
+      //              זה כל חבר תחנה יכול היה לנפח את ספירת
+      //              "מגיעים" בקריאה שאינה שלו, והמפקד היה
+      //              סופר אנשים שלא הוזעקו
+      //   acks       מפתח אחד, שלו
+      //   resp       ערך מוכר בלבד. diff מזהה שינוי בתוכן, אבל
+      //              אינו מאמת אותו — בלי הבדיקה הזו אפשר
+      //              לכתוב כל דבר תחת המפתח שלך
 
       match /callouts/{coId} {
         allow read: if member(sid);
         allow create, delete: if false;
 
         allow update: if member(sid)
+                      && request.auth.uid in resource.data.get('uids', [])
                       && request.resource.data.diff(resource.data)
                            .affectedKeys().hasOnly(['acks'])
                       && request.resource.data.get('acks', {})
                            .diff(resource.data.get('acks', {}))
-                           .affectedKeys().hasOnly([request.auth.uid]);
+                           .affectedKeys().hasOnly([request.auth.uid])
+                      && request.resource.data.get('acks', {})
+                           .get(request.auth.uid, {})
+                           .get('resp', '') in ['coming', 'no'];
       }
 
 
@@ -627,44 +715,89 @@ service cloud.firestore {
       match /swaps/{swapId} {
         allow read: if member(sid);
 
+        // שני מסלולים ליצירה:
+        //
+        //   peer  בקשה מכוונת לאדם מסוים
+        //   open  בקשה פתוחה — "מי מוכן להחליף איתי" — שכל
+        //         אחד יכול לקחת
+        //
+        // הזיהוי הוא לפי uid ולא לפי מספר עובד. הגרסה הקודמת
+        // בדקה from_emp/to_emp בכללים בזמן שהיצירה שמרה שם
+        // מחרוזת ריקה, ולכן שום הסכמה לא הייתה עוברת בשרת.
+        // מספר עובד גם אינו נחוץ כאן — אלדד ביקש חיפוש בשם.
         allow create: if member(sid)
-                      && request.resource.data.get('from_emp', '') == myEmp()
-                      && request.resource.data.get('status', '') == 'peer'
+                      && request.resource.data.get('from_uid', '') == request.auth.uid
+                      && request.resource.data.get('status', '') in ['peer', 'open']
                       && request.resource.data.get('from_crew', '') != ''
-                      && request.resource.data.get('to_crew', '') != '';
+                      && request.resource.data.get('from_date', '') != ''
+                      && (request.resource.data.get('status', '') == 'open'
+                          || (request.resource.data.get('to_uid', '') != ''
+                              && request.resource.data.get('to_uid', '') != request.auth.uid
+                              && request.resource.data.get('to_crew', '') != ''));
+
+        // לקיחת בקשה פתוחה. מי שלוקח קובע את עצמו כצד השני
+        // ומציע את היום שלו בתמורה — ובכך גם נותן את הסכמתו,
+        // ולכן הבקשה עוברת ישר למפקדים.
+        //
+        // הצד של המבקש נעול לגמרי: מי שלוקח לא משנה את התאריך
+        // או את המשמרת של מי שפרסם.
+        allow update: if member(sid)
+                      && resource.data.get('status', '') == 'open'
+                      && request.resource.data.get('status', '') == 'cmd_from'
+                      && request.resource.data.get('to_uid', '') == request.auth.uid
+                      && resource.data.get('from_uid', '') != request.auth.uid
+                      && request.resource.data.get('to_date', '') != ''
+                      && request.resource.data.get('to_crew', '') != ''
+                      && request.resource.data.get('from_uid', '')  == resource.data.get('from_uid', '')
+                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '');
 
         // הכבאי השני מסכים או מסרב. הוא לא יכול לאשר סופית.
         allow update: if member(sid)
-                      && resource.data.get('to_emp', '') == myEmp()
+                      && resource.data.get('to_uid', '') == request.auth.uid
                       && resource.data.get('status', '') == 'peer'
                       && request.resource.data.get('status', '') in ['cmd_from', 'rejected']
-                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
-                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
+                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
 
         // מפקד המשמרת של המבקש.
         allow update: if staff(sid)
                       && seesShift(sid, resource.data.get('from_crew', ''))
                       && resource.data.get('status', '') == 'cmd_from'
                       && request.resource.data.get('status', '') in ['cmd_to', 'rejected']
-                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
-                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
+                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
 
         // מפקד המשמרת השנייה. רק הוא יכול להביא ל-approved.
+        //
+        // ואינו אותו אדם שאישר את השלב הקודם. רכז כוח אדם
+        // ומנהל-על עוברים את seesShift לכל המשמרות, ולכן בלי
+        // התנאי הזה אדם אחד יכול היה להעביר בקשה משני שלבי
+        // המפקדים לבדו — בזמן שכל התכנון הוא ששניים אישרו.
         allow update: if staff(sid)
                       && seesShift(sid, resource.data.get('to_crew', ''))
+                      && request.auth.uid != resource.data.get('from_appr_uid', '')
                       && resource.data.get('status', '') == 'cmd_to'
                       && request.resource.data.get('status', '') in ['approved', 'rejected']
-                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
-                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
+                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
 
         // ביטול על ידי אחד השניים, כל עוד לא אושרה.
         allow update: if member(sid)
-                      && (resource.data.get('from_emp', '') == myEmp()
-                          || resource.data.get('to_emp', '') == myEmp())
+                      && (resource.data.get('from_uid', '') == request.auth.uid
+                          || resource.data.get('to_uid', '') == request.auth.uid)
                       && resource.data.get('status', '') != 'approved'
                       && request.resource.data.get('status', '') == 'cancelled'
-                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
-                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
+                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
 
         allow delete: if isSuper();
       }
@@ -704,13 +837,22 @@ service cloud.firestore {
 
       // תוצאות הריצה הלילית ודוחות משאבי אנוש. נכתבים בשרת
       // בלבד; הסגל קורא כדי לראות מה נמצא.
+      // סריקה לילית ודוח משאבי אנוש. שני המסמכים כלל-תחנתיים
+      // ומכילים את השעות של כל אדם בתחנה — ולכן מפקד משמרת
+      // שקורא אותם רואה את שתי המשמרות האחרות, בניגוד לכלל.
+      // אי אפשר לצמצם אותם לפי משמרת כי הם מסמך אחד לחודש,
+      // ולכן הגישה מצטמצמת לרכז כוח אדם ולמנהל-על.
+      //
+      // מפקד לא מאבד דבר: הממצאים שנוגעים לאנשיו מגיעים אליו
+      // בהתראה ובדוח החודשי, ושניהם ממילא מצומצמים למשמרת שלו.
+
       match /scans/{monthKey} {
-        allow read:  if staff(sid);
+        allow read:  if hr(sid);
         allow write: if false;
       }
 
       match /hr_reports/{monthKey} {
-        allow read:  if staff(sid);
+        allow read:  if hr(sid);
         allow write: if false;
       }
 

@@ -252,23 +252,23 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=19';
-import { watchCallouts } from './callout.js?v=19';
-import { isAssigned as guardHasMe } from './guards.js?v=19';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=20';
+import { watchCallouts } from './callout.js?v=20';
+import { isAssigned as guardHasMe } from './guards.js?v=20';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
          OVERRIDE_KINDS, overrideKindHe, overrideOn,
          personWorks, swapEffect }
-  from './rotation.js?v=19';
+  from './rotation.js?v=20';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=19';
+  from './readiness.js?v=20';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

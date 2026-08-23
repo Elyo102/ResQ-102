@@ -21,7 +21,7 @@
 //
 // טעות זו היא הטעות המתבקשת כאן, ולכן היא כתובה במפורש.
 
-import { personWorks, fromKey } from './rotation.js?v=19';
+import { personWorks, fromKey } from './rotation.js?v=20';
 
 // ------------------------------------------------------------------
 //  מצבים

@@ -250,17 +250,17 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
-import { renderNav, renderStuckNav } from './nav.js?v=19';
-import { watchCallouts } from './callout.js?v=19';
-import { isAssigned as guardHasMe } from './guards.js?v=19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
+import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { watchCallouts } from './callout.js?v=20';
+import { isAssigned as guardHasMe } from './guards.js?v=20';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=19';
+  from './rotation.js?v=20';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=19';
+  from './hours.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

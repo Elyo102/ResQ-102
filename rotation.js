@@ -234,3 +234,86 @@ export function nextShift(rotations, crew, fromDate, overrides) {
   }
   return null;
 }
+
+
+// ---------- מנוחה בין משמרות ----------
+//
+// כבאי לא עובד 48 שעות רצוף. משמרת היא 24 שעות, ולכן שתי
+// משמרות בימים צמודים הן 48 שעות בלי לעצור — וזה הכלל שאלדד
+// הגדיר: מי שעובד ביום א', המוקדם ביותר שאפשר להחליף אליו
+// הוא יום ג'. יום שלם של מנוחה ביניהם.
+//
+// הסבב הרגיל של שלוש משמרות ממילא לא מייצר ימים צמודים.
+// הכלל הזה נוגע רק להחלפות, כי החלפה היא הדרך היחידה שאדם
+// נכנס ליום שאינו יום המשמרת שלו.
+//
+// הערה על אכיפה: הבדיקה כאן היא בצד הלקוח ובמסך האישור של
+// המפקד. כללי Firestore אינם יכולים לבצע חשבון תאריכים על
+// פני מסמכים אחרים, ולכן אכיפה מלאה בשרת הייתה מחייבת
+// להעביר את יצירת ההחלפה ואת האישור לפונקציית ענן. השער
+// האמיתי הוא המפקד, שרואה את ההפרה לפני שהוא מאשר.
+
+export const MIN_REST_DAYS = 1;   // יום מנוחה מלא בין משמרות
+
+export function addDays(key, n) {
+  const d = fromKey(key);
+  d.setDate(d.getDate() + n);
+  return toKey(d);
+}
+
+// האם האדם יעבוד ביום מסוים, בהינתן החלפה מוצעת שעדיין לא
+// נשמרה. gainKey הוא היום שהוא נכנס אליו, loseKey היום שהוא
+// יוצא ממנו.
+export function wouldWork(rotations, crew, overrides, swaps, uid,
+                          key, gainKey, loseKey) {
+  if (!key) return false;
+  if (loseKey && key === loseKey) return false;
+  if (gainKey && key === gainKey) return true;
+  if (!crew) return false;
+  return personWorks(rotations, crew, fromKey(key), overrides, swaps, uid) === true;
+}
+
+// הימים הצמודים שבהם האדם כבר עובד, ושהופכים את היום החדש
+// ל-48 שעות רצוף. רשימה ריקה = תקין.
+export function restConflicts(rotations, crew, overrides, swaps, uid,
+                              gainKey, loseKey) {
+  const out = [];
+  if (!gainKey) return out;
+  const before = addDays(gainKey, -1);
+  const after  = addDays(gainKey, 1);
+  if (wouldWork(rotations, crew, overrides, swaps, uid, before, gainKey, loseKey)) {
+    out.push(before);
+  }
+  if (wouldWork(rotations, crew, overrides, swaps, uid, after, gainKey, loseKey)) {
+    out.push(after);
+  }
+  return out;
+}
+
+// בדיקת שני הצדדים של החלפה. מחזיר רשימת הפרות עם שם ותאריכים.
+//
+// a = { uid, crew, name, gain, lose }
+export function swapRestCheck(rotations, overrides, swaps, a, b) {
+  const out = [];
+  [a, b].forEach(function (p) {
+    if (!p || !p.gain) return;
+    const hits = restConflicts(rotations, p.crew, overrides, swaps,
+                               p.uid, p.gain, p.lose);
+    if (hits.length) {
+      out.push({ uid: p.uid, name: p.name || '', gain: p.gain, days: hits });
+    }
+  });
+  return out;
+}
+
+export function restWhy(v) {
+  if (!v) return '';
+  const d = v.days.map(function (k) {
+    const p = String(k).split('-');
+    return Number(p[2]) + '.' + Number(p[1]);
+  }).join(' ו-');
+  const g = String(v.gain).split('-');
+  return (v.name || 'הכבאי') + ' עובד ב-' + d +
+         ', והחלפה ל-' + Number(g[2]) + '.' + Number(g[1]) +
+         ' תיצור 48 שעות רצוף.';
+}

@@ -194,13 +194,39 @@
           <input type="date" id="hisDate">
         </div>
       </div>
-      <label>עם מי</label>
-      <button class="btn" id="btnPick" style="margin-top:0;width:100%">בחר כבאי</button>
-      <div class="note" id="peerNote" style="margin-top:8px">לא נבחר.</div>
+      <label>איך למצוא מחליף</label>
+      <select id="mode">
+        <option value="peer">אני יודע עם מי — בחירה בשם</option>
+        <option value="open">שיראו כולם — מי שמעוניין יתפוס</option>
+      </select>
+
+      <div id="peerWrap">
+        <label>עם מי</label>
+        <button class="btn" id="btnPick" style="margin-top:0;width:100%">בחר כבאי</button>
+        <div class="note" id="peerNote" style="margin-top:8px">לא נבחר.</div>
+      </div>
+
+      <div id="openWrap" class="hide">
+        <label>איזו משמרת מעניינת אותך</label>
+        <select id="wantCrew"></select>
+        <div class="note" style="margin-top:8px">
+          הבקשה תופיע לכולם. מי שמעוניין בוחר יום משלו בתמורה
+          ולוחץ — ומשם זה עובר ישר לשני המפקדים.
+          <b>היום שלו לא נקבע מראש</b>, ולכן שדה "היום שלו" למעלה
+          אינו נדרש.
+        </div>
+      </div>
       <label>הערה (לא חובה)</label>
       <textarea id="newNote" maxlength="200"></textarea>
       <button class="btn go" id="btnSend">שלח בקשה</button>
       <div class="msg" id="newMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>בקשות פתוחות בתחנה</h2>
+      <div class="note" id="openNote">—</div>
+      <div id="openList"></div>
+      <div class="msg" id="openMsg"></div>
     </div>
 
     <div class="card">
@@ -215,10 +241,11 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=19';
-import { renderNav, renderStuckNav } from './nav.js?v=19';
-import { watchCallouts } from './callout.js?v=19';
-import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking } from './rotation.js?v=19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
+import { renderNav, renderStuckNav } from './nav.js?v=20';
+import { watchCallouts } from './callout.js?v=20';
+import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking,
+         swapRestCheck, restWhy } from './rotation.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -244,7 +271,8 @@ function msg(text, kind, box){
   m.className = 'msg ' + (text ? (kind || '') : '');
 }
 function dmy(k){
-  const p = String(k).split('-');
+  const p = String(k || '').split('-');
+  if (p.length !== 3) return '';
   return Number(p[2]) + '.' + Number(p[1]);
 }
 
@@ -299,6 +327,7 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'swaps.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
+  setupMode();
   if (IS_STAFF) $('apprCard').classList.remove('hide');
   await loadAll();
 });
@@ -364,6 +393,7 @@ async function loadSwaps(){
     msg('לא הצלחתי לקרוא את ההחלפות. (' + (e.code || e.message) + ')', 'err', 'mineMsg');
   }
   renderMine();
+  renderOpenBoard();
   if (IS_STAFF) renderApprovals();
 }
 
@@ -412,12 +442,40 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); }
 
 // ---------- שליחת בקשה ----------
 
+// ---------- שני מסלולים לבקשה ----------
+//
+// peer  אני יודע עם מי. בוחר בשם ושולח לאישורו
+// open  אני לא יודע עם מי. מפרסם, ומי שמעוניין תופס
+//
+// המסלול השני קיים כי הראשון מניח שאתה כבר סגרת עם מישהו
+// בטלפון. כשלא סגרת, החלופה היום היא לשלוח הודעות לכל מי
+// שאתה מכיר — וזה בדיוק מה שהמסך הזה בא להחליף.
+
+function setupMode(){
+  $('wantCrew').innerHTML = '<option value="">כל משמרת</option>' +
+    ['A','B','C'].filter(c => c !== ME.crew).map(c =>
+      '<option value="' + c + '">משמרת ' + esc(CREW_HE[c] || c) +
+      '</option>').join('');
+
+  $('mode').onchange = function () {
+    const open = $('mode').value === 'open';
+    $('peerWrap').classList.toggle('hide', open);
+    $('openWrap').classList.toggle('hide', !open);
+    $('hisDate').disabled = open;
+    $('hisDate').parentNode.style.opacity = open ? '.45' : '1';
+  };
+  $('mode').onchange();
+}
+
 $('btnSend').onclick = async () => {
   msg('', '');
   const my  = $('myDate').value;
   const his = $('hisDate').value;
 
+  const OPEN = $('mode').value === 'open';
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(my))  { msg('צריך לבחור את היום שלך.', 'err'); return; }
+  if (OPEN) { await sendOpen(my); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(his)) { msg('צריך לבחור את היום שלו.', 'err'); return; }
   if (!peer) { msg('צריך לבחור עם מי מחליפים.', 'err'); return; }
   if (my === his) { msg('שני התאריכים זהים. בהחלפה יום מול יום צריך שני ימים.', 'err'); return; }
@@ -437,13 +495,25 @@ $('btnSend').onclick = async () => {
     warn.push('לפי הסידור ' + peer.full_name + ' לא עובד ב-' + dmy(his));
   }
 
+  // 48 שעות רצוף. משמרת היא 24 שעות, ולכן החלפה שמצמידה שתי
+  // משמרות אסורה — לא אזהרה, חסימה. זו לא העדפה תפעולית אלא
+  // בטיחות: כבאי שלא ישן שני לילות אינו כשיר לצאת לאירוע.
+  const rest = swapRestCheck(rotations, overrides, swaps,
+    { uid: ME.uid,   crew: ME.crew,   name: ME.full_name,   gain: his, lose: my },
+    { uid: peer.uid, crew: peer.crew, name: peer.full_name, gain: my,  lose: his });
+  if (rest.length) {
+    msg(rest.map(restWhy).join(' ') + ' צריך יום מנוחה מלא בין משמרות.',
+        'err');
+    return;
+  }
+
   const b = $('btnSend'); b.disabled = true;
   try {
     const ref = doc(collection(db, 'stations', SID, 'swaps'));
     await setDoc(ref, {
-      from_uid: ME.uid, from_emp: ME.emp, from_name: ME.full_name,
+      from_uid: ME.uid, from_name: ME.full_name,
       from_crew: ME.crew, from_date: my,
-      to_uid: peer.uid, to_emp: '', to_name: peer.full_name,
+      to_uid: peer.uid, to_name: peer.full_name,
       to_crew: peer.crew, to_date: his,
       note: $('newNote').value.trim(),
       status: 'peer',
@@ -461,9 +531,151 @@ $('btnSend').onclick = async () => {
   b.disabled = false;
 };
 
+// ---------- בקשה פתוחה ----------
+
+async function sendOpen(my){
+  const want = $('wantCrew').value;
+  if (!ME.crew) { msg('אין לך שיוך משמרת. פנה לרכז כוח אדם.', 'err'); return; }
+
+  const d1 = fromKey(my);
+  const warn = isCrewWorking(rotations, ME.crew, d1, overrides)
+    ? [] : ['לפי הסידור אתה לא עובד ב-' + dmy(my)];
+
+  const b = $('btnSend'); b.disabled = true;
+  try {
+    await setDoc(doc(collection(db, 'stations', SID, 'swaps')), {
+      from_uid: ME.uid, from_name: ME.full_name,
+      from_crew: ME.crew, from_date: my,
+      to_uid: '', to_name: '', to_crew: '', to_date: '',
+      want_crew: want,
+      note: $('newNote').value.trim(),
+      status: 'open',
+      created_key: new Date().toISOString(),
+      created_at: serverTimestamp()
+    });
+    msg('הבקשה פורסמה. היא מופיעה עכשיו לכל מי שיכול לקחת אותה.' +
+        (warn.length ? ' שים לב: ' + warn.join(' · ') : ''),
+        warn.length ? 'info' : 'ok');
+    $('newNote').value = '';
+    await loadSwaps();
+  } catch (e) {
+    msg('הפרסום נכשל. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+function fromKey(k){
+  const p = String(k).split('-');
+  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+}
+
+// מי יכול לקחת בקשה פתוחה: כל מי שאינו המבקש, ואם המבקש ציין
+// משמרת מבוקשת — מי שנמצא בה. אין כאן חסימה לפי כשירות: פער
+// כשירויות מוצג למפקד בשלב האישור, וזה המקום להחליט עליו.
+function canTake(s){
+  if (!ME.crew) return false;
+  if (s.from_uid === ME.uid) return false;
+  if (s.want_crew && s.want_crew !== ME.crew) return false;
+  return s.status === 'open';
+}
+
+function renderOpenBoard(){
+  const box = $('openList');
+  box.innerHTML = '';
+  const list = swaps.filter(s => s.status === 'open')
+    .sort((a,b) => String(a.from_date||'').localeCompare(String(b.from_date||'')));
+
+  $('openNote').textContent = list.length
+    ? list.length + ' בקשות מחפשות מחליף.'
+    : 'אין בקשות פתוחות.';
+
+  list.forEach(function (s) {
+    const el = document.createElement('div');
+    el.innerHTML = swapBox(s);
+    const card = el.firstChild;
+
+    if (canTake(s)) {
+      const row = document.createElement('div');
+      row.style.marginTop = '10px';
+      const t = document.createElement('button');
+      t.className = 'btn ok sm';
+      t.textContent = 'אני מעוניין להחליף';
+      t.onclick = () => takeOpen(s);
+      row.appendChild(t);
+      card.appendChild(row);
+    } else if (s.from_uid === ME.uid) {
+      const n = document.createElement('div');
+      n.className = 'note';
+      n.style.marginTop = '8px';
+      n.textContent = 'זו הבקשה שלך. ממתינה שמישהו יתפוס אותה.';
+      card.appendChild(n);
+    }
+    box.appendChild(card);
+  });
+}
+
+// לקיחת בקשה. מי שלוקח מציע יום משלו בתמורה, ובכך גם נותן את
+// הסכמתו — ולכן אין שלב "הסכמת הכבאי" והבקשה עוברת ישר
+// למפקדים.
+function takeOpen(s){
+  $('dlg').innerHTML =
+    '<h3>החלפה עם ' + esc(s.from_name) + '</h3>' +
+    '<div class="hint">הוא לא עובד ב-' + esc(dmy(s.from_date)) +
+      ' ואתה נכנס במקומו. בתמורה — באיזה יום שלך הוא ייכנס במקומך?</div>' +
+    '<label style="display:block;margin:12px 0 4px;font-size:12.5px;color:#9aa0a6">' +
+      'היום שלי</label>' +
+    '<input type="date" id="tkDate" style="width:100%;padding:10px;' +
+      'background:#111316;color:#e8eaed;border:1px solid #2c3036;' +
+      'border-radius:7px;font-size:15px;font-family:inherit;color-scheme:dark">' +
+    '<div class="msg" id="tkMsg"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">' +
+      '<button class="btn go" id="tkGo">שלח למפקדים</button>' +
+      '<button class="btn" id="tkX">ביטול</button>' +
+    '</div>';
+  $('ov').style.display = 'flex';
+  $('tkX').onclick = () => { $('ov').style.display = 'none'; };
+
+  $('tkGo').onclick = async () => {
+    const d = $('tkDate').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      msg('צריך לבחור יום.', 'err', 'tkMsg'); return;
+    }
+    if (d === s.from_date) {
+      msg('זה אותו יום. בהחלפה יום מול יום צריך שני ימים.', 'err', 'tkMsg');
+      return;
+    }
+    const rest2 = swapRestCheck(rotations, overrides, swaps,
+      { uid: ME.uid, crew: ME.crew, name: ME.full_name,
+        gain: s.from_date, lose: d },
+      { uid: s.from_uid, crew: s.from_crew, name: s.from_name,
+        gain: d, lose: s.from_date });
+    if (rest2.length) {
+      msg(rest2.map(restWhy).join(' ') + ' בחר יום אחר.', 'err', 'tkMsg');
+      return;
+    }
+
+    const b = $('tkGo'); b.disabled = true;
+    try {
+      await setDoc(doc(db, 'stations', SID, 'swaps', s.id), {
+        to_uid: ME.uid, to_name: ME.full_name, to_crew: ME.crew, to_date: d,
+        peer_name: ME.full_name, peer_at: serverTimestamp(),
+        status: 'cmd_from', updated_at: serverTimestamp()
+      }, { merge: true });
+      $('ov').style.display = 'none';
+      msg('תפסת את הבקשה. היא עברה לשני המפקדים לאישור.', 'ok', 'openMsg');
+      await loadSwaps();
+    } catch (e) {
+      b.disabled = false;
+      msg('הלקיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+          'err', 'tkMsg');
+    }
+  };
+}
+
 // ---------- מצב ותצוגה ----------
 
 const ST = {
+  open:      { he: 'מחפש מחליף',          cls: 'wait' },
   peer:      { he: 'ממתין להסכמת הכבאי', cls: 'wait' },
   cmd_from:  { he: 'ממתין למפקד שלך',    cls: 'wait' },
   cmd_to:    { he: 'ממתין למפקד השני',   cls: 'wait' },
@@ -488,6 +700,26 @@ function trail(s){
 
 function swapBox(s, extra){
   const st = ST[s.status] || { he: s.status, cls: '' };
+
+  // בקשה פתוחה עדיין אין לה צד שני. הצגת "⇄" עם שם ריק נראית
+  // כמו תקלה, ולכן הצד השני מתואר במילים עד שמישהו תופס.
+  const isOpen = s.status === 'open';
+  const other = isOpen
+    ? '<span style="color:#9aa0a6">' +
+      (s.want_crew
+        ? 'מחפש מישהו ממשמרת ' + esc(CREW_HE[s.want_crew] || s.want_crew)
+        : 'מחפש מחליף מכל משמרת') + '</span>'
+    : esc(s.to_name) + ' <span class="cw ' + esc(s.to_crew) + '">' +
+      esc(CREW_SHORT[s.to_crew] || s.to_crew) + '</span>';
+
+  const leg = isOpen
+    ? esc(s.from_name) + ' רוצה לא לעבוד ב-<b>' + esc(dmy(s.from_date)) +
+      '</b>.<br>מי שיתפוס נכנס במקומו, ובוחר יום משלו בתמורה.'
+    : esc(s.from_name) + ' לא עובד ב-<b>' + esc(dmy(s.from_date)) + '</b>, ' +
+      esc(s.to_name) + ' נכנס במקומו<br>' +
+      esc(s.to_name) + ' לא עובד ב-<b>' + esc(dmy(s.to_date)) + '</b>, ' +
+      esc(s.from_name) + ' נכנס במקומו';
+
   return '<div class="sw ' +
       (s.status === 'approved' ? 'done' :
        (s.status === 'rejected' || s.status === 'cancelled') ? 'dead' : 'mine') + '">' +
@@ -495,14 +727,9 @@ function swapBox(s, extra){
       '<span class="st ' + st.cls + '">' + esc(st.he) + '</span>' +
       esc(s.from_name) + ' <span class="cw ' + esc(s.from_crew) + '">' +
         esc(CREW_SHORT[s.from_crew] || s.from_crew) + '</span>' +
-      ' ⇄ ' + esc(s.to_name) + ' <span class="cw ' + esc(s.to_crew) + '">' +
-        esc(CREW_SHORT[s.to_crew] || s.to_crew) + '</span>' +
+      ' ⇄ ' + other +
     '</div>' +
-    '<div class="leg">' +
-      esc(s.from_name) + ' לא עובד ב-<b>' + esc(dmy(s.from_date)) + '</b>, ' +
-      esc(s.to_name) + ' נכנס במקומו<br>' +
-      esc(s.to_name) + ' לא עובד ב-<b>' + esc(dmy(s.to_date)) + '</b>, ' +
-      esc(s.from_name) + ' נכנס במקומו' +
+    '<div class="leg">' + leg +
       (s.note ? '<br>הערה: ' + esc(s.note) : '') +
     '</div>' +
     trail(s) +
@@ -675,6 +902,22 @@ function reviewDialog(s){
         '</b><br>המחליף אינו מחזיק בכשירויות האלה. האישור עדיין אפשרי — ' +
         'ההחלטה שלך.</div>'
       : '<div class="fine">המחליף מכסה את כל הכשירויות של מי שיוצא.</div>') +
+
+    // 48 שעות רצוף. נבדק שוב כאן ולא רק בשליחה, כי הסידור
+    // יכול להשתנות בין הבקשה לאישור — חריגה שנוספה, החלפה
+    // אחרת שאושרה. המפקד הוא השער האחרון.
+    (function () {
+      const v = swapRestCheck(rotations, overrides, swaps,
+        { uid: s.from_uid, crew: s.from_crew, name: s.from_name,
+          gain: s.to_date,   lose: s.from_date },
+        { uid: s.to_uid,   crew: s.to_crew,   name: s.to_name,
+          gain: s.from_date, lose: s.to_date });
+      if (!v.length) return '';
+      return '<div class="gap" style="border-color:#c62828;background:#2c1614">' +
+        '<b>48 שעות רצוף</b><br>' + v.map(restWhy).map(esc).join('<br>') +
+        '<br>כבאי חייב יום מנוחה מלא בין משמרות. מומלץ לדחות ' +
+        'ולבקש תאריך אחר.</div>';
+    })() +
 
     '<div class="acts">' +
       '<button class="btn ok" id="aY">מאשר</button>' +
