@@ -41,6 +41,8 @@ export const ALERT_TYPES = [
     note: 'למפקד משמרת ולרכז כוח אדם' },
   { id: 'guard_open',   he: 'אבטחה חדשה נפתחה',          must: false,
     note: 'פתוחה להרשמה. לכל התחנה, לא רק למשמרת' },
+  { id: 'fault_blocking', he: 'רכב יצא מכלל שימוש',       must: false,
+    note: 'תקלה משביתה נפתחה או נסגרה. למפקדים' },
   { id: 'redline',      he: 'המשמרת ירדה מתחת לקו האדום', must: false,
     note: 'למפקד משמרת' },
   { id: 'scan',         he: 'ממצאים מהסריקה הלילית',    must: false,

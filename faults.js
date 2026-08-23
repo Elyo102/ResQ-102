@@ -26,6 +26,7 @@
 
 export const FAULT_KINDS = [
   { id: 'vehicle',  he: 'תקלת רכב',        needsVehicle: true,  group: 'fault' },
+  { id: 'damage',   he: 'פגיעה ברכב',      needsVehicle: true,  group: 'damage' },
   { id: 'gear',     he: 'תקלת ציוד',       needsVehicle: false, group: 'fault' },
   { id: 'building', he: 'תקלת מבנה',       needsVehicle: false, group: 'fault' },
   { id: 'task_st',  he: 'משימת תחזוקת תחנה', needsVehicle: false, group: 'task' },
@@ -40,6 +41,38 @@ export function groupOf(id) {
 export function isTask(f)  { return groupOf((f || {}).kind) === 'task'; }
 export function isNote(f)  { return groupOf((f || {}).kind) === 'note'; }
 export function isFault(f) { return groupOf((f || {}).kind) === 'fault'; }
+export function isDamage(f) { return groupOf((f || {}).kind) === 'damage'; }
+
+// ------------------------------------------------------------------
+//  פגיעות ומכות ברכב
+// ------------------------------------------------------------------
+//
+// פגיעה אינה תקלה, ולכן היא אינה נסגרת — היא נמחקת או שהיא
+// קיימת. אלדד: "פגיעות ומכות ברכב לעולם לא נמחקות, תמיד יש
+// תיעוד, אלא אם תוקנה במוסך המכה ואז ניתן להסיר באישור ראש
+// משמרת."
+//
+// ההיגיון: מכה שתוקנה בפועל כבר לא קיימת על הרכב, ולכן רישום
+// שלה מטעה את מי שמקבל את הרכב אחריך. מכה שלא תוקנה נשארת
+// לנצח, כי היא עדיין שם.
+//
+// ההשלכה שחשוב להבין: המחיקה היא סופית. אין ארכיון, ואין
+// "לבטל". לכן היא דורשת אישור של ראש משמרת ולא של כל אחד.
+
+export const DAMAGE_DELETE_WHY =
+  'פגיעה נמחקת רק אחרי תיקון בפועל במוסך. המחיקה סופית ואין ' +
+  'לה ארכיון — מכה שתוקנה כבר לא קיימת על הרכב, ורישום שלה ' +
+  'מטעה את מי שמקבל אותו אחריך.';
+
+export function damagesOf(faults, vehicleId) {
+  return sortFaults((faults || []).filter(function (f) {
+    return isDamage(f) && f.vehicle_id === vehicleId && isOpen(f);
+  }));
+}
+
+export function hasDamage(faults, vehicleId) {
+  return damagesOf(faults, vehicleId).length > 0;
+}
 
 export function kindHe(id) {
   const k = FAULT_KINDS.filter(function (x) { return x.id === id; })[0];
@@ -51,26 +84,48 @@ export function needsVehicle(id) {
 }
 
 // חומרה. הסדר כאן הוא סדר הדחיפות, ומשמש למיון.
+//
+// **את החומרה קובע ראש המשמרת או סגנו, לא המדווח.**
+//
+// הכבאי מתאר מה ראה ומצלם. הוא לא נשאל כמה זה חמור, כי זו
+// החלטה מבצעית שאינה שלו: מי שיסמן "קלה" על משהו חמור יקבור
+// אותו בתחתית הרשימה, ומי שיסמן "משבית" יוציא רכב מהכוננות.
+//
+// עד שראש המשמרת נוגע, התקלה נמצאת ב-'unset' — ממתינה
+// להערכה, ומוצגת ראשונה כדי שלא תישכח.
 export const SEVERITIES = [
-  { id: 'blocking', he: 'משבית',  color: '#ef5350', rank: 0,
-    note: 'הרכב או הציוד לא כשיר לשימוש' },
-  { id: 'limiting', he: 'מגביל',  color: '#e0a23c', rank: 1,
-    note: 'אפשר להשתמש, עם מגבלה' },
-  { id: 'minor',    he: 'קלה',    color: '#4d94ff', rank: 2,
-    note: 'לתיעוד ולטיפול בהמשך' }
+  { id: 'blocking', he: 'משבית',  color: '#ef5350', rank: 1,
+    note: 'הרכב או הציוד לא כשיר לשימוש', staffOnly: true },
+  { id: 'limiting', he: 'מגביל',  color: '#e0a23c', rank: 2,
+    note: 'אפשר להשתמש, עם מגבלה', staffOnly: true },
+  { id: 'minor',    he: 'קלה',    color: '#4d94ff', rank: 3,
+    note: 'לתיעוד ולטיפול בהמשך', staffOnly: true }
 ];
 
+// לא חומרה — היעדר החלטה. יושבת בראש המיון בכוונה.
+export const UNSET = { id: 'unset', he: 'ממתינה להערכה',
+                       color: '#c77dff', rank: 0,
+                       note: 'ראש המשמרת עוד לא קבע חומרה' };
+
+export function allSeverities() {
+  return [UNSET].concat(SEVERITIES);
+}
+export function needsGrading(f) {
+  const v = (f || {}).severity;
+  return !v || v === 'unset';
+}
+
 export function sevHe(id) {
-  const s = SEVERITIES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.he : '';
+  const s = allSeverities().filter(function (x) { return x.id === id; })[0];
+  return s ? s.he : UNSET.he;
 }
 export function sevColor(id) {
-  const s = SEVERITIES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.color : '#9aa0a6';
+  const s = allSeverities().filter(function (x) { return x.id === id; })[0];
+  return s ? s.color : UNSET.color;
 }
 export function sevRank(id) {
-  const s = SEVERITIES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.rank : 9;
+  const s = allSeverities().filter(function (x) { return x.id === id; })[0];
+  return s ? s.rank : UNSET.rank;
 }
 
 export const FAULT_STATES = [
@@ -131,9 +186,12 @@ export function mergeFleet(boardVehicles, anchorVehicles) {
 // שדה מצב שנשמר בנפרד מתיישן: מישהו סוגר תקלה ושוכח לעדכן,
 // והרכב נשאר "משבית" על המסך שבועיים אחרי שתוקן. כאן אין מה
 // לשכוח.
+// כשירות הרכב נגזרת מתקלות בלבד. פגיעה היא חיווי נפרד:
+// שריטה בדופן אינה מונעת מהרכב לצאת, ואם היא הייתה נספרת
+// כאן, "משבית" ו"יש מכה" היו נראים אותו דבר.
 export function vehicleState(faults, vehicleId) {
   const open = (faults || []).filter(function (f) {
-    return f && isOpen(f) && f.vehicle_id === vehicleId;
+    return f && isOpen(f) && f.vehicle_id === vehicleId && !isDamage(f);
   });
   if (!open.length) return { id: 'ok', he: 'תקין', color: '#66bb6a', faults: [] };
 
@@ -141,6 +199,10 @@ export function vehicleState(faults, vehicleId) {
     return sevRank(f.severity) < sevRank(a.severity) ? f : a;
   }, open[0]);
 
+  if (needsGrading(worst)) {
+    return { id: 'ungraded', he: 'ממתינה להערכה', color: '#c77dff',
+             faults: open };
+  }
   if (worst.severity === 'blocking') {
     return { id: 'blocked', he: 'משבית', color: '#ef5350', faults: open };
   }

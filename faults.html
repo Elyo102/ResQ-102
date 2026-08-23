@@ -56,6 +56,8 @@
   .f.blocking{ border-inline-start-color:var(--bad) }
   .f.limiting{ border-inline-start-color:var(--warn) }
   .f.minor{ border-inline-start-color:#4d94ff }
+  .f.unset{ border-inline-start-color:#c77dff }
+  .f.damage{ border-inline-start-color:#8d6e63 }
   .f.done{ opacity:.62; border-inline-start-color:var(--good) }
   .f .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
   .f .ttl{ font-size:15.5px; font-weight:700; flex:1 1 180px }
@@ -206,9 +208,15 @@
             <label>תיאור</label>
             <textarea id="nDesc" maxlength="600"
               placeholder="מה בדיוק, מתי התגלה, מה כבר נעשה"></textarea>
-            <label>חומרה</label>
-            <select id="nSev"></select>
-            <div class="note" id="sevNote" style="margin-top:4px">—</div>
+            <div id="sevWrap" class="hide">
+              <label>חומרה</label>
+              <select id="nSev"></select>
+              <div class="note" id="sevNote" style="margin-top:4px">—</div>
+            </div>
+            <div class="note" id="sevHint" style="margin-top:10px">
+              את החומרה קובע ראש המשמרת. תאר מה ראית וצלם —
+              הוא יעריך.
+            </div>
             <label>צילום (לא חובה)</label>
             <input type="file" id="nShot" accept="image/*" capture="environment" multiple>
             <div class="note" id="shotNote">אפשר לצרף עד 3 תמונות. הן מוקטנות אוטומטית.</div>
@@ -249,6 +257,15 @@
         <h2>תקלות רכבים</h2>
         <div class="note">מה שהמשמרת הזו יורשת. לחיצה על שם רכב פותחת את דוח הנזק שלו.</div>
         <div id="hoVeh"></div>
+      </div>
+
+      <div class="card">
+        <h2>פגיעות ומכות ברכבים</h2>
+        <div class="note">
+          נשארות רשומות עד שהמכה תוקנה בפועל במוסך. הסרה
+          באישור ראש משמרת בלבד.
+        </div>
+        <div id="hoDamage"></div>
       </div>
 
       <div class="card">
@@ -333,6 +350,8 @@ import { watchCallouts } from './callout.js?v=20';
 import { CREW_HE } from './rotation.js?v=20';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
+         UNSET, needsGrading, isDamage, damagesOf, hasDamage,
+         DAMAGE_DELETE_WHY,
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          shrinkImage } from './faults.js?v=20';
@@ -340,7 +359,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -376,7 +395,8 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
   if (!isMember || !SID) {
@@ -386,7 +406,7 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  CAN_MANAGE = isSuper || ['commander','hr_coordinator'].indexOf(c.role) !== -1;
+  CAN_MANAGE = isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1;
   ME = { uid: user.uid, crew: c.shift || '', full_name: '' };
   try {
     const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
@@ -458,6 +478,9 @@ VIEWS.forEach(function (v) {
 function setupForm(){
   $('nKind').innerHTML = FAULT_KINDS.map(k =>
     '<option value="' + esc(k.id) + '">' + esc(k.he) + '</option>').join('');
+  // בורר החומרה מוצג לסגל בלבד. כבאי מדווח ולא מדרג.
+  $('sevWrap').classList.toggle('hide', !CAN_MANAGE);
+  $('sevHint').classList.toggle('hide', CAN_MANAGE);
   $('nSev').innerHTML = SEVERITIES.map(s =>
     '<option value="' + esc(s.id) + '">' + esc(s.he) + '</option>').join('');
 
@@ -523,7 +546,9 @@ async function createFault(){
     const ref = await addDoc(collection(db, 'stations', SID, 'faults'), {
       kind: kind, vehicle_id: vid, vehicle_name: veh ? veh.name : '',
       title: title, desc: $('nDesc').value.trim(),
-      severity: kind === 'note' ? 'minor' : $('nSev').value,
+      // הערת חפיפה אינה תקלה ולכן אינה ממתינה להערכה.
+      severity: kind === 'note' ? 'minor'
+              : (CAN_MANAGE ? $('nSev').value : 'unset'),
       status: 'open', photos: pics.length,
       by_uid: ME.uid, by_name: ME.full_name || '', crew: ME.crew || '',
       date: toKey(now), created_key: now.toISOString(),
@@ -571,7 +596,9 @@ async function addAnchor(){
 
 function faultCard(f){
   const el = document.createElement('div');
-  el.className = 'f ' + (isOpen(f) ? (f.severity || 'minor') : 'done');
+  el.className = 'f ' + (!isOpen(f) ? 'done'
+    : isDamage(f) ? 'damage'
+    : needsGrading(f) ? 'unset' : (f.severity || 'minor'));
 
   const head = document.createElement('div');
   head.className = 'top';
@@ -621,6 +648,37 @@ function faultCard(f){
   if (isOpen(f)) {
     const acts = document.createElement('div');
     acts.className = 'acts';
+
+    // פגיעה אינה נסגרת ואינה מדורגת. היא קיימת עד שהיא
+    // מתוקנת בפועל, ואז היא נמחקת — באישור ראש משמרת בלבד.
+    if (isDamage(f)) {
+      if (CAN_MANAGE) {
+        acts.appendChild(actBtn('תוקנה במוסך — מחק', 'sm', () => wipeDamage(f)));
+      } else {
+        const n = document.createElement('span');
+        n.className = 'note';
+        n.textContent = 'הסרה באישור ראש משמרת, אחרי תיקון במוסך.';
+        acts.appendChild(n);
+      }
+      el.appendChild(acts);
+      return el;
+    }
+
+    // דירוג חומרה. סגל בלבד, וזה השדה היחיד שהוא משנה על
+    // תקלה של מישהו אחר.
+    if (CAN_MANAGE && f.kind !== 'note') {
+      const sel = document.createElement('select');
+      sel.style.width = 'auto';
+      sel.style.padding = '6px 10px';
+      sel.style.fontSize = '12.5px';
+      sel.innerHTML = (needsGrading(f)
+        ? '<option value="unset">' + esc(UNSET.he) + '</option>' : '') +
+        SEVERITIES.map(x => '<option value="' + esc(x.id) + '"' +
+          (x.id === f.severity ? ' selected' : '') + '>' +
+          esc(x.he) + '</option>').join('');
+      sel.onchange = () => grade(f, sel.value, sel);
+      acts.appendChild(sel);
+    }
     // המדווח יכול לסגור את מה שהוא פתח; הסגל יכול לסגור הכל.
     if (CAN_MANAGE || f.by_uid === ME.uid) {
       if (f.status === 'open') {
@@ -670,6 +728,44 @@ function paintShots(list, box){
     };
     box.appendChild(im);
   });
+}
+
+// מחיקת פגיעה. סופית, וכוללת את הצילומים — מסמך שנמחק
+// ב-Firestore אינו גורר את תת-האוסף שלו, וצילומים יתומים
+// היו נשארים לנצח בלי דרך להגיע אליהם.
+async function wipeDamage(f){
+  if (!window.confirm('למחוק את הפגיעה "' + (f.title || '') + '"?\n\n' +
+      DAMAGE_DELETE_WHY + '\n\nלמחוק?')) return;
+  try {
+    try {
+      const ps = await getDocs(
+        collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+      for (const d of ps.docs) {
+        await deleteDoc(doc(db, 'stations', SID, 'faults', f.id, 'photos', d.id));
+      }
+    } catch (ignore) {}
+    await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
+    delete shots[f.id];
+    msg('הפגיעה נמחקה.', 'ok');
+    await loadAll();
+  } catch (e) {
+    msg('המחיקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+}
+
+async function grade(f, sev, sel){
+  if (sev === 'unset') return;
+  sel.disabled = true;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+      severity: sev, graded_by: ME.uid, graded_by_name: ME.full_name || '',
+      graded_key: new Date().toISOString()
+    }, { merge: true });
+    await loadAll();
+  } catch (e) {
+    sel.disabled = false;
+    msg('קביעת החומרה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
 }
 
 async function setState(f, st){
@@ -729,6 +825,9 @@ function renderShift(){
   const sum = $('hoSummary');
   sum.innerHTML = '';
   [
+    { he: 'ממתינות להערכת מפקד',
+      n: faults.filter(x => isOpen(x) && needsGrading(x) && x.kind !== 'note').length,
+      bad: faults.filter(x => isOpen(x) && needsGrading(x) && x.kind !== 'note').length > 0 },
     { he: 'רכבים משביתים', n: bd.blocked.length, bad: bd.blocked.length > 0 },
     { he: 'תקלות רכב פתוחות', n: bd.veh.length, bad: false },
     { he: 'תקלות ציוד ומבנה', n: bd.gear.length, bad: false },
@@ -750,6 +849,8 @@ function renderShift(){
   });
 
   fill('hoVeh',    bd.veh,      'אין תקלות רכב פתוחות.');
+  fill('hoDamage', faults.filter(x => isDamage(x) && isOpen(x)),
+       'לא רשומות פגיעות על אף רכב.');
   fill('hoGear',   bd.gear,     'אין תקלות ציוד או מבנה.');
   fill('hoRepair', bd.inRepair, 'שום דבר אינו בתיקון כרגע.');
   fill('hoTasks',  bd.tasks,    'אין משימות פתוחות.');
@@ -888,6 +989,9 @@ function renderFleet(){
         (v.role ? ' · ' + esc(v.role) : '') +
         (st.faults.length ? ' · ' + st.faults.length + ' תקלות פתוחות' : '') +
         '</em></span>' +
+      (hasDamage(faults, v.id)
+        ? '<span class="st" style="color:#a1887f">' +
+          damagesOf(faults, v.id).length + ' פגיעות</span>' : '') +
       '<span class="st" style="color:' + st.color + '">' + esc(st.he) + '</span>';
     el.style.cursor = 'pointer';
     el.title = 'פתח דוח נזק';

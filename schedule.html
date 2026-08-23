@@ -21,7 +21,10 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;padding:18px}
-  .wrap{max-width:560px;margin:0 auto}
+  /* רחב כברירת מחדל. הלוח הזה נקרא ממחשב בתחנה וגם מטלפון,
+     ובמחשב עמודה של 560 פיקסלים באמצע מסך רחב היא בזבוז —
+     הריבועים יוצאים קטנים והתגיות נדחסות. */
+  .wrap{max-width:1180px;margin:0 auto}
   .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
   .top .me{font-size:15px;font-weight:600}
   .top .sub{font-size:12px;color:var(--muted)}
@@ -41,35 +44,36 @@
         border-radius:6px;padding:6px 14px;font-size:16px;cursor:pointer;font-family:inherit}
   .nav .mo{font-size:16px;font-weight:600}
 
-  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
 
   /* שורת הימים היא כותרת, לא הערת שוליים. גם שמות מלאים ולא
      אותיות: «ג» כשם יום ו«ג'» כשם משמרת באותו מסך היו מבלבלים. */
   #dows{background:#23262c;border:1px solid var(--line);border-radius:9px;
         padding:9px 0;margin-bottom:8px;gap:5px}
-  .dow{font-size:14px;font-weight:700;color:var(--txt);text-align:center;
+  .dow{font-size:15.5px;font-weight:700;color:var(--txt);text-align:center;
        line-height:1.2}
   .dow.rest{color:var(--accent)}
   @media (max-width:420px){
     .dow{font-size:11.5px}
     #dows{padding:7px 0}
   }
-  .day{aspect-ratio:1;border:1px solid var(--line);border-radius:9px;
+  .day{aspect-ratio:1.25;min-height:72px;
+       border:1px solid var(--line);border-radius:10px;
        display:flex;flex-direction:column;align-items:center;justify-content:center;
-       gap:5px;font-size:13px;background:#191c20;position:relative}
+       gap:6px;font-size:13px;background:#191c20;position:relative}
   .day.pad{border:0;background:transparent}
   /* אבטחה. נקודה בפינה — היום כבר נושא צבע משמרת, ועוד רקע
      היה מתחרה בו. */
   .day .gd{position:absolute;inset-block-start:5px;inset-inline-start:5px;
            width:7px;height:7px;border-radius:50%;background:#7cb342}
-  .day .n{font-weight:700;font-size:16px;line-height:1;
+  .day .n{font-weight:700;font-size:22px;line-height:1;
           font-variant-numeric:tabular-nums}
 
   /* תג המשמרת. האות נשארת תמיד, גם כשיש צבע: כ-8% מהגברים
      אינם מבחינים בין אדום לירוק, וא' מול ב' הן בדיוק הזוג הזה.
      הצבע מזרז את הקריאה, האות מחזיקה את המידע. */
-  .day .c{font-size:11px;font-weight:800;line-height:1;
-          padding:3px 7px;border-radius:5px;border:1px solid transparent}
+  .day .c{font-size:13px;font-weight:800;line-height:1;
+          padding:4px 10px;border-radius:6px;border:1px solid transparent}
   .day.A .c{color:var(--crewA);background:var(--crewA-bg);border-color:var(--crewA)}
   .day.B .c{color:var(--crewB);background:var(--crewB-bg);border-color:var(--crewB)}
   .day.C .c{color:var(--crewC);background:var(--crewC-bg);border-color:var(--crewC)}
@@ -136,12 +140,24 @@
   .fit .p .s{font-size:12px;color:#f0b2b2;line-height:1.6}
   .fit .p .s.ok{color:var(--muted)}
   .fit .note{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.7}
+  /* טלפון: חוזרים לריבוע. ריבוע רחב על מסך צר גוזל גובה
+     ודוחף את הסיכום מתחת לקיפול. */
+  @media (max-width:700px){
+    .day{aspect-ratio:1;min-height:0;gap:4px;border-radius:9px}
+    .day .n{font-size:16px}
+    .day .c{font-size:11px;padding:3px 7px}
+    .grid{gap:5px}
+  }
   @media (max-width:420px){
     .day .n{font-size:14px}
     .day .c{font-size:10px;padding:2px 5px}
+    .dow{font-size:11.5px}
   }
 
-  .sum{display:flex;gap:10px;margin-top:12px}
+  /* הסיכום לא נמתח לרוחב הלוח. שני מספרים ברוחב 1180 פיקסלים
+     נראים כמו באנר, לא כמו סיכום. */
+  .sum{display:flex;gap:10px;margin-top:14px;max-width:420px;
+       margin-inline-start:auto;margin-inline-end:auto}
   .sum div{flex:1;background:#191c20;border:1px solid var(--line);border-radius:8px;
         padding:10px;text-align:center}
   .sum .v{font-size:20px;font-weight:700}
@@ -304,7 +320,9 @@ renderStuckNav('');
 
 const ROLE_HE = {
   firefighter: 'לוחם אש',
+  deputy: 'סגן מפקד משמרת',
   commander: 'קצין / מפקד משמרת',
+  station_commander: 'מפקד תחנה',
   hr_coordinator: 'רכז/ת משאבי אנוש'
 };
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
@@ -368,7 +386,7 @@ onAuthStateChanged(auth, async user => {
 
   SID = claims.stationId || STATION_ID;
   canEditOvr = claims.super === true || claims.role === 'super_admin' ||
-               ['commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+               ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
 
   try {
     const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));

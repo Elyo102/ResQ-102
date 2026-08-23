@@ -100,6 +100,48 @@
   .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
   .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
   .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+
+  /* ---------- מאיפה לאן ---------- */
+  .move{ display:grid; grid-template-columns:1fr auto 1fr; gap:10px;
+         align-items:stretch; margin-top:12px }
+  .move .side{ border:1px solid var(--line); border-radius:11px; padding:13px;
+               background:#191c20; border-top-width:3px }
+  .move .side.from{ border-top-color:#e0a23c }
+  .move .side.to{ border-top-color:#4dd0e1 }
+  .move .side .ttl{ font-size:14.5px; font-weight:800 }
+  .move .side.from .ttl{ color:#e0a23c }
+  .move .side.to .ttl{ color:#4dd0e1 }
+  .move .side .sub2{ font-size:11.5px; color:var(--muted); line-height:1.6;
+                     margin:3px 0 9px; min-height:32px }
+  .move .side input{ width:100% }
+  .move .crewline{ font-size:12px; color:var(--muted); margin-top:7px;
+                   min-height:17px }
+  .move .crewline b{ color:var(--txt) }
+  /* החץ מצביע שמאלה — מהמשמרת שלי אל זו שאני עובר אליה.
+     ב-RTL הכיוון הזה הוא "קדימה", ולכן הוא נכון כמו שהוא. */
+  .move .arrow{ display:flex; align-items:center; justify-content:center;
+                font-size:30px; color:var(--accent); font-weight:700;
+                padding:0 2px; line-height:1 }
+  @media (max-width:620px){
+    .move{ grid-template-columns:1fr; gap:8px }
+    .move .arrow{ transform:rotate(-90deg); font-size:24px; padding:2px 0 }
+    .move .side .sub2{ min-height:0 }
+  }
+
+  /* ---------- שתי דרכים למצוא מחליף ---------- */
+  .modes{ display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:4px }
+  .modes .mode{ width:auto; margin:0; text-align:start; cursor:pointer;
+                border:1px solid var(--line); background:#191c20;
+                border-radius:10px; padding:12px 13px; font-family:inherit;
+                color:var(--muted) }
+  .modes .mode b{ display:block; font-size:14.5px; color:var(--txt);
+                  font-weight:700 }
+  .modes .mode span{ display:block; font-size:11.5px; margin-top:2px;
+                     line-height:1.55 }
+  .modes .mode.on{ border-color:var(--accent); background:#2a1a10 }
+  .modes .mode.on b{ color:var(--accent) }
+  @media (max-width:480px){ .modes{ grid-template-columns:1fr } }
+
   .hide{ display:none !important }
 
   #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
@@ -184,25 +226,40 @@
         יום מול יום. אתה לא עובד ביום שלך והוא נכנס במקומך,
         ובתמורה אתה נכנס במקומו ביום שלו.
       </div>
-      <div class="two">
-        <div>
-          <label>היום שלי — שאני לא עובד בו</label>
+      <!-- שני צדדים וחץ ביניהם. הכיוון הוא הכיוון האמיתי:
+           מהמשמרת שלי, אל המשמרת שאני עובר אליה. -->
+      <div class="move">
+        <div class="side from">
+          <div class="ttl">המשמרת שלי</div>
+          <div class="sub2">היום שאני עובד בו ורוצה לעבור ממנו</div>
           <input type="date" id="myDate">
+          <div class="crewline" id="myCrewLine">—</div>
         </div>
-        <div>
-          <label>היום שלו — שאני נכנס בו במקומו</label>
+
+        <div class="arrow" aria-hidden="true">←</div>
+
+        <div class="side to">
+          <div class="ttl">מעבר אל משמרת</div>
+          <div class="sub2">היום שאני רוצה לעבוד בו עם משמרת אחרת</div>
           <input type="date" id="hisDate">
+          <div class="crewline" id="hisCrewLine">—</div>
         </div>
       </div>
-      <label>איך למצוא מחליף</label>
-      <select id="mode">
-        <option value="peer">אני יודע עם מי — בחירה בשם</option>
-        <option value="open">שיראו כולם — מי שמעוניין יתפוס</option>
-      </select>
+
+      <label>מציאת מחליף</label>
+      <div class="modes">
+        <button type="button" class="mode on" id="modePeer">
+          <b>בחירת שם</b>
+          <span>אני יודע עם מי אני מתחלף</span>
+        </button>
+        <button type="button" class="mode" id="modeOpen">
+          <b>שידור לכולם</b>
+          <span>מי שמעוניין יתפוס</span>
+        </button>
+      </div>
 
       <div id="peerWrap">
-        <label>עם מי</label>
-        <button class="btn" id="btnPick" style="margin-top:0;width:100%">בחר כבאי</button>
+        <button class="btn" id="btnPick" style="margin-top:10px;width:100%">בחר כבאי</button>
         <div class="note" id="peerNote" style="margin-top:8px">לא נבחר.</div>
       </div>
 
@@ -210,10 +267,10 @@
         <label>איזו משמרת מעניינת אותך</label>
         <select id="wantCrew"></select>
         <div class="note" style="margin-top:8px">
-          הבקשה תופיע לכולם. מי שמעוניין בוחר יום משלו בתמורה
-          ולוחץ — ומשם זה עובר ישר לשני המפקדים.
-          <b>היום שלו לא נקבע מראש</b>, ולכן שדה "היום שלו" למעלה
-          אינו נדרש.
+          הבקשה תופיע לכולם. מי שמעוניין בוחר יום משלו בתמורה,
+          ומשם זה עובר ישר לשני המפקדים.
+          <b>בשידור לכולם אין צורך למלא את התאריך בצד שמאל</b> —
+          מי שיתפוס יבחר אותו.
         </div>
       </div>
       <label>הערה (לא חובה)</label>
@@ -299,7 +356,8 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
   if (!isMember || !SID || !c.emp) {
@@ -310,7 +368,7 @@ onAuthStateChanged(auth, async user => {
   }
 
   MY_SHIFT = c.shift || '';
-  IS_STAFF = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  IS_STAFF = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
   // מי שאינו נעול למשמרת אחת. חייב להיות זהה ל-seesShift()
   // בכללי האבטחה, אחרת המסך יציג בקשה שהשרת ידחה.
   UNLOCKED = isSuper || c.role === 'hr_coordinator' || !c.shift;
@@ -457,14 +515,45 @@ function setupMode(){
       '<option value="' + c + '">משמרת ' + esc(CREW_HE[c] || c) +
       '</option>').join('');
 
-  $('mode').onchange = function () {
-    const open = $('mode').value === 'open';
-    $('peerWrap').classList.toggle('hide', open);
-    $('openWrap').classList.toggle('hide', !open);
-    $('hisDate').disabled = open;
-    $('hisDate').parentNode.style.opacity = open ? '.45' : '1';
-  };
-  $('mode').onchange();
+  // שני כפתורים ולא רשימה נפתחת. שתי דרכים בלבד, וכשיש שתיים
+  // רשימה נפתחת מסתירה חצי מהבחירה מאחורי לחיצה.
+  setMode('peer');
+  $('modePeer').onclick = () => setMode('peer');
+  $('modeOpen').onclick = () => setMode('open');
+
+  // איזו משמרת עובדת בתאריך שנבחר. מוצג מתחת לכל שדה, כי
+  // כבאי שבוחר תאריך רוצה לדעת מיד למי הוא נכנס.
+  $('myDate').oninput  = () => crewLine('myDate', 'myCrewLine');
+  $('hisDate').oninput = () => crewLine('hisDate', 'hisCrewLine');
+  crewLine('myDate', 'myCrewLine');
+  crewLine('hisDate', 'hisCrewLine');
+}
+
+let MODE = 'peer';
+
+function setMode(m){
+  MODE = m;
+  const open = m === 'open';
+  $('modePeer').classList.toggle('on', !open);
+  $('modeOpen').classList.toggle('on', open);
+  $('peerWrap').classList.toggle('hide', open);
+  $('openWrap').classList.toggle('hide', !open);
+  $('hisDate').disabled = open;
+  const side = $('hisDate').closest('.side');
+  if (side) side.style.opacity = open ? '.45' : '1';
+  crewLine('hisDate', 'hisCrewLine');
+}
+
+function crewLine(inputId, outId){
+  const v = $(inputId).value;
+  const box = $(outId);
+  if (!v) { box.textContent = '—'; return; }
+  if ($(inputId).disabled) { box.textContent = 'מי שיתפוס יבחר את היום שלו.'; return; }
+  const d = new Date(v + 'T00:00:00');
+  const c = crewOnDate(rotations, d, overrides);
+  box.innerHTML = c
+    ? 'עובדת ביום זה: <b>משמרת ' + esc(CREW_HE[c] || c) + '</b>'
+    : 'לא ידוע איזו משמרת עובדת ביום זה.';
 }
 
 $('btnSend').onclick = async () => {
@@ -472,7 +561,7 @@ $('btnSend').onclick = async () => {
   const my  = $('myDate').value;
   const his = $('hisDate').value;
 
-  const OPEN = $('mode').value === 'open';
+  const OPEN = MODE === 'open';
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(my))  { msg('צריך לבחור את היום שלך.', 'err'); return; }
   if (OPEN) { await sendOpen(my); return; }

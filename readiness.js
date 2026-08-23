@@ -152,3 +152,61 @@ export function summaryText(rl, bs, qualName) {
 
   return parts.join(' · ');
 }
+
+
+// ---------- ירידה מאושרת מתחת לקו האדום ----------
+//
+// אלדד: "כשירות תמיד לפי צרכי מערכת, לפעמים מאשרים לרדת מקו
+// אדום." ההחלטה היא של ראש המשמרת — היא שלו, והוא זה שמכיר
+// את המשמרת — אבל היא נכנסת לתוקף רק אחרי אישור מפקד התחנה.
+//
+// שני דברים שקבע במפורש:
+//
+//   בלי נימוק   ראש המשמרת קיבל את ההחלטה, היא שלו. לבקש
+//               ממנו לנמק היה הופך אישור לטופס
+//   למשמרת אחת  היתר נפתח על יום ומשמרת מסוימים ופג מעצמו.
+//               היתר פתוח שנשכח משתיק את המערכת בדיוק כשהיא
+//               אמורה לצעוק
+//
+// המצב אינו נשמר כשדה על המשמרת אלא נקרא מהוויתורים, מאותה
+// סיבה שמצב רכב נגזר מהתקלות: אין מה לשכוח לבטל.
+
+export const WAIVER_STATES = [
+  { id: 'pending',  he: 'ממתין לאישור מפקד התחנה', color: '#e0a23c' },
+  { id: 'approved', he: 'מאושר',                    color: '#66bb6a' },
+  { id: 'rejected', he: 'נדחה',                     color: '#ef5350' }
+];
+
+export function waiverId(crew, dateKey) {
+  return String(crew || '') + '_' + String(dateKey || '');
+}
+
+export function waiverOn(waivers, crew, dateKey) {
+  const w = (waivers || {})[waiverId(crew, dateKey)];
+  return w || null;
+}
+
+// האם המשמרת רשאית לעבוד מתחת לקו האדום ביום הזה.
+export function waived(waivers, crew, dateKey) {
+  const w = waiverOn(waivers, crew, dateKey);
+  return !!(w && w.status === 'approved');
+}
+
+// המשפט שמופיע ליד הכשירות. שם המבקש ושם המאשר, כי היתר בלי
+// שמות הוא היתר שאיש לא אחראי עליו.
+export function waiverLine(w) {
+  if (!w) return '';
+  const by = w.by_name || 'ראש המשמרת';
+  if (w.status === 'pending') {
+    return by + ' ביקש היתר לעבוד מתחת לקו האדום. ממתין לאישור מפקד התחנה.';
+  }
+  if (w.status === 'approved') {
+    return 'אושר לעבוד מתחת לקו האדום · ביקש ' + by +
+           ' · אישר ' + (w.approved_by_name || 'מפקד התחנה') +
+           '. תקף להיום בלבד.';
+  }
+  if (w.status === 'rejected') {
+    return 'הבקשה נדחתה על ידי ' + (w.approved_by_name || 'מפקד התחנה') + '.';
+  }
+  return '';
+}

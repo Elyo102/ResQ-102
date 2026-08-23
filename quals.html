@@ -275,7 +275,8 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
 
@@ -291,7 +292,7 @@ onAuthStateChanged(auth, async user => {
   // אם המסך היה מציג כפתורים לכבאי רגיל, כל לחיצה הייתה
   // נדחית בשרת והמסך היה נראה שבור.
   CAN_EDIT = isSuper ||
-    ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
 
   // מפקד משמרת רואה את המשמרת שלו. אותה הגדרה בדיוק שבכללי
   // האבטחה ובשאר המסכים.

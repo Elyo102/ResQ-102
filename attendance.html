@@ -320,7 +320,8 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
   if (!isMember || !SID || !c.emp) {
@@ -331,7 +332,7 @@ onAuthStateChanged(auth, async user => {
   }
 
   MY_SHIFT = c.shift || '';
-  CAN_APPROVE = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  CAN_APPROVE = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
 
   ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '',
          role: c.role || '', full_name: '' };

@@ -29,8 +29,17 @@ setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
 // מנהל-העל. חייב להיות זהה לערך ב-firestore.rules.
 const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 
+// סגן מפקד משמרת ומפקד תחנה נוספו 23.8.2026.
+//
+//   deputy            סגן מפקד משמרת. סמכויותיו זהות למפקד
+//                     המשמרת, ונעול לאותה משמרת. אלדד חוזר
+//                     בכל דרישה על "מפקד משמרת או סגנו", ולכן
+//                     זה תפקיד ולא הערה
+//   station_commander מפקד התחנה. רואה את שלוש המשמרות, והוא
+//                     היחיד שמאשר ירידה מתחת לקו האדום
 const VALID_ROLES = [
-  'firefighter', 'commander', 'hr_coordinator', 'district_commander'
+  'firefighter', 'deputy', 'commander', 'station_commander',
+  'hr_coordinator', 'district_commander'
 ];
 const VALID_SHIFTS = ['A', 'B', 'C'];
 
@@ -1541,7 +1550,11 @@ async function commandersOf(sid, crew) {
       const v = d.data() || {};
       if (v.is_active === false) return;
       if (v.role === 'hr_coordinator') { out.push(d.id); return; }
-      if (v.role === 'commander' && (!crew || v.crew === crew)) out.push(d.id);
+      // מפקד התחנה מקבל הכל, כמו רכז כוח אדם.
+      if (v.role === 'station_commander') { out.push(d.id); return; }
+      // סגן מפקד משמרת — אלדד: "תמיד התראה למפקד משמרת וסגנו".
+      if ((v.role === 'commander' || v.role === 'deputy') &&
+          (!crew || v.crew === crew)) out.push(d.id);
     });
   } catch (e) {}
   return out;
@@ -1724,7 +1737,8 @@ exports.sendBroadcast = onCall(async (req) => {
   if (!text) throw new HttpsError('invalid-argument', 'צריך לכתוב הודעה.');
   if (text.length > 400) throw new HttpsError('invalid-argument', 'ההודעה ארוכה מדי.');
 
-  const wide = isSuper || role === 'hr_coordinator';
+  const wide = isSuper || role === 'hr_coordinator' ||
+               role === 'station_commander';
   let crew = '', targetHe = '';
 
   if (target === 'station') {
@@ -1745,7 +1759,7 @@ exports.sendBroadcast = onCall(async (req) => {
     throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
   }
 
-  if (!wide && role !== 'commander' && role !== 'firefighter') {
+  if (!wide && ['commander','deputy','firefighter'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied', 'אין לך הרשאה לשלוח הודעות.');
   }
 
@@ -1813,7 +1827,8 @@ exports.sendCallout = onCall(async (req) => {
   const role = t.role || '';
   const myCrew = t.shift || '';
 
-  if (!isSuper && role !== 'commander' && role !== 'hr_coordinator') {
+  if (!isSuper && ['commander','deputy','station_commander',
+                   'hr_coordinator'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied',
       'קריאת פתע שמורה למפקד משמרת ולרכז כוח אדם.');
   }
@@ -1826,7 +1841,8 @@ exports.sendCallout = onCall(async (req) => {
       'קריאת פתע קצרה מ-300 תווים. מה שארוך מזה לא נקרא בריצה.');
   }
 
-  const wide = isSuper || role === 'hr_coordinator';
+  const wide = isSuper || role === 'hr_coordinator' ||
+               role === 'station_commander';
   const target = String(d.target || '').trim();
   let uids = [], targetHe = '', crew = '';
 
@@ -1988,7 +2004,8 @@ exports.guardSignup = onCall(async (req) => {
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
-  if (!isSuper && ['firefighter','commander','hr_coordinator'].indexOf(role) === -1) {
+  if (!isSuper && ['firefighter','deputy','commander','station_commander',
+       'hr_coordinator'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied', 'אין לך הרשאה.');
   }
 
@@ -2033,7 +2050,8 @@ exports.assignGuard = onCall(async (req) => {
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
-  if (!isSuper && role !== 'commander' && role !== 'hr_coordinator') {
+  if (!isSuper && ['commander','deputy','station_commander',
+                   'hr_coordinator'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied',
       'שיבוץ לאבטחה שמור למפקד משמרת ולרכז כוח אדם.');
   }
@@ -2152,4 +2170,45 @@ exports.guardReminder = onSchedule(
           (v.place ? ' · ' + v.place : ''),
         './guards.html', true);
     }
+  });
+
+
+// ---------- תקלה משביתה ----------
+//
+// רכב שיוצא מכלל שימוש הוא לא עוד פריט ברשימה — הוא משנה את
+// מה שהמשמרת יכולה לעשות. מפקד שיגלה את זה כשהוא כבר בדרך
+// לאירוע גילה מאוחר מדי.
+//
+// נשלח רק על 'blocking', ורק בפתיחה או בהסלמה. תקלה קלה
+// שנפתחת פעמיים ביום לא אמורה לצלצל אצל אף אחד.
+
+exports.onFaultBlocking = onDocumentWritten(
+  'stations/{sid}/faults/{faultId}',
+  async (event) => {
+    const sid = event.params.sid;
+    const before = event.data && event.data.before && event.data.before.data();
+    const after  = event.data && event.data.after  && event.data.after.data();
+    if (!after) return;
+
+    const wasBlocking = !!(before && before.severity === 'blocking' &&
+                           before.status !== 'fixed');
+    const isBlocking  = after.severity === 'blocking' && after.status !== 'fixed';
+
+    // נסגרה תקלה משביתה — גם זה שווה הודעה. מפקד שממתין
+    // לרכב צריך לדעת שהוא חזר.
+    if (wasBlocking && !isBlocking && after.status === 'fixed') {
+      await pushToUsers(sid, await commandersOf(sid, ''), 'fault_blocking',
+        'רכב חזר לכשירות',
+        (after.vehicle_name || after.title || '') + ' — התקלה נסגרה' +
+          (after.fixed_by_name ? ' ע״י ' + after.fixed_by_name : '') + '.',
+        './faults.html');
+      return;
+    }
+
+    if (!isBlocking || wasBlocking) return;   // רק מעבר למשבית
+
+    await pushToUsers(sid, await commandersOf(sid, ''), 'fault_blocking',
+      'תקלה משביתה — ' + (after.vehicle_name || 'ציוד'),
+      (after.title || '') + ' · דווח ע״י ' + (after.by_name || '') + '.',
+      './faults.html', true);
   });

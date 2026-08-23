@@ -69,15 +69,33 @@ service cloud.firestore {
       return signedIn() && claim('stationId') == sid;
     }
 
+    // סגן מפקד משמרת ומפקד תחנה, 23.8.2026.
+    //
+    // הסגן אינו הערה על מפקד — הוא תפקיד. אלדד חוזר בכל דרישה
+    // על "מפקד משמרת או סגנו", ולכן סמכויותיו זהות, והוא נעול
+    // לאותה משמרת בדיוק כמוהו.
+    //
+    // מפקד התחנה רואה את שלוש המשמרות, והוא היחיד שמאשר
+    // ירידה מתחת לקו האדום.
+
     function member(sid) {
       return isSuper()
              || (inStation(sid)
-                 && claim('role') in ['firefighter', 'commander', 'hr_coordinator']);
+                 && claim('role') in ['firefighter', 'deputy', 'commander',
+                                      'station_commander', 'hr_coordinator']);
     }
 
     function staff(sid) {
       return isSuper()
-             || (inStation(sid) && claim('role') in ['commander', 'hr_coordinator']);
+             || (inStation(sid) && claim('role') in
+                 ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
+    }
+
+    // מפקד התחנה. השם הארוך במכוון — stationCmd מול commander
+    // הם שני דברים שונים לגמרי, ושם דומה מדי היה מזמין טעות.
+    function stationCommander(sid) {
+      return isSuper()
+             || (inStation(sid) && claim('role') == 'station_commander');
     }
 
     function hr(sid) {
@@ -99,7 +117,8 @@ service cloud.firestore {
     }
 
     function seesShift(sid, crew) {
-      return isSuper() || hr(sid) || myShift() == '' || myShift() == crew;
+      return isSuper() || hr(sid) || stationCommander(sid)
+             || myShift() == '' || myShift() == crew;
     }
 
     // כמו seesShift, אבל על נתון שכבר קיים ושדה המשמרת שלו
@@ -107,7 +126,7 @@ service cloud.firestore {
     // בלי משמרת נראית לכל הסגל, כי אין לפי מה לנעול אותה,
     // ולנעול הכל היה מסתיר נתונים בלי שאיש יבין למה.
     function seesCrewData(sid, crew) {
-      return isSuper() || hr(sid) || crew == ''
+      return isSuper() || hr(sid) || stationCommander(sid) || crew == ''
              || myShift() == '' || myShift() == crew;
     }
 
@@ -437,6 +456,39 @@ service cloud.firestore {
         allow write: if staff(sid);
       }
 
+      // ---------- היתר לרדת מתחת לקו האדום ----------
+      //
+      // ראש המשמרת או סגנו מבקשים; מפקד התחנה מאשר. שני שלבים
+      // ולא אחד, כי זו החלטה שמוציאה משמרת לשטח בתקן חסר.
+      //
+      // המבקש אינו יכול לאשר לעצמו — הכלל השני דורש
+      // stationCommander, ו-staff() אינו מספיק.
+      //
+      // אין נימוק בכוונה. אלדד: "לא צריך נימוק, מפקד המשמרת
+      // קיבל את ההחלטה היא שלו." מה שכן נשמר: מי ביקש, מי
+      // אישר, ומתי.
+
+      match /redline_waivers/{wId} {
+        allow read: if member(sid);
+
+        allow create: if staff(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('status', '') == 'pending'
+                      && request.resource.data.get('crew', '') != ''
+                      && request.resource.data.get('date', '') != '';
+
+        // רק מפקד התחנה מכריע, ורק על בקשה שממתינה.
+        allow update: if stationCommander(sid)
+                      && resource.data.get('status', '') == 'pending'
+                      && request.resource.data.get('status', '') in ['approved', 'rejected']
+                      && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
+                      && request.resource.data.get('crew', '') == resource.data.get('crew', '')
+                      && request.resource.data.get('date', '') == resource.data.get('date', '');
+
+        allow delete: if isSuper();
+      }
+
+
       // ---------- מסירת אחריות ----------
       //
       // זו חתימה, לא רשומה רגילה. אלדד הגדיר: מפקד משמרת או
@@ -494,7 +546,16 @@ service cloud.firestore {
                       && request.resource.data.get('created_key', '') == resource.data.get('created_key', '')
                       && request.resource.data.get('title', '') == resource.data.get('title', '');
 
-        allow delete: if isSuper();
+        // מחיקה. רק פגיעות רכב, ורק בידי הסגל.
+        //
+        // תקלה רגילה נסגרת ונשארת בהיסטוריה. פגיעה שתוקנה
+        // בפועל במוסך כבר לא קיימת על הרכב, ולכן היא נמחקת —
+        // אלדד הגדיר זאת במפורש, והמחיקה סופית.
+        //
+        // תקלה שאינה פגיעה לא נמחקת בשום מקרה מלבד מנהל-על:
+        // מי שדיווח בטעות סוגר, לא מוחק.
+        allow delete: if isSuper()
+                      || (staff(sid) && resource.data.get('kind', '') == 'damage');
 
         // צילומים. נשמרים כמסמך נפרד תחת התקלה כדי שמסמך התקלה
         // יישאר קטן ושהתמונה תיטען רק כשמסתכלים בה.
@@ -847,12 +908,12 @@ service cloud.firestore {
       // בהתראה ובדוח החודשי, ושניהם ממילא מצומצמים למשמרת שלו.
 
       match /scans/{monthKey} {
-        allow read:  if hr(sid);
+        allow read:  if hr(sid) || stationCommander(sid);
         allow write: if false;
       }
 
       match /hr_reports/{monthKey} {
-        allow read:  if hr(sid);
+        allow read:  if hr(sid) || stationCommander(sid);
         allow write: if false;
       }
 

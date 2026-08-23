@@ -307,7 +307,8 @@ onAuthStateChanged(auth, async user => {
   IS_SUPER = c.super === true ||
              String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = IS_SUPER ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (IS_SUPER ? STATION_ID : '');
   if (!isMember || !SID) {
@@ -537,15 +538,26 @@ function rosterName(uid){
   return (p && p.name) ? p.name : 'לא בסגל';
 }
 
+// מי מזעיק. סגן מפקד משמרת נמצא כאן כי אלדד הגדיר "מפקד
+// משמרת או סגנו" — אם הסגן מנהל את המשמרת כשהמפקד לא בתחנה,
+// הזעקה היא בדיוק מה שהוא צריך.
 function canCallout(){
-  return IS_SUPER || ROLE === 'commander' || ROLE === 'hr_coordinator';
+  return IS_SUPER ||
+    ['commander','deputy','station_commander','hr_coordinator']
+      .indexOf(ROLE) !== -1;
+}
+
+// מי רואה את כל התחנה ולא רק את המשמרת שלו. חייב להיות זהה
+// ל-seesShift() בכללי האבטחה.
+function isWide(){
+  return IS_SUPER || ROLE === 'hr_coordinator' || ROLE === 'station_commander';
 }
 
 async function setupCallout(){
   if (!canCallout()) return;
   $('coCard').classList.remove('hide');
 
-  const wide = IS_SUPER || ROLE === 'hr_coordinator';
+  const wide = isWide();
   const opts = [];
   if (ME.crew) {
     opts.push({ v: 'crew:' + ME.crew,
@@ -684,7 +696,7 @@ function watchMyCallouts(){
         const list = [];
         snap.forEach(function (d) {
           const v = d.data() || {};
-          if (v.by_uid !== ME.uid && !IS_SUPER && ROLE !== 'hr_coordinator') return;
+          if (v.by_uid !== ME.uid && !isWide()) return;
           list.push({ id: d.id, v: v });
         });
         renderLive(list);
@@ -765,16 +777,17 @@ function renderLive(list){
 
 function setupSend(){
   const opts = [];
-  if (IS_SUPER || ROLE === 'hr_coordinator') {
+  if (isWide()) {
     opts.push({ v: 'station', he: 'כל התחנה' });
     ['A','B','C'].forEach(c => opts.push({ v: 'crew:' + c,
       he: 'משמרת ' + (CREW_HE[c] || c) }));
-  } else if (ROLE === 'commander' && ME.crew) {
-    opts.push({ v: 'crew:' + ME.crew,
-      he: 'המשמרת שלי — ' + (CREW_HE[ME.crew] || ME.crew) });
   } else if (ME.crew) {
+    // מפקד, סגן וכבאי — כולם למשמרת שלהם. ההבדל ביניהם אינו
+    // ביעד אלא בשאר המסכים.
+    const boss = ROLE === 'commander' || ROLE === 'deputy';
     opts.push({ v: 'crew:' + ME.crew,
-      he: 'הכבאים במשמרת שלי — ' + (CREW_HE[ME.crew] || ME.crew) });
+      he: (boss ? 'המשמרת שלי — ' : 'הכבאים במשמרת שלי — ') +
+          (CREW_HE[ME.crew] || ME.crew) });
   }
 
   if (!opts.length) return;
@@ -783,12 +796,11 @@ function setupSend(){
   $('target').innerHTML = opts.map(o =>
     '<option value="' + esc(o.v) + '">' + esc(o.he) + '</option>').join('');
 
-  $('sendNote').textContent =
-    (IS_SUPER || ROLE === 'hr_coordinator')
-      ? 'אתה יכול לשלוח לכל התחנה או למשמרת אחת.'
-      : ROLE === 'commander'
-      ? 'אתה יכול לשלוח לאנשי המשמרת שלך.'
-      : 'אתה יכול לשלוח לכבאים במשמרת שלך.';
+  $('sendNote').textContent = isWide()
+    ? 'אתה יכול לשלוח לכל התחנה או למשמרת אחת.'
+    : (ROLE === 'commander' || ROLE === 'deputy')
+    ? 'אתה יכול לשלוח לאנשי המשמרת שלך.'
+    : 'אתה יכול לשלוח לכבאים במשמרת שלך.';
 
   $('btnSend').onclick = send;
 }

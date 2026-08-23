@@ -78,6 +78,30 @@
   }
   .veh{ border:1px solid var(--line); border-radius:12px; background:var(--card);
         overflow:hidden }
+  /* רכב עם תקלה משביתה. המשבצות נשארות מאוישות — האנשים
+     עדיין במשמרת — אבל ברור שהרכב לא יוצא. */
+  .waiver{ margin-top:9px }
+  .waiver .wline{ padding:10px 13px; border-radius:9px; font-size:12.5px;
+                  line-height:1.7; background:#241f13; border:1px solid #5a4a2b;
+                  color:#e8c78a }
+  .waiver .wline.approved{ background:#16241a; border-color:#2f4a33; color:#a5d6a7 }
+  .waiver .wline.rejected{ background:#241618; border-color:#5a2b2d; color:#f0b2b2 }
+  .verdict.warn{ color:#e0a23c; border:1px solid #e0a23c; background:#241f13 }
+
+  .vehwarn{ margin-top:9px; padding:10px 13px; border-radius:9px;
+            background:#241618; border:1px solid #5a2b2d; color:#f0b2b2;
+            font-size:12.5px; line-height:1.7 }
+  .vehwarn b{ color:#fff }
+  .veh.blocked{ border-color:var(--bad) }
+  .veh.blocked > .hd{ background:#2a1618 }
+  .veh.blocked .slots{ opacity:.45 }
+  .veh .fault{ display:flex; align-items:flex-start; gap:8px;
+               padding:9px 14px; font-size:12.5px; line-height:1.7;
+               background:#241618; border-bottom:1px solid var(--line);
+               color:#f0b2b2 }
+  .veh .fault.limit{ background:#241f13; color:#e8c78a }
+  .veh .fault b{ color:#fff }
+  .veh .fault .who{ color:var(--muted); font-size:11.5px }
   .veh > .hd{ display:flex; align-items:center; gap:9px; flex-wrap:wrap;
               padding:10px 14px; border-bottom:1px solid var(--line);
               background:#191c21 }
@@ -232,6 +256,8 @@
 
       <span class="verdict ok" id="verdict">—</span>
       <span class="why ok" id="why"></span>
+      <div class="vehwarn hide" id="vehWarn"></div>
+      <div class="waiver hide" id="waiver"></div>
 
       <span class="spacer"></span>
       <span class="lbl" id="sitesLbl"></span>
@@ -255,12 +281,15 @@ import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
 import { stationName } from './stations.js?v=20';
 import { renderNav, renderStuckNav } from './nav.js?v=20';
 import { watchCallouts } from './callout.js?v=20';
-import { boardState, summaryText, visibleCrews } from './readiness.js?v=20';
+import { boardState, summaryText, visibleCrews,
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=20';
+import { vehicleState, isOpen as faultOpen, reportedLine }
+  from './faults.js?v=20';
 import { SITE_SEED } from './hours.js?v=20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, serverTimestamp }
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
@@ -270,6 +299,14 @@ const db   = getFirestore(app);
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const CREWS   = ['A', 'B', 'C'];
 const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
+
+// תאריך היום כמפתח. הלוח אינו מייבא את rotation.js, ושורה
+// אחת כאן עדיפה על ייבוא מודול שלם בשביל פונקציה אחת.
+function toKey(d){
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const a = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + m + '-' + a;
+}
 
 // ברירת המחדל של אילת, לפי מה שאלדד מסר. נכתבת פעם אחת לתחנה
 // שאין לה עדיין מבנה, וממנה והלאה היא נתון של התחנה — נערכת
@@ -321,10 +358,14 @@ function uid(p){
 }
 
 let SID = '', CAN_EDIT = false, CREW = 'A';
+let ME = { uid: '', full_name: '' };
 let MY_CREWS = CREWS.slice();   // אילו משמרות מותר לי לראות
 let board  = { vehicles: [], command: [] };
 let assign = {};          // slotId -> uid
 let people = [];          // כל אנשי התחנה הפעילים
+let faults = [];          // תקלות פתוחות — קובעות אם רכב יוצא בכלל
+let waivers = {};         // היתרים לרדת מתחת לקו האדום
+let IS_STCMD = false;     // מפקד תחנה — היחיד שמאשר היתר
 let quals  = [];          // [{id,name}]
 let sites  = [];          // [{id,name,fixed_hours,order}]
 let held   = {};          // uid -> [qid]
@@ -340,7 +381,8 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+    ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
 
@@ -351,7 +393,13 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  CAN_EDIT = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  CAN_EDIT = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  IS_STCMD = isSuper || c.role === 'station_commander';
+  ME = { uid: user.uid, full_name: '' };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
 
   // מפקד משמרת מנהל את המשמרת שלו. הכפתורים של האחרות לא
   // מוסתרים אלא לא נוצרים — כפתור שהשרת ידחה גרוע מכפתור שאין.
@@ -378,6 +426,24 @@ onAuthStateChanged(auth, async user => {
 // ---------- טעינה ----------
 
 async function loadStatic(){
+  // תקלות פתוחות. בלעדיהן הלוח מציג רכב מאויש במלואו בזמן
+  // שהרכב עצמו בחוץ — בדיוק המצב שבו המערכת אומרת דבר אחד
+  // והמציאות אומרת אחר.
+  try {
+    const fs2 = await getDocs(collection(db, 'stations', SID, 'faults'));
+    faults = [];
+    fs2.forEach(d => {
+      const v = Object.assign({ id: d.id }, d.data() || {});
+      if (faultOpen(v)) faults.push(v);
+    });
+  } catch (ignore) {}
+
+  try {
+    const ws = await getDocs(collection(db, 'stations', SID, 'redline_waivers'));
+    waivers = {};
+    ws.forEach(d => { waivers[d.id] = Object.assign({ id: d.id }, d.data() || {}); });
+  } catch (ignore) {}
+
   try {
     const qs = await getDocs(collection(db, 'stations', SID, 'quals'));
     quals = [];
@@ -562,14 +628,20 @@ function renderFleet(){
     const slots = v.slots || [];
     const filled = slots.filter(s => assign[s.id]).length;
 
+    const vs = vehicleState(faults, v.id);
+    const down = vs.id === 'blocked';
+
     const card = document.createElement('div');
-    card.className = 'veh';
+    card.className = 'veh' + (down ? ' blocked' : '');
 
     const hd = document.createElement('div');
     hd.className = 'hd';
     hd.innerHTML =
       '<span class="nm">' + esc(v.name) + '</span>' +
       (v.role ? '<span class="role">' + esc(v.role) + '</span>' : '') +
+      (vs.id !== 'ok'
+        ? '<span class="role" style="color:' + vs.color +
+          ';border-color:' + vs.color + '">' + esc(vs.he) + '</span>' : '') +
       '<span class="cnt' + (filled < slots.length ? ' bad' : '') + '">' +
         filled + ' מתוך ' + slots.length + '</span>';
 
@@ -587,6 +659,23 @@ function renderFleet(){
       hd.appendChild(tools);
     }
     card.appendChild(hd);
+
+    // מה בדיוק שבור, ומי דיווח. שורה אחת — מפקד שרואה "משבית"
+    // בלי לדעת על מה, הולך לחפש במסך אחר.
+    (vs.faults || []).slice(0, 2).forEach(function (f) {
+      const fl = document.createElement('div');
+      fl.className = 'fault' + (f.severity === 'blocking' ? '' : ' limit');
+      fl.innerHTML = '<span><b>' + esc(f.title || '') + '</b>' +
+        (f.status === 'in_repair' ? ' · בטיפול' : '') +
+        '<br><span class="who">' + esc(reportedLine(f)) + '</span></span>';
+      card.appendChild(fl);
+    });
+    if ((vs.faults || []).length > 2) {
+      const more = document.createElement('div');
+      more.className = 'fault limit';
+      more.textContent = 'ועוד ' + (vs.faults.length - 2) + ' תקלות פתוחות.';
+      card.appendChild(more);
+    }
 
     slots.forEach(function (s) {
       const u = assign[s.id] || '';
@@ -644,9 +733,38 @@ function renderFleet(){
 function renderVerdict(){
   const bs = boardState(board, assign, held);
 
-  $('verdict').className = 'verdict ' + (bs.below ? 'bad' : 'ok');
+  // היתר מאושר אינו הופך משמרת לכשירה — הוא אומר שמפקד
+  // התחנה יודע והחליט. לכן הכיתוב משתנה והצבע מתרכך, אבל
+  // "לא כשירה" לא נמחק: מי שיקרא את הלוח מחר צריך לראות
+  // שהמשמרת יצאה בתקן חסר.
+  const today = toKey(new Date());
+  const wv = waiverOn(waivers, CREW, today);
+  const ok = waived(waivers, CREW, today);
+
+  $('verdict').className = 'verdict ' +
+    (!bs.below ? 'ok' : (ok ? 'warn' : 'bad'));
   $('verdict').textContent = !bs.configured ? 'אין מבנה'
-                                            : (bs.below ? 'לא כשירה' : 'כשירה');
+    : !bs.below ? 'כשירה'
+    : ok ? 'לא כשירה — באישור' : 'לא כשירה';
+
+  renderWaiver(bs, wv, today);
+
+  // רכבים משביתים מוצגים **לצד** הכשירות ולא בתוכה.
+  // הקו האדום עונה על "יש לי מספיק אנשים עם ההסמכות הנכונות" —
+  // שאלה על כוח אדם. רכב תקול היא שאלה אחרת, ומדד שמערבב
+  // את שתיהן לא אומר למפקד מה לתקן.
+  //
+  // אם אלדד יחליט שרכב משבית מפיל את הכשירות — כאן משנים,
+  // בשורה אחת: bs.below = bs.below || downVeh.length > 0.
+  const downVeh = (board.vehicles || []).filter(function (v) {
+    return vehicleState(faults, v.id).id === 'blocked';
+  });
+  $('vehWarn').classList.toggle('hide', !downVeh.length);
+  $('vehWarn').innerHTML = downVeh.length
+    ? '<b>' + downVeh.length + ' רכבים משביתים:</b> ' +
+      downVeh.map(v => esc(v.name)).join(' · ') +
+      ' — המשמרת מאוישת, אבל הרכבים האלה לא יוצאים.'
+    : '';
 
   const txt = summaryText(null, bs, qualName);
   $('why').className = 'why ' + (bs.below ? '' : 'ok');
@@ -654,6 +772,83 @@ function renderVerdict(){
     ? 'הוסף רכבים ומשבצות כדי שהמערכת תדע מה נדרש.'
     : (txt ? txt.split(' · ').map(s => '<b>' + esc(s) + '</b>').join(' · ')
            : 'כל <b>' + bs.total + '</b> המשבצות מאוישות ומתאימות');
+}
+
+// ---------- היתר לרדת מקו אדום ----------
+
+function renderWaiver(bs, wv, today){
+  const box = $('waiver');
+  box.innerHTML = '';
+  // אין למה לבקש היתר כשהמשמרת כשירה.
+  if (!bs.below && !wv) { box.classList.add('hide'); return; }
+  box.classList.remove('hide');
+
+  if (wv) {
+    const st = wv.status || 'pending';
+    box.innerHTML = '<div class="wline ' + esc(st) + '">' +
+      esc(waiverLine(wv)) + '</div>';
+    // מפקד התחנה מכריע על בקשה שממתינה.
+    if (IS_STCMD && st === 'pending') {
+      const row = document.createElement('div');
+      row.style.display = 'flex'; row.style.gap = '8px';
+      row.style.flexWrap = 'wrap'; row.style.marginTop = '9px';
+      row.appendChild(wbtn('אשר', 'go', () => decideWaiver(wv, 'approved')));
+      row.appendChild(wbtn('דחה', '', () => decideWaiver(wv, 'rejected')));
+      box.appendChild(row);
+    }
+    return;
+  }
+
+  if (!CAN_EDIT) {
+    box.innerHTML = '<div class="wline">המשמרת מתחת לקו האדום. ' +
+      'ראש המשמרת יכול לבקש היתר ממפקד התחנה.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="wline">המשמרת מתחת לקו האדום. ' +
+    'אם צרכי המערכת מחייבים — בקש היתר ממפקד התחנה.</div>';
+  const b = wbtn('בקש היתר לעבוד מתחת לקו האדום', 'go',
+                 () => askWaiver(today));
+  b.style.marginTop = '9px';
+  box.appendChild(b);
+}
+
+function wbtn(text, cls, fn){
+  const b = document.createElement('button');
+  b.className = 'btn ' + cls;
+  b.style.width = 'auto'; b.style.margin = '0';
+  b.textContent = text; b.onclick = fn;
+  return b;
+}
+
+async function askWaiver(today){
+  if (!window.confirm('לבקש היתר לעבוד מתחת לקו האדום היום?\n\n' +
+      'ההחלטה שלך, אבל היא נכנסת לתוקף רק אחרי אישור מפקד ' +
+      'התחנה. ההיתר תקף להיום בלבד.')) return;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'redline_waivers',
+                     waiverId(CREW, today)), {
+      crew: CREW, date: today, status: 'pending',
+      by_uid: ME.uid, by_name: ME.full_name || '',
+      created_key: new Date().toISOString(),
+      created_at: serverTimestamp()
+    });
+    await loadStatic(); render();
+  } catch (e) {
+    msg('הבקשה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+}
+
+async function decideWaiver(wv, status){
+  try {
+    await setDoc(doc(db, 'stations', SID, 'redline_waivers', wv.id), {
+      status: status,
+      approved_by: ME.uid, approved_by_name: ME.full_name || '',
+      approved_key: new Date().toISOString()
+    }, { merge: true });
+    await loadStatic(); render();
+  } catch (e) {
+    msg('העדכון נכשל. (' + (e.code || e.message) + ')', 'err');
+  }
 }
 
 // ---------- חלונית ----------

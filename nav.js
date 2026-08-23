@@ -29,7 +29,8 @@ const ITEMS = [
 // מה שהשרת מתיר בפועל. מפקד מחוז אינו staff באף כלל אבטחה
 // היום — הצגת הכפתורים לו הייתה שולחת אותו לשלושה מסכים
 // שכולם נחסמים, ואחד מהם אף מציג הודעה שגויה.
-const STAFF_ROLES = ['commander', 'hr_coordinator'];
+const STAFF_ROLES = ['deputy', 'commander', 'station_commander',
+                     'hr_coordinator'];
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';
@@ -40,7 +41,8 @@ function allowed(who, claims) {
   // כלול, ולכן אסור להציג לו "סידור עבודה" — הוא ייחסם בשרת.
   if (who === 'member') {
     return isSuper ||
-           ['firefighter', 'commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+           ['firefighter', 'deputy', 'commander', 'station_commander',
+     'hr_coordinator'].indexOf(claims.role) !== -1;
   }
   return false;
 }
