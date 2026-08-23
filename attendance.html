@@ -250,14 +250,14 @@
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
-import { renderNav, renderStuckNav } from './nav.js?v=13';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
+import { renderNav, renderStuckNav } from './nav.js?v=16';
 import { crewOnDate, isCrewWorking, overrideOn, overrideKindHe, shiftTimes,
-         CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=13';
+         CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=16';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=15';
+  from './hours.js?v=16';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

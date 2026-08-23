@@ -350,10 +350,10 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=13';
-import { renderNav, clearNav } from './nav.js?v=13';
+  from './stations.js?v=16';
+import { renderNav, clearNav } from './nav.js?v=16';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -640,7 +640,8 @@ $('btnFirst').onclick = async () => {
 // רשימה סגורה של יעדים. בלעדיה, פרמטר בכתובת היה יכול להפנות
 // כבאי לאתר חיצוני שנראה כמו המערכת.
 const RETURNABLE = ['schedule.html', 'access.html', 'admin.html', 'check.html',
-                    'quals.html', 'board.html', 'attendance.html'];
+                    'quals.html', 'board.html', 'attendance.html',
+                    'swaps.html'];
 
 function returnToCaller(){
   let next = '';

@@ -248,20 +248,20 @@
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=13';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=13';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=16';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
          OVERRIDE_KINDS, overrideKindHe, overrideOn }
-  from './rotation.js?v=13';
+  from './rotation.js?v=16';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=13';
+  from './readiness.js?v=16';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

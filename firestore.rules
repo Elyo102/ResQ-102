@@ -490,37 +490,67 @@ service cloud.firestore {
       // הערה פתוחה: שם הסטטוס הסופי ('approved') הוא הנחה.
       // צריך לאמת מול הקוד כשמודול ההחלפות ייכתב.
 
+      // ---------- החלפות משמרת ----------
+      //
+      // המסלול, לפי אלדד:
+      //
+      //   peer      נשלחה. הכבאי השני צריך להסכים
+      //   cmd_from  הצד השני הסכים. מפקד המשמרת של המבקש בוחן
+      //   cmd_to    מפקד המבקש אישר. מפקד המשמרת השנייה בוחן
+      //   approved  שני המפקדים אישרו
+      //   rejected  נדחתה, עם נימוק ועם שם הדוחה
+      //   cancelled המבקש ביטל
+      //
+      // הסכמת הכבאי השני היא שלב ראשון ולא קישוט: בלעדיה
+      // אפשר להתנדב בשמו של מישהו אחר, והמפקד מקבל בקשה
+      // שהצד השני לא יודע עליה.
+      //
+      // כל אחד מהשניים יכול לבטל כל עוד לא אושרה סופית.
+      // מפקד מאשר רק את המשמרת שלו — seesShift אוכף את זה.
+
       match /swaps/{swapId} {
         allow read: if member(sid);
 
-        // מסלול האישור, לפי אלדד 22.8.2026:
-        //
-        //   sent            הבקשה נשלחה
-        //   under_review    ראש המשמרת של המבקש קיבל ובוחן
-        //   approved_first  ראש משמרת א' אישר, ממתין לראש משמרת ב'
-        //   approved        שני ראשי המשמרות אישרו
-        //   rejected        נדחתה, עם או בלי נימוק
-        //   cancelled       המבקש ביטל
-        //
-        // תיקון מהותי: קודם הונח שהכבאי שמקבל את הבקשה הוא זה
-        // שמאשר. בפועל ראשי המשמרות מאשרים, לא הכבאי. לכן זכות
-        // העדכון עברה לסגל בלבד.
-        //
-        // המבקש יכול רק לבטל, וגם זה רק כל עוד לא אושרה סופית.
-
         allow create: if member(sid)
-                      && request.resource.data.get('requester_emp', '') == myEmp()
-                      && request.resource.data.get('status', '') == 'sent';
+                      && request.resource.data.get('from_emp', '') == myEmp()
+                      && request.resource.data.get('status', '') == 'peer'
+                      && request.resource.data.get('from_crew', '') != ''
+                      && request.resource.data.get('to_crew', '') != '';
 
+        // הכבאי השני מסכים או מסרב. הוא לא יכול לאשר סופית.
+        allow update: if member(sid)
+                      && resource.data.get('to_emp', '') == myEmp()
+                      && resource.data.get('status', '') == 'peer'
+                      && request.resource.data.get('status', '') in ['cmd_from', 'rejected']
+                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
+                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+
+        // מפקד המשמרת של המבקש.
         allow update: if staff(sid)
-                      || (member(sid)
-                          && resource.data.get('requester_emp', '') == myEmp()
-                          && resource.data.get('status', '') != 'approved'
-                          && request.resource.data.get('status', '') == 'cancelled'
-                          && request.resource.data.get('requester_emp', '') == resource.data.get('requester_emp', '')
-                          && request.resource.data.get('target_emp', '') == resource.data.get('target_emp', ''));
+                      && seesShift(sid, resource.data.get('from_crew', ''))
+                      && resource.data.get('status', '') == 'cmd_from'
+                      && request.resource.data.get('status', '') in ['cmd_to', 'rejected']
+                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
+                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
 
-        allow delete: if staff(sid);
+        // מפקד המשמרת השנייה. רק הוא יכול להביא ל-approved.
+        allow update: if staff(sid)
+                      && seesShift(sid, resource.data.get('to_crew', ''))
+                      && resource.data.get('status', '') == 'cmd_to'
+                      && request.resource.data.get('status', '') in ['approved', 'rejected']
+                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
+                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+
+        // ביטול על ידי אחד השניים, כל עוד לא אושרה.
+        allow update: if member(sid)
+                      && (resource.data.get('from_emp', '') == myEmp()
+                          || resource.data.get('to_emp', '') == myEmp())
+                      && resource.data.get('status', '') != 'approved'
+                      && request.resource.data.get('status', '') == 'cancelled'
+                      && request.resource.data.get('from_emp', '') == resource.data.get('from_emp', '')
+                      && request.resource.data.get('to_emp', '')   == resource.data.get('to_emp', '');
+
+        allow delete: if isSuper();
       }
 
 

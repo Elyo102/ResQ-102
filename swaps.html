@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — החלפות משמרת</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#0f1b33">
+
+<style>
+  :root{
+    --bg:#15171a; --card:#1e2126; --line:#2c3036; --txt:#e8eaed;
+    --muted:#9aa0a6; --accent:#e8590c;
+    --crewA:#f0523f; --crewB:#35c46b; --crewC:#4d94ff;
+    --bad:#ef5350; --good:#66bb6a; --warn:#e0a23c;
+  }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:860px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  input, select, textarea{ width:100%; padding:10px; background:#111316;
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  input[type="date"]{ color-scheme:dark }
+  input[type="date"]::-webkit-calendar-picker-indicator{
+    filter:invert(1) brightness(1.6); opacity:.85; cursor:pointer }
+  textarea{ min-height:56px; resize:vertical }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:#3d444d }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:#fff }
+  .btn.ok{ background:#2e7d32; border-color:#2e7d32; color:#fff }
+  .btn.no{ background:#c62828; border-color:#c62828; color:#fff }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+
+  .two{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  @media (max-width:560px){ .two{ grid-template-columns:1fr } }
+
+  .cw{ display:inline-block; font-size:10.5px; font-weight:700; border-radius:4px;
+       padding:1px 7px; color:#fff }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:#0d1f12 }
+  .cw.C{ background:var(--crewC) }
+
+  .sw{ border:1px solid var(--line); border-radius:10px; padding:13px;
+       margin-top:10px; background:#191c20 }
+  .sw.mine{ border-color:#3d444d }
+  .sw.done{ border-color:#2f4a33 }
+  .sw.dead{ border-color:var(--bad) }
+  .sw .hd{ display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+           font-size:14.5px; font-weight:700; margin-bottom:6px }
+  .sw .leg{ font-size:12.5px; color:var(--muted); line-height:1.9 }
+  .sw .leg b{ color:var(--txt) }
+  .rng{ direction:ltr; unicode-bidi:isolate; display:inline-block }
+
+  .st{ font-size:11.5px; font-weight:700; border-radius:20px; padding:2px 11px;
+       border:1px solid var(--line); color:var(--muted); white-space:nowrap }
+  .st.wait{ border-color:var(--warn); color:var(--warn) }
+  .st.ok{ border-color:#2f4a33; color:var(--good) }
+  .st.no{ border-color:var(--bad); color:var(--bad) }
+
+  .trail{ margin-top:8px; font-size:12.5px; line-height:1.9 }
+  .trail .y{ color:var(--good) }
+  .trail .n{ color:var(--bad) }
+
+  .cmp{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px }
+  @media (max-width:560px){ .cmp{ grid-template-columns:1fr } }
+  .side{ border:1px solid var(--line); border-radius:10px; padding:12px;
+         background:#15181c }
+  .side .who{ font-size:15.5px; font-weight:800; margin-bottom:2px }
+  .side .dir{ font-size:11.5px; color:var(--muted); margin-bottom:9px }
+  .side.out .dir{ color:var(--bad) }
+  .side.in  .dir{ color:var(--good) }
+  .chip{ display:inline-block; border:1px solid var(--line); border-radius:20px;
+         padding:2px 10px; font-size:11.5px; color:var(--muted);
+         margin:2px 0 2px 4px }
+  .chip.has{ border-color:#2f4a33; color:var(--good) }
+  .chip.lost{ border-color:var(--bad); color:var(--bad) }
+  .gap{ border:1px solid var(--bad); background:#241618; border-radius:9px;
+        padding:11px; margin-top:12px; font-size:13px; color:#f0b2b2;
+        line-height:1.8 }
+  .gap b{ color:#fff }
+  .fine{ border:1px solid #2f4a33; background:#16241a; border-radius:9px;
+         padding:11px; margin-top:12px; font-size:13px; color:#a5d6a7 }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:#3a1d1d; color:#ef9a9a }
+  .msg.ok{ display:block; background:#1d3a20; color:#a5d6a7 }
+  .msg.info{ display:block; background:#23262c; color:#b9c0c8 }
+  .hide{ display:none !important }
+
+  #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
+       display:none; align-items:flex-start; justify-content:center;
+       padding:4vh 14px; overflow:auto }
+  #ov.on{ display:flex }
+  .dlg{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+        width:100%; max-width:620px; padding:18px }
+  .dlg h3{ margin:0 0 3px; font-size:17px }
+  .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:10px; line-height:1.7 }
+  .acts{ display:flex; gap:8px; margin-top:16px; flex-wrap:wrap }
+  .plist{ max-height:40vh; overflow:auto; margin-top:8px;
+          border:1px solid var(--line); border-radius:8px }
+  .pit{ display:flex; align-items:center; gap:9px; padding:10px 12px;
+        border-bottom:1px solid #24272c; cursor:pointer }
+  .pit:last-child{ border-bottom:0 }
+  .pit:hover{ background:#20242a }
+  .pit .pn{ flex:1; font-size:14.5px; font-weight:600 }
+  .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
+</style>
+</head>
+<body>
+
+<style>
+  #errBar{ position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+           background:#3a1d1d; color:#ffcdd2; border-bottom:2px solid #c62828;
+           padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+           font-size:13px; line-height:1.7; direction:rtl; max-height:45vh; overflow:auto }
+  #errBar b{ color:#fff; display:block; margin-bottom:4px; font-size:14px }
+  #errBar code{ direction:ltr; display:block; margin-top:6px; color:#ef9a9a;
+                font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+  #errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
+               color:#fff; font-size:18px }
+</style>
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>החלפות משמרת</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין החלפות להציג.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="card hide" id="apprCard">
+      <h2>ממתין לאישורך</h2>
+      <div class="note" id="apprNote">—</div>
+      <div id="apprList"></div>
+      <div class="msg" id="apprMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>בקשה חדשה</h2>
+      <div class="note">
+        יום מול יום. אתה לא עובד ביום שלך והוא נכנס במקומך,
+        ובתמורה אתה נכנס במקומו ביום שלו.
+      </div>
+      <div class="two">
+        <div>
+          <label>היום שלי — שאני לא עובד בו</label>
+          <input type="date" id="myDate">
+        </div>
+        <div>
+          <label>היום שלו — שאני נכנס בו במקומו</label>
+          <input type="date" id="hisDate">
+        </div>
+      </div>
+      <label>עם מי</label>
+      <button class="btn" id="btnPick" style="margin-top:0;width:100%">בחר כבאי</button>
+      <div class="note" id="peerNote" style="margin-top:8px">לא נבחר.</div>
+      <label>הערה (לא חובה)</label>
+      <textarea id="newNote" maxlength="200"></textarea>
+      <button class="btn go" id="btnSend">שלח בקשה</button>
+      <div class="msg" id="newMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>הבקשות שלי</h2>
+      <div id="mineList"></div>
+      <div class="msg" id="mineMsg"></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="ov"><div class="dlg" id="dlg"></div></div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=16';
+import { renderNav, renderStuckNav } from './nav.js?v=16';
+import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking } from './rotation.js?v=16';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
+         serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'newMsg');
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+function dmy(k){
+  const p = String(k).split('-');
+  return Number(p[2]) + '.' + Number(p[1]);
+}
+
+let SID = '', ME = null, IS_STAFF = false, MY_SHIFT = '', UNLOCKED = false;
+let people = [], quals = [], held = {}, swaps = [], rotations = [], overrides = {};
+let peer = null;
+
+function qualName(id){
+  const q = quals.filter(x => x.id === id)[0];
+  return q ? q.name : '';
+}
+function qualsOf(uid){
+  return (held[uid] || []).map(qualName).filter(Boolean);
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=swaps.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter', 'commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID || !c.emp) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  MY_SHIFT = c.shift || '';
+  IS_STAFF = isSuper || ['commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  // מי שאינו נעול למשמרת אחת. חייב להיות זהה ל-seesShift()
+  // בכללי האבטחה, אחרת המסך יציג בקשה שהשרת ידחה.
+  UNLOCKED = isSuper || c.role === 'hr_coordinator' || !c.shift;
+  ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '', full_name: '' };
+
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'swaps.html', user.email || '');
+
+  if (IS_STAFF) $('apprCard').classList.remove('hide');
+  await loadAll();
+});
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  try {
+    const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
+    people = [];
+    rs.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      people.push({ uid: d.id, full_name: v.full_name || '', crew: v.crew || '' });
+    });
+    people.sort((a,b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
+  } catch (ignore) {}
+
+  try {
+    const qs = await getDocs(collection(db, 'stations', SID, 'quals'));
+    quals = [];
+    qs.forEach(d => {
+      const v = d.data() || {};
+      quals.push({ id: d.id, name: v.name || '', order: Number(v.order || 0) });
+    });
+    quals.sort((a,b) => a.order - b.order);
+  } catch (ignore) {}
+
+  try {
+    const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
+    held = {};
+    ms.forEach(d => {
+      const v = d.data() || {};
+      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+    });
+  } catch (ignore) {}
+
+  try {
+    const rr = await getDocs(collection(db, 'stations', SID, 'rotations'));
+    rotations = rr.docs.map(d => d.data());
+  } catch (ignore) {}
+
+  try {
+    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
+    overrides = {};
+    os.forEach(d => {
+      const v = d.data() || {};
+      overrides[d.id] = { kind: v.kind || '', crew: v.crew || '',
+                          extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [] };
+    });
+  } catch (ignore) {}
+
+  await loadSwaps();
+}
+
+async function loadSwaps(){
+  swaps = [];
+  try {
+    const ss = await getDocs(collection(db, 'stations', SID, 'swaps'));
+    ss.forEach(d => swaps.push(Object.assign({ id: d.id }, d.data() || {})));
+    swaps.sort((a,b) => String(b.created_key || '').localeCompare(String(a.created_key || '')));
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את ההחלפות. (' + (e.code || e.message) + ')', 'err', 'mineMsg');
+  }
+  renderMine();
+  if (IS_STAFF) renderApprovals();
+}
+
+// ---------- בחירת כבאי ----------
+
+$('btnPick').onclick = () => {
+  $('dlg').innerHTML =
+    '<h3>עם מי מחליפים</h3>' +
+    '<div class="hint">כל אנשי התחנה. מי שבמשמרת אחרת — התג לידו.</div>' +
+    '<input type="text" id="pq" placeholder="חיפוש שם" autocomplete="off">' +
+    '<div class="plist" id="plist"></div>' +
+    '<div class="acts"><button class="btn" id="pc">סגור</button></div>';
+  $('ov').classList.add('on');
+
+  const draw = function(){
+    const term = String($('pq').value || '').trim().toLowerCase();
+    const list = people.filter(p => p.uid !== ME.uid &&
+      (!term || String(p.full_name).toLowerCase().indexOf(term) !== -1));
+    const box = $('plist');
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<div class="empty">לא נמצא.</div>'; return; }
+    list.slice(0, 60).forEach(function (p) {
+      const it = document.createElement('div');
+      it.className = 'pit';
+      it.innerHTML = '<span class="pn">' + esc(p.full_name || '(בלי שם)') + '</span>' +
+        (p.crew ? '<span class="cw ' + esc(p.crew) + '">' +
+                  esc(CREW_SHORT[p.crew] || p.crew) + '</span>' : '');
+      it.onclick = () => {
+        peer = p;
+        $('peerNote').innerHTML = 'נבחר: <b style="color:var(--txt)">' +
+          esc(p.full_name) + '</b>' +
+          (p.crew ? ' · משמרת ' + esc(CREW_HE[p.crew] || p.crew) : '');
+        closeOv();
+      };
+      box.appendChild(it);
+    });
+  };
+  $('pq').addEventListener('input', draw);
+  draw(); $('pq').focus();
+  $('pc').onclick = closeOv;
+};
+
+function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+$('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
+
+// ---------- שליחת בקשה ----------
+
+$('btnSend').onclick = async () => {
+  msg('', '');
+  const my  = $('myDate').value;
+  const his = $('hisDate').value;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(my))  { msg('צריך לבחור את היום שלך.', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(his)) { msg('צריך לבחור את היום שלו.', 'err'); return; }
+  if (!peer) { msg('צריך לבחור עם מי מחליפים.', 'err'); return; }
+  if (my === his) { msg('שני התאריכים זהים. בהחלפה יום מול יום צריך שני ימים.', 'err'); return; }
+  if (!ME.crew || !peer.crew) {
+    msg('אחד מכם בלי שיוך משמרת. פנה לרכז כוח אדם.', 'err'); return;
+  }
+
+  // אזהרה ולא חסימה: הסידור יכול להשתנות, ולפעמים מחליפים
+  // יום שהמערכת עוד לא יודעת עליו.
+  const warn = [];
+  const d1 = new Date(my.split('-')[0], Number(my.split('-')[1]) - 1, my.split('-')[2]);
+  const d2 = new Date(his.split('-')[0], Number(his.split('-')[1]) - 1, his.split('-')[2]);
+  if (!isCrewWorking(rotations, ME.crew, d1, overrides)) {
+    warn.push('לפי הסידור אתה לא עובד ב-' + dmy(my));
+  }
+  if (!isCrewWorking(rotations, peer.crew, d2, overrides)) {
+    warn.push('לפי הסידור ' + peer.full_name + ' לא עובד ב-' + dmy(his));
+  }
+
+  const b = $('btnSend'); b.disabled = true;
+  try {
+    const ref = doc(collection(db, 'stations', SID, 'swaps'));
+    await setDoc(ref, {
+      from_uid: ME.uid, from_emp: ME.emp, from_name: ME.full_name,
+      from_crew: ME.crew, from_date: my,
+      to_uid: peer.uid, to_emp: '', to_name: peer.full_name,
+      to_crew: peer.crew, to_date: his,
+      note: $('newNote').value.trim(),
+      status: 'peer',
+      created_key: new Date().toISOString(),
+      created_at: serverTimestamp()
+    });
+    msg('הבקשה נשלחה ל' + peer.full_name + ' לאישור.' +
+        (warn.length ? ' שים לב: ' + warn.join(' · ') : ''),
+        warn.length ? 'info' : 'ok');
+    $('newNote').value = '';
+    await loadSwaps();
+  } catch (e) {
+    msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+// ---------- מצב ותצוגה ----------
+
+const ST = {
+  peer:      { he: 'ממתין להסכמת הכבאי', cls: 'wait' },
+  cmd_from:  { he: 'ממתין למפקד שלך',    cls: 'wait' },
+  cmd_to:    { he: 'ממתין למפקד השני',   cls: 'wait' },
+  approved:  { he: 'אושרה',              cls: 'ok'   },
+  rejected:  { he: 'נדחתה',              cls: 'no'   },
+  cancelled: { he: 'בוטלה',              cls: 'no'   }
+};
+
+function trail(s){
+  const out = [];
+  if (s.peer_name)  out.push('<div class="y">✓ ' + esc(s.peer_name) + ' הסכים</div>');
+  if (s.from_appr_name) out.push('<div class="y">✓ אושר ע״י ' + esc(s.from_appr_name) +
+    ' · מפקד משמרת ' + esc(CREW_HE[s.from_crew] || s.from_crew) + '</div>');
+  if (s.to_appr_name)   out.push('<div class="y">✓ אושר ע״י ' + esc(s.to_appr_name) +
+    ' · מפקד משמרת ' + esc(CREW_HE[s.to_crew] || s.to_crew) + '</div>');
+  if (s.reject_name) {
+    out.push('<div class="n">✗ נדחה ע״י ' + esc(s.reject_name) +
+      (s.reject_reason ? ' — ' + esc(s.reject_reason) : ' — בלי נימוק') + '</div>');
+  }
+  return out.length ? '<div class="trail">' + out.join('') + '</div>' : '';
+}
+
+function swapBox(s, extra){
+  const st = ST[s.status] || { he: s.status, cls: '' };
+  return '<div class="sw ' +
+      (s.status === 'approved' ? 'done' :
+       (s.status === 'rejected' || s.status === 'cancelled') ? 'dead' : 'mine') + '">' +
+    '<div class="hd">' +
+      '<span class="st ' + st.cls + '">' + esc(st.he) + '</span>' +
+      esc(s.from_name) + ' <span class="cw ' + esc(s.from_crew) + '">' +
+        esc(CREW_SHORT[s.from_crew] || s.from_crew) + '</span>' +
+      ' ⇄ ' + esc(s.to_name) + ' <span class="cw ' + esc(s.to_crew) + '">' +
+        esc(CREW_SHORT[s.to_crew] || s.to_crew) + '</span>' +
+    '</div>' +
+    '<div class="leg">' +
+      esc(s.from_name) + ' לא עובד ב-<b>' + esc(dmy(s.from_date)) + '</b>, ' +
+      esc(s.to_name) + ' נכנס במקומו<br>' +
+      esc(s.to_name) + ' לא עובד ב-<b>' + esc(dmy(s.to_date)) + '</b>, ' +
+      esc(s.from_name) + ' נכנס במקומו' +
+      (s.note ? '<br>הערה: ' + esc(s.note) : '') +
+    '</div>' +
+    trail(s) +
+    (extra || '') +
+  '</div>';
+}
+
+function renderMine(){
+  const box = $('mineList');
+  box.innerHTML = '';
+  const mine = swaps.filter(s => s.from_uid === ME.uid || s.to_uid === ME.uid);
+
+  if (!mine.length) {
+    box.innerHTML = '<div class="note" style="padding-top:10px">' +
+                    'אין לך בקשות החלפה.</div>';
+    return;
+  }
+
+  mine.forEach(function (s) {
+    const el = document.createElement('div');
+    el.innerHTML = swapBox(s);
+    const card = el.firstChild;
+
+    // הכבאי השני מסכים או מסרב
+    if (s.status === 'peer' && s.to_uid === ME.uid) {
+      const row = document.createElement('div');
+      row.style.marginTop = '10px';
+      const y = document.createElement('button');
+      y.className = 'btn ok sm'; y.textContent = 'אני מסכים';
+      y.onclick = () => peerAnswer(s, true);
+      const n = document.createElement('button');
+      n.className = 'btn no sm'; n.textContent = 'לא מסכים';
+      n.style.marginInlineStart = '8px';
+      n.onclick = () => peerAnswer(s, false);
+      row.appendChild(y); row.appendChild(n);
+      card.appendChild(row);
+    }
+
+    if (s.status !== 'approved' && s.status !== 'rejected' &&
+        s.status !== 'cancelled') {
+      const c = document.createElement('button');
+      c.className = 'btn sm'; c.textContent = 'בטל';
+      c.style.marginTop = '10px';
+      c.onclick = () => cancelSwap(s);
+      card.appendChild(c);
+    }
+    box.appendChild(card);
+  });
+}
+
+async function write(s, patch, okText, box){
+  try {
+    await setDoc(doc(db, 'stations', SID, 'swaps', s.id),
+                 Object.assign({ updated_at: serverTimestamp() }, patch),
+                 { merge: true });
+    msg(okText, 'ok', box);
+    await loadSwaps();
+  } catch (e) {
+    msg('הפעולה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+  }
+}
+
+function peerAnswer(s, yes){
+  if (yes) {
+    write(s, { status: 'cmd_from', peer_name: ME.full_name,
+               peer_at: serverTimestamp() },
+          'הסכמת. הבקשה עברה למפקד המשמרת של ' + s.from_name + '.', 'mineMsg');
+    return;
+  }
+  askReason('דחיית ההחלפה', function (reason) {
+    write(s, { status: 'rejected', reject_name: ME.full_name,
+               reject_reason: reason, reject_at: serverTimestamp() },
+          'הבקשה נדחתה.', 'mineMsg');
+  });
+}
+
+function cancelSwap(s){
+  write(s, { status: 'cancelled', reject_name: ME.full_name,
+             reject_reason: 'בוטלה על ידי המבקש',
+             reject_at: serverTimestamp() },
+        'הבקשה בוטלה.', 'mineMsg');
+}
+
+// ---------- אישור מפקד ----------
+
+function renderApprovals(){
+  const box = $('apprList');
+  box.innerHTML = '';
+
+  const mine = swaps.filter(function (s) {
+    if (s.status === 'cmd_from') return canApprove(s.from_crew);
+    if (s.status === 'cmd_to')   return canApprove(s.to_crew);
+    return false;
+  });
+
+  $('apprNote').textContent = UNLOCKED
+    ? 'כל התחנה.'
+    : 'מוצגות בקשות שנוגעות למשמרת ' + (CREW_HE[MY_SHIFT] || MY_SHIFT) + '.';
+
+  if (!mine.length) {
+    box.innerHTML = '<div class="note" style="padding-top:10px">' +
+                    'אין בקשות שממתינות לך.</div>';
+    return;
+  }
+
+  mine.forEach(function (s) {
+    const el = document.createElement('div');
+    el.innerHTML = swapBox(s);
+    const card = el.firstChild;
+    const b = document.createElement('button');
+    b.className = 'btn go sm'; b.textContent = 'בדוק ואשר';
+    b.style.marginTop = '10px';
+    b.onclick = () => reviewDialog(s);
+    card.appendChild(b);
+    box.appendChild(card);
+  });
+}
+
+function canApprove(crew){
+  return UNLOCKED || MY_SHIFT === crew;
+}
+
+// החלונית שאלדד ביקש: השם והכשירויות של מי שיוצא מול מי שנכנס,
+// ומה בדיוק המשמרת מאבדת. ההחלטה נשארת של המפקד — לפעמים
+// אין ברירה — אבל היא לא מתקבלת בעיוורון.
+function reviewDialog(s){
+  const first = s.status === 'cmd_from';
+  const crew  = first ? s.from_crew : s.to_crew;
+  const date  = first ? s.from_date : s.to_date;
+
+  // במשמרת של המבקש: הוא יוצא והשני נכנס. במשמרת השנייה — הפוך.
+  const out = first ? { uid: s.from_uid, name: s.from_name }
+                    : { uid: s.to_uid,   name: s.to_name };
+  const inn = first ? { uid: s.to_uid,   name: s.to_name }
+                    : { uid: s.from_uid, name: s.from_name };
+
+  const outQ = held[out.uid] || [];
+  const innQ = held[inn.uid] || [];
+  const lost = outQ.filter(q => innQ.indexOf(q) === -1).map(qualName).filter(Boolean);
+
+  const chips = function (ids, other) {
+    if (!ids.length) return '<span class="chip">אין כשירויות רשומות</span>';
+    return ids.map(function (q) {
+      const n = qualName(q);
+      if (!n) return '';
+      const missing = other && other.indexOf(q) === -1;
+      return '<span class="chip ' + (missing ? 'lost' : 'has') + '">' +
+             esc(n) + '</span>';
+    }).join('');
+  };
+
+  $('dlg').innerHTML =
+    '<h3>החלפה במשמרת ' + esc(CREW_HE[crew] || crew) + ' · ' + esc(dmy(date)) + '</h3>' +
+    '<div class="hint">' + esc(out.name) + ' יוצא, ' + esc(inn.name) +
+      ' נכנס במקומו.</div>' +
+
+    '<div class="cmp">' +
+      '<div class="side out">' +
+        '<div class="who">' + esc(out.name) + '</div>' +
+        '<div class="dir">יוצא מהמשמרת</div>' + chips(outQ, innQ) +
+      '</div>' +
+      '<div class="side in">' +
+        '<div class="who">' + esc(inn.name) + '</div>' +
+        '<div class="dir">נכנס למשמרת</div>' + chips(innQ, outQ) +
+      '</div>' +
+    '</div>' +
+
+    (lost.length
+      ? '<div class="gap">המשמרת מאבדת: <b>' + lost.map(esc).join('</b>, <b>') +
+        '</b><br>המחליף אינו מחזיק בכשירויות האלה. האישור עדיין אפשרי — ' +
+        'ההחלטה שלך.</div>'
+      : '<div class="fine">המחליף מכסה את כל הכשירויות של מי שיוצא.</div>') +
+
+    '<div class="acts">' +
+      '<button class="btn ok" id="aY">מאשר</button>' +
+      '<button class="btn no" id="aN">דוחה</button>' +
+      '<button class="btn" id="aC">סגור</button>' +
+    '</div>';
+  $('ov').classList.add('on');
+
+  $('aY').onclick = () => {
+    closeOv();
+    if (first) {
+      write(s, { status: 'cmd_to', from_appr_name: ME.full_name,
+                 from_appr_uid: ME.uid, from_appr_at: serverTimestamp() },
+            'אושר. עבר למפקד משמרת ' + (CREW_HE[s.to_crew] || s.to_crew) + '.',
+            'apprMsg');
+    } else {
+      write(s, { status: 'approved', to_appr_name: ME.full_name,
+                 to_appr_uid: ME.uid, to_appr_at: serverTimestamp() },
+            'ההחלפה אושרה סופית. שני הכבאים יראו את זה.', 'apprMsg');
+    }
+  };
+  $('aN').onclick = () => {
+    closeOv();
+    askReason('דחיית ההחלפה', function (reason) {
+      write(s, { status: 'rejected', reject_name: ME.full_name,
+                 reject_uid: ME.uid, reject_reason: reason,
+                 reject_at: serverTimestamp() },
+            'הבקשה נדחתה.', 'apprMsg');
+    });
+  };
+  $('aC').onclick = closeOv;
+}
+
+// נימוק דחייה. לא חובה טכנית, אבל השדה פתוח וברור — כבאי
+// שמקבל "נדחתה" בלי מילה אחת לא יודע אם לנסות שוב.
+function askReason(title, cb){
+  $('dlg').innerHTML =
+    '<h3>' + esc(title) + '</h3>' +
+    '<div class="hint">הנימוק מוצג לשני הכבאים יחד עם שמך.</div>' +
+    '<label>נימוק</label>' +
+    '<input type="text" id="rr" maxlength="120" placeholder="למשל: המשמרת נשארת בלי נהג">' +
+    '<div class="acts">' +
+      '<button class="btn no" id="rY">דחה</button>' +
+      '<button class="btn" id="rC">ביטול</button>' +
+    '</div>';
+  $('ov').classList.add('on');
+  $('rr').focus();
+  $('rY').onclick = () => { const v = $('rr').value.trim(); closeOv(); cb(v); };
+  $('rC').onclick = closeOv;
+}
+</script>
+</body>
+</html>
