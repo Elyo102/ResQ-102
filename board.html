@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=25">
+<link rel="stylesheet" href="./theme.css?v=26">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -274,16 +274,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=25';
-import { stationName } from './stations.js?v=25';
-import { renderNav, renderStuckNav } from './nav.js?v=25';
-import { initPWA } from './pwa.js?v=25';
-import { watchCallouts } from './callout.js?v=25';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=26';
+import { stationName } from './stations.js?v=26';
+import { renderNav, renderStuckNav } from './nav.js?v=26';
+import { initPWA } from './pwa.js?v=26';
+import { watchCallouts } from './callout.js?v=26';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=25';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=26';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=25';
-import { SITE_SEED } from './hours.js?v=25';
+  from './faults.js?v=26';
+import { SITE_SEED } from './hours.js?v=26';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

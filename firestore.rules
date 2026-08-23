@@ -456,6 +456,40 @@ service cloud.firestore {
         allow write: if staff(sid);
       }
 
+      // ---------- ארבע תמונות הרכב ----------
+      //
+      // הרקע שעליו נתלים דיווחי התקלות והפגיעות: חזית, ימין,
+      // אחור, שמאל. מזהה המסמך הוא vehicleId__side, ולכן העלאה
+      // חוזרת מחליפה ואי אפשר להגיע לשתי תמונות חזית.
+      //
+      // **יצירה לכל חבר תחנה, החלפה לסגל בלבד.** אלדד ביקש
+      // שהכבאי יצלם ויעלה, וזה מה שהיצירה מאפשרת. אבל החלפת
+      // תמונה קיימת בזווית אחרת מזיזה את כל הנקודות שכבר
+      // סומנו עליה — הן נשמרות כיחס לתמונה, לא לרכב. תוצאה:
+      // עשרה דיווחים מדויקים הופכים בבת אחת למטעים, בלי שאיש
+      // ישים לב. לכן זו פעולה של סגל.
+      match /vehicle_views/{viewId} {
+        allow read: if member(sid);
+
+        allow create: if member(sid)
+                      && request.resource.data.get('vehicle_id', '') != ''
+                      && request.resource.data.get('side', '') in
+                         ['front', 'right', 'rear', 'left']
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('photo', '') is string
+                      && request.resource.data.get('photo', '').size() > 0
+                      && request.resource.data.get('photo', '').size() <= 900000;
+
+        allow update: if staff(sid)
+                      && request.resource.data.get('vehicle_id', '') ==
+                         resource.data.get('vehicle_id', '')
+                      && request.resource.data.get('side', '') ==
+                         resource.data.get('side', '')
+                      && request.resource.data.get('photo', '').size() <= 900000;
+
+        allow delete: if staff(sid);
+      }
+
       // ---------- טפסים ----------
       //
       // בקשת חופשה, דוח אי החתמת כרטיס, דוח פציעה, דוח נזק.

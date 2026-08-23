@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — מפת רכב</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=26">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  select, textarea, input{ width:100%; padding:10px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  textarea{ min-height:74px; resize:vertical }
+  input[type=file]{ padding:8px; font-size:13px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:12px; width:auto }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  /* ---------- בוררים ---------- */
+  .chips{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px }
+  .chips button{ width:auto; margin:0; background:var(--chip);
+                 border:1px solid var(--line); color:var(--muted);
+                 border-radius:9px; padding:9px 15px; font-family:inherit;
+                 font-size:14px; font-weight:600; cursor:pointer;
+                 display:inline-flex; align-items:center; gap:8px }
+  .chips button.on{ background:var(--accent); border-color:var(--accent);
+                    color:var(--on-accent) }
+  .chips button i{ width:8px; height:8px; border-radius:50%; flex:none }
+  .chips button .n{ font-weight:800; font-variant-numeric:tabular-nums }
+
+  /* ---------- התמונה והנקודות ---------- */
+  .stage{ position:relative; border:1px solid var(--line); border-radius:12px;
+          overflow:hidden; background:var(--panel); touch-action:manipulation }
+  .stage img.base{ display:block; width:100%; height:auto }
+  .stage.pick{ cursor:crosshair }
+
+  .pin{ position:absolute; transform:translate(-50%,-50%);
+        width:30px; height:30px; border-radius:50%; cursor:pointer;
+        display:flex; align-items:center; justify-content:center;
+        font-size:13px; font-weight:800; color:#fff;
+        border:2px solid rgba(255,255,255,.92);
+        box-shadow:0 2px 10px rgba(0,0,0,.5) }
+  .pin:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+  .pin.done{ opacity:.5 }
+
+  .empty{ padding:30px 18px; text-align:center }
+  .empty .big{ font-size:15px; font-weight:700; margin-bottom:6px }
+
+  .legend{ display:flex; gap:12px; flex-wrap:wrap; align-items:center;
+           margin-top:10px; font-size:12px; color:var(--muted) }
+  .legend span.k{ display:inline-flex; align-items:center; gap:5px }
+  .legend i{ width:9px; height:9px; border-radius:50%; display:inline-block }
+
+  /* ---------- תקלה ---------- */
+  .f{ border:1px solid var(--line); border-radius:11px; padding:13px;
+      margin-top:11px; background:var(--panel); border-inline-start-width:4px }
+  .f .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
+  .f .num{ width:24px; height:24px; border-radius:50%; flex:none; color:#fff;
+           display:inline-flex; align-items:center; justify-content:center;
+           font-size:12px; font-weight:800 }
+  .f .ttl{ font-size:15.5px; font-weight:700; flex:1 1 150px }
+  .f .desc{ font-size:14px; line-height:1.7; margin-top:6px;
+            white-space:pre-wrap; word-break:break-word }
+  .f .rep{ font-size:12px; color:var(--muted); margin-top:8px;
+           padding-top:8px; border-top:1px solid var(--line-soft) }
+  .f .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px;
+            align-items:center }
+  .f.done{ opacity:.62 }
+  .tag{ font-size:11px; font-weight:700; border-radius:20px;
+        padding:2px 10px; white-space:nowrap; border:1px solid var(--line);
+        color:var(--muted) }
+
+  .shots{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
+  .shots img{ width:92px; height:92px; object-fit:cover; border-radius:8px;
+              border:1px solid var(--line); cursor:pointer; display:block }
+  .shots .ld{ font-size:12px; color:var(--muted) }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+
+  #ov{ position:fixed; inset:0; background:rgba(8,10,13,.75); z-index:1000;
+       display:none; align-items:flex-start; justify-content:center;
+       padding:4vh 14px; overflow:auto }
+  #ov.on{ display:flex }
+  .dlg{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+        width:100%; max-width:480px; padding:18px; position:relative }
+  .dlg h3{ margin:0 0 3px; font-size:17px }
+  .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:6px;
+              line-height:1.7 }
+  .dlg .x{ position:absolute; top:10px; inset-inline-end:14px; color:var(--muted);
+           font-size:26px; cursor:pointer; line-height:1 }
+  .dlg .x:hover{ color:var(--txt) }
+  .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
+
+  #lb{ position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:1200;
+       display:none; align-items:center; justify-content:center; padding:20px }
+  #lb.on{ display:flex }
+  #lb img{ max-width:100%; max-height:90vh; border-radius:9px }
+  #lb .x{ position:absolute; top:14px; inset-inline-end:18px; color:#fff;
+          font-size:30px; cursor:pointer; line-height:1 }
+</style>
+</head>
+<body>
+<div id="errBar"></div>
+<div class="wrap">
+
+  <div id="denyCard" class="card hide">
+    <h2>אין הרשאה</h2>
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+    <button class="btn" id="btnOutDeny">התנתק</button>
+  </div>
+
+  <div id="work" class="hide">
+    <h1>מפת רכב</h1>
+    <div class="sub" id="topNote">בוחרים צד, לוחצים על הנקודה, מדווחים.</div>
+
+    <div class="card">
+      <h2>רכב</h2>
+      <div class="chips" id="vehChips"></div>
+      <div class="note" id="vehState">—</div>
+    </div>
+
+    <div class="card">
+      <div class="chips" id="sideChips"></div>
+
+      <div id="stageWrap"></div>
+
+      <div class="legend" id="legend"></div>
+      <div class="row" id="photoActs"></div>
+      <input type="file" id="basePick" accept="image/*" capture="environment"
+             class="hide">
+      <div class="msg" id="baseMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>דיווחים על הרכב</h2>
+      <div class="note" id="listNote">—</div>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
+
+<div id="ov"><div class="dlg">
+  <span class="x" id="dlgX">×</span>
+  <h3 id="dlgTitle">דיווח חדש</h3>
+  <div class="hint" id="dlgHint"></div>
+  <div id="dlgBody"></div>
+</div></div>
+
+<div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=26';
+import { renderNav, renderStuckNav } from './nav.js?v=26';
+import { initPWA } from './pwa.js?v=26';
+import { watchCallouts } from './callout.js?v=26';
+import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
+         viewsOf, missingHe, coverage, nextToShoot, hasPoint }
+  from './vmap.js?v=26';
+import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
+         needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
+         vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
+  from './faults.js?v=26';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         deleteDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;');
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+let SID = '', ME = { uid:'', name:'', crew:'' }, CAN_MANAGE = false;
+let faults = [], views = [], fleet = [], shots = {};
+let vid = '', side = 'right';
+
+initPWA({ offer:false });
+
+window.addEventListener('error', function (e) {
+  const b = $('errBar');
+  b.innerHTML = '<span class="xx" onclick="this.parentNode.style.display=\'none\'">×</span>' +
+    '<b>שגיאה במסך</b><code>' + esc(e.message || '') + '</code>';
+  b.style.display = 'block';
+});
+
+function msg(t, cls, id){
+  const m = $(id || 'baseMsg');
+  m.textContent = t; m.className = 'msg ' + (cls || 'info');
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=vehicle.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper ||
+    ['firefighter'].concat(STAFF).indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  ME = { uid: user.uid, name: c.full_name || user.email || '', crew: c.shift || '' };
+  CAN_MANAGE = isSuper || STAFF.indexOf(c.role) !== -1;
+
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  $('work').classList.remove('hide');
+  renderNav(c, 'vehicle.html', user.email || '');
+  watchCallouts(db, SID, user.uid, { name: user.email || '' });
+
+  // רכב מהכתובת, כדי שקישור ממסך התקלות יפתח את הרכב הנכון.
+  const q = new URLSearchParams(location.search);
+  vid = q.get('v') || '';
+  const s = q.get('side') || '';
+  if (SIDES.some(x => x.id === s)) side = s;
+
+  await loadAll();
+});
+
+$('btnOutDeny').onclick = () => signOut(auth);
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  faults = []; views = []; let boardVehicles = [], anchors = [];
+  const safe = p => p.catch(() => null);
+
+  const [fs_, bd, vs, vw] = await Promise.all([
+    safe(getDocs(collection(db, 'stations', SID, 'faults'))),
+    safe(getDoc(doc(db, 'stations', SID, 'config', 'board'))),
+    safe(getDocs(collection(db, 'stations', SID, 'vehicles'))),
+    safe(getDocs(collection(db, 'stations', SID, 'vehicle_views')))
+  ]);
+
+  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id:d.id }, d.data() || {})));
+  if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
+  if (vs) vs.forEach(d => {
+    const v = d.data() || {};
+    if (v.kind && v.kind !== 'anchor') return;
+    anchors.push(Object.assign({ id:d.id }, v));
+  });
+  if (vw) vw.forEach(d => views.push(Object.assign({ id:d.id }, d.data() || {})));
+
+  fleet = mergeFleet(boardVehicles, anchors);
+  if (!fleet.some(v => v.id === vid)) vid = fleet.length ? fleet[0].id : '';
+
+  render();
+}
+
+// ---------- ציור ----------
+
+function render(){
+  renderVehicles();
+  renderSides();
+  renderStage();
+  renderList();
+}
+
+function renderVehicles(){
+  const box = $('vehChips');
+  box.innerHTML = '';
+  if (!fleet.length) {
+    box.innerHTML = '<div class="note">לא הוגדרו רכבים. רכבי כיבוי בלוח ' +
+                    'הציוות, רכבי עיגון במסך התקלות.</div>';
+    $('vehState').textContent = '';
+    return;
+  }
+  fleet.forEach(function (v) {
+    const st = vehicleState(faults, v.id);
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (v.id === vid) b.className = 'on';
+    b.innerHTML = '<i style="background:' + st.color + '"></i>' +
+                  esc(v.name) + (v.role ? ' <span class="n">·</span> ' +
+                  esc(v.role) : '');
+    b.onclick = function () { vid = v.id; render(); };
+    box.appendChild(b);
+  });
+
+  const v = fleet.filter(x => x.id === vid)[0];
+  if (!v) { $('vehState').textContent = ''; return; }
+  const st = vehicleState(faults, v.id);
+  const cov = coverage(views, v.id);
+  const miss = missingHe(views, v.id);
+  $('vehState').innerHTML =
+    '<b style="color:' + st.color + '">' + esc(st.he) + '</b> · ' +
+    'סט תמונות ' + cov.done + ' מתוך ' + cov.total +
+    (miss ? ' · ' + esc(miss) : '');
+}
+
+function renderSides(){
+  const box = $('sideChips');
+  box.innerHTML = '';
+  const n = countBySide(faults, vid);
+  SIDES.forEach(function (s) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (s.id === side) b.className = 'on';
+    b.innerHTML = esc(s.he) +
+      (n[s.id] ? ' <span class="n" style="color:' +
+        (s.id === side ? 'inherit' : 'var(--bad)') + '">' + n[s.id] + '</span>' : '');
+    b.onclick = function () { side = s.id; render(); };
+    box.appendChild(b);
+  });
+}
+
+function renderStage(){
+  const wrap = $('stageWrap');
+  wrap.innerHTML = '';
+  $('photoActs').innerHTML = '';
+  $('legend').innerHTML = '';
+  $('baseMsg').className = 'msg';
+
+  const have = viewsOf(views, vid)[side];
+
+  if (!have) {
+    // אין תמונה — אין על מה לסמן. אומרים בדיוק מה חסר ומה
+    // הצעד הבא, במקום מסגרת ריקה שנראית כמו תקלה בטעינה.
+    const nx = nextToShoot(views, vid);
+    wrap.innerHTML =
+      '<div class="stage"><div class="empty">' +
+      '<div class="big">אין תמונת ' + esc(sideHe(side)) + ' לרכב הזה</div>' +
+      '<div class="note">צלם את הרכב מהצד הזה והעלה. אחר כך אפשר ' +
+      'לסמן עליו תקלות ופגיעות.' +
+      (nx && nx !== side ? '<br>מומלץ להשלים לפי הסדר: ' +
+        esc(sideHe(nx)) + ' קודם.' : '') +
+      '</div></div></div>';
+    addPhotoBtn('העלה תמונת ' + sideHe(side));
+    return;
+  }
+
+  const st = document.createElement('div');
+  st.className = 'stage pick';
+
+  const img = document.createElement('img');
+  img.className = 'base';
+  img.src = have.photo;
+  img.alt = 'רכב — ' + sideHe(side);
+  img.draggable = false;
+  st.appendChild(img);
+
+  const list = sortByTime(pointsOn(faults, vid, side));
+  list.forEach(function (f, i) {
+    const p = document.createElement('button');
+    p.type = 'button';
+    p.className = 'pin' + (isOpen(f) ? '' : ' done');
+    p.style.insetInlineStart = '';
+    p.style.left = (f.x * 100) + '%';
+    p.style.top  = (f.y * 100) + '%';
+    p.style.background = isOpen(f) ? sevColor(f.severity) : 'var(--good)';
+    p.textContent = String(i + 1);
+    p.title = f.title || '';
+    p.setAttribute('aria-label', (i + 1) + '. ' + (f.title || ''));
+    p.onclick = function (e) { e.stopPropagation(); openFault(f, i + 1); };
+    st.appendChild(p);
+  });
+
+  // לחיצה על התמונה עצמה פותחת דיווח חדש באותה נקודה.
+  st.onclick = function (e) {
+    if (e.target !== img) return;
+    const pt = pointAt(img.getBoundingClientRect(), e.clientX, e.clientY);
+    newAt(pt);
+  };
+
+  wrap.appendChild(st);
+
+  $('legend').innerHTML =
+    '<span class="k"><i style="background:' + UNSET.color + '"></i>' +
+      esc(UNSET.he) + '</span>' +
+    SEVERITIES.map(s => '<span class="k"><i style="background:' + s.color +
+      '"></i>' + esc(s.he) + '</span>').join('') +
+    '<span class="k"><i style="background:var(--good)"></i>טופלה</span>' +
+    '<span class="k">' + list.length + ' נקודות · לחץ על התמונה כדי לדווח</span>';
+
+  if (CAN_MANAGE) addPhotoBtn('החלף תמונת ' + sideHe(side), true);
+}
+
+function addPhotoBtn(text, warn){
+  const b = document.createElement('button');
+  b.className = 'btn' + (warn ? '' : ' go');
+  b.textContent = text;
+  b.onclick = function () {
+    if (warn && !window.confirm(
+      'החלפת התמונה מזיזה את כל הנקודות שכבר סומנו על הצד הזה.\n\n' +
+      'הן נשמרות כיחס לתמונה, ולכן בזווית אחרת הן יצביעו על מקום ' +
+      'אחר ברכב.\n\nלהחליף?')) return;
+    $('basePick').click();
+  };
+  $('photoActs').appendChild(b);
+}
+
+function sortByTime(list){
+  return (list || []).slice().sort((a, b) =>
+    String(a.created_key || '').localeCompare(String(b.created_key || '')));
+}
+
+// ---------- העלאת תמונת הרכב ----------
+
+$('basePick').onchange = async function (){
+  const file = this.files && this.files[0];
+  this.value = '';
+  if (!file || !vid) return;
+
+  msg('מקטין ומעלה…', 'info');
+  try {
+    // 1600 פיקסל ולא 1280 כמו בצילום תקלה: על התמונה הזו
+    // מסמנים נקודות באצבע, וכל פיקסל הוא דיוק סימון.
+    const im = await shrinkImage(file, 1600, 820 * 1024);
+    const id = viewId(vid, side);
+    const exists = !!viewsOf(views, vid)[side];
+    const body = {
+      vehicle_id: vid, side: side, photo: im.data, w: im.w, h: im.h,
+      by_uid: ME.uid, by_name: ME.name,
+      created_key: new Date().toISOString(), created_at: serverTimestamp()
+    };
+    // merge כדי שהחלפה לא תמחק את מי שהעלה במקור.
+    await setDoc(doc(db, 'stations', SID, 'vehicle_views', id), body,
+                 exists ? { merge:true } : undefined);
+    msg('התמונה נשמרה.', 'ok');
+    await loadAll();
+  } catch (e) {
+    msg('ההעלאה נכשלה. (' + (e.code || e.message || '') + ')', 'err');
+  }
+};
+
+// ---------- דיווח חדש בנקודה ----------
+
+function newAt(pt){
+  const kinds = FAULT_KINDS.filter(k => k.needsVehicle);
+  $('dlgTitle').textContent = 'דיווח חדש · ' + sideHe(side);
+  $('dlgHint').textContent =
+    'הנקודה נשמרת במקום שלחצת. ראש המשמרת קובע את החומרה אחר כך.';
+  $('dlgBody').innerHTML =
+    '<label>סוג</label><select id="nKind">' +
+      kinds.map(k => '<option value="' + k.id + '">' + esc(k.he) + '</option>').join('') +
+    '</select>' +
+    '<label>כותרת קצרה</label>' +
+    '<input type="text" id="nTitle" maxlength="80" ' +
+      'placeholder="למשל: מכה בדופן מאחורי הגלגל">' +
+    '<label>תיאור</label><textarea id="nDesc" maxlength="600"></textarea>' +
+    '<label>צילום המכה (לא חובה)</label>' +
+    '<input type="file" id="nShot" accept="image/*" capture="environment">' +
+    '<div class="row"><button class="btn go" id="nSave">שמור דיווח</button>' +
+    '<button class="btn" id="nCancel">ביטול</button></div>' +
+    '<div class="msg" id="nMsg"></div>';
+  $('ov').classList.add('on');
+
+  $('nCancel').onclick = close;
+  $('nSave').onclick = async function (){
+    const b = $('nSave');
+    const title = $('nTitle').value.trim();
+    if (!title) { msg('נא להזין כותרת.', 'err', 'nMsg'); return; }
+    b.disabled = true;
+    msg('שומר…', 'info', 'nMsg');
+    try {
+      const now = new Date();
+      const ref = await addDoc(collection(db, 'stations', SID, 'faults'), {
+        kind: $('nKind').value,
+        vehicle_id: vid,
+        vehicle_name: (fleet.filter(v => v.id === vid)[0] || {}).name || '',
+        side: side, x: pt.x, y: pt.y,
+        title: title,
+        desc: $('nDesc').value.trim(),
+        severity: 'unset', status: 'open', photos: 0,
+        by_uid: ME.uid, by_name: ME.name, crew: ME.crew,
+        date: toKey(now), created_key: now.toISOString(),
+        created_at: serverTimestamp()
+      });
+
+      const file = $('nShot').files && $('nShot').files[0];
+      if (file) {
+        try {
+          const im = await shrinkImage(file);
+          await addDoc(collection(db, 'stations', SID, 'faults', ref.id, 'photos'),
+                       { data: im.data, w: im.w, h: im.h, by_uid: ME.uid,
+                         created_key: new Date().toISOString() });
+          await setDoc(doc(db, 'stations', SID, 'faults', ref.id),
+                       { photos: 1 }, { merge:true });
+        } catch (pe) {
+          // הדיווח כבר נשמר. צילום שנכשל אינו סיבה לאבד אותו.
+          msg('הדיווח נשמר, אבל הצילום לא עלה. (' +
+              (pe.message || '') + ')', 'info', 'nMsg');
+        }
+      }
+      close();
+      await loadAll();
+    } catch (e) {
+      b.disabled = false;
+      msg('השמירה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'nMsg');
+    }
+  };
+}
+
+function toKey(d){
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const a = String(d.getDate()).padStart(2,'0');
+  return d.getFullYear() + '-' + m + '-' + a;
+}
+
+function close(){ $('ov').classList.remove('on'); }
+$('dlgX').onclick = close;
+$('ov').onclick = e => { if (e.target === $('ov')) close(); };
+$('lbX').onclick = () => $('lb').classList.remove('on');
+$('lb').onclick = e => { if (e.target !== $('lbImg')) $('lb').classList.remove('on'); };
+
+// ---------- כרטיס נקודה ----------
+
+function openFault(f, n){
+  $('dlgTitle').textContent = 'נקודה ' + n + ' · ' + sideHe(f.side);
+  $('dlgHint').textContent = kindHe(f.kind);
+  $('dlgBody').innerHTML = '';
+  $('dlgBody').appendChild(faultCard(f, n));
+  $('ov').classList.add('on');
+}
+
+function faultCard(f, n){
+  const open = isOpen(f);
+  const col = open ? sevColor(f.severity) : 'var(--good)';
+  const el = document.createElement('div');
+  el.className = 'f' + (open ? '' : ' done');
+  el.style.borderInlineStartColor = col;
+
+  el.innerHTML =
+    '<div class="top">' +
+      '<span class="num" style="background:' + col + '">' + n + '</span>' +
+      '<span class="ttl">' + esc(f.title || '') + '</span>' +
+      '<span class="tag" style="color:' + col + ';border-color:' + col + '">' +
+        esc(open ? sevHe(f.severity) : 'טופלה') + '</span>' +
+    '</div>' +
+    (f.desc ? '<div class="desc">' + esc(f.desc) + '</div>' : '') +
+    '<div class="shots"><span class="ld">טוען צילומים…</span></div>' +
+    '<div class="rep">דווח: ' + esc(reportedLine(f)) + '</div>';
+
+  loadShots(f, el.querySelector('.shots'));
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+
+  // דירוג — סגל בלבד. הכבאי מתאר מה ראה; כמה זה חמור זו
+  // החלטה מבצעית של ראש המשמרת.
+  if (CAN_MANAGE && open) {
+    const sel = document.createElement('select');
+    sel.style.width = 'auto';
+    sel.innerHTML = '<option value="unset">' + esc(UNSET.he) + '</option>' +
+      SEVERITIES.map(s => '<option value="' + s.id + '">' + esc(s.he) +
+        '</option>').join('');
+    sel.value = needsGrading(f) ? 'unset' : f.severity;
+    sel.onchange = () => grade(f, sel.value, sel);
+    acts.appendChild(sel);
+  }
+
+  if (open && (CAN_MANAGE || f.by_uid === ME.uid)) {
+    acts.appendChild(btn('סגור', 'btn sm', () => closeFault(f)));
+  }
+  if (CAN_MANAGE && isDamage(f)) {
+    acts.appendChild(btn('מחק פגיעה', 'btn sm', () => wipe(f)));
+  }
+  if (acts.children.length) el.appendChild(acts);
+  return el;
+}
+
+function btn(t, cls, fn){
+  const b = document.createElement('button');
+  b.className = cls; b.textContent = t; b.onclick = fn;
+  return b;
+}
+
+async function loadShots(f, box){
+  if (!f.photos) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
+  if (shots[f.id]) { paint(shots[f.id], box); return; }
+  try {
+    const s = await getDocs(
+      collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+    const list = []; s.forEach(d => list.push(d.data() || {}));
+    shots[f.id] = list; paint(list, box);
+  } catch (e) { box.innerHTML = '<span class="ld">הצילומים לא נטענו.</span>'; }
+}
+
+function paint(list, box){
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
+  list.forEach(function (p) {
+    if (!p || !p.data) return;
+    const im = document.createElement('img');
+    im.src = p.data; im.alt = 'צילום המכה';
+    im.onclick = () => { $('lbImg').src = p.data; $('lb').classList.add('on'); };
+    box.appendChild(im);
+  });
+}
+
+async function grade(f, sev, sel){
+  sel.disabled = true;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+      severity: sev, graded_by: ME.uid, graded_by_name: ME.name,
+      graded_key: new Date().toISOString()
+    }, { merge:true });
+    close(); await loadAll();
+  } catch (e) { sel.disabled = false; }
+}
+
+async function closeFault(f){
+  const what = window.prompt('מה נעשה? (אפשר להשאיר ריק)', '');
+  if (what === null) return;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+      status:'fixed', fix_note:String(what || '').slice(0,300),
+      fixed_by: ME.uid, fixed_by_name: ME.name,
+      fixed_key: new Date().toISOString(), fixed_at: serverTimestamp()
+    }, { merge:true });
+    close(); await loadAll();
+  } catch (e) {}
+}
+
+async function wipe(f){
+  if (!window.confirm('למחוק את "' + (f.title || '') + '"?\n\n' +
+      DAMAGE_DELETE_WHY + '\n\nלמחוק?')) return;
+  try {
+    try {
+      const ps = await getDocs(
+        collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+      for (const d of ps.docs) {
+        await deleteDoc(doc(db,'stations',SID,'faults',f.id,'photos',d.id));
+      }
+    } catch (ignore) {}
+    await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
+    delete shots[f.id];
+    close(); await loadAll();
+  } catch (e) {}
+}
+
+// ---------- הרשימה מתחת ----------
+
+function renderList(){
+  const box = $('list');
+  box.innerHTML = '';
+
+  const onMap = sortByTime(pointsOn(faults, vid, side));
+  const other = sortFaults((faults || []).filter(f =>
+    f.vehicle_id === vid && !hasPoint(f)));
+
+  $('listNote').textContent = onMap.length
+    ? onMap.length + ' נקודות על ' + sideHe(side) +
+      (other.length ? ' · ועוד ' + other.length + ' דיווחים בלי מיקום.' : '.')
+    : 'אין דיווח על ' + sideHe(side) + '.' +
+      (other.length ? ' יש ' + other.length + ' דיווחים בלי מיקום.' : '');
+
+  onMap.forEach((f, i) => box.appendChild(faultCard(f, i + 1)));
+
+  // דיווחים שנפתחו לפני שהיו תמונות, או ממסך התקלות. הם
+  // שייכים לרכב אבל אין להם נקודה — ולכן הם מוצגים כאן
+  // ולא נעלמים.
+  if (other.length) {
+    const h = document.createElement('div');
+    h.className = 'note';
+    h.style.margin = '18px 0 0';
+    h.style.paddingTop = '12px';
+    h.style.borderTop = '1px solid var(--line)';
+    h.innerHTML = '<b>בלי מיקום על המפה</b><br>' +
+      'דווחו ממסך התקלות או לפני שהועלו התמונות.';
+    box.appendChild(h);
+    other.forEach(f => box.appendChild(faultCard(f, '·')));
+  }
+}
+</script>
+</body>
+</html>
