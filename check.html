@@ -68,6 +68,21 @@
     <div id="fns"><div class="row">בודק...</div></div>
   </div>
 
+  <div class="card">
+    <h2>5 · הרצה ידנית</h2>
+    <div class="sub" style="margin-bottom:0">
+      הסריקה הלילית רצה מעצמה ב-02:10, והדוח למשאבי אנוש ב-1 לחודש ב-06:00.
+      כאן אפשר להריץ אותן עכשיו כדי לבדוק. למנהל-על בלבד.
+    </div>
+    <label class="k" style="margin-top:12px;display:block">חודש</label>
+    <input type="text" id="mkey" placeholder="2026-08">
+    <div>
+      <button id="btnScan">הרץ סריקה עכשיו</button>
+      <button class="ghost" id="btnReport">בנה ושלח דוח למשאבי אנוש</button>
+    </div>
+    <div id="runOut"></div>
+  </div>
+
   <button class="ghost" id="btnAgain">בדוק הכל מחדש</button>
 </div>
 
@@ -260,6 +275,63 @@ async function runRest(){
   await checkDirectory();
   await runSearch();
 }
+
+// ---------- הרצה ידנית ----------
+
+function thisMonth(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+$('mkey').value = thisMonth();
+
+$('btnScan').onclick = async () => {
+  const b = $('btnScan'); b.disabled = true;
+  $('runOut').innerHTML = '';
+  try {
+    const res = await httpsCallable(fns, 'runReportNow')({
+      what: 'scan', month: $('mkey').value.trim() });
+    const d = res.data || {};
+    line('runOut', 'הסריקה רצה', 'חודש ' + d.month, 'ok');
+    line('runOut', 'אנשים שנבדקו', String(d.checked));
+    line('runOut', 'אנשים עם ממצאים', String(d.flagged),
+         d.flagged ? 'warn' : 'ok');
+  } catch (e) {
+    line('runOut', 'הסריקה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+  b.disabled = false;
+};
+
+// שולח מייל אמיתי לכתובת אמיתית. אישור מפורש לפני, כי לחיצה
+// בטעות שולחת דוח למשאבי אנוש ואי אפשר לבטל אותה.
+$('btnReport').onclick = async () => {
+  const mk = $('mkey').value.trim();
+  const ok = window.confirm(
+    'הפעולה בונה את הדוח החודשי של ' + mk + ' ושולחת אותו במייל ' +
+    'לכתובת lisaa@102.gov.il.\n\n' +
+    'המייל יוצא בפועל רק אם תוסף המיילים מותקן. להמשיך?');
+  if (!ok) return;
+
+  const b = $('btnReport'); b.disabled = true;
+  $('runOut').innerHTML = '';
+  try {
+    const res = await httpsCallable(fns, 'runReportNow')({
+      what: 'report', month: mk });
+    const d = res.data || {};
+    line('runOut', 'הדוח נבנה', 'חודש ' + d.month, 'ok');
+    line('runOut', 'עובדים בדוח', String(d.people));
+    line('runOut', 'חריגות בשעות', String(d.over), d.over ? 'warn' : 'ok');
+    line('runOut', 'נשלח למייל', d.sent ? 'כן — נכנס לתור השליחה' : 'לא',
+         d.sent ? 'ok' : 'warn');
+    if (d.sent) {
+      line('runOut', 'שים לב',
+           'המייל יצא בפועל רק אם תוסף המיילים של Firebase מותקן. ' +
+           'עד אז הוא ממתין בתור.', 'warn');
+    }
+  } catch (e) {
+    line('runOut', 'בניית הדוח נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+  b.disabled = false;
+};
 
 $('btnRun').onclick  = () => runSearch();
 $('btnAgain').onclick = () => runAll(auth.currentUser);

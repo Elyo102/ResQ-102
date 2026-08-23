@@ -198,7 +198,6 @@
         <button class="btn" id="btnView">הצג סיכום חודשי</button>
         <button class="btn hide" id="btnSync">תקן לפי הסידור</button>
         <button class="btn hide" id="btnRecalc">חשב מחדש</button>
-        <button class="btn hide" id="btnPrint">הדפס דוח</button>
         <button class="btn hide" id="btnUnsubmit">בטל שליחה</button>
         <button class="btn hide" id="btnApprove">אשר את החודש</button>
         <button class="btn hide" id="btnReopen">פתח מחדש</button>
@@ -259,7 +258,6 @@ import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
   from './hours.js?v=15';
-import { reportPage } from './report.js?v=15';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -484,7 +482,6 @@ function render(){
   $('btnFill').classList.toggle('hide', !sug.length || locked() || st === 'submitted');
   $('btnSync').classList.toggle('hide', locked());
   $('btnRecalc').classList.toggle('hide', !saved.length);
-  $('btnPrint').classList.toggle('hide', !saved.length);
   $('btnSubmit').classList.toggle('hide', st !== 'draft' || !saved.length);
   $('btnUnsubmit').classList.toggle('hide', st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
@@ -772,48 +769,6 @@ $('btnRecalc').onclick = async () => {
     msg('החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
   }
   b.disabled = false;
-};
-
-// דוח להדפסה או לשמירה כ-PDF, בפורמט שנשלח למשאבי אנוש.
-// אותו מבנה בדיוק שהשרת ישלח במייל ב-1 לחודש, כדי שמה
-// שהכבאי רואה יהיה מה שמשאבי אנוש מקבלים.
-function reportRows(){
-  return Object.keys(records).sort().map(function (key) {
-    const r    = records[key];
-    const site = sites.filter(s => s.id === r.sub_station)[0];
-    const fix  = siteHoursOf(r.sub_station);
-    return {
-      date: r.date,
-      day_type_he: dayTypeHe(r.day_type),
-      start: r.start, end: r.end,
-      start2: r.start2, end2: r.end2,
-      site_name: site ? site.name : '',
-      site_fixed: !!(site && site.fixed_hours),
-      notes: r.notes || '',
-      reason: String(r.overtime_reason || '').trim(),
-      reason_why: reasonWhy(r, fix, shiftHoursFor()),
-      hours: calcHours(r, fix)
-    };
-  });
-}
-
-$('btnPrint').onclick = () => {
-  const rows = reportRows();
-  const st = (report && report.status) || 'draft';
-  const html = reportPage({
-    full_name: ME.full_name || '',
-    month: monthKey(viewYear, viewMonth),
-    station_name: 'תחנה 102',
-    status: st,
-    total: monthTotal(Object.keys(records).map(k => records[k]), siteHoursOf)
-  }, rows);
-
-  const w = window.open('', '_blank');
-  if (!w) { msg('הדפדפן חסם את החלון. אפשר לאשר חלונות קופצים ולנסות שוב.', 'err'); return; }
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  setTimeout(function () { w.print(); }, 300);
 };
 
 // ---------- חלונית עריכה ----------

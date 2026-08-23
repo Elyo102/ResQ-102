@@ -395,7 +395,7 @@ service cloud.firestore {
           ) || (
             docId == 'hr'
             && request.resource.data.keys().hasOnly(
-                 ['email', 'hour_limit', 'updated_at', 'by'])
+                 ['email', 'name', 'hour_limit', 'updated_at', 'by'])
             && request.resource.data.get('hour_limit', 0) is int
             && request.resource.data.get('hour_limit', 0) >= 0
             && request.resource.data.get('hour_limit', 0) <= 1000

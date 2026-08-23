@@ -1013,6 +1013,12 @@ const STATION_NAME = 'תחנה 102';
 // חריגה בסך שעות חודשי. ניתן לשנות במסמך ההגדרות.
 const DEFAULT_HOUR_LIMIT = 265;
 
+// משאבי אנוש. ברירת מחדל, כדי שהדוח יישלח גם בלי שמישהו
+// יגדיר משהו. מסמך ההגדרות דורס אותה — כתובת מתחלפת, ואין
+// סיבה שהחלפה תדרוש פריסה מחדש.
+const DEFAULT_HR_EMAIL = 'lisaa@102.gov.il';
+const DEFAULT_HR_NAME  = 'ליסה עגיב';
+
 const HE_MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                    'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
 
@@ -1051,7 +1057,8 @@ async function hrConfig() {
     console.error('hr config read failed', e);
   }
   return {
-    email: String(cfg.email || '').trim(),
+    email: String(cfg.email || DEFAULT_HR_EMAIL).trim(),
+    name:  String(cfg.name  || DEFAULT_HR_NAME).trim(),
     limit: Number(cfg.hour_limit || DEFAULT_HOUR_LIMIT)
   };
 }
@@ -1335,16 +1342,18 @@ function personTable(r, cfg) {
 
 async function buildAndSendMonthly(mk) {
   const { results, cfg } = await scanMonth(mk);
-  if (!cfg.email) {
-    console.error('monthlyHrReport: no HR email configured, skipping send');
-  }
 
   const over = results.filter(r => r.total > cfg.limit);
   const flagged = results.filter(r => r.findings.length);
 
   const head =
+    (cfg.name
+      ? '<div style="font-size:14px;color:#222;margin-bottom:12px">' +
+        esc(cfg.name) + ' שלום,</div>'
+      : '') +
     '<div style="font-size:13px;color:#444;line-height:1.9;margin-bottom:22px;' +
       'border:1px solid #dde3e8;border-radius:8px;padding:13px">' +
+    'דוח נוכחות ' + esc(heMonth(mk)) + ' · ' + esc(STATION_NAME) + '<br>' +
     '<b>' + results.length + '</b> עובדים · ' +
     '<b>' + over.length + '</b> חריגות מעל ' + cfg.limit + ' שעות · ' +
     '<b>' + flagged.length + '</b> עובדים עם הערות' +
