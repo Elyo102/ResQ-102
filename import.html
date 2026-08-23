@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — קליטת סגל</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=28">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1000px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:11px 18px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:12px; width:auto }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
+  th{ text-align:right; color:var(--muted); font-weight:600; font-size:11.5px;
+      padding:8px 6px; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:9px 6px; border-bottom:1px solid var(--line-soft) }
+  tr:last-child td{ border-bottom:0 }
+  .scroll{ overflow-x:auto }
+  .nm{ font-weight:600; white-space:nowrap }
+  .em{ color:var(--muted); font-size:12.5px; direction:ltr; unicode-bidi:isolate;
+       display:inline-block }
+  .mono{ font-family:Consolas,monospace; font-variant-numeric:tabular-nums }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px; padding:2px 10px;
+        white-space:nowrap; border:1px solid var(--line); color:var(--muted) }
+  .tag.cmd{ border-color:var(--accent); color:var(--accent) }
+  .tag.hr{ border-color:var(--pick); color:var(--pick) }
+  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 7px;
+       color:var(--on-accent) }
+  .cw.A{ background:var(--crewA) }
+  .cw.B{ background:var(--crewB); color:var(--crewB-on) }
+  .cw.C{ background:var(--crewC) }
+
+  .st{ font-size:11.5px; font-weight:700; white-space:nowrap }
+  .st.created{ color:var(--good) }
+  .st.updated{ color:var(--crewC) }
+  .st.failed{ color:var(--bad) }
+
+  .warn{ border:1px solid var(--warn); background:var(--warn-bg);
+         border-radius:10px; padding:14px 16px; margin-top:12px;
+         font-size:13.5px; line-height:1.75; color:var(--dim) }
+  .warn b{ color:var(--txt) }
+
+  .sw{ display:flex; align-items:center; gap:12px; padding:14px;
+       border:1px solid var(--line); border-radius:10px; background:var(--panel);
+       margin-top:10px }
+  .sw .lbl{ flex:1 }
+  .sw .lbl .t{ font-size:15px; font-weight:700 }
+  .sw .lbl .s{ font-size:12.5px; color:var(--muted); margin-top:3px;
+               line-height:1.6 }
+  .sw .state{ font-size:12px; font-weight:700; white-space:nowrap }
+  .sw .state.on{ color:var(--warn) }
+  .sw .state.off{ color:var(--good) }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+
+  .sum{ display:flex; gap:12px; flex-wrap:wrap; margin-top:12px }
+  .sum div{ flex:1 1 110px; background:var(--panel); border:1px solid var(--line);
+            border-radius:9px; padding:12px; text-align:center }
+  .sum .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
+  .sum .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+</style>
+</head>
+<body>
+<div id="errBar"></div>
+<div class="wrap">
+
+  <div id="denyCard" class="card hide">
+    <h2>אין הרשאה</h2>
+    <div class="note" id="denyWho"></div>
+    <div class="note">מסך הקליטה פתוח למנהל-על בלבד.</div>
+  </div>
+
+  <div id="work" class="hide">
+    <h1>קליטת סגל</h1>
+    <div class="sub" id="srcNote">—</div>
+
+    <!-- ============ מצב שקט ============ -->
+    <div class="card">
+      <h2>מצב שקט</h2>
+      <div class="note">
+        חוסם כל התראה וכל מייל לכל המערכת, חוץ ממך. כל חסימה נרשמת,
+        כדי שבסוף הניסוי תדע מה היה נשלח.
+      </div>
+      <div class="sw">
+        <div class="lbl">
+          <div class="t">התראות לכלל התחנה</div>
+          <div class="s" id="swNote">בודק…</div>
+        </div>
+        <div class="state" id="swState">—</div>
+      </div>
+      <div class="row">
+        <button class="btn go" id="btnSilentOn">הפעל מצב שקט</button>
+        <button class="btn" id="btnSilentOff">כבה — התראות יוצאות לכולם</button>
+      </div>
+      <div class="msg" id="swMsg"></div>
+    </div>
+
+    <!-- ============ הרשימה ============ -->
+    <div class="card">
+      <h2>מי נקלט</h2>
+      <div class="note" id="listNote">—</div>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>שם</th><th>מס׳ עובד</th><th>מייל</th>
+                     <th>תפקיד</th><th>משמרת</th><th id="thState"></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ============ ההרצה ============ -->
+    <div class="card">
+      <h2>הרצה</h2>
+      <div class="note">
+        <b>חזרה בטוחה.</b> הרצה שנייה על אותה רשימה לא משכפלת חשבונות
+        ולא מאפסת סיסמה למי שכבר נכנס והחליף אותה — היא רק מעדכנת
+        תפקיד ופרופיל.
+      </div>
+
+      <div class="warn">
+        <b>לפני ההרצה האמיתית:</b> ודא שמצב שקט <b>פעיל</b>.
+        הקליטה עצמה לא שולחת כלום, אבל ברגע שיש 28 חשבונות פעילים,
+        כל תקלה שמישהו יפתח וכל החלפה שיאשר מייצרות התראות אמיתיות
+        לאנשים אמיתיים.
+      </div>
+
+      <label for="pwPaste" style="display:block;font-size:12.5px;
+            color:var(--muted);margin:16px 0 4px">
+        הדבק כאן שתי עמודות מגיליון הבקרה — מספר עובד וסיסמה
+      </label>
+      <textarea id="pwPaste" rows="5" spellcheck="false"
+        placeholder="123123&#9;abcd234xyz&#10;1234&#9;pqrs789mno"
+        style="width:100%;padding:11px;background:var(--input);color:var(--txt);
+               border:1px solid var(--line);border-radius:7px;font-size:14px;
+               font-family:Consolas,monospace;direction:ltr;resize:vertical"></textarea>
+      <div class="note" style="margin-top:6px" id="pwNote">
+        סמן בגיליון את שתי העמודות, העתק, והדבק. הן נשארות בדף הזה
+        בלבד — לא נשמרות, לא עולות לאתר.
+      </div>
+
+      <div class="row">
+        <button class="btn" id="btnDry">בדיקה יבשה — בלי ליצור כלום</button>
+        <button class="btn ok" id="btnRun">הרץ קליטה</button>
+      </div>
+      <div class="msg" id="runMsg"></div>
+      <div class="sum hide" id="sum"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=28';
+import { renderNav, renderStuckNav } from './nav.js?v=28';
+import { ROSTER, SOURCE, SKIPPED, SKIPPED_WHY } from './roster-import.js?v=28';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;');
+
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const ROLE_HE = { firefighter:'כבאי', deputy:'סגן מפקד משמרת',
+  commander:'מפקד משמרת', station_commander:'מפקד תחנה',
+  hr_coordinator:'רכז כוח אדם' };
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const fns  = getFunctions(app, 'europe-west1');
+
+let ME = { uid:'', email:'' };
+let RESULT = {};   // emp → state
+
+window.addEventListener('error', function (e) {
+  const b = $('errBar');
+  b.innerHTML = '<span class="xx" onclick="this.parentNode.style.display=\'none\'">×</span>' +
+    '<b>שגיאה במסך</b><code>' + esc(e.message || '') + '</code>';
+  b.style.display = 'block';
+});
+
+function msg(t, cls, id){
+  const m = $(id); m.textContent = t; m.className = 'msg ' + (cls || 'info');
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=import.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  const isSuper = c.super === true ||
+                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+
+  ME = { uid: user.uid, email: String(user.email || '').toLowerCase() };
+
+  if (!isSuper) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  $('work').classList.remove('hide');
+  renderNav(c, 'import.html', user.email || '');
+  $('srcNote').textContent = 'מקור: ' + SOURCE;
+  renderList();
+  await loadSilent();
+});
+
+// ---------- הרשימה ----------
+
+function renderList(){
+  const box = $('rows');
+  box.innerHTML = '';
+  $('listNote').innerHTML =
+    '<b>' + ROSTER.length + ' אנשים</b> ייקלטו. ' +
+    SKIPPED + ' נוספים לא ברשימה — ' + esc(SKIPPED_WHY) +
+    '<br>החשבון שלך לא ברשימה בכוונה: ייבוא היה דורס לך את התפקיד ' +
+    'ומנתק אותך מהמערכת באמצע הקליטה.';
+
+  ROSTER.forEach(function (p) {
+    const st = RESULT[p.emp];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="nm">' + esc(p.name) + '</td>' +
+      '<td class="mono">' + esc(p.emp) + '</td>' +
+      '<td><span class="em">' + esc(p.email) + '</span></td>' +
+      '<td><span class="tag' +
+        (p.role === 'commander' || p.role === 'deputy' ? ' cmd' : '') +
+        (p.role === 'hr_coordinator' ? ' hr' : '') + '">' +
+        esc(ROLE_HE[p.role] || p.role) + '</span></td>' +
+      '<td>' + (p.crew ? '<span class="cw ' + p.crew + '">' + p.crew + '</span>'
+                       : '<span class="note">—</span>') + '</td>' +
+      '<td>' + (st ? '<span class="st ' + st.state + '">' +
+                     esc(stateHe(st)) + '</span>' : '') + '</td>';
+    box.appendChild(tr);
+  });
+}
+
+function stateHe(r){
+  if (r.state === 'created') return r.dry ? 'ייווצר' : '✓ נוצר';
+  if (r.state === 'updated') return r.dry ? 'קיים — יעודכן' : '✓ עודכן';
+  return '✗ ' + (r.why || 'נכשל');
+}
+
+// ---------- מצב שקט ----------
+
+async function loadSilent(){
+  try {
+    const r = await httpsCallable(fns, 'getSilentMode')({});
+    paintSilent(r.data || {});
+  } catch (e) {
+    $('swNote').textContent = 'לא הצלחתי לקרוא את המצב. (' +
+      (e.code || e.message || '') + ')';
+    $('swState').textContent = '?';
+  }
+}
+
+function paintSilent(v){
+  const on = v.silent === true;
+  $('swState').textContent = on ? 'שקט' : 'פעיל';
+  $('swState').className = 'state ' + (on ? 'on' : 'off');
+  $('swNote').innerHTML = on
+    ? 'אף אחד לא מקבל התראות או מיילים, חוץ מ־' +
+      esc((v.allow || []).join(', ') || 'אף אחד') + '.' +
+      (v.blocked ? ' <b>' + v.blocked + '</b> התראות נחסמו עד כה.' : '')
+    : 'כל ההתראות והמיילים יוצאים כרגיל, לכל 28 האנשים.';
+}
+
+$('btnSilentOn').onclick  = () => setSilent(true);
+$('btnSilentOff').onclick = () => setSilent(false);
+
+async function setSilent(on){
+  if (!on && !window.confirm(
+      'כיבוי מצב שקט מפעיל התראות ומיילים אמיתיים לכל מי שנקלט.\n\n' +
+      'קריאת פתע תקפיץ להם את המסך, ותקלה שתיפתח תשלח התראה ' +
+      'למפקד המשמרת שלהם.\n\nלכבות?')) return;
+
+  msg('שומר…', 'info', 'swMsg');
+  try {
+    // הרשימה הפטורה: גם ה-uid וגם המייל. השליחות עובדות
+    // באחד מהשניים לפי המסלול — פוש לפי uid, מייל לפי כתובת —
+    // ומי שיציין רק אחד מהם יגלה שחצי מההתראות שלו נעלמו.
+    const r = await httpsCallable(fns, 'setSilentMode')({
+      silent: on, allow: on ? [ME.uid, ME.email] : []
+    });
+    msg(on ? 'מצב שקט פעיל. רק אתה מקבל.' : 'מצב שקט כבוי.',
+        'ok', 'swMsg');
+    paintSilent({ silent: r.data.silent, allow: r.data.allow, blocked: 0 });
+    await loadSilent();
+  } catch (e) {
+    msg('נכשל. (' + (e.code || e.message || '') + ')', 'err', 'swMsg');
+  }
+}
+
+// ---------- ההרצה ----------
+
+$('btnDry').onclick = () => run(true);
+$('btnRun').onclick = () => run(false);
+
+async function run(dry){
+  if (!dry && !window.confirm(
+      'ייווצרו עד ' + ROSTER.length + ' חשבונות אמיתיים עם הסיסמאות ' +
+      'שבגיליון הבקרה.\n\nאף אחד לא יקבל הודעה על כך.\n\nלהריץ?')) return;
+
+  const btns = [$('btnDry'), $('btnRun')];
+  btns.forEach(b => b.disabled = true);
+  msg(dry ? 'בודק בלי ליצור כלום…' : 'קולט… זה יכול לקחת דקה.',
+      'info', 'runMsg');
+
+  try {
+    // הסיסמאות אינן בקוד הזה. הן מודבקות לרשימה רק ברגע ההרצה,
+    // מהגיליון — כדי שקובץ שיושב באתר ציבורי לא יכיל אותן.
+    const people = ROSTER.map(p => Object.assign({}, p, { pw: pwOf(p.emp) }));
+
+    const r = await httpsCallable(fns, 'bulkImport')({
+      people: people, dry_run: dry, stationId: STATION_ID, districtId: 'south'
+    });
+
+    const d = r.data || {};
+    RESULT = {};
+    (d.rows || []).forEach(row => { RESULT[row.emp] = row; });
+    $('thState').textContent = dry ? 'צפוי' : 'תוצאה';
+    renderList();
+
+    const s = d.summary || {};
+    $('sum').classList.remove('hide');
+    $('sum').innerHTML =
+      '<div><div class="v" style="color:var(--good)">' + (s.created||0) +
+        '</div><div class="k">' + (dry ? 'ייווצרו' : 'נוצרו') + '</div></div>' +
+      '<div><div class="v" style="color:var(--crewC)">' + (s.updated||0) +
+        '</div><div class="k">' + (dry ? 'קיימים' : 'עודכנו') + '</div></div>' +
+      '<div><div class="v" style="color:' +
+        ((s.failed||0) ? 'var(--bad)' : 'var(--muted)') + '">' + (s.failed||0) +
+        '</div><div class="k">נכשלו</div></div>';
+
+    msg(dry
+      ? 'בדיקה יבשה הסתיימה. שום דבר לא נוצר.'
+      : 'הקליטה הסתיימה. ' + (s.created||0) + ' חשבונות חדשים.',
+      (s.failed||0) ? 'info' : 'ok', 'runMsg');
+  } catch (e) {
+    msg('ההרצה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'runMsg');
+  }
+  btns.forEach(b => b.disabled = false);
+}
+
+// ---------- הסיסמאות ----------
+//
+// **למה הדבקה ולא קובץ.** קובץ סיסמאות בתיקיית האפליקציה היה
+// עולה ל-GitHub Pages ב-web-2-upload, כלומר יושב בכתובת ציבורית
+// שכל אחד יכול להוריד. עשרים ושמונה חשבונות בקובץ טקסט פתוח.
+//
+// כאן הן קיימות רק בזיכרון הדף, נמחקות ברענון, ולא נכתבות לשום
+// מקום — לא ל-localStorage ולא לקובץ.
+//
+// הפורמט הוא בדיוק מה שיוצא מהעתקת שתי עמודות ב-Google Sheets:
+// מספר, טאב, סיסמה, שורה חדשה.
+
+function parsePw(text){
+  const map = {};
+  String(text || '').split(/\r?\n/).forEach(function (line) {
+    const parts = line.split(/[\t,;]+/).map(x => x.trim()).filter(Boolean);
+    if (parts.length < 2) return;
+    map[parts[0]] = parts[parts.length - 1];
+  });
+  return map;
+}
+
+let PW = {};
+
+$('pwPaste').addEventListener('input', function () {
+  PW = parsePw(this.value);
+  const have = ROSTER.filter(p => PW[p.emp]).length;
+  const miss = ROSTER.filter(p => !PW[p.emp]);
+  const n = $('pwNote');
+  if (!Object.keys(PW).length) {
+    n.textContent = 'סמן בגיליון את שתי העמודות, העתק, והדבק. הן נשארות ' +
+                    'בדף הזה בלבד — לא נשמרות, לא עולות לאתר.';
+    n.style.color = '';
+  } else if (miss.length) {
+    // מציג את החסרים בשמם. "23 מתוך 28" בלי לומר מי חסר מכריח
+    // להשוות שתי רשימות ביד.
+    n.innerHTML = '<b style="color:var(--warn)">' + have + ' מתוך ' +
+      ROSTER.length + '.</b> חסרים: ' +
+      miss.slice(0, 6).map(p => esc(p.name)).join(', ') +
+      (miss.length > 6 ? ' ועוד ' + (miss.length - 6) : '') + '.';
+    n.style.color = '';
+  } else {
+    n.innerHTML = '<b style="color:var(--good)">כל ' + ROSTER.length +
+                  ' הסיסמאות זוהו.</b>';
+  }
+  $('btnRun').disabled = miss.length > 0;
+});
+
+$('btnRun').disabled = true;
+
+function pwOf(emp){
+  const v = PW[String(emp)];
+  if (!v) throw new Error('אין סיסמה למספר עובד ' + emp + '.');
+  return v;
+}
+</script>
+</body>
+</html>

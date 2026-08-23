@@ -79,8 +79,63 @@ const FV = admin.firestore.FieldValue;
 //  המיילים נצברים באוסף ולא נשלחים — שום דבר לא נשבר.
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+//  מצב שקט — תקופת הניסוי
+// ---------------------------------------------------------------------
+//
+//  אלדד: "זה יכול להיות גם בסיס ניסויים מבלי לשלוח להם באמת
+//  הודעות."
+//
+//  **למה זה יושב כאן ולא במסכים.** שתי פונקציות בקובץ הזה הן
+//  הפתח היחיד החוצה — sendMail ו-pushToUsers. כל התראה, כל מייל
+//  וכל קריאת פתע עוברים באחת מהן. חסימה כאן היא חסימה מלאה;
+//  חסימה בכל מסך בנפרד הייתה שוכחת אחד, וזה היה מתגלה כשכבאי
+//  אמיתי מקבל הזעקת בדיקה בשלוש לפנות בוקר.
+//
+//  **מה שלא נחסם: אלדד עצמו.** בלי זה אי אפשר לדעת אם השליחה
+//  בכלל עובדת — ו"שקט" ו"שבור" ייראו אותו דבר בדיוק עד יום
+//  הפעלת המערכת.
+//
+//  כל חסימה נרשמת ב-silenced/, כדי שבסוף הניסוי תהיה רשימה של
+//  מה היה נשלח לו המערכת הייתה חיה.
+
+const RUNTIME_DOC = 'config/runtime';
+let _rt = null, _rtAt = 0;
+
+async function runtime() {
+  // 30 שניות מטמון. הדגל נקרא בכל שליחה, וקריאת מסמך לכל התראה
+  // הייתה מכפילה את עלות המשלוח בלי להוסיף דיוק.
+  const now = Date.now();
+  if (_rt && now - _rtAt < 30000) return _rt;
+  try {
+    const d = await db.doc(RUNTIME_DOC).get();
+    _rt = (d.exists ? d.data() : {}) || {};
+  } catch (e) { _rt = {}; }
+  _rtAt = now;
+  return _rt;
+}
+
+// uid או אימייל שפטורים מהשקט.
+async function silentFor(who) {
+  const rt = await runtime();
+  if (rt.silent !== true) return false;
+  const allow = Array.isArray(rt.silent_allow) ? rt.silent_allow : [];
+  const key = String(who || '').toLowerCase();
+  return allow.indexOf(key) === -1;
+}
+
+async function logSilenced(kind, to, subject) {
+  try {
+    await db.collection('silenced').add({
+      kind: kind, to: String(to || ''), subject: String(subject || '').slice(0, 200),
+      at: FV.serverTimestamp()
+    });
+  } catch (e) {}
+}
+
 async function sendMail(to, subject, html) {
   if (!to) return;
+  if (await silentFor(to)) { await logSilenced('mail', to, subject); return; }
   try {
     await db.collection('mail').add({
       to: [to],
@@ -898,6 +953,170 @@ exports.unlockAccount = onCall(async (req) => {
 });
 
 // ---------------------------------------------------------------------
+//  קליטת סגל — ייבוא מרוכז
+// ---------------------------------------------------------------------
+//
+//  ארבעים ושניים כבאים חיים היום במערכת אחרת. אישור אחד־אחד
+//  דרך מסך הניהול הוא ארבעים ושתיים פעולות ידניות, וכל אחת
+//  מהן היא הזדמנות להקליד תפקיד לא נכון.
+//
+//  **הפונקציה אידמפוטנטית, וזה העיקר.** הרצה שנייה על אותה
+//  רשימה לא יוצרת כפילות ולא מאפסת סיסמה למי שכבר נכנס והחליף
+//  אותה. ייבוא של ארבעים ושניים אנשים כמעט תמיד נעצר באמצע
+//  בפעם הראשונה — מייל כפול, שדה חסר — וכלי שאי אפשר להריץ
+//  שוב בבטחה הופך כל תקלה קטנה לניקוי ידני.
+//
+//  שלוש מצבים אפשריים לכל אדם:
+//
+//    created   החשבון נוצר עכשיו, עם הסיסמה שנשלחה
+//    updated   החשבון היה קיים — עודכנו התפקיד והפרופיל בלבד
+//    failed    משהו נכשל, והסיבה חוזרת בשם
+//
+//  **סיסמה נקבעת רק ליצירה.** לחשבון קיים היא לא נדרסת: מי
+//  שכבר נכנס והחליף סיסמה לא יגלה בבוקר שהיא חזרה לזו שבגיליון.
+
+exports.bulkImport = onCall({ timeoutSeconds: 540 }, async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const people = Array.isArray(d.people) ? d.people : [];
+  const dry = d.dry_run === true;
+
+  if (!people.length) {
+    throw new HttpsError('invalid-argument', 'לא נשלחה רשימה.');
+  }
+  if (people.length > 200) {
+    throw new HttpsError('invalid-argument', 'עד 200 אנשים בהרצה אחת.');
+  }
+
+  const stationId  = String(d.stationId  || STATION_ID);
+  const districtId = String(d.districtId || 'south');
+
+  const audit = await openAudit(auth, dry ? 'bulk_import_dry' : 'bulk_import',
+                                null, { count: people.length, station: stationId });
+
+  const out = [];
+  for (const raw of people) {
+    const email = String((raw && raw.email) || '').trim().toLowerCase();
+    const name  = String((raw && raw.name)  || '').trim();
+    const emp   = String((raw && raw.emp)   || '').trim();
+    const role  = VALID_ROLES.indexOf(raw && raw.role) !== -1 ? raw.role : 'firefighter';
+    const shift = VALID_SHIFTS.indexOf(raw && raw.crew) !== -1 ? raw.crew : '';
+    const phone = String((raw && raw.phone) || '').trim();
+    const pw    = String((raw && raw.pw)    || '');
+
+    const row = { emp: emp, name: name, email: email, role: role, crew: shift };
+
+    if (!email || email.indexOf('@') === -1 || !name || !emp) {
+      out.push(Object.assign(row, { state: 'failed',
+        why: 'חסר שם, מייל או מספר עובד' }));
+      continue;
+    }
+
+    try {
+      let user = null;
+      try { user = await admin.auth().getUserByEmail(email); }
+      catch (e) { user = null; }
+
+      let state;
+      if (!user) {
+        if (pw.length < 8) {
+          out.push(Object.assign(row, { state: 'failed',
+            why: 'סיסמה קצרה מדי — לפחות שמונה תווים' }));
+          continue;
+        }
+        if (dry) { out.push(Object.assign(row, { state: 'created', dry: true })); continue; }
+        user = await admin.auth().createUser({
+          email: email, password: pw, displayName: name,
+          emailVerified: false, disabled: false
+        });
+        state = 'created';
+      } else {
+        if (dry) { out.push(Object.assign(row, { state: 'updated', dry: true })); continue; }
+        // שם התצוגה כן מתעדכן; הסיסמה לא. ראה ההסבר למעלה.
+        if (user.displayName !== name) {
+          await admin.auth().updateUser(user.uid, { displayName: name });
+        }
+        state = 'updated';
+      }
+
+      // מספר עובד קודם — אותה בעיה שאושר בה ב-approveRegistration:
+      // בלי המחיקה, שני מספרים פותחים את אותו חשבון.
+      const prevEmp = String((user.customClaims || {}).emp || '');
+      if (prevEmp && prevEmp !== emp) {
+        await db.doc('emp_index/' + prevEmp).delete().catch(function () {});
+      }
+
+      await admin.auth().setCustomUserClaims(user.uid, {
+        role: role, stationId: stationId, districtId: districtId,
+        shift: shift, emp: emp
+      });
+
+      await writeProfile(user.uid, {
+        emp: emp, full_name: name, email: email, phone: phone,
+        role: role, shift: shift,
+        stationId: stationId, districtId: districtId
+      });
+
+      out.push(Object.assign(row, { state: state, uid: user.uid }));
+    } catch (e) {
+      out.push(Object.assign(row, { state: 'failed',
+        why: String((e && e.message) || e).slice(0, 160) }));
+    }
+  }
+
+  const sum = {
+    created: out.filter(r => r.state === 'created').length,
+    updated: out.filter(r => r.state === 'updated').length,
+    failed:  out.filter(r => r.state === 'failed').length
+  };
+  await closeAudit(audit, 'ok', sum);
+
+  return { ok: true, dry: dry, summary: sum, rows: out };
+});
+
+// ---------------------------------------------------------------------
+//  מצב שקט — הפעלה וכיבוי
+// ---------------------------------------------------------------------
+//
+//  silent_allow מכיל uid-ים ואימיילים שממשיכים לקבל. הרשימה
+//  נשמרת באותיות קטנות כי אימייל אינו תלוי־רישיות, ואי־התאמה
+//  כאן משמעה שאלדד מפסיק לקבל בלי להבין למה.
+
+exports.setSilentMode = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const on = d.silent === true;
+  const allow = (Array.isArray(d.allow) ? d.allow : [])
+    .map(x => String(x || '').trim().toLowerCase()).filter(Boolean).slice(0, 40);
+
+  const audit = await openAudit(auth, 'set_silent_mode', null,
+                               { silent: on, allow: allow.length });
+
+  await db.doc(RUNTIME_DOC).set({
+    silent: on, silent_allow: allow,
+    updated_by: auth.uid, updated_at: FV.serverTimestamp()
+  }, { merge: true });
+
+  _rt = null;   // מאלץ קריאה מחדש, אחרת המטמון היה משהה את השינוי בחצי דקה
+  await closeAudit(audit, 'ok', { silent: on });
+  return { ok: true, silent: on, allow: allow };
+});
+
+exports.getSilentMode = onCall(async (req) => {
+  requireSuperAdmin(req);
+  const d = await db.doc(RUNTIME_DOC).get().catch(() => null);
+  const v = (d && d.exists ? d.data() : {}) || {};
+  let blocked = 0;
+  try {
+    const c = await db.collection('silenced').count().get();
+    blocked = c.data().count;
+  } catch (e) {}
+  return { silent: v.silent === true,
+           allow: Array.isArray(v.silent_allow) ? v.silent_allow : [],
+           blocked: blocked };
+});
+
+// ---------------------------------------------------------------------
 //  6. רשימת משתמשים למסך הניהול
 // ---------------------------------------------------------------------
 
@@ -1462,6 +1681,10 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
   let people = 0, devices = 0;
 
   for (const uid of unique) {
+    // הבדיקה לכל נמען בנפרד, ולא פעם אחת לכל הקבוצה: קריאת פתע
+    // לכל המשמרת צריכה להגיע לאלדד ולהיחסם לשאר, באותה שליחה.
+    if (await silentFor(uid)) { await logSilenced('push', uid, title); continue; }
+
     let snap;
     try {
       snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();

@@ -207,6 +207,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // מצב שקט ויומן ההתראות שנחסמו.
+    //
+    // שניהם חסומים ללקוח לחלוטין. הדגל נקבע דרך setSilentMode,
+    // כלומר עובר דרך פונקציית שרת שבודקת מנהל-על ורושמת ביומן
+    // הביקורת. כלל שהיה מתיר לסגל לכתוב ישירות ל-config/runtime
+    // היה מאפשר להשתיק את קריאות הפתע של כל התחנה בלי שיישאר
+    // רישום מי עשה זאת.
+
+    match /config/{docId} {
+      allow read, write: if false;
+    }
+
+    match /silenced/{entryId} {
+      allow read, write: if false;
+    }
+
 
     // ---------- חיפוש עובד ----------
     //
