@@ -19,12 +19,29 @@
 // לא ישבור כלל אבטחה או רשומה שכבר נשמרה.
 
 export const DAY_TYPES = [
-  { id: 'regular',  he: 'רגיל',                times: true  },
-  { id: 'swap',     he: 'החלפה צרכי מערכת',    times: true  },
-  { id: 'vacation', he: 'חופש',                times: false },
-  { id: 'sick',     he: 'מחלה',                times: false },
-  { id: 'reserve',  he: 'מילואים',             times: false }
+  { id: 'regular',  he: 'רגיל',                       times: true  },
+  { id: 'swap',     he: 'החלפה צרכי מערכת',           times: true  },
+  { id: 'extra',    he: 'שעות ידני · נע״ת',           times: true  },
+  { id: 'meeting',  he: 'ישיבות',                     times: true  },
+  { id: 'vacation', he: 'חופש',                       times: false },
+  { id: 'sick',     he: 'מחלה',                       times: false },
+  { id: 'reserve',  he: 'מילואים',                    times: false }
 ];
+
+// סוגי יום שדורשים נימוק תמיד, גם אם השעות רגילות לגמרי.
+//
+//   swap     המערכת ביקשה ממך לעבוד ביום שהמשמרת שלך לא עובדת.
+//            משאבי אנוש צריכים לדעת מה קרה שם.
+//   extra    נע״ת — נוסף על תפקיד. שעות מחוץ למסגרת המשמרת.
+//   meeting  ישיבות.
+export const REASON_TYPES = ['swap', 'extra', 'meeting'];
+
+// אורך משמרת ברירת מחדל, כשהסידור לא אומר אחרת.
+//
+// הסף לנימוק הוא אורך המשמרת של המקום שבו עבדת, ולא 24 קבוע:
+// יטבתה היא 25 שעות בהגדרה, ולכן יום יטבתה שלם אינו חריגה
+// ואינו דורש נימוק. אלדד תיקן אותי על זה במפורש.
+export const DEFAULT_SHIFT_HOURS = 24;
 
 // מילואים — 8.5 שעות קבועות, בלי קשר לשעות בפועל.
 export const RESERVE_HOURS = 8.5;
@@ -183,9 +200,10 @@ export function calcHours(rec, siteHours) {
 export function expectedHours(rec, siteHours, shiftHours) {
   const r = rec || {};
   if (!needsTimes(r.day_type)) return null;
+  // אורך קבוע של תחנת קצה הוא אורך המשמרת שם, ולא חריגה ממנה.
   const fixed = Number(siteHours || 0);
   if (fixed > 0) return fixed;
-  return Number(shiftHours || 24);
+  return Number(shiftHours || DEFAULT_SHIFT_HOURS);
 }
 
 export function overtimeHours(rec, siteHours, shiftHours) {
@@ -197,11 +215,33 @@ export function overtimeHours(rec, siteHours, shiftHours) {
   return ot > 0 ? ot : 0;
 }
 
-// נימוק חובה. אלדד: כל שעה מעל אורך המשמרת בסידור, והשמירה
-// נחסמת בלי הסבר — כדי שהמפקד יקבל דוח שכל חריגה בו מוסברת,
-// ולא רשימת מספרים שצריך לרדוף אחריה בטלפון.
+// למה נדרש נימוק ביום הזה. מחזיר מחרוזת להסבר, או '' אם לא נדרש.
+//
+// שלוש סיבות, וכולן של אלדד:
+//   סוג היום      החלפה צרכי מערכת, נע״ת, ישיבות
+//   המשך משמרת    לפי הגדרתו מעל יממה
+//   מעל 24 שעות   כולל יטבתה של 25
+export function reasonWhy(rec, siteHours, shiftHours) {
+  const r = rec || {};
+
+  if (REASON_TYPES.indexOf(r.day_type) !== -1) {
+    return dayTypeHe(r.day_type);
+  }
+  if (!needsTimes(r.day_type)) return '';
+
+  const h = calcHours(r, siteHours);
+  if (h == null) return '';
+
+  if (shapeOf(r) === 'continued') return 'המשך משמרת';
+
+  const ot = overtimeHours(r, siteHours, shiftHours);
+  if (ot > 0) return ot + ' שעות מעל המשמרת';
+
+  return '';
+}
+
 export function needsReason(rec, siteHours, shiftHours) {
-  return overtimeHours(rec, siteHours, shiftHours) > 0;
+  return reasonWhy(rec, siteHours, shiftHours) !== '';
 }
 
 export function reasonMissing(rec, siteHours, shiftHours) {
@@ -241,9 +281,10 @@ export function monthSummary(records, siteHoursOf, shiftHoursOf) {
     const site = f(r.sub_station);
     byType[r.day_type] = (byType[r.day_type] || 0) + 1;
     if (isSplit(r)) split++;
-    const ot = overtimeHours(r, site, g(r.date));
-    if (ot > 0) {
-      overtime.push({ date: r.date, hours: ot,
+    const why = reasonWhy(r, site, g(r.date));
+    if (why) {
+      overtime.push({ date: r.date, why: why,
+                      hours: overtimeHours(r, site, g(r.date)),
                       reason: String(r.overtime_reason || '').trim() });
     }
   });

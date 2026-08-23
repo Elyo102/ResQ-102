@@ -95,6 +95,13 @@
   .dlg input, .dlg select, .dlg textarea{ width:100%; padding:10px; background:#111316;
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
         font-size:15px; font-family:inherit }
+  /* בלי זה, אייקון השעון של שדה הזמן מצויר בשחור על רקע שחור
+     והמשתמש לא רואה שיש שם כפתור בכלל. color-scheme אומר
+     לדפדפן לצייר את הפקדים המובנים בגרסה הכהה שלהם. */
+  .dlg input[type="time"], .dlg input[type="date"]{ color-scheme:dark }
+  .dlg input[type="time"]::-webkit-calendar-picker-indicator,
+  .dlg input[type="date"]::-webkit-calendar-picker-indicator{
+    filter:invert(1) brightness(1.6); opacity:.85; cursor:pointer }
   .dlg textarea{ min-height:64px; resize:vertical }
   .two{ display:grid; grid-template-columns:1fr 1fr; gap:9px }
   .three{ display:grid; grid-template-columns:1fr 1fr 1.1fr; gap:9px }
@@ -189,6 +196,9 @@
         <button class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
         <button class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
         <button class="btn" id="btnView">הצג סיכום חודשי</button>
+        <button class="btn hide" id="btnSync">תקן לפי הסידור</button>
+        <button class="btn hide" id="btnRecalc">חשב מחדש</button>
+        <button class="btn hide" id="btnPrint">הדפס דוח</button>
         <button class="btn hide" id="btnUnsubmit">בטל שליחה</button>
         <button class="btn hide" id="btnApprove">אשר את החודש</button>
         <button class="btn hide" id="btnReopen">פתח מחדש</button>
@@ -247,8 +257,9 @@ import { crewOnDate, isCrewWorking, overrideOn, overrideKindHe, shiftTimes,
          CREW_HE, CREW_SHORT, toKey } from './rotation.js?v=13';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
-         overtimeHours, reasonMissing, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=14';
+         overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
+  from './hours.js?v=15';
+import { reportPage } from './report.js?v=15';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -284,6 +295,7 @@ let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [];
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
+let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
 
 function siteHoursOf(id){
   const s = sites.filter(x => x.id === id)[0];
@@ -356,6 +368,25 @@ async function loadStatic(){
       overrides[d.id] = { kind: v.kind || '', crew: v.crew || '',
                           extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
                           note: v.note || '' };
+    });
+  } catch (ignore) {}
+
+  // איפה אני משובץ בלוח הציוות של המשמרת שלי. משמש כברירת
+  // מחדל לימים שעוד לא דיווחתי — כדי שהדוח יראה גם איפה עבדתי
+  // או אעבוד, ולא רק מתי.
+  try {
+    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
+    const s = ME.crew
+      ? await getDoc(doc(db, 'stations', SID, 'shifts', ME.crew))
+      : null;
+    const board  = b.exists() ? (b.data() || {}) : {};
+    const assign = (s && s.exists() && (s.data() || {}).assign) || {};
+
+    const mine = Object.keys(assign).filter(k => assign[k] === ME.uid);
+    (board.vehicles || []).forEach(function (v) {
+      (v.slots || []).forEach(function (sl) {
+        if (mine.indexOf(sl.id) !== -1 && sl.site && !mySite) mySite = sl.site;
+      });
     });
   } catch (ignore) {}
 
@@ -451,6 +482,9 @@ function render(){
                         : st === 'submitted' ? 'ממתין לאישור' : 'טיוטה';
 
   $('btnFill').classList.toggle('hide', !sug.length || locked() || st === 'submitted');
+  $('btnSync').classList.toggle('hide', locked());
+  $('btnRecalc').classList.toggle('hide', !saved.length);
+  $('btnPrint').classList.toggle('hide', !saved.length);
   $('btnSubmit').classList.toggle('hide', st !== 'draft' || !saved.length);
   $('btnUnsubmit').classList.toggle('hide', st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
@@ -502,9 +536,9 @@ function renderRows(sug){
     const bt = baseTimes();
 
     const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
-                          sub_station: '' };
+                          sub_station: mySite };
     const hrs = calcHours(view, siteHoursOf(view.sub_station));
-    const ot  = overtimeHours(view, siteHoursOf(view.sub_station), shiftHoursFor());
+    const why = reasonWhy(view, siteHoursOf(view.sub_station), shiftHoursFor());
     const running = !!(rec && rec.start && !rec.end);
 
     const tr = document.createElement('tr');
@@ -523,9 +557,9 @@ function renderRows(sug){
         (needsTimes(view.day_type) && shapeOf(view) !== 'regular'
           ? ' <span class="tag">' +
             (shapeOf(view) === 'split' ? 'מפוצלת' : 'המשך משמרת') + '</span>' : '') +
-        (ot > 0 ? ' <span class="tag' + (view.overtime_reason ? '' : ' no') +
-                  '" title="' + esc(view.overtime_reason || 'חסר נימוק') + '">' +
-                  ot + ' ש״נ</span>' : '') + '</td>' +
+        (view.overtime_reason
+          ? ' <span class="tag" title="' + esc(view.overtime_reason) + '">נימוק</span>'
+          : '') + '</td>' +
       '<td class="hh">' + (needsTimes(view.day_type)
           ? '<span class="rng">' + esc(view.start || '—') + '–' +
               esc(running ? '…' : (view.end || '—')) + '</span>' +
@@ -563,7 +597,19 @@ function newRecord(key, patch){
 async function saveRecord(key, rec){
   const body = Object.assign({}, rec);
   delete body.id;
-  body.hours = calcHours(body, siteHoursOf(body.sub_station));
+
+  const fix = siteHoursOf(body.sub_station);
+  body.hours = calcHours(body, fix);
+
+  // שדות שהשרת קורא ואינו מחשב: הסיכום החודשי והריצה הלילית
+  // צריכים לדעת מה סוג היום בעברית, איפה זה היה, והאם היום
+  // דורש נימוק — בלי להריץ שוב את כללי החישוב בצד השרת.
+  // חישוב שני היה יוצר אפשרות שהמייל אומר מספר אחד והמסך אחר.
+  const site = sites.filter(s => s.id === body.sub_station)[0];
+  body.day_type_he     = dayTypeHe(body.day_type);
+  body.site_name       = site ? site.name : '';
+  body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
+
   body.updated_at = serverTimestamp();
   await setDoc(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), body);
   records[key] = Object.assign({ id: recordId(ME.emp, key) }, body);
@@ -577,8 +623,14 @@ $('btnFill').onclick = async () => {
     const bt = baseTimes();
     const batch = writeBatch(db);
     sug.forEach(function (key) {
-      const rec = newRecord(key, { day_type: 'regular', start: bt.start, end: bt.end });
-      rec.hours = calcHours(rec, 0);
+      const rec = newRecord(key, { day_type: 'regular', start: bt.start,
+                                   end: bt.end, sub_station: mySite });
+      const fx = siteHoursOf(mySite);
+      const site0 = sites.filter(s => s.id === mySite)[0];
+      rec.hours           = calcHours(rec, fx);
+      rec.day_type_he     = dayTypeHe(rec.day_type);
+      rec.site_name       = site0 ? site0.name : '';
+      rec.reason_required = reasonWhy(rec, fx, shiftHoursFor()) !== '';
       rec.updated_at = serverTimestamp();
       batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), rec);
       records[key] = rec;
@@ -631,6 +683,139 @@ $('btnManual').onclick = () => {
           records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
 };
 
+// ---------- תיקון וחישוב מחדש ----------
+//
+// הסידור משתנה. חריגה נוספת, מישהו מחליף מישהו, והדוח שנבנה
+// לפני שבועיים כבר לא תואם. שני הכפתורים האלה נותנים למשתמש
+// לתקן את זה בעצמו במקום לפנות למפקד.
+
+$('btnSync').onclick = async () => {
+  const b = $('btnSync'); b.disabled = true;
+  try {
+    // הסידור נטען מחדש — הוא יכול היה להשתנות מאז שהמסך נפתח.
+    await loadStatic();
+
+    const bt = baseTimes();
+    const last = daysInMonth(viewYear, viewMonth);
+    const added = [], extra = [];
+    const batch = writeBatch(db);
+    let n = 0;
+
+    for (let d = 1; d <= last; d++) {
+      const date = new Date(viewYear, viewMonth, d);
+      const key  = dateKey(viewYear, viewMonth, d);
+      const working = ME.crew && isCrewWorking(rotations, ME.crew, date, overrides);
+      const rec = records[key];
+
+      if (working && !rec) {
+        const add = newRecord(key, { day_type: 'regular', start: bt.start,
+                                     end: bt.end, sub_station: mySite });
+        const fx2 = siteHoursOf(mySite);
+        const st2 = sites.filter(s => s.id === mySite)[0];
+        add.hours           = calcHours(add, fx2);
+        add.day_type_he     = dayTypeHe(add.day_type);
+        add.site_name       = st2 ? st2.name : '';
+        add.reason_required = reasonWhy(add, fx2, shiftHoursFor()) !== '';
+        add.updated_at = serverTimestamp();
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), add);
+        records[key] = add; added.push(d); n++;
+      }
+
+      // יום שדיווחת עליו והסידור אומר שלא עבדת. לא נמחק
+      // אוטומטית — יכול להיות נע״ת, ישיבה או החלפה אמיתית.
+      // רק מסומן, וההחלטה שלך.
+      if (!working && rec && rec.day_type === 'regular') extra.push(d);
+    }
+
+    if (n) await batch.commit();
+
+    const parts = [];
+    if (added.length) parts.push('נוספו ' + added.length + ' ימים: ' + added.join(', '));
+    if (extra.length) parts.push('יש ' + extra.length +
+      ' ימים שדיווחת כרגילים והסידור אומר שלא עבדת: ' + extra.join(', ') +
+      '. בדוק אותם — אולי הם נע״ת או החלפה.');
+    if (!parts.length) parts.push('הדוח תואם לסידור. אין מה לתקן.');
+
+    msg(parts.join(' · '), extra.length ? 'info' : 'ok');
+    render();
+  } catch (e) {
+    msg('התיקון נכשל. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+// השעות נשמרות על הרשומה לצורך דוחות, ומחושבות מחדש בכל תצוגה.
+// אם השניים נפרדו — למשל אחרי שינוי באורך המשמרת של תחנת קצה —
+// הכפתור הזה מיישר אותם.
+$('btnRecalc').onclick = async () => {
+  const b = $('btnRecalc'); b.disabled = true;
+  try {
+    const keys = Object.keys(records);
+    const batch = writeBatch(db);
+    let fixed = 0;
+
+    keys.forEach(function (key) {
+      const r = records[key];
+      const h = calcHours(r, siteHoursOf(r.sub_station));
+      if (Number(r.hours) !== Number(h)) {
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)),
+                  { hours: h, updated_at: serverTimestamp() }, { merge: true });
+        r.hours = h; fixed++;
+      }
+    });
+
+    if (fixed) await batch.commit();
+    msg(fixed ? fixed + ' ימים תוקנו.'
+              : 'אין פער. השעות השמורות תואמות לחישוב.', 'ok');
+    render();
+  } catch (e) {
+    msg('החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+// דוח להדפסה או לשמירה כ-PDF, בפורמט שנשלח למשאבי אנוש.
+// אותו מבנה בדיוק שהשרת ישלח במייל ב-1 לחודש, כדי שמה
+// שהכבאי רואה יהיה מה שמשאבי אנוש מקבלים.
+function reportRows(){
+  return Object.keys(records).sort().map(function (key) {
+    const r    = records[key];
+    const site = sites.filter(s => s.id === r.sub_station)[0];
+    const fix  = siteHoursOf(r.sub_station);
+    return {
+      date: r.date,
+      day_type_he: dayTypeHe(r.day_type),
+      start: r.start, end: r.end,
+      start2: r.start2, end2: r.end2,
+      site_name: site ? site.name : '',
+      site_fixed: !!(site && site.fixed_hours),
+      notes: r.notes || '',
+      reason: String(r.overtime_reason || '').trim(),
+      reason_why: reasonWhy(r, fix, shiftHoursFor()),
+      hours: calcHours(r, fix)
+    };
+  });
+}
+
+$('btnPrint').onclick = () => {
+  const rows = reportRows();
+  const st = (report && report.status) || 'draft';
+  const html = reportPage({
+    full_name: ME.full_name || '',
+    month: monthKey(viewYear, viewMonth),
+    station_name: 'תחנה 102',
+    status: st,
+    total: monthTotal(Object.keys(records).map(k => records[k]), siteHoursOf)
+  }, rows);
+
+  const w = window.open('', '_blank');
+  if (!w) { msg('הדפדפן חסם את החלון. אפשר לאשר חלונות קופצים ולנסות שוב.', 'err'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(function () { w.print(); }, 300);
+};
+
 // ---------- חלונית עריכה ----------
 
 function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
@@ -656,7 +841,7 @@ function editDay(key, rec){
   if (locked()) return;
   const bt = baseTimes();
   const v = rec || { day_type: 'regular', start: bt.start, end: bt.end,
-                     sub_station: '', notes: '' };
+                     sub_station: mySite, notes: '' };
   const p = key.split('-');
   const shape0 = rec ? shapeOf(rec) : 'regular';
 
@@ -701,7 +886,7 @@ function editDay(key, rec){
 
     '<div id="dOtBox" class="ot hide">' +
       '<div class="otHead" id="dOtHead"></div>' +
-      '<label>נימוק לשעות הנוספות · חובה</label>' +
+      '<label>נימוק · חובה</label>' +
       '<input type="text" id="dOtReason" maxlength="120" value="' +
         esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
     '</div>' +
@@ -761,15 +946,15 @@ function editDay(key, rec){
     const cur   = current();
     const fixed = siteHoursOf(cur.sub_station);
     const h     = calcHours(cur, fixed);
-    const ot    = overtimeHours(cur, fixed, shiftHoursFor());
+    const why   = reasonWhy(cur, fixed, shiftHoursFor());
 
     $('dHint').innerHTML = 'שעות שיישמרו: <b>' + (h == null ? '—' : h) + '</b>' +
       (fixed ? ' · תחנת קצה עם אורך משמרת קבוע' : '');
 
-    $('dOtBox').classList.toggle('hide', ot <= 0);
-    if (ot > 0) {
-      $('dOtHead').innerHTML = '<b>' + ot + '</b> שעות מעל אורך המשמרת (' +
-        shiftHoursFor() + '). בלי נימוק אי אפשר לשמור.';
+    $('dOtBox').classList.toggle('hide', !why);
+    if (why) {
+      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — משאבי אנוש צריכים ' +
+        'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.';
     }
   };
 
@@ -803,8 +988,9 @@ function editDay(key, rec){
           '. בחר "משמרת רגילה", או תקן את השעות.', 'err');
       return;
     }
-    if (reasonMissing(cur, fixed, shiftHoursFor())) {
-      msg('יש שעות נוספות ביום הזה. צריך לכתוב נימוק.', 'err');
+    const why = reasonWhy(cur, fixed, shiftHoursFor());
+    if (why && !cur.overtime_reason) {
+      msg(why + ' — צריך לכתוב נימוק לפני שמירה.', 'err');
       $('dOtReason').focus();
       return;
     }
@@ -877,8 +1063,8 @@ function submitPreview(){
   const otLines = s.overtime.length
     ? '<div class="sum-ot">' + s.overtime.map(function (o) {
         const p2 = o.date.split('-');
-        return '<div>' + Number(p2[2]) + '.' + Number(p2[1]) + ' · ' + o.hours +
-               ' שעות נוספות · ' + (o.reason
+        return '<div>' + Number(p2[2]) + '.' + Number(p2[1]) + ' · ' +
+               esc(o.why) + ' · ' + (o.reason
                  ? esc(o.reason)
                  : '<span class="no">חסר נימוק</span>') + '</div>';
       }).join('') + '</div>'
@@ -896,6 +1082,8 @@ function submitPreview(){
     typeLines +
     (s.split ? '<div class="sum-line"><span>משמרות מפוצלות</span><b>' +
                 s.split + '</b></div>' : '') +
+    (s.overtime.length ? '<div class="sum-line"><span>ימים שדורשים נימוק</span><b>' +
+                s.overtime.length + '</b></div>' : '') +
     (s.overtimeHours ? '<div class="sum-line"><span>שעות נוספות</span><b>' +
                 s.overtimeHours + '</b></div>' : '') +
     (sug.length ? '<div class="sum-line sum-bad"><span>ימים בסידור שלא דיווחת</span><b>' +
@@ -904,7 +1092,7 @@ function submitPreview(){
 
     (s.unexplained.length
       ? '<div class="ot" style="margin-top:14px"><div class="otHead">' +
-        '<b>' + s.unexplained.length + '</b> ימים עם שעות נוספות בלי נימוק. ' +
+        '<b>' + s.unexplained.length + '</b> ימים בלי נימוק. ' +
         'צריך להשלים אותם לפני שליחה.</div></div>'
       : '') +
 

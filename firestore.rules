@@ -393,6 +393,13 @@ service cloud.firestore {
             && request.resource.data.get('min_headcount', 0) >= 0
             && request.resource.data.get('min_headcount', 0) <= 200
           ) || (
+            docId == 'hr'
+            && request.resource.data.keys().hasOnly(
+                 ['email', 'hour_limit', 'updated_at', 'by'])
+            && request.resource.data.get('hour_limit', 0) is int
+            && request.resource.data.get('hour_limit', 0) >= 0
+            && request.resource.data.get('hour_limit', 0) <= 1000
+          ) || (
             docId == 'board'
             && request.resource.data.keys().hasOnly(
                  ['vehicles', 'command', 'updated_at', 'by'])
@@ -548,6 +555,18 @@ service cloud.firestore {
       // מפקד משמרת מאשר את האנשים שלו; רכז כוח אדם ומנהל-על
       // מאשרים את כל התחנה — כדי שסוף חודש לא ייתקע כשמפקד
       // בחופשה.
+
+      // תוצאות הריצה הלילית ודוחות משאבי אנוש. נכתבים בשרת
+      // בלבד; הסגל קורא כדי לראות מה נמצא.
+      match /scans/{monthKey} {
+        allow read:  if staff(sid);
+        allow write: if false;
+      }
+
+      match /hr_reports/{monthKey} {
+        allow read:  if staff(sid);
+        allow write: if false;
+      }
 
       match /monthly_reports/{docId} {
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))

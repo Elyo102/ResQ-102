@@ -989,3 +989,428 @@ exports.reindexDirectory = onCall(async (req) => {
 
   return { ok: true, scanned: snaps.size, updated: updated };
 });
+
+
+// =====================================================================
+//  ריצת לילה ודוח חודשי
+//
+//  הסידור משתנה — חריגה נוספת, מישהו מחליף מישהו — והדוח שנבנה
+//  לפני שבועיים כבר לא תואם. שתי המשימות כאן רצות מעצמן ומוצאות
+//  את הפערים לפני שמשאבי אנוש מוצאים אותם.
+//
+//  שתיהן קוראות את השעות מהשדה hours שנשמר על הרשומה, ואינן
+//  מחשבות אותן מחדש. החישוב חי במקום אחד — hours.js בדפדפן —
+//  והמשתמש אישר בדיוק את המספרים האלה. חישוב שני כאן היה יוצר
+//  אפשרות שהמייל אומר מספר אחד והמסך אומר אחר, וזה בדיוק הפער
+//  שהמערכת הישנה סבלה ממנו.
+// =====================================================================
+
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+
+const STATION_ID   = 'eilat_102';
+const STATION_NAME = 'תחנה 102';
+
+// חריגה בסך שעות חודשי. ניתן לשנות במסמך ההגדרות.
+const DEFAULT_HOUR_LIMIT = 265;
+
+const HE_MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                   'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function monthKeyOf(d) {
+  return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1);
+}
+
+function prevMonthKey(d) {
+  const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  return m === 0 ? (y - 1) + '-12' : y + '-' + pad2(m);
+}
+
+function heMonth(mk) {
+  const p = String(mk).split('-');
+  return (HE_MONTHS[Number(p[1]) - 1] || p[1]) + ' ' + p[0];
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---------- הגדרות משאבי אנוש ----------
+//
+// כתובת המייל אינה קבועה בקוד. היא יושבת במסמך שאפשר לערוך,
+// כי כתובת מתחלפת ואין סיבה שהחלפה כזו תדרוש פריסה מחדש.
+async function hrConfig() {
+  let cfg = {};
+  try {
+    const snap = await db.doc('stations/' + STATION_ID + '/config/hr').get();
+    if (snap.exists) cfg = snap.data() || {};
+  } catch (e) {
+    console.error('hr config read failed', e);
+  }
+  return {
+    email: String(cfg.email || '').trim(),
+    limit: Number(cfg.hour_limit || DEFAULT_HOUR_LIMIT)
+  };
+}
+
+// ---------- איזו משמרת עובדת בתאריך ----------
+//
+// אותה נוסחה בדיוק שב-rotation.js, כולל עדיפות החריגות.
+// היא מוכפלת כאן כי הדפדפן והשרת אינם חולקים קוד, וזו כפילות
+// מודעת: כל שינוי בכלל הזה חייב להיעשות בשני המקומות.
+const CREWS = ['A', 'B', 'C'];
+
+function daysBetweenKeys(a, b) {
+  const pa = a.split('-').map(Number), pb = b.split('-').map(Number);
+  return Math.round(
+    (Date.UTC(pb[0], pb[1] - 1, pb[2]) - Date.UTC(pa[0], pa[1] - 1, pa[2])) / 86400000
+  );
+}
+
+function crewOnKey(rotations, overrides, dateKey) {
+  const ov = overrides[dateKey];
+  if (ov && ov.crew && CREWS.indexOf(ov.crew) !== -1) return ov.crew;
+
+  const active = (rotations || []).filter(r => r.is_active !== false);
+  if (!active.length) return null;
+
+  const base   = active[0];
+  const cycle  = Number(base.cycle_days) || CREWS.length;
+  const anchor = String(base.anchor_date || '');
+  if (!anchor) return null;
+
+  const diff = daysBetweenKeys(anchor, dateKey);
+  const idx  = ((diff % cycle) + cycle) % cycle;
+  const hit  = active.find(r => Number(r.position_in_cycle) === idx);
+  return hit ? hit.crew : null;
+}
+
+function isWorking(rotations, overrides, crew, dateKey) {
+  if (crewOnKey(rotations, overrides, dateKey) === crew) return true;
+  const ov = overrides[dateKey];
+  return !!(ov && Array.isArray(ov.extra_crews) && ov.extra_crews.indexOf(crew) !== -1);
+}
+
+async function loadSchedule() {
+  const rotations = [];
+  const overrides = {};
+  try {
+    const rs = await db.collection('stations/' + STATION_ID + '/rotations').get();
+    rs.forEach(d => rotations.push(d.data() || {}));
+  } catch (e) { console.error('rotations read failed', e); }
+  try {
+    const os = await db.collection('stations/' + STATION_ID + '/shift_overrides').get();
+    os.forEach(d => { overrides[d.id] = d.data() || {}; });
+  } catch (e) { console.error('overrides read failed', e); }
+  return { rotations, overrides };
+}
+
+// ---------- סריקת חודש של אדם אחד ----------
+
+function scanPerson(person, recs, sched, mk, limit) {
+  const findings = [];
+  const byDate = {};
+  recs.forEach(r => { byDate[r.date] = r; });
+
+  const p = mk.split('-').map(Number);
+  const last = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
+
+  let total = 0;
+  recs.forEach(r => { total += Number(r.hours || 0); });
+  total = Math.round(total * 100) / 100;
+
+  for (let d = 1; d <= last; d++) {
+    const key = mk + '-' + pad2(d);
+    const working = person.crew &&
+      isWorking(sched.rotations, sched.overrides, person.crew, key);
+    const rec = byDate[key];
+
+    // הסידור אומר שעבד ואין דיווח.
+    if (working && !rec) {
+      findings.push({ kind: 'missing', date: key,
+                      text: 'הסידור אומר שעבד ואין דיווח' });
+    }
+    // דווח כיום רגיל והסידור אומר שלא עבד. לא בהכרח טעות —
+    // נע״ת, ישיבה או החלפה נראים כך — ולכן זו הערה ולא שגיאה.
+    if (!working && rec && rec.day_type === 'regular') {
+      findings.push({ kind: 'unscheduled', date: key,
+                      text: 'דווח יום רגיל והסידור אומר שלא עבד' });
+    }
+    // משמרת שנפתחה ולא נסגרה.
+    if (rec && rec.start && !rec.end) {
+      findings.push({ kind: 'open', date: key,
+                      text: 'משמרת נפתחה בשעון ולא נסגרה' });
+    }
+    // יום שדורש נימוק ואין. הדגל reason_required נכתב על הרשומה
+    // בדפדפן, ששם חיים כללי הנימוק.
+    if (rec && rec.reason_required && !String(rec.overtime_reason || '').trim()) {
+      findings.push({ kind: 'no_reason', date: key,
+                      text: 'יום שדורש נימוק ואין בו נימוק' });
+    }
+    // שעות שנשמרו ולא מסתדרות בכלל.
+    if (rec && (rec.hours == null || Number(rec.hours) < 0 || Number(rec.hours) > 48)) {
+      findings.push({ kind: 'bad_hours', date: key,
+                      text: 'שעות לא סבירות: ' + rec.hours });
+    }
+  }
+
+  if (total > limit) {
+    findings.push({ kind: 'over_limit', date: '',
+                    text: 'סך ' + total + ' שעות, מעל הסף של ' + limit });
+  }
+
+  return { total, findings };
+}
+
+// ---------- סריקה מלאה ----------
+
+async function scanMonth(mk) {
+  const sched = await loadSchedule();
+  const cfg = await hrConfig();
+
+  const people = [];
+  const rs = await db.collection('stations/' + STATION_ID + '/roster').get();
+  rs.forEach(d => {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    people.push({ uid: d.id, full_name: v.full_name || '', crew: v.crew || '' });
+  });
+
+  const att = await db.collection('stations/' + STATION_ID + '/attendance')
+    .where('month', '==', mk).get();
+
+  const byEmp = {};
+  att.forEach(d => {
+    const v = d.data() || {};
+    const e = String(v.emp_number || '');
+    if (!e) return;
+    (byEmp[e] = byEmp[e] || []).push(v);
+  });
+
+  const results = [];
+  for (const emp of Object.keys(byEmp)) {
+    const recs = byEmp[emp];
+    const first = recs[0] || {};
+    const person = {
+      emp: emp,
+      uid: first.uid || '',
+      full_name: first.full_name || '',
+      crew: first.crew || ''
+    };
+    const out = scanPerson(person, recs, sched, mk, cfg.limit);
+    results.push(Object.assign({ person, recs }, out));
+  }
+
+  // מי שיש לו משמרות בסידור ולא דיווח אף יום — לא יופיע כלל
+  // בסריקה שמבוססת על דיווחים, ולכן נבדק בנפרד.
+  const reported = {};
+  results.forEach(r => { reported[r.person.uid] = true; });
+  people.forEach(function (p) {
+    if (reported[p.uid] || !p.crew) return;
+    const pk = mk.split('-').map(Number);
+    const last = new Date(Date.UTC(pk[0], pk[1], 0)).getUTCDate();
+    let due = 0;
+    for (let d = 1; d <= last; d++) {
+      if (isWorking(sched.rotations, sched.overrides, p.crew,
+                    mk + '-' + pad2(d))) due++;
+    }
+    if (due) {
+      results.push({
+        person: { emp: '', uid: p.uid, full_name: p.full_name, crew: p.crew },
+        recs: [], total: 0,
+        findings: [{ kind: 'nothing_reported', date: '',
+                     text: due + ' משמרות בסידור ואף יום לא דווח' }]
+      });
+    }
+  });
+
+  results.sort((a, b) =>
+    String(a.person.full_name).localeCompare(String(b.person.full_name), 'he'));
+  return { results, cfg, mk };
+}
+
+// ---------- ריצת הלילה ----------
+//
+// 02:10 בלילה, שעון ישראל. מוקדם מספיק כדי שהבוקר יתחיל עם
+// תמונה נכונה, ומאוחר מספיק כדי שדיווחי הערב כבר נכנסו.
+
+exports.nightlyScan = onSchedule({
+  schedule: '10 2 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const now = new Date();
+  const mk = monthKeyOf(now);
+  const { results, cfg } = await scanMonth(mk);
+
+  const flagged = results.filter(r => r.findings.length);
+  const total = flagged.reduce((s, r) => s + r.findings.length, 0);
+
+  await db.doc('stations/' + STATION_ID + '/scans/' + mk).set({
+    month: mk,
+    ran_at: FV.serverTimestamp(),
+    people_checked: results.length,
+    people_flagged: flagged.length,
+    findings_total: total,
+    hour_limit: cfg.limit,
+    people: flagged.map(r => ({
+      emp: r.person.emp,
+      full_name: r.person.full_name,
+      crew: r.person.crew,
+      total_hours: r.total,
+      findings: r.findings
+    }))
+  }, { merge: true });
+
+  console.log('nightlyScan', mk, 'checked', results.length,
+              'flagged', flagged.length, 'findings', total);
+});
+
+// ---------- הדוח החודשי למשאבי אנוש ----------
+//
+// ב-1 לחודש ב-06:00, על החודש שהסתיים. מייל אחד מאוחד עם כל
+// המשתמשים, כפי שאלדד ביקש — ולא 39 מיילים נפרדים.
+
+function personTable(r, cfg) {
+  const rows = r.recs.slice().sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)));
+
+  const body = rows.map(function (v) {
+    // בלי סימון "לא צוינה סיבה" — השמירה חסומה בלעדיו.
+    const note = esc(String(v.overtime_reason || '').trim() || v.notes || '');
+    const t = function (x) {
+      return '<span style="direction:ltr;unicode-bidi:isolate;display:inline-block">' +
+             esc(x || '—') + '</span>';
+    };
+    const p = String(v.date).split('-');
+    return '<tr>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center">' +
+        Number(p[2]) + '.' + Number(p[1]) + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center">' +
+        esc(v.day_type_he || v.day_type || '') + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center">' +
+        (v.start ? t(v.start) : '—') + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center">' +
+        (v.end ? t(v.end) : '—') + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center">' +
+        esc(v.site_name || '') + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:right">' + note + '</td>' +
+      '<td style="padding:6px;border:1px solid #e6eaee;text-align:center;' +
+        'font-weight:700">' + (v.hours == null ? '—' : v.hours) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  const over = r.total > cfg.limit;
+  const flags = r.findings.filter(f => f.kind !== 'over_limit');
+
+  return '<div style="margin:0 0 30px">' +
+    '<div style="font-size:19px;font-weight:800;color:#c62828">' +
+      esc(r.person.full_name || r.person.emp) + '</div>' +
+    '<div style="font-size:12.5px;color:#666;margin-bottom:8px">מס׳ ' +
+      esc(r.person.emp) + (r.person.crew ? ' · משמרת ' + esc(r.person.crew) : '') +
+      '</div>' +
+    (rows.length
+      ? '<table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+        '<thead><tr>' +
+        ['תאריך','סוג יום','כניסה','יציאה','מקום','הערות','שעות'].map(function (h) {
+          return '<th style="background:#f4f6f8;color:#1565c0;padding:7px;' +
+                 'border:1px solid #dde3e8">' + h + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + body + '</tbody></table>'
+      : '<div style="color:#c62828;font-weight:700">לא דווח אף יום</div>') +
+    (flags.length
+      ? '<div style="border:1px solid #e0a23c;background:#fff8e6;border-radius:6px;' +
+        'padding:9px;margin-top:8px;font-size:12.5px;color:#8a6100">' +
+        flags.map(f => (f.date ? f.date.slice(8) + '.' + f.date.slice(5, 7) + ' · ' : '') +
+                       esc(f.text)).join('<br>') + '</div>'
+      : '') +
+    '<div style="border:2px solid ' + (over ? '#c62828' : '#dde3e8') +
+      ';border-radius:6px;padding:11px;margin-top:8px;text-align:center;' +
+      'font-size:16px;font-weight:800' + (over ? ';color:#c62828' : '') + '">' +
+      'סך שעות: ' + r.total + (over ? '  ⚠ חריגה מעל ' + cfg.limit : '') +
+    '</div></div>';
+}
+
+async function buildAndSendMonthly(mk) {
+  const { results, cfg } = await scanMonth(mk);
+  if (!cfg.email) {
+    console.error('monthlyHrReport: no HR email configured, skipping send');
+  }
+
+  const over = results.filter(r => r.total > cfg.limit);
+  const flagged = results.filter(r => r.findings.length);
+
+  const head =
+    '<div style="font-size:13px;color:#444;line-height:1.9;margin-bottom:22px;' +
+      'border:1px solid #dde3e8;border-radius:8px;padding:13px">' +
+    '<b>' + results.length + '</b> עובדים · ' +
+    '<b>' + over.length + '</b> חריגות מעל ' + cfg.limit + ' שעות · ' +
+    '<b>' + flagged.length + '</b> עובדים עם הערות' +
+    '</div>';
+
+  const html = mailShell('דוח נוכחות · ' + heMonth(mk),
+    head + results.map(r => personTable(r, cfg)).join(''));
+
+  await db.doc('stations/' + STATION_ID + '/hr_reports/' + mk).set({
+    month: mk,
+    built_at: FV.serverTimestamp(),
+    people: results.length,
+    over_limit: over.length,
+    flagged: flagged.length,
+    hour_limit: cfg.limit,
+    sent_to: cfg.email || null
+  }, { merge: true });
+
+  if (cfg.email) {
+    await sendMail(cfg.email,
+      'ResQ — דוח נוכחות ' + heMonth(mk) + ' · ' + STATION_NAME, html);
+  }
+
+  console.log('monthlyHrReport', mk, 'people', results.length,
+              'over', over.length, 'to', cfg.email || '(none)');
+  return { people: results.length, over: over.length, sent: !!cfg.email };
+}
+
+exports.monthlyHrReport = onSchedule({
+  schedule: '0 6 1 * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  await buildAndSendMonthly(prevMonthKey(new Date()));
+});
+
+// הרצה ידנית של אחת מהשתיים, למנהל-על. בלי זה אי אפשר לבדוק
+// אותן בלי לחכות לחצות או לראשון בחודש.
+exports.runReportNow = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+  const isSuper = auth.token.super === true ||
+    String(auth.token.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  if (!isSuper) throw new HttpsError('permission-denied', 'למנהל מערכת בלבד.');
+
+  const mk = String((req.data || {}).month || '') ||
+             prevMonthKey(new Date());
+  const what = String((req.data || {}).what || 'report');
+
+  if (what === 'scan') {
+    const { results, cfg } = await scanMonth(mk);
+    const flagged = results.filter(r => r.findings.length);
+    await db.doc('stations/' + STATION_ID + '/scans/' + mk).set({
+      month: mk, ran_at: FV.serverTimestamp(),
+      people_checked: results.length, people_flagged: flagged.length,
+      findings_total: flagged.reduce((s, r) => s + r.findings.length, 0),
+      hour_limit: cfg.limit,
+      people: flagged.map(r => ({
+        emp: r.person.emp, full_name: r.person.full_name, crew: r.person.crew,
+        total_hours: r.total, findings: r.findings
+      }))
+    }, { merge: true });
+    return { ok: true, month: mk, checked: results.length,
+             flagged: flagged.length };
+  }
+
+  const out = await buildAndSendMonthly(mk);
+  return Object.assign({ ok: true, month: mk }, out);
+});
