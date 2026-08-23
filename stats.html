@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=20">
+<link rel="stylesheet" href="./theme.css?v=21">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -159,14 +159,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
-import { renderNav, renderStuckNav } from './nav.js?v=20';
-import { initPWA } from './pwa.js?v=20';
-import { watchCallouts } from './callout.js?v=20';
-import { CREW_HE } from './rotation.js?v=20';
-import { mergeFleet } from './faults.js?v=20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=21';
+import { renderNav, renderStuckNav } from './nav.js?v=21';
+import { initPWA } from './pwa.js?v=21';
+import { watchCallouts } from './callout.js?v=21';
+import { CREW_HE } from './rotation.js?v=21';
+import { mergeFleet } from './faults.js?v=21';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=20';
+         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=21';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

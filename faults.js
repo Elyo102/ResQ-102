@@ -313,6 +313,109 @@ export function vehicleReport(faults, vehicleId) {
 }
 
 // ------------------------------------------------------------------
+//  הדיווח האחרון
+// ------------------------------------------------------------------
+//
+// אלדד: "בכל מקום שיש לדווח כל סוג של תקלה — להראות רק את
+// העדכנית ביותר, ולחיצה תפתח לוג היסטוריה של הרכב."
+//
+// **הסכנה שבזה, ומה שנבנה כדי לנטרל אותה.** אם השורה מציגה
+// רק את האחרון, תקלה משביתה מלפני שלושה ימים נעלמת מתחת
+// לשריטה שדווחה הבוקר — והמפקד הנכנס מקבל רכב שנראה תקין.
+//
+// לכן השורה מציגה **שני** דברים מקורות שונים:
+//
+//   המלל          הדיווח האחרון
+//   התג והצבע     החומרה **הגרועה ביותר שעדיין פתוחה**
+//   המונה         כמה דיווחים יש בסך הכל על הנושא
+//
+// כך "רכב אלמוג · פנס שרוף" יכול להופיע עם תג אדום "משבית",
+// ואז ברור שיש שם עוד משהו וצריך ללחוץ.
+
+export function normTitle(t) {
+  return String(t || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// נושא = הרכב, ואם אין רכב — הכותרת. כך גם "מסכה מספר 4"
+// צוברת היסטוריה משלה, בדיוק כמו רכב.
+export function subjectKey(f) {
+  const v = f || {};
+  return v.vehicle_id ? 'v:' + v.vehicle_id : 't:' + normTitle(v.title);
+}
+
+export function subjectName(f) {
+  const v = f || {};
+  return v.vehicle_name || v.title || 'ללא שם';
+}
+
+export function latestOf(list) {
+  return (list || []).slice().sort(function (a, b) {
+    return String((b || {}).created_key || '')
+      .localeCompare(String((a || {}).created_key || ''));
+  })[0] || null;
+}
+
+// כל הדיווחים על אותו נושא — מה שנפתח בלחיצה.
+export function subjectLog(faults, f) {
+  const k = subjectKey(f);
+  return sortFaults((faults || []).filter(function (x) {
+    return x && subjectKey(x) === k;
+  }));
+}
+
+// קיבוץ לשורה אחת לכל נושא.
+export function bySubject(list, all) {
+  const groups = {};
+  (list || []).forEach(function (f) {
+    if (!f) return;
+    const k = subjectKey(f);
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(f);
+  });
+
+  const rows = Object.keys(groups).map(function (k) {
+    const shown = groups[k];
+    // ההיסטוריה נמדדת על כל התקלות, לא רק על אלה שבמדור.
+    // אחרת "3 דיווחים" יהפוך ל"1" ברגע שהשניים האחרים נסגרו,
+    // וזו בדיוק ההיסטוריה שרוצים לראות.
+    const hist = all ? subjectLog(all, shown[0]) : sortFaults(shown);
+    const open = shown.filter(isOpen);
+    const pool = open.length ? open : shown;
+    const worst = pool.reduce(function (a, f) {
+      return sevRank(f.severity) < sevRank(a.severity) ? f : a;
+    }, pool[0]);
+    const last = latestOf(shown);
+    return {
+      key: k,
+      name: subjectName(last),
+      // הכותרת הקטנה מעל המלל. לרכב — שם הרכב. לפריט בלי
+      // רכב — **סוג הדיווח**, ולא הכותרת: היא כבר מופיעה
+      // בשורה מתחת, ושורה שחוזרת על עצמה היא רעש.
+      head: (last && last.vehicle_id) ? subjectName(last)
+                                      : kindHe((last || {}).kind),
+      vehicle_id: (last && last.vehicle_id) || '',
+      latest: last,
+      list: sortFaults(shown),
+      history: hist,
+      count: shown.length,
+      hist_count: hist.length,
+      sev: (worst && worst.severity) || 'unset',
+      color: sevColor((worst && worst.severity) || 'unset'),
+      sev_he: sevHe((worst && worst.severity) || 'unset')
+    };
+  });
+
+  // החמור קודם, ובתוך אותה חומרה — האחרון שדווח קודם.
+  rows.sort(function (a, b) {
+    const r = sevRank(a.sev) - sevRank(b.sev);
+    if (r) return r;
+    return String((b.latest || {}).created_key || '')
+      .localeCompare(String((a.latest || {}).created_key || ''));
+  });
+  return rows;
+}
+
+// ------------------------------------------------------------------
 //  מסירת אחריות
 // ------------------------------------------------------------------
 //

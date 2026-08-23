@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=20">
+<link rel="stylesheet" href="./theme.css?v=21">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -96,6 +96,27 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .v .nm em{ display:block; font-style:normal; font-size:12px;
              color:var(--muted); font-weight:400; margin-top:2px }
   .v .st{ font-size:12px; font-weight:700; white-space:nowrap }
+
+  /* שורת נושא — רכב אחד או פריט אחד, עם הדיווח האחרון עליו.
+     הפס הצדדי נושא את החומרה הגרועה שעדיין פתוחה, ולא את
+     חומרת הדיווח האחרון. ההסבר למה — ב-faults.js. */
+  .subj{ border:1px solid var(--line); border-inline-start-width:4px;
+        border-radius:11px; padding:12px 13px; background:var(--panel);
+        margin-bottom:9px; cursor:pointer }
+  .subj:hover{ border-color:var(--line-hover) }
+  .subj:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+  .subj .hd{ display:flex; align-items:baseline; gap:10px }
+  .subj .nm{ flex:1; font-size:13px; font-weight:700; color:var(--muted) }
+  .subj .sev{ font-size:12px; font-weight:700; white-space:nowrap }
+  .subj .last{ font-size:15.5px; font-weight:700; margin-top:5px;
+              line-height:1.4 }
+  .subj .dsc{ font-size:13.5px; line-height:1.65; color:var(--dim);
+             margin-top:4px }
+  .subj .ft{ display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+            font-size:12px; color:var(--muted); margin-top:9px;
+            border-top:1px solid var(--line-soft); padding-top:8px }
+  .subj .more{ margin-inline-start:auto; color:var(--accent); font-weight:700;
+              white-space:nowrap }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
@@ -343,18 +364,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=20';
-import { renderNav, renderStuckNav } from './nav.js?v=20';
-import { initPWA } from './pwa.js?v=20';
-import { watchCallouts } from './callout.js?v=20';
-import { CREW_HE } from './rotation.js?v=20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=21';
+import { renderNav, renderStuckNav } from './nav.js?v=21';
+import { initPWA } from './pwa.js?v=21';
+import { watchCallouts } from './callout.js?v=21';
+import { CREW_HE } from './rotation.js?v=21';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
          DAMAGE_DELETE_WHY,
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
-         shrinkImage } from './faults.js?v=20';
+         bySubject, subjectLog, subjectName, latestOf,
+         shrinkImage } from './faults.js?v=21';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -790,16 +812,71 @@ async function closeFault(f){
 
 // ---------- תצוגות ----------
 
+// ---------- שורת נושא ----------
+//
+// שורה אחת לכל רכב או פריט, ובה **הדיווח האחרון בלבד**.
+// לחיצה פותחת את הלוג המלא — כל מה שאי פעם דווח על אותו
+// נושא, עם כפתורי הדירוג והסגירה.
+//
+// מה שמונע מזה להסתיר תקלה חמורה: הפס הצדדי והתג מציגים את
+// החומרה הגרועה **שעדיין פתוחה**, ולא את זו של הדיווח האחרון.
+// רכב עם פנס שרוף שדווח היום ונזילת שמן שפתוחה מאתמול נראה
+// אדום, לא כחול.
+function subRow(row){
+  const f = row.latest || {};
+  const el = document.createElement('div');
+  el.className = 'subj';
+  el.tabIndex = 0;
+  el.style.borderInlineStartColor = row.color;
+  el.innerHTML =
+    '<div class="hd">' +
+      '<span class="nm">' + esc(row.head || row.name) + '</span>' +
+      '<span class="sev" style="color:' + row.color + '">' +
+        esc(row.sev_he) + '</span></div>' +
+    '<div class="last">' + esc(f.title || '—') + '</div>' +
+    (f.desc ? '<div class="dsc">' + esc(f.desc) + '</div>' : '') +
+    '<div class="ft"><span>' + esc(reportedLine(f)) + '</span>' +
+      '<span class="more">' +
+        (row.hist_count > 1 ? row.hist_count + ' דיווחים · ' : '') +
+        'פתח לוג ›</span></div>';
+  const open = function(){ subjectReport(row); };
+  el.onclick = open;
+  el.onkeydown = function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  };
+  return el;
+}
+
+// הלוג. לרכב — כל מה שאי פעם נפתח עליו; לפריט בלי רכב — כל
+// הדיווחים שנשאו את אותה כותרת. פתוח וסגור, כדי שיהיה אפשר
+// לראות שזו הפעם השלישית שאותה מסכה נקרעת.
+function subjectReport(row){
+  const list = row.history || [];
+  $('dlgTitle').textContent = 'לוג · ' + row.name;
+  $('dlgSub').innerHTML = '<span style="color:' + row.color + '">' +
+    esc(row.sev_he) + '</span> · ' + list.length + ' דיווחים בסך הכל, ' +
+    list.filter(isOpen).length + ' פתוחים';
+  $('dlgBody').innerHTML = '';
+  if (!list.length) {
+    $('dlgBody').innerHTML = '<div class="note">אין דיווח.</div>';
+  }
+  list.forEach(f => $('dlgBody').appendChild(faultCard(f)));
+  $('rep').classList.add('on');
+}
+
 function renderOpen(){
   const vid = $('fFilter').value;
-  const list = sortFaults(faults.filter(f =>
-    isOpen(f) && (!vid || f.vehicle_id === vid)));
+  const list = faults.filter(f =>
+    isOpen(f) && (!vid || f.vehicle_id === vid));
+  const rows = bySubject(list, faults);
   const box = $('openList');
   box.innerHTML = '';
   $('openNote').textContent = list.length
-    ? list.length + ' תקלות פתוחות.'
-    : 'אין תקלות פתוחות.';
-  list.forEach(f => box.appendChild(faultCard(f)));
+    ? list.length + ' תקלות פתוחות על ' + rows.length +
+      (rows.length === 1 ? ' נושא. לחץ לפתיחת הלוג.'
+                         : ' נושאים. לחץ לפתיחת הלוג.')
+    : 'אין דיווח.';
+  rows.forEach(r => box.appendChild(subRow(r)));
 }
 
 function fill(boxId, list, empty){
@@ -810,7 +887,7 @@ function fill(boxId, list, empty){
                     esc(empty) + '</div>';
     return;
   }
-  list.forEach(f => box.appendChild(faultCard(f)));
+  bySubject(list, faults).forEach(r => box.appendChild(subRow(r)));
 }
 
 function renderShift(){
@@ -847,13 +924,14 @@ function renderShift(){
     sum.appendChild(el);
   });
 
-  fill('hoVeh',    bd.veh,      'אין תקלות רכב פתוחות.');
-  fill('hoDamage', faults.filter(x => isDamage(x) && isOpen(x)),
-       'לא רשומות פגיעות על אף רכב.');
-  fill('hoGear',   bd.gear,     'אין תקלות ציוד או מבנה.');
-  fill('hoRepair', bd.inRepair, 'שום דבר אינו בתיקון כרגע.');
-  fill('hoTasks',  bd.tasks,    'אין משימות פתוחות.');
-  fill('hoNotes',  bd.notes,    'לא נרשמו מסרים.');
+  // נוסח אחיד לכל מדור: "אין דיווח." מדור ריק צריך להיקרא
+  // כמדור ריק, ולא כמשפט שצריך לפענח בשש בבוקר.
+  fill('hoVeh',    bd.veh,      'אין דיווח.');
+  fill('hoDamage', faults.filter(x => isDamage(x) && isOpen(x)), 'אין דיווח.');
+  fill('hoGear',   bd.gear,     'אין דיווח.');
+  fill('hoRepair', bd.inRepair, 'אין דיווח.');
+  fill('hoTasks',  bd.tasks,    'אין דיווח.');
+  fill('hoNotes',  bd.notes,    'אין דיווח.');
 
   const an = $('hoAnchors');
   an.innerHTML = '';
@@ -1008,13 +1086,15 @@ function renderFleet(){
 }
 
 function renderHist(){
-  const list = sortFaults(faults.filter(f => !isOpen(f))).slice(0, 60);
+  const list = faults.filter(f => !isOpen(f));
   const box = $('histList');
   box.innerHTML = '';
   if (!list.length) {
-    box.innerHTML = '<div class="note" style="padding-top:8px">אין תקלות סגורות.</div>';
+    box.innerHTML = '<div class="note" style="padding-top:8px">אין דיווח.</div>';
+    return;
   }
-  list.forEach(f => box.appendChild(faultCard(f)));
+  bySubject(list, faults).slice(0, 60)
+    .forEach(r => box.appendChild(subRow(r)));
 }
 </script>
 </body>

@@ -90,13 +90,55 @@ function styleOnce() {
     '#appNav a.on i{background:var(--on-accent)}',
     '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
+    // במסך רחב המכולה שקופה: הקישורים נשארים ילדים ישירים של
+    // הסרגל, ומתנהגים בדיוק כמו קודם. שום שינוי במחשב.
+    '#navLinks{display:contents}',
+    '#navToggle{display:none}',
     '@media (prefers-reduced-motion:reduce){',
     '  #appNav a{transition:none}',
     '  #appNav a:hover{transform:none}}',
-    '@media (max-width:520px){',
-    '  #appNav{gap:6px;padding:10px 12px}',
-    '  #appNav a{font-size:14px;padding:10px 13px}',
-    '  #appNav .me{width:100%;margin-inline-start:0;order:9;padding-top:2px}}'
+
+    // ----------------------------------------------------------------
+    //  טלפון
+    // ----------------------------------------------------------------
+    //
+    // ארבעה־עשר יעדים בשורה גמישה נשברו לשלוש שורות משוננות
+    // שתפסו רבע מהמסך — **קבוע**, כי הסרגל דביק. אלדד צילם את
+    // זה בדיוק.
+    //
+    // שני תיקונים:
+    //
+    //   1. **רשת ולא זרימה.** ארבע עמודות שוות, כך שהכפתורים
+    //      מיושרים בקו אנכי אחד. שורה גמישה מיישרת לפי אורך
+    //      המילה, ולכן "כשירויות" ו"גישה" אף פעם לא מתחילים
+    //      באותו מקום
+    //   2. **סגור כברירת מחדל.** בשורה אחת רואים איפה אתה
+    //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
+    //      על הניווט
+    '@media (max-width:560px){',
+    '  #appNav{gap:6px;padding:8px 10px;margin:-18px -18px 14px}',
+    '  #appNav .brand{font-size:15px;margin-inline-end:0}',
+    '  #appNav button.back{padding:8px 10px;font-size:13px}',
+    '  #navToggle{display:inline-flex;align-items:center;gap:6px;',
+    '    margin-inline-start:auto;width:auto;flex:none;',
+    '    background:var(--chip);border:1px solid var(--line);color:var(--txt);',
+    '    font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;',
+    '    padding:9px 12px;border-radius:10px;white-space:nowrap}',
+    '  #navToggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+    '  #navToggle b{color:var(--accent);font-weight:700}',
+    '  #navLinks{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;',
+    '    width:100%;order:5;padding-top:2px}',
+    '  #navLinks.closed{display:none}',
+    '  #appNav a{font-size:12.5px;padding:9px 3px;justify-content:center;',
+    '    gap:5px;text-align:center;line-height:1.15}',
+    '  #appNav a i{width:7px;height:7px}',
+    '  #themeBtn{width:100%;padding:9px 3px;font-size:12.5px}',
+    '  #appNav .me{width:100%;order:6;margin-inline-start:0;font-size:12px}',
+    '  #appNav .me.closed{display:none}}',
+    // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
+    // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
+    '@media (max-width:360px){',
+    '  #navLinks{grid-template-columns:repeat(3,1fr)}}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -129,6 +171,22 @@ export function renderNav(claims, current, who) {
     nav.appendChild(back);
   }
 
+  // כפתור "תפריט" — נראה בטלפון בלבד (CSS), ומחזיק את שם
+  // המסך הנוכחי. סרגל מקופל בלי שם המסך היה חוסך מקום ומוחק
+  // את התשובה לשאלה "איפה אני".
+  const cur = ITEMS.filter(function (x) { return x.href === current; })[0];
+  const tg = document.createElement('button');
+  tg.type = 'button';
+  tg.id = 'navToggle';
+  tg.setAttribute('aria-expanded', 'false');
+  tg.setAttribute('aria-controls', 'navLinks');
+  tg.innerHTML = 'תפריט' + (cur ? ' · <b>' + cur.label + '</b>' : '');
+  nav.appendChild(tg);
+
+  const links = document.createElement('div');
+  links.id = 'navLinks';
+  links.className = 'closed';   // מתעלמים ממנו במסך רחב
+
   ITEMS.forEach(function (it) {
     if (!allowed(it.who, claims)) return;
     const a = document.createElement('a');
@@ -140,17 +198,25 @@ export function renderNav(claims, current, who) {
     a.appendChild(document.createTextNode(it.label));
 
     if (it.href === current) a.className = 'on';
-    nav.appendChild(a);
+    links.appendChild(a);
   });
 
-  nav.appendChild(themeButton());
+  links.appendChild(themeButton());
+  nav.appendChild(links);
 
+  let me = null;
   if (who) {
-    const m = document.createElement('div');
-    m.className = 'me';
-    m.textContent = who;
-    nav.appendChild(m);
+    me = document.createElement('div');
+    me.className = 'me closed';
+    me.textContent = who;
+    nav.appendChild(me);
   }
+
+  tg.onclick = function () {
+    const nowClosed = links.classList.toggle('closed');
+    if (me) me.classList.toggle('closed', nowClosed);
+    tg.setAttribute('aria-expanded', nowClosed ? 'false' : 'true');
+  };
 
   document.body.insertBefore(nav, document.body.firstChild);
 }
