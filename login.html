@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -83,7 +83,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
   .pw-rules i{ font-style:normal; color:var(--muted) }
-  .pw-rules i.ok{ color:#7bc47f }
+  /* היה #7bc47f — ירוק בהיר לרקע כהה, שנעלם על כרטיס לבן.
+     זה הסימן היחיד שאומר "הסיסמה עומדת בתנאי". */
+  .pw-rules i.ok{ color:var(--good) }
   .res{ border-bottom:1px solid var(--line); padding:11px 2px }
   .res:last-child{ border-bottom:0 }
   .res .n{ font-size:15px; font-weight:600 }
@@ -339,7 +341,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <button class="link" id="btnUpdate">בדוק עדכון</button>
     </div>
     <a id="lnkAdmin" class="hide" href="./admin.html"
-       style="display:block;text-align:center;margin-top:10px;color:#ff6a00;font-size:14px">
+       style="display:block;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px">
        ניהול המערכת ואישור בקשות ←</a>
     <button class="link" id="btnChangePw">שינוי סיסמה</button>
     <button class="link" id="btnLogout">התנתק</button>
@@ -373,13 +375,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
 import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=31';
-import { renderNav, clearNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { APP_VERSION, APP_DATE } from './version.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
+  from './stations.js?v=36';
+import { renderNav, clearNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { APP_VERSION, APP_DATE } from './version.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -267,7 +267,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -277,12 +277,12 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=31';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=36';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=31';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
+  from './stations.js?v=36';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -622,8 +622,22 @@ async function reject(uid, box){
 async function loadRotation(){
   const box = $('rotState');
   let snaps;
+  // **החריגות נטענות יחד עם הסבב.**
+  //
+  // crewOnDate נקראה כאן בלי הארגומנט השלישי, ולכן התעלמה
+  // מ-shift_overrides. rotation.js מזהיר על זה במפורש: אם
+  // החריגה גוברת רק במקום אחד, שני מסכים מציגים משמרת שונה
+  // לאותו יום. ביום שיש בו החלפה, מסך הניהול סתר את הסידור,
+  // את הציוות ואת הנוכחות.
+  let ovMap = {};
   try {
     snaps = await getDocs(collection(db, 'stations', STATION_ID, 'rotations'));
+    const ovs = await getDocs(
+      collection(db, 'stations', STATION_ID, 'shift_overrides')).catch(() => null);
+    if (ovs) ovs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.date) ovMap[v.date] = v;
+    });
   } catch (e) {
     box.textContent = 'שגיאה בטעינה: ' + (e.code || e.message);
     return;
@@ -641,8 +655,8 @@ async function loadRotation(){
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
 
-  const cToday = crewOnDate(rots, today);
-  const cTomor = crewOnDate(rots, tomorrow);
+  const cToday = crewOnDate(rots, today, ovMap);
+  const cTomor = crewOnDate(rots, tomorrow, ovMap);
 
   box.innerHTML =
     'מחזור פעיל · ' + rots.length + ' משמרות · עוגן ' + base.anchor_date + '<br>' +

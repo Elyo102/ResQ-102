@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -231,14 +231,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
-import { CREW_HE } from './rotation.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
+import { CREW_HE } from './rotation.js?v=36';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
          subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
-         awayHe, callableWhileAway, summaryOf } from './forms.js?v=31';
+         awayHe, callableWhileAway, summaryOf } from './forms.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -498,7 +498,15 @@ function initSig(){
 function clearSig(){
   if (!sigCtx) return;
   const c = $('sig');
-  sigCtx.fillStyle = 'var(--on-accent)';
+  // לוח החתימה לבן תמיד, בשני המצבים של הערכה. שתי סיבות:
+  // החתימה נשמרת כתמונה ונכנסת לטופס רשמי, ושם רקע כהה הוא
+  // כתם שחור; והקו עצמו מצויר ב-#111.
+  //
+  // כאן היה 'var(--on-accent)'. קנבס אינו CSS — הוא לא יודע
+  // לפענח משתנה, ולכן פסל את ההשמה בשקט והשאיר את ברירת
+  // המחדל: שחור. כלומר הלוח נצבע שחור, הקו נמשך בשחור־כמעט,
+  // והחותם ראה מלבן ריק בלי שום סימן שהוא חתם.
+  sigCtx.fillStyle = '#ffffff';
   sigCtx.fillRect(0, 0, c.width, c.height);
   sigCtx.strokeStyle = '#111';
   sigCtx.lineWidth = 3;

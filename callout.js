@@ -23,8 +23,8 @@ import { collection, query, where, orderBy, limit, onSnapshot,
 export const CALLOUT_TTL_MS = 8 * 60 * 60 * 1000;
 
 export const ACKS = [
-  { id: 'coming', he: 'מגיע',    color: '#35c46b' },
-  { id: 'no',     he: 'לא זמין', color: '#9aa0a6' }
+  { id: 'coming', he: 'מגיע',    color: 'var(--good)' },
+  { id: 'no',     he: 'לא זמין', color: 'var(--muted)' }
 ];
 
 export function ackHe(id) {

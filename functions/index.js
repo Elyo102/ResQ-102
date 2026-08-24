@@ -633,6 +633,18 @@ exports.setUserRole = onCall(async (req) => {
     email: user.email, before: before, after: claims
   });
 
+  // **האימות לפני הכתיבה, ולא אחריה.**
+  //
+  // בגרסה הקודמת ההרשאות נכתבו כאן והבדיקה הזו רצה אחריהן.
+  // כשהיא נכשלה — שם ריק במעבר תחנה — התפקיד, התחנה והמשמרת
+  // כבר השתנו, writeProfile לא רץ, מפתח מספר העובד לא הופנה
+  // מחדש, והמסך הציג "נכשל" על פעולה שכבר חצי בוצעה.
+  const fullName = String(d.full_name || existing.full_name || '').trim();
+  if (!fullName) {
+    throw new HttpsError('invalid-argument',
+      'חסר שם מלא. הזן אותו בטופס — בלעדיו הכבאי לא יימצא בחיפוש.');
+  }
+
   await admin.auth().setCustomUserClaims(user.uid, claims);
 
   // שם וטלפון נשמרים אם לא נמסרו במפורש. בלי זה, תיקון תפקיד
@@ -646,11 +658,7 @@ exports.setUserRole = onCall(async (req) => {
 
   // רשומה בלי שם אינה ניתנת למציאה בחיפוש עובד, והמסכים מציגים
   // במקומה כתובת מייל. עדיף להיכשל כאן מאשר ליצור כבאי אנונימי.
-  const fullName = String(d.full_name || existing.full_name || '').trim();
-  if (!fullName) {
-    throw new HttpsError('invalid-argument',
-      'חסר שם מלא. הזן אותו בטופס — בלעדיו הכבאי לא יימצא בחיפוש.');
-  }
+
 
   await writeProfile(user.uid, {
     emp:        emp,
@@ -1506,7 +1514,7 @@ async function loadSchedule() {
 
 // ---------- סריקת חודש של אדם אחד ----------
 
-function scanPerson(person, recs, sched, mk, limit) {
+function scanPerson(person, recs, sched, mk, limit, cutoff) {
   const findings = [];
   const byDate = {};
   recs.forEach(r => { byDate[r.date] = r; });
@@ -1514,12 +1522,19 @@ function scanPerson(person, recs, sched, mk, limit) {
   const p = mk.split('-').map(Number);
   const last = new Date(Date.UTC(p[0], p[1], 0)).getUTCDate();
 
+  // **עד היום בלבד.** הסריקה רצה על החודש הנוכחי, והלולאה
+  // הגיעה עד סופו — כך שב-5 בחודש כל משמרת עתידית נספרה
+  // כ"עבד ואין דיווח". התוצאה: כעשרים ממצאים מומצאים לכל
+  // אדם, בכל לילה, שמטביעים את הממצאים האמיתיים.
+  const stop = cutoff || (mk + '-' + pad2(last));
+
   let total = 0;
   recs.forEach(r => { total += Number(r.hours || 0); });
   total = Math.round(total * 100) / 100;
 
   for (let d = 1; d <= last; d++) {
     const key = mk + '-' + pad2(d);
+    if (key > stop) break;
     const working = person.crew &&
       isWorking(sched.rotations, sched.overrides, person.crew, key);
     const rec = byDate[key];
@@ -1563,7 +1578,10 @@ function scanPerson(person, recs, sched, mk, limit) {
 
 // ---------- סריקה מלאה ----------
 
-async function scanMonth(mk) {
+// cutoff — התאריך האחרון שנסרק. חודש סגור נסרק במלואו; החודש
+// הנוכחי נסרק עד היום בלבד, אחרת כל משמרת עתידית נספרת
+// כדיווח חסר.
+async function scanMonth(mk, cutoff) {
   const sched = await loadSchedule();
   const cfg = await hrConfig();
 
@@ -1596,7 +1614,7 @@ async function scanMonth(mk) {
       full_name: first.full_name || '',
       crew: first.crew || ''
     };
-    const out = scanPerson(person, recs, sched, mk, cfg.limit);
+    const out = scanPerson(person, recs, sched, mk, cfg.limit, cutoff);
     results.push(Object.assign({ person, recs }, out));
   }
 
@@ -1610,8 +1628,9 @@ async function scanMonth(mk) {
     const last = new Date(Date.UTC(pk[0], pk[1], 0)).getUTCDate();
     let due = 0;
     for (let d = 1; d <= last; d++) {
-      if (isWorking(sched.rotations, sched.overrides, p.crew,
-                    mk + '-' + pad2(d))) due++;
+      const key = mk + '-' + pad2(d);
+      if (cutoff && key > cutoff) break;   // אותו חתך כמו ב-scanPerson
+      if (isWorking(sched.rotations, sched.overrides, p.crew, key)) due++;
     }
     if (due) {
       results.push({
@@ -1633,6 +1652,95 @@ async function scanMonth(mk) {
 // 02:10 בלילה, שעון ישראל. מוקדם מספיק כדי שהבוקר יתחיל עם
 // תמונה נכונה, ומאוחר מספיק כדי שדיווחי הערב כבר נכנסו.
 
+// ---------------------------------------------------------------------
+//  תצלום לילי — גילוי אובדן נתונים
+// ---------------------------------------------------------------------
+//
+//  **מה זה כן, ומה זה לא.**
+//
+//  זה **אינו** גיבוי. שחזור אמיתי של Firestore הוא Point-In-Time
+//  Recovery בקונסולה — הוא מחזיר את בסיס הנתונים לכל רגע בשבעה
+//  ימים אחורה, הוא חינם, והוא לא דורש שאיש יזכור כלום. הוא
+//  כבוי כרגע, ואי אפשר להפעיל אותו רטרואקטיבית.
+//
+//  מה שזה כן: **גלאי**. כל לילה נספרים המסמכים בכל אוסף
+//  ומושווים לאתמול. ירידה חדה — מחיקה בטעות, סקריפט שרץ פעמיים,
+//  כלל שנפרס שגוי ומחק — מייצרת התראה בבוקר.
+//
+//  בלי זה, אובדן נתונים מתגלה כשמישהו מחפש משהו ולא מוצא, וזה
+//  קורה שבועות אחרי — הרבה אחרי שחלון השחזור נסגר.
+
+const SNAP_COLS = [
+  'roster', 'users', 'quals', 'member_quals', 'rotations',
+  'shift_overrides', 'sub_stations', 'vehicles', 'vehicle_views',
+  'attendance', 'monthly_reports', 'swaps', 'guards', 'faults',
+  'handovers', 'submissions', 'broadcasts'
+];
+
+// ירידה של יותר מרבע, או היעלמות מוחלטת של אוסף שהיה מלא.
+const DROP_RATIO = 0.75;
+
+exports.nightlySnapshot = onSchedule({
+  schedule: '15 3 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const sid = STATION_ID;
+  const today = new Date().toISOString().slice(0, 10);
+  const counts = {};
+
+  for (const name of SNAP_COLS) {
+    try {
+      const c = await db.collection('stations/' + sid + '/' + name).count().get();
+      counts[name] = c.data().count;
+    } catch (e) {
+      // ספירה שנכשלה נרשמת כ-null ולא כאפס. אפס פירושו "נמחק
+      // הכל", וזו התראה שגויה שתישלח כל לילה עד שמישהו יבדוק.
+      counts[name] = null;
+    }
+  }
+
+  // אתמול, להשוואה.
+  let prev = null;
+  try {
+    const snap = await db.collection('stations/' + sid + '/backups')
+      .orderBy('date', 'desc').limit(1).get();
+    if (!snap.empty) prev = (snap.docs[0].data() || {}).counts || null;
+  } catch (e) {}
+
+  const drops = [];
+  if (prev) {
+    for (const name of SNAP_COLS) {
+      const was = prev[name], now = counts[name];
+      if (was == null || now == null) continue;
+      if (was >= 5 && now < was * DROP_RATIO) {
+        drops.push(name + ': ' + was + ' → ' + now);
+      }
+    }
+  }
+
+  await db.doc('stations/' + sid + '/backups/' + today).set({
+    date: today, counts: counts, drops: drops,
+    at: FV.serverTimestamp()
+  });
+
+  if (drops.length) {
+    console.error('DATA LOSS SUSPECTED', drops.join(' | '));
+    await sendMail(SUPER_ADMIN_EMAIL,
+      'ResQ — ירידה חדה בכמות הנתונים',
+      mailShell('ירידה חדה בכמות הנתונים',
+        '<p>הספירה הלילית מצאה ירידה של יותר מרבע באוספים הבאים:</p>' +
+        '<ul><li>' + drops.join('</li><li>') + '</li></ul>' +
+        '<p><b>אם לא מחקת בכוונה</b> — היכנס לקונסולה של Firebase ' +
+        'והשתמש ב-Point-In-Time Recovery כדי לחזור לאתמול. ' +
+        'חלון השחזור הוא שבעה ימים.</p>'));
+  }
+
+  console.log('snapshot ' + today + ' · ' +
+    Object.keys(counts).length + ' collections · ' +
+    drops.length + ' drops');
+});
+
 exports.nightlyScan = onSchedule({
   schedule: '10 2 * * *',
   timeZone: 'Asia/Jerusalem',
@@ -1640,7 +1748,9 @@ exports.nightlyScan = onSchedule({
 }, async () => {
   const now = new Date();
   const mk = monthKeyOf(now);
-  const { results, cfg } = await scanMonth(mk);
+  // עד היום. הסריקה רצה בלילה על החודש הרץ.
+  const today = mk + '-' + pad2(now.getUTCDate());
+  const { results, cfg } = await scanMonth(mk, today);
 
   const flagged = results.filter(r => r.findings.length);
   const total = flagged.reduce((s, r) => s + r.findings.length, 0);
@@ -1956,6 +2066,74 @@ function dmyS(k) {
 // אין התראה על מצב שלא השתנה — עדכון של שדה צדדי לא אמור
 // לצלצל בטלפון של אף אחד.
 
+// ---------------------------------------------------------------------
+//  חוק 48 השעות — אכיפה בשרת
+// ---------------------------------------------------------------------
+//
+//  אלדד: "כבאי לא יכול לעבוד 48 שעות רצוף. אם משמרת א׳ עבדה
+//  בראשון לחודש, כל מי שעבד לא יכול לעבוד בשני לחודש."
+//
+//  **הבדיקה קיימת במסך מאז שהוגדרה, ורק שם.** מסך אפשר לעקוף:
+//  קריאה ישירה ל-Firestore, לשונית ישנה שנשארה פתוחה עם קוד
+//  קודם, או פשוט באג. כלל אבטחה לא יכול לבדוק את זה — הוא
+//  היה צריך לקרוא את הסבב, את החריגות ואת שאר ההחלפות, וכל
+//  הקובץ בנוי על אפס קריאות get().
+//
+//  **לכן: הדק, ולא שער.** ההחלפה נכתבת, ומיד אחריה השרת בודק
+//  ומחזיר אותה ל-rejected אם היא פוגעת במנוחה. זה לא מונע את
+//  הכתיבה, אבל זה סמכותי — אי אפשר לעקוף טריגר — והתוצאה
+//  הסופית זהה: החלפה לא חוקית אינה שורדת.
+//
+//  **ההשלכה שאינה מובנת מאליה**, ואלדד אישר אותה: בסבב אחד
+//  לשלושה כל יום פנוי צמוד ליום עבודה. לכן החלפה חוקית חייבת
+//  לוותר על המשמרת הצמודה — כלומר החלפה מזיזה משמרת ביום אחד.
+
+function keyPlus(key, n) {
+  const p = String(key).split('-').map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// האם האדם עובד בתאריך, **אחרי** שההחלפה תיכנס לתוקף.
+function worksAfterSwap(sched, approved, uid, crew, key, gainKey, loseKey) {
+  if (!key) return false;
+  if (loseKey && key === loseKey) return false;
+  if (gainKey && key === gainKey) return true;
+
+  // החלפות מאושרות אחרות שכבר הזיזו לו ימים.
+  for (const sw of approved) {
+    if (sw.from_uid === uid && sw.from_date === key) return false;
+    if (sw.to_uid   === uid && sw.to_date   === key) return false;
+    if (sw.from_uid === uid && sw.to_date   === key) return true;
+    if (sw.to_uid   === uid && sw.from_date === key) return true;
+  }
+  if (!crew) return false;
+  return isWorking(sched.rotations, sched.overrides, crew, key);
+}
+
+// הימים שנפגעים בשני הצדדים. ריק = ההחלפה חוקית.
+function restBreaks(sched, approved, sw) {
+  const out = [];
+  const sides = [
+    { uid: sw.from_uid, name: sw.from_name || 'המבקש',
+      crew: sw.from_crew, gain: sw.to_date,   lose: sw.from_date },
+    { uid: sw.to_uid,   name: sw.to_name   || 'המחליף',
+      crew: sw.to_crew,   gain: sw.from_date, lose: sw.to_date }
+  ];
+
+  for (const p of sides) {
+    if (!p.uid || !p.gain) continue;
+    for (const n of [-1, 1]) {
+      const k = keyPlus(p.gain, n);
+      if (worksAfterSwap(sched, approved, p.uid, p.crew, k, p.gain, p.lose)) {
+        out.push({ who: p.name, gain: p.gain, clash: k });
+      }
+    }
+  }
+  return out;
+}
+
 exports.onSwapChange = onDocumentWritten(
   'stations/{sid}/swaps/{swapId}',
   async (event) => {
@@ -1972,6 +2150,52 @@ exports.onSwapChange = onDocumentWritten(
 
     const url = './swaps.html';
     const both = [after.from_uid, after.to_uid];
+
+    // ---------- אכיפת המנוחה ----------
+    //
+    // רק ברגע האישור. בקשה פתוחה או ממתינה עדיין לא מזיזה
+    // אף משמרת, ולחסום אותה מוקדם מדי היה מונע גם בקשות
+    // שיהיו חוקיות אחרי שהצד השני יבחר תאריך אחר.
+    if (now === 'approved' && was !== 'approved') {
+      try {
+        const sched = await loadSchedule();
+        const apSnap = await db.collection('stations/' + sid + '/swaps')
+          .where('status', '==', 'approved').get();
+        const approved = [];
+        apSnap.forEach(function (d) {
+          if (d.id === event.params.swapId) return;   // לא סופרים את עצמנו
+          approved.push(d.data() || {});
+        });
+
+        const breaks = restBreaks(sched, approved, after);
+        if (breaks.length) {
+          const why = breaks.map(function (b) {
+            return b.who + ' יעבוד ב-' + dmyS(b.gain) +
+                   ' וגם ב-' + dmyS(b.clash);
+          }).join('; ');
+
+          await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
+            status: 'rejected',
+            rejected_by_system: true,
+            reject_why: 'חוק 48 השעות: ' + why + '. בין שתי משמרות ' +
+                        'חייב להיות יום מנוחה.',
+            rejected_key: new Date().toISOString()
+          }, { merge: true });
+
+          await pushToUsers(sid, both, 'swap_mine',
+            'ההחלפה בוטלה',
+            'חוק 48 השעות: ' + why + '.', url, true);
+
+          console.warn('swap ' + event.params.swapId + ' reverted — rest rule', why);
+          return;
+        }
+      } catch (e) {
+        // כשל בבדיקה לא מבטל החלפה שאושרה בידי שני מפקדים.
+        // הוא נרשם, וההחלפה ממשיכה — שקט עדיף על ביטול שרירותי
+        // שאיש לא יבין.
+        console.error('rest check failed', e);
+      }
+    }
 
     if (now === 'peer') {
       await pushToUsers(sid, [after.to_uid], 'swap_mine',

@@ -128,7 +128,7 @@ function styleOnce() {
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
     '#appNav .brand{font-weight:800;font-size:17px;color:var(--txt);',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
-    '#appNav .brand b{color:var(--accent);font-weight:800}',
+    '#appNav .brand b{color:var(--accent-txt);font-weight:800}',
     // כללי הרוחב והשוליים כתובים במפורש: לדפים יש חוקים גורפים
     // כמו button{width:100%} שאחרת בולעים את הכפתור לשורה שלמה.
     '#appNav button.back{display:inline-flex;align-items:center;gap:6px;',
@@ -187,7 +187,10 @@ function styleOnce() {
     '    font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;',
     '    padding:9px 12px;border-radius:10px;white-space:nowrap}',
     '  #navToggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
-    '  #navToggle b{color:var(--accent);font-weight:700}',
+    // accent-txt ולא accent: הכיתוב הזה יושב על צ'יפ אפור,
+    // ושם הכתום הבהיר של הערכה היומית נופל מתחת לסף
+    // הקריאוּת. זו התווית שאומרת באיזה מסך אתה נמצא.
+    '  #navToggle b{color:var(--accent-txt);font-weight:700}',
     '  #navLinks{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;',
     '    width:100%;order:5;padding-top:2px}',
     '  #navLinks.closed{display:none}',

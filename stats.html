@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -46,7 +46,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .lead{ border:1px solid var(--line); border-inline-start:4px solid var(--accent);
          border-radius:10px; padding:14px 16px; background:var(--panel);
          font-size:14.5px; line-height:1.75; margin-bottom:14px }
-  .lead b{ color:var(--on-accent) }
+  /* שם הרכב או האדם — ההדגשה של השורה.
+     היה כאן var(--on-accent), כלומר לבן. הוא נועד לטקסט
+     **על** רקע ההדגשה הכתום, אבל הכרטיס הזה תמיד בהיר:
+     panel רגיל, bad-bg ורוד, good-bg ירקרק. התוצאה הייתה
+     לבן על בהיר — השם פשוט נעלם, ומי שקרא את המשפט לא ידע
+     על איזה רכב מדובר. */
+  .lead b{ color:var(--txt) }
+  .lead.bad b{ color:var(--bad) }
+  .lead.ok  b{ color:var(--good) }
   .lead.bad{ border-inline-start-color:var(--bad); background:var(--bad-bg) }
   .lead.ok{ border-inline-start-color:var(--good); background:var(--good-bg) }
 
@@ -58,6 +66,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   td{ padding:10px 11px; border-bottom:1px solid var(--line-soft); vertical-align:middle }
   tr:last-child td{ border-bottom:0 }
   td.n{ font-variant-numeric:tabular-nums; white-space:nowrap }
+  .lt{ font-size:11.5px; font-weight:600; color:var(--muted) }
   td .nm{ font-weight:700 }
   td .why{ font-size:11.5px; color:var(--muted); margin-top:2px }
 
@@ -88,6 +97,37 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-size:11.5px; color:var(--muted) }
   .key span{ display:flex; align-items:center; gap:5px }
   .key i{ width:9px; height:9px; border-radius:2px; display:inline-block }
+
+  /* ---------- טבלת הרכבים בטלפון ----------
+     שש עמודות ורוחב מזערי של 640 פיקסלים: בטלפון נראו שתי
+     עמודות, וארבע האחרות — תקלות, פגיעות, פתוחות וממוצע
+     סגירה — היו מעבר לקצה. אפשר לגלול אליהן, אבל אף אחד לא
+     גולל לצד בטבלה שהוא לא יודע שהיא נמשכת.
+     לכן כל רכב הופך לכרטיס, והמדדים יורדים לשורה משלהם עם
+     תווית לכל אחד. */
+  @media (max-width:620px){
+    #vTbl{ min-width:0 }
+    #vTbl, #vTbl tbody{ display:block }
+    #vTbl thead{ display:none }
+    /* שתי עמודות קבועות ולא שורה זורמת: כשהמדדים פשוט
+       נגלשים, כל כרטיס נשבר במקום אחר והתוויות לא עומדות
+       זו מתחת לזו. רשת מיישרת את כולם. */
+    #vTbl tr{ display:grid; grid-template-columns:1fr 1fr;
+              column-gap:12px; row-gap:1px;
+              border:1px solid var(--line-soft); border-radius:10px;
+              padding:10px 12px; margin-bottom:8px }
+    #vTbl td{ border:0; padding:0 }
+    #vTbl td:first-child{ grid-column:1 / -1; margin-bottom:7px }
+    #vTbl td.n{ display:block; margin:0;
+                font-size:12.5px; line-height:1.9 }
+    #vTbl td.n::before{ content:attr(data-l) ': '; color:var(--muted);
+                        font-size:11px; font-weight:600 }
+    /* הפס משווה בין שורות זו לזו. בכרטיסים נפרדים אין מה
+       להשוות אליו, והוא רק מותח את השורה. */
+    #vTbl .bar{ display:none }
+    #vTbl td[colspan]{ display:block; padding:14px 0 }
+    #vTbl td[colspan]::before{ content:none }
+  }
 
   .hide{ display:none !important }
 </style>
@@ -159,14 +199,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
-import { CREW_HE } from './rotation.js?v=31';
-import { mergeFleet } from './faults.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
+import { CREW_HE } from './rotation.js?v=36';
+import { mergeFleet } from './faults.js?v=36';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=31';
+         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -353,15 +393,21 @@ function renderVehicles(since){
       '<td><div class="nm">' + esc(r.name) +
         (r.kind === 'anchor' ? ' <span class="why">· עיגון</span>' : '') +
         '</div><div class="why">' + esc(vehicleWhy(r)) + '</div></td>' +
-      '<td class="n">' + (!r.downDays ? '—'
-         : r.downDays < 1 ? '<1' : Math.round(r.downDays)) +
+      // "פחות מיום" ולא "<1". הסימן הזה נכתב כאן כטקסט גולמי
+      // בתוך innerHTML, והדפדפן — בעמוד שכולו ימין-לשמאל —
+      // סידר אותו הפוך והציג "1>", כלומר יותר מיום. ההפך
+      // הגמור מהכוונה, על עמודה שמפקד קורא כדי להחליט.
+      '<td class="n" data-l="ימי השבתה">' + (!r.downDays ? '—'
+         : r.downDays < 1 ? '<span class="lt">פחות מיום</span>'
+         : Math.round(r.downDays)) +
         '<div class="bar"><i class="' + (r.downDays ? 'bad' : '') +
         '" style="width:' + Math.round((r.downDays / maxDown) * 100) +
         '%"></i></div></td>' +
-      '<td class="n">' + r.tech + '</td>' +
-      '<td class="n">' + (r.damage || '—') + '</td>' +
-      '<td class="n">' + (r.open || '—') + '</td>' +
-      '<td class="n">' + (r.avgClose == null ? '—' : r.avgClose + ' ימים') + '</td>';
+      '<td class="n" data-l="תקלות">' + r.tech + '</td>' +
+      '<td class="n" data-l="פגיעות">' + (r.damage || '—') + '</td>' +
+      '<td class="n" data-l="פתוחות">' + (r.open || '—') + '</td>' +
+      '<td class="n" data-l="ממוצע סגירה">' +
+        (r.avgClose == null ? '—' : r.avgClose + ' ימים') + '</td>';
     tb.appendChild(tr);
   });
   if (!rows.length) {

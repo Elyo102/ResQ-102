@@ -492,6 +492,13 @@ service cloud.firestore {
         allow write: if staff(sid);
       }
 
+      // תצלומים ליליים — ספירת מסמכים לגילוי אובדן נתונים.
+      // נכתבים בשרת בלבד. מנהל-על קורא כדי לראות מגמה.
+      match /backups/{dateId} {
+        allow read:  if isSuper();
+        allow write: if false;
+      }
+
       // ---------- ארבע תמונות הרכב ----------
       //
       // הרקע שעליו נתלים דיווחי התקלות והפגיעות: חזית, ימין,

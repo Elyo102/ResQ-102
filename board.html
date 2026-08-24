@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -56,7 +56,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:var(--bad-bg) }
   .verdict.ok{ color:var(--good); border:1px solid var(--good-bd); background:var(--good-bg) }
   .why{ font-size:13px; color:var(--soft-bad); line-height:1.7 }
-  .why b{ color:var(--on-accent) }
+  .why b{ color:var(--on-soft) }
   .why.ok{ color:var(--muted) }
   .why.ok b{ color:var(--txt) }
   .spacer{ flex:1 }
@@ -85,6 +85,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     .fleet{ grid-template-columns:1fr }
     .chain{ grid-template-columns:1fr 1fr }
   }
+  /* בטלפון שתי עמודות צרות מדי לשם מלא: "אלדד יונה" נחתך
+     ל"אלדד..." ו"דנה לוי" ל"דנ...". שרשרת הפיקוד היא בדיוק
+     המקום שבו צריך לדעת מי — ולכן עמודה אחת, שם שלם. */
+  @media (max-width:620px){
+    .chain{ grid-template-columns:1fr; gap:8px }
+    .node{ padding:9px 12px }
+  }
   .veh{ border:1px solid var(--line); border-radius:12px; background:var(--card);
         overflow:hidden }
   /* רכב עם תקלה משביתה. המשבצות נשארות מאוישות — האנשים
@@ -92,7 +99,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .waiver{ margin-top:9px }
   .waiver .wline{ padding:10px 13px; border-radius:9px; font-size:12.5px;
                   line-height:1.7; background:var(--warn-bg); border:1px solid var(--warn);
-                  color:#e8c78a }
+                  /* היה #e8c78a — זהב חיוור שנבחר לרקע הכהה.
+                     על warn-bg הבהיר (שמנת) הוא כמעט בלתי
+                     נראה, וזו השורה שאומרת למפקד שהמשמרת
+                     מתחת לקו האדום. */
+                  color:var(--warn) }
   .waiver .wline.approved{ background:var(--good-bg); border-color:var(--good-bd); color:var(--ok-fg) }
   .waiver .wline.rejected{ background:var(--bad-bg); border-color:var(--bad-bd); color:var(--soft-bad) }
   .verdict.warn{ color:var(--warn); border:1px solid var(--warn); background:var(--warn-bg) }
@@ -100,7 +111,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .vehwarn{ margin-top:9px; padding:10px 13px; border-radius:9px;
             background:var(--bad-bg); border:1px solid var(--bad-bd); color:var(--soft-bad);
             font-size:12.5px; line-height:1.7 }
-  .vehwarn b{ color:var(--on-accent) }
+  .vehwarn b{ color:var(--on-soft) }
   .veh.blocked{ border-color:var(--bad) }
   .veh.blocked > .hd{ background:var(--bad-bg) }
   .veh.blocked .slots{ opacity:.45 }
@@ -108,8 +119,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                padding:9px 14px; font-size:12.5px; line-height:1.7;
                background:var(--bad-bg); border-bottom:1px solid var(--line);
                color:var(--soft-bad) }
-  .veh .fault.limit{ background:var(--warn-bg); color:#e8c78a }
-  .veh .fault b{ color:var(--on-accent) }
+  .veh .fault.limit{ background:var(--warn-bg); color:var(--warn) }
+  .veh .fault b{ color:var(--on-soft) }
   .veh .fault .who{ color:var(--muted); font-size:11.5px }
   .veh > .hd{ display:flex; align-items:center; gap:9px; flex-wrap:wrap;
               padding:10px 14px; border-bottom:1px solid var(--line);
@@ -274,16 +285,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { stationName } from './stations.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { stationName } from './stations.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=31';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=36';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=31';
-import { SITE_SEED } from './hours.js?v=31';
+  from './faults.js?v=36';
+import { SITE_SEED } from './hours.js?v=36';
+import { plural } from './rotation.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -299,8 +311,9 @@ const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const CREWS   = ['A', 'B', 'C'];
 const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
 
-// תאריך היום כמפתח. הלוח אינו מייבא את rotation.js, ושורה
-// אחת כאן עדיפה על ייבוא מודול שלם בשביל פונקציה אחת.
+// תאריך היום כמפתח. שורה אחת כאן, ולא ייבוא, כי המסך צריך
+// מ-rotation.js רק את plural — והפונקציה הזו קצרה ממשפט
+// הייבוא שלה.
 function toKey(d){
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const a = String(d.getDate()).padStart(2, '0');
@@ -580,7 +593,11 @@ function render(){
     b.className = 'sw ' + c + (c === CREW ? ' on' : '');
   });
   $('sitesLbl').textContent = sites.length
-    ? sites.map(s => s.name + (s.fixed_hours ? ' ' + s.fixed_hours + 'ש' : '')).join(' · ')
+    // "יטבתה 25ש" נראה על המסך כ"יטבתה25ש": הרווח בין מילה
+    // עברית למספר נבלע בסידור הדו-כיווני, והתוצאה היא מילה
+    // אחת מודבקת. סוגריים ומילה מלאה פותרים את זה בלי טריקים.
+    ? sites.map(s => s.name +
+        (s.fixed_hours ? ' (' + s.fixed_hours + ' שעות)' : '')).join(' · ')
     : '';
   $('scope').textContent = MY_CREWS.length === 1
     ? 'אתה מנהל את משמרת ' + (CREW_HE[CREW] || CREW) + ' בלבד'
@@ -673,7 +690,8 @@ function renderFleet(){
     if ((vs.faults || []).length > 2) {
       const more = document.createElement('div');
       more.className = 'fault limit';
-      more.textContent = 'ועוד ' + (vs.faults.length - 2) + ' תקלות פתוחות.';
+      more.textContent = 'ועוד ' +
+        plural(vs.faults.length - 2, 'תקלה אחת פתוחה', 'תקלות פתוחות') + '.';
       card.appendChild(more);
     }
 
@@ -760,10 +778,14 @@ function renderVerdict(){
     return vehicleState(faults, v.id).id === 'blocked';
   });
   $('vehWarn').classList.toggle('hide', !downVeh.length);
+  // "1 רכבים משביתים" זה לא עברית. המשפט הזה נקרא על ידי
+  // מפקד באמצע משמרת, ורשלנות בניסוח נקראת כרשלנות בנתון.
+  const one = downVeh.length === 1;
   $('vehWarn').innerHTML = downVeh.length
-    ? '<b>' + downVeh.length + ' רכבים משביתים:</b> ' +
-      downVeh.map(v => esc(v.name)).join(' · ') +
-      ' — המשמרת מאוישת, אבל הרכבים האלה לא יוצאים.'
+    ? '<b>' + (one ? 'רכב אחד משבית:' : downVeh.length + ' רכבים משביתים:') +
+      '</b> ' + downVeh.map(v => esc(v.name)).join(' · ') +
+      ' — המשמרת מאוישת, אבל ' +
+      (one ? 'הרכב הזה לא יוצא.' : 'הרכבים האלה לא יוצאים.')
     : '';
 
   const txt = summaryText(null, bs, qualName);

@@ -21,7 +21,7 @@
 //
 // טעות זו היא הטעות המתבקשת כאן, ולכן היא כתובה במפורש.
 
-import { personWorks, fromKey } from './rotation.js?v=31';
+import { personWorks, fromKey } from './rotation.js?v=36';
 
 // ------------------------------------------------------------------
 //  מצבים
@@ -37,10 +37,10 @@ import { personWorks, fromKey } from './rotation.js?v=31';
 // בדיוק הבעיה שהמסך הזה בא לפתור.
 
 export const GUARD_STATES = [
-  { id: 'open',      he: 'פתוחה להרשמה', color: '#4d94ff' },
-  { id: 'staffed',   he: 'משובצת',        color: '#35c46b' },
-  { id: 'done',      he: 'התקיימה',       color: '#9aa0a6' },
-  { id: 'cancelled', he: 'בוטלה',         color: '#ef5350' }
+  { id: 'open',      he: 'פתוחה להרשמה', color: 'var(--note)' },
+  { id: 'staffed',   he: 'משובצת',        color: 'var(--good)' },
+  { id: 'done',      he: 'התקיימה',       color: 'var(--muted)' },
+  { id: 'cancelled', he: 'בוטלה',         color: 'var(--bad)' }
 ];
 
 export function stateHe(id) {
@@ -49,7 +49,7 @@ export function stateHe(id) {
 }
 export function stateColor(id) {
   const s = GUARD_STATES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.color : '#9aa0a6';
+  return s ? s.color : 'var(--muted)';
 }
 
 // סוגי אירוע. רשימה פתוחה — המפקד יכול לכתוב משלו.

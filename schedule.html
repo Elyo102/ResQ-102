@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -58,7 +58,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         padding:9px 0;margin-bottom:8px;gap:5px}
   .dow{font-size:15.5px;font-weight:700;color:var(--txt);text-align:center;
        line-height:1.2}
-  .dow.rest{color:var(--accent)}
+  .dow.rest{color:var(--accent-txt)}
   @media (max-width:420px){
     .dow{font-size:11.5px}
     #dows{padding:7px 0}
@@ -274,24 +274,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
-import { isAssigned as guardHasMe } from './guards.js?v=31';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
+import { isAssigned as guardHasMe } from './guards.js?v=36';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
          OVERRIDE_KINDS, overrideKindHe, overrideOn,
          personWorks, swapEffect }
-  from './rotation.js?v=31';
+  from './rotation.js?v=36';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=31';
+  from './readiness.js?v=36';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

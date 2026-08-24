@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -99,7 +99,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .gap{ border:1px solid var(--bad); background:var(--bad-bg); border-radius:9px;
         padding:11px; margin-top:12px; font-size:13px; color:var(--soft-bad);
         line-height:1.8 }
-  .gap b{ color:var(--on-accent) }
+  .gap b{ color:var(--on-soft) }
   .fine{ border:1px solid var(--good-bd); background:var(--good-bg); border-radius:9px;
          padding:11px; margin-top:12px; font-size:13px; color:var(--ok-fg) }
 
@@ -115,10 +115,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .move .side{ border:1px solid var(--line); border-radius:11px; padding:13px;
                background:var(--panel); border-top-width:3px }
   .move .side.from{ border-top-color:var(--warn) }
-  .move .side.to{ border-top-color:#4dd0e1 }
+  .move .side.to{ border-top-color:var(--in) }
   .move .side .ttl{ font-size:14.5px; font-weight:800 }
   .move .side.from .ttl{ color:var(--warn) }
-  .move .side.to .ttl{ color:#4dd0e1 }
+  .move .side.to .ttl{ color:var(--in) }
   .move .side .sub2{ font-size:11.5px; color:var(--muted); line-height:1.6;
                      margin:3px 0 9px; min-height:32px }
   .move .side input{ width:100% }
@@ -295,12 +295,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
 import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking,
-         swapRestCheck, restWhy } from './rotation.js?v=31';
+         swapRestCheck, restWhy } from './rotation.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";

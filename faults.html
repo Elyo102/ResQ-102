@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -364,11 +364,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
-import { CREW_HE } from './rotation.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
+import { CREW_HE, plural } from './rotation.js?v=36';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -376,7 +376,7 @@ import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage } from './faults.js?v=31';
+         shrinkImage } from './faults.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -872,9 +872,8 @@ function renderOpen(){
   const box = $('openList');
   box.innerHTML = '';
   $('openNote').textContent = list.length
-    ? list.length + ' תקלות פתוחות על ' + rows.length +
-      (rows.length === 1 ? ' נושא. לחץ לפתיחת הלוג.'
-                         : ' נושאים. לחץ לפתיחת הלוג.')
+    ? plural(list.length, 'תקלה אחת פתוחה', 'תקלות פתוחות') + ' על ' +
+      plural(rows.length, 'נושא אחד', 'נושאים') + '. לחץ לפתיחת הלוג.'
     : 'אין דיווח.';
   rows.forEach(r => box.appendChild(subRow(r)));
 }
@@ -1039,7 +1038,7 @@ function damageReport(v){
   $('dlgBody').innerHTML = '';
   $('dlgTitle').textContent = 'דוח נזק · ' + v.name;
   $('dlgSub').innerHTML = '<span style="color:' + st.color + '">' + esc(st.he) +
-    '</span> · ' + list.length + ' תקלות בסך הכל, ' +
+    '</span> · ' + plural(list.length, 'תקלה אחת', 'תקלות') + ' בסך הכל, ' +
     list.filter(isOpen).length + ' פתוחות';
   if (!list.length) {
     $('dlgBody').innerHTML = '<div class="note">לא נפתחו תקלות על הרכב הזה.</div>';
@@ -1064,7 +1063,8 @@ function renderFleet(){
       '<span class="nm">' + esc(v.name) +
         '<em>' + (v.kind === 'anchor' ? 'רכב עיגון' : 'רכב מבצעי') +
         (v.role ? ' · ' + esc(v.role) : '') +
-        (st.faults.length ? ' · ' + st.faults.length + ' תקלות פתוחות' : '') +
+        (st.faults.length ? ' · ' +
+           plural(st.faults.length, 'תקלה אחת פתוחה', 'תקלות פתוחות') : '') +
         '</em></span>' +
       (hasDamage(faults, v.id)
         ? '<span class="st" style="color:#a1887f">' +

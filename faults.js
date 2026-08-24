@@ -94,17 +94,17 @@ export function needsVehicle(id) {
 // עד שראש המשמרת נוגע, התקלה נמצאת ב-'unset' — ממתינה
 // להערכה, ומוצגת ראשונה כדי שלא תישכח.
 export const SEVERITIES = [
-  { id: 'blocking', he: 'משבית',  color: '#ef5350', rank: 1,
+  { id: 'blocking', he: 'משבית',  color: 'var(--bad)', rank: 1,
     note: 'הרכב או הציוד לא כשיר לשימוש', staffOnly: true },
-  { id: 'limiting', he: 'מגביל',  color: '#e0a23c', rank: 2,
+  { id: 'limiting', he: 'מגביל',  color: 'var(--warn)', rank: 2,
     note: 'אפשר להשתמש, עם מגבלה', staffOnly: true },
-  { id: 'minor',    he: 'קלה',    color: '#4d94ff', rank: 3,
+  { id: 'minor',    he: 'קלה',    color: 'var(--note)', rank: 3,
     note: 'לתיעוד ולטיפול בהמשך', staffOnly: true }
 ];
 
 // לא חומרה — היעדר החלטה. יושבת בראש המיון בכוונה.
 export const UNSET = { id: 'unset', he: 'ממתינה להערכה',
-                       color: '#c77dff', rank: 0,
+                       color: 'var(--pick)', rank: 0,
                        note: 'ראש המשמרת עוד לא קבע חומרה' };
 
 export function allSeverities() {
@@ -129,9 +129,9 @@ export function sevRank(id) {
 }
 
 export const FAULT_STATES = [
-  { id: 'open',      he: 'פתוחה',     color: '#ef5350' },
-  { id: 'in_repair', he: 'בטיפול',    color: '#e0a23c' },
-  { id: 'fixed',     he: 'טופלה',     color: '#66bb6a' }
+  { id: 'open',      he: 'פתוחה',     color: 'var(--bad)' },
+  { id: 'in_repair', he: 'בטיפול',    color: 'var(--warn)' },
+  { id: 'fixed',     he: 'טופלה',     color: 'var(--good)' }
 ];
 
 export function stateHe(id) {
@@ -140,7 +140,7 @@ export function stateHe(id) {
 }
 export function stateColor(id) {
   const s = FAULT_STATES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.color : '#9aa0a6';
+  return s ? s.color : 'var(--muted)';
 }
 
 export function isOpen(f) {
@@ -193,23 +193,23 @@ export function vehicleState(faults, vehicleId) {
   const open = (faults || []).filter(function (f) {
     return f && isOpen(f) && f.vehicle_id === vehicleId && !isDamage(f);
   });
-  if (!open.length) return { id: 'ok', he: 'תקין', color: '#66bb6a', faults: [] };
+  if (!open.length) return { id: 'ok', he: 'תקין', color: 'var(--good)', faults: [] };
 
   const worst = open.reduce(function (a, f) {
     return sevRank(f.severity) < sevRank(a.severity) ? f : a;
   }, open[0]);
 
   if (needsGrading(worst)) {
-    return { id: 'ungraded', he: 'ממתינה להערכה', color: '#c77dff',
+    return { id: 'ungraded', he: 'ממתינה להערכה', color: 'var(--pick)',
              faults: open };
   }
   if (worst.severity === 'blocking') {
-    return { id: 'blocked', he: 'משבית', color: '#ef5350', faults: open };
+    return { id: 'blocked', he: 'משבית', color: 'var(--bad)', faults: open };
   }
   if (worst.severity === 'limiting') {
-    return { id: 'limited', he: 'מגביל', color: '#e0a23c', faults: open };
+    return { id: 'limited', he: 'מגביל', color: 'var(--warn)', faults: open };
   }
-  return { id: 'minor', he: 'תקלה קלה', color: '#4d94ff', faults: open };
+  return { id: 'minor', he: 'תקלה קלה', color: 'var(--note)', faults: open };
 }
 
 // ------------------------------------------------------------------

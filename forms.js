@@ -113,10 +113,10 @@ export function formById(forms, id) {
 // ------------------------------------------------------------------
 
 export const SUB_STATES = [
-  { id: 'submitted', he: 'הוגשה',  color: '#e0a23c' },
-  { id: 'approved',  he: 'אושרה',  color: '#66bb6a' },
-  { id: 'rejected',  he: 'נדחתה',  color: '#ef5350' },
-  { id: 'cancelled', he: 'בוטלה',  color: '#9aa0a6' }
+  { id: 'submitted', he: 'הוגשה',  color: 'var(--warn)' },
+  { id: 'approved',  he: 'אושרה',  color: 'var(--good)' },
+  { id: 'rejected',  he: 'נדחתה',  color: 'var(--bad)' },
+  { id: 'cancelled', he: 'בוטלה',  color: 'var(--muted)' }
 ];
 
 export function subHe(id) {
@@ -125,7 +125,7 @@ export function subHe(id) {
 }
 export function subColor(id) {
   const s = SUB_STATES.filter(function (x) { return x.id === id; })[0];
-  return s ? s.color : '#9aa0a6';
+  return s ? s.color : 'var(--muted)';
 }
 export function isPending(sub) {
   return (sub || {}).status === 'submitted';

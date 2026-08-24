@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -38,7 +38,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .k{color:var(--muted);font-size:12px}
   .v{font-family:Consolas,monospace;direction:ltr;text-align:right;
      white-space:pre-wrap;word-break:break-all;font-size:13px}
-  .ok{color:#7bc47f} .bad{color:var(--err-fg)} .warn{color:#ffcc80}
+  /* היו #7bc47f ו-#ffcc80 — פסטלים שנבחרו לרקע כהה
+     ונעלמו על כרטיס לבן. זה מסך שכל תפקידו לומר
+     "עבר" או "נכשל". */
+  .ok{color:var(--good)} .bad{color:var(--err-fg)} .warn{color:var(--warn)}
   input{width:100%;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;
         font-family:inherit;margin-top:6px}
@@ -97,6 +100,28 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div class="card">
+    <h2>גיבוי</h2>
+    <div class="note">
+      מוריד את כל נתוני התחנה לקובץ אחד במחשב שלך. סידור, סגל,
+      נוכחות, תקלות, אבטחות, טפסים והחלפות — הכל.
+      <br><br>
+      <b>זה גיבוי ידני, וזו לא ההגנה העיקרית.</b> ההגנה
+      האמיתית היא <b>Point-In-Time Recovery</b> ו-<b>Delete
+      Protection</b> בקונסולה של Firebase: הן מחזירות את בסיס
+      הנתונים לכל רגע בשבעת הימים האחרונים, והן חינם. שתיהן
+      כבויות כרגע, ו<b>אי אפשר להפעיל אותן רטרואקטיבית</b> —
+      גיבוי שלא היה קיים ברגע המחיקה לא יעזור.
+      <br><br>
+      הקובץ הזה טוב למה שהן לא מכסות: להסתכל בנתונים בלי
+      להיכנס למערכת, ולשמור עותק מחוץ לגוגל.
+    </div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap">
+      <button id="btnBackup">הורד גיבוי מלא</button>
+    </div>
+    <div id="bk"></div>
+  </div>
+
+  <div class="card">
     <h2>נתוני הדגמה</h2>
     <div class="note" id="seedNote">
       מערכת שזה עתה נפרסה ריקה, ומסך ריק נראה בדיוק כמו מסך
@@ -131,7 +156,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=31';
+import { firebaseConfig } from './firebase-config.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -140,9 +165,9 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { renderStuckNav, renderNav } from './nav.js?v=31';
-import * as SEED from './seed.js?v=31';
-import { initPWA } from './pwa.js?v=31';
+import { renderStuckNav, renderNav } from './nav.js?v=36';
+import * as SEED from './seed.js?v=36';
+import { initPWA } from './pwa.js?v=36';
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -189,30 +214,43 @@ function line(box, key, value, cls){
 
 const MARK = '__selfcheck';
 
-// האוספים, ומה מצופה מכל אחד. writable=false פירושו שהכלל
-// אמור **לדחות** כתיבה מהדפדפן — וכישלון כתיבה שם הוא הצלחה.
+// האוספים, ומה מצופה מכל אחד מהם כשכותבים לו מסמך בדיקה
+// **גנרי** — שלושה שדות ותו לא.
+//
+// **למה שלושה מצבים ולא שניים.** הגרסה הקודמת ידעה רק
+// "כתיבה מותרת" או "כתיבה חסומה", ולכן דיווחה תשע כשלים
+// מדומים על מערכת תקינה לחלוטין: אחד־עשר אוספים מאמתים שדות
+// (hasOnly, בעלות, אורך כותרת), ולכן הם **אמורים** לדחות מסמך
+// גנרי. דחייה שם היא הוכחה שהכלל חי ואוכף — לא תקלה.
+//
+//   open    כלל רופף. כתיבה גנרית אמורה להצליח
+//   strict  הכלל מאמת שדות. דחייה = הכלל חי ואוכף
+//   closed  הלקוח אינו כותב כלל. דחייה = כמצופה
+//
+// **מה עדיין מתגלה כאן.** אוסף strict שמקבל זבל פירושו שהכלל
+// **לא נפרס** — וזו בדיוק התקלה שהמסך הזה קיים בשבילה.
 const COLLECTIONS = [
-  { name: 'roster',           he: 'סגל',              writable: false },
-  { name: 'users',            he: 'משתמשים',          writable: false },
-  { name: 'quals',            he: 'כשירויות',         writable: true  },
-  { name: 'member_quals',     he: 'כשירויות אישיות',  writable: true  },
-  { name: 'rotations',        he: 'סבב משמרות',       writable: true  },
-  { name: 'shift_overrides',  he: 'חריגות סידור',     writable: true  },
-  { name: 'sub_stations',     he: 'תחנות משנה',       writable: true  },
-  { name: 'vehicles',         he: 'רכבי עיגון',       writable: true  },
-  { name: 'attendance',       he: 'נוכחות',           writable: true  },
-  { name: 'monthly_reports',  he: 'דוחות חודשיים',    writable: true  },
-  { name: 'swaps',            he: 'החלפות',           writable: true  },
-  { name: 'guards',           he: 'אבטחות',           writable: true  },
-  { name: 'faults',           he: 'תקלות',            writable: true  },
-  { name: 'vehicle_views',    he: 'תמונות רכב',       writable: false },
-  { name: 'handovers',        he: 'מסירות אחריות',    writable: true  },
-  { name: 'redline_waivers',  he: 'היתרי קו אדום',    writable: true  },
-  { name: 'broadcasts',       he: 'הודעות',           writable: true  },
-  { name: 'callouts',         he: 'קריאות פתע',       writable: false },
-  { name: 'push_tokens',      he: 'מכשירי התראות',    writable: true  },
-  { name: 'scans',            he: 'סריקות לילה',      writable: false },
-  { name: 'hr_reports',       he: 'דוחות משאבי אנוש', writable: false }
+  { name: 'roster',           he: 'סגל',              mode: 'closed' },
+  { name: 'users',            he: 'משתמשים',          mode: 'closed' },
+  { name: 'quals',            he: 'כשירויות',         mode: 'strict' },
+  { name: 'member_quals',     he: 'כשירויות אישיות',  mode: 'strict' },
+  { name: 'rotations',        he: 'סבב משמרות',       mode: 'open'   },
+  { name: 'shift_overrides',  he: 'חריגות סידור',     mode: 'open'   },
+  { name: 'sub_stations',     he: 'תחנות משנה',       mode: 'open'   },
+  { name: 'vehicles',         he: 'רכבי עיגון',       mode: 'open'   },
+  { name: 'attendance',       he: 'נוכחות',           mode: 'strict' },
+  { name: 'monthly_reports',  he: 'דוחות חודשיים',    mode: 'strict' },
+  { name: 'swaps',            he: 'החלפות',           mode: 'strict' },
+  { name: 'guards',           he: 'אבטחות',           mode: 'strict' },
+  { name: 'faults',           he: 'תקלות',            mode: 'strict' },
+  { name: 'vehicle_views',    he: 'תמונות רכב',       mode: 'strict' },
+  { name: 'handovers',        he: 'מסירות אחריות',    mode: 'strict' },
+  { name: 'redline_waivers',  he: 'היתרי קו אדום',    mode: 'strict' },
+  { name: 'broadcasts',       he: 'הודעות',           mode: 'strict' },
+  { name: 'callouts',         he: 'קריאות פתע',       mode: 'closed' },
+  { name: 'push_tokens',      he: 'מכשירי התראות',    mode: 'strict' },
+  { name: 'scans',            he: 'סריקות לילה',      mode: 'closed' },
+  { name: 'hr_reports',       he: 'דוחות משאבי אנוש', mode: 'closed' }
 ];
 
 // שאילתות שדורשות אינדקס מורכב. אינדקס שלא נבנה מחזיר
@@ -263,6 +301,87 @@ async function roster(sid){
   } catch (e) {}
   return out;
 }
+
+// ---------- גיבוי ----------
+//
+// **למה זה בדפדפן ולא בשרת.** ייצוא אמיתי של Firestore דורש
+// דלי אחסון, הרשאות שירות ופריסה נוספת — שרשרת שלמה שצריך
+// להקים ולתחזק. הדפדפן כבר מחובר, כבר מורשה, וכבר יודע לקרוא
+// את כל מה שאלדד רשאי לראות. קובץ שיורד עכשיו שווה יותר
+// ממנגנון שיהיה מוכן בעוד שבוע.
+//
+// **המגבלה, במפורש.** זה קורא כמנהל-על ולכן מקבל הכל — אבל
+// זה עדיין תצלום רגע, ידני, שמישהו צריך לזכור ללחוץ עליו.
+// לכן הטקסט במסך מפנה ל-PITR: זו ההגנה שעובדת בלי שאיש
+// יזכור.
+
+const BACKUP_COLS = [
+  'roster', 'users', 'quals', 'member_quals', 'rotations',
+  'shift_overrides', 'sub_stations', 'vehicles', 'vehicle_views',
+  'attendance', 'monthly_reports', 'swaps', 'guards', 'faults',
+  'handovers', 'redline_waivers', 'broadcasts', 'callouts',
+  'scans', 'hr_reports', 'submissions', 'config'
+];
+
+$('btnBackup').onclick = async function () {
+  const b = $('btnBackup'), out = $('bk');
+  b.disabled = true;
+  out.innerHTML = '<div class="note">אוסף…</div>';
+
+  // myStation() קורא את השיוך מהטוקן — אותה דרך שכל שאר
+  // המסך משתמש בה.
+  const sid = await myStation();
+  const data = { station: sid, taken_at: new Date().toISOString(),
+                 by: (auth.currentUser || {}).email || '', collections: {} };
+  const lines = [];
+  let docs = 0;
+
+  for (const name of BACKUP_COLS) {
+    try {
+      const snap = await getDocs(collection(db, 'stations', sid, name));
+      const rows = [];
+      snap.forEach(d => rows.push(Object.assign({ __id: d.id }, d.data() || {})));
+      data.collections[name] = rows;
+      docs += rows.length;
+      lines.push('<div class="row ok"><span>' + name + '</span><b>' +
+                 rows.length + '</b></div>');
+    } catch (e) {
+      // אוסף שנחסם נרשם בקובץ עצמו, ולא נעלם בשקט. גיבוי
+      // שחסר בו משהו בלי לומר זאת גרוע מגיבוי שלא נעשה.
+      data.collections[name] = { __error: e.code || e.message };
+      lines.push('<div class="row bad"><span>' + name + '</span><b>נחסם</b></div>');
+    }
+    out.innerHTML = lines.join('');
+  }
+
+  // ספריית העובדים יושבת בשורש ולא תחת התחנה.
+  try {
+    const dsnap = await getDocs(collection(db, 'directory'));
+    const rows = [];
+    dsnap.forEach(d => rows.push(Object.assign({ __id: d.id }, d.data() || {})));
+    data.collections['directory'] = rows;
+    docs += rows.length;
+    lines.push('<div class="row ok"><span>directory</span><b>' +
+               rows.length + '</b></div>');
+  } catch (e) {
+    lines.push('<div class="row bad"><span>directory</span><b>נחסם</b></div>');
+  }
+
+  const txt = JSON.stringify(data, null, 1);
+  const url = URL.createObjectURL(new Blob([txt], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'resq-102-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+
+  out.innerHTML = lines.join('') +
+    '<div class="note" style="margin-top:10px"><b>' + docs +
+    ' מסמכים · ' + Math.round(txt.length / 1024) + ' KB</b> — הקובץ ירד. ' +
+    'שמור אותו מחוץ ל-OneDrive של התחנה, כדי שמחיקה בטעות ' +
+    'לא תיקח גם אותו.</div>';
+  b.disabled = false;
+};
 
 $('btnSeed').onclick = async () => {
   if (seedBusy) return;
@@ -403,10 +522,19 @@ $('btnDeploy').onclick = async () => {
       catch (e) { leftovers.push(col.name + '/' + id); }
     }
 
-    if (col.writable && wrote) say('dep', col.he, 'קריאה ✓ · כתיבה ✓', 'ok');
-    else if (col.writable && !wrote)
-      say('dep', col.he, 'קריאה ✓ · כתיבה נחסמה · ' + writeWhy, 'bad');
-    else if (!col.writable && !wrote)
+    // מנהל-על עוקף חלק מהאימותים, ולכן ההשוואה היא מול המצב
+    // ולא מול הרשאה כללית.
+    if (col.mode === 'open') {
+      if (wrote) say('dep', col.he, 'קריאה ✓ · כתיבה ✓', 'ok');
+      else say('dep', col.he, 'קריאה ✓ · כתיבה נחסמה · ' + writeWhy, 'bad');
+    } else if (col.mode === 'strict') {
+      if (!wrote && /permission-denied/.test(writeWhy))
+        say('dep', col.he, 'קריאה ✓ · הכלל אוכף שדות ✓', 'ok');
+      else if (wrote)
+        say('dep', col.he, 'קריאה ✓ · **מסמך גנרי התקבל** — הכלל לא נפרס', 'bad');
+      else
+        say('dep', col.he, 'קריאה ✓ · כתיבה נכשלה · ' + writeWhy, 'bad');
+    } else if (col.mode === 'closed' && !wrote)
       say('dep', col.he, 'קריאה ✓ · כתיבה חסומה כמצופה', 'ok');
     else
       say('dep', col.he, 'קריאה ✓ · כתיבה עברה — והכלל אמור היה לחסום אותה', 'bad');

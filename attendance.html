@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=31">
+<link rel="stylesheet" href="./theme.css?v=36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -94,6 +94,46 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .nt .em{ color:var(--muted) }
   @media (max-width:700px){ .nt{ max-width:170px } }
 
+  /* ---------- טבלת ימי החודש בטלפון ----------
+     שבע עמודות לא נכנסות ל-390 פיקסלים. מה שקרה בפועל:
+     הכותרת "הערות" נשברה ל"הערו/ת", התאריך נשבר ותג המשמרת
+     ירד לשורה שנייה, וכל שורה קיבלה גובה אחר — טבלה שנראית
+     עקומה.
+     הרוחב לא ייפתר בהקטנת גופן; הפתרון הוא לוותר על מבנה
+     הטבלה עצמו. כל יום הופך לכרטיס: תאריך למעלה, כפתור
+     בפינה, והשדות מתחת עם תווית לכל אחד — כי בלי שורת
+     הכותרת אין דרך אחרת לדעת מה זה "24".
+     שדה ריק פשוט לא מוצג. "תחנה —" הוא רעש, לא מידע. */
+  @media (max-width:620px){
+    .days table, .days tbody, .days tr, .days td { display:block; width:auto }
+    .days thead{ display:none }
+    .days table{ margin-top:8px }
+    .days tr{ position:relative; border:1px solid var(--line-soft);
+              border-radius:10px; padding:9px 12px 10px; margin-bottom:8px }
+    .days tr:last-child{ margin-bottom:0 }
+    .days tr.run{ border-color:var(--warn) }
+    .days tr.run td{ background:transparent }
+    .days td{ border:0; padding:2px 0; line-height:1.6 }
+    .days td.dash{ display:none }          /* שדה ריק לא תופס שורה */
+    .days td[data-l]::before{
+      content:attr(data-l) ': '; color:var(--muted);
+      font-size:11.5px; font-weight:600 }
+    /* שורת הכותרת של הכרטיס: תאריך, יום ומשמרת — בלי תווית,
+       ועם מקום פנוי בצד לכפתור. */
+    .days td.c-date{ font-size:15px; padding:0 0 5px;
+                     padding-inline-end:78px; white-space:normal }
+    .days td.c-date::before{ content:none }
+    .days td.c-act{ position:absolute; top:8px; inset-inline-end:12px;
+                    padding:0 }
+    .days td.c-act::before{ content:none }
+    .days td.c-act .btn{ margin:0; width:auto; min-width:64px }
+    /* בכרטיס אין עמודה שנדחסת, ולכן ההערה נקראת במלואה. */
+    .days .nt{ max-width:none }
+    .days .nt span{ -webkit-line-clamp:none; line-clamp:none; overflow:visible;
+                    display:inline }
+    .days td[colspan]{ border:0; padding:16px 0 }
+  }
+
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
   .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
@@ -133,7 +173,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .ot{ border:1px solid var(--warn); background:var(--warn-bg); border-radius:9px;
        padding:2px 12px 13px; margin-top:12px }
   .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
-  .otHead b{ color:var(--on-accent) }
+  .otHead b{ color:var(--on-soft) }
   .sum-line{ display:flex; justify-content:space-between; gap:12px;
              padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .sum-line:last-child{ border-bottom:0 }
@@ -228,7 +268,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         ימים שהמשמרת שלך עובדת בהם מופיעים מראש לפי הסידור, כולל חריגות.
         לחיצה על שורה פותחת עריכה.
       </div>
-      <div class="scroll">
+      <div class="scroll days">
         <table>
           <thead>
             <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנה</th>
@@ -257,18 +297,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=31';
-import { renderNav, renderStuckNav } from './nav.js?v=31';
-import { initPWA } from './pwa.js?v=31';
-import { watchCallouts } from './callout.js?v=31';
-import { isAssigned as guardHasMe } from './guards.js?v=31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=36';
+import { renderNav, renderStuckNav } from './nav.js?v=36';
+import { initPWA } from './pwa.js?v=36';
+import { watchCallouts } from './callout.js?v=36';
+import { isAssigned as guardHasMe } from './guards.js?v=36';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=31';
+  from './rotation.js?v=36';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=31';
+  from './hours.js?v=36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -596,15 +636,23 @@ function renderRows(sug){
     const tr = document.createElement('tr');
     tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '');
 
+    // data-l הוא שם השדה. במסך רחב הוא לא מוצג — שורת הכותרת
+    // עושה את העבודה. בטלפון הטבלה נפרקת לכרטיסים, ואז זו
+    // התווית היחידה שאומרת מה המספר הזה.
+    // dash מסמן שדה ריק, כדי שהכרטיס לא יציג "תחנה: —".
+    const dash = (s) => (s === '—' ? ' dash' : '');
+    const site = view.sub_station ? esc(siteName(view.sub_station)) : '—';
+    const tot  = hrs == null ? '—' : String(hrs);
+
     tr.innerHTML =
-      '<td><span class="d">' + Number(p[2]) + '.' + Number(p[1]) + '</span> ' +
+      '<td class="c-date"><span class="d">' + Number(p[2]) + '.' + Number(p[1]) + '</span> ' +
         '<span class="dw">' + DOWS[date.getDay()] + '</span>' +
         (crew ? ' <span class="cw ' + crew + '" title="' + esc(CREW_HE[crew] || crew) +
                 '">' + (CREW_SHORT[crew] || crew) + '</span>' : '') +
         (ov ? ' <span class="tag" title="' + esc(ov.note || '') + '">' +
               esc(overrideKindHe(ov.kind)) + '</span>' : '') +
         (eff === 'in' ? ' <span class="tag">נכנסת בהחלפה</span>' : '') + '</td>' +
-      '<td>' + esc(dayTypeHe(view.day_type)) +
+      '<td data-l="סוג">' + esc(dayTypeHe(view.day_type)) +
         (isSug ? ' <span class="tag">לפי הסידור</span>' : '') +
         (running ? ' <span class="tag">פתוחה</span>' : '') +
         (needsTimes(view.day_type) && shapeOf(view) !== 'regular'
@@ -613,14 +661,15 @@ function renderRows(sug){
         (view.overtime_reason
           ? ' <span class="tag" title="' + esc(view.overtime_reason) + '">נימוק</span>'
           : '') + '</td>' +
-      '<td class="hh">' + (needsTimes(view.day_type)
+      '<td class="hh' + (needsTimes(view.day_type) ? '' : ' dash') +
+        '" data-l="שעות">' + (needsTimes(view.day_type)
           ? '<span class="rng">' + esc(view.start || '—') + '–' +
               esc(running ? '…' : (view.end || '—')) + '</span>' +
             (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
               esc(view.end2) + '</span>' : '')
           : '—') + '</td>' +
-      '<td>' + (view.sub_station ? esc(siteName(view.sub_station)) : '—') + '</td>' +
-      '<td class="hh">' + (hrs == null ? '—' : hrs) + '</td>' +
+      '<td class="' + dash(site).trim() + '" data-l="תחנה">' + site + '</td>' +
+      '<td class="hh' + dash(tot) + '" data-l="סה״כ">' + tot + '</td>' +
       // הערות. השדה קיים מזמן בטופס העריכה, אבל לא הופיע
       // בטבלה — כלומר מי שכתב הערה לא ראה אותה שוב, ומי
       // שקורא את הדוח לא ידע שהיא קיימת. שדה שנכתב ולא נקרא
@@ -628,11 +677,13 @@ function renderRows(sug){
       //
       // שיוך אבטחה ממלא אותו לבד, ולכן העמודה הזו מסבירה
       // בשקט למה ליום מסוים יש יותר שעות.
-      '<td class="nt">' + (view.notes
+      '<td class="nt' + (view.notes ? '' : ' dash') + '" data-l="הערות">' +
+        (view.notes
           ? '<span title="' + esc(view.notes) + '">' + esc(view.notes) + '</span>'
           : '<span class="em">—</span>') + '</td>';
 
     const td = document.createElement('td');
+    td.className = 'c-act';
     if (!locked()) {
       const b = document.createElement('button');
       b.className = 'btn sm';

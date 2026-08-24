@@ -177,9 +177,9 @@ export function summaryText(rl, bs, qualName) {
 // סיבה שמצב רכב נגזר מהתקלות: אין מה לשכוח לבטל.
 
 export const WAIVER_STATES = [
-  { id: 'pending',  he: 'ממתין לאישור מפקד התחנה', color: '#e0a23c' },
-  { id: 'approved', he: 'מאושר',                    color: '#66bb6a' },
-  { id: 'rejected', he: 'נדחה',                     color: '#ef5350' }
+  { id: 'pending',  he: 'ממתין לאישור מפקד התחנה', color: 'var(--warn)' },
+  { id: 'approved', he: 'מאושר',                    color: 'var(--good)' },
+  { id: 'rejected', he: 'נדחה',                     color: 'var(--bad)' }
 ];
 
 export function waiverId(crew, dateKey) {
