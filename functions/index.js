@@ -847,20 +847,32 @@ async function noteFailedLogin(ref, lockIgnored, emp, email) {
     )
   });
 
-  const body =
-    '<p style="font-size:15px;color:#333;line-height:1.8">' +
-    'החשבון שלך ננעל לאחר ' + MAX_FAILED_LOGINS + ' ניסיונות כניסה שגויים.<br>' +
-    'הנעילה תשתחרר מעצמה בעוד ' + LOCKOUT_MINUTES + ' דקות.</p>' +
-    '<p style="font-size:15px;color:#333;line-height:1.8">' +
-    'אם זה היית אתה ואתה רוצה לנסות שוב עכשיו:</p>' +
-    button(SITE_URL + '/unlock.html?t=' + token, 'שחרור הנעילה') +
-    '<p style="font-size:13px;color:#888;line-height:1.8">' +
-    'הקישור תקף לשעה אחת ולשימוש יחיד.<br><br>' +
-    '<b style="color:#c0392b">אם זה לא היית אתה</b> — מישהו מנסה להיכנס לחשבון שלך. ' +
-    'אל תלחץ על הכפתור, ושנה סיסמה בהקדם.</p>';
-
-  await sendMail(email, 'ResQ — החשבון שלך ננעל',
-                 mailShell('נעילת חשבון', body));
+  // ההודעה יוצאת בפוש, לא במייל.
+  //
+  // להתראה הזו שני תפקידים, ושניהם נשמרים: לתת לבעל החשבון
+  // דרך לחזור מיד במקום לחכות רבע שעה, ולהזהיר אותו שמישהו
+  // מנסה להיכנס בשמו.
+  //
+  // הפוש מגיע רק למכשירים הרשומים של אותו משתמש — אותה תכונת
+  // אמון שהייתה למייל, ובלי שרת דואר חיצוני. מי שמנחש סיסמאות
+  // אינו מקבל דבר.
+  //
+  // למי שאין מכשיר רשום פשוט לא מקבל התראה, וממתין רבע שעה.
+  // מסך הכניסה כבר אומר לו כמה דקות נשארו, ולכן הוא אינו
+  // תקוע בלי הסבר.
+  try {
+    const u = await admin.auth().getUserByEmail(email);
+    await pushToUsers(STATION_ID, [u.uid], 'lockout',
+      'ResQ — החשבון שלך ננעל',
+      'אחרי ' + MAX_FAILED_LOGINS + ' ניסיונות שגויים. ' +
+      'הנעילה משתחררת בעוד ' + LOCKOUT_MINUTES + ' דקות — ' +
+      'או עכשיו, בלחיצה כאן. אם זה לא היית אתה, שנה סיסמה.',
+      './unlock.html?t=' + token, true);
+  } catch (e) {
+    // כישלון בהתראה אינו מבטל את הנעילה. ההגנה עצמה כבר נרשמה,
+    // וזה החלק שחשוב.
+    console.error('lockout push failed', e);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1726,14 +1738,27 @@ exports.nightlySnapshot = onSchedule({
 
   if (drops.length) {
     console.error('DATA LOSS SUSPECTED', drops.join(' | '));
-    await sendMail(SUPER_ADMIN_EMAIL,
-      'ResQ — ירידה חדה בכמות הנתונים',
-      mailShell('ירידה חדה בכמות הנתונים',
-        '<p>הספירה הלילית מצאה ירידה של יותר מרבע באוספים הבאים:</p>' +
-        '<ul><li>' + drops.join('</li><li>') + '</li></ul>' +
-        '<p><b>אם לא מחקת בכוונה</b> — היכנס לקונסולה של Firebase ' +
-        'והשתמש ב-Point-In-Time Recovery כדי לחזור לאתמול. ' +
-        'חלון השחזור הוא שבעה ימים.</p>'));
+
+    // פוש ולא מייל.
+    //
+    // ההתראה הזו מגיעה לאדם אחד — מנהל המערכת — והוא זה שמחזיק
+    // את האפליקציה בטלפון. מייל היה מחייב שרת דואר חיצוני,
+    // חשבון אצל חברה כלשהי ותשלום חודשי, בשביל התראה אחת
+    // שנשלחת אולי פעם בשנה. הפוש כבר קיים ועובד.
+    //
+    // הודעה רגילה ולא דחופה: היא נשלחת ב-03:15, ואין מה לעשות
+    // בשלוש לפנות בוקר. המידע ממתין בטלפון עד הבוקר.
+    try {
+      const admUser = await admin.auth().getUserByEmail(SUPER_ADMIN_EMAIL);
+      await pushToUsers(sid, [admUser.uid], 'data_loss',
+        'ResQ — ירידה חדה בנתונים',
+        drops.join(' · ') + ' — בדוק לפני שהחלון של שבעה ימים ייסגר.',
+        './check.html', false);
+    } catch (e) {
+      // כישלון בהתראה לא מבטל את הגיבוי עצמו. הספירה כבר
+      // נכתבה, והיא הנתון שממנו משחזרים.
+      console.error('data-loss push failed', e);
+    }
   }
 
   console.log('snapshot ' + today + ' · ' +
@@ -2304,15 +2329,26 @@ exports.hoursReminder = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  // שלושה ימים לפני סוף החודש. היה ארבעה, ואלדד ביקש שלושה:
+  // מוקדם מדי והתזכורת מגיעה לפני שהמשמרות האחרונות נסגרו,
+  // ואז היא סתם רעש. שלושה ימים משאירים זמן לתקן ועדיין
+  // מגיעים אחרי שרוב החודש כבר מדווח.
+  //
+  // הריצה יומית ויוצאת רק ביום הנכון, כי אורך החודש משתנה —
+  // ה-28 בפברואר וה-28 באוגוסט אינם אותו מרחק מהסוף.
   const now = new Date();
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  if (last - now.getDate() !== 4) return;
+  if (last - now.getDate() !== 3) return;
 
   const sid = PUSH_STATION;
   const uids = await uidsInCrew(sid, '');
+  // שתי פעולות ולא אחת: לדווח את מה שחסר, **ולאשר** את הדוח.
+  // דוח שלא אושר אינו מגיע לרכז כוח אדם, וכבאי שדיווח הכל
+  // ושכח לאשר בטוח שסיים.
   const res = await pushToUsers(sid, uids, 'reminder',
-    'תזכורת דיווח שעות',
-    'נשארו ארבעה ימים לסוף החודש. ודא שדיווחת את כל המשמרות שלך.',
+    'תזכורת דוח שעות',
+    'נשארו שלושה ימים לסוף החודש. בדוק שכל המשמרות מדווחות, ' +
+    'ואשר את הדוח — בלי אישור הוא לא נשלח.',
     './attendance.html');
   console.log('hoursReminder: ' + res.people + ' people, ' +
               res.devices + ' devices');
@@ -2895,3 +2931,60 @@ exports.onFaultBlocking = onDocumentWritten(
       (after.title || '') + ' · דווח ע״י ' + (after.by_name || '') + '.',
       './faults.html', true);
   });
+
+// ---------------------------------------------------------------------
+//  תפיסת מזהה מכשיר — מכשיר אחד, משתמש אחד
+//
+//  מזהה הפוש שייך ל**דפדפן**, לא לאדם. במחשב התחנה נכנסים
+//  בזה אחר זה כמה כבאים, וכל אחד שמפעיל התראות רושם את אותו
+//  מזהה בדיוק — תחת שם המשתמש שלו.
+//
+//  התוצאה: התראה שנשלחת לאדם אחד מגיעה למכשיר שיושב מולו
+//  מישהו אחר. בקשת החלפה, דוח שעות, ובמקרה הגרוע קריאת פתע
+//  ששולחת מישהו לשריפה — כולם מוצגים על מסך של מי שבמקרה
+//  עומד שם.
+//
+//  מצאתי את זה בנתונים החיים של האפליקציה הקיימת: לשני
+//  משתמשים רשום אותו מזהה בדיוק. ResQ נבנתה באותו מבנה,
+//  ולכן ירשה את אותו הפגם.
+//
+//  הכלל כאן פשוט: מזהה מכשיר שייך למי שנכנס בו אחרון.
+//  ההרשמה מפנה אותו מכל שאר המשתמשים.
+//
+//  סריקה ולא שאילתה: הרשומות מחזיקות מערך של אובייקטים,
+//  ו-array-contains דורש התאמה מדויקת של האובייקט כולו —
+//  כולל התווית והשעה, שנבדלות בין משתמשים. בתחנה יש כחמישים
+//  רשומות, וזה רץ רק כשמפעילים התראות.
+exports.claimPushToken = onCall(async (req) => {
+  const auth = req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+
+  const t   = auth.token || {};
+  const sid = t.stationId || PUSH_STATION;
+  const me  = auth.uid;
+
+  const token = String((req.data || {}).token || '').trim();
+  if (!token || token.length < 20) {
+    throw new HttpsError('invalid-argument', 'מזהה מכשיר לא תקין.');
+  }
+
+  const col  = db.collection('stations/' + sid + '/push_tokens');
+  const snap = await col.get();
+
+  let evicted = 0;
+  for (const d of snap.docs) {
+    if (d.id === me) continue;
+    const list = Array.isArray((d.data() || {}).tokens) ? d.data().tokens : [];
+    const kept = list.filter(x => String((x || {}).token || '') !== token);
+    if (kept.length === list.length) continue;
+    await d.ref.set({ tokens: kept, updated_at: FV.serverTimestamp() },
+                    { merge: true });
+    evicted++;
+  }
+
+  if (evicted) {
+    console.log('claimPushToken: ' + me + ' claimed a device from ' +
+                evicted + ' other user(s)');
+  }
+  return { evicted: evicted };
+});
