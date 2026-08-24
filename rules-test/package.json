@@ -1,0 +1,11 @@
+{
+  "name": "resq-rules-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node rules.test.mjs"
+  },
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1"
+  }
+}
