@@ -2988,3 +2988,232 @@ exports.claimPushToken = onCall(async (req) => {
   }
   return { evicted: evicted };
 });
+
+
+// =======================================================================
+//  בדיקת מייל מקצה לקצה
+// =======================================================================
+//  כל הדואר במערכת נכתב לאוסף mail/ ונשלח בידי תוסף Trigger Email.
+//  כל עוד התוסף לא מותקן, sendMail מצליחה — המסמך נכתב — ואף מייל
+//  לא יוצא. זו תקלה שקטה: המערכת "חושבת" ששלחה.
+//
+//  sendTestMail כותבת מסמך אחד ומחזירה את המזהה שלו. מיד אחר כך
+//  checkTestMail קוראת את אותו מסמך ומדווחת מה התוסף עשה איתו:
+//  התוסף כותב שדה delivery עם state (PENDING / PROCESSING / SUCCESS /
+//  ERROR). אם השדה לא קיים אחרי כמה שניות — התוסף לא מותקן, או
+//  שהוא מאזין לאוסף אחר.
+
+exports.sendTestMail = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  const to = String((req.data && req.data.to) || '').trim();
+  if (!to || to.indexOf('@') === -1) {
+    throw new HttpsError('invalid-argument', 'צריך כתובת מייל תקינה.');
+  }
+
+  const stamp = new Date().toISOString();
+  const ref = await db.collection('mail').add({
+    to: [to],
+    message: {
+      subject: 'ResQ — בדיקת מייל',
+      html: mailShell('בדיקת מייל',
+        '<p style="margin:0 0 10px;color:#444">אם הגעת לכאן, תוסף שליחת ' +
+        'המייל מותקן ועובד. כל הדואר של המערכת — איפוס סיסמה, הודעת ' +
+        'נעילה, הדוח החודשי — יוצא מאותו צינור.</p>' +
+        '<p style="margin:0;color:#888;font-size:12px">נשלח ' + stamp + '</p>')
+    },
+    created_at: FV.serverTimestamp(),
+    is_test: true
+  });
+
+  console.log('sendTestMail: נכתב מסמך ' + ref.id + ' עבור ' + to);
+  return {
+    id: ref.id,
+    to: to,
+    note: 'המסמך נכתב לאוסף mail. הרץ checkTestMail בעוד כ-15 שניות.'
+  };
+});
+
+exports.checkTestMail = onCall(async (req) => {
+  requireSuperAdmin(req);
+  const id = String((req.data && req.data.id) || '').trim();
+  if (!id) throw new HttpsError('invalid-argument', 'צריך מזהה מסמך.');
+
+  const snap = await db.collection('mail').doc(id).get();
+  if (!snap.exists) {
+    return { state: 'MISSING', ok: false,
+             message: 'המסמך לא נמצא. ייתכן שנמחק, או שהמזהה שגוי.' };
+  }
+
+  const d = snap.data() || {};
+  const delivery = d.delivery || null;
+
+  if (!delivery) {
+    return {
+      state: 'NO_DELIVERY', ok: false,
+      message: 'המסמך נכתב, אבל התוסף לא נגע בו. ' +
+               'או שהוא לא מותקן, או שהוא מאזין לאוסף אחר. ' +
+               'ודא שפרמטר MAIL_COLLECTION מוגדר בדיוק "mail".'
+    };
+  }
+
+  const state = String(delivery.state || '');
+  const ok = (state === 'SUCCESS');
+  const messages = {
+    'SUCCESS': 'המייל נשלח. הצינור עובד מקצה לקצה.',
+    'PENDING': 'התוסף קלט את המסמך וממתין. הרץ שוב בעוד כמה שניות.',
+    'PROCESSING': 'התוסף שולח כרגע. הרץ שוב בעוד כמה שניות.',
+    'RETRY': 'השליחה נכשלה והתוסף מנסה שוב.',
+    'ERROR': 'השליחה נכשלה. ראה את השדה error.'
+  };
+
+  return {
+    state: state, ok: ok,
+    message: messages[state] || 'מצב לא מוכר: ' + state,
+    error: delivery.error ? String(delivery.error).slice(0, 400) : '',
+    attempts: delivery.attempts || 0,
+    info: delivery.info || null
+  };
+});
+
+
+// =======================================================================
+//  שליחת הדואר בפועל
+// =======================================================================
+//  זו החלופה לתוסף Trigger Email של גוגל. התוסף ננעל להגדרות ב-31
+//  במרץ 2027 — הוא ימשיך לרוץ, אבל אי אפשר יהיה לשנות לו את סיסמת
+//  ה-SMTP או את כתובת השולח. סיסמת אפליקציה של Gmail נשללת מדי פעם
+//  מעצמה, ובאותו יום צינור הדואר היה מת בלי דרך לתקן. לכן הוא נכתב
+//  כאן, בקוד שאפשר לשנות בכל רגע.
+//
+//  החוזה זהה לזה של התוסף, בכוונה: מסמך נכנס ל-mail/, והשולח כותב
+//  בחזרה שדה delivery עם state. כך sendTestMail ו-checkTestMail
+//  עובדות בלי שינוי, וכך גם אפשר לחזור לתוסף בעתיד בלי לגעת בקוד.
+//
+//  ⚙️ שינוי כתובת השולח — כאן ורק כאן.
+//  ⚙️ שינוי הסיסמה — לא בקוד. פקודה אחת:
+//     firebase functions:secrets:set GMAIL_APP_PASSWORD
+
+const MAIL_FROM_NAME = 'ResQ · תחנה 102';
+const MAIL_FROM_ADDR = 'fire102.shits@gmail.com';
+const MAIL_ATTEMPTS  = 3;
+
+const { defineSecret } = require('firebase-functions/params');
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+
+const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
+
+// מנוע השליחה נבנה פעם אחת לכל מופע ולא בכל מייל — פתיחת חיבור
+// SMTP היא הפעולה היקרה כאן, והספרייה יודעת להחזיק אותו פתוח.
+let mailer = null;
+function getMailer(pass) {
+  if (!mailer) {
+    const nodemailer = require('nodemailer');
+    mailer = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: { user: MAIL_FROM_ADDR, pass: pass },
+      pool: true,
+      maxConnections: 3
+    });
+  }
+  return mailer;
+}
+
+function asList(v) {
+  if (!v) return [];
+  return (Array.isArray(v) ? v : [v])
+    .map(x => String(x || '').trim())
+    .filter(x => x.indexOf('@') !== -1);
+}
+
+exports.deliverMail = onDocumentCreated(
+  { document: 'mail/{mailId}', secrets: [GMAIL_APP_PASSWORD] },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const ref = snap.ref;
+    const d = snap.data() || {};
+
+    // הגנת כפילות. onDocumentCreated יכול לירות פעמיים על אותו
+    // מסמך (ניסיון חוזר של התשתית), ומייל כפול לכבאי הוא באג גלוי.
+    if (d.delivery && d.delivery.state) {
+      console.log('deliverMail: ' + ref.id + ' כבר טופל (' + d.delivery.state + ')');
+      return;
+    }
+
+    const to  = asList(d.to);
+    const cc  = asList(d.cc);
+    const bcc = asList(d.bcc);
+    const msg = d.message || {};
+
+    if (to.length === 0) {
+      await ref.set({ delivery: {
+        state: 'ERROR', attempts: 0,
+        error: 'אין נמען תקין בשדה to',
+        endTime: FV.serverTimestamp()
+      } }, { merge: true });
+      return;
+    }
+
+    await ref.set({ delivery: {
+      state: 'PROCESSING', attempts: 0, startTime: FV.serverTimestamp()
+    } }, { merge: true });
+
+    const mail = {
+      from: MAIL_FROM_NAME + ' <' + MAIL_FROM_ADDR + '>',
+      to: to.join(', '),
+      subject: String(msg.subject || '(ללא נושא)')
+    };
+    if (cc.length) mail.cc = cc.join(', ');
+    if (bcc.length) mail.bcc = bcc.join(', ');
+    if (msg.html) mail.html = String(msg.html);
+    if (msg.text) mail.text = String(msg.text);
+    if (!mail.html && !mail.text) mail.text = '(ללא תוכן)';
+
+    let lastErr = '';
+    for (let attempt = 1; attempt <= MAIL_ATTEMPTS; attempt++) {
+      try {
+        const info = await getMailer(GMAIL_APP_PASSWORD.value()).sendMail(mail);
+        await ref.set({ delivery: {
+          state: 'SUCCESS', attempts: attempt, error: '',
+          info: {
+            messageId: String(info.messageId || ''),
+            accepted: (info.accepted || []).length,
+            rejected: (info.rejected || []).length
+          },
+          endTime: FV.serverTimestamp()
+        } }, { merge: true });
+        console.log('deliverMail: ' + ref.id + ' נשלח אל ' + to.join(', ') +
+                    ' בניסיון ' + attempt);
+        return;
+      } catch (e) {
+        lastErr = String((e && e.message) || e);
+        console.warn('deliverMail: ' + ref.id + ' ניסיון ' + attempt +
+                     ' נכשל — ' + lastErr);
+        // חיבור שנפל נשאר תקוע במאגר. זורקים אותו כדי שהניסיון
+        // הבא ייפתח נקי במקום לחזור לאותו שקע מת.
+        try { if (mailer) mailer.close(); } catch (e2) {}
+        mailer = null;
+        if (attempt < MAIL_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        }
+      }
+    }
+
+    await ref.set({ delivery: {
+      state: 'ERROR', attempts: MAIL_ATTEMPTS, error: lastErr.slice(0, 500),
+      endTime: FV.serverTimestamp()
+    } }, { merge: true });
+
+    // כישלון שליחה הוא תקלה שקטה מטבעה — אין מי שיתלונן, כי בדיוק
+    // מי שהיה מתלונן הוא זה שלא קיבל. לכן הוא נרשם ליומן התקלות
+    // שהמנהל רואה, ולא רק ללוג של הפונקציה.
+    try {
+      await db.collection('mail_failures').add({
+        mail_id: ref.id, to: to, subject: mail.subject,
+        error: lastErr.slice(0, 500), at: FV.serverTimestamp()
+      });
+    } catch (e) {}
+  }
+);

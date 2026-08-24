@@ -100,6 +100,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div class="card">
+    <h2>6 · בדיקת מייל</h2>
+    <div class="sub" style="margin-bottom:0">
+      כל הדואר של המערכת נכתב לאוסף <code>mail</code> ונשלח בידי תוסף
+      Trigger Email. כל עוד התוסף לא מותקן — הכתיבה מצליחה ואף מייל
+      לא יוצא. זו תקלה שקטה: המערכת חושבת ששלחה.
+      <br>הבדיקה כותבת מייל אחד וקוראת בחזרה מה התוסף עשה איתו.
+    </div>
+    <label class="k" style="margin-top:12px;display:block">שלח אל</label>
+    <input type="text" id="mailTo" placeholder="fire102.shits@gmail.com">
+    <div>
+      <button id="btnMail">שלח מייל בדיקה</button>
+      <button class="ghost" id="btnMailCheck" disabled>בדוק מה קרה לו</button>
+    </div>
+    <div id="mailOut"></div>
+  </div>
+
+  <div class="card">
     <h2>גיבוי</h2>
     <div class="note">
       מוריד את כל נתוני התחנה לקובץ אחד במחשב שלך. סידור, סגל,
@@ -799,6 +816,61 @@ $('btnScan').onclick = async () => {
          d.flagged ? 'warn' : 'ok');
   } catch (e) {
     line('runOut', 'הסריקה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+  b.disabled = false;
+};
+
+// ---------- בדיקת מייל מקצה לקצה ----------
+//
+// שני שלבים בכוונה. הכתיבה ל-mail תמיד מצליחה, גם בלי תוסף —
+// ולכן היא לבדה לא מוכיחה כלום. רק הקריאה החוזרת, שבודקת אם
+// התוסף כתב שדה delivery, מבדילה בין "נשלח" ל"נשמר ונשכח".
+
+let lastMailId = '';
+
+$('btnMail').onclick = async () => {
+  const to = $('mailTo').value.trim();
+  if (!to || to.indexOf('@') === -1) {
+    $('mailOut').innerHTML = '';
+    line('mailOut', 'כתובת לא תקינה', 'צריך מייל מלא עם @', 'bad');
+    return;
+  }
+  const b = $('btnMail'); b.disabled = true;
+  $('mailOut').innerHTML = '';
+  try {
+    const res = await httpsCallable(fns, 'sendTestMail')({ to: to });
+    const d = res.data || {};
+    lastMailId = d.id || '';
+    line('mailOut', 'המסמך נכתב', d.id, 'ok');
+    line('mailOut', 'הצעד הבא',
+         'המתן כ-15 שניות ולחץ "בדוק מה קרה לו". ' +
+         'זה מה שמבדיל בין נשלח לנשמר ונשכח.', 'warn');
+    $('btnMailCheck').disabled = false;
+  } catch (e) {
+    line('mailOut', 'הכתיבה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+  b.disabled = false;
+};
+
+$('btnMailCheck').onclick = async () => {
+  if (!lastMailId) return;
+  const b = $('btnMailCheck'); b.disabled = true;
+  $('mailOut').innerHTML = '';
+  try {
+    const res = await httpsCallable(fns, 'checkTestMail')({ id: lastMailId });
+    const d = res.data || {};
+    const cls = d.ok ? 'ok' : (d.state === 'PENDING' || d.state === 'PROCESSING' ? 'warn' : 'bad');
+    line('mailOut', 'מצב', d.state, cls);
+    line('mailOut', 'פירוש', d.message, cls);
+    if (d.attempts) line('mailOut', 'ניסיונות', String(d.attempts));
+    if (d.error) line('mailOut', 'שגיאה', d.error, 'bad');
+    if (d.state === 'NO_DELIVERY') {
+      line('mailOut', 'מה לעשות',
+           'התקן את התוסף Trigger Email, וודא שהפרמטר MAIL_COLLECTION ' +
+           'מוגדר בדיוק mail.', 'bad');
+    }
+  } catch (e) {
+    line('mailOut', 'הבדיקה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
   }
   b.disabled = false;
 };
