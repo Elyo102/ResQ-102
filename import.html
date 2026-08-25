@@ -128,6 +128,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .ready .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
 
   .sum{ display:flex; gap:12px; flex-wrap:wrap; margin-top:12px }
+  /* סיכום הייבוא הוא טקסט זורם ולא אריחים: הוא מונה חודשים,
+     אנשים ושורות פגומות, ואריח לכל אחד מהם היה דורש גלילה
+     אופקית בטלפון. */
+  .longsum{ margin-top:14px; background:var(--panel); border:1px solid var(--line);
+            border-radius:9px; padding:13px; font-size:13px; line-height:1.9;
+            max-height:420px; overflow-y:auto }
+  .longsum .s{ color:var(--muted); font-size:12px }
   .sum div{ flex:1 1 110px; background:var(--panel); border:1px solid var(--line);
             border-radius:9px; padding:12px; text-align:center }
   .sum .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
@@ -220,6 +227,45 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="msg" id="runMsg"></div>
       <div class="sum hide" id="sum"></div>
     </div>
+
+    <!-- ============ היסטוריית שעות ============ -->
+    <div class="card">
+      <h2>ייבוא היסטוריית שעות מ-Shift-eilat</h2>
+      <div class="note">
+        פעולה חד-פעמית. בלעדיה, ביום המעבר ההיסטוריה נשארת
+        בגיליון — וכבאי שרוצה לראות כמה עבד במרץ פותח מערכת
+        שנייה. שתי מערכות במקביל זו לא תקופת מעבר.
+      </div>
+
+      <div class="warn" style="margin-top:12px">
+        <b>איך מפיקים את הקובץ:</b> ב-Shift-eilat, בתפריט
+        <b>פקודות</b>, הרץ <b>M170 — ייצוא היסטוריה לרסקיו</b>.
+        הוא שולח אליך קובץ CSV במייל. פתח אותו, סמן הכל, העתק,
+        והדבק כאן.
+      </div>
+
+      <label for="hPaste" style="display:block;font-size:12.5px;
+            color:var(--muted);margin:16px 0 4px">
+        הדבק כאן את תוכן הקובץ
+      </label>
+      <textarea id="hPaste" rows="6" spellcheck="false"
+        placeholder="שם,מספר עובד,משמרת,תאריך,סוג יום,כניסה,יציאה,..."
+        style="width:100%;padding:11px;background:var(--input);color:var(--txt);
+               border:1px solid var(--line);border-radius:7px;font-size:13px;
+               font-family:Consolas,monospace;direction:ltr;resize:vertical"></textarea>
+
+      <div class="row">
+        <button class="btn" id="hDry">בדיקה יבשה — בלי לכתוב כלום</button>
+        <button class="btn ok" id="hRun" disabled>כתוב למערכת</button>
+      </div>
+      <div class="note" style="margin-top:6px">
+        כפתור הכתיבה נפתח רק אחרי בדיקה יבשה נקייה. ייבוא של
+        אלפי רשומות שמתברר כשגוי אחרי הכתיבה הוא לא "נסה שוב" —
+        הוא ניקוי ידני של אוסף שלם.
+      </div>
+      <div class="msg" id="hMsg"></div>
+      <div class="longsum hide" id="hSum"></div>
+    </div>
   </div>
 </div>
 
@@ -232,6 +278,10 @@ import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import { getFirestore, collection, doc, getDocs, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
+import { dryRun } from './histimport.js?v=38';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
@@ -239,9 +289,9 @@ const esc = s => String(s == null ? '' : s)
   .replace(/"/g,'&quot;');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
-const ROLE_HE = { firefighter:'כבאי', deputy:'סגן מפקד משמרת',
-  commander:'מפקד משמרת', station_commander:'מפקד תחנה',
-  hr_coordinator:'רכז כוח אדם' };
+// שמות התפקידים מגיעים מ-roles.js. כאן הייתה המפה השישית
+// שלהם, והיא גם הייתה שונה מהשאר ("כבאי" במקום "לוחם אש").
+const ROLE_HE = ROLES_HE;
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -507,6 +557,154 @@ function pwOf(emp){
   const v = PW[String(emp)];
   if (!v) throw new Error('אין סיסמה למספר עובד ' + emp + '.');
   return v;
+}
+
+// =================================================================
+//  ייבוא היסטוריית שעות
+// =================================================================
+//
+//  שני כפתורים, ותמיד באותו סדר: בדיקה יבשה ואז כתיבה. כפתור
+//  הכתיבה נעול עד שהבדיקה עברה נקייה, כי ייבוא של אלפי רשומות
+//  שמתברר כשגוי אחרי הכתיבה אינו "נסה שוב".
+
+const db = getFirestore(app);
+let HIST = null;   // תוצאת הבדיקה היבשה האחרונה
+
+// הסגל מהמסד ולא מ-roster-import.js: הרשימה הקבועה היא מה
+// שנקלט פעם אחת, והמסד הוא מי שקיים **עכשיו**. אדם שנוסף
+// אחרי הקליטה אינו ברשימה הקבועה, והשעות שלו היו נדחות
+// כ"לא נמצא במערכת".
+async function loadRoster(){
+  const out = [];
+  const rs = await getDocs(collection(db, 'stations', STATION_ID, 'roster'));
+  rs.forEach(function (d) {
+    const v = d.data() || {};
+    out.push({ uid: d.id, emp: String(v.employee_number || v.emp_number || ''),
+               name: v.full_name || '', crew: v.crew || '' });
+  });
+  return out;
+}
+
+$('hDry').onclick = async function () {
+  const b = $('hDry'); b.disabled = true;
+  $('hRun').disabled = true; HIST = null;
+  hmsg('קורא את הסגל ובודק את הקובץ…', 'info');
+  try {
+    const roster = await loadRoster();
+    if (!roster.length) {
+      hmsg('אין סגל במסד. הרץ קודם את הקליטה למעלה.', 'err');
+      b.disabled = false; return;
+    }
+    const r = dryRun($('hPaste').value, roster);
+    if (r.fatal) { hmsg(r.fatal, 'err'); $('hSum').classList.add('hide');
+                   b.disabled = false; return; }
+
+    HIST = r;
+    renderHist(r, roster.length);
+    // שורות פגומות אינן חוסמות — הן פשוט לא ייכתבו, והן
+    // מוצגות בשמן כדי שאפשר יהיה לתקן אותן בגיליון ולייצא
+    // שוב. מה שכן חוסם: אפס שורות תקינות.
+    $('hRun').disabled = r.ready.length === 0;
+    hmsg(r.ready.length
+      ? 'הבדיקה הסתיימה. שום דבר לא נכתב עדיין — עבור על הסיכום.'
+      : 'אין אף שורה תקינה בקובץ.', r.ready.length ? 'ok' : 'err');
+  } catch (e) {
+    hmsg('הבדיקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+$('hRun').onclick = async function () {
+  if (!HIST || !HIST.ready.length) return;
+  const n = HIST.ready.length;
+  if (!window.confirm('לכתוב ' + n + ' רשומות נוכחות למערכת?\n\n' +
+      'רשומה קיימת לאותו אדם ואותו יום תידרס.')) return;
+
+  const b = $('hRun'); b.disabled = true; $('hDry').disabled = true;
+  try {
+    // Firestore מגביל אצווה ל-500 פעולות. 12,000 רשומות הן
+    // 24 אצוות, ולכן הן נכתבות במנות עם דיווח התקדמות —
+    // מסך שנתקע בלי סימן חיים במשך דקה נסגר בידי המשתמש
+    // באמצע הכתיבה.
+    const CHUNK = 400;
+    let done = 0;
+    for (let i = 0; i < HIST.ready.length; i += CHUNK) {
+      const slice = HIST.ready.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      slice.forEach(function (o) {
+        batch.set(doc(db, 'stations', STATION_ID, 'attendance', o.id),
+                  Object.assign({}, o.rec, { updated_at: serverTimestamp() }));
+      });
+      await batch.commit();
+      done += slice.length;
+      hmsg('נכתבו ' + done + ' מתוך ' + n + '…', 'info');
+    }
+    hmsg('הושלם. ' + done + ' רשומות נכתבו. ההיסטוריה זמינה ' +
+         'עכשיו במסך הנוכחות.', 'ok');
+    HIST = null;
+  } catch (e) {
+    hmsg('הכתיבה נכשלה באמצע. (' + (e.code || '') + ' ' + (e.message || '') +
+         ') מה שנכתב עד כה נשאר — הרצה חוזרת בטוחה, היא דורסת ' +
+         'את אותן רשומות.', 'err');
+  }
+  b.disabled = false; $('hDry').disabled = false;
+};
+
+function hmsg(t, k){
+  const m = $('hMsg');
+  m.textContent = t || '';
+  m.className = 'msg ' + (t ? (k || '') : '');
+}
+
+function renderHist(r, rosterSize){
+  const box = $('hSum');
+  box.classList.remove('hide');
+
+  const months = Object.keys(r.months).sort();
+  const people = Object.keys(r.perPerson).sort();
+  const unknown = Object.keys(r.unknownPeople);
+
+  let h = '<b>' + r.ready.length + '</b> רשומות מוכנות מתוך ' +
+          r.totalRows + ' שורות · <b>' + r.totalHours + '</b> שעות · ' +
+          months.length + ' חודשים · ' + people.length + ' אנשים מתוך ' +
+          rosterSize + '<br><br>';
+
+  h += '<b>חודשים:</b><br>' + months.map(function (m) {
+    return '&nbsp;&nbsp;' + esc(m) + ' — ' + r.months[m] + ' ימים';
+  }).join('<br>') + '<br><br>';
+
+  h += '<b>לפי אדם:</b><br>' + people.map(function (p) {
+    return '&nbsp;&nbsp;' + esc(p) + ' — ' + r.perPerson[p].rows +
+           ' ימים · ' + r.perPerson[p].hours + ' שעות';
+  }).join('<br>');
+
+  if (r.dupes) {
+    h += '<br><br><b>' + r.dupes + '</b> שורות כפולות (אותו אדם, אותו יום) — ' +
+         'נלקחה הראשונה.';
+  }
+
+  // מי שלא נמצא מוצג בשמו ולא כמספר. "7 שורות נדחו" מכריח
+  // להשוות שתי רשימות ביד; "רמי · 12 שורות" אומר בדיוק מה
+  // לתקן.
+  if (unknown.length) {
+    h += '<br><br><b style="color:var(--warn)">לא נמצאו במערכת:</b><br>' +
+      unknown.map(function (u) {
+        return '&nbsp;&nbsp;' + esc(u) + ' — ' + r.unknownPeople[u] + ' שורות';
+      }).join('<br>') +
+      '<br><span class="s">הוסף אותם בקליטה למעלה, או תקן את השם ' +
+      'בגיליון, וייצא שוב.</span>';
+  }
+
+  if (r.errors.length) {
+    h += '<br><br><b style="color:var(--bad)">' + r.errors.length +
+         ' שורות פגומות:</b><br>' +
+      r.errors.slice(0, 25).map(function (e) {
+        return '&nbsp;&nbsp;שורה ' + e.line + ' — ' + esc(e.why);
+      }).join('<br>') +
+      (r.errors.length > 25 ? '<br>&nbsp;&nbsp;ועוד ' + (r.errors.length - 25) : '');
+  }
+
+  box.innerHTML = h;
 }
 </script>
 </body>

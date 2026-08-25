@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "static": "node rulecheck.mjs && node fncheck.mjs && node restcheck.mjs && node vmapcheck.mjs && node signflow.mjs && node docpdf.mjs && node roles.mjs && node shiftlog.mjs",
+    "static": "node rulecheck.mjs && node fncheck.mjs && node restcheck.mjs && node vmapcheck.mjs && node signflow.mjs && node docpdf.mjs && node roles.mjs && node shiftlog.mjs && node histimport.mjs",
     "browser": "node smoke.mjs && node role.mjs && node numbers.mjs && node contrast.mjs",
     "all": "npm run static && npm run browser"
   },

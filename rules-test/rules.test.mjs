@@ -701,9 +701,27 @@ await ok('מפקד התחנה מאשר בקשה שראש המשמרת הגיש',
 await blocked('🔓 🔒 ראש משמרת סוגר לבדו חופשה בחו״ל',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
 
+// ⚠️ המפה נשלחת **שלמה**, עם חתימת הכבאי בתוכה.
+//
+// updateDoc על שדה מסוג מפה דורס את כולה ולא ממזג אותה.
+// שליחת { commander } בלבד מוחקת את חתימת הכבאי — והכלל
+// שנועל אותה חוסם את זה, בצדק. הגרסה הראשונה של הבדיקה
+// הזאת שלחה מפה חלקית ונכשלה, וזה נראה כמו באג בכלל
+// בזמן שזה היה בדיוק ההגנה עובדת.
+//
+// forms.html עושה את זה נכון: Object.assign על המפה הקיימת.
+const EMPSIG = { image: 'data:image/png;base64,' + 'A'.repeat(400),
+                 uid: 'u_ff', name: 'כבאי א', emp: '101',
+                 role: 'firefighter', at: '2026-08-20T08:00:00.000Z' };
+
 await ok('ראש משמרת חותם ומעביר חופשת חו״ל למפקד התחנה',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_abroad`), {
-    status: 'pending_station', signatures: { commander: CSIG } }));
+    status: 'pending_station',
+    signatures: { employee: EMPSIG, commander: CSIG } }));
+
+await blocked('🔒 המאשר משמיט את חתימת הכבאי מהמפה',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_home`), {
+    status: 'approved', signatures: { commander: CSIG } }));
 
 await blocked('🔒 ראש משמרת מאשר בקשה שכבר אצל מפקד התחנה',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
