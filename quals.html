@@ -475,27 +475,46 @@ async function renameQual(q, name, inp){
 async function removeQual(q){
   const uids = Object.keys(held).filter(u => (held[u] || []).indexOf(q.id) !== -1);
 
-  const batch = writeBatch(db);
-  batch.delete(doc(db, 'stations', SID, 'quals', q.id));
-
-  uids.forEach(function (u) {
+  // **חלוקה למנות של 400.**
+  //
+  // אצווה ב-Firestore מוגבלת ל-500 פעולות. כאן יש פעולה אחת
+  // לכל אדם שמחזיק בכשירות — וכשירות נפוצה כמו נהג או נושא
+  // מסכה מוחזקת כמעט בידי כל הסגל.
+  //
+  // ברגע ש-499 אנשים מחזיקים בה, commit() נזרק, הכשירות
+  // **לא נמחקת**, ואף אחד לא מנוקה — כישלון שקט שמשאיר את
+  // הנתונים באמצע. ב-44 אנשים זה לא יכול לקרות, ולכן זה
+  // היה נשאר חבוי עד שהמערכת תגדל.
+  const CHUNK = 400;
+  const ops = uids.map(function (u) {
     const left = held[u].filter(x => x !== q.id);
-    batch.set(doc(db, 'stations', SID, 'member_quals', u),
-              { quals: left, updated_at: serverTimestamp(),
-                by: auth.currentUser.uid });
+    return { ref: doc(db, 'stations', SID, 'member_quals', u),
+             data: { quals: left, updated_at: serverTimestamp(),
+                     by: auth.currentUser.uid } };
   });
 
-  if (redline.min_quals && redline.min_quals[q.id] != null) {
-    const next = Object.assign({}, redline.min_quals);
-    delete next[q.id];
-    batch.set(doc(db, 'stations', SID, 'config', 'redline'),
-              { min_headcount: Number(redline.min_headcount || 0),
-                min_quals: next, updated_at: serverTimestamp(),
-                by: auth.currentUser.uid });
-    redline.min_quals = next;
-  }
+  // המנה הראשונה נושאת גם את מחיקת הכשירות עצמה ואת עדכון
+  // קו האדום, כדי שאם משהו ייפול — הכשירות כבר לא קיימת
+  // ואי אפשר להעניק אותה מחדש בטעות.
+  for (let i = 0; i < ops.length || i === 0; i += CHUNK) {
+    const batch = writeBatch(db);
 
-  await batch.commit();
+    if (i === 0) {
+      batch.delete(doc(db, 'stations', SID, 'quals', q.id));
+      if (redline.min_quals && redline.min_quals[q.id] != null) {
+        const next = Object.assign({}, redline.min_quals);
+        delete next[q.id];
+        batch.set(doc(db, 'stations', SID, 'config', 'redline'),
+                  { min_headcount: Number(redline.min_headcount || 0),
+                    min_quals: next, updated_at: serverTimestamp(),
+                    by: auth.currentUser.uid });
+        redline.min_quals = next;
+      }
+    }
+
+    ops.slice(i, i + CHUNK).forEach(function (o) { batch.set(o.ref, o.data); });
+    await batch.commit();
+  }
 
   uids.forEach(u => { held[u] = held[u].filter(x => x !== q.id); });
   quals = quals.filter(x => x.id !== q.id);

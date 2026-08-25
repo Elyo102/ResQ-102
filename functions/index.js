@@ -144,19 +144,42 @@ async function logSilenced(kind, to, subject) {
   } catch (e) {}
 }
 
+// מסמך ב-Firestore מוגבל למגה אחד, **כולל שמות השדות**.
+// 900KB משאיר מקום לנושא, לנמענים ולחותמות הזמן.
+const MAIL_MAX_HTML = 900000;
+
+// מחזירה true אם המייל אכן נכנס לתור.
+//
+// ⚠️ הערך המוחזר אינו קישוט. עד 25.8.2026 הפונקציה בלעה כל
+// שגיאה ו-console.error בלבד, והקורא — buildAndSendMonthly —
+// רשם ב-hr_reports ש"הדוח נשלח" בלי לבדוק כלום. כלומר ביום
+// שבו הדוח ייכשל, רישום הביקורת יטען שהוא הצליח.
 async function sendMail(to, subject, html) {
-  if (!to) return;
-  if (await silentFor(to)) { await logSilenced('mail', to, subject); return; }
+  if (!to) return false;
+  if (await silentFor(to)) { await logSilenced('mail', to, subject); return true; }
+
+  const size = Buffer.byteLength(String(html || ''), 'utf8');
+  if (size > MAIL_MAX_HTML) {
+    console.error('mail too large', { to: to, subject: subject, bytes: size });
+    return false;
+  }
+
   try {
     await db.collection('mail').add({
       to: [to],
       message: { subject: subject, html: html },
       created_at: FV.serverTimestamp()
     });
+    return true;
   } catch (e) {
     console.error('mail queue failed', e);
+    return false;
   }
 }
+
+// גודל ה-HTML בבייטים. עברית היא שני בייטים לתו, ולכן ספירת
+// תווים הייתה נותנת חצי מהמספר האמיתי.
+function htmlBytes(s) { return Buffer.byteLength(String(s || ''), 'utf8'); }
 
 function mailShell(title, bodyHtml) {
   return '<div dir="rtl" style="font-family:Arial,sans-serif;background:#f4f6f8;' +
@@ -650,6 +673,32 @@ exports.setUserRole = onCall(async (req) => {
   // כשהיא נכשלה — שם ריק במעבר תחנה — התפקיד, התחנה והמשמרת
   // כבר השתנו, writeProfile לא רץ, מפתח מספר העובד לא הופנה
   // מחדש, והמסך הציג "נכשל" על פעולה שכבר חצי בוצעה.
+  // שם וטלפון נשמרים אם לא נמסרו במפורש. בלי זה, תיקון תפקיד
+  // או שינוי מספר עובד היה מוחק לכבאי את השם והטלפון — כי
+  // writeProfile כותב את כל השדות, וריק דורס.
+  //
+  // ⚠️ הקריאה הזאת **חייבת** להיות לפני בדיקת השם למטה.
+  //
+  // עד 25.8.2026 היא ישבה אחריה, ו-existing הוגדר ב-let
+  // אחרי שכבר נקרא. בגלל ש-|| עוצר בערך הראשון שאינו ריק,
+  // זה לא קרס תמיד — הוא קרס **בדיוק כששדה השם הושאר ריק**,
+  // שזה המקרה הרגיל: במסך הניהול כתוב "ריק = לא משנה את השם
+  // הקיים". כלומר כל שינוי תפקיד לאדם קיים, בלי להקליד את
+  // שמו מחדש, נפל על
+  //   ReferenceError: Cannot access 'existing' before initialization
+  // והתפקיד לא השתנה.
+  let existing = {};
+  try {
+    const cur = await db.doc('stations/' + stationId + '/users/' + user.uid).get();
+    if (cur.exists) existing = cur.data() || {};
+  } catch (ignore) {}
+
+  // **האימות לפני הכתיבה, ולא אחריה.**
+  //
+  // רשומה בלי שם אינה ניתנת למציאה בחיפוש עובד, והמסכים
+  // מציגים במקומה כתובת מייל. עדיף להיכשל כאן מאשר ליצור
+  // כבאי אנונימי — ולהיכשל **לפני** שההרשאות נכתבו, כדי
+  // שלא יישאר מצב חצי-מעודכן.
   const fullName = String(d.full_name || existing.full_name || '').trim();
   if (!fullName) {
     throw new HttpsError('invalid-argument',
@@ -657,18 +706,6 @@ exports.setUserRole = onCall(async (req) => {
   }
 
   await admin.auth().setCustomUserClaims(user.uid, claims);
-
-  // שם וטלפון נשמרים אם לא נמסרו במפורש. בלי זה, תיקון תפקיד
-  // או שינוי מספר עובד היה מוחק לכבאי את השם והטלפון — כי
-  // writeProfile כותב את כל השדות, וריק דורס.
-  let existing = {};
-  try {
-    const cur = await db.doc('stations/' + stationId + '/users/' + user.uid).get();
-    if (cur.exists) existing = cur.data() || {};
-  } catch (ignore) {}
-
-  // רשומה בלי שם אינה ניתנת למציאה בחיפוש עובד, והמסכים מציגים
-  // במקומה כתובת מייל. עדיף להיכשל כאן מאשר ליצור כבאי אנונימי.
 
 
   await writeProfile(user.uid, {
@@ -1704,6 +1741,7 @@ const SNAP_COLS = [
 const DROP_RATIO = 0.75;
 
 exports.nightlySnapshot = onSchedule({
+  timeoutSeconds: 300,
   schedule: '15 3 * * *',
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
@@ -1778,6 +1816,8 @@ exports.nightlySnapshot = onSchedule({
 });
 
 exports.nightlyScan = onSchedule({
+  timeoutSeconds: 540,
+  memory: '1GiB',
   schedule: '10 2 * * *',
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
@@ -1894,8 +1934,42 @@ async function buildAndSendMonthly(mk) {
     '<b>' + flagged.length + '</b> עובדים עם הערות' +
     '</div>';
 
-  const html = mailShell('דוח נוכחות · ' + heMonth(mk),
-    head + results.map(r => personTable(r, cfg)).join(''));
+  // ---------- חלוקה למיילים לפי גודל ----------
+  //
+  //  **הדוח הזה היה בדרך לשבור את עצמו, ובשקט.**
+  //
+  //  כל יום עבודה של כבאי הוא שורת טבלה של כ-714 בייטים
+  //  (סגנונות מוטבעים בכל תא, כי לקוחות דואר לא מבטיחים
+  //  תמיכה ב-CSS חיצוני). 25 ימים לאדם ≈ 18KB לאדם.
+  //
+  //  מסמך ב-Firestore מוגבל למגה. החשבון:
+  //     44 אנשים  → 0.80MB   ← 80% מהמגבלה, היום
+  //     55 אנשים  → מעל המגבלה
+  //    100 אנשים  → 1.8MB, נדחה
+  //
+  //  וכשזה היה נדחה, sendMail בלעה את השגיאה ו-hr_reports
+  //  כבר נכתב עם sent_to. כלומר ליסה לא הייתה מקבלת דוח,
+  //  ורישום הביקורת היה טוען שהוא נשלח.
+  //
+  //  הפתרון אינו לקצץ את הדוח — כל שורה בו היא שעות של אדם.
+  //  הוא נחתך לכמה מיילים לפי גודל אמיתי בבייטים, וכל אחד
+  //  מסומן "חלק N מתוך M" כדי שיהיה ברור שאין חסר.
+
+  const PART_MAX = 700000;          // מתחת ל-900KB של sendMail, עם מרווח
+  const tables = results.map(r => ({ r: r, html: personTable(r, cfg) }));
+
+  const parts = [];
+  let cur = [], curBytes = htmlBytes(head);
+  tables.forEach(function (t) {
+    const b = htmlBytes(t.html);
+    // אדם בודד שגדול מהמכסה יקבל מייל משלו. עדיף מייל אחד
+    // חריג מאשר להשמיט אותו.
+    if (cur.length && curBytes + b > PART_MAX) {
+      parts.push(cur); cur = []; curBytes = htmlBytes(head);
+    }
+    cur.push(t); curBytes += b;
+  });
+  if (cur.length) parts.push(cur);
 
   await db.doc('stations/' + STATION_ID + '/hr_reports/' + mk).set({
     month: mk,
@@ -1904,20 +1978,55 @@ async function buildAndSendMonthly(mk) {
     over_limit: over.length,
     flagged: flagged.length,
     hour_limit: cfg.limit,
-    sent_to: cfg.email || null
+    parts: parts.length
   }, { merge: true });
 
+  let sentAll = true;
   if (cfg.email) {
-    await sendMail(cfg.email,
-      'ResQ — דוח נוכחות ' + heMonth(mk) + ' · ' + STATION_NAME, html);
+    for (let i = 0; i < parts.length; i++) {
+      const label = parts.length > 1
+        ? ' · חלק ' + (i + 1) + ' מתוך ' + parts.length : '';
+      const body = (i === 0 ? head : '') +
+        parts[i].map(t => t.html).join('');
+      const ok = await sendMail(cfg.email,
+        'ResQ — דוח נוכחות ' + heMonth(mk) + ' · ' + STATION_NAME + label,
+        mailShell('דוח נוכחות · ' + heMonth(mk) + label, body));
+      if (!ok) sentAll = false;
+    }
+
+    // **רישום הביקורת אומר את האמת.** sent_to נכתב רק אם
+    // המייל באמת נכנס לתור; אחרת נשמרת הסיבה, ומנהל-העל
+    // מקבל התראה — כי דוח שכר שלא יצא הוא לא משהו שמגלים
+    // חודש אחרי.
+    await db.doc('stations/' + STATION_ID + '/hr_reports/' + mk).set({
+      sent_to: sentAll ? cfg.email : null,
+      send_failed: !sentAll
+    }, { merge: true });
+
+    if (!sentAll) {
+      console.error('monthlyHrReport: לא כל החלקים נשלחו', mk);
+      try {
+        await sendMail(SUPER_ADMIN_EMAIL,
+          '⚠️ דוח הנוכחות ' + heMonth(mk) + ' לא נשלח במלואו',
+          mailShell('הדוח החודשי נכשל',
+            '<p>הדוח לחודש ' + esc(heMonth(mk)) + ' נבנה מ-' +
+            parts.length + ' חלקים, ולפחות אחד מהם לא נכנס לתור ' +
+            'הדואר. ליסה <b>לא</b> קיבלה דוח מלא.</p>' +
+            '<p>הרץ אותו ידנית ממסך הבדיקה.</p>'));
+      } catch (e) {}
+    }
   }
 
   console.log('monthlyHrReport', mk, 'people', results.length,
-              'over', over.length, 'to', cfg.email || '(none)');
-  return { people: results.length, over: over.length, sent: !!cfg.email };
+              'over', over.length, 'parts', parts.length,
+              'to', cfg.email || '(none)', 'ok', sentAll);
+  return { people: results.length, over: over.length,
+           parts: parts.length, sent: !!cfg.email && sentAll };
 }
 
 exports.monthlyHrReport = onSchedule({
+  timeoutSeconds: 540,
+  memory: '1GiB',
   schedule: '0 6 1 * *',
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
@@ -1927,7 +2036,9 @@ exports.monthlyHrReport = onSchedule({
 
 // הרצה ידנית של אחת מהשתיים, למנהל-על. בלי זה אי אפשר לבדוק
 // אותן בלי לחכות לחצות או לראשון בחודש.
-exports.runReportNow = onCall(async (req) => {
+exports.runReportNow = onCall(
+  { timeoutSeconds: 540, memory: '1GiB' },
+  async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
   const isSuper = auth.token.super === true ||
@@ -1981,22 +2092,64 @@ const PUSH_STATION = 'eilat_102';
 // שולח לרשימת uid. מסנן לפי העדפות, מנקה מזהי מכשיר מתים,
 // ולעולם לא מפיל את הפעולה שקראה לו: התראה שלא יצאה היא
 // מטרד, אבל החלפה שלא אושרה בגללה היא תקלה.
+// ---------------------------------------------------------------------
+//  שליחת התראות
+// ---------------------------------------------------------------------
+//
+//  **למה זה רץ במקביל ולא בטור.**
+//
+//  הגרסה הקודמת טיפלה בנמען אחד בכל פעם: קריאה לבדיקת השתקה,
+//  קריאה למזהי המכשיר, שליחה ל-FCM, ולפעמים כתיבה — הכל
+//  ברצף, לכל אדם בנפרד. כ-175 אלפיות שנייה לאדם.
+//
+//  ב-44 אנשים זה כשמונה שניות. **בקריאת פתע.** שמונה שניות
+//  שבהן חלק מהמשמרת כבר קיבלה הזעקה וחלק עוד לא, והמפקד
+//  מסתכל על מסך שלא סיים.
+//
+//  ובקנה מידה גדול זה נשבר לגמרי: ב-1000 איש זה כ-175 שניות,
+//  מעל תקרת הזמן של הפונקציה — כלומר השליחה נקטעת באמצע,
+//  חלק מהאנשים לא מוזעקים, ואין שום דרך לדעת מי.
+//
+//  עכשיו: 25 במקביל. אותה לוגיקה בדיוק לכל אדם, רק לא בתור.
+//  25 ולא הכל-בבת-אחת, כדי לא להציף את FCM ולא לנפח זיכרון.
+
+const PUSH_CONCURRENCY = 25;
+
 async function pushToUsers(sid, uids, type, title, body, url, important) {
   const unique = Array.from(new Set((uids || []).filter(Boolean)));
   if (!unique.length) return { people: 0, devices: 0 };
 
   let people = 0, devices = 0;
 
-  for (const uid of unique) {
+  for (let i = 0; i < unique.length; i += PUSH_CONCURRENCY) {
+    const group = unique.slice(i, i + PUSH_CONCURRENCY);
+    const res = await Promise.all(group.map(function (uid) {
+      return pushToOne(sid, uid, type, title, body, url, important)
+        .catch(function (e) {
+          // נמען אחד שנכשל לא מפיל את השאר. זו הזעקה.
+          console.error('push failed for ' + uid + ': ' + (e && e.message));
+          return { sent: 0 };
+        });
+    }));
+    res.forEach(function (r) {
+      if (r && r.sent) { people++; devices += r.sent; }
+    });
+  }
+
+  return { people, devices };
+}
+
+async function pushToOne(sid, uid, type, title, body, url, important) {
+  {
     // הבדיקה לכל נמען בנפרד, ולא פעם אחת לכל הקבוצה: קריאת פתע
     // לכל המשמרת צריכה להגיע לאלדד ולהיחסם לשאר, באותה שליחה.
-    if (await silentFor(uid)) { await logSilenced('push', uid, title); continue; }
+    if (await silentFor(uid)) { await logSilenced('push', uid, title); return { sent: 0 }; }
 
     let snap;
     try {
       snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();
-    } catch (e) { continue; }
-    if (!snap.exists) continue;
+    } catch (e) { return { sent: 0 }; }
+    if (!snap.exists) return { sent: 0 };
 
     const v = snap.data() || {};
     const prefs = v.prefs || {};
@@ -2006,13 +2159,13 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
     // שכיבה התראות עדיין צריך להגיע לתחנה.
     const must = type === 'swap_mine' || type === 'report_mine' ||
                  type === 'callout'   || type === 'guard_mine';
-    if (!must && prefs[type] === false) continue;
+    if (!must && prefs[type] === false) return { sent: 0 };
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
-    if (!list.length) continue;
+    if (!list.length) return { sent: 0 };
 
     const toks = list.map(t => t && t.token).filter(Boolean);
-    if (!toks.length) continue;
+    if (!toks.length) return { sent: 0 };
 
     let res;
     try {
@@ -2029,7 +2182,7 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
       });
     } catch (e) {
       console.error('push failed for ' + uid + ': ' + e.message);
-      continue;
+      return { sent: 0 };
     }
 
     let sent = 0;
@@ -2052,10 +2205,8 @@ async function pushToUsers(sid, uids, type, title, body, url, important) {
         .catch(() => {});
     }
 
-    if (sent) { people++; devices += sent; }
+    return { sent: sent };
   }
-
-  return { people, devices };
 }
 
 async function uidsInCrew(sid, crew) {
@@ -2404,6 +2555,8 @@ exports.onReportChange = onDocumentWritten(
 // ביטוי cron ל"ארבעה ימים לפני הסוף" בחודש באורך משתנה.
 
 exports.hoursReminder = onSchedule({
+  timeoutSeconds: 540,
+  memory: '512MiB',
   schedule: '0 17 * * *',
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
@@ -2444,7 +2597,9 @@ exports.hoursReminder = onSchedule({
 // צ׳אט: כל הודעה נשמרת עם שם השולח ועם היעד, וכל אחד בתחנה
 // רואה את ההיסטוריה.
 
-exports.sendBroadcast = onCall(async (req) => {
+exports.sendBroadcast = onCall(
+  { timeoutSeconds: 300 },
+  async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
@@ -2548,7 +2703,9 @@ function hhmmIL(d) {
   } catch (e) { return ''; }
 }
 
-exports.sendCallout = onCall(async (req) => {
+exports.sendCallout = onCall(
+  { timeoutSeconds: 300 },
+  async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
@@ -2917,7 +3074,8 @@ exports.onGuardOpen = onDocumentWritten(
 
 // תזכורת ערב לפני, 19:00. מי ששובץ למחר מקבל תזכורת אחת.
 exports.guardReminder = onSchedule(
-  { schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
+  {
+  timeoutSeconds: 300, schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
     region: 'europe-west1' },
   async () => {
     const sid = PUSH_STATION;
@@ -3493,26 +3651,53 @@ const SIGN_COLS = ['monthly_reports', 'submissions', 'handovers'];
 // והמסך הוא זה שמכריע מי בדיוק רשאי לחתום עליו. תזכורת שמצביעה
 // על מסך שבו יש שלושה פריטים במקום ארבעה עדיין עשתה את עבודתה;
 // שתי מימושים של אותו כלל שמתפצלים עם הזמן — לא.
-async function countAwaiting(sid, step, matches) {
-  let n = 0;
+// ---------------------------------------------------------------------
+//  מה ממתין לחתימה
+// ---------------------------------------------------------------------
+//
+//  **קוראים פעם אחת, סופרים בזיכרון.**
+//
+//  הגרסה הקודמת קראה את המסד **מחדש עבור כל אדם**: שלוש
+//  שאילתות, עד 300 מסמכים כל אחת. ב-44 כבאים זה כ-40,000
+//  קריאות מסמך בכל ריצה לילית — יותר מהמכסה החינמית היומית
+//  של Firestore, בשביל שאלה אחת שהתשובה לה זהה לכולם.
+//
+//  ובנוסף היא הייתה **פשוט שגויה**: ה-limit(300) חתך את
+//  התוצאה. ברגע שיש יותר מ-300 מסמכים פתוחים באוסף, הספירה
+//  מפסיקה שם — כלומר אנשים שממתינה להם חתימה פשוט לא
+//  נספרים, ולא מקבלים תזכורת.
+//
+//  עכשיו: שאילתה אחת לכל אוסף, בלי תקרה, והספירה לכל אדם
+//  נעשית על מה שכבר בזיכרון.
+
+async function loadAwaiting(sid) {
+  const out = [];
   for (const col of SIGN_COLS) {
     try {
       const snap = await db.collection('stations/' + sid + '/' + col)
                            .where('status', 'in', ['submitted', 'pending', 'draft'])
-                           .limit(300).get();
-      snap.forEach(function (d) {
-        const v = d.data() || {};
-        const s = v.signatures || {};
-        if (s[step] && s[step].image) return;      // כבר חתום בשלב הזה
-        if (matches && !matches(v)) return;
-        n++;
-      });
+                           .get();
+      snap.forEach(function (d) { out.push(d.data() || {}); });
     } catch (e) { /* אוסף שאינו קיים, או אינדקס חסר */ }
   }
+  return out;
+}
+
+// ספירה טהורה על מה שכבר נטען. בלי גישה לרשת.
+function countAwaitingIn(docs, step, matches) {
+  let n = 0;
+  (docs || []).forEach(function (v) {
+    const s = v.signatures || {};
+    if (s[step] && s[step].image) return;        // כבר חתום בשלב הזה
+    if (matches && !matches(v)) return;
+    n++;
+  });
   return n;
 }
 
 exports.signReminder = onSchedule({
+  timeoutSeconds: 540,
+  memory: '512MiB',
   schedule: '30 17 * * *',
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
@@ -3528,12 +3713,29 @@ exports.signReminder = onSchedule({
     const uids = await uidsInCrew(sid, '');
     const need = [];
 
+    // המסמכים הפתוחים נטענים **פעם אחת** לכל הריצה, ולא
+    // מחדש לכל כבאי. ראה loadAwaiting.
+    const pending = await loadAwaiting(sid);
+
     for (const uid of uids) {
       try {
+        // ⚠️ נקרא מ-users ולא מ-roster.
+        //
+        // מסמך ה-roster מכיל שם, תפקיד, משמרת ו-is_active
+        // בלבד — **אין בו מספר עובד**. ראה writeProfile:
+        // employee_number נכתב ל-users, ו-roster מקבל רק את
+        // מה שכל אנשי התחנה רשאים לראות.
+        //
+        // הגרסה הקודמת קראה roster.emp_number, קיבלה מחרוזת
+        // ריקה עבור **כל** כבאי, ונפלה מיד ל-continue. כלומר
+        // תזכורת החתימה לכבאים לא נשלחה מעולם, לאף אחד, ואף
+        // שגיאה לא נזרקה. התגלה ב-25.8.2026 בזמן שדיברנו על
+        // משהו אחר לגמרי.
         const p = await db.doc('stations/' + sid + '/users/' + uid).get();
-        const d = p.data() || {}; const emp = String(d.employee_number || d.emp_number || '');
+        const d = p.data() || {};
+        const emp = String(d.employee_number || d.emp_number || '');
         if (!emp) continue;
-        const n = await countAwaiting(sid, 'employee',
+        const n = countAwaitingIn(pending, 'employee',
           (v) => String(v.emp_number || '') === emp ||
                  String(v.by_uid || '') === uid);
         if (n > 0) need.push(uid);
@@ -3565,12 +3767,15 @@ exports.signReminder = onSchedule({
         staff.push({ uid: d.id, crew: v.crew || '', role: v.role });
       });
 
+      // גם כאן: טעינה אחת לכל המפקדים.
+      const pendingCmd = await loadAwaiting(sid);
+
       for (const s of staff) {
         // מפקד משמרת נעול למשמרת שלו; מפקד תחנה ורכז כוח אדם
         // רואים הכל — אותו כלל בדיוק כמו בכל שאר המערכת.
         const wide = s.role === 'station_commander' ||
                      s.role === 'hr_coordinator' || !s.crew;
-        const n = await countAwaiting(sid, 'commander',
+        const n = countAwaitingIn(pendingCmd, 'commander',
           wide ? null : (v) => String(v.crew || '') === s.crew);
         if (n <= 0) continue;
 

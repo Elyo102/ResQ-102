@@ -450,6 +450,20 @@ async function loadAll(){
   // מפקד תחנה — כלומר אצל כל מפקד משמרת — ו-grab בלע את
   // השגיאה. התוצאה: busy נשאר ריק, ואדם בחופש מאושר הוצג
   // כזמין לשיבוץ לאבטחה.
+  // **וחייבת גם להיות חסומה בזמן.**
+  //
+  // הסינון לפי משמרת פתר את ההרשאות, אבל השאיר את השאילתה
+  // פתוחה על כל ההיסטוריה. נוכחות היא מסמך אחד לאדם ליום,
+  // ולכן היא גדלה בלי סוף: 44 אנשים = כ-16,000 מסמכים בשנה,
+  // שיורדים לטלפון בכל פתיחה של המסך. אחרי שלוש שנים זה
+  // 48,000, והמסך מפסיק להיטען ברשת סלולרית.
+  //
+  // המסך צריך לדעת מי לא זמין לאבטחות שעוד לא היו. שבוע
+  // אחורה מכסה גם אבטחה שכבר התחילה.
+  const busyFrom = (function () {
+    const d = new Date(); d.setDate(d.getDate() - 7); return toKey(d);
+  })();
+
   busy = {};
   await grab('attendance', s => s.forEach(d => {
     const v = d.data() || {};
@@ -459,9 +473,12 @@ async function loadAll(){
     if (!why || !v.date || !v.uid) return;
     if (!busy[v.date]) busy[v.date] = {};
     busy[v.date][v.uid] = why;
-  }), WIDE ? null
+  }), WIDE
+     ? query(collection(db, 'stations', SID, 'attendance'),
+             where('date', '>=', busyFrom))
      : query(collection(db, 'stations', SID, 'attendance'),
-             where('crew', '==', ME.crew || '\u0000')));
+             where('crew', '==', ME.crew || '\u0000'),
+             where('date', '>=', busyFrom)));
 
   await flush();
 
