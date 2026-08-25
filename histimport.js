@@ -34,8 +34,36 @@
 //   מרכאות     — הערה שיש בה פסיק עטופה במרכאות, ומרכאה
 //                בתוך הערה מוכפלת
 
+// זיהוי התו המפריד.
+//
+// **זה לא פינוק, זו הדרך שבה הקובץ באמת מגיע.**
+//
+// אלדד הריץ את M170, קיבל קובץ CSV מופרד בפסיקים, פתח אותו
+// באקסל, סימן הכל והדביק — **ואקסל מעתיק ללוח עם טאבים, לא
+// עם פסיקים.** התוצאה: כל שורה נקראה כתא אחד, אף שם עמודה לא
+// נמצא, והמסך אמר "חסרות עמודות בקובץ" על קובץ תקין לגמרי.
+//
+// זו הייתה שגיאה בתכנון שלי: ההוראה "פתח, סמן הכל, העתק"
+// מייצרת טאבים, ולא לקחתי את זה בחשבון.
+//
+// נבדקת השורה הראשונה בלבד: היא הכותרת, והיא לא מכילה
+// טקסט חופשי שעלול להטות את הספירה. נקודה-פסיק נתמכת גם
+// היא, כי אקסל בהגדרות אזור מסוימות מייצא איתה.
+
+export function sniffDelimiter(text) {
+  const first = String(text || '').split('\n')[0] || '';
+  const counts = [
+    { ch: '\t', n: (first.match(/\t/g)  || []).length },
+    { ch: ',',  n: (first.match(/,/g)   || []).length },
+    { ch: ';',  n: (first.match(/;/g)   || []).length }
+  ].sort(function (a, b) { return b.n - a.n; });
+  // בלי אף מפריד — פסיק, כדי שקובץ בעל עמודה אחת עדיין ייקרא.
+  return counts[0].n > 0 ? counts[0].ch : ',';
+}
+
 export function parseCsv(text) {
   const s = String(text == null ? '' : text).replace(/^﻿/, '');
+  const sep = sniffDelimiter(s);
   const rows = [];
   let row = [], cell = '', q = false;
 
@@ -49,7 +77,7 @@ export function parseCsv(text) {
       continue;
     }
     if (c === '"') { q = true; continue; }
-    if (c === ',') { row.push(cell); cell = ''; continue; }
+    if (c === sep) { row.push(cell); cell = ''; continue; }
     if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; continue; }
     if (c === '\r') continue;
     cell += c;
@@ -138,6 +166,38 @@ const TYPE_MAP = {
 export function mapDayType(he) {
   const t = String(he == null ? '' : he).trim();
   return TYPE_MAP[t] || null;
+}
+
+// ---------------------------------------------------------------
+//  תחנות הקצה
+// ---------------------------------------------------------------
+//
+//  עמודת "מקום" בקובץ נקראה אבל **לא נכנסה לרשומה** — ראיתי
+//  את זה בנתונים של אלדד: שורה של ישיבה ב"ראשית" הייתה
+//  נכנסת בלי שום ציון מקום.
+//
+//  זה משנה יותר מתצוגה: יטבתה היא משמרת של 25 שעות בהגדרה,
+//  ולכן יום יטבתה שלם אינו חריגה ואינו דורש נימוק. בלי
+//  ה-sub_station, המערכת הייתה מסמנת אותו כחריגה.
+//
+//  "אילת" אינה תחנת קצה — היא התחנה עצמה, ולכן היא ממופה
+//  למחרוזת ריקה בדיוק כמו שהמסך שומר יום רגיל.
+
+const SITE_MAP = {
+  'ראשית':  'rashit',
+  'שחמון':  'shahmon',
+  'תמנע':   'timna',
+  'יטבתה':  'yotvata',
+  'יוטבתה': 'yotvata',
+  'אילת':   '',
+  '':       ''
+};
+
+export function mapSite(he) {
+  const t = String(he == null ? '' : he).trim();
+  // מקום שאינו מוכר אינו שגיאה — הוא פשוט לא תחנת קצה
+  // מוגדרת, והרשומה נכנסת כאילו נעשתה בתחנה עצמה.
+  return SITE_MAP[t] != null ? SITE_MAP[t] : '';
 }
 
 export function knownTypes() { return Object.keys(TYPE_MAP); }
@@ -253,7 +313,9 @@ export function toAttendance(row, person, sid) {
     day_type: t.day_type,
     shape: t.shape,
     start: start, end: end,
-    sub_station: t.site || '',
+    // סוג היום גובר על עמודת המקום: מי שרשום "יטבתה" בסוג
+    // היום נמצא ביטבתה גם אם עמודת המקום ריקה.
+    sub_station: t.site || mapSite(row.site),
     hours: Math.round(hours * 100) / 100,
     notes: String(row.notes == null ? '' : row.notes).trim().slice(0, 300),
 

@@ -16,6 +16,51 @@
       ]
     }
   ],
+  "hosting": {
+    "public": ".",
+
+    "_הערה_ignore": "שלוש השורות .git/** .github/** .firebase/** אינן מיותרות. '**/.*' לבדו אינו גוזם תיקיות מוסתרות — הוא תפס את התיקייה .git עצמה אבל לא את 362 הקבצים שבתוכה, והפריסה הראשונה ב-25.8.2026 העלתה את כל היסטוריית הריפו לכתובת ציבורית. תיקיית .git על שרת אינטרנט היא יעד סריקה מוכר: מבקשים /.git/HEAD ומשם משחזרים את כל הריפו.",
+
+    "ignore": [
+      "firebase.json",
+      ".git/**",
+      ".github/**",
+      ".firebase/**",
+      "**/.*",
+      "**/node_modules/**",
+      "functions/**",
+      "tests/**",
+      "rules-test/**",
+      "_דיונים/**",
+      "firestore.rules",
+      "firestore.indexes.json",
+      "*.bat",
+      "*.mjs",
+      "*.md"
+    ],
+
+    "headers": [
+      {
+        "source": "/version.json",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "/firebase-messaging-sw.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      }
+    ]
+  },
+
   "emulators": {
     "firestore": {
       "port": 8080
