@@ -225,6 +225,30 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <div id="work" class="hide">
 
+    <!-- ============ תיקון שעות לאדם אחר ============
+         מוצג לרכז/ת כוח אדם ולמנהל-על בלבד. כשנבחר אדם,
+         כל המסך עובר לעבוד עליו — טעינה, עריכה ושמירה —
+         ופס כתום נשאר על המסך כל הזמן. פס כזה נראה מיותר
+         עד הפעם הראשונה שמישהו עורך את החודש הלא נכון
+         ולא שם לב. -->
+    <div class="card hide" id="pickCard">
+      <h2>תיקון שעות</h2>
+      <div class="note">
+        בחר אדם כדי לפתוח את החודש שלו. כל שינוי נרשם על שמך
+        ומופיע לו במסך.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="pickWho" style="flex:1;min-width:200px"></select>
+        <button class="btn" id="pickGo">פתח</button>
+        <button class="btn hide" id="pickBack">חזרה אליי</button>
+      </div>
+      <div id="pickMsg" class="note"></div>
+    </div>
+
+    <div class="bar hide" id="otherBar"
+         style="background:#e8590c;color:#fff;padding:10px 14px;
+                border-radius:8px;margin:0 0 12px;font-weight:bold"></div>
+
     <div class="card">
       <div class="mo">
         <button id="prev" title="חודש קודם">‹</button>
@@ -345,6 +369,26 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '', IS_SUPER = false;
+
+// SUBJ — על מי הדף עובד כרגע. שווה ל-ME אלא אם רכזת כוח אדם
+// בחרה אדם אחר. ראה ההסבר המלא במקום שבו הוא נקבע.
+let SUBJ = null, CAN_EDIT_OTHERS = false;
+let PEOPLE = [];
+
+// האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
+function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
+
+// חותמת התיעוד. נדרשת על ידי כללי האבטחה בכל עריכה של רשומה
+// שאינה שלך, ו-edited_by חייב להיות ה-uid האמיתי — הכלל בודק
+// אותו מול request.auth.uid, כך שאי אפשר לערוך בשם אחר.
+function stamp(body) {
+  if (!onOther()) return body;
+  return Object.assign({}, body, {
+    edited_by:      ME.uid,
+    edited_by_name: ME.full_name || '',
+    edited_at:      serverTimestamp()
+  });
+}
 let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [];
 let myGuards = [];   // אבטחות שאני משובץ אליהן
@@ -395,6 +439,25 @@ onAuthStateChanged(auth, async user => {
     if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
   } catch (ignore) {}
 
+  // ---------- על מי המסך עובד ----------
+  //
+  // עד 25.8.2026 המסך הזה עבד תמיד על ME, ובכל 17 מקומות
+  // שנגעו בנתונים היה כתוב ME.emp במפורש. אלדד ביקש שרכזת
+  // כוח אדם תוכל לתקן שעות של אחרים, ולכן הופרדו שני דברים
+  // שהיו אותו דבר: **מי מחובר** ו**על מי מסתכלים**.
+  //
+  // ME נשאר הזהות — מי חתום, מי מאשר, מה כתוב בכותרת.
+  // SUBJ הוא נושא הדף — למי שייכות הרשומות שנטענות ונכתבות.
+  // ברירת המחדל היא שהם אותו אדם, וזה המצב אצל 43 מתוך 44
+  // האנשים בתחנה.
+  //
+  // ⚠️ כל נתיב נתונים חייב להשתמש ב-SUBJ. נתיב שנשאר עם
+  // ME.emp ייראה תקין לגמרי כשמסתכלים על עצמך — ויכתוב
+  // לרשומה הלא נכונה ברגע שרכזת תפתח מישהו אחר. tests/assign.mjs
+  // נופל אם נשאר ME.emp באחד מהם.
+  SUBJ = Object.assign({}, ME);
+  CAN_EDIT_OTHERS = isSuper || c.role === 'hr_coordinator';
+
   $('work').classList.remove('hide');
   $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
@@ -408,6 +471,29 @@ onAuthStateChanged(auth, async user => {
   await loadStatic();
   await loadMonth();
   if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
+
+  // תיקון שעות לאחרים — רכז/ת כוח אדם ומנהל-על בלבד.
+  // מפקד משמרת אינו מקבל את זה: אלדד ביקש הפרדה בין
+  // כוח אדם לפיקוד המשמרת, ותיקון שעות הוא כוח אדם.
+  if (CAN_EDIT_OTHERS) {
+    $('pickCard').classList.remove('hide');
+    loadPeople();
+    $('pickGo').onclick = async () => {
+      const emp = $('pickWho').value;
+      if (!emp) { msg('בחר אדם מהרשימה.', 'err', 'pickMsg'); return; }
+      const p = PEOPLE.filter(function (x) { return x.emp === emp; })[0];
+      if (!p) { msg('לא מצאתי את האדם הזה.', 'err', 'pickMsg'); return; }
+      $('pickGo').disabled = true;
+      try { await switchTo(p); msg('', '', 'pickMsg'); }
+      catch (e) { msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', 'pickMsg'); }
+      $('pickGo').disabled = false;
+    };
+    $('pickBack').onclick = async () => {
+      $('pickWho').value = '';
+      await switchTo(null);
+      msg('', '', 'pickMsg');
+    };
+  }
 });
 
 // ---------- טעינה ----------
@@ -424,7 +510,7 @@ async function loadStatic(){
     gs.forEach(d => {
       const v = Object.assign({ id: d.id }, d.data() || {});
       if (v.status === 'cancelled') return;
-      if (guardHasMe(v, ME.uid)) myGuards.push(v);
+      if (guardHasMe(v, SUBJ.uid)) myGuards.push(v);
     });
   } catch (ignore) {}
 
@@ -444,13 +530,13 @@ async function loadStatic(){
   // או אעבוד, ולא רק מתי.
   try {
     const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
-    const s = ME.crew
-      ? await getDoc(doc(db, 'stations', SID, 'shifts', ME.crew))
+    const s = SUBJ.crew
+      ? await getDoc(doc(db, 'stations', SID, 'shifts', SUBJ.crew))
       : null;
     const board  = b.exists() ? (b.data() || {}) : {};
     const assign = (s && s.exists() && (s.data() || {}).assign) || {};
 
-    const mine = Object.keys(assign).filter(k => assign[k] === ME.uid);
+    const mine = Object.keys(assign).filter(k => assign[k] === SUBJ.uid);
     (board.vehicles || []).forEach(function (v) {
       (v.slots || []).forEach(function (sl) {
         if (mine.indexOf(sl.id) !== -1 && sl.site && !mySite) mySite = sl.site;
@@ -493,7 +579,7 @@ async function loadMonth(){
   try {
     const qs = await getDocs(query(
       collection(db, 'stations', SID, 'attendance'),
-      where('emp_number', '==', ME.emp),
+      where('emp_number', '==', SUBJ.emp),
       where('month', '==', mk)
     ));
     qs.forEach(function (d) {
@@ -512,7 +598,7 @@ async function loadMonth(){
   report = null;
   try {
     const r = await getDoc(doc(db, 'stations', SID, 'monthly_reports',
-                               ME.emp + '_' + mk));
+                               SUBJ.emp + '_' + mk));
     if (r.exists()) report = r.data();
   } catch (ignore) {}
 
@@ -527,11 +613,11 @@ function locked(){
 
 function suggestedDays(){
   const out = [];
-  if (!ME.crew) return out;
+  if (!SUBJ.crew) return out;
   const last = daysInMonth(viewYear, viewMonth);
   for (let d = 1; d <= last; d++) {
     const date = new Date(viewYear, viewMonth, d);
-    if (!personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid)) continue;
+    if (!personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid)) continue;
     const key = dateKey(viewYear, viewMonth, d);
     if (records[key]) continue;
     out.push(key);
@@ -552,7 +638,7 @@ function workingOn(key){
   const p = String(key).split('-').map(Number);
   if (p.length !== 3) return false;
   const date = new Date(p[0], p[1] - 1, p[2]);
-  return personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid) === true;
+  return personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid) === true;
 }
 
 function myGuardOn(key){
@@ -579,8 +665,12 @@ function render(){
   $('btnFill').classList.toggle('hide', !sug.length || locked() || st === 'submitted');
   $('btnSync').classList.toggle('hide', locked());
   $('btnRecalc').classList.toggle('hide', !saved.length);
-  $('btnSubmit').classList.toggle('hide', st !== 'draft' || !saved.length);
-  $('btnUnsubmit').classList.toggle('hide', st !== 'submitted');
+  // "בדקתי ואישרתי את הדיווחים שלי" היא הצהרה אישית.
+  // רכזת שעורכת עבור מישהו אחר יכולה לתקן לו שעות, אבל
+  // לא להצהיר בשמו שהוא בדק אותן.
+  $('btnSubmit').classList.toggle('hide',
+    onOther() || st !== 'draft' || !saved.length);
+  $('btnUnsubmit').classList.toggle('hide', onOther() || st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
   $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && st === 'approved'));
 
@@ -627,7 +717,7 @@ function renderRows(sug){
     const date = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
     const ov = overrideOn(overrides, date);
     const crew = crewOnDate(rotations, date, overrides);
-    const eff = swapEffect(swaps, ME.uid, key);
+    const eff = swapEffect(swaps, SUBJ.uid, key);
     const bt = baseTimes();
 
     const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
@@ -704,8 +794,8 @@ function renderRows(sug){
 function newRecord(key, patch){
   const mk = monthKey(viewYear, viewMonth);
   return Object.assign({
-    emp_number: ME.emp, uid: ME.uid, full_name: ME.full_name,
-    crew: ME.crew, date: key, month: mk,
+    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
+    crew: SUBJ.crew, date: key, month: mk,
     day_type: 'regular', start: '', end: '', sub_station: '', notes: '',
     status: 'draft'
   }, patch || {});
@@ -728,8 +818,8 @@ async function saveRecord(key, rec){
   body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
 
   body.updated_at = serverTimestamp();
-  await setDoc(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), body);
-  records[key] = Object.assign({ id: recordId(ME.emp, key) }, body);
+  await setDoc(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(body));
+  records[key] = Object.assign({ id: recordId(SUBJ.emp, key) }, body);
 }
 
 $('btnFill').onclick = async () => {
@@ -749,7 +839,7 @@ $('btnFill').onclick = async () => {
       rec.site_name       = site0 ? site0.name : '';
       rec.reason_required = reasonWhy(rec, fx, shiftHoursFor()) !== '';
       rec.updated_at = serverTimestamp();
-      batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), rec);
+      batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(rec));
       records[key] = rec;
     });
     await batch.commit();
@@ -821,8 +911,8 @@ $('btnSync').onclick = async () => {
     for (let d = 1; d <= last; d++) {
       const date = new Date(viewYear, viewMonth, d);
       const key  = dateKey(viewYear, viewMonth, d);
-      const working = ME.crew &&
-        personWorks(rotations, ME.crew, date, overrides, swaps, ME.uid);
+      const working = SUBJ.crew &&
+        personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid);
       const rec = records[key];
 
       if (working && !rec) {
@@ -835,7 +925,7 @@ $('btnSync').onclick = async () => {
         add.site_name       = st2 ? st2.name : '';
         add.reason_required = reasonWhy(add, fx2, shiftHoursFor()) !== '';
         add.updated_at = serverTimestamp();
-        batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)), add);
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(add));
         records[key] = add; added.push(d); n++;
       }
 
@@ -876,8 +966,8 @@ $('btnRecalc').onclick = async () => {
       const r = records[key];
       const h = calcHours(r, siteHoursOf(r.sub_station));
       if (Number(r.hours) !== Number(h)) {
-        batch.set(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)),
-                  { hours: h, updated_at: serverTimestamp() }, { merge: true });
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)),
+                  stamp({ hours: h, updated_at: serverTimestamp() }), { merge: true });
         r.hours = h; fixed++;
       }
     });
@@ -1105,7 +1195,7 @@ function editDay(key, rec){
 
   if (rec) $('dDel').onclick = async () => {
     try {
-      await deleteDoc(doc(db, 'stations', SID, 'attendance', recordId(ME.emp, key)));
+      await deleteDoc(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)));
       delete records[key];
       closeOv(); msg('היום נמחק.', 'ok'); render();
     } catch (e) {
@@ -1122,13 +1212,13 @@ async function writeReport(patch){
   const mk = monthKey(viewYear, viewMonth);
   const saved = Object.keys(records).sort();
   const body = Object.assign({
-    emp_number: ME.emp, uid: ME.uid, full_name: ME.full_name,
-    crew: ME.crew, month: mk,
+    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
+    crew: SUBJ.crew, month: mk,
     days: saved,
     total_hours: monthTotal(saved.map(k => records[k]), siteHoursOf),
     updated_at: serverTimestamp()
   }, patch);
-  await setDoc(doc(db, 'stations', SID, 'monthly_reports', ME.emp + '_' + mk), body);
+  await setDoc(doc(db, 'stations', SID, 'monthly_reports', SUBJ.emp + '_' + mk), stamp(body));
   report = body;
 }
 
@@ -1160,7 +1250,7 @@ function submitPreview(){
   $('dlg').innerHTML =
     '<h3>בדקתי ואישרתי את הדיווחים שלי</h3>' +
     '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
-      ' · ' + esc(ME.full_name || '') + ' · מס׳ ' + esc(ME.emp) + '</div>' +
+      ' · ' + esc(SUBJ.full_name || '') + ' · מס׳ ' + esc(SUBJ.emp) + '</div>' +
 
     '<div class="sum-big">' + s.hours + '</div>' +
     '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
@@ -1234,15 +1324,23 @@ $('btnUnsubmit').onclick = async () => {
 async function setMonthStatus(emp, mk, days, status){
   const batch = writeBatch(db);
   (days || []).forEach(function (key) {
+    // אישור נוגע ברשומות של אדם אחר, ולכן הוא נחתם כמו כל
+    // עריכה. בלי החתימה כלל האבטחה החדש ידחה את האצווה כולה.
+    const body = { status: status, updated_at: serverTimestamp() };
+    if (emp !== ME.emp) {
+      body.edited_by      = ME.uid;
+      body.edited_by_name = ME.full_name || '';
+      body.edited_at      = serverTimestamp();
+    }
     batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
-              { status: status, updated_at: serverTimestamp() }, { merge: true });
+              body, { merge: true });
   });
   await batch.commit();
 }
 
-$('btnApprove').onclick = () => approveMonth(ME.emp, monthKey(viewYear, viewMonth),
+$('btnApprove').onclick = () => approveMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
                                             Object.keys(records).sort(), 'msg');
-$('btnReopen').onclick  = () => reopenMonth(ME.emp, monthKey(viewYear, viewMonth),
+$('btnReopen').onclick  = () => reopenMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
                                             Object.keys(records).sort(), 'msg');
 
 async function approveMonth(emp, mk, days, box){
@@ -1253,7 +1351,7 @@ async function approveMonth(emp, mk, days, box){
                         approved_by_name: ME.full_name,
                         approved_at: serverTimestamp() }, { merge: true });
     msg('החודש אושר ונעול.', 'ok', box);
-    if (emp === ME.emp) await loadMonth();
+    if (emp === SUBJ.emp) await loadMonth();
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
     msg('האישור נכשל. (' + (e.code || e.message) + ')', 'err', box);
@@ -1268,7 +1366,7 @@ async function reopenMonth(emp, mk, days, box){
                         reopened_by_name: ME.full_name,
                         reopened_at: serverTimestamp() }, { merge: true });
     msg('החודש נפתח מחדש.', 'ok', box);
-    if (emp === ME.emp) await loadMonth();
+    if (emp === SUBJ.emp) await loadMonth();
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
     msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
@@ -1276,6 +1374,58 @@ async function reopenMonth(emp, mk, days, box){
 }
 
 // ---------- רשימת האישורים ----------
+
+// ---------- בורר האדם ----------
+//
+// קורא מ-users ולא מ-roster, כי מספר העובד יושב שם. roster
+// מחזיק שם ומשמרת בלבד — וזה בדיוק מה שהפיל את signReminder,
+// שקראה משם שדה שאף פעם לא נכתב והפסיקה לצאת בשקט.
+async function loadPeople(){
+  const sel = $('pickWho');
+  sel.innerHTML = '<option value="">טוען…</option>';
+  const out = [];
+  try {
+    const qs = await getDocs(collection(db, 'stations', SID, 'users'));
+    qs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      const emp = String(v.employee_number || v.emp_number || '');
+      if (!emp) return;
+      out.push({ uid: d.id, emp: emp, crew: v.crew || '',
+                 full_name: v.full_name || ('מס׳ ' + emp) });
+    });
+  } catch (e) {
+    sel.innerHTML = '<option value="">לא הצלחתי לקרוא את רשימת האנשים</option>';
+    return;
+  }
+  out.sort(function (a, b) { return a.full_name.localeCompare(b.full_name, 'he'); });
+  PEOPLE = out;
+  sel.innerHTML = '<option value="">— בחר אדם —</option>' +
+    out.map(function (p) {
+      return '<option value="' + esc(p.emp) + '">' + esc(p.full_name) +
+             (p.crew ? ' · ' + esc(CREW_HE[p.crew] || p.crew) : '') + '</option>';
+    }).join('');
+}
+
+// מעבר לאדם אחר. **טוענים מחדש הכל**, ולא רק את הרשומות:
+// טבלת החודש נגזרת גם מהמשמרת של האדם ומההחלפות שלו, ולכן
+// החלפת נושא בלי טעינה מחדש הייתה מציגה את הימים של אחד
+// והשעות של אחר.
+async function switchTo(p){
+  SUBJ = p ? Object.assign({}, p) : Object.assign({}, ME);
+  const other = onOther();
+
+  $('otherBar').classList.toggle('hide', !other);
+  if (other) {
+    $('otherBar').textContent =
+      'אתה עורך את ' + (SUBJ.full_name || ('מס׳ ' + SUBJ.emp)) +
+      ' — כל שינוי יירשם על שמך.';
+  }
+  $('pickBack').classList.toggle('hide', !other);
+
+  await loadStatic();
+  await loadMonth();
+}
 
 async function loadApprovals(){
   const body = $('apprRows');

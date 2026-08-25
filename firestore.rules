@@ -356,7 +356,37 @@ service cloud.firestore {
                       && request.resource.data.employee_number == resource.data.employee_number
                       && request.resource.data.is_active     == resource.data.is_active;
 
-        allow update: if hr(sid);
+        // ---------- רכז/ת כוח אדם ----------
+        //
+        // אלדד ביקש שהרכזת תוכל לערוך כרטיס עובד, וזה נכון —
+        // זו העבודה שלה. שלושה שדות בכל זאת נעולים גם בפניה,
+        // ולכל אחד יש סיבה נפרדת:
+        //
+        //   employee_number — לא שדה, **מפתח**. כל שעה, אבטחה
+        //     וחתימה במערכת נשלפות לפיו. שינוי שלו אינו עריכה
+        //     אלא העברת נתונים: השעות נשארות תלויות במספר הישן
+        //     והכרטיס החדש מציג היסטוריה ריקה. גם באפליקציה
+        //     שהתחנה משתמשת בה היום אין שום פונקציה שמשנה את
+        //     הקוד האישי — לאף אחד, כולל אלדד.
+        //
+        //   role — נכתב בשרת בלבד, ב-setUserRole, ששם נאכפת
+        //     תקרת הדרגה. אילו הרכזת יכלה לכתוב אותו כאן
+        //     ישירות, כל התקרה הייתה עוקפת את עצמה דרך המסמך.
+        //     השדה כאן הוא **בבואה** של ההרשאה, לא ההרשאה.
+        //
+        //   is_active — כיבוי חשבון הוא הסרת גישה. באפליקציה
+        //     הנוכחית זו פעולה של מנהל-על בלבד, ולא ראיתי סיבה
+        //     לפתוח אותה כאן.
+        //
+        // כל השאר — שם, טלפון, מייל, שיוך משמרת — פתוח לה,
+        // כולל שיוך משמרת, בדיוק כמו היום.
+        allow update: if hr(sid)
+                      && request.resource.data.employee_number == resource.data.employee_number
+                      && request.resource.data.get('role', '') == resource.data.get('role', '')
+                      && request.resource.data.is_active == resource.data.is_active;
+
+        // מנהל-על — בלי מגבלה. הוא גם היחיד שמעביר מספר עובד.
+        allow update: if isSuper();
       }
 
 
@@ -821,8 +851,34 @@ service cloud.firestore {
                           && request.resource.data.keys().hasAll(['status'])
                           && request.resource.data.get('status', '') != 'approved');
 
+        // ---------- עריכת נוכחות על ידי סגל ----------
+        //
+        // אלדד, 25.8.2026: "כל התחנה, עם תיעוד."
+        //
+        // שלוש נעילות, ולכל אחת תרחיש שהיא מונעת:
+        //
+        //   emp_number — בלעדיה מפקד יכול לקחת יום עבודה
+        //     של כבאי אחד ולשייך אותו לכבאי אחר. אצל הכבאי
+        //     עצמו השדה כבר נעול מאז ומתמיד; אצל הסגל
+        //     הוא לא היה, וזו הייתה אי-סימטריה בלי סיבה.
+        //
+        //   crew — שיוך משמרת על הרשומה הוא מה שקובע מי בכלל
+        //     רשאי לראות אותה (seesCrewData). מי שיכול לשנות
+        //     אותו יכול להזיז רשומה אל מחוץ לשדה הראייה
+        //     של המפקד שאמור לאשר אותה.
+        //
+        //   edited_by — כשסגל נוגע ברשומה **של מישהו אחר**,
+        //     הוא חייב לחתום עליה בזהות שלו, והחתימה חייבת
+        //     להיות ה-uid שלו ולא מחרוזת שהוא בחר. זה מה
+        //     שהופך את התיעוד לאמין: אי אפשר לערוך בשם אחר.
+        //     עריכה של הרשומה של עצמך פטורה — שם ממילא ידוע
+        //     מי כתב.
         allow update: if (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', '')))
+                          && seesCrewData(sid, resource.data.get('crew', ''))
+                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
+                          && request.resource.data.get('crew', '') == resource.data.get('crew', '')
+                          && (resource.data.get('emp_number', '') == myEmp()
+                              || request.resource.data.get('edited_by', '') == request.auth.uid))
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
@@ -1207,6 +1263,20 @@ service cloud.firestore {
       //
       // מפקד לא מאבד דבר: הממצאים שנוגעים לאנשיו מגיעים אליו
       // בהתראה ובדוח החודשי, ושניהם ממילא מצומצמים למשמרת שלו.
+
+      // ---------- בדיקת הבריאות היומית ----------
+      //
+      // systemHealth כותב לכאן כל בוקר, גם כשאין ממצאים —
+      // בלי רשומה יומית אי אפשר להבדיל בין "הכל תקין" לבין
+      // "כלב השמירה עצמו מת".
+      //
+      // הקריאה למנהל-על בלבד. הממצאים מתארים איפה המערכת
+      // חלשה — אוסף שגדל מדי, מסמך שמתקרב לגבול, משימה
+      // שהפסיקה לרוץ — וזו מפה שאין סיבה לפרוש בפני כולם.
+      match /health/{dateId} {
+        allow read:  if isSuper();
+        allow write: if false;
+      }
 
       match /scans/{monthKey} {
         allow read:  if hr(sid) || stationCommander(sid);

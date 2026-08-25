@@ -54,6 +54,31 @@ const VALID_ROLES = [
 ];
 const VALID_SHIFTS = ['A', 'B', 'C'];
 
+// ---------- מי רשאי לשבץ תפקיד למי ----------
+//
+// ⚠️ שתי הטבלאות האלה חייבות להיות זהות ל-ROLES ו-ASSIGN_MAX_RANK
+//    ב-roles.js. tests/roles.mjs נופל אם הן יוצאות מסנכרון.
+//
+// אלדד, 25.8.2026: רכזת כוח אדם משבצת "עד סגן מפקד משמרת" —
+// כלומר עד דרגה 3, מפקד צוות, כולל.
+//
+// באפליקציה שהתחנה משתמשת בה היום שיבוץ תפקיד נעול לקוד אחד
+// בלבד, עם הערה מפורשת בקוד: "כדי שאף אחד לא יוכל לשדרג את
+// עצמו למנהל בטעות או בזדון". פתחנו את זה לרכזת כי בלעדיה
+// היא לא יכולה לעבוד — אבל פתיחה **בלי תקרה** אינה מתן הרשאה,
+// היא מסירת המערכת: מי שיכול למנות מפקד יכול למנות את עצמה.
+const ROLE_RANK = {
+  firefighter: 1, deputy_team_leader: 2, team_leader: 3,
+  deputy: 4, commander: 5, station_commander: 6,
+  hr_coordinator: 6, district_commander: 7
+};
+
+const ASSIGN_MAX_RANK = { hr_coordinator: 3 };
+
+function rankOf(role) {
+  return ROLE_RANK[String(role || '')] || 0;
+}
+
 // המחוזות מאומתים בשרת. עד עכשיו הרשימה חיה רק בקוד הדפדפן,
 // כלומר כל מחרוזת שהגיעה מהטופס נכנסה כמות שהיא להרשאות.
 const KNOWN_DISTRICTS = ['south', 'center', 'north', 'jerusalem', 'haifa', 'dan'];
@@ -226,6 +251,81 @@ function requireSuperAdmin(req) {
     throw new HttpsError('permission-denied', 'הפעולה מותרת למנהל המערכת בלבד.');
   }
   return auth;
+}
+
+// ---------- שער השיבוץ ----------
+//
+// מחזיר את המשתמש המחובר ואת התקרה שלו. מנהל-על מקבל Infinity;
+// כל תפקיד שאינו בטבלה מקבל 0, כלומר נדחה. ברירת מחדל אוסרת —
+// תפקיד חדש שיתווסף למערכת לא יקבל סמכות שיבוץ בהיסח הדעת.
+function requireRoleSetter(req) {
+  const auth = requireAuth(req);
+  if (isSuperAdmin(auth)) return { auth: auth, cap: Infinity, sid: '' };
+
+  const cap = ASSIGN_MAX_RANK[String(auth.token.role || '')] || 0;
+  if (!cap) {
+    throw new HttpsError('permission-denied',
+      'שיבוץ תפקידים מותר למנהל המערכת ולרכז/ת כוח אדם בלבד.');
+  }
+  return { auth: auth, cap: cap, sid: String(auth.token.stationId || '') };
+}
+
+// שלוש בדיקות, ולכל אחת יש תרחיש שהיא מונעת.
+//
+//  1. התפקיד החדש מתחת לתקרה — אחרת הרכזת ממנה מפקד משמרת.
+//  2. התפקיד **הקיים** של היעד מתחת לתקרה — אחרת היא מדיחה
+//     מפקד לדרגת לוחם. הורדה בדרגה היא שינוי סמכות בדיוק כמו
+//     העלאה, ומי שאינו רשאי למנות מפקד אינו רשאי לפרק אותו.
+//  3. לא על עצמה, ולא דגל מנהל-על. בלי אלה כל התקרה מיותרת:
+//     די בפעולה אחת על החשבון של עצמה כדי לעקוף אותה.
+function assertMayAssign(gate, targetRole, targetBefore, targetUid, wantSuper) {
+  if (gate.cap === Infinity) return;
+
+  const beforeRole = String((targetBefore || {}).role || '');
+
+  if (targetUid && targetUid === gate.auth.uid) {
+    throw new HttpsError('permission-denied',
+      'אי אפשר לשנות את התפקיד של עצמך. בקש ממנהל המערכת.');
+  }
+  if (wantSuper || (targetBefore || {}).super === true) {
+    throw new HttpsError('permission-denied',
+      'הרשאת מנהל מערכת ניתנת ומוסרת על ידי מנהל מערכת בלבד.');
+  }
+  if (targetRole && rankOf(targetRole) > gate.cap) {
+    throw new HttpsError('permission-denied',
+      'אפשר לשבץ עד ' + heRole(rankName(gate.cap)) + '. ' +
+      'שיבוץ ל' + heRole(targetRole) + ' מותר למנהל המערכת בלבד.');
+  }
+  if (beforeRole && rankOf(beforeRole) > gate.cap) {
+    throw new HttpsError('permission-denied',
+      'האדם הזה מוגדר כ' + heRole(beforeRole) + '. ' +
+      'שינוי תפקיד למי שדרגתו מעל ' + heRole(rankName(gate.cap)) +
+      ' מותר למנהל המערכת בלבד.');
+  }
+  // תחנה זרה. מנהל-על עובר, רכזת נעולה לתחנה שלה.
+  const targetSid = String((targetBefore || {}).stationId || '');
+  if (gate.sid && targetSid && targetSid !== gate.sid) {
+    throw new HttpsError('permission-denied',
+      'האדם הזה שייך לתחנה אחרת.');
+  }
+}
+
+function rankName(cap) {
+  const hit = Object.keys(ROLE_RANK).filter(function (k) {
+    return ROLE_RANK[k] === cap;
+  });
+  return hit[0] || '';
+}
+
+const ROLE_HE_SRV = {
+  firefighter: 'לוחם אש', deputy_team_leader: 'סגן מפקד צוות',
+  team_leader: 'מפקד צוות', deputy: 'סגן מפקד משמרת',
+  commander: 'קצין / מפקד משמרת', station_commander: 'מפקד תחנה',
+  hr_coordinator: 'רכז/ת משאבי אנוש', district_commander: 'מפקד מחוז'
+};
+
+function heRole(id) {
+  return ROLE_HE_SRV[String(id || '')] || String(id || '');
 }
 
 // כל שינוי הרשאה נרשם — לפני שהוא קורה.
@@ -591,12 +691,31 @@ exports.approveRegistration = onCall(async (req) => {
 // ---------------------------------------------------------------------
 
 exports.setUserRole = onCall(async (req) => {
-  const auth = requireSuperAdmin(req);
+  // עד 25.8.2026 היה כאן requireSuperAdmin. נפתח לרכז/ת כוח אדם
+  // עם תקרת דרגה — ראה assertMayAssign. **התקרה נאכפת כאן ולא
+  // במסך**: הבורר ב-admin.html מציג רק את מה שמותר, אבל מסך
+  // שמסתיר אפשרות אינו הרשאה, והקריאה הזאת פתוחה לכל מי שיש לו
+  // טוקן.
+  const gate = requireRoleSetter(req);
+  const auth = gate.auth;
   const d = req.data || {};
 
   const user   = await resolveUser(d);
   const before = user.customClaims || {};
   const role   = String(d.role || '');
+
+  // מספר עובד הוא המפתח שכל השעות, האבטחות והחתימות תלויות בו.
+  // שינוי שלו אינו עריכת שדה אלא העברת נתונים, ולכן הוא נשאר
+  // אצל מנהל-על גם אחרי הפתיחה לרכזת.
+  if (gate.cap !== Infinity) {
+    const wantEmp = String(d.emp || '');
+    const curEmp  = String(before.emp || '');
+    if (wantEmp && curEmp && wantEmp !== curEmp) {
+      throw new HttpsError('permission-denied',
+        'שינוי מספר עובד מותר למנהל המערכת בלבד. מספר העובד מקשר את ' +
+        'כל השעות והחתימות של האדם, ושינוי שלו מנתק אותן.');
+    }
+  }
 
   // הבדיקה הזו חייבת לקדום למסלול 'none'. בגרסה הקודמת היא ישבה
   // אחריו — ולכן מנהל שבחר לעצמו "הסרת כל ההרשאות" ננעל מחוץ
@@ -607,6 +726,12 @@ exports.setUserRole = onCall(async (req) => {
     throw new HttpsError('failed-precondition',
       'אי אפשר להסיר את הרשאת הניהול מעצמך. בקש ממנהל אחר.');
   }
+
+  // התקרה נבדקת **לפני** מסלול 'none' ולא אחריו. הסרת תפקיד היא
+  // שינוי סמכות לכל דבר, ורכזת שאינה רשאית למנות מפקד משמרת אינה
+  // רשאית גם למחוק אותו מהמערכת.
+  assertMayAssign(gate, role === 'none' ? '' : role, before, user.uid,
+                  d.super === true);
 
   if (role === 'none') {
     const audit = await openAudit(auth, 'clear_role', user.uid, { email: user.email });
@@ -3853,4 +3978,229 @@ exports.signReminder = onSchedule({
       console.warn('signReminder · מפקדים נכשל: ' + (e && e.message));
     }
   }
+});
+
+
+// =====================================================================
+//  כלב שמירה — בדיקת בריאות יומית של המערכת
+// =====================================================================
+//
+//  **למה הוא קיים.**
+//
+//  אלדד, 25.8.2026: "תהליך שבודק את כלל המערכות כדי לזהות באגים."
+//
+//  הרקע הוא שלושה באגים שנמצאו באוגוסט, ולשלושתם צורה אחת:
+//  הם לא הפילו כלום. תזכורת החתימה קראה שדה שאף פעם לא נכתב
+//  והפסיקה לצאת — בשקט, במשך חודשים. הדוח החודשי נכשל, בלע את
+//  השגיאה, ורשם בביקורת שהוא הצליח. שניהם רצו בייצור ואף אחד
+//  לא ידע.
+//
+//  קריסה רועשת. **הכישלון המסוכן פה הוא השקט**, ולכן צריך משהו
+//  שיבדוק כל בוקר שהדברים שאמורים לקרות אכן קרו.
+//
+//  **מייל נשלח רק כשיש ממצא.** שקט פירושו תקין. כלב שמירה
+//  שמדווח כל יום "הכל בסדר" הופך תוך שבועיים למייל שמוחקים
+//  בלי לפתוח, ואז הוא חסר ערך בדיוק ביום שבו הוא צודק.
+//
+//  ⚠️ המייל יוצא גם במצב ניסוי. sendMail חוסם את כולם חוץ
+//  מאלדד, והנמען כאן הוא אלדד — אחרת כלב השמירה היה שותק
+//  בדיוק בתקופה שבה הכי צריך אותו.
+
+// כמה מסמכים מסך בודד רשאי לקרוא לפני שזה מדאיג. הקצבה החינמית
+// של Firestore היא 50,000 קריאות ליום לכל הפרויקט, ומתאפסת כל
+// בוקר. הסף כאן נמוך ממנה בהרבה בכוונה: הוא לא מסמן "חרגת",
+// הוא מסמן "מסך אחד כבר אוכל אחוזים מהיום, וזה רק גדל".
+const SCREEN_READ_WARN = 3000;
+
+// האוספים ש-stats.html קורא **שלמים** — בלי where ובלי limit.
+// שלושת הראשונים גדלים לנצח ואינם מסוננים לפי תאריך.
+const WHOLE_READ_COLS = ['faults', 'guards', 'swaps'];
+
+// גבול מסמך ב-Firestore הוא מגה-בייט אחד. מסמן ב-70%, כי
+// הדוח החודשי גדל עם מספר האנשים ואי אפשר לחכות ל-100%.
+const DOC_WARN_BYTES = 700000;
+
+const CONSOLE_URL = 'https://console.firebase.google.com/project/station-102';
+
+exports.systemHealth = onSchedule({
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  schedule: '0 6 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const sid   = STATION_ID;
+  const now   = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const found = [];
+
+  // level: 'stop' עוצר עלייה לאוויר, 'warn' צריך טיפול, 'info' לידיעה
+  function add(level, title, detail) {
+    found.push({ level: level, title: title, detail: String(detail || '') });
+  }
+
+  // כל בדיקה בתוך try משלה. בדיקה שנופלת אינה מפילה את השאר —
+  // והנפילה עצמה היא ממצא, כי בדיקה שקרסה בשקט היא בדיוק סוג
+  // הבעיה שכלב השמירה נועד לתפוס.
+  async function check(name, fn) {
+    try { await fn(); }
+    catch (e) { add('warn', 'בדיקה נכשלה · ' + name, (e && e.message) || String(e)); }
+  }
+
+  // ---------- 1. מצב ניסוי ----------
+  await check('מצב ניסוי', async () => {
+    const rt = await db.doc('config/runtime').get();
+    if (!rt.exists || (rt.data() || {}).silent !== true) return;
+
+    let days = null;
+    try {
+      const md = await db.doc('config/mode').get();
+      const since = md.exists ? (md.data() || {}).since : null;
+      if (since && since.toDate) {
+        days = Math.floor((now - since.toDate()) / 86400000);
+      }
+    } catch (ignore) {}
+
+    add('stop', 'המערכת עדיין במצב ניסוי',
+        'אף התראה, מייל או קריאת פתע אינם מגיעים לאף אחד חוץ ממך' +
+        (days === null ? '.' : ', כבר ' + days + ' ימים.') +
+        ' המתג נמצא במסך הקליטה.');
+  });
+
+  // ---------- 2. אוספים שנקראים שלמים ----------
+  //
+  // הספירה כבר נעשית כל לילה ב-nightlySnapshot ונשמרת ב-backups.
+  // קוראים משם במקום לספור שוב — ספירה היא קריאה בתשלום.
+  await check('גודל אוספים', async () => {
+    const snap = await db.collection('stations/' + sid + '/backups')
+      .orderBy('date', 'desc').limit(1).get();
+    if (snap.empty) {
+      add('warn', 'אין תצלום אוספים',
+          'nightlySnapshot לא כתב אף רשומה. ייתכן שהוא אינו רץ.');
+      return;
+    }
+    const counts = (snap.docs[0].data() || {}).counts || {};
+    WHOLE_READ_COLS.forEach(function (name) {
+      const n = counts[name];
+      if (typeof n !== 'number' || n < SCREEN_READ_WARN) return;
+      add('warn', 'אוסף ' + name + ' הגיע ל-' + n + ' מסמכים',
+          'מסך הסטטיסטיקה קורא את האוסף הזה שלם, בלי סינון תאריך. ' +
+          'כל פתיחה של המסך עולה ' + n + ' קריאות, וזה רק גדל. ' +
+          'צריך לסנן אותו לטווח תאריכים.');
+    });
+  });
+
+  // ---------- 3. מסמכים שמתקרבים לגבול המגה-בייט ----------
+  await check('גודל מסמכים', async () => {
+    const cols = ['hr_reports', 'scans'];
+    for (const col of cols) {
+      const s = await db.collection('stations/' + sid + '/' + col)
+        .orderBy('__name__', 'desc').limit(3).get();
+      s.forEach(function (d) {
+        let bytes = 0;
+        try { bytes = Buffer.byteLength(JSON.stringify(d.data() || {}), 'utf8'); }
+        catch (ignore) { return; }
+        if (bytes < DOC_WARN_BYTES) return;
+        add('warn', col + '/' + d.id + ' שוקל ' + Math.round(bytes / 1024) + 'KB',
+            'הגבול הקשיח של מסמך ב-Firestore הוא 1024KB. מעבר לו הכתיבה ' +
+            'נכשלת, ולא לאט — פתאום. צריך לפצל.');
+      });
+    }
+  });
+
+  // ---------- 4. כשלי מייל ב-24 השעות האחרונות ----------
+  await check('כשלי מייל', async () => {
+    const since = new Date(now.getTime() - 86400000);
+    const s = await db.collection('mail_failures')
+      .where('at', '>=', since).limit(50).get();
+    if (s.empty) return;
+    const sample = s.docs.slice(0, 3).map(function (d) {
+      const v = d.data() || {};
+      return (v.to || '?') + ' · ' + (v.error || v.subject || '');
+    }).join(' | ');
+    add('warn', s.size + ' מיילים נכשלו ביממה האחרונה', sample);
+  });
+
+  // ---------- 5. משימות מתוזמנות ששתקו ----------
+  //
+  // זה הלב. תזכורת שהפסיקה לצאת אינה מייצרת שגיאה — היא פשוט
+  // לא קורית, וזה נראה בדיוק כמו "לא היה למי לשלוח".
+  await check('משימות מתוזמנות', async () => {
+    const twoDays = new Date(now.getTime() - 2 * 86400000);
+
+    const scan = await db.doc('stations/' + sid + '/scans/' + monthKeyOf(now)).get();
+    const ranAt = scan.exists ? (scan.data() || {}).ran_at : null;
+    if (!ranAt || !ranAt.toDate || ranAt.toDate() < twoDays) {
+      add('warn', 'nightlyScan לא רץ ביומיים האחרונים',
+          'סריקת חריגות השעות היא מה שמייצר את ההתראות לרכזת. ' +
+          'אם היא שותקת, אין התראות — וזה נראה כמו חודש בלי חריגות.');
+    }
+
+    const bk = await db.collection('stations/' + sid + '/backups')
+      .orderBy('date', 'desc').limit(1).get();
+    const last = bk.empty ? '' : String((bk.docs[0].data() || {}).date || '');
+    if (last && last < twoDays.toISOString().slice(0, 10)) {
+      add('warn', 'nightlySnapshot לא רץ מאז ' + last,
+          'התצלום היומי הוא מה שמזהה מחיקה המונית. בלעדיו לא נדע.');
+    }
+  });
+
+  // ---------- 6. יתומים במפתח מספרי העובד ----------
+  //
+  // emp_index הוא מה שהופך מספר עובד ל-uid. רשומה שמצביעה על
+  // משתמש שכבר לא קיים פירושה מספר עובד תפוס בלי בעלים —
+  // והוא יחסום את מי שינסה לקבל אותו, בלי שיהיה ברור למה.
+  await check('מפתח מספרי עובד', async () => {
+    const idx = await db.collection('emp_index').limit(200).get();
+    const orphans = [];
+    for (const d of idx.docs) {
+      const uid = String((d.data() || {}).uid || '');
+      if (!uid) { orphans.push(d.id + ' (בלי uid)'); continue; }
+      const u = await db.doc('stations/' + sid + '/users/' + uid).get();
+      if (!u.exists) orphans.push(d.id);
+    }
+    if (!orphans.length) return;
+    add('warn', orphans.length + ' מספרי עובד מצביעים על משתמש שאינו קיים',
+        orphans.slice(0, 10).join(', '));
+  });
+
+  // ---------- הרישום ----------
+  //
+  // נכתב תמיד, גם כשאין ממצאים. בלי רשומה יומית אי אפשר להבדיל
+  // בין "הכל תקין" לבין "כלב השמירה עצמו מת".
+  const stop = found.filter(f => f.level === 'stop').length;
+  const warn = found.filter(f => f.level === 'warn').length;
+
+  try {
+    await db.doc('stations/' + sid + '/health/' + today).set({
+      date: today, ran_at: FV.serverTimestamp(),
+      findings: found, stop: stop, warn: warn
+    });
+  } catch (e) {
+    console.error('systemHealth · רישום נכשל: ' + (e && e.message));
+  }
+
+  console.log('systemHealth', today, 'stop', stop, 'warn', warn);
+
+  if (!found.length) return;   // שקט פירושו תקין
+
+  const rows = found.map(function (f) {
+    const color = f.level === 'stop' ? '#c92a2a' : '#e8590c';
+    return '<div style="border-right:4px solid ' + color + ';padding:8px 12px;' +
+           'margin:0 0 12px;background:#fafafa">' +
+           '<div style="font-weight:bold;color:#222">' + f.title + '</div>' +
+           '<div style="color:#666;font-size:14px;margin-top:4px">' + f.detail + '</div>' +
+           '</div>';
+  }).join('');
+
+  const subject = (stop ? '⛔ ' : '⚠️ ') + 'בדיקת מערכת · ' +
+                  (stop ? stop + ' חוסמים' : warn + ' לטיפול');
+
+  await sendMail(SUPER_ADMIN_EMAIL, subject, mailShell(
+    'בדיקת הבריאות היומית מצאה ' + found.length + ' דברים',
+    rows +
+    '<div style="color:#888;font-size:13px;margin-top:16px">' +
+    'המייל הזה נשלח רק כשיש ממצא. יום בלי מייל הוא יום תקין.</div>' +
+    button(CONSOLE_URL, 'לקונסולה')
+  ));
 });

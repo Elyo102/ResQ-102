@@ -118,6 +118,83 @@ export function mayWriteLog(c) {
 }
 
 // ---------------------------------------------------------------
+//  מי רשאי לשבץ תפקיד למי
+// ---------------------------------------------------------------
+//
+//  אלדד, 25.8.2026: "עד סגן מפקד משמרת."
+//
+//  **למה יש כאן תקרה בכלל.**
+//
+//  באפליקציה שהתחנה משתמשת בה היום, שיבוץ תפקיד נעול לקוד
+//  אחד בלבד — שלו. ההערה שם מסבירה למה במילים האלה:
+//  "כדי שאף אחד לא יוכל לשדרג את עצמו למנהל בטעות או בזדון."
+//
+//  פתחנו את זה לרכזת כוח האדם, כי בלי זה היא לא יכולה לעשות
+//  את העבודה שלה. אבל לפתוח בלי תקרה זה לא "לתת לה הרשאה",
+//  זה לתת לה את המערכת: מי שיכול למנות מפקד יכול למנות את
+//  עצמה מפקדת, ומשם הכל.
+//
+//  התקרה היא דרגה 3 — מפקד צוות. כלומר הרכזת משבצת את דרגות
+//  השטח, שזו העבודה היומיומית, ומינוי סגל פיקודי נשאר אצל
+//  מנהל-על. זה גם לא מקרי שהתקרה נמוכה מהדרגה שלה עצמה: כלל
+//  "עד הדרגה שלי" היה מאפשר לה למנות רכזת שנייה, ומשם שתיהן
+//  יכולות למנות זו את זו לכל דבר.
+//
+//  ⚠️ הכלל הזה נאכף **בשרת**, ב-setUserRole. הפונקציה כאן
+//  משמשת את המסכים כדי לא להציג אפשרות שתידחה ממילא. מסך
+//  שמסתיר כפתור אינו הרשאה.
+
+export const ASSIGN_MAX_RANK = {
+  hr_coordinator: 3   // עד מפקד צוות, כולל
+};
+
+// מה מותר ל-actor לשבץ. מנהל-על — הכל. אחרת לפי הטבלה למעלה,
+// וברירת המחדל היא אפס, כלומר אסור. תפקיד חדש שיתווסף למערכת
+// לא יקבל סמכות שיבוץ במקרה.
+export function maxAssignRank(claims) {
+  if (isSuper(claims)) return Infinity;
+  const r = claims && claims.role;
+  return ASSIGN_MAX_RANK[r] || 0;
+}
+
+// שתי בדיקות, לא אחת: גם התפקיד **החדש** וגם התפקיד **הקיים**
+// של היעד חייבים להיות מתחת לתקרה.
+//
+// בלי הבדיקה השנייה, רכזת יכולה להוריד מפקד משמרת לדרגת לוחם —
+// פעולה שכל כולה מתחת לתקרה מבחינת התפקיד החדש, ובכל זאת היא
+// הדחה של בכיר ממנה. הורדה בדרגה היא שינוי סמכות בדיוק כמו
+// העלאה, ומי שאינו רשאי למנות מפקד אינו רשאי גם לפרק אותו.
+export function mayAssignRole(claims, targetRoleId, targetCurrentRoleId) {
+  const cap = maxAssignRank(claims);
+  if (cap === Infinity) return true;
+  if (cap === 0) return false;
+  if (targetRoleId && roleRank(targetRoleId) > cap) return false;
+  if (targetCurrentRoleId && roleRank(targetCurrentRoleId) > cap) return false;
+  return true;
+}
+
+// רשימת התפקידים שה-actor רשאי לבחור מהם, לבניית הבורר במסך.
+export function assignableRoles(claims) {
+  const cap = maxAssignRank(claims);
+  if (cap === Infinity) return ROLES.slice();
+  return ROLES.filter(function (r) { return r.rank <= cap; });
+}
+
+export function assignableRoleOptionsHtml(claims, extra) {
+  const esc = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+  const list = assignableRoles(claims)
+    .sort(function (a, b) { return a.rank - b.rank; })
+    .concat(extra || []);
+  return list.map(function (r) {
+    return '<option value="' + esc(r.id) + '">' + esc(r.he) + '</option>';
+  }).join('');
+}
+
+// ---------------------------------------------------------------
 //  שיוך צוות
 // ---------------------------------------------------------------
 //
