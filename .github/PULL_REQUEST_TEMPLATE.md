@@ -15,5 +15,4 @@
 - [ ] No secrets or personal data were added
 - [ ] A rollback path is documented for high-risk changes
 
-Production deployment requires a separate, explicit approval after this pull request is reviewed and merged.
-
+Production deployment requires explicit production approval that satisfies `AGENTS.md`; it is not authorized by ordinary pull-request approval.

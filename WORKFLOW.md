@@ -1,11 +1,11 @@
 # ResQ development workflow
 
 1. Start each task from an up-to-date `main` and create a branch named `codex/<short-task-name>`.
-2. Use the Codex task to agree on the requested outcome. Codex may inspect files, edit the work branch, and run local tests.
+2. Use the Codex task to agree on the requested outcome. Inspection, implementation, and validation must follow the mandatory two-reviewer workflow in `AGENTS.md`.
 3. Review Codex's summary, changed files, diff, and test results from the desktop app or Remote on the phone.
 4. Push only the work branch and open a Pull Request. GitHub runs the existing `בדיקות` workflow for every Pull Request.
-5. Merge to `main` only after the user explicitly approves the reviewed Pull Request.
-6. Treat deployment as a separate operation. Before any production action, Codex must provide the exact target, command, validation evidence, risks, and rollback plan and receive explicit approval.
+5. Merge to `main` only with explicit merge approval satisfying `AGENTS.md`, whether granted after review or explicitly included in advance in a fully defined workflow.
+6. Deployment requires explicit production approval satisfying `AGENTS.md`, whether granted separately or explicitly included in advance in a fully defined workflow. Before any production action, Codex must provide the exact target, command, validation evidence, risks, and rollback plan.
 
 ## Phone review checkpoints
 
