@@ -203,6 +203,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // יומן מיילים שנכשלו. נכתב בידי deliverMail אחרי שלושה ניסיונות.
+    //
+    // חסום ללקוח כמו mail עצמו: הוא מכיל כתובות ונושאי מייל, ואת
+    // שגיאת ה-SMTP המלאה — שעלולה לחשוף פרטי שרת. המנהל רואה אותו
+    // דרך פונקציית שרת, לא בקריאה ישירה.
+    match /mail_failures/{docId} {
+      allow read, write: if false;
+    }
+
     match /unlock_tokens/{token} {
       allow read, write: if false;
     }
@@ -760,6 +769,31 @@ service cloud.firestore {
 
       match /push_tokens/{uid} {
         allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+
+
+      // ---------- חתימה שמורה ----------
+      //
+      // כל אדם מצייר או מעלה את חתימתו פעם אחת, ומכאן והלאה
+      // מאשר בלחיצה במקום לצייר מחדש בכל טופס.
+      //
+      // הכתיבה נעולה לבעלים בלבד, וזו כל הנקודה: חתימה שמישהו
+      // אחר יכול לכתוב אינה חתימה. גם מנהל-על אינו יכול לכתוב
+      // כאן — הוא יכול למחוק, אם מישהו העלה משהו שגוי, אבל לא
+      // להחליף חתימה של אדם אחר בשלו.
+      //
+      // הקריאה פתוחה לבעלים בלבד. הסגל אינו צריך לראות את
+      // התמונה כדי לאשר טופס: החתימה מועתקת אל המסמך החתום
+      // בזמן החתימה, ושם היא נקראת.
+
+      match /signatures/{uid} {
+        allow read:   if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn()
+                              && request.auth.uid == uid
+                              && request.resource.data.get('image', '') is string
+                              && request.resource.data.get('image', '').size() > 100
+                              && request.resource.data.get('image', '').size() <= 400000;
+        allow delete: if (signedIn() && request.auth.uid == uid) || isSuper();
       }
 
       // הודעות שנשלחו ביד. נשמרות כדי שיהיה תיעוד מי שלח מה

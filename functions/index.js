@@ -3217,3 +3217,293 @@ exports.deliverMail = onDocumentCreated(
     } catch (e) {}
   }
 );
+
+
+// =======================================================================
+//  גיבוי הנתונים לגיליון Google Sheets
+// =======================================================================
+//  Firestore הוא בסיס נתונים שאי אפשר לפתוח ולהסתכל בו. גיבוי
+//  אמיתי כבר יש — PITR ל-7 ימים וגיבויים מתוזמנים ל-98 יום — אבל
+//  שניהם משחזרים לתוך Firestore, ואי אפשר לקרוא בהם.
+//
+//  הגיליון הזה הוא השכבה השלישית, וייעודה שונה: לשבת פתוח ולתת
+//  לקרוא. אם ביום מן הימים המערכת תיפול, או שיצטרכו להוכיח שעות
+//  מול משאבי אנוש בלי גישה לאפליקציה — הנתונים שם, בטבלה שכל
+//  אחד יודע לפתוח.
+//
+//  לשונית לכל אוסף, נכתבת מחדש בכל לילה.
+//
+//  ⚙️ הקמה — שני צעדים, פעם אחת:
+//
+//  1. הפעל את Sheets API:
+//     https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=station-102
+//
+//  2. פתח את הגיליון "פיירסטור-102", לחץ שיתוף, והוסף כעורך את:
+//     52676411962-compute@developer.gserviceaccount.com
+//
+//  3. הדבק כאן את מזהה הגיליון — החלק הארוך מתוך הכתובת שלו,
+//     בין /d/ לבין /edit:
+
+const BACKUP_SHEET_ID = '';
+
+// כמה מסמכים לכל היותר מכל אוסף. גיליון גוגל נחנק סביב חמישה
+// מיליון תאים, והמגבלה כאן מונעת ריצה שנופלת באמצע ומשאירה
+// גיליון חצי כתוב.
+const BACKUP_MAX_ROWS = 5000;
+
+async function sheetsClient_() {
+  const { google } = require('googleapis');
+  const auth = new google.auth.GoogleAuth({
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
+  return google.sheets({ version: 'v4', auth: await auth.getClient() });
+}
+
+// Firestore מחזיר ערכים מקוננים, חותמות זמן ומערכים. גיליון
+// מקבל טקסט בלבד, ולכן כל ערך מומר לצורה שאדם יכול לקרוא.
+function flat_(v) {
+  if (v === null || v === undefined) return '';
+  if (v && typeof v.toDate === 'function') {
+    try { return v.toDate().toISOString().replace('T', ' ').slice(0, 19); }
+    catch (e) { return ''; }
+  }
+  if (Array.isArray(v)) return v.map(flat_).join(', ');
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+async function backupCollectionToSheet_(sheets, sheetId, colName, path) {
+  const snap = await db.collection(path).limit(BACKUP_MAX_ROWS).get();
+
+  if (snap.empty) return { name: colName, rows: 0 };
+
+  // איחוד כל השדות שמופיעים באיזשהו מסמך. אוסף ב-Firestore
+  // אינו חייב מבנה אחיד, ולכן כותרת שנלקחת מהמסמך הראשון
+  // הייתה מפילה שדות שקיימים רק בחלק מהשורות.
+  const fields = new Set();
+  snap.docs.forEach(d => Object.keys(d.data()).forEach(k => fields.add(k)));
+  const cols = ['_id'].concat(Array.from(fields).sort());
+
+  const rows = [cols];
+  snap.docs.forEach(d => {
+    const data = d.data();
+    rows.push(cols.map(c => c === '_id' ? d.id : flat_(data[c])));
+  });
+
+  // יוצרים את הלשונית אם אינה קיימת. שגיאה כאן פירושה בדרך
+  // כלל שהיא כבר שם, וזה בסדר גמור.
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: colName } } }] }
+    });
+  } catch (e) { /* קיימת */ }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId, range: colName
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: colName + '!A1',
+    valueInputOption: 'RAW',
+    requestBody: { values: rows }
+  });
+
+  return { name: colName, rows: snap.size };
+}
+
+async function runSheetBackup_() {
+  if (!BACKUP_SHEET_ID) {
+    console.log('גיבוי לשיטס: BACKUP_SHEET_ID ריק — מדלג.');
+    return { skipped: true, reason: 'לא הוגדר מזהה גיליון' };
+  }
+
+  const sheets = await sheetsClient_();
+  const sid = STATION_ID;
+  const done = [];
+  const failed = [];
+
+  for (const name of SNAP_COLS) {
+    try {
+      done.push(await backupCollectionToSheet_(
+        sheets, BACKUP_SHEET_ID, name, 'stations/' + sid + '/' + name));
+    } catch (e) {
+      failed.push(name + ': ' + String((e && e.message) || e).slice(0, 200));
+    }
+  }
+
+  // חותמת זמן, כדי שיהיה אפשר לראות בגיליון מתי הוא עודכן
+  // לאחרונה בלי לחפש בלוגים.
+  try {
+    const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: BACKUP_SHEET_ID,
+        requestBody: { requests: [{ addSheet: { properties: { title: 'עדכון אחרון' } } }] }
+      });
+    } catch (e) { /* קיימת */ }
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: BACKUP_SHEET_ID,
+      range: 'עדכון אחרון!A1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [
+        ['עודכן', stamp + ' UTC'],
+        ['אוספים', String(done.length)],
+        ['שורות', String(done.reduce((a, b) => a + b.rows, 0))],
+        ['נכשלו', failed.length ? failed.join(' | ') : 'אין']
+      ] }
+    });
+  } catch (e) { /* לא קריטי */ }
+
+  const total = done.reduce((a, b) => a + b.rows, 0);
+  console.log('גיבוי לשיטס: ' + done.length + ' אוספים, ' + total +
+              ' שורות' + (failed.length ? ', ' + failed.length + ' נכשלו' : ''));
+
+  if (failed.length) {
+    try {
+      await sendMail(SUPER_ADMIN_EMAIL, '⚠️ גיבוי לשיטס — ' + failed.length + ' אוספים נכשלו',
+        mailShell('גיבוי לשיטס',
+          '<p>' + failed.join('<br>') + '</p>'));
+    } catch (e) {}
+  }
+
+  return { ok: true, collections: done.length, rows: total, failed: failed };
+}
+
+// רץ כל לילה, אחרי הסריקה הלילית ולפני תחילת המשמרת.
+exports.nightlySheetBackup = onSchedule({
+  schedule: '40 3 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1',
+  timeoutSeconds: 540
+}, async () => { await runSheetBackup_(); });
+
+// הרצה ידנית מתוך check.html, לבדיקה אחרי ההקמה.
+exports.backupToSheetNow = onCall({ timeoutSeconds: 540 }, async (req) => {
+  requireSuperAdmin(req);
+  return await runSheetBackup_();
+});
+
+
+// =======================================================================
+//  תזכורת חתימה
+// =======================================================================
+//  חתימה שאיש אינו יודע שהיא ממתינה לו לא תיחתם. ראש משמרת
+//  אינו פותח את המערכת כדי לבדוק אם מישהו הגיש טופס — הוא
+//  פותח אותה כשמשהו קרא לו.
+//
+//  שתי תזכורות שונות בכוונה, ולא אחת:
+//
+//    לכבאי  — יומיים לפני סוף החודש, על דוח השעות שלו.
+//             מוקדם מזה והוא עוד לא סיים לדווח.
+//
+//    למפקד  — כל יום ראשון, על כל מה שתקוע אצלו. פעם בשבוע
+//             ולא כל יום: התראה יומית על אותו דבר הופכת
+//             לרעש, ומי שמתרגל להתעלם מתעלם גם מהחשובות.
+//
+//  שתיהן שקטות כשאין מה להזכיר. תזכורת "יש לך 0 מסמכים"
+//  היא הדרך המהירה ביותר ללמד אנשים לכבות התראות.
+
+const SIGN_COLS = ['monthly_reports', 'submissions', 'handovers'];
+
+// כמה מסמכים ממתינים לשלב מסוים בשרשרת.
+//
+// הספירה כאן פשוטה בכוונה: אין ניסיון לשחזר את כל הלוגיקה של
+// signflow.js בשרת. השרת סופר "מסמך שאינו חתום בשלב הזה",
+// והמסך הוא זה שמכריע מי בדיוק רשאי לחתום עליו. תזכורת שמצביעה
+// על מסך שבו יש שלושה פריטים במקום ארבעה עדיין עשתה את עבודתה;
+// שתי מימושים של אותו כלל שמתפצלים עם הזמן — לא.
+async function countAwaiting(sid, step, matches) {
+  let n = 0;
+  for (const col of SIGN_COLS) {
+    try {
+      const snap = await db.collection('stations/' + sid + '/' + col)
+                           .where('status', 'in', ['submitted', 'pending', 'draft'])
+                           .limit(300).get();
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        const s = v.signatures || {};
+        if (s[step] && s[step].image) return;      // כבר חתום בשלב הזה
+        if (matches && !matches(v)) return;
+        n++;
+      });
+    } catch (e) { /* אוסף שאינו קיים, או אינדקס חסר */ }
+  }
+  return n;
+}
+
+exports.signReminder = onSchedule({
+  schedule: '30 17 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const sid = PUSH_STATION;
+  const now = new Date();
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = last - now.getDate();
+  const isSunday = now.getDay() === 0;
+
+  // ---------- לכבאים, יומיים לפני הסוף ----------
+  if (daysLeft === 2) {
+    const uids = await uidsInCrew(sid, '');
+    const need = [];
+
+    for (const uid of uids) {
+      try {
+        const p = await db.doc('stations/' + sid + '/roster/' + uid).get();
+        const emp = String((p.data() || {}).emp_number || '');
+        if (!emp) continue;
+        const n = await countAwaiting(sid, 'employee',
+          (v) => String(v.emp_number || '') === emp ||
+                 String(v.by_uid || '') === uid);
+        if (n > 0) need.push(uid);
+      } catch (e) {}
+    }
+
+    if (need.length) {
+      const res = await pushToUsers(sid, need, 'reminder',
+        'ממתין לחתימתך',
+        'נשארו יומיים לסוף החודש, ויש מסמכים שטרם חתמת עליהם. ' +
+        'דוח שלא נחתם אינו נשלח.',
+        './sign.html');
+      console.log('signReminder · כבאים: ' + res.people + ' אנשים');
+    } else {
+      console.log('signReminder · כבאים: אין מה להזכיר');
+    }
+  }
+
+  // ---------- למפקדים, בכל יום ראשון ----------
+  if (isSunday) {
+    try {
+      const rs = await db.collection('stations/' + sid + '/roster').get();
+      const staff = [];
+      rs.forEach(function (d) {
+        const v = d.data() || {};
+        if (v.is_active === false) return;
+        if (['commander', 'deputy', 'station_commander', 'hr_coordinator']
+              .indexOf(v.role) === -1) return;
+        staff.push({ uid: d.id, crew: v.crew || '', role: v.role });
+      });
+
+      for (const s of staff) {
+        // מפקד משמרת נעול למשמרת שלו; מפקד תחנה ורכז כוח אדם
+        // רואים הכל — אותו כלל בדיוק כמו בכל שאר המערכת.
+        const wide = s.role === 'station_commander' ||
+                     s.role === 'hr_coordinator' || !s.crew;
+        const n = await countAwaiting(sid, 'commander',
+          wide ? null : (v) => String(v.crew || '') === s.crew);
+        if (n <= 0) continue;
+
+        await pushToUsers(sid, [s.uid], 'reminder',
+          n === 1 ? 'מסמך אחד ממתין לאישורך'
+                  : n + ' מסמכים ממתינים לאישורך',
+          'פתח את מסך החתימות כדי לאשר.',
+          './sign.html');
+      }
+      console.log('signReminder · מפקדים: נבדקו ' + staff.length);
+    } catch (e) {
+      console.warn('signReminder · מפקדים נכשל: ' + (e && e.message));
+    }
+  }
+});

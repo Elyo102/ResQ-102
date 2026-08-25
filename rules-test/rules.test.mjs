@@ -121,6 +121,45 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, 'emp_index/101'), { uid: 'u_ff' });
   await setDoc(doc(d, 'salary_rules/v1'), { rate: 1 });
   await setDoc(doc(d, `stations/${SID}/push_tokens/u_ff`), { token: 'abc' });
+
+  // ---- החלפות משמרת ----
+  await setDoc(doc(d, `stations/${SID}/swaps/sw_open`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
+    to_uid: '', to_crew: '', status: 'open' });
+  await setDoc(doc(d, `stations/${SID}/swaps/sw_peer`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
+    to_uid: 'u_ffb', to_crew: 'ב', to_date: '2026-09-02', status: 'peer' });
+
+  // ---- תקלות ----
+  await setDoc(doc(d, `stations/${SID}/faults/fa_mine`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'תקלה', desc: 'x',
+    status: 'open', kind: 'general', created_key: 'k1' });
+  await setDoc(doc(d, `stations/${SID}/faults/fa_damage`), {
+    by_uid: 'u_ffb', by_name: 'כבאי ב', title: 'פגיעה', desc: 'x',
+    status: 'open', kind: 'damage', created_key: 'k2' });
+
+  // ---- אבטחות ----
+  await setDoc(doc(d, `stations/${SID}/guards/g_open`), {
+    by_uid: 'u_cmda', title: 'אבטחה', date: '2026-09-05',
+    slots: 3, assigned: [], signups: [] });
+  await setDoc(doc(d, `stations/${SID}/guards/g_full`), {
+    by_uid: 'u_cmda', title: 'משובצת', date: '2026-09-06',
+    slots: 1, assigned: ['u_ffb'], signups: [] });
+
+  // ---- מסמכים אישיים ----
+  await setDoc(doc(d, `stations/${SID}/documents/doc_mine`),
+    { emp_number: '101', name: 'תלוש.pdf' });
+  await setDoc(doc(d, `stations/${SID}/documents/doc_other`),
+    { emp_number: '102', name: 'תלוש-של-אחר.pdf' });
+
+  // ---- הודעות ----
+  await setDoc(doc(d, `stations/${SID}/broadcasts/b1`),
+    { by_uid: 'u_cmda', text: 'הודעה' });
+
+  // ---- חתימות שמורות ----
+  await setDoc(doc(d, `stations/${SID}/signatures/u_ff`),
+    { image: 'data:image/png;base64,' + 'A'.repeat(400),
+      full_name: 'כבאי א', emp_number: '101' });
 });
 
 console.log('\n\x1b[1m╔══════════════════════════════════════════════════╗');
@@ -332,6 +371,207 @@ await blocked('🔒 נתיב שלא הוגדר כלל — ברירת המחדל 
 
 await blocked('🔒 כתיבה לנתיב שלא הוגדר',
   setDoc(doc(superA, 'another_undefined/x'), { a: 1 }));
+
+// ============================================================
+head('9 · החלפות משמרת');
+// ============================================================
+// החלפה מזיזה משמרת של שני אנשים. זיוף כאן הוא שינוי סידור
+// העבודה של התחנה, ובעקיפין גם של השכר.
+
+await ok('כבאי מפרסם בקשת החלפה פתוחה',
+  setDoc(doc(ff, `stations/${SID}/swaps/new_open`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-10',
+    to_uid: '', to_crew: '', status: 'open' }));
+
+await blocked('🔒 כבאי מפרסם בקשה בשם כבאי אחר',
+  setDoc(doc(ff, `stations/${SID}/swaps/forge`), {
+    from_uid: 'u_ffb', from_crew: 'ב', from_date: '2026-09-10',
+    to_uid: '', to_crew: '', status: 'open' }));
+
+await blocked('🔒 כבאי יוצר החלפה שכבר מאושרת',
+  setDoc(doc(ff, `stations/${SID}/swaps/pre`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-10',
+    to_uid: 'u_ffb', to_crew: 'ב', status: 'approved' }));
+
+await blocked('🔒 כבאי לוקח את הבקשה הפתוחה של עצמו',
+  updateDoc(doc(ff, `stations/${SID}/swaps/sw_open`), {
+    status: 'cmd_from', to_uid: 'u_ff', to_date: '2026-09-03', to_crew: 'א' }));
+
+await ok('כבאי אחר לוקח בקשה פתוחה',
+  updateDoc(doc(ffB, `stations/${SID}/swaps/sw_open`), {
+    status: 'cmd_from', to_uid: 'u_ffb', to_date: '2026-09-03', to_crew: 'ב' }));
+
+await blocked('🔒 מי שלוקח משנה את התאריך של המבקש',
+  updateDoc(doc(ffB, `stations/${SID}/swaps/sw_peer`), {
+    status: 'cmd_from', from_date: '2026-12-31' }));
+
+await blocked('🔒 הצד השני מאשר סופית במקום המפקד',
+  updateDoc(doc(ffB, `stations/${SID}/swaps/sw_peer`), { status: 'approved' }));
+
+await blocked('🔒 כבאי מתחנה אחרת קורא החלפות באילת',
+  getDoc(doc(outside, `stations/${SID}/swaps/sw_open`)));
+
+// ============================================================
+head('10 · תקלות וחפיפת משמרת');
+// ============================================================
+// החומרה נקבעת בידי ראש המשמרת ולא בידי המדווח. תקלה רגילה
+// נסגרת ונשארת בהיסטוריה; רק פגיעת רכב שתוקנה נמחקת.
+
+await ok('כבאי מדווח תקלה',
+  setDoc(doc(ff, `stations/${SID}/faults/new_f`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'ברז דולף',
+    desc: 'תיאור', status: 'open', kind: 'general' }));
+
+await blocked('🔒 כבאי מדווח תקלה בשם מישהו אחר',
+  setDoc(doc(ff, `stations/${SID}/faults/forge_f`), {
+    by_uid: 'u_ffb', by_name: 'כבאי ב', title: 'זיוף',
+    desc: '', status: 'open', kind: 'general' }));
+
+await blocked('🔒 תקלה נפתחת ישר כסגורה',
+  setDoc(doc(ff, `stations/${SID}/faults/closed_f`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'תקלה',
+    desc: '', status: 'closed', kind: 'general' }));
+
+await blocked('🔒 כותרת ארוכה מהמותר',
+  setDoc(doc(ff, `stations/${SID}/faults/long_f`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'א'.repeat(120),
+    desc: '', status: 'open', kind: 'general' }));
+
+await blocked('🔒 כבאי משכתב את המדווח בתקלה קיימת',
+  updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { by_uid: 'u_ffb' }));
+
+await blocked('🔒 כבאי משנה כותרת של תקלה קיימת',
+  updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { title: 'אחרת' }));
+
+await blocked('🔒 כבאי עורך תקלה של כבאי אחר',
+  updateDoc(doc(ff, `stations/${SID}/faults/fa_damage`), { status: 'closed' }));
+
+await blocked('🔒 כבאי מוחק תקלה',
+  deleteDoc(doc(ff, `stations/${SID}/faults/fa_mine`)));
+
+await blocked('🔒 ראש משמרת מוחק תקלה רגילה (סוגרים, לא מוחקים)',
+  deleteDoc(doc(cmdA, `stations/${SID}/faults/fa_mine`)));
+
+await ok('ראש משמרת מוחק פגיעת רכב שתוקנה',
+  deleteDoc(doc(cmdA, `stations/${SID}/faults/fa_damage`)));
+
+// ============================================================
+head('11 · אבטחות');
+// ============================================================
+// השיבוץ נקבע בשרת לפי חלוקת עומס הוגנת. כתיבה ישירה לשדה
+// assigned מהדפדפן היא עקיפה של החלוקה הזו.
+
+await blocked('🔒 כבאי פותח אבטחה (רק סגל)',
+  setDoc(doc(ff, `stations/${SID}/guards/g_new`), {
+    by_uid: 'u_ff', title: 'אבטחה', date: '2026-09-09',
+    slots: 2, assigned: [] }));
+
+await blocked('🔒 אבטחה נפתחת עם משובצים מראש',
+  setDoc(doc(cmdA, `stations/${SID}/guards/g_pre`), {
+    by_uid: 'u_cmda', title: 'אבטחה', date: '2026-09-09',
+    slots: 2, assigned: ['u_ff'] }));
+
+await blocked('🔒 מספר מקומות בלתי סביר',
+  setDoc(doc(cmdA, `stations/${SID}/guards/g_many`), {
+    by_uid: 'u_cmda', title: 'אבטחה', date: '2026-09-09',
+    slots: 500, assigned: [] }));
+
+await blocked('🔒 שיבוץ עצמי ישיר לשדה assigned',
+  updateDoc(doc(ff, `stations/${SID}/guards/g_open`), { assigned: ['u_ff'] }));
+
+await blocked('🔒 סגל משנה שיבוץ באבטחה שכבר משובצת',
+  updateDoc(doc(cmdA, `stations/${SID}/guards/g_full`), { assigned: [] }));
+
+await ok('כל חבר תחנה רואה את לוח האבטחות',
+  getDoc(doc(ff, `stations/${SID}/guards/g_open`)));
+
+// ============================================================
+head('12 · מסמכים אישיים');
+// ============================================================
+// כאן יושבים תלושי שכר. זו הדליפה שהכי קל לעשות בטעות.
+
+await ok('כבאי קורא מסמך של עצמו',
+  getDoc(doc(ff, `stations/${SID}/documents/doc_mine`)));
+
+await blocked('🔒 כבאי קורא מסמך של כבאי אחר',
+  getDoc(doc(ff, `stations/${SID}/documents/doc_other`)));
+
+await blocked('🔒 ראש משמרת קורא מסמך אישי של כבאי',
+  getDoc(doc(cmdA, `stations/${SID}/documents/doc_other`)));
+
+await ok('רכז כוח אדם קורא מסמכים',
+  getDoc(doc(hrUser, `stations/${SID}/documents/doc_other`)));
+
+await blocked('🔒 כבאי מעלה מסמך על שם מספר עובד אחר',
+  setDoc(doc(ff, `stations/${SID}/documents/d_forge`), { emp_number: '102' }));
+
+await blocked('🔒 כבאי מוחק מסמך של עצמו',
+  deleteDoc(doc(ff, `stations/${SID}/documents/doc_mine`)));
+
+// ============================================================
+head('13 · הודעות תחנה');
+// ============================================================
+// הודעה לכל המשמרת היא פעולה ניהולית. הכלל מונע תיעוד מזויף.
+
+await ok('חבר תחנה קורא הודעות',
+  getDoc(doc(ff, `stations/${SID}/broadcasts/b1`)));
+
+await blocked('🔒 שליחת הודעה בשם מישהו אחר',
+  setDoc(doc(ff, `stations/${SID}/broadcasts/b_forge`), {
+    by_uid: 'u_cmda', text: 'הודעה מזויפת' }));
+
+await blocked('🔒 כבאי מתחנה אחרת קורא הודעות',
+  getDoc(doc(outside, `stations/${SID}/broadcasts/b1`)));
+
+// ============================================================
+head('14 · חתימה שמורה');
+// ============================================================
+// חתימה שמישהו אחר יכול לכתוב אינה חתימה. זו הנקודה היחידה
+// במערכת שבה גם מנהל-על אינו רשאי לכתוב — הוא יכול למחוק
+// חתימה שגויה, אבל לא להחליף חתימה של אדם בשלו.
+
+const SIG = 'data:image/png;base64,' + 'A'.repeat(400);
+
+await ok('כבאי קורא את החתימה של עצמו',
+  getDoc(doc(ff, `stations/${SID}/signatures/u_ff`)));
+
+await blocked('🔒 כבאי קורא חתימה של כבאי אחר',
+  getDoc(doc(ffB, `stations/${SID}/signatures/u_ff`)));
+
+await blocked('🔒 ראש משמרת קורא חתימה שמורה של כבאי',
+  getDoc(doc(cmdA, `stations/${SID}/signatures/u_ff`)));
+
+await blocked('🔒 רכזת כוח אדם קוראת חתימה שמורה',
+  getDoc(doc(hrUser, `stations/${SID}/signatures/u_ff`)));
+
+await ok('כבאי שומר את החתימה של עצמו',
+  setDoc(doc(ff, `stations/${SID}/signatures/u_ff`),
+    { image: SIG, full_name: 'כבאי א', emp_number: '101' }));
+
+await blocked('🔒 כבאי כותב חתימה בתיק של כבאי אחר',
+  setDoc(doc(ffB, `stations/${SID}/signatures/u_ff`),
+    { image: SIG, full_name: 'זיוף' }));
+
+await blocked('🔒 ראש משמרת כותב חתימה בשם כבאי',
+  setDoc(doc(cmdA, `stations/${SID}/signatures/u_ff`),
+    { image: SIG, full_name: 'זיוף' }));
+
+await blocked('🔒 גם מנהל-על אינו כותב חתימה של אדם אחר',
+  setDoc(doc(superA, `stations/${SID}/signatures/u_ff`),
+    { image: SIG, full_name: 'זיוף' }));
+
+await blocked('🔒 חתימה ריקה',
+  setDoc(doc(ffB, `stations/${SID}/signatures/u_ffb`), { image: '' }));
+
+await blocked('🔒 חתימה כבדה מהמותר',
+  setDoc(doc(ffB, `stations/${SID}/signatures/u_ffb`),
+    { image: 'd'.repeat(500000) }));
+
+await blocked('🔒 מבקר לא מחובר קורא חתימות',
+  getDoc(doc(anon, `stations/${SID}/signatures/u_ff`)));
+
+await ok('מנהל-על מוחק חתימה שגויה',
+  deleteDoc(doc(superA, `stations/${SID}/signatures/u_ff`)));
 
 // ============================================================
 //  סיכום

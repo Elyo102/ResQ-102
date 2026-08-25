@@ -1,0 +1,84 @@
+# ============================================================
+#  בדיקות אוטומטיות על כל דחיפה
+# ============================================================
+#  עד עכשיו הבדיקות רצו רק כשמישהו זכר להריץ אותן ידנית.
+#  ב-24.8.2026 שלוש פריסות רצופות נכשלו מסיבות שכל אחת מהן
+#  הייתה נתפסת כאן בשלושים שניות: קובץ שלא הועתק, ספרייה
+#  שלא הותקנה, קובץ נעילה לא מסונכרן.
+#
+#  שתי משרות במקביל. הראשונה מהירה ובודקת קוד; השנייה מרימה
+#  Firestore אמיתי ובודקת את כללי האבטחה - זו שבלעדיה כלל
+#  שגוי היה מגיע לייצור בשקט.
+# ============================================================
+
+name: בדיקות
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:      # אפשר גם להריץ ידנית מהלשונית Actions
+
+jobs:
+
+  # ---------- קוד, מסכים וחוקיות עסקית ----------
+  app:
+    name: קוד ומסכים
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: התקנת תלויות הבדיקה
+        working-directory: tests
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      # בדיקות סטטיות. מהירות, ותופסות את מחלקת הבאגים
+      # שנושכת ביום הפריסה: שם שדה בכלל שלא תואם לשם בקוד,
+      # קריאה לפונקציה שלא קיימת, נתיב שנשבר.
+      - name: בדיקות סטטיות
+        working-directory: tests
+        run: npm run static
+
+      # מריצות דפדפן אמיתי מול Firebase מזויף, בשישה תפקידים.
+      - name: מסכים, תפקידים, חוקיות עסקית וניגודיות
+        working-directory: tests
+        run: npm run browser
+
+  # ---------- כללי האבטחה ----------
+  rules:
+    name: כללי אבטחה
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # אמולטור Firestore הוא תוכנית Java. בלעדיה הכללים
+      # לא מהודרים כאן, וחוזרים למצב שבו הוודאות היחידה
+      # היא שהפריסה לא צעקה.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: התקנת firebase-tools
+        run: npm install -g firebase-tools
+
+      - name: התקנת תלויות
+        working-directory: rules-test
+        run: npm install --no-audit --no-fund
+
+      - name: הרצת 52 תרחישי אבטחה מול Firestore אמיתי
+        run: firebase emulators:exec --only firestore --project station-102 "cd rules-test && npm test"

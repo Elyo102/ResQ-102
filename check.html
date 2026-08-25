@@ -117,6 +117,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div class="card">
+    <h2>7 · גיבוי לגיליון</h2>
+    <div class="sub" style="margin-bottom:0">
+      PITR וגיבויים מתוזמנים משחזרים לתוך Firestore, ואי אפשר לקרוא
+      בהם. הגיליון הוא השכבה שאפשר לפתוח ולהסתכל בה — לשונית לכל
+      אוסף, נכתבת מחדש כל לילה ב-03:40.
+      <br>דורש הקמה חד-פעמית. ראה את ההערות בראש הפונקציה ב-index.js.
+    </div>
+    <div style="margin-top:12px">
+      <button id="btnBk">הרץ גיבוי עכשיו</button>
+    </div>
+    <div id="bkOut"></div>
+  </div>
+
+  <div class="card">
     <h2>גיבוי</h2>
     <div class="note">
       מוריד את כל נתוני התחנה לקובץ אחד במחשב שלך. סידור, סגל,
@@ -187,6 +201,9 @@ import * as SEED from './seed.js?v=37';
 import { initPWA } from './pwa.js?v=37';
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=37';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
@@ -871,6 +888,34 @@ $('btnMailCheck').onclick = async () => {
     }
   } catch (e) {
     line('mailOut', 'הבדיקה נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
+  }
+  b.disabled = false;
+};
+
+// ---------- גיבוי לגיליון ----------
+
+$('btnBk').onclick = async () => {
+  const b = $('btnBk'); b.disabled = true;
+  $('bkOut').innerHTML = '';
+  line('bkOut', 'רץ', 'עד דקה. אל תסגור את הדף.', 'warn');
+  try {
+    const res = await httpsCallable(fns, 'backupToSheetNow')({});
+    const d = res.data || {};
+    $('bkOut').innerHTML = '';
+    if (d.skipped) {
+      line('bkOut', 'דולג', d.reason, 'warn');
+      line('bkOut', 'מה לעשות',
+           'קבע את BACKUP_SHEET_ID בראש הפונקציה ב-functions/index.js, ' +
+           'ושתף את הגיליון עם חשבון השירות. הפרטים בהערות שם.', 'warn');
+    } else {
+      line('bkOut', 'אוספים שגובו', String(d.collections), 'ok');
+      line('bkOut', 'שורות', String(d.rows), 'ok');
+      const f = (d.failed || []);
+      line('bkOut', 'נכשלו', f.length ? f.join(' | ') : 'אין', f.length ? 'bad' : 'ok');
+    }
+  } catch (e) {
+    $('bkOut').innerHTML = '';
+    line('bkOut', 'הגיבוי נכשל', (e.code || '') + ' ' + (e.message || ''), 'bad');
   }
   b.disabled = false;
 };

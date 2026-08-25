@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — חתימות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=38">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1000px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  h2{ font-size:15px; margin:0 0 10px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:16px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+  .hide{ display:none !important }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px 18px; margin-bottom:14px }
+
+  .tabs{ display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap }
+  .tab{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:9px; padding:8px 15px; cursor:pointer; font-size:13.5px;
+        font-family:inherit }
+  .tab.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .tab b{ font-size:12px; opacity:.85; margin-inline-start:5px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:9px; padding:8px 15px; cursor:pointer; font-size:13.5px;
+        font-family:inherit }
+  .btn:hover{ color:var(--txt) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.sm{ padding:6px 12px; font-size:12.5px }
+  .btn:disabled{ opacity:.45; cursor:default }
+
+  /* ---------- קנבס החתימה ---------- */
+  /* רקע לבן קבוע, לא לפי הערכה. חתימה היא דיו על נייר בשני
+     המצבים, וקנבס כהה היה מייצר תמונה שחורה על שחור בייצוא. */
+  .pad{ position:relative }
+  .pad canvas{ width:100%; height:170px; background:#ffffff;
+               border:1px dashed var(--line); border-radius:10px;
+               display:block; cursor:crosshair }
+  .padrow{ display:flex; gap:8px; align-items:center; margin-top:9px;
+           flex-wrap:wrap }
+
+  .have{ display:flex; gap:14px; align-items:center; flex-wrap:wrap }
+  .have img{ height:64px; background:#fff; border-radius:8px; padding:5px;
+             border:1px solid var(--line) }
+
+  /* ---------- תור החתימות ---------- */
+  .row{ border:1px solid var(--line); border-radius:11px; padding:13px 15px;
+        margin-bottom:9px; background:var(--card) }
+  .rowtop{ display:flex; justify-content:space-between; gap:12px;
+           align-items:flex-start; flex-wrap:wrap }
+  .rowtop b{ font-size:14.5px }
+  .meta{ color:var(--muted); font-size:12px; margin-top:3px }
+  .pill{ font-size:11.5px; padding:3px 9px; border-radius:999px;
+         border:1px solid var(--line); color:var(--muted); white-space:nowrap }
+  .pill.wait{ color:var(--warn); border-color:var(--warn) }
+  .pill.done{ color:var(--good); border-color:var(--good) }
+  .rowact{ margin-top:11px; display:flex; gap:8px; flex-wrap:wrap;
+           align-items:center }
+
+  .msg{ font-size:12.5px; margin-top:9px; min-height:17px }
+  .msg.ok{ color:var(--good) } .msg.bad{ color:var(--err-fg) }
+  .msg.warn{ color:var(--warn) }
+
+  .empty{ color:var(--muted); font-size:13px; padding:22px 0; text-align:center }
+
+  input[type=file]{ font-size:12.5px; color:var(--muted); max-width:100% }
+  textarea{ width:100%; background:var(--in); color:var(--txt);
+            border:1px solid var(--line); border-radius:9px; padding:9px;
+            font-family:inherit; font-size:13px; resize:vertical }
+
+  @media (max-width:620px){
+    body{ padding:12px }
+    .have img{ height:52px }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="navSlot"></div>
+
+  <h1>חתימות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <h2>אין גישה</h2>
+    <div class="note" id="denyWho">—</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="tabs">
+      <button class="tab on" id="tabQueue" data-v="queue">
+        ממתין לחתימתי<b id="cQueue"></b>
+      </button>
+      <button class="tab" id="tabMine" data-v="mine">החתימה שלי</button>
+    </div>
+
+    <!-- ================= תור החתימות ================= -->
+    <div id="viewQueue">
+      <div class="card">
+        <h2>מסמכים שממתינים לך</h2>
+        <div class="note">
+          כל מה שאתה נדרש לחתום עליו, במקום אחד. ראש משמרת בסוף חודש
+          חותם לכל המשמרת מכאן, בלי לחפש מסמך-מסמך.
+        </div>
+      </div>
+      <div id="queueList"></div>
+    </div>
+
+    <!-- ================= החתימה שלי ================= -->
+    <div id="viewMine" class="hide">
+      <div class="card">
+        <h2>החתימה השמורה שלך</h2>
+        <div class="note">
+          שומרים פעם אחת, ומכאן והלאה מאשרים בלחיצה. אפשר לצייר
+          באצבע, או להעלות צילום של חתימה על נייר.
+          <br><br>
+          <b>החתימה שלך פרטית.</b> אף אחד אחר במערכת אינו רואה אותה —
+          לא ראש המשמרת ולא רכזת כוח האדם. היא מועתקת אל המסמך רק
+          ברגע שאתה חותם, ושם היא נקראת.
+        </div>
+
+        <div id="haveWrap" class="hide" style="margin-top:14px">
+          <div class="have">
+            <img id="haveImg" alt="החתימה השמורה">
+            <div>
+              <div class="note" id="haveWhen">—</div>
+              <div class="padrow">
+                <button class="btn sm" id="btnReplace">החלף</button>
+                <button class="btn sm" id="btnDelete">מחק</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="editWrap" style="margin-top:14px">
+          <div class="pad">
+            <canvas id="pad"></canvas>
+          </div>
+          <div class="padrow">
+            <button class="btn sm" id="btnClear">נקה</button>
+            <label class="btn sm" for="fileSig" style="display:inline-block">
+              העלה תמונה
+            </label>
+            <input type="file" id="fileSig" accept="image/*" class="hide">
+            <span class="note" id="padState">לא נחתם.</span>
+          </div>
+          <div class="padrow" style="margin-top:12px">
+            <button class="btn go" id="btnSave">שמור חתימה</button>
+            <button class="btn sm hide" id="btnCancel">ביטול</button>
+          </div>
+        </div>
+
+        <div class="msg" id="mineMsg"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getFirestore, collection, query, where, getDocs, doc, updateDoc, getDoc
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { initAppCheck } from './appcheck.js?v=38';
+import {
+  loadSignature, saveSignature, clearSignature, attachPad, readImageFile
+} from './signature.js?v=38';
+import {
+  signState, canSign, signatureRecord, stepLabel
+} from './signflow.js?v=38';
+
+const app  = initializeApp(firebaseConfig);
+initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const $ = (id) => document.getElementById(id);
+const CREW_HE = { 'א':'א', 'ב':'ב', 'ג':'ג' };
+
+let SID = '', ME = null, PAD = null, MY_SIG = null;
+let QUEUE = [];
+
+// ---------- כניסה ----------
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { location.href = './login.html'; return; }
+
+  const tok = await user.getIdTokenResult(true);
+  const c = tok.claims || {};
+  const isSuper = c.super === true;
+  const isMember = isSuper || (c.emp && c.stationId);
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  ME = {
+    uid: user.uid, role: c.role || (isSuper ? 'super' : 'firefighter'),
+    super: isSuper, shift: c.shift || '', emp: String(c.emp || ''),
+    full_name: '', emp_number: String(c.emp || '')
+  };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.shift ? ' · משמרת ' + (CREW_HE[ME.shift] || ME.shift) : '');
+  renderNav(c, 'sign.html', user.email || '');
+
+  setupTabs();
+  setupPad();
+  await refreshSignature();
+  await loadQueue();
+});
+
+// ---------- לשוניות ----------
+
+function setupTabs(){
+  document.querySelectorAll('.tab').forEach(t => {
+    t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+      t.classList.add('on');
+      const v = t.dataset.v;
+      $('viewQueue').classList.toggle('hide', v !== 'queue');
+      $('viewMine').classList.toggle('hide', v !== 'mine');
+    };
+  });
+}
+
+// ---------- החתימה שלי ----------
+
+function setupPad(){
+  PAD = attachPad($('pad'), {
+    onChange: (has) => {
+      $('padState').textContent = has ? 'מוכן לשמירה.' : 'לא נחתם.';
+      $('btnSave').disabled = !has;
+    }
+  });
+  $('btnSave').disabled = true;
+
+  $('btnClear').onclick = () => { PAD.clear(); say('mineMsg', '', ''); };
+
+  $('fileSig').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    say('mineMsg', 'קורא את התמונה...', 'warn');
+    try {
+      const img = await readImageFile(f, 600);
+      await PAD.load(img);
+      say('mineMsg', 'התמונה נטענה. לחץ "שמור חתימה".', 'ok');
+    } catch (err) {
+      say('mineMsg', err.message || 'טעינת התמונה נכשלה.', 'bad');
+    }
+    e.target.value = '';
+  };
+
+  $('btnSave').onclick = async () => {
+    const img = PAD.toImage();
+    if (!img) return say('mineMsg', 'אין מה לשמור.', 'bad');
+    $('btnSave').disabled = true;
+    say('mineMsg', 'שומר...', 'warn');
+    try {
+      await saveSignature(db, SID, ME.uid, img, {
+        full_name: ME.full_name, emp_number: ME.emp_number
+      });
+      say('mineMsg', 'החתימה נשמרה. מעכשיו תאשר בלחיצה.', 'ok');
+      await refreshSignature();
+    } catch (e) {
+      say('mineMsg', e.message || 'השמירה נכשלה.', 'bad');
+      $('btnSave').disabled = false;
+    }
+  };
+
+  $('btnReplace').onclick = () => {
+    $('editWrap').classList.remove('hide');
+    $('btnCancel').classList.remove('hide');
+    PAD.clear();
+  };
+  $('btnCancel').onclick = () => {
+    $('editWrap').classList.add('hide');
+    $('btnCancel').classList.add('hide');
+    say('mineMsg', '', '');
+  };
+
+  // מחיקה היא פעולה שקשה לבטל: מסמכים שכבר נחתמו אינם
+  // מושפעים (בהם יושב עותק), אבל החתימה השמורה נעלמת ויש
+  // לצייר אותה מחדש. לכן אישור מפורש.
+  $('btnDelete').onclick = async () => {
+    if (!window.confirm('למחוק את החתימה השמורה?\n\n' +
+        'מסמכים שכבר חתמת עליהם לא ישתנו — בהם שמור עותק. ' +
+        'אבל בפעם הבאה תצטרך לצייר אותה מחדש.')) return;
+    try {
+      await clearSignature(db, SID, ME.uid);
+      say('mineMsg', 'החתימה נמחקה.', 'ok');
+      await refreshSignature();
+    } catch (e) {
+      say('mineMsg', e.message || 'המחיקה נכשלה.', 'bad');
+    }
+  };
+}
+
+async function refreshSignature(){
+  MY_SIG = await loadSignature(db, SID, ME.uid);
+  const has = !!(MY_SIG && MY_SIG.image);
+
+  $('haveWrap').classList.toggle('hide', !has);
+  $('editWrap').classList.toggle('hide', has);
+  $('btnCancel').classList.add('hide');
+
+  if (has) {
+    $('haveImg').src = MY_SIG.image;
+    let when = '';
+    try {
+      const d = MY_SIG.saved_at && MY_SIG.saved_at.toDate
+        ? MY_SIG.saved_at.toDate() : null;
+      when = d ? d.toLocaleDateString('he-IL') : '';
+    } catch (e) {}
+    $('haveWhen').textContent = when ? 'נשמרה ' + when : 'שמורה';
+  }
+  renderQueue();   // כפתורי החתימה תלויים בקיום חתימה שמורה
+}
+
+// ---------- תור החתימות ----------
+
+const KINDS = [
+  { col: 'monthly_reports', kind: 'monthly_report', label: 'דוח שעות חודשי' },
+  { col: 'submissions',     kind: 'form',           label: 'טופס' },
+  { col: 'handovers',       kind: 'handover',       label: 'מסירת אחריות' }
+];
+
+async function loadQueue(){
+  QUEUE = [];
+  const base = 'stations/' + SID + '/';
+
+  // **קריאה מסוננת ולא גורפת.** שאילתה נדחית כולה אם מסמך אחד
+  // בתוצאה נכשל בכלל אבטחה — ולכן כבאי שקורא גורף היה מקבל
+  // מסך ריק בלי שום הודעה. אותו לקח בדיוק כמו ב-forms.html.
+  const wide = ME.super || ME.role === 'station_commander' ||
+               ME.role === 'hr_coordinator';
+
+  for (const k of KINDS) {
+    const qs = [];
+    try {
+      if (wide) {
+        qs.push(getDocs(collection(db, base + k.col)));
+      } else if (ME.role === 'commander' || ME.role === 'deputy') {
+        // המשמרת שלו, ובנוסף מה שהוא הגיש בעצמו.
+        qs.push(getDocs(query(collection(db, base + k.col),
+                              where('crew', '==', ME.shift))));
+        qs.push(getDocs(query(collection(db, base + k.col),
+                              where('by_uid', '==', ME.uid))));
+      } else {
+        qs.push(getDocs(query(collection(db, base + k.col),
+                              where('by_uid', '==', ME.uid))));
+        if (ME.emp) {
+          qs.push(getDocs(query(collection(db, base + k.col),
+                                where('emp_number', '==', ME.emp))));
+        }
+      }
+
+      const snaps = await Promise.all(qs.map(p => p.catch(() => null)));
+      const seen = {};
+      snaps.filter(Boolean).forEach(s => s.docs.forEach(d => {
+        if (seen[d.id]) return;
+        seen[d.id] = 1;
+        const data = Object.assign({ id: d.id }, d.data() || {});
+        // סוג המסמך נגזר מהתוכן כשאפשר: טופס חופשה לחו"ל צריך
+        // שרשרת אחרת, וה-form_id הוא מה שמבדיל.
+        const kind = (k.kind === 'form' &&
+                      /vacation|חופש/i.test(String(data.form_id || '')))
+                     ? 'vacation' : k.kind;
+        QUEUE.push({ col: k.col, kind: kind, label: k.label, d: data });
+      }));
+    } catch (e) { /* אוסף שאינו קיים עדיין */ }
+  }
+
+  renderQueue();
+}
+
+function renderQueue(){
+  const box = $('queueList');
+  if (!box) return;
+
+  const mine = QUEUE.filter(it => {
+    const c = canSign(it.kind, it.d, ME);
+    return c.allowed;
+  });
+
+  $('cQueue').textContent = mine.length ? ' · ' + mine.length : '';
+
+  if (!mine.length) {
+    box.innerHTML = '<div class="card"><div class="empty">' +
+      'אין מסמכים שממתינים לחתימתך.</div></div>';
+    return;
+  }
+
+  box.innerHTML = '';
+  mine.forEach((it, i) => {
+    const st = signState(it.kind, it.d);
+    const c  = canSign(it.kind, it.d, ME);
+
+    const who = it.d.full_name || it.d.by_name || it.d.emp_number || '';
+    const when = it.d.month || it.d.date || it.d.created_key || '';
+
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.innerHTML =
+      '<div class="rowtop">' +
+        '<div>' +
+          '<b>' + esc(it.label) + (when ? ' · ' + esc(String(when)) : '') + '</b>' +
+          '<div class="meta">' + esc(who) +
+            (it.d.crew ? ' · משמרת ' + esc(it.d.crew) : '') + '</div>' +
+        '</div>' +
+        '<span class="pill wait">' + esc(st.label) + '</span>' +
+      '</div>' +
+      (c.warn ? '<div class="meta" style="margin-top:8px;color:var(--warn)">⚠️ ' +
+                esc(c.warn) + '</div>' : '') +
+      (c.onBehalf
+        ? '<textarea id="why' + i + '" rows="2" style="margin-top:9px" ' +
+          'placeholder="למה אתה חותם במקומו? הסיבה נשמרת עם החתימה."></textarea>'
+        : '') +
+      '<div class="rowact">' +
+        '<button class="btn go sm" id="sg' + i + '">' +
+          (c.onBehalf ? 'חתום בשמו' : 'אשר וחתום') + '</button>' +
+        '<span class="msg" id="m' + i + '"></span>' +
+      '</div>';
+    box.appendChild(el);
+
+    $('sg' + i).onclick = () => signOne(it, c, i);
+  });
+}
+
+async function signOne(it, c, i){
+  const msg = 'm' + i;
+
+  if (!MY_SIG || !MY_SIG.image) {
+    say(msg, 'אין לך חתימה שמורה. עבור ללשונית "החתימה שלי".', 'bad');
+    return;
+  }
+
+  let extra = null;
+  if (c.onBehalf) {
+    const why = ($('why' + i) || {}).value || '';
+    if (!why.trim()) {
+      say(msg, 'חתימה בשם אדם אחר דורשת סיבה.', 'bad');
+      return;
+    }
+    extra = {
+      on_behalf_of: it.d.by_uid || it.d.emp_number || '',
+      on_behalf_name: it.d.full_name || it.d.by_name || '',
+      reason: why.trim().slice(0, 300)
+    };
+  }
+
+  $('sg' + i).disabled = true;
+  say(msg, 'חותם...', 'warn');
+
+  try {
+    const rec = signatureRecord(MY_SIG.image, ME, extra);
+    const patch = {};
+    patch['signatures.' + c.step] = rec;
+
+    // מסמך שהושלמה בו השרשרת נסגר. הסטטוס נשאר מקור האמת
+    // היחיד למי שקורא את המסמך ולא מבין בשלבים.
+    const after = JSON.parse(JSON.stringify(it.d));
+    after.signatures = after.signatures || {};
+    after.signatures[c.step] = rec;
+    if (signState(it.kind, after).complete) patch.status = 'approved';
+
+    await updateDoc(doc(db, 'stations', SID, it.col, it.d.id), patch);
+
+    say(msg, 'נחתם.', 'ok');
+    await loadQueue();
+  } catch (e) {
+    say(msg, (e.code || '') + ' ' + (e.message || 'החתימה נכשלה.'), 'bad');
+    $('sg' + i).disabled = false;
+  }
+}
+
+// ---------- עזר ----------
+
+function say(id, t, cls){
+  const el = $(id); if (!el) return;
+  el.textContent = t; el.className = 'msg' + (cls ? ' ' + cls : '');
+}
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

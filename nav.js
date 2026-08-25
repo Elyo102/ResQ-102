@@ -19,6 +19,7 @@ const ITEMS = [
   { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a' },
+  { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd' },
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1' },
   { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c' },
   { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5' },
