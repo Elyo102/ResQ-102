@@ -156,6 +156,16 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/broadcasts/b1`),
     { by_uid: 'u_cmda', text: 'הודעה' });
 
+  // ---- החלפות בשלבי המפקדים ----
+  await setDoc(doc(d, `stations/${SID}/swaps/sw_cmdfrom`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
+    to_uid: 'u_ffb', to_crew: 'ב', to_date: '2026-09-02',
+    status: 'cmd_from' });
+  await setDoc(doc(d, `stations/${SID}/swaps/sw_cmdto`), {
+    from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
+    to_uid: 'u_ffb', to_crew: 'ב', to_date: '2026-09-02',
+    status: 'cmd_to', from_appr_uid: 'u_cmda' });
+
   // ---- חתימות שמורות ----
   await setDoc(doc(d, `stations/${SID}/signatures/u_ff`),
     { image: 'data:image/png;base64,' + 'A'.repeat(400),
@@ -407,6 +417,27 @@ await blocked('🔒 מי שלוקח משנה את התאריך של המבקש',
 
 await blocked('🔒 הצד השני מאשר סופית במקום המפקד',
   updateDoc(doc(ffB, `stations/${SID}/swaps/sw_peer`), { status: 'approved' }));
+
+// התאריכים הם כל העניין בהחלפה. מי שיכול לשנות אותם בשלב
+// אישור הופך את מה שאושר למשהו אחר ממה שהוגש — וזה בדיוק
+// החור שהבדיקה מצאה ב-25.8.2026, בשלושה ענפים בבת אחת.
+
+await blocked('🔒 מפקד המשמרת הראשון משנה תאריך תוך כדי אישור',
+  updateDoc(doc(cmdA, `stations/${SID}/swaps/sw_cmdfrom`), {
+    status: 'cmd_to', from_date: '2026-12-31' }));
+
+await ok('מפקד המשמרת הראשון מאשר בלי לשנות',
+  updateDoc(doc(cmdA, `stations/${SID}/swaps/sw_cmdfrom`), { status: 'cmd_to' }));
+
+await blocked('🔒 מפקד המשמרת השני משנה תאריך תוך כדי אישור',
+  updateDoc(doc(cmdB, `stations/${SID}/swaps/sw_cmdto`), {
+    status: 'approved', to_date: '2026-12-31' }));
+
+await blocked('🔒 אותו מפקד מאשר את שני השלבים לבדו',
+  updateDoc(doc(cmdA, `stations/${SID}/swaps/sw_cmdto`), { status: 'approved' }));
+
+await ok('מפקד המשמרת השנייה מאשר סופית',
+  updateDoc(doc(cmdB, `stations/${SID}/swaps/sw_cmdto`), { status: 'approved' }));
 
 await blocked('🔒 כבאי מתחנה אחרת קורא החלפות באילת',
   getDoc(doc(outside, `stations/${SID}/swaps/sw_open`)));

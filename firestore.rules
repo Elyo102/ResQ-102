@@ -971,6 +971,12 @@ service cloud.firestore {
                       && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '');
 
         // הכבאי השני מסכים או מסרב. הוא לא יכול לאשר סופית.
+        //
+        // התאריכים נעולים כאן כמו האנשים והמשמרות. בגרסה
+        // הקודמת רק from_uid, to_uid ושתי המשמרות היו נעולים,
+        // והכבאי המסכים יכול היה לשנות את היום שהמבקש מוסר —
+        // ולהעביר את הבקשה למפקדים כאילו הוסכם עליה. בדיקת
+        // האבטחה תפסה את זה ב-25.8.2026.
         allow update: if member(sid)
                       && resource.data.get('to_uid', '') == request.auth.uid
                       && resource.data.get('status', '') == 'peer'
@@ -978,9 +984,14 @@ service cloud.firestore {
                       && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
                       && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
                       && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
+                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
 
         // מפקד המשמרת של המבקש.
+        //
+        // מפקד מאשר או דוחה — הוא אינו עורך. גם לו התאריכים
+        // נעולים: מה שמאושר חייב להיות מה שהוגש.
         allow update: if staff(sid)
                       && seesShift(sid, resource.data.get('from_crew', ''))
                       && resource.data.get('status', '') == 'cmd_from'
@@ -988,7 +999,9 @@ service cloud.firestore {
                       && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
                       && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
                       && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
+                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
 
         // מפקד המשמרת השנייה. רק הוא יכול להביא ל-approved.
         //
@@ -1004,7 +1017,9 @@ service cloud.firestore {
                       && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
                       && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
                       && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
+                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
+                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
 
         // ביטול על ידי אחד השניים, כל עוד לא אושרה.
         allow update: if member(sid)
