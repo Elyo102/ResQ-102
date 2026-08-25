@@ -150,6 +150,74 @@ is('חתימה בשם — נרשם מי החותם האמיתי', r2.name, 'רז
 is('ונרשם בשם מי',                      r2.on_behalf_name, 'אלדד יונה');
 is('ונרשמת הסיבה',                      r2.reason, 'לא חתם עד סוף החודש');
 
+// ============================================================
+head('9 · טופס שהוגש — המבנה שבפועל במסד');
+// ============================================================
+//  מה שנבדק כאן אינו הלוגיקה אלא **התאמת שמות השדות**.
+//  אותו נתון נקרא crew במסמך ו-shift בטוקן, ובעל המסמך
+//  מזוהה פעם לפי by_uid ופעם לפי emp_number. אי-התאמה כזאת
+//  לא נראית בקוד — היא נראית כשמפקד לוחץ "אשר" ומקבל
+//  "אינך רשאי", בלי שאיש יבין למה.
+
+const empSig = S.signatureRecord('data:img', {
+  uid: 'u1', full_name: 'כבאי א', emp_number: '101', role: 'firefighter' });
+
+// טופס חופשה בארץ, כפי ש-forms.html כותב אותו.
+const subHome = {
+  form_id: 'leave', kind: 'vacation',
+  values: { from: '2026-09-10', to: '2026-09-12', where: 'בארץ' },
+  signatures: { employee: empSig },
+  status: 'submitted', by_uid: 'u1', by_emp: '101', crew: 'א'
+};
+const subAbroad = Object.assign({}, subHome, {
+  values: { from: '2026-09-10', to: '2026-09-20', where: 'בחו״ל' } });
+
+is('חופשה בארץ — שני שלבים',
+   S.requiredSteps('vacation', subHome).length, 2);
+is('חופשה בחו״ל — שלושה שלבים',
+   S.requiredSteps('vacation', subAbroad).length, 3);
+is('זיהוי חו״ל מתוך values.where', S.isAbroad(subAbroad), true);
+is('בארץ אינו חו״ל',               S.isAbroad(subHome),   false);
+
+is('בעלות לפי by_uid',  S.isOwnerOf(subHome, FF), true);
+is('בעלות לפי by_emp',  S.isOwnerOf(subHome, { uid: 'other', emp: '101' }), true);
+is('מפקד אינו הבעלים',  S.isOwnerOf(subHome, CMDA), false);
+is('מספר עובד כמספר ולא כמחרוזת עדיין תופס',
+   S.isOwnerOf({ emp_number: 417 }, { uid: 'x', emp: '417' }), true);
+
+is('ראש המשמרת רשאי לחתום על טופס במשמרתו',
+   S.canSign('vacation', subHome, CMDA).allowed, true);
+is('והשלב שלו הוא commander',
+   S.canSign('vacation', subHome, CMDA).step, 'commander');
+
+is('🔒 ראש משמרת ממשמרת אחרת אינו רשאי',
+   S.canSign('vacation', subHome, CMDB).allowed, false);
+
+// חופשת חו"ל אחרי חתימת ראש המשמרת.
+const cmdSig = S.signatureRecord('data:img', {
+  uid: 'u2', full_name: 'מפקד א', emp_number: '201', role: 'commander' });
+const subAtStation = Object.assign({}, subAbroad, {
+  signatures: { employee: empSig, commander: cmdSig },
+  status: 'pending_station' });
+
+is('אחרי ראש המשמרת — הבא בתור הוא מפקד התחנה',
+   S.signState('vacation', subAtStation).next, 'station_commander');
+is('🔒 ראש המשמרת אינו יכול לחתום שוב',
+   S.canSign('vacation', subAtStation, CMDA).allowed, false);
+is('מפקד התחנה כן',
+   S.canSign('vacation', subAtStation, ST).allowed, true);
+is('ואז המסמך סגור',
+   S.signState('vacation', Object.assign({}, subAtStation, {
+     signatures: { employee: empSig, commander: cmdSig,
+                   station_commander: cmdSig } })).complete, true);
+
+// המקרה שהמסך מסתמך עליו: בקשה שראש המשמרת עצמו הגיש.
+const subByCmd = Object.assign({}, subHome, { by_uid: 'u2', by_emp: '201' });
+is('🔒 ראש משמרת אינו מאשר בקשה שהגיש בעצמו',
+   S.canSign('vacation', subByCmd, CMDA).allowed, false);
+is('היא עוברת למפקד התחנה',
+   S.canSign('vacation', subByCmd, ST).allowed, true);
+
 console.log('\n\x1b[1m════════════════════════════════════\x1b[0m');
 if (fail === 0) {
   console.log('\x1b[32m\x1b[1m  ✓ כל ' + pass + ' הבדיקות עברו\x1b[0m');

@@ -345,7 +345,14 @@ is('בקשה שלא אושרה אינה נספרת',
 is('דוח פציעה סגור', !!F.formById(null,'injury').private, true);
 is('בקשת חופשה אינה סגורה', !!F.formById(null,'leave').private, false);
 is('דוח אי החתמה דורש חתימה', F.formById(null,'noclock').sign, true);
-is('בקשת חופשה לא דורשת חתימה', F.formById(null,'leave').sign, false);
+// שונה במכוון. כשהחתימה הייתה ציור באצבע בכל טופס מחדש,
+// בקשת חופשה לא הצדיקה אותה. עכשיו החתימה שמורה והחתימה
+// היא הקשה אחת — ובקשה חתומה היא בקשה שאי אפשר להתכחש לה.
+is('בקשת חופשה נחתמת גם היא', F.formById(null,'leave').sign, true);
+is('לחופשה יש שרשרת חתימות',  F.formById(null,'leave').kind, 'vacation');
+is('ממתין למפקד התחנה נחשב פתוח',
+   F.isPending({ status: 'pending_station' }), true);
+is('מאושר אינו פתוח', F.isPending({ status: 'approved' }), false);
 
 console.log(bad ? '\n' + bad + ' כשלים' : '\nכל כללי העסק תקינים');
 process.exit(bad ? 1 : 0);

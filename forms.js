@@ -44,7 +44,11 @@ export const BUILTIN_FORMS = [
     note: 'ראש המשמרת או סגנו מאשרים. באישור, הימים נכנסים לדוח ' +
           'השעות כחופש, והשיבוץ יודע שאתה לא זמין.',
     approve: 'shift',        // ראש משמרת או סגן
-    sign: false,             // בקשה, לא הצהרה
+    // נחתמת. כשהחתימה הייתה ציור באצבע בכל פעם, בקשת חופשה
+    // לא הצדיקה אותה. עכשיו החתימה שמורה והחתימה היא הקשה
+    // אחת — ובקשה חתומה היא בקשה שאי אפשר להתכחש לה.
+    sign: true,
+    kind: 'vacation',        // שרשרת החתימות ב-signflow.js
     fields: [
       { id: 'from',  he: 'מתאריך',  type: 'date',   req: true },
       { id: 'to',    he: 'עד תאריך', type: 'date',  req: true },
@@ -62,6 +66,7 @@ export const BUILTIN_FORMS = [
           'מסמך ולא הערה.',
     approve: 'shift',
     sign: true,
+    kind: 'missed_punch',
     fields: [
       { id: 'date',  he: 'תאריך',     type: 'date', req: true },
       { id: 'in',    he: 'שעת כניסה', type: 'time', req: true },
@@ -112,11 +117,21 @@ export function formById(forms, id) {
 //  מצבים
 // ------------------------------------------------------------------
 
+// pending_station הוא שלב ביניים ולא מצב סופי: ראש המשמרת
+// כבר חתם, והבקשה ממתינה למפקד התחנה. הוא קיים רק בגלל
+// חופשה בחו"ל — שם ההחלטה עולה דרגה, כי אדם שיצא מהארץ
+// אינו ניתן להזעקה בכלל.
+//
+// בלי מצב הביניים הזה, החתימה של ראש המשמרת הייתה או
+// מאשרת סופית (ואז אין מפקד תחנה בשרשרת) או לא נשמרת בכלל
+// (ואז אין ראיה שהוא בדק).
+
 export const SUB_STATES = [
-  { id: 'submitted', he: 'הוגשה',  color: 'var(--warn)' },
-  { id: 'approved',  he: 'אושרה',  color: 'var(--good)' },
-  { id: 'rejected',  he: 'נדחתה',  color: 'var(--bad)' },
-  { id: 'cancelled', he: 'בוטלה',  color: 'var(--muted)' }
+  { id: 'submitted',      he: 'הוגשה',  color: 'var(--warn)' },
+  { id: 'pending_station', he: 'ממתינה למפקד התחנה', color: 'var(--pick)' },
+  { id: 'approved',       he: 'אושרה',  color: 'var(--good)' },
+  { id: 'rejected',       he: 'נדחתה',  color: 'var(--bad)' },
+  { id: 'cancelled',      he: 'בוטלה',  color: 'var(--muted)' }
 ];
 
 export function subHe(id) {
@@ -128,7 +143,15 @@ export function subColor(id) {
   return s ? s.color : 'var(--muted)';
 }
 export function isPending(sub) {
-  return (sub || {}).status === 'submitted';
+  const st = (sub || {}).status;
+  return st === 'submitted' || st === 'pending_station';
+}
+
+// איזו שרשרת חתימות חלה על הטופס. signflow.js מדבר בשפה של
+// סוגי מסמך ולא של מזהי טופס, כדי שדוח שעות חודשי — שאינו
+// טופס בכלל — יעבור באותה שרשרת.
+export function signKind(form) {
+  return (form && form.kind) || 'form';
 }
 
 // ------------------------------------------------------------------

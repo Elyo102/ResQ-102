@@ -570,19 +570,75 @@ service cloud.firestore {
                       && request.resource.data.get('by_uid', '') == request.auth.uid
                       && request.resource.data.get('status', '') == 'submitted'
                       && request.resource.data.get('form_id', '') != ''
-                      && request.resource.data.get('signature', '').size() <= 400000;
+                      && request.resource.data.get('signature', '').size() <= 400000
+                      && request.resource.data.get('signatures', {})
+                           .get('employee', {}).get('image', '').size() <= 400000
+                      // מסמך אינו נולד חתום בידי מפקד. שרשרת שמגיעה
+                      // מהלקוח כשהיא כבר מלאה היא לא שרשרת.
+                      && !('commander' in request.resource.data.get('signatures', {}))
+                      && !('station_commander' in request.resource.data.get('signatures', {}));
 
-        // הכרעה: הסגל של אותה משמרת, או ביטול בידי המגיש.
-        allow update: if ((staff(sid)
-                           && seesCrewData(sid, resource.data.get('crew', ''))
-                           && request.resource.data.get('status', '') in
-                              ['approved', 'rejected'])
-                          || (resource.data.get('by_uid', '') == request.auth.uid
-                              && request.resource.data.get('status', '') == 'cancelled'))
-                      && resource.data.get('status', '') == 'submitted'
-                      && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
-                      && request.resource.data.get('values', {}) == resource.data.get('values', {})
-                      && request.resource.data.get('signature', '') == resource.data.get('signature', '');
+        // ---------- הכרעה ----------
+        //
+        // **אישור הוא חתימה, ולכן יש לו שלבים.**
+        //
+        // שלב א' — הסגל של אותה משמרת. הוא מאשר, דוחה, או
+        // חותם ומעביר הלאה. הוא **אינו** יכול להכריע בבקשה
+        // שהוא עצמו הגיש: עד היום כלל זה לא נאכף בשרת בכלל,
+        // רק במסך, וראש משמרת יכול היה לאשר לעצמו חופשה
+        // בקריאת HTTP אחת.
+        //
+        // שלב ב' — מפקד התחנה, ורק הוא, מכריע במה שהועבר
+        // אליו. זה קיים בגלל חופשה בחו"ל: אדם שיצא מהארץ
+        // אינו ניתן להזעקה, ולכן ההחלטה עולה דרגה.
+        //
+        // ולכן גם התנאי האחרון בשלב א': ראש משמרת אינו יכול
+        // לאשר סופית חופשה בחו"ל. הוא יכול רק להעביר אותה
+        // הלאה. בלי השורה הזאת כל השרשרת הייתה עיצוב מסך
+        // בלבד — מי שיודע לשלוח בקשה היה עוקף אותה.
+        allow update: if (
+                        ( staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', ''))
+                          && resource.data.get('by_uid', '') != request.auth.uid
+                          && resource.data.get('status', '') == 'submitted'
+                          && request.resource.data.get('status', '') in
+                             ['approved', 'rejected', 'pending_station']
+                          // "בחו״ל" נבדק כתבנית ולא כמחרוזת מדויקת.
+                          // הגרש בעברית נכתב בשלוש צורות שונות
+                          // (״ ,\" ,') ומי שיכתוב "חול" בלי גרש בכלל
+                          // עדיין מתכוון לאותו דבר. השוואה מדויקת
+                          // הייתה עוקפת את כל השרשרת בגלל תו אחד.
+                          && ( request.resource.data.get('status', '') != 'approved'
+                               || resource.data.get('form_id', '') != 'leave'
+                               || !resource.data.get('values', {})
+                                    .get('where', '').matches('.*חו.*')
+                               || stationCommander(sid) || isSuper() ) )
+                        ||
+                        ( (stationCommander(sid) || isSuper())
+                          && resource.data.get('by_uid', '') != request.auth.uid
+                          && resource.data.get('status', '') == 'pending_station'
+                          && request.resource.data.get('status', '') in
+                             ['approved', 'rejected'] )
+                        ||
+                        ( resource.data.get('by_uid', '') == request.auth.uid
+                          && resource.data.get('status', '') == 'submitted'
+                          && request.resource.data.get('status', '') == 'cancelled' )
+                      )
+                      // מה שנעול לכל אורך הדרך: מי הגיש, מה נכתב,
+                      // איזה טופס זה, ולאיזו משמרת הוא שייך. מפקד
+                      // שמאשר אינו עורך — הוא מאשר.
+                      && request.resource.data.get('by_uid', '')  == resource.data.get('by_uid', '')
+                      && request.resource.data.get('form_id', '') == resource.data.get('form_id', '')
+                      && request.resource.data.get('crew', '')    == resource.data.get('crew', '')
+                      && request.resource.data.get('values', {})  == resource.data.get('values', {})
+                      && request.resource.data.get('signature', '') == resource.data.get('signature', '')
+                      // חתימת הכבאי אינה ניתנת להחלפה בשלב האישור.
+                      && request.resource.data.get('signatures', {}).get('employee', {})
+                         == resource.data.get('signatures', {}).get('employee', {})
+                      && request.resource.data.get('signatures', {})
+                           .get('commander', {}).get('image', '').size() <= 400000
+                      && request.resource.data.get('signatures', {})
+                           .get('station_commander', {}).get('image', '').size() <= 400000;
 
         allow delete: if isSuper();
       }

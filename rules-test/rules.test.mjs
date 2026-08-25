@@ -170,6 +170,51 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/signatures/u_ff`),
     { image: 'data:image/png;base64,' + 'A'.repeat(400),
       full_name: 'כבאי א', emp_number: '101' });
+
+  // ---- טפסים ----
+  const empSig = { image: 'data:image/png;base64,' + 'A'.repeat(400),
+                   uid: 'u_ff', name: 'כבאי א', emp: '101',
+                   role: 'firefighter', at: '2026-08-20T08:00:00.000Z' };
+
+  // חופשה בארץ — שתי חתימות ודי.
+  await setDoc(doc(d, `stations/${SID}/submissions/sub_home`), {
+    form_id: 'leave', form_he: 'בקשת חופשה', kind: 'vacation',
+    values: { from: '2026-09-10', to: '2026-09-12', where: 'בארץ' },
+    signature: empSig.image, signatures: { employee: empSig },
+    is_private: false, status: 'submitted',
+    by_uid: 'u_ff', by_name: 'כבאי א', by_emp: '101', crew: 'א',
+    created_key: '2026-08-20T08:00:00.000Z' });
+
+  // חופשה בחו"ל — מחייבת גם את מפקד התחנה.
+  await setDoc(doc(d, `stations/${SID}/submissions/sub_abroad`), {
+    form_id: 'leave', form_he: 'בקשת חופשה', kind: 'vacation',
+    values: { from: '2026-09-10', to: '2026-09-20', where: 'בחו״ל' },
+    signature: empSig.image, signatures: { employee: empSig },
+    is_private: false, status: 'submitted',
+    by_uid: 'u_ff', by_name: 'כבאי א', by_emp: '101', crew: 'א',
+    created_key: '2026-08-20T08:00:00.000Z' });
+
+  // אותה בקשה, אחרי שראש המשמרת חתם והעביר הלאה.
+  await setDoc(doc(d, `stations/${SID}/submissions/sub_at_station`), {
+    form_id: 'leave', form_he: 'בקשת חופשה', kind: 'vacation',
+    values: { from: '2026-09-10', to: '2026-09-20', where: 'בחו״ל' },
+    signature: empSig.image,
+    signatures: { employee: empSig,
+                  commander: { image: empSig.image, uid: 'u_cmda',
+                               name: 'מפקד א', emp: '201',
+                               role: 'commander', at: '2026-08-21T08:00:00.000Z' } },
+    is_private: false, status: 'pending_station',
+    by_uid: 'u_ff', by_name: 'כבאי א', by_emp: '101', crew: 'א',
+    created_key: '2026-08-20T08:00:00.000Z' });
+
+  // בקשה שראש המשמרת עצמו הגיש.
+  await setDoc(doc(d, `stations/${SID}/submissions/sub_by_cmd`), {
+    form_id: 'leave', form_he: 'בקשת חופשה', kind: 'vacation',
+    values: { from: '2026-09-10', to: '2026-09-12', where: 'בארץ' },
+    signature: empSig.image, signatures: { employee: empSig },
+    is_private: false, status: 'submitted',
+    by_uid: 'u_cmda', by_name: 'מפקד א', by_emp: '201', crew: 'א',
+    created_key: '2026-08-20T08:00:00.000Z' });
 });
 
 console.log('\n\x1b[1m╔══════════════════════════════════════════════════╗');
@@ -603,6 +648,103 @@ await blocked('🔒 מבקר לא מחובר קורא חתימות',
 
 await ok('מנהל-על מוחק חתימה שגויה',
   deleteDoc(doc(superA, `stations/${SID}/signatures/u_ff`)));
+
+// ============================================================
+head('15 · טפסים — שרשרת האישורים');
+// ============================================================
+// אישור הוא חתימה, ולחתימה יש סדר. שלושה דברים נבדקים כאן:
+// שאיש אינו מאשר לעצמו, שחופשה בחו"ל אינה נסגרת בלי מפקד
+// התחנה, ושמי שמאשר אינו עורך את מה שהוגש.
+
+const CSIG = { image: 'data:image/png;base64,' + 'B'.repeat(400),
+               uid: 'u_cmda', name: 'מפקד א', emp: '201',
+               role: 'commander', at: '2026-08-22T08:00:00.000Z' };
+
+await ok('ראש משמרת מאשר חופשה בארץ של כבאי במשמרתו',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_home`), {
+    status: 'approved', signatures: { employee: { image: 'data:image/png;base64,' + 'A'.repeat(400),
+      uid: 'u_ff', name: 'כבאי א', emp: '101', role: 'firefighter',
+      at: '2026-08-20T08:00:00.000Z' }, commander: CSIG } }));
+
+await blocked('🔒 ראש משמרת ממשמרת אחרת מאשר',
+  updateDoc(doc(cmdB, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
+
+await blocked('🔒 כבאי מאשר טופס',
+  updateDoc(doc(ffB, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
+
+await blocked('🔒 המגיש מאשר לעצמו',
+  updateDoc(doc(ff, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
+
+await blocked('🔒 ראש משמרת מאשר בקשה שהוא עצמו הגיש',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), { status: 'approved' }));
+
+await ok('מפקד התחנה מאשר בקשה שראש המשמרת הגיש',
+  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_by_cmd`), { status: 'approved' }));
+
+// ---- החריג של חו"ל ----
+
+await blocked('🔓 🔒 ראש משמרת סוגר לבדו חופשה בחו״ל',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
+
+await ok('ראש משמרת חותם ומעביר חופשת חו״ל למפקד התחנה',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_abroad`), {
+    status: 'pending_station', signatures: { commander: CSIG } }));
+
+await blocked('🔒 ראש משמרת מאשר בקשה שכבר אצל מפקד התחנה',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
+
+await blocked('🔒 סגן ראש משמרת מאשר בקשה שאצל מפקד התחנה',
+  updateDoc(doc(deputyA, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
+
+await ok('מפקד התחנה מאשר חופשת חו״ל שהועברה אליו',
+  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
+
+// ---- מה שנעול בזמן האישור ----
+
+await blocked('🔒 המאשר משנה את תאריכי החופשה',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', values: { from: '2026-09-01', to: '2026-09-30', where: 'בארץ' } }));
+
+await blocked('🔒 המאשר מחליף את חתימת הכבאי',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved',
+    signatures: { employee: { image: 'data:image/png;base64,' + 'Z'.repeat(400),
+                              uid: 'u_cmda', name: 'זיוף' } } }));
+
+await blocked('🔒 המאשר מעביר את הטופס למשמרת אחרת',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', crew: 'ב' }));
+
+await blocked('🔒 המאשר מחליף את זהות המגיש',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', by_uid: 'u_ffb' }));
+
+await blocked('🔒 חתימת מפקד כבדה מהמותר',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', signatures: { commander: { image: 'z'.repeat(500000) } } }));
+
+// ---- הגשה ----
+
+await ok('כבאי מגיש טופס חתום בשמו',
+  setDoc(doc(ff, `stations/${SID}/submissions/sub_new_ok`), {
+    form_id: 'noclock', kind: 'missed_punch', values: { date: '2026-09-01' },
+    signature: 'data:image/png;base64,' + 'A'.repeat(400),
+    signatures: { employee: { image: 'data:image/png;base64,' + 'A'.repeat(400),
+                              uid: 'u_ff', name: 'כבאי א' } },
+    status: 'submitted', by_uid: 'u_ff', crew: 'א', is_private: false }));
+
+await blocked('🔒 כבאי מגיש טופס בשם כבאי אחר',
+  setDoc(doc(ff, `stations/${SID}/submissions/sub_new_bad`), {
+    form_id: 'noclock', values: {}, status: 'submitted', by_uid: 'u_ffb', crew: 'ב' }));
+
+await blocked('🔒 כבאי מגיש טופס שכבר חתום בידי מפקד',
+  setDoc(doc(ff, `stations/${SID}/submissions/sub_new_pre`), {
+    form_id: 'leave', values: {}, status: 'submitted', by_uid: 'u_ff', crew: 'א',
+    signatures: { employee: { image: 'x' }, commander: CSIG } }));
+
+await blocked('🔒 כבאי מגיש טופס שנולד מאושר',
+  setDoc(doc(ff, `stations/${SID}/submissions/sub_new_appr`), {
+    form_id: 'leave', values: {}, status: 'approved', by_uid: 'u_ff', crew: 'א' }));
 
 // ============================================================
 //  סיכום

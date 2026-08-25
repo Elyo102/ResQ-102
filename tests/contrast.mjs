@@ -73,8 +73,18 @@ for (const screen of SCREENS) {
   const ctx = await b.newContext({ viewport:{ width:390, height:900 }, locale:'he-IL' });
   await ctx.route('**/firebase-*.js', r => {
     const n = path.basename(new URL(r.request().url()).pathname);
+    const p = path.join(STUB, n);
+    // firebase-messaging-sw.js הוא **קובץ של האפליקציה**, לא
+    // ייבוא מה-CDN — הוא ה-service worker של ההתראות, והוא
+    // יושב בשורש הפרויקט. התבנית firebase-*.js תופסת גם אותו,
+    // ואז readFileSync נפל על קובץ בדל שאינו קיים והפיל את
+    // כל הבדיקה. בדיוק זה הכשיל את ה-CI ב-25.8.2026.
+    //
+    // מה שאין לו בדל — מוגש כמו שהוא. זה גם הכלל הנכון
+    // לעתיד: קובץ חדש בשם דומה לא יפיל את הבדיקה.
+    if (!fs.existsSync(p)) { r.continue(); return; }
     r.fulfill({ status:200, contentType:'text/javascript',
-                body: fs.readFileSync(path.join(STUB, n), 'utf8') });
+                body: fs.readFileSync(p, 'utf8') });
   });
   await ctx.route('https://www.gstatic.com/**', r => {
     const n = path.basename(new URL(r.request().url()).pathname)

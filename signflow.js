@@ -125,8 +125,7 @@ export function canSign(kind, docData, me) {
 
   const step = st.next;
   const isSuper = me.role === 'super' || me.super === true;
-  const isOwner = docData && (docData.by_uid === me.uid ||
-                              docData.emp_number === me.emp);
+  const isOwner = isOwnerOf(docData, me);
 
   if (step === STEP.EMPLOYEE) {
     if (isOwner) return { allowed: true, step: step, onBehalf: false };
@@ -165,6 +164,25 @@ export function canSign(kind, docData, me) {
   }
 
   return { allowed: false, why: 'שלב לא מוכר.' };
+}
+
+// בעלות על המסמך.
+//
+// שם השדה אינו אחיד במערכת ולא יהיה: דוח שעות חודשי מזוהה
+// לפי emp_number, טופס שהוגש מזוהה לפי by_uid ו-by_emp,
+// ומסירת אחריות לפי to_uid. במקום לתקן שלושה אוספים
+// קיימים — שכל אחד מהם כבר מלא נתונים — הבדיקה מכירה את
+// כולם. מספר עובד מושווה כמחרוזת, כי במקום אחד הוא נשמר
+// כמספר ובמקום אחר כטקסט, ו-'417' !== 417.
+export function isOwnerOf(docData, me) {
+  if (!docData || !me) return false;
+  const d = docData;
+  if (d.by_uid && d.by_uid === me.uid) return true;
+  if (d.uid && d.uid === me.uid) return true;
+  const mine = String(me.emp || me.emp_number || '');
+  if (!mine) return false;
+  return String(d.emp_number || '') === mine ||
+         String(d.by_emp || '')     === mine;
 }
 
 // ראש משמרת, סגנו, או מפקד תחנה — ונעולים למשמרת של המסמך.
