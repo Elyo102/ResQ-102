@@ -3530,8 +3530,8 @@ exports.signReminder = onSchedule({
 
     for (const uid of uids) {
       try {
-        const p = await db.doc('stations/' + sid + '/roster/' + uid).get();
-        const emp = String((p.data() || {}).emp_number || '');
+        const p = await db.doc('stations/' + sid + '/users/' + uid).get();
+        const d = p.data() || {}; const emp = String(d.employee_number || d.emp_number || '');
         if (!emp) continue;
         const n = await countAwaiting(sid, 'employee',
           (v) => String(v.emp_number || '') === emp ||
