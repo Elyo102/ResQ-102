@@ -168,6 +168,66 @@ function SW_LITERAL(st) {
 
 is('מצב לא מוכר מחזיר ריק', L.swapSystemText('nope', SW), '');
 
+// ============================================================
+head('7 · המסכים מכירים את כל התפקידים');
+// ============================================================
+//
+//  **הבאג שהבדיקה הזאת נועדה למנוע.**
+//
+//  ב-25.8.2026 נוספו מפקד צוות וסגן מפקד צוות ל-roles.js
+//  ולכללי האבטחה — אבל **תשעה מסכים החזיקו את רשימת
+//  התפקידים כתובה ביד**, בלי השניים החדשים.
+//
+//  התוצאה: התפריט (שקורא מ-roles.js) הציג להם את כל
+//  הכפתורים, והמסך עצמו ענה "אין הרשאה". השרת דווקא התיר —
+//  כלומר החסימה הייתה במסך בלבד, והמשתמש חווה מערכת שבורה.
+//
+//  הבדיקה אוסרת על רשימת תפקידים קשיחה בכל מסך. מי שמוסיף
+//  תפקיד מעכשיו — מוסיף אותו במקום אחד.
+
+import { readdirSync } from 'fs';
+
+const SCREENS = readdirSync(__APP).filter(f => f.endsWith('.html'));
+const HARDCODED = /\[\s*'firefighter'[^\]]*\]\s*\.indexOf\s*\(\s*c\.role/;
+
+SCREENS.forEach(function (f) {
+  const src = readFileSync(__j(__APP, f), 'utf8');
+  is('🔒 ' + f + ' אינו מחזיק רשימת תפקידים קשיחה',
+     HARDCODED.test(src), false);
+});
+
+// וכל מסך שבודק תפקיד חייב לייבא את הרשימה מהמקור
+SCREENS.forEach(function (f) {
+  const src = readFileSync(__j(__APP, f), 'utf8');
+  if (src.indexOf('MEMBER_ROLES') === -1) return;
+  is(f + ' מייבא את MEMBER_ROLES מ-roles.js',
+     /import\s*\{[^}]*MEMBER_ROLES[^}]*\}\s*from\s*'\.\/roles\.js/.test(src), true);
+});
+
+// ============================================================
+head('8 · מפקד צוות אינו חלש מלוחם אש');
+// ============================================================
+//
+//  התפקידים האלה אמורים להיות "לוחם אש ועוד כתיבה בלוג".
+//  בפועל הם קיבלו **פחות**: sendBroadcast ו-guardSignup
+//  החזיקו רשימות תפקידים משלהם, ובהן לוחם אש היה ושניהם לא.
+
+['team_leader', 'deputy_team_leader'].forEach(function (r) {
+  const bcBody = (SERVER.match(/exports\.sendBroadcast[\s\S]*?\n\}\);/) || [''])[0];
+  const bc = bcBody.match(/if \(!wide && \[([\s\S]*?)\]/);
+  is('sendBroadcast מתיר ל-' + r,
+     !!bc && bc[1].indexOf("'" + r + "'") !== -1, true);
+  // ⚠️ העוגן הוא **גוף הפונקציה**, לא הדפוס הכללי.
+  //
+  // הגרסה הראשונה של הבדיקה חיפשה `if (!isSuper && [` בכל
+  // הקובץ — והדפוס הזה מופיע שלוש פעמים. היא תפסה את
+  // sendCallout בשורה 2779 ודיווחה על כשל בקוד תקין.
+  const gsBody = (SERVER.match(/exports\.guardSignup[\s\S]*?\n\}\);/) || [''])[0];
+  const gs = gsBody.match(/if \(!isSuper && \[([\s\S]*?)\]\.indexOf\(role\)/);
+  is('guardSignup מתיר ל-' + r,
+     !!gs && gs[1].indexOf("'" + r + "'") !== -1, true);
+});
+
 console.log('\n\x1b[1m════════════════════════════════════\x1b[0m');
 if (fail === 0) {
   console.log('\x1b[32m\x1b[1m  ✓ כל ' + pass + ' הבדיקות עברו\x1b[0m');

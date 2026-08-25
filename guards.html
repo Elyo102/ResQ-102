@@ -285,6 +285,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
 import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { MEMBER_ROLES } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
 import { watchCallouts } from './callout.js?v=38';
 import { CREW_HE } from './rotation.js?v=38';
@@ -341,8 +342,7 @@ onAuthStateChanged(auth, async user => {
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   const isMember = isSuper ||
-    ['firefighter', 'deputy', 'commander', 'station_commander',
-     'hr_coordinator'].indexOf(c.role) !== -1;
+    MEMBER_ROLES.indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
   if (!isMember || !SID) {

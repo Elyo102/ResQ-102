@@ -347,9 +347,31 @@ async function deactivateEverywhere(uid, before) {
   }
 }
 
+// ⚠️ השגיאות כאן חייבות להיות HttpsError.
+//
+// הגרסה הקודמת נתנה ל-FirebaseAuthError לעלות כמו שהוא.
+// onCall אינו יודע לתרגם אותו, ולכן הלקוח קיבל `INTERNAL`
+// בלי שום מידע — והמסך הציג "נכשל: INTERNAL".
+//
+// ב-25.8.2026 זה עלה שעה של חיפוש בלוגים כדי לגלות שהמשמעות
+// היא פשוט "אין משתמש עם המייל הזה". זו הודעה שהמסך יכול היה
+// להציג מלכתחילה.
 async function resolveUser(data) {
-  if (data.uid)   return admin.auth().getUser(String(data.uid));
-  if (data.email) return admin.auth().getUserByEmail(String(data.email).toLowerCase());
+  const wanted = String(data.uid || data.email || '');
+  try {
+    if (data.uid)   return await admin.auth().getUser(String(data.uid));
+    if (data.email) return await admin.auth().getUserByEmail(String(data.email).toLowerCase());
+  } catch (e) {
+    const code = String((e && e.code) || '');
+    if (code.indexOf('user-not-found') !== -1) {
+      throw new HttpsError('not-found',
+        'אין חשבון עם המזהה ' + wanted + '. ' +
+        'צריך שהאדם יירשם דרך מסך הכניסה, או שייקלט במסך הקליטה — ' +
+        'אי אפשר להעניק תפקיד למי שאין לו חשבון.');
+    }
+    throw new HttpsError('internal',
+      'איתור המשתמש נכשל: ' + ((e && e.message) || code || 'שגיאה לא ידועה'));
+  }
   throw new HttpsError('invalid-argument', 'צריך למסור uid או email.');
 }
 
@@ -1370,6 +1392,38 @@ exports.listUsersWithClaims = onCall(async (req) => {
     });
     pageToken = page.pageToken;
   } while (pageToken);
+
+  // ---------- שם וטלפון מהפרופיל ----------
+  //
+  // ההרשאות בטוקן מכילות תפקיד, תחנה, משמרת ומספר עובד —
+  // **אבל לא שם.** השם נשמר בפרופיל, ב-users/{uid}.
+  //
+  // בלי זה, בורר האנשים במסך הניהול היה מציג רשימה של
+  // כתובות מייל. אלדד ביקש לבחור **לפי שם**, וזה גם הדבר
+  // הנכון: מי שמתקן תפקיד מכיר את האדם בשמו, לא לפי
+  // ramiha25@gmail.com.
+  //
+  // קריאה אחת לכל תחנה שמופיעה ברשימה, ולא אחת לכל אדם.
+  const sids = Array.from(new Set(result
+    .map(function (u) { return String((u.claims || {}).stationId || ''); })
+    .filter(Boolean)));
+
+  const byUid = {};
+  for (const sid of sids) {
+    try {
+      const snap = await db.collection('stations/' + sid + '/users').get();
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        byUid[d.id] = { full_name: v.full_name || '', phone: v.phone || '' };
+      });
+    } catch (e) { /* תחנה שאין אליה גישה — הרשימה פשוט בלי שמות */ }
+  }
+
+  result.forEach(function (u) {
+    const p = byUid[u.uid] || {};
+    u.full_name = p.full_name || '';
+    u.phone     = p.phone || '';
+  });
 
   return { ok: true, count: result.length, users: result };
 });
@@ -2637,7 +2691,13 @@ exports.sendBroadcast = onCall(
     throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
   }
 
-  if (!wide && ['commander','deputy','firefighter'].indexOf(role) === -1) {
+  // ⚠️ מפקד צוות וסגנו נוספו כאן ב-25.8.2026.
+  //
+  // בלעדיהם נוצר מצב הפוך מהכוונה: **לוחם אש יכול היה לשדר
+  // הודעה, ומפקד צוות לא.** התפקידים האלה אמורים להיות לוחם
+  // אש לכל דבר ועוד כתיבה בלוג — לא פחות ממנו.
+  if (!wide && ['commander','deputy','firefighter',
+                'team_leader','deputy_team_leader'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied', 'אין לך הרשאה לשלוח הודעות.');
   }
 
@@ -2932,7 +2992,10 @@ exports.guardSignup = onCall(async (req) => {
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
-  if (!isSuper && ['firefighter','deputy','commander','station_commander',
+  // אותה סיבה כמו ב-sendBroadcast: מפקד צוות לא היה יכול
+  // להירשם לאבטחה, בזמן שלוחם אש כן.
+  if (!isSuper && ['firefighter','deputy_team_leader','team_leader',
+       'deputy','commander','station_commander',
        'hr_coordinator'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied', 'אין לך הרשאה.');
   }

@@ -206,6 +206,10 @@ import { initAppCheck } from './appcheck.js?v=38';
 initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+
+// חשבון מנהל המערכת. משמש כרשת ביטחון לבדיקת ההרשאה למטה,
+// למקרה שההרשאות בטוקן עוד לא נטענו.
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const fns  = getFunctions(app, 'europe-west1');
 
 const $ = id => document.getElementById(id);
@@ -800,9 +804,46 @@ async function checkFunctions(){
 // הסדר חשוב: בדיקת הפונקציות מריצה בנייה מחדש של מפתח החיפוש
 // (למנהל-על בלבד). אם ספריית החיפוש נבדקת לפניה, הדוח מציג
 // מצב שכבר לא נכון — וזה בדיוק מה שבלבל ב-22.8.
+// ⚠️ **המסך הזה היה פתוח לכל מי שמחובר.**
+//
+// הוא הוסתר מהתפריט (who: 'super' ב-nav.js) — וזה כל מה
+// שהיה. הסתרה אינה הרשאה: מי שמקליד את הכתובת ידנית נכנס.
+//
+// והמסך הזה אינו תמים. יש בו קריאה של 22 אוספים לזיכרון
+// הדפדפן, ולולאת מחיקה שסורקת ומוחקת מסמכים. כללי האבטחה
+// בשרת אמנם היו חוסמים את רוב הפעולות בפועל, אבל מסך
+// אבחון ומחיקה שנפתח לכבאי הוא לא משהו שמסתמכים עליו
+// שכבה אחת בלבד.
+//
+// התגלה ב-25.8.2026, כשאלדד שאל בדיוק את השאלה הנכונה:
+// "אילו יכולות מנהל מערכת מקבל לפי תפקיד — אני לא רוצה
+// שיהיו להם היכולות שלי."
 async function runAll(user){
   const c = await checkWho(user);
-  if (c) renderNav(c, 'check.html', (user && user.email) || '');
+
+  if (!user) { location.replace('./login.html?next=check.html'); return; }
+
+  const isSuper = (c && c.super === true) ||
+                  String((user.email || '')).toLowerCase() === SUPER_ADMIN;
+  if (!isSuper) {
+    document.body.innerHTML =
+      '<div style="max-width:520px;margin:60px auto;padding:26px;' +
+      'font-family:Segoe UI,Arial,sans-serif;text-align:center;' +
+      'direction:rtl;line-height:1.9">' +
+      '<div style="font-size:40px">🔒</div>' +
+      '<div style="font-size:19px;font-weight:700;margin-top:8px">' +
+      'אין לך הרשאה למסך הזה</div>' +
+      '<div style="font-size:14px;color:#777;margin-top:6px">' +
+      'מסך הבדיקה פתוח למנהל המערכת בלבד.</div>' +
+      '<div style="font-size:12px;color:#999;margin-top:14px">' +
+      'מחובר כ־' + String(user.email || '').replace(/[<>&"]/g, '') + '</div>' +
+      '<div style="margin-top:22px">' +
+      '<a href="./login.html" style="color:#e8590c">חזרה למסך הבית</a>' +
+      '</div></div>';
+    return;
+  }
+
+  renderNav(c, 'check.html', user.email || '');
   await runRest(c);
 }
 

@@ -154,6 +154,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         לשימוש כשצריך לתקן תפקיד או להגדיר מישהו שלא עבר דרך בקשת הרשמה.
       </div>
 
+      <!-- בורר לפי שם. נבנה מרשימת המשתמשים שנטענה למעלה. -->
+      <label for="rPick">בחר אדם קיים</label>
+      <select id="rPick">
+        <option value="">— טען קודם את רשימת המשתמשים —</option>
+      </select>
+      <div class="ln" id="rPickNote" style="margin-top:6px;color:var(--muted)">
+        בחירה כאן ממלאת את כל השדות מהמערכת. אפשר גם למלא ידנית
+        למטה — לאדם שעדיין אין לו חשבון.
+      </div>
+
       <label>מייל המשתמש</label>
       <input type="email" id="rEmail" autocomplete="off">
 
@@ -790,6 +800,7 @@ $('btnUsers').onclick = async () => {
     }
 
     $('usrState').textContent = users.length + ' משתמשים רשומים.';
+    fillPicker(users);
 
     users.forEach(function (u) {
       const c = u.claims || {};
@@ -819,6 +830,76 @@ $('btnUsers').onclick = async () => {
     $('usrState').textContent = 'שגיאה: ' + (e.message || e.code);
   }
   btn.disabled = false;
+};
+
+// ---------------------------------------------------------------
+//  בורר האנשים
+// ---------------------------------------------------------------
+//
+//  אלדד ביקש לבחור **לפי שם** במקום להקליד מייל ומספר עובד
+//  ידנית בכל פעם. זה לא רק נוח: הקלדה ידנית של מספר עובד היא
+//  בדיוק המקום שבו טעות אחת מעניקה תפקיד לאדם הלא נכון, או
+//  נתקעת על "מספר העובד כבר שייך למישהו אחר".
+//
+//  הרשימה נבנית ממה שכבר נטען בכפתור שמעל — בלי קריאה נוספת
+//  לשרת.
+
+let PICK_USERS = [];
+
+function fillPicker(users) {
+  PICK_USERS = users || [];
+  const sel = $('rPick');
+
+  // מיון לפי שם בעברית. מי שאין לו שם יורד לסוף — הוא בדרך
+  // כלל חשבון שנרשם ולא הושלם, ולא מה שמחפשים.
+  const sorted = PICK_USERS.slice().sort(function (a, b) {
+    const an = a.full_name || '', bn = b.full_name || '';
+    if (!an && bn) return 1;
+    if (an && !bn) return -1;
+    return String(an).localeCompare(String(bn), 'he');
+  });
+
+  sel.innerHTML = '<option value="">— בחר אדם —</option>' +
+    sorted.map(function (u) {
+      const c = u.claims || {};
+      const label = (u.full_name || u.email || u.uid) +
+        (c.emp ? ' · ' + c.emp : '') +
+        (c.shift ? ' · ' + (CREW_HE[c.shift] || c.shift) : '') +
+        (u.full_name ? '' : '  (בלי שם)');
+      return '<option value="' + esc(u.uid) + '">' + esc(label) + '</option>';
+    }).join('');
+
+  $('rPickNote').textContent =
+    PICK_USERS.length + ' אנשים ברשימה. בחירה ממלאת את כל השדות.';
+}
+
+$('rPick').onchange = function () {
+  const uid = $('rPick').value;
+  if (!uid) return;
+  const u = PICK_USERS.filter(function (x) { return x.uid === uid; })[0];
+  if (!u) return;
+  const c = u.claims || {};
+
+  $('rEmail').value = u.email || '';
+  $('rName').value  = u.full_name || '';
+  $('rPhone').value = u.phone || '';
+
+  // התפקיד הנוכחי נבחר מראש, כדי שאפשר יהיה לשנות רק את מה
+  // שבאמת משתנה. בורר שמתאפס ל"לוחם אש" בכל בחירה היה מוריד
+  // בשוגג תפקיד למי שרק רצו לתקן לו את המשמרת.
+  if (c.role) $('rRole').value = c.role;
+  $('rShift').value   = c.shift || '';
+  $('rEmp').value     = c.emp || '';
+  if (c.stationId)  $('rStation').value  = c.stationId;
+  if (c.districtId) $('rDistrict').value = c.districtId;
+
+  // ניהול המערכת נשאר "להשאיר כמו שהוא" בכוונה. הוא הרשאה
+  // נפרדת, ומי שבא לתקן משמרת לא אמור להעניק או להסיר אותה
+  // בלי לשים לב.
+  // חתימת msg כאן היא (אלמנט, טקסט, סוג) — לא (טקסט, סוג, אלמנט)
+  // כמו בשאר המסכים. שוני קטן שאין סיבה שיפיל קריאה.
+  msg('roleMsg', 'נטען: ' + (u.full_name || u.email) +
+      '. שנה את מה שצריך ולחץ "הגדר תפקיד".', 'info');
 };
 
 $('rStation').innerHTML = stationOptions(STATION_ID);

@@ -188,6 +188,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { MEMBER_ROLES } from './roles.js?v=38';
 import { initAppCheck } from './appcheck.js?v=38';
 import {
   loadSignature, saveSignature, clearSignature, attachPad, readImageFile
@@ -215,7 +216,11 @@ onAuthStateChanged(auth, async (user) => {
   const tok = await user.getIdTokenResult(true);
   const c = tok.claims || {};
   const isSuper = c.super === true;
-  const isMember = isSuper || (c.emp && c.stationId);
+  // ⚠️ כאן לא הייתה שום בדיקת תפקיד — רק "יש מספר עובד ותחנה",
+  // ו-setUserRole דורש את שניהם לכל תפקיד. כלומר גם מפקד מחוז,
+  // שאינו member באף כלל אבטחה, קיבל מסך חתימות עובד.
+  const isMember = isSuper ||
+    (!!c.emp && !!c.stationId && MEMBER_ROLES.indexOf(c.role) !== -1);
   SID = c.stationId || (isSuper ? STATION_ID : '');
 
   if (!isMember || !SID) {
