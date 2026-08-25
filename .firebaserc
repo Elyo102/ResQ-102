@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "station-102"
+    "production": "station-102",
+    "staging": "REPLACE_WITH_STAGING_PROJECT"
   }
 }

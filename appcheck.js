@@ -24,7 +24,7 @@
 //  אתחול חלקי היה גרוע ממצב שבו הוא כבוי, כי הוא היה מייצר
 //  טוקנים לא תקפים ומכשיל בקשות בלי סיבה נראית לעין.
 
-export const RECAPTCHA_SITE_KEY = '';
+import { RECAPTCHA_SITE_KEY } from './firebase-config.js';
 
 // מפתח ניפוי לפיתוח מקומי. reCAPTCHA לא עובד מ-localhost, ולכן
 // בפיתוח משתמשים בטוקן ניפוי שנרשם בקונסולה תחת Debug tokens.

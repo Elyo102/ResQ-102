@@ -65,3 +65,4 @@ desktop.ini
 rules-test/node_modules/
 firestore-debug.log
 ui-debug.log
+tests/debug.log

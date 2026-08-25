@@ -16,9 +16,7 @@
 //
 // מסמך ההגדרות ב-Firestore גובר עליו, כדי שהחלפת מפתח לא
 // תדרוש פריסה מחדש.
-export const DEFAULT_VAPID =
-  'BGjGPb4X4kZ--G_fCg5ssV9i3yXuijLtRs_wS8oq' +
-  '85R6jNxn1O62HmCOHi59tLcjn4qu94DRqlF19HE0HbX_htI';
+export { DEFAULT_VAPID } from './firebase-config.js';
 
 export const ALERT_TYPES = [
   // הזעקה. מופיעה ברשימה כדי שיהיה ברור שהיא קיימת ושאי אפשר

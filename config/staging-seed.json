@@ -1,0 +1,11 @@
+{
+  "station": { "id": "staging_station", "name": "תחנת בדיקות ResQ" },
+  "users": [
+    { "employeeId": "TEST-001", "name": "לוחם בדיקה", "role": "firefighter" },
+    { "employeeId": "TEST-002", "name": "מפקד צוות בדיקה", "role": "team_leader" },
+    { "employeeId": "TEST-003", "name": "מפקד משמרת בדיקה", "role": "commander" },
+    { "employeeId": "TEST-004", "name": "רכזת בדיקה", "role": "hr_coordinator" },
+    { "employeeId": "TEST-005", "name": "מפקד תחנה בדיקה", "role": "station_commander" },
+    { "employeeId": "TEST-006", "name": "מנהל מערכת בדיקה", "role": "firefighter", "super": true }
+  ]
+}

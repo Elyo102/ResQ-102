@@ -18,6 +18,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const env = require('./runtime-config');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -27,7 +28,7 @@ setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
 // ---------------------------------------------------------------------
 
 // מנהל-העל. חייב להיות זהה לערך ב-firestore.rules.
-const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
+const SUPER_ADMIN_EMAIL = env.superAdminEmail;
 
 // סגן מפקד משמרת ומפקד תחנה נוספו 23.8.2026.
 //
@@ -85,7 +86,7 @@ const KNOWN_DISTRICTS = ['south', 'center', 'north', 'jerusalem', 'haifa', 'dan'
 
 // המפתח הציבורי של אפליקציית הווב. מופיע ממילא ב-firebase-config.js
 // ונשלח לכל דפדפן — הוא מזהה את הפרויקט, לא מעניק גישה.
-const WEB_API_KEY = 'AIzaSyDY13rUZCN0q2Izo8i59JHKmWvnu_0Tw7Q';
+const WEB_API_KEY = env.webApiKey;
 
 // מספרי עובד ארציים, לא לפי תחנה — כדי שמספר יזהה אדם אחד בכל
 // המדינה גם אחרי מעבר בין תחנות או מחוזות.
@@ -96,7 +97,7 @@ const MAX_FAILED_LOGINS = 8;
 const LOCKOUT_MINUTES   = 15;
 
 // כתובת האתר, לבניית קישורים במיילים.
-const SITE_URL = 'https://elyo102.github.io/ResQ-102';
+const SITE_URL = env.siteUrl;
 
 // קישור שחרור נעילה תקף לשעה. אחריה צריך לחכות או לבקש חדש.
 const UNLOCK_TOKEN_MINUTES = 60;
@@ -181,6 +182,10 @@ const MAIL_MAX_HTML = 900000;
 // שבו הדוח ייכשל, רישום הביקורת יטען שהוא הצליח.
 async function sendMail(to, subject, html) {
   if (!to) return false;
+  if (env.outboundMode !== 'live') {
+    await logSilenced('mail_sink', to, subject);
+    return true;
+  }
   if (await silentFor(to)) { await logSilenced('mail', to, subject); return true; }
 
   const size = Buffer.byteLength(String(html || ''), 'utf8');
@@ -1643,8 +1648,8 @@ exports.reindexDirectory = onCall(async (req) => {
 
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 
-const STATION_ID   = 'eilat_102';
-const STATION_NAME = 'תחנה 102';
+const STATION_ID   = env.stationId;
+const STATION_NAME = env.stationName;
 
 // חריגה בסך שעות חודשי. ניתן לשנות במסמך ההגדרות.
 const DEFAULT_HOUR_LIMIT = 265;
@@ -1652,8 +1657,8 @@ const DEFAULT_HOUR_LIMIT = 265;
 // משאבי אנוש. ברירת מחדל, כדי שהדוח יישלח גם בלי שמישהו
 // יגדיר משהו. מסמך ההגדרות דורס אותה — כתובת מתחלפת, ואין
 // סיבה שהחלפה תדרוש פריסה מחדש.
-const DEFAULT_HR_EMAIL = 'lisaa@102.gov.il';
-const DEFAULT_HR_NAME  = 'ליסה עגיב';
+const DEFAULT_HR_EMAIL = env.hrEmail;
+const DEFAULT_HR_NAME  = env.hrName;
 
 const HE_MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                    'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
@@ -1925,6 +1930,7 @@ exports.nightlySnapshot = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('nightlySnapshot skipped in ' + env.environment); return; }
   const sid = STATION_ID;
   const today = new Date().toISOString().slice(0, 10);
   const counts = {};
@@ -2001,6 +2007,7 @@ exports.nightlyScan = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('nightlyScan skipped in ' + env.environment); return; }
   const now = new Date();
   const mk = monthKeyOf(now);
   // עד היום. הסריקה רצה בלילה על החודש הרץ.
@@ -2210,6 +2217,7 @@ exports.monthlyHrReport = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('monthlyHrReport skipped in ' + env.environment); return; }
   await buildAndSendMonthly(prevMonthKey(new Date()));
 });
 
@@ -2266,7 +2274,7 @@ exports.runReportNow = onCall(
 
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 
-const PUSH_STATION = 'eilat_102';
+const PUSH_STATION = env.stationId;
 
 // שולח לרשימת uid. מסנן לפי העדפות, מנקה מזהי מכשיר מתים,
 // ולעולם לא מפיל את הפעולה שקראה לו: התראה שלא יצאה היא
@@ -2297,6 +2305,10 @@ const PUSH_CONCURRENCY = 25;
 async function pushToUsers(sid, uids, type, title, body, url, important) {
   const unique = Array.from(new Set((uids || []).filter(Boolean)));
   if (!unique.length) return { people: 0, devices: 0 };
+  if (env.outboundMode !== 'live') {
+    await logSilenced('push_sink', unique.join(','), title);
+    return { people: unique.length, devices: 0, sink: true };
+  }
 
   let people = 0, devices = 0;
 
@@ -2740,6 +2752,7 @@ exports.hoursReminder = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('hoursReminder skipped in ' + env.environment); return; }
   // שלושה ימים לפני סוף החודש. היה ארבעה, ואלדד ביקש שלושה:
   // מוקדם מדי והתזכורת מגיעה לפני שהמשמרות האחרונות נסגרו,
   // ואז היא סתם רעש. שלושה ימים משאירים זמן לתקן ועדיין
@@ -3266,6 +3279,7 @@ exports.guardReminder = onSchedule(
   timeoutSeconds: 300, schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
     region: 'europe-west1' },
   async () => {
+    if (!env.schedulersEnabled) { console.log('guardReminder skipped in ' + env.environment); return; }
     const sid = PUSH_STATION;
     const t = new Date(Date.now() + 24 * 3600 * 1000);
     const key = t.toISOString().slice(0, 10);
@@ -3518,8 +3532,8 @@ exports.checkTestMail = onCall(async (req) => {
 //  ⚙️ שינוי הסיסמה — לא בקוד. פקודה אחת:
 //     firebase functions:secrets:set GMAIL_APP_PASSWORD
 
-const MAIL_FROM_NAME = 'ResQ · תחנה 102';
-const MAIL_FROM_ADDR = 'fire102.shits@gmail.com';
+const MAIL_FROM_NAME = env.mailFromName;
+const MAIL_FROM_ADDR = env.mailFromAddress;
 const MAIL_ATTEMPTS  = 3;
 
 const { defineSecret } = require('firebase-functions/params');
@@ -3553,12 +3567,19 @@ function asList(v) {
 }
 
 exports.deliverMail = onDocumentCreated(
-  { document: 'mail/{mailId}', secrets: [GMAIL_APP_PASSWORD] },
+  { document: 'mail/{mailId}', secrets: env.isProduction ? [GMAIL_APP_PASSWORD] : [] },
   async (event) => {
     const snap = event.data;
     if (!snap) return;
     const ref = snap.ref;
     const d = snap.data() || {};
+    if (env.outboundMode !== 'live') {
+      await ref.set({ delivery: {
+        state: 'SINK', attempts: 0, environment: env.environment,
+        endTime: FV.serverTimestamp()
+      } }, { merge: true });
+      return;
+    }
 
     // הגנת כפילות. onDocumentCreated יכול לירות פעמיים על אותו
     // מסמך (ניסיון חוזר של התשתית), ומייל כפול לכבאי הוא באג גלוי.
@@ -3802,7 +3823,10 @@ exports.nightlySheetBackup = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1',
   timeoutSeconds: 540
-}, async () => { await runSheetBackup_(); });
+}, async () => {
+  if (!env.schedulersEnabled) { console.log('nightlySheetBackup skipped in ' + env.environment); return; }
+  await runSheetBackup_();
+});
 
 // הרצה ידנית מתוך check.html, לבדיקה אחרי ההקמה.
 exports.backupToSheetNow = onCall({ timeoutSeconds: 540 }, async (req) => {
@@ -3890,6 +3914,7 @@ exports.signReminder = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('signReminder skipped in ' + env.environment); return; }
   const sid = PUSH_STATION;
   const now = new Date();
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -4020,7 +4045,7 @@ const WHOLE_READ_COLS = ['faults', 'guards', 'swaps'];
 // הדוח החודשי גדל עם מספר האנשים ואי אפשר לחכות ל-100%.
 const DOC_WARN_BYTES = 700000;
 
-const CONSOLE_URL = 'https://console.firebase.google.com/project/station-102';
+const CONSOLE_URL = 'https://console.firebase.google.com/project/' + env.projectId;
 
 exports.systemHealth = onSchedule({
   timeoutSeconds: 540,
@@ -4029,6 +4054,7 @@ exports.systemHealth = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
+  if (!env.schedulersEnabled) { console.log('systemHealth skipped in ' + env.environment); return; }
   const sid   = STATION_ID;
   const now   = new Date();
   const today = now.toISOString().slice(0, 10);

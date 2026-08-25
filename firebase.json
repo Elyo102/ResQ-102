@@ -29,6 +29,8 @@
       "**/.*",
       "**/node_modules/**",
       "functions/**",
+      "config/**",
+      "scripts/**",
       "tests/**",
       "rules-test/**",
       "_דיונים/**",
