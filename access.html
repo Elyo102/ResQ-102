@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -161,11 +161,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=37';
-import { STATIONS, stationName } from './stations.js?v=37';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=37';
-import { initPWA } from './pwa.js?v=37';
-import { watchCallouts } from './callout.js?v=37';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
+import { STATIONS, stationName } from './stations.js?v=38';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=38';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
+import { initPWA } from './pwa.js?v=38';
+import { watchCallouts } from './callout.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          signOut, onAuthStateChanged }
@@ -176,6 +177,9 @@ import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=38';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
@@ -202,15 +206,10 @@ renderStuckNav('');
 const $ = id => document.getElementById(id);
 initPWA({ offer: false });
 
-const ROLE_HE = {
-  firefighter:        'לוחם אש',
-  deputy:             'סגן מפקד משמרת',
-  commander:          'קצין / מפקד משמרת',
-  station_commander:  'מפקד תחנה',
-  hr_coordinator:     'רכז/ת משאבי אנוש',
-  district_commander: 'מפקד מחוז',
-  super_admin:        'מנהל מערכת'
-};
+// שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
+// עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
+// כמחרוזת באנגלית באחד המסכים.
+const ROLE_HE = ROLES_HE;
 const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
 
 function msg(el, text, kind){

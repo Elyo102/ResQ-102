@@ -89,6 +89,10 @@ const outside = who('u_out',  'out@x.com',  { emp: '999', role: 'firefighter', s
 // מפקד שטרם שויך למשמרת. לפי הכלל הוא אינו ננעל — אחרת הוא
 // היה חסום משלוש המשמרות בלי שום דרך לראות שזו הסיבה.
 const cmdNew  = who('u_new',  'new@x.com',  { emp: '204', role: 'commander',         stationId: SID, shift: '' });
+// מפקד צוות וסגנו. הסמכות היחידה שלהם היא לכתוב בלוג המשמרת —
+// בכל השאר הם לוחם אש לכל דבר, וזה בדיוק מה שנבדק כאן.
+const teamA   = who('u_tl',   'tl@x.com',   { emp: '111', role: 'team_leader',        stationId: SID, shift: 'א' });
+const dteamA  = who('u_dtl',  'dtl@x.com',  { emp: '112', role: 'deputy_team_leader', stationId: SID, shift: 'א' });
 const anon    = env.unauthenticatedContext().firestore();
 
 // ---------- זריעת נתונים ----------
@@ -170,6 +174,17 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/signatures/u_ff`),
     { image: 'data:image/png;base64,' + 'A'.repeat(400),
       full_name: 'כבאי א', emp_number: '101' });
+
+  // ---- לוג המשמרת ----
+  await setDoc(doc(d, `stations/${SID}/shift_log/lg_cmd`), {
+    text: 'בוקר טוב, שני אנשים חסרים היום.', kind: 'chat',
+    by_uid: 'u_cmda', by_name: 'מפקד א', by_role: 'commander',
+    by_crew: 'א', hidden: false,
+    created_key: '2026-08-25T06:00:00.000Z' });
+  await setDoc(doc(d, `stations/${SID}/shift_log/lg_sys`), {
+    text: '✅ ההחלפה אושרה.', kind: 'system',
+    by_uid: '', by_name: 'המערכת', hidden: false,
+    created_key: '2026-08-25T06:05:00.000Z' });
 
   // ---- טפסים ----
   const empSig = { image: 'data:image/png;base64,' + 'A'.repeat(400),
@@ -745,6 +760,140 @@ await blocked('🔒 כבאי מגיש טופס שכבר חתום בידי מפק
 await blocked('🔒 כבאי מגיש טופס שנולד מאושר',
   setDoc(doc(ff, `stations/${SID}/submissions/sub_new_appr`), {
     form_id: 'leave', values: {}, status: 'approved', by_uid: 'u_ff', crew: 'א' }));
+
+// ============================================================
+head('16 · לוג המשמרת — קורא כולם, כותב הפיקוד');
+// ============================================================
+// זה בא להחליף קבוצת ווטסאפ שבה מתנהל תיאום אמיתי. שתי
+// הנקודות שחייבות להחזיק: שלוחם אש קורא ולא כותב, ושאף
+// אחד — כולל מי שכתב — אינו יכול לשנות הודעה בדיעבד.
+
+const LOGMSG = (uid, extra) => Object.assign({
+  text: 'הודעה', kind: 'chat', by_uid: uid, by_name: 'מישהו',
+  by_role: 'commander', by_crew: 'א', hidden: false,
+  created_key: '2026-08-25T07:00:00.000Z'
+}, extra || {});
+
+// ---- קריאה ----
+
+await ok('לוחם אש קורא את הלוג',
+  getDoc(doc(ff, `stations/${SID}/shift_log/lg_cmd`)));
+
+await ok('לוחם אש ממשמרת אחרת קורא את הלוג',
+  getDoc(doc(ffB, `stations/${SID}/shift_log/lg_cmd`)));
+
+await ok('מפקד צוות קורא את הלוג',
+  getDoc(doc(teamA, `stations/${SID}/shift_log/lg_cmd`)));
+
+await blocked('🔒 מי שאינו בתחנה אינו קורא את הלוג',
+  getDoc(doc(outside, `stations/${SID}/shift_log/lg_cmd`)));
+
+await blocked('🔒 מבקר לא מחובר אינו קורא את הלוג',
+  getDoc(doc(anon, `stations/${SID}/shift_log/lg_cmd`)));
+
+await blocked('🔒 נרשם שטרם אושר אינו קורא את הלוג',
+  getDoc(doc(pending, `stations/${SID}/shift_log/lg_cmd`)));
+
+// ---- כתיבה ----
+
+await ok('ראש משמרת כותב בלוג',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_cmd`), LOGMSG('u_cmda')));
+
+await ok('סגן ראש משמרת כותב בלוג',
+  setDoc(doc(deputyA, `stations/${SID}/shift_log/new_dep`), LOGMSG('u_dep')));
+
+await ok('מפקד צוות כותב בלוג',
+  setDoc(doc(teamA, `stations/${SID}/shift_log/new_tl`),
+    LOGMSG('u_tl', { by_role: 'team_leader' })));
+
+await ok('סגן מפקד צוות כותב בלוג',
+  setDoc(doc(dteamA, `stations/${SID}/shift_log/new_dtl`),
+    LOGMSG('u_dtl', { by_role: 'deputy_team_leader' })));
+
+await ok('מפקד התחנה כותב בלוג',
+  setDoc(doc(stCmd, `stations/${SID}/shift_log/new_st`), LOGMSG('u_st')));
+
+await blocked('🔒 לוחם אש כותב בלוג',
+  setDoc(doc(ff, `stations/${SID}/shift_log/new_ff`), LOGMSG('u_ff')));
+
+await blocked('🔒 מי שאינו בתחנה כותב בלוג',
+  setDoc(doc(outside, `stations/${SID}/shift_log/new_out`), LOGMSG('u_out')));
+
+await blocked('🔒 כתיבה בשם אדם אחר',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_fake`), LOGMSG('u_cmdb')));
+
+await blocked('🔒 הודעה ריקה',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_empty`),
+    LOGMSG('u_cmda', { text: '' })));
+
+await blocked('🔒 הודעה ארוכה מהמותר',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_long`),
+    LOGMSG('u_cmda', { text: 'א'.repeat(2500) })));
+
+await blocked('🔒 בלי חותמת זמן',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_nokey`),
+    LOGMSG('u_cmda', { created_key: '' })));
+
+// ההודעה שאיש לא מפקפק בה. מפקד שמסמן את הודעתו כ"מערכת"
+// מתחזה למקור אוטומטי — ולכן זה חסום גם למי שכן רשאי לכתוב.
+await blocked('🔒 מפקד מזייף הודעת מערכת',
+  setDoc(doc(cmdA, `stations/${SID}/shift_log/new_sys`),
+    LOGMSG('u_cmda', { kind: 'system' })));
+
+// ---- אין עריכה ואין מחיקה ----
+
+await blocked('🔒 מפקד עורך הודעה שכתב בעצמו',
+  updateDoc(doc(cmdA, `stations/${SID}/shift_log/lg_cmd`), { text: 'משהו אחר' }));
+
+await blocked('🔒 מפקד עורך הודעה של מפקד אחר',
+  updateDoc(doc(cmdB, `stations/${SID}/shift_log/lg_cmd`), { text: 'משהו אחר' }));
+
+await blocked('🔒 מפקד מוחק הודעה מהלוג',
+  deleteDoc(doc(cmdA, `stations/${SID}/shift_log/lg_cmd`)));
+
+await blocked('🔒 לוחם אש מוחק הודעה מהלוג',
+  deleteDoc(doc(ff, `stations/${SID}/shift_log/lg_cmd`)));
+
+await blocked('🔒 גם מנהל-על אינו משנה טקסט של הודעה',
+  updateDoc(doc(superA, `stations/${SID}/shift_log/lg_cmd`), { text: 'שוכתב' }));
+
+await ok('מנהל-על מסתיר הודעה פוגענית',
+  updateDoc(doc(superA, `stations/${SID}/shift_log/lg_cmd`), { hidden: true }));
+
+await ok('מנהל-על מוחק הודעה',
+  deleteDoc(doc(superA, `stations/${SID}/shift_log/lg_sys`)));
+
+// ============================================================
+head('17 · מפקד צוות — כל השאר נשאר סגור');
+// ============================================================
+// התפתיתי לתת לו סמכויות כי השם נשמע פיקודי. אלדד הגדיר
+// במפורש: רק כתיבה בלוג. הבדיקות האלה הן מה שימנע מהתפקיד
+// הזה לזחול לסמכויות נוספות בעדכון עתידי.
+
+await blocked('🔒 מפקד צוות קורא נוכחות של כבאי אחר',
+  getDoc(doc(teamA, `stations/${SID}/attendance/att_ffb_b`)));
+
+await blocked('🔒 מפקד צוות מאשר דוח שעות',
+  updateDoc(doc(teamA, `stations/${SID}/attendance/att_ff_a`), { status: 'approved' }));
+
+await blocked('🔒 מפקד צוות מאשר טופס',
+  updateDoc(doc(teamA, `stations/${SID}/submissions/sub_abroad`), { status: 'approved' }));
+
+await blocked('🔒 מפקד צוות מאשר החלפת משמרת',
+  updateDoc(doc(teamA, `stations/${SID}/swaps/sw_cmdfrom`), { status: 'cmd_to' }));
+
+await blocked('🔒 מפקד צוות משנה תפקיד של עצמו',
+  updateDoc(doc(teamA, `stations/${SID}/users/u_ff`), { role: 'commander' }));
+
+await blocked('🔒 מפקד צוות קורא מסמך אישי של אחר',
+  getDoc(doc(teamA, `stations/${SID}/documents/doc_other`)));
+
+await blocked('🔒 מפקד צוות קורא חתימה שמורה של כבאי',
+  getDoc(doc(teamA, `stations/${SID}/signatures/u_ffb`)));
+
+await ok('מפקד צוות כן רואה את הסידור',
+  getDoc(doc(teamA, `stations/${SID}/roster/u_ff`)).catch(() => null)
+    .then(() => getDocs(collection(teamA, `stations/${SID}/broadcasts`))));
 
 // ============================================================
 //  סיכום

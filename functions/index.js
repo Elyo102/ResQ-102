@@ -37,8 +37,19 @@ const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 //                     זה תפקיד ולא הערה
 //   station_commander מפקד התחנה. רואה את שלוש המשמרות, והוא
 //                     היחיד שמאשר ירידה מתחת לקו האדום
+//   team_leader        מפקד צוות. נוסף 25.8.2026.
+//   deputy_team_leader סגן מפקד צוות.
+//                     שניהם דרגות שטח: הסמכות היחידה שהם
+//                     מקבלים היא לכתוב בלוג המשמרת. בכל השאר
+//                     הם לוחם אש לכל דבר — אינם מאשרים טפסים,
+//                     אינם מאשרים שעות ואינם רואים נתוני אחרים.
+//
+// ⚠️ הרשימה הזאת חייבת להיות זהה ל-VALID_ROLES ב-roles.js.
+//    השרת אינו יכול לייבא מודול דפדפן, ולכן היא משוכפלת —
+//    ו-tests/roles.mjs נופל אם השתיים יוצאות מסנכרון.
 const VALID_ROLES = [
-  'firefighter', 'deputy', 'commander', 'station_commander',
+  'firefighter', 'deputy_team_leader', 'team_leader',
+  'deputy', 'commander', 'station_commander',
   'hr_coordinator', 'district_commander'
 ];
 const VALID_SHIFTS = ['A', 'B', 'C'];
@@ -2159,6 +2170,55 @@ function restBreaks(sched, approved, sw) {
   return out;
 }
 
+// ---------------------------------------------------------------------
+//  כתיבה ללוג המשמרת
+// ---------------------------------------------------------------------
+//
+//  הטקסטים עצמם יושבים ב-shiftlog.js המשותף עם הדפדפן, כדי
+//  שהם ייבדקו בלי להריץ פונקציות ענן. כאן רק הכתיבה.
+//
+//  הפונקציה אינה זורקת לעולם. לוג הוא רישום ולא תנאי —
+//  כישלון בכתיבה שלו אסור שיבטל החלפה שאושרה או התראה
+//  שצריכה לצאת.
+
+async function writeShiftLog(sid, text, extra) {
+  if (!sid || !text) return null;
+  const rec = Object.assign({
+    text: String(text).slice(0, 2000),
+    kind: 'system',
+    by_uid: '', by_name: 'המערכת', by_role: '', by_crew: '', by_vehicle: '',
+    hidden: false,
+    created_key: new Date().toISOString(),
+    created_at: FV.serverTimestamp()
+  }, extra || {});
+  return db.collection('stations/' + sid + '/shift_log').add(rec);
+}
+
+// גרסת שרת של הטקסטים. זהה ל-swapSystemText ב-shiftlog.js,
+// ו-tests/shiftlog.mjs משווה ביניהן ונופל אם הן יוצאות
+// מסנכרון — בדיוק כמו רשימת התפקידים.
+function swapSystemText(status, d) {
+  const s = d || {};
+  const from = s.from_name || 'כבאי';
+  const to   = s.to_name   || 'כבאי';
+  const dt = function (k) {
+    const p = String(k || '').split('-');
+    return p.length === 3 ? Number(p[2]) + '.' + Number(p[1]) : String(k || '');
+  };
+  switch (status) {
+    case 'open':      return from + ' פרסם בקשת החלפה ל-' + dt(s.from_date) + '.';
+    case 'peer':      return from + ' ביקש להחליף עם ' + to + ' · ' +
+                             dt(s.from_date) + ' מול ' + dt(s.to_date) + '.';
+    case 'cmd_from':  return to + ' הסכים להחלפה עם ' + from + '. ממתין למפקדים.';
+    case 'cmd_to':    return 'מפקד המשמרת של ' + from + ' אישר. ממתין למפקד של ' + to + '.';
+    case 'approved':  return '✅ ההחלפה אושרה: ' + from + ' ↔ ' + to + ' · ' +
+                             dt(s.from_date) + ' מול ' + dt(s.to_date) + '.';
+    case 'rejected':  return '❌ ההחלפה בין ' + from + ' ל-' + to + ' נדחתה.';
+    case 'cancelled': return 'הבקשה של ' + from + ' בוטלה.';
+    default:          return '';
+  }
+}
+
 exports.onSwapChange = onDocumentWritten(
   'stations/{sid}/swaps/{swapId}',
   async (event) => {
@@ -2175,6 +2235,25 @@ exports.onSwapChange = onDocumentWritten(
 
     const url = './swaps.html';
     const both = [after.from_uid, after.to_uid];
+
+    // ---------- הודעה בלוג המשמרת ----------
+    //
+    // אותו פיד שבו הפיקוד מתכתב מקבל גם את ההיסטוריה
+    // האוטומטית. בלי זה, הלוג הוא שיחה — ועם זה הוא רישום
+    // מלא של מה שקרה למשמרת, ואפשר לגלול אחורה ולראות מי
+    // אישר מה ומתי בלי לחפש בשלושה מסכים.
+    //
+    // נכתב **רק בשרת**. הכלל ב-firestore.rules חוסם לקוח
+    // שמנסה לכתוב kind:'system' — הודעה שנראית כאילו המערכת
+    // אמרה אותה היא ההודעה שאיש לא מפקפק בה.
+    try {
+      const line = swapSystemText(now, after);
+      if (line) await writeShiftLog(sid, line, { swap_id: event.params.swapId });
+    } catch (e) {
+      // לוג הוא רישום, לא תנאי. כישלון כאן לא מבטל התראה
+      // ולא עוצר את ההחלפה.
+      console.error('shift_log write failed', e);
+    }
 
     // ---------- אכיפת המנוחה ----------
     //

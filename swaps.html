@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -35,6 +35,47 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   .card{ background:var(--card); border:1px solid var(--line);
          border-radius:12px; padding:16px; margin-bottom:14px }
+
+  /* ---------- לוג המשמרת ---------- */
+  /* גובה קבוע ולא זורם. פיד שגדל בלי גבול דוחף את טופס
+     הבקשה מחוץ למסך, וכל שאר העמוד הופך לבלתי נגיש. */
+  .feed{ margin-top:10px; max-height:340px; overflow-y:auto;
+         border:1px solid var(--line); border-radius:10px;
+         padding:10px 11px; background:var(--panel);
+         display:flex; flex-direction:column; gap:2px;
+         overscroll-behavior:contain }
+  .feed .empty{ color:var(--muted); font-size:12.5px; text-align:center;
+                padding:18px 0 }
+  .feed .day{ align-self:center; font-size:11px; color:var(--muted);
+              background:var(--chip); border:1px solid var(--line);
+              border-radius:20px; padding:2px 12px; margin:9px 0 5px }
+
+  .m{ max-width:86%; align-self:flex-start; background:var(--card);
+      border:1px solid var(--line); border-radius:11px;
+      border-start-start-radius:3px; padding:7px 10px; margin-top:5px }
+  .m.mine{ align-self:flex-end; border-start-start-radius:11px;
+           border-start-end-radius:3px; background:var(--chip) }
+  .m .who{ font-size:11.5px; font-weight:700; color:var(--accent);
+           margin-bottom:2px }
+  .m .role{ font-weight:400; color:var(--muted) }
+  .m .tx{ font-size:14px; line-height:1.6; white-space:pre-wrap;
+          word-break:break-word }
+  .m .at{ font-size:10.5px; color:var(--muted); text-align:end; margin-top:2px }
+
+  /* הודעת מערכת אינה בועה. היא לא נאמרה בידי אדם, ואם היא
+     תיראה כמו הודעה של אדם — היא תיקרא כאילו מישהו כתב אותה. */
+  .m.sys{ align-self:center; max-width:100%; background:transparent;
+          border:0; text-align:center; padding:3px 0 }
+  .m.sys .tx{ font-size:12px; color:var(--muted) }
+
+  .composer{ display:flex; gap:8px; align-items:flex-end; margin-top:11px }
+  .composer textarea{ min-height:44px; max-height:150px; resize:none;
+                      margin:0; flex:1 }
+  .composer .send{ margin:0; flex:0 0 auto; padding:11px 16px }
+
+  .badge{ display:inline-block; background:var(--bad); color:var(--on-accent);
+          border-radius:20px; font-size:11px; font-weight:700;
+          padding:1px 8px; margin-inline-start:6px; vertical-align:middle }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   input, select, textarea{ width:100%; padding:10px; background:var(--input);
@@ -217,6 +258,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="msg" id="apprMsg"></div>
     </div>
 
+    <!-- ========== לוג המשמרת ========== -->
+    <div class="card" id="logCard">
+      <h2>לוג המשמרת <span class="badge hide" id="logBadge">0</span></h2>
+      <div class="note" id="logNote">
+        עדכונים בזמן אמת בין הפיקוד. ראשי משמרות, סגנים ומפקדי
+        צוותים כותבים — כולם קוראים.
+      </div>
+
+      <div class="feed" id="logFeed">
+        <div class="empty">טוען…</div>
+      </div>
+
+      <div id="logWrite" class="hide">
+        <div class="composer">
+          <textarea id="logText" rows="1" maxlength="2000"
+                    placeholder="כתוב הודעה למשמרת…"></textarea>
+          <button class="btn go send" id="logSend" title="שלח">שלח</button>
+        </div>
+        <div class="note" id="logCount"></div>
+      </div>
+      <div id="logRead" class="note hide">
+        קריאה בלבד. כתיבה בלוג פתוחה לראשי משמרות, סגנים
+        ומפקדי צוותים.
+      </div>
+      <div class="msg" id="logMsg"></div>
+    </div>
+
     <div class="card">
       <h2>בקשה חדשה</h2>
       <div class="note">
@@ -295,19 +363,28 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=37';
-import { renderNav, renderStuckNav } from './nav.js?v=37';
-import { initPWA } from './pwa.js?v=37';
-import { watchCallouts } from './callout.js?v=37';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
+import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { initPWA } from './pwa.js?v=38';
+import { watchCallouts } from './callout.js?v=38';
 import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking,
-         swapRestCheck, restWhy } from './rotation.js?v=37';
+         swapRestCheck, restWhy } from './rotation.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         query, orderBy, limit, onSnapshot,
          serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { MEMBER_ROLES, STAFF_ROLES, mayWriteLog, roleHe }
+  from './roles.js?v=38';
+import { MAX_TEXT, validateMessage, messageDoc, groupByDay, timeOf,
+         lastRead, markRead, unreadCount, newestKey, visible }
+  from './shiftlog.js?v=38';
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=38';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
@@ -333,6 +410,7 @@ function dmy(k){
 }
 
 let SID = '', ME = null, IS_STAFF = false, MY_SHIFT = '', UNLOCKED = false;
+let CAN_LOG = false, MY_ROLE = '', logMsgs = [], logStop = null, logSeen = '';
 let people = [], quals = [], held = {}, swaps = [], rotations = [], overrides = {};
 let peer = null;
 
@@ -354,9 +432,7 @@ onAuthStateChanged(auth, async user => {
 
   const isSuper = c.super === true ||
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
-  const isMember = isSuper ||
-    ['firefighter', 'deputy', 'commander', 'station_commander',
-     'hr_coordinator'].indexOf(c.role) !== -1;
+  const isMember = isSuper || MEMBER_ROLES.indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
   if (!isMember || !SID || !c.emp) {
@@ -367,7 +443,10 @@ onAuthStateChanged(auth, async user => {
   }
 
   MY_SHIFT = c.shift || '';
-  IS_STAFF = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  IS_STAFF = isSuper || STAFF_ROLES.indexOf(c.role) !== -1;
+  // מפקד צוות אינו staff — הוא אינו מאשר החלפות. הוא כן כותב
+  // בלוג, וזו הסמכות היחידה שלו. שתי שאלות נפרדות בכוונה.
+  CAN_LOG  = mayWriteLog(Object.assign({ super: isSuper }, c));
   // מי שאינו נעול למשמרת אחת. חייב להיות זהה ל-seesShift()
   // בכללי האבטחה, אחרת המסך יציג בקשה שהשרת ידחה.
   UNLOCKED = isSuper || c.role === 'hr_coordinator' || !c.shift;
@@ -384,10 +463,165 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'swaps.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
+  MY_ROLE = c.role || '';
   setupMode();
+  setupLog();
   if (IS_STAFF) $('apprCard').classList.remove('hide');
   await loadAll();
 });
+
+// =================================================================
+//  לוג המשמרת
+// =================================================================
+//
+//  onSnapshot ולא getDocs. זו כל הנקודה: הודעה שנשלחת
+//  מהתחנה מופיעה אצל מי שנמצא בבית תוך שנייה, בלי לרענן.
+//  קריאה חד-פעמית הייתה הופכת את זה ללוח מודעות שצריך
+//  לזכור לבדוק — וזה בדיוק מה שיש היום, והוא לא נבדק.
+
+const LOG_LIMIT = 200;
+
+function setupLog(){
+  $('logWrite').classList.toggle('hide', !CAN_LOG);
+  $('logRead').classList.toggle('hide',  CAN_LOG);
+  logSeen = lastRead(SID);
+
+  if (CAN_LOG) {
+    const ta = $('logText');
+    $('logSend').onclick = sendLog;
+    // גובה שגדל עם הטקסט, עד תקרה. תיבה בגובה שורה אחת
+    // שכותבים בה חמש שורות מסתירה את מה שנכתב.
+    ta.oninput = function () {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 150) + 'px';
+      const n = ta.value.length;
+      $('logCount').textContent = n > MAX_TEXT - 200
+        ? n + ' מתוך ' + MAX_TEXT + ' תווים' : '';
+    };
+    // Enter שולח, Shift+Enter יורד שורה. במקלדת של טלפון
+    // Enter הוא ירידת שורה ממילא, ולכן זה לא פוגע שם.
+    ta.onkeydown = function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault(); sendLog();
+      }
+    };
+  }
+
+  // מסמך אחרון ראשון בשאילתה, כי limit חותך מהסוף — ואז
+  // מסדרים חזרה לתצוגה. בלי זה, limit היה מביא את 200
+  // ההודעות **הישנות** ביותר.
+  const q = query(collection(db, 'stations', SID, 'shift_log'),
+                  orderBy('created_key', 'desc'), limit(LOG_LIMIT));
+
+  logStop = onSnapshot(q, function (snap) {
+    logMsgs = [];
+    snap.forEach(function (d) {
+      logMsgs.push(Object.assign({ id: d.id }, d.data() || {}));
+    });
+    renderLog();
+  }, function (err) {
+    $('logFeed').innerHTML =
+      '<div class="empty">טעינת הלוג נכשלה. (' +
+      esc(err.code || err.message || '') + ')</div>';
+  });
+}
+
+// הפסקת ההאזנה כשעוזבים את הדף. מאזין שנשאר חי אחרי ניווט
+// ממשיך לצרוך קריאות מ-Firestore בלי שאיש רואה אותן.
+window.addEventListener('pagehide', function () {
+  if (logStop) { try { logStop(); } catch (e) {} logStop = null; }
+});
+
+function renderLog(){
+  const box = $('logFeed');
+  const days = groupByDay(logMsgs);
+  const shown = visible(logMsgs);
+
+  if (!shown.length) {
+    box.innerHTML = '<div class="empty">אין עדיין הודעות בלוג.</div>';
+    $('logBadge').classList.add('hide');
+    return;
+  }
+
+  // האם המשתמש נמצא בתחתית. אם כן — נגלול אליו את החדשה.
+  // אם לא — הוא קורא משהו ישן, וגלילה אוטומטית הייתה חוטפת
+  // לו את המסך מתחת לאצבע.
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+
+  box.innerHTML = '';
+  days.forEach(function (day) {
+    const sep = document.createElement('div');
+    sep.className = 'day';
+    sep.textContent = day.label;
+    box.appendChild(sep);
+    day.items.forEach(function (m) { box.appendChild(logBubble(m)); });
+  });
+
+  if (atBottom) box.scrollTop = box.scrollHeight;
+
+  // מונה הלא-נקראו. מה שאני כתבתי אינו נספר.
+  const n = unreadCount(logMsgs, logSeen, ME && ME.uid);
+  const b = $('logBadge');
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.classList.toggle('hide', n === 0);
+
+  // הכרטיס פתוח על המסך, ולכן מה שנראה נקרא.
+  markRead(SID, newestKey(logMsgs));
+}
+
+function logBubble(m){
+  const el = document.createElement('div');
+  const sys = m.kind === 'system';
+  el.className = 'm' + (sys ? ' sys' : (m.by_uid === (ME && ME.uid) ? ' mine' : ''));
+
+  if (!sys) {
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.innerHTML = esc(m.by_name || '') +
+      '<span class="role"> · ' + esc(roleHe(m.by_role)) +
+      (m.by_vehicle ? ' · ' + esc(m.by_vehicle) : '') + '</span>';
+    el.appendChild(who);
+  }
+
+  const tx = document.createElement('div');
+  tx.className = 'tx';
+  tx.textContent = m.text || '';       // textContent ולא innerHTML.
+  el.appendChild(tx);
+
+  if (!sys) {
+    const at = document.createElement('div');
+    at.className = 'at';
+    at.textContent = timeOf(m);
+    el.appendChild(at);
+  }
+  return el;
+}
+
+async function sendLog(){
+  const ta = $('logText');
+  const err = validateMessage(ta.value);
+  if (err) { msg(err, 'err', 'logMsg'); return; }
+
+  const b = $('logSend'); b.disabled = true;
+  const text = ta.value;
+  // מנקים מיד. הודעה שנשארת בתיבה אחרי שליחה נשלחת פעמיים
+  // בידי מי שלא בטוח אם היא נשלחה.
+  ta.value = ''; ta.style.height = 'auto'; $('logCount').textContent = '';
+  msg('', '', 'logMsg');
+
+  try {
+    await addDoc(collection(db, 'stations', SID, 'shift_log'),
+      Object.assign(messageDoc(text, {
+        uid: ME.uid, full_name: ME.full_name, role: MY_ROLE,
+        crew: ME.crew, vehicle: ''
+      }), { created_at: serverTimestamp() }));
+  } catch (e) {
+    ta.value = text;                    // מחזירים, כדי שלא ילך לאיבוד
+    msg('השליחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'logMsg');
+  }
+  b.disabled = false;
+}
 
 // ---------- טעינה ----------
 

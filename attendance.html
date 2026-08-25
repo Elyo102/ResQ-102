@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -297,18 +297,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=37';
-import { renderNav, renderStuckNav } from './nav.js?v=37';
-import { initPWA } from './pwa.js?v=37';
-import { watchCallouts } from './callout.js?v=37';
-import { isAssigned as guardHasMe } from './guards.js?v=37';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
+import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { initPWA } from './pwa.js?v=38';
+import { watchCallouts } from './callout.js?v=38';
+import { isAssigned as guardHasMe } from './guards.js?v=38';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=37';
+  from './rotation.js?v=38';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=37';
+  from './hours.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -317,6 +317,9 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=38';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 

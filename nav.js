@@ -34,8 +34,11 @@ const ITEMS = [
 // מה שהשרת מתיר בפועל. מפקד מחוז אינו staff באף כלל אבטחה
 // היום — הצגת הכפתורים לו הייתה שולחת אותו לשלושה מסכים
 // שכולם נחסמים, ואחד מהם אף מציג הודעה שגויה.
-const STAFF_ROLES = ['deputy', 'commander', 'station_commander',
-                     'hr_coordinator'];
+//
+// הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
+// עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
+// מקומות ונשכח בחמישי.
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=38';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';
@@ -45,9 +48,7 @@ function allowed(who, claims) {
   // בדיוק אותה רשימה כמו member() בכללי האבטחה. מפקד מחוז אינו
   // כלול, ולכן אסור להציג לו "סידור עבודה" — הוא ייחסם בשרת.
   if (who === 'member') {
-    return isSuper ||
-           ['firefighter', 'deputy', 'commander', 'station_commander',
-     'hr_coordinator'].indexOf(claims.role) !== -1;
+    return isSuper || MEMBER_ROLES.indexOf(claims.role) !== -1;
   }
   return false;
 }

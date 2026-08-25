@@ -78,10 +78,23 @@ service cloud.firestore {
     // מפקד התחנה רואה את שלוש המשמרות, והוא היחיד שמאשר
     // ירידה מתחת לקו האדום.
 
+    // מפקד צוות וסגן מפקד צוות, 25.8.2026.
+    //
+    // שים לב היכן הם **לא** מופיעים: staff() אינו כולל אותם.
+    // אלדד הגדיר במפורש שהסמכות היחידה שלהם היא לכתוב בלוג
+    // המשמרת. הם אינם מאשרים טפסים, אינם מאשרים שעות ואינם
+    // רואים נתונים של אחרים — בכל אלה הם לוחם אש לכל דבר.
+    //
+    // התפתיתי להוסיף אותם ל-staff() כי השם נשמע פיקודי. זה
+    // בדיוק איך שמערכת הרשאות נשחקת: תפקיד מקבל סמכות כי
+    // הוא "נשמע בכיר", ולא כי מישהו החליט שתהיה לו.
+
     function member(sid) {
       return isSuper()
              || (inStation(sid)
-                 && claim('role') in ['firefighter', 'deputy', 'commander',
+                 && claim('role') in ['firefighter',
+                                      'deputy_team_leader', 'team_leader',
+                                      'deputy', 'commander',
                                       'station_commander', 'hr_coordinator']);
     }
 
@@ -89,6 +102,16 @@ service cloud.firestore {
       return isSuper()
              || (inStation(sid) && claim('role') in
                  ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
+    }
+
+    // מי רשאי לכתוב בלוג המשמרת. סגל פיקודי **ועוד** שתי דרגות
+    // השטח. זו הקבוצה היחידה במערכת שאינה staff ואינה member —
+    // ולכן היא נשאלת בשם משלה ולא נגזרת מאחת מהן.
+    function logWriter(sid) {
+      return isSuper()
+             || (inStation(sid) && claim('role') in
+                 ['deputy_team_leader', 'team_leader', 'deputy',
+                  'commander', 'station_commander', 'hr_coordinator']);
     }
 
     // מפקד התחנה. השם הארוך במכוון — stationCmd מול commander
@@ -1087,6 +1110,56 @@ service cloud.firestore {
                       && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
                       && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
                       && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
+
+        allow delete: if isSuper();
+      }
+
+
+      // ---------- לוג המשמרת ----------
+      //
+      //  אלדד: "כמו קבוצת ווטסאפ — לוג שרץ עם הודעות בזמן
+      //  אמת בין ראשי משמרות, סגנים ומפקדי צוותים. לוחם פשוט
+      //  רק קורא."
+      //
+      //  **קורא — כולם. כותב — רק הפיקוד.**
+      //
+      //  כבאי קורא הכל בכוונה. לוג שהוא לא רואה אינו מודיע לו
+      //  כלום, וכל הנקודה היא שהמשמרת תדע מה קורה. מה שהוא
+      //  לא יכול הוא לכתוב — כדי שהערוץ יישאר ערוץ פיקודי
+      //  ולא צ'אט של עשרים איש.
+      //
+      //  **אין update ואין delete.** זו הנקודה החשובה כאן,
+      //  והיא אותה נקודה כמו במסירת האחריות: הודעה שאפשר
+      //  לערוך בדיעבד אינה לוג אלא טיוטה. ביום שיהיה ויכוח
+      //  על מי הסכים למה, מה שכתוב הוא מה שנכתב.
+      //
+      //  תיקון נעשה בהודעה חדשה. מנהל-על יכול למחוק — הוא
+      //  זה שמסיר הודעה פוגענית או פרט רפואי שנכתב בטעות —
+      //  והמחיקה שלו נרשמת ב-admin_audit ככל פעולת מנהל.
+      //
+      //  hidden: הודעה שמנהל-על הסתיר. היא נשארת במסד ואינה
+      //  מוצגת. עדיף על מחיקה, כי מחיקה שאי אפשר להוכיח
+      //  שקרתה היא בדיוק מה שהופך לוג לחסר ערך.
+
+      match /shift_log/{msgId} {
+        allow read: if member(sid);
+
+        allow create: if logWriter(sid)
+                      && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('text', '') != ''
+                      && request.resource.data.get('text', '').size() <= 2000
+                      && request.resource.data.get('created_key', '') != ''
+                      // הודעת מערכת נכתבת רק בשרת. לקוח שמסמן
+                      // את הודעתו כ"מערכת" היה מתחזה למערכת
+                      // עצמה, וזו ההודעה שאיש לא מפקפק בה.
+                      && request.resource.data.get('kind', 'chat') == 'chat';
+
+        // הודעה אינה משתנה. הדבר היחיד שמותר לגעת בו הוא
+        // ההסתרה, ורק מנהל-על.
+        allow update: if isSuper()
+                      && request.resource.data.get('text', '') == resource.data.get('text', '')
+                      && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
+                      && request.resource.data.get('created_key', '') == resource.data.get('created_key', '');
 
         allow delete: if isSuper();
       }

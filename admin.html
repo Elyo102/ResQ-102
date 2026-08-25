@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -173,13 +173,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="two">
         <div>
           <label>תפקיד</label>
-          <select id="rRole">
-            <option value="firefighter">לוחם אש</option>
-            <option value="commander">קצין / מפקד משמרת</option>
-            <option value="hr_coordinator">רכז/ת משאבי אנוש</option>
-            <option value="district_commander">מפקד מחוז</option>
-            <option value="none">הסרת כל ההרשאות</option>
-          </select>
+          <!-- הרשימה נבנית מ-roles.js. ראה שם: הבורר הזה
+               נכתב פעם ביד, ושני תפקידים קיימים פשוט חסרו בו. -->
+          <select id="rRole"></select>
         </div>
         <div>
           <label>משמרת</label>
@@ -267,7 +263,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=37';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -277,14 +273,18 @@ import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=37';
+import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=38';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=37';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=37';
-import { initPWA } from './pwa.js?v=37';
-import { watchCallouts } from './callout.js?v=37';
+  from './stations.js?v=38';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=38';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=38';
+import { initPWA } from './pwa.js?v=38';
+import { watchCallouts } from './callout.js?v=38';
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=38';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
@@ -298,6 +298,15 @@ const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+
+// בורר התפקידים נבנה מיד, לפני כל טעינת נתונים. אם הוא ייבנה
+// בתוך onAuthStateChanged, מסך שנתקע בטעינה היה מציג בורר ריק
+// בלי שום רמז למה.
+{
+  const sel = document.getElementById('rRole');
+  if (sel) sel.innerHTML =
+    roleOptionsHtml([{ id: 'none', he: 'הסרת כל ההרשאות' }]);
+}
 
 // אין מסך כניסה בכל דף. יש אחד, והוא login.html.
 //
@@ -318,15 +327,10 @@ renderStuckNav('');
 const $ = id => document.getElementById(id);
 initPWA({ offer: false });
 
-const ROLE_HE = {
-  firefighter:        'לוחם אש',
-  deputy:             'סגן מפקד משמרת',
-  commander:          'קצין / מפקד משמרת',
-  station_commander:  'מפקד תחנה',
-  hr_coordinator:     'רכז/ת משאבי אנוש',
-  district_commander: 'מפקד מחוז',
-  super_admin:        'מנהל מערכת'
-};
+// שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
+// עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
+// כמחרוזת באנגלית באחד המסכים.
+const ROLE_HE = ROLES_HE;
 const DIST_HE = DISTRICTS.reduce(function (acc, d) {
   acc[d.id] = d.name.replace('מחוז ', '');
   return acc;
@@ -492,12 +496,7 @@ async function loadRequests(){
       '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
       '<div class="two" style="margin-top:10px">' +
         '<div><label>תפקיד</label>' +
-        '<select data-f="role">' +
-          '<option value="firefighter">לוחם אש</option>' +
-          '<option value="commander">קצין / מפקד משמרת</option>' +
-          '<option value="hr_coordinator">רכז/ת משאבי אנוש</option>' +
-          '<option value="district_commander">מפקד מחוז</option>' +
-        '</select></div>' +
+        '<select data-f="role">' + roleOptionsHtml() + '</select></div>' +
         '<div><label>משמרת</label>' +
         '<select data-f="shift">' +
           '<option value="">ללא</option>' +

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -187,7 +187,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=37';
+import { firebaseConfig } from './firebase-config.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -196,13 +196,13 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { renderStuckNav, renderNav } from './nav.js?v=37';
-import * as SEED from './seed.js?v=37';
-import { initPWA } from './pwa.js?v=37';
+import { renderStuckNav, renderNav } from './nav.js?v=38';
+import * as SEED from './seed.js?v=38';
+import { initPWA } from './pwa.js?v=38';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=37';
+import { initAppCheck } from './appcheck.js?v=38';
 initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

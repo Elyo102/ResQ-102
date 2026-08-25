@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=37">
+<link rel="stylesheet" href="./theme.css?v=38">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -274,26 +274,30 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=37';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=37';
-import { initPWA } from './pwa.js?v=37';
-import { watchCallouts } from './callout.js?v=37';
-import { isAssigned as guardHasMe } from './guards.js?v=37';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=38';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
+import { initPWA } from './pwa.js?v=38';
+import { watchCallouts } from './callout.js?v=38';
+import { isAssigned as guardHasMe } from './guards.js?v=38';
 import { CREW_HE, CREW_SHORT, crewOnDate, shiftsInMonth, hoursInMonth,
          nextShift, shiftTimes, sameDay, daysBetween, toKey,
          OVERRIDE_KINDS, overrideKindHe, overrideOn,
          personWorks, swapEffect }
-  from './rotation.js?v=37';
+  from './rotation.js?v=38';
 import { CREWS, redlineState, boardState, crewReady, summaryText, visibleCrews }
-  from './readiness.js?v=37';
+  from './readiness.js?v=38';
 
 const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=38';
+initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
@@ -326,13 +330,8 @@ function goSignIn(){
 renderStuckNav('');
 
 
-const ROLE_HE = {
-  firefighter: 'לוחם אש',
-  deputy: 'סגן מפקד משמרת',
-  commander: 'קצין / מפקד משמרת',
-  station_commander: 'מפקד תחנה',
-  hr_coordinator: 'רכז/ת משאבי אנוש'
-};
+// שמות התפקידים מגיעים מ-roles.js. ראה שם.
+const ROLE_HE = ROLES_HE;
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
 const DOWS = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
