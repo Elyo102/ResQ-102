@@ -134,7 +134,7 @@ function styleOnce() {
     // כללי הרוחב והשוליים כתובים במפורש: לדפים יש חוקים גורפים
     // כמו button{width:100%} שאחרת בולעים את הכפתור לשורה שלמה.
     '#appNav button.back{display:inline-flex;align-items:center;gap:6px;',
-    '  width:auto;margin:0;flex:none;',
+    '  width:auto;min-height:44px;margin:0;flex:none;box-sizing:border-box;',
     '  background:transparent;border:1px solid var(--line-hover);color:var(--dim);',
     '  font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;',
     '  padding:10px 14px;border-radius:10px;white-space:nowrap}',
@@ -142,7 +142,7 @@ function styleOnce() {
     '#appNav button.back:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
     '#appNav a{display:inline-flex;align-items:center;gap:8px;',
     '  color:var(--dim);text-decoration:none;font-size:15.5px;font-weight:600;',
-    '  padding:11px 18px;border-radius:10px;white-space:nowrap;',
+    '  min-height:44px;box-sizing:border-box;padding:11px 18px;border-radius:10px;white-space:nowrap;',
     '  width:auto;margin:0;flex:none;',
     '  background:var(--chip);border:1px solid var(--line);',
     '  transition:transform .12s ease,background .12s ease,color .12s ease}',
@@ -183,7 +183,7 @@ function styleOnce() {
     '  #appNav{gap:6px;padding:8px 10px;margin:-18px -18px 14px}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
-    '  #navToggle{display:inline-flex;align-items:center;gap:6px;',
+    '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',
     '    margin-inline-start:auto;width:auto;flex:none;',
     '    background:var(--chip);border:1px solid var(--line);color:var(--txt);',
     '    font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;',
@@ -193,19 +193,19 @@ function styleOnce() {
     // ושם הכתום הבהיר של הערכה היומית נופל מתחת לסף
     // הקריאוּת. זו התווית שאומרת באיזה מסך אתה נמצא.
     '  #navToggle b{color:var(--accent-txt);font-weight:700}',
-    '  #navLinks{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;',
+    '  #navLinks{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;',
     '    width:100%;order:5;padding-top:2px}',
     '  #navLinks.closed{display:none}',
-    '  #appNav a{font-size:12.5px;padding:9px 3px;justify-content:center;',
+    '  #appNav a{font-size:13.5px;padding:9px 5px;justify-content:center;',
     '    gap:5px;text-align:center;line-height:1.15}',
     '  #appNav a i{width:7px;height:7px}',
-    '  #themeBtn{width:100%;padding:9px 3px;font-size:12.5px}',
+    '  #themeBtn{width:100%;min-height:44px;padding:9px 5px;font-size:13.5px}',
     '  #appNav .me{width:100%;order:6;margin-inline-start:0;font-size:12px}',
     '  #appNav .me.closed{display:none}}',
     // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
     // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
-    '@media (max-width:360px){',
-    '  #navLinks{grid-template-columns:repeat(3,1fr)}}'
+    '@media (min-width:421px) and (max-width:560px){',
+    '  #navLinks{grid-template-columns:repeat(4,1fr)}}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -221,6 +221,7 @@ export function renderNav(claims, current, who) {
 
   const nav = document.createElement('nav');
   nav.id = 'appNav';
+  nav.setAttribute('aria-label', 'ניווט ראשי');
 
   const brand = document.createElement('div');
   brand.className = 'brand';
@@ -248,6 +249,7 @@ export function renderNav(claims, current, who) {
   tg.id = 'navToggle';
   tg.setAttribute('aria-expanded', 'false');
   tg.setAttribute('aria-controls', 'navLinks');
+  tg.setAttribute('aria-label', 'פתיחת תפריט הניווט');
   tg.innerHTML = 'תפריט' + (cur ? ' · <b>' + cur.label + '</b>' : '');
   nav.appendChild(tg);
 
@@ -261,11 +263,15 @@ export function renderNav(claims, current, who) {
     a.href = './' + it.href;
 
     const dot = document.createElement('i');
+    dot.setAttribute('aria-hidden', 'true');
     dot.style.background = it.dot;
     a.appendChild(dot);
     a.appendChild(document.createTextNode(it.label));
 
-    if (it.href === current) a.className = 'on';
+    if (it.href === current) {
+      a.className = 'on';
+      a.setAttribute('aria-current', 'page');
+    }
     links.appendChild(a);
   });
 
@@ -284,7 +290,17 @@ export function renderNav(claims, current, who) {
     const nowClosed = links.classList.toggle('closed');
     if (me) me.classList.toggle('closed', nowClosed);
     tg.setAttribute('aria-expanded', nowClosed ? 'false' : 'true');
+    tg.setAttribute('aria-label', nowClosed ? 'פתיחת תפריט הניווט' : 'סגירת תפריט הניווט');
   };
+
+  nav.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || links.classList.contains('closed')) return;
+    links.classList.add('closed');
+    if (me) me.classList.add('closed');
+    tg.setAttribute('aria-expanded', 'false');
+    tg.setAttribute('aria-label', 'פתיחת תפריט הניווט');
+    tg.focus();
+  });
 
   document.body.insertBefore(nav, document.body.firstChild);
 }
