@@ -232,8 +232,9 @@
 #errBar b{ color:var(--bar-strong); display:block; margin-bottom:4px; font-size:14px }
 #errBar code{ direction:ltr; display:block; margin-top:6px; color:var(--err-fg);
               font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-#errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-             color:var(--bar-strong); font-size:18px }
+#errBar .xx{ position:absolute; inset-inline-end:8px; top:4px; cursor:pointer;
+             width:44px; min-height:44px; margin:0; padding:0;
+             border:0; background:transparent; color:var(--bar-strong); font-size:22px }
 
 /* ===================================================================
    מתג המצב — יושב בסרגל הניווט

@@ -26,5 +26,19 @@ for (const token of ["aria-label', 'ניווט ראשי", "aria-current', 'page"
   check(nav.includes(token), 'navigation contains ' + token);
 }
 
+const login = read('login.html');
+for (const id of ['loginEmp','loginPass','fName','fEmail','fPhone','fDistrict','fStation','fShift','fCode','fPass','fPass2','pwOld','pwNew','pwNew2']) {
+  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(login), 'login label is associated with ' + id);
+}
+for (const token of ['role="tablist"', 'role="tab"', 'role="tabpanel"', 'aria-live="polite"', 'role="alert"']) {
+  check(login.includes(token), 'login accessibility contains ' + token);
+}
+for (const token of ['tabindex="-1"', "event.key === 'ArrowRight'", "event.key === 'ArrowLeft'", "event.key === 'Home'", "event.key === 'End'"]) {
+  check(login.includes(token), 'login tabs contain ' + token);
+}
+for (const token of ['body.art{ background:#070d18', 'body.art h1{ color:#f4f7fb', 'body.art input, body.art select', 'color:#f8fafc']) {
+  check(login.includes(token), 'login artwork keeps explicit dark-surface contrast: ' + token);
+}
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');

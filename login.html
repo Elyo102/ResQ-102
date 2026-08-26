@@ -29,23 +29,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;
        min-height:100vh;display:flex;flex-direction:column;
-       align-items:center;justify-content:center;padding:18px}
+       align-items:center;justify-content:center;padding:max(18px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left))}
   body.with-nav{justify-content:flex-start}
   body.with-nav .card{margin-top:10px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
-        padding:26px;width:100%;max-width:400px}
-  h1{font-size:21px;margin:0 0 4px;text-align:center}
-  .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:22px}
-  .tabs{display:flex;gap:6px;margin-bottom:20px}
-  .tab{flex:1;padding:9px;text-align:center;font-size:14px;cursor:pointer;
-       border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;
+        padding:28px;width:100%;max-width:440px;box-shadow:var(--shadow)}
+  h1{font-size:30px;letter-spacing:-.03em;margin:0 0 4px;text-align:center}
+  .sub{color:var(--muted);font-size:14px;text-align:center;margin-bottom:24px}
+  .tabs{display:flex;gap:6px;margin-bottom:22px;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .tab{flex:1;min-height:44px;width:auto;margin:0;padding:9px 12px;text-align:center;font-size:14px;font-weight:700;cursor:pointer;
+       background:transparent;border:0;border-radius:9px;color:var(--muted)}
   .tab.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
-  input{width:100%;padding:11px;background:var(--input);color:var(--txt);
-        border:1px solid var(--line);border-radius:6px;font-size:15px;
+  label{display:block;font-size:14px;font-weight:650;color:var(--dim);margin:14px 0 6px}
+  input,select{width:100%;min-height:46px;padding:11px 12px;background:var(--input);color:var(--txt);
+        border:1px solid var(--line);border-radius:10px;font-size:16px;
         font-family:inherit}
-  button{width:100%;background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
-        padding:12px;font-size:15px;cursor:pointer;margin-top:20px;font-family:inherit}
+  input:focus-visible,select:focus-visible,.tab:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  button{width:100%;min-height:46px;background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;
+        padding:12px 16px;font-size:15px;font-weight:700;cursor:pointer;margin-top:20px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
   /* כרטיס הגרסה. יושב במקום שבו היה "חיפוש עובד" — מסך
@@ -61,12 +62,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               margin-top:7px }
   .ver .note.new{ color:var(--accent); font-weight:700 }
   .ver button{ margin-top:9px }
-  .link{background:none;border:0;color:var(--muted);font-size:13px;
-        cursor:pointer;margin-top:14px;text-decoration:underline;font-family:inherit}
-  .msg{margin-top:16px;padding:11px;border-radius:6px;font-size:13px;
+  .link{background:none;border:0;color:var(--dim);font-size:14px;
+        cursor:pointer;margin-top:10px;text-decoration:underline;font-family:inherit}
+  .msg{margin-top:16px;padding:12px 14px;border:1px solid transparent;border-radius:10px;font-size:14px;
        line-height:1.6;display:none}
-  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
-  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg);border-color:var(--bad-bd)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}
   /* מצב ניטרלי גלוי. בלעדיו הודעות כמו "לא נמצאו תוצאות" נכתבו
      לאלמנט שנשאר display:none — והמסך נראה כאילו שום דבר לא קרה. */
   .msg.info{display:block;background:var(--chip);color:var(--dim)}
@@ -79,6 +80,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .wait .icon{font-size:38px;margin-bottom:10px}
   .wait .ttl{font-size:18px;font-weight:600;margin-bottom:8px}
   .wait .txt{color:var(--muted);font-size:14px}
+  @media(max-width:560px){
+    .card{padding:22px 18px;border-radius:16px;max-width:100%}
+    h1{font-size:28px}
+    body.with-nav .card{margin-top:0}
+  }
 </style>
 <style>
   .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
@@ -106,7 +112,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   #bgArt, #bgScrim{ position:fixed; inset:0; z-index:-2; display:none }
   #bgScrim{ z-index:-1 }
 
-  body.art{ background:var(--bg) }
+  /* מסך האיור הוא משטח כהה גם כשהטלפון במצב בהיר. בלי
+     צבעי foreground מפורשים, ערכת היום מציירת טקסט כהה על
+     זכוכית כהה — והוא כמעט נעלם. */
+  body.art{ background:#070d18; color:#f4f7fb }
   body.art #bgArt, body.art #bgScrim{ display:block }
 
   #bgArt{
@@ -148,14 +157,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     opacity:0; transform:translateY(24px) scale(.97);
     transition:opacity 640ms ease 2000ms,
                transform 760ms cubic-bezier(.16,1,.3,1) 2000ms;
+    color:#f4f7fb;
   }
   body.art.ready .card{ opacity:1; transform:none }
 
-  body.art h1{ text-shadow:0 1px 10px rgba(0,0,0,.75) }
-  body.art .sub, body.art label, body.art .note{ color:var(--dim) }
-  body.art input{ background:rgba(4,8,14,.55); border-color:rgba(255,255,255,.18) }
-  body.art .tab{ border-color:rgba(255,255,255,.18); color:var(--dim) }
-  body.art .link{ color:var(--dim) }
+  body.art h1{ color:#f4f7fb; text-shadow:0 1px 10px rgba(0,0,0,.75) }
+  body.art .sub, body.art label, body.art .note, body.art .pw-rules,
+  body.art .pw-rules i{ color:#cbd5e1 }
+  body.art input, body.art select{ background:rgba(4,8,14,.78); border-color:rgba(255,255,255,.28); color:#f8fafc; caret-color:#f8fafc }
+  body.art select option{ background:#111827; color:#f8fafc }
+  body.art .tabs{ background:rgba(4,8,14,.78); border-color:rgba(255,255,255,.22) }
+  body.art .tab{ border-color:rgba(255,255,255,.18); color:#dbe4ee }
+  body.art .tab.on{ color:#fff }
+  body.art .link{ color:#dbe4ee }
   body.art #btnLogin, body.art #btnFirst{ box-shadow:0 6px 18px rgba(232,89,12,.42) }
 
   /* מי שביקש פחות תנועה מקבל את המסך מיד. */
@@ -169,7 +183,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="bgArt"></div>
 <div id="bgScrim"></div>
 
-<div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
+<div id="errBar" role="alert" aria-live="assertive"><button type="button" class="xx" aria-label="סגירת הודעת השגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
   <code id="errRaw"></code>
@@ -229,15 +243,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <!-- ============ כניסה והרשמה ============ -->
   <div id="authView" class="hide">
-    <div class="tabs">
-      <div class="tab on" id="tabLogin">כניסה</div>
-      <div class="tab" id="tabFirst">הרשמה</div>
+    <div class="tabs" role="tablist" aria-label="כניסה או הרשמה">
+      <button type="button" class="tab on" id="tabLogin" role="tab" tabindex="0" aria-selected="true" aria-controls="paneLogin">כניסה</button>
+      <button type="button" class="tab" id="tabFirst" role="tab" tabindex="-1" aria-selected="false" aria-controls="paneFirst">הרשמה</button>
     </div>
 
-    <div id="paneLogin">
-      <label>מספר עובד</label>
+    <div id="paneLogin" role="tabpanel" aria-labelledby="tabLogin">
+      <label for="loginEmp">מספר עובד</label>
       <input type="text" id="loginEmp" inputmode="numeric" autocomplete="username">
-      <label>סיסמה</label>
+      <label for="loginPass">סיסמה</label>
       <input type="password" id="loginPass" autocomplete="current-password">
       <button id="btnLogin">כניסה</button>
       <button class="link" id="btnForgot">שכחתי סיסמה</button>
@@ -247,27 +261,27 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
     </div>
 
-    <div id="paneFirst" class="hide">
-      <label>שם מלא</label>
+    <div id="paneFirst" class="hide" role="tabpanel" aria-labelledby="tabFirst">
+      <label for="fName">שם מלא</label>
       <input type="text" id="fName" autocomplete="name">
 
-      <label>מייל</label>
+      <label for="fEmail">מייל</label>
       <input type="email" id="fEmail" autocomplete="email">
 
-      <label>טלפון</label>
+      <label for="fPhone">טלפון</label>
       <input type="tel" id="fPhone" inputmode="tel" autocomplete="tel">
 
-      <label>מחוז</label>
+      <label for="fDistrict">מחוז</label>
       <select id="fDistrict">
         <option value="">בחר מחוז</option>
       </select>
 
-      <label>תחנה</label>
+      <label for="fStation">תחנה</label>
       <select id="fStation">
         <option value="">קודם בחר מחוז</option>
       </select>
 
-      <label>משמרת</label>
+      <label for="fShift">משמרת</label>
       <select id="fShift">
         <option value="">בחר משמרת</option>
         <option value="A">משמרת א׳</option>
@@ -280,15 +294,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         אם טעית — פנה לראש המשמרת.
       </div>
 
-      <label>קוד תחנה <span style="opacity:.7">(לא חובה)</span></label>
+      <label for="fCode">קוד תחנה <span style="opacity:.7">(לא חובה)</span></label>
       <input type="text" id="fCode" autocomplete="off" inputmode="numeric">
       <div class="note" style="margin-top:6px">
         קיבלת קוד מראש המשמרת? הקלד אותו — והחשבון ייפתח מיד.
         בלי קוד הבקשה תמתין לאישור מנהל.
       </div>
 
-      <label>בחר סיסמה</label>
-      <input type="password" id="fPass" autocomplete="new-password">
+      <label for="fPass">בחר סיסמה</label>
+      <input type="password" id="fPass" autocomplete="new-password" aria-describedby="pwRules">
       <div class="pw-rules" id="pwRules">
         <i id="pw1">8 תווים לפחות</i> ·
         <i id="pw2">אות גדולה</i> ·
@@ -296,7 +310,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <i id="pw4">ספרה</i>
       </div>
 
-      <label>אימות סיסמה</label>
+      <label for="fPass2">אימות סיסמה</label>
       <input type="password" id="fPass2" autocomplete="new-password">
 
       <button id="btnFirst">שלח בקשה</button>
@@ -305,7 +319,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
     </div>
 
-    <div class="msg" id="msg"></div>
+    <div class="msg" id="msg" aria-live="polite"></div>
   </div>
 
   <!-- ============ ממתין לאישור ============ -->
@@ -320,7 +334,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
       <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
     </div>
-    <div class="msg" id="bootMsg"></div>
+    <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
     <button id="btnLogoutWait">התנתק</button>
   </div>
@@ -336,7 +350,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
     <div class="ver">
       <div class="vrow"><span>גרסת האפליקציה</span><b id="verNow">…</b></div>
-      <div class="note" id="verMsg">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
+      <div class="note" id="verMsg" aria-live="polite">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
         הוא לרגע שבו אתה רוצה לוודא.</div>
       <button class="link" id="btnUpdate">בדוק עדכון</button>
     </div>
@@ -352,24 +366,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <h2 style="font-size:19px;margin:0 0 4px">שינוי סיסמה</h2>
     <div class="sub">תצטרך להזין את הסיסמה הנוכחית.</div>
 
-    <label>סיסמה נוכחית</label>
+    <label for="pwOld">סיסמה נוכחית</label>
     <input type="password" id="pwOld" autocomplete="current-password">
 
-    <label>סיסמה חדשה</label>
-    <input type="password" id="pwNew" autocomplete="new-password">
-    <div class="pw-rules">
+    <label for="pwNew">סיסמה חדשה</label>
+    <input type="password" id="pwNew" autocomplete="new-password" aria-describedby="changePwRules">
+    <div class="pw-rules" id="changePwRules">
       <i id="cp1">8 תווים לפחות</i> ·
       <i id="cp2">אות גדולה</i> ·
       <i id="cp3">אות קטנה</i> ·
       <i id="cp4">ספרה</i>
     </div>
 
-    <label>אימות סיסמה חדשה</label>
+    <label for="pwNew2">אימות סיסמה חדשה</label>
     <input type="password" id="pwNew2" autocomplete="new-password">
 
     <button id="btnSavePw">שמור סיסמה</button>
     <button class="back" id="btnPwBack">חזרה</button>
-    <div class="msg" id="pwMsg"></div>
+    <div class="msg" id="pwMsg" aria-live="polite"></div>
   </div>
 
 </div>
@@ -482,8 +496,9 @@ let onboarding = false;
 
 function show(text, kind){
   const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
+  m.setAttribute('role', kind === 'err' ? 'alert' : 'status');
 }
-function clearMsg(){ $('msg').className = 'msg'; }
+function clearMsg(){ $('msg').className = 'msg'; $('msg').removeAttribute('role'); }
 
 function showView(name){
   ['bootView','authView','waitView','homeView','pwView']
@@ -529,16 +544,32 @@ $('pwNew').oninput = function(){ paintRules(this.value, ['cp1','cp2','cp3','cp4'
 
 // ---------- לשוניות ----------
 
-$('tabLogin').onclick = () => {
-  $('tabLogin').classList.add('on'); $('tabFirst').classList.remove('on');
-  $('paneLogin').classList.remove('hide'); $('paneFirst').classList.add('hide');
+const authTabs = [$('tabLogin'), $('tabFirst')];
+function activateAuthTab(index, moveFocus){
+  authTabs.forEach(function(tab, i){
+    const active = i === index;
+    tab.classList.toggle('on', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    tab.setAttribute('tabindex', active ? '0' : '-1');
+  });
+  $('paneLogin').classList.toggle('hide', index !== 0);
+  $('paneFirst').classList.toggle('hide', index !== 1);
   clearMsg();
-};
-$('tabFirst').onclick = () => {
-  $('tabFirst').classList.add('on'); $('tabLogin').classList.remove('on');
-  $('paneFirst').classList.remove('hide'); $('paneLogin').classList.add('hide');
-  clearMsg();
-};
+  if (moveFocus) authTabs[index].focus();
+}
+authTabs.forEach(function(tab, index){
+  tab.onclick = function(){ activateAuthTab(index, false); };
+  tab.onkeydown = function(event){
+    let next = index;
+    if (event.key === 'ArrowRight') next = (index + 1) % authTabs.length;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + authTabs.length) % authTabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = authTabs.length - 1;
+    else return;
+    event.preventDefault();
+    activateAuthTab(next, true);
+  };
+});
 
 // ---------- כניסה ----------
 //

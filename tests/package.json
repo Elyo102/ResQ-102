@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "static": "node uxcheck.mjs && node rulecheck.mjs && node fncheck.mjs && node restcheck.mjs && node vmapcheck.mjs && node signflow.mjs && node docpdf.mjs && node roles.mjs && node assign.mjs && node shiftlog.mjs && node histimport.mjs",
-    "browser": "node smoke.mjs && node role.mjs && node numbers.mjs && node contrast.mjs",
+    "browser": "node uxbrowser.mjs && node smoke.mjs && node role.mjs && node numbers.mjs && node contrast.mjs",
     "all": "npm run static && npm run browser"
   },
   "dependencies": {
