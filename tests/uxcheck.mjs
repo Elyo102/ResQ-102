@@ -26,6 +26,42 @@ for (const token of ["aria-label', 'ניווט ראשי", "aria-current', 'page"
   check(nav.includes(token), 'navigation contains ' + token);
 }
 
+const serviceWorker = read('firebase-messaging-sw.js');
+check(/caches\.match\(req\s*,\s*\{\s*ignoreSearch\s*:\s*true\s*\}\s*\)/.test(serviceWorker),
+      'service worker offline fallback ignores asset version query strings');
+for (const asset of ['./bulletin.js', './bulletin.css']) {
+  check(serviceWorker.includes(asset), 'service worker shell includes ' + asset);
+}
+
+const systemCheck = read('check.html');
+const subStationProbe = systemCheck.indexOf("if (col.name === 'sub_stations')");
+const genericProbe = systemCheck.indexOf("const id = MARK + '_' + Date.now();");
+check(systemCheck.includes("const SUB_STATION_PROBE_ID = '__selfcheck_archived_site'"),
+      'deployment check reuses one archived sub-station probe');
+check(subStationProbe !== -1 && genericProbe !== -1 && subStationProbe < genericProbe,
+      'archived sub-station probe bypasses the generic create-delete path');
+for (const token of ["is_active: false", "archived: true", "status: 'archived'",
+                     'const saved = await getDoc(ref)', 'continue;']) {
+  check(systemCheck.slice(subStationProbe, genericProbe).includes(token),
+        'archived sub-station probe contains ' + token);
+}
+
+const bulletin = read('bulletin.js');
+const board = read('board.html');
+const attendanceBoard = read('attendance.html');
+const stations = read('stations.js');
+for (const item of [
+  ['bulletin.js', bulletin, 'subStationAvailable(data)'],
+  ['board.html', board, 'subStationAvailable(v)'],
+  ['attendance.html', attendanceBoard, 'subStationAvailable(v)']
+]) {
+  check(item[1].includes(item[2]), item[0] + ' uses the shared active sub-station contract');
+}
+for (const token of ['data.is_active !== false', 'data.active !== false',
+                     'data.archived !== true', "state !== 'inactive'", "state !== 'archived'"]) {
+  check(stations.includes(token), 'shared sub-station contract contains ' + token);
+}
+
 const login = read('login.html');
 for (const id of ['loginEmp','loginPass','fName','fEmail','fPhone','fDistrict','fStation','fShift','fCode','fPass','fPass2','pwOld','pwNew','pwNew2']) {
   check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(login), 'login label is associated with ' + id);

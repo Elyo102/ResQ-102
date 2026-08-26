@@ -15,7 +15,8 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': ext === '.html' ? 'text/html; charset=utf-8' : ext === '.css' ? 'text/css' : 'text/javascript' });
   res.end(fs.readFileSync(file));
 });
-await new Promise(resolve => server.listen(8392, resolve));
+await new Promise(resolve => server.listen(0, resolve));
+const port = server.address().port;
 
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
@@ -27,7 +28,7 @@ await context.route('**/firebasejs/**', route => {
 await context.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
 await context.addInitScript('window.__SMOKE_ROLE = "none";');
 const page = await context.newPage();
-await page.goto('http://localhost:8392/login.html', { waitUntil:'load' });
+await page.goto('http://localhost:' + port + '/login.html', { waitUntil:'load' });
 await page.waitForTimeout(6800);
 
 async function check(value, message) {
@@ -53,7 +54,7 @@ await appContext.route('**/firebasejs/**', route => {
 await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
 await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
 const attendance = await appContext.newPage();
-await attendance.goto('http://localhost:8392/attendance.html', { waitUntil:'load' });
+await attendance.goto('http://localhost:' + port + '/attendance.html', { waitUntil:'load' });
 await attendance.locator('.days .btn').first().waitFor({ state:'visible', timeout:8000 });
 await attendance.addStyleTag({ content:'#coWrap{display:none!important}' });
 const source = attendance.locator('.days .btn').first();
@@ -80,7 +81,7 @@ await check(await attendance.evaluate(date => document.activeElement?.dataset?.d
             'attendance save restores focus after the row is rebuilt');
 
 const swaps = await appContext.newPage();
-await swaps.goto('http://localhost:8392/swaps.html', { waitUntil:'load' });
+await swaps.goto('http://localhost:' + port + '/swaps.html', { waitUntil:'load' });
 await swaps.addStyleTag({ content:'#coWrap{display:none!important}' });
 const take = swaps.getByRole('button', { name:'אני מעוניין להחליף' }).first();
 await take.waitFor({ state:'visible', timeout:8000 });
@@ -124,7 +125,7 @@ await check(await swaps.evaluate(() => document.activeElement?.id === 'openMsg')
             'successful open swap keeps focus after the list is rebuilt');
 
 const forms = await appContext.newPage();
-await forms.goto('http://localhost:8392/forms.html', { waitUntil:'load' });
+await forms.goto('http://localhost:' + port + '/forms.html', { waitUntil:'load' });
 await forms.locator('#tabNew').waitFor({ state:'visible', timeout:8000 });
 await forms.addStyleTag({ content:'#coWrap{display:none!important}' });
 await forms.locator('#tabNew').focus();
@@ -145,7 +146,7 @@ await check(await forms.locator('#tabNew').getAttribute('aria-selected') === 'tr
             'forms Home returns to the first tab');
 
 const sign = await appContext.newPage();
-await sign.goto('http://localhost:8392/sign.html', { waitUntil:'load' });
+await sign.goto('http://localhost:' + port + '/sign.html', { waitUntil:'load' });
 await sign.locator('#tabQueue').waitFor({ state:'visible', timeout:8000 });
 await sign.addStyleTag({ content:'#coWrap{display:none!important}' });
 await sign.locator('#tabQueue').focus();
@@ -191,7 +192,7 @@ await firefighterContext.route('**/firebasejs/**', route => {
 await firefighterContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
 await firefighterContext.addInitScript('window.__SMOKE_ROLE = "firefighter";');
 const firefighterForms = await firefighterContext.newPage();
-await firefighterForms.goto('http://localhost:8392/forms.html', { waitUntil:'load' });
+await firefighterForms.goto('http://localhost:' + port + '/forms.html', { waitUntil:'load' });
 await firefighterForms.locator('#tabNew').waitFor({ state:'visible', timeout:8000 });
 await check(await firefighterForms.locator('#tabAppr').isHidden(),
             'firefighter approval tab stays hidden');

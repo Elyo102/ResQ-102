@@ -21,7 +21,8 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
   res.end(fs.readFileSync(file));
 });
-await new Promise(resolve => server.listen(8391, resolve));
+await new Promise(resolve => server.listen(0, resolve));
+const port = server.address().port;
 
 const browser = await chromium.launch();
 for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', width:1280, height:900 }]) {
@@ -34,7 +35,7 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
   await context.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
   await context.addInitScript('window.__SMOKE_ROLE = "none";');
   const page = await context.newPage();
-  await page.goto('http://localhost:8391/login.html', { waitUntil:'load' });
+  await page.goto('http://localhost:' + port + '/login.html', { waitUntil:'load' });
   await page.waitForTimeout(6800);
   await page.screenshot({ path:path.join(out, 'login-' + size.name + '.png'), fullPage:true });
   await context.close();
@@ -48,10 +49,14 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
   await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
   await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
   const appPage = await appContext.newPage();
-  for (const screen of ['schedule', 'attendance', 'swaps', 'forms', 'sign']) {
-    await appPage.goto('http://localhost:8391/' + screen + '.html', { waitUntil:'load' });
+  for (const screen of ['bulletin', 'schedule', 'attendance', 'swaps', 'forms', 'sign']) {
+    const target = screen === 'bulletin' ? 'login' : screen;
+    await appPage.goto('http://localhost:' + port + '/' + target + '.html', { waitUntil:'load' });
     await appPage.waitForTimeout(2600);
     await appPage.addStyleTag({ content:'#coWrap{display:none!important}' });
+    if (screen === 'bulletin') {
+      await appPage.locator('#bulletinBoard').waitFor({ state:'visible', timeout:8000 });
+    }
     if (screen === 'sign') {
       await appPage.locator('#tabMine').click();
       await appPage.waitForFunction(() => {

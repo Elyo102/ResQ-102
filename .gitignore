@@ -66,3 +66,4 @@ rules-test/node_modules/
 firestore-debug.log
 ui-debug.log
 tests/.visual/
+tests/debug.log

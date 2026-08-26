@@ -18,7 +18,7 @@ const __APP   = __j(__TESTS, '..');
 
 const ROOT = process.argv[2] || __APP;
 const STUB = __j(__TESTS, "stub");
-const PORT = 8099;
+let PORT = 0;
 const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css' };
 
 const server = http.createServer((req, res) => {
@@ -29,7 +29,8 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'text/plain' });
   res.end(fs.readFileSync(f));
 });
-await new Promise(r => server.listen(PORT, r));
+await new Promise(r => server.listen(0, r));
+PORT = server.address().port;
 
 const ROLE  = process.env.SMOKE_ROLE || 'super';
 const PAGES = fs.readdirSync(ROOT).filter(f => f.endsWith('.html')).sort();
@@ -42,7 +43,12 @@ const MUST_ALL = {
                  '#btnUsers','#btnReindex'],
   'login.html': ['#loginEmp','#loginPass','#btnLogin','#btnForgot','#fName',
                  '#fEmail','#fPhone','#fDistrict','#fStation','#fPass',
-                 '#btnFirst','#btnBootstrap','#verNow','#btnUpdate','#fShift','#fCode'],
+                 '#btnFirst','#btnBootstrap','#verNow','#btnUpdate','#fShift','#fCode',
+                 '#bulletinBoard','#boardTabs','#bulletinFeed','#bulletinForm',
+                 '#bulletinCategory','#bulletinText','#bulletinSubmit',
+                 '#bulletinStatus','#bulletinRetry','#bulletinLoadMore',
+                 '#bulletinCompose','#bulletinEmpty','#bulletinIdentity',
+                 '#accountDetails'],
   // חיפוש העובד עבר למסך משלו. השדות נבדקים שם עכשיו — אם
   // הם היו נמחקים מכאן בלי להיבדק שם, המעבר היה "מוצלח"
   // בדיוק עד שמישהו היה מנסה לחפש.

@@ -18,6 +18,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const bulletin = require('./bulletin');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -1297,6 +1298,255 @@ exports.getJoinCode = onCall(async (req) => {
   const snap = await db.doc(JOIN_DOC).get().catch(function () { return null; });
   const v = (snap && snap.exists ? snap.data() : {}) || {};
   return { code: String(v.code || ''), active: v.active === true };
+});
+
+// ---------------------------------------------------------------------
+//  לוח מודעות לפי תחנת משנה
+// ---------------------------------------------------------------------
+//
+// לקוחות אינם כותבים לאוסף ישירות. שתי הפונקציות האלה הן שער
+// הכתיבה היחיד, ולכן שם הכותב, התפקיד, המשמרת וחותמת הזמן אינם
+// מגיעים מהדפדפן. כך הודעה שמוצגת כ"מפקד התחנה" באמת נכתבה
+// מחשבון עם הטוקן הזה, ושעון מכשיר שגוי אינו משנה את סדר הלוח.
+//
+// מזהה הבקשה נשמר בנפרד. ניסיון חוזר עם אותו תוכן מחזיר את אותה
+// תוצאה בלי ליצור כפילות ובלי לצרוך מכסת קצב; שימוש חוזר באותו
+// מזהה עם תוכן אחר נחסם. קבלות הבקשה ומסמכי מגבלת הקצב חסומים
+// לחלוטין ללקוח בכללי Firestore.
+
+function translateBulletinError(error) {
+  if (error instanceof bulletin.BulletinError) {
+    return new HttpsError(error.code, error.message);
+  }
+  return null;
+}
+
+function parseBulletinPost(req) {
+  try {
+    return {
+      // The fallback is server-owned and is used only for a verified super
+      // account that predates station claims. Ordinary users can never choose
+      // a station in the payload; their station always comes from the token.
+      identity: bulletin.postingIdentity(req.auth, {
+        isSuper: !!(req.auth && isSuperAdmin(req.auth)),
+        defaultStationId: STATION_ID
+      }),
+      input: bulletin.parsePostInput(req.data)
+    };
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+}
+
+exports.postBulletinMessage = onCall(async (req) => {
+  const parsed = parseBulletinPost(req);
+  const identity = parsed.identity;
+  const input = parsed.input;
+  const sid = identity.sid;
+
+  const msgId = bulletin.messageId(identity.uid, input.requestId);
+  const reqKey = bulletin.requestKey(identity.uid, input.requestId);
+  const msgRef = db.doc(
+    'stations/' + sid + '/sub_stations/' + input.subStationId +
+    '/bulletin_messages/' + msgId
+  );
+  const receiptRef = db.doc('stations/' + sid + '/bulletin_requests/' + reqKey);
+  const rateRef = db.doc(
+    'stations/' + sid + '/bulletin_rate_limits/' +
+    bulletin.requestKey(identity.uid, 'rate-limit-v1')
+  );
+  const userRef = db.doc('stations/' + sid + '/users/' + identity.uid);
+  const subStationRef = db.doc(
+    'stations/' + sid + '/sub_stations/' + input.subStationId
+  );
+  const hash = bulletin.contentHash(identity, input);
+
+  try {
+    return await db.runTransaction(async function (tx) {
+      // Every authorization and existence read happens before the first write.
+      // This keeps the transaction valid and ensures an old retry cannot bypass
+      // a user deactivation or an archived sub-station.
+      const userSnap = await tx.get(userRef);
+      const subStationSnap = await tx.get(subStationRef);
+      const receiptSnap = await tx.get(receiptRef);
+
+      if (!userSnap.exists && !identity.isSuper) {
+        throw new HttpsError('failed-precondition',
+          'כרטיס המשתמש בתחנה לא נמצא. פנה למנהל המערכת.');
+      }
+      const user = userSnap.data() || {};
+      if (user.is_active === false && !identity.isSuper) {
+        throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+      }
+      const byName = String(user.full_name ||
+        (identity.isSuper ? 'מנהל המערכת' : '')).trim();
+      if (!byName || byName.length > 120) {
+        throw new HttpsError('failed-precondition',
+          'חסר שם מלא תקין בכרטיס המשתמש.');
+      }
+
+      // A mismatch means the browser still holds an old token after a role or
+      // crew change. Failing closed avoids publishing with stale authority.
+      const storedRole = String(user.role || '').trim();
+      const storedCrew = String(user.crew || '').trim();
+      if (!identity.isSuper && storedRole && storedRole !== identity.role) {
+        throw new HttpsError('failed-precondition',
+          'ההרשאה השתנתה. התנתק והתחבר מחדש לפני הפרסום.');
+      }
+      if (!identity.isSuper && storedCrew && storedCrew !== identity.crew) {
+        throw new HttpsError('failed-precondition',
+          'שיוך המשמרת השתנה. התנתק והתחבר מחדש לפני הפרסום.');
+      }
+
+      if (!subStationSnap.exists ||
+          !bulletin.subStationAvailable(subStationSnap.data() || {})) {
+        throw new HttpsError('failed-precondition',
+          'תחנת המשנה אינה קיימת או שאינה פעילה.');
+      }
+
+      const prior = receiptSnap.exists ? (receiptSnap.data() || {}) : null;
+      const requestState = bulletin.requestState(prior, hash, msgRef.path);
+      if (requestState === 'conflict') {
+        throw new HttpsError('already-exists',
+          'מזהה הבקשה כבר שימש להודעה אחרת. רענן ונסה שוב.');
+      }
+      if (requestState === 'duplicate') {
+        return {
+          ok: true,
+          id: String(prior.message_id || msgId),
+          duplicate: true,
+          createdKey: String(prior.created_key || '')
+        };
+      }
+
+      const rateSnap = await tx.get(rateRef);
+      const nowMillis = Date.now();
+      let rate;
+      try {
+        rate = bulletin.rateDecision(
+          rateSnap.exists ? (rateSnap.data() || {}) : null,
+          nowMillis
+        );
+      } catch (error) {
+        const translated = translateBulletinError(error);
+        if (translated) throw translated;
+        throw error;
+      }
+      if (!rate.allowed) {
+        throw new HttpsError('resource-exhausted',
+          'נשלחו יותר מדי הודעות. נסה שוב בעוד ' +
+          rate.retryAfterSeconds + ' שניות.',
+          { retryAfterSeconds: rate.retryAfterSeconds });
+      }
+
+      const createdAt = admin.firestore.Timestamp.fromMillis(nowMillis);
+      const createdKey = new Date(nowMillis).toISOString();
+      const message = {
+        kind: 'bulletin',
+        text: input.text,
+        category: input.category,
+        by_uid: identity.uid,
+        by_name: byName,
+        by_role: identity.role,
+        by_crew: identity.crew,
+        hidden: false,
+        created_at: createdAt,
+        created_key: createdKey,
+        request_hash: hash
+      };
+
+      tx.create(msgRef, message);
+      tx.create(receiptRef, {
+        request_hash: hash,
+        message_path: msgRef.path,
+        message_id: msgId,
+        created_key: createdKey,
+        created_at: createdAt
+      });
+      tx.set(rateRef, {
+        count: rate.count,
+        window_started_at: admin.firestore.Timestamp.fromMillis(
+          rate.windowStartedMillis
+        ),
+        updated_at: createdAt
+      }, { merge: true });
+
+      return { ok: true, id: msgId, duplicate: false, createdKey: createdKey };
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    console.error('postBulletinMessage failed', {
+      uid: identity.uid, sid: sid, subStationId: input.subStationId,
+      requestKey: reqKey, error: String(error && error.message || error)
+    });
+    throw new HttpsError('internal',
+      'פרסום ההודעה נכשל. לא נוצרה הודעה חלקית; נסה שוב.');
+  }
+});
+
+exports.hideBulletinMessage = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  let input;
+  try {
+    input = bulletin.parseHideInput(req.data);
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+
+  const messageRef = db.doc(
+    'stations/' + input.sid + '/sub_stations/' + input.subStationId +
+    '/bulletin_messages/' + input.messageId
+  );
+  const audit = await openAudit(
+    auth, 'hide_bulletin_message', messageRef.path,
+    { sid: input.sid, sub_station_id: input.subStationId,
+      message_id: input.messageId }
+  );
+
+  try {
+    const result = await db.runTransaction(async function (tx) {
+      const snap = await tx.get(messageRef);
+      if (!snap.exists) {
+        throw new HttpsError('not-found', 'ההודעה לא נמצאה.');
+      }
+      const message = snap.data() || {};
+      if (message.kind !== 'bulletin') {
+        throw new HttpsError('failed-precondition',
+          'המסמך שנמצא אינו הודעת לוח תקינה.');
+      }
+      if (message.hidden === true) return { alreadyHidden: true };
+
+      tx.update(messageRef, {
+        hidden: true,
+        hidden_at: admin.firestore.Timestamp.fromMillis(Date.now()),
+        hidden_by: auth.uid
+      });
+      return { alreadyHidden: false };
+    });
+
+    await sealAudit(audit, {
+      message_path: messageRef.path,
+      already_hidden: result.alreadyHidden
+    });
+    return { ok: true, id: input.messageId,
+             alreadyHidden: result.alreadyHidden };
+  } catch (error) {
+    await sealAudit(audit, {
+      outcome: 'failed',
+      error_code: String(error && error.code || 'internal').slice(0, 80)
+    });
+    if (error instanceof HttpsError) throw error;
+    console.error('hideBulletinMessage failed', {
+      path: messageRef.path, error: String(error && error.message || error)
+    });
+    throw new HttpsError('internal', 'הסתרת ההודעה נכשלה. נסה שוב.');
+  }
 });
 
 // ---------------------------------------------------------------------

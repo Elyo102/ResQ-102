@@ -353,6 +353,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
+import { subStationAvailable } from './stations.js?v=39';
 import { renderNav, renderStuckNav } from './nav.js?v=38';
 import { MEMBER_ROLES } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
@@ -630,6 +631,7 @@ async function loadStatic(){
       const found = [];
       ss.forEach(d => {
         const v = d.data() || {};
+        if (!subStationAvailable(v)) return;
         found.push({ id: d.id, name: v.name || '',
                      fixed_hours: Number(v.fixed_hours || 0),
                      order: Number(v.order || 0) });

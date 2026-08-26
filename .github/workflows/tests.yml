@@ -80,5 +80,12 @@ jobs:
         working-directory: rules-test
         run: npm install --no-audit --no-fund
 
-      - name: הרצת 52 תרחישי אבטחה מול Firestore אמיתי
-        run: firebase emulators:exec --only firestore --project station-102 "cd rules-test && npm test"
+      - name: התקנת תלויות פונקציות
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+
+      - name: כללי האבטחה מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
+
+      - name: פונקציות לוח המודעות מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js"

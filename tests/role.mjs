@@ -10,19 +10,21 @@ const __TESTS = __d(__f(import.meta.url));
 const __APP   = __j(__TESTS, '..');
 
 
-const ROOT=process.env.ROLE_ROOT||__APP, STUB=__j(__TESTS, "stub"), PORT=8097;
+const ROOT=process.env.ROLE_ROOT||__APP, STUB=__j(__TESTS, "stub");
+let PORT=0;
 const T={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
   if(p==='/')p='/index.html';const f=path.join(ROOT,p);
   if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){r.writeHead(404);r.end('no');return;}
   r.writeHead(200,{'Content-Type':T[path.extname(f)]||'text/plain'});r.end(fs.readFileSync(f));});
-await new Promise(r=>srv.listen(PORT,r));
+await new Promise(r=>srv.listen(0,r));
+PORT=srv.address().port;
 
 const EXPECT = {
   // quals: מה מסך הכשירויות אמור להראות.
   //   work   — המסך עצמו נפתח
   //   edit   — כלי העריכה (הוספה, שמירת קו אדום, כפתורי "ערוך")
-  super:       { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים','קליטה','בדיקה'],
+  super:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים','קליטה','בדיקה'],
                  adminSees:['reqCard','usersCard'],
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true },
@@ -33,7 +35,7 @@ const EXPECT = {
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
                  waiver:{ shown:true, btns:1 } },
-  firefighter: { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים'], adminSees:[],
+  firefighter: { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים'], adminSees:[],
                  quals:{ work:true, edit:false },
                  board:{ work:true, edit:false },
                  swaps:{ work:true, appr:false },
@@ -44,7 +46,7 @@ const EXPECT = {
                  forms:{ work:true, appr:false, count:4 }, stats:false,
                  // כבאי רואה שהמשמרת מתחת לקו, ואין לו מה ללחוץ.
                  waiver:{ shown:true, btns:0 } },
-  commander:   { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  commander:   { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
@@ -54,7 +56,7 @@ const EXPECT = {
                  guards:{ work:true, create:true },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
-  hr:          { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  hr:          { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['A','B','C'],
@@ -65,7 +67,7 @@ const EXPECT = {
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
   // סגן מפקד משמרת: אותן סמכויות כמו מפקד, נעול למשמרת ב'.
-  deputy:      { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  deputy:      { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
@@ -77,7 +79,7 @@ const EXPECT = {
                  waiver:{ shown:true, btns:1 },
                  alerts:{ work:true, send:true, key:false, opts:1 } },
   // מפקד תחנה: רואה את שלוש המשמרות, כמו רכז כוח אדם.
-  stcmd:       { nav:['הבית','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  stcmd:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['A','B','C'],
@@ -90,7 +92,7 @@ const EXPECT = {
                  // מפקד התחנה על משמרת א׳ עם בקשה ממתינה: אשר / דחה.
                  waiver:{ shown:true, btns:2 },
                  alerts:{ work:true, send:true, key:false, opts:4 } },
-  pending:     { nav:['הבית'], adminSees:[],
+  pending:     { nav:['לוח מודעות'], adminSees:[],
                  quals:{ work:false, edit:false },
                  board:{ work:false, edit:false },
                  swaps:{ work:false, appr:false },

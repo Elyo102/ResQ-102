@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ResQ — כניסה</title>
+<title>ResQ — לוח מודעות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
@@ -15,7 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=38">
+<link rel="stylesheet" href="./theme.css?v=39">
+<link rel="stylesheet" href="./bulletin.css?v=39">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -227,8 +228,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
 <div class="card">
 
-  <h1>Res<span style="color:var(--accent)">Q</span></h1>
-  <div class="sub">ניהול תחנה · תחנה 102</div>
+  <h1 id="pageTitle" tabindex="-1">לוח מודעות</h1>
+  <div class="sub" id="pageSub">ResQ · תחנה 102</div>
 
   <!-- ============ טוען ============ -->
   <!-- ברירת המחדל היא המסך הזה ולא טופס הכניסה. עד עכשיו הטופס
@@ -341,24 +342,76 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <!-- ============ מסך ראשי ============ -->
   <div id="homeView" class="hide">
-    <div class="profile">
-      <div class="big" id="pName"></div>
-      <div class="row" id="pRole"></div>
-      <div class="row" id="pCrew"></div>
-      <div class="row" id="pStation"></div>
-      <div class="row" id="pEmp"></div>
-    </div>
-    <div class="ver">
-      <div class="vrow"><span>גרסת האפליקציה</span><b id="verNow">…</b></div>
-      <div class="note" id="verMsg" aria-live="polite">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
-        הוא לרגע שבו אתה רוצה לוודא.</div>
-      <button class="link" id="btnUpdate">בדוק עדכון</button>
-    </div>
-    <a id="lnkAdmin" class="hide" href="./admin.html"
-       style="display:block;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px">
-       ניהול המערכת ואישור בקשות ←</a>
-    <button class="link" id="btnChangePw">שינוי סיסמה</button>
-    <button class="link" id="btnLogout">התנתק</button>
+    <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
+             aria-labelledby="pageTitle">
+      <header class="bulletin-toolbar">
+        <div id="bulletinIdentity" class="bulletin-identity"></div>
+        <button type="button" id="bulletinCompose" class="bulletin-compose"
+                aria-expanded="false" aria-controls="bulletinForm">
+          + כתיבת הודעה
+        </button>
+      </header>
+
+      <p id="bulletinPrivacy" class="bulletin-privacy">
+        <strong>הלוח אינו מוקד חירום ואינו מיועד למידע אישי או רפואי.</strong>
+        תקלה בציוד או ברכב יש לתעד גם <a href="./faults.html">במסך התקלות</a>.
+      </p>
+
+      <div id="boardTabs" class="bulletin-board-tabs" role="tablist"
+           aria-label="בחירת לוח לפי תחנת משנה"></div>
+
+      <form id="bulletinForm" class="bulletin-form hide" novalidate>
+        <label for="bulletinCategory">סוג ההודעה</label>
+        <select id="bulletinCategory"></select>
+
+        <label for="bulletinText">מה חשוב שהמשמרת הבאה תדע?</label>
+        <textarea id="bulletinText" rows="5" maxlength="2000"
+                  placeholder="לדוגמה: חסר חלב במטבח, רכב 12 נכנס לטיפול, ציוד שממתין לבדיקה"></textarea>
+        <div class="bulletin-form-meta">
+          <span>השם, התפקיד, התאריך והשעה יצורפו אוטומטית.</span>
+          <span id="bulletinCharCount" class="bulletin-char-count">0 / 2000</span>
+        </div>
+        <div id="bulletinFormStatus" class="bulletin-form-status" aria-live="polite"></div>
+        <div class="bulletin-form-actions">
+          <button type="submit" id="bulletinSubmit">פרסם הודעה</button>
+          <button type="button" id="bulletinCancel" class="bulletin-cancel">סגור</button>
+        </div>
+      </form>
+
+      <div id="bulletinStatus" class="bulletin-status" aria-live="polite"></div>
+      <button type="button" id="bulletinRetry" class="bulletin-retry hide">נסה שוב</button>
+
+      <div id="bulletinFeed" class="bulletin-feed" role="feed"
+           aria-live="polite" aria-busy="true"></div>
+      <div id="bulletinEmpty" class="bulletin-empty hide">
+        עדיין אין הודעות בלוח הזה. אפשר להיות הראשון שמעדכן את המשמרת.
+      </div>
+      <button type="button" id="bulletinLoadMore" class="bulletin-load-more hide">
+        טען הודעות קודמות
+      </button>
+
+      <details id="accountDetails" class="bulletin-account">
+        <summary>החשבון שלי ועדכוני האפליקציה</summary>
+        <div class="profile">
+          <div class="big" id="pName"></div>
+          <div class="row" id="pRole"></div>
+          <div class="row" id="pCrew"></div>
+          <div class="row" id="pStation"></div>
+          <div class="row" id="pEmp"></div>
+        </div>
+        <div class="ver">
+          <div class="vrow"><span>גרסת האפליקציה</span><b id="verNow">…</b></div>
+          <div class="note" id="verMsg" aria-live="polite">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
+            הוא לרגע שבו אתה רוצה לוודא.</div>
+          <button class="link" id="btnUpdate">בדוק עדכון</button>
+        </div>
+        <a id="lnkAdmin" class="hide" href="./admin.html"
+           style="display:block;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px">
+           ניהול המערכת ואישור בקשות ←</a>
+        <button class="link" id="btnChangePw">שינוי סיסמה</button>
+        <button class="link" id="btnLogout">התנתק</button>
+      </details>
+    </section>
   </div>
 
   <!-- ============ שינוי סיסמה ============ -->
@@ -389,14 +442,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
-import { DISTRICTS, stationsInDistrict, stationName, districtName }
-  from './stations.js?v=38';
-import { renderNav, clearNav } from './nav.js?v=38';
-import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
-import { initPWA } from './pwa.js?v=38';
-import { APP_VERSION, APP_DATE } from './version.js?v=38';
-import { watchCallouts } from './callout.js?v=38';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=39';
+import { DISTRICTS, stationsInDistrict, stationName, districtName,
+         subStationsForStation } from './stations.js?v=39';
+import { renderNav, clearNav } from './nav.js?v=39';
+import { ROLE_HE as ROLES_HE, isMember } from './roles.js?v=39';
+import { initPWA } from './pwa.js?v=39';
+import { APP_VERSION, APP_DATE } from './version.js?v=39';
+import { watchCallouts } from './callout.js?v=39';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=39';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -404,14 +458,14 @@ import { getAuth, signInWithEmailAndPassword,
          EmailAuthProvider, setPersistence, browserLocalPersistence }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, collection, query, where,
-         orderBy, limit, getDocs, serverTimestamp }
+         orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=38';
+import { initAppCheck } from './appcheck.js?v=39';
 initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -493,6 +547,7 @@ fillDistricts();
 $('fDistrict').onchange = function () { fillStations(this.value); };
 
 let onboarding = false;
+let loginTransitionPending = false;
 
 function show(text, kind){
   const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
@@ -505,6 +560,7 @@ function showView(name){
     .forEach(function(v){
       $(v).classList.toggle('hide', v !== name + 'View');
     });
+  document.body.classList.toggle('bulletin-mode', name === 'home');
 }
 
 // רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
@@ -588,6 +644,7 @@ $('btnLogin').onclick = async () => {
   if (!id || !pass) { show('נא למלא מספר עובד וסיסמה.', 'err'); return; }
 
   btn.disabled = true;
+  loginTransitionPending = true;
   try {
     if (id.indexOf('@') !== -1) {
       await signInWithEmailAndPassword(auth, id.toLowerCase(), pass);
@@ -598,6 +655,7 @@ $('btnLogin').onclick = async () => {
       await signInWithEmailAndPassword(auth, res.data.email, pass);
     }
   } catch (e) {
+    loginTransitionPending = false;
     const code = String(e.code || '');
     if (code.indexOf('resource-exhausted') !== -1) {
       show(e.message, 'err');
@@ -738,17 +796,24 @@ function returnToCaller(){
   let next = '';
   try { next = new URLSearchParams(location.search).get('next') || ''; }
   catch (ignore) {}
-  if (RETURNABLE.indexOf(next) === -1) return;
+  if (RETURNABLE.indexOf(next) === -1) return false;
   location.replace('./' + next);
+  return true;
 }
 
-$('btnLogout').onclick     = () => signOut(auth);
-$('btnLogoutWait').onclick = () => signOut(auth);
+function logout(){ destroyBulletin(); return signOut(auth); }
+$('btnLogout').onclick     = logout;
+$('btnLogoutWait').onclick = logout;
 
 onAuthStateChanged(auth, user => {
   authSettled = true;
   if (onboarding) return;
   if (!user) {
+    destroyBulletin();
+    // auth יכול להחזיר את מצב "אין משתמש" הראשוני בדיוק
+    // כשהמשתמש כבר לחץ כניסה. במקרה הזה לא מבטלים את ההנפשה
+    // של הכניסה שנמצאת בתהליך.
+    if (!$('btnLogin').disabled) loginTransitionPending = false;
     clearNav();
     document.body.classList.remove('with-nav');
     document.body.classList.add('art');
@@ -810,6 +875,7 @@ function navFor(claims, user, name){
 }
 
 function showNotLinked(user){
+  loginTransitionPending = false;
   $('waitIcon').textContent = '🔒';
   $('waitTtl').textContent  = 'החשבון אינו משויך';
   $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
@@ -829,6 +895,7 @@ function showNotLinked(user){
 }
 
 function showWaiting(user){
+  loginTransitionPending = false;
   $('waitIcon').textContent = '⏳';
   $('waitTtl').textContent  = 'הבקשה נשלחה';
   $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
@@ -902,12 +969,6 @@ async function loadProfile(user, claims){
   $('pEmp').textContent     = claims.emp ? ('מספר עובד: ' + claims.emp) : '';
 
   $('lnkAdmin').classList.toggle('hide', !isSuper);
-  navFor(claims, user, u ? u.full_name : '');
-  watchCallouts(db, sid, user.uid, { name: (u && u.full_name) || user.email || '' });
-
-  // מי שנשלח לכאן ממסך אחר — מוחזר אליו אחרי הכניסה, במקום
-  // להישאר תקוע במסך הבית ולנווט שוב ביד.
-  returnToCaller();
 
   if (claims.emp && claims.stationId) {
     markLogin(user.uid, sid, {
@@ -917,7 +978,58 @@ async function loadProfile(user, claims){
     });
   }
 
+  // מי שנשלח לכאן ממסך אחר — מוחזר אליו אחרי הכניסה, במקום
+  // להישאר תקוע במסך הבית ולנווט שוב ביד. רישום הכניסה כבר
+  // התחיל למעלה, ולכן המעבר אינו מדלג על מדד הנוכחות הקיים.
+  if (returnToCaller()) return;
+
+  const animate = loginTransitionPending && !$('authView').classList.contains('hide');
+  const reduceMotion = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (animate && !reduceMotion) {
+    $('authView').classList.add('bulletin-auth-leave');
+    await new Promise(function (resolve) { setTimeout(resolve, 200); });
+  }
+
+  navFor(claims, user, u ? u.full_name : '');
+  watchCallouts(db, sid, user.uid, { name: (u && u.full_name) || user.email || '' });
+  $('pageSub').textContent = 'ResQ · ' + (stationName(sid) || sid);
+
+  initBulletin({
+    db: db,
+    functions: fns,
+    user: user,
+    claims: claims,
+    stationId: sid,
+    profile: u || { full_name: user.email || '' },
+    roleLabels: ROLE_HE,
+    fallbackBoards: subStationsForStation(sid),
+    canAccess: isMember(claims),
+    sdk: {
+      collection: collection, getDocs: getDocs, query: query, where: where,
+      orderBy: orderBy, limit: limit, onSnapshot: onSnapshot,
+      startAfter: startAfter, httpsCallable: httpsCallable
+    }
+  });
+
+  if (animate && !reduceMotion) $('homeView').classList.add('bulletin-enter');
   showView('home');
+  if (animate && !reduceMotion) {
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          $('homeView').classList.add('bulletin-enter-active');
+          setTimeout(resolve, 280);
+        });
+      });
+    });
+    $('authView').classList.remove('bulletin-auth-leave');
+    $('homeView').classList.remove('bulletin-enter', 'bulletin-enter-active');
+  }
+  loginTransitionPending = false;
+  try { $('pageTitle').focus({ preventScroll: true }); }
+  catch (ignore) { $('pageTitle').focus(); }
 }
 
 // ---------- גרסה ועדכון ----------
@@ -976,7 +1088,7 @@ $('btnUpdate').onclick = async function () {
 // ---------- שינוי סיסמה ----------
 
 $('btnChangePw').onclick = () => { $('pwMsg').className = 'msg'; showView('pw'); };
-$('btnPwBack').onclick   = () => showView('home');
+$('btnPwBack').onclick   = () => { showView('home'); $('pageTitle').focus(); };
 
 $('btnSavePw').onclick = async () => {
   const btn = $('btnSavePw');

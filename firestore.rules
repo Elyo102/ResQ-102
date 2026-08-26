@@ -396,7 +396,23 @@ service cloud.firestore {
 
       match /sub_stations/{subId} {
         allow read:  if member(sid);
-        allow write: if staff(sid);
+        // תחנה שיש לה היסטוריית לוח אינה נמחקת מהלקוח. במקום
+        // מחיקה, הסגל מעדכן אותה ל-inactive/archived; כך נתיב
+        // ההודעות נשמר והפניות ישנות אינן הופכות ליתומות.
+        allow create, update: if staff(sid);
+        allow delete: if false;
+
+        // לוח המודעות נכתב רק דרך Cloud Functions. הן קובעות
+        // זהות וזמן, מאמתות את תחנת המשנה ומגבילות קצב. Admin
+        // SDK עוקף את הכללים; false כאן חוסם התחזות מהדפדפן.
+        // גם מנהל-על מסתיר דרך callable מתועד, ולא משנה מסמך
+        // ישירות. הודעה מוסתרת נשארת למסלול ביקורת אך אינה
+        // ניתנת לקריאה באפליקציה — גם לא לפי מזהה ישיר.
+        match /bulletin_messages/{messageId} {
+          allow read: if member(sid)
+                      && resource.data.get('hidden', true) == false;
+          allow create, update, delete: if false;
+        }
       }
 
 
