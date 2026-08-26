@@ -4,11 +4,13 @@
 // ובחלון של 30 הודעות. כתיבה והסתרה אינן נעשות מהדפדפן: הן
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
-import { subStationAvailable } from './stations.js?v=39';
+import { subStationAvailable } from './stations.js?v=40';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
+const REPLY_PAGE_SIZE = 20;
 const MAX_TEXT = 2000;
+const MAX_REPLY_TEXT = 1000;
 const SELECTED_BOARD_PREFIX = 'resq_bulletin_board:';
 const LEGACY_DRAFT_PREFIX = 'resq_bulletin_draft:';
 const DRAFT_PREFIX = 'resq_bulletin_draft:v2:';
@@ -204,9 +206,48 @@ function selectedBoardKey() {
   return SELECTED_BOARD_PREFIX + state.stationId;
 }
 
+function selectedAudience() {
+  if (!state || !state.canShiftCommand) return 'board';
+  const checked = document.querySelector(
+    'input[name="bulletinAudience"]:checked'
+  );
+  return checked && checked.value === 'station' ? 'station' : 'board';
+}
+
+function updateAudienceUi(resetApproval) {
+  if (!state) return;
+  const board = state.boards.find(function (item) {
+    return item.id === state.activeBoard;
+  });
+  byId('bulletinCurrentBoardName').textContent = board ? board.name : 'הנבחר';
+  byId('bulletinAllBoardsCount').textContent = String(state.boards.length);
+  byId('bulletinBroadcastTargets').textContent = state.boards.length
+    ? 'היעדים: ' + state.boards.map(function (item) { return item.name; }).join(' · ')
+    : 'אין כרגע תחנות פעילות.';
+  const broad = selectedAudience() === 'station';
+  byId('bulletinBroadcastConfirm').classList.toggle('hide', !broad);
+  if (resetApproval) byId('bulletinBroadcastApproved').checked = false;
+  if (!state.publishing) {
+    byId('bulletinSubmit').textContent = broad
+      ? 'פרסם ל־' + state.boards.length + ' תחנות'
+      : 'פרסם הודעה';
+  }
+}
+
+function setAudience(value, resetApproval) {
+  const allowed = state && state.canShiftCommand && value === 'station'
+    ? 'station' : 'board';
+  const input = document.querySelector(
+    'input[name="bulletinAudience"][value="' + allowed + '"]'
+  );
+  if (input) input.checked = true;
+  updateAudienceUi(resetApproval !== false);
+}
+
 function readDraft(boardId) {
   const fallback = {
-    text: '', category: 'general', requestId: '', attemptedFingerprint: ''
+    text: '', category: 'general', audience: 'board',
+    requestId: '', attemptedFingerprint: ''
   };
   try {
     const value = JSON.parse(safeRead(
@@ -216,6 +257,7 @@ function readDraft(boardId) {
     return {
       text: typeof value.text === 'string' ? value.text.slice(0, MAX_TEXT) : '',
       category: CATEGORY_BY_ID[value.category] ? value.category : 'general',
+      audience: value.audience === 'station' ? 'station' : 'board',
       requestId: typeof value.requestId === 'string' ? value.requestId : '',
       attemptedFingerprint: typeof value.attemptedFingerprint === 'string'
         ? value.attemptedFingerprint : ''
@@ -230,6 +272,7 @@ function persistDraft() {
   const text = byId('bulletinText').value.slice(0, MAX_TEXT);
   const category = CATEGORY_BY_ID[byId('bulletinCategory').value]
     ? byId('bulletinCategory').value : 'general';
+  const audience = selectedAudience();
   if (text && !state.draftRequestId) state.draftRequestId = newRequestId();
 
   if (!text && !state.draftRequestId) {
@@ -239,13 +282,14 @@ function persistDraft() {
   safeWrite(draftStorageKey(state.user.uid, state.stationId, state.activeBoard), JSON.stringify({
     text: text,
     category: category,
+    audience: audience,
     requestId: state.draftRequestId,
     attemptedFingerprint: state.attemptedFingerprint
   }));
 }
 
 function currentDraftFingerprint() {
-  return byId('bulletinCategory').value + '\n' +
+  return selectedAudience() + '\n' + byId('bulletinCategory').value + '\n' +
     validateBulletinText(byId('bulletinText').value).text;
 }
 
@@ -262,6 +306,7 @@ function restoreDraft(boardId) {
   state.attemptedFingerprint = draft.attemptedFingerprint;
   byId('bulletinText').value = draft.text;
   byId('bulletinCategory').value = draft.category;
+  setAudience(draft.audience, true);
   updateCharCount();
   setFormStatus(draft.text ? 'הטיוטה שלך נשמרה במכשיר.' : '', 'info');
 }
@@ -272,6 +317,7 @@ function clearDraft(boardId) {
   state.attemptedFingerprint = '';
   byId('bulletinText').value = '';
   byId('bulletinCategory').value = 'general';
+  setAudience('board', true);
   updateCharCount();
 }
 
@@ -328,6 +374,482 @@ function messageRecord(snapshot) {
   return { id: snapshot.id, data: data, snapshot: snapshot };
 }
 
+function replyDraftKey(boardId, messageId) {
+  return String(boardId || '') + ':' + String(messageId || '');
+}
+
+function domToken(value) {
+  return String(value || '').replace(/[^A-Za-z0-9_-]/g, function (character) {
+    return '_' + character.codePointAt(0).toString(16) + '_';
+  });
+}
+
+function replyThreadDomId(boardId, messageId) {
+  return 'bulletinThread-' + domToken(boardId) + '-' + domToken(messageId);
+}
+
+function replyFocusKey(kind, messageId) {
+  return String(kind || 'control') + ':' + String(messageId || '');
+}
+
+function feedFocusSnapshot(feed) {
+  const active = document.activeElement;
+  if (!feed || !active || !feed.contains(active)) return null;
+  const key = String(active.dataset && active.dataset.bulletinFocus || '');
+  if (!key) return null;
+  const snapshot = { key: key };
+  if (typeof active.selectionStart === 'number') {
+    snapshot.selectionStart = active.selectionStart;
+    snapshot.selectionEnd = active.selectionEnd;
+  }
+  return snapshot;
+}
+
+function restoreFeedFocus(feed, requested) {
+  const focus = typeof requested === 'string' ? { key: requested } : requested;
+  if (!feed || !focus || !focus.key) return;
+  const target = Array.from(feed.querySelectorAll('[data-bulletin-focus]'))
+    .find(function (node) { return node.dataset.bulletinFocus === focus.key; });
+  if (!target || target.disabled) return;
+  try { target.focus({ preventScroll: true }); } catch (ignore) { target.focus(); }
+  if (typeof focus.selectionStart === 'number' &&
+      typeof target.setSelectionRange === 'function') {
+    const end = typeof focus.selectionEnd === 'number'
+      ? focus.selectionEnd : focus.selectionStart;
+    try { target.setSelectionRange(focus.selectionStart, end); } catch (ignore) {}
+  }
+}
+
+function replyDraft(boardId, messageId) {
+  const key = replyDraftKey(boardId, messageId);
+  if (!state.replyDrafts[key]) {
+    state.replyDrafts[key] = {
+      text: '', requestId: '', attemptedText: ''
+    };
+  }
+  return state.replyDrafts[key];
+}
+
+function mergedReplies(thread) {
+  const all = new Map();
+  (thread.liveDocs || []).concat(thread.olderDocs || []).forEach(function (item) {
+    if (!item || !item.id || item.data.hidden === true) return;
+    all.set(item.id, item);
+  });
+  return Array.from(all.values()).sort(function (a, b) {
+    const delta = messageTimeMs(a.data.created_at) - messageTimeMs(b.data.created_at);
+    if (delta) return delta;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function stopReplyListener() {
+  if (!state) return;
+  state.replyGeneration++;
+  if (!state.replyUnsubscribe) return;
+  try { state.replyUnsubscribe(); } catch (ignore) {}
+  state.replyUnsubscribe = null;
+}
+
+function repliesQuery(thread, cursor) {
+  const sdk = state.sdk;
+  const base = sdk.collection(
+    state.db, 'stations', state.stationId, 'sub_stations', thread.boardId,
+    'bulletin_messages', thread.messageId, 'bulletin_replies'
+  );
+  const clauses = [
+    sdk.where('hidden', '==', false),
+    sdk.orderBy('created_at', 'desc')
+  ];
+  if (cursor) clauses.push(sdk.startAfter(cursor));
+  clauses.push(sdk.limit(REPLY_PAGE_SIZE));
+  return sdk.query(base, ...clauses);
+}
+
+function subscribeReplies() {
+  if (!state || !state.replyThread || document.visibilityState === 'hidden') return;
+  stopReplyListener();
+  const owner = state;
+  const thread = state.replyThread;
+  // חזרה מרקע יכולה לבטל getDocs שכבר יצא. פתיחת המאזין מחדש
+  // מבטלת את העמוד הישן ומשחררת מיד כפתור שנשאר במצב טעינה.
+  thread.paginationRevision++;
+  thread.loadingOlder = false;
+  const generation = ++state.replyGeneration;
+  thread.loading = true;
+  thread.status = '';
+  renderFeed();
+  state.replyUnsubscribe = state.sdk.onSnapshot(
+    repliesQuery(thread),
+    function (snapshot) {
+      if (state !== owner || state.replyThread !== thread ||
+          generation !== state.replyGeneration) return;
+      const docs = Array.isArray(snapshot.docs) ? snapshot.docs : [];
+      const next = docs.map(messageRecord);
+      const previousIds = thread.liveDocs.map(function (item) { return item.id; });
+      const nextIds = next.map(function (item) { return item.id; });
+      const changed = previousIds.length > 0 &&
+        (previousIds.length !== nextIds.length || previousIds.some(function (id, index) {
+          return id !== nextIds[index];
+        }));
+      if (changed) {
+        thread.olderDocs = [];
+        thread.paginationRevision++;
+        thread.loadingOlder = false;
+      }
+      thread.liveDocs = next;
+      thread.hasMore = docs.length === REPLY_PAGE_SIZE;
+      thread.loading = false;
+      thread.loaded = true;
+      thread.status = snapshot.metadata && snapshot.metadata.fromCache
+        ? 'מוצגות תגובות שמורות מהמכשיר.' : '';
+      renderFeed();
+    },
+    function () {
+      if (state !== owner || state.replyThread !== thread ||
+          generation !== state.replyGeneration) return;
+      thread.loading = false;
+      thread.loaded = true;
+      thread.status = 'לא הצלחנו לטעון את התגובות. אפשר לנסות שוב.';
+      thread.statusKind = 'error';
+      renderFeed();
+    }
+  );
+}
+
+async function loadOlderReplies() {
+  if (!state || !state.replyThread || state.replyThread.loadingOlder) return;
+  const owner = state;
+  const thread = state.replyThread;
+  const cursorRecord = thread.olderDocs.length
+    ? thread.olderDocs[thread.olderDocs.length - 1]
+    : thread.liveDocs[thread.liveDocs.length - 1];
+  if (!cursorRecord || !cursorRecord.snapshot) {
+    thread.hasMore = false;
+    renderFeed();
+    return;
+  }
+  const generation = state.replyGeneration;
+  const paginationRevision = thread.paginationRevision;
+  thread.loadingOlder = true;
+  renderFeed();
+  try {
+    const snapshot = await state.sdk.getDocs(repliesQuery(thread, cursorRecord.snapshot));
+    if (state !== owner || state.replyThread !== thread ||
+        generation !== state.replyGeneration ||
+        paginationRevision !== thread.paginationRevision) return;
+    const docs = Array.isArray(snapshot.docs) ? snapshot.docs : [];
+    thread.olderDocs = thread.olderDocs.concat(docs.map(messageRecord));
+    thread.hasMore = docs.length === REPLY_PAGE_SIZE;
+  } catch (ignore) {
+    if (state === owner && state.replyThread === thread &&
+        generation === state.replyGeneration &&
+        paginationRevision === thread.paginationRevision) {
+      thread.status = 'לא הצלחנו לטעון תגובות קודמות.';
+      thread.statusKind = 'error';
+    }
+  } finally {
+    if (state === owner && state.replyThread === thread &&
+        generation === state.replyGeneration &&
+        paginationRevision === thread.paginationRevision) {
+      thread.loadingOlder = false;
+      renderFeed();
+    }
+  }
+}
+
+function openReplyThread(item, composing) {
+  if (!state || !state.activeBoard) return;
+  const same = state.replyThread &&
+    state.replyThread.boardId === state.activeBoard &&
+    state.replyThread.messageId === item.id;
+  if (!same) {
+    stopReplyListener();
+    state.replyThread = {
+      boardId: state.activeBoard,
+      messageId: item.id,
+      liveDocs: [],
+      olderDocs: [],
+      hasMore: false,
+      loading: true,
+      loadingOlder: false,
+      paginationRevision: 0,
+      loaded: false,
+      composing: !!composing,
+      status: '',
+      statusKind: ''
+    };
+    renderFeed();
+    subscribeReplies();
+  } else {
+    state.replyThread.composing = state.replyThread.composing || !!composing;
+    renderFeed();
+  }
+}
+
+function toggleReplyThread(item) {
+  const same = state && state.replyThread &&
+    state.replyThread.boardId === state.activeBoard &&
+    state.replyThread.messageId === item.id;
+  if (same) {
+    stopReplyListener();
+    state.replyThread = null;
+    renderFeed(replyFocusKey('toggle', item.id));
+    return;
+  }
+  openReplyThread(item, false);
+}
+
+function openReplyComposer(item) {
+  if (!state || !state.canShiftCommand) return;
+  openReplyThread(item, true);
+  requestAnimationFrame(function () {
+    const article = Array.from(document.querySelectorAll('[data-message-id]'))
+      .find(function (node) { return node.dataset.messageId === item.id; });
+    const field = article && article.querySelector('.bulletin-reply-form textarea');
+    if (field) field.focus();
+  });
+}
+
+async function publishReply(event, item) {
+  event.preventDefault();
+  if (!state || !state.canShiftCommand || state.replyPublishing ||
+      !state.replyThread || state.replyThread.messageId !== item.id) return;
+  const thread = state.replyThread;
+  const draft = replyDraft(thread.boardId, item.id);
+  const text = String(draft.text || '').normalize('NFC').trim();
+  if (!text) {
+    thread.status = 'כתוב תגובה לפני השליחה.';
+    thread.statusKind = 'error';
+    renderFeed();
+    return;
+  }
+  if (text.length > MAX_REPLY_TEXT) {
+    thread.status = 'התגובה ארוכה מדי. אפשר לכתוב עד ' +
+      MAX_REPLY_TEXT + ' תווים.';
+    thread.statusKind = 'error';
+    renderFeed();
+    return;
+  }
+  if (navigator.onLine === false) {
+    thread.status = 'אין כרגע חיבור. התגובה נשמרה במסך ואפשר לנסות שוב.';
+    thread.statusKind = 'error';
+    renderFeed();
+    return;
+  }
+  if (!draft.requestId) draft.requestId = newRequestId();
+  if (!draft.requestId) {
+    thread.status = 'הדפדפן אינו יכול ליצור מזהה תגובה בטוח.';
+    thread.statusKind = 'error';
+    renderFeed();
+    return;
+  }
+
+  const owner = state;
+  const boardId = thread.boardId;
+  const requestId = draft.requestId;
+  draft.attemptedText = text;
+  state.replyPublishing = true;
+  thread.status = 'שולח את התגובה…';
+  thread.statusKind = '';
+  renderFeed();
+  try {
+    await state.replyMessage({
+      subStationId: boardId,
+      messageId: item.id,
+      text: text,
+      requestId: requestId
+    });
+    if (state !== owner || state.replyThread !== thread) return;
+    delete state.replyDrafts[replyDraftKey(boardId, item.id)];
+    thread.composing = false;
+    thread.status = 'התגובה פורסמה.';
+    thread.statusKind = 'success';
+  } catch (error) {
+    if (state !== owner || state.replyThread !== thread) return;
+    const code = String((error && error.code) || '');
+    if (code.indexOf('already-exists') !== -1) {
+      draft.requestId = newRequestId();
+      draft.attemptedText = '';
+      thread.status = 'הבקשה הקודמת כבר טופלה. בדוק אם התגובה מופיעה; אם לא, נסה שוב.';
+    } else if (code.indexOf('permission-denied') !== -1) {
+      thread.status = 'ההרשאה השתנתה. התחבר מחדש לפני כתיבת תגובה.';
+    } else if (code.indexOf('resource-exhausted') !== -1) {
+      thread.status = 'נשלחו יותר מדי תגובות בזמן קצר. המתן ונסה שוב.';
+    } else {
+      thread.status = 'התגובה לא הושלמה. הטקסט נשמר במסך ואפשר לנסות שוב.';
+    }
+    thread.statusKind = 'error';
+  } finally {
+    if (state === owner) {
+      state.replyPublishing = false;
+      renderFeed();
+    }
+  }
+}
+
+async function hideReply(item, reply, button) {
+  if (!state || !state.isSuper || button.disabled) return;
+  if (!window.confirm('להסתיר את התגובה? הפעולה תישמר בתיעוד.')) return;
+  const owner = state;
+  const thread = state.replyThread;
+  button.disabled = true;
+  button.textContent = 'מסתיר…';
+  try {
+    await state.hideReply({
+      sid: state.stationId,
+      subStationId: thread.boardId,
+      messageId: item.id,
+      replyId: reply.id
+    });
+    if (state !== owner || state.replyThread !== thread) return;
+    thread.liveDocs = thread.liveDocs.filter(function (x) { return x.id !== reply.id; });
+    thread.olderDocs = thread.olderDocs.filter(function (x) { return x.id !== reply.id; });
+    thread.paginationRevision++;
+    thread.loadingOlder = false;
+    thread.status = 'התגובה הוסתרה.';
+    thread.statusKind = 'success';
+    renderFeed();
+  } catch (ignore) {
+    if (state !== owner || state.replyThread !== thread) return;
+    thread.status = 'הסתרת התגובה לא הושלמה.';
+    thread.statusKind = 'error';
+    renderFeed();
+  }
+}
+
+function renderReplyThread(item) {
+  const thread = state.replyThread;
+  const section = document.createElement('section');
+  section.className = 'bulletin-thread';
+  section.dataset.testid = 'bulletin-thread';
+  section.id = replyThreadDomId(thread.boardId, item.id);
+
+  const title = document.createElement('h3');
+  title.className = 'bulletin-thread-title';
+  title.id = section.id + '-title';
+  title.textContent = 'תגובות';
+  section.setAttribute('aria-labelledby', title.id);
+  section.appendChild(title);
+
+  const replies = mergedReplies(thread);
+  const list = document.createElement('div');
+  list.className = 'bulletin-replies';
+  replies.forEach(function (reply) {
+    const data = reply.data || {};
+    const card = document.createElement('div');
+    card.className = 'bulletin-reply';
+    card.dataset.replyId = reply.id;
+    card.dataset.testid = 'bulletin-reply';
+    const head = document.createElement('div');
+    head.className = 'bulletin-reply-head';
+    addText(head, 'bulletin-reply-name', data.by_name || 'חבר צוות');
+    const role = state.roleLabels[data.by_role] || data.by_role || '';
+    const crew = data.by_crew ? 'משמרת ' + data.by_crew : '';
+    const detail = [role, crew].filter(Boolean).join(' · ');
+    if (detail) addText(head, 'bulletin-reply-role', detail);
+    const when = timeParts(data);
+    const time = document.createElement('time');
+    time.className = 'bulletin-reply-time';
+    time.textContent = when.text;
+    if (when.iso) time.dateTime = when.iso;
+    head.appendChild(time);
+    card.appendChild(head);
+    const body = document.createElement('p');
+    body.className = 'bulletin-reply-text';
+    body.textContent = typeof data.text === 'string' ? data.text : '';
+    card.appendChild(body);
+    if (state.isSuper) {
+      const footer = document.createElement('div');
+      footer.className = 'bulletin-reply-footer';
+      const hide = document.createElement('button');
+      hide.type = 'button';
+      hide.className = 'bulletin-hide-reply';
+      hide.textContent = 'הסתר תגובה';
+      hide.onclick = function () { hideReply(item, reply, hide); };
+      footer.appendChild(hide);
+      card.appendChild(footer);
+    }
+    list.appendChild(card);
+  });
+  section.appendChild(list);
+
+  if (thread.loading && !thread.loaded) {
+    addText(section, 'bulletin-reply-state', 'טוען תגובות…');
+  } else if (!replies.length) {
+    addText(section, 'bulletin-reply-state', 'עדיין אין תגובות להודעה.');
+  }
+  if (thread.hasMore) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'bulletin-reply-more';
+    more.textContent = thread.loadingOlder ? 'טוען…' : 'טען תגובות קודמות';
+    more.disabled = thread.loadingOlder;
+    more.onclick = loadOlderReplies;
+    section.appendChild(more);
+  }
+
+  if (state.canShiftCommand && thread.composing) {
+    const draft = replyDraft(thread.boardId, item.id);
+    const form = document.createElement('form');
+    form.className = 'bulletin-reply-form';
+    form.dataset.testid = 'bulletin-reply-form';
+    const label = document.createElement('label');
+    label.textContent = 'תגובה פיקודית';
+    const field = document.createElement('textarea');
+    field.maxLength = MAX_REPLY_TEXT;
+    field.rows = 3;
+    field.value = draft.text;
+    field.placeholder = 'כתוב תשובה ברורה וקצרה';
+    label.htmlFor = 'bulletinReplyText-' + item.id;
+    field.id = label.htmlFor;
+    field.dataset.bulletinFocus = replyFocusKey('field', item.id);
+    field.oninput = function () {
+      const next = field.value.slice(0, MAX_REPLY_TEXT);
+      if (draft.attemptedText && next.normalize('NFC').trim() !== draft.attemptedText) {
+        draft.requestId = newRequestId();
+        draft.attemptedText = '';
+      }
+      draft.text = next;
+      thread.status = '';
+      thread.statusKind = '';
+    };
+    form.appendChild(label);
+    form.appendChild(field);
+    const actions = document.createElement('div');
+    actions.className = 'bulletin-reply-form-actions';
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.dataset.bulletinFocus = replyFocusKey('submit', item.id);
+    submit.textContent = state.replyPublishing ? 'שולח…' : 'פרסם תגובה';
+    submit.disabled = state.replyPublishing;
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'bulletin-reply-cancel';
+    cancel.dataset.bulletinFocus = replyFocusKey('cancel', item.id);
+    cancel.textContent = 'ביטול';
+    cancel.disabled = state.replyPublishing;
+    cancel.onclick = function () {
+      thread.composing = false;
+      renderFeed(replyFocusKey('action', item.id));
+    };
+    actions.appendChild(submit);
+    actions.appendChild(cancel);
+    form.appendChild(actions);
+    form.onsubmit = function (event) { publishReply(event, item); };
+    section.appendChild(form);
+  }
+
+  if (thread.status) {
+    const status = addText(section,
+      'bulletin-reply-status' + (thread.statusKind ? ' ' + thread.statusKind : ''),
+      thread.status
+    );
+    status.setAttribute('role', thread.statusKind === 'error' ? 'alert' : 'status');
+  }
+  return section;
+}
+
 function mergedMessages() {
   const all = new Map();
   state.liveDocs.concat(state.olderDocs).forEach(function (item) {
@@ -362,6 +884,14 @@ function renderMessage(item) {
   categoryChip.className = 'bulletin-category';
   categoryChip.textContent = category.icon + ' ' + category.label;
   top.appendChild(categoryChip);
+
+  if (data.audience === 'all_sub_stations') {
+    const broad = document.createElement('span');
+    broad.className = 'bulletin-broadcast-chip';
+    broad.textContent = '📣 לכל התחנות';
+    broad.setAttribute('aria-label', 'הודעה שהופצה לכל תחנות המשנה');
+    top.appendChild(broad);
+  }
 
   const when = timeParts(data);
   const time = document.createElement('time');
@@ -398,6 +928,43 @@ function renderMessage(item) {
     actions.appendChild(fault);
   }
 
+  const replyCount = Math.max(0, Math.floor(Number(data.reply_count || 0)));
+  const threadOpen = state.replyThread &&
+    state.replyThread.boardId === state.activeBoard &&
+    state.replyThread.messageId === item.id;
+  if (replyCount || threadOpen) {
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'bulletin-reply-toggle';
+    toggle.dataset.testid = 'bulletin-replies-toggle';
+    toggle.dataset.bulletinFocus = replyFocusKey('toggle', item.id);
+    toggle.textContent = threadOpen
+      ? 'סגור תגובות'
+      : 'הצג תגובות' + (replyCount ? ' (' + replyCount + ')' : '');
+    toggle.setAttribute('aria-expanded', threadOpen ? 'true' : 'false');
+    toggle.setAttribute('aria-controls',
+      replyThreadDomId(state.activeBoard, item.id));
+    toggle.onclick = function () { toggleReplyThread(item); };
+    actions.appendChild(toggle);
+  }
+
+  if (state.canShiftCommand) {
+    const reply = document.createElement('button');
+    reply.type = 'button';
+    reply.className = 'bulletin-reply-action';
+    reply.dataset.testid = 'bulletin-reply-action';
+    reply.dataset.bulletinFocus = replyFocusKey('action', item.id);
+    reply.textContent = 'תגובה';
+    reply.setAttribute('aria-label', 'כתיבת תגובה להודעה מאת ' +
+      (data.by_name || data.author_name || 'חבר צוות'));
+    reply.setAttribute('aria-controls',
+      replyThreadDomId(state.activeBoard, item.id));
+    reply.setAttribute('aria-expanded',
+      threadOpen && state.replyThread.composing ? 'true' : 'false');
+    reply.onclick = function () { openReplyComposer(item); };
+    actions.appendChild(reply);
+  }
+
   if (state.isSuper) {
     const hide = document.createElement('button');
     hide.type = 'button';
@@ -410,12 +977,14 @@ function renderMessage(item) {
     actions.appendChild(hide);
   }
   if (actions.childNodes.length) article.appendChild(actions);
+  if (threadOpen) article.appendChild(renderReplyThread(item));
   return article;
 }
 
-function renderFeed() {
+function renderFeed(preferredFocus) {
   if (!state) return;
   const feed = byId('bulletinFeed');
+  const focus = preferredFocus || feedFocusSnapshot(feed);
   const messages = mergedMessages();
   feed.replaceChildren();
   messages.forEach(function (item) { feed.appendChild(renderMessage(item)); });
@@ -425,6 +994,7 @@ function renderFeed() {
   empty.classList.toggle('hide', messages.length !== 0);
   const more = byId('bulletinLoadMore');
   more.classList.toggle('hide', messages.length === 0 || !state.hasMore);
+  restoreFeedFocus(feed, focus);
 
   if (state.lastLoadFromCache || navigator.onLine === false) {
     setStatus('מציג מידע שמור. ייתכן שיש הודעות חדשות שטרם הגיעו.', 'offline', false);
@@ -603,6 +1173,8 @@ function selectBoard(boardId, force) {
   if (!state || !state.boards.some(function (b) { return b.id === boardId; })) return;
   if (!force && state.activeBoard === boardId) return;
   if (state.activeBoard) persistDraft();
+  stopReplyListener();
+  state.replyThread = null;
   stopListener();
   clearTimeout(state.readTimer);
   state.generation++;
@@ -730,6 +1302,7 @@ async function publishMessage(event) {
   const checked = validateBulletinText(byId('bulletinText').value);
   const text = checked.text;
   const category = byId('bulletinCategory').value;
+  const audience = selectedAudience();
   if (checked.error === 'empty') {
     setFormStatus('כתוב הודעה לפני הפרסום.', 'error');
     byId('bulletinText').focus();
@@ -742,6 +1315,22 @@ async function publishMessage(event) {
   if (!CATEGORY_BY_ID[category]) {
     setFormStatus('בחר סוג הודעה תקין.', 'error');
     return;
+  }
+  if (audience === 'station') {
+    if (!state.canShiftCommand) {
+      setFormStatus('אין לחשבון הזה הרשאה להפיץ לכל התחנות.', 'error');
+      setAudience('board', true);
+      return;
+    }
+    if (!state.boards.length) {
+      setFormStatus('לא נמצאו תחנות פעילות להפצה.', 'error');
+      return;
+    }
+    if (!byId('bulletinBroadcastApproved').checked) {
+      setFormStatus('לפני הפצה רחבה צריך לאשר את רשימת התחנות.', 'error');
+      byId('bulletinBroadcastApproved').focus();
+      return;
+    }
   }
   if (navigator.onLine === false) {
     persistDraft();
@@ -764,21 +1353,32 @@ async function publishMessage(event) {
   const button = byId('bulletinSubmit');
   state.publishing = true;
   button.disabled = true;
-  button.textContent = 'מפרסם…';
-  setFormStatus('שולח את ההודעה…', 'info');
+  button.textContent = audience === 'station' ? 'מפיץ…' : 'מפרסם…';
+  setFormStatus(audience === 'station'
+    ? 'מפיץ את ההודעה לכל התחנות…'
+    : 'שולח את ההודעה…', 'info');
 
   try {
-    await state.postMessage({
-      subStationId: boardId,
-      category: category,
-      text: text,
-      requestId: requestId
-    });
+    const result = audience === 'station'
+      ? await state.broadcastMessage({
+        category: category,
+        text: text,
+        requestId: requestId
+      })
+      : await state.postMessage({
+        subStationId: boardId,
+        category: category,
+        text: text,
+        requestId: requestId
+      });
     if (state !== owner || state.activeBoard !== boardId) return;
     clearDraft(boardId);
     setFormStatus('', '');
     hideComposer();
-    setStatus('ההודעה פורסמה.', 'success', false);
+    setStatus(audience === 'station'
+      ? 'ההודעה פורסמה ב־' + Number(result && result.data &&
+          result.data.targetCount || state.boards.length) + ' תחנות.'
+      : 'ההודעה פורסמה.', 'success', false);
   } catch (error) {
     if (state !== owner || state.activeBoard !== boardId) return;
     // הטקסט וה-requestId נשארים כפי שהם. ניסיון נוסף אינו יכול
@@ -804,7 +1404,7 @@ async function publishMessage(event) {
     if (state === owner) {
       state.publishing = false;
       button.disabled = false;
-      button.textContent = 'פרסם הודעה';
+      updateAudienceUi(false);
     }
   }
 }
@@ -840,9 +1440,11 @@ function handleVisibility() {
   if (!state) return;
   if (document.visibilityState === 'hidden') {
     stopListener();
+    stopReplyListener();
     clearTimeout(state.readTimer);
-  } else if (state.activeBoard && !state.unsubscribe) {
-    subscribeToActive(true);
+  } else {
+    if (state.activeBoard && !state.unsubscribe) subscribeToActive(true);
+    if (state.replyThread && !state.replyUnsubscribe) subscribeReplies();
   }
 }
 
@@ -875,13 +1477,26 @@ function wireEvents() {
     renewIdentityAfterEdit();
     persistDraft();
   }, { signal: signal });
+  byId('bulletinAudience').addEventListener('change', function (event) {
+    if (!event.target.matches('input[name="bulletinAudience"]')) return;
+    updateAudienceUi(true);
+    renewIdentityAfterEdit();
+    persistDraft();
+    setFormStatus('', '');
+  }, { signal: signal });
+  byId('bulletinBroadcastApproved').addEventListener('change', function () {
+    setFormStatus('', '');
+  }, { signal: signal });
   byId('bulletinForm').addEventListener('submit', publishMessage, { signal: signal });
   byId('bulletinRetry').addEventListener('click', function () {
     subscribeToActive(true);
   }, { signal: signal });
   byId('bulletinLoadMore').addEventListener('click', loadOlder, { signal: signal });
   document.addEventListener('visibilitychange', handleVisibility, { signal: signal });
-  window.addEventListener('pagehide', stopListener, { signal: signal });
+  window.addEventListener('pagehide', function () {
+    stopListener();
+    stopReplyListener();
+  }, { signal: signal });
   window.addEventListener('pageshow', handleVisibility, { signal: signal });
   window.addEventListener('offline', handleOffline, { signal: signal });
   window.addEventListener('online', handleOnline, { signal: signal });
@@ -916,11 +1531,15 @@ export function initBulletin(options) {
   const opts = options || {};
   purgeLegacyBulletinDrafts();
   purgeLegacyBulletinReads();
+  const claims = opts.claims || {};
+  const isSuper = claims.super === true || claims.role === 'super_admin';
+  const canShiftCommand = isSuper ||
+    claims.role === 'commander' || claims.role === 'deputy';
   state = {
     db: opts.db,
     functions: opts.functions,
     user: opts.user || {},
-    claims: opts.claims || {},
+    claims: claims,
     stationId: String(opts.stationId || ''),
     profile: opts.profile || {},
     sdk: opts.sdk || {},
@@ -941,11 +1560,19 @@ export function initBulletin(options) {
     draftRequestId: '',
     attemptedFingerprint: '',
     publishing: false,
+    replyPublishing: false,
+    replyThread: null,
+    replyDrafts: {},
+    replyUnsubscribe: null,
+    replyGeneration: 0,
     canAccess: opts.canAccess !== false,
-    isSuper: opts.claims &&
-      (opts.claims.super === true || opts.claims.role === 'super_admin'),
+    isSuper: isSuper,
+    canShiftCommand: canShiftCommand,
     postMessage: null,
+    broadcastMessage: null,
+    replyMessage: null,
     hideMessage: null,
+    hideReply: null,
     abort: new AbortController()
   };
 
@@ -962,6 +1589,8 @@ export function initBulletin(options) {
   byId('bulletinEmpty').classList.add('hide');
   byId('bulletinLoadMore').classList.add('hide');
   byId('bulletinRetry').classList.add('hide');
+  byId('bulletinAudience').classList.toggle('hide', !state.canShiftCommand);
+  setAudience('board', true);
 
   // תפקיד תקף שאינו חבר תחנה (כגון מפקד מחוז) מקבל מסך
   // מפורש ולא לוח מדומה שייכשל רק אחרי לחיצה. חשוב שהחזרה הזו
@@ -981,7 +1610,18 @@ export function initBulletin(options) {
   }
 
   state.postMessage = opts.sdk.httpsCallable(opts.functions, 'postBulletinMessage');
-  state.hideMessage = opts.sdk.httpsCallable(opts.functions, 'hideBulletinMessage');
+  if (state.canShiftCommand) {
+    state.broadcastMessage = opts.sdk.httpsCallable(
+      opts.functions, 'broadcastBulletinMessage'
+    );
+    state.replyMessage = opts.sdk.httpsCallable(
+      opts.functions, 'replyToBulletinMessage'
+    );
+  }
+  if (state.isSuper) {
+    state.hideMessage = opts.sdk.httpsCallable(opts.functions, 'hideBulletinMessage');
+    state.hideReply = opts.sdk.httpsCallable(opts.functions, 'hideBulletinReply');
+  }
   renderCategoryOptions();
   wireEvents();
   byId('bulletinFeed').setAttribute('aria-busy', 'true');
@@ -997,6 +1637,7 @@ export function destroyBulletin() {
   if (!state) return;
   persistDraft();
   stopListener();
+  stopReplyListener();
   clearTimeout(state.readTimer);
   state.generation++;
   state.abort.abort();

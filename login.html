@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=39">
-<link rel="stylesheet" href="./bulletin.css?v=39">
+<link rel="stylesheet" href="./theme.css?v=40">
+<link rel="stylesheet" href="./bulletin.css?v=40">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -364,6 +364,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <label for="bulletinCategory">סוג ההודעה</label>
         <select id="bulletinCategory"></select>
 
+        <fieldset id="bulletinAudience" class="bulletin-audience hide">
+          <legend>איפה לפרסם?</legend>
+          <label class="bulletin-audience-option">
+            <input type="radio" name="bulletinAudience" value="board" checked>
+            <span>רק בלוח <strong id="bulletinCurrentBoardName">הנבחר</strong></span>
+          </label>
+          <label class="bulletin-audience-option">
+            <input type="radio" name="bulletinAudience" value="station">
+            <span>בכל תחנות המשנה (<strong id="bulletinAllBoardsCount">0</strong>)</span>
+          </label>
+          <div id="bulletinBroadcastConfirm" class="bulletin-broadcast-confirm hide">
+            <div id="bulletinBroadcastTargets" class="bulletin-broadcast-targets"></div>
+            <label>
+              <input type="checkbox" id="bulletinBroadcastApproved">
+              <span>אני מאשר שההודעה תפורסם בכל הלוחות המוצגים למעלה.</span>
+            </label>
+          </div>
+        </fieldset>
+
         <label for="bulletinText">מה חשוב שהמשמרת הבאה תדע?</label>
         <textarea id="bulletinText" rows="5" maxlength="2000"
                   placeholder="לדוגמה: חסר חלב במטבח, רכב 12 נכנס לטיפול, ציוד שממתין לבדיקה"></textarea>
@@ -442,15 +461,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=39';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=40';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=39';
-import { renderNav, clearNav } from './nav.js?v=39';
-import { ROLE_HE as ROLES_HE, isMember } from './roles.js?v=39';
-import { initPWA } from './pwa.js?v=39';
-import { APP_VERSION, APP_DATE } from './version.js?v=39';
-import { watchCallouts } from './callout.js?v=39';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=39';
+         subStationsForStation } from './stations.js?v=40';
+import { renderNav, clearNav } from './nav.js?v=40';
+import { ROLE_HE as ROLES_HE, isMember } from './roles.js?v=40';
+import { initPWA } from './pwa.js?v=40';
+import { APP_VERSION, APP_DATE } from './version.js?v=40';
+import { watchCallouts } from './callout.js?v=40';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=40';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -465,7 +484,7 @@ import { getFunctions, httpsCallable }
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=39';
+import { initAppCheck } from './appcheck.js?v=40';
 initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

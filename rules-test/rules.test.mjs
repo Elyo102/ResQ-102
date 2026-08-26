@@ -197,7 +197,8 @@ await env.withSecurityRulesDisabled(async (c) => {
     kind: 'bulletin', text: 'בדיקת ציוד בשעה 10:00', category: 'equipment',
     by_uid: 'u_cmda', by_name: 'מפקד א', by_role: 'commander', by_crew: 'א',
     hidden: false, created_at: new Date('2026-08-25T07:00:00.000Z'),
-    created_key: '2026-08-25T07:00:00.000Z', request_hash: 'hash-visible' });
+    created_key: '2026-08-25T07:00:00.000Z', request_hash: 'hash-visible',
+    reply_count: 1 });
   await setDoc(doc(d,
     `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_hidden`), {
     kind: 'bulletin', text: 'תוכן שהוסתר', category: 'general',
@@ -205,6 +206,27 @@ await env.withSecurityRulesDisabled(async (c) => {
     hidden: true, created_at: new Date('2026-08-25T07:05:00.000Z'),
     created_key: '2026-08-25T07:05:00.000Z', request_hash: 'hash-hidden',
     hidden_at: new Date('2026-08-25T07:06:00.000Z'), hidden_by: 'u_sup' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_visible/bulletin_replies/reply_visible`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+    text: 'תגובה גלויה', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: false,
+    created_at: new Date('2026-08-25T07:01:00.000Z'),
+    created_key: '2026-08-25T07:01:00.000Z', request_hash: 'reply-visible' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_visible/bulletin_replies/reply_hidden`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+    text: 'תגובה מוסתרת', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: true,
+    created_at: new Date('2026-08-25T07:02:00.000Z'),
+    created_key: '2026-08-25T07:02:00.000Z', request_hash: 'reply-hidden' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_hidden/bulletin_replies/reply_parent_hidden`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_hidden',
+    text: 'תגובה תחת אב מוסתר', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: false,
+    created_at: new Date('2026-08-25T07:06:00.000Z'),
+    created_key: '2026-08-25T07:06:00.000Z', request_hash: 'reply-parent-hidden' });
 
   // ---- טפסים ----
   const empSig = { image: 'data:image/png;base64,' + 'A'.repeat(400),
@@ -963,6 +985,55 @@ await blocked('🔒 מנהל-על חייב להסתיר דרך callable מתוע
 
 await blocked('🔒 אין מחיקה פיזית של הודעת לוח',
   deleteDoc(doc(superA, `${BOARD}/msg_visible`)));
+
+// ---- תגובות גלויות לחברים, אך כל כתיבה נשארת בשרת ----
+
+const REPLIES = `${BOARD}/msg_visible/bulletin_replies`;
+const REPLYMSG = {
+  kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+  text: 'תגובה מזויפת', by_uid: 'u_cmda', by_name: 'מפקד א',
+  by_role: 'commander', by_crew: 'א', hidden: false,
+  created_at: new Date('2026-08-25T08:10:00.000Z'),
+  created_key: '2026-08-25T08:10:00.000Z', request_hash: 'client-reply'
+};
+
+await ok('חבר תחנה קורא תגובה גלויה',
+  getDoc(doc(ff, `${REPLIES}/reply_visible`)));
+
+await ok('שאילתת תגובות גלויה ומוגבלת מותרת',
+  getDocs(query(collection(ff, REPLIES),
+    where('hidden', '==', false), orderBy('created_at', 'desc'), limit(20))));
+
+await blocked('🔒 שאילתת תגובות בלי מסנן הסתרה נחסמת',
+  getDocs(collection(ff, REPLIES)));
+
+await blocked('🔒 תגובה מוסתרת חסומה לפי מזהה ישיר',
+  getDoc(doc(ff, `${REPLIES}/reply_hidden`)));
+
+await blocked('🔒 תגובה גלויה תחת הודעת-אב מוסתרת אינה דולפת',
+  getDoc(doc(ff,
+    `${BOARD}/msg_hidden/bulletin_replies/reply_parent_hidden`)));
+
+await blocked('🔒 חבר מתחנה אחרת אינו קורא תגובה',
+  getDoc(doc(outside, `${REPLIES}/reply_visible`)));
+
+await blocked('🔒 מפקד מחוז אינו קורא תגובת תחנה',
+  getDoc(doc(district, `${REPLIES}/reply_visible`)));
+
+await blocked('🔒 ראש משמרת אינו יוצר תגובה ישירות',
+  setDoc(doc(cmdA, `${REPLIES}/client_commander`), REPLYMSG));
+
+await blocked('🔒 גם מנהל-על אינו יוצר תגובה ישירות',
+  setDoc(doc(superA, `${REPLIES}/client_super`), REPLYMSG));
+
+await blocked('🔒 כותב אינו עורך תגובה ישירות',
+  updateDoc(doc(cmdA, `${REPLIES}/reply_visible`), { text: 'שונה' }));
+
+await blocked('🔒 מנהל-על מסתיר תגובה רק דרך callable מתועד',
+  updateDoc(doc(superA, `${REPLIES}/reply_visible`), { hidden: true }));
+
+await blocked('🔒 אין מחיקה פיזית של תגובה',
+  deleteDoc(doc(superA, `${REPLIES}/reply_visible`)));
 
 // ---- ניהול תחנות משנה נשמר, אך מחיקה מוחלפת בארכוב ----
 

@@ -98,6 +98,12 @@ async function bulletinActiveListeners(page) {
     .reduce((sum, [,n]) => sum + Number(n || 0), 0));
 }
 
+async function bulletinReplyActiveListeners(page) {
+  return page.evaluate(() => Object.entries(window.__FIRESTORE_ACTIVE_PATHS || {})
+    .filter(([p]) => p.endsWith('/bulletin_replies'))
+    .reduce((sum, [,n]) => sum + Number(n || 0), 0));
+}
+
 function browserDraftKey(uid, stationId, boardId) {
   return 'resq_bulletin_draft:v2:' + [uid, stationId, boardId]
     .map(value => encodeURIComponent(String(value || ''))).join(':');
@@ -174,7 +180,275 @@ try {
   await districtContext.close();
 
   // ----------------------------------------------------------
-  head('3 · טיוטות מבודדות בין משתמשים במכשיר משותף');
+  head('3 · קריאת תגובות לחבר תחנה והרשאות תפקיד מדויקות');
+  // ----------------------------------------------------------
+  const memberContext = await makeContext({ role:'firefighter' });
+  const memberBoard = await openBoard(memberContext);
+  const memberPage = memberBoard.page;
+  await memberPage.locator('#bulletinFeed [data-message-id="br2"]')
+    .waitFor({ state:'visible', timeout:8000 });
+  await memberPage.locator('#bulletinCompose').click();
+  check(!await memberPage.locator('#bulletinAudience').isVisible(),
+        'כבאי רגיל אינו רואה אפשרות הפצה לכל התחנות');
+  check(await memberPage.locator('[data-testid="bulletin-reply-action"]').count() === 0,
+        'כבאי רגיל אינו רואה פעולת כתיבת תגובה');
+  const memberFactories = await memberPage.evaluate(() => window.__CALLABLE_FACTORIES || []);
+  check(memberFactories.includes('postBulletinMessage') &&
+        !memberFactories.includes('broadcastBulletinMessage') &&
+        !memberFactories.includes('replyToBulletinMessage') &&
+        !memberFactories.includes('hideBulletinMessage') &&
+        !memberFactories.includes('hideBulletinReply'),
+        'הדפדפן של כבאי יוצר רק את פעולת הפרסום הרגילה');
+  check(await bulletinReplyActiveListeners(memberPage) === 0,
+        'תגובות אינן נטענות לפני פתיחת הדיון');
+
+  const memberThreadMessage = memberPage.locator('[data-message-id="br2"]');
+  await memberThreadMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await memberPage.waitForFunction(() =>
+    document.querySelectorAll('[data-message-id="br2"] [data-testid="bulletin-reply"]').length === 2);
+  const memberToggleControls = await memberThreadMessage
+    .locator('[data-testid="bulletin-replies-toggle"]').getAttribute('aria-controls');
+  check(Boolean(memberToggleControls) &&
+        await memberPage.locator('#' + memberToggleControls).count() === 1,
+        'כפתור הצגת התגובות מחובר לדיון הנכון עבור קורא מסך');
+  check(await bulletinReplyActiveListeners(memberPage) === 1,
+        'פתיחת דיון מפעילה מאזין תגובות יחיד');
+  const memberReplies = await memberThreadMessage
+    .locator('[data-testid="bulletin-reply"]').allTextContents();
+  check(memberReplies[0]?.includes('קיבלתי, אטפל') &&
+        memberReplies[1]?.includes('<svg onload='),
+        'התגובות מוצגות מהישנה לחדשה לכל חבר תחנה');
+  check(!memberReplies.some(text => text.includes('תגובה מוסתרת')),
+        'תגובה מוסתרת אינה מוצגת');
+  check(await memberThreadMessage.locator('svg').count() === 0 &&
+        await memberPage.evaluate(() => window.__BULLETIN_REPLY_XSS !== 1),
+        'HTML זדוני בתגובה נשאר טקסט ואינו מורץ');
+  await memberPage.evaluate(async () => {
+    await window.__FIRESTORE_PUSH_BULLETIN_REPLY({
+      boardId:'rashit', messageId:'br2', id:'brr-live',
+      text:'עדכון תגובה חי', iso:'2099-01-01T12:02:00.000Z'
+    });
+  });
+  await memberPage.getByText('עדכון תגובה חי', { exact:true })
+    .waitFor({ state:'visible', timeout:5000 });
+  check(await memberThreadMessage.locator('[data-testid="bulletin-reply"]').count() === 3,
+        'תגובה חדשה מגיעה בזמן אמת בלי רענון המסך');
+  await memberThreadMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await memberPage.waitForFunction(() => Object.entries(window.__FIRESTORE_ACTIVE_PATHS || {})
+    .filter(([p]) => p.endsWith('/bulletin_replies'))
+    .every(([,n]) => Number(n || 0) === 0));
+  check(await bulletinReplyActiveListeners(memberPage) === 0,
+        'סגירת הדיון מבטלת את מאזין התגובות');
+  check(await memberPage.evaluate(() => {
+    const active = document.activeElement;
+    return active?.matches('[data-message-id="br2"] [data-testid="bulletin-replies-toggle"]') &&
+      active.getAttribute('aria-expanded') === 'false';
+  }), 'סגירת הדיון מחזירה את המיקוד לכפתור שפתח אותו');
+
+  const pagedMessage = memberPage.locator('[data-message-id="br1"]');
+  await pagedMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await memberPage.waitForFunction(() =>
+    document.querySelectorAll('[data-message-id="br1"] [data-testid="bulletin-reply"]').length === 20);
+  await pagedMessage.locator('.bulletin-reply-more').waitFor({ state:'visible', timeout:5000 });
+  await memberPage.evaluate(() => { window.__SMOKE_LAG_PLAN = [300]; });
+  await pagedMessage.locator('.bulletin-reply-more').click();
+  await memberPage.waitForTimeout(30);
+  await memberPage.evaluate(async () => {
+    await window.__FIRESTORE_PUSH_BULLETIN_REPLY({
+      boardId:'rashit', messageId:'br1', id:'br1-reply-live',
+      text:'תגובה חדשה בזמן טעינת עבר', iso:'2099-01-01T12:03:00.000Z'
+    });
+  });
+  await memberPage.getByText('תגובה חדשה בזמן טעינת עבר', { exact:true })
+    .waitFor({ state:'visible', timeout:5000 });
+  await memberPage.waitForTimeout(350);
+  check(await pagedMessage.locator('[data-testid="bulletin-reply"]').count() === 20,
+        'עדכון חי מבטל עמוד תגובות ישן שעדיין היה בדרך');
+  await pagedMessage.locator('.bulletin-reply-more').click();
+  await memberPage.waitForFunction(() =>
+    document.querySelectorAll('[data-message-id="br1"] [data-testid="bulletin-reply"]').length === 26);
+  check(await pagedMessage.locator('[data-testid="bulletin-reply"]').count() === 26,
+        'טעינה חוזרת מוסיפה את כל תגובות העבר פעם אחת בלבד');
+  await pagedMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await pagedMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await memberPage.waitForFunction(() =>
+    document.querySelectorAll('[data-message-id="br1"] [data-testid="bulletin-reply"]').length === 20);
+  await memberPage.evaluate(() => { window.__SMOKE_LAG_PLAN = [300]; });
+  await pagedMessage.locator('.bulletin-reply-more').click();
+  await memberPage.waitForTimeout(30);
+  await memberPage.evaluate(() => {
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('pageshow'));
+  });
+  await memberPage.waitForFunction(() => {
+    const button = document.querySelector(
+      '[data-message-id="br1"] .bulletin-reply-more'
+    );
+    return button && !button.disabled && button.textContent.includes('טען תגובות קודמות');
+  });
+  await memberPage.waitForTimeout(350);
+  check(await pagedMessage.locator('[data-testid="bulletin-reply"]').count() === 20 &&
+        !await pagedMessage.locator('.bulletin-reply-more').isDisabled(),
+        'חזרה מרקע מבטלת טעינה ישנה ומשחררת את כפתור התגובות');
+  check(memberBoard.errors.length === 0, 'קריאת תגובות לא יצרה שגיאת קוד',
+        memberBoard.errors.join(' · '));
+  await memberContext.close();
+
+  for (const deniedRole of [
+    { id:'team', name:'מפקד צוות' },
+    { id:'hr', name:'רכז כוח אדם' },
+    { id:'stcmd', name:'מפקד תחנה' }
+  ]) {
+    const deniedContext = await makeContext({ role:deniedRole.id });
+    const deniedBoard = await openBoard(deniedContext);
+    await deniedBoard.page.locator('#bulletinCompose').click();
+    check(!await deniedBoard.page.locator('#bulletinAudience').isVisible() &&
+          await deniedBoard.page.locator('[data-testid="bulletin-reply-action"]').count() === 0,
+          deniedRole.name + ' אינו מקבל בטעות הרשאת ראש/סגן משמרת');
+    const factories = await deniedBoard.page.evaluate(() => window.__CALLABLE_FACTORIES || []);
+    check(!factories.includes('broadcastBulletinMessage') &&
+          !factories.includes('replyToBulletinMessage'),
+          deniedRole.name + ' אינו יוצר פעולות שרת להפצה או תגובה');
+    await deniedContext.close();
+  }
+
+  // ----------------------------------------------------------
+  head('4 · ראש משמרת: הפצה לכל התחנות ותגובה');
+  // ----------------------------------------------------------
+  const commanderContext = await makeContext({ role:'commander' });
+  const commanderBoard = await openBoard(commanderContext);
+  const commanderPage = commanderBoard.page;
+  await commanderPage.locator('#bulletinFeed [data-message-id="br2"]')
+    .waitFor({ state:'visible', timeout:8000 });
+  check(await commanderPage.locator('[data-message-id="br1"] .bulletin-broadcast-chip').isVisible(),
+        'הודעה רחבה מסומנת בבירור בכל לוח');
+  await commanderPage.locator('#bulletinCompose').click();
+  check(await commanderPage.locator('#bulletinAudience').isVisible(),
+        'ראש משמרת רואה את בחירת קהל היעד');
+  await commanderPage.locator('input[name="bulletinAudience"][value="station"]').check();
+  check(await commanderPage.locator('#bulletinBroadcastConfirm').isVisible(),
+        'בחירת כל התחנות מציגה אישור נוסף');
+  const targetsText = await commanderPage.locator('#bulletinBroadcastTargets').innerText();
+  check(['ראשית','שחמון','תמנע','יטבתה'].every(name => targetsText.includes(name)) &&
+        !targetsText.includes('ישנה'),
+        'האישור מפרט רק את ארבע תחנות המשנה הפעילות');
+  await commanderPage.locator('#bulletinText').fill('עדכון פיקודי לכל התחנות');
+  await commanderPage.evaluate(() => { window.__CALLABLE_CALLS = []; });
+  await commanderPage.locator('#bulletinSubmit').click();
+  check((await commanderPage.evaluate(() => window.__CALLABLE_CALLS || [])).length === 0,
+        'לא מתבצעת הפצה רחבה בלי סימון אישור מפורש');
+  await commanderPage.getByText('לפני הפצה רחבה צריך לאשר את רשימת התחנות.', { exact:true })
+    .waitFor({ state:'visible', timeout:3000 });
+
+  await commanderPage.locator('#bulletinBroadcastApproved').check();
+  await commanderPage.evaluate(() => {
+    window.__CALLABLE_PLAN = {
+      broadcastBulletinMessage:[{ delay:250, data:{ ok:true, id:'wide-1', targetCount:4 } }]
+    };
+    window.__CALLABLE_CALLS = [];
+    window.__CALLABLE_MAX_INFLIGHT = 0;
+    const form = document.getElementById('bulletinForm');
+    form.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true }));
+    form.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true }));
+  });
+  await commanderPage.waitForFunction(() => (window.__CALLABLE_CALLS || []).length === 1 &&
+    (window.__CALLABLE_INFLIGHT || 0) === 0);
+  const broadcastCalls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS || []);
+  const broadcastPayload = broadcastCalls[0]?.payload || {};
+  check(broadcastCalls[0]?.name === 'broadcastBulletinMessage' &&
+        Object.keys(broadcastPayload).sort().join(',') === 'category,requestId,text' &&
+        broadcastPayload.category === 'general' &&
+        broadcastPayload.text === 'עדכון פיקודי לכל התחנות' &&
+        typeof broadcastPayload.requestId === 'string' && broadcastPayload.requestId.length >= 8,
+        'הפצה נשלחת פעם אחת וללא מזהי תחנות שניתן לזייף');
+  check((await commanderPage.evaluate(() => window.__CALLABLE_MAX_INFLIGHT)) === 1,
+        'לחיצה כפולה אינה יוצרת שתי הפצות במקביל');
+  await commanderPage.getByText('ההודעה פורסמה ב־4 תחנות.', { exact:true })
+    .waitFor({ state:'visible', timeout:3000 });
+
+  await commanderPage.locator('[data-message-id="br2"] [data-testid="bulletin-reply-action"]').click();
+  const commanderReplyForm = commanderPage.locator(
+    '[data-message-id="br2"] [data-testid="bulletin-reply-form"]'
+  );
+  await commanderReplyForm.waitFor({ state:'visible', timeout:5000 });
+  const commanderReplyField = commanderReplyForm.locator('textarea');
+  check(await commanderReplyField.evaluate(field => document.activeElement === field),
+        'פתיחת תגובה מעבירה את המיקוד לשדה הכתיבה');
+  const replyControls = await commanderPage
+    .locator('[data-message-id="br2"] [data-testid="bulletin-reply-action"]')
+    .getAttribute('aria-controls');
+  check(Boolean(replyControls) && await commanderPage.locator('#' + replyControls).count() === 1,
+        'פעולת התגובה מחוברת לטופס הנכון עבור קורא מסך');
+  await commanderReplyField.fill('טיוטה בזמן עדכון חי');
+  await commanderReplyField.evaluate(field => field.setSelectionRange(5, 10));
+  await commanderPage.evaluate(async () => {
+    await window.__FIRESTORE_PUSH_BULLETIN_REPLY({
+      boardId:'rashit', messageId:'br2', id:'brr-focus-live',
+      text:'תגובה חיה בזמן כתיבה', iso:'2099-01-01T12:04:00.000Z'
+    });
+  });
+  check(await commanderReplyForm.locator('textarea').evaluate(field =>
+    document.activeElement === field && field.value === 'טיוטה בזמן עדכון חי' &&
+    field.selectionStart === 5 && field.selectionEnd === 10),
+    'תגובה חדשה אינה סוגרת את המקלדת ואינה מוחקת את הטיוטה');
+  await commanderReplyForm.locator('.bulletin-reply-cancel').click();
+  check(await commanderPage.evaluate(() =>
+    document.activeElement?.matches(
+      '[data-message-id="br2"] [data-testid="bulletin-reply-action"]'
+    )), 'ביטול תגובה מחזיר את המיקוד לפעולת התגובה');
+  await commanderPage.locator(
+    '[data-message-id="br2"] [data-testid="bulletin-reply-action"]'
+  ).click();
+  await commanderPage.locator(
+    '[data-message-id="br2"] [data-testid="bulletin-reply-form"]'
+  ).waitFor({ state:'visible', timeout:5000 });
+  await commanderReplyForm.locator('textarea').fill('מאשר, הנושא בטיפול.');
+  await commanderPage.evaluate(() => {
+    window.__CALLABLE_PLAN = {
+      replyToBulletinMessage:[{ delay:250, data:{ ok:true, id:'reply-1' } }]
+    };
+    window.__CALLABLE_CALLS = [];
+    window.__CALLABLE_MAX_INFLIGHT = 0;
+    const form = document.querySelector(
+      '[data-message-id="br2"] [data-testid="bulletin-reply-form"]'
+    );
+    form.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true }));
+    form.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true }));
+  });
+  await commanderPage.waitForFunction(() => (window.__CALLABLE_CALLS || []).length === 1 &&
+    (window.__CALLABLE_INFLIGHT || 0) === 0);
+  const replyCalls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS || []);
+  const replyPayload = replyCalls[0]?.payload || {};
+  check(replyCalls[0]?.name === 'replyToBulletinMessage' &&
+        Object.keys(replyPayload).sort().join(',') === 'messageId,requestId,subStationId,text' &&
+        replyPayload.subStationId === 'rashit' && replyPayload.messageId === 'br2' &&
+        replyPayload.text === 'מאשר, הנושא בטיפול.' &&
+        typeof replyPayload.requestId === 'string' && replyPayload.requestId.length >= 8,
+        'תגובת ראש משמרת נשלחת פעם אחת עם יעד מדויק');
+  check((await commanderPage.evaluate(() => window.__CALLABLE_MAX_INFLIGHT)) === 1,
+        'לחיצה כפולה אינה יוצרת שתי תגובות במקביל');
+  check(commanderBoard.errors.length === 0, 'מסלול ראש משמרת לא יצר שגיאת קוד',
+        commanderBoard.errors.join(' · '));
+  await commanderContext.close();
+
+  const deputyContext = await makeContext({ role:'deputy' });
+  const deputyBoard = await openBoard(deputyContext);
+  await deputyBoard.page.locator('#bulletinFeed [data-testid="bulletin-message"]').first()
+    .waitFor({ state:'visible', timeout:8000 });
+  await deputyBoard.page.locator('#bulletinCompose').click();
+  check(await deputyBoard.page.locator('#bulletinAudience').isVisible() &&
+        await deputyBoard.page.locator('[data-testid="bulletin-reply-action"]').count() > 0,
+        'סגן ראש משמרת מקבל גם הפצה לכל התחנות וגם תגובה');
+  const deputyFactories = await deputyBoard.page.evaluate(() => window.__CALLABLE_FACTORIES || []);
+  check(deputyFactories.includes('broadcastBulletinMessage') &&
+        deputyFactories.includes('replyToBulletinMessage'),
+        'לדפדפן של הסגן נוצרות שתי פעולות השרת המורשות');
+  check(deputyBoard.errors.length === 0, 'מסלול סגן ראש משמרת לא יצר שגיאת קוד',
+        deputyBoard.errors.join(' · '));
+  await deputyContext.close();
+
+  // ----------------------------------------------------------
+  head('5 · טיוטות מבודדות בין משתמשים במכשיר משותף');
   // ----------------------------------------------------------
   const keyA = browserDraftKey('uid-a', 'eilat_102', 'rashit');
   const keyB = browserDraftKey('uid-b', 'eilat_102', 'rashit');
@@ -502,6 +776,28 @@ try {
           spec.name + ' ללא גלישה אופקית', JSON.stringify(layout));
     check(await responsivePage.locator('#bulletinCompose').isVisible(),
           spec.name + ' משאיר את פעולת הכתיבה נגישה');
+    if (spec.viewport.width <= 390) {
+      await responsivePage.locator('#bulletinCompose').click();
+      await responsivePage.locator(
+        'input[name="bulletinAudience"][value="station"]'
+      ).check();
+      const confirmationHeight = await responsivePage
+        .locator('#bulletinBroadcastConfirm label')
+        .evaluate(node => node.getBoundingClientRect().height);
+      check(confirmationHeight >= 44,
+            spec.name + ' משאיר את אישור ההפצה בגודל מגע בטוח',
+            'height=' + confirmationHeight);
+      await responsivePage.locator('[data-message-id="br2"] [data-testid="bulletin-replies-toggle"]')
+        .click();
+      await responsivePage.waitForFunction(() =>
+        document.querySelectorAll('[data-message-id="br2"] [data-testid="bulletin-reply"]').length === 2);
+      const hideReplyHeight = await responsivePage
+        .locator('[data-message-id="br2"] .bulletin-hide-reply').first()
+        .evaluate(node => node.getBoundingClientRect().height);
+      check(hideReplyHeight >= 44,
+            spec.name + ' משאיר את הסתרת התגובה בגודל מגע בטוח',
+            'height=' + hideReplyHeight);
+    }
     if (spec.reducedMotion === 'reduce') {
       check(layout.reduced, 'הדפדפן מדווח prefers-reduced-motion');
       const duration = Math.max(

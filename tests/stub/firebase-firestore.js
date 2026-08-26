@@ -315,11 +315,13 @@ const BULLETIN_MESSAGES = {
       created_key:'2026-08-25T09:30:00.000Z' }],
     ['br2', { text:'חסר חלב וביצים במטבח', category:'supplies',
       by_uid:'u2', by_name:'טל חודרה', by_role:'firefighter', by_crew:'A',
-      hidden:false, created_at:stamp('2026-08-25T08:20:00.000Z'),
+      hidden:false, reply_count:2, created_at:stamp('2026-08-25T08:20:00.000Z'),
       created_key:'2026-08-25T08:20:00.000Z' }],
     ['br1', { text:'רכב געש יוצא לטיפול בשעה 11:00', category:'vehicle',
       by_uid:'u1', by_name:'אלדד יונה', by_role:'commander', by_crew:'C',
-      hidden:false, created_at:stamp('2026-08-25T07:10:00.000Z'),
+      hidden:false, audience:'all_sub_stations', broadcast_count:4,
+      reply_count:25,
+      created_at:stamp('2026-08-25T07:10:00.000Z'),
       created_key:'2026-08-25T07:10:00.000Z' }],
     ['br0', { text:'הודעה מוסתרת', category:'general', by_uid:'u1',
       by_name:'אלדד יונה', by_role:'commander', by_crew:'C', hidden:true,
@@ -344,6 +346,37 @@ const BULLETIN_MESSAGES = {
       created_key:'2026-08-24T18:00:00.000Z' }]
   ]
 };
+
+const BULLETIN_REPLIES = {
+  'rashit/br2': [
+    ['brr1', { text:'קיבלתי, אטפל בהשלמה לפני החלפת המשמרת.',
+      by_uid:'u1', by_name:'אלדד יונה', by_role:'commander', by_crew:'C',
+      hidden:false, created_at:stamp('2026-08-25T08:24:00.000Z'),
+      created_key:'2026-08-25T08:24:00.000Z' }],
+    ['brr2', { text:'<svg onload="window.__BULLETIN_REPLY_XSS=1">',
+      by_uid:'u9', by_name:'נועה כהן', by_role:'deputy', by_crew:'B',
+      hidden:false, created_at:stamp('2026-08-25T08:27:00.000Z'),
+      created_key:'2026-08-25T08:27:00.000Z' }],
+    ['brr-hidden', { text:'תגובה מוסתרת', by_uid:'u1', by_name:'אלדד יונה',
+      by_role:'commander', by_crew:'C', hidden:true,
+      created_at:stamp('2026-08-25T08:28:00.000Z'),
+      created_key:'2026-08-25T08:28:00.000Z' }]
+  ]
+};
+
+// יותר מעמוד תגובות אחד, כדי לבדוק שטעינה מדורגת ועדכון חי
+// אינם מערבבים עמוד ישן עם הרשימה החדשה.
+BULLETIN_REPLIES['rashit/br1'] = [];
+for (let i = 1; i <= 25; i++) {
+  const second = String(i).padStart(2, '0');
+  BULLETIN_REPLIES['rashit/br1'].push([
+    'br1-reply-' + second,
+    { text:'תגובת עבר ' + i, by_uid:'u' + i, by_name:'חבר צוות ' + i,
+      by_role:i % 2 ? 'commander' : 'deputy', by_crew:i % 2 ? 'A' : 'B',
+      hidden:false, created_at:stamp('2026-08-25T07:11:' + second + '.000Z'),
+      created_key:'2026-08-25T07:11:' + second + '.000Z' }
+  ]);
+}
 
 // יותר מעמוד אחד בלוח הראשי, כדי ש"טען קודמות" ייבדק באמת.
 // המספור נשאר בתוך הטקסט כדי שבדיקת ההמשך תוכל לזהות שנוספו
@@ -372,6 +405,18 @@ async function emitBulletinSnapshots(boardId) {
   }));
 }
 
+async function emitBulletinReplySnapshots(boardId, messageId) {
+  const suffix = '/sub_stations/' + boardId + '/bulletin_messages/' +
+    messageId + '/bulletin_replies';
+  const listeners = Array.from(ACTIVE_SNAPSHOT_LISTENERS).filter(function (item) {
+    return item.live && item.path.endsWith(suffix);
+  });
+  await Promise.all(listeners.map(async function (item) {
+    const snapshot = await getDocs(item.query);
+    if (item.live) item.next(snapshot);
+  }));
+}
+
 if (typeof window !== 'undefined') {
   window.__FIRESTORE_PUSH_BULLETIN = async function (input) {
     const value = input || {};
@@ -388,6 +433,23 @@ if (typeof window !== 'undefined') {
       }
     ]);
     await emitBulletinSnapshots(boardId);
+  };
+  window.__FIRESTORE_PUSH_BULLETIN_REPLY = async function (input) {
+    const value = input || {};
+    const boardId = String(value.boardId || 'rashit');
+    const messageId = String(value.messageId || 'br2');
+    const key = boardId + '/' + messageId;
+    const iso = String(value.iso || new Date().toISOString());
+    BULLETIN_REPLIES[key] = BULLETIN_REPLIES[key] || [];
+    BULLETIN_REPLIES[key].push([
+      String(value.id || ('reply-live-' + Date.now())),
+      {
+        text:String(value.text || 'תגובת realtime'),
+        by_uid:'u9', by_name:'נועה כהן', by_role:'deputy', by_crew:'B',
+        hidden:false, created_at:stamp(iso), created_key:iso
+      }
+    ]);
+    await emitBulletinReplySnapshots(boardId, messageId);
   };
 }
 
@@ -560,38 +622,58 @@ function lag(v, path){
   return new Promise(r => setTimeout(function () { done(); r(v); }, wait));
 }
 
+function constrainedRows(source, constraints) {
+  let rows = (source || []).slice();
+  const list = constraints || [];
+  list.forEach(c => {
+    if (!c || c.kind !== 'where') return;
+    if (c.op === '==') rows = rows.filter(pair => pair[1] && pair[1][c.field] === c.value);
+  });
+  const order = list.find(c => c && c.kind === 'orderBy');
+  if (order) {
+    const value = row => {
+      const v = row[1] && row[1][order.field];
+      if (v && typeof v.toMillis === 'function') return v.toMillis();
+      return String(v == null ? '' : v);
+    };
+    rows.sort((a, b) => {
+      const av = value(a), bv = value(b);
+      const n = av < bv ? -1 : av > bv ? 1 : 0;
+      return order.direction === 'desc' ? -n : n;
+    });
+  }
+  const cursor = list.find(c => c && c.kind === 'startAfter');
+  if (cursor && cursor.id) {
+    const at = rows.findIndex(pair => pair[0] === cursor.id);
+    if (at !== -1) rows = rows.slice(at + 1);
+  }
+  const cap = list.find(c => c && c.kind === 'limit');
+  if (cap && cap.count > 0) rows = rows.slice(0, cap.count);
+  return rows;
+}
+
 export function getDocs(q){
   const p = (q && q.path) || '';
   const delayed = value => lag(value, p);
+  const replyMatch = p.match(
+    /\/sub_stations\/([^/]+)\/bulletin_messages\/([^/]+)\/bulletin_replies$/
+  );
+  if (replyMatch) {
+    const boardId = decodeURIComponent(replyMatch[1]);
+    const messageId = decodeURIComponent(replyMatch[2]);
+    const rows = constrainedRows(
+      BULLETIN_REPLIES[boardId + '/' + messageId],
+      (q && q.constraints) || []
+    );
+    return delayed(listSnap(rows));
+  }
   const boardMatch = p.match(/\/sub_stations\/([^/]+)\/bulletin_messages$/);
   if (boardMatch) {
     const boardId = decodeURIComponent(boardMatch[1]);
-    let rows = (BULLETIN_MESSAGES[boardId] || []).slice();
-    const constraints = (q && q.constraints) || [];
-    constraints.forEach(c => {
-      if (!c || c.kind !== 'where') return;
-      if (c.op === '==') rows = rows.filter(pair => pair[1] && pair[1][c.field] === c.value);
-    });
-    const order = constraints.find(c => c && c.kind === 'orderBy');
-    if (order) {
-      const value = row => {
-        const v = row[1] && row[1][order.field];
-        if (v && typeof v.toMillis === 'function') return v.toMillis();
-        return String(v == null ? '' : v);
-      };
-      rows.sort((a, b) => {
-        const av = value(a), bv = value(b);
-        const n = av < bv ? -1 : av > bv ? 1 : 0;
-        return order.direction === 'desc' ? -n : n;
-      });
-    }
-    const cursor = constraints.find(c => c && c.kind === 'startAfter');
-    if (cursor && cursor.id) {
-      const at = rows.findIndex(pair => pair[0] === cursor.id);
-      if (at !== -1) rows = rows.slice(at + 1);
-    }
-    const cap = constraints.find(c => c && c.kind === 'limit');
-    if (cap && cap.count > 0) rows = rows.slice(0, cap.count);
+    const rows = constrainedRows(
+      BULLETIN_MESSAGES[boardId],
+      (q && q.constraints) || []
+    );
     return delayed(listSnap(rows));
   }
   if (/\/quals$/.test(p))        return delayed(listSnap(QUALS));

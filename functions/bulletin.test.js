@@ -121,6 +121,39 @@ test('valid hide input is accepted', function () {
   }), { sid: 'eilat_102', subStationId: 'rashit', messageId: 'm_abc' });
 });
 
+test('single-board hide keeps the selected board only', function () {
+  assert.deepEqual(bulletin.hideTargetIds('rashit', 'm_abc', {
+    kind: 'bulletin', audience: 'board'
+  }), ['rashit']);
+});
+
+test('broadcast hide returns the exact original sorted target set', function () {
+  assert.deepEqual(bulletin.hideTargetIds('rashit', 'b_abc', {
+    kind: 'bulletin', audience: 'all_sub_stations', broadcast_id: 'b_abc',
+    sub_station_ids: ['shahmon', 'rashit']
+  }), ['rashit', 'shahmon']);
+});
+
+test('broadcast hide rejects a missing or inconsistent target set', function () {
+  throwsCode('failed-precondition', function () {
+    bulletin.hideTargetIds('rashit', 'b_abc', {
+      audience: 'all_sub_stations', broadcast_id: 'b_abc'
+    });
+  });
+  throwsCode('failed-precondition', function () {
+    bulletin.hideTargetIds('rashit', 'b_abc', {
+      audience: 'all_sub_stations', broadcast_id: 'b_other',
+      sub_station_ids: ['rashit']
+    });
+  });
+  throwsCode('failed-precondition', function () {
+    bulletin.hideTargetIds('rashit', 'b_abc', {
+      audience: 'all_sub_stations', broadcast_id: 'b_abc',
+      sub_station_ids: ['rashit', 'rashit']
+    });
+  });
+});
+
 bulletin.MEMBER_ROLES.forEach(function (role) {
   test('posting member role accepted: ' + role, function () {
     const identity = bulletin.postingIdentity({
@@ -205,6 +238,119 @@ test('content hash changes with content', function () {
   assert.notEqual(first, second);
 });
 
+test('broadcast input accepts only server-resolved targets', function () {
+  const parsed = bulletin.parseBroadcastInput({
+    category: 'general',
+    text: ' הודעה לכל התחנות ',
+    requestId: validPost.requestId
+  });
+  assert.equal(parsed.text, 'הודעה לכל התחנות');
+  assert.equal(Object.hasOwn(parsed, 'subStationId'), false);
+  throwsCode('invalid-argument', function () {
+    bulletin.parseBroadcastInput({
+      category: 'general', text: 'זיוף יעד',
+      requestId: validPost.requestId, sid: 'other'
+    });
+  });
+});
+
+test('reply input validates parent, text and exact fields', function () {
+  const parsed = bulletin.parseReplyInput({
+    subStationId: 'rashit',
+    messageId: 'm_parent',
+    text: ' תשובה ברורה ',
+    requestId: validPost.requestId
+  });
+  assert.equal(parsed.text, 'תשובה ברורה');
+  assert.equal(parsed.messageId, 'm_parent');
+  throwsCode('invalid-argument', function () {
+    bulletin.parseReplyInput({
+      subStationId: 'rashit', messageId: '../parent', text: 'x',
+      requestId: validPost.requestId
+    });
+  });
+  throwsCode('invalid-argument', function () {
+    bulletin.parseReplyInput({
+      subStationId: 'rashit', messageId: 'm_parent',
+      text: 'א'.repeat(bulletin.MAX_REPLY_TEXT + 1),
+      requestId: validPost.requestId
+    });
+  });
+});
+
+test('hide reply input is strict and path-safe', function () {
+  assert.deepEqual(bulletin.parseHideReplyInput({
+    sid: 'eilat_102', subStationId: 'rashit',
+    messageId: 'm_parent', replyId: 'p_reply'
+  }), {
+    sid: 'eilat_102', subStationId: 'rashit',
+    messageId: 'm_parent', replyId: 'p_reply'
+  });
+  throwsCode('invalid-argument', function () {
+    bulletin.parseHideReplyInput({
+      sid: 'eilat_102', subStationId: 'rashit',
+      messageId: 'm_parent', replyId: '../reply'
+    });
+  });
+});
+
+['deputy', 'commander'].forEach(function (role) {
+  test(role + ' may use shift-command bulletin actions', function () {
+    assert.equal(bulletin.mayUseShiftCommandActions({
+      role: role, isSuper: false
+    }), true);
+  });
+});
+
+['firefighter', 'deputy_team_leader', 'team_leader',
+  'station_commander', 'hr_coordinator', 'district_commander'
+].forEach(function (role) {
+  test(role + ' may not use shift-command bulletin actions', function () {
+    assert.equal(bulletin.mayUseShiftCommandActions({
+      role: role, isSuper: false
+    }), false);
+  });
+});
+
+test('verified super may use shift-command bulletin actions', function () {
+  assert.equal(bulletin.mayUseShiftCommandActions({
+    role: 'super_admin', isSuper: true
+  }), true);
+});
+
+test('post, broadcast and reply request namespaces do not collide', function () {
+  const uid = 'u_commander';
+  const id = validPost.requestId;
+  assert.equal(new Set([
+    bulletin.requestKey(uid, id),
+    bulletin.broadcastRequestKey(uid, id),
+    bulletin.replyRequestKey(uid, id)
+  ]).size, 3);
+  assert.equal(new Set([
+    bulletin.messageId(uid, id),
+    bulletin.broadcastMessageId(uid, id),
+    bulletin.replyId(uid, id)
+  ]).size, 3);
+});
+
+test('broadcast hash binds the exact active-board set independent of order', function () {
+  const identity = {
+    uid: 'u_commander', sid: 'eilat_102', role: 'commander',
+    crew: 'A', isSuper: false
+  };
+  const input = bulletin.parseBroadcastInput({
+    category: 'general', text: 'עדכון', requestId: validPost.requestId
+  });
+  assert.equal(
+    bulletin.broadcastContentHash(identity, input, ['rashit', 'shahmon']),
+    bulletin.broadcastContentHash(identity, input, ['shahmon', 'rashit'])
+  );
+  assert.notEqual(
+    bulletin.broadcastContentHash(identity, input, ['rashit']),
+    bulletin.broadcastContentHash(identity, input, ['rashit', 'shahmon'])
+  );
+});
+
 test('new request is classified as new', function () {
   assert.equal(bulletin.requestState(null, 'hash', 'path'), 'new');
 });
@@ -255,6 +401,32 @@ test('rate window resets after exactly 60 seconds', function () {
   assert.equal(decision.allowed, true);
   assert.equal(decision.count, 1);
   assert.equal(decision.windowStartedMillis, 61000);
+});
+
+test('broadcast limiter allows two operations and blocks the third', function () {
+  let current = null;
+  for (let i = 0; i < bulletin.BROADCAST_RATE_LIMIT; i++) {
+    const decision = bulletin.broadcastRateDecision(current, 2000 + i);
+    assert.equal(decision.allowed, true);
+    current = {
+      count: decision.count,
+      window_started_at: new Date(decision.windowStartedMillis)
+    };
+  }
+  assert.equal(bulletin.broadcastRateDecision(current, 3000).allowed, false);
+});
+
+test('reply limiter allows ten operations and blocks the eleventh', function () {
+  let current = null;
+  for (let i = 0; i < bulletin.REPLY_RATE_LIMIT; i++) {
+    const decision = bulletin.replyRateDecision(current, 4000 + i);
+    assert.equal(decision.allowed, true);
+    current = {
+      count: decision.count,
+      window_started_at: new Date(decision.windowStartedMillis)
+    };
+  }
+  assert.equal(bulletin.replyRateDecision(current, 5000).allowed, false);
 });
 
 test('active legacy sub-station is available', function () {

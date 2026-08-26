@@ -11,12 +11,21 @@ const MEMBER_ROLES = Object.freeze([
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
 ]);
 
+// הרשאה ייעודית ולא נגזרת מ"סגל": מפקד התחנה ורכזת משאבי
+// אנוש הם סגל, אך אלדד ביקש את פעולות ההפצה והתגובה רק מראש
+// המשמרת ומסגנו. מנהל-על נבדק בנפרד דרך identity.isSuper.
+const SHIFT_COMMAND_ROLES = Object.freeze(['deputy', 'commander']);
+
 const CATEGORIES = Object.freeze([
   'general', 'supplies', 'equipment', 'vehicle', 'maintenance'
 ]);
 
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 60 * 1000;
+const REPLY_RATE_LIMIT = 10;
+const BROADCAST_RATE_LIMIT = 2;
+const MAX_BROADCAST_BOARDS = 100;
+const MAX_REPLY_TEXT = 1000;
 
 class BulletinError extends Error {
   constructor(code, message) {
@@ -92,6 +101,53 @@ function parsePostInput(data) {
   };
 }
 
+function parseBroadcastInput(data) {
+  onlyKeys(data, ['category', 'text', 'requestId']);
+  const category = stringField(data, 'category', 'סוג הודעה');
+  if (CATEGORIES.indexOf(category) === -1) {
+    fail('invalid-argument', 'סוג ההודעה אינו מוכר.');
+  }
+  const text = stringField(data, 'text', 'תוכן הודעה').normalize('NFC');
+  if (!text) fail('invalid-argument', 'צריך לכתוב הודעה.');
+  if (text.length > 2000) fail('invalid-argument', 'ההודעה ארוכה מדי.');
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text)) {
+    fail('invalid-argument', 'ההודעה מכילה תווים שאינם נתמכים.');
+  }
+  const requestId = safeId(
+    stringField(data, 'requestId', 'מזהה בקשה'),
+    'מזהה הבקשה', 16, 128
+  );
+  return { category: category, text: text, requestId: requestId };
+}
+
+function parseReplyInput(data) {
+  onlyKeys(data, ['subStationId', 'messageId', 'text', 'requestId']);
+  const subStationId = safeId(
+    stringField(data, 'subStationId', 'מזהה תחנת משנה'),
+    'מזהה תחנת המשנה', 1, 64
+  );
+  const messageIdValue = safeId(
+    stringField(data, 'messageId', 'מזהה הודעה'),
+    'מזהה ההודעה', 1, 128
+  );
+  const text = stringField(data, 'text', 'תוכן תגובה').normalize('NFC');
+  if (!text) fail('invalid-argument', 'צריך לכתוב תגובה.');
+  if (text.length > MAX_REPLY_TEXT) fail('invalid-argument', 'התגובה ארוכה מדי.');
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text)) {
+    fail('invalid-argument', 'התגובה מכילה תווים שאינם נתמכים.');
+  }
+  const requestId = safeId(
+    stringField(data, 'requestId', 'מזהה בקשה'),
+    'מזהה הבקשה', 16, 128
+  );
+  return {
+    subStationId: subStationId,
+    messageId: messageIdValue,
+    text: text,
+    requestId: requestId
+  };
+}
+
 function parseHideInput(data) {
   onlyKeys(data, ['sid', 'subStationId', 'messageId']);
   return {
@@ -105,6 +161,45 @@ function parseHideInput(data) {
       'מזהה ההודעה', 1, 128
     )
   };
+}
+
+function parseHideReplyInput(data) {
+  onlyKeys(data, ['sid', 'subStationId', 'messageId', 'replyId']);
+  const base = parseHideInput({
+    sid: data && data.sid,
+    subStationId: data && data.subStationId,
+    messageId: data && data.messageId
+  });
+  base.replyId = safeId(
+    stringField(data, 'replyId', 'מזהה תגובה'),
+    'מזהה התגובה', 1, 128
+  );
+  return base;
+}
+
+function hideTargetIds(subStationId, messageIdValue, message) {
+  const selectedId = safeId(String(subStationId || ''),
+    'מזהה תחנת המשנה', 1, 64);
+  const selectedMessageId = safeId(String(messageIdValue || ''),
+    'מזהה ההודעה', 1, 128);
+  const source = plainObject(message) ? message : {};
+  if (source.audience !== 'all_sub_stations') return [selectedId];
+  if (String(source.broadcast_id || '') !== selectedMessageId) {
+    fail('failed-precondition', 'מזהה ההפצה הרחבה אינו תקין.');
+  }
+  if (!Array.isArray(source.sub_station_ids) ||
+      !source.sub_station_ids.length ||
+      source.sub_station_ids.length > MAX_BROADCAST_BOARDS) {
+    fail('failed-precondition', 'רשימת יעדי ההפצה הרחבה אינה תקינה.');
+  }
+  const ids = Array.from(new Set(source.sub_station_ids.map(function (value) {
+    return safeId(String(value || ''), 'מזהה תחנת המשנה', 1, 64);
+  }))).sort();
+  if (ids.length !== source.sub_station_ids.length ||
+      ids.indexOf(selectedId) === -1) {
+    fail('failed-precondition', 'רשימת יעדי ההפצה הרחבה אינה עקבית.');
+  }
+  return ids;
 }
 
 function postingIdentity(auth, options) {
@@ -137,6 +232,11 @@ function postingIdentity(auth, options) {
   };
 }
 
+function mayUseShiftCommandActions(identity) {
+  return !!identity && (identity.isSuper === true ||
+    SHIFT_COMMAND_ROLES.indexOf(identity.role) !== -1);
+}
+
 function digest(parts) {
   const hash = crypto.createHash('sha256');
   parts.forEach(function (part) {
@@ -151,14 +251,46 @@ function requestKey(uid, requestId) {
   return 'r_' + digest(['bulletin-request-v1', uid, requestId]);
 }
 
+function broadcastRequestKey(uid, requestId) {
+  return 'b_' + digest(['bulletin-broadcast-request-v1', uid, requestId]);
+}
+
+function replyRequestKey(uid, requestId) {
+  return 'p_' + digest(['bulletin-reply-request-v1', uid, requestId]);
+}
+
 function messageId(uid, requestId) {
   return 'm_' + digest(['bulletin-message-v1', uid, requestId]);
+}
+
+function broadcastMessageId(uid, requestId) {
+  return 'b_' + digest(['bulletin-broadcast-message-v1', uid, requestId]);
+}
+
+function replyId(uid, requestId) {
+  return 'p_' + digest(['bulletin-reply-v1', uid, requestId]);
 }
 
 function contentHash(identity, input) {
   return digest([
     'bulletin-content-v1', identity.uid, identity.sid,
     input.subStationId, input.category, input.text
+  ]);
+}
+
+function broadcastContentHash(identity, input, boardIds) {
+  const targets = Array.from(Array.isArray(boardIds) ? boardIds : [])
+    .map(String).sort();
+  return digest([
+    'bulletin-broadcast-content-v1', identity.uid, identity.sid,
+    input.category, input.text, targets.join('\n')
+  ]);
+}
+
+function replyContentHash(identity, input) {
+  return digest([
+    'bulletin-reply-content-v1', identity.uid, identity.sid,
+    input.subStationId, input.messageId, input.text
   ]);
 }
 
@@ -175,7 +307,7 @@ function timestampMillis(value) {
   return Number(value || 0);
 }
 
-function rateDecision(current, nowMillis) {
+function limitedRateDecision(current, nowMillis, limit, windowMillis) {
   const now = Number(nowMillis);
   if (!Number.isFinite(now) || now < 0) {
     fail('internal', 'חותמת הזמן של השרת אינה תקינה.');
@@ -184,7 +316,9 @@ function rateDecision(current, nowMillis) {
   const data = plainObject(current) ? current : {};
   const started = timestampMillis(data.window_started_at);
   const count = Math.max(0, Math.floor(Number(data.count || 0)));
-  const expired = !started || now < started || now - started >= RATE_WINDOW_MS;
+  const safeLimit = Math.max(1, Math.floor(Number(limit || RATE_LIMIT)));
+  const safeWindow = Math.max(1000, Math.floor(Number(windowMillis || RATE_WINDOW_MS)));
+  const expired = !started || now < started || now - started >= safeWindow;
 
   if (expired) {
     return {
@@ -195,12 +329,12 @@ function rateDecision(current, nowMillis) {
     };
   }
 
-  if (count >= RATE_LIMIT) {
+  if (count >= safeLimit) {
     return {
       allowed: false,
       count: count,
       windowStartedMillis: started,
-      retryAfterSeconds: Math.max(1, Math.ceil((RATE_WINDOW_MS - (now - started)) / 1000))
+      retryAfterSeconds: Math.max(1, Math.ceil((safeWindow - (now - started)) / 1000))
     };
   }
 
@@ -210,6 +344,18 @@ function rateDecision(current, nowMillis) {
     windowStartedMillis: started,
     retryAfterSeconds: 0
   };
+}
+
+function rateDecision(current, nowMillis) {
+  return limitedRateDecision(current, nowMillis, RATE_LIMIT, RATE_WINDOW_MS);
+}
+
+function replyRateDecision(current, nowMillis) {
+  return limitedRateDecision(current, nowMillis, REPLY_RATE_LIMIT, RATE_WINDOW_MS);
+}
+
+function broadcastRateDecision(current, nowMillis) {
+  return limitedRateDecision(current, nowMillis, BROADCAST_RATE_LIMIT, RATE_WINDOW_MS);
 }
 
 function subStationAvailable(data) {
@@ -222,16 +368,34 @@ function subStationAvailable(data) {
 module.exports = {
   BulletinError: BulletinError,
   MEMBER_ROLES: MEMBER_ROLES,
+  SHIFT_COMMAND_ROLES: SHIFT_COMMAND_ROLES,
   CATEGORIES: CATEGORIES,
   RATE_LIMIT: RATE_LIMIT,
   RATE_WINDOW_MS: RATE_WINDOW_MS,
+  REPLY_RATE_LIMIT: REPLY_RATE_LIMIT,
+  BROADCAST_RATE_LIMIT: BROADCAST_RATE_LIMIT,
+  MAX_BROADCAST_BOARDS: MAX_BROADCAST_BOARDS,
+  MAX_REPLY_TEXT: MAX_REPLY_TEXT,
   parsePostInput: parsePostInput,
+  parseBroadcastInput: parseBroadcastInput,
+  parseReplyInput: parseReplyInput,
   parseHideInput: parseHideInput,
+  parseHideReplyInput: parseHideReplyInput,
+  hideTargetIds: hideTargetIds,
   postingIdentity: postingIdentity,
+  mayUseShiftCommandActions: mayUseShiftCommandActions,
   requestKey: requestKey,
+  broadcastRequestKey: broadcastRequestKey,
+  replyRequestKey: replyRequestKey,
   messageId: messageId,
+  broadcastMessageId: broadcastMessageId,
+  replyId: replyId,
   contentHash: contentHash,
+  broadcastContentHash: broadcastContentHash,
+  replyContentHash: replyContentHash,
   requestState: requestState,
   rateDecision: rateDecision,
+  replyRateDecision: replyRateDecision,
+  broadcastRateDecision: broadcastRateDecision,
   subStationAvailable: subStationAvailable
 };

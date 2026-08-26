@@ -34,6 +34,10 @@
       "_דיונים/**",
       "firestore.rules",
       "firestore.indexes.json",
+      "firestore_1.rules",
+      "**/*.log",
+      "firestore-debug.log",
+      "ui-debug.log",
       "*.bat",
       "*.mjs",
       "*.md"

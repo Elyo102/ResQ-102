@@ -65,6 +65,21 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
       });
     }
     await appPage.screenshot({ path:path.join(out, screen + '-' + size.name + '.png'), fullPage:true });
+    if (screen === 'bulletin') {
+      await appPage.locator('#bulletinCompose').click();
+      await appPage.locator('input[name="bulletinAudience"][value="station"]').check();
+      await appPage.locator('#bulletinBroadcastApproved').check();
+      await appPage.locator('#bulletinForm').screenshot({
+        path:path.join(out, 'bulletin-broadcast-form-' + size.name + '.png')
+      });
+      await appPage.locator('#bulletinCancel').click();
+      await appPage.locator('[data-message-id="br2"] [data-testid="bulletin-reply-action"]').click();
+      await appPage.waitForFunction(() =>
+        document.querySelectorAll('[data-message-id="br2"] [data-testid="bulletin-reply"]').length === 2);
+      await appPage.locator('[data-message-id="br2"]').screenshot({
+        path:path.join(out, 'bulletin-replies-' + size.name + '.png')
+      });
+    }
   }
   await appContext.close();
 }

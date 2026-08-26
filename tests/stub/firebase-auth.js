@@ -7,6 +7,8 @@ const ROLES = {
            stationId: 'eilat_102', districtId: 'south', shift: 'C' },
   firefighter: { role: 'firefighter', emp: '17',
                  stationId: 'eilat_102', districtId: 'south', shift: 'A' },
+  team:        { role: 'team_leader', emp: '18',
+                 stationId: 'eilat_102', districtId: 'south', shift: 'A' },
   // מפקד משמרת ב'. לא מנהל-על ולא רכז — ולכן נעול למשמרת שלו.
   commander:   { role: 'commander', emp: '5',
                  stationId: 'eilat_102', districtId: 'south', shift: 'B' },

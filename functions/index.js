@@ -1340,6 +1340,58 @@ function parseBulletinPost(req) {
   }
 }
 
+function bulletinIdentityFor(req) {
+  try {
+    return bulletin.postingIdentity(req.auth, {
+      isSuper: !!(req.auth && isSuperAdmin(req.auth)),
+      defaultStationId: STATION_ID
+    });
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+}
+
+function requireShiftCommand(identity) {
+  if (!bulletin.mayUseShiftCommandActions(identity)) {
+    throw new HttpsError('permission-denied',
+      'רק ראש משמרת או סגן ראש משמרת רשאים לבצע את הפעולה.');
+  }
+}
+
+// טוקן מאומת קובע את גבול התחנה, ומסמך המשתמש קובע שהחשבון
+// עדיין פעיל ושהתפקיד לא השתנה מאז הנפקת הטוקן. שלוש פעולות
+// הלוח משתמשות באותו שער כדי שלא תיווצר ביניהן סטיית הרשאות.
+function verifiedBulletinActor(identity, userSnap) {
+  if (!userSnap.exists && !identity.isSuper) {
+    throw new HttpsError('failed-precondition',
+      'כרטיס המשתמש בתחנה לא נמצא. פנה למנהל המערכת.');
+  }
+  const user = userSnap.exists ? (userSnap.data() || {}) : {};
+  if (user.is_active === false && !identity.isSuper) {
+    throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  }
+  const byName = String(user.full_name ||
+    (identity.isSuper ? 'מנהל המערכת' : '')).trim();
+  if (!byName || byName.length > 120) {
+    throw new HttpsError('failed-precondition',
+      'חסר שם מלא תקין בכרטיס המשתמש.');
+  }
+
+  const storedRole = String(user.role || '').trim();
+  const storedCrew = String(user.crew || '').trim();
+  if (!identity.isSuper && storedRole !== identity.role) {
+    throw new HttpsError('failed-precondition',
+      'ההרשאה השתנתה. התנתק והתחבר מחדש לפני הפרסום.');
+  }
+  if (!identity.isSuper && storedCrew !== identity.crew) {
+    throw new HttpsError('failed-precondition',
+      'שיוך המשמרת השתנה. התנתק והתחבר מחדש לפני הפרסום.');
+  }
+  return { user: user, byName: byName };
+}
+
 exports.postBulletinMessage = onCall(async (req) => {
   const parsed = parseBulletinPost(req);
   const identity = parsed.identity;
@@ -1372,33 +1424,7 @@ exports.postBulletinMessage = onCall(async (req) => {
       const subStationSnap = await tx.get(subStationRef);
       const receiptSnap = await tx.get(receiptRef);
 
-      if (!userSnap.exists && !identity.isSuper) {
-        throw new HttpsError('failed-precondition',
-          'כרטיס המשתמש בתחנה לא נמצא. פנה למנהל המערכת.');
-      }
-      const user = userSnap.data() || {};
-      if (user.is_active === false && !identity.isSuper) {
-        throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
-      }
-      const byName = String(user.full_name ||
-        (identity.isSuper ? 'מנהל המערכת' : '')).trim();
-      if (!byName || byName.length > 120) {
-        throw new HttpsError('failed-precondition',
-          'חסר שם מלא תקין בכרטיס המשתמש.');
-      }
-
-      // A mismatch means the browser still holds an old token after a role or
-      // crew change. Failing closed avoids publishing with stale authority.
-      const storedRole = String(user.role || '').trim();
-      const storedCrew = String(user.crew || '').trim();
-      if (!identity.isSuper && storedRole && storedRole !== identity.role) {
-        throw new HttpsError('failed-precondition',
-          'ההרשאה השתנתה. התנתק והתחבר מחדש לפני הפרסום.');
-      }
-      if (!identity.isSuper && storedCrew && storedCrew !== identity.crew) {
-        throw new HttpsError('failed-precondition',
-          'שיוך המשמרת השתנה. התנתק והתחבר מחדש לפני הפרסום.');
-      }
+      const actor = verifiedBulletinActor(identity, userSnap);
 
       if (!subStationSnap.exists ||
           !bulletin.subStationAvailable(subStationSnap.data() || {})) {
@@ -1447,11 +1473,13 @@ exports.postBulletinMessage = onCall(async (req) => {
         kind: 'bulletin',
         text: input.text,
         category: input.category,
+        audience: 'board',
         by_uid: identity.uid,
-        by_name: byName,
+        by_name: actor.byName,
         by_role: identity.role,
         by_crew: identity.crew,
         hidden: false,
+        reply_count: 0,
         created_at: createdAt,
         created_key: createdKey,
         request_hash: hash
@@ -1488,6 +1516,302 @@ exports.postBulletinMessage = onCall(async (req) => {
   }
 });
 
+// פרסום רחב הוא פעולה נפרדת בכוונה. הלקוח אינו שולח sid או
+// רשימת יעדים; השרת גוזר את התחנה מהטוקן וקורא בעצמו את כל
+// תחנות-המשנה הפעילות. הטרנזקציה כותבת את כולן או אף אחת.
+exports.broadcastBulletinMessage = onCall(async (req) => {
+  const identity = bulletinIdentityFor(req);
+  requireShiftCommand(identity);
+  let input;
+  try {
+    input = bulletin.parseBroadcastInput(req.data);
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+
+  const sid = identity.sid;
+  const msgId = bulletin.broadcastMessageId(identity.uid, input.requestId);
+  const reqKey = bulletin.broadcastRequestKey(identity.uid, input.requestId);
+  const targetKey = 'stations/' + sid +
+    '/sub_stations/*/bulletin_messages/' + msgId;
+  const receiptRef = db.doc('stations/' + sid + '/bulletin_requests/' + reqKey);
+  const rateRef = db.doc(
+    'stations/' + sid + '/bulletin_rate_limits/' +
+    bulletin.broadcastRequestKey(identity.uid, 'rate-limit-v1')
+  );
+  const userRef = db.doc('stations/' + sid + '/users/' + identity.uid);
+  const boardsQuery = db.collection('stations/' + sid + '/sub_stations');
+
+  try {
+    return await db.runTransaction(async function (tx) {
+      const userSnap = await tx.get(userRef);
+      // The query belongs to the transaction so the target set and all writes
+      // share one serializable snapshot. A board cannot silently become active
+      // between an external list call and this commit.
+      const boardSnapshot = await tx.get(boardsQuery);
+      const receiptSnap = await tx.get(receiptRef);
+      const rateSnap = await tx.get(rateRef);
+
+      const actor = verifiedBulletinActor(identity, userSnap);
+      const targets = boardSnapshot.docs.filter(function (item) {
+        return bulletin.subStationAvailable(item.data() || {});
+      }).sort(function (a, b) { return a.id.localeCompare(b.id); });
+      if (!targets.length) {
+        throw new HttpsError('failed-precondition',
+          'לא נמצאו תחנות משנה פעילות להפצה.');
+      }
+      if (targets.length > bulletin.MAX_BROADCAST_BOARDS) {
+        throw new HttpsError('failed-precondition',
+          'מספר תחנות המשנה גדול ממכסת ההפצה הבטוחה.');
+      }
+      const boardIds = targets.map(function (item) { return item.id; });
+      const targetRefs = targets.map(function (item) {
+        return {
+          id: item.id,
+          messageRef: item.ref.collection('bulletin_messages').doc(msgId)
+        };
+      });
+      const hash = bulletin.broadcastContentHash(identity, input, boardIds);
+
+      const prior = receiptSnap.exists ? (receiptSnap.data() || {}) : null;
+      const requestState = bulletin.requestState(prior, hash, targetKey);
+      if (requestState === 'conflict') {
+        throw new HttpsError('already-exists',
+          'בקשת ההפצה כבר שימשה לתוכן או לרשימת תחנות אחרת.');
+      }
+      if (requestState === 'duplicate') {
+        return {
+          ok: true,
+          id: String(prior.message_id || msgId),
+          duplicate: true,
+          targetCount: Number(prior.target_count || boardIds.length),
+          boardIds: Array.isArray(prior.sub_station_ids)
+            ? prior.sub_station_ids : boardIds
+        };
+      }
+
+      let rate;
+      try {
+        rate = bulletin.broadcastRateDecision(
+          rateSnap.exists ? (rateSnap.data() || {}) : null,
+          Date.now()
+        );
+      } catch (error) {
+        const translated = translateBulletinError(error);
+        if (translated) throw translated;
+        throw error;
+      }
+      if (!rate.allowed) {
+        throw new HttpsError('resource-exhausted',
+          'נשלחו יותר מדי הפצות. נסה שוב בעוד ' +
+          rate.retryAfterSeconds + ' שניות.',
+          { retryAfterSeconds: rate.retryAfterSeconds });
+      }
+
+      const nowMillis = Date.now();
+      const createdAt = admin.firestore.Timestamp.fromMillis(nowMillis);
+      const createdKey = new Date(nowMillis).toISOString();
+      const message = {
+        kind: 'bulletin',
+        text: input.text,
+        category: input.category,
+        audience: 'all_sub_stations',
+        broadcast_id: msgId,
+        broadcast_count: boardIds.length,
+        sub_station_ids: boardIds,
+        by_uid: identity.uid,
+        by_name: actor.byName,
+        by_role: identity.role,
+        by_crew: identity.crew,
+        hidden: false,
+        reply_count: 0,
+        created_at: createdAt,
+        created_key: createdKey,
+        request_hash: hash
+      };
+
+      targetRefs.forEach(function (target) {
+        tx.create(target.messageRef, message);
+      });
+      tx.create(receiptRef, {
+        request_hash: hash,
+        message_path: targetKey,
+        message_id: msgId,
+        target_count: boardIds.length,
+        sub_station_ids: boardIds,
+        created_key: createdKey,
+        created_at: createdAt
+      });
+      tx.set(rateRef, {
+        count: rate.count,
+        window_started_at: admin.firestore.Timestamp.fromMillis(
+          rate.windowStartedMillis
+        ),
+        updated_at: createdAt
+      }, { merge: true });
+
+      return {
+        ok: true, id: msgId, duplicate: false,
+        targetCount: boardIds.length, boardIds: boardIds
+      };
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    console.error('broadcastBulletinMessage failed', {
+      uid: identity.uid, sid: sid, requestKey: reqKey,
+      error: String(error && error.message || error)
+    });
+    throw new HttpsError('internal',
+      'הפצת ההודעה נכשלה. לא נוצר פרסום חלקי; נסה שוב.');
+  }
+});
+
+exports.replyToBulletinMessage = onCall(async (req) => {
+  const identity = bulletinIdentityFor(req);
+  requireShiftCommand(identity);
+  let input;
+  try {
+    input = bulletin.parseReplyInput(req.data);
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+
+  const sid = identity.sid;
+  const replyId = bulletin.replyId(identity.uid, input.requestId);
+  const reqKey = bulletin.replyRequestKey(identity.uid, input.requestId);
+  const parentRef = db.doc(
+    'stations/' + sid + '/sub_stations/' + input.subStationId +
+    '/bulletin_messages/' + input.messageId
+  );
+  const replyRef = parentRef.collection('bulletin_replies').doc(replyId);
+  const subStationRef = db.doc(
+    'stations/' + sid + '/sub_stations/' + input.subStationId
+  );
+  const userRef = db.doc('stations/' + sid + '/users/' + identity.uid);
+  const receiptRef = db.doc('stations/' + sid + '/bulletin_requests/' + reqKey);
+  const rateRef = db.doc(
+    'stations/' + sid + '/bulletin_rate_limits/' +
+    bulletin.replyRequestKey(identity.uid, 'rate-limit-v1')
+  );
+  const hash = bulletin.replyContentHash(identity, input);
+
+  try {
+    return await db.runTransaction(async function (tx) {
+      const userSnap = await tx.get(userRef);
+      const subStationSnap = await tx.get(subStationRef);
+      const parentSnap = await tx.get(parentRef);
+      const receiptSnap = await tx.get(receiptRef);
+      const rateSnap = await tx.get(rateRef);
+
+      const actor = verifiedBulletinActor(identity, userSnap);
+      if (!subStationSnap.exists ||
+          !bulletin.subStationAvailable(subStationSnap.data() || {})) {
+        throw new HttpsError('failed-precondition',
+          'תחנת המשנה אינה קיימת או שאינה פעילה.');
+      }
+      if (!parentSnap.exists) {
+        throw new HttpsError('not-found', 'ההודעה שאליה מגיבים לא נמצאה.');
+      }
+      const parent = parentSnap.data() || {};
+      if (parent.kind !== 'bulletin' || parent.hidden === true) {
+        throw new HttpsError('failed-precondition',
+          'אי אפשר להגיב להודעה שאינה פעילה.');
+      }
+
+      const prior = receiptSnap.exists ? (receiptSnap.data() || {}) : null;
+      const requestState = bulletin.requestState(prior, hash, replyRef.path);
+      if (requestState === 'conflict') {
+        throw new HttpsError('already-exists',
+          'מזהה הבקשה כבר שימש לתגובה אחרת. רענן ונסה שוב.');
+      }
+      if (requestState === 'duplicate') {
+        return {
+          ok: true,
+          id: String(prior.message_id || replyId),
+          duplicate: true,
+          createdKey: String(prior.created_key || '')
+        };
+      }
+
+      let rate;
+      try {
+        rate = bulletin.replyRateDecision(
+          rateSnap.exists ? (rateSnap.data() || {}) : null,
+          Date.now()
+        );
+      } catch (error) {
+        const translated = translateBulletinError(error);
+        if (translated) throw translated;
+        throw error;
+      }
+      if (!rate.allowed) {
+        throw new HttpsError('resource-exhausted',
+          'נשלחו יותר מדי תגובות. נסה שוב בעוד ' +
+          rate.retryAfterSeconds + ' שניות.',
+          { retryAfterSeconds: rate.retryAfterSeconds });
+      }
+
+      const replyCount = Math.max(0, Math.floor(Number(parent.reply_count || 0)));
+      if (replyCount >= 500) {
+        throw new HttpsError('failed-precondition',
+          'הדיון הגיע למספר התגובות המרבי. יש לפרסם הודעת המשך.');
+      }
+      const nowMillis = Date.now();
+      const createdAt = admin.firestore.Timestamp.fromMillis(nowMillis);
+      const createdKey = new Date(nowMillis).toISOString();
+      tx.create(replyRef, {
+        kind: 'bulletin_reply',
+        parent_message_id: input.messageId,
+        text: input.text,
+        by_uid: identity.uid,
+        by_name: actor.byName,
+        by_role: identity.role,
+        by_crew: identity.crew,
+        hidden: false,
+        created_at: createdAt,
+        created_key: createdKey,
+        request_hash: hash
+      });
+      tx.update(parentRef, {
+        reply_count: replyCount + 1,
+        last_reply_at: createdAt
+      });
+      tx.create(receiptRef, {
+        request_hash: hash,
+        message_path: replyRef.path,
+        message_id: replyId,
+        created_key: createdKey,
+        created_at: createdAt
+      });
+      tx.set(rateRef, {
+        count: rate.count,
+        window_started_at: admin.firestore.Timestamp.fromMillis(
+          rate.windowStartedMillis
+        ),
+        updated_at: createdAt
+      }, { merge: true });
+      return { ok: true, id: replyId, duplicate: false, createdKey: createdKey };
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    console.error('replyToBulletinMessage failed', {
+      uid: identity.uid, sid: sid, subStationId: input.subStationId,
+      messageId: input.messageId, requestKey: reqKey,
+      error: String(error && error.message || error)
+    });
+    throw new HttpsError('internal',
+      'שליחת התגובה נכשלה. לא נוצרה תגובה חלקית; נסה שוב.');
+  }
+});
+
 exports.hideBulletinMessage = onCall(async (req) => {
   const auth = requireSuperAdmin(req);
   let input;
@@ -1511,31 +1835,96 @@ exports.hideBulletinMessage = onCall(async (req) => {
 
   try {
     const result = await db.runTransaction(async function (tx) {
-      const snap = await tx.get(messageRef);
-      if (!snap.exists) {
+      const selectedSnap = await tx.get(messageRef);
+      if (!selectedSnap.exists) {
         throw new HttpsError('not-found', 'ההודעה לא נמצאה.');
       }
-      const message = snap.data() || {};
+      const message = selectedSnap.data() || {};
       if (message.kind !== 'bulletin') {
         throw new HttpsError('failed-precondition',
           'המסמך שנמצא אינו הודעת לוח תקינה.');
       }
-      if (message.hidden === true) return { alreadyHidden: true };
+      let targetIds;
+      const isBroadcast = message.audience === 'all_sub_stations';
+      try {
+        targetIds = bulletin.hideTargetIds(
+          input.subStationId, input.messageId, message
+        );
+      } catch (error) {
+        const translated = translateBulletinError(error);
+        if (translated) throw translated;
+        throw error;
+      }
+      const targets = [];
+      for (const targetId of targetIds) {
+        const ref = db.doc(
+          'stations/' + input.sid + '/sub_stations/' + targetId +
+          '/bulletin_messages/' + input.messageId
+        );
+        const snap = targetId === input.subStationId
+          ? selectedSnap : await tx.get(ref);
+        targets.push({ id: targetId, ref: ref, snap: snap });
+      }
 
-      tx.update(messageRef, {
-        hidden: true,
-        hidden_at: admin.firestore.Timestamp.fromMillis(Date.now()),
-        hidden_by: auth.uid
+      // All copies are read before the first update. For a broad message this
+      // makes moderation all-or-none across the original target set, including
+      // boards that were archived after publication.
+      let alreadyHiddenCount = 0;
+      let missingCount = 0;
+      const toHide = [];
+      targets.forEach(function (target) {
+        if (!target.snap.exists) {
+          missingCount += 1;
+          return;
+        }
+        const copy = target.snap.data() || {};
+        if (copy.kind !== 'bulletin' ||
+            (isBroadcast &&
+             (copy.audience !== 'all_sub_stations' ||
+              String(copy.broadcast_id || '') !== input.messageId))) {
+          throw new HttpsError('failed-precondition',
+            'עותקי ההפצה אינם עקביים; לא בוצעה הסתרה חלקית.');
+        }
+        if (copy.hidden === true) {
+          alreadyHiddenCount += 1;
+        } else {
+          toHide.push(target);
+        }
       });
-      return { alreadyHidden: false };
+      const hiddenAt = admin.firestore.Timestamp.fromMillis(Date.now());
+      toHide.forEach(function (target) {
+        tx.update(target.ref, {
+          hidden: true,
+          hidden_at: hiddenAt,
+          hidden_by: auth.uid
+        });
+      });
+      return {
+        alreadyHidden: toHide.length === 0,
+        broadcast: isBroadcast,
+        targetCount: targetIds.length,
+        hiddenCount: toHide.length,
+        alreadyHiddenCount: alreadyHiddenCount,
+        missingCount: missingCount,
+        messagePaths: targets.map(function (target) { return target.ref.path; })
+      };
     });
 
     await sealAudit(audit, {
       message_path: messageRef.path,
+      message_paths: result.messagePaths,
+      broadcast: result.broadcast,
+      target_count: result.targetCount,
+      hidden_count: result.hiddenCount,
+      already_hidden_count: result.alreadyHiddenCount,
+      missing_count: result.missingCount,
       already_hidden: result.alreadyHidden
     });
     return { ok: true, id: input.messageId,
-             alreadyHidden: result.alreadyHidden };
+             alreadyHidden: result.alreadyHidden,
+             broadcast: result.broadcast,
+             targetCount: result.targetCount,
+             hiddenCount: result.hiddenCount };
   } catch (error) {
     await sealAudit(audit, {
       outcome: 'failed',
@@ -1546,6 +1935,76 @@ exports.hideBulletinMessage = onCall(async (req) => {
       path: messageRef.path, error: String(error && error.message || error)
     });
     throw new HttpsError('internal', 'הסתרת ההודעה נכשלה. נסה שוב.');
+  }
+});
+
+exports.hideBulletinReply = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  let input;
+  try {
+    input = bulletin.parseHideReplyInput(req.data);
+  } catch (error) {
+    const translated = translateBulletinError(error);
+    if (translated) throw translated;
+    throw error;
+  }
+
+  const parentRef = db.doc(
+    'stations/' + input.sid + '/sub_stations/' + input.subStationId +
+    '/bulletin_messages/' + input.messageId
+  );
+  const replyRef = parentRef.collection('bulletin_replies').doc(input.replyId);
+  const audit = await openAudit(
+    auth, 'hide_bulletin_reply', replyRef.path,
+    { sid: input.sid, sub_station_id: input.subStationId,
+      message_id: input.messageId, reply_id: input.replyId }
+  );
+
+  try {
+    const result = await db.runTransaction(async function (tx) {
+      const parentSnap = await tx.get(parentRef);
+      const replySnap = await tx.get(replyRef);
+      if (!parentSnap.exists || (parentSnap.data() || {}).kind !== 'bulletin') {
+        throw new HttpsError('not-found', 'הודעת המקור לא נמצאה.');
+      }
+      if (!replySnap.exists) {
+        throw new HttpsError('not-found', 'התגובה לא נמצאה.');
+      }
+      const reply = replySnap.data() || {};
+      if (reply.kind !== 'bulletin_reply') {
+        throw new HttpsError('failed-precondition',
+          'המסמך שנמצא אינו תגובת לוח תקינה.');
+      }
+      if (reply.hidden === true) return { alreadyHidden: true };
+
+      const parent = parentSnap.data() || {};
+      const count = Math.max(0, Math.floor(Number(parent.reply_count || 0)));
+      const hiddenAt = admin.firestore.Timestamp.fromMillis(Date.now());
+      tx.update(replyRef, {
+        hidden: true,
+        hidden_at: hiddenAt,
+        hidden_by: auth.uid
+      });
+      tx.update(parentRef, { reply_count: Math.max(0, count - 1) });
+      return { alreadyHidden: false };
+    });
+
+    await sealAudit(audit, {
+      message_path: replyRef.path,
+      already_hidden: result.alreadyHidden
+    });
+    return { ok: true, id: input.replyId,
+             alreadyHidden: result.alreadyHidden };
+  } catch (error) {
+    await sealAudit(audit, {
+      outcome: 'failed',
+      error_code: String(error && error.code || 'internal').slice(0, 80)
+    });
+    if (error instanceof HttpsError) throw error;
+    console.error('hideBulletinReply failed', {
+      path: replyRef.path, error: String(error && error.message || error)
+    });
+    throw new HttpsError('internal', 'הסתרת התגובה נכשלה. נסה שוב.');
   }
 });
 
