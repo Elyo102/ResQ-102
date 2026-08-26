@@ -40,5 +40,13 @@ for (const token of ['body.art{ background:#070d18', 'body.art h1{ color:#f4f7fb
   check(login.includes(token), 'login artwork keeps explicit dark-surface contrast: ' + token);
 }
 
+const schedule = read('schedule.html');
+for (const token of ['<main id="mainView"', '<h1 class="screen-title">', 'aria-label="החודש הקודם"', 'aria-label="החודש הבא"', 'role="list"', "setAttribute('role', 'listitem')", "createElement('button')", 'min-width:44px;min-height:44px']) {
+  check(schedule.includes(token), 'schedule accessibility contains ' + token);
+}
+for (const id of ['ovKind','ovDate','ovCrew','ovNote']) {
+  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(schedule), 'schedule label is associated with ' + id);
+}
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');
