@@ -22,6 +22,15 @@ const ROSTER = [
   ['u5', { full_name: 'עזב מזמן',   role: 'firefighter', crew: 'B', is_active: false }]
 ];
 
+// מסמכי users עבור בורר תיקון השעות. המספרים וה-uid שונים
+// כדי שבדיקת race תוכל לעבור לאדם אחר ולחזור למשתמש המחובר.
+const USERS = [
+  ['u2', { full_name:'טל חודרה', employee_number:'17', role:'firefighter',
+           crew:'A', is_active:true }],
+  ['u4', { full_name:'דנה לוי', employee_number:'21', role:'firefighter',
+           crew:'B', is_active:true }]
+];
+
 // קריאת פתע פתוחה, שנשלחה למשתמש הבדיקה. מאפשרת לוודא שהחלון
 // באמת קופץ, ושהמונים במסך המפקד סופרים נכון.
 const CALLOUTS = [
@@ -232,8 +241,8 @@ const BOARD = {
     ]},
     { id: 'v2', name: 'רכב געש', role: 'חילוץ', slots: [
       { id: 's21', job: 'נהג מפעיל משאבה', req: 'q1' },
-      { id: 's22', job: 'כבאי',            req: 'q2' },
-      { id: 's23', job: 'ר. משמרת',        req: ''   }
+      { id: 's22', job: 'כבאי',            req: 'q2', site: 'shahmon' },
+      { id: 's23', job: 'ר. משמרת',        req: '',   site: 'rashit'  }
     ]},
     { id: 'v3', name: 'רכב סער', role: 'כיבוי', slots: [
       { id: 's31', job: 'חובש',     req: 'q3' },
@@ -247,7 +256,7 @@ const BOARD = {
 const SHIFT = { assign: {
   c1: 'u1', c2: 'u4', c3: 'u2',
   s11: 'u4', s12: 'u1',
-  s21: 'u4', s22: 'u2',
+  s21: 'u4', s22: 'u2', s23: 'stub-uid',
   s31: 'u1'
 } };
 
@@ -402,8 +411,7 @@ export function limit(){ return {}; }
 
 export function getDoc(ref){
   const p = (ref && ref.path) || '';
-  if (LAG) return lag(1).then(() => getDoc0(ref));
-  return getDoc0(ref);
+  return lag(null, p).then(() => getDoc0(ref));
 }
 
 function getDoc0(ref){
@@ -423,42 +431,50 @@ FAULTS.push.apply(FAULTS, TASKS_EXTRA);
 const LAG = (typeof window !== 'undefined' && window.__SMOKE_LAG) || 0;
 // מדידה: מתי יצאה הבקשה הראשונה, ומתי חזרה האחרונה.
 // זה הזמן שהמשתמש מחכה בו למסך ריק.
-function mark(){
+function mark(path){
   if (typeof window === 'undefined') return;
   if (!window.__T0) window.__T0 = Date.now();
   window.__N = (window.__N || 0) + 1;
+  window.__DATA_PATHS = window.__DATA_PATHS || [];
+  window.__DATA_PATHS.push(path || '');
 }
 function done(){
   if (typeof window === 'undefined') return;
   window.__TN = Date.now();
 }
-function lag(v){
-  mark();
-  if (!LAG) { done(); return Promise.resolve(v); }
-  return new Promise(r => setTimeout(function () { done(); r(v); }, LAG));
+function lag(v, path){
+  mark(path);
+  const plan = (typeof window !== 'undefined') ? window.__SMOKE_LAG_PLAN : null;
+  const wait = Array.isArray(plan) && plan.length
+    ? Number(plan.shift()) || 0
+    : Number(LAG) || 0;
+  if (!wait) { done(); return Promise.resolve(v); }
+  return new Promise(r => setTimeout(function () { done(); r(v); }, wait));
 }
 
 export function getDocs(q){
   const p = (q && q.path) || '';
-  if (/\/quals$/.test(p))        return lag(listSnap(QUALS));
-  if (/\/roster$/.test(p))       return lag(listSnap(ROSTER));
-  if (/\/member_quals$/.test(p)) return lag(listSnap(MEMBER_QUALS));
-  if (/\/rotations$/.test(p))    return lag(listSnap(ROTATIONS));
-  if (/\/shift_overrides$/.test(p)) return lag(listSnap(OVERRIDES));
-  if (/\/sub_stations$/.test(p))    return lag(listSnap(SITES));
-  if (/\/attendance$/.test(p))      return lag(listSnap(ATTENDANCE));
-  if (/\/monthly_reports$/.test(p)) return lag(listSnap(REPORTS));
-  if (/\/swaps$/.test(p))           return lag(listSnap(SWAPS));
-  if (/\/callouts$/.test(p))        return lag(listSnap(CALLOUTS));
-  if (/\/guards$/.test(p))          return lag(listSnap(GUARDS));
-  if (/\/photos$/.test(p))          return lag(listSnap(FAULT_PHOTOS));
-  if (/\/faults$/.test(p))          return lag(listSnap(FAULTS));
-  if (/\/vehicles$/.test(p))        return lag(listSnap(VEHICLES));
-  if (/\/vehicle_views$/.test(p))   return lag(listSnap(VIEWS));
-  if (/\/handovers$/.test(p))       return lag(listSnap(HANDOVERS));
-  if (/\/redline_waivers$/.test(p)) return lag(listSnap(WAIVERS));
-  if (/\/submissions$/.test(p))     return lag(listSnap(SUBS));
-  return lag(EMPTY_QUERY);
+  const delayed = value => lag(value, p);
+  if (/\/quals$/.test(p))        return delayed(listSnap(QUALS));
+  if (/\/roster$/.test(p))       return delayed(listSnap(ROSTER));
+  if (/\/users$/.test(p))        return delayed(listSnap(USERS));
+  if (/\/member_quals$/.test(p)) return delayed(listSnap(MEMBER_QUALS));
+  if (/\/rotations$/.test(p))    return delayed(listSnap(ROTATIONS));
+  if (/\/shift_overrides$/.test(p)) return delayed(listSnap(OVERRIDES));
+  if (/\/sub_stations$/.test(p))    return delayed(listSnap(SITES));
+  if (/\/attendance$/.test(p))      return delayed(listSnap(ATTENDANCE));
+  if (/\/monthly_reports$/.test(p)) return delayed(listSnap(REPORTS));
+  if (/\/swaps$/.test(p))           return delayed(listSnap(SWAPS));
+  if (/\/callouts$/.test(p))        return delayed(listSnap(CALLOUTS));
+  if (/\/guards$/.test(p))          return delayed(listSnap(GUARDS));
+  if (/\/photos$/.test(p))          return delayed(listSnap(FAULT_PHOTOS));
+  if (/\/faults$/.test(p))          return delayed(listSnap(FAULTS));
+  if (/\/vehicles$/.test(p))        return delayed(listSnap(VEHICLES));
+  if (/\/vehicle_views$/.test(p))   return delayed(listSnap(VIEWS));
+  if (/\/handovers$/.test(p))       return delayed(listSnap(HANDOVERS));
+  if (/\/redline_waivers$/.test(p)) return delayed(listSnap(WAIVERS));
+  if (/\/submissions$/.test(p))     return delayed(listSnap(SUBS));
+  return delayed(EMPTY_QUERY);
 }
 
 export function updateDoc(){ return Promise.resolve(); }

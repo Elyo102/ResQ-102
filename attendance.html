@@ -248,7 +248,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין דוח להציג.</div>
   </div>
 
-  <div id="work" class="hide">
+  <div id="work" class="hide" aria-busy="false">
 
     <!-- ============ תיקון שעות לאדם אחר ============
          מוצג לרכז/ת כוח אדם ולמנהל-על בלבד. כשנבחר אדם,
@@ -405,6 +405,9 @@ let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '', IS_SUPER = false;
 // בחרה אדם אחר. ראה ההסבר המלא במקום שבו הוא נקבע.
 let SUBJ = null, CAN_EDIT_OTHERS = false;
 let PEOPLE = [];
+let subjectGeneration = 0;
+let staticLoadGeneration = 0;
+let monthLoadGeneration = 0;
 
 // האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
 function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
@@ -426,7 +429,7 @@ let myGuards = [];   // אבטחות שאני משובץ אליהן
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
 let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
-let swaps   = [];          // החלפות מאושרות שנוגעות אליי
+let swaps   = [];          // כל ההחלפות המאושרות בתחנה; הסינון לאדם נעשה בחישוב
 
 function siteHoursOf(id){
   const s = sites.filter(x => x.id === id)[0];
@@ -487,6 +490,7 @@ onAuthStateChanged(auth, async user => {
   // לרשומה הלא נכונה ברגע שרכזת תפתח מישהו אחר. tests/assign.mjs
   // נופל אם נשאר ME.emp באחד מהם.
   SUBJ = Object.assign({}, ME);
+  const initialSubjectGeneration = ++subjectGeneration;
   CAN_EDIT_OTHERS = isSuper || c.role === 'hr_coordinator';
 
   $('work').classList.remove('hide');
@@ -499,7 +503,8 @@ onAuthStateChanged(auth, async user => {
   viewYear = now.getFullYear();
   viewMonth = now.getMonth();
 
-  await loadStatic();
+  const staticReady = await loadStatic();
+  if (!staticReady || initialSubjectGeneration !== subjectGeneration) return;
   await loadMonth();
   if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
 
@@ -530,110 +535,215 @@ onAuthStateChanged(auth, async user => {
 // ---------- טעינה ----------
 
 async function loadStatic(){
-  try {
-    const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));
-    rotations = rs.docs.map(d => d.data());
-  } catch (ignore) {}
+  const generation = ++staticLoadGeneration;
+  const snapshot = {
+    sid: SID,
+    uid: SUBJ.uid,
+    emp: String(SUBJ.emp),
+    crew: SUBJ.crew || '',
+    mySite: mySite
+  };
+  const next = {};
 
-  try {
-    const gs = await getDocs(collection(db, 'stations', SID, 'guards'));
-    myGuards = [];
-    gs.forEach(d => {
-      const v = Object.assign({ id: d.id }, d.data() || {});
-      if (v.status === 'cancelled') return;
-      if (guardHasMe(v, SUBJ.uid)) myGuards.push(v);
-    });
-  } catch (ignore) {}
+  // ששת המקורות אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
+  // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
+  // כל משימה עדיין מבודדת בכשל, בדיוק כמו ששת ה-try/catch
+  // שהיו כאן קודם — מקור חסר אינו מוחק נתון שמקור אחר החזיר.
+  const loadRotations = async function () {
+    try {
+      const rs = await getDocs(collection(db, 'stations', snapshot.sid, 'rotations'));
+      next.rotations = rs.docs.map(d => d.data());
+    } catch (ignore) {}
+  };
 
-  try {
-    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
-    overrides = {};
-    os.forEach(d => {
-      const v = d.data() || {};
-      overrides[d.id] = { kind: v.kind || '', crew: v.crew || '',
-                          extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
-                          note: v.note || '' };
-    });
-  } catch (ignore) {}
+  const loadGuards = async function () {
+    try {
+      const gs = await getDocs(collection(db, 'stations', snapshot.sid, 'guards'));
+      const found = [];
+      gs.forEach(d => {
+        const v = Object.assign({ id: d.id }, d.data() || {});
+        if (v.status === 'cancelled') return;
+        if (guardHasMe(v, snapshot.uid)) found.push(v);
+      });
+      next.myGuards = found;
+    } catch (ignore) {}
+  };
+
+  const loadOverrides = async function () {
+    try {
+      const os = await getDocs(collection(db, 'stations', snapshot.sid, 'shift_overrides'));
+      const found = {};
+      os.forEach(d => {
+        const v = d.data() || {};
+        found[d.id] = { kind: v.kind || '', crew: v.crew || '',
+                        extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
+                        note: v.note || '' };
+      });
+      next.overrides = found;
+    } catch (ignore) {}
+  };
 
   // איפה אני משובץ בלוח הציוות של המשמרת שלי. משמש כברירת
   // מחדל לימים שעוד לא דיווחתי — כדי שהדוח יראה גם איפה עבדתי
   // או אעבוד, ולא רק מתי.
-  try {
-    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
-    const s = SUBJ.crew
-      ? await getDoc(doc(db, 'stations', SID, 'shifts', SUBJ.crew))
-      : null;
-    const board  = b.exists() ? (b.data() || {}) : {};
-    const assign = (s && s.exists() && (s.data() || {}).assign) || {};
+  const loadBoardSite = async function () {
+    try {
+      const pair = await Promise.all([
+        getDoc(doc(db, 'stations', snapshot.sid, 'config', 'board')),
+        snapshot.crew
+          ? getDoc(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
+          : Promise.resolve(null)
+      ]);
+      const b = pair[0], s = pair[1];
+      const board  = b.exists() ? (b.data() || {}) : {};
+      const assign = (s && s.exists() && (s.data() || {}).assign) || {};
 
-    const mine = Object.keys(assign).filter(k => assign[k] === SUBJ.uid);
-    (board.vehicles || []).forEach(function (v) {
-      (v.slots || []).forEach(function (sl) {
-        if (mine.indexOf(sl.id) !== -1 && sl.site && !mySite) mySite = sl.site;
+      const mine = Object.keys(assign).filter(k => assign[k] === snapshot.uid);
+      let found = snapshot.mySite;
+      (board.vehicles || []).forEach(function (v) {
+        (v.slots || []).forEach(function (sl) {
+          if (mine.indexOf(sl.id) !== -1 && sl.site && !found) found = sl.site;
+        });
       });
-    });
-  } catch (ignore) {}
+      next.mySite = found;
+    } catch (ignore) {}
+  };
 
   // החלפות מאושרות. אדם שהחליף לא עובד ביום שלו, וכן עובד
   // ביום של מי שהחליף איתו — ושני הימים חייבים להופיע נכון
   // במילוי מראש, אחרת הדוח מתחיל שגוי.
-  try {
-    const sw = await getDocs(collection(db, 'stations', SID, 'swaps'));
-    swaps = [];
-    sw.forEach(d => {
-      const v = d.data() || {};
-      if (v.status === 'approved') swaps.push(v);
-    });
-  } catch (ignore) {}
+  const loadSwaps = async function () {
+    try {
+      const sw = await getDocs(collection(db, 'stations', snapshot.sid, 'swaps'));
+      const found = [];
+      sw.forEach(d => {
+        const v = d.data() || {};
+        if (v.status === 'approved') found.push(v);
+      });
+      next.swaps = found;
+    } catch (ignore) {}
+  };
 
-  try {
-    const ss = await getDocs(collection(db, 'stations', SID, 'sub_stations'));
-    sites = [];
-    ss.forEach(d => {
-      const v = d.data() || {};
-      sites.push({ id: d.id, name: v.name || '',
-                   fixed_hours: Number(v.fixed_hours || 0),
-                   order: Number(v.order || 0) });
-    });
-    sites.sort((a, b) => a.order - b.order);
-  } catch (ignore) {}
+  const loadSites = async function () {
+    try {
+      const ss = await getDocs(collection(db, 'stations', snapshot.sid, 'sub_stations'));
+      const found = [];
+      ss.forEach(d => {
+        const v = d.data() || {};
+        found.push({ id: d.id, name: v.name || '',
+                     fixed_hours: Number(v.fixed_hours || 0),
+                     order: Number(v.order || 0) });
+      });
+      found.sort((a, b) => a.order - b.order);
+      next.sites = found;
+    } catch (ignore) {}
+  };
+
+  await Promise.all([
+    loadRotations(), loadGuards(), loadOverrides(),
+    loadBoardSite(), loadSwaps(), loadSites()
+  ]);
+
+  const current = generation === staticLoadGeneration &&
+    SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
+    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew;
+  if (!current) return false;
+
+  if (Object.prototype.hasOwnProperty.call(next, 'rotations')) rotations = next.rotations;
+  if (Object.prototype.hasOwnProperty.call(next, 'myGuards')) myGuards = next.myGuards;
+  if (Object.prototype.hasOwnProperty.call(next, 'overrides')) overrides = next.overrides;
+  if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
+  if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
+  if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;
+  return true;
+}
+
+function setMonthBusy(busy){
+  $('work').setAttribute('aria-busy', busy ? 'true' : 'false');
+  ['prev','next','btnFill','btnSubmit','btnView','btnSync','btnRecalc',
+   'btnUnsubmit','btnApprove','btnReopen','btnStart','btnStop','btnManual'].forEach(function (id) {
+    const el = $(id);
+    if (el) el.disabled = !!busy;
+  });
+  document.querySelectorAll('.days button').forEach(function (el) {
+    el.disabled = !!busy;
+  });
+}
+
+// פעולה שהתחילה לפני מעבר חודש עלולה להסתיים בזמן שהחודש
+// החדש עדיין נטען. במקרה כזה אסור לה להפעיל את הכפתור מחדש;
+// loadMonth האחרון ישחרר את כל הכפתורים רק אחרי שהנתונים הוחלפו.
+function releaseMonthAction(button){
+  button.disabled = $('work').getAttribute('aria-busy') === 'true';
 }
 
 async function loadMonth(){
-  const mk = monthKey(viewYear, viewMonth);
-  records = {};
+  const generation = ++monthLoadGeneration;
+  const snapshot = {
+    sid: SID,
+    emp: String(SUBJ.emp),
+    subject: subjectGeneration,
+    year: viewYear,
+    month: viewMonth
+  };
+  const mk = monthKey(snapshot.year, snapshot.month);
+  const nextRecords = {};
+  let nextReport = null;
+  let attendanceError = null;
+  setMonthBusy(true);
 
-  // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
-  // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
-  // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
-  try {
-    const qs = await getDocs(query(
-      collection(db, 'stations', SID, 'attendance'),
-      where('emp_number', '==', SUBJ.emp),
-      where('month', '==', mk)
-    ));
-    qs.forEach(function (d) {
-      const v = d.data() || {};
-      records[v.date] = Object.assign({ id: d.id }, v);
-    });
-  } catch (e) {
-    const code = String(e.code || '');
+  // רשומות החודש ומצב הדוח הן שתי קריאות עצמאיות. שתיהן
+  // מתחילות יחד ובונות תוצאה מקומית. רק דור הטעינה האחרון
+  // רשאי לפרסם אותה, כך שחודש איטי לא יכול לדרוס חודש חדש.
+  await Promise.all([
+    (async function () {
+      // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
+      // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
+      // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
+      try {
+        const qs = await getDocs(query(
+          collection(db, 'stations', snapshot.sid, 'attendance'),
+          where('emp_number', '==', snapshot.emp),
+          where('month', '==', mk)
+        ));
+        qs.forEach(function (d) {
+          const v = d.data() || {};
+          nextRecords[v.date] = Object.assign({ id: d.id }, v);
+        });
+      } catch (e) {
+        attendanceError = e;
+      }
+    })(),
+    (async function () {
+      try {
+        const r = await getDoc(doc(db, 'stations', snapshot.sid, 'monthly_reports',
+                                   snapshot.emp + '_' + mk));
+        if (r.exists()) nextReport = r.data();
+      } catch (ignore) {}
+    })()
+  ]);
+
+  const current = generation === monthLoadGeneration &&
+    snapshot.subject === subjectGeneration && SID === snapshot.sid &&
+    SUBJ && String(SUBJ.emp) === snapshot.emp &&
+    viewYear === snapshot.year && viewMonth === snapshot.month;
+  if (!current) return false;
+
+  records = nextRecords;
+  report = nextReport;
+  if (attendanceError) {
+    const code = String(attendanceError.code || '');
     if (code.indexOf('failed-precondition') !== -1) {
       msg('חסר אינדקס במסד. הרץ deploy.bat — הוא פורס גם אינדקסים.', 'err');
     } else {
-      msg('לא הצלחתי לקרוא את הדוח. (' + (e.code || e.message) + ')', 'err');
+      msg('לא הצלחתי לקרוא את הדוח. (' +
+          (attendanceError.code || attendanceError.message) + ')', 'err');
     }
   }
 
-  report = null;
-  try {
-    const r = await getDoc(doc(db, 'stations', SID, 'monthly_reports',
-                               SUBJ.emp + '_' + mk));
-    if (r.exists()) report = r.data();
-  } catch (ignore) {}
-
   render();
+  setMonthBusy(false);
+  return true;
 }
 
 // ---------- ציור ----------
@@ -882,8 +992,9 @@ $('btnFill').onclick = async () => {
     render();
   } catch (e) {
     msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
   }
-  b.disabled = false;
 };
 
 $('btnStart').onclick = async () => {
@@ -933,9 +1044,15 @@ $('btnManual').onclick = () => {
 
 $('btnSync').onclick = async () => {
   const b = $('btnSync'); b.disabled = true;
+  const action = { subject:subjectGeneration, year:viewYear, month:viewMonth };
   try {
     // הסידור נטען מחדש — הוא יכול היה להשתנות מאז שהמסך נפתח.
-    await loadStatic();
+    const fresh = await loadStatic();
+    if (!fresh || action.subject !== subjectGeneration ||
+        action.year !== viewYear || action.month !== viewMonth) {
+      msg('התיקון בוטל כי האדם או החודש השתנו בזמן הטעינה.', 'info');
+      return;
+    }
 
     const bt = baseTimes();
     const last = daysInMonth(viewYear, viewMonth);
@@ -983,8 +1100,9 @@ $('btnSync').onclick = async () => {
     render();
   } catch (e) {
     msg('התיקון נכשל. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
   }
-  b.disabled = false;
 };
 
 // השעות נשמרות על הרשומה לצורך דוחות, ומחושבות מחדש בכל תצוגה.
@@ -1013,8 +1131,9 @@ $('btnRecalc').onclick = async () => {
     render();
   } catch (e) {
     msg('החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
   }
-  b.disabled = false;
 };
 
 // ---------- חלונית עריכה ----------
@@ -1488,7 +1607,17 @@ async function loadPeople(){
 // החלפת נושא בלי טעינה מחדש הייתה מציגה את הימים של אחד
 // והשעות של אחר.
 async function switchTo(p){
+  const previousUid = SUBJ && SUBJ.uid;
   SUBJ = p ? Object.assign({}, p) : Object.assign({}, ME);
+  if (previousUid !== SUBJ.uid) {
+    // שני הערכים האלה נגזרים מה-UID. אם הקריאה החדשה תיכשל,
+    // ברירת מחדל ריקה בטוחה יותר מהצגת אתר או אבטחה של אדם אחר.
+    mySite = '';
+    myGuards = [];
+  }
+  const generation = ++subjectGeneration;
+  monthLoadGeneration++;
+  setMonthBusy(true);
   const other = onOther();
 
   $('otherBar').classList.toggle('hide', !other);
@@ -1499,8 +1628,10 @@ async function switchTo(p){
   }
   $('pickBack').classList.toggle('hide', !other);
 
-  await loadStatic();
+  const staticReady = await loadStatic();
+  if (!staticReady || generation !== subjectGeneration) return false;
   await loadMonth();
+  return generation === subjectGeneration;
 }
 
 async function loadApprovals(){
