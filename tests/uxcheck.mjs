@@ -62,5 +62,20 @@ for (const id of ['pickWho','dType','dShape','dStart','dEnd','dStart2','dEnd2',
         'attendance label is associated with ' + id);
 }
 
+const swaps = read('swaps.html');
+for (const token of ['<main class="wrap">', 'role="dialog"', 'aria-modal="true"',
+  'aria-hidden="true"', 'function openOv(', 'ovReturnFocus',
+  "e.key !== 'Tab'", "style.removeProperty('display')",
+  "createElement('button')", "setAttribute('aria-pressed'",
+  'function focusStatus(', 'closeOv(false)']) {
+  check(swaps.includes(token), 'swaps UX contains ' + token);
+}
+for (const id of ['myDate','hisDate','wantCrew','newNote','pq','tkDate','rr']) {
+  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(swaps),
+        'swaps label is associated with ' + id);
+}
+check(!swaps.includes("$('ov').style.display"),
+      'swaps dialogs do not leave an inline display override');
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');

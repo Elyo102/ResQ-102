@@ -26,15 +26,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
-        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
-  .wrap{ max-width:860px; margin:0 auto }
-  h1{ font-size:21px; margin:0 0 3px }
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
-         border-radius:12px; padding:16px; margin-bottom:14px }
+         border-radius:14px; padding:18px; margin-bottom:14px }
 
   /* ---------- לוג המשמרת ---------- */
   /* גובה קבוע ולא זורם. פיד שגדל בלי גבול דוחף את טופס
@@ -77,23 +77,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           border-radius:20px; font-size:11px; font-weight:700;
           padding:1px 8px; margin-inline-start:6px; vertical-align:middle }
 
-  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  label,.field-label{ display:block; font-size:12.5px; color:var(--muted);
+                      font-weight:650; margin:12px 0 4px }
   input, select, textarea{ width:100%; padding:10px; background:var(--input);
-        color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+        min-height:44px; color:var(--txt); border:1px solid var(--line);
+        border-radius:10px; font-size:15px; font-family:inherit }
+  :where(input,select,textarea,.btn,.mode,.pit):focus-visible{
+        outline:3px solid var(--accent); outline-offset:2px }
   input[type="date"]::-webkit-calendar-picker-indicator{
     filter:invert(1) brightness(1.6); opacity:.85; cursor:pointer }
   textarea{ min-height:56px; resize:vertical }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
-        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
   .btn.no{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px; margin-top:0 }
 
   .two{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
   @media (max-width:560px){ .two{ grid-template-columns:1fr } }
@@ -181,7 +184,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .modes{ display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:4px }
   .modes .mode{ width:auto; margin:0; text-align:start; cursor:pointer;
                 border:1px solid var(--line); background:var(--panel);
-                border-radius:10px; padding:12px 13px; font-family:inherit;
+                border-radius:10px; min-height:70px; padding:12px 13px; font-family:inherit;
                 color:var(--muted) }
   .modes .mode b{ display:block; font-size:14.5px; color:var(--txt);
                   font-weight:700 }
@@ -205,16 +208,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .plist{ max-height:40vh; overflow:auto; margin-top:8px;
           border:1px solid var(--line); border-radius:8px }
   .pit{ display:flex; align-items:center; gap:9px; padding:10px 12px;
-        border-bottom:1px solid var(--line-soft); cursor:pointer }
+        width:100%; min-height:44px; border:0; border-bottom:1px solid var(--line-soft);
+        background:transparent; color:var(--txt); font:inherit; text-align:start;
+        cursor:pointer }
   .pit:last-child{ border-bottom:0 }
   .pit:hover{ background:var(--panel) }
   .pit .pn{ flex:1; font-size:14.5px; font-weight:600 }
   .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
+  .sr-only{ position:absolute!important; width:1px!important; height:1px!important;
+            padding:0!important; margin:-1px!important; overflow:hidden!important;
+            clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important }
+  @media (max-width:620px){
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .card{ border-radius:12px; padding:14px }
+    .composer{ align-items:stretch }
+    .composer .send{ min-width:72px }
+    .acts .btn{ flex:1 1 130px }
+  }
 </style>
 </head>
 <body>
 
-<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+<div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
   <code id="errRaw"></code>
@@ -240,22 +256,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 })();
 </script>
 
-<div class="wrap">
+<main class="wrap">
   <h1>החלפות משמרת</h1>
   <div class="sub" id="whoSub">—</div>
 
-  <div class="card hide" id="denyCard">
+  <div class="card hide" id="denyCard" role="status">
     <div class="note" id="denyWho"></div>
     <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין החלפות להציג.</div>
   </div>
 
-  <div id="work" class="hide">
+  <div id="work" class="hide" aria-busy="false">
 
     <div class="card hide" id="apprCard">
       <h2>ממתין לאישורך</h2>
       <div class="note" id="apprNote">—</div>
       <div id="apprList"></div>
-      <div class="msg" id="apprMsg"></div>
+      <div class="msg" id="apprMsg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
     <!-- ========== לוג המשמרת ========== -->
@@ -266,15 +282,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         צוותים כותבים — כולם קוראים.
       </div>
 
-      <div class="feed" id="logFeed">
+      <div class="feed" id="logFeed" role="log" aria-live="polite" aria-relevant="additions text">
         <div class="empty">טוען…</div>
       </div>
 
       <div id="logWrite" class="hide">
         <div class="composer">
+          <label class="sr-only" for="logText">הודעה ללוג המשמרת</label>
           <textarea id="logText" rows="1" maxlength="2000"
                     placeholder="כתוב הודעה למשמרת…"></textarea>
-          <button class="btn go send" id="logSend" title="שלח">שלח</button>
+          <button type="button" class="btn go send" id="logSend" title="שלח">שלח</button>
         </div>
         <div class="note" id="logCount"></div>
       </div>
@@ -282,7 +299,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         קריאה בלבד. כתיבה בלוג פתוחה לראשי משמרות, סגנים
         ומפקדי צוותים.
       </div>
-      <div class="msg" id="logMsg"></div>
+      <div class="msg" id="logMsg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
     <div class="card">
@@ -297,8 +314,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <div class="side from">
           <div class="ttl">המשמרת שלי</div>
           <div class="sub2">היום שאני עובד בו ורוצה לעבור ממנו</div>
-          <input type="date" id="myDate">
-          <div class="crewline" id="myCrewLine">—</div>
+          <label for="myDate">תאריך המשמרת שלי</label>
+          <input type="date" id="myDate" aria-describedby="myCrewLine">
+          <div class="crewline" id="myCrewLine" aria-live="polite">—</div>
         </div>
 
         <div class="arrow" aria-hidden="true">←</div>
@@ -306,30 +324,31 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <div class="side to">
           <div class="ttl">מעבר אל משמרת</div>
           <div class="sub2">היום שאני רוצה לעבוד בו עם משמרת אחרת</div>
-          <input type="date" id="hisDate">
-          <div class="crewline" id="hisCrewLine">—</div>
+          <label for="hisDate">תאריך המשמרת שאליה עוברים</label>
+          <input type="date" id="hisDate" aria-describedby="hisCrewLine">
+          <div class="crewline" id="hisCrewLine" aria-live="polite">—</div>
         </div>
       </div>
 
-      <label>מציאת מחליף</label>
-      <div class="modes">
-        <button type="button" class="mode on" id="modePeer">
+      <div class="field-label" id="modeLabel">מציאת מחליף</div>
+      <div class="modes" role="group" aria-labelledby="modeLabel">
+        <button type="button" class="mode on" id="modePeer" aria-pressed="true">
           <b>בחירת שם</b>
           <span>אני יודע עם מי אני מתחלף</span>
         </button>
-        <button type="button" class="mode" id="modeOpen">
+        <button type="button" class="mode" id="modeOpen" aria-pressed="false">
           <b>שידור לכולם</b>
           <span>מי שמעוניין יתפוס</span>
         </button>
       </div>
 
       <div id="peerWrap">
-        <button class="btn" id="btnPick" style="margin-top:10px;width:100%">בחר כבאי</button>
-        <div class="note" id="peerNote" style="margin-top:8px">לא נבחר.</div>
+        <button type="button" class="btn" id="btnPick" aria-describedby="peerNote" style="margin-top:10px;width:100%">בחר כבאי</button>
+        <div class="note" id="peerNote" role="status" aria-live="polite" style="margin-top:8px">לא נבחר.</div>
       </div>
 
       <div id="openWrap" class="hide">
-        <label>איזו משמרת מעניינת אותך</label>
+        <label for="wantCrew">איזו משמרת מעניינת אותך</label>
         <select id="wantCrew"></select>
         <div class="note" style="margin-top:8px">
           הבקשה תופיע לכולם. מי שמעוניין בוחר יום משלו בתמורה,
@@ -338,29 +357,31 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           מי שיתפוס יבחר אותו.
         </div>
       </div>
-      <label>הערה (לא חובה)</label>
+      <label for="newNote">הערה (לא חובה)</label>
       <textarea id="newNote" maxlength="200"></textarea>
-      <button class="btn go" id="btnSend">שלח בקשה</button>
-      <div class="msg" id="newMsg"></div>
+      <button type="button" class="btn go" id="btnSend">שלח בקשה</button>
+      <div class="msg" id="newMsg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
     <div class="card">
       <h2>בקשות פתוחות בתחנה</h2>
       <div class="note" id="openNote">—</div>
       <div id="openList"></div>
-      <div class="msg" id="openMsg"></div>
+      <div class="msg" id="openMsg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
     <div class="card">
       <h2>הבקשות שלי</h2>
       <div id="mineList"></div>
-      <div class="msg" id="mineMsg"></div>
+      <div class="msg" id="mineMsg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
   </div>
-</div>
+</main>
 
-<div id="ov"><div class="dlg" id="dlg"></div></div>
+<div id="ov" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" aria-hidden="true">
+  <div class="dlg" id="dlg" tabindex="-1"></div>
+</div>
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
@@ -691,13 +712,14 @@ async function loadSwaps(){
 // ---------- בחירת כבאי ----------
 
 $('btnPick').onclick = () => {
-  $('dlg').innerHTML =
-    '<h3>עם מי מחליפים</h3>' +
+  openOv(
+    '<h3 id="dlgTitle">עם מי מחליפים</h3>' +
     '<div class="hint">כל אנשי התחנה. מי שבמשמרת אחרת — התג לידו.</div>' +
+    '<label for="pq">חיפוש שם</label>' +
     '<input type="text" id="pq" placeholder="חיפוש שם" autocomplete="off">' +
     '<div class="plist" id="plist"></div>' +
-    '<div class="acts"><button class="btn" id="pc">סגור</button></div>';
-  $('ov').classList.add('on');
+    '<div class="acts"><button type="button" class="btn" id="pc">סגור</button></div>',
+    'pq');
 
   const draw = function(){
     const term = String($('pq').value || '').trim().toLowerCase();
@@ -707,7 +729,8 @@ $('btnPick').onclick = () => {
     box.innerHTML = '';
     if (!list.length) { box.innerHTML = '<div class="empty">לא נמצא.</div>'; return; }
     list.slice(0, 60).forEach(function (p) {
-      const it = document.createElement('div');
+      const it = document.createElement('button');
+      it.type = 'button';
       it.className = 'pit';
       it.innerHTML = '<span class="pn">' + esc(p.full_name || '(בלי שם)') + '</span>' +
         (p.crew ? '<span class="cw ' + esc(p.crew) + '">' +
@@ -723,13 +746,63 @@ $('btnPick').onclick = () => {
     });
   };
   $('pq').addEventListener('input', draw);
-  draw(); $('pq').focus();
+  draw();
   $('pc').onclick = closeOv;
 };
 
-function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+let ovReturnFocus = null;
+function openOv(html, firstId){
+  const ov = $('ov');
+  const dlg = $('dlg');
+  ovReturnFocus = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement : null;
+  dlg.innerHTML = html;
+  // takeOpen השתמש בעבר ב-style.display והותיר display:none inline.
+  // class לבדה לא יכולה לגבור עליו, ולכן חלוניות מאוחרות נעלמו.
+  ov.style.removeProperty('display');
+  ov.classList.add('on');
+  ov.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(function () {
+    if (!ov.classList.contains('on')) return;
+    const first = (firstId && $(firstId)) ||
+      dlg.querySelector('input,select,textarea,button,[href],[tabindex]:not([tabindex="-1"])');
+    (first || dlg).focus();
+  });
+}
+function dialogFocusable(){
+  return Array.from($('dlg').querySelectorAll(
+    'button:not([disabled]),input:not([disabled]),select:not([disabled]),' +
+    'textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'))
+    .filter(function (el) { return !el.classList.contains('hide'); });
+}
+function closeOv(restoreFocus){
+  const shouldRestore = restoreFocus !== false;
+  const back = ovReturnFocus;
+  ovReturnFocus = null;
+  $('ov').classList.remove('on');
+  $('ov').style.removeProperty('display');
+  $('ov').setAttribute('aria-hidden', 'true');
+  $('dlg').innerHTML = '';
+  if (shouldRestore && back && back.isConnected) back.focus();
+}
+function focusStatus(id){
+  const target = $(id);
+  if (target) target.focus();
+}
 $('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
+document.addEventListener('keydown', function (e) {
+  if (!$('ov').classList.contains('on')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeOv(); return; }
+  if (e.key !== 'Tab') return;
+  const items = dialogFocusable();
+  if (!items.length) { e.preventDefault(); $('dlg').focus(); return; }
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !$('dlg').contains(document.activeElement))) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && (document.activeElement === last || !$('dlg').contains(document.activeElement))) {
+    e.preventDefault(); first.focus();
+  }
+});
 
 // ---------- שליחת בקשה ----------
 
@@ -769,6 +842,8 @@ function setMode(m){
   const open = m === 'open';
   $('modePeer').classList.toggle('on', !open);
   $('modeOpen').classList.toggle('on', open);
+  $('modePeer').setAttribute('aria-pressed', String(!open));
+  $('modeOpen').setAttribute('aria-pressed', String(open));
   $('peerWrap').classList.toggle('hide', open);
   $('openWrap').classList.toggle('hide', !open);
   $('hisDate').disabled = open;
@@ -920,6 +995,7 @@ function renderOpenBoard(){
       const row = document.createElement('div');
       row.style.marginTop = '10px';
       const t = document.createElement('button');
+      t.type = 'button';
       t.className = 'btn ok sm';
       t.textContent = 'אני מעוניין להחליף';
       t.onclick = () => takeOpen(s);
@@ -940,22 +1016,21 @@ function renderOpenBoard(){
 // הסכמתו — ולכן אין שלב "הסכמת הכבאי" והבקשה עוברת ישר
 // למפקדים.
 function takeOpen(s){
-  $('dlg').innerHTML =
-    '<h3>החלפה עם ' + esc(s.from_name) + '</h3>' +
+  openOv(
+    '<h3 id="dlgTitle">החלפה עם ' + esc(s.from_name) + '</h3>' +
     '<div class="hint">הוא לא עובד ב-' + esc(dmy(s.from_date)) +
       ' ואתה נכנס במקומו. בתמורה — באיזה יום שלך הוא ייכנס במקומך?</div>' +
-    '<label style="display:block;margin:12px 0 4px;font-size:12.5px;color:var(--muted)">' +
+    '<label for="tkDate">' +
       'היום שלי</label>' +
     '<input type="date" id="tkDate" style="width:100%;padding:10px;' +
       'background:var(--input);color:var(--txt);border:1px solid var(--line);' +
       'border-radius:7px;font-size:15px;font-family:inherit">' +
-    '<div class="msg" id="tkMsg"></div>' +
+    '<div class="msg" id="tkMsg" role="status" aria-live="polite"></div>' +
     '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">' +
-      '<button class="btn go" id="tkGo">שלח למפקדים</button>' +
-      '<button class="btn" id="tkX">ביטול</button>' +
-    '</div>';
-  $('ov').style.display = 'flex';
-  $('tkX').onclick = () => { $('ov').style.display = 'none'; };
+      '<button type="button" class="btn go" id="tkGo">שלח למפקדים</button>' +
+      '<button type="button" class="btn" id="tkX">ביטול</button>' +
+    '</div>', 'tkDate');
+  $('tkX').onclick = closeOv;
 
   $('tkGo').onclick = async () => {
     const d = $('tkDate').value;
@@ -983,14 +1058,22 @@ function takeOpen(s){
         peer_name: ME.full_name, peer_at: serverTimestamp(),
         status: 'cmd_from', updated_at: serverTimestamp()
       }, { merge: true });
-      $('ov').style.display = 'none';
-      msg('תפסת את הבקשה. היא עברה לשני המפקדים לאישור.', 'ok', 'openMsg');
-      await loadSwaps();
     } catch (e) {
       b.disabled = false;
       msg('הלקיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
           'err', 'tkMsg');
+      return;
     }
+
+    closeOv(false);
+    msg('תפסת את הבקשה. היא עברה לשני המפקדים לאישור.', 'ok', 'openMsg');
+    try {
+      await loadSwaps();
+    } catch (e) {
+      msg('הבקשה נשמרה, אך הרשימה לא התרעננה. רענן את המסך. (' +
+          (e.code || '') + ' ' + (e.message || '') + ')', 'err', 'openMsg');
+    }
+    focusStatus('openMsg');
   };
 }
 
@@ -1080,9 +1163,11 @@ function renderMine(){
       const row = document.createElement('div');
       row.style.marginTop = '10px';
       const y = document.createElement('button');
+      y.type = 'button';
       y.className = 'btn ok sm'; y.textContent = 'אני מסכים';
       y.onclick = () => peerAnswer(s, true);
       const n = document.createElement('button');
+      n.type = 'button';
       n.className = 'btn no sm'; n.textContent = 'לא מסכים';
       n.style.marginInlineStart = '8px';
       n.onclick = () => peerAnswer(s, false);
@@ -1093,6 +1178,7 @@ function renderMine(){
     if (s.status !== 'approved' && s.status !== 'rejected' &&
         s.status !== 'cancelled') {
       const c = document.createElement('button');
+      c.type = 'button';
       c.className = 'btn sm'; c.textContent = 'בטל';
       c.style.marginTop = '10px';
       c.onclick = () => cancelSwap(s);
@@ -1107,11 +1193,20 @@ async function write(s, patch, okText, box){
     await setDoc(doc(db, 'stations', SID, 'swaps', s.id),
                  Object.assign({ updated_at: serverTimestamp() }, patch),
                  { merge: true });
-    msg(okText, 'ok', box);
-    await loadSwaps();
   } catch (e) {
     msg('הפעולה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+    focusStatus(box);
+    return;
   }
+
+  msg(okText, 'ok', box);
+  try {
+    await loadSwaps();
+  } catch (e) {
+    msg('הפעולה נשמרה, אך הרשימה לא התרעננה. רענן את המסך. (' +
+        (e.code || e.message) + ')', 'err', box);
+  }
+  focusStatus(box);
 }
 
 function peerAnswer(s, yes){
@@ -1162,6 +1257,7 @@ function renderApprovals(){
     el.innerHTML = swapBox(s);
     const card = el.firstChild;
     const b = document.createElement('button');
+    b.type = 'button';
     b.className = 'btn go sm'; b.textContent = 'בדוק ואשר';
     b.style.marginTop = '10px';
     b.onclick = () => reviewDialog(s);
@@ -1203,8 +1299,8 @@ function reviewDialog(s){
     }).join('');
   };
 
-  $('dlg').innerHTML =
-    '<h3>החלפה במשמרת ' + esc(CREW_HE[crew] || crew) + ' · ' + esc(dmy(date)) + '</h3>' +
+  openOv(
+    '<h3 id="dlgTitle">החלפה במשמרת ' + esc(CREW_HE[crew] || crew) + ' · ' + esc(dmy(date)) + '</h3>' +
     '<div class="hint">' + esc(out.name) + ' יוצא, ' + esc(inn.name) +
       ' נכנס במקומו.</div>' +
 
@@ -1242,14 +1338,13 @@ function reviewDialog(s){
     })() +
 
     '<div class="acts">' +
-      '<button class="btn ok" id="aY">מאשר</button>' +
-      '<button class="btn no" id="aN">דוחה</button>' +
-      '<button class="btn" id="aC">סגור</button>' +
-    '</div>';
-  $('ov').classList.add('on');
+      '<button type="button" class="btn ok" id="aY">מאשר</button>' +
+      '<button type="button" class="btn no" id="aN">דוחה</button>' +
+      '<button type="button" class="btn" id="aC">סגור</button>' +
+    '</div>', 'aY');
 
   $('aY').onclick = () => {
-    closeOv();
+    closeOv(false);
     if (first) {
       write(s, { status: 'cmd_to', from_appr_name: ME.full_name,
                  from_appr_uid: ME.uid, from_appr_at: serverTimestamp() },
@@ -1276,18 +1371,16 @@ function reviewDialog(s){
 // נימוק דחייה. לא חובה טכנית, אבל השדה פתוח וברור — כבאי
 // שמקבל "נדחתה" בלי מילה אחת לא יודע אם לנסות שוב.
 function askReason(title, cb){
-  $('dlg').innerHTML =
-    '<h3>' + esc(title) + '</h3>' +
+  openOv(
+    '<h3 id="dlgTitle">' + esc(title) + '</h3>' +
     '<div class="hint">הנימוק מוצג לשני הכבאים יחד עם שמך.</div>' +
-    '<label>נימוק</label>' +
+    '<label for="rr">נימוק</label>' +
     '<input type="text" id="rr" maxlength="120" placeholder="למשל: המשמרת נשארת בלי נהג">' +
     '<div class="acts">' +
-      '<button class="btn no" id="rY">דחה</button>' +
-      '<button class="btn" id="rC">ביטול</button>' +
-    '</div>';
-  $('ov').classList.add('on');
-  $('rr').focus();
-  $('rY').onclick = () => { const v = $('rr').value.trim(); closeOv(); cb(v); };
+      '<button type="button" class="btn no" id="rY">דחה</button>' +
+      '<button type="button" class="btn" id="rC">ביטול</button>' +
+    '</div>', 'rr');
+  $('rY').onclick = () => { const v = $('rr').value.trim(); closeOv(false); cb(v); };
   $('rC').onclick = closeOv;
 }
 </script>

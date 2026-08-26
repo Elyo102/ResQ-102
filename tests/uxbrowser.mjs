@@ -60,6 +60,7 @@ const source = attendance.locator('.days .btn').first();
 await source.focus();
 await attendance.keyboard.press('Enter');
 await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'false', 'attendance dialog opens semantically');
+await attendance.waitForFunction(() => document.activeElement?.id === 'dType');
 await check(await attendance.evaluate(() => document.activeElement?.id === 'dType'), 'attendance dialog focuses its first control');
 await attendance.keyboard.press('Shift+Tab');
 await check(await attendance.evaluate(() => document.activeElement?.id === 'dCancel'), 'Shift+Tab wraps to the last dialog control');
@@ -70,12 +71,57 @@ await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'tru
 await check(await source.evaluate(el => document.activeElement === el), 'attendance dialog restores focus to its source');
 const sourceDate = await source.getAttribute('data-date');
 await attendance.keyboard.press('Enter');
+await attendance.waitForFunction(() => document.activeElement?.id === 'dType');
 await attendance.locator('#dSave').focus();
 await attendance.keyboard.press('Enter');
 await attendance.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
 await attendance.waitForFunction(date => document.activeElement?.dataset?.date === date, sourceDate);
 await check(await attendance.evaluate(date => document.activeElement?.dataset?.date === date, sourceDate),
             'attendance save restores focus after the row is rebuilt');
+
+const swaps = await appContext.newPage();
+await swaps.goto('http://localhost:8392/swaps.html', { waitUntil:'load' });
+await swaps.addStyleTag({ content:'#coWrap{display:none!important}' });
+const take = swaps.getByRole('button', { name:'אני מעוניין להחליף' }).first();
+await take.waitFor({ state:'visible', timeout:8000 });
+await take.focus();
+await take.click();
+await swaps.locator('#tkDate').waitFor({ state:'visible', timeout:3000 });
+await check(await swaps.locator('#ov').getAttribute('aria-hidden') === 'false',
+            'open swap dialog opens semantically');
+await swaps.waitForFunction(() => document.activeElement?.id === 'tkDate');
+await check(await swaps.evaluate(() => document.activeElement?.id === 'tkDate'),
+            'open swap dialog focuses the date');
+await swaps.keyboard.press('Shift+Tab');
+await check(await swaps.evaluate(() => document.activeElement?.id === 'tkX'),
+            'open swap dialog wraps focus backward');
+await swaps.keyboard.press('Escape');
+await check(await swaps.locator('#ov').getAttribute('aria-hidden') === 'true',
+            'Escape closes the open swap dialog');
+await check(await take.evaluate(el => document.activeElement === el),
+            'open swap dialog restores focus to its source');
+
+const pick = swaps.locator('#btnPick');
+await pick.focus();
+await pick.click();
+await swaps.locator('#pq').waitFor({ state:'visible', timeout:3000 });
+await check(await swaps.locator('#ov').getAttribute('aria-hidden') === 'false',
+            'picker opens after a previous swap dialog closed');
+await swaps.waitForFunction(() => document.activeElement?.id === 'pq');
+await check(await swaps.evaluate(() => document.activeElement?.id === 'pq'),
+            'picker focuses its search field');
+await swaps.keyboard.press('Escape');
+await check(await pick.evaluate(el => document.activeElement === el),
+            'picker restores focus to the picker button');
+
+await take.focus();
+await take.click();
+await swaps.locator('#tkDate').fill('2026-09-03');
+await swaps.locator('#tkGo').click();
+await swaps.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
+await swaps.waitForFunction(() => document.activeElement?.id === 'openMsg');
+await check(await swaps.evaluate(() => document.activeElement?.id === 'openMsg'),
+            'successful open swap keeps focus after the list is rebuilt');
 await appContext.close();
 
 await browser.close();
