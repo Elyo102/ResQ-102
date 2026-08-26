@@ -442,38 +442,56 @@ onAuthStateChanged(auth, async user => {
 // ---------- טעינה ----------
 
 async function loadStatic(){
+  // שבע הקריאות אינן תלויות זו בזו. כולן יוצאות יחד, אבל
+  // התוצאות מעובדות באותו סדר שהיה קודם, ורק אחרי שכולן חזרו.
+  // כך אין שינוי בתוכן, בברירות המחדל או בהתנהגות של כשל חלקי.
+  const settle = promise => promise
+    .then(value => ({ value: value, error: null }))
+    .catch(error => ({ value: null, error: error }));
+  const [faultRead, waiverRead, qualRead, rosterRead,
+         heldRead, siteRead, boardRead] = await Promise.all([
+    settle(getDocs(collection(db, 'stations', SID, 'faults'))),
+    settle(getDocs(collection(db, 'stations', SID, 'redline_waivers'))),
+    settle(getDocs(collection(db, 'stations', SID, 'quals'))),
+    settle(getDocs(collection(db, 'stations', SID, 'roster'))),
+    settle(getDocs(collection(db, 'stations', SID, 'member_quals'))),
+    settle(getDocs(collection(db, 'stations', SID, 'sub_stations'))),
+    settle(getDoc(doc(db, 'stations', SID, 'config', 'board')))
+  ]);
+
   // תקלות פתוחות. בלעדיהן הלוח מציג רכב מאויש במלואו בזמן
   // שהרכב עצמו בחוץ — בדיוק המצב שבו המערכת אומרת דבר אחד
   // והמציאות אומרת אחר.
-  try {
-    const fs2 = await getDocs(collection(db, 'stations', SID, 'faults'));
+  if (faultRead.value) try {
     faults = [];
-    fs2.forEach(d => {
+    faultRead.value.forEach(d => {
       const v = Object.assign({ id: d.id }, d.data() || {});
       if (faultOpen(v)) faults.push(v);
     });
   } catch (ignore) {}
 
-  try {
-    const ws = await getDocs(collection(db, 'stations', SID, 'redline_waivers'));
+  if (waiverRead.value) try {
     waivers = {};
-    ws.forEach(d => { waivers[d.id] = Object.assign({ id: d.id }, d.data() || {}); });
+    waiverRead.value.forEach(d => {
+      waivers[d.id] = Object.assign({ id: d.id }, d.data() || {});
+    });
   } catch (ignore) {}
 
-  try {
-    const qs = await getDocs(collection(db, 'stations', SID, 'quals'));
+  if (qualRead.value) try {
     quals = [];
-    qs.forEach(d => {
+    qualRead.value.forEach(d => {
       const v = d.data() || {};
       quals.push({ id: d.id, name: v.name || '', order: Number(v.order || 0) });
     });
     quals.sort((a, b) => a.order - b.order);
   } catch (ignore) {}
 
-  try {
-    const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
+  if (rosterRead.error) {
+    const e = rosterRead.error;
+    msg('לא הצלחתי לקרוא את רשימת אנשי התחנה. (' + (e.code || e.message) + ')', 'err');
+  } else try {
     people = [];
-    rs.forEach(d => {
+    rosterRead.value.forEach(d => {
       const v = d.data() || {};
       if (v.is_active === false) return;
       people.push({ uid: d.id, full_name: v.full_name || '', crew: v.crew || '' });
@@ -483,19 +501,17 @@ async function loadStatic(){
     msg('לא הצלחתי לקרוא את רשימת אנשי התחנה. (' + (e.code || e.message) + ')', 'err');
   }
 
-  try {
-    const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
+  if (heldRead.value) try {
     held = {};
-    ms.forEach(d => {
+    heldRead.value.forEach(d => {
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
   } catch (ignore) {}
 
-  try {
-    const ss = await getDocs(collection(db, 'stations', SID, 'sub_stations'));
+  if (siteRead.value) try {
     sites = [];
-    ss.forEach(d => {
+    siteRead.value.forEach(d => {
       const v = d.data() || {};
       sites.push({ id: d.id, name: v.name || '',
                    fixed_hours: Number(v.fixed_hours || 0),
@@ -515,8 +531,11 @@ async function loadStatic(){
     }
   } catch (ignore) {}
 
-  try {
-    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
+  if (boardRead.error) {
+    const e = boardRead.error;
+    msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
+  } else try {
+    const b = boardRead.value;
     if (b.exists()) {
       const v = b.data() || {};
       board = {
