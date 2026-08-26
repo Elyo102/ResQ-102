@@ -286,7 +286,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
-import { stationName } from './stations.js?v=38';
+import { stationName, subStationAvailable } from './stations.js?v=40';
 import { renderNav, renderStuckNav } from './nav.js?v=38';
 import { MEMBER_ROLES } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
@@ -497,6 +497,7 @@ async function loadStatic(){
     sites = [];
     ss.forEach(d => {
       const v = d.data() || {};
+      if (!subStationAvailable(v)) return;
       sites.push({ id: d.id, name: v.name || '',
                    fixed_hours: Number(v.fixed_hours || 0),
                    order: Number(v.order || 0) });
@@ -507,8 +508,9 @@ async function loadStatic(){
       SITE_SEED.forEach(function (s) {
         batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
           name: s.name, fixed_hours: s.fixed_hours, order: s.order,
+          is_active: true, archived: false,
           updated_at: serverTimestamp(), by: auth.currentUser.uid
-        });
+        }, { merge: true });
         sites.push(Object.assign({}, s));
       });
       await batch.commit();
@@ -1036,11 +1038,17 @@ $('btnSites').onclick = () => {
       next.forEach(function (s) {
         batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
           name: s.name, fixed_hours: s.fixed_hours, order: s.order,
+          is_active: true, archived: false,
           updated_at: serverTimestamp(), by: auth.currentUser.uid
-        });
+        }, { merge: true });
       });
       gone.forEach(function (s) {
-        batch.delete(doc(db, 'stations', SID, 'sub_stations', s.id));
+        // תחנה שיש לה הודעות, נוכחות או היסטוריה אינה נמחקת.
+        // היא יוצאת מהבחירה הפעילה אך נשארת במסד לצורך ביקורת.
+        batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
+          is_active: false, archived: true,
+          updated_at: serverTimestamp(), by: auth.currentUser.uid
+        }, { merge: true });
       });
       await batch.commit();
       sites = next;

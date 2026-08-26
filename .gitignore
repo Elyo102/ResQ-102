@@ -40,6 +40,7 @@ token.json
 node_modules/
 npm-debug.log*
 package-lock.json
+!functions/package-lock.json
 
 # --- firebase ---
 .firebase/
@@ -66,3 +67,4 @@ rules-test/node_modules/
 firestore-debug.log
 ui-debug.log
 tests/.visual/
+tests/debug.log

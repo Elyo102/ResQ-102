@@ -12,7 +12,7 @@
 // שלם לכל מדור היה גורם לארבעה כפתורים להתחרות זה בזה, ואז
 // אף אחד לא בולט.
 const ITEMS = [
-  { href: 'login.html',    label: 'הבית',        who: 'any',    dot: '#e8590c' },
+  { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c' },
   { href: 'schedule.html', label: 'סידור', who: 'member', dot: '#4d94ff' },
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166' },
@@ -38,7 +38,7 @@ const ITEMS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=38';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=40';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';

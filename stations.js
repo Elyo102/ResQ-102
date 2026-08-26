@@ -30,10 +30,12 @@ export const STATIONS = [
     name:       'תחנת כיבוי אילת',
     districtId: 'south',
     subStations: [
-      { id: 'eilat_main',  name: 'אילת ראשית' },
-      { id: 'shahamon',    name: 'שחמון'      },
-      { id: 'timna',       name: 'תמנע'       },
-      { id: 'yotvata',     name: 'יטבתה'      }
+      // אלה המזהים הקיימים במסד ובלוח הציוות. שינוי כתיב כאן
+      // היה יוצר לוח מודעות מקביל וריק לאותו מקום פיזי.
+      { id: 'rashit',  name: 'ראשית', order: 1 },
+      { id: 'shahmon', name: 'שחמון', order: 2 },
+      { id: 'timna',   name: 'תמנע',  order: 3 },
+      { id: 'yotvata', name: 'יטבתה', order: 4 }
     ]
   }
 ];
@@ -50,6 +52,23 @@ export const STATION_HE = STATIONS.reduce(function (acc, s) {
 
 export function stationsInDistrict(districtId) {
   return STATIONS.filter(function (s) { return s.districtId === districtId; });
+}
+
+export function subStationsForStation(stationId) {
+  const station = STATIONS.filter(function (s) { return s.id === stationId; })[0];
+  return station && Array.isArray(station.subStations)
+    ? station.subStations.map(function (item) { return Object.assign({}, item); })
+    : [];
+}
+
+// חוזה אחיד למסכי התחנה ולפונקציות השרת: רשומת legacy יכולה
+// להשתמש באחד מכמה שדות, ולכן כל סימן מפורש לארכוב גובר על
+// ברירת המחדל הפעילה.
+export function subStationAvailable(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  const state = String(data.status || '').toLowerCase();
+  return data.is_active !== false && data.active !== false &&
+    data.archived !== true && state !== 'inactive' && state !== 'archived';
 }
 
 // שם לתצוגה. אם המזהה לא מוכר — מחזיר אותו כמו שהוא, כדי

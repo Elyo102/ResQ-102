@@ -25,7 +25,7 @@ import {
 import { readFileSync } from 'fs';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs
+  collection, getDocs, query, where, orderBy, limit
 } from 'firebase/firestore';
 
 const SID = 'eilat_102';
@@ -86,6 +86,7 @@ const hrUser  = who('u_hr',   'hr@x.com',   { emp: '401', role: 'hr_coordinator'
 const superA  = who('u_sup',  'fire102.shits@gmail.com', { super: true });
 const pending = who('u_pend', 'pend@x.com', {});                       // נרשם, טרם אושר
 const outside = who('u_out',  'out@x.com',  { emp: '999', role: 'firefighter', stationId: 'other_99', shift: 'א' });
+const district = who('u_dist', 'dist@x.com', { emp: '701', role: 'district_commander', stationId: SID, districtId: 'south', shift: '' });
 // מפקד שטרם שויך למשמרת. לפי הכלל הוא אינו ננעל — אחרת הוא
 // היה חסום משלוש המשמרות בלי שום דרך לראות שזו הסיבה.
 const cmdNew  = who('u_new',  'new@x.com',  { emp: '204', role: 'commander',         stationId: SID, shift: '' });
@@ -185,6 +186,47 @@ await env.withSecurityRulesDisabled(async (c) => {
     text: '✅ ההחלפה אושרה.', kind: 'system',
     by_uid: '', by_name: 'המערכת', hidden: false,
     created_key: '2026-08-25T06:05:00.000Z' });
+
+  // ---- לוח מודעות לפי תחנת משנה ----
+  await setDoc(doc(d, `stations/${SID}/sub_stations/rashit`), {
+    name: 'ראשית', order: 1, status: 'active' });
+  await setDoc(doc(d, `stations/${SID}/sub_stations/archived_site`), {
+    name: 'תחנה ארכיון', order: 99, status: 'archived' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_visible`), {
+    kind: 'bulletin', text: 'בדיקת ציוד בשעה 10:00', category: 'equipment',
+    by_uid: 'u_cmda', by_name: 'מפקד א', by_role: 'commander', by_crew: 'א',
+    hidden: false, created_at: new Date('2026-08-25T07:00:00.000Z'),
+    created_key: '2026-08-25T07:00:00.000Z', request_hash: 'hash-visible',
+    reply_count: 1 });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_hidden`), {
+    kind: 'bulletin', text: 'תוכן שהוסתר', category: 'general',
+    by_uid: 'u_ff', by_name: 'כבאי א', by_role: 'firefighter', by_crew: 'א',
+    hidden: true, created_at: new Date('2026-08-25T07:05:00.000Z'),
+    created_key: '2026-08-25T07:05:00.000Z', request_hash: 'hash-hidden',
+    hidden_at: new Date('2026-08-25T07:06:00.000Z'), hidden_by: 'u_sup' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_visible/bulletin_replies/reply_visible`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+    text: 'תגובה גלויה', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: false,
+    created_at: new Date('2026-08-25T07:01:00.000Z'),
+    created_key: '2026-08-25T07:01:00.000Z', request_hash: 'reply-visible' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_visible/bulletin_replies/reply_hidden`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+    text: 'תגובה מוסתרת', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: true,
+    created_at: new Date('2026-08-25T07:02:00.000Z'),
+    created_key: '2026-08-25T07:02:00.000Z', request_hash: 'reply-hidden' });
+  await setDoc(doc(d,
+    `stations/${SID}/sub_stations/rashit/bulletin_messages/msg_hidden/bulletin_replies/reply_parent_hidden`), {
+    kind: 'bulletin_reply', parent_message_id: 'msg_hidden',
+    text: 'תגובה תחת אב מוסתר', by_uid: 'u_cmda', by_name: 'מפקד א',
+    by_role: 'commander', by_crew: 'א', hidden: false,
+    created_at: new Date('2026-08-25T07:06:00.000Z'),
+    created_key: '2026-08-25T07:06:00.000Z', request_hash: 'reply-parent-hidden' });
 
   // ---- טפסים ----
   const empSig = { image: 'data:image/png;base64,' + 'A'.repeat(400),
@@ -882,7 +924,139 @@ await ok('מנהל-על מוחק הודעה',
   deleteDoc(doc(superA, `stations/${SID}/shift_log/lg_sys`)));
 
 // ============================================================
-head('17 · מפקד צוות — כל השאר נשאר סגור');
+head('17 · לוח מודעות — תחנה מבודדת וכתיבה רק בשרת');
+// ============================================================
+
+const BOARD = `stations/${SID}/sub_stations/rashit/bulletin_messages`;
+const BOARDMSG = {
+  kind: 'bulletin', text: 'הודעה מזויפת מהלקוח', category: 'general',
+  by_uid: 'u_ff', by_name: 'כבאי א', by_role: 'firefighter', by_crew: 'א',
+  hidden: false, created_at: new Date('2026-08-25T08:00:00.000Z'),
+  created_key: '2026-08-25T08:00:00.000Z', request_hash: 'client-hash'
+};
+
+// ---- קריאה מבודדת לפי התחנה, והודעות מוסתרות אינן דולפות ----
+
+await ok('חבר תחנה קורא הודעת לוח גלויה',
+  getDoc(doc(ff, `${BOARD}/msg_visible`)));
+
+await ok('שאילתת הלוח המוגבלת ל-hidden=false מותרת',
+  getDocs(query(collection(ff, BOARD),
+    where('hidden', '==', false), orderBy('created_at', 'desc'), limit(30))));
+
+await blocked('🔒 שאילתה בלי מסנן הסתרה נחסמת',
+  getDocs(collection(ff, BOARD)));
+
+await blocked('🔒 הודעה מוסתרת חסומה גם לפי מזהה ישיר',
+  getDoc(doc(ff, `${BOARD}/msg_hidden`)));
+
+await blocked('🔒 גם מנהל-על אינו קורא הודעה מוסתרת מהלקוח',
+  getDoc(doc(superA, `${BOARD}/msg_hidden`)));
+
+await blocked('🔒 חבר מתחנה אחרת אינו קורא הודעת לוח',
+  getDoc(doc(outside, `${BOARD}/msg_visible`)));
+
+await blocked('🔒 מפקד מחוז אינו חבר תחנה ואינו קורא את הלוח',
+  getDoc(doc(district, `${BOARD}/msg_visible`)));
+
+await blocked('🔒 נרשם שטרם אושר אינו קורא את הלוח',
+  getDoc(doc(pending, `${BOARD}/msg_visible`)));
+
+await blocked('🔒 מבקר לא מחובר אינו קורא את הלוח',
+  getDoc(doc(anon, `${BOARD}/msg_visible`)));
+
+// ---- כל שינוי הודעה מהלקוח חסום; רק Admin SDK של ה-callable כותב ----
+
+await blocked('🔒 לוחם אש אינו יוצר הודעת לוח ישירות',
+  setDoc(doc(ff, `${BOARD}/client_ff`), BOARDMSG));
+
+await blocked('🔒 מפקד תחנה אינו יוצר הודעת לוח ישירות',
+  setDoc(doc(stCmd, `${BOARD}/client_station`),
+    { ...BOARDMSG, by_uid: 'u_st', by_role: 'station_commander' }));
+
+await blocked('🔒 גם מנהל-על אינו יוצר הודעת לוח ישירות',
+  setDoc(doc(superA, `${BOARD}/client_super`), BOARDMSG));
+
+await blocked('🔒 כותב אינו עורך את תוכן הודעתו',
+  updateDoc(doc(ff, `${BOARD}/msg_visible`), { text: 'שונה' }));
+
+await blocked('🔒 מנהל-על חייב להסתיר דרך callable מתועד',
+  updateDoc(doc(superA, `${BOARD}/msg_visible`), { hidden: true }));
+
+await blocked('🔒 אין מחיקה פיזית של הודעת לוח',
+  deleteDoc(doc(superA, `${BOARD}/msg_visible`)));
+
+// ---- תגובות גלויות לחברים, אך כל כתיבה נשארת בשרת ----
+
+const REPLIES = `${BOARD}/msg_visible/bulletin_replies`;
+const REPLYMSG = {
+  kind: 'bulletin_reply', parent_message_id: 'msg_visible',
+  text: 'תגובה מזויפת', by_uid: 'u_cmda', by_name: 'מפקד א',
+  by_role: 'commander', by_crew: 'א', hidden: false,
+  created_at: new Date('2026-08-25T08:10:00.000Z'),
+  created_key: '2026-08-25T08:10:00.000Z', request_hash: 'client-reply'
+};
+
+await ok('חבר תחנה קורא תגובה גלויה',
+  getDoc(doc(ff, `${REPLIES}/reply_visible`)));
+
+await ok('שאילתת תגובות גלויה ומוגבלת מותרת',
+  getDocs(query(collection(ff, REPLIES),
+    where('hidden', '==', false), orderBy('created_at', 'desc'), limit(20))));
+
+await blocked('🔒 שאילתת תגובות בלי מסנן הסתרה נחסמת',
+  getDocs(collection(ff, REPLIES)));
+
+await blocked('🔒 תגובה מוסתרת חסומה לפי מזהה ישיר',
+  getDoc(doc(ff, `${REPLIES}/reply_hidden`)));
+
+await blocked('🔒 תגובה גלויה תחת הודעת-אב מוסתרת אינה דולפת',
+  getDoc(doc(ff,
+    `${BOARD}/msg_hidden/bulletin_replies/reply_parent_hidden`)));
+
+await blocked('🔒 חבר מתחנה אחרת אינו קורא תגובה',
+  getDoc(doc(outside, `${REPLIES}/reply_visible`)));
+
+await blocked('🔒 מפקד מחוז אינו קורא תגובת תחנה',
+  getDoc(doc(district, `${REPLIES}/reply_visible`)));
+
+await blocked('🔒 ראש משמרת אינו יוצר תגובה ישירות',
+  setDoc(doc(cmdA, `${REPLIES}/client_commander`), REPLYMSG));
+
+await blocked('🔒 גם מנהל-על אינו יוצר תגובה ישירות',
+  setDoc(doc(superA, `${REPLIES}/client_super`), REPLYMSG));
+
+await blocked('🔒 כותב אינו עורך תגובה ישירות',
+  updateDoc(doc(cmdA, `${REPLIES}/reply_visible`), { text: 'שונה' }));
+
+await blocked('🔒 מנהל-על מסתיר תגובה רק דרך callable מתועד',
+  updateDoc(doc(superA, `${REPLIES}/reply_visible`), { hidden: true }));
+
+await blocked('🔒 אין מחיקה פיזית של תגובה',
+  deleteDoc(doc(superA, `${REPLIES}/reply_visible`)));
+
+// ---- ניהול תחנות משנה נשמר, אך מחיקה מוחלפת בארכוב ----
+
+await ok('סגל יוצר תחנת משנה חדשה',
+  setDoc(doc(stCmd, `stations/${SID}/sub_stations/new_site`),
+    { name: 'חדשה', order: 5, status: 'active' }));
+
+await ok('סגל מעביר תחנת משנה לארכיון',
+  updateDoc(doc(stCmd, `stations/${SID}/sub_stations/archived_site`),
+    { status: 'archived' }));
+
+await blocked('🔒 לוחם אש אינו משנה תחנת משנה',
+  updateDoc(doc(ff, `stations/${SID}/sub_stations/rashit`),
+    { status: 'archived' }));
+
+await blocked('🔒 סגל אינו מוחק תחנת משנה',
+  deleteDoc(doc(stCmd, `stations/${SID}/sub_stations/new_site`)));
+
+await blocked('🔒 גם מנהל-על אינו מוחק תחנת משנה מהלקוח',
+  deleteDoc(doc(superA, `stations/${SID}/sub_stations/new_site`)));
+
+// ============================================================
+head('18 · מפקד צוות — כל השאר נשאר סגור');
 // ============================================================
 // התפתיתי לתת לו סמכויות כי השם נשמע פיקודי. אלדד הגדיר
 // במפורש: רק כתיבה בלוג. הבדיקות האלה הן מה שימנע מהתפקיד
