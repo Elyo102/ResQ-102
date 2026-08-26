@@ -48,7 +48,7 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
   await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
   await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
   const appPage = await appContext.newPage();
-  for (const screen of ['schedule', 'attendance', 'swaps']) {
+  for (const screen of ['schedule', 'attendance', 'swaps', 'forms']) {
     await appPage.goto('http://localhost:8391/' + screen + '.html', { waitUntil:'load' });
     await appPage.waitForTimeout(2600);
     await appPage.addStyleTag({ content:'#coWrap{display:none!important}' });

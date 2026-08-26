@@ -77,5 +77,17 @@ for (const id of ['myDate','hisDate','wantCrew','newNote','pq','tkDate','rr']) {
 check(!swaps.includes("$('ov').style.display"),
       'swaps dialogs do not leave an inline display override');
 
+const forms = read('forms.html');
+for (const token of ['<main class="wrap">', 'role="tablist"', 'role="tab"',
+  'role="tabpanel"', 'aria-selected="true"', 'aria-controls="viewNew"',
+  'function activateView(', 'function visibleViews(', "event.key === 'ArrowRight'",
+  "event.key === 'Home'", 'lab.htmlFor = fieldId', "b.type = 'button'"]) {
+  check(forms.includes(token), 'forms UX contains ' + token);
+}
+for (const id of ['fPick','awayDate']) {
+  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(forms),
+        'forms label is associated with ' + id);
+}
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');

@@ -122,7 +122,50 @@ await swaps.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
 await swaps.waitForFunction(() => document.activeElement?.id === 'openMsg');
 await check(await swaps.evaluate(() => document.activeElement?.id === 'openMsg'),
             'successful open swap keeps focus after the list is rebuilt');
+
+const forms = await appContext.newPage();
+await forms.goto('http://localhost:8392/forms.html', { waitUntil:'load' });
+await forms.locator('#tabNew').waitFor({ state:'visible', timeout:8000 });
+await forms.addStyleTag({ content:'#coWrap{display:none!important}' });
+await forms.locator('#tabNew').focus();
+await forms.keyboard.press('ArrowRight');
+await check(await forms.locator('#tabMine').getAttribute('aria-selected') === 'true',
+            'forms ArrowRight activates the next visible tab');
+await check(await forms.evaluate(() => document.activeElement?.id === 'tabMine'),
+            'forms active tab receives keyboard focus');
+await check(await forms.locator('#viewMine').isVisible(),
+            'forms selected panel is visible');
+await forms.keyboard.press('End');
+await check(await forms.locator('#tabAway').getAttribute('aria-selected') === 'true',
+            'forms End activates the last visible tab');
+await check(await forms.locator('#viewAway').isVisible(),
+            'forms last panel is visible');
+await forms.keyboard.press('Home');
+await check(await forms.locator('#tabNew').getAttribute('aria-selected') === 'true',
+            'forms Home returns to the first tab');
 await appContext.close();
+
+const firefighterContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+await firefighterContext.route('**/firebasejs/**', route => {
+  const name = route.request().url().split('/').pop().split('?')[0];
+  const file = path.join(stub, name);
+  route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
+});
+await firefighterContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+await firefighterContext.addInitScript('window.__SMOKE_ROLE = "firefighter";');
+const firefighterForms = await firefighterContext.newPage();
+await firefighterForms.goto('http://localhost:8392/forms.html', { waitUntil:'load' });
+await firefighterForms.locator('#tabNew').waitFor({ state:'visible', timeout:8000 });
+await check(await firefighterForms.locator('#tabAppr').isHidden(),
+            'firefighter approval tab stays hidden');
+await firefighterForms.locator('#tabNew').focus();
+await firefighterForms.keyboard.press('End');
+await check(await firefighterForms.locator('#tabAway').getAttribute('aria-selected') === 'true',
+            'firefighter End reaches the last visible tab');
+await firefighterForms.keyboard.press('ArrowLeft');
+await check(await firefighterForms.locator('#tabMine').getAttribute('aria-selected') === 'true',
+            'firefighter keyboard skips the hidden approval tab');
+await firefighterContext.close();
 
 await browser.close();
 server.close();
