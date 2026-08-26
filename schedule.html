@@ -608,46 +608,64 @@ async function loadFitness(sid){
   let redline = null, board = null;
   const assigns = {};
 
-  try {
-    const qs = await getDocs(collection(db, 'stations', sid, 'quals'));
-    qs.forEach(d => { qualNames[d.id] = (d.data() || {}).name || ''; });
+  // כל מקורות הכשירות בלתי תלויים. מוציאים את אותן קריאות יחד,
+  // אך מעבדים את התוצאות בסדר המקורי ורק אחרי שכולן הסתיימו.
+  // settle עוטף כל מקור בנפרד, כדי שכשל אחד לא יפיל את האחרים.
+  const settle = task => Promise.resolve().then(task)
+    .then(value => ({ value: value, error: null }))
+    .catch(error => ({ value: null, error: error }));
+  const tasks = [
+    () => getDocs(collection(db, 'stations', sid, 'quals')),
+    () => getDocs(collection(db, 'stations', sid, 'roster')),
+    () => getDocs(collection(db, 'stations', sid, 'member_quals')),
+    () => getDoc(doc(db, 'stations', sid, 'config', 'redline')),
+    () => getDoc(doc(db, 'stations', sid, 'config', 'board'))
+  ];
+  myCrews.forEach(crew => tasks.push(
+    () => getDoc(doc(db, 'stations', sid, 'shifts', crew))));
+  const reads = await Promise.all(tasks.map(settle));
+  const [qualRead, rosterRead, heldRead, redlineRead, boardRead] = reads;
+
+  if (!qualRead.error) try {
+    qualRead.value.forEach(d => { qualNames[d.id] = (d.data() || {}).name || ''; });
   } catch (ignore) {}
 
-  try {
-    const rs = await getDocs(collection(db, 'stations', sid, 'roster'));
-    rs.forEach(d => {
+  if (!rosterRead.error) try {
+    rosterRead.value.forEach(d => {
       const v = d.data() || {};
       if (v.is_active === false) return;
       people.push({ uid: d.id, crew: v.crew || '' });
     });
   } catch (ignore) {}
 
-  try {
-    const ms = await getDocs(collection(db, 'stations', sid, 'member_quals'));
-    ms.forEach(d => {
+  if (!heldRead.error) try {
+    heldRead.value.forEach(d => {
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
   } catch (ignore) {}
 
-  try {
-    const r = await getDoc(doc(db, 'stations', sid, 'config', 'redline'));
+  if (!redlineRead.error) try {
+    const r = redlineRead.value;
     if (r.exists()) redline = r.data();
   } catch (ignore) {}
 
-  try {
-    const b = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
+  if (!boardRead.error) try {
+    const b = boardRead.value;
     if (b.exists()) board = b.data();
   } catch (ignore) {}
 
   // רק המשמרות שמותר לי לראות. קריאה למשמרת אחרת תיחסם בשרת,
   // ואין טעם לשלוח בקשה שאני יודע מראש שתידחה.
-  for (const crew of myCrews) {
-    try {
-      const s = await getDoc(doc(db, 'stations', sid, 'shifts', crew));
+  myCrews.forEach(function (crew, index) {
+    const read = reads[5 + index];
+    if (read && !read.error) try {
+      const s = read.value;
       assigns[crew] = (s.exists() && (s.data() || {}).assign) || {};
-    } catch (ignore) { assigns[crew] = {}; }
-  }
+      return;
+    } catch (ignore) {}
+    assigns[crew] = {};
+  });
 
   fit = {};
   myCrews.forEach(function (crew) {

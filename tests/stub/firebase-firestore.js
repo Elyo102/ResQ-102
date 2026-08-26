@@ -424,20 +424,46 @@ const LAG = (typeof window !== 'undefined' && window.__SMOKE_LAG) || 0;
 // מדידה: מתי יצאה הבקשה הראשונה, ומתי חזרה האחרונה.
 // זה הזמן שהמשתמש מחכה בו למסך ריק.
 function mark(path){
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return null;
   if (!window.__T0) window.__T0 = Date.now();
   window.__N = (window.__N || 0) + 1;
   window.__DATA_PATHS = window.__DATA_PATHS || [];
   window.__DATA_PATHS.push(path || '');
+  window.__DATA_EVENTS = window.__DATA_EVENTS || [];
+  const event = { path: path || '', started: Date.now(), finished: 0 };
+  window.__DATA_EVENTS.push(event);
+  return event;
 }
-function done(){
+function done(event){
   if (typeof window === 'undefined') return;
-  window.__TN = Date.now();
+  const now = Date.now();
+  window.__TN = now;
+  if (event) event.finished = now;
+}
+function shouldFail(path){
+  if (typeof window === 'undefined') return false;
+  const paths = Array.isArray(window.__SMOKE_FAIL_PATHS)
+    ? window.__SMOKE_FAIL_PATHS : [];
+  return paths.some(function (part) { return String(path || '').indexOf(part) !== -1; });
+}
+function stubFailure(path){
+  const error = new Error('Synthetic read failure: ' + path);
+  error.code = 'unavailable';
+  return error;
 }
 function lag(v, path){
-  mark(path);
-  if (!LAG) { done(); return Promise.resolve(v); }
-  return new Promise(r => setTimeout(function () { done(); r(v); }, LAG));
+  const event = mark(path);
+  if (!LAG) {
+    done(event);
+    return shouldFail(path) ? Promise.reject(stubFailure(path)) : Promise.resolve(v);
+  }
+  return new Promise(function (resolve, reject) {
+    setTimeout(function () {
+      done(event);
+      if (shouldFail(path)) reject(stubFailure(path));
+      else resolve(v);
+    }, LAG);
+  });
 }
 
 export function getDocs(q){
