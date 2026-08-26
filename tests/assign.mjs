@@ -20,12 +20,12 @@
 //
 // הרצה:  node assign.mjs
 import fs from 'fs';
-import { fileURLToPath as __f } from 'url';
+import { fileURLToPath as __f, pathToFileURL as __u } from 'url';
 import { dirname as __d, join as __j } from 'path';
 const __TESTS = __d(__f(import.meta.url));
 const __APP   = __j(__TESTS, '..');
 
-const R = await import(__j(__APP, 'roles.js'));
+const R = await import(__u(__j(__APP, 'roles.js')).href);
 const srv = fs.readFileSync(__j(__APP, 'functions', 'index.js'), 'utf8');
 
 let pass = 0, fail = 0;
