@@ -80,9 +80,8 @@ const MUST_ALL = {
                   '#histList','#lb','#rep','#dlgTitle','#dlgBody'],
   'forms.html': ['#tabNew','#tabMine','#tabAppr','#tabAway','#fPick',
                  '#fFields','#btnSubmit','#mineList','#apprList',
-                 '#awayDate','#awayList','#sig','#sigClear'],
-  'forms.html': ['#tabNew','#tabMine','#tabAway','#fPick','#fFields',
-                 '#btnSubmit','#mineList','#awayDate','#awayList'],
+                 '#awayDate','#awayList','#sig','#sigClear','#sigUpload',
+                 '#sigFile','#sigSave'],
   'stats.html': ['#winBar','#vLead','#vTbl','#lLead','#lList','#scoreWhy'],
   'unlock.html': []
 };
