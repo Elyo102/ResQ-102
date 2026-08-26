@@ -42,6 +42,41 @@ await check(await page.locator('#paneFirst').isVisible(), 'registration panel is
 await page.keyboard.press('Home');
 await check(await page.locator('#tabLogin').getAttribute('aria-selected') === 'true', 'Home returns to login');
 await check(await page.locator('#paneLogin').isVisible(), 'login panel is visible');
+await context.close();
+
+const appContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+await appContext.route('**/firebasejs/**', route => {
+  const name = route.request().url().split('/').pop().split('?')[0];
+  const file = path.join(stub, name);
+  route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
+});
+await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
+const attendance = await appContext.newPage();
+await attendance.goto('http://localhost:8392/attendance.html', { waitUntil:'load' });
+await attendance.locator('.days .btn').first().waitFor({ state:'visible', timeout:8000 });
+await attendance.addStyleTag({ content:'#coWrap{display:none!important}' });
+const source = attendance.locator('.days .btn').first();
+await source.focus();
+await attendance.keyboard.press('Enter');
+await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'false', 'attendance dialog opens semantically');
+await check(await attendance.evaluate(() => document.activeElement?.id === 'dType'), 'attendance dialog focuses its first control');
+await attendance.keyboard.press('Shift+Tab');
+await check(await attendance.evaluate(() => document.activeElement?.id === 'dCancel'), 'Shift+Tab wraps to the last dialog control');
+await attendance.keyboard.press('Tab');
+await check(await attendance.evaluate(() => document.activeElement?.id === 'dType'), 'Tab remains trapped inside the dialog');
+await attendance.keyboard.press('Escape');
+await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'true', 'Escape closes the attendance dialog');
+await check(await source.evaluate(el => document.activeElement === el), 'attendance dialog restores focus to its source');
+const sourceDate = await source.getAttribute('data-date');
+await attendance.keyboard.press('Enter');
+await attendance.locator('#dSave').focus();
+await attendance.keyboard.press('Enter');
+await attendance.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
+await attendance.waitForFunction(date => document.activeElement?.dataset?.date === date, sourceDate);
+await check(await attendance.evaluate(date => document.activeElement?.dataset?.date === date, sourceDate),
+            'attendance save restores focus after the row is rebuilt');
+await appContext.close();
 
 await browser.close();
 server.close();

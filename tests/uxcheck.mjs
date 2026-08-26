@@ -48,5 +48,19 @@ for (const id of ['ovKind','ovDate','ovCrew','ovNote']) {
   check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(schedule), 'schedule label is associated with ' + id);
 }
 
+const attendance = read('attendance.html');
+for (const token of ['<main class="wrap">', 'aria-label="החודש הקודם"',
+  'aria-label="החודש הבא"', 'role="dialog"', 'aria-modal="true"',
+  'aria-hidden="true"', 'function openOv()', 'ovReturnFocus',
+  "e.key !== 'Tab'", 'function focusAfterRender(key)',
+  'b.dataset.date = key', '<caption class="sr-only">']) {
+  check(attendance.includes(token), 'attendance UX contains ' + token);
+}
+for (const id of ['pickWho','dType','dShape','dStart','dEnd','dStart2','dEnd2',
+                  'dOtReason','dSite','dNotes']) {
+  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(attendance),
+        'attendance label is associated with ' + id);
+}
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');

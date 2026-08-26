@@ -38,6 +38,23 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
   await page.waitForTimeout(6800);
   await page.screenshot({ path:path.join(out, 'login-' + size.name + '.png'), fullPage:true });
   await context.close();
+
+  const appContext = await browser.newContext({ viewport: size, locale:'he-IL' });
+  await appContext.route('**/firebasejs/**', route => {
+    const name = route.request().url().split('/').pop().split('?')[0];
+    const file = path.join(stub, name);
+    route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
+  });
+  await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+  await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
+  const appPage = await appContext.newPage();
+  for (const screen of ['schedule', 'attendance']) {
+    await appPage.goto('http://localhost:8391/' + screen + '.html', { waitUntil:'load' });
+    await appPage.waitForTimeout(2600);
+    await appPage.addStyleTag({ content:'#coWrap{display:none!important}' });
+    await appPage.screenshot({ path:path.join(out, screen + '-' + size.name + '.png'), fullPage:true });
+  }
+  await appContext.close();
 }
 await browser.close();
 server.close();

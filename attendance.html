@@ -26,30 +26,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
-        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
-  .wrap{ max-width:820px; margin:0 auto }
-  h1{ font-size:21px; margin:0 0 3px }
-  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:20px }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
-         border-radius:12px; padding:16px; margin-bottom:14px }
+         border-radius:14px; padding:18px; margin-bottom:14px }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
-        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600 }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .btn.stop{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
-  .btn.sm{ padding:6px 12px; font-size:12.5px }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px }
 
-  .mo{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
-  .mo .lbl{ font-size:17px; font-weight:700; min-width:132px; text-align:center }
+  .mo{ display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap }
+  .mo .lbl{ color:var(--txt); font-size:18px; font-weight:750; min-width:132px;
+            text-align:center; margin:0 }
   .mo button{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
-              border-radius:8px; width:38px; height:38px; font-size:19px;
+              border-radius:10px; width:44px; height:44px; font-size:20px;
               cursor:pointer; font-family:inherit }
+  .mo button:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
 
   .tot{ display:flex; gap:12px; flex-wrap:wrap; align-items:stretch }
   .tot div{ flex:1 1 130px; background:var(--panel); border:1px solid var(--line);
@@ -58,8 +61,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tot .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
   .tot .v.soft{ color:var(--warn) }
 
-  .state{ display:inline-block; font-size:12px; font-weight:700; border-radius:20px;
-          padding:3px 12px; border:1px solid var(--line); color:var(--muted) }
+  .state{ display:inline-flex; min-height:30px; align-items:center; font-size:12px;
+          font-weight:700; border-radius:20px; padding:3px 12px;
+          border:1px solid var(--line); color:var(--muted); margin-inline-start:auto }
   .state.submitted{ border-color:var(--warn); color:var(--warn) }
   .state.approved{ border-color:var(--good-bd); color:var(--good) }
 
@@ -83,6 +87,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         padding:1px 9px; color:var(--muted); white-space:nowrap }
   .tag.no{ border-color:var(--bad); color:var(--bad) }
   .scroll{ overflow-x:auto }
+  .field-label{ display:block; color:var(--muted); font-size:12.5px;
+                font-weight:650; margin:10px 0 5px }
+  .pick-control{ min-height:44px; flex:1; min-width:200px; border:1px solid var(--line);
+                 border-radius:10px; background:var(--input); color:var(--txt);
+                 padding:9px 11px; font:inherit }
+  .pick-control:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+  .sr-only{ position:absolute!important; width:1px!important; height:1px!important;
+            padding:0!important; margin:-1px!important; overflow:hidden!important;
+            clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important }
 
   /* עמודת ההערות. רוחב מרבי ושתי שורות לכל היותר — הערה
      ארוכה אחת אחרת מותחת את כל השורה, וכל שאר הדוח נדחס.
@@ -139,6 +152,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
   .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
   .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .msg:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
   .hide{ display:none !important }
   .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
 
@@ -184,6 +198,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .sum-ot{ font-size:12.5px; color:var(--muted); line-height:1.8; margin-top:8px }
   .sum-ot .no{ color:var(--bad) }
   .acts{ display:flex; gap:8px; margin-top:15px; flex-wrap:wrap }
+  @media (max-width:620px){
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .sub{ margin-bottom:15px }
+    .card{ border-radius:12px; padding:14px }
+    .mo{ justify-content:center }
+    .mo .lbl{ flex:1; min-width:120px }
+    .state{ width:100%; justify-content:center; margin-inline-start:0 }
+    .row .btn{ flex:1 1 160px }
+    .dlg{ padding:16px }
+  }
 </style>
 </head>
 <body>
@@ -214,11 +239,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 })();
 </script>
 
-<div class="wrap">
+<main class="wrap">
   <h1>דוח נוכחות</h1>
   <div class="sub" id="whoSub">—</div>
 
-  <div class="card hide" id="denyCard">
+  <div class="card hide" id="denyCard" role="status">
     <div class="note" id="denyWho"></div>
     <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין דוח להציג.</div>
   </div>
@@ -237,24 +262,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         בחר אדם כדי לפתוח את החודש שלו. כל שינוי נרשם על שמך
         ומופיע לו במסך.
       </div>
+      <label class="field-label" for="pickWho">איש צוות</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="pickWho" style="flex:1;min-width:200px"></select>
-        <button class="btn" id="pickGo">פתח</button>
-        <button class="btn hide" id="pickBack">חזרה אליי</button>
+        <select id="pickWho" class="pick-control"></select>
+        <button type="button" class="btn" id="pickGo">פתח</button>
+        <button type="button" class="btn hide" id="pickBack">חזרה אליי</button>
       </div>
-      <div id="pickMsg" class="note"></div>
+      <div id="pickMsg" class="note" role="status" aria-live="polite"></div>
     </div>
 
     <div class="bar hide" id="otherBar"
+         role="status" aria-live="polite"
          style="background:#e8590c;color:#fff;padding:10px 14px;
                 border-radius:8px;margin:0 0 12px;font-weight:bold"></div>
 
     <div class="card">
       <div class="mo">
-        <button id="prev" title="חודש קודם">‹</button>
-        <div class="lbl" id="moLabel">—</div>
-        <button id="next" title="חודש הבא">›</button>
-        <span class="state" id="state">טיוטה</span>
+        <button type="button" id="prev" aria-label="החודש הקודם">‹</button>
+        <h2 class="lbl" id="moLabel" aria-live="polite">—</h2>
+        <button type="button" id="next" aria-label="החודש הבא">›</button>
+        <span class="state" id="state" role="status" aria-live="polite">טיוטה</span>
       </div>
 
       <div class="tot">
@@ -264,25 +291,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
 
       <div class="row">
-        <button class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
-        <button class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
-        <button class="btn" id="btnView">הצג סיכום חודשי</button>
-        <button class="btn hide" id="btnSync">תקן לפי הסידור</button>
-        <button class="btn hide" id="btnRecalc">חשב מחדש</button>
-        <button class="btn hide" id="btnUnsubmit">בטל שליחה</button>
-        <button class="btn hide" id="btnApprove">אשר את החודש</button>
-        <button class="btn hide" id="btnReopen">פתח מחדש</button>
+        <button type="button" class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
+        <button type="button" class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
+        <button type="button" class="btn" id="btnView">הצג סיכום חודשי</button>
+        <button type="button" class="btn hide" id="btnSync">תקן לפי הסידור</button>
+        <button type="button" class="btn hide" id="btnRecalc">חשב מחדש</button>
+        <button type="button" class="btn hide" id="btnUnsubmit">בטל שליחה</button>
+        <button type="button" class="btn hide" id="btnApprove">אשר את החודש</button>
+        <button type="button" class="btn hide" id="btnReopen">פתח מחדש</button>
       </div>
-      <div class="msg" id="msg"></div>
+      <div class="msg" id="msg" role="status" aria-live="polite" tabindex="-1"></div>
     </div>
 
     <div class="card" id="timerCard">
       <h2>שעון משמרת</h2>
-      <div class="note" id="timerNote">—</div>
+      <div class="note" id="timerNote" aria-live="polite">—</div>
       <div class="row">
-        <button class="btn go" id="btnStart">התחל משמרת</button>
-        <button class="btn stop hide" id="btnStop">סיים משמרת</button>
-        <button class="btn sm" id="btnManual">דיווח ידני</button>
+        <button type="button" class="btn go" id="btnStart">התחל משמרת</button>
+        <button type="button" class="btn stop hide" id="btnStop">סיים משמרת</button>
+        <button type="button" class="btn sm" id="btnManual">דיווח ידני</button>
       </div>
     </div>
 
@@ -294,6 +321,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
       <div class="scroll days">
         <table>
+          <caption class="sr-only">ימי הנוכחות בחודש הנבחר</caption>
           <thead>
             <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנה</th>
                 <th class="hh">סה״כ</th><th class="nt">הערות</th><th></th></tr>
@@ -308,17 +336,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="note" id="apprNote">—</div>
       <div class="scroll">
         <table>
+          <caption class="sr-only">דוחות חודשיים שממתינים לאישור</caption>
           <thead><tr><th>שם</th><th>משמרת</th><th>חודש</th><th class="hh">שעות</th><th></th></tr></thead>
           <tbody id="apprRows"></tbody>
         </table>
       </div>
-      <div class="msg" id="apprMsg"></div>
+      <div class="msg" id="apprMsg" role="status" aria-live="polite"></div>
     </div>
 
   </div>
-</div>
+</main>
 
-<div id="ov"><div class="dlg" id="dlg"></div></div>
+<div id="ov" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" aria-hidden="true">
+  <div class="dlg" id="dlg" tabindex="-1"></div>
+</div>
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
@@ -779,8 +810,12 @@ function renderRows(sug){
     td.className = 'c-act';
     if (!locked()) {
       const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.date = key;
       b.className = 'btn sm';
       b.textContent = isSug ? 'שמור' : 'ערוך';
+      b.setAttribute('aria-label', (isSug ? 'שמירת' : 'עריכת') +
+        ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
       b.onclick = () => editDay(key, rec);
       td.appendChild(b);
     }
@@ -984,9 +1019,50 @@ $('btnRecalc').onclick = async () => {
 
 // ---------- חלונית עריכה ----------
 
-function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+let ovReturnFocus = null;
+function openOv(){
+  const ov = $('ov');
+  ovReturnFocus = document.activeElement;
+  ov.classList.add('on');
+  ov.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(function () {
+    const first = $('dlg').querySelector(
+      'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+    );
+    (first || $('dlg')).focus();
+  });
+}
+function closeOv(restoreFocus = true){
+  const back = ovReturnFocus;
+  $('ov').classList.remove('on');
+  $('ov').setAttribute('aria-hidden', 'true');
+  $('dlg').innerHTML = '';
+  ovReturnFocus = null;
+  if (restoreFocus && back && back.isConnected && typeof back.focus === 'function') back.focus();
+}
+function focusAfterRender(key){
+  requestAnimationFrame(function () {
+    const dayButton = key
+      ? Array.from(document.querySelectorAll('.days button[data-date]'))
+          .find(function (el) { return el.dataset.date === key; })
+      : null;
+    const target = dayButton || $('msg') || $('moLabel');
+    if (target && typeof target.focus === 'function') target.focus();
+  });
+}
 $('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
+document.addEventListener('keydown', function (e) {
+  if (!$('ov').classList.contains('on')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeOv(); return; }
+  if (e.key !== 'Tab') return;
+  const focusable = Array.from($('dlg').querySelectorAll(
+    'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  )).filter(el => el.offsetParent !== null);
+  if (!focusable.length) { e.preventDefault(); $('dlg').focus(); return; }
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 
 // כמה שעות הסידור קבע ליום הזה. כרגע אורך אחיד לתחנה; כשיהיו
 // אורכים שונים לימים שונים, זה המקום היחיד שישתנה.
@@ -1034,28 +1110,28 @@ function editDay(key, rec){
     '</option>').join('');
 
   $('dlg').innerHTML =
-    '<h3>' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
+    '<h3 id="dlgTitle">דיווח ליום ' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
     '<div class="hint" id="dHint"></div>' +
-    '<label>סוג היום</label><select id="dType">' + types + '</select>' +
+    '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
 
     '<div id="dTimes">' +
-      '<label>צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
+      '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
       '<div class="shapeNote" id="dShapeNote"></div>' +
 
       '<div class="seg">' +
         '<div class="two">' +
-          '<div><label id="lStart">כניסה</label>' +
+          '<div><label id="lStart" for="dStart">כניסה</label>' +
             '<input type="time" id="dStart" value="' + esc(v.start || '') + '"></div>' +
-          '<div><label id="lEnd">יציאה</label>' +
+          '<div><label id="lEnd" for="dEnd">יציאה</label>' +
             '<input type="time" id="dEnd" value="' + esc(v.end || '') + '"></div>' +
         '</div>' +
       '</div>' +
 
       '<div class="seg hide" id="dSeg2">' +
         '<div class="two">' +
-          '<div><label>כניסה שנייה</label>' +
+          '<div><label for="dStart2">כניסה שנייה</label>' +
             '<input type="time" id="dStart2" value="' + esc(v.start2 || '') + '"></div>' +
-          '<div><label>יציאה שנייה</label>' +
+          '<div><label for="dEnd2">יציאה שנייה</label>' +
             '<input type="time" id="dEnd2" value="' + esc(v.end2 || '') + '"></div>' +
         '</div>' +
       '</div>' +
@@ -1063,20 +1139,20 @@ function editDay(key, rec){
 
     '<div id="dOtBox" class="ot hide">' +
       '<div class="otHead" id="dOtHead"></div>' +
-      '<label>נימוק · חובה</label>' +
+      '<label for="dOtReason">נימוק · חובה</label>' +
       '<input type="text" id="dOtReason" maxlength="120" value="' +
         esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
     '</div>' +
 
-    '<label>תחנה</label><select id="dSite">' + siteOpts + '</select>' +
-    '<label>הערות</label><textarea id="dNotes" maxlength="200">' +
+    '<label for="dSite">תחנה</label><select id="dSite">' + siteOpts + '</select>' +
+    '<label for="dNotes">הערות</label><textarea id="dNotes" maxlength="200">' +
       esc(v.notes || '') + '</textarea>' +
     '<div class="acts">' +
-      '<button class="btn go" id="dSave">שמור</button>' +
-      (rec ? '<button class="btn" id="dDel">מחק את היום</button>' : '') +
-      '<button class="btn" id="dCancel">ביטול</button>' +
+      '<button type="button" class="btn go" id="dSave">שמור</button>' +
+      (rec ? '<button type="button" class="btn" id="dDel">מחק את היום</button>' : '') +
+      '<button type="button" class="btn" id="dCancel">ביטול</button>' +
     '</div>';
-  $('ov').classList.add('on');
+  openOv();
 
   // הצורה קובעת את חישוב היממות, ולא ניחוש מהשעות.
   //
@@ -1187,7 +1263,7 @@ function editDay(key, rec){
         overtime_reason: cur.overtime_reason,
         notes: $('dNotes').value.trim()
       }));
-      closeOv(); msg('היום נשמר.', 'ok'); render();
+      closeOv(false); msg('היום נשמר.', 'ok'); render(); focusAfterRender(key);
     } catch (e) {
       msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
     }
@@ -1197,7 +1273,7 @@ function editDay(key, rec){
     try {
       await deleteDoc(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)));
       delete records[key];
-      closeOv(); msg('היום נמחק.', 'ok'); render();
+      closeOv(false); msg('היום נמחק.', 'ok'); render(); focusAfterRender(key);
     } catch (e) {
       msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err');
     }
@@ -1248,7 +1324,7 @@ function submitPreview(){
     : '';
 
   $('dlg').innerHTML =
-    '<h3>בדקתי ואישרתי את הדיווחים שלי</h3>' +
+    '<h3 id="dlgTitle">בדקתי ואישרתי את הדיווחים שלי</h3>' +
     '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
       ' · ' + esc(SUBJ.full_name || '') + ' · מס׳ ' + esc(SUBJ.emp) + '</div>' +
 
@@ -1286,18 +1362,18 @@ function submitPreview(){
 
     '<div class="acts">' +
       ((st === 'draft' && !s.unexplained.length)
-        ? '<button class="btn go" id="pSend">אישור ושליחה</button>' : '') +
-      '<button class="btn" id="pBack">חזרה לדוח</button>' +
+        ? '<button type="button" class="btn go" id="pSend">אישור ושליחה</button>' : '') +
+      '<button type="button" class="btn" id="pBack">חזרה לדוח</button>' +
     '</div>';
-  $('ov').classList.add('on');
+  openOv();
 
   if ($('pSend')) $('pSend').onclick = async () => {
     $('pSend').disabled = true;
     try {
       await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
-      closeOv();
+      closeOv(false);
       msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
-      render();
+      render(); focusAfterRender();
     } catch (e) {
       msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
       $('pSend').disabled = false;
@@ -1476,8 +1552,11 @@ async function loadApprovals(){
       '<td class="hh">' + (r.total_hours != null ? r.total_hours : '—') + '</td>';
     const td = document.createElement('td');
     const b = document.createElement('button');
+    b.type = 'button';
     b.className = 'btn go sm';
     b.textContent = 'אשר';
+    b.setAttribute('aria-label', 'אישור הדוח של ' + (r.full_name || r.emp_number) +
+      ' לחודש ' + (r.month || ''));
     b.onclick = () => approveMonth(r.emp_number, r.month, r.days || [], 'apprMsg');
     td.appendChild(b);
     tr.appendChild(td);
