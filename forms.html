@@ -26,40 +26,43 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
-        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
   .wrap{ max-width:1000px; margin:0 auto }
-  h1{ font-size:21px; margin:0 0 3px }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
-         border-radius:12px; padding:16px; margin-bottom:14px }
+         border-radius:14px; padding:18px; margin-bottom:14px }
   .cols{ display:grid; grid-template-columns:1fr; gap:14px }
   @media (min-width:900px){ .cols{ grid-template-columns:1fr 1fr } }
 
-  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
-  label b{ color:var(--txt); font-weight:600 }
-  label i{ font-style:normal; color:var(--bad) }
-  select, textarea, input{ width:100%; padding:10px; background:var(--input);
-        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+  label,.field-label{ display:block; font-size:12.5px; color:var(--muted);
+                      font-weight:650; margin:12px 0 4px }
+  label b,.field-label b{ color:var(--txt); font-weight:600 }
+  label i,.field-label i{ font-style:normal; color:var(--bad) }
+  select, textarea, input{ width:100%; min-height:44px; padding:10px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:10px;
         font-size:15px; font-family:inherit }
+  :where(select,textarea,input,.btn,.tabs button):focus-visible{
+        outline:3px solid var(--accent); outline-offset:2px }
   textarea{ min-height:76px; resize:vertical }
   .fnote{ font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.6 }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
-        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
   .btn.no{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px; margin-top:0 }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
-  .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
-                color:var(--muted); border-radius:9px; padding:9px 16px;
+  .tabs button{ flex:1 1 150px; min-height:48px; margin:0; background:var(--chip);
+                border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:10px 14px;
                 font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
   .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
 
@@ -128,11 +131,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
   .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .hide{ display:none !important }
+  @media (max-width:620px){
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .card{ border-radius:12px; padding:14px }
+    .tabs button{ flex-basis:130px; padding-inline:10px }
+    .s .acts .btn{ flex:1 1 130px }
+    .sigcard{ align-items:flex-start; flex-wrap:wrap }
+  }
 </style>
 </head>
 <body>
 
-<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+<div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
   <code id="errRaw"></code>
@@ -158,37 +169,37 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 })();
 </script>
 
-<div class="wrap">
+<main class="wrap">
   <h1>טפסים</h1>
   <div class="sub" id="whoSub">—</div>
 
-  <div class="card hide" id="denyCard">
+  <div class="card hide" id="denyCard" role="status">
     <div class="note" id="denyWho"></div>
     <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
   </div>
 
   <div id="work" class="hide">
 
-    <div class="tabs">
-      <button id="tabNew" class="on">מילוי טופס</button>
-      <button id="tabMine">הטפסים שלי</button>
-      <button id="tabAppr" class="hide">ממתין לאישורי</button>
-      <button id="tabAway">מי בחופשה</button>
+    <div class="tabs" role="tablist" aria-label="תצוגות טפסים">
+      <button type="button" id="tabNew" class="on" role="tab" tabindex="0" aria-selected="true" aria-controls="viewNew">מילוי טופס</button>
+      <button type="button" id="tabMine" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewMine">הטפסים שלי</button>
+      <button type="button" id="tabAppr" class="hide" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewAppr">ממתין לאישורי</button>
+      <button type="button" id="tabAway" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewAway">מי בחופשה</button>
     </div>
 
     <!-- ========== טופס חדש ========== -->
-    <div id="viewNew">
+    <div id="viewNew" role="tabpanel" aria-labelledby="tabNew" aria-hidden="false">
       <div class="cols">
         <div>
           <div class="card">
             <h2>מילוי טופס</h2>
-            <label>איזה טופס</label>
-            <select id="fPick"></select>
+            <label for="fPick">איזה טופס</label>
+            <select id="fPick" aria-describedby="fNote"></select>
             <div class="note" id="fNote" style="margin-top:6px">—</div>
             <div id="fFields"></div>
 
-            <div id="sigWrap" class="hide">
-              <label>חתימה <i>*</i></label>
+            <div id="sigWrap" class="hide" role="group" aria-labelledby="sigLabel">
+              <div class="field-label" id="sigLabel">חתימה <i>*</i></div>
 
               <!-- יש חתימה שמורה: מראים אותה ומאשרים בלחיצה. -->
               <div id="sigHave" class="hide">
@@ -226,12 +237,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                     <button class="btn sm go" id="sigSave" type="button">שמור חתימה</button>
                   </div>
                 </div>
-                <div class="msg" id="sigMsg"></div>
+                <div class="msg" id="sigMsg" role="status" aria-live="polite" tabindex="-1"></div>
               </div>
             </div>
 
-            <button class="btn go" id="btnSubmit">הגש</button>
-            <div class="msg" id="newMsg"></div>
+            <button type="button" class="btn go" id="btnSubmit">הגש</button>
+            <div class="msg" id="newMsg" role="status" aria-live="polite" tabindex="-1"></div>
           </div>
         </div>
         <div>
@@ -254,41 +265,41 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <!-- ========== שלי ========== -->
-    <div id="viewMine" class="hide">
+    <div id="viewMine" class="hide" role="tabpanel" aria-labelledby="tabMine" aria-hidden="true">
       <div class="card">
         <h2>הטפסים שלי</h2>
-        <div class="note" id="mineNote">—</div>
-        <div id="mineList"></div>
-        <div class="msg" id="mineMsg"></div>
+        <div class="note" id="mineNote" role="status" aria-live="polite">—</div>
+        <div id="mineList" role="list"></div>
+        <div class="msg" id="mineMsg" role="status" aria-live="polite" tabindex="-1"></div>
       </div>
     </div>
 
     <!-- ========== לאישורי ========== -->
-    <div id="viewAppr" class="hide">
+    <div id="viewAppr" class="hide" role="tabpanel" aria-labelledby="tabAppr" aria-hidden="true">
       <div class="card">
         <h2>ממתין לאישורי</h2>
-        <div class="note" id="apprNote">—</div>
-        <div id="apprList"></div>
-        <div class="msg" id="apprMsg"></div>
+        <div class="note" id="apprNote" role="status" aria-live="polite">—</div>
+        <div id="apprList" role="list"></div>
+        <div class="msg" id="apprMsg" role="status" aria-live="polite" tabindex="-1"></div>
       </div>
     </div>
 
     <!-- ========== מי בחופשה ========== -->
-    <div id="viewAway" class="hide">
+    <div id="viewAway" class="hide" role="tabpanel" aria-labelledby="tabAway" aria-hidden="true">
       <div class="card">
         <h2>מי בחופשה</h2>
         <div class="note">
           חופשות מאושרות. מי שבחו״ל או מחוץ לאילת אינו זמין להזעקה,
           וקריאת פתע לא תכלול אותו.
         </div>
-        <label>תאריך</label>
+        <label for="awayDate">תאריך</label>
         <input type="date" id="awayDate">
-        <div id="awayList"></div>
+        <div id="awayList" role="list" aria-live="polite"></div>
       </div>
     </div>
 
   </div>
-</div>
+</main>
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
@@ -445,12 +456,35 @@ async function loadAll(){
 
 const VIEWS = [['tabNew','viewNew'],['tabMine','viewMine'],
                ['tabAppr','viewAppr'],['tabAway','viewAway']];
+function visibleViews(){
+  return VIEWS.filter(function (v) { return !$(v[0]).classList.contains('hide'); });
+}
+function activateView(tabId, moveFocus){
+  VIEWS.forEach(function (v) {
+    const active = v[0] === tabId;
+    $(v[0]).classList.toggle('on', active);
+    $(v[0]).setAttribute('aria-selected', active ? 'true' : 'false');
+    $(v[0]).setAttribute('tabindex', active ? '0' : '-1');
+    $(v[1]).classList.toggle('hide', !active);
+    $(v[1]).setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
+  if (moveFocus) $(tabId).focus();
+}
 VIEWS.forEach(function (v) {
-  $(v[0]).onclick = function () {
-    VIEWS.forEach(function (x) {
-      $(x[0]).classList.toggle('on', x[0] === v[0]);
-      $(x[1]).classList.toggle('hide', x[1] !== v[1]);
-    });
+  const tab = $(v[0]);
+  tab.onclick = function () { activateView(v[0], false); };
+  tab.onkeydown = function (event) {
+    const tabs = visibleViews();
+    const at = tabs.findIndex(function (x) { return x[0] === v[0]; });
+    if (at < 0) return;
+    let next = at;
+    if (event.key === 'ArrowRight') next = (at + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (at - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    activateView(tabs[next][0], true);
   };
 });
 
@@ -487,7 +521,9 @@ function drawFields(){
   if (f.sign) paintSig();
 
   (f.fields || []).forEach(function (fl) {
+    const fieldId = 'fld_' + fl.id;
     const lab = document.createElement('label');
+    lab.htmlFor = fieldId;
     lab.innerHTML = '<b>' + esc(fl.he) + '</b>' + (fl.req ? ' <i>*</i>' : '');
     box.appendChild(lab);
 
@@ -509,13 +545,15 @@ function drawFields(){
               : fl.type === 'time' ? 'time'
               : fl.type === 'number' ? 'number' : 'text';
     }
-    el.id = 'fld_' + fl.id;
+    el.id = fieldId;
     box.appendChild(el);
 
     if (fl.note) {
       const n = document.createElement('div');
       n.className = 'fnote';
+      n.id = fieldId + '_note';
       n.textContent = fl.note;
+      el.setAttribute('aria-describedby', n.id);
       box.appendChild(n);
     }
   });
@@ -691,6 +729,7 @@ function subCard(s, forAppr){
   const f = formById(BUILTIN_FORMS, s.form_id);
   const el = document.createElement('div');
   el.className = 's ' + (s.status || 'submitted');
+  el.setAttribute('role', 'listitem');
 
   el.innerHTML =
     '<div class="top">' +
@@ -783,6 +822,7 @@ async function printSub(s, f){
 
 function btn(text, cls, fn){
   const b = document.createElement('button');
+  b.type = 'button';
   b.className = 'btn ' + cls;
   b.textContent = text; b.onclick = fn;
   return b;
@@ -1034,6 +1074,7 @@ function renderAway(){
     const a = map[u];
     const el = document.createElement('div');
     el.className = 's ' + (a.callable ? 'approved' : 'rejected');
+    el.setAttribute('role', 'listitem');
     el.innerHTML =
       '<div class="top"><span class="ttl">' + esc(a.name || u) + '</span>' +
       '<span class="tag" style="color:' +

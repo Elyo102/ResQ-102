@@ -192,7 +192,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         deleteDoc, query, where, orderBy, limit }
+         deleteDoc, query, where, orderBy, limit, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
@@ -251,6 +251,7 @@ function line(box, key, value, cls){
 // המחיקה נכשלה — הבדיקה אומרת זאת במפורש ומראה מה למחוק.
 
 const MARK = '__selfcheck';
+const SUB_STATION_PROBE_ID = '__selfcheck_archived_site';
 
 // האוספים, ומה מצופה מכל אחד מהם כשכותבים לו מסמך בדיקה
 // **גנרי** — שלושה שדות ותו לא.
@@ -542,6 +543,42 @@ $('btnDeploy').onclick = async () => {
 
     if (!readOk) {
       say('dep', col.he, 'קריאה נחסמה · ' + readWhy, 'bad');
+      continue;
+    }
+
+    // תחנות משנה אינן נמחקות עוד: לוח המודעות והנוכחות יכולים
+    // להחזיק תחתיהן היסטוריה. בדיקת write גנרית שמוחקת מיד הייתה
+    // משאירה בכל ריצה תחנה פיקטיבית פעילה. לכן משתמשים במסמך אחד
+    // וקבוע, שנולד מאורכב, מאמתים אותו בקריאה חוזרת ולעולם לא
+    // מוחקים אותו. הריצה הראשונה בודקת create והבאות בודקות update.
+    if (col.name === 'sub_stations') {
+      const ref = doc(db, 'stations', sid, col.name, SUB_STATION_PROBE_ID);
+      let wrote = false, writeWhy = '';
+      try {
+        await setDoc(ref, {
+          [MARK]: true,
+          name: 'בדיקת פריסה — מוסתר',
+          is_active: false,
+          archived: true,
+          status: 'archived',
+          order: 999999,
+          by_uid: user.uid,
+          updated_at: serverTimestamp()
+        }, { merge: true });
+        const saved = await getDoc(ref);
+        const value = saved.exists() ? (saved.data() || {}) : {};
+        wrote = saved.exists() && value[MARK] === true &&
+                value.is_active === false && value.archived === true &&
+                value.status === 'archived';
+        if (!wrote) writeWhy = 'המסמך נכתב אך דגלי הארכוב לא נשמרו';
+      } catch (e) {
+        writeWhy = e.code || e.message;
+      }
+
+      if (wrote)
+        say('dep', col.he, 'קריאה ✓ · יצירה/עדכון ✓ · נשמר בארכיון ✓', 'ok');
+      else
+        say('dep', col.he, 'קריאה ✓ · בדיקת כתיבה נכשלה · ' + writeWhy, 'bad');
       continue;
     }
 

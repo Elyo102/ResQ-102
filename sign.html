@@ -23,31 +23,34 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
-        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
   .wrap{ max-width:1000px; margin:0 auto }
-  h1{ font-size:21px; margin:0 0 3px }
-  h2{ font-size:15px; margin:0 0 10px }
-  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:16px }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 8px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
   .hide{ display:none !important }
 
   .card{ background:var(--card); border:1px solid var(--line);
-         border-radius:12px; padding:16px 18px; margin-bottom:14px }
+         border-radius:14px; padding:18px; margin-bottom:14px }
 
-  .tabs{ display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap }
-  .tab{ border:1px solid var(--line); background:transparent; color:var(--muted);
-        border-radius:9px; padding:8px 15px; cursor:pointer; font-size:13.5px;
-        font-family:inherit }
+  .tabs{ display:flex; gap:7px; margin-bottom:14px; flex-wrap:wrap }
+  .tab{ flex:1 1 180px; min-height:48px; border:1px solid var(--line);
+        background:var(--chip); color:var(--muted); border-radius:10px;
+        padding:10px 14px; cursor:pointer; font-size:14px;
+        font-family:inherit; font-weight:600 }
   .tab.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .tab b{ font-size:12px; opacity:.85; margin-inline-start:5px }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
-        border-radius:9px; padding:8px 15px; cursor:pointer; font-size:13.5px;
-        font-family:inherit }
-  .btn:hover{ color:var(--txt) }
+        border-radius:10px; min-height:44px; padding:10px 17px; cursor:pointer;
+        font-size:14px; font-family:inherit; font-weight:600 }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px }
-  .btn:disabled{ opacity:.45; cursor:default }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px }
+  .btn:disabled{ opacity:.45; cursor:not-allowed }
+  :where(.tab,.btn,textarea):focus-visible{
+        outline:3px solid var(--accent); outline-offset:2px }
 
   /* ---------- קנבס החתימה ---------- */
   /* רקע לבן קבוע, לא לפי הערכה. חתימה היא דיו על נייר בשני
@@ -55,17 +58,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .pad{ position:relative }
   .pad canvas{ width:100%; height:170px; background:#ffffff;
                border:1px dashed var(--line); border-radius:10px;
-               display:block; cursor:crosshair }
+               display:block; cursor:crosshair; touch-action:none }
   .padrow{ display:flex; gap:8px; align-items:center; margin-top:9px;
            flex-wrap:wrap }
 
   .have{ display:flex; gap:14px; align-items:center; flex-wrap:wrap }
-  .have img{ height:64px; background:#fff; border-radius:8px; padding:5px;
-             border:1px solid var(--line) }
+  .have img{ height:64px; max-width:240px; object-fit:contain; background:#fff;
+             border-radius:8px; padding:5px; border:1px solid var(--line) }
 
   /* ---------- תור החתימות ---------- */
-  .row{ border:1px solid var(--line); border-radius:11px; padding:13px 15px;
-        margin-bottom:9px; background:var(--card) }
+  .row{ border:1px solid var(--line); border-inline-start:4px solid var(--warn);
+        border-radius:11px; padding:14px 15px; margin-bottom:9px;
+        background:var(--card) }
   .rowtop{ display:flex; justify-content:space-between; gap:12px;
            align-items:flex-start; flex-wrap:wrap }
   .rowtop b{ font-size:14.5px }
@@ -77,46 +81,56 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .rowact{ margin-top:11px; display:flex; gap:8px; flex-wrap:wrap;
            align-items:center }
 
-  .msg{ font-size:12.5px; margin-top:9px; min-height:17px }
-  .msg.ok{ color:var(--good) } .msg.bad{ color:var(--err-fg) }
-  .msg.warn{ color:var(--warn) }
+  .msg{ display:none; font-size:12.5px; margin-top:9px; padding:10px 11px;
+        border-radius:8px; line-height:1.6 }
+  .msg.ok{ display:block; color:var(--ok-fg); background:var(--ok-bg) }
+  .msg.bad{ display:block; color:var(--err-fg); background:var(--err-bg) }
+  .msg.warn{ display:block; color:var(--warn); background:var(--chip) }
 
   .empty{ color:var(--muted); font-size:13px; padding:22px 0; text-align:center }
 
+  .field-label{ display:block; color:var(--muted); font-size:12.5px;
+                font-weight:650; margin:11px 0 4px }
   input[type=file]{ font-size:12.5px; color:var(--muted); max-width:100% }
-  textarea{ width:100%; background:var(--in); color:var(--txt);
-            border:1px solid var(--line); border-radius:9px; padding:9px;
-            font-family:inherit; font-size:13px; resize:vertical }
+  textarea{ width:100%; background:var(--input); color:var(--txt);
+            min-height:76px; border:1px solid var(--line); border-radius:10px;
+            padding:10px; font-family:inherit; font-size:15px; resize:vertical }
 
   @media (max-width:620px){
-    body{ padding:12px }
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .card{ border-radius:12px; padding:14px }
+    .tab{ flex-basis:140px; padding-inline:10px }
     .have img{ height:52px }
+    .rowact .btn{ flex:1 1 150px }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
+<main class="wrap">
   <div id="navSlot"></div>
 
   <h1>חתימות</h1>
   <div class="sub" id="whoSub">—</div>
 
-  <div class="card hide" id="denyCard">
+  <div class="card hide" id="denyCard" role="status">
     <h2>אין גישה</h2>
     <div class="note" id="denyWho">—</div>
   </div>
 
   <div id="work" class="hide">
 
-    <div class="tabs">
-      <button class="tab on" id="tabQueue" data-v="queue">
-        ממתין לחתימתי<b id="cQueue"></b>
+    <div class="tabs" role="tablist" aria-label="תצוגות חתימות">
+      <button type="button" class="tab on" id="tabQueue" data-v="queue"
+              role="tab" tabindex="0" aria-selected="true" aria-controls="viewQueue">
+        ממתין לחתימתי<b id="cQueue" aria-live="polite"></b>
       </button>
-      <button class="tab" id="tabMine" data-v="mine">החתימה שלי</button>
+      <button type="button" class="tab" id="tabMine" data-v="mine"
+              role="tab" tabindex="-1" aria-selected="false" aria-controls="viewMine">החתימה שלי</button>
     </div>
 
     <!-- ================= תור החתימות ================= -->
-    <div id="viewQueue">
+    <div id="viewQueue" role="tabpanel" aria-labelledby="tabQueue" aria-hidden="false">
       <div class="card">
         <h2>מסמכים שממתינים לך</h2>
         <div class="note">
@@ -124,11 +138,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           חותם לכל המשמרת מכאן, בלי לחפש מסמך-מסמך.
         </div>
       </div>
-      <div id="queueList"></div>
+      <div id="queueList" role="list" aria-live="polite"></div>
     </div>
 
     <!-- ================= החתימה שלי ================= -->
-    <div id="viewMine" class="hide">
+    <div id="viewMine" class="hide" role="tabpanel" aria-labelledby="tabMine" aria-hidden="true">
       <div class="card">
         <h2>החתימה השמורה שלך</h2>
         <div class="note">
@@ -146,8 +160,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
             <div>
               <div class="note" id="haveWhen">—</div>
               <div class="padrow">
-                <button class="btn sm" id="btnReplace">החלף</button>
-                <button class="btn sm" id="btnDelete">מחק</button>
+                <button type="button" class="btn sm" id="btnReplace">החלף</button>
+                <button type="button" class="btn sm" id="btnDelete">מחק</button>
               </div>
             </div>
           </div>
@@ -155,28 +169,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
         <div id="editWrap" style="margin-top:14px">
           <div class="pad">
-            <canvas id="pad"></canvas>
+            <canvas id="pad" aria-label="משטח ציור חתימה"></canvas>
           </div>
           <div class="padrow">
-            <button class="btn sm" id="btnClear">נקה</button>
-            <label class="btn sm" for="fileSig" style="display:inline-block">
-              העלה תמונה
-            </label>
+            <button type="button" class="btn sm" id="btnClear">נקה</button>
+            <button type="button" class="btn sm" id="btnUpload">העלה תמונה</button>
             <input type="file" id="fileSig" accept="image/*" class="hide">
-            <span class="note" id="padState">לא נחתם.</span>
+            <span class="note" id="padState" aria-live="polite">לא נחתם.</span>
           </div>
           <div class="padrow" style="margin-top:12px">
-            <button class="btn go" id="btnSave">שמור חתימה</button>
-            <button class="btn sm hide" id="btnCancel">ביטול</button>
+            <button type="button" class="btn go" id="btnSave">שמור חתימה</button>
+            <button type="button" class="btn sm hide" id="btnCancel">ביטול</button>
           </div>
         </div>
 
-        <div class="msg" id="mineMsg"></div>
+        <div class="msg" id="mineMsg" role="status" aria-live="polite"></div>
       </div>
     </div>
 
   </div>
-</div>
+</main>
 
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
@@ -246,45 +258,80 @@ onAuthStateChanged(auth, async (user) => {
   renderNav(c, 'sign.html', user.email || '');
 
   setupTabs();
-  setupPad();
+  setupPadControls();
   await refreshSignature();
   await loadQueue();
 });
 
 // ---------- לשוניות ----------
 
+const SIGN_VIEWS = [['tabQueue','viewQueue'],['tabMine','viewMine']];
+function activateSignView(tabId, moveFocus){
+  SIGN_VIEWS.forEach(function (v) {
+    const active = v[0] === tabId;
+    $(v[0]).classList.toggle('on', active);
+    $(v[0]).setAttribute('aria-selected', active ? 'true' : 'false');
+    $(v[0]).setAttribute('tabindex', active ? '0' : '-1');
+    $(v[1]).classList.toggle('hide', !active);
+    $(v[1]).setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
+  if (tabId === 'tabMine') requestAnimationFrame(function () { ensurePad(); });
+  if (moveFocus) $(tabId).focus();
+}
 function setupTabs(){
-  document.querySelectorAll('.tab').forEach(t => {
-    t.onclick = () => {
-      document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
-      t.classList.add('on');
-      const v = t.dataset.v;
-      $('viewQueue').classList.toggle('hide', v !== 'queue');
-      $('viewMine').classList.toggle('hide', v !== 'mine');
+  SIGN_VIEWS.forEach(function (v, index) {
+    const tab = $(v[0]);
+    tab.onclick = function () { activateSignView(v[0], false); };
+    tab.onkeydown = function (event) {
+      let next = index;
+      if (event.key === 'ArrowRight') next = (index + 1) % SIGN_VIEWS.length;
+      else if (event.key === 'ArrowLeft') next = (index - 1 + SIGN_VIEWS.length) % SIGN_VIEWS.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = SIGN_VIEWS.length - 1;
+      else return;
+      event.preventDefault();
+      activateSignView(SIGN_VIEWS[next][0], true);
     };
   });
 }
 
 // ---------- החתימה שלי ----------
 
-function setupPad(){
+function ensurePad(){
+  if (PAD) return PAD;
+  if ($('viewMine').classList.contains('hide') ||
+      $('editWrap').classList.contains('hide')) return null;
+  const canvas = $('pad');
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
   PAD = attachPad($('pad'), {
     onChange: (has) => {
       $('padState').textContent = has ? 'מוכן לשמירה.' : 'לא נחתם.';
       $('btnSave').disabled = !has;
     }
   });
+  return PAD;
+}
+
+function setupPadControls(){
   $('btnSave').disabled = true;
 
-  $('btnClear').onclick = () => { PAD.clear(); say('mineMsg', '', ''); };
+  $('btnClear').onclick = () => {
+    const pad = ensurePad();
+    if (pad) pad.clear();
+    say('mineMsg', '', '');
+  };
+  $('btnUpload').onclick = () => $('fileSig').click();
 
   $('fileSig').onchange = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     say('mineMsg', 'קורא את התמונה...', 'warn');
     try {
+      const pad = ensurePad();
+      if (!pad) throw new Error('לוח החתימה עדיין נטען. נסה שוב.');
       const img = await readImageFile(f, 600);
-      await PAD.load(img);
+      await pad.load(img);
       say('mineMsg', 'התמונה נטענה. לחץ "שמור חתימה".', 'ok');
     } catch (err) {
       say('mineMsg', err.message || 'טעינת התמונה נכשלה.', 'bad');
@@ -293,7 +340,8 @@ function setupPad(){
   };
 
   $('btnSave').onclick = async () => {
-    const img = PAD.toImage();
+    const pad = ensurePad();
+    const img = pad ? pad.toImage() : '';
     if (!img) return say('mineMsg', 'אין מה לשמור.', 'bad');
     $('btnSave').disabled = true;
     say('mineMsg', 'שומר...', 'warn');
@@ -312,7 +360,10 @@ function setupPad(){
   $('btnReplace').onclick = () => {
     $('editWrap').classList.remove('hide');
     $('btnCancel').classList.remove('hide');
-    PAD.clear();
+    requestAnimationFrame(function () {
+      const pad = ensurePad();
+      if (pad) pad.clear();
+    });
   };
   $('btnCancel').onclick = () => {
     $('editWrap').classList.add('hide');
@@ -344,6 +395,7 @@ async function refreshSignature(){
   $('haveWrap').classList.toggle('hide', !has);
   $('editWrap').classList.toggle('hide', has);
   $('btnCancel').classList.add('hide');
+  if (!has) requestAnimationFrame(function () { ensurePad(); });
 
   if (has) {
     $('haveImg').src = MY_SIG.image;
@@ -427,7 +479,7 @@ function renderQueue(){
   $('cQueue').textContent = mine.length ? ' · ' + mine.length : '';
 
   if (!mine.length) {
-    box.innerHTML = '<div class="card"><div class="empty">' +
+    box.innerHTML = '<div class="card" role="status"><div class="empty">' +
       'אין מסמכים שממתינים לחתימתך.</div></div>';
     return;
   }
@@ -442,6 +494,7 @@ function renderQueue(){
 
     const el = document.createElement('div');
     el.className = 'row';
+    el.setAttribute('role', 'listitem');
     el.innerHTML =
       '<div class="rowtop">' +
         '<div>' +
@@ -454,13 +507,14 @@ function renderQueue(){
       (c.warn ? '<div class="meta" style="margin-top:8px;color:var(--warn)">⚠️ ' +
                 esc(c.warn) + '</div>' : '') +
       (c.onBehalf
-        ? '<textarea id="why' + i + '" rows="2" style="margin-top:9px" ' +
+        ? '<label class="field-label" for="why' + i + '">סיבת החתימה בשם אדם אחר</label>' +
+          '<textarea id="why' + i + '" rows="2" ' +
           'placeholder="למה אתה חותם במקומו? הסיבה נשמרת עם החתימה."></textarea>'
         : '') +
       '<div class="rowact">' +
-        '<button class="btn go sm" id="sg' + i + '">' +
+        '<button type="button" class="btn go sm" id="sg' + i + '">' +
           (c.onBehalf ? 'חתום בשמו' : 'אשר וחתום') + '</button>' +
-        '<span class="msg" id="m' + i + '"></span>' +
+        '<span class="msg" id="m' + i + '" role="status" aria-live="polite"></span>' +
       '</div>';
     box.appendChild(el);
 

@@ -10,13 +10,15 @@ const __TESTS = __d(__f(import.meta.url));
 const __APP   = __j(__TESTS, '..');
 
 
-const ROOT=__APP, STUB=__j(__TESTS, "stub"), PORT=8301;
+const ROOT=__APP, STUB=__j(__TESTS, "stub");
+let PORT=0;
 const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json'};
 const srv=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
   if(p==='/')p='/index.html'; const f=path.join(ROOT,p);
   if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){r.writeHead(404);r.end('no');return;}
   r.writeHead(200,{'Content-Type':T[path.extname(f)]||'text/plain'});r.end(fs.readFileSync(f));});
-await new Promise(r=>srv.listen(PORT,r));
+await new Promise(r=>srv.listen(0,r));
+PORT=srv.address().port;
 const b=await chromium.launch();
 let bad=0;
 function ck(what,got,want){const ok=String(got)===String(want);if(!ok)bad++;

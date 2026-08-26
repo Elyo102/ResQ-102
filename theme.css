@@ -27,6 +27,14 @@
 :root{
   color-scheme: dark;
 
+  /* --- יסודות ממשק משותפים (opt-in) --- */
+  --space-1:4px; --space-2:8px; --space-3:12px;
+  --space-4:16px; --space-5:24px; --space-6:32px;
+  --radius-sm:8px; --radius-md:12px; --radius-lg:16px;
+  --touch-min:44px;
+  --text-xs:12px; --text-sm:14px; --text-md:16px;
+  --text-lg:20px; --text-xl:28px;
+
   /* --- משטחים --- */
   --bg:#15171a;          /* רקע הדף */
   --card:#1e2126;        /* כרטיס */
@@ -224,8 +232,9 @@
 #errBar b{ color:var(--bar-strong); display:block; margin-bottom:4px; font-size:14px }
 #errBar code{ direction:ltr; display:block; margin-top:6px; color:var(--err-fg);
               font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
-#errBar .xx{ position:absolute; inset-inline-end:12px; top:10px; cursor:pointer;
-             color:var(--bar-strong); font-size:18px }
+#errBar .xx{ position:absolute; inset-inline-end:8px; top:4px; cursor:pointer;
+             width:44px; min-height:44px; margin:0; padding:0;
+             border:0; background:transparent; color:var(--bar-strong); font-size:22px }
 
 /* ===================================================================
    מתג המצב — יושב בסרגל הניווט
@@ -244,3 +253,27 @@
 @media (prefers-reduced-motion:no-preference){
   #themeBtn{ transition:color .12s ease, border-color .12s ease }
 }
+
+/* רכיבי UI משותפים — מחלקות opt-in בלבד. מסך משתמש בהן
+   במפורש אחרי בדיקה, ולכן השכבה אינה דורסת CSS קיים. */
+.ui-page{width:min(1120px,100%);margin-inline:auto;padding:var(--space-4);color:var(--txt)}
+.ui-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg);padding:var(--space-5);box-shadow:var(--shadow)}
+.ui-stack{display:flex;flex-direction:column;gap:var(--space-4)}
+.ui-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.ui-field{display:flex;flex-direction:column;gap:var(--space-2)}
+.ui-field>label{color:var(--dim);font-size:var(--text-sm);font-weight:700}
+.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
+.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
+.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+.ui-btn:disabled,.ui-control:disabled{opacity:.58;cursor:not-allowed}
+.ui-message{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--info-bg);color:var(--info-fg);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);line-height:1.55}
+.ui-message--success{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}
+.ui-message--error{background:var(--err-bg);color:var(--err-fg);border-color:var(--bad-bd)}
+.ui-empty{padding:var(--space-6) var(--space-4);text-align:center;color:var(--muted)}
+.ui-table-scroll{max-width:100%;overflow:auto;overscroll-behavior-inline:contain}
+.ui-skeleton{min-height:var(--touch-min);border-radius:var(--radius-md);background:linear-gradient(90deg,var(--panel),var(--chip),var(--panel));background-size:200% 100%;animation:ui-shimmer 1.2s linear infinite}
+@keyframes ui-shimmer{to{background-position:-200% 0}}
+:where(.ui-btn,.ui-control):focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.ui-skeleton{animation:none}}
+@media (max-width:560px){.ui-page{padding:var(--space-3)}.ui-card{padding:var(--space-4);border-radius:var(--radius-md)}.ui-cluster>.ui-btn{flex:1 1 140px}}

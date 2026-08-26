@@ -7,6 +7,8 @@ const ROLES = {
            stationId: 'eilat_102', districtId: 'south', shift: 'C' },
   firefighter: { role: 'firefighter', emp: '17',
                  stationId: 'eilat_102', districtId: 'south', shift: 'A' },
+  team:        { role: 'team_leader', emp: '18',
+                 stationId: 'eilat_102', districtId: 'south', shift: 'A' },
   // מפקד משמרת ב'. לא מנהל-על ולא רכז — ולכן נעול למשמרת שלו.
   commander:   { role: 'commander', emp: '5',
                  stationId: 'eilat_102', districtId: 'south', shift: 'B' },
@@ -19,6 +21,8 @@ const ROLES = {
   // מפקד התחנה. רואה את שלוש המשמרות ומאשר ירידה מקו אדום.
   stcmd:       { role: 'station_commander', emp: '2',
                  stationId: 'eilat_102', districtId: 'south', shift: '' },
+  district:    { role: 'district_commander', emp: '900',
+                 districtId: 'south', shift: '' },
   pending: {}
 };
 
@@ -32,21 +36,36 @@ const CLAIMS = Object.assign({
 }, ROLES[WHO] || ROLES.super);
 
 const USER = {
-  uid: 'stub-uid',
+  uid: (typeof window !== 'undefined' && window.__SMOKE_UID) || 'stub-uid',
   email: 'eldad50@gmail.com',
   emailVerified: true,
   getIdTokenResult: () => Promise.resolve({ claims: CLAIMS }),
   getIdToken: () => Promise.resolve('stub-token')
 };
 
-const noop = () => {};
-export function getAuth(){ return { currentUser: SIGNED_OUT ? null : USER }; }
+const observers = new Set();
+const AUTH = { currentUser: SIGNED_OUT ? null : USER };
+export function getAuth(){ return AUTH; }
 export function onAuthStateChanged(a, cb){
-  setTimeout(() => cb(SIGNED_OUT ? null : USER), 20); return noop;
+  observers.add(cb);
+  setTimeout(() => cb(AUTH.currentUser), 20);
+  return () => observers.delete(cb);
 }
-export function signInWithEmailAndPassword(){ return Promise.resolve({ user: USER }); }
-export function createUserWithEmailAndPassword(){ return Promise.resolve({ user: USER }); }
-export function signOut(){ return Promise.resolve(); }
+export function signInWithEmailAndPassword(){
+  AUTH.currentUser = USER;
+  setTimeout(() => observers.forEach(cb => cb(USER)), 0);
+  return Promise.resolve({ user: USER });
+}
+export function createUserWithEmailAndPassword(){
+  AUTH.currentUser = USER;
+  setTimeout(() => observers.forEach(cb => cb(USER)), 0);
+  return Promise.resolve({ user: USER });
+}
+export function signOut(){
+  AUTH.currentUser = null;
+  setTimeout(() => observers.forEach(cb => cb(null)), 0);
+  return Promise.resolve();
+}
 export function deleteUser(){ return Promise.resolve(); }
 export function updatePassword(){ return Promise.resolve(); }
 export function reauthenticateWithCredential(){ return Promise.resolve(); }

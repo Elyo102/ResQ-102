@@ -30,7 +30,8 @@ const __APP   = __j(__TESTS, '..');
 
 
 
-const ROOT = __APP, STUB = __j(__TESTS, "stub"), PORT = 8293;
+const ROOT = __APP, STUB = __j(__TESTS, "stub");
+let PORT = 0;
 const T = { '.html':'text/html; charset=utf-8', '.js':'text/javascript',
             '.css':'text/css', '.json':'application/json' };
 const srv = http.createServer((q, r) => {
@@ -41,10 +42,11 @@ const srv = http.createServer((q, r) => {
   r.writeHead(200, { 'Content-Type': T[path.extname(f)] || 'text/plain' });
   r.end(fs.readFileSync(f));
 });
-await new Promise(r => srv.listen(PORT, r));
+await new Promise(r => srv.listen(0, r));
+PORT = srv.address().port;
 
 const SCREENS = ['login.html','schedule.html','board.html','attendance.html',
-                 'guards.html','faults.html','forms.html','swaps.html',
+                 'guards.html','faults.html','forms.html','sign.html','swaps.html',
                  'quals.html','alerts.html','stats.html','people.html',
                  'vehicle.html','admin.html','access.html','import.html',
                  'check.html'];

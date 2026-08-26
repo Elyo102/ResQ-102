@@ -22,6 +22,15 @@ const ROSTER = [
   ['u5', { full_name: 'עזב מזמן',   role: 'firefighter', crew: 'B', is_active: false }]
 ];
 
+// מסמכי users עבור בורר תיקון השעות. המספרים וה-uid שונים
+// כדי שבדיקת race תוכל לעבור לאדם אחר ולחזור למשתמש המחובר.
+const USERS = [
+  ['u2', { full_name:'טל חודרה', employee_number:'17', role:'firefighter',
+           crew:'A', is_active:true }],
+  ['u4', { full_name:'דנה לוי', employee_number:'21', role:'firefighter',
+           crew:'B', is_active:true }]
+];
+
 // קריאת פתע פתוחה, שנשלחה למשתמש הבדיקה. מאפשרת לוודא שהחלון
 // באמת קופץ, ושהמונים במסך המפקד סופרים נכון.
 const CALLOUTS = [
@@ -232,8 +241,8 @@ const BOARD = {
     ]},
     { id: 'v2', name: 'רכב געש', role: 'חילוץ', slots: [
       { id: 's21', job: 'נהג מפעיל משאבה', req: 'q1' },
-      { id: 's22', job: 'כבאי',            req: 'q2' },
-      { id: 's23', job: 'ר. משמרת',        req: ''   }
+      { id: 's22', job: 'כבאי',            req: 'q2', site: 'shahmon' },
+      { id: 's23', job: 'ר. משמרת',        req: '',   site: 'rashit'  }
     ]},
     { id: 'v3', name: 'רכב סער', role: 'כיבוי', slots: [
       { id: 's31', job: 'חובש',     req: 'q3' },
@@ -247,7 +256,7 @@ const BOARD = {
 const SHIFT = { assign: {
   c1: 'u1', c2: 'u4', c3: 'u2',
   s11: 'u4', s12: 'u1',
-  s21: 'u4', s22: 'u2',
+  s21: 'u4', s22: 'u2', s23: 'stub-uid',
   s31: 'u1'
 } };
 
@@ -279,8 +288,170 @@ const SITES = [
   ['rashit',  { name:'ראשית', fixed_hours:0,  order:1 }],
   ['shahmon', { name:'שחמון', fixed_hours:0,  order:2 }],
   ['timna',   { name:'תמנע',  fixed_hours:0,  order:3 }],
-  ['yotvata', { name:'יטבתה', fixed_hours:25, order:4 }]
+  ['yotvata', { name:'יטבתה', fixed_hours:25, order:4 }],
+  ['legacy-inactive', { name:'ישנה לא פעילה', order:90, status:'inactive' }],
+  ['legacy-archived', { name:'ישנה בארכיון', order:91, status:'ARCHIVED' }],
+  ['legacy-active-false', { name:'ישנה כבויה', order:92, active:false }]
 ];
+
+// לוחות מודעות נפרדים לכל תחנת משנה. הטקסט הזדוני כאן מכוון:
+// בדיקת הדפדפן מוודאת שהוא מופיע כטקסט בלבד ולעולם לא כ-HTML.
+// created_at מדמה Firestore Timestamp במידה המינימלית שבה החזית
+// משתמשת, ושומר גם created_key לצורך נפילה לאחור/בדיקות pure.
+function stamp(iso) {
+  return {
+    toDate(){ return new Date(iso); },
+    toMillis(){ return Date.parse(iso); },
+    seconds: Math.floor(Date.parse(iso) / 1000),
+    nanoseconds: 0
+  };
+}
+const BULLETIN_MESSAGES = {
+  rashit: [
+    ['br3', { text:'<img src=x onerror="window.__BULLETIN_XSS=1">',
+      category:'general', by_uid:'u3', by_name:'משה טויטו',
+      by_role:'firefighter', by_crew:'A', hidden:false,
+      created_at:stamp('2026-08-25T09:30:00.000Z'),
+      created_key:'2026-08-25T09:30:00.000Z' }],
+    ['br2', { text:'חסר חלב וביצים במטבח', category:'supplies',
+      by_uid:'u2', by_name:'טל חודרה', by_role:'firefighter', by_crew:'A',
+      hidden:false, reply_count:2, created_at:stamp('2026-08-25T08:20:00.000Z'),
+      created_key:'2026-08-25T08:20:00.000Z' }],
+    ['br1', { text:'רכב געש יוצא לטיפול בשעה 11:00', category:'vehicle',
+      by_uid:'u1', by_name:'אלדד יונה', by_role:'commander', by_crew:'C',
+      hidden:false, audience:'all_sub_stations', broadcast_count:4,
+      reply_count:25,
+      created_at:stamp('2026-08-25T07:10:00.000Z'),
+      created_key:'2026-08-25T07:10:00.000Z' }],
+    ['br0', { text:'הודעה מוסתרת', category:'general', by_uid:'u1',
+      by_name:'אלדד יונה', by_role:'commander', by_crew:'C', hidden:true,
+      created_at:stamp('2026-08-25T10:00:00.000Z'),
+      created_key:'2026-08-25T10:00:00.000Z' }]
+  ],
+  shahmon: [
+    ['bs2', { text:'תקלה במזגן בחדר התדריכים', category:'equipment',
+      by_uid:'u4', by_name:'דנה לוי', by_role:'firefighter', by_crew:'B',
+      hidden:false, created_at:stamp('2026-08-25T10:15:00.000Z'),
+      created_key:'2026-08-25T10:15:00.000Z' }],
+    ['bs1', { text:'בדיקת משאבות הושלמה', category:'maintenance',
+      by_uid:'u1', by_name:'אלדד יונה', by_role:'commander', by_crew:'C',
+      hidden:false, created_at:stamp('2026-08-25T06:45:00.000Z'),
+      created_key:'2026-08-25T06:45:00.000Z' }]
+  ],
+  timna: [],
+  yotvata: [
+    ['by1', { text:'אספקת מים הגיעה למחסן', category:'supplies',
+      by_uid:'u2', by_name:'טל חודרה', by_role:'firefighter', by_crew:'A',
+      hidden:false, created_at:stamp('2026-08-24T18:00:00.000Z'),
+      created_key:'2026-08-24T18:00:00.000Z' }]
+  ]
+};
+
+const BULLETIN_REPLIES = {
+  'rashit/br2': [
+    ['brr1', { text:'קיבלתי, אטפל בהשלמה לפני החלפת המשמרת.',
+      by_uid:'u1', by_name:'אלדד יונה', by_role:'commander', by_crew:'C',
+      hidden:false, created_at:stamp('2026-08-25T08:24:00.000Z'),
+      created_key:'2026-08-25T08:24:00.000Z' }],
+    ['brr2', { text:'<svg onload="window.__BULLETIN_REPLY_XSS=1">',
+      by_uid:'u9', by_name:'נועה כהן', by_role:'deputy', by_crew:'B',
+      hidden:false, created_at:stamp('2026-08-25T08:27:00.000Z'),
+      created_key:'2026-08-25T08:27:00.000Z' }],
+    ['brr-hidden', { text:'תגובה מוסתרת', by_uid:'u1', by_name:'אלדד יונה',
+      by_role:'commander', by_crew:'C', hidden:true,
+      created_at:stamp('2026-08-25T08:28:00.000Z'),
+      created_key:'2026-08-25T08:28:00.000Z' }]
+  ]
+};
+
+// יותר מעמוד תגובות אחד, כדי לבדוק שטעינה מדורגת ועדכון חי
+// אינם מערבבים עמוד ישן עם הרשימה החדשה.
+BULLETIN_REPLIES['rashit/br1'] = [];
+for (let i = 1; i <= 25; i++) {
+  const second = String(i).padStart(2, '0');
+  BULLETIN_REPLIES['rashit/br1'].push([
+    'br1-reply-' + second,
+    { text:'תגובת עבר ' + i, by_uid:'u' + i, by_name:'חבר צוות ' + i,
+      by_role:i % 2 ? 'commander' : 'deputy', by_crew:i % 2 ? 'A' : 'B',
+      hidden:false, created_at:stamp('2026-08-25T07:11:' + second + '.000Z'),
+      created_key:'2026-08-25T07:11:' + second + '.000Z' }
+  ]);
+}
+
+// יותר מעמוד אחד בלוח הראשי, כדי ש"טען קודמות" ייבדק באמת.
+// המספור נשאר בתוך הטקסט כדי שבדיקת ההמשך תוכל לזהות שנוספו
+// מסמכים אחרים ולא רק שהכפתור נלחץ.
+for (let i = 1; i <= 31; i++) {
+  const minute = String(i % 60).padStart(2, '0');
+  BULLETIN_MESSAGES.rashit.push([
+    'br-old-' + String(i).padStart(2, '0'),
+    { text:'הודעה קודמת ' + i, category:'general', by_uid:'u4',
+      by_name:'דנה לוי', by_role:'firefighter', by_crew:'B', hidden:false,
+      created_at:stamp('2026-08-20T06:' + minute + ':00.000Z'),
+      created_key:'2026-08-20T06:' + minute + ':00.000Z' }
+  ]);
+}
+
+const ACTIVE_SNAPSHOT_LISTENERS = new Set();
+
+async function emitBulletinSnapshots(boardId) {
+  const suffix = '/sub_stations/' + boardId + '/bulletin_messages';
+  const listeners = Array.from(ACTIVE_SNAPSHOT_LISTENERS).filter(function (item) {
+    return item.live && item.path.endsWith(suffix);
+  });
+  await Promise.all(listeners.map(async function (item) {
+    const snapshot = await getDocs(item.query);
+    if (item.live) item.next(snapshot);
+  }));
+}
+
+async function emitBulletinReplySnapshots(boardId, messageId) {
+  const suffix = '/sub_stations/' + boardId + '/bulletin_messages/' +
+    messageId + '/bulletin_replies';
+  const listeners = Array.from(ACTIVE_SNAPSHOT_LISTENERS).filter(function (item) {
+    return item.live && item.path.endsWith(suffix);
+  });
+  await Promise.all(listeners.map(async function (item) {
+    const snapshot = await getDocs(item.query);
+    if (item.live) item.next(snapshot);
+  }));
+}
+
+if (typeof window !== 'undefined') {
+  window.__FIRESTORE_PUSH_BULLETIN = async function (input) {
+    const value = input || {};
+    const boardId = String(value.boardId || 'rashit');
+    const iso = String(value.iso || new Date().toISOString());
+    BULLETIN_MESSAGES[boardId] = BULLETIN_MESSAGES[boardId] || [];
+    BULLETIN_MESSAGES[boardId].push([
+      String(value.id || ('live-' + Date.now())),
+      {
+        text:String(value.text || 'הודעת realtime'),
+        category:String(value.category || 'general'),
+        by_uid:'u2', by_name:'טל חודרה', by_role:'firefighter', by_crew:'A',
+        hidden:false, created_at:stamp(iso), created_key:iso
+      }
+    ]);
+    await emitBulletinSnapshots(boardId);
+  };
+  window.__FIRESTORE_PUSH_BULLETIN_REPLY = async function (input) {
+    const value = input || {};
+    const boardId = String(value.boardId || 'rashit');
+    const messageId = String(value.messageId || 'br2');
+    const key = boardId + '/' + messageId;
+    const iso = String(value.iso || new Date().toISOString());
+    BULLETIN_REPLIES[key] = BULLETIN_REPLIES[key] || [];
+    BULLETIN_REPLIES[key].push([
+      String(value.id || ('reply-live-' + Date.now())),
+      {
+        text:String(value.text || 'תגובת realtime'),
+        by_uid:'u9', by_name:'נועה כהן', by_role:'deputy', by_crew:'B',
+        hidden:false, created_at:stamp(iso), created_key:iso
+      }
+    ]);
+    await emitBulletinReplySnapshots(boardId, messageId);
+  };
+}
 
 // דיווחי נוכחות לחודש אוגוסט 2026 של מספר עובד 1.
 const ATTENDANCE = [
@@ -395,15 +566,22 @@ export function doc(first, ...rest){
 }
 export function collection(db, ...segs){ return { path: segs.join('/') }; }
 
-export function query(base){ return { path: (base && base.path) || '' }; }
-export function where(){ return {}; }
-export function orderBy(){ return {}; }
-export function limit(){ return {}; }
+export function query(base, ...constraints){
+  const value = { path: (base && base.path) || '', constraints:constraints.filter(Boolean) };
+  if (typeof window !== 'undefined') {
+    window.__FIRESTORE_QUERIES = window.__FIRESTORE_QUERIES || [];
+    window.__FIRESTORE_QUERIES.push(value);
+  }
+  return value;
+}
+export function where(field, op, value){ return { kind:'where', field, op, value }; }
+export function orderBy(field, direction){ return { kind:'orderBy', field, direction:direction || 'asc' }; }
+export function limit(count){ return { kind:'limit', count:Number(count) || 0 }; }
+export function startAfter(snap){ return { kind:'startAfter', id:snap && snap.id }; }
 
 export function getDoc(ref){
   const p = (ref && ref.path) || '';
-  if (LAG) return lag(1).then(() => getDoc0(ref));
-  return getDoc0(ref);
+  return lag(null, p).then(() => getDoc0(ref));
 }
 
 function getDoc0(ref){
@@ -423,42 +601,101 @@ FAULTS.push.apply(FAULTS, TASKS_EXTRA);
 const LAG = (typeof window !== 'undefined' && window.__SMOKE_LAG) || 0;
 // מדידה: מתי יצאה הבקשה הראשונה, ומתי חזרה האחרונה.
 // זה הזמן שהמשתמש מחכה בו למסך ריק.
-function mark(){
+function mark(path){
   if (typeof window === 'undefined') return;
   if (!window.__T0) window.__T0 = Date.now();
   window.__N = (window.__N || 0) + 1;
+  window.__DATA_PATHS = window.__DATA_PATHS || [];
+  window.__DATA_PATHS.push(path || '');
 }
 function done(){
   if (typeof window === 'undefined') return;
   window.__TN = Date.now();
 }
-function lag(v){
-  mark();
-  if (!LAG) { done(); return Promise.resolve(v); }
-  return new Promise(r => setTimeout(function () { done(); r(v); }, LAG));
+function lag(v, path){
+  mark(path);
+  const plan = (typeof window !== 'undefined') ? window.__SMOKE_LAG_PLAN : null;
+  const wait = Array.isArray(plan) && plan.length
+    ? Number(plan.shift()) || 0
+    : Number(LAG) || 0;
+  if (!wait) { done(); return Promise.resolve(v); }
+  return new Promise(r => setTimeout(function () { done(); r(v); }, wait));
+}
+
+function constrainedRows(source, constraints) {
+  let rows = (source || []).slice();
+  const list = constraints || [];
+  list.forEach(c => {
+    if (!c || c.kind !== 'where') return;
+    if (c.op === '==') rows = rows.filter(pair => pair[1] && pair[1][c.field] === c.value);
+  });
+  const order = list.find(c => c && c.kind === 'orderBy');
+  if (order) {
+    const value = row => {
+      const v = row[1] && row[1][order.field];
+      if (v && typeof v.toMillis === 'function') return v.toMillis();
+      return String(v == null ? '' : v);
+    };
+    rows.sort((a, b) => {
+      const av = value(a), bv = value(b);
+      const n = av < bv ? -1 : av > bv ? 1 : 0;
+      return order.direction === 'desc' ? -n : n;
+    });
+  }
+  const cursor = list.find(c => c && c.kind === 'startAfter');
+  if (cursor && cursor.id) {
+    const at = rows.findIndex(pair => pair[0] === cursor.id);
+    if (at !== -1) rows = rows.slice(at + 1);
+  }
+  const cap = list.find(c => c && c.kind === 'limit');
+  if (cap && cap.count > 0) rows = rows.slice(0, cap.count);
+  return rows;
 }
 
 export function getDocs(q){
   const p = (q && q.path) || '';
-  if (/\/quals$/.test(p))        return lag(listSnap(QUALS));
-  if (/\/roster$/.test(p))       return lag(listSnap(ROSTER));
-  if (/\/member_quals$/.test(p)) return lag(listSnap(MEMBER_QUALS));
-  if (/\/rotations$/.test(p))    return lag(listSnap(ROTATIONS));
-  if (/\/shift_overrides$/.test(p)) return lag(listSnap(OVERRIDES));
-  if (/\/sub_stations$/.test(p))    return lag(listSnap(SITES));
-  if (/\/attendance$/.test(p))      return lag(listSnap(ATTENDANCE));
-  if (/\/monthly_reports$/.test(p)) return lag(listSnap(REPORTS));
-  if (/\/swaps$/.test(p))           return lag(listSnap(SWAPS));
-  if (/\/callouts$/.test(p))        return lag(listSnap(CALLOUTS));
-  if (/\/guards$/.test(p))          return lag(listSnap(GUARDS));
-  if (/\/photos$/.test(p))          return lag(listSnap(FAULT_PHOTOS));
-  if (/\/faults$/.test(p))          return lag(listSnap(FAULTS));
-  if (/\/vehicles$/.test(p))        return lag(listSnap(VEHICLES));
-  if (/\/vehicle_views$/.test(p))   return lag(listSnap(VIEWS));
-  if (/\/handovers$/.test(p))       return lag(listSnap(HANDOVERS));
-  if (/\/redline_waivers$/.test(p)) return lag(listSnap(WAIVERS));
-  if (/\/submissions$/.test(p))     return lag(listSnap(SUBS));
-  return lag(EMPTY_QUERY);
+  const delayed = value => lag(value, p);
+  const replyMatch = p.match(
+    /\/sub_stations\/([^/]+)\/bulletin_messages\/([^/]+)\/bulletin_replies$/
+  );
+  if (replyMatch) {
+    const boardId = decodeURIComponent(replyMatch[1]);
+    const messageId = decodeURIComponent(replyMatch[2]);
+    const rows = constrainedRows(
+      BULLETIN_REPLIES[boardId + '/' + messageId],
+      (q && q.constraints) || []
+    );
+    return delayed(listSnap(rows));
+  }
+  const boardMatch = p.match(/\/sub_stations\/([^/]+)\/bulletin_messages$/);
+  if (boardMatch) {
+    const boardId = decodeURIComponent(boardMatch[1]);
+    const rows = constrainedRows(
+      BULLETIN_MESSAGES[boardId],
+      (q && q.constraints) || []
+    );
+    return delayed(listSnap(rows));
+  }
+  if (/\/quals$/.test(p))        return delayed(listSnap(QUALS));
+  if (/\/roster$/.test(p))       return delayed(listSnap(ROSTER));
+  if (/\/users$/.test(p))        return delayed(listSnap(USERS));
+  if (/\/member_quals$/.test(p)) return delayed(listSnap(MEMBER_QUALS));
+  if (/\/rotations$/.test(p))    return delayed(listSnap(ROTATIONS));
+  if (/\/shift_overrides$/.test(p)) return delayed(listSnap(OVERRIDES));
+  if (/\/sub_stations$/.test(p))    return delayed(listSnap(SITES));
+  if (/\/attendance$/.test(p))      return delayed(listSnap(ATTENDANCE));
+  if (/\/monthly_reports$/.test(p)) return delayed(listSnap(REPORTS));
+  if (/\/swaps$/.test(p))           return delayed(listSnap(SWAPS));
+  if (/\/callouts$/.test(p))        return delayed(listSnap(CALLOUTS));
+  if (/\/guards$/.test(p))          return delayed(listSnap(GUARDS));
+  if (/\/photos$/.test(p))          return delayed(listSnap(FAULT_PHOTOS));
+  if (/\/faults$/.test(p))          return delayed(listSnap(FAULTS));
+  if (/\/vehicles$/.test(p))        return delayed(listSnap(VEHICLES));
+  if (/\/vehicle_views$/.test(p))   return delayed(listSnap(VIEWS));
+  if (/\/handovers$/.test(p))       return delayed(listSnap(HANDOVERS));
+  if (/\/redline_waivers$/.test(p)) return delayed(listSnap(WAIVERS));
+  if (/\/submissions$/.test(p))     return delayed(listSnap(SUBS));
+  return delayed(EMPTY_QUERY);
 }
 
 export function updateDoc(){ return Promise.resolve(); }
@@ -469,10 +706,41 @@ export function updateDoc(){ return Promise.resolve(); }
 export function onSnapshot(q, next, err){
   const p = (q && q.path) || '';
   const fn = typeof next === 'function' ? next : (next && next.next);
-  if (fn) {
-    getDocs({ path: p }).then(s => { try { fn(s); } catch (e) {} });
+  const fail = typeof window !== 'undefined' && Array.isArray(window.__FIRESTORE_FAIL_PATHS) &&
+               window.__FIRESTORE_FAIL_PATHS.some(x => p.indexOf(String(x)) !== -1);
+  if (typeof window !== 'undefined') {
+    window.__FIRESTORE_LISTENS = window.__FIRESTORE_LISTENS || [];
+    window.__FIRESTORE_LISTENS.push(p);
+    window.__FIRESTORE_ACTIVE = (window.__FIRESTORE_ACTIVE || 0) + 1;
+    window.__FIRESTORE_ACTIVE_PATHS = window.__FIRESTORE_ACTIVE_PATHS || {};
+    window.__FIRESTORE_ACTIVE_PATHS[p] = (window.__FIRESTORE_ACTIVE_PATHS[p] || 0) + 1;
   }
-  return function(){};
+  let listener = null;
+  if (fail) {
+    const failFn = typeof err === 'function' ? err : (next && next.error);
+    Promise.resolve().then(() => { if (failFn) failFn(new Error('stub-offline')); });
+  } else if (fn) {
+    listener = { query:q, path:p, next:fn, live:true };
+    ACTIVE_SNAPSHOT_LISTENERS.add(listener);
+    getDocs(q).then(s => { try { if (listener.live) fn(s); } catch (e) {} });
+  }
+  let live = true;
+  return function(){
+    if (!live) return;
+    live = false;
+    if (listener) {
+      listener.live = false;
+      ACTIVE_SNAPSHOT_LISTENERS.delete(listener);
+    }
+    if (typeof window !== 'undefined') {
+      window.__FIRESTORE_UNSUBSCRIBES = (window.__FIRESTORE_UNSUBSCRIBES || 0) + 1;
+      window.__FIRESTORE_ACTIVE = Math.max(0, (window.__FIRESTORE_ACTIVE || 1) - 1);
+      window.__FIRESTORE_ACTIVE_PATHS[p] = Math.max(
+        0,
+        (window.__FIRESTORE_ACTIVE_PATHS[p] || 1) - 1
+      );
+    }
+  };
 }
 
 export function addDoc(){ return Promise.resolve({ id: 'new1' }); }

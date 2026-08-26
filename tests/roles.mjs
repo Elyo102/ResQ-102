@@ -27,6 +27,7 @@ const R = await import(pathToFileURL(__j(__APP, 'roles.js')).href);
 const L = await import(pathToFileURL(__j(__APP, 'shiftlog.js')).href);
 
 const SERVER = readFileSync(__j(__APP, 'functions', 'index.js'), 'utf8');
+const BULLETIN_SERVER = readFileSync(__j(__APP, 'functions', 'bulletin.js'), 'utf8');
 const RULES  = readFileSync(__j(__APP, 'firestore.rules'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -54,6 +55,15 @@ const serverRoles = (m ? m[1] : '')
 
 is('אותם תפקידים בדיוק, בשני הצדדים',
    serverRoles.slice().sort(), R.VALID_ROLES.slice().sort());
+
+const bulletinMembersMatch = BULLETIN_SERVER.match(
+  /const MEMBER_ROLES = Object\.freeze\(\[([\s\S]*?)\]\)/
+);
+is('MEMBER_ROLES של לוח המודעות נמצאה בשרת', !!bulletinMembersMatch, true);
+const bulletinMembers = (bulletinMembersMatch ? bulletinMembersMatch[1] : '')
+  .split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+is('לוח המודעות והלקוח מכירים אותם חברי תחנה',
+   bulletinMembers.slice().sort(), R.MEMBER_ROLES.slice().sort());
 
 // ============================================================
 head('2 · כל תפקיד מוכר לכללי האבטחה');

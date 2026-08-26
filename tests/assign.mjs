@@ -20,12 +20,12 @@
 //
 // הרצה:  node assign.mjs
 import fs from 'fs';
-import { fileURLToPath as __f } from 'url';
+import { fileURLToPath as __f, pathToFileURL as __u } from 'url';
 import { dirname as __d, join as __j } from 'path';
 const __TESTS = __d(__f(import.meta.url));
 const __APP   = __j(__TESTS, '..');
 
-const R = await import(__j(__APP, 'roles.js'));
+const R = await import(__u(__j(__APP, 'roles.js')).href);
 const srv = fs.readFileSync(__j(__APP, 'functions', 'index.js'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -176,17 +176,29 @@ console.log('מסך תיקון השעות');
 
 // כל נתיב נתונים חייב SUBJ. מותר ME רק בהקשרי זהות מוצהרים.
 const dataPaths = [
-  ["where('emp_number', '==', SUBJ.emp)", 'טעינת החודש'],
+  ["where('emp_number', '==', snapshot.emp)", 'טעינת החודש'],
   ['recordId(SUBJ.emp, key)',             'כתיבת יום'],
   ['emp_number: SUBJ.emp',                'מספר עובד ברשומה'],
   ['crew: SUBJ.crew',                     'משמרת ברשומה'],
-  ["'shifts', SUBJ.crew)",                'לוח המשמרת'],
+  ["'shifts', snapshot.crew)",            'לוח המשמרת'],
   ['swapEffect(swaps, SUBJ.uid, key)',    'החלפות'],
   ['personWorks(rotations, SUBJ.crew',    'האם עובד ביום הזה']
 ];
 dataPaths.forEach(function (pair) {
   ok(pair[1] + ' עובר דרך SUBJ', att.indexOf(pair[0]) !== -1);
 });
+ok('טעינת חודש לוכדת snapshot', /const snapshot = \{[\s\S]{0,180}?subject: subjectGeneration/.test(att));
+ok('חודש ישן אינו מתפרסם', /generation === monthLoadGeneration/.test(att));
+ok('טעינת אדם לוכדת uid', /uid: SUBJ\.uid[\s\S]{0,2600}?guardHasMe\(v, snapshot\.uid\)/.test(att));
+ok('אדם ישן אינו מתפרסם', /generation === staticLoadGeneration/.test(att));
+ok('מעבר אדם מאפס מידע שתלוי ב-uid',
+   /const previousUid = SUBJ && SUBJ\.uid[\s\S]{0,260}?previousUid !== SUBJ\.uid[\s\S]{0,180}?mySite = ''[\s\S]{0,100}?myGuards = \[\]/.test(att));
+ok('טעינת חודש נועלת גם את פעולות שעון המשמרת',
+   /function setMonthBusy\(busy\)[\s\S]{0,320}?'btnStart','btnStop'/.test(att));
+ok('שחרור פעולה מכבד חודש שעדיין בטעינה',
+   /function releaseMonthAction\(button\)[\s\S]{0,180}?aria-busy[\s\S]{0,80}?=== 'true'/.test(att));
+is('שלוש פעולות החודש משתחררות דרך שומר הטעינה',
+   (att.match(/releaseMonthAction\(b\)/g) || []).length, 3);
 
 // אין שריד. ME.emp מותר רק בשלושה מקומות מוצהרים: ההשוואה
 // ב-onOther, הכותרת, וההשוואה באישור חודש.

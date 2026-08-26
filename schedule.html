@@ -31,14 +31,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
      ובמחשב עמודה של 560 פיקסלים באמצע מסך רחב היא בזבוז —
      הריבועים יוצאים קטנים והתגיות נדחסות. */
   .wrap{max-width:1180px;margin:0 auto}
-  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+  .screen-title{font-size:28px;line-height:1.15;letter-spacing:-.025em;margin:0 0 5px}
   .top .me{font-size:15px;font-weight:600}
   .top .sub{font-size:12px;color:var(--muted)}
   .lnk{background:none;border:0;color:var(--muted);font-size:13px;cursor:pointer;
        text-decoration:underline;font-family:inherit;padding:0}
 
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-        padding:14px;margin-bottom:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:16px;margin-bottom:14px}
 
   .next{display:flex;align-items:center;gap:12px}
   .next .big{font-size:26px;font-weight:700;color:var(--accent);line-height:1}
@@ -46,9 +47,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .next .txt b{color:var(--txt)}
 
   .nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .nav button{background:transparent;border:1px solid var(--line);color:var(--txt);
-        border-radius:6px;padding:6px 14px;font-size:16px;cursor:pointer;font-family:inherit}
-  .nav .mo{font-size:16px;font-weight:600}
+  .nav button{min-width:44px;min-height:44px;background:transparent;border:1px solid var(--line);color:var(--txt);
+        border-radius:10px;padding:8px 14px;font-size:20px;cursor:pointer;font-family:inherit}
+  .nav button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .nav .mo{font-size:18px;font-weight:750;text-align:center}
 
   .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
 
@@ -60,7 +62,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        line-height:1.2}
   .dow.rest{color:var(--accent-txt)}
   @media (max-width:420px){
-    .dow{font-size:11.5px}
+    .dow{font-size:12px}
     #dows{padding:7px 0}
   }
   .day{aspect-ratio:1.25;min-height:72px;
@@ -125,8 +127,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .ovr-row .k{color:var(--muted);flex:none}
   .ovr-row .n{color:var(--muted);flex:1;min-width:0;overflow:hidden;
               text-overflow:ellipsis;white-space:nowrap}
-  .ovr-row .x{color:var(--muted);cursor:pointer;padding:0 6px}
+  .ovr-row .x{display:inline-grid;place-items:center;min-width:44px;min-height:44px;
+        background:transparent;border:0;border-radius:8px;color:var(--muted);
+        cursor:pointer;padding:0 6px;font:inherit}
   .ovr-row .x:hover{color:var(--bad)}
+  .ovr-row .x:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
   .btn-s{background:transparent;border:1px solid var(--line);color:var(--muted);
          border-radius:6px;padding:9px 16px;font-size:13px;cursor:pointer;
          font-family:inherit;margin-top:10px}
@@ -155,9 +160,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     .grid{gap:5px}
   }
   @media (max-width:420px){
-    .day .n{font-size:14px}
-    .day .c{font-size:10px;padding:2px 5px}
-    .dow{font-size:11.5px}
+    .day .n{font-size:15px}
+    .day .c{font-size:12px;padding:3px 5px}
+    .dow{font-size:12px}
   }
 
   /* הסיכום לא נמתח לרוחב הלוח. שני מספרים ברוחב 1180 פיקסלים
@@ -169,7 +174,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .sum .v{font-size:20px;font-weight:700}
   .sum .k{font-size:11px;color:var(--muted);margin-top:2px}
 
-  .legend{display:flex;gap:14px;justify-content:center;margin-top:12px;font-size:11px;color:var(--muted)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 14px;justify-content:center;margin-top:14px;font-size:12px;color:var(--muted)}
   .legend span{display:flex;align-items:center;gap:4px}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 
@@ -182,6 +187,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         padding:12px;font-size:15px;cursor:pointer;margin-top:18px;font-family:inherit}
   .err{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;
        background:var(--err-bg);color:var(--err-fg);display:none}
+  .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+  @media(max-width:560px){
+    body{padding:12px}
+    .screen-title{font-size:24px}
+    .card{padding:13px;border-radius:12px}
+    .top{align-items:center}
+  }
 </style>
 </head>
 <body>
@@ -202,10 +214,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card center hide" id="blocked"></div>
 
   <!-- תצוגה -->
-  <div id="mainView" class="hide">
+  <main id="mainView" class="hide">
 
     <div class="top">
       <div>
+        <h1 class="screen-title">סידור עבודה</h1>
         <div class="me" id="meName"></div>
         <div class="sub" id="meSub"></div>
       </div>
@@ -213,23 +226,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="card">
-      <div class="next" id="nextBox"></div>
+      <div class="next" id="nextBox" aria-live="polite"></div>
     </div>
 
     <div class="card" id="fitCard" style="display:none">
-      <div style="font-size:14px;font-weight:700;margin-bottom:9px">כשירות המשמרות</div>
+      <h2 style="font-size:16px;margin:0 0 9px">כשירות המשמרות</h2>
       <div class="fit" id="fitBoxes"></div>
       <div class="note" id="fitNote"></div>
     </div>
 
     <div class="card">
       <div class="nav">
-        <button id="prev">‹</button>
-        <div class="mo" id="moLabel"></div>
-        <button id="next">›</button>
+        <button type="button" id="prev" aria-label="החודש הקודם">‹</button>
+        <div class="mo" id="moLabel" aria-live="polite"></div>
+        <button type="button" id="next" aria-label="החודש הבא">›</button>
       </div>
-      <div class="grid" id="dows"></div>
-      <div class="grid" id="grid"></div>
+      <div class="grid" id="dows" aria-hidden="true"></div>
+      <div class="grid" id="grid" role="list" aria-label="לוח סידור חודשי"></div>
 
       <div class="sum">
         <div><div class="v" id="sumShifts">—</div><div class="k">משמרות בחודש</div></div>
@@ -248,29 +261,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="card hide" id="ovrCard">
-      <div style="font-size:14px;font-weight:700;margin-bottom:3px">חריגות בסידור</div>
+      <h2 style="font-size:16px;margin:0 0 3px">חריגות בסידור</h2>
       <div style="font-size:12px;color:var(--muted);line-height:1.7">
         המחזור הוא נוסחה שלא נשברת. חריגה גוברת עליו — בלוח,
         בסימון הכשירות ובמילוי דוח הנוכחות.
       </div>
 
       <div class="ovr-form">
+        <label class="sr-only" for="ovKind">סוג החריגה</label>
         <select id="ovKind"></select>
+        <label class="sr-only" for="ovDate">תאריך החריגה</label>
         <input type="date" id="ovDate">
+        <label class="sr-only" for="ovCrew">משמרת</label>
         <select id="ovCrew" class="wide"></select>
+        <label class="sr-only" for="ovNote">סיבת החריגה</label>
         <input type="text" id="ovNote" class="wide" maxlength="60" placeholder="סיבה (לא חובה)">
       </div>
       <button class="btn-s go" id="ovAdd">הוסף חריגה</button>
 
       <div class="ovr-list" id="ovList"></div>
-      <div class="err" id="ovErr"></div>
+      <div class="err" id="ovErr" role="alert" aria-live="assertive"></div>
     </div>
 
     <div class="card" id="noRot" style="display:none">
       <div class="center">עדיין לא הוגדר מחזור סידור בתחנה.</div>
     </div>
 
-  </div>
+  </main>
 </div>
 
 <script type="module">
@@ -593,8 +610,10 @@ function renderOvrList(){
           ? ' · + ' + o.extra_crews.map(c => CREW_HE[c]).join(', ') : '') +
       '</span>' +
       '<span class="n">' + (o.note || '') + '</span>';
-    const x = document.createElement('span');
+    const x = document.createElement('button');
+    x.type = 'button';
     x.className = 'x'; x.textContent = '✕'; x.title = 'מחק';
+    x.setAttribute('aria-label', 'מחיקת חריגה בתאריך ' + k);
     x.onclick = () => removeOverride(k);
     row.appendChild(x);
     box.appendChild(row);
@@ -746,6 +765,7 @@ function render(){
   for (let i = 0; i < first.getDay(); i++) {
     const pad = document.createElement('div');
     pad.className = 'day pad';
+    pad.setAttribute('aria-hidden', 'true');
     grid.appendChild(pad);
   }
 
@@ -795,6 +815,12 @@ function render(){
     el.innerHTML = '<div class="n">' + d + '</div>' +
                    '<div class="c">' + (crew ? CREW_SHORT[crew] : '') + '</div>' +
                    (gToday.length ? '<div class="gd"></div>' : '');
+    el.setAttribute('role', 'listitem');
+    el.setAttribute('aria-label', 'יום ' + DOWS[date.getDay()] + ', ' + d + ' ' + MONTHS[viewMonth] + ' ' + viewYear +
+      (crew ? ', משמרת ' + (CREW_HE[crew] || crew) : '') +
+      (mineToday ? ', המשמרת שלי' : '') +
+      (sameDay(date, today) ? ', היום' : '') +
+      (el.title ? ', ' + el.title.replace(/\n/g, ', ') : ''));
     grid.appendChild(el);
   }
 
