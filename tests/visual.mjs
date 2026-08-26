@@ -48,10 +48,17 @@ for (const size of [{ name:'mobile', width:390, height:844 }, { name:'desktop', 
   await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
   await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
   const appPage = await appContext.newPage();
-  for (const screen of ['schedule', 'attendance', 'swaps', 'forms']) {
+  for (const screen of ['schedule', 'attendance', 'swaps', 'forms', 'sign']) {
     await appPage.goto('http://localhost:8391/' + screen + '.html', { waitUntil:'load' });
     await appPage.waitForTimeout(2600);
     await appPage.addStyleTag({ content:'#coWrap{display:none!important}' });
+    if (screen === 'sign') {
+      await appPage.locator('#tabMine').click();
+      await appPage.waitForFunction(() => {
+        const canvas = document.getElementById('pad');
+        return canvas && canvas.width > 0 && canvas.height > 0;
+      });
+    }
     await appPage.screenshot({ path:path.join(out, screen + '-' + size.name + '.png'), fullPage:true });
   }
   await appContext.close();

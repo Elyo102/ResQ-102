@@ -89,5 +89,21 @@ for (const id of ['fPick','awayDate']) {
         'forms label is associated with ' + id);
 }
 
+const sign = read('sign.html');
+for (const token of ['<main class="wrap">', 'role="tablist"', 'role="tab"',
+  'role="tabpanel"', 'aria-selected="true"', 'aria-controls="viewQueue"',
+  'function activateSignView(', 'function ensurePad(', 'function setupPadControls(',
+  'if (PAD) return PAD', 'if (rect.width <= 0 || rect.height <= 0) return null',
+  "event.key === 'ArrowRight'", "event.key === 'Home'", "$('fileSig').click()",
+  "requestAnimationFrame(function () { ensurePad(); })", "el.setAttribute('role', 'listitem')"]) {
+  check(sign.includes(token), 'sign UX contains ' + token);
+}
+check(/<button[^>]+id=["']btnUpload["']/.test(sign),
+      'sign image upload uses a keyboard-accessible button');
+check(/<label[^>]+for=["']why["'] \+ i/.test(sign),
+      'sign on-behalf reason receives an associated label');
+check(!sign.includes('setupPad();'),
+      'sign canvas is not initialized while its panel is hidden');
+
 if (bad) process.exit(1);
 console.log('Shared UX foundation is consistent across ' + pages.length + ' HTML screens.');

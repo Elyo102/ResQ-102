@@ -44,7 +44,7 @@ const srv = http.createServer((q, r) => {
 await new Promise(r => srv.listen(PORT, r));
 
 const SCREENS = ['login.html','schedule.html','board.html','attendance.html',
-                 'guards.html','faults.html','forms.html','swaps.html',
+                 'guards.html','faults.html','forms.html','sign.html','swaps.html',
                  'quals.html','alerts.html','stats.html','people.html',
                  'vehicle.html','admin.html','access.html','import.html',
                  'check.html'];

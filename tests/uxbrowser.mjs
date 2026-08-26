@@ -143,6 +143,43 @@ await check(await forms.locator('#viewAway').isVisible(),
 await forms.keyboard.press('Home');
 await check(await forms.locator('#tabNew').getAttribute('aria-selected') === 'true',
             'forms Home returns to the first tab');
+
+const sign = await appContext.newPage();
+await sign.goto('http://localhost:8392/sign.html', { waitUntil:'load' });
+await sign.locator('#tabQueue').waitFor({ state:'visible', timeout:8000 });
+await sign.addStyleTag({ content:'#coWrap{display:none!important}' });
+await sign.locator('#tabQueue').focus();
+await sign.keyboard.press('ArrowRight');
+await check(await sign.locator('#tabMine').getAttribute('aria-selected') === 'true',
+            'sign ArrowRight activates the saved-signature tab');
+await check(await sign.evaluate(() => document.activeElement?.id === 'tabMine'),
+            'sign active tab receives keyboard focus');
+await check(await sign.locator('#viewMine').isVisible(),
+            'sign selected panel is visible');
+await sign.waitForFunction(() => {
+  const canvas = document.getElementById('pad');
+  return canvas && canvas.width > 0 && canvas.height > 0;
+});
+await check(await sign.evaluate(() => {
+  const canvas = document.getElementById('pad');
+  return canvas.width > 0 && canvas.height > 0;
+}), 'sign canvas initializes with a usable backing size after it becomes visible');
+const padBox = await sign.locator('#pad').boundingBox();
+await sign.mouse.move(padBox.x + 18, padBox.y + 30);
+await sign.mouse.down();
+await sign.mouse.move(padBox.x + 90, padBox.y + 70, { steps:4 });
+await sign.mouse.up();
+await check(await sign.locator('#btnSave').isEnabled(),
+            'drawing on the visible sign canvas enables saving');
+await sign.locator('#btnClear').click();
+await check(await sign.locator('#btnSave').isDisabled(),
+            'clearing the sign canvas resets its save state');
+await sign.locator('#tabMine').focus();
+await sign.keyboard.press('Home');
+await check(await sign.locator('#tabQueue').getAttribute('aria-selected') === 'true',
+            'sign Home returns to the signing queue');
+await check(await sign.locator('#viewQueue').isVisible(),
+            'sign queue panel is visible again');
 await appContext.close();
 
 const firefighterContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
