@@ -63,7 +63,7 @@ for (const token of ['data.is_active !== false', 'data.active !== false',
 }
 
 const login = read('login.html');
-for (const id of ['loginEmp','loginPass','fName','fEmail','fPhone','fDistrict','fStation','fShift','fCode','fPass','fPass2','pwOld','pwNew','pwNew2']) {
+for (const id of ['loginEmp','loginPass','fName','fEmail','fPhone','fDistrict','fStation','fShift','fPass','fPass2','pwOld','pwNew','pwNew2']) {
   check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(login), 'login label is associated with ' + id);
 }
 for (const token of ['role="tablist"', 'role="tab"', 'role="tabpanel"', 'aria-live="polite"', 'role="alert"']) {

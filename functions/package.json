@@ -2,6 +2,9 @@
   "name": "station-102-functions",
   "description": "Cloud Functions - Station 102",
   "main": "index.js",
+  "scripts": {
+    "test:identity": "node identity-coordinator.integration.test.js"
+  },
   "engines": {
     "node": "22"
   },

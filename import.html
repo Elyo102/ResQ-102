@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ResQ — קליטת סגל</title>
+<title>ResQ — כלי מנהל</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
 <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
@@ -152,8 +152,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div id="work" class="hide">
-    <h1>קליטת סגל</h1>
-    <div class="sub" id="srcNote">—</div>
+    <h1>כלי מנהל</h1>
+    <div class="sub">מצב המערכת וייבוא היסטוריית שעות</div>
 
     <!-- ============ המתג ============ -->
     <div class="card">
@@ -174,58 +174,6 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
       <div class="ready" id="ready"></div>
       <div class="msg" id="swMsg"></div>
-    </div>
-
-    <!-- ============ הרשימה ============ -->
-    <div class="card">
-      <h2>מי נקלט</h2>
-      <div class="note" id="listNote">—</div>
-
-      <div class="scroll">
-        <table>
-          <thead><tr><th>שם</th><th>מס׳ עובד</th><th>מייל</th>
-                     <th>תפקיד</th><th>משמרת</th><th id="thState"></th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ============ ההרצה ============ -->
-    <div class="card">
-      <h2>הרצה</h2>
-      <div class="note">
-        <b>חזרה בטוחה.</b> הרצה שנייה על אותה רשימה לא משכפלת חשבונות
-        ולא מאפסת סיסמה למי שכבר נכנס והחליף אותה — היא רק מעדכנת
-        תפקיד ופרופיל.
-      </div>
-
-      <div class="warn">
-        <b>לפני ההרצה האמיתית:</b> ודא שמצב שקט <b>פעיל</b>.
-        הקליטה עצמה לא שולחת כלום, אבל ברגע שיש 28 חשבונות פעילים,
-        כל תקלה שמישהו יפתח וכל החלפה שיאשר מייצרות התראות אמיתיות
-        לאנשים אמיתיים.
-      </div>
-
-      <label for="pwPaste" style="display:block;font-size:12.5px;
-            color:var(--muted);margin:16px 0 4px">
-        הדבק כאן שתי עמודות מגיליון הבקרה — מספר עובד וסיסמה
-      </label>
-      <textarea id="pwPaste" rows="5" spellcheck="false"
-        placeholder="123123&#9;abcd234xyz&#10;1234&#9;pqrs789mno"
-        style="width:100%;padding:11px;background:var(--input);color:var(--txt);
-               border:1px solid var(--line);border-radius:7px;font-size:14px;
-               font-family:Consolas,monospace;direction:ltr;resize:vertical"></textarea>
-      <div class="note" style="margin-top:6px" id="pwNote">
-        סמן בגיליון את שתי העמודות, העתק, והדבק. הן נשארות בדף הזה
-        בלבד — לא נשמרות, לא עולות לאתר.
-      </div>
-
-      <div class="row">
-        <button class="btn" id="btnDry">בדיקה יבשה — בלי ליצור כלום</button>
-        <button class="btn ok" id="btnRun">הרץ קליטה</button>
-      </div>
-      <div class="msg" id="runMsg"></div>
-      <div class="sum hide" id="sum"></div>
     </div>
 
     <!-- ============ היסטוריית שעות ============ -->
@@ -272,7 +220,6 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <script type="module">
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
 import { renderNav, renderStuckNav } from './nav.js?v=38';
-import { ROSTER, SOURCE, SKIPPED, SKIPPED_WHY } from './roster-import.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -280,7 +227,6 @@ import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { getFirestore, collection, doc, getDocs, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
 import { dryRun } from './histimport.js?v=38';
 
 const $ = id => document.getElementById(id);
@@ -289,10 +235,6 @@ const esc = s => String(s == null ? '' : s)
   .replace(/"/g,'&quot;');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
-// שמות התפקידים מגיעים מ-roles.js. כאן הייתה המפה השישית
-// שלהם, והיא גם הייתה שונה מהשאר ("כבאי" במקום "לוחם אש").
-const ROLE_HE = ROLES_HE;
-
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
 import { initAppCheck } from './appcheck.js?v=41a1';
@@ -301,7 +243,6 @@ const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
 
 let ME = { uid:'', email:'' };
-let RESULT = {};   // emp → state
 
 window.addEventListener('error', function (e) {
   const b = $('errBar');
@@ -335,46 +276,8 @@ onAuthStateChanged(auth, async user => {
 
   $('work').classList.remove('hide');
   renderNav(c, 'import.html', user.email || '');
-  $('srcNote').textContent = 'מקור: ' + SOURCE;
-  renderList();
   await loadSilent();
 });
-
-// ---------- הרשימה ----------
-
-function renderList(){
-  const box = $('rows');
-  box.innerHTML = '';
-  $('listNote').innerHTML =
-    '<b>' + ROSTER.length + ' אנשים</b> ייקלטו. ' +
-    SKIPPED + ' נוספים לא ברשימה — ' + esc(SKIPPED_WHY) +
-    '<br>החשבון שלך לא ברשימה בכוונה: ייבוא היה דורס לך את התפקיד ' +
-    'ומנתק אותך מהמערכת באמצע הקליטה.';
-
-  ROSTER.forEach(function (p) {
-    const st = RESULT[p.emp];
-    const tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td class="nm">' + esc(p.name) + '</td>' +
-      '<td class="mono">' + esc(p.emp) + '</td>' +
-      '<td><span class="em">' + esc(p.email) + '</span></td>' +
-      '<td><span class="tag' +
-        (p.role === 'commander' || p.role === 'deputy' ? ' cmd' : '') +
-        (p.role === 'hr_coordinator' ? ' hr' : '') + '">' +
-        esc(ROLE_HE[p.role] || p.role) + '</span></td>' +
-      '<td>' + (p.crew ? '<span class="cw ' + p.crew + '">' + p.crew + '</span>'
-                       : '<span class="note">—</span>') + '</td>' +
-      '<td>' + (st ? '<span class="st ' + st.state + '">' +
-                     esc(stateHe(st)) + '</span>' : '') + '</td>';
-    box.appendChild(tr);
-  });
-}
-
-function stateHe(r){
-  if (r.state === 'created') return r.dry ? 'ייווצר' : '✓ נוצר';
-  if (r.state === 'updated') return r.dry ? 'קיים — יעודכן' : '✓ עודכן';
-  return '✗ ' + (r.why || 'נכשל');
-}
 
 // ---------- מצב שקט ----------
 
@@ -451,114 +354,6 @@ async function setSilent(on){
   $('knob').disabled = false;
 }
 
-// ---------- ההרצה ----------
-
-$('btnDry').onclick = () => run(true);
-$('btnRun').onclick = () => run(false);
-
-async function run(dry){
-  if (!dry && !window.confirm(
-      'ייווצרו עד ' + ROSTER.length + ' חשבונות אמיתיים עם הסיסמאות ' +
-      'שבגיליון הבקרה.\n\nאף אחד לא יקבל הודעה על כך.\n\nלהריץ?')) return;
-
-  const btns = [$('btnDry'), $('btnRun')];
-  btns.forEach(b => b.disabled = true);
-  msg(dry ? 'בודק בלי ליצור כלום…' : 'קולט… זה יכול לקחת דקה.',
-      'info', 'runMsg');
-
-  try {
-    // הסיסמאות אינן בקוד הזה. הן מודבקות לרשימה רק ברגע ההרצה,
-    // מהגיליון — כדי שקובץ שיושב באתר ציבורי לא יכיל אותן.
-    const people = ROSTER.map(p => Object.assign({}, p, { pw: pwOf(p.emp) }));
-
-    const r = await httpsCallable(fns, 'bulkImport')({
-      people: people, dry_run: dry, stationId: STATION_ID, districtId: 'south'
-    });
-
-    const d = r.data || {};
-    RESULT = {};
-    (d.rows || []).forEach(row => { RESULT[row.emp] = row; });
-    $('thState').textContent = dry ? 'צפוי' : 'תוצאה';
-    renderList();
-
-    const s = d.summary || {};
-    $('sum').classList.remove('hide');
-    $('sum').innerHTML =
-      '<div><div class="v" style="color:var(--good)">' + (s.created||0) +
-        '</div><div class="k">' + (dry ? 'ייווצרו' : 'נוצרו') + '</div></div>' +
-      '<div><div class="v" style="color:var(--crewC)">' + (s.updated||0) +
-        '</div><div class="k">' + (dry ? 'קיימים' : 'עודכנו') + '</div></div>' +
-      '<div><div class="v" style="color:' +
-        ((s.failed||0) ? 'var(--bad)' : 'var(--muted)') + '">' + (s.failed||0) +
-        '</div><div class="k">נכשלו</div></div>';
-
-    msg(dry
-      ? 'בדיקה יבשה הסתיימה. שום דבר לא נוצר.'
-      : 'הקליטה הסתיימה. ' + (s.created||0) + ' חשבונות חדשים.',
-      (s.failed||0) ? 'info' : 'ok', 'runMsg');
-  } catch (e) {
-    msg('ההרצה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
-        'err', 'runMsg');
-  }
-  btns.forEach(b => b.disabled = false);
-}
-
-// ---------- הסיסמאות ----------
-//
-// **למה הדבקה ולא קובץ.** קובץ סיסמאות בתיקיית האפליקציה היה
-// עולה ל-GitHub Pages ב-web-2-upload, כלומר יושב בכתובת ציבורית
-// שכל אחד יכול להוריד. עשרים ושמונה חשבונות בקובץ טקסט פתוח.
-//
-// כאן הן קיימות רק בזיכרון הדף, נמחקות ברענון, ולא נכתבות לשום
-// מקום — לא ל-localStorage ולא לקובץ.
-//
-// הפורמט הוא בדיוק מה שיוצא מהעתקת שתי עמודות ב-Google Sheets:
-// מספר, טאב, סיסמה, שורה חדשה.
-
-function parsePw(text){
-  const map = {};
-  String(text || '').split(/\r?\n/).forEach(function (line) {
-    const parts = line.split(/[\t,;]+/).map(x => x.trim()).filter(Boolean);
-    if (parts.length < 2) return;
-    map[parts[0]] = parts[parts.length - 1];
-  });
-  return map;
-}
-
-let PW = {};
-
-$('pwPaste').addEventListener('input', function () {
-  PW = parsePw(this.value);
-  const have = ROSTER.filter(p => PW[p.emp]).length;
-  const miss = ROSTER.filter(p => !PW[p.emp]);
-  const n = $('pwNote');
-  if (!Object.keys(PW).length) {
-    n.textContent = 'סמן בגיליון את שתי העמודות, העתק, והדבק. הן נשארות ' +
-                    'בדף הזה בלבד — לא נשמרות, לא עולות לאתר.';
-    n.style.color = '';
-  } else if (miss.length) {
-    // מציג את החסרים בשמם. "23 מתוך 28" בלי לומר מי חסר מכריח
-    // להשוות שתי רשימות ביד.
-    n.innerHTML = '<b style="color:var(--warn)">' + have + ' מתוך ' +
-      ROSTER.length + '.</b> חסרים: ' +
-      miss.slice(0, 6).map(p => esc(p.name)).join(', ') +
-      (miss.length > 6 ? ' ועוד ' + (miss.length - 6) : '') + '.';
-    n.style.color = '';
-  } else {
-    n.innerHTML = '<b style="color:var(--good)">כל ' + ROSTER.length +
-                  ' הסיסמאות זוהו.</b>';
-  }
-  $('btnRun').disabled = miss.length > 0;
-});
-
-$('btnRun').disabled = true;
-
-function pwOf(emp){
-  const v = PW[String(emp)];
-  if (!v) throw new Error('אין סיסמה למספר עובד ' + emp + '.');
-  return v;
-}
-
 // =================================================================
 //  ייבוא היסטוריית שעות
 // =================================================================
@@ -570,15 +365,15 @@ function pwOf(emp){
 const db = getFirestore(app);
 let HIST = null;   // תוצאת הבדיקה היבשה האחרונה
 
-// הסגל מהמסד ולא מ-roster-import.js: הרשימה הקבועה היא מה
-// שנקלט פעם אחת, והמסד הוא מי שקיים **עכשיו**. אדם שנוסף
-// אחרי הקליטה אינו ברשימה הקבועה, והשעות שלו היו נדחות
-// כ"לא נמצא במערכת".
+// מספר העובד נשמר במסמכי users ולא במסמכי roster המצומצמים.
+// המסך פתוח למנהל-על בלבד, וממפה לזיכרון רק את ארבעת השדות
+// הנדרשים להתאמת היסטוריית השעות.
 async function loadRoster(){
   const out = [];
-  const rs = await getDocs(collection(db, 'stations', STATION_ID, 'roster'));
+  const rs = await getDocs(collection(db, 'stations', STATION_ID, 'users'));
   rs.forEach(function (d) {
     const v = d.data() || {};
+    if (v.is_active === false) return;
     out.push({ uid: d.id, emp: String(v.employee_number || v.emp_number || ''),
                name: v.full_name || '', crew: v.crew || '' });
   });
@@ -592,7 +387,7 @@ $('hDry').onclick = async function () {
   try {
     const roster = await loadRoster();
     if (!roster.length) {
-      hmsg('אין סגל במסד. הרץ קודם את הקליטה למעלה.', 'err');
+      hmsg('אין משתמשים פעילים בתחנה. הוסף משתמשים לפני ייבוא ההיסטוריה.', 'err');
       b.disabled = false; return;
     }
     const r = dryRun($('hPaste').value, roster);
@@ -691,8 +486,8 @@ function renderHist(r, rosterSize){
       unknown.map(function (u) {
         return '&nbsp;&nbsp;' + esc(u) + ' — ' + r.unknownPeople[u] + ' שורות';
       }).join('<br>') +
-      '<br><span class="s">הוסף אותם בקליטה למעלה, או תקן את השם ' +
-      'בגיליון, וייצא שוב.</span>';
+      '<br><span class="s">ודא שהמשתמשים קיימים ופעילים, או תקן את השם ' +
+      'בגיליון וייצא שוב.</span>';
   }
 
   if (r.errors.length) {

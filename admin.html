@@ -278,7 +278,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection,
+import { getFirestore, doc, getDoc, setDoc, collection,
          getDocs, query, where, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
@@ -303,11 +303,20 @@ const db   = getFirestore(app);
 const fns = getFunctions(app, 'europe-west1');
 
 const callApprove  = httpsCallable(fns, 'approveRegistration');
+const callReject   = httpsCallable(fns, 'rejectRegistration');
+const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+let roleOperationId = '';
+
+function newOperationId(prefix){
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return prefix + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // בורר התפקידים נבנה מיד, לפני כל טעינת נתונים. אם הוא ייבנה
 // בתוך onAuthStateChanged, מסך שנתקע בטעינה היה מציג בורר ריק
@@ -477,7 +486,7 @@ async function loadRequests(){
   let snaps;
   try {
     const q = query(collection(db, 'registration_requests'),
-                    where('status', '==', 'pending'));
+                    where('status', 'in', ['pending', 'processing', 'needs_recovery']));
     snaps = await getDocs(q);
   } catch (e) {
     list.innerHTML = '<div class="empty">שגיאה בטעינה: ' + (e.code || e.message) + '</div>';
@@ -492,16 +501,40 @@ async function loadRequests(){
   list.innerHTML = '';
   for (const d of snaps.docs) {
     const r = d.data();
+    const state = String(r.status || 'pending');
+    const plan = r.locked_plan || {};
+    const isPending = state === 'pending';
+    const isLocked = r.resumable === true &&
+      (state === 'processing' || state === 'needs_recovery') &&
+      /^[A-Za-z0-9_-]{16,100}$/.test(String(r.operation_id || '')) &&
+      /^[a-f0-9]{64}$/.test(String(r.plan_fingerprint || '')) &&
+      plan && typeof plan === 'object' && String(plan.kind || '') !== '';
+    const isOrphanedReview = !isPending && !isLocked;
+    const stateLine = isOrphanedReview ?
+      '<div class="match" style="margin:8px 0">אין לבקשה תוכנית שרתית שניתן להמשיך. ' +
+      'אפשר להסיר רק את בקשת ההרשמה; השרת יוודא קודם שאין פעולת זהות פעילה.</div>' :
+      (state === 'processing' ?
+      '<div class="match" style="margin:8px 0">האישור התחיל ונשמר. מוצגת כאן התוכנית המדויקת שננעלה בשרת.</div>' :
+      (state === 'needs_recovery' ?
+        '<div class="match" style="margin:8px 0">הבקשה נשמרה ודורשת התאוששות מבוקרת. לא בוצעה דריסה או מחיקה.</div>' : ''));
+    const actions = isPending ?
+      '<div class="acts"><button class="ok" data-act="ok">אשר</button>' +
+      '<button class="no" data-act="no">דחה</button></div>' :
+      (isLocked ?
+        '<div class="acts"><button class="ok" data-act="resume">המשך את התוכנית המוצגת</button></div>' :
+        '<div class="acts"><button class="no" data-act="dismiss">הסר בקשה תקועה</button></div>');
     const box = document.createElement('div');
     box.className = 'req';
 
-    box.innerHTML =
-      '<div class="nm">' + esc(r.full_name) + '</div>' +
+    const lockedPlan = isLocked ?
+      '<div class="ln"><b>התוכנית שננעלה:</b></div>' +
+      '<div class="ln">תפקיד: <b>' + esc(ROLE_HE[plan.role] || plan.role || 'ללא') + '</b></div>' +
+      '<div class="ln">משמרת: <b>' + esc(plan.shift ? 'משמרת ' + plan.shift : 'ללא') + '</b></div>' +
+      '<div class="ln">תחנה: <b>' + esc(stationName(plan.stationId || '')) + '</b></div>' +
+      '<div class="ln">מחוז: <b>' + esc(DIST_HE[plan.districtId] || plan.districtId || '') + '</b></div>' +
+      '<div class="ln">מספר עובד: <b>' + esc(plan.emp || 'טרם הוקצה') + '</b></div>' : '';
 
-      '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
-      (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
-      (r.stationId ? '<div class="ln">תחנה מבוקשת: <b>' + esc(stationName(r.stationId)) + '</b></div>' : '') +
-      (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
+    const editablePlan = isPending ?
       '<label style="margin-top:10px">תחנה</label>' +
       '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
       '<div class="two" style="margin-top:10px">' +
@@ -519,16 +552,30 @@ async function loadRequests(){
       '<input type="text" inputmode="numeric" data-f="emp" ' +
         'placeholder="השאר ריק והמערכת תקצה את הפנוי הבא">' +
       '<div class="ln" style="font-size:12px">' +
-        'אם לכבאי כבר יש קוד אישי מהמערכת הישנה — הקלד אותו כאן, ' +
-        'והוא ישמור אותו.' +
-      '</div>' +
-      '<div class="acts">' +
-        '<button class="ok" data-act="ok">אשר</button>' +
-        '<button class="no" data-act="no">דחה</button>' +
-      '</div>';
+        'אם לכבאי כבר יש קוד אישי מהמערכת הישנה — הקלד אותו כאן, והוא ישמור אותו.' +
+      '</div>' : '';
 
-    box.querySelector('[data-act="ok"]').onclick = () => approve(d.id, r, box);
-    box.querySelector('[data-act="no"]').onclick = () => reject(d.id, box);
+    box.innerHTML =
+      '<div class="nm">' + esc(r.full_name) + '</div>' +
+
+      '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
+      stateLine +
+      (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
+      (r.stationId ? '<div class="ln">תחנה מבוקשת: <b>' + esc(stationName(r.stationId)) + '</b></div>' : '') +
+      (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
+      lockedPlan + editablePlan +
+      actions;
+
+    const approveButton = box.querySelector('[data-act="ok"]');
+    const rejectButton = box.querySelector('[data-act="no"]');
+    const resumeButton = box.querySelector('[data-act="resume"]');
+    const dismissButton = box.querySelector('[data-act="dismiss"]');
+    if (approveButton) approveButton.onclick = () => approve(d.id, r, box);
+    if (rejectButton) rejectButton.onclick = () => reject(d.id, r.request_id || '',
+      r.server_generation || '', box, false);
+    if (resumeButton) resumeButton.onclick = () => resumeIdentity(d.id, r, box);
+    if (dismissButton) dismissButton.onclick = () => reject(d.id, r.request_id || '',
+      r.server_generation || '', box, true);
     list.appendChild(box);
   }
 }
@@ -556,6 +603,8 @@ async function approve(uid, r, box){
     // התפקיד והמשמרת, ומספר העובד מוקצה אוטומטית.
     const res = await callApprove({
       uid:   uid,
+      request_id: String(r.request_id || ''),
+      request_generation: String(r.server_generation || ''),
       role:  sel ? sel.value : 'firefighter',
       shift: shf ? shf.value : '',
       emp:   emp ? emp.value.trim() : '',
@@ -594,12 +643,24 @@ async function approve(uid, r, box){
     const code = e.code || '';
     let text = e.message || String(e);
 
+    if (e.details && e.details.request_refreshed === true) {
+      alert('הבקשה קיבלה מזהה בטוח. הרשימה תתרענן — אשר שוב.');
+      await loadRequests();
+      return;
+    }
+    if (e.details && (e.details.request_preserved === true ||
+                      e.details.needs_recovery === true)) {
+      alert('הבקשה נשמרה ולא נמחקה. היא דורשת בדיקה או המשך טיפול.');
+      await loadRequests();
+      return;
+    }
+
     if (code.indexOf('not-found') !== -1) {
       text = 'הבקשה לא נמצאה. ייתכן שכבר טופלה — רענן את הרשימה.';
     } else if (code.indexOf('permission-denied') !== -1) {
       text = 'אין לך הרשאה לאשר. רק מנהל המערכת יכול.';
-    } else if (code.indexOf('internal') !== -1) {
-      text = 'שגיאת שרת. ייתכן שהפונקציות עדיין לא נפרסו.';
+    } else if (code.indexOf('unavailable') !== -1) {
+      text = 'השירות נקטע באמצע, אך הפעולה נשמרה. לחץ שוב כדי להמשיך בבטחה.';
     }
 
     alert('האישור נכשל: ' + text);
@@ -609,18 +670,61 @@ async function approve(uid, r, box){
 
 // ---------- דחייה ----------
 
-async function reject(uid, box){
-  if (!confirm('לדחות את הבקשה?')) return;
+async function reject(uid, requestId, requestGeneration, box, orphanedReview){
+  const question = orphanedReview ?
+    'להסיר את בקשת ההרשמה התקועה? פעולה זו אינה משנה הרשאות או פרופיל. ' +
+    'השרת יסרב אם קיימת פעולת זהות פעילה.' :
+    'לדחות את הבקשה?';
+  if (!confirm(question)) return;
   box.querySelectorAll('button').forEach(b => b.disabled = true);
   try {
-    await deleteDoc(doc(db, 'registration_requests', uid));
+    await callReject({
+      uid: uid,
+      request_id: String(requestId || ''),
+      request_generation: String(requestGeneration || '')
+    });
     box.remove();
     if (!$('list').querySelector('.req')) {
       $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
     }
   } catch (e) {
+    if (e.details && e.details.request_refreshed === true) {
+      alert('הבקשה קיבלה מזהה בטוח. הרשימה תתרענן — דחה שוב.');
+      await loadRequests();
+      return;
+    }
     alert('שגיאה בדחייה: ' + (e.code || e.message));
     box.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+async function resumeIdentity(uid, r, box){
+  if (!confirm('להמשיך בדיוק את התוכנית המוצגת בכרטיס?')) return;
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const res = await callResumeIdentity({
+      uid: uid,
+      operation_id: String(r.operation_id || ''),
+      plan_fingerprint: String(r.plan_fingerprint || '')
+    });
+    const data = res.data || {};
+    box.innerHTML =
+      '<div class="nm">הפעולה הושלמה</div>' +
+      '<div class="match found" style="line-height:1.9">' +
+        esc(data.message || 'התוכנית השמורה הושלמה בבטחה.') +
+        (data.emp ? '<div style="font-size:28px;font-weight:700;direction:ltr">' +
+          esc(data.emp) + '</div>' : '') +
+      '</div><button data-f="done" style="width:100%">הבנתי · סגור</button>';
+    box.querySelector('[data-f="done"]').onclick = function(){ box.remove(); };
+  } catch (e) {
+    if (e.details && e.details.recovery_blocked === true) {
+      alert('המערכת זיהתה מצב הרשאות שאינו תואם לתוכנית ולא דרסה אותו. ' +
+        'הפעולה נשמרה לבדיקת מנהל מערכת.');
+    } else {
+      alert('המשך הפעולה נכשל: ' + (e.message || e.code || String(e)));
+    }
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+    await loadRequests();
   }
 }
 
@@ -874,6 +978,7 @@ function fillPicker(users) {
 }
 
 $('rPick').onchange = function () {
+  roleOperationId = '';
   const uid = $('rPick').value;
   if (!uid) return;
   const u = PICK_USERS.filter(function (x) { return x.uid === uid; })[0];
@@ -904,6 +1009,15 @@ $('rPick').onchange = function () {
 
 $('rStation').innerHTML = stationOptions(STATION_ID);
 
+['rEmail','rRole','rShift','rEmp','rDistrict','rName','rPhone','rStation','rSuper']
+  .forEach(function (id) {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', function () {
+      roleOperationId = '';
+    });
+  });
+
 $('btnRole').onclick = async () => {
   const btn   = $('btnRole');
   const email = $('rEmail').value.trim().toLowerCase();
@@ -929,7 +1043,9 @@ $('btnRole').onclick = async () => {
   msg('roleMsg', 'שולח...', 'info');
 
   try {
+    if (!roleOperationId) roleOperationId = newOperationId('role-');
     const res = await callSetRole({
+      operation_id: roleOperationId,
       email:      email,
       role:       role,
       stationId:  sta || STATION_ID,
@@ -946,8 +1062,37 @@ $('btnRole').onclick = async () => {
     $('rName').value  = '';
     $('rPhone').value = '';
     $('rSuper').value = 'keep';
+    roleOperationId = '';
   } catch (e) {
     let text = e.message || String(e);
+    const details = e.details || {};
+    if (details.operation_in_progress && details.operation_id && details.plan_fingerprint) {
+      const p = details.plan_summary || {};
+      const summary =
+        'קיימת תוכנית שמורה:\n' +
+        'תפקיד: ' + (ROLE_HE[p.role] || p.role || 'ללא') + '\n' +
+        'משמרת: ' + (p.shift || 'ללא') + '\n' +
+        'תחנה: ' + stationName(p.stationId || '') + '\n' +
+        'מספר עובד: ' + (p.emp || 'ללא') + '\n\n' +
+        'להמשיך בדיוק את התוכנית הזאת?';
+      if (confirm(summary)) {
+        try {
+          const resumed = await callResumeIdentity({
+            uid: String(details.target_uid || details.uid || $('rPick').value || ''),
+            operation_id: String(details.operation_id),
+            plan_fingerprint: String(details.plan_fingerprint)
+          });
+          msg('roleMsg', (resumed.data || {}).message || 'הפעולה השמורה הושלמה.', 'ok');
+          roleOperationId = '';
+          btn.disabled = false;
+          return;
+        } catch (resumeError) {
+          text = resumeError.message || String(resumeError);
+        }
+      } else {
+        text = 'התוכנית הקודמת נשמרה ולא שונתה.';
+      }
+    }
     if (String(e.code || '').indexOf('not-found') !== -1) {
       text = 'לא נמצא משתמש עם המייל הזה. הוא צריך להירשם קודם.';
     }
