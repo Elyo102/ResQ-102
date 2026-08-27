@@ -27,12 +27,13 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v40';
+const CACHE = 'resq-v41a';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
   './login.html', './schedule.html', './board.html', './attendance.html',
+  './attendance-shadow.html',
   './guards.html', './faults.html', './forms.html', './swaps.html',
   './quals.html', './alerts.html', './stats.html', './people.html',
   './vehicle.html', './sign.html',
@@ -89,7 +90,7 @@ self.addEventListener('fetch', function (e) {
       return res;
     }).catch(function () {
       // קבצי המעטפת נשמרים בלי query string, בעוד הדפים
-      // מייבאים אותם עם ?v=40. במצב לא מקוון זו אותה גרסה
+      // מייבאים אותם עם query של גרסה. במצב לא מקוון זו אותה גרסה
       // בתוך מטמון גרסה נפרד, ולכן מתעלמים מה-query בחיפוש.
       return caches.match(req, { ignoreSearch: true }).then(function (hit) {
         if (hit) return hit;

@@ -46,6 +46,7 @@ await new Promise(r => srv.listen(0, r));
 PORT = srv.address().port;
 
 const SCREENS = ['login.html','schedule.html','board.html','attendance.html',
+                 'attendance-shadow.html',
                  'guards.html','faults.html','forms.html','sign.html','swaps.html',
                  'quals.html','alerts.html','stats.html','people.html',
                  'vehicle.html','admin.html','access.html','import.html',

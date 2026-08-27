@@ -37,7 +37,7 @@ jobs:
       - name: התקנת תלויות הבדיקה
         working-directory: tests
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
       # בדיקות סטטיות. מהירות, ותופסות את מחלקת הבאגים
@@ -74,18 +74,21 @@ jobs:
           java-version: '21'
 
       - name: התקנת firebase-tools
-        run: npm install -g firebase-tools
+        run: npm install -g firebase-tools@15.28.1
 
       - name: התקנת תלויות
         working-directory: rules-test
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: התקנת תלויות פונקציות
         working-directory: functions
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: כללי האבטחה מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
 
       - name: פונקציות לוח המודעות מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js"
+
+      - name: נוכחות Shadow מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js"

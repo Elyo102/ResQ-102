@@ -126,6 +126,28 @@ service cloud.firestore {
       return isSuper() || (inStation(sid) && claim('role') == 'hr_coordinator');
     }
 
+    // מבקרי חודש הצל של הנוכחות האוטומטית. המידע המסכם כולל
+    // פערים בין הסידור לדיווח ולכן הוא מצומצם לרכז/ת כוח אדם,
+    // למפקד התחנה ולמנהל-העל. נתוני הגלם נשארים חסומים לכולם
+    // ונקראים רק בשרת באמצעות Admin SDK.
+    function shadowAuditor(sid) {
+      // דוחות הצל כוללים פערי נוכחות אישיים, ולכן כאן בלבד לא
+      // מסתפקים ב-claim שעלול להישאר ישן עד רענון הטוקן. מסמך
+      // המשתמש נכתב בשרת, והבדיקה החיה חוסמת מיד חשבון שהושבת
+      // או משתמש שתפקידו השתנה. get() של מסמך חסר נכשל סגור.
+      let user = get(/databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid)).data;
+      return isSuper()
+             || (inStation(sid) && claim('role') in
+                 ['station_commander', 'hr_coordinator']
+                 && user.get('is_active', true) != false
+                 && user.get('role', '') == claim('role'));
+    }
+
+    function activeShadowGeneration(sid, monthKey, generationId) {
+      return get(/databases/$(database)/documents/stations/$(sid)/attendance_shadow_reports/$(monthKey))
+               .data.get('active_generation_id', '') == generationId;
+    }
+
     // ---------- נעילת מפקד משמרת למשמרת שלו ----------
     //
     // מפקד משמרת ב' מנהל את ב'. הוא עדיין שואל אנשים מכל התחנה —
@@ -1313,6 +1335,46 @@ service cloud.firestore {
       match /hr_reports/{monthKey} {
         allow read:  if hr(sid) || stationCommander(sid);
         allow write: if false;
+      }
+
+      // ---------- נוכחות אוטומטית · חודש צל ----------
+      //
+      // runs וה-entries שבתוכם הם חומר גלם של השרת: צילום יומי
+      // קנוני שנועד למדידה בלבד. אף לקוח, כולל מנהל-על, אינו
+      // קורא או משנה אותם. Admin SDK של המשימה המתוזמנת עוקף
+      // את הכללים האלה.
+      match /attendance_shadow_runs/{runId} {
+        allow read, write: if false;
+
+        match /attendance_shadow_entries/{entryId} {
+          allow read, write: if false;
+        }
+      }
+
+      // הדוח החודשי ותוצאות האדם הם פלט מצומצם לביקורת. הם
+      // זמינים רק למבקרי הצל של אותה תחנה, ונכתבים בשרת בלבד.
+      match /attendance_shadow_reports/{monthKey} {
+        allow read:  if shadowAuditor(sid);
+        allow write: if false;
+
+        // דור בנייה מקבל מזהה אקראי ונשאר בלתי נראה כל עוד הוא
+        // אינו פעיל. מסמך הדור עצמו הוא מטא-דאטה שרתי בלבד;
+        // הלקוח מקבל מהדוח החודשי רק את active_generation_id.
+        match /attendance_shadow_generations/{generationId} {
+          allow read, write: if false;
+
+          match /attendance_shadow_people/{uid} {
+            allow read:  if shadowAuditor(sid)
+                         && activeShadowGeneration(sid, monthKey, generationId);
+            allow write: if false;
+          }
+        }
+
+        // הנתיב הישן נשאר סגור במפורש כדי שדוח מגרסה קודמת או
+        // כתיבה שגויה לא יהפכו בטעות למקור שהמסך קורא.
+        match /attendance_shadow_people/{uid} {
+          allow read, write: if false;
+        }
       }
 
       match /monthly_reports/{docId} {
