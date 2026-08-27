@@ -19,6 +19,7 @@ const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bulletin = require('./bulletin');
+const attendanceShadow = require('./attendance-shadow-runner');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -104,6 +105,10 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
+  db: db,
+  admin: admin
+});
 
 // ---------------------------------------------------------------------
 //  שליחת מייל
@@ -2354,6 +2359,183 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 
 const STATION_ID   = 'eilat_102';
 const STATION_NAME = 'תחנה 102';
+
+// =====================================================================
+//  41A · נוכחות אוטומטית במצב Shadow בלבד
+// =====================================================================
+//
+// הריצה מצלמת את הסידור הקנוני ב-05:30 ומשווה אותו לדיווחים
+// הקיימים. היא אינה כותבת ל-attendance או ל-monthly_reports.
+// המעבר מ-Shadow למנגנון שמייצר שעות אינו קיים בגרסה הזאת בכוונה.
+
+const SHADOW_AUDITOR_ROLES = ['hr_coordinator', 'station_commander'];
+
+function attendanceShadowStation(req, auth) {
+  const claimed = String((auth && auth.token && auth.token.stationId) || '');
+  if (claimed) return claimed;
+  if (auth && isSuperAdmin(auth)) return STATION_ID;
+  throw new HttpsError('failed-precondition', 'לחשבון אין שיוך לתחנה.');
+}
+
+async function requireAttendanceShadowAuditor(req) {
+  const auth = requireAuth(req);
+  const sid = attendanceShadowStation(req, auth);
+  if (isSuperAdmin(auth)) return { auth: auth, sid: sid, super: true };
+
+  const tokenRole = String(auth.token.role || '');
+  if (SHADOW_AUDITOR_ROLES.indexOf(tokenRole) === -1) {
+    throw new HttpsError('permission-denied',
+      'בקרת השעות פתוחה לרכז/ת כוח אדם ולמפקד התחנה בלבד.');
+  }
+  const userSnap = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
+  if (!userSnap.exists) {
+    throw new HttpsError('failed-precondition', 'כרטיס המשתמש בתחנה לא נמצא.');
+  }
+  const user = userSnap.data() || {};
+  if (user.is_active === false) {
+    throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  }
+  if (String(user.role || '') !== tokenRole) {
+    throw new HttpsError('failed-precondition',
+      'ההרשאה השתנתה. התנתק והתחבר מחדש לפני פתיחת הבקרה.');
+  }
+  return { auth: auth, sid: sid, super: false };
+}
+
+function translateAttendanceShadowError(error) {
+  if (error instanceof HttpsError) return error;
+  if (!(error instanceof attendanceShadow.AttendanceShadowError)) return null;
+  const code = String(error.code || 'internal');
+  if (code === 'run-in-progress' || code === 'report-in-progress' ||
+      code === 'run-lost' || code === 'report-lost') {
+    return new HttpsError('aborted', 'צילום הצל של היום כבר רץ. נסה שוב בעוד כמה דקות.');
+  }
+  if (code === 'shadow-disabled') {
+    return new HttpsError('failed-precondition', 'מצב הצל כבוי.');
+  }
+  if (code === 'source-changed') {
+    return new HttpsError('failed-precondition',
+      'הסידור השתנה בזמן הצילום. לא נשמר צילום חלקי; אפשר להריץ שוב.');
+  }
+  if (code === 'station-too-large' || code === 'swap-dependency-limit' ||
+      code.indexOf('too-many-') === 0) {
+    return new HttpsError('resource-exhausted',
+      'כמות הנתונים גדולה ממגבלת הבטיחות של ריצת הצל.');
+  }
+  if (code.indexOf('invalid-') === 0) {
+    return new HttpsError('invalid-argument', 'הבקשה לריצת הצל אינה תקינה.');
+  }
+  return new HttpsError('internal',
+    'ריצת הצל נעצרה בבטחה. לא בוצע שינוי בשעות הקיימות.');
+}
+
+exports.getAttendanceShadowStatus = onCall(async (req) => {
+  const gate = await requireAttendanceShadowAuditor(req);
+  try {
+    return await attendanceShadowService.status(gate.sid);
+  } catch (error) {
+    const translated = translateAttendanceShadowError(error);
+    if (translated) throw translated;
+    console.error('attendanceShadow status failed', error);
+    throw new HttpsError('internal', 'מצב בקרת השעות אינו זמין כרגע.');
+  }
+});
+
+exports.setAttendanceShadowMode = onCall(async (req) => {
+  const auth = requireSuperAdmin(req);
+  const sid = attendanceShadowStation(req, auth);
+  const mode = String((req.data || {}).mode || '');
+  if (mode !== 'shadow' && mode !== 'off') {
+    throw new HttpsError('invalid-argument', 'מצב לא מוכר.');
+  }
+  const audit = await openAudit(auth, 'set_attendance_shadow_mode', null, {
+    station_id: sid, mode: mode
+  });
+  const configRef = db.doc(attendanceShadow.CONFIG_PATH);
+  await db.runTransaction(async function (tx) {
+    const snap = await tx.get(configRef);
+    const prior = snap.exists ? (snap.data() || {}) : {};
+    const stationIds = Array.isArray(prior.station_ids)
+      ? prior.station_ids.map(String).filter(function (value) {
+        return /^[a-z0-9_-]{2,80}$/.test(value);
+      }) : [];
+    const unique = Array.from(new Set(stationIds));
+    const at = unique.indexOf(sid);
+    if (mode === 'shadow' && at === -1) unique.push(sid);
+    if (mode === 'off' && at !== -1) unique.splice(at, 1);
+    unique.sort();
+    tx.set(configRef, {
+      schema_version: 1,
+      mode: unique.length ? 'shadow' : 'off',
+      station_ids: unique,
+      generator_version: attendanceShadow.GENERATOR_VERSION,
+      updated_by: auth.uid,
+      updated_at: FV.serverTimestamp()
+    }, { merge: true });
+  });
+  await sealAudit(audit, { station_id: sid, mode: mode });
+  return { ok: true, mode: mode, station_id: sid };
+});
+
+exports.runAttendanceShadowNow = onCall({
+  timeoutSeconds: 540,
+  memory: '512MiB'
+}, async (req) => {
+  const gate = await requireAttendanceShadowAuditor(req);
+  const audit = await openAudit(gate.auth, 'run_attendance_shadow_now', null, {
+    station_id: gate.sid, mode: 'shadow'
+  });
+  try {
+    const result = await attendanceShadowService.runStation({
+      sid: gate.sid,
+      trigger: 'manual',
+      requestedBy: gate.auth.uid
+    });
+    await sealAudit(audit, {
+      station_id: gate.sid,
+      duplicate: result.duplicate === true,
+      entries: Number(result.entries || 0)
+    });
+    return result;
+  } catch (error) {
+    const translated = translateAttendanceShadowError(error);
+    if (translated) throw translated;
+    console.error('attendanceShadow manual run failed', error);
+    throw new HttpsError('internal',
+      'ריצת הצל נעצרה בבטחה. לא בוצע שינוי בשעות הקיימות.');
+  }
+});
+
+exports.attendanceShadowDaily = onSchedule({
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  schedule: '30 5 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1'
+}, async () => {
+  const config = await attendanceShadowService.configuredStations();
+  if (config.mode !== 'shadow' || !config.stationIds.length) {
+    console.log('attendanceShadowDaily · disabled');
+    return;
+  }
+  const failures = [];
+  for (const sid of config.stationIds) {
+    try {
+      const result = await attendanceShadowService.runStation({
+        sid: sid, trigger: 'scheduled', requestedBy: 'scheduler'
+      });
+      console.log('attendanceShadowDaily · station', sid,
+        'entries', Number(result.entries || 0), 'duplicate', result.duplicate === true);
+    } catch (error) {
+      const code = String(error && error.code || 'internal');
+      failures.push(sid + ':' + code);
+      console.error('attendanceShadowDaily · station failed', sid, code);
+    }
+  }
+  if (failures.length) {
+    throw new Error('Attendance Shadow failed for ' + failures.join(', '));
+  }
+});
 
 // חריגה בסך שעות חודשי. ניתן לשנות במסמך ההגדרות.
 const DEFAULT_HOUR_LIMIT = 265;

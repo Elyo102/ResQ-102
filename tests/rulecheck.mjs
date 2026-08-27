@@ -92,20 +92,30 @@ head('אילוץ ארכיטקטוני');
 
 {
   // get() ו-exists() עלולים לעלות קריאת מסמך לכל בדיקת הרשאה.
-  // המערכת בנויה על claims; החריג היחיד הוא תגובה, שחייבת לבדוק
-  // שהודעת-האב לא הוסתרה כדי שנתיב ישיר לא ידליף את התוכן.
+  // המערכת בנויה על claims; חריגים חייבים להיות קריאות מדויקות:
+  // תגובה בודקת שהודעת-האב לא הוסתרה, דוח Shadow בודק שרק הדור
+  // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל
+  // ושתפקידו החי תואם לטוקן.
   const gets = [...CODE.matchAll(/(?<![.\w])(get|exists|getAfter)\s*\(/g)];
   const replyParentReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/sub_stations\/\$\(subId\)\/bulletin_messages\/\$\(messageId\)\s*\)/g
   )];
-  if (gets.length === 1 && gets[0][1] === 'get' && replyParentReads.length === 1) {
-    ok('קריאת מסמך אחת ומוגבלת: בדיקת הודעת-האב של תגובה');
+  const shadowParentReads = [...CODE.matchAll(
+    /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/attendance_shadow_reports\/\$\(monthKey\)\s*\)/g
+  )];
+  const shadowUserReads = [...CODE.matchAll(
+    /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/users\/\$\(request\.auth\.uid\)\s*\)/g
+  )];
+  if (gets.length === 3 && gets.every(call => call[1] === 'get') &&
+      replyParentReads.length === 1 && shadowParentReads.length === 1 &&
+      shadowUserReads.length === 1) {
+    ok('שלוש קריאות מוגבלות: תגובה, דור Shadow פעיל ומשתמש Shadow חי');
   } else if (gets.length) {
-    fail(gets.length + ' קריאות get()/exists() — רק אב של תגובה מותר',
+    fail(gets.length + ' קריאות get()/exists() — רק שלושת הנתיבים המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
   } else {
-    fail('חסרה בדיקת הודעת-האב של תגובה',
-      'תגובה גלויה תחת הודעה מוסתרת עלולה לדלוף בנתיב ישיר');
+    fail('חסרות בדיקות נתיבי-האב המאושרות',
+      'תגובה מוסתרת או דור Shadow חלקי עלולים לדלוף בנתיב ישיר');
   }
 }
 

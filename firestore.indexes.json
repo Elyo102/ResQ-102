@@ -53,6 +53,10 @@
         {
           "fieldPath": "status",
           "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "values.to",
+          "order": "ASCENDING"
         }
       ]
     },
@@ -99,5 +103,81 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "attendance_shadow_runs",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_entries",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_reports",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_generations",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_people",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_entries",
+      "fieldPath": "slot_ids",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_entries",
+      "fieldPath": "rotation_ids",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_entries",
+      "fieldPath": "conflict_codes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_entries",
+      "fieldPath": "warning_codes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_reports",
+      "fieldPath": "snapshot_run_ids",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_reports",
+      "fieldPath": "missing_snapshot_days",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_reports",
+      "fieldPath": "gate_reasons",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_reports",
+      "fieldPath": "global_conflicts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendance_shadow_people",
+      "fieldPath": "issues",
+      "indexes": []
+    }
+  ]
 }

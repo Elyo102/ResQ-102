@@ -24,8 +24,9 @@ const EXPECT = {
   // quals: מה מסך הכשירויות אמור להראות.
   //   work   — המסך עצמו נפתח
   //   edit   — כלי העריכה (הוספה, שמירת קו אדום, כפתורי "ערוך")
-  super:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים','קליטה','בדיקה'],
+  super:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','בקרת שעות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים','קליטה','בדיקה'],
                  adminSees:['reqCard','usersCard'],
+                 shadow:true,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true },
                  swaps:{ work:true, appr:true, pend:2 },
@@ -36,6 +37,7 @@ const EXPECT = {
                  forms:{ work:true, appr:true, count:4 }, stats:true,
                  waiver:{ shown:true, btns:1 } },
   firefighter: { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים'], adminSees:[],
+                 shadow:false,
                  quals:{ work:true, edit:false },
                  board:{ work:true, edit:false },
                  swaps:{ work:true, appr:false },
@@ -48,6 +50,7 @@ const EXPECT = {
                  waiver:{ shown:true, btns:0 } },
   commander:   { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
+                 shadow:false,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
                  swaps:{ work:true, appr:true, pend:1 },
@@ -56,8 +59,9 @@ const EXPECT = {
                  guards:{ work:true, create:true },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
-  hr:          { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  hr:          { nav:['לוח מודעות','סידור','ציוות','נוכחות','בקרת שעות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
+                 shadow:true,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['A','B','C'],
                  swaps:{ work:true, appr:true, pend:2 },
@@ -69,6 +73,7 @@ const EXPECT = {
   // סגן מפקד משמרת: אותן סמכויות כמו מפקד, נעול למשמרת ב'.
   deputy:      { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
+                 shadow:false,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
                  swaps:{ work:true, appr:true, pend:1 },
@@ -79,8 +84,9 @@ const EXPECT = {
                  waiver:{ shown:true, btns:1 },
                  alerts:{ work:true, send:true, key:false, opts:1 } },
   // מפקד תחנה: רואה את שלוש המשמרות, כמו רכז כוח אדם.
-  stcmd:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  stcmd:       { nav:['לוח מודעות','סידור','ציוות','נוכחות','בקרת שעות','אבטחות','תקלות','טפסים','חתימות','החלפות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
+                 shadow:true,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['A','B','C'],
                  swaps:{ work:true, appr:true, pend:2 },
@@ -93,6 +99,7 @@ const EXPECT = {
                  waiver:{ shown:true, btns:2 },
                  alerts:{ work:true, send:true, key:false, opts:4 } },
   pending:     { nav:['לוח מודעות'], adminSees:[],
+                 shadow:false,
                  quals:{ work:false, edit:false },
                  board:{ work:false, edit:false },
                  swaps:{ work:false, appr:false },
@@ -131,6 +138,21 @@ for (const role of Object.keys(EXPECT)) {
   const same = nav.length === want.length && nav.every((v,i) => v === want[i]);
   console.log((same?'✓':'✗') + ' [' + role + '] תפריט: ' + JSON.stringify(nav));
   if (!same) { bad++; console.log('    ציפיתי: ' + JSON.stringify(want)); }
+
+  // בקרת שעות Shadow היא מסך רגיש: רק רכז/ת כוח אדם, מפקד
+  // תחנה ומנהל-על רואים אותו. תפקיד חסום גם לא מפעיל callable.
+  await pg.goto('http://localhost:'+PORT+'/attendance-shadow.html', {waitUntil:'load'});
+  await pg.waitForTimeout(500);
+  const shMain = await pg.isVisible('#main').catch(()=>false);
+  const shDeny = await pg.isVisible('#deny').catch(()=>false);
+  const shCalls = await pg.evaluate(() => (window.__CALLABLE_FACTORIES || [])
+    .filter(name => /AttendanceShadow/.test(name))).catch(()=>[]);
+  const wantShadow = EXPECT[role].shadow;
+  const okShadow = shMain === wantShadow && shDeny === !wantShadow &&
+                   (wantShadow || shCalls.length === 0);
+  console.log((okShadow?'✓':'✗') + ' [' + role + '] בקרת שעות: מסך=' + shMain +
+              ' חסום=' + shDeny + ' קריאות-שרת=' + shCalls.length);
+  if (!okShadow) bad++;
 
   await pg.goto('http://localhost:'+PORT+'/admin.html', {waitUntil:'load'});
   await pg.waitForTimeout(1500);

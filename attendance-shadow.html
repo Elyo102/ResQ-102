@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#15171a">
+  <title>ResQ · בקרת שעות</title>
+  <link rel="stylesheet" href="./theme.css?v=41a">
+  <style>
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);
+         font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}
+    main{max-width:1060px;margin:0 auto}
+    h1{font-size:25px;margin:0 0 5px;letter-spacing:-.02em}
+    h2{font-size:17px;margin:0 0 8px}
+    .sub{color:var(--muted);font-size:13px;line-height:1.65;margin-bottom:16px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+          padding:16px;margin-bottom:12px;box-shadow:var(--shadow)}
+    .bar{display:flex;gap:9px;align-items:end;flex-wrap:wrap}
+    .bar .grow{flex:1;min-width:180px}
+    label{display:block;color:var(--muted);font-size:12px;font-weight:700;margin-bottom:5px}
+    input,button{font:inherit;box-sizing:border-box;border-radius:10px;min-height:44px}
+    input{width:100%;background:var(--panel);color:var(--txt);border:1px solid var(--line);
+          padding:10px 12px}
+    button{border:1px solid var(--line-hover);background:var(--chip);color:var(--txt);
+           padding:9px 14px;font-weight:700;cursor:pointer}
+    button.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+    button.stop{border-color:var(--bad-bd);color:var(--bad);background:var(--bad-bg)}
+    button:disabled{opacity:.55;cursor:wait}
+    button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+    .state{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
+           border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}
+    .state:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+    .state.on{color:var(--good);border-color:var(--good-bd);background:var(--good-bg)}
+    .state.on:before{background:var(--good)}
+    .state.off{color:var(--muted)}
+    .state.bad{color:var(--bad);border-color:var(--bad-bd);background:var(--bad-bg)}
+    .state.bad:before{background:var(--bad)}
+    .msg{display:none;margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;
+         line-height:1.6;border:1px solid var(--line)}
+    .msg.on{display:block}.msg.ok{background:var(--good-bg);border-color:var(--good-bd);color:var(--good)}
+    .msg.warn{background:var(--warn-bg);border-color:var(--warn);color:var(--warn)}
+    .msg.err{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+    .stats{display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:8px;margin-top:13px}
+    .stat{background:var(--panel);border:1px solid var(--line-soft);border-radius:11px;padding:11px}
+    .stat .n{font-size:23px;font-weight:850;font-variant-numeric:tabular-nums}
+    .stat .k{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35}
+    .stat.good .n{color:var(--good)}.stat.warn .n{color:var(--warn)}.stat.bad .n{color:var(--bad)}
+    .gate{margin-top:12px;border-radius:11px;padding:11px 13px;font-size:13px;font-weight:700;
+          border:1px solid var(--line)}
+    .gate.good{background:var(--good-bg);border-color:var(--good-bd);color:var(--good)}
+    .gate.bad{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+    .person{border:1px solid var(--line);border-radius:12px;margin-top:9px;overflow:hidden}
+    .person-head{display:flex;gap:8px;align-items:center;padding:11px 13px;background:var(--panel)}
+    .person-head b{font-size:14px}.crew{font-size:11px;color:var(--muted)}
+    .badge{margin-inline-start:auto;border-radius:999px;background:var(--bad-bg);color:var(--bad);
+           border:1px solid var(--bad-bd);padding:3px 8px;font-size:11px;font-weight:800}
+    .issue{display:grid;grid-template-columns:92px 130px 1fr;gap:8px;padding:10px 13px;
+           border-top:1px solid var(--line-soft);font-size:12.5px;align-items:start}
+    .issue .date{font-variant-numeric:tabular-nums;font-weight:750}
+    .issue .kind{color:var(--warn);font-weight:750}
+    .issue .why{color:var(--muted);line-height:1.55}
+    .empty{text-align:center;color:var(--muted);padding:24px 12px;line-height:1.7}
+    .hide{display:none!important}
+    .foot{color:var(--muted);font-size:11.5px;line-height:1.6;margin-top:9px}
+    @media(max-width:780px){.stats{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:560px){
+      body{padding:18px}.stats{grid-template-columns:repeat(2,1fr)}
+      .issue{grid-template-columns:82px 1fr}.issue .why{grid-column:1/-1}
+      .bar>*{width:100%}.bar button{width:100%}
+    }
+  </style>
+</head>
+<body>
+<main id="main" class="hide">
+  <h1>בקרת שעות · 41A</h1>
+  <div class="sub">המערכת משווה בין הסידור לבין הדיווח בפועל. זהו מצב צל בלבד —
+    הנתונים במסך הזה אינם משנים שעות, אינם מאשרים דוח ואינם נכנסים לשכר.</div>
+
+  <section class="card" aria-labelledby="statusTitle">
+    <div class="bar">
+      <div class="grow">
+        <h2 id="statusTitle">מצב המנגנון</h2>
+        <span class="state off" id="modeState">בודק…</span>
+      </div>
+      <button type="button" id="btnRun" class="go">הרץ צילום צל עכשיו</button>
+      <button type="button" id="btnMode" class="hide">—</button>
+    </div>
+    <div class="foot" id="lastRun">טוען את הריצה האחרונה…</div>
+    <div class="msg" id="actionMsg" role="status" aria-live="polite" tabindex="-1"></div>
+  </section>
+
+  <section class="card" aria-labelledby="reportTitle">
+    <div class="bar">
+      <div class="grow">
+        <label for="month">חודש להשוואה</label>
+        <input type="month" id="month">
+      </div>
+      <button type="button" id="btnLoad">הצג דוח</button>
+    </div>
+    <h2 id="reportTitle" style="margin-top:16px">תמונת החודש</h2>
+    <div class="stats" id="stats" aria-live="polite"></div>
+    <div id="gate"></div>
+    <div class="foot" id="reportMeta"></div>
+  </section>
+
+  <section class="card" aria-labelledby="issuesTitle">
+    <h2 id="issuesTitle">חריגים שדורשים בדיקה</h2>
+    <div class="sub" style="margin-bottom:8px">רק חריגים מוצגים כאן. שם העובד נקרא בזמן אמת
+      מכרטיס העובד ואינו נשמר בנתוני הצל.</div>
+    <div id="people"><div class="empty">בחר חודש כדי לטעון דוח.</div></div>
+    <button type="button" id="btnMore" class="hide" style="margin-top:10px">טען עוד</button>
+  </section>
+</main>
+
+<section class="card hide" id="deny" style="max-width:620px;margin:50px auto">
+  <h1>אין הרשאה למסך</h1>
+  <div class="sub">דוח בקרת השעות פתוח רק לרכזת כוח אדם, למפקד התחנה ולמנהל המערכת.</div>
+</section>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=41a';
+import { renderNav, renderStuckNav } from './nav.js?v=41a';
+import { initPWA } from './pwa.js?v=41a';
+import { initAppCheck } from './appcheck.js?v=41a';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, collection, getDocs, query,
+         orderBy, limit, startAfter }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const app = initializeApp(firebaseConfig);
+initAppCheck(app);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const fns = getFunctions(app, 'europe-west1');
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const $ = id => document.getElementById(id);
+
+let SID = '';
+let CLAIMS = {};
+let STATUS = {};
+let reportMonth = '';
+let activeGeneration = '';
+let peopleCursor = null;
+let loadingPeople = false;
+let reportLoadGeneration = 0;
+let peopleLoadSerial = 0;
+const personNames = new Map();
+
+renderStuckNav('');
+initPWA({ offer:false });
+
+function localMonth(){
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit'
+  }).formatToParts(new Date()).reduce((a, x) => { a[x.type] = x.value; return a; }, {});
+  return p.year + '-' + p.month;
+}
+
+function esc(value){
+  return String(value == null ? '' : value)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showMsg(text, kind){
+  const box = $('actionMsg');
+  box.className = 'msg on ' + (kind || 'warn');
+  box.textContent = text;
+  box.focus();
+}
+
+function errorText(error){
+  const code = String((error && error.code) || '');
+  if (code.includes('permission-denied')) return 'השרת דחה את הפעולה בגלל הרשאה.';
+  if (code.includes('failed-precondition')) return (error && error.message) || 'הפעולה אינה זמינה במצב הנוכחי.';
+  return 'הפעולה נכשלה. (' + (code || (error && error.message) || 'שגיאה') + ')';
+}
+
+function timeText(value){
+  if (!value) return 'אין עדיין ריצה';
+  const d = value.toDate ? value.toDate() : new Date(value);
+  if (Number.isNaN(d.getTime())) return 'אין עדיין ריצה';
+  return new Intl.DateTimeFormat('he-IL', {
+    timeZone:'Asia/Jerusalem', dateStyle:'short', timeStyle:'short'
+  }).format(d);
+}
+
+function paintStatus(data){
+  STATUS = data || {};
+  const on = STATUS.mode === 'shadow';
+  $('modeState').className = 'state ' + (on ? 'on' : 'off');
+  $('modeState').textContent = on ? 'מצב צל פעיל' : 'מצב צל כבוי';
+  $('btnRun').disabled = !on;
+  const last = STATUS.last_run || null;
+  $('lastRun').textContent = last
+    ? 'ריצה אחרונה: ' + (last.target_date || '—') + ' · ' +
+      (last.status === 'complete' ? 'הושלמה' : (last.status || 'לא ידוע')) +
+      ' · ' + timeText(last.completed_at || last.started_at)
+    : 'עדיין לא נשמר צילום צל.';
+  if (CLAIMS.super === true || String(auth.currentUser && auth.currentUser.email || '').toLowerCase() === SUPER_ADMIN) {
+    $('btnMode').classList.remove('hide');
+    $('btnMode').className = on ? 'stop' : 'go';
+    $('btnMode').textContent = on ? 'כבה מצב צל' : 'הפעל מצב צל';
+  }
+}
+
+async function loadStatus(){
+  try {
+    const result = await httpsCallable(fns, 'getAttendanceShadowStatus')({});
+    paintStatus(result.data || {});
+  } catch (error) {
+    $('modeState').className = 'state bad';
+    $('modeState').textContent = 'המצב לא זמין';
+    $('btnRun').disabled = true;
+    $('lastRun').textContent = errorText(error);
+  }
+}
+
+const LABELS = {
+  exact_match:'תואם', match_off:'יום חופשי תואם', pending:'ממתין לדיווח',
+  missing_attendance:'חסר דיווח', unexpected_attendance:'דיווח לא צפוי',
+  explained_exception:'חריג מוסבר', explained_extra:'פעילות נוספת מוסברת',
+  hours_mismatch:'פער בשעות', station_mismatch:'פער בתחנה',
+  missing_actual_station:'תחנה חסרה בדיווח', time_mismatch:'פער בזמנים',
+  identity_conflict:'בעיית זיהוי', duplicate_actual:'דיווח כפול',
+  source_conflict:'סתירה בסידור', uncomparable:'לא ניתן להשוות',
+  missing_station:'תחנה לא ידועה', ambiguous_station:'יותר מתחנה אחת',
+  rotation_conflict:'מחזור לא תקין', rest_violation:'הפרת מנוחה',
+  missing_roster:'חסר ברשימת התחנה', crew_mismatch:'סתירה במשמרת',
+  role_mismatch:'סתירה בתפקיד', missing_board_assignment:'אין שיבוץ בציוות'
+};
+
+function label(code){ return LABELS[code] || String(code || '').replace(/_/g, ' '); }
+function num(v){ return Number(v || 0).toLocaleString('he-IL'); }
+
+function paintSummary(report){
+  const t = (report && report.totals) || {};
+  const items = [
+    ['planned_work_rows','ימי עבודה שנבדקו',''],
+    ['exact_matches','התאמות מלאות','good'],
+    ['pending','ממתינים לדיווח','warn'],
+    ['explained_exceptions','חריגים מוסברים','warn'],
+    ['missing_attendance','דיווחים חסרים','bad'],
+    ['mismatches','פערים','bad'],
+    ['source_conflicts','סתירות מקור','bad'],
+    ['identity_conflict','בעיות זיהוי','bad']
+  ];
+  $('stats').innerHTML = items.map(x =>
+    '<div class="stat ' + x[2] + '"><div class="n">' + num(t[x[0]]) +
+    '</div><div class="k">' + x[1] + '</div></div>').join('');
+
+  const gate = $('gate');
+  if (!report) { gate.innerHTML = ''; return; }
+  gate.className = 'gate ' + (report.gate_pass === true ? 'good' : 'bad');
+  gate.textContent = report.gate_pass === true
+    ? 'בדיקות החודש עברו את שער Shadow. עדיין אין לכך השפעה על השכר.'
+    : 'החודש עדיין אינו מוכן להפעלה אוטומטית. יש חריגים שדורשים בדיקה.';
+  $('reportMeta').textContent = 'עודכן: ' + timeText(report.generated_at) +
+    ' · נבדק עד: ' + (report.compared_through || '—') +
+    ' · מנוע: ' + (report.generator_version || '—') +
+    (report.build_status === 'building' ? ' · דוח חדש נבנה כעת ברקע' : '');
+}
+
+async function personName(uid){
+  if (personNames.has(uid)) return personNames.get(uid);
+  try {
+    const snap = await getDoc(doc(db, 'stations', SID, 'users', uid));
+    const name = snap.exists()
+      ? String((snap.data() || {}).full_name || 'משתמש ללא שם')
+      : 'משתמש שאינו פעיל עוד';
+    personNames.set(uid, name);
+    return name;
+  } catch (ignore) {
+    personNames.set(uid, 'השם אינו זמין');
+    return 'השם אינו זמין';
+  }
+}
+
+function issueHtml(issue){
+  const codes = Array.isArray(issue.codes) ? issue.codes :
+    (Array.isArray(issue.mismatch_codes) ? issue.mismatch_codes : []);
+  const why = codes.length ? codes.map(label).join(' · ') : label(issue.state);
+  const values = [];
+  if (issue.planned_hours != null) values.push('תכנון ' + issue.planned_hours + ' ש׳');
+  if (issue.actual_hours != null) values.push('דיווח ' + issue.actual_hours + ' ש׳');
+  if (issue.planned_station) values.push('תחנה מתוכננת: ' + issue.planned_station);
+  if (issue.actual_station) values.push('תחנה בדיווח: ' + issue.actual_station);
+  return '<div class="issue"><div class="date">' + esc(issue.date || '—') +
+    '</div><div class="kind">' + esc(label(issue.state)) +
+    '</div><div class="why">' + esc(why + (values.length ? ' · ' + values.join(' · ') : '')) +
+    '</div></div>';
+}
+
+async function appendPeople(docs, reset, expected){
+  const names = new Array(docs.length);
+  // שמונה קריאות במקביל מונעות קפיצה של מאה בקשות רשת בבת
+  // אחת, ועדיין טוענות עמוד מהר. המטמון חוסך קריאה בעמוד הבא.
+  let cursor = 0;
+  await Promise.all(Array.from({length:Math.min(8, docs.length)}, async () => {
+    while (cursor < docs.length) {
+      const index = cursor++;
+      names[index] = await personName(docs[index].id);
+    }
+  }));
+  if (expected !== reportLoadGeneration) return false;
+  const box = $('people');
+  if (reset) box.innerHTML = '';
+  if (!docs.length && reset) {
+    box.innerHTML = '<div class="empty">אין חריגים בדוח הזה, או שהצילום עדיין לא רץ.</div>';
+    return true;
+  }
+  docs.forEach((snap, index) => {
+    const value = snap.data() || {};
+    const issues = Array.isArray(value.issues) ? value.issues : [];
+    const wrap = document.createElement('article');
+    wrap.className = 'person';
+    wrap.innerHTML = '<div class="person-head"><b>' + esc(names[index]) +
+      '</b><span class="crew">משמרת ' + esc(value.home_crew || '—') +
+      '</span><span class="badge">' + num(value.issue_count || issues.length) +
+      ' חריגים</span></div>' + issues.map(issueHtml).join('');
+    box.appendChild(wrap);
+  });
+  return true;
+}
+
+async function loadPeople(reset){
+  if ((loadingPeople && !reset) || !reportMonth || !activeGeneration) return;
+  const serial = ++peopleLoadSerial;
+  const expected = reportLoadGeneration;
+  const expectedMonth = reportMonth;
+  const expectedGeneration = activeGeneration;
+  loadingPeople = true;
+  $('btnMore').disabled = true;
+  try {
+    const base = collection(db, 'stations', SID, 'attendance_shadow_reports',
+                            expectedMonth, 'attendance_shadow_generations',
+                            expectedGeneration, 'attendance_shadow_people');
+    const constraints = [orderBy('uid'), limit(100)];
+    if (!reset && peopleCursor) constraints.push(startAfter(peopleCursor));
+    const snap = await getDocs(query(base, ...constraints));
+    if (expected !== reportLoadGeneration || expectedMonth !== reportMonth ||
+        expectedGeneration !== activeGeneration) return;
+    if (!(await appendPeople(snap.docs, reset, expected))) return;
+    peopleCursor = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
+    $('btnMore').classList.toggle('hide', snap.docs.length < 100);
+  } catch (error) {
+    if (reset) $('people').innerHTML = '<div class="empty">טעינת החריגים נכשלה. (' +
+      esc(error.code || error.message || '') + ')</div>';
+  } finally {
+    if (serial === peopleLoadSerial) {
+      loadingPeople = false;
+      $('btnMore').disabled = false;
+    }
+  }
+}
+
+async function loadReport(){
+  const mk = String($('month').value || '');
+  if (!/^\d{4}-\d{2}$/.test(mk)) return;
+  const expected = ++reportLoadGeneration;
+  reportMonth = mk;
+  activeGeneration = '';
+  peopleCursor = null;
+  $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">טוען דוח…</div>';
+  $('gate').innerHTML = '';
+  $('reportMeta').textContent = '';
+  $('btnMore').classList.add('hide');
+  try {
+    const snap = await getDoc(doc(db, 'stations', SID, 'attendance_shadow_reports', mk));
+    if (expected !== reportLoadGeneration || reportMonth !== mk) return;
+    if (!snap.exists()) {
+      paintSummary(null);
+      $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">' +
+        'עדיין אין דוח לחודש הזה. צילום הצל היומי ייצור אותו.</div>';
+      $('people').innerHTML = '<div class="empty">אין נתונים להצגה.</div>';
+      return;
+    }
+    const report = snap.data() || {};
+    activeGeneration = String(report.active_generation_id || '');
+    if (report.status !== 'complete' || !activeGeneration) {
+      paintSummary(null);
+      const building = report.build_status === 'building' || report.status === 'building';
+      $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">' +
+        (building ? 'הדוח נבנה כעת. אפשר לנסות שוב בעוד כמה דקות.' :
+          'בניית הדוח האחרונה נעצרה בבטחה. השעות הקיימות לא השתנו.') + '</div>';
+      $('people').innerHTML = '<div class="empty">אין דור דוח מאושר להצגה.</div>';
+      $('reportMeta').textContent = report.last_build_error_code
+        ? 'קוד בדיקה: ' + report.last_build_error_code : '';
+      return;
+    }
+    paintSummary(report);
+    await loadPeople(true);
+  } catch (error) {
+    $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">' +
+      'טעינת הדוח נכשלה. (' + esc(error.code || error.message || '') + ')</div>';
+  }
+}
+
+$('btnLoad').onclick = loadReport;
+$('btnMore').onclick = () => loadPeople(false);
+
+$('btnRun').onclick = async () => {
+  const b = $('btnRun'); b.disabled = true;
+  showMsg('צילום הסידור וההשוואה רצים בשרת. אפשר להישאר במסך.', 'warn');
+  try {
+    const result = await httpsCallable(fns, 'runAttendanceShadowNow')({});
+    const data = result.data || {};
+    showMsg(data.duplicate
+      ? 'הצילום של היום כבר קיים ונבדק; לא נוצר עותק נוסף.'
+      : 'צילום הצל הושלם. נוצרו ' + num(data.entries) + ' רשומות בדיקה.', 'ok');
+    await loadStatus();
+    await loadReport();
+  } catch (error) { showMsg(errorText(error), 'err'); }
+  finally { b.disabled = STATUS.mode !== 'shadow'; }
+};
+
+$('btnMode').onclick = async () => {
+  const next = STATUS.mode === 'shadow' ? 'off' : 'shadow';
+  const text = next === 'shadow'
+    ? 'להפעיל מצב צל? המערכת תצלם ותשווה, בלי לשנות שעות.'
+    : 'לכבות מצב צל? ResQ תמשיך לעבוד כרגיל, אך לא ייווצרו צילומים חדשים.';
+  if (!window.confirm(text)) return;
+  const b = $('btnMode'); b.disabled = true;
+  try {
+    await httpsCallable(fns, 'setAttendanceShadowMode')({ mode:next });
+    showMsg(next === 'shadow' ? 'מצב הצל הופעל.' : 'מצב הצל כובה.', 'ok');
+    await loadStatus();
+  } catch (error) { showMsg(errorText(error), 'err'); }
+  finally { b.disabled = false; }
+};
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=attendance-shadow.html'); return; }
+  let claims = {};
+  try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  const superUser = claims.super === true || String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const allowed = superUser || claims.role === 'hr_coordinator' ||
+                  claims.role === 'station_commander';
+  SID = claims.stationId || (superUser ? STATION_ID : '');
+  CLAIMS = Object.assign({}, claims, { super:superUser });
+  if (!allowed || !SID) {
+    $('deny').classList.remove('hide');
+    renderNav({}, '', user.email || '');
+    return;
+  }
+  $('main').classList.remove('hide');
+  renderNav(CLAIMS, 'attendance-shadow.html', user.email || '');
+  $('month').value = localMonth();
+  await Promise.all([loadStatus(), loadReport()]);
+});
+</script>
+</body>
+</html>

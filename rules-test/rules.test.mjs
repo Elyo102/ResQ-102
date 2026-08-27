@@ -83,9 +83,24 @@ const cmdB    = who('u_cmdb', 'cmdb@x.com', { emp: '202', role: 'commander',    
 const deputyA = who('u_dep',  'dep@x.com',  { emp: '203', role: 'deputy',            stationId: SID, shift: 'א' });
 const stCmd   = who('u_st',   'st@x.com',   { emp: '301', role: 'station_commander', stationId: SID, shift: '' });
 const hrUser  = who('u_hr',   'hr@x.com',   { emp: '401', role: 'hr_coordinator',    stationId: SID, shift: '' });
+const inactiveStCmd = who('u_st_inactive', 'st-inactive@x.com', {
+  emp: '302', role: 'station_commander', stationId: SID, shift: ''
+});
+const inactiveHr = who('u_hr_inactive', 'hr-inactive@x.com', {
+  emp: '402', role: 'hr_coordinator', stationId: SID, shift: ''
+});
+const staleHr = who('u_hr_stale', 'hr-stale@x.com', {
+  emp: '403', role: 'hr_coordinator', stationId: SID, shift: ''
+});
+const missingHr = who('u_hr_missing', 'hr-missing@x.com', {
+  emp: '404', role: 'hr_coordinator', stationId: SID, shift: ''
+});
 const superA  = who('u_sup',  'fire102.shits@gmail.com', { super: true });
 const pending = who('u_pend', 'pend@x.com', {});                       // נרשם, טרם אושר
 const outside = who('u_out',  'out@x.com',  { emp: '999', role: 'firefighter', stationId: 'other_99', shift: 'א' });
+const outsideHr = who('u_out_hr', 'out-hr@x.com', {
+  emp: '998', role: 'hr_coordinator', stationId: 'other_99', shift: ''
+});
 const district = who('u_dist', 'dist@x.com', { emp: '701', role: 'district_commander', stationId: SID, districtId: 'south', shift: '' });
 // מפקד שטרם שויך למשמרת. לפי הכלל הוא אינו ננעל — אחרת הוא
 // היה חסום משלוש המשמרות בלי שום דרך לראות שזו הסיבה.
@@ -106,6 +121,16 @@ await env.withSecurityRulesDisabled(async (c) => {
     { role: 'firefighter', crew: 'א', employee_number: '101', is_active: true, full_name: 'כבאי א' });
   await setDoc(doc(d, `stations/${SID}/users/u_ffb`),
     { role: 'firefighter', crew: 'ב', employee_number: '102', is_active: true, full_name: 'כבאי ב' });
+  await setDoc(doc(d, `stations/${SID}/users/u_st`),
+    { role: 'station_commander', crew: '', employee_number: '301', is_active: true, full_name: 'מפקד תחנה' });
+  await setDoc(doc(d, `stations/${SID}/users/u_hr`),
+    { role: 'hr_coordinator', crew: '', employee_number: '401', is_active: true, full_name: 'רכזת כוח אדם' });
+  await setDoc(doc(d, `stations/${SID}/users/u_st_inactive`),
+    { role: 'station_commander', crew: '', employee_number: '302', is_active: false, full_name: 'מפקד מושבת' });
+  await setDoc(doc(d, `stations/${SID}/users/u_hr_inactive`),
+    { role: 'hr_coordinator', crew: '', employee_number: '402', is_active: false, full_name: 'רכזת מושבתת' });
+  await setDoc(doc(d, `stations/${SID}/users/u_hr_stale`),
+    { role: 'firefighter', crew: 'א', employee_number: '403', is_active: true, full_name: 'רכזת לשעבר' });
 
   // נוכחות — הלב של המערכת
   await setDoc(doc(d, `stations/${SID}/attendance/att_ff_a`),
@@ -126,6 +151,72 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, 'emp_index/101'), { uid: 'u_ff' });
   await setDoc(doc(d, 'salary_rules/v1'), { rate: 1 });
   await setDoc(doc(d, `stations/${SID}/push_tokens/u_ff`), { token: 'abc' });
+
+  // ---- נוכחות אוטומטית · חודש צל ----
+  // חומר הגלם חסום לכל לקוח. רק הדוחות המצומצמים נקראים בידי
+  // רכזת כוח אדם, מפקד התחנה ומנהל-העל.
+  const shadowExpiry = new Date('2026-12-01T00:00:00.000Z');
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_runs/2026-09-01__v1`), {
+    date: '2026-09-01', status: 'complete', algorithm_version: 'v1',
+    expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_runs/2026-09-01__v1/attendance_shadow_entries/u_ff`), {
+    uid: 'u_ff', date: '2026-09-01', crew: 'א', planned_hours: 24,
+    expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_reports/2026-09`), {
+    month: '2026-09', people: 1, mismatches: 0,
+    active_generation_id: 'gen_active',
+    expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active`), {
+    generation_id: 'gen_active', status: 'complete', expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active/attendance_shadow_people/u_ff`), {
+    uid: 'u_ff', month: '2026-09', mismatch_count: 0,
+    expires_at: shadowExpiry
+  });
+  // עמוד מלא כמו השאילתה האמיתית במסך. כולם משתמשים באותם שני
+  // מסמכי-תלות קבועים בכללים, ולכן מטמון Rules חייב להשאיר את
+  // הבקשה מתחת לתקרת access calls גם ב-limit(100).
+  for (let i = 1; i <= 99; i++) {
+    const uid = 'u_shadow_' + String(i).padStart(3, '0');
+    await setDoc(doc(d,
+      `stations/${SID}/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active/attendance_shadow_people/${uid}`), {
+      uid: uid, month: '2026-09', mismatch_count: i,
+      expires_at: shadowExpiry
+    });
+  }
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_building`), {
+    generation_id: 'gen_building', status: 'building', expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    `stations/${SID}/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_building/attendance_shadow_people/u_ff`), {
+    uid: 'u_ff', month: '2026-09', mismatch_count: 99,
+    expires_at: shadowExpiry
+  });
+
+  await setDoc(doc(d,
+    'stations/other_99/attendance_shadow_reports/2026-09'), {
+    month: '2026-09', people: 1, mismatches: 0,
+    active_generation_id: 'gen_active',
+    expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    'stations/other_99/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active'), {
+    generation_id: 'gen_active', status: 'complete', expires_at: shadowExpiry
+  });
+  await setDoc(doc(d,
+    'stations/other_99/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active/attendance_shadow_people/u_out'), {
+    uid: 'u_out', month: '2026-09', mismatch_count: 0,
+    expires_at: shadowExpiry
+  });
 
   // ---- החלפות משמרת ----
   await setDoc(doc(d, `stations/${SID}/swaps/sw_open`), {
@@ -1056,7 +1147,177 @@ await blocked('🔒 גם מנהל-על אינו מוחק תחנת משנה מה�
   deleteDoc(doc(superA, `stations/${SID}/sub_stations/new_site`)));
 
 // ============================================================
-head('18 · מפקד צוות — כל השאר נשאר סגור');
+head('18 · נוכחות אוטומטית — חומר גלם סגור ודוחות מצומצמים');
+// ============================================================
+
+const SHADOW_RUNS = `stations/${SID}/attendance_shadow_runs`;
+const SHADOW_RUN = `${SHADOW_RUNS}/2026-09-01__v1`;
+const SHADOW_ENTRIES = `${SHADOW_RUN}/attendance_shadow_entries`;
+const SHADOW_ENTRY = `${SHADOW_ENTRIES}/u_ff`;
+const SHADOW_REPORTS = `stations/${SID}/attendance_shadow_reports`;
+const SHADOW_REPORT = `${SHADOW_REPORTS}/2026-09`;
+const SHADOW_GENERATIONS = `${SHADOW_REPORT}/attendance_shadow_generations`;
+const SHADOW_GENERATION = `${SHADOW_GENERATIONS}/gen_active`;
+const SHADOW_PEOPLE = `${SHADOW_GENERATION}/attendance_shadow_people`;
+const SHADOW_PERSON = `${SHADOW_PEOPLE}/u_ff`;
+const SHADOW_BUILDING_PEOPLE = `${SHADOW_GENERATIONS}/gen_building/attendance_shadow_people`;
+const SHADOW_BUILDING_PERSON = `${SHADOW_BUILDING_PEOPLE}/u_ff`;
+const SHADOW_LEGACY_PERSON = `${SHADOW_REPORT}/attendance_shadow_people/u_ff`;
+
+// כל תפקיד נבדק גם ב-get וגם ב-list. raw סגור תמיד; הדוח
+// המצומצם פתוח רק לשלושת מבקרי הצל.
+const SHADOW_READERS = [
+  ['מבקר לא מחובר', anon, false],
+  ['נרשם שטרם אושר', pending, false],
+  ['לוחם אש', ff, false],
+  ['סגן מפקד צוות', dteamA, false],
+  ['מפקד צוות', teamA, false],
+  ['סגן מפקד משמרת', deputyA, false],
+  ['מפקד משמרת', cmdA, false],
+  ['מפקד בלי שיוך משמרת', cmdNew, false],
+  ['מפקד תחנה', stCmd, true],
+  ['רכזת כוח אדם', hrUser, true],
+  ['מפקד מחוז', district, false],
+  ['לוחם מתחנה אחרת', outside, false],
+  ['רכזת מתחנה אחרת', outsideHr, false],
+  ['מנהל-על', superA, true]
+];
+
+for (const [roleName, client, mayAudit] of SHADOW_READERS) {
+  await blocked(`🔒 ${roleName} אינו קורא ריצת Shadow גולמית`,
+    getDoc(doc(client, SHADOW_RUN)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לריצות Shadow גולמיות`,
+    getDocs(collection(client, SHADOW_RUNS)));
+  await blocked(`🔒 ${roleName} אינו קורא רשומת אדם גולמית`,
+    getDoc(doc(client, SHADOW_ENTRY)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לרשומות אדם גולמיות`,
+    getDocs(collection(client, SHADOW_ENTRIES)));
+  await blocked(`🔒 ${roleName} אינו קורא מסמך דור Shadow`,
+    getDoc(doc(client, SHADOW_GENERATION)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לדורות Shadow`,
+    getDocs(collection(client, SHADOW_GENERATIONS)));
+  await blocked(`🔒 ${roleName} אינו קורא נתיב אדם ישן ללא דור`,
+    getDoc(doc(client, SHADOW_LEGACY_PERSON)));
+
+  const reportGet = getDoc(doc(client, SHADOW_REPORT));
+  const reportList = getDocs(collection(client, SHADOW_REPORTS));
+  const personGet = getDoc(doc(client, SHADOW_PERSON));
+  const peopleList = getDocs(collection(client, SHADOW_PEOPLE));
+  if (mayAudit) {
+    await ok(`${roleName} קורא דוח Shadow מצומצם`, reportGet);
+    await ok(`${roleName} מבצע list לדוחות Shadow מצומצמים`, reportList);
+    await ok(`${roleName} קורא תוצאת אדם מצומצמת`, personGet);
+    await ok(`${roleName} מבצע list לתוצאות אדם מצומצמות`, peopleList);
+  } else {
+    await blocked(`🔒 ${roleName} אינו קורא דוח Shadow`, reportGet);
+    await blocked(`🔒 ${roleName} אינו מבצע list לדוחות Shadow`, reportList);
+    await blocked(`🔒 ${roleName} אינו קורא תוצאת אדם ב-Shadow`, personGet);
+    await blocked(`🔒 ${roleName} אינו מבצע list לתוצאות אדם ב-Shadow`, peopleList);
+  }
+}
+
+// טוקן ישן אינו מספיק למסך הרגיש. השבתה, שינוי תפקיד או מחיקת
+// כרטיס המשתמש חייבים לחסום מיד גם get וגם list, לדוח ולאדם.
+for (const [roleName, client] of [
+  ['מפקד תחנה מושבת', inactiveStCmd],
+  ['רכזת כוח אדם מושבתת', inactiveHr],
+  ['רכזת עם תפקיד ישן בטוקן', staleHr],
+  ['רכזת בלי כרטיס משתמש בתחנה', missingHr]
+]) {
+  await blocked(`🔒 ${roleName} אינו קורא דוח Shadow`,
+    getDoc(doc(client, SHADOW_REPORT)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לדוחות Shadow`,
+    getDocs(collection(client, SHADOW_REPORTS)));
+  await blocked(`🔒 ${roleName} אינו קורא תוצאת אדם ב-Shadow`,
+    getDoc(doc(client, SHADOW_PERSON)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לתוצאות אדם ב-Shadow`,
+    getDocs(collection(client, SHADOW_PEOPLE)));
+}
+
+await ok('רכזת פעילה קוראת עמוד Shadow מלא של 100 אנשים',
+  getDocs(query(collection(hrUser, SHADOW_PEOPLE), orderBy('uid'), limit(100)))
+    .then(snap => {
+      if (snap.size !== 100) throw new Error('Expected 100 Shadow people, got ' + snap.size);
+      return snap;
+    }));
+
+await blocked('🔒 רכזת אילת אינה קוראת דוח Shadow של תחנה אחרת',
+  getDoc(doc(hrUser, 'stations/other_99/attendance_shadow_reports/2026-09')));
+await blocked('🔒 רכזת אילת אינה קוראת תוצאת אדם של תחנה אחרת',
+  getDoc(doc(hrUser,
+    'stations/other_99/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active/attendance_shadow_people/u_out')));
+await ok('מנהל-על קורא דוח Shadow של תחנה אחרת',
+  getDoc(doc(superA, 'stations/other_99/attendance_shadow_reports/2026-09')));
+await ok('מנהל-על קורא תוצאת אדם בדור הפעיל של תחנה אחרת',
+  getDoc(doc(superA,
+    'stations/other_99/attendance_shadow_reports/2026-09/attendance_shadow_generations/gen_active/attendance_shadow_people/u_out')));
+
+for (const [roleName, client] of [
+  ['מפקד תחנה', stCmd], ['רכזת כוח אדם', hrUser], ['מנהל-על', superA]
+]) {
+  await blocked(`🔒 ${roleName} אינו קורא תוצאת אדם מדור שעדיין בבנייה`,
+    getDoc(doc(client, SHADOW_BUILDING_PERSON)));
+  await blocked(`🔒 ${roleName} אינו מבצע list לתוצאות מדור שעדיין בבנייה`,
+    getDocs(collection(client, SHADOW_BUILDING_PEOPLE)));
+}
+
+// false מוחלט בכתיבה: גם תפקידים מורשים לקריאה וגם מנהל-העל
+// אינם עוקפים את פונקציית השרת. בודקים create/update/delete בכל
+// אחת מארבע קבוצות האוספים.
+const SHADOW_WRITERS = [
+  ['לוחם אש', ff],
+  ['מפקד משמרת', cmdA],
+  ['מפקד תחנה', stCmd],
+  ['רכזת כוח אדם', hrUser],
+  ['רכזת מתחנה אחרת', outsideHr],
+  ['מנהל-על', superA]
+];
+
+for (const [roleName, client] of SHADOW_WRITERS) {
+  const createRun = `${SHADOW_RUNS}/client_${client === superA ? 'super' : roleName}`;
+  const createEntry = `${SHADOW_ENTRIES}/client_${client === superA ? 'super' : roleName}`;
+  const createReport = `${SHADOW_REPORTS}/client_${client === superA ? 'super' : roleName}`;
+  const createGeneration = `${SHADOW_GENERATIONS}/client_${client === superA ? 'super' : roleName}`;
+  const createPerson = `${SHADOW_PEOPLE}/client_${client === superA ? 'super' : roleName}`;
+
+  await blocked(`🔒 ${roleName} אינו יוצר ריצת Shadow`,
+    setDoc(doc(client, createRun), { expires_at: new Date() }));
+  await blocked(`🔒 ${roleName} אינו מעדכן ריצת Shadow`,
+    updateDoc(doc(client, SHADOW_RUN), { status: 'tampered' }));
+  await blocked(`🔒 ${roleName} אינו מוחק ריצת Shadow`,
+    deleteDoc(doc(client, SHADOW_RUN)));
+
+  await blocked(`🔒 ${roleName} אינו יוצר רשומת Shadow גולמית`,
+    setDoc(doc(client, createEntry), { uid: 'fake', expires_at: new Date() }));
+  await blocked(`🔒 ${roleName} אינו מעדכן רשומת Shadow גולמית`,
+    updateDoc(doc(client, SHADOW_ENTRY), { planned_hours: 99 }));
+  await blocked(`🔒 ${roleName} אינו מוחק רשומת Shadow גולמית`,
+    deleteDoc(doc(client, SHADOW_ENTRY)));
+
+  await blocked(`🔒 ${roleName} אינו יוצר דוח Shadow`,
+    setDoc(doc(client, createReport), { month: '2099-01', expires_at: new Date() }));
+  await blocked(`🔒 ${roleName} אינו מעדכן דוח Shadow`,
+    updateDoc(doc(client, SHADOW_REPORT), { mismatches: 999 }));
+  await blocked(`🔒 ${roleName} אינו מוחק דוח Shadow`,
+    deleteDoc(doc(client, SHADOW_REPORT)));
+
+  await blocked(`🔒 ${roleName} אינו יוצר דור Shadow`,
+    setDoc(doc(client, createGeneration), { generation_id: 'fake', expires_at: new Date() }));
+  await blocked(`🔒 ${roleName} אינו מעדכן דור Shadow`,
+    updateDoc(doc(client, SHADOW_GENERATION), { status: 'tampered' }));
+  await blocked(`🔒 ${roleName} אינו מוחק דור Shadow`,
+    deleteDoc(doc(client, SHADOW_GENERATION)));
+
+  await blocked(`🔒 ${roleName} אינו יוצר תוצאת אדם ב-Shadow`,
+    setDoc(doc(client, createPerson), { uid: 'fake', expires_at: new Date() }));
+  await blocked(`🔒 ${roleName} אינו מעדכן תוצאת אדם ב-Shadow`,
+    updateDoc(doc(client, SHADOW_PERSON), { mismatch_count: 999 }));
+  await blocked(`🔒 ${roleName} אינו מוחק תוצאת אדם ב-Shadow`,
+    deleteDoc(doc(client, SHADOW_PERSON)));
+}
+
+// ============================================================
+head('19 · מפקד צוות — כל השאר נשאר סגור');
 // ============================================================
 // התפתיתי לתת לו סמכויות כי השם נשמע פיקודי. אלדד הגדיר
 // במפורש: רק כתיבה בלוג. הבדיקות האלה הן מה שימנע מהתפקיד

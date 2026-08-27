@@ -16,6 +16,7 @@ const ITEMS = [
   { href: 'schedule.html', label: 'סידור', who: 'member', dot: '#4d94ff' },
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166' },
+  { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9' },
   { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a' },
@@ -45,6 +46,12 @@ function allowed(who, claims) {
   if (who === 'any')    return true;
   if (who === 'super')  return isSuper;
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(claims.role) !== -1;
+  // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
+  // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.
+  if (who === 'attendance_audit') {
+    return isSuper || claims.role === 'hr_coordinator' ||
+           claims.role === 'station_commander';
+  }
   // בדיוק אותה רשימה כמו member() בכללי האבטחה. מפקד מחוז אינו
   // כלול, ולכן אסור להציג לו "סידור עבודה" — הוא ייחסם בשרת.
   if (who === 'member') {
