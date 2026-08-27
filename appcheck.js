@@ -10,12 +10,11 @@
 //
 //  ⚙️ שלושה צעדים, בסדר הזה. הפוך — והאפליקציה נחסמת לכולם:
 //
-//  1. בקונסולה, קבל מפתח reCAPTCHA v3:
-//     https://console.firebase.google.com/project/station-102/appcheck
-//     App Check ← Apps ← בחר את אפליקציית הווב ← reCAPTCHA v3
+//  1. ספק reCAPTCHA Enterprise מסוג SCORE רשום ב-Firebase
+//     ומוגבל לדומיינים של ResQ בלבד.
 //
-//  2. הדבק אותו כאן ב-RECAPTCHA_SITE_KEY, פרוס את האתר, וחכה
-//     יום-יומיים. בקונסולה, תחת Metrics, תראה בקשות מסווגות
+//  2. לאחר הפריסה מחכים יום-יומיים. בקונסולה, תחת Metrics,
+//     בודקים שבקשות Firestore ו-Auth מסווגות
 //     כ-Verified. **אל תפעיל אכיפה כל עוד יש שם Unverified.**
 //
 //  3. רק כשהמונה נקי — הפעל Enforce על Firestore ועל Functions.
@@ -24,7 +23,7 @@
 //  אתחול חלקי היה גרוע ממצב שבו הוא כבוי, כי הוא היה מייצר
 //  טוקנים לא תקפים ומכשיל בקשות בלי סיבה נראית לעין.
 
-export const RECAPTCHA_SITE_KEY = '';
+export const RECAPTCHA_SITE_KEY = '6Lfk8JotAAAAAFizQN_Bxb_d7hKei8EntKGyeZhN';
 
 // מפתח ניפוי לפיתוח מקומי. reCAPTCHA לא עובד מ-localhost, ולכן
 // בפיתוח משתמשים בטוקן ניפוי שנרשם בקונסולה תחת Debug tokens.
@@ -45,13 +44,13 @@ export function initAppCheck(app) {
       if (USE_DEBUG_TOKEN) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
 
       const ac = m.initializeAppCheck(app, {
-        provider: new m.ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+        provider: new m.ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY),
         // חידוש אוטומטי. בלעדיו הטוקן פג באמצע משמרת, והכבאי
         // רואה שגיאת הרשאה בלי שום דבר שהשתנה אצלו.
         isTokenAutoRefreshEnabled: true
       });
 
-      console.log('App Check פעיל');
+      console.log('App Check Enterprise פעיל');
       return ac;
     } catch (e) {
       // כישלון כאן לא יפיל את המסך. אם האכיפה מופעלת בשרת,
