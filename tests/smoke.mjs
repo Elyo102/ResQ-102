@@ -56,8 +56,8 @@ const MUST_ALL = {
                   '#roster','#rosterCard','#rosterNote'],
   'vehicle.html': ['#vehChips','#sideChips','#stageWrap','#legend',
                    '#photoActs','#basePick','#list','#ov','#dlgBody'],
-  'import.html': ['#rows','#pwPaste','#btnDry','#btnRun','#knob',
-                  '#master','#mState','#ready','#sum'],
+  'import.html': ['#knob','#master','#mState','#ready',
+                  '#hPaste','#hDry','#hRun','#hMsg','#hSum'],
   'access.html': ['#sid','#btnLoad','#rows','#tbl'],
   'quals.html': ['#rlBoxes','#catList','#addRow','#newQual','#btnAdd',
                  '#minHead','#rlQuals','#btnSaveRL','#rows','#tbl'],
@@ -157,6 +157,30 @@ for (const page of PAGES) {
   for (const sel of (MUST[page] || [])) {
     const found = await pg.$(sel);
     if (!found) errs.push('שדה חסר בדף: ' + sel);
+  }
+
+  if (page === 'import.html' && ROLE === 'super') {
+    for (const sel of ['#rows', '#pwPaste', '#btnDry', '#btnRun', '#sum']) {
+      if (await pg.$(sel)) errs.push('בקר קליטה פרטי עדיין קיים: ' + sel);
+    }
+    try {
+      const csv = [
+        'שם,מספר עובד,משמרת,תאריך,סוג יום,כניסה,יציאה,כניסה 2,יציאה 2,שעות,מקום,הערה',
+        'שם שונה בכוונה,17,A,2026-03-01,משמרת,07:00,07:00,,,24,,'
+      ].join('\n');
+      await pg.fill('#hPaste', csv);
+      await pg.click('#hDry');
+      await pg.waitForFunction(() => {
+        const value = document.querySelector('#hMsg')?.textContent || '';
+        return value.includes('הבדיקה הסתיימה') || value.includes('נכשלה');
+      }, { timeout: 5000 });
+      const summary = await pg.textContent('#hSum');
+      if (!String(summary || '').includes('טל חודרה')) {
+        errs.push('ייבוא היסטוריה לא זיהה משתמש לפי employee_number ממסמכי users');
+      }
+    } catch (e) {
+      errs.push('בדיקת ייבוא היסטוריה נכשלה: ' + e.message);
+    }
   }
 
   const real = errs.filter(e => !/ERR_TUNNEL|ERR_NAME|ERR_CONNECTION|net::/.test(e));

@@ -32,6 +32,7 @@
       "tests/**",
       "rules-test/**",
       "_דיונים/**",
+      "roster-import.js",
       "firestore.rules",
       "firestore.indexes.json",
       "firestore_1.rules",
