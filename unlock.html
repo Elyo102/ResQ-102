@@ -61,8 +61,8 @@ import { getFunctions, httpsCallable }
 
 const app = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=38';
-initAppCheck(app);
+import { initAppCheck } from './appcheck.js?v=41a1';
+await initAppCheck(app);
 const fns = getFunctions(app, 'europe-west1');
 
 const $ = id => document.getElementById(id);

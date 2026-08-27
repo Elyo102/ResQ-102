@@ -219,8 +219,8 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=38';
-initAppCheck(app);
+import { initAppCheck } from './appcheck.js?v=41a1';
+await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
