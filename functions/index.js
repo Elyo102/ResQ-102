@@ -20,6 +20,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bulletin = require('./bulletin');
 const attendanceShadow = require('./attendance-shadow-runner');
+const bulkImportDisabled = require('./bulk-import-disabled');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -2014,126 +2015,19 @@ exports.hideBulletinReply = onCall(async (req) => {
 });
 
 // ---------------------------------------------------------------------
-//  קליטת סגל — ייבוא מרוכז
+//  קליטת סגל מרוכזת — מושבתת ב-41B
 // ---------------------------------------------------------------------
 //
-//  ארבעים ושניים כבאים חיים היום במערכת אחרת. אישור אחד־אחד
-//  דרך מסך הניהול הוא ארבעים ושתיים פעולות ידניות, וכל אחת
-//  מהן היא הזדמנות להקליד תפקיד לא נכון.
-//
-//  **הפונקציה אידמפוטנטית, וזה העיקר.** הרצה שנייה על אותה
-//  רשימה לא יוצרת כפילות ולא מאפסת סיסמה למי שכבר נכנס והחליף
-//  אותה. ייבוא של ארבעים ושניים אנשים כמעט תמיד נעצר באמצע
-//  בפעם הראשונה — מייל כפול, שדה חסר — וכלי שאי אפשר להריץ
-//  שוב בבטחה הופך כל תקלה קטנה לניקוי ידני.
-//
-//  שלוש מצבים אפשריים לכל אדם:
-//
-//    created   החשבון נוצר עכשיו, עם הסיסמה שנשלחה
-//    updated   החשבון היה קיים — עודכנו התפקיד והפרופיל בלבד
-//    failed    משהו נכשל, והסיבה חוזרת בשם
-//
-//  **סיסמה נקבעת רק ליצירה.** לחשבון קיים היא לא נדרסת: מי
-//  שכבר נכנס והחליף סיסמה לא יגלה בבוקר שהיא חזרה לזו שבגיליון.
-
-exports.bulkImport = onCall({ timeoutSeconds: 540 }, async (req) => {
-  const auth = requireSuperAdmin(req);
-  const d = req.data || {};
-  const people = Array.isArray(d.people) ? d.people : [];
-  const dry = d.dry_run === true;
-
-  if (!people.length) {
-    throw new HttpsError('invalid-argument', 'לא נשלחה רשימה.');
-  }
-  if (people.length > 200) {
-    throw new HttpsError('invalid-argument', 'עד 200 אנשים בהרצה אחת.');
-  }
-
-  const stationId  = String(d.stationId  || STATION_ID);
-  const districtId = String(d.districtId || 'south');
-
-  const audit = await openAudit(auth, dry ? 'bulk_import_dry' : 'bulk_import',
-                                null, { count: people.length, station: stationId });
-
-  const out = [];
-  for (const raw of people) {
-    const email = String((raw && raw.email) || '').trim().toLowerCase();
-    const name  = String((raw && raw.name)  || '').trim();
-    const emp   = String((raw && raw.emp)   || '').trim();
-    const role  = VALID_ROLES.indexOf(raw && raw.role) !== -1 ? raw.role : 'firefighter';
-    const shift = VALID_SHIFTS.indexOf(raw && raw.crew) !== -1 ? raw.crew : '';
-    const phone = String((raw && raw.phone) || '').trim();
-    const pw    = String((raw && raw.pw)    || '');
-
-    const row = { emp: emp, name: name, email: email, role: role, crew: shift };
-
-    if (!email || email.indexOf('@') === -1 || !name || !emp) {
-      out.push(Object.assign(row, { state: 'failed',
-        why: 'חסר שם, מייל או מספר עובד' }));
-      continue;
-    }
-
-    try {
-      let user = null;
-      try { user = await admin.auth().getUserByEmail(email); }
-      catch (e) { user = null; }
-
-      let state;
-      if (!user) {
-        if (pw.length < 8) {
-          out.push(Object.assign(row, { state: 'failed',
-            why: 'סיסמה קצרה מדי — לפחות שמונה תווים' }));
-          continue;
-        }
-        if (dry) { out.push(Object.assign(row, { state: 'created', dry: true })); continue; }
-        user = await admin.auth().createUser({
-          email: email, password: pw, displayName: name,
-          emailVerified: false, disabled: false
-        });
-        state = 'created';
-      } else {
-        if (dry) { out.push(Object.assign(row, { state: 'updated', dry: true })); continue; }
-        // שם התצוגה כן מתעדכן; הסיסמה לא. ראה ההסבר למעלה.
-        if (user.displayName !== name) {
-          await admin.auth().updateUser(user.uid, { displayName: name });
-        }
-        state = 'updated';
-      }
-
-      // מספר עובד קודם — אותה בעיה שאושר בה ב-approveRegistration:
-      // בלי המחיקה, שני מספרים פותחים את אותו חשבון.
-      const prevEmp = String((user.customClaims || {}).emp || '');
-      if (prevEmp && prevEmp !== emp) {
-        await db.doc('emp_index/' + prevEmp).delete().catch(function () {});
-      }
-
-      await admin.auth().setCustomUserClaims(user.uid, {
-        role: role, stationId: stationId, districtId: districtId,
-        shift: shift, emp: emp
-      });
-
-      await writeProfile(user.uid, {
-        emp: emp, full_name: name, email: email, phone: phone,
-        role: role, shift: shift,
-        stationId: stationId, districtId: districtId
-      });
-
-      out.push(Object.assign(row, { state: state, uid: user.uid }));
-    } catch (e) {
-      out.push(Object.assign(row, { state: 'failed',
-        why: String((e && e.message) || e).slice(0, 160) }));
-    }
-  }
-
-  const sum = {
-    created: out.filter(r => r.state === 'created').length,
-    updated: out.filter(r => r.state === 'updated').length,
-    failed:  out.filter(r => r.state === 'failed').length
-  };
-  await sealAudit(audit, sum);
-
-  return { ok: true, dry: dry, summary: sum, rows: out };
-});
+// ה-UI הישן הוסר יחד עם קובץ הסגל הפרטי. משאירים את שם
+// הפונקציה קיים כדי שגם לקוח ישן יקבל חסימה מפורשת, במקום
+// להמשיך להגיע למימוש ישן או לקבל שגיאת "פונקציה לא קיימת".
+exports.bulkImport = onCall(
+  { timeoutSeconds: 540 },
+  bulkImportDisabled.createHandler({
+    requireSuperAdmin: requireSuperAdmin,
+    HttpsError: HttpsError
+  })
+);
 
 // ---------------------------------------------------------------------
 //  מצב שקט — הפעלה וכיבוי
