@@ -210,7 +210,7 @@ import {
 } from './signflow.js?v=38';
 
 const app  = initializeApp(firebaseConfig);
-initAppCheck(app);
+await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 

@@ -33,6 +33,8 @@ check(imports.length === 20, 'all 20 Firebase screens initialize App Check');
 for (const item of imports) {
   check(item.body.includes("./appcheck.js?v=41a1"),
     item.file + ' uses the current App Check cache version');
+  check((item.body.match(/await initAppCheck\(app\);/g) || []).length === 1,
+    item.file + ' waits for App Check before accessing Firebase services');
 }
 
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');

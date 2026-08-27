@@ -296,7 +296,7 @@ const ROLE_HE = ROLES_HE;
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
 import { initAppCheck } from './appcheck.js?v=41a1';
-initAppCheck(app);
+await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
 
