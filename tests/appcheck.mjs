@@ -38,7 +38,7 @@ for (const item of imports) {
 }
 
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
-check(worker.includes("const CACHE = 'resq-v41b-privacy1'"),
+check(worker.includes("const CACHE = 'resq-v41b-identity2'"),
   'the PWA cache is rotated for the privacy fix');
 
 if (failed) {

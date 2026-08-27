@@ -24,5 +24,5 @@
 // מספרים שיוצאים מסנכרון גורמים לאפליקציה לדווח "יש עדכון"
 // לנצח.
 
-export const APP_VERSION = '41A';
+export const APP_VERSION = '41B';
 export const APP_DATE    = '27.8.2026';

@@ -21,6 +21,8 @@ const crypto = require('crypto');
 const bulletin = require('./bulletin');
 const attendanceShadow = require('./attendance-shadow-runner');
 const bulkImportDisabled = require('./bulk-import-disabled');
+const registrationSafety = require('./registration-safety');
+const identityCoordinatorModule = require('./identity-coordinator');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -106,6 +108,18 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator({
+  db: db,
+  auth: admin.auth(),
+  FieldValue: FV,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: HttpsError,
+  randomId: function () { return crypto.randomBytes(16).toString('hex'); },
+  // פעולות הזהות מוגבלות ל-120 שניות. גדר של שלוש דקות מונעת
+  // מ-worker ישן שהתעורר מאוחר לדרוס פעולה חדשה על אותו משתמש.
+  leaseMs: 5 * 60 * 1000,
+  fenceMs: 3 * 60 * 1000
+});
 const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
   db: db,
   admin: admin
@@ -267,14 +281,20 @@ function requireSuperAdmin(req) {
 // תפקיד חדש שיתווסף למערכת לא יקבל סמכות שיבוץ בהיסח הדעת.
 function requireRoleSetter(req) {
   const auth = requireAuth(req);
-  if (isSuperAdmin(auth)) return { auth: auth, cap: Infinity, sid: '' };
+  if (isSuperAdmin(auth)) return { auth: auth, cap: Infinity, sid: '', did: '' };
 
   const cap = ASSIGN_MAX_RANK[String(auth.token.role || '')] || 0;
   if (!cap) {
     throw new HttpsError('permission-denied',
       'שיבוץ תפקידים מותר למנהל המערכת ולרכז/ת כוח אדם בלבד.');
   }
-  return { auth: auth, cap: cap, sid: String(auth.token.stationId || '') };
+  const sid = String(auth.token.stationId || '');
+  const did = String(auth.token.districtId || '');
+  if (!sid || !did || KNOWN_DISTRICTS.indexOf(did) === -1) {
+    throw new HttpsError('permission-denied',
+      'לחשבון המשבץ חסר שיוך תחנה או מחוז תקין. פנה למנהל המערכת.');
+  }
+  return { auth: auth, cap: cap, sid: sid, did: did };
 }
 
 // שלוש בדיקות, ולכל אחת יש תרחיש שהיא מונעת.
@@ -285,7 +305,7 @@ function requireRoleSetter(req) {
 //     העלאה, ומי שאינו רשאי למנות מפקד אינו רשאי לפרק אותו.
 //  3. לא על עצמה, ולא דגל מנהל-על. בלי אלה כל התקרה מיותרת:
 //     די בפעולה אחת על החשבון של עצמה כדי לעקוף אותה.
-function assertMayAssign(gate, targetRole, targetBefore, targetUid, wantSuper) {
+function assertMayAssign(gate, targetRole, targetBefore, targetUid, wantSuper, targetDesired) {
   if (gate.cap === Infinity) return;
 
   const beforeRole = String((targetBefore || {}).role || '');
@@ -309,11 +329,13 @@ function assertMayAssign(gate, targetRole, targetBefore, targetUid, wantSuper) {
       'שינוי תפקיד למי שדרגתו מעל ' + heRole(rankName(gate.cap)) +
       ' מותר למנהל המערכת בלבד.');
   }
-  // תחנה זרה. מנהל-על עובר, רכזת נעולה לתחנה שלה.
-  const targetSid = String((targetBefore || {}).stationId || '');
-  if (gate.sid && targetSid && targetSid !== gate.sid) {
+  // תחנה ומחוז נבדקים גם במצב הקודם וגם בתוכנית החדשה. בדיקה
+  // של התחנה הקודמת בלבד הייתה מאפשרת ללקוח מותאם להעביר אדם
+  // לתחנה אחרת. claims חלקיים של המשבץ נכשלים כבר בשער למעלה.
+  if (!registrationSafety.withinRoleSetterScope(
+      gate, targetBefore || {}, targetDesired || {})) {
     throw new HttpsError('permission-denied',
-      'האדם הזה שייך לתחנה אחרת.');
+      'אפשר לשנות תפקידים רק בתוך התחנה והמחוז של המשבץ.');
   }
 }
 
@@ -371,35 +393,6 @@ function validEmp(v) {
   return /^[1-9][0-9]{0,5}$/.test(String(v || ''));
 }
 
-async function empTaken(emp) {
-  const snap = await db.doc('emp_index/' + emp).get();
-  return snap.exists;
-}
-
-// הקצאת מספר עובד. טרנזקציה, כדי ששני אישורים במקביל לא יקבלו
-// את אותו מספר.
-//
-// המונה מדלג על מספרים תפוסים. זה נחוץ כי במעבר מהמערכת הישנה
-// כבאים שומרים את הקוד האישי שהם כבר מכירים — 1990, 1711, 4492 —
-// והמונה חייב לעקוף אותם ולא לדרוס אף אחד.
-async function allocateEmployeeNumber() {
-  const ref = db.doc('meta/emp_counter');
-
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const candidate = await db.runTransaction(async function (tx) {
-      const snap = await tx.get(ref);
-      const next = snap.exists ? Number(snap.data().next || EMP_START) : EMP_START;
-      tx.set(ref, { next: next + 1, updated_at: FV.serverTimestamp() }, { merge: true });
-      return String(next);
-    });
-
-    if (!(await empTaken(candidate))) return candidate;
-  }
-
-  throw new HttpsError('resource-exhausted',
-    'לא נמצא מספר עובד פנוי. פנה למנהל המערכת.');
-}
-
 // Firestore לא יודע לחפש "מכיל". הוא יודע רק "שווה" ו"מתחיל ב".
 //
 // הגרסה הראשונה חיפשה לפי תחילת השם המלא בלבד — ולכן מי שחיפש
@@ -433,27 +426,6 @@ function namePrefixes(fullName) {
   return Object.keys(out);
 }
 
-// מכבה אדם בכל המקומות שבהם הוא מופיע: ספרייה, תחנה, רשימת
-// התחנה, ומפתח הכניסה לפי מספר עובד.
-async function deactivateEverywhere(uid, before) {
-  const off = { is_active: false, updated_at: FV.serverTimestamp() };
-  const sid = String((before || {}).stationId || '');
-  const emp = String((before || {}).emp || '');
-
-  await db.doc('directory/' + uid).set(off, { merge: true }).catch(function () {});
-
-  if (sid) {
-    await db.doc('stations/' + sid + '/users/'  + uid).set(off, { merge: true })
-            .catch(function () {});
-    await db.doc('stations/' + sid + '/roster/' + uid).set(off, { merge: true })
-            .catch(function () {});
-  }
-
-  if (emp) {
-    await db.doc('emp_index/' + emp).delete().catch(function () {});
-  }
-}
-
 // ⚠️ השגיאות כאן חייבות להיות HttpsError.
 //
 // הגרסה הקודמת נתנה ל-FirebaseAuthError לעלות כמו שהוא.
@@ -482,66 +454,11 @@ async function resolveUser(data) {
   throw new HttpsError('invalid-argument', 'צריך למסור uid או email.');
 }
 
-// כותב את שלושת המסמכים שמתארים אדם, כל אחד לקהל אחר.
-//
-//   users      הכל, כולל מספר עובד. נקרא על ידי הכבאי עצמו וסגל.
-//   roster     שם, תפקיד, משמרת. נקרא על ידי אנשי התחנה.
-//   directory  חיפוש עובד — שם, תפקיד, תחנה, מחוז. כל כבאי בארץ.
-//
-// ההפרדה קיימת כי כללי Firestore לא יכולים לחסום שדה בודד —
-// או שכל המסמך נקרא, או שלא.
-async function writeProfile(uid, p) {
-  const batch = db.batch();
-
-  batch.set(db.doc('stations/' + p.stationId + '/users/' + uid), {
-    employee_number: p.emp,
-    full_name:       p.full_name || '',
-    email:           p.email || '',
-    phone:           p.phone || '',
-    role:            p.role,
-    crew:            p.shift || '',
-    station:         p.stationId,
-    district:        p.districtId || '',
-    is_active:       true,
-    updated_at:      FV.serverTimestamp()
-  }, { merge: true });
-
-  batch.set(db.doc('stations/' + p.stationId + '/roster/' + uid), {
-    full_name:  p.full_name || '',
-    role:       p.role,
-    crew:       p.shift || '',
-    is_active:  true,
-    updated_at: FV.serverTimestamp()
-  }, { merge: true });
-
-  // חיפוש עובד. בלי מספר עובד, בלי מייל, בלי טלפון.
-  batch.set(db.doc('directory/' + uid), {
-    full_name:     p.full_name || '',
-    name_prefixes: namePrefixes(p.full_name),
-    role:          p.role,
-    crew:          p.shift || '',
-    station:       p.stationId,
-    district:      p.districtId || '',
-    is_active:     true,
-    updated_at:    FV.serverTimestamp()
-  }, { merge: true });
-
-  // מפתח כניסה: מספר עובד אל המשתמש. נקרא רק בשרת.
-  batch.set(db.doc('emp_index/' + p.emp), {
-    uid:        uid,
-    email:      p.email || '',
-    stationId:  p.stationId,
-    updated_at: FV.serverTimestamp()
-  }, { merge: true });
-
-  await batch.commit();
-}
-
 // ---------------------------------------------------------------------
 //  1. אתחול מנהל-על — פעם אחת
 // ---------------------------------------------------------------------
 
-exports.bootstrapSuperAdmin = onCall(async (req) => {
+exports.bootstrapSuperAdmin = onCall({ timeoutSeconds: 120 }, async (req) => {
   const auth = requireAuth(req);
   const email = String(auth.token.email || '').toLowerCase();
 
@@ -549,21 +466,33 @@ exports.bootstrapSuperAdmin = onCall(async (req) => {
     throw new HttpsError('permission-denied', 'החשבון הזה אינו מנהל המערכת.');
   }
 
-  const audit = await openAudit(auth, 'bootstrap_super_admin', auth.uid, { email: email });
-
   // מיזוג ולא דריסה. אלדד הוא לוחם אש וגם מנהל; דריסה הייתה
   // מוחקת לו מספר עובד, תחנה, מחוז ומשמרת בלחיצה אחת.
   const cur = (await admin.auth().getUser(auth.uid)).customClaims || {};
   const merged = Object.assign({}, cur, { super: true });
   if (!merged.role) merged.role = 'super_admin';
-  await admin.auth().setCustomUserClaims(auth.uid, merged);
-
-  await sealAudit(audit);
-
-  return {
+  const intentFingerprint = identityCoordinatorModule.stableHash({
+    kind: 'bootstrap', uid: auth.uid, previous_claims: cur, desired_claims: merged
+  });
+  const opId = 'bootstrap-' + crypto.createHash('sha256')
+    .update(auth.uid + ':' + intentFingerprint).digest('hex').slice(0, 32);
+  const acquired = await identityCoordinator.acquireBootstrap({
+    uid: auth.uid,
+    opId: opId,
+    actorUid: auth.uid,
+    actorEmail: email,
+    previousClaims: cur,
+    desiredClaims: merged,
+    intentFingerprint: intentFingerprint,
+    auditAction: 'bootstrap_super_admin',
+    auditDetails: { email: email }
+  });
+  const result = {
     ok: true,
     message: 'הוגדרת כמנהל מערכת. התנתק והתחבר מחדש כדי שהשינוי ייכנס לתוקף.'
   };
+  if (acquired.type === 'completed') return acquired.operation.result;
+  return identityCoordinator.runBootstrap(auth.uid, acquired.operation.op_id, result);
 });
 
 // ---------------------------------------------------------------------
@@ -571,125 +500,157 @@ exports.bootstrapSuperAdmin = onCall(async (req) => {
 //     כאן מוקצה מספר העובד. הכבאי לא מזין אותו ולא בוחר אותו.
 // ---------------------------------------------------------------------
 
-exports.approveRegistration = onCall(async (req) => {
+exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
   const auth = requireSuperAdmin(req);
   const d = req.data || {};
 
   const uid = String(d.uid || '');
   if (!uid) throw new HttpsError('invalid-argument', 'חסר מזהה משתמש.');
+  const requestId = String(d.request_id || '');
+  const requestGeneration = String(d.request_generation || '');
+  const wanted = String(d.emp || '').trim();
+  if (wanted && !validEmp(wanted)) {
+    throw new HttpsError('invalid-argument',
+      'מספר עובד חייב להיות עד 6 ספרות, ולא להתחיל באפס.');
+  }
 
   const user = await admin.auth().getUser(uid);
+  const previousClaims = user.customClaims || {};
+  const roleInput = VALID_ROLES.indexOf(d.role) !== -1 ? d.role : 'firefighter';
+  const shiftInput = VALID_SHIFTS.indexOf(d.shift) !== -1 ? d.shift : '';
+  const intentFingerprint = identityCoordinatorModule.stableHash({
+    kind: 'approve', uid: uid,
+    request_generation: requestGeneration,
+    request_id: requestId,
+    role: roleInput,
+    shift: shiftInput,
+    stationId: String(d.stationId || ''),
+    districtId: String(d.districtId || ''),
+    employee_mode: wanted ? 'fixed' : 'auto',
+    wanted_emp: wanted
+  });
+  const opId = 'approve-' + crypto.createHash('sha256')
+    .update(uid + ':' + requestGeneration + ':' + intentFingerprint)
+    .digest('hex').slice(0, 32);
 
-  // הפרטים מגיעים מהבקשה שהכבאי מילא, ומה שהמאשר תיקן עליהם.
-  const reqRef  = db.doc('registration_requests/' + uid);
-  const reqSnap = await reqRef.get();
-  if (!reqSnap.exists) {
-    throw new HttpsError('not-found', 'הבקשה לא נמצאה. ייתכן שכבר טופלה.');
-  }
-  const r = reqSnap.data();
+  const acquired = await identityCoordinator.acquireAssignment({
+    uid: uid,
+    opId: opId,
+    kind: 'approve',
+    actorUid: auth.uid,
+    actorEmail: auth.token.email,
+    previousClaims: previousClaims,
+    previousEmp: previousClaims.emp,
+    previousStation: previousClaims.stationId,
+    requireRequest: true,
+    attachPendingRequest: false,
+    requestId: requestId,
+    requestGeneration: requestGeneration,
+    blockIfAssigned: true,
+    intentFingerprint: intentFingerprint,
+    employeeMode: wanted ? 'fixed' : 'auto',
+    wantedEmp: wanted,
+    employeeStart: EMP_START,
+    auditAction: 'approve_registration',
+    auditDetails: { email: String(user.email || '').toLowerCase() },
+    makePlan: function (emp, r) {
+      const stationId = String(d.stationId || r.stationId || '');
+      const districtId = String(d.districtId || r.districtId || '');
+      const role = roleInput;
+      const shift = shiftInput;
+      const fullName = String(d.full_name || r.full_name || '').trim();
+      const liveEmail = String(user.email || '').toLowerCase();
+      const requestEmail = String(r.email || '').toLowerCase();
 
-  // הבקשה נקראת מחדש ברגע האישור. אם הכבאי מחק ויצר אותה מחדש
-  // בזמן שהמסך היה פתוח, הערכים כאן אינם מה שהמאשר ראה.
-  if (String(r.status || '') !== 'pending') {
+      if (!stationId) throw new HttpsError('invalid-argument', 'חסרה תחנה.');
+      if (!districtId) throw new HttpsError('invalid-argument', 'חסר מחוז.');
+      if (KNOWN_DISTRICTS.indexOf(districtId) === -1) {
+        throw new HttpsError('invalid-argument', 'מחוז לא מוכר: ' + districtId);
+      }
+      if (!fullName) {
+        throw new HttpsError('invalid-argument',
+          'לבקשה אין שם מלא. הוסף אותו לפני האישור.');
+      }
+      if (requestEmail && liveEmail && requestEmail !== liveEmail) {
+        throw new HttpsError('failed-precondition',
+          'כתובת המייל בחשבון השתנתה מאז הגשת הבקשה. רענן את פרטי הבקשה.');
+      }
+
+      const claims = {
+        role: role, stationId: stationId, districtId: districtId,
+        shift: shift, emp: emp
+      };
+      if (JSON.stringify(claims).length > 900) {
+        throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי.');
+      }
+      return {
+        desiredClaims: claims,
+        desiredProfile: {
+          full_name: fullName,
+          name_prefixes: namePrefixes(fullName),
+          email: liveEmail,
+          phone: String(r.phone || ''),
+          role: role,
+          shift: shift,
+          stationId: stationId,
+          districtId: districtId
+        }
+      };
+    }
+  });
+
+  if (acquired.type === 'request_stamped') {
     throw new HttpsError('failed-precondition',
-      'הבקשה כבר טופלה או שונתה. רענן את הרשימה ונסה שוב.');
+      'הבקשה הישנה קיבלה מזהה בטוח. הרשימה תתרענן; אשר אותה שוב.', {
+        request_refreshed: true
+      });
+  }
+  if (acquired.type === 'assigned_request_preserved') {
+    throw new HttpsError('failed-precondition',
+      'החשבון כבר מכיל שיוך חי. הבקשה נשמרה לבדיקה ולא נמחקה.', {
+        request_preserved: true,
+        needs_recovery: true
+      });
   }
 
-  const stationId  = String(d.stationId  || r.stationId  || '');
-  const districtId = String(d.districtId || r.districtId || '');
-  const role       = VALID_ROLES.indexOf(d.role) !== -1 ? d.role : 'firefighter';
-  const shift      = VALID_SHIFTS.indexOf(d.shift) !== -1 ? d.shift : '';
-
-  if (!stationId)  throw new HttpsError('invalid-argument', 'חסרה תחנה.');
-  if (!districtId) throw new HttpsError('invalid-argument', 'חסר מחוז.');
-  if (KNOWN_DISTRICTS.indexOf(districtId) === -1) {
-    throw new HttpsError('invalid-argument', 'מחוז לא מוכר: ' + districtId);
-  }
-
-  // שם חסר יוצר כבאי אנונימי שלא נמצא בחיפוש ומוצג בכל מסך
-  // ככתובת מייל. אותה בדיקה כבר קיימת בהענקת תפקיד ידנית.
-  const fullName = String(d.full_name || r.full_name || '').trim();
-  if (!fullName) {
-    throw new HttpsError('invalid-argument',
-      'לבקשה אין שם מלא. הוסף אותו לפני האישור.');
-  }
-  if (role === 'district_commander' && !districtId) {
-    throw new HttpsError('invalid-argument', 'מפקד מחוז חייב שיוך למחוז.');
-  }
-
-  // המאשר יכול לקבוע מספר עובד. במעבר מהמערכת הישנה זה מה
-  // שמאפשר לכבאי לשמור את הקוד האישי שהוא כבר מכיר, במקום
-  // ללמוד מספר חדש בלי סיבה. ריק = הקצאה אוטומטית.
-  let emp;
-  const wanted = String(d.emp || '').trim();
-
-  if (wanted) {
-    if (!validEmp(wanted)) {
-      throw new HttpsError('invalid-argument',
-        'מספר עובד חייב להיות עד 6 ספרות, ולא להתחיל באפס.');
-    }
-    // "תפוס" רק אם הוא שייך למישהו אחר. אישור חוזר של אותו אדם
-    // עם אותו מספר הוא פעולה לגיטימית.
-    const takenSnap = await db.doc('emp_index/' + wanted).get();
-    if (takenSnap.exists && String(takenSnap.data().uid || '') !== uid) {
-      throw new HttpsError('already-exists',
-        'מספר העובד ' + wanted + ' כבר שייך למישהו אחר. בחר אחר או השאר ריק.');
-    }
-    emp = wanted;
-  } else {
-    emp = await allocateEmployeeNumber();
-  }
-
-  const claims = {
-    role:       role,
-    stationId:  stationId,
-    districtId: districtId,
-    shift:      shift,
-    emp:        emp
-  };
-
-  // מגבלת Custom Claims היא 1000 בתים. אנחנו רחוקים ממנה,
-  // אבל הבדיקה זולה ומונעת הפתעה עתידית.
-  if (JSON.stringify(claims).length > 900) {
-    throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי.');
-  }
-
-  const audit = await openAudit(auth, 'approve_registration', uid, {
-    email: user.email, stationId: stationId, districtId: districtId,
-    role: role, shift: shift, emp: emp
-  });
-
-  await admin.auth().setCustomUserClaims(uid, claims);
-
-  // מספר עובד קודם, אם המשתמש כבר אושר פעם: בלי המחיקה הזו שני
-  // מספרים היו פותחים את אותו חשבון.
-  const prevEmp = String((user.customClaims || {}).emp || '');
-  if (prevEmp && prevEmp !== emp) {
-    await db.doc('emp_index/' + prevEmp).delete().catch(function () {});
-  }
-
-  await writeProfile(uid, {
-    emp:        emp,
-    full_name:  fullName,
-    email:      String(user.email || '').toLowerCase(),
-    phone:      r.phone || '',
-    role:       role,
-    shift:      shift,
-    stationId:  stationId,
-    districtId: districtId
-  });
-
-  await reqRef.delete();
-  await sealAudit(audit);
-
-  return {
+  const operation = acquired.operation || await identityCoordinator.getOperation(uid);
+  const desired = operation.desired_claims || {};
+  const result = {
     ok: true,
     uid: uid,
-    emp: emp,
-    role: role,
-    message: 'אושר. מספר העובד שהוקצה: ' + emp +
+    emp: String(operation.desired_emp || desired.emp || ''),
+    role: String(desired.role || ''),
+    message: 'אושר. מספר העובד שהוקצה: ' + String(operation.desired_emp || desired.emp || '') +
              '. הכבאי צריך להתנתק ולהתחבר מחדש.'
   };
+  if (acquired.type === 'completed') return operation.result;
+  return identityCoordinator.runAssignment(uid, operation.op_id, result, uid === auth.uid);
+});
+
+// דחייה עוברת בשרת ונקשרת למזהה הבקשה שהמנהל ראה. מחיקה
+// ישירה מהדפדפן הייתה יכולה למחוק בקשה חדשה מכרטיס ישן.
+exports.rejectRegistration = onCall({ timeoutSeconds: 60 }, async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const uid = String(d.uid || '');
+  const requestId = String(d.request_id || '');
+  const requestGeneration = String(d.request_generation || '');
+  if (!uid) throw new HttpsError('invalid-argument', 'חסר מזהה משתמש.');
+
+  const rejected = await identityCoordinator.rejectRequest({
+    uid: uid,
+    requestId: requestId,
+    requestGeneration: requestGeneration,
+    actorUid: auth.uid,
+    actorEmail: auth.token.email
+  });
+  if (rejected.requestStamped) {
+    throw new HttpsError('failed-precondition',
+      'הבקשה הישנה קיבלה מזהה בטוח. הרשימה תתרענן; דחה אותה שוב.', {
+        request_refreshed: true
+      });
+  }
+  return { ok: true, uid: uid };
 });
 
 // ---------------------------------------------------------------------
@@ -697,7 +658,7 @@ exports.approveRegistration = onCall(async (req) => {
 //     לא מקצה מספר עובד חדש — מספר עובד נשאר עם האדם.
 // ---------------------------------------------------------------------
 
-exports.setUserRole = onCall(async (req) => {
+exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   // עד 25.8.2026 היה כאן requireSuperAdmin. נפתח לרכז/ת כוח אדם
   // עם תקרת דרגה — ראה assertMayAssign. **התקרה נאכפת כאן ולא
   // במסך**: הבורר ב-admin.html מציג רק את מה שמותר, אבל מסך
@@ -737,28 +698,62 @@ exports.setUserRole = onCall(async (req) => {
   // התקרה נבדקת **לפני** מסלול 'none' ולא אחריו. הסרת תפקיד היא
   // שינוי סמכות לכל דבר, ורכזת שאינה רשאית למנות מפקד משמרת אינה
   // רשאית גם למחוק אותו מהמערכת.
+  const requestedStationId = String(d.stationId || before.stationId || '');
+  const requestedDistrictId = String(d.districtId || before.districtId || '');
+  const desiredScope = role === 'none' ? {
+    stationId: String(before.stationId || ''),
+    districtId: String(before.districtId || '')
+  } : {
+    stationId: requestedStationId,
+    districtId: requestedDistrictId
+  };
   assertMayAssign(gate, role === 'none' ? '' : role, before, user.uid,
-                  d.super === true);
+                  d.super === true, desiredScope);
 
   if (role === 'none') {
-    const audit = await openAudit(auth, 'clear_role', user.uid, { email: user.email });
-    await admin.auth().setCustomUserClaims(user.uid, null);
-
-    // מבטל טוקני רענון. שים לב: טוקן שכבר הונפק נשאר תקף מול
-    // כללי Firestore עד לתפוגתו — עד שעה.
-    await admin.auth().revokeRefreshTokens(user.uid);
-
-    // עזיבה אמיתית, לא רק ניקוי הרשאות. בגרסה הקודמת מספר העובד
-    // המשיך לפתוח כניסה, והרשומה המשיכה להופיע בבקרת הגישה עם
-    // טלפון ומייל — כלומר עובד שעזב נשאר גלוי ופעיל למראית עין.
-    await deactivateEverywhere(user.uid, before);
-
-    await sealAudit(audit);
-    return {
+    const suppliedOpId = String(d.operation_id || '');
+    const opId = /^[A-Za-z0-9_-]{16,100}$/.test(suppliedOpId) ? suppliedOpId :
+      'clear-' + crypto.randomBytes(16).toString('hex');
+    const intentFingerprint = identityCoordinatorModule.stableHash({
+      kind: 'clear_role', uid: user.uid, desired_claims: null
+    });
+    const acquired = await identityCoordinator.acquireAssignment({
+      uid: user.uid,
+      opId: opId,
+      kind: 'clear_role',
+      actorUid: auth.uid,
+      actorEmail: auth.token.email,
+      previousClaims: before,
+      previousEmp: before.emp,
+      previousStation: before.stationId,
+      requireRequest: false,
+      attachPendingRequest: true,
+      requestId: '',
+      requestGeneration: '',
+      blockIfAssigned: false,
+      intentFingerprint: intentFingerprint,
+      employeeMode: 'none',
+      wantedEmp: '',
+      auditAction: 'clear_role',
+      auditDetails: { email: user.email },
+      makePlan: function () {
+        return { desiredClaims: null, desiredProfile: null };
+      }
+    });
+    if (acquired.type === 'orphan_request') {
+      throw new HttpsError('failed-precondition',
+        'נמצאה בקשת הרשמה ללא פעולת זהות תואמת. היא נשמרה לבדיקה.', {
+          needs_recovery: true
+        });
+    }
+    const operation = acquired.operation || await identityCoordinator.getOperation(user.uid);
+    const result = {
       ok: true,
       uid: user.uid,
       message: 'ההרשאות הוסרו והשיוך נוקה. טוקן קיים עשוי להישאר תקף עד שעה.'
     };
+    if (acquired.type === 'completed') return operation.result;
+    return identityCoordinator.runClear(user.uid, operation.op_id, result);
   }
 
   if (VALID_ROLES.indexOf(role) === -1) {
@@ -766,8 +761,8 @@ exports.setUserRole = onCall(async (req) => {
       'תפקיד לא מוכר: ' + role + '. מותר: ' + VALID_ROLES.join(', ') + ' או none.');
   }
 
-  const stationId  = String(d.stationId  || before.stationId  || '');
-  const districtId = String(d.districtId || before.districtId || '');
+  const stationId  = requestedStationId;
+  const districtId = requestedDistrictId;
   const shift      = String(d.shift || '');
   const emp        = String(d.emp || before.emp || '');
 
@@ -778,13 +773,6 @@ exports.setUserRole = onCall(async (req) => {
       'מספר עובד חייב להיות 1 עד 6 ספרות, ולא להתחיל באפס.');
   }
 
-  // אם המספר תפוס על ידי מישהו אחר — עוצרים. אם הוא תפוס על ידי
-  // המשתמש הזה עצמו, זה פשוט אותו מספר ואין בעיה.
-  const idxSnap = await db.doc('emp_index/' + emp).get();
-  if (idxSnap.exists && String(idxSnap.data().uid || '') !== user.uid) {
-    throw new HttpsError('already-exists',
-      'מספר העובד ' + emp + ' כבר שייך למישהו אחר.');
-  }
   if (shift && VALID_SHIFTS.indexOf(shift) === -1) {
     throw new HttpsError('invalid-argument', 'משמרת לא מוכרת: ' + shift);
   }
@@ -817,19 +805,15 @@ exports.setUserRole = onCall(async (req) => {
     throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי.');
   }
 
-  const audit = await openAudit(auth, 'set_role', user.uid, {
-    email: user.email, before: before, after: claims
-  });
-
   // **האימות לפני הכתיבה, ולא אחריה.**
   //
   // בגרסה הקודמת ההרשאות נכתבו כאן והבדיקה הזו רצה אחריהן.
   // כשהיא נכשלה — שם ריק במעבר תחנה — התפקיד, התחנה והמשמרת
-  // כבר השתנו, writeProfile לא רץ, מפתח מספר העובד לא הופנה
+  // כבר השתנו, כתיבת הפרופיל לא רצה, ומפתח מספר העובד לא הופנה
   // מחדש, והמסך הציג "נכשל" על פעולה שכבר חצי בוצעה.
   // שם וטלפון נשמרים אם לא נמסרו במפורש. בלי זה, תיקון תפקיד
   // או שינוי מספר עובד היה מוחק לכבאי את השם והטלפון — כי
-  // writeProfile כותב את כל השדות, וריק דורס.
+  // תוכנית הפרופיל כותבת את כל השדות, וריק דורס.
   //
   // ⚠️ הקריאה הזאת **חייבת** להיות לפני בדיקת השם למטה.
   //
@@ -859,54 +843,141 @@ exports.setUserRole = onCall(async (req) => {
       'חסר שם מלא. הזן אותו בטופס — בלעדיו הכבאי לא יימצא בחיפוש.');
   }
 
-  await admin.auth().setCustomUserClaims(user.uid, claims);
-
-
-  await writeProfile(user.uid, {
-    emp:        emp,
-    full_name:  fullName,
-    email:      String(user.email || '').toLowerCase(),
-    phone:      String(d.phone || existing.phone || ''),
-    role:       role,
-    shift:      shift,
-    stationId:  stationId,
-    districtId: districtId
+  const phone = String(d.phone || existing.phone || '');
+  const intentFingerprint = identityCoordinatorModule.stableHash({
+    kind: 'set_role', uid: user.uid, role: role,
+    stationId: stationId, districtId: districtId, shift: shift, emp: emp,
+    full_name: fullName, phone: phone, super: wantSuper === true
   });
 
-  // שינוי מספר עובד משאיר מאחור את מפתח הכניסה הישן. בלי המחיקה
-  // הזו שני מספרים היו מכניסים לאותו חשבון — מבלבל בבקרה, וגם
-  // משטח תקיפה מיותר.
-  const oldEmp = String(before.emp || '');
-  if (oldEmp && oldEmp !== emp) {
-    await db.doc('emp_index/' + oldEmp).delete().catch(function () {});
+  const suppliedOpId = String(d.operation_id || '');
+  const opId = /^[A-Za-z0-9_-]{16,100}$/.test(suppliedOpId) ? suppliedOpId :
+    'role-' + crypto.randomBytes(16).toString('hex');
+  const acquired = await identityCoordinator.acquireAssignment({
+    uid: user.uid,
+    opId: opId,
+    kind: 'set_role',
+    actorUid: auth.uid,
+    actorEmail: auth.token.email,
+    previousClaims: before,
+    previousEmp: before.emp,
+    previousStation: before.stationId,
+    requireRequest: false,
+    attachPendingRequest: true,
+    requestId: '',
+    requestGeneration: '',
+    blockIfAssigned: false,
+    intentFingerprint: intentFingerprint,
+    employeeMode: 'fixed',
+    wantedEmp: emp,
+    auditAction: 'set_role',
+    auditDetails: { email: user.email, before: before, after: claims },
+    makePlan: function (reservedEmp) {
+      const desiredClaims = Object.assign({}, claims, { emp: reservedEmp });
+      return {
+        desiredClaims: desiredClaims,
+        desiredProfile: {
+          full_name: fullName,
+          name_prefixes: namePrefixes(fullName),
+          email: String(user.email || '').toLowerCase(),
+          phone: phone,
+          role: desiredClaims.role,
+          shift: desiredClaims.shift || '',
+          stationId: desiredClaims.stationId,
+          districtId: desiredClaims.districtId || ''
+        }
+      };
+    }
+  });
+  if (acquired.type === 'orphan_request') {
+    throw new HttpsError('failed-precondition',
+      'נמצאה בקשת הרשמה ללא פעולת זהות תואמת. היא נשמרה לבדיקה.', {
+        needs_recovery: true
+      });
   }
 
-  // תחנה שהשתנתה: הרשומה הישנה נשארה קריאה לסגל התחנה הישנה,
-  // עם טלפון ומייל, גם אחרי שהכבאי עבר. מכבים אותה.
-  const oldSid = String(before.stationId || '');
-  if (oldSid && oldSid !== stationId) {
-    const off = { is_active: false, updated_at: FV.serverTimestamp() };
-    await db.doc('stations/' + oldSid + '/users/'  + user.uid).set(off, { merge: true })
-            .catch(function () {});
-    await db.doc('stations/' + oldSid + '/roster/' + user.uid).set(off, { merge: true })
-            .catch(function () {});
+  const operation = acquired.operation || await identityCoordinator.getOperation(user.uid);
+  const planned = operation.desired_claims || {};
+  assertMayAssign(gate, planned.role || '', operation.previous_claims || {}, user.uid,
+                  planned.super === true, planned);
+  if (gate.cap !== Infinity && String(operation.previous_emp || '') &&
+      String(operation.previous_emp || '') !== String(operation.desired_emp || '')) {
+    throw new HttpsError('permission-denied',
+      'שינוי מספר עובד מותר למנהל המערכת בלבד.');
   }
 
-  // בלי ביטול טוקני הרענון, הרשאה שהוסרה ממשיכה לעבוד עד שעה —
-  // והכללים קוראים אך ורק את הטוקן, בלי בדיקה נוספת בשרת.
-  //
-  // יוצא דופן: עריכה עצמית. ביטול כאן היה מנתק את המנהל מהמערכת
-  // באמצע העבודה, בלי שביקש.
-  if (user.uid !== auth.uid) {
-    await admin.auth().revokeRefreshTokens(user.uid).catch(function () {});
-  }
-
-  await sealAudit(audit, { emp_before: oldEmp || null, emp_after: emp });
-
-  return {
-    ok: true, uid: user.uid, emp: emp,
+  const result = {
+    ok: true, uid: user.uid, emp: String(operation.desired_emp || ''),
     message: 'התפקיד הוגדר. המשתמש צריך להתנתק ולהתחבר מחדש כדי שהשינוי ייכנס לתוקף.'
   };
+  if (acquired.type === 'completed') return operation.result;
+  return identityCoordinator.runAssignment(user.uid, operation.op_id, result,
+    user.uid === auth.uid);
+});
+
+// ממשיך רק תוכנית זהות שכבר ננעלה בשרת. הלקוח אינו שולח כאן
+// תפקיד, תחנה, מספר עובד או תוצאה חדשה — ולכן רענון מסך לא יכול
+// להחליף בשקט את מה שהמנהל אישר קודם.
+exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const uid = String(d.uid || '');
+  const opId = String(d.operation_id || '');
+  const planFingerprint = String(d.plan_fingerprint || '');
+  if (!uid || !/^[A-Za-z0-9_-]{16,100}$/.test(opId) ||
+      !/^[a-f0-9]{64}$/.test(planFingerprint)) {
+    throw new HttpsError('invalid-argument', 'פרטי פעולת ההתאוששות חסרים או אינם תקינים.');
+  }
+
+  const before = await identityCoordinator.getOperation(uid);
+  if (!before) throw new HttpsError('not-found', 'פעולת הזהות לא נמצאה.');
+  if (before.kind === 'bootstrap') {
+    const email = String(auth.token.email || '').toLowerCase();
+    if (uid !== auth.uid || email !== SUPER_ADMIN_EMAIL) {
+      throw new HttpsError('permission-denied', 'אתחול מנהל ניתן להמשך רק בידי אותו חשבון.');
+    }
+  } else if (['approve', 'set_role', 'clear_role'].indexOf(before.kind) === -1) {
+    throw new HttpsError('failed-precondition', 'סוג פעולת הזהות אינו ניתן להמשך.');
+  }
+
+  if (uid === auth.uid && (before.previous_claims || {}).super === true &&
+      (before.desired_claims == null || before.desired_claims.super !== true)) {
+    throw new HttpsError('failed-precondition',
+      'אי אפשר להמשיך פעולה שמסירה ממך את הרשאת הניהול.');
+  }
+
+  const resumed = await identityCoordinator.resumeOperation({
+    uid: uid,
+    opId: opId,
+    planFingerprint: planFingerprint,
+    actorUid: auth.uid,
+    actorEmail: auth.token.email
+  });
+  const operation = resumed.operation;
+  if (resumed.type === 'completed') return operation.result;
+
+  const summary = operation.plan_summary || {};
+  if (operation.kind === 'clear_role') {
+    return identityCoordinator.runClear(uid, operation.op_id, {
+      ok: true, uid: uid,
+      message: 'ההרשאות הוסרו והשיוך נוקה. המשתמש צריך להתחבר מחדש.'
+    });
+  }
+  if (operation.kind === 'bootstrap') {
+    return identityCoordinator.runBootstrap(uid, operation.op_id, {
+      ok: true,
+      message: 'הגדרת מנהל המערכת הושלמה. התחבר מחדש כדי לרענן הרשאות.'
+    });
+  }
+  return identityCoordinator.runAssignment(uid, operation.op_id, {
+    ok: true,
+    uid: uid,
+    emp: String(summary.emp || ''),
+    role: String(summary.role || ''),
+    message: operation.kind === 'approve' ?
+      'האישור השמור הושלם. מספר העובד: ' + String(summary.emp || '') + '.' :
+      'שינוי התפקיד השמור הושלם. המשתמש צריך להתחבר מחדש.'
+  }, uid === auth.uid);
 });
 
 // ---------------------------------------------------------------------
@@ -953,7 +1024,7 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   // יהיה אפשר לגלות אילו מספרי עובד קיימים.
   const generic = 'מספר עובד או סיסמה שגויים.';
 
-  if (!idxSnap.exists) {
+  if (!idxSnap.exists || !identityCoordinatorModule.activeIndex(idxSnap.data() || {})) {
     // מספר עובד לא קיים. נספר את הניסיון, אבל אין למי לשלוח מייל.
     await noteFailedLogin(lockRef, lock, emp, '');
     throw new HttpsError('unauthenticated', generic);
@@ -1107,10 +1178,15 @@ exports.requestPasswordReset = onCall(async (req) => {
       const u = await admin.auth().getUserByEmail(email);
       const c = u.customClaims || {};
       emp = String(c.emp || '');
+      if (emp) {
+        const liveIndex = await db.doc('emp_index/' + emp).get();
+        if (!liveIndex.exists || !identityCoordinatorModule.activeIndex(liveIndex.data() || {}) ||
+            String((liveIndex.data() || {}).uid || '') !== u.uid) emp = '';
+      }
     } catch (e) { return answer; }
   } else {
     const idx = await db.doc('emp_index/' + id).get();
-    if (!idx.exists) return answer;
+    if (!idx.exists || !identityCoordinatorModule.activeIndex(idx.data() || {})) return answer;
     email = String(idx.data().email || '');
     emp   = id;
     if (!email) return answer;
@@ -1175,108 +1251,22 @@ exports.unlockAccount = onCall(async (req) => {
 });
 
 // ---------------------------------------------------------------------
-//  הצטרפות עם קוד תחנה — כניסה מיידית
+//  הצטרפות עם קוד תחנה — מושבתת ב-41B
 // ---------------------------------------------------------------------
 //
-//  אלדד ביקש שהעובד יבחר משמרת בפתיחת החשבון וייכנס מיד, בלי
-//  להמתין לאישור.
-//
-//  **למה זה לא יכול להיות פתוח לכל אחד.** ההרשמה פתוחה לכל
-//  כתובת מייל בעולם. אישור אוטומטי בלי שום תנאי היה נותן לכל
-//  זר שנרשם תפקיד firefighter בתחנה 102 — כלומר גישה לסידור
-//  המלא, לסגל, לכל התקלות ולמצב הכשירות של הצי. זה לא סיכון
-//  תיאורטי: הכתובת ציבורית.
-//
-//  לכן תנאי אחד: **קוד תחנה**. אלדד מוסר אותו לאנשיו, וכל מי
-//  שמקליד אותו נכנס מיד עם המשמרת שבחר. מי שאין לו את הקוד
-//  ממשיך למסלול הישן — בקשה ממתינה שאלדד מאשר.
-//
-//  הקוד מוגבל בקצב: חמישה ניסיונות כושלים מאותו חשבון נועלים
-//  אותו לשעה. בלי זה אפשר לנחש קוד בן שש ספרות בכמה שעות.
+//  קוד הלקוח הישן בדק claims מתוך token שעלול להיות בן שעה.
+//  קריאה ישירה בזמן אישור מקביל הייתה יכולה לשכתב שיוך ומספר
+//  עובד. משאירים את שם הפונקציה ללקוחות ישנים, אבל השרת חוסם
+//  אותה בלי לקרוא payload ובלי שום תופעת לוואי. עד מנגנון
+//  אטומי בגרסה 42, כל בקשת הרשמה עוברת אישור מנהל ידני.
 
 const JOIN_DOC = 'config/join';
-const JOIN_MAX_TRIES = 5;
-const JOIN_LOCK_MIN  = 60;
-
-exports.joinWithCode = onCall(async (req) => {
-  const auth = requireAuth(req);
-  const d = req.data || {};
-  const code  = String(d.code || '').trim();
-  const shift = String(d.shift || '').trim();
-  const name  = String(d.full_name || '').trim();
-  const phone = String(d.phone || '').trim();
-
-  if (!code) throw new HttpsError('invalid-argument', 'חסר קוד תחנה.');
-  if (!name) throw new HttpsError('invalid-argument', 'חסר שם מלא.');
-  if (shift && VALID_SHIFTS.indexOf(shift) === -1) {
-    throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
-  }
-
-  // כבר יש לו תפקיד — אין מה לעשות, ולכן גם אין מה לנעול.
-  if (String((auth.token || {}).emp || '')) {
-    throw new HttpsError('failed-precondition',
-      'החשבון שלך כבר משויך לתחנה.');
-  }
-
-  const tryRef = db.doc('join_attempts/' + auth.uid);
-  const trySnap = await tryRef.get().catch(function () { return null; });
-  const tv = (trySnap && trySnap.exists ? trySnap.data() : {}) || {};
-  const until = tv.locked_until ? tv.locked_until.toMillis() : 0;
-  if (until && until > Date.now()) {
-    throw new HttpsError('resource-exhausted',
-      'יותר מדי ניסיונות. נסה שוב בעוד שעה, או פנה למנהל המערכת.');
-  }
-
-  const jSnap = await db.doc(JOIN_DOC).get().catch(function () { return null; });
-  const jv = (jSnap && jSnap.exists ? jSnap.data() : {}) || {};
-
-  if (jv.active !== true || !jv.code) {
-    throw new HttpsError('failed-precondition',
-      'הצטרפות עם קוד סגורה כרגע. הבקשה שלך תמתין לאישור מנהל.');
-  }
-
-  if (String(jv.code) !== code) {
-    const n = Number(tv.fails || 0) + 1;
-    const lock = n >= JOIN_MAX_TRIES;
-    await tryRef.set({
-      fails: lock ? 0 : n,
-      locked_until: lock
-        ? admin.firestore.Timestamp.fromMillis(Date.now() + JOIN_LOCK_MIN * 60000)
-        : null,
-      last_at: FV.serverTimestamp()
-    }, { merge: true }).catch(function () {});
-    throw new HttpsError('permission-denied',
-      lock ? 'הקוד שגוי. החשבון ננעל לשעה.'
-           : 'קוד תחנה שגוי. נותרו ' + (JOIN_MAX_TRIES - n) + ' ניסיונות.');
-  }
-
-  const stationId  = String(jv.stationId  || STATION_ID);
-  const districtId = String(jv.districtId || 'south');
-
-  const audit = await openAudit(auth, 'join_with_code', auth.uid,
-                               { station: stationId, shift: shift });
-
-  const emp = await allocateEmployeeNumber();
-
-  await admin.auth().setCustomUserClaims(auth.uid, {
-    role: 'firefighter', stationId: stationId,
-    districtId: districtId, shift: shift, emp: emp
-  });
-
-  await writeProfile(auth.uid, {
-    emp: emp, full_name: name, email: String(auth.token.email || '').toLowerCase(),
-    phone: phone, role: 'firefighter', shift: shift,
-    stationId: stationId, districtId: districtId
-  });
-
-  // הבקשה הממתינה מיותרת עכשיו — מי שנכנס לא צריך לחכות
-  // לאישור, ורשומה שנשארת שם היא עבודה שאלדד יעשה לחינם.
-  await db.doc('registration_requests/' + auth.uid).delete().catch(function () {});
-  await tryRef.delete().catch(function () {});
-
-  await sealAudit(audit, { emp: emp, shift: shift });
-  return { ok: true, emp: emp, shift: shift, stationId: stationId };
-});
+exports.joinWithCode = onCall(
+  registrationSafety.createDisabledJoinHandler({
+    requireAuth: requireAuth,
+    HttpsError: HttpsError
+  })
+);
 
 // קביעת הקוד — מנהל-על בלבד.
 exports.setJoinCode = onCall(async (req) => {
@@ -4695,7 +4685,7 @@ exports.signReminder = onSchedule({
         // ⚠️ נקרא מ-users ולא מ-roster.
         //
         // מסמך ה-roster מכיל שם, תפקיד, משמרת ו-is_active
-        // בלבד — **אין בו מספר עובד**. ראה writeProfile:
+        // בלבד — **אין בו מספר עובד**. ראה identity-coordinator:
         // employee_number נכתב ל-users, ו-roster מקבל רק את
         // מה שכל אנשי התחנה רשאים לראות.
         //
@@ -4939,7 +4929,9 @@ exports.systemHealth = onSchedule({
     const idx = await db.collection('emp_index').limit(200).get();
     const orphans = [];
     for (const d of idx.docs) {
-      const uid = String((d.data() || {}).uid || '');
+      const indexData = d.data() || {};
+      if (!identityCoordinatorModule.activeIndex(indexData)) continue;
+      const uid = String(indexData.uid || '');
       if (!uid) { orphans.push(d.id + ' (בלי uid)'); continue; }
       const u = await db.doc('stations/' + sid + '/users/' + uid).get();
       if (!u.exists) orphans.push(d.id);

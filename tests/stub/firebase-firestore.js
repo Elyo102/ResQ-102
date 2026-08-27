@@ -584,8 +584,26 @@ export function getDoc(ref){
   return lag(null, p).then(() => getDoc0(ref));
 }
 
+export function getDocFromServer(ref){
+  return getDoc(ref);
+}
+
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
+  if (p.indexOf('registration_requests/') === 0) {
+    if (typeof window !== 'undefined' &&
+        window.__REGISTRATION_REQUEST_READ_FAIL === true) {
+      return Promise.reject({ code:'firestore/unavailable',
+                              message:'stub read failure' });
+    }
+    const exists = typeof window === 'undefined' ||
+                   window.__REGISTRATION_REQUEST_EXISTS !== false;
+    if (!exists) {
+      return Promise.resolve({ exists:() => false, data:() => undefined,
+                               id:p.split('/').pop() || 'stub' });
+    }
+    return Promise.resolve(docSnap({ status:'pending' }, p.split('/').pop()));
+  }
   if (p.indexOf('config/redline') !== -1) return Promise.resolve(docSnap(REDLINE, 'redline'));
   if (p.indexOf('config/board') !== -1)   return Promise.resolve(docSnap(BOARD, 'board'));
   if (/\/shifts\//.test(p))               return Promise.resolve(docSnap(SHIFT, 'shift'));
@@ -655,6 +673,10 @@ function constrainedRows(source, constraints) {
 export function getDocs(q){
   const p = (q && q.path) || '';
   const delayed = value => lag(value, p);
+  if (p === 'registration_requests' && typeof window !== 'undefined' &&
+      Array.isArray(window.__REGISTRATION_REQUESTS)) {
+    return delayed(listSnap(window.__REGISTRATION_REQUESTS));
+  }
   const replyMatch = p.match(
     /\/sub_stations\/([^/]+)\/bulletin_messages\/([^/]+)\/bulletin_replies$/
   );
@@ -744,7 +766,33 @@ export function onSnapshot(q, next, err){
 }
 
 export function addDoc(){ return Promise.resolve({ id: 'new1' }); }
-export function setDoc(){ return Promise.resolve(); }
+export function setDoc(ref, value, options){
+  const path = (ref && ref.path) || '';
+  if (typeof window !== 'undefined') {
+    window.__FIRESTORE_WRITES = window.__FIRESTORE_WRITES || [];
+    window.__FIRESTORE_WRITES.push({ path:path, value:value, options:options || null });
+    const failures = Array.isArray(window.__FIRESTORE_WRITE_FAIL_PATHS) ?
+      window.__FIRESTORE_WRITE_FAIL_PATHS : [];
+    const committedFailures = Array.isArray(window.__FIRESTORE_WRITE_FAIL_AFTER_COMMIT_PATHS) ?
+      window.__FIRESTORE_WRITE_FAIL_AFTER_COMMIT_PATHS : [];
+    if (committedFailures.some(function (item) {
+      return path.indexOf(String(item)) !== -1;
+    })) {
+      if (path.indexOf('registration_requests/') === 0) {
+        window.__REGISTRATION_REQUEST_EXISTS = true;
+      }
+      return Promise.reject({ code:'firestore/unavailable',
+                              message:'stub response lost after commit' });
+    }
+    if (failures.some(function (item) { return path.indexOf(String(item)) !== -1; })) {
+      return Promise.reject({ code:'firestore/unavailable', message:'stub write failure' });
+    }
+    if (path.indexOf('registration_requests/') === 0) {
+      window.__REGISTRATION_REQUEST_EXISTS = true;
+    }
+  }
+  return Promise.resolve();
+}
 export function deleteDoc(){ return Promise.resolve(); }
 export function serverTimestamp(){ return null; }
 export function writeBatch(){
