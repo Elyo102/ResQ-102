@@ -171,7 +171,7 @@ async function rejectsWith(label, promise, code) {
   assert.ok(coordinatorSource.indexOf('applyAssignmentProfile(uid, opId)') <
             coordinatorSource.indexOf("applyAuth(uid, opId, ['profile_applied'])"));
   const clearFlow = coordinatorSource.match(
-    /async function runClear[\s\S]*?\n  }\n\n  async function runBootstrap/
+    /async function runClear[\s\S]*?\r?\n  }\r?\n\r?\n  async function runBootstrap/
   );
   assert.ok(clearFlow && clearFlow[0].indexOf("applyAuth(uid, opId, ['prepared'])") <
             clearFlow[0].indexOf('applyDeactivation(uid, opId)'));
