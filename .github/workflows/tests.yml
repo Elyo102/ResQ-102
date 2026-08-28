@@ -90,5 +90,8 @@ jobs:
       - name: פונקציות לוח המודעות מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js"
 
+      - name: פעולות זהות והרשמה מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && npm run test:identity"
+
       - name: נוכחות Shadow מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js"

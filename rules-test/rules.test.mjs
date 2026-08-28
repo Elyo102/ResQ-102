@@ -97,6 +97,16 @@ const missingHr = who('u_hr_missing', 'hr-missing@x.com', {
 });
 const superA  = who('u_sup',  'fire102.shits@gmail.com', { super: true });
 const pending = who('u_pend', 'pend@x.com', {});                       // נרשם, טרם אושר
+const pendingMail = who('u_pend_mail', 'right@x.com', {});
+const pendingStatus = who('u_pend_status', 'status@x.com', {});
+const pendingOperation = who('u_pend_op', 'pending-op@x.com', {});
+const pendingActive = who('u_pend_active', 'pending-active@x.com', {});
+const regEmp = who('u_reg_emp', 'reg-emp@x.com', { emp:'777' });
+const regRole = who('u_reg_role', 'reg-role@x.com', { role:'firefighter' });
+const regStation = who('u_reg_station', 'reg-station@x.com', { stationId:SID });
+const regDistrict = who('u_reg_district', 'reg-district@x.com', { districtId:'south' });
+const regShift = who('u_reg_shift', 'reg-shift@x.com', { shift:'A' });
+const regSuper = who('u_reg_super', 'reg-super@x.com', { super:true });
 const outside = who('u_out',  'out@x.com',  { emp: '999', role: 'firefighter', stationId: 'other_99', shift: 'א' });
 const outsideHr = who('u_out_hr', 'out-hr@x.com', {
   emp: '998', role: 'hr_coordinator', stationId: 'other_99', shift: ''
@@ -368,6 +378,121 @@ await env.withSecurityRulesDisabled(async (c) => {
 console.log('\n\x1b[1m╔══════════════════════════════════════════════════╗');
 console.log('║   בדיקת כללי האבטחה — Firestore אמיתי            ║');
 console.log('╚══════════════════════════════════════════════════╝\x1b[0m');
+
+// ============================================================
+head('0 · בקשת הרשמה והגשה חוזרת');
+// ============================================================
+
+const registration = {
+  request_id: '1234567890abcdef1234567890abcdef',
+  full_name: 'כבאי ממתין', email: 'pend@x.com', phone: '0500000000',
+  districtId: 'south', stationId: SID, shift: 'A', status: 'pending',
+  created_at: null
+};
+
+await ok('נרשם יוצר בקשה רק תחת ה-uid והמייל שלו',
+  setDoc(doc(pending, 'registration_requests/u_pend'), registration));
+
+await ok('נרשם קורא את הבקשה של עצמו',
+  getDoc(doc(pending, 'registration_requests/u_pend')));
+
+await blocked('🔒 נרשם אינו מעדכן בקשה קיימת ודורס pending',
+  updateDoc(doc(pending, 'registration_requests/u_pend'),
+    { full_name: 'שם שנדרס' }));
+
+await blocked('🔒 משתמש אחר אינו קורא בקשה שאינה שלו',
+  getDoc(doc(pendingMail, 'registration_requests/u_pend')));
+
+await blocked('🔒 בקשה תחת uid של אדם אחר נחסמת',
+  setDoc(doc(pendingMail, 'registration_requests/u_other'), {
+    ...registration, email: 'right@x.com'
+  }));
+
+await blocked('🔒 מייל שאינו המייל בטוקן נחסם',
+  setDoc(doc(pendingMail, 'registration_requests/u_pend_mail'), {
+    ...registration, email: 'wrong@x.com'
+  }));
+
+await blocked('🔒 סטטוס שאינו pending נחסם ביצירה',
+  setDoc(doc(pendingStatus, 'registration_requests/u_pend_status'), {
+    ...registration, email: 'status@x.com', status: 'approved'
+  }));
+
+const legacyRegistration = { ...registration, email: 'right@x.com' };
+delete legacyRegistration.request_id;
+await ok('לקוח 41A ישן עדיין רשאי ליצור בקשה בלי request_id',
+  setDoc(doc(pendingMail, 'registration_requests/u_pend_mail'), legacyRegistration));
+await ok('לקוח 41A רשאי למחוק את בקשת ה-legacy שלו',
+  deleteDoc(doc(pendingMail, 'registration_requests/u_pend_mail')));
+
+await blocked('🔒 לקוח אינו רשאי ליצור generation או תוכנית שרתית',
+  setDoc(doc(pendingStatus, 'registration_requests/u_pend_status'), {
+    ...registration,
+    email: 'status@x.com',
+    server_generation: 'copied-server-generation',
+    request_fingerprint: 'a'.repeat(64),
+    resumable: true,
+    locked_plan: { role: 'commander' }
+  }));
+
+await blocked('🔒 טוקן מעודכן של חשבון מאושר אינו פותח בקשת הרשמה חדשה',
+  setDoc(doc(ff, 'registration_requests/u_ff'), {
+    ...registration, email: 'ff@x.com'
+  }));
+
+for (const [label, client, uid, email] of [
+  ['מספר עובד', regEmp, 'u_reg_emp', 'reg-emp@x.com'],
+  ['תפקיד', regRole, 'u_reg_role', 'reg-role@x.com'],
+  ['תחנה', regStation, 'u_reg_station', 'reg-station@x.com'],
+  ['מחוז', regDistrict, 'u_reg_district', 'reg-district@x.com'],
+  ['משמרת', regShift, 'u_reg_shift', 'reg-shift@x.com'],
+  ['מנהל-על', regSuper, 'u_reg_super', 'reg-super@x.com']
+]) {
+  await blocked('🔒 claim חלקי (' + label + ') חוסם בקשת הרשמה',
+    setDoc(doc(client, 'registration_requests/' + uid), {
+      ...registration, email
+    }));
+}
+
+await ok('נרשם רשאי למחוק את הבקשה של עצמו',
+  deleteDoc(doc(pending, 'registration_requests/u_pend')));
+
+await env.withSecurityRulesDisabled(async (c) => {
+  const d = c.firestore();
+  await setDoc(doc(d, 'registration_requests/u_pend'), {
+    ...registration,
+    status: 'processing',
+    operation_id: 'approve-op-1234567890',
+    email: 'pend@x.com'
+  });
+  await setDoc(doc(d, 'identity_operations/u_pend_op'), {
+    status: 'completed', assigned: true, op_id: 'completed-assignment'
+  });
+  await setDoc(doc(d, 'identity_operations/u_pend_active'), {
+    status: 'processing', assigned: false, op_id: 'active-assignment'
+  });
+});
+
+await blocked('🔒 נרשם אינו מוחק בקשה בזמן processing',
+  deleteDoc(doc(pending, 'registration_requests/u_pend')));
+await blocked('🔒 גם מנהל אינו מוחק processing ישירות מהדפדפן',
+  deleteDoc(doc(superA, 'registration_requests/u_pend')));
+await ok('נרשם עדיין קורא את בקשת processing של עצמו',
+  getDoc(doc(pending, 'registration_requests/u_pend')));
+await blocked('🔒 מסמך שיוך שרתי חוסם בקשה חדשה מטוקן ישן',
+  setDoc(doc(pendingOperation, 'registration_requests/u_pend_op'), {
+    ...registration, email: 'pending-op@x.com'
+  }));
+await blocked('🔒 פעולת שיוך פעילה חוסמת בקשה חדשה גם לפני כתיבת claims',
+  setDoc(doc(pendingActive, 'registration_requests/u_pend_active'), {
+    ...registration, email: 'pending-active@x.com'
+  }));
+await blocked('🔒 לקוח אינו קורא מסמך פעולת זהות',
+  getDoc(doc(superA, 'identity_operations/u_pend_op')));
+await blocked('🔒 לקוח אינו כותב שריון מספר עובד',
+  setDoc(doc(superA, 'emp_reservations/99991'), {
+    uid: 'u_sup', operation_id: 'bad'
+  }));
 
 // ============================================================
 head('1 · דוחות נוכחות — הנתון הרגיש ביותר');

@@ -49,6 +49,24 @@
           border:1px solid var(--line)}
     .gate.good{background:var(--good-bg);border-color:var(--good-bd);color:var(--good)}
     .gate.bad{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+    .run-panel,.readiness{margin-top:12px;border:1px solid var(--line-soft);
+          border-radius:12px;padding:13px;background:var(--panel)}
+    .run-panel h3,.readiness h3{font-size:14px;margin:0 0 9px}
+    .run-grid{display:grid;grid-template-columns:repeat(4,minmax(105px,1fr));gap:8px}
+    .run-metric{border:1px solid var(--line-soft);border-radius:10px;padding:10px;
+          background:var(--card)}
+    .run-metric .n{font-size:21px;font-weight:850;font-variant-numeric:tabular-nums}
+    .run-metric .k{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35}
+    .run-metric.good .n{color:var(--good)}.run-metric.warn .n{color:var(--warn)}
+    .run-metric.bad .n{color:var(--bad)}
+    .run-message,.coverage{color:var(--muted);font-size:12.5px;line-height:1.6}
+    .coverage{font-weight:750;margin-bottom:8px}
+    .readiness.good{background:var(--good-bg);border-color:var(--good-bd)}
+    .readiness.bad{background:var(--warn-bg);border-color:var(--warn)}
+    .reason-list,.action-list{margin:8px 0 0;padding-inline-start:20px;font-size:12.5px;
+          line-height:1.65}
+    .reason-list li+li,.action-list li+li{margin-top:4px}
+    .action-title{font-size:12px;font-weight:800;margin-top:10px}
     .person{border:1px solid var(--line);border-radius:12px;margin-top:9px;overflow:hidden}
     .person-head{display:flex;gap:8px;align-items:center;padding:11px 13px;background:var(--panel)}
     .person-head b{font-size:14px}.crew{font-size:11px;color:var(--muted)}
@@ -62,7 +80,8 @@
     .empty{text-align:center;color:var(--muted);padding:24px 12px;line-height:1.7}
     .hide{display:none!important}
     .foot{color:var(--muted);font-size:11.5px;line-height:1.6;margin-top:9px}
-    @media(max-width:780px){.stats{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:780px){.stats{grid-template-columns:repeat(3,1fr)}
+      .run-grid{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:560px){
       body{padding:18px}.stats{grid-template-columns:repeat(2,1fr)}
       .issue{grid-template-columns:82px 1fr}.issue .why{grid-column:1/-1}
@@ -72,7 +91,7 @@
 </head>
 <body>
 <main id="main" class="hide">
-  <h1>בקרת שעות · 41A</h1>
+  <h1>בקרת שעות אוטומטיות</h1>
   <div class="sub">המערכת משווה בין הסידור לבין הדיווח בפועל. זהו מצב צל בלבד —
     הנתונים במסך הזה אינם משנים שעות, אינם מאשרים דוח ואינם נכנסים לשכר.</div>
 
@@ -86,6 +105,14 @@
       <button type="button" id="btnMode" class="hide">—</button>
     </div>
     <div class="foot" id="lastRun">טוען את הריצה האחרונה…</div>
+    <div class="run-panel hide" id="runPanel" aria-labelledby="runTitle" aria-live="polite">
+      <h3 id="runTitle">תוצאות הצילום היומי האחרון</h3>
+      <div class="run-grid" id="runMetrics"></div>
+      <div class="run-message" id="runMessage"></div>
+      <ul class="reason-list hide" id="runConflicts"></ul>
+      <div class="action-title hide" id="runActionTitle">מה לתקן לקראת הצילום הבא</div>
+      <ul class="action-list hide" id="runActions"></ul>
+    </div>
     <div class="msg" id="actionMsg" role="status" aria-live="polite" tabindex="-1"></div>
   </section>
 
@@ -100,6 +127,12 @@
     <h2 id="reportTitle" style="margin-top:16px">תמונת החודש</h2>
     <div class="stats" id="stats" aria-live="polite"></div>
     <div id="gate"></div>
+    <div class="readiness hide" id="readiness" aria-labelledby="readinessTitle">
+      <h3 id="readinessTitle">מוכנות החודש</h3>
+      <div class="coverage" id="coverage"></div>
+      <ul class="reason-list" id="gateReasons"></ul>
+      <div class="foot" id="readinessNote"></div>
+    </div>
     <div class="foot" id="reportMeta"></div>
   </section>
 
@@ -189,6 +222,268 @@ function timeText(value){
   }).format(d);
 }
 
+function safeCount(value){
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
+    return null;
+  }
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 && n <= 1000000 ? n : null;
+}
+
+function validDateKey(value){
+  const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 &&
+    d.getUTCDate() === Number(m[3]);
+}
+
+function dateKeyText(value){
+  const m = validDateKey(value) && String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? m[3] + '.' + m[2] + '.' + m[1] : 'תאריך לא זמין';
+}
+
+function clearNode(node){
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function addListItem(node, text){
+  const item = document.createElement('li');
+  item.textContent = text;
+  node.appendChild(item);
+}
+
+const RUN_STATUS = {
+  complete:'הושלמה', building:'מתבצעת', failed:'נעצרה', cancelled:'בוטלה'
+};
+
+const RUN_RESULTS = [
+  ['ready_working','כשירים לעבודה','good'],
+  ['ready_off','ביום חופשי',''],
+  ['conflict','דורשים תיקון','bad'],
+  ['warning','עם אזהרה','warn']
+];
+
+const RUN_CONFLICTS = {
+  missing_emp:'חסר מספר עובד',
+  missing_roster:'חסר ברשימת התחנה',
+  missing_or_invalid_crew:'שיוך משמרת חסר או לא תקין',
+  missing_rotations:'מחזור המשמרות לא הוגדר',
+  missing_standby_crews:'בכוננות לא נבחרה משמרת',
+  swap_missing_swap_id:'להחלפה המאושרת חסר מזהה',
+  swap_missing_swap_party:'בהחלפה המאושרת חסר אחד הצדדים',
+  missing_shift_assignment:'לוח הציוות למשמרת לא נשמר',
+  missing_assignment:'אין שיבוץ במשבצת ובתחנת קצה',
+  missing_station:'לא ניתן לקבוע תחנת קצה מהציוות',
+  missing_commander_start:'שעת תחילת מפקד המשמרת לא הוגדרה'
+};
+
+const RUN_ACTIONS = [
+  { codes:['missing_emp'], text:'מנהל המערכת ישלים את קליטת העובד ואת מספר העובד.' },
+  { codes:['missing_roster'], text:'יש לסנכרן מחדש את שיוך העובד לרשימת התחנה.' },
+  { codes:['missing_or_invalid_crew'], text:'יש להשלים משמרת תקינה בכרטיס העובד.' },
+  { codes:['missing_rotations'],
+    text:'מנהל המערכת ישלים את הגדרת מחזור המשמרות לפני הצילום הבא.' },
+  { codes:['missing_standby_crews'],
+    text:'יש לתקן את אירוע הכוננות בסידור ולבחור לפחות משמרת אחת.' },
+  { codes:['swap_missing_swap_id','swap_missing_swap_party'],
+    text:'מנהל המערכת יבדוק את רשומת ההחלפה המאושרת ואת שני המשתתפים בה.' },
+  { codes:['missing_shift_assignment','missing_assignment','missing_station'],
+    text:'יש לפתוח את מסך הציוות, לשבץ כל עובד במשבצת ובתחנת הקצה המתאימה ולשמור.' },
+  { codes:['missing_commander_start'],
+    text:'מנהל המערכת ישלים את שעת תחילת מפקד המשמרת בהגדרת המשמרות.' }
+];
+
+const GATE_REASONS = {
+  future_period:'התקופה שנבחרה עדיין לא התחילה.',
+  no_snapshot_runs:'אין צילומי Shadow לתקופה שנבחרה.',
+  no_snapshot_rows:'הצילומים אינם כוללים רשומות עובדים.',
+  missing_snapshot_days:'חסרים ימי צילום בתקופה שנבדקה.',
+  source_conflicts:'קיימות סתירות בסידור או בציוות.',
+  identity_conflicts:'קיימות בעיות זיהוי או קליטת עובדים.',
+  data_warnings:'קיימות אזהרות נתונים שחוסמות אימות.',
+  mismatches:'נמצאו פערים בין הסידור לבין הדיווח בפועל.',
+  uncomparable:'יש רשומות שלא ניתן להשוות בבטחה.',
+  pending:'יש ימים שממתינים לדיווח.',
+  exceptions_require_review:'יש חריגים מוסברים שעדיין דורשים בדיקה.'
+};
+
+function paintRun(last){
+  const panel = $('runPanel');
+  const metrics = $('runMetrics');
+  const message = $('runMessage');
+  const conflictsBox = $('runConflicts');
+  const actionTitle = $('runActionTitle');
+  const actionsBox = $('runActions');
+  clearNode(metrics); clearNode(conflictsBox); clearNode(actionsBox);
+  message.textContent = '';
+  metrics.classList.remove('hide');
+  conflictsBox.classList.add('hide');
+  actionTitle.classList.add('hide');
+  actionsBox.classList.add('hide');
+  if (!last) { panel.classList.add('hide'); return; }
+  panel.classList.remove('hide');
+
+  const status = String(last.status || '');
+  if (status !== 'complete') {
+    metrics.classList.add('hide');
+    message.textContent = status === 'building'
+      ? 'צילום חדש מתבצע כעת. תוצאות יוצגו רק לאחר השלמה מלאה.'
+      : status === 'failed'
+        ? 'הצילום האחרון נעצר בבטחה. לא מוצגות תוצאות חלקיות; אפשר לנסות שוב או לפנות למנהל.'
+        : status === 'cancelled'
+          ? 'הצילום האחרון בוטל בבטחה. לא מוצגות תוצאות חלקיות.'
+          : 'מצב הצילום האחרון אינו זמין. לא מוצגות תוצאות חלקיות.';
+    return;
+  }
+
+  const counts = last.result_counts;
+  const values = counts && typeof counts === 'object'
+    ? RUN_RESULTS.map(item => safeCount(counts[item[0]])) : [];
+  const entryCount = safeCount(last.entry_count);
+  if (values.length !== RUN_RESULTS.length || values.some(value => value === null) ||
+      entryCount === null || values[0] + values[1] + values[2] !== entryCount ||
+      values[3] > entryCount) {
+    metrics.classList.add('hide');
+    message.textContent = 'פירוט תוצאות הצילום אינו זמין בגרסה שנשמרה.';
+    return;
+  }
+  RUN_RESULTS.forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'run-metric ' + item[2];
+    const n = document.createElement('div'); n.className = 'n';
+    n.textContent = values[index].toLocaleString('he-IL');
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = item[1];
+    card.append(n, k); metrics.appendChild(card);
+  });
+  message.textContent = 'הצילום כולל ' + entryCount.toLocaleString('he-IL') +
+    ' עובדים. אזהרות וקטגוריות תקלה עשויות לחפוף ואינן סכום עובדים ייחודיים.';
+
+  const raw = last.conflict_counts && typeof last.conflict_counts === 'object' &&
+    !Array.isArray(last.conflict_counts) ? last.conflict_counts : null;
+  const known = new Set(Object.keys(RUN_CONFLICTS));
+  const present = new Set();
+  const details = [];
+  let other = 0, detailTotal = 0, hasUnknown = false, detailsValid = !!raw, inspected = 0;
+  for (const [code, rawValue] of Object.entries(raw || {})) {
+    if (++inspected > 100) { detailsValid = false; break; }
+    const count = safeCount(rawValue);
+    if (count === null || count > values[2]) { detailsValid = false; break; }
+    detailTotal += count;
+    if (count === 0) continue;
+    if (known.has(code)) {
+      present.add(code);
+      details.push(RUN_CONFLICTS[code] + ': ' + count.toLocaleString('he-IL'));
+    } else {
+      hasUnknown = true;
+      other += count;
+    }
+  }
+  if (detailsValid && detailTotal < values[2]) detailsValid = false;
+  if (!detailsValid) {
+    present.clear();
+  } else {
+    details.forEach(text => addListItem(conflictsBox, text));
+    if (hasUnknown) {
+      addListItem(conflictsBox, other > 0
+        ? 'בעיות נוספות שדורשות בדיקה טכנית: ' + other.toLocaleString('he-IL') + ' סימונים'
+        : 'קיימות בעיות נוספות שדורשות בדיקה טכנית.');
+    }
+  }
+  if (values[2] > 0 && !conflictsBox.children.length) {
+    addListItem(conflictsBox, 'פירוט הבעיות אינו זמין בגרסה שנשמרה.');
+  }
+  if (conflictsBox.children.length) conflictsBox.classList.remove('hide');
+  RUN_ACTIONS.forEach(action => {
+    if (action.codes.some(code => present.has(code))) addListItem(actionsBox, action.text);
+  });
+  if (actionsBox.children.length) {
+    actionTitle.classList.remove('hide');
+    actionsBox.classList.remove('hide');
+  }
+}
+
+function clearReadiness(){
+  $('readiness').className = 'readiness hide';
+  $('coverage').textContent = '';
+  $('readinessNote').textContent = '';
+  clearNode($('gateReasons'));
+}
+
+function validCoverage(report){
+  const runs = report && report.snapshot_run_ids;
+  const missing = report && report.missing_snapshot_days;
+  const through = String(report && report.compared_through || '');
+  if (!Array.isArray(runs) || !Array.isArray(missing) ||
+      !validDateKey(through) ||
+      (reportMonth && through.slice(0, 7) !== reportMonth) ||
+      runs.length + missing.length < 1 || runs.length + missing.length > 31 ||
+      runs.length + missing.length !== Number(through.slice(8, 10)) ||
+      new Set(runs.map(String)).size !== runs.length ||
+      new Set(missing.map(String)).size !== missing.length ||
+      runs.some(value => typeof value !== 'string' || !value || value.length > 200) ||
+      missing.some(value => typeof value !== 'string' ||
+        !validDateKey(value) || value.slice(0, 7) !== through.slice(0, 7))) {
+    return null;
+  }
+  return { complete:runs.length, missing:missing.length,
+    total:runs.length + missing.length, through:through };
+}
+
+function normalizedGateReasons(report){
+  const raw = report && report.gate_reasons;
+  if (!Array.isArray(raw) || raw.length > 20 ||
+      raw.some(value => typeof value !== 'string' || value.length > 100)) return null;
+  return Array.from(new Set(raw));
+}
+
+function provenGatePass(report){
+  const reasons = normalizedGateReasons(report);
+  const coverage = validCoverage(report);
+  return report && report.gate_pass === true && Array.isArray(reasons) &&
+    reasons.length === 0 && coverage && coverage.missing === 0;
+}
+
+function paintReadiness(report){
+  clearReadiness();
+  const box = $('readiness');
+  const reasonsBox = $('gateReasons');
+  const reasons = normalizedGateReasons(report);
+  const coverage = validCoverage(report);
+  const passed = provenGatePass(report);
+  box.className = 'readiness ' + (passed ? 'good' : 'bad');
+  $('readinessTitle').textContent = passed
+    ? 'התקופה עברה את שער Shadow'
+    : 'מה חוסם את התקופה';
+  $('coverage').textContent = coverage
+    ? 'כיסוי עד ' + dateKeyText(coverage.through) + ': ' +
+      coverage.complete.toLocaleString('he-IL') + ' מתוך ' +
+      coverage.total.toLocaleString('he-IL') + ' ימים' +
+      (coverage.missing ? ' · חסרים ' + coverage.missing.toLocaleString('he-IL') : '')
+    : 'כיסוי הצילומים אינו זמין בדוח הזה.';
+
+  if (passed) {
+    addListItem(reasonsBox, 'לא נמצאו סיבות חוסמות בתקופה שנבדקה.');
+  } else if (reasons && reasons.length) {
+    let unknownShown = false;
+    reasons.forEach(code => {
+      if (GATE_REASONS[code]) addListItem(reasonsBox, GATE_REASONS[code]);
+      else if (!unknownShown) {
+        addListItem(reasonsBox, 'קיימת סיבה נוספת שדורשת בדיקה טכנית.');
+        unknownShown = true;
+      }
+    });
+  } else {
+    addListItem(reasonsBox, 'סיבת החסימה אינה זמינה בדוח הזה.');
+  }
+  const missingPast = reasons && reasons.includes('missing_snapshot_days');
+  $('readinessNote').textContent = passed
+    ? 'זהו אישור איכות ל-Shadow בלבד. הוא אינו מפעיל שעות אוטומטיות ואינו מאשר שכר.'
+    : missingPast
+      ? 'תיקוני קליטה וציוות ישפיעו על הצילום הבא. צילום חסר מיום עבר אינו ניתן להשלמה מהמסך הזה ודורש בדיקה טכנית.'
+      : 'יש לתקן את המקור לקראת הצילום הבא. אין במסך הזה שינוי בשעות או בשכר.';
+}
+
 function paintStatus(data){
   STATUS = data || {};
   const on = STATUS.mode === 'shadow';
@@ -197,10 +492,11 @@ function paintStatus(data){
   $('btnRun').disabled = !on;
   const last = STATUS.last_run || null;
   $('lastRun').textContent = last
-    ? 'ריצה אחרונה: ' + (last.target_date || '—') + ' · ' +
-      (last.status === 'complete' ? 'הושלמה' : (last.status || 'לא ידוע')) +
+    ? 'ריצה אחרונה: ' + dateKeyText(last.target_date) + ' · ' +
+      (RUN_STATUS[String(last.status || '')] || 'מצב לא ידוע') +
       ' · ' + timeText(last.completed_at || last.started_at)
     : 'עדיין לא נשמר צילום צל.';
+  paintRun(last);
   if (CLAIMS.super === true || String(auth.currentUser && auth.currentUser.email || '').toLowerCase() === SUPER_ADMIN) {
     $('btnMode').classList.remove('hide');
     $('btnMode').className = on ? 'stop' : 'go';
@@ -217,6 +513,7 @@ async function loadStatus(){
     $('modeState').textContent = 'המצב לא זמין';
     $('btnRun').disabled = true;
     $('lastRun').textContent = errorText(error);
+    paintRun(null);
   }
 }
 
@@ -227,15 +524,32 @@ const LABELS = {
   hours_mismatch:'פער בשעות', station_mismatch:'פער בתחנה',
   missing_actual_station:'תחנה חסרה בדיווח', time_mismatch:'פער בזמנים',
   identity_conflict:'בעיית זיהוי', duplicate_actual:'דיווח כפול',
-  source_conflict:'סתירה בסידור', uncomparable:'לא ניתן להשוות',
+  source_conflict:'סתירה בסידור', source_conflicts:'סתירות בסידור',
+  uncomparable:'לא ניתן להשוות', match:'תואם', mismatch:'פער', explained:'חריג מוסבר',
   missing_station:'תחנה לא ידועה', ambiguous_station:'יותר מתחנה אחת',
   rotation_conflict:'מחזור לא תקין', rest_violation:'הפרת מנוחה',
-  missing_roster:'חסר ברשימת התחנה', crew_mismatch:'סתירה במשמרת',
-  role_mismatch:'סתירה בתפקיד', missing_board_assignment:'אין שיבוץ בציוות'
+  missing_emp:'חסר מספר עובד', missing_roster:'חסר ברשימת התחנה',
+  missing_or_invalid_crew:'שיוך משמרת חסר או לא תקין',
+  missing_shift_assignment:'לוח הציוות למשמרת לא נשמר',
+  missing_assignment:'אין שיבוץ בציוות', missing_board_assignment:'אין שיבוץ בציוות',
+  crew_mismatch:'סתירה במשמרת', roster_crew_mismatch:'סתירה בין כרטיס העובד לסגל',
+  role_mismatch:'סתירה בתפקיד', roster_role_mismatch:'סתירה בתפקיד מול הסגל',
+  duplicate_emp:'מספר עובד כפול', unknown_role:'תפקיד לא מוכר',
+  legacy_source:'דיווח ישן ללא סימון מקור', default_station_used:'נעשה שימוש בתחנת ברירת מחדל'
 };
 
-function label(code){ return LABELS[code] || String(code || '').replace(/_/g, ' '); }
-function num(v){ return Number(v || 0).toLocaleString('he-IL'); }
+function label(code){
+  const value = String(code || '');
+  if (LABELS[value]) return LABELS[value];
+  if (value.startsWith('swap_')) return 'בעיה בהחלפה';
+  if (value.startsWith('invalid_')) return 'נתון לא תקין';
+  if (value.startsWith('inconsistent_')) return 'סתירה בנתוני המקור';
+  return 'בעיה נוספת לבדיקה טכנית';
+}
+function num(v){
+  const value = safeCount(v);
+  return value === null ? '—' : value.toLocaleString('he-IL');
+}
 
 function paintSummary(report){
   const t = (report && report.totals) || {};
@@ -255,9 +569,10 @@ function paintSummary(report){
 
   const gate = $('gate');
   if (!report) { gate.innerHTML = ''; return; }
-  gate.className = 'gate ' + (report.gate_pass === true ? 'good' : 'bad');
-  gate.textContent = report.gate_pass === true
-    ? 'בדיקות החודש עברו את שער Shadow. עדיין אין לכך השפעה על השכר.'
+  const passed = provenGatePass(report);
+  gate.className = 'gate ' + (passed ? 'good' : 'bad');
+  gate.textContent = passed
+    ? 'התקופה עברה את שער Shadow. עדיין אין לכך השפעה על שעות או שכר.'
     : 'החודש עדיין אינו מוכן להפעלה אוטומטית. יש חריגים שדורשים בדיקה.';
   $('reportMeta').textContent = 'עודכן: ' + timeText(report.generated_at) +
     ' · נבדק עד: ' + (report.compared_through || '—') +
@@ -348,6 +663,8 @@ async function loadPeople(reset){
     peopleCursor = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
     $('btnMore').classList.toggle('hide', snap.docs.length < 100);
   } catch (error) {
+    if (expected !== reportLoadGeneration || expectedMonth !== reportMonth ||
+        expectedGeneration !== activeGeneration) return;
     if (reset) $('people').innerHTML = '<div class="empty">טעינת החריגים נכשלה. (' +
       esc(error.code || error.message || '') + ')</div>';
   } finally {
@@ -367,6 +684,7 @@ async function loadReport(){
   peopleCursor = null;
   $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">טוען דוח…</div>';
   $('gate').innerHTML = '';
+  clearReadiness();
   $('reportMeta').textContent = '';
   $('btnMore').classList.add('hide');
   try {
@@ -393,8 +711,11 @@ async function loadReport(){
       return;
     }
     paintSummary(report);
+    paintReadiness(report);
     await loadPeople(true);
   } catch (error) {
+    if (expected !== reportLoadGeneration || reportMonth !== mk) return;
+    clearReadiness();
     $('stats').innerHTML = '<div class="empty" style="grid-column:1/-1">' +
       'טעינת הדוח נכשלה. (' + esc(error.code || error.message || '') + ')</div>';
   }

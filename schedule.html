@@ -105,6 +105,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                     background:var(--bad,var(--bad));
                     box-shadow:0 0 0 2px var(--panel)}
   .day.mine.unfit::after{box-shadow:0 0 0 2px rgba(0,0,0,.35)}
+  .day.fit-unknown::after{content:'';position:absolute;top:5px;inset-inline-end:5px;
+                    width:8px;height:8px;border-radius:50%;box-sizing:border-box;
+                    border:2px solid var(--warn);background:var(--panel)}
 
   /* יום עם חריגה. משולש קטן בפינה הנגדית לנקודת הכשירות,
      כדי ששני הסימונים לא יתנגשו על אותו יום. */
@@ -141,6 +144,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .fit .p{flex:1 1 150px;border:1px solid var(--line);border-radius:9px;
           padding:9px 11px;background:var(--panel)}
   .fit .p.bad{border-color:var(--bad);background:var(--bad-bg)}
+  .fit .p.unavailable{border-color:var(--warn);background:var(--warn-bg)}
   .fit .p .h{display:flex;align-items:center;gap:7px;font-size:13px;
              font-weight:700;margin-bottom:3px}
   .fit .p .tag{font-size:11px;font-weight:800;border-radius:5px;padding:2px 7px;
@@ -150,6 +154,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .fit .p .tag.C{background:var(--crewC)}
   .fit .p .s{font-size:12px;color:var(--soft-bad);line-height:1.6}
   .fit .p .s.ok{color:var(--muted)}
+  .fit .p .s.unavailable{color:var(--warn)}
   .fit .note{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.7}
   /* טלפון: חוזרים לריבוע. ריבוע רחב על מסך צר גוזל גובה
      ודוחף את הסיכום מתחת לקיפול. */
@@ -177,6 +182,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .legend{display:flex;flex-wrap:wrap;gap:10px 14px;justify-content:center;margin-top:14px;font-size:12px;color:var(--muted)}
   .legend span{display:flex;align-items:center;gap:4px}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .dot.unknown{background:transparent;border:2px solid var(--warn);box-sizing:border-box}
 
   .center{text-align:center;color:var(--muted);padding:26px 0;font-size:14px}
   .hide{display:none}
@@ -256,6 +262,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <span><i class="dot" style="background:var(--crewC);
               border:2px solid var(--txt)"></i>המשמרת שלי</span>
         <span><i class="dot" style="background:var(--bad)"></i>לא כשירה</span>
+        <span><i class="dot unknown"></i>כשירות לא זמינה</span>
         <span><i class="dot" style="background:var(--warn)"></i>חריגה</span>
       </div>
     </div>
@@ -367,6 +374,56 @@ let mySwaps = [];        // החלפות מאושרות
 let myGuards = [];       // אבטחות שאני משובץ אליהן
 let canEditOvr = false;
 let SID = '';
+let authGeneration = 0;
+let stopScheduleCallouts = function () {};
+
+function clearFitnessView(){
+  fit = {};
+  qualNames = {};
+  myCrews = [];
+  $('fitBoxes').innerHTML = '';
+  $('fitNote').textContent = '';
+  $('fitCard').style.display = 'none';
+}
+
+function stopCalloutWatch(){
+  const stop = stopScheduleCallouts;
+  stopScheduleCallouts = function () {};
+  try { stop(); } catch (ignore) {}
+  const wrap = $('coWrap');
+  if (wrap) wrap.classList.remove('on');
+}
+
+function clearSessionView(){
+  stopCalloutWatch();
+  clearFitnessView();
+  me = null;
+  rotations = [];
+  overrides = {};
+  mySwaps = [];
+  myGuards = [];
+  canEditOvr = false;
+  SID = '';
+  $('meName').textContent = '';
+  $('meSub').textContent = '';
+  $('mainView').classList.add('hide');
+  $('ovrCard').classList.add('hide');
+  $('blocked').textContent = '';
+  $('blocked').classList.add('hide');
+  // הסרגל נמצא מחוץ ל-mainView. מחליפים אותו מיד בסרגל הציבורי
+  // המינימלי כדי ששם וקישורי תפקיד ישנים לא יישארו בזמן טעינה.
+  renderStuckNav('');
+}
+
+function authContextCurrent(context){
+  const current = auth.currentUser;
+  return !!(context && context.generation === authGeneration && current &&
+            current.uid === context.uid);
+}
+
+function fitnessContextCurrent(context){
+  return authContextCurrent(context) && SID === context.sid;
+}
 
 // ---------- כניסה ----------
 
@@ -386,39 +443,48 @@ $('btnIn').onclick = async () => {
 $('btnOut').onclick = () => signOut(auth);
 
 onAuthStateChanged(auth, async user => {
+  const generation = ++authGeneration;
+  clearSessionView();
   if (!user) { goSignIn(); return; }
+
+  const authContext = { generation: generation, uid: user.uid };
 
   let claims = {};
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (!authContextCurrent(authContext)) return;
+
+  const sid = claims.stationId || STATION_ID;
+  const localCanEditOvr = claims.super === true || claims.role === 'super_admin' ||
+    ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+  let localMe = null;
 
   try {
     // התחנה מגיעה מהטוקן. הקבוע שימש כברירת מחדל בלבד, וכל כבאי
     // שאינו באילת היה נתקע כאן במסך שגיאה בלי דרך המשך.
-    const sid = claims.stationId || STATION_ID;
     const s = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
+    if (!authContextCurrent(authContext)) return;
     if (!s.exists()) {
       renderStuckNav(user.email || '');
       showBlocked('החשבון אינו משויך לכבאי בתחנה הזו. פנה למנהל המערכת.');
       return;
     }
-    me = s.data();
+    localMe = s.data();
   } catch (e) {
+    if (!authContextCurrent(authContext)) return;
     renderStuckNav(user.email || '');
     showBlocked('שגיאה בטעינת הפרופיל: ' + (e.code || e.message || ''));
     return;
   }
 
-  SID = claims.stationId || STATION_ID;
-  canEditOvr = claims.super === true || claims.role === 'super_admin' ||
-               ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
-
+  let localRotations = [];
   try {
-    const rs = await getDocs(collection(db, 'stations', SID, 'rotations'));
-    rotations = rs.docs.map(d => d.data());
+    const rs = await getDocs(collection(db, 'stations', sid, 'rotations'));
+    if (!authContextCurrent(authContext)) return;
+    localRotations = rs.docs.map(d => d.data());
   } catch (e) {
+    if (!authContextCurrent(authContext)) return;
     // הבחנה חשובה: "אין מחזור" ו"אין לך הרשאה לקרוא" נראים אותו
     // דבר כשבולעים את השגיאה, ומי שנחסם חושב שהתחנה לא הוגדרה.
-    rotations = [];
     if (String(e.code || '').indexOf('permission-denied') !== -1) {
       renderStuckNav(user.email || '');
       showBlocked('אין לך הרשאה לקרוא את סידור התחנה הזו.');
@@ -426,28 +492,43 @@ onAuthStateChanged(auth, async user => {
     }
   }
 
-  await loadOverrides();
+  const localOverrides = await loadOverridesFor(sid);
+  if (!authContextCurrent(authContext)) return;
+
+  const localSwaps = [];
   try {
-    const sw = await getDocs(collection(db, 'stations', SID, 'swaps'));
-    mySwaps = [];
+    const sw = await getDocs(collection(db, 'stations', sid, 'swaps'));
+    if (!authContextCurrent(authContext)) return;
     sw.forEach(d => {
       const v = d.data() || {};
-      if (v.status === 'approved') mySwaps.push(v);
+      if (v.status === 'approved') localSwaps.push(v);
     });
   } catch (ignore) {}
+  if (!authContextCurrent(authContext)) return;
 
   // אבטחות. הן נשמרות עם תאריך בלבד, ולכן הן נופלות ליומן
   // מעצמן — אין כאן שיבוץ ידני ואין לוח נפרד לתחזק.
+  const localGuards = [];
   try {
-    const uid = auth.currentUser ? auth.currentUser.uid : '';
-    const gs = await getDocs(collection(db, 'stations', SID, 'guards'));
-    myGuards = [];
+    const gs = await getDocs(collection(db, 'stations', sid, 'guards'));
+    if (!authContextCurrent(authContext)) return;
     gs.forEach(d => {
       const v = Object.assign({ id: d.id }, d.data() || {});
       if (v.status === 'cancelled') return;
-      if (guardHasMe(v, uid)) myGuards.push(v);
+      if (guardHasMe(v, authContext.uid)) localGuards.push(v);
     });
   } catch (ignore) {}
+  if (!authContextCurrent(authContext)) return;
+
+  // עד כאן הכול מקומי. רק callback שזהותו עדיין בתוקף רשאי
+  // לפרסם את התמונה השלמה אל ה-state ואל המסך.
+  me = localMe;
+  SID = sid;
+  canEditOvr = localCanEditOvr;
+  rotations = localRotations;
+  overrides = localOverrides;
+  mySwaps = localSwaps;
+  myGuards = localGuards;
 
   $('meName').textContent = me.full_name;
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
@@ -457,7 +538,8 @@ onAuthStateChanged(auth, async user => {
             (me.full_name || user.email || '') +
             (claims.emp ? ' · מס׳ ' + claims.emp : ''));
 
-  watchCallouts(db, SID, user.uid, { name: me.full_name || user.email || '' });
+  stopScheduleCallouts = watchCallouts(
+    db, SID, authContext.uid, { name: me.full_name || user.email || '' });
 
   $('authView').classList.add('hide');
   $('mainView').classList.remove('hide');
@@ -476,21 +558,31 @@ onAuthStateChanged(auth, async user => {
 
   // הכשירות נטענת אחרי הלוח, לא לפניו. אם הקריאה איטית או
   // נכשלת, הסידור עצמו כבר על המסך — הוא לא ממתין לה.
-  myCrews = visibleCrews(claims);
-  await loadFitness(claims.stationId || STATION_ID);
+  const fitnessContext = {
+    generation: generation,
+    uid: user.uid,
+    sid: SID,
+    crews: visibleCrews(claims).slice()
+  };
+  if (!fitnessContextCurrent(fitnessContext)) return;
+  myCrews = fitnessContext.crews.slice();
+  const fitnessResult = await loadFitness(fitnessContext);
+  if (!fitnessContextCurrent(fitnessContext)) return;
+  fit = fitnessResult.nextFit;
+  qualNames = fitnessResult.nextQualNames;
   renderFitness();
   render();
 });
 
 // ---------- חריגות ----------
 
-async function loadOverrides(){
-  overrides = {};
+async function loadOverridesFor(sid){
+  const result = {};
   try {
-    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
+    const os = await getDocs(collection(db, 'stations', sid, 'shift_overrides'));
     os.forEach(function (d) {
       const v = d.data() || {};
-      overrides[d.id] = {
+      result[d.id] = {
         kind: v.kind || 'holiday',
         crew: v.crew || '',
         extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
@@ -498,6 +590,7 @@ async function loadOverrides(){
       };
     });
   } catch (ignore) {}
+  return result;
 }
 
 function setupOvrForm(){
@@ -622,65 +715,112 @@ function renderOvrList(){
 
 // ---------- כשירות ----------
 
-async function loadFitness(sid){
-  const people = [], held = {};
+async function loadFitness(context){
+  // כל הערכים שמגדירים הרשאה וזהות מצולמים לפני ה-await. טעינה
+  // ישנה לעולם אינה ממפה תוצאות אל רשימת משמרות של משתמש חדש.
+  const sid = context.sid;
+  const crews = context.crews.slice();
+  const people = [], held = {}, assigns = {}, shiftUnavailable = {};
+  const nextQualNames = {};
   let redline = null, board = null;
-  const assigns = {};
 
-  try {
-    const qs = await getDocs(collection(db, 'stations', sid, 'quals'));
-    qs.forEach(d => { qualNames[d.id] = (d.data() || {}).name || ''; });
-  } catch (ignore) {}
+  // אותם מקורות ואותה עלות כמו קודם, אבל הקריאות הבלתי־תלויות
+  // יוצאות יחד. כל תוצאה נשמרת בנפרד כדי שכשל לא יבטל אחרות.
+  const settle = task => Promise.resolve()
+    .then(task)
+    .then(value => ({ value: value, error: null }))
+    .catch(error => ({ value: null, error: error }));
+  const tasks = [
+    () => getDocs(collection(db, 'stations', sid, 'quals')),
+    () => getDocs(collection(db, 'stations', sid, 'roster')),
+    () => getDocs(collection(db, 'stations', sid, 'member_quals')),
+    () => getDoc(doc(db, 'stations', sid, 'config', 'redline')),
+    () => getDoc(doc(db, 'stations', sid, 'config', 'board'))
+  ];
+  crews.forEach(crew => tasks.push(
+    () => getDoc(doc(db, 'stations', sid, 'shifts', crew))));
+  const reads = await Promise.all(tasks.map(settle));
+  const [qualRead, rosterRead, heldRead, redlineRead, boardRead] = reads;
+  let commonUnavailable = reads.slice(0, 5).some(read => !read || read.error);
 
-  try {
-    const rs = await getDocs(collection(db, 'stations', sid, 'roster'));
-    rs.forEach(d => {
+  if (qualRead && !qualRead.error) try {
+    qualRead.value.forEach(d => {
+      nextQualNames[d.id] = (d.data() || {}).name || '';
+    });
+  } catch (ignore) { commonUnavailable = true; }
+
+  if (rosterRead && !rosterRead.error) try {
+    rosterRead.value.forEach(d => {
       const v = d.data() || {};
       if (v.is_active === false) return;
       people.push({ uid: d.id, crew: v.crew || '' });
     });
-  } catch (ignore) {}
+  } catch (ignore) { commonUnavailable = true; }
 
-  try {
-    const ms = await getDocs(collection(db, 'stations', sid, 'member_quals'));
-    ms.forEach(d => {
+  if (heldRead && !heldRead.error) try {
+    heldRead.value.forEach(d => {
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
-  } catch (ignore) {}
+  } catch (ignore) { commonUnavailable = true; }
 
-  try {
-    const r = await getDoc(doc(db, 'stations', sid, 'config', 'redline'));
+  if (redlineRead && !redlineRead.error) try {
+    const r = redlineRead.value;
     if (r.exists()) redline = r.data();
-  } catch (ignore) {}
+  } catch (ignore) { commonUnavailable = true; }
 
-  try {
-    const b = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
+  if (boardRead && !boardRead.error) try {
+    const b = boardRead.value;
     if (b.exists()) board = b.data();
-  } catch (ignore) {}
+  } catch (ignore) { commonUnavailable = true; }
 
-  // רק המשמרות שמותר לי לראות. קריאה למשמרת אחרת תיחסם בשרת,
-  // ואין טעם לשלוח בקשה שאני יודע מראש שתידחה.
-  for (const crew of myCrews) {
+  // רק המשמרות שב-snapshot המורשה. מסמך שלא קיים הוא שיבוץ
+  // ריק תקין; כשל קריאה או מבנה פגום הוא מצב לא־ידוע נפרד.
+  crews.forEach(function (crew, index) {
+    const read = reads[5 + index];
+    if (!read || read.error) {
+      shiftUnavailable[crew] = true;
+      assigns[crew] = {};
+      return;
+    }
     try {
-      const s = await getDoc(doc(db, 'stations', sid, 'shifts', crew));
+      const s = read.value;
       assigns[crew] = (s.exists() && (s.data() || {}).assign) || {};
-    } catch (ignore) { assigns[crew] = {}; }
-  }
-
-  fit = {};
-  myCrews.forEach(function (crew) {
-    const rl = redlineState(people, held, redline, crew);
-    const bs = boardState(board, assigns[crew], held);
-    fit[crew] = { rl: rl, bs: bs, verdict: crewReady(rl, bs) };
+    } catch (ignore) {
+      shiftUnavailable[crew] = true;
+      assigns[crew] = {};
+    }
   });
+
+  const nextFit = {};
+  crews.forEach(function (crew) {
+    if (commonUnavailable || shiftUnavailable[crew]) {
+      nextFit[crew] = { unavailable: true, rl: null, bs: null, verdict: null };
+      return;
+    }
+    try {
+      const rl = redlineState(people, held, redline, crew);
+      const bs = boardState(board, assigns[crew], held);
+      nextFit[crew] = {
+        unavailable: false,
+        rl: rl,
+        bs: bs,
+        verdict: crewReady(rl, bs)
+      };
+    } catch (ignore) {
+      nextFit[crew] = { unavailable: true, rl: null, bs: null, verdict: null };
+    }
+  });
+
+  return { nextFit: nextFit, nextQualNames: nextQualNames };
 }
 
 function qualName(id){ return qualNames[id] || id; }
 
 function renderFitness(){
-  const known = myCrews.some(c => fit[c] && fit[c].verdict.known);
-  if (!known) { $('fitCard').style.display = 'none'; return; }
+  const visible = myCrews.some(c => fit[c] &&
+    (fit[c].unavailable || (fit[c].verdict && fit[c].verdict.known)));
+  if (!visible) { $('fitCard').style.display = 'none'; return; }
 
   $('fitCard').style.display = '';
   const box = $('fitBoxes');
@@ -689,6 +829,19 @@ function renderFitness(){
   myCrews.forEach(function (crew) {
     const f = fit[crew];
     if (!f) return;
+    if (f.unavailable) {
+      const unknown = document.createElement('div');
+      unknown.className = 'p unavailable';
+      unknown.innerHTML =
+        '<div class="h"><span class="tag ' + crew + '">' +
+          (CREW_HE[crew] || crew) + '</span>לא ניתן לחשב כשירות</div>' +
+        '<div class="s unavailable">חלק מנתוני הכשירות לא נטען. נסה לרענן.</div>';
+      box.appendChild(unknown);
+      return;
+    }
+    // known=false פירושו שלא הוגדרו תנאי כשירות. זה אינו verdict
+    // חיובי, ולכן אין להציג אותו כ"כשירה" כאשר כרטיס אחר נכשל.
+    if (!f.verdict || !f.verdict.known) return;
     const bad = !f.verdict.ready;
     const txt = summaryText(f.rl, f.bs, qualName);
 
@@ -775,7 +928,9 @@ function render(){
     const ov   = overrideOn(overrides, date);
 
     const f = crew ? fit[crew] : null;
-    const unfit = !!(f && f.verdict.known && !f.verdict.ready);
+    const fitnessUnknown = !!(f && f.unavailable);
+    const unfit = !!(f && !fitnessUnknown && f.verdict &&
+                     f.verdict.known && !f.verdict.ready);
 
     const eff  = swapEffect(mySwaps, auth.currentUser ? auth.currentUser.uid : '', toKey(date));
     const mineToday = me.crew &&
@@ -786,6 +941,7 @@ function render(){
     el.className = 'day' + (crew ? ' ' + crew : '') +
                    (mineToday ? ' mine' : '') +
                    (unfit ? ' unfit' : '') +
+                   (fitnessUnknown ? ' fit-unknown' : '') +
                    (ov ? ' ovr' + (ov.kind === 'swap' ? ' swap' : '') : '') +
                    (sameDay(date, today) ? ' today' : '');
     if (eff) {
@@ -794,9 +950,12 @@ function render(){
     if (ov) {
       el.title = (el.title || '') + overrideKindHe(ov.kind) +
                  (ov.note ? ' · ' + ov.note : '') +
-                 (unfit ? '\n' : '');
+                 (unfit || fitnessUnknown ? '\n' : '');
     }
-    if (unfit) {
+    if (fitnessUnknown) {
+      el.title = (el.title || '') + 'משמרת ' + (CREW_HE[crew] || crew) +
+                 ' — לא ניתן לחשב כשירות';
+    } else if (unfit) {
       el.title = (el.title || '') + 'משמרת ' + (CREW_HE[crew] || crew) +
                  ' — לא כשירה · ' + summaryText(f.rl, f.bs, qualName);
     }

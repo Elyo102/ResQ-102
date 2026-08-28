@@ -244,7 +244,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <!-- ============ כניסה והרשמה ============ -->
   <div id="authView" class="hide">
-    <div class="tabs" role="tablist" aria-label="כניסה או הרשמה">
+    <div class="tabs" id="authTabs" role="tablist" aria-label="כניסה או הרשמה">
       <button type="button" class="tab on" id="tabLogin" role="tab" tabindex="0" aria-selected="true" aria-controls="paneLogin">כניסה</button>
       <button type="button" class="tab" id="tabFirst" role="tab" tabindex="-1" aria-selected="false" aria-controls="paneFirst">הרשמה</button>
     </div>
@@ -295,26 +295,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         אם טעית — פנה לראש המשמרת.
       </div>
 
-      <label for="fCode">קוד תחנה <span style="opacity:.7">(לא חובה)</span></label>
-      <input type="text" id="fCode" autocomplete="off" inputmode="numeric">
-      <div class="note" style="margin-top:6px">
-        קיבלת קוד מראש המשמרת? הקלד אותו — והחשבון ייפתח מיד.
-        בלי קוד הבקשה תמתין לאישור מנהל.
-      </div>
+      <div id="newPasswordFields">
+        <label for="fPass">בחר סיסמה</label>
+        <input type="password" id="fPass" autocomplete="new-password" aria-describedby="pwRules">
+        <div class="pw-rules" id="pwRules">
+          <i id="pw1">8 תווים לפחות</i> ·
+          <i id="pw2">אות גדולה</i> ·
+          <i id="pw3">אות קטנה</i> ·
+          <i id="pw4">ספרה</i>
+        </div>
 
-      <label for="fPass">בחר סיסמה</label>
-      <input type="password" id="fPass" autocomplete="new-password" aria-describedby="pwRules">
-      <div class="pw-rules" id="pwRules">
-        <i id="pw1">8 תווים לפחות</i> ·
-        <i id="pw2">אות גדולה</i> ·
-        <i id="pw3">אות קטנה</i> ·
-        <i id="pw4">ספרה</i>
+        <label for="fPass2">אימות סיסמה</label>
+        <input type="password" id="fPass2" autocomplete="new-password">
       </div>
-
-      <label for="fPass2">אימות סיסמה</label>
-      <input type="password" id="fPass2" autocomplete="new-password">
 
       <button id="btnFirst">שלח בקשה</button>
+      <button type="button" class="back hide" id="btnResubmitCancel">חזרה למסך החשבון</button>
       <div class="note">
         מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
       </div>
@@ -337,6 +333,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
     <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
+    <button id="btnResubmit" class="hide">מלא ושלח בקשה מחדש</button>
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
@@ -465,9 +462,9 @@ import { firebaseConfig, STATION_ID } from './firebase-config.js?v=40';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
          subStationsForStation } from './stations.js?v=40';
 import { renderNav, clearNav } from './nav.js?v=40';
-import { ROLE_HE as ROLES_HE, isMember } from './roles.js?v=40';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=40';
 import { initPWA } from './pwa.js?v=40';
-import { APP_VERSION, APP_DATE } from './version.js?v=40';
+import { APP_VERSION, APP_DATE } from './version.js?v=41e1';
 import { watchCallouts } from './callout.js?v=40';
 import { initBulletin, destroyBulletin } from './bulletin.js?v=40';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -476,7 +473,7 @@ import { getAuth, signInWithEmailAndPassword,
          deleteUser, updatePassword, reauthenticateWithCredential,
          EmailAuthProvider, setPersistence, browserLocalPersistence }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, collection, query, where,
+import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
@@ -495,6 +492,7 @@ const fns = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
+const callWho   = httpsCallable(fns, 'whoAmI');
 
 // חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
 // וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
@@ -506,6 +504,12 @@ setPersistence(auth, browserLocalPersistence).catch(function(){});
 
 const $ = id => document.getElementById(id);
 initPWA({ offer: true });
+
+function newRequestId(){
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
 // עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
@@ -567,12 +571,35 @@ $('fDistrict').onchange = function () { fillStations(this.value); };
 
 let onboarding = false;
 let loginTransitionPending = false;
+let resubmitUser = null;
 
 function show(text, kind){
   const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
   m.setAttribute('role', kind === 'err' ? 'alert' : 'status');
 }
 function clearMsg(){ $('msg').className = 'msg'; $('msg').removeAttribute('role'); }
+
+function resetRegistrationMode(){
+  resubmitUser = null;
+  $('authTabs').classList.remove('hide');
+  $('newPasswordFields').classList.remove('hide');
+  $('fEmail').readOnly = false;
+  $('btnFirst').textContent = 'שלח בקשה';
+  $('btnResubmitCancel').classList.add('hide');
+}
+
+function hasServerAssignment(claims){
+  claims = claims || {};
+  return claims.super === true || !!claims.emp || !!claims.role ||
+         !!claims.stationId || !!claims.districtId || !!claims.shift;
+}
+
+function hasCompleteServerAssignment(claims){
+  claims = claims || {};
+  if (claims.super === true || claims.role === 'super_admin') return true;
+  return !!claims.emp && VALID_ROLES.indexOf(String(claims.role || '')) !== -1 &&
+         !!claims.stationId;
+}
 
 function showView(name){
   ['bootView','authView','waitView','homeView','pwView']
@@ -718,20 +745,24 @@ $('btnFirst').onclick = async () => {
   clearMsg();
 
   const name     = $('fName').value.trim();
-  const email    = $('fEmail').value.trim().toLowerCase();
+  const reusing  = !!(resubmitUser && auth.currentUser &&
+                      resubmitUser.uid === auth.currentUser.uid);
+  const email    = (reusing ? String(resubmitUser.email || '') :
+                    $('fEmail').value).trim().toLowerCase();
   const phone    = $('fPhone').value.trim();
   const district = $('fDistrict').value;
   const station  = $('fStation').value;
   const shift    = $('fShift').value;
-  const joinCode = $('fCode').value.trim();
   const pass     = $('fPass').value;
   const pass2    = $('fPass2').value;
 
   if (!name || !email || !district || !station || !shift) {
     show('נא למלא שם, מייל, מחוז, תחנה ומשמרת.', 'err'); return;
   }
-  if (pass !== pass2) { show('הסיסמאות אינן תואמות.', 'err'); return; }
-  if (!pwOk(pass)) {
+  if (!reusing && pass !== pass2) {
+    show('הסיסמאות אינן תואמות.', 'err'); return;
+  }
+  if (!reusing && !pwOk(pass)) {
     show('הסיסמה חייבת להיות באורך 8 תווים לפחות, ולכלול אות גדולה, אות קטנה וספרה.', 'err');
     return;
   }
@@ -739,24 +770,71 @@ $('btnFirst').onclick = async () => {
   btn.disabled = true;
   onboarding = true;
 
-  let created = null;
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    created = cred.user;
-  } catch (e) {
-    onboarding = false; btn.disabled = false;
-    if (e.code === 'auth/email-already-in-use') {
-      show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה".', 'err');
-    } else if (e.code === 'auth/invalid-email') {
-      show('כתובת המייל אינה תקינה.', 'err');
-    } else {
-      show('שגיאה: ' + e.code, 'err');
+  let applicant = null;
+  let createdNow = false;
+
+  if (reusing) {
+    applicant = auth.currentUser;
+
+    // בקשה חוזרת אינה מסתמכת על הטוקן שבדפדפן: ייתכן שהמנהל
+    // כבר אישר והטוקן פשוט ישן. whoAmI קוראת את ה-claims החיים
+    // מ-Auth; אם היא לא עונה, לא כותבים דבר.
+    try {
+      const answer = await callWho({});
+      const live = (answer && answer.data) || {};
+      if (live.signedIn !== true || live.uid !== applicant.uid) {
+        throw new Error('זהות החשבון בשרת אינה תואמת לחשבון המחובר.');
+      }
+      const serverClaims = live.claims_on_server || {};
+      if (hasServerAssignment(serverClaims)) {
+        onboarding = false; btn.disabled = false;
+        if (hasCompleteServerAssignment(serverClaims)) {
+          await applicant.getIdToken(true);
+          resetRegistrationMode();
+          location.replace('./login.html');
+        } else {
+          showAssignmentRecovery(applicant);
+        }
+        return;
+      }
+
+      // לחיצה כפולה, לשונית אחרת או חיבור איטי לא ידרסו בקשה
+      // שכבר קיימת. המשתמש פשוט חוזר למסך ההמתנה.
+      const pending = await getDoc(doc(db, 'registration_requests', applicant.uid));
+      if (pending.exists()) {
+        onboarding = false; btn.disabled = false;
+        showWaiting(applicant, pending.data() || {});
+        return;
+      }
+    } catch (e) {
+      onboarding = false; btn.disabled = false;
+      show('לא ניתן לאמת כרגע את מצב החשבון, ולכן לא נשלחה בקשה. ' +
+           'בדוק חיבור ונסה שוב.', 'err');
+      return;
     }
-    return;
+  } else {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      applicant = cred.user;
+      createdNow = true;
+    } catch (e) {
+      onboarding = false; btn.disabled = false;
+      if (e.code === 'auth/email-already-in-use') {
+        show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה", ' +
+             'היכנס עם המייל והסיסמה, ומשם תוכל להגיש בקשה מחדש.', 'err');
+      } else if (e.code === 'auth/invalid-email') {
+        show('כתובת המייל אינה תקינה.', 'err');
+      } else {
+        show('שגיאה: ' + e.code, 'err');
+      }
+      return;
+    }
   }
 
+  const requestRef = doc(db, 'registration_requests', applicant.uid);
   try {
-    await setDoc(doc(db, 'registration_requests', created.uid), {
+    await setDoc(requestRef, {
+      request_id: newRequestId(),
       full_name:  name,
       email:      email,
       phone:      phone,
@@ -769,36 +847,41 @@ $('btnFirst').onclick = async () => {
       status:     'pending',
       created_at: serverTimestamp()
     });
-    // עם קוד — כניסה מיידית. בלי קוד, או אם הקוד נדחה, נשארים
-    // במסלול הישן: הבקשה כבר נשמרה ואלדד יאשר אותה.
-    if (joinCode) {
-      show('בודק את הקוד…', 'info');
-      try {
-        await httpsCallable(fns, 'joinWithCode')({
-          code: joinCode, shift: shift === 'none' ? '' : shift,
-          full_name: name, phone: phone
-        });
-        // ההרשאות נכתבו בשרת; הטוקן שביד עדיין נושא את הישנות.
-        await created.getIdToken(true);
-        onboarding = false; btn.disabled = false;
-        location.replace('./login.html');
-        return;
-      } catch (ce) {
-        onboarding = false; btn.disabled = false;
-        showWaiting();
-        show('הבקשה נשמרה, אבל הקוד לא התקבל: ' +
-             (ce.message || ce.code || '') +
-             ' — הבקשה תמתין לאישור מנהל.', 'info');
-        return;
-      }
-    }
-
     onboarding = false; btn.disabled = false;
     showWaiting();
   } catch (e) {
-    // אם הבקשה לא נשמרה, החשבון נשאר תקוע בלי שום דבר מאחוריו.
-    if (created) { try { await deleteUser(created); } catch (ignore) {} }
+    // כשל רשת יכול להגיע אחרי שהשרת כבר שמר את הבקשה. קודם
+    // קוראים אותה בחזרה, ורק אם היעדרה הוכח מוחקים חשבון חדש.
+    // במצב לא ודאי שומרים את החשבון כדי לא לייצר בקשה יתומה.
+    let requestSaved = false;
+    let absenceConfirmed = false;
+    try {
+      const verification = await getDocFromServer(requestRef);
+      requestSaved = verification.exists();
+      absenceConfirmed = !requestSaved;
+    } catch (ignore) {}
+
     onboarding = false; btn.disabled = false;
+
+    if (requestSaved) {
+      showWaiting(applicant);
+      $('waitTxt').innerHTML = 'החיבור נקטע בזמן השליחה, אבל בדקנו והבקשה נשמרה.<br>' +
+                              'היא ממתינה כעת לאישור מנהל המערכת.';
+      return;
+    }
+
+    if (createdNow && applicant && absenceConfirmed) {
+      try {
+        await deleteUser(applicant);
+      } catch (ignore) {
+        showRegistrationRecovery(applicant);
+        return;
+      }
+    } else if (!absenceConfirmed) {
+      showRegistrationRecovery(applicant);
+      return;
+    }
+
     show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
   }
 };
@@ -834,6 +917,7 @@ onAuthStateChanged(auth, user => {
     // של הכניסה שנמצאת בתהליך.
     if (!$('btnLogin').disabled) loginTransitionPending = false;
     clearNav();
+    resetRegistrationMode();
     document.body.classList.remove('with-nav');
     document.body.classList.add('art');
     showView('auth');
@@ -855,13 +939,25 @@ async function route(user){
     return;
   }
 
-  // בלי מספר עובד בטוקן — או שהבקשה ממתינה, או שטרם נשלחה.
-  if (!claims.emp) {
+  // Claims חלקיים אינם מספיקים לכניסה, גם אם מספר העובד כבר
+  // נכתב. אחרת כשל באמצע שיבוץ היה טוען את המערכת במצב סותר.
+  if (hasServerAssignment(claims) && !hasCompleteServerAssignment(claims)) {
+    showAssignmentRecovery(user);
+    return;
+  }
+
+  // בלי שום שיוך בטוקן — או שהבקשה ממתינה, או שטרם נשלחה.
+  if (!hasServerAssignment(claims)) {
     let req = null;
-    try { req = await getDoc(doc(db, 'registration_requests', user.uid)); }
+    let requestChecked = false;
+    try {
+      req = await getDoc(doc(db, 'registration_requests', user.uid));
+      requestChecked = true;
+    }
     catch (ignore) {}
 
-    if (req && req.exists()) { showWaiting(user); return; }
+    if (req && req.exists()) { showWaiting(user, req.data() || {}); return; }
+    if (!requestChecked) { showRegistrationRecovery(user); return; }
     showNotLinked(user);
     return;
   }
@@ -898,13 +994,15 @@ function showNotLinked(user){
   $('waitIcon').textContent = '🔒';
   $('waitTtl').textContent  = 'החשבון אינו משויך';
   $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
-                              'התנתק והירשם מחדש.';
+                              'אפשר למלא את הפרטים ולשלוח בקשה מחדש ' +
+                              'מאותו חשבון.';
   showWho(user);
   navFor(claims0(), user, '');
 
   // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
   const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   $('btnBootstrap').classList.toggle('hide', !isBoot);
+  $('btnResubmit').classList.toggle('hide', isBoot);
   if (isBoot) {
     $('waitTxt').innerHTML = 'זהו חשבון ההקמה של המערכת, והוא עדיין לא הופעל.<br>' +
                              'לחץ על הכפתור למטה כדי להפוך אותו למנהל מערכת.';
@@ -913,18 +1011,80 @@ function showNotLinked(user){
   showView('wait');
 }
 
-function showWaiting(user){
+function showWaiting(user, request){
   loginTransitionPending = false;
+  const status = String((request || {}).status || 'pending');
   $('waitIcon').textContent = '⏳';
-  $('waitTtl').textContent  = 'הבקשה נשלחה';
-  $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
-                              'עם האישור יוקצה לך מספר עובד.<br><br>' +
-                              '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
+  if (status === 'processing') {
+    $('waitTtl').textContent = 'האישור בתהליך';
+    $('waitTxt').innerHTML = 'מנהל המערכת התחיל לטפל בבקשה. ' +
+      'היא נשמרה ותמשיך מאותה נקודה גם אם החיבור נקטע.<br><br>' +
+      '<b>אין צורך לשלוח בקשה נוספת.</b>';
+  } else if (status === 'needs_recovery') {
+    $('waitTtl').textContent = 'הבקשה נשמרה לבדיקה';
+    $('waitTxt').innerHTML = 'זוהה מצב שאינו חד-משמעי ולכן המערכת עצרה בבטחה. ' +
+      'הבקשה לא נמחקה ומנהל המערכת יבדוק אותה.';
+  } else {
+    $('waitTtl').textContent  = 'הבקשה נשלחה';
+    $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
+                                'עם האישור יוקצה לך מספר עובד.<br><br>' +
+                                '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
+  }
   showWho(user);
   navFor(claims0(), user, '');
   $('btnBootstrap').classList.add('hide');
+  $('btnResubmit').classList.add('hide');
   showView('wait');
 }
+
+function showRegistrationRecovery(user){
+  showWaiting(user);
+  $('waitIcon').textContent = '⚠️';
+  $('waitTtl').textContent  = 'מצב הבקשה לא אומת';
+  $('waitTxt').innerHTML    = 'החיבור נקטע ולא ניתן לוודא אם הבקשה נשמרה.<br>' +
+                              'החשבון נשמר כדי למנוע אובדן מידע. ' +
+                              'אל תיצור חשבון נוסף; נסה להתחבר שוב מאוחר יותר ' +
+                              'או פנה למנהל המערכת.';
+}
+
+function showAssignmentRecovery(user){
+  showWaiting(user);
+  $('waitIcon').textContent = '⚠️';
+  $('waitTtl').textContent  = 'השיוך לחשבון אינו שלם';
+  $('waitTxt').innerHTML    = 'נמצא שיוך חלקי לחשבון. לא נשלחה בקשה חדשה ' +
+                              'ולא נטען מידע מהמערכת, כדי למנוע מצב סותר.<br>' +
+                              'פנה למנהל המערכת להשלמת השיוך.';
+}
+
+$('btnResubmit').onclick = function(){
+  const user = auth.currentUser;
+  if (!user || !user.uid || !user.email) {
+    showView('auth');
+    show('החיבור לחשבון הסתיים. היכנס שוב ונסה מחדש.', 'err');
+    return;
+  }
+
+  resubmitUser = user;
+  $('authTabs').classList.add('hide');
+  $('newPasswordFields').classList.add('hide');
+  $('fEmail').value = user.email;
+  $('fEmail').readOnly = true;
+  $('btnFirst').textContent = 'שלח בקשה מחדש';
+  $('btnResubmitCancel').classList.remove('hide');
+  activateAuthTab(1, false);
+  showView('auth');
+  show('מלא את הפרטים העדכניים. הבקשה תישלח מאותו חשבון; ' +
+       'אין צורך ליצור סיסמה חדשה והיא תמתין לאישור מנהל.', 'info');
+  try { $('fName').focus(); } catch (ignore) {}
+};
+
+$('btnResubmitCancel').onclick = function(){
+  const user = auth.currentUser;
+  resetRegistrationMode();
+  clearMsg();
+  if (user) showNotLinked(user);
+  else showView('auth');
+};
 
 $('btnBootstrap').onclick = async () => {
   const btn = $('btnBootstrap');

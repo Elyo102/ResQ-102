@@ -38,8 +38,8 @@ for (const item of imports) {
 }
 
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
-check(worker.includes("const CACHE = 'resq-v41a-appcheck1'"),
-  'the PWA cache is rotated for App Check');
+check(worker.includes("const CACHE = 'resq-v41e-release1'"),
+  'the PWA cache is rotated for the privacy fix');
 
 if (failed) {
   console.error('\n' + failed + ' App Check safety checks failed.');

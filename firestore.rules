@@ -54,6 +54,27 @@ service cloud.firestore {
       return signedIn() && claim('emp') != '';
     }
 
+    // בקשת הרשמה מותרת רק לחשבון שעדיין לא קיבל שום שיוך.
+    // בדיקת ה-UI משפרת את ההודעה למשתמש; זהו גבול האבטחה
+    // שמונע מלקוח מותאם עם טוקן מעודכן לפתוח בקשה חדשה לחשבון
+    // שכבר אושר. טוקן ישן נחסם שוב ב-approveRegistration מול Auth חי.
+    function noIdentityOperation(uid) {
+      return !exists(/databases/$(database)/documents/identity_operations/$(uid))
+             || (get(/databases/$(database)/documents/identity_operations/$(uid)).data.status == 'completed'
+                 && get(/databases/$(database)/documents/identity_operations/$(uid)).data.assigned != true);
+    }
+
+    function mayRequestRegistration(uid) {
+      return signedIn()
+             && !isSuper()
+             && claim('emp') == ''
+             && claim('role') == ''
+             && claim('stationId') == ''
+             && claim('districtId') == ''
+             && claim('shift') == ''
+             && noIdentityOperation(uid);
+    }
+
     // מנהל-על. שדה ה-super מגיע מהפונקציה bootstrapSuperAdmin.
     // בדיקת המייל היא רשת ביטחון: אם ה-claim נמחק בטעות,
     // מנהל המערכת עדיין יכול להיכנס ולתקן. חייב להיות זהה
@@ -218,12 +239,26 @@ service cloud.firestore {
     // מספר עובד לא מוזן — המערכת מקצה אותו באישור.
 
     match /registration_requests/{uid} {
-      allow create: if signedIn()
+      allow create: if mayRequestRegistration(uid)
                     && request.auth.uid == uid
                     && request.resource.data.email == request.auth.token.email.lower()
-                    && request.resource.data.status == 'pending';
-      allow read, delete: if signedIn() && request.auth.uid == uid;
-      allow read, write:  if isSuper();
+                    && request.resource.data.status == 'pending'
+                    && (!request.resource.data.keys().hasAny(['request_id'])
+                        || (request.resource.data.request_id is string
+                            && request.resource.data.request_id.size() >= 16
+                            && request.resource.data.request_id.size() <= 100))
+                    && request.resource.data.keys().hasAll([
+                      'full_name', 'email', 'phone', 'districtId',
+                      'stationId', 'shift', 'status', 'created_at'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'request_id', 'full_name', 'email', 'phone', 'districtId',
+                      'stationId', 'shift', 'status', 'created_at'
+                    ]);
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow delete: if signedIn() && request.auth.uid == uid
+                    && resource.data.status == 'pending';
+      allow read: if isSuper();
     }
 
 
@@ -231,6 +266,14 @@ service cloud.firestore {
     // נקראים ונכתבים על ידי השרת בלבד. חסומים ללקוח לגמרי.
 
     match /emp_index/{emp} {
+      allow read, write: if false;
+    }
+
+    match /emp_reservations/{emp} {
+      allow read, write: if false;
+    }
+
+    match /identity_operations/{uid} {
       allow read, write: if false;
     }
 

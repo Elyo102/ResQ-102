@@ -106,12 +106,15 @@ head('אילוץ ארכיטקטוני');
   const shadowUserReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/users\/\$\(request\.auth\.uid\)\s*\)/g
   )];
-  if (gets.length === 3 && gets.every(call => call[1] === 'get') &&
+  const identityOperationReads = [...CODE.matchAll(
+    /(?<![.\w])(get|exists)\s*\(\s*\/databases\/\$\(database\)\/documents\/identity_operations\/\$\(uid\)\s*\)/g
+  )];
+  if (gets.length === 6 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
-      shadowUserReads.length === 1) {
-    ok('שלוש קריאות מוגבלות: תגובה, דור Shadow פעיל ומשתמש Shadow חי');
+      shadowUserReads.length === 1 && identityOperationReads.length === 3) {
+    ok('קריאות מוגבלות: שלושת נתיבי Shadow/תגובה ובקרת פעולת זהות');
   } else if (gets.length) {
-    fail(gets.length + ' קריאות get()/exists() — רק שלושת הנתיבים המאושרים מותרים',
+    fail(gets.length + ' קריאות get()/exists() — רק ארבעת הנתיבים המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
   } else {
     fail('חסרות בדיקות נתיבי-האב המאושרות',
