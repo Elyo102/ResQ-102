@@ -596,6 +596,25 @@ export function getDocFromServer(ref){
 
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
+  if (/\/attendance_shadow_reports\/[^/]+$/.test(p) &&
+      typeof window !== 'undefined' &&
+      (Object.prototype.hasOwnProperty.call(window, '__SHADOW_REPORT') ||
+       Array.isArray(window.__SHADOW_REPORT_PLAN))) {
+    const plan = Array.isArray(window.__SHADOW_REPORT_PLAN) ? window.__SHADOW_REPORT_PLAN : [];
+    const step = plan.length ? plan.shift() : { data:window.__SHADOW_REPORT };
+    const delay = Math.max(0, Number(step && step.delay) || 0);
+    return new Promise((resolve, reject) => setTimeout(() => {
+      if (step && step.reject) {
+        reject({ code:step.code || 'firestore/unavailable', message:'shadow report stub failure' });
+        return;
+      }
+      if (!step || step.exists === false || step.data == null) {
+        resolve({ exists:() => false, data:() => undefined, id:p.split('/').pop() || 'stub' });
+        return;
+      }
+      resolve(docSnap(step.data, p.split('/').pop() || 'shadow-report'));
+    }, delay));
+  }
   if (p.indexOf('registration_requests/') === 0) {
     if (typeof window !== 'undefined' &&
         window.__REGISTRATION_REQUEST_READ_FAIL === true) {
@@ -722,6 +741,23 @@ function constrainedRows(source, constraints) {
 export function getDocs(q){
   const p = (q && q.path) || '';
   const delayed = value => delayedRead(value, p).then(result => corruptRead(result, p));
+  if (/\/attendance_shadow_people$/.test(p) && typeof window !== 'undefined' &&
+      Array.isArray(window.__SHADOW_PEOPLE_PLAN)) {
+    const step = window.__SHADOW_PEOPLE_PLAN.length
+      ? window.__SHADOW_PEOPLE_PLAN.shift() : {};
+    window.__SHADOW_PEOPLE_STARTED = window.__SHADOW_PEOPLE_STARTED || [];
+    window.__SHADOW_PEOPLE_STARTED.push(p);
+    const wait = Math.max(0, Number(step && step.delay) || 0);
+    return new Promise((resolve, reject) => setTimeout(() => {
+      if (step && step.reject) {
+        reject({ code:step.code || 'firestore/unavailable',
+          message:'shadow people stub failure' });
+        return;
+      }
+      const source = step && Array.isArray(step.data) ? step.data : [];
+      resolve(listSnap(constrainedRows(source, (q && q.constraints) || [])));
+    }, wait));
+  }
   if (p === 'registration_requests' && typeof window !== 'undefined' &&
       Array.isArray(window.__REGISTRATION_REQUESTS)) {
     return delayed(listSnap(window.__REGISTRATION_REQUESTS));
