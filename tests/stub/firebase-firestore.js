@@ -581,7 +581,7 @@ export function startAfter(snap){ return { kind:'startAfter', id:snap && snap.id
 
 export function getDoc(ref){
   const p = (ref && ref.path) || '';
-  return lag(null, p).then(() => getDoc0(ref));
+  return delayedRead(null, p).then(() => getDoc0(ref));
 }
 
 export function getDocFromServer(ref){
@@ -640,6 +640,19 @@ function lag(v, path){
   return new Promise(r => setTimeout(function () { done(); r(v); }, wait));
 }
 
+// בדיקות ממוקדות יכולות לדמות כשל קריאה לפי סיומת נתיב.
+// ברירת המחדל ריקה ולכן אין השפעה על שום בדיקה קיימת.
+function delayedRead(value, path){
+  return lag(value, path).then(result => {
+    const failures = (typeof window !== 'undefined' &&
+      Array.isArray(window.__SMOKE_FAIL_PATHS)) ? window.__SMOKE_FAIL_PATHS : [];
+    if (failures.some(suffix => String(path || '').includes(String(suffix || '')))) {
+      return Promise.reject({ code:'permission-denied', message:'stub read failure' });
+    }
+    return result;
+  });
+}
+
 function constrainedRows(source, constraints) {
   let rows = (source || []).slice();
   const list = constraints || [];
@@ -672,7 +685,7 @@ function constrainedRows(source, constraints) {
 
 export function getDocs(q){
   const p = (q && q.path) || '';
-  const delayed = value => lag(value, p);
+  const delayed = value => delayedRead(value, p);
   if (p === 'registration_requests' && typeof window !== 'undefined' &&
       Array.isArray(window.__REGISTRATION_REQUESTS)) {
     return delayed(listSnap(window.__REGISTRATION_REQUESTS));
