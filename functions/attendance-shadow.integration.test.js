@@ -204,6 +204,11 @@ async function main() {
       assertNoIdentityValues(value);
       assert.match(value.input_hash, /^[a-f0-9]{64}$/);
     });
+    const afterStatus = await functions.getAttendanceShadowStatus.run({ auth: hr, data: {} });
+    assert.equal(afterStatus.last_run.status, 'complete');
+    assert.equal(afterStatus.last_run.entry_count, 2);
+    assert.deepEqual(afterStatus.last_run.result_counts, run.data().result_counts);
+    assert.deepEqual(afterStatus.last_run.conflict_counts, run.data().conflict_counts);
 
     const report = await db.doc(
       `stations/${SID}/attendance_shadow_reports/${month}`
