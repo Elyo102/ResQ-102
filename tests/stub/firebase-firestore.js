@@ -581,7 +581,13 @@ export function startAfter(snap){ return { kind:'startAfter', id:snap && snap.id
 
 export function getDoc(ref){
   const p = (ref && ref.path) || '';
-  return delayedRead(null, p).then(() => getDoc0(ref));
+  return delayedRead(null, p)
+    .then(() => getDoc0(ref))
+    .then(value => testPathMatches('__SMOKE_MISSING_PATHS', p)
+      ? { exists:() => false, data:() => undefined,
+          id:p.split('/').pop() || 'stub' }
+      : value)
+    .then(value => corruptRead(value, p));
 }
 
 export function getDocFromServer(ref){
@@ -620,33 +626,63 @@ const LAG = (typeof window !== 'undefined' && window.__SMOKE_LAG) || 0;
 // מדידה: מתי יצאה הבקשה הראשונה, ומתי חזרה האחרונה.
 // זה הזמן שהמשתמש מחכה בו למסך ריק.
 function mark(path){
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return null;
   if (!window.__T0) window.__T0 = Date.now();
   window.__N = (window.__N || 0) + 1;
   window.__DATA_PATHS = window.__DATA_PATHS || [];
   window.__DATA_PATHS.push(path || '');
+  window.__DATA_EVENTS = window.__DATA_EVENTS || [];
+  const event = { path:path || '', started:Date.now(), finished:0 };
+  window.__DATA_EVENTS.push(event);
+  return event;
 }
-function done(){
+function done(event){
   if (typeof window === 'undefined') return;
-  window.__TN = Date.now();
+  const now = Date.now();
+  window.__TN = now;
+  if (event) event.finished = now;
 }
 function lag(v, path){
-  mark(path);
+  const event = mark(path);
   const plan = (typeof window !== 'undefined') ? window.__SMOKE_LAG_PLAN : null;
   const wait = Array.isArray(plan) && plan.length
     ? Number(plan.shift()) || 0
     : Number(LAG) || 0;
-  if (!wait) { done(); return Promise.resolve(v); }
-  return new Promise(r => setTimeout(function () { done(); r(v); }, wait));
+  if (!wait) { done(event); return Promise.resolve(v); }
+  return new Promise(r => setTimeout(function () { done(event); r(v); }, wait));
+}
+
+function testPathMatches(variableName, path){
+  if (typeof window === 'undefined') return false;
+  const values = Array.isArray(window[variableName]) ? window[variableName] : [];
+  return values.some(value => {
+    const part = String(value || '');
+    return part && String(path || '').includes(part);
+  });
+}
+
+function corruptRead(value, path){
+  if (!testPathMatches('__SMOKE_PARSE_FAIL_PATHS', path)) return value;
+  const fail = function () { throw new Error('synthetic malformed read'); };
+  return { exists:fail, data:fail, forEach:fail, docs:[] };
+}
+
+function qualRows(path){
+  if (typeof window === 'undefined') return QUALS;
+  const prefixes = window.__SMOKE_QUAL_PREFIX_BY_STATION || {};
+  const match = String(path || '').match(/^stations\/([^/]+)\//);
+  const prefix = match ? String(prefixes[match[1]] || '') : '';
+  if (!prefix) return QUALS;
+  return QUALS.map(pair => [pair[0], Object.assign({}, pair[1], {
+    name: prefix + (pair[1].name || '')
+  })]);
 }
 
 // בדיקות ממוקדות יכולות לדמות כשל קריאה לפי סיומת נתיב.
 // ברירת המחדל ריקה ולכן אין השפעה על שום בדיקה קיימת.
 function delayedRead(value, path){
   return lag(value, path).then(result => {
-    const failures = (typeof window !== 'undefined' &&
-      Array.isArray(window.__SMOKE_FAIL_PATHS)) ? window.__SMOKE_FAIL_PATHS : [];
-    if (failures.some(suffix => String(path || '').includes(String(suffix || '')))) {
+    if (testPathMatches('__SMOKE_FAIL_PATHS', path)) {
       return Promise.reject({ code:'permission-denied', message:'stub read failure' });
     }
     return result;
@@ -685,7 +721,7 @@ function constrainedRows(source, constraints) {
 
 export function getDocs(q){
   const p = (q && q.path) || '';
-  const delayed = value => delayedRead(value, p);
+  const delayed = value => delayedRead(value, p).then(result => corruptRead(result, p));
   if (p === 'registration_requests' && typeof window !== 'undefined' &&
       Array.isArray(window.__REGISTRATION_REQUESTS)) {
     return delayed(listSnap(window.__REGISTRATION_REQUESTS));
@@ -711,7 +747,7 @@ export function getDocs(q){
     );
     return delayed(listSnap(rows));
   }
-  if (/\/quals$/.test(p))        return delayed(listSnap(QUALS));
+  if (/\/quals$/.test(p))        return delayed(listSnap(qualRows(p)));
   if (/\/roster$/.test(p))       return delayed(listSnap(ROSTER));
   if (/\/users$/.test(p))        return delayed(listSnap(USERS));
   if (/\/member_quals$/.test(p)) return delayed(listSnap(MEMBER_QUALS));
