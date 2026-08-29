@@ -12,24 +12,32 @@
 // שלם לכל מדור היה גורם לארבעה כפתורים להתחרות זה בזה, ואז
 // אף אחד לא בולט.
 const ITEMS = [
-  { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c' },
-  { href: 'schedule.html', label: 'סידור', who: 'member', dot: '#4d94ff' },
-  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff' },
-  { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166' },
-  { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9' },
-  { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342' },
-  { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043' },
-  { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a' },
-  { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd' },
-  { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1' },
-  { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c' },
-  { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5' },
-  { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63' },
-  { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b' },
-  { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f' },
-  { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8' },
-  { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a' },
-  { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6' }
+  { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
+  { href: 'schedule.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
+  { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
+  { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
+  { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342', group: 'station' },
+  { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043', group: 'mine' },
+  { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },
+  { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd', group: 'station' },
+  { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1', group: 'mine' },
+  { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c', group: 'station' },
+  { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5', group: 'station' },
+  { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63', group: 'station' },
+  { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b', group: 'admin' },
+  { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f', group: 'admin' },
+  { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
+  { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a', group: 'admin' },
+  { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' }
+];
+
+// שלוש קבוצות תצוגה בלבד. ההרשאה נשארת בשדה who של כל פריט.
+// קבוצה שאין בה אף פריט מותר אינה מוצגת.
+const GROUPS = [
+  { id: 'mine',    label: 'המשמרת שלי',   dot: '#4d94ff' },
+  { id: 'station', label: 'התחנה והצוות', dot: '#7cb342' },
+  { id: 'admin',   label: 'בקרה וניהול',  dot: '#f0523f' }
 ];
 
 // מה שהשרת מתיר בפועל. מפקד מחוז אינו staff באף כלל אבטחה
@@ -159,6 +167,22 @@ function styleOnce() {
     '#appNav a.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);',
     '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
     '#appNav a.on i{background:var(--on-accent)}',
+    '#appNav button.door{display:inline-flex;align-items:center;gap:8px;',
+    '  width:auto;min-height:44px;margin:0;flex:none;box-sizing:border-box;',
+    '  background:var(--chip);border:1px solid var(--line);color:var(--dim);',
+    '  font-family:inherit;font-size:15.5px;font-weight:700;cursor:pointer;',
+    '  padding:11px 18px;border-radius:10px;white-space:nowrap}',
+    '#appNav button.door:hover{background:var(--line);color:var(--txt)}',
+    '#appNav button.door:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+    '#appNav button.door i{width:8px;height:8px;border-radius:50%;flex:none}',
+    '#appNav button.door.here{border-color:var(--accent);color:var(--accent-txt)}',
+    '#appNav button.door[aria-expanded="true"]{background:var(--accent);',
+    '  border-color:var(--accent);color:var(--on-accent);',
+    '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
+    '#appNav button.door[aria-expanded="true"] i{background:var(--on-accent)}',
+    '#appNav .navPanel{width:100%;order:5;display:flex;flex-wrap:wrap;gap:6px;',
+    '  padding:10px 0 2px;margin:0;box-sizing:border-box}',
+    '#appNav .navPanel[hidden]{display:none}',
     '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
     // במסך רחב המכולה שקופה: הקישורים נשארים ילדים ישירים של
@@ -200,8 +224,12 @@ function styleOnce() {
     // ושם הכתום הבהיר של הערכה היומית נופל מתחת לסף
     // הקריאוּת. זו התווית שאומרת באיזה מסך אתה נמצא.
     '  #navToggle b{color:var(--accent-txt);font-weight:700}',
-    '  #navLinks{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;',
+    '  #navLinks{display:flex;flex-direction:column;gap:6px;',
     '    width:100%;order:5;padding-top:2px}',
+    '  #appNav button.door{width:100%;justify-content:flex-start;',
+    '    font-size:14.5px;padding:10px 12px}',
+    '  #appNav .navPanel{display:grid;grid-template-columns:repeat(3,1fr);',
+    '    gap:6px;padding:2px 0 6px;order:0}',
     '  #navLinks.closed{display:none}',
     '  #appNav a{font-size:13.5px;padding:9px 5px;justify-content:center;',
     '    gap:5px;text-align:center;line-height:1.15}',
@@ -212,7 +240,7 @@ function styleOnce() {
     // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
     // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
     '@media (min-width:421px) and (max-width:560px){',
-    '  #navLinks{grid-template-columns:repeat(4,1fr)}}'
+    '  #appNav .navPanel{grid-template-columns:repeat(4,1fr)}}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -264,8 +292,7 @@ export function renderNav(claims, current, who) {
   links.id = 'navLinks';
   links.className = 'closed';   // מתעלמים ממנו במסך רחב
 
-  ITEMS.forEach(function (it) {
-    if (!allowed(it.who, claims)) return;
+  function linkFor(it) {
     const a = document.createElement('a');
     a.href = './' + it.href;
 
@@ -279,7 +306,56 @@ export function renderNav(claims, current, who) {
       a.className = 'on';
       a.setAttribute('aria-current', 'page');
     }
-    links.appendChild(a);
+    return a;
+  }
+
+  // רק קבוצה אחת פתוחה בכל רגע, כדי לא לדחוף את תוכן המסך.
+  const doors = [];
+  function closeDoors(keep) {
+    doors.forEach(function (d) {
+      if (d.panel === keep) return;
+      d.panel.hidden = true;
+      d.door.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  GROUPS.forEach(function (g) {
+    const items = ITEMS.filter(function (it) {
+      return it.group === g.id && allowed(it.who, claims);
+    });
+    if (!items.length) return;
+
+    const here = items.some(function (it) { return it.href === current; });
+    const door = document.createElement('button');
+    door.type = 'button';
+    door.id = 'door-' + g.id;
+    door.className = here ? 'door here' : 'door';
+    door.setAttribute('aria-expanded', 'false');
+    door.setAttribute('aria-controls', 'panel-' + g.id);
+
+    const dot = document.createElement('i');
+    dot.setAttribute('aria-hidden', 'true');
+    dot.style.background = g.dot;
+    door.appendChild(dot);
+    door.appendChild(document.createTextNode(g.label));
+
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + g.id;
+    panel.className = 'navPanel';
+    panel.setAttribute('aria-labelledby', door.id);
+    panel.hidden = true;
+    items.forEach(function (it) { panel.appendChild(linkFor(it)); });
+
+    door.onclick = function () {
+      const willOpen = panel.hidden;
+      closeDoors(willOpen ? panel : null);
+      panel.hidden = !willOpen;
+      door.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    };
+
+    doors.push({ door: door, panel: panel });
+    links.appendChild(door);
+    links.appendChild(panel);
   });
 
   links.appendChild(themeButton());
@@ -301,7 +377,14 @@ export function renderNav(claims, current, who) {
   };
 
   nav.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || links.classList.contains('closed')) return;
+    if (event.key !== 'Escape') return;
+    const openDoor = doors.filter(function (d) { return !d.panel.hidden; })[0];
+    if (openDoor) {
+      closeDoors(null);
+      openDoor.door.focus();
+      return;
+    }
+    if (links.classList.contains('closed')) return;
     links.classList.add('closed');
     if (me) me.classList.add('closed');
     tg.setAttribute('aria-expanded', 'false');
