@@ -91,15 +91,23 @@ function createStationAutomation(options) {
         'runAllStations requires a runStation function.');
     }
 
-    const budgetMs = Number.isFinite(args.budgetMs) && args.budgetMs > 0
-      ? args.budgetMs
-      : DEFAULT_BUDGET_MS;
+    if (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0) {
+      throw new StationAutomationError('missing-timeout',
+        'runAllStations requires the function timeout in milliseconds.');
+    }
+
     const reserveMs = Number.isFinite(args.reserveMs) && args.reserveMs >= 0
       ? args.reserveMs
       : DEFAULT_RESERVE_MS;
-    const listing = await listStations(args);
+    const requestedBudgetMs = Number.isFinite(args.budgetMs) && args.budgetMs > 0
+      ? args.budgetMs
+      : DEFAULT_BUDGET_MS;
+    const budgetCeilingMs = Math.max(0, args.timeoutMs - reserveMs);
+    const budgetMs = Math.min(requestedBudgetMs, budgetCeilingMs);
     const startedAt = now();
     const deadline = startedAt + budgetMs;
+    const budgetClamped = budgetMs < requestedBudgetMs;
+    const listing = await listStations(args);
     const results = [];
     const succeeded = [];
     const failed = [];
@@ -107,7 +115,7 @@ function createStationAutomation(options) {
     let budgetExhausted = false;
 
     for (const sid of listing.stationIds) {
-      if (budgetExhausted || now() + reserveMs >= deadline) {
+      if (budgetExhausted || now() >= deadline) {
         budgetExhausted = true;
         notRun.push({ station_id: sid, reason: 'budget_exhausted' });
         results.push({
@@ -167,6 +175,10 @@ function createStationAutomation(options) {
         not_run: notRun.length
       },
       budget_ms: budgetMs,
+      timeout_ms: args.timeoutMs,
+      reserve_ms: reserveMs,
+      budget_requested_ms: requestedBudgetMs,
+      budget_clamped: budgetClamped,
       budget_exhausted: budgetExhausted,
       overrun: finishedAt > deadline,
       started_at: startedAt,
