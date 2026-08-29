@@ -8,6 +8,7 @@ const path = require('node:path');
 const mod = require('./station-automation');
 const { createStationAutomation, normalizeStationIds, CONFIG_PATH } = mod;
 const PILOT = 'eilat_102';
+const TIMEOUT_540 = 540000;
 
 function fakeDb(data, exists) {
   const reads = [];
@@ -94,6 +95,7 @@ test('more than 50 stations are visible as station_cap', async () => {
   const seen = [];
   const report = await api.runAllStations({
     pilotStationId: PILOT,
+    timeoutMs: TIMEOUT_540,
     runStation: async ({ sid }) => { seen.push(sid); }
   });
   assert.equal(seen.length, 50);
@@ -109,6 +111,7 @@ test('stations run sequentially in stable order', async () => {
   const { api } = build({ mode: 'shadow', station_ids: ['b_2', 'a_1'] });
   const report = await api.runAllStations({
     pilotStationId: PILOT,
+    timeoutMs: TIMEOUT_540,
     runStation: async ({ sid }) => {
       order.push('start:' + sid);
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -127,6 +130,7 @@ test('one station failure does not stop the next station', async () => {
   const seen = [];
   const report = await api.runAllStations({
     pilotStationId: PILOT,
+    timeoutMs: TIMEOUT_540,
     runStation: async ({ sid }) => {
       seen.push(sid);
       if (sid === 'b_2') {
@@ -150,6 +154,7 @@ test('budget exhaustion marks every remaining station', async () => {
   const seen = [];
   const report = await api.runAllStations({
     pilotStationId: PILOT,
+    timeoutMs: 200000,
     budgetMs: 100000,
     reserveMs: 10000,
     runStation: async ({ sid }) => { seen.push(sid); }
@@ -161,10 +166,27 @@ test('budget exhaustion marks every remaining station', async () => {
     ['a_1', 'b_2', 'c_3', 'd_4'].slice(seen.length));
 });
 
+test('time spent loading station configuration consumes the same budget', async () => {
+  const { api } = build(
+    { mode: 'shadow', station_ids: ['a_1', 'b_2'] },
+    fakeClock(100000, 0));
+  const seen = [];
+  const report = await api.runAllStations({
+    pilotStationId: PILOT,
+    timeoutMs: 150000,
+    reserveMs: 50000,
+    runStation: async ({ sid }) => { seen.push(sid); }
+  });
+  assert.deepEqual(seen, []);
+  assert.equal(report.budget_exhausted, true);
+  assert.deepEqual(report.not_run.map((row) => row.station_id), ['a_1', 'b_2']);
+});
+
 test('summary reports every station exactly once', async () => {
   const { api } = build({ mode: 'shadow', station_ids: ['a_1', 'b_2', 'c_3'] });
   const report = await api.runAllStations({
     pilotStationId: PILOT,
+    timeoutMs: TIMEOUT_540,
     runStation: async ({ sid }) => {
       if (sid === 'c_3') throw new Error('nope');
     }
@@ -176,6 +198,43 @@ test('summary reports every station exactly once', async () => {
   assert.equal(new Set(all).size, all.length);
   assert.equal(report.results.length, 3);
   assert.equal(report.failed[0].code, 'internal');
+});
+
+test('timeout is required before a budget can be trusted', async () => {
+  const { api } = build({ mode: 'shadow', station_ids: ['a_1'] });
+  for (const timeoutMs of [undefined, 0, -1, '300000', NaN, Infinity]) {
+    await assert.rejects(() => api.runAllStations({
+      pilotStationId: PILOT,
+      timeoutMs: timeoutMs,
+      runStation: async () => {}
+    }), (error) => error.code === 'missing-timeout');
+  }
+});
+
+test('default budget is clamped below a five-minute function timeout', async () => {
+  const { api } = build({ mode: 'shadow', station_ids: ['a_1'] });
+  const report = await api.runAllStations({
+    pilotStationId: PILOT,
+    timeoutMs: 300000,
+    reserveMs: 30000,
+    runStation: async () => {}
+  });
+  assert.equal(report.budget_requested_ms, 480000);
+  assert.equal(report.budget_ms, 270000);
+  assert.equal(report.budget_clamped, true);
+  assert.ok(report.budget_ms < report.timeout_ms);
+});
+
+test('an explicit budget inside the timeout is preserved', async () => {
+  const { api } = build({ mode: 'shadow', station_ids: ['a_1'] });
+  const report = await api.runAllStations({
+    pilotStationId: PILOT,
+    timeoutMs: TIMEOUT_540,
+    budgetMs: 60000,
+    runStation: async () => {}
+  });
+  assert.equal(report.budget_ms, 60000);
+  assert.equal(report.budget_clamped, false);
 });
 
 test('module contains no hardcoded station identifier or station path', () => {
