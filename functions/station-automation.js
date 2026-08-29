@@ -9,6 +9,8 @@ const STATION_ID_RE = /^[a-z0-9_-]{2,80}$/;
 const MAX_STATIONS = 50;
 const DEFAULT_BUDGET_MS = 8 * 60 * 1000;
 const DEFAULT_RESERVE_MS = 30 * 1000;
+const CONFIG_READ_ATTEMPTS = 2;
+const CONFIG_RETRY_DELAY_MS = 250;
 
 class StationAutomationError extends Error {
   constructor(code, message) {
@@ -48,6 +50,11 @@ function createStationAutomation(options) {
   const now = typeof opts.clock === 'function'
     ? opts.clock
     : function () { return Date.now(); };
+  const sleep = typeof opts.sleep === 'function'
+    ? opts.sleep
+    : function (ms) {
+      return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    };
 
   if (!db || typeof db.doc !== 'function') {
     throw new StationAutomationError('missing-db',
@@ -57,7 +64,24 @@ function createStationAutomation(options) {
   async function listStations(input) {
     const args = input || {};
     const pilot = assertStationId(args.pilotStationId, 'pilotStationId');
-    const snap = await db.doc(CONFIG_PATH).get();
+    let snap = null;
+    for (let attempt = 0; attempt < CONFIG_READ_ATTEMPTS; attempt += 1) {
+      try {
+        snap = await db.doc(CONFIG_PATH).get();
+        break;
+      } catch (error) {
+        if (attempt + 1 >= CONFIG_READ_ATTEMPTS) {
+          throw new StationAutomationError('config-unavailable',
+            'Station automation configuration is unavailable.');
+        }
+        try {
+          await sleep(CONFIG_RETRY_DELAY_MS);
+        } catch (ignore) {
+          // A failed delay must not expose its raw error or prevent the
+          // bounded second configuration read.
+        }
+      }
+    }
     const value = snap && snap.exists ? (snap.data() || {}) : {};
     const mode = value.mode === 'shadow' ? 'shadow' : 'off';
     const normalized = normalizeStationIds(value.station_ids);
@@ -199,6 +223,8 @@ module.exports = {
   STATION_ID_RE: STATION_ID_RE,
   MAX_STATIONS: MAX_STATIONS,
   DEFAULT_BUDGET_MS: DEFAULT_BUDGET_MS,
+  CONFIG_READ_ATTEMPTS: CONFIG_READ_ATTEMPTS,
+  CONFIG_RETRY_DELAY_MS: CONFIG_RETRY_DELAY_MS,
   StationAutomationError: StationAutomationError,
   isValidStationId: isValidStationId,
   normalizeStationIds: normalizeStationIds,
