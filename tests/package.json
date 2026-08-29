@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "static": "node uxcheck.mjs && node appcheck.mjs && node hosting-privacy.mjs && node registration.mjs && node rulecheck.mjs && node fncheck.mjs && node restcheck.mjs && node station-boundary.mjs && node vmapcheck.mjs && node signflow.mjs && node docpdf.mjs && node roles.mjs && node assign.mjs && node shiftlog.mjs && node bulletin.mjs && node ../functions/bulk-import-disabled.test.js && node ../functions/registration-safety.test.js && node ../functions/bulletin.test.js && node ../functions/attendance-shadow.test.js && node attendance-shadow.mjs && node histimport.mjs",
+    "static": "node uxcheck.mjs && node appcheck.mjs && node hosting-privacy.mjs && node registration.mjs && node rulecheck.mjs && node fncheck.mjs && node restcheck.mjs && node station-boundary.mjs && node station-source.mjs && node vmapcheck.mjs && node signflow.mjs && node docpdf.mjs && node roles.mjs && node assign.mjs && node shiftlog.mjs && node bulletin.mjs && node ../functions/bulk-import-disabled.test.js && node ../functions/registration-safety.test.js && node ../functions/bulletin.test.js && node ../functions/attendance-shadow.test.js && node attendance-shadow.mjs && node histimport.mjs",
     "browser": "node nav-groups.mjs && node uxbrowser.mjs && node registration-browser.mjs && node bulletin-browser.mjs && node attendance-shadow-browser.mjs && npm run performance && node smoke.mjs && node role.mjs && node numbers.mjs && node contrast.mjs",
     "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs",
     "all": "npm run static && npm run browser"

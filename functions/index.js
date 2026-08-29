@@ -274,6 +274,30 @@ function requireSuperAdmin(req) {
   return auth;
 }
 
+// מזהה התחנה לפעולות שהמשתמש מפעיל נקבע רק מההרשאות
+// החתומות שלו. אין ברירת מחדל לתחנת הפיילוט: חשבון ללא
+// שיוך תקין נעצר כדי שלא יכתוב בטעות נתונים לתחנה אחרת.
+const STATION_ID_RE = /^[a-z0-9_-]{2,80}$/;
+
+function callerStation(req, auth) {
+  const data = (req && req.data) || null;
+  if (data && Object.prototype.hasOwnProperty.call(data, 'stationId')) {
+    throw new HttpsError('invalid-argument',
+      'התחנה נקבעת לפי ההרשאות של החשבון ואינה נשלחת מהלקוח.');
+  }
+
+  const sid = String((auth && auth.token && auth.token.stationId) || '');
+  if (!sid) {
+    throw new HttpsError('failed-precondition',
+      'לחשבון אין שיוך לתחנה. פנה למנהל המערכת.');
+  }
+  if (!STATION_ID_RE.test(sid)) {
+    throw new HttpsError('failed-precondition',
+      'שיוך התחנה בחשבון אינו תקין. פנה למנהל המערכת.');
+  }
+  return sid;
+}
+
 // ---------- שער השיבוץ ----------
 //
 // מחזיר את המשתמש המחובר ואת התקרה שלו. מנהל-על מקבל Infinity;
@@ -3561,7 +3585,7 @@ exports.sendBroadcast = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3673,7 +3697,7 @@ exports.sendCallout = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3828,7 +3852,7 @@ exports.closeCallout = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3891,7 +3915,7 @@ exports.guardSignup = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3940,7 +3964,7 @@ exports.assignGuard = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -4162,8 +4186,7 @@ exports.claimPushToken = onCall(async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
-  const t   = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const me  = auth.uid;
 
   const token = String((req.data || {}).token || '').trim();
