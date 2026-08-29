@@ -6,7 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const mod = require('./station-automation');
-const { createStationAutomation, normalizeStationIds, CONFIG_PATH } = mod;
+const {
+  createStationAutomation,
+  normalizeStationIds,
+  CONFIG_PATH,
+  CONFIG_RETRY_DELAY_MS
+} = mod;
 const PILOT = 'eilat_102';
 const TIMEOUT_540 = 540000;
 
@@ -64,6 +69,65 @@ test('a missing config document falls back to the injected pilot', async () => {
   const { api } = build(null, null, false);
   const out = await api.listStations({ pilotStationId: PILOT });
   assert.deepEqual(out.stationIds, [PILOT]);
+});
+
+test('a transient config read failure retries once and then succeeds', async () => {
+  let reads = 0;
+  const delays = [];
+  const db = {
+    doc: function (docPath) {
+      assert.equal(docPath, CONFIG_PATH);
+      return {
+        get: async function () {
+          reads += 1;
+          if (reads === 1) throw new Error('transient private detail');
+          return {
+            exists: true,
+            data: function () {
+              return { mode: 'shadow', station_ids: ['a_1'] };
+            }
+          };
+        }
+      };
+    }
+  };
+  const api = createStationAutomation({
+    db: db,
+    clock: fakeClock(0),
+    sleep: async function (ms) { delays.push(ms); }
+  });
+  const out = await api.listStations({ pilotStationId: PILOT });
+  assert.equal(reads, 2);
+  assert.deepEqual(delays, [CONFIG_RETRY_DELAY_MS]);
+  assert.deepEqual(out.stationIds, ['a_1']);
+});
+
+test('a persistent config read failure is typed and hides the raw error', async () => {
+  let reads = 0;
+  const db = {
+    doc: function () {
+      return {
+        get: async function () {
+          reads += 1;
+          throw new Error('/secret/path 052-1234567');
+        }
+      };
+    }
+  };
+  const api = createStationAutomation({
+    db: db,
+    clock: fakeClock(0),
+    sleep: async function () {}
+  });
+  await assert.rejects(() => api.listStations({ pilotStationId: PILOT }),
+    function (error) {
+      assert.equal(error.code, 'config-unavailable');
+      assert.equal(error.name, 'StationAutomationError');
+      assert.equal(String(error.message).includes('/secret/path'), false);
+      assert.equal(String(error.message).includes('052-1234567'), false);
+      return true;
+    });
+  assert.equal(reads, 2);
 });
 
 test('an invalid or missing pilot is rejected', async () => {
@@ -180,6 +244,46 @@ test('time spent loading station configuration consumes the same budget', async 
   assert.deepEqual(seen, []);
   assert.equal(report.budget_exhausted, true);
   assert.deepEqual(report.not_run.map((row) => row.station_id), ['a_1', 'b_2']);
+});
+
+test('config retry delay consumes the same run budget', async () => {
+  let reads = 0;
+  let time = 0;
+  const db = {
+    doc: function () {
+      return {
+        get: async function () {
+          reads += 1;
+          if (reads === 1) throw new Error('temporary');
+          return {
+            exists: true,
+            data: function () {
+              return { mode: 'shadow', station_ids: ['a_1'] };
+            }
+          };
+        }
+      };
+    }
+  };
+  const api = createStationAutomation({
+    db: db,
+    clock: function () { return time; },
+    sleep: async function (ms) { time += ms; }
+  });
+  const seen = [];
+  const report = await api.runAllStations({
+    pilotStationId: PILOT,
+    timeoutMs: 1000,
+    reserveMs: 0,
+    budgetMs: 200,
+    runStation: async function ({ sid }) { seen.push(sid); }
+  });
+  assert.equal(reads, 2);
+  assert.deepEqual(seen, []);
+  assert.equal(report.budget_exhausted, true);
+  assert.deepEqual(report.not_run, [
+    { station_id: 'a_1', reason: 'budget_exhausted' }
+  ]);
 });
 
 test('summary reports every station exactly once', async () => {
