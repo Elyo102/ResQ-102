@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const sourcePath = path.join(here, '..', 'functions', 'invitations.js');
+const testPath = path.join(here, '..', 'functions', 'invitations.test.js');
+const source = fs.readFileSync(sourcePath, 'utf8');
+const tests = fs.readFileSync(testPath, 'utf8');
+
+const checks = [];
+function check(label, fn) {
+  fn();
+  checks.push(label);
+  console.log('✓ ' + label);
+}
+
+check('module exposes the reviewed pure invitation surface', function () {
+  for (const token of [
+    'function issue(', 'function inspect(', 'function redeem(',
+    'function verifyPlan(', 'function revoke(', 'function assertApprovable('
+  ]) assert.ok(source.includes(token), token);
+});
+
+check('invitation validity is exactly 72 hours', function () {
+  assert.ok(source.includes('const INVITE_LIFETIME_MS = 72 * 60 * 60 * 1000'));
+});
+
+check('the module contains no Firebase or database I/O', function () {
+  for (const token of [
+    'firebase-admin', 'firebase-functions', 'getFirestore', '.collection(',
+    '.doc(', '.set(', '.update(', '.delete(', 'runTransaction', 'writeBatch'
+  ]) assert.equal(source.includes(token), false, token);
+});
+
+check('the module contains no logs that can leak invitation PII', function () {
+  for (const token of ['console.log', 'console.error', 'console.warn', 'logger.']) {
+    assert.equal(source.includes(token), false, token);
+  }
+});
+
+check('no station or district is hardcoded', function () {
+  for (const token of ['eilat_102', 'station-102', "'102'", 'אילת', "'south'"]) {
+    assert.equal(source.includes(token), false, token);
+  }
+});
+
+check('no parallel list of application roles exists', function () {
+  for (const token of ['firefighter', 'hr_coordinator', 'station_commander',
+                       'district_commander', 'commander', 'deputy']) {
+    assert.equal(source.includes(token), false, token);
+  }
+});
+
+check('authorization is injected from the existing role setter', function () {
+  assert.ok(source.includes("'assertMayAssign'"));
+  assert.ok(source.includes("'withinRoleSetterScope'"));
+  assert.ok((source.match(/d\.assertMayAssign\(/g) || []).length >= 2);
+  assert.ok((source.match(/d\.withinRoleSetterScope\(/g) || []).length >= 2);
+});
+
+check('super-admin assignment cannot be encoded in an invitation', function () {
+  assert.ok(source.includes("role === 'super_admin'"));
+  assert.ok(source.includes('super cannot be invited'));
+  assert.equal(/doc\s*=\s*\{[\s\S]*?\bsuper\s*:/.test(source), false);
+});
+
+check('the secret is hashed and checked with constant-time comparison', function () {
+  assert.ok(source.includes('secret_hash: hashSecret(secret)'));
+  assert.ok(source.includes('d.timingSafeEqual('));
+  assert.ok(source.includes('assertSecretAbsent(doc, secret)'));
+});
+
+check('public inspection intentionally collapses every invalid state', function () {
+  assert.ok(source.includes("const INVALID_PUBLIC_RESULT = Object.freeze({ ok:false, error:'invalid' })"));
+  assert.ok(source.includes('catch (_)'));
+});
+
+check('redemption requires verified email ownership', function () {
+  assert.ok(source.includes('auth.email_verified !== true'));
+  assert.ok(source.includes("'email-not-verified'"));
+});
+
+check('client assignment input is never copied into the redemption request', function () {
+  const body = source.match(/function redeem\([\s\S]*?\n  }\n\n  function verifyPlan/);
+  assert.ok(body, 'redeem body');
+  assert.ok(body[0].includes('void clientInput'));
+  for (const token of ['clientInput.station', 'clientInput.district',
+                       'clientInput.role', 'clientInput.shift']) {
+    assert.equal(body[0].includes(token), false, token);
+  }
+});
+
+check('transaction-time verification rechecks revoke, use and expiry state', function () {
+  const body = source.match(/function verifyPlan\([\s\S]*?\n  }\n\n  function revoke/);
+  assert.ok(body, 'verifyPlan body');
+  assert.ok(body[0].includes('assertRedeemableWithoutSecret(invite, when)'));
+  assert.ok(source.includes('invite.revoked_at || invite.redeemed_by'));
+});
+
+check('approval is bound to the redeeming uid and locked email', function () {
+  const body = source.match(/function assertApprovable\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
+  assert.ok(body, 'assertApprovable body');
+  assert.ok(body[0].includes("uid !== String(invite.redeemed_by || '')"));
+  assert.ok(body[0].includes('request.email'));
+});
+
+check('expiry is not re-applied after a timely redemption awaits approval', function () {
+  const body = source.match(/function assertApprovable\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
+  assert.ok(body);
+  assert.equal(body[0].includes('expires_at'), false);
+});
+
+check('the contract has at least 35 executable checks', function () {
+  const count = (tests.match(/\btest\('/g) || []).length;
+  assert.ok(count >= 35, 'found ' + count);
+});
+
+check('the tests cover the transaction race and privacy response', function () {
+  assert.ok(tests.includes('two concurrent plans cannot both commit'));
+  assert.ok(tests.includes('all invalid inspect cases return the same public shape'));
+  assert.ok(tests.includes('secret is returned once and never stored in the document'));
+});
+
+assert.equal(checks.length, 17);
+console.log('\n17 invitation source checks passed.');
