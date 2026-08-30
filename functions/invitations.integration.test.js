@@ -129,17 +129,31 @@ function resultCounts(results) {
     assert.deepEqual(counts, { fulfilled:1, rejected:9 });
   });
 
-  await test('redemption and revocation race to mutually exclusive states', async function () {
+  await test('redemption and revocation race accepts both legal serializations', async function () {
     const issued = await seedInvite();
     const plan = await buildPlan(issued, 'race-user');
-    const counts = resultCounts(await Promise.allSettled([
+    const results = await Promise.allSettled([
       commitPlan(issued.invite_id, plan),
       commitRevocation(issued.invite_id)
-    ]));
-    assert.deepEqual(counts, { fulfilled:1, rejected:1 });
+    ]);
+    const redemption = results[0];
+    const revocation = results[1];
+    const counts = resultCounts(results);
+    assert.equal(revocation.status, 'fulfilled');
     const after = (await db.collection(COLLECTION).doc(issued.invite_id).get()).data();
-    assert.equal(Boolean(after.redeemed_by) === Boolean(after.revoked_at), false,
-      'an invitation must be redeemed or revoked, never both');
+    assert.ok(after.revoked_at);
+    assert.equal(after.approved_at, null);
+    assert.equal(after.approved_by, null);
+    if (redemption.status === 'fulfilled') {
+      assert.deepEqual(counts, { fulfilled:2, rejected:0 });
+      assert.equal(after.redeemed_by, 'race-user');
+      assert.ok(after.redeemed_at);
+    } else {
+      assert.deepEqual(counts, { fulfilled:1, rejected:1 });
+      assert.equal(after.redeemed_by, null);
+      assert.equal(after.redeemed_at, null);
+    }
+    await assert.rejects(commitApproval(issued.invite_id, 'race-user'));
   });
 
   await test('a redeemed invitation can be revoked and then cannot be approved', async function () {

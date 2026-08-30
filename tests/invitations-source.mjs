@@ -171,9 +171,12 @@ check('the race test prevalidates contenders before either transaction starts', 
   assert.ok(integration.includes('length:10'));
 });
 
-check('redemption and revocation are required to be mutually exclusive', function () {
-  assert.ok(integration.includes("Boolean(after.redeemed_by) === Boolean(after.revoked_at)"));
-  assert.ok(integration.includes('fulfilled:1, rejected:1'));
+check('redemption and revocation race accepts only the two legal serializations', function () {
+  assert.ok(integration.includes("assert.equal(revocation.status, 'fulfilled')"));
+  assert.ok(integration.includes('assert.ok(after.revoked_at)'));
+  assert.ok(integration.includes('assert.deepEqual(counts, { fulfilled:2, rejected:0 })'));
+  assert.ok(integration.includes('assert.deepEqual(counts, { fulfilled:1, rejected:1 })'));
+  assert.ok(integration.includes("await assert.rejects(commitApproval(issued.invite_id, 'race-user'))"));
 });
 
 assert.equal(checks.length, 24);
