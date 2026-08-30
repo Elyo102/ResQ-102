@@ -143,6 +143,13 @@ function test(label, fn) {
     }, 'invalid-argument');
   });
 
+  test('station ids follow the existing station contract', function () {
+    const issued = buildApi().issue(superGate, Object.assign({}, baseInput, {
+      station_id:'_branch_1'
+    }));
+    assert.equal(issued.doc.station_id, '_branch_1');
+  });
+
   test('super_admin cannot be issued as an invitation role', function () {
     expectCode(function () {
       buildApi().issue(superGate, Object.assign({}, baseInput, { role: 'super_admin' }));
@@ -222,6 +229,21 @@ function test(label, fn) {
 
   test('missing invitation is indistinguishable to inspect', function () {
     assert.deepEqual(buildApi().inspect(null, 'anything'), { ok:false, error:'invalid' });
+  });
+
+  test('an invitation without max_uses is rejected', function () {
+    const api = buildApi();
+    const issued = api.issue(superGate, baseInput);
+    const malformed = Object.assign({}, issued.doc);
+    delete malformed.max_uses;
+    assert.deepEqual(api.inspect(malformed, issued.secret), { ok:false, error:'invalid' });
+  });
+
+  test('an invitation with max_uses other than one is rejected', function () {
+    const api = buildApi();
+    const issued = api.issue(superGate, baseInput);
+    const malformed = Object.assign({}, issued.doc, { max_uses:5 });
+    assert.deepEqual(api.inspect(malformed, issued.secret), { ok:false, error:'invalid' });
   });
 
   test('redeem requires a verified email', function () {
@@ -373,16 +395,17 @@ function test(label, fn) {
     }, 'invalid-invitation');
   });
 
-  test('approval remains possible after a timely redemption expires', function () {
+  test('approval rechecks expiry and rejects an expired invitation', function () {
     const api = buildApi(NOW + 100 * HOUR);
     const issued = buildApi().issue(superGate, baseInput);
     const redeemed = Object.assign({}, issued.doc, {
       redeemed_by:'u_new', redeemed_at:new Date(NOW + HOUR)
     });
-    const locked = api.assertApprovable(redeemed, {
-      uid:'u_new', email:'new.user@example.com'
-    });
-    assert.equal(locked.stationId, 'eilat_102');
+    expectCode(function () {
+      api.assertApprovable(redeemed, {
+        uid:'u_new', email:'new.user@example.com'
+      });
+    }, 'invalid-invitation');
   });
 
   test('approval is bound to the account that redeemed', function () {

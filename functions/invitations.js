@@ -5,7 +5,7 @@ const INVITE_SECRET_BYTES = 32;
 const INVITE_ID_BYTES = 16;
 const INVALID_PUBLIC_RESULT = Object.freeze({ ok:false, error:'invalid' });
 const INVISIBLE_OR_CONTROL = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202f\u2060\ufeff]/;
-const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,79}$/;
+const ID_PATTERN = /^[a-z0-9_-]{2,80}$/;
 const ROLE_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
 const SHIFT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,29}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -207,9 +207,12 @@ function createInvitations(deps) {
     return { revoked_at:new Date(nowMillis(at)), revoked_by:issuerUid };
   }
 
-  function assertApprovable(invite, requestValue) {
+  function assertApprovable(invite, requestValue, at) {
     const request = requestValue && typeof requestValue === 'object' ? requestValue : {};
-    if (!invite || typeof invite !== 'object' || invite.revoked_at || !invite.redeemed_by) {
+    const when = nowMillis(at);
+    if (!invite || typeof invite !== 'object' || invite.max_uses !== 1 ||
+        invite.revoked_at || !invite.redeemed_by ||
+        !Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when) {
       throw new InvitationError('invalid-invitation', 'invitation is not approvable');
     }
     const uid = cleanRequired(request.uid, 'uid', 128);

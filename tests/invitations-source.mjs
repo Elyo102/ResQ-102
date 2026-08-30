@@ -110,10 +110,11 @@ check('approval is bound to the redeeming uid and locked email', function () {
   assert.ok(body[0].includes('request.email'));
 });
 
-check('expiry is not re-applied after a timely redemption awaits approval', function () {
+check('approval rechecks expiry after redemption', function () {
   const body = source.match(/function assertApprovable\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
   assert.ok(body);
-  assert.equal(body[0].includes('expires_at'), false);
+  assert.ok(body[0].includes('expires_at'));
+  assert.ok(body[0].includes('<= when'));
 });
 
 check('the contract has at least 35 executable checks', function () {
