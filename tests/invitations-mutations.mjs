@@ -20,8 +20,20 @@ const mutations = [
   },
   {
     name: 'approval ignores revocation',
-    find: "if (!invite || typeof invite !== 'object' || invite.revoked_at || !invite.redeemed_by) {",
-    replace: "if (!invite || typeof invite !== 'object' || !invite.redeemed_by) {",
+    find: "invite.revoked_at || !invite.redeemed_by ||\n        !Number.isFinite(toMillis(invite.expires_at))",
+    replace: "false || !invite.redeemed_by ||\n        !Number.isFinite(toMillis(invite.expires_at))",
+    expected: 'caught'
+  },
+  {
+    name: 'approval ignores expiry',
+    find: "!Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when",
+    replace: 'false',
+    expected: 'caught'
+  },
+  {
+    name: 'single-use guard removed',
+    find: "invite.max_uses !== 1 ||\n        invite.revoked_at || invite.redeemed_by ||",
+    replace: "false ||\n        invite.revoked_at || invite.redeemed_by ||",
     expected: 'caught'
   },
   {
@@ -110,6 +122,6 @@ try {
   fs.rmSync(tempRoot, { recursive:true, force:true });
 }
 
-assert.equal(caught, 10);
+assert.equal(caught, 12);
 assert.equal(survived, 1);
-console.log('\n10 security mutations caught; 1 timing-only mutation survived as declared.');
+console.log('\n12 security mutations caught; 1 timing-only mutation survived as declared.');
