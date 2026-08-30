@@ -23,7 +23,8 @@ function check(label, fn) {
 check('module exposes the reviewed pure invitation surface', function () {
   for (const token of [
     'function issue(', 'function inspect(', 'function redeem(',
-    'function verifyPlan(', 'function revoke(', 'function assertApprovable('
+    'function verifyPlan(', 'function revoke(', 'function assertApprovable(',
+    'function approve('
   ]) assert.ok(source.includes(token), token);
 });
 
@@ -110,6 +111,23 @@ check('approval is bound to the redeeming uid and locked email', function () {
   assert.ok(body[0].includes('request.email'));
 });
 
+check('revocation remains open after redemption and closes at approval', function () {
+  const body = source.match(/function revoke\([\s\S]*?\n  }\n\n  function assertApprovable/);
+  assert.ok(body, 'revoke body');
+  assert.equal(body[0].includes('invite.redeemed_by'), false);
+  assert.ok(body[0].includes('invite.approved_at'));
+  assert.ok(body[0].includes('invite.approved_by'));
+});
+
+check('approval records an auditable terminal state', function () {
+  const body = source.match(/function approve\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
+  assert.ok(body, 'approve body');
+  assert.ok(body[0].includes('approved_at: new Date(when)'));
+  assert.ok(body[0].includes('approved_by: approvedBy'));
+  assert.ok(body[0].includes('withinRoleSetterScope'));
+  assert.ok(body[0].includes('assertMayAssign'));
+});
+
 check('approval rechecks expiry after redemption', function () {
   const body = source.match(/function assertApprovable\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
   assert.ok(body);
@@ -124,6 +142,8 @@ check('the contract has at least 35 executable checks', function () {
 
 check('the tests cover the transaction race and privacy response', function () {
   assert.ok(tests.includes('two concurrent plans cannot both commit'));
+  assert.ok(tests.includes('a redeemed but unapproved invitation can still be revoked'));
+  assert.ok(tests.includes('an approved invitation cannot be revoked'));
   assert.ok(tests.includes('all invalid inspect cases return the same public shape'));
   assert.ok(tests.includes('secret is returned once and never stored in the document'));
 });
@@ -156,5 +176,5 @@ check('redemption and revocation are required to be mutually exclusive', functio
   assert.ok(integration.includes('fulfilled:1, rejected:1'));
 });
 
-assert.equal(checks.length, 22);
-console.log('\n22 invitation source checks passed.');
+assert.equal(checks.length, 24);
+console.log('\n24 invitation source checks passed.');

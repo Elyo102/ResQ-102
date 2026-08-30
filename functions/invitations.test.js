@@ -103,6 +103,8 @@ function test(label, fn) {
     const issued = buildApi().issue(superGate, baseInput);
     assert.equal(issued.doc.expires_at.getTime() - issued.doc.issued_at.getTime(), 72 * HOUR);
     assert.equal(issued.doc.max_uses, 1);
+    assert.equal(issued.doc.approved_at, null);
+    assert.equal(issued.doc.approved_by, null);
   });
 
   test('secret is returned once and never stored in the document', function () {
@@ -362,11 +364,52 @@ function test(label, fn) {
     expectCode(function () { api.revoke(hrGate, issued.doc); }, 'out-of-scope');
   });
 
-  test('a redeemed invitation cannot be revoked retroactively', function () {
+  test('a redeemed but unapproved invitation can still be revoked', function () {
     const api = buildApi();
     const issued = api.issue(superGate, baseInput);
-    const used = Object.assign({}, issued.doc, { redeemed_by:'u_new' });
-    expectCode(function () { api.revoke(superGate, used); }, 'invalid-invitation');
+    const redeemed = Object.assign({}, issued.doc, {
+      redeemed_by:'u_new', redeemed_at:new Date(NOW)
+    });
+    const update = api.revoke(superGate, redeemed);
+    const revoked = Object.assign({}, redeemed, update);
+    assert.equal(update.revoked_by, 'u_super');
+    expectCode(function () {
+      api.assertApprovable(revoked, { uid:'u_new', email:'new.user@example.com' });
+    }, 'invalid-invitation');
+  });
+
+  test('an approved invitation cannot be revoked', function () {
+    const api = buildApi();
+    const issued = api.issue(superGate, baseInput);
+    const redeemed = Object.assign({}, issued.doc, {
+      redeemed_by:'u_new', redeemed_at:new Date(NOW)
+    });
+    const approval = api.approve(superGate, redeemed, {
+      uid:'u_new', email:'new.user@example.com'
+    });
+    const approved = Object.assign({}, redeemed, approval.update);
+    assert.equal(approval.update.approved_by, 'u_super');
+    assert.equal(approval.update.approved_at.getTime(), NOW);
+    expectCode(function () { api.revoke(superGate, approved); }, 'invalid-invitation');
+  });
+
+  test('post-redemption revocation keeps issuer scope and role ceiling', function () {
+    const api = buildApi();
+    const foreign = api.issue(superGate, Object.assign({}, baseInput, {
+      station_id:'other_99'
+    }));
+    const foreignRedeemed = Object.assign({}, foreign.doc, {
+      redeemed_by:'u_new', redeemed_at:new Date(NOW)
+    });
+    expectCode(function () { api.revoke(hrGate, foreignRedeemed); }, 'out-of-scope');
+
+    const elevated = api.issue(superGate, Object.assign({}, baseInput, {
+      role:'commander'
+    }));
+    const elevatedRedeemed = Object.assign({}, elevated.doc, {
+      redeemed_by:'u_new', redeemed_at:new Date(NOW)
+    });
+    expectCode(function () { api.revoke(hrGate, elevatedRedeemed); }, 'permission-denied');
   });
 
   test('assertApprovable returns invitation-owned assignment values', function () {

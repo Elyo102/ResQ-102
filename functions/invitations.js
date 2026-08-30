@@ -103,6 +103,8 @@ function createInvitations(deps) {
       revoked_by: null,
       redeemed_by: null,
       redeemed_at: null,
+      approved_by: null,
+      approved_at: null,
       max_uses: 1
     };
     assertSecretAbsent(doc, secret);
@@ -190,7 +192,8 @@ function createInvitations(deps) {
 
   function revoke(gateValue, invite, at) {
     const gate = gateValue && typeof gateValue === 'object' ? gateValue : {};
-    if (!invite || typeof invite !== 'object' || invite.revoked_at || invite.redeemed_by) {
+    if (!invite || typeof invite !== 'object' || invite.revoked_at ||
+        invite.approved_at || invite.approved_by) {
       throw new InvitationError('invalid-invitation', 'invitation cannot be revoked');
     }
     const issuerUid = cleanRequired(inputFrom(gate, ['auth', 'uid']), 'revoked_by', 128);
@@ -211,7 +214,8 @@ function createInvitations(deps) {
     const request = requestValue && typeof requestValue === 'object' ? requestValue : {};
     const when = nowMillis(at);
     if (!invite || typeof invite !== 'object' || invite.max_uses !== 1 ||
-        invite.revoked_at || !invite.redeemed_by ||
+        invite.revoked_at || invite.approved_at || invite.approved_by ||
+        !invite.redeemed_by ||
         !Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when) {
       throw new InvitationError('invalid-invitation', 'invitation is not approvable');
     }
@@ -228,6 +232,28 @@ function createInvitations(deps) {
       districtId: cleanId(invite.district_id, 'district_id'),
       role: cleanRole(invite.role),
       shift: cleanShift(invite.shift)
+    };
+  }
+
+  function approve(gateValue, invite, requestValue, at) {
+    const gate = gateValue && typeof gateValue === 'object' ? gateValue : {};
+    const when = nowMillis(at);
+    const approvedBy = cleanRequired(inputFrom(gate, ['auth', 'uid']), 'approved_by', 128);
+    const assignment = assertApprovable(invite, requestValue, when);
+    const request = requestValue && typeof requestValue === 'object' ? requestValue : {};
+    const targetUid = cleanRequired(request.uid, 'uid', 128);
+
+    if (!d.withinRoleSetterScope(gate, {}, assignment)) {
+      throw new InvitationError('out-of-scope', 'invitation is outside approver scope');
+    }
+    d.assertMayAssign(gate, assignment.role, {}, targetUid, false, assignment);
+
+    return {
+      assignment: assignment,
+      update: {
+        approved_by: approvedBy,
+        approved_at: new Date(when)
+      }
     };
   }
 
@@ -299,7 +325,7 @@ function createInvitations(deps) {
     }));
   }
 
-  return Object.freeze({ issue, inspect, redeem, verifyPlan, revoke, assertApprovable });
+  return Object.freeze({ issue, inspect, redeem, verifyPlan, revoke, assertApprovable, approve });
 }
 
 function inputFrom(value, path) {

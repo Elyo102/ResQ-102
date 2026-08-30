@@ -83,6 +83,19 @@ async function commitRevocation(inviteId) {
   });
 }
 
+async function commitApproval(inviteId, uid) {
+  const ref = db.collection(COLLECTION).doc(inviteId);
+  return db.runTransaction(async function (tx) {
+    const fresh = await tx.get(ref);
+    if (!fresh.exists) throw new Error('invitation missing');
+    const approval = api.approve(gate, fresh.data(), {
+      uid:uid, email:EMAIL
+    });
+    tx.update(ref, approval.update);
+    return approval.assignment;
+  });
+}
+
 function resultCounts(results) {
   return {
     fulfilled: results.filter(function (r) { return r.status === 'fulfilled'; }).length,
@@ -129,6 +142,42 @@ function resultCounts(results) {
       'an invitation must be redeemed or revoked, never both');
   });
 
+  await test('a redeemed invitation can be revoked and then cannot be approved', async function () {
+    const issued = await seedInvite();
+    const plan = await buildPlan(issued, 'revoked-user');
+    await commitPlan(issued.invite_id, plan);
+    await commitRevocation(issued.invite_id);
+    await assert.rejects(commitApproval(issued.invite_id, 'revoked-user'));
+    const after = (await db.collection(COLLECTION).doc(issued.invite_id).get()).data();
+    assert.ok(after.revoked_at);
+    assert.equal(after.approved_at, null);
+  });
+
+  await test('an approved invitation cannot be revoked', async function () {
+    const issued = await seedInvite();
+    const plan = await buildPlan(issued, 'approved-user');
+    await commitPlan(issued.invite_id, plan);
+    await commitApproval(issued.invite_id, 'approved-user');
+    await assert.rejects(commitRevocation(issued.invite_id));
+    const after = (await db.collection(COLLECTION).doc(issued.invite_id).get()).data();
+    assert.ok(after.approved_at);
+    assert.equal(after.revoked_at, null);
+  });
+
+  await test('approval and revocation race and exactly one commits', async function () {
+    const issued = await seedInvite();
+    const plan = await buildPlan(issued, 'approval-race-user');
+    await commitPlan(issued.invite_id, plan);
+    const counts = resultCounts(await Promise.allSettled([
+      commitApproval(issued.invite_id, 'approval-race-user'),
+      commitRevocation(issued.invite_id)
+    ]));
+    assert.deepEqual(counts, { fulfilled:1, rejected:1 });
+    const after = (await db.collection(COLLECTION).doc(issued.invite_id).get()).data();
+    assert.equal(Boolean(after.approved_at) === Boolean(after.revoked_at), false,
+      'an invitation must be approved or revoked, never both');
+  });
+
   await test('expiry after prevalidation is rechecked inside the transaction', async function () {
     const issued = await seedInvite();
     const plan = await buildPlan(issued, 'slow-user');
@@ -165,8 +214,8 @@ function resultCounts(results) {
     assert.equal((await ghost.get()).exists, false);
   });
 
-  assert.equal(passed, 7);
-  console.log('\n7 invitation Firestore integration checks passed.');
+  assert.equal(passed, 10);
+  console.log('\n10 invitation Firestore integration checks passed.');
   process.exit(0);
 })().catch(function (error) {
   console.error(error);

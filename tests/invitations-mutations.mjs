@@ -13,6 +13,24 @@ const originalTests = fs.readFileSync(testPath, 'utf8');
 
 const mutations = [
   {
+    name: 'revocation still closes at redemption',
+    find: "invite.approved_at || invite.approved_by) {",
+    replace: "invite.redeemed_by) {",
+    expected: 'caught'
+  },
+  {
+    name: 'approved invitation remains revocable',
+    find: "invite.approved_at || invite.approved_by) {",
+    replace: "false || false) {",
+    expected: 'caught'
+  },
+  {
+    name: 'approval terminal marker removed',
+    find: "approved_by: approvedBy,\n        approved_at: new Date(when)",
+    replace: "approved_by: null,\n        approved_at: null",
+    expected: 'caught'
+  },
+  {
     name: 'email verification disabled',
     find: 'if (auth.email_verified !== true) {',
     replace: 'if (false) {',
@@ -20,8 +38,8 @@ const mutations = [
   },
   {
     name: 'approval ignores revocation',
-    find: "invite.revoked_at || !invite.redeemed_by ||\n        !Number.isFinite(toMillis(invite.expires_at))",
-    replace: "false || !invite.redeemed_by ||\n        !Number.isFinite(toMillis(invite.expires_at))",
+    find: "invite.revoked_at || invite.approved_at || invite.approved_by ||\n        !invite.redeemed_by ||",
+    replace: "false || invite.approved_at || invite.approved_by ||\n        !invite.redeemed_by ||",
     expected: 'caught'
   },
   {
@@ -122,6 +140,6 @@ try {
   fs.rmSync(tempRoot, { recursive:true, force:true });
 }
 
-assert.equal(caught, 12);
+assert.equal(caught, 15);
 assert.equal(survived, 1);
-console.log('\n12 security mutations caught; 1 timing-only mutation survived as declared.');
+console.log('\n15 security mutations caught; 1 timing-only mutation survived as declared.');
