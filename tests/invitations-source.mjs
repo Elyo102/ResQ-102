@@ -6,8 +6,12 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(here, '..', 'functions', 'invitations.js');
 const testPath = path.join(here, '..', 'functions', 'invitations.test.js');
+const integrationPath = path.join(here, '..', 'functions', 'invitations.integration.test.js');
+const workflowPath = path.join(here, '..', '.github', 'workflows', 'tests.yml');
 const source = fs.readFileSync(sourcePath, 'utf8');
 const tests = fs.readFileSync(testPath, 'utf8');
+const integration = fs.readFileSync(integrationPath, 'utf8');
+const workflow = fs.readFileSync(workflowPath, 'utf8');
 
 const checks = [];
 function check(label, fn) {
@@ -123,5 +127,33 @@ check('the tests cover the transaction race and privacy response', function () {
   assert.ok(tests.includes('secret is returned once and never stored in the document'));
 });
 
-assert.equal(checks.length, 17);
-console.log('\n17 invitation source checks passed.');
+check('the Firestore race test is wired into the existing emulator CI job', function () {
+  assert.ok(workflow.includes('node invitations.integration.test.js'));
+  assert.ok(workflow.includes('firebase emulators:exec --only firestore'));
+});
+
+check('the integration test refuses to run outside the emulator', function () {
+  assert.ok(integration.includes('if (!process.env.FIRESTORE_EMULATOR_HOST)'));
+  assert.ok(integration.includes('process.exit(2)'));
+});
+
+check('every redemption decision is repeated inside a transaction', function () {
+  assert.ok(integration.includes('db.runTransaction('));
+  assert.ok(integration.includes('const fresh = await tx.get(ref)'));
+  assert.ok(integration.includes('api.verifyPlan(fresh.data(), plan)'));
+  assert.ok(integration.includes('tx.update(ref, update)'));
+});
+
+check('the race test prevalidates contenders before either transaction starts', function () {
+  assert.ok(integration.includes("const first = await buildPlan(issued, 'user-a')"));
+  assert.ok(integration.includes("const second = await buildPlan(issued, 'user-b')"));
+  assert.ok(integration.includes('length:10'));
+});
+
+check('redemption and revocation are required to be mutually exclusive', function () {
+  assert.ok(integration.includes("Boolean(after.redeemed_by) === Boolean(after.revoked_at)"));
+  assert.ok(integration.includes('fulfilled:1, rejected:1'));
+});
+
+assert.equal(checks.length, 22);
+console.log('\n22 invitation source checks passed.');
