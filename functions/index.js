@@ -274,6 +274,30 @@ function requireSuperAdmin(req) {
   return auth;
 }
 
+// מזהה התחנה לפעולות שהמשתמש מפעיל נקבע רק מההרשאות
+// החתומות שלו. אין ברירת מחדל לתחנת הפיילוט: חשבון ללא
+// שיוך תקין נעצר כדי שלא יכתוב בטעות נתונים לתחנה אחרת.
+const STATION_ID_RE = /^[a-z0-9_-]{2,80}$/;
+
+function callerStation(req, auth) {
+  const data = (req && req.data) || null;
+  if (data && Object.prototype.hasOwnProperty.call(data, 'stationId')) {
+    throw new HttpsError('invalid-argument',
+      'התחנה נקבעת לפי ההרשאות של החשבון ואינה נשלחת מהלקוח.');
+  }
+
+  const sid = String((auth && auth.token && auth.token.stationId) || '');
+  if (!sid) {
+    throw new HttpsError('failed-precondition',
+      'לחשבון אין שיוך לתחנה. פנה למנהל המערכת.');
+  }
+  if (!STATION_ID_RE.test(sid)) {
+    throw new HttpsError('failed-precondition',
+      'שיוך התחנה בחשבון אינו תקין. פנה למנהל המערכת.');
+  }
+  return sid;
+}
+
 // ---------- שער השיבוץ ----------
 //
 // מחזיר את המשתמש המחובר ואת התקרה שלו. מנהל-על מקבל Infinity;
@@ -2512,15 +2536,18 @@ function isWorking(rotations, overrides, crew, dateKey) {
   return !!(ov && Array.isArray(ov.extra_crews) && ov.extra_crews.indexOf(crew) !== -1);
 }
 
-async function loadSchedule() {
+async function loadSchedule(sid) {
+  if (typeof sid !== 'string' || !sid.trim() || sid !== sid.trim()) {
+    throw new Error('loadSchedule requires an explicit station id');
+  }
   const rotations = [];
   const overrides = {};
   try {
-    const rs = await db.collection('stations/' + STATION_ID + '/rotations').get();
+    const rs = await db.collection('stations/' + sid + '/rotations').get();
     rs.forEach(d => rotations.push(d.data() || {}));
   } catch (e) { console.error('rotations read failed', e); }
   try {
-    const os = await db.collection('stations/' + STATION_ID + '/shift_overrides').get();
+    const os = await db.collection('stations/' + sid + '/shift_overrides').get();
     os.forEach(d => { overrides[d.id] = d.data() || {}; });
   } catch (e) { console.error('overrides read failed', e); }
   return { rotations, overrides };
@@ -2596,7 +2623,7 @@ function scanPerson(person, recs, sched, mk, limit, cutoff) {
 // הנוכחי נסרק עד היום בלבד, אחרת כל משמרת עתידית נספרת
 // כדיווח חסר.
 async function scanMonth(mk, cutoff) {
-  const sched = await loadSchedule();
+  const sched = await loadSchedule(STATION_ID);
   const cfg = await hrConfig();
 
   const people = [];
@@ -3367,7 +3394,7 @@ exports.onSwapChange = onDocumentWritten(
     // שיהיו חוקיות אחרי שהצד השני יבחר תאריך אחר.
     if (now === 'approved' && was !== 'approved') {
       try {
-        const sched = await loadSchedule();
+        const sched = await loadSchedule(sid);
         const apSnap = await db.collection('stations/' + sid + '/swaps')
           .where('status', '==', 'approved').get();
         const approved = [];
@@ -3558,7 +3585,7 @@ exports.sendBroadcast = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3670,7 +3697,7 @@ exports.sendCallout = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3825,7 +3852,7 @@ exports.closeCallout = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3888,7 +3915,7 @@ exports.guardSignup = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3937,7 +3964,7 @@ exports.assignGuard = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -4159,8 +4186,7 @@ exports.claimPushToken = onCall(async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
-  const t   = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const me  = auth.uid;
 
   const token = String((req.data || {}).token || '').trim();
