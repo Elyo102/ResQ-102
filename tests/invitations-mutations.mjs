@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(here, '..', 'functions', 'invitations.js');
 const testPath = path.join(here, '..', 'functions', 'invitations.test.js');
-const originalSource = fs.readFileSync(sourcePath, 'utf8');
+const originalSource = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n');
 const originalTests = fs.readFileSync(testPath, 'utf8');
 
 const mutations = [
