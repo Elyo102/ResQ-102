@@ -3,6 +3,7 @@
   "description": "Cloud Functions - Station 102",
   "main": "index.js",
   "scripts": {
+    "audit:station-claims": "node run-station-claims-audit.js",
     "test:identity": "node identity-coordinator.integration.test.js"
   },
   "engines": {

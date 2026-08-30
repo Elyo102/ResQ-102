@@ -64,8 +64,35 @@ function authUser(claims, extra) {
   test('pending account with station is visible but does not become approved', function () {
     const out = claimsAudit.summarizeUsers([authUser({ stationId:'eilat_102' })]);
     assert.equal(out.pending_accounts, 1);
+    assert.equal(out.assigned_accounts, 1);
     assert.equal(out.pending_with_station_claim, 1);
     assert.equal(out.release_gate_42b, 'PASS');
+  });
+
+  test('partial identity assignment without station blocks', function () {
+    const out = claimsAudit.summarizeUsers([authUser({ emp:'123' })]);
+    assert.equal(out.pending_accounts, 1);
+    assert.equal(out.assigned_missing_station_claim, 1);
+    assert.equal(out.release_gate_42b, 'BLOCK');
+  });
+
+  test('invalid station blocks even when role is missing', function () {
+    const out = claimsAudit.summarizeUsers([
+      authUser({ emp:'123', stationId:'BAD STATION!', districtId:'south' })
+    ]);
+    assert.equal(out.pending_accounts, 1);
+    assert.equal(out.invalid_station_claim, 1);
+    assert.equal(out.assigned_invalid_station_claim, 1);
+    assert.equal(out.release_gate_42b, 'BLOCK');
+  });
+
+  test('Firebase Admin customClaims input follows the same fail-closed gate', function () {
+    const out = claimsAudit.summarizeUsers([{
+      disabled:false,
+      customClaims:{ emp:'123', stationId:'BAD STATION!', districtId:'south' }
+    }]);
+    assert.equal(out.assigned_invalid_station_claim, 1);
+    assert.equal(out.release_gate_42b, 'BLOCK');
   });
 
   test('trailing ASCII space is invalid, never trimmed silently', function () {
@@ -194,6 +221,6 @@ function authUser(claims, extra) {
     assert.equal(JSON.stringify(users), before);
   });
 
-  assert.equal(passed, 25);
-  console.log('\n25 station-claim checks passed.');
+  assert.equal(passed, 28);
+  console.log('\n28 station-claim checks passed.');
 })()
