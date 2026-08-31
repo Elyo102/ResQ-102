@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ResQ · ניהול סידור עבודה</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap">
+<style>
+:root{
+  --bg:#eef1f6; --card:#fff; --sunk:#f5f7fa; --line:#e4e8ee;
+  --ink:#1b2230; --ink2:#5b6675; --dim:#93a0b0;
+  --brand:#2f6fb0; --brand-soft:#e8f0fa; --on-brand:#fff;
+  --bad:#c2413a; --bad-bg:#fdeceb; --warn:#9a6b0d; --warn-bg:#fdf5e2;
+  --ok:#2c7a62; --ok-bg:#e7f4ef;
+  --shadow:0 1px 2px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
+  --t-eilat:#dbe6f7; --t-shach:#dcecdc; --t-timna:#fdf3d6; --t-yotv:#fae2d4;
+  --t-task:#ffffff; --t-sick:#c8daf0; --t-course:#ddd6ee; --t-vac:#f0cdc4; --t-res:#d9ead9;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1319; --card:#171c24; --sunk:#131820; --line:#262d38;
+  --ink:#e8ecf2; --ink2:#a3aebd; --dim:#717d8c;
+  --brand:#6fa8de; --brand-soft:#182430; --on-brand:#0d1218;
+  --bad:#e8908a; --bad-bg:#2a1a19; --warn:#d9ab55; --warn-bg:#272115;
+  --ok:#6dbfa4; --ok-bg:#152520;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+  --t-eilat:#1c2a3b; --t-shach:#1a2a1e; --t-timna:#2a2614; --t-yotv:#2d2118;
+  --t-task:#1c212a; --t-sick:#1a2432; --t-course:#241f33; --t-vac:#2e1e1a; --t-res:#18271b;
+}}
+:root[data-theme="dark"]{
+  --bg:#0f1319; --card:#171c24; --sunk:#131820; --line:#262d38;
+  --ink:#e8ecf2; --ink2:#a3aebd; --dim:#717d8c;
+  --brand:#6fa8de; --brand-soft:#182430; --on-brand:#0d1218;
+  --bad:#e8908a; --bad-bg:#2a1a19; --warn:#d9ab55; --warn-bg:#272115;
+  --ok:#6dbfa4; --ok-bg:#152520;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+  --t-eilat:#1c2a3b; --t-shach:#1a2a1e; --t-timna:#2a2614; --t-yotv:#2d2118;
+  --t-task:#1c212a; --t-sick:#1a2432; --t-course:#241f33; --t-vac:#2e1e1a; --t-res:#18271b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Heebo","Assistant","Segoe UI",system-ui,-apple-system,sans-serif;
+  font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+button,input,select{font-family:inherit}
+[hidden]{display:none!important}
+
+.shell{display:grid;grid-template-columns:1fr;min-height:100vh}
+@media(min-width:1000px){.shell{grid-template-columns:1fr 13.5rem}}
+
+.rail{background:var(--card);border-inline-start:1px solid var(--line);padding:1.1rem .8rem;display:flex;flex-direction:column;gap:.15rem}
+.rail .brand{display:flex;align-items:center;gap:.55rem;margin-bottom:1.1rem;padding:0 .3rem}
+.rail .mark{width:1.9rem;height:1.9rem;border-radius:.55rem;background:var(--brand);color:var(--on-brand);display:grid;place-items:center;font-weight:800;font-size:.85rem}
+.rail .brand b{font-size:1rem;font-weight:700}
+.rail .grp{font-size:.7rem;font-weight:700;letter-spacing:.06em;color:var(--dim);padding:.85rem .55rem .25rem}
+.rail a{display:flex;align-items:center;gap:.6rem;padding:.5rem .55rem;border-radius:.5rem;color:var(--ink2);text-decoration:none;font-size:.9rem;font-weight:500;cursor:pointer;border:0;background:none;width:100%;text-align:start}
+.rail a.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.rail a .ic{width:1.15rem;text-align:center}
+.rail .me{margin-top:auto;display:flex;align-items:center;gap:.55rem;padding-top:.9rem;border-top:1px solid var(--line)}
+.av{width:2rem;height:2rem;border-radius:50%;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand);font-weight:700;font-size:.78rem;flex:none}
+@media(max-width:999px){.rail{display:none}}
+
+main{padding:1rem 1rem 5rem;min-width:0}
+.crumb{font-size:.75rem;font-weight:600;color:var(--dim);margin-bottom:.1rem}
+h1{margin:0;font-size:1.25rem;font-weight:700;letter-spacing:-.015em}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin-bottom:.85rem}
+.spacer{margin-inline-start:auto}
+.muted{font-size:.82rem;color:var(--ink2)}
+
+button{font-size:.86rem;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:.55rem;padding:.42rem .8rem;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--brand);color:var(--brand)}
+button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+button.pri{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+button.pri:hover{color:var(--on-brand)}
+button.big{padding:.55rem 1.1rem;font-size:.92rem;border-radius:.6rem}
+select{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:.55rem;padding:.4rem .6rem;font-size:.84rem}
+.pill{display:inline-flex;align-items:center;gap:.35rem;font-size:.76rem;font-weight:600;padding:.22rem .6rem;border-radius:999px;background:var(--warn-bg);color:var(--warn)}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill::before{content:"";width:.4rem;height:.4rem;border-radius:50%;background:currentColor}
+
+/* מתג התצוגות — ברור ובלחיצה אחת גם בנייד */
+.viewtabs{display:flex;gap:.35rem;background:var(--sunk);padding:.2rem;border-radius:.7rem;margin-bottom:.85rem}
+.viewtabs button{flex:1;border:0;background:none;padding:.5rem .4rem;border-radius:.55rem;font-size:.88rem;min-height:2.6rem}
+.viewtabs button.on{background:var(--brand);color:var(--on-brand);box-shadow:var(--shadow)}
+
+.panel{background:var(--card);border:1px solid var(--line);border-radius:.9rem;padding:.85rem .95rem;box-shadow:var(--shadow);margin-bottom:.8rem}
+.panel h2{margin:0 0 .1rem;font-size:.98rem;font-weight:700}
+.lead{margin:0 0 .7rem;color:var(--ink2);font-size:.83rem}
+.tabs{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.7rem}
+.tabs button{padding:.32rem .75rem;font-size:.82rem;border-radius:999px}
+.tabs button.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.reqs{display:flex;flex-wrap:wrap;gap:.45rem;margin-bottom:.75rem}
+.req{display:flex;align-items:center;gap:.5rem;background:var(--sunk);border-radius:.6rem;padding:.35rem .4rem .35rem .6rem}
+.req.min{background:var(--bad-bg)}
+.req.min .lb{color:var(--bad)}
+.req .lb{font-size:.83rem;font-weight:600;min-width:5rem}
+.req .stp{display:flex;align-items:center;gap:.25rem}
+.req .stp button{width:1.7rem;height:1.7rem;padding:0;border-radius:.4rem;display:grid;place-items:center;font-size:1rem}
+.req .stp b{min-width:1.3rem;text-align:center;font-weight:700}
+.run{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;padding-top:.7rem;border-top:1px solid var(--line)}
+.seg{display:flex;background:var(--sunk);border-radius:.55rem;padding:.15rem;gap:.15rem}
+.seg button{border:0;background:none;padding:.3rem .7rem;font-size:.82rem;border-radius:.42rem}
+.seg button.on{background:var(--brand);color:var(--on-brand)}
+.tot{margin-inline-start:auto;font-size:.82rem;color:var(--ink2)}
+#runNote{margin-top:.55rem;font-size:.83rem;color:var(--ok);font-weight:600}
+
+/* ---- הלוח ---- */
+.board{background:var(--card);border:1px solid var(--line);border-radius:.9rem;padding:.5rem;overflow-x:auto;box-shadow:var(--shadow)}
+.grid{display:grid;gap:.3rem;min-width:78rem}
+.hd{padding:.4rem .3rem .5rem;text-align:center;font-size:.8rem;font-weight:700;position:sticky;top:0;background:var(--card);z-index:3}
+.hd .wd{display:block;color:var(--dim);font-weight:500;font-size:.72rem}
+.rowlab{position:sticky;inset-inline-end:0;z-index:2;background:var(--card);display:flex;align-items:center;padding:.5rem .5rem;font-size:.82rem;font-weight:700;border-radius:.5rem}
+.cell{border-radius:.55rem;padding:.45rem .55rem .5rem;min-height:2.5rem}
+.n{font-size:.87rem;font-weight:600;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.n.me{color:var(--brand);font-weight:800}
+.n .q{font-weight:800;color:var(--warn)}
+.rule{border-top:2px solid var(--bad);margin:.34rem 0 .22rem;height:0}
+.dash{color:var(--dim);font-size:.8rem}
+.gap{display:inline-flex;font-size:.68rem;font-weight:700;color:var(--bad);border:1px dashed currentColor;border-radius:.3rem;padding:0 .32rem;margin-top:.3rem}
+.gap.under{background:var(--bad);color:#fff;border-style:solid}
+.blk{border-radius:.45rem;padding:.3rem .42rem;margin-bottom:.28rem}
+.blk b{display:block;font-size:.78rem;font-weight:700}
+.blk span{display:block;font-size:.72rem;opacity:.85}
+.blk time{display:block;font-size:.74rem;font-weight:700;direction:ltr;text-align:right;unicode-bidi:isolate}
+.k-green{background:#d6f0d8;color:#1d5227}.k-yellow{background:#fdf1c8;color:#6b5405}
+.k-orange{background:#f9dcbe;color:#8a4a13}.k-cyan{background:#cfeaf2;color:#0f5566}
+.k-plain{background:var(--sunk);color:var(--ink2)}
+:root[data-theme="dark"] .blk[class*="k-"]{background:#232a33;color:#dfe5ee}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .blk[class*="k-"]{background:#232a33;color:#dfe5ee}}
+
+.tint-eilat{background:var(--t-eilat)}.tint-shach{background:var(--t-shach)}
+.tint-timna{background:var(--t-timna)}.tint-yotv{background:var(--t-yotv)}
+.tint-task{background:var(--t-task)}.tint-sick{background:var(--t-sick)}
+.tint-course{background:var(--t-course)}.tint-vac{background:var(--t-vac)}
+.tint-res{background:var(--t-res)}
+.rowlab.tint-eilat,.rowlab.tint-shach,.rowlab.tint-timna,.rowlab.tint-yotv,
+.rowlab.tint-task,.rowlab.tint-sick,.rowlab.tint-course,.rowlab.tint-vac,.rowlab.tint-res{background:var(--card)}
+
+.kpis{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.6rem}
+.kpi{background:var(--sunk);border-radius:.6rem;padding:.45rem .7rem;min-width:6.5rem;flex:1 1 6.5rem}
+.kpi b{display:block;font-size:1.15rem;font-weight:800;line-height:1.2}
+.kpi small{color:var(--dim);font-size:.74rem}
+.kpi.bad b{color:var(--bad)}.kpi.ok b{color:var(--ok)}
+.fnd{display:flex;align-items:center;gap:.5rem;padding:.4rem .55rem;border-radius:.5rem;background:var(--bad-bg);color:var(--bad);font-size:.83rem;margin-bottom:.3rem;flex-wrap:wrap}
+.fnd .tag{font-size:.7rem;font-weight:700;padding:.1rem .45rem;border-radius:999px;background:rgba(0,0,0,.07)}
+.fnd .day{font-weight:700}
+.clean{color:var(--ok);background:var(--ok-bg);border-radius:.5rem;padding:.5rem .6rem;font-size:.86rem;font-weight:600}
+.note{margin-top:.6rem;font-size:.8rem;color:var(--ink2)}
+
+/* ---- הסידור שלי / התחנה ---- */
+.dayNav{display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem}
+.dayNav .t{flex:1;text-align:center}
+.dayNav .t b{display:block;font-size:.98rem;font-weight:700}
+.dayNav .t small{display:block;color:var(--dim);font-size:.74rem;direction:ltr;unicode-bidi:isolate}
+.nav{width:2.5rem;height:2.5rem;min-height:2.5rem;border-radius:.6rem;display:grid;place-items:center;font-size:1rem;padding:0;direction:ltr;unicode-bidi:isolate}
+.cards{display:flex;flex-direction:column;gap:.6rem}
+.card{border-radius:.9rem;overflow:hidden;box-shadow:var(--shadow)}
+.card.empty{background:var(--card);padding:1.1rem;text-align:center;color:var(--dim)}
+.card .ch{padding:.5rem .75rem;font-weight:700;font-size:.9rem}
+.card .cb{background:var(--card);margin:0 .35rem .35rem;border-radius:.7rem;padding:.65rem .7rem}
+.who{display:flex;align-items:center;gap:.55rem}
+.who .nm{font-weight:700;font-size:.92rem;line-height:1.25}
+.who .nm small{display:block;font-weight:400;color:var(--dim);font-size:.75rem}
+.chips{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.55rem}
+.chip{font-size:.74rem;font-weight:600;padding:.18rem .55rem;border-radius:999px;background:var(--sunk);color:var(--ink2)}
+.crew{margin-top:.5rem;font-size:.8rem;color:var(--ink2);line-height:1.6}
+.hours{font-size:.85rem;font-weight:700;direction:ltr;text-align:start;unicode-bidi:isolate;margin-top:.2rem}
+.state{margin-top:.55rem;font-size:.82rem;font-weight:700;text-align:end}
+.state.ok{color:var(--ok)}.state.warn{color:var(--warn)}
+.acts{display:flex;gap:.45rem;margin-top:.6rem}
+.acts button{flex:1;padding:.55rem 0;border-radius:.55rem;min-height:2.75rem}
+.acts .ok{background:var(--ok);border-color:var(--ok);color:#fff}
+.chg{margin-top:.55rem;background:var(--warn-bg);color:var(--warn);border-radius:.6rem;padding:.5rem .6rem;font-size:.8rem}
+
+.threeDays{display:grid;grid-template-columns:1fr;gap:.7rem}
+@media(min-width:820px){.threeDays{grid-template-columns:repeat(3,1fr)}}
+.dayCol{background:var(--card);border:1px solid var(--line);border-radius:.9rem;padding:.6rem;box-shadow:var(--shadow)}
+.dayHead{font-weight:700;font-size:.9rem;margin-bottom:.5rem}
+.dayHead small{display:block;font-weight:400;color:var(--dim);font-size:.74rem;direction:ltr;unicode-bidi:isolate}
+.stBlock{border-radius:.6rem;padding:.45rem .55rem;margin-bottom:.4rem}
+.stLab{font-size:.7rem;font-weight:800;opacity:.65;margin-bottom:.15rem}
+
+.footnote{margin-top:1rem;color:var(--dim);font-size:.78rem;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="shell">
+  <main>
+    <div class="crumb" id="crumb">ניהול › ניהול סידור עבודה</div>
+    <div class="bar">
+      <h1 id="title">ניהול סידור עבודה</h1>
+      <span class="spacer"></span>
+      <label class="muted" for="roleSel">מחובר כ־</label>
+      <select id="roleSel" aria-label="תפקיד לצפייה">
+        <option value="scheduler">אחראי סידור</option>
+        <option value="firefighter">כבאי</option>
+      </select>
+    </div>
+
+    <div class="viewtabs" role="tablist" aria-label="תצוגות">
+      <button data-view="manage" id="manageTab" role="tab">ניהול</button>
+      <button data-view="mine" role="tab">הסידור שלי</button>
+      <button data-view="station" role="tab">סידור התחנה</button>
+    </div>
+
+    <div id="manageWrap">
+      <div class="panel" id="setup"></div>
+      <div class="bar">
+        <button class="pri" id="publishBtn">פרסום הסידור</button>
+        <span class="pill" id="pubState">טיוטה</span>
+        <span class="muted" id="runNote" hidden></span>
+      </div>
+      <div class="board"><div class="grid" id="grid"></div></div>
+      <div class="panel" id="findings"></div>
+    </div>
+
+    <div id="mine" hidden></div>
+    <div id="station" hidden></div>
+
+    <p class="footnote">
+      הנתונים במסך הופקו על ידי <code>functions/schedule-calendar-engine.js</code>.
+      מתג התפקיד כאן להדגמה בלבד — ההפרדה בין כבאי לאחראי סידור נאכפת בשרת,
+      ב-<code>functions/schedule-service.js</code>.
+    </p>
+  </main>
+
+  <aside class="rail">
+    <div class="brand"><span class="mark">102</span><b>ResQ</b></div>
+    <div class="grp">ניהול</div>
+    <button class="a on" data-view="manage" style="all:unset" hidden></button>
+    <a class="on" data-view="manage"><span class="ic">🗓️</span>ניהול סידור עבודה</a>
+    <a data-view="mine"><span class="ic">👤</span>הסידור שלי</a>
+    <a data-view="station"><span class="ic">🏢</span>סידור התחנה</a>
+    <div class="grp">מטה</div>
+    <a><span class="ic">👥</span>כוח אדם</a>
+    <a><span class="ic">📄</span>דוחות</a>
+    <a><span class="ic">⚙️</span>הגדרות</a>
+    <div class="me"><span class="av">01</span><span><b>כבאי 001</b><br><small class="muted">אחראי סידור</small></span></div>
+  </aside>
+</div>
+
+<script id="fixture" type="application/json">{"plan":{"kind":"schedule-plan","station_id":"102","source_snapshot":"snap_demo","source_version":"v2026.08","policy_version":"v2026.08","generated_at":"2026-08-30T05:00:00.000Z","from":"2026-08-30","to":"2026-09-06","rows":[{"date":"2026-08-30","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"א","minimum":7,"slots":[{"person":"כבאי 002","role":"shift_lead","label":"ראש משמרת","source":"manual"},{"person":"כבאי 015","role":"deputy","label":"סגן ראש משמרת","source":"manual"},{"person":"כבאי 028","role":"team_cmd","label":"מפקד צוות","source":"manual"},{"person":"כבאי 031","role":"team_cmd","label":"מפקד צוות","source":"manual"},{"person":"כבאי 012","role":"firefighter","label":"לוחם","source":"manual"},{"person":"כבאי 067","role":"firefighter","label":"לוחם","source":"manual"},{"person":"כבאי 029","role":null,"label":null,"source":"manual"},{"person":"כבאי 050","role":null,"label":null,"source":"manual"},{"person":"כבאי 011","role":null,"label":null,"source":"manual"},{"person":"כבאי 016","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 034","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 037","role":"driver","label":"נהג","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-08-30","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 024","role":"shift_lead","label":"ראש משמרת","source":"manual"},{"person":"כבאי 041","role":"team_cmd","label":"מפקד צוות","source":"manual"},{"person":"כבאי 045","role":"firefighter","label":"לוחם","source":"manual"},{"person":"כבאי 043","role":null,"label":null,"source":"manual"},{"person":"כבאי 057","role":"driver","label":"נהג","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-08-30","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 026","role":"team_cmd","label":"מפקד צוות","source":"manual"},{"person":"כבאי 010","role":"firefighter","label":"לוחם","source":"manual"},{"person":"כבאי 027","role":null,"label":null,"source":"manual"},{"person":"כבאי 008","role":null,"label":null,"source":"manual"},{"person":"כבאי 032","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 066","role":"driver","label":"נהג","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-08-30","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"א","minimum":2,"slots":[{"person":"כבאי 055","role":"firefighter","label":"לוחם","source":"manual"},{"person":"כבאי 061","role":null,"label":null,"source":"manual"},{"person":"כבאי 069","role":"driver","label":"נהג","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-08-31","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"ב","minimum":7,"slots":[{"person":"כבאי 001","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 018","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 023","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 038","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 036","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 013","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 020","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 048","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[{"role":"deputy","label":"סגן ראש משמרת","required":true,"reasons":[{"code":"already_assigned","count":1},{"code":"rest","count":8}]}],"rejected_manual":[],"below_minimum":false,"complete":false},{"date":"2026-08-31","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 051","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 007","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 056","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[{"role":"shift_lead","label":"ראש משמרת","required":true,"reasons":[{"code":"rest","count":2}]}],"rejected_manual":[],"below_minimum":true,"complete":false},{"date":"2026-08-31","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 021","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 068","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 006","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 054","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-08-31","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"ב","minimum":2,"slots":[{"person":"כבאי 004","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 017","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-01","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"ג","minimum":7,"slots":[{"person":"כבאי 015","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 012","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 003","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 044","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 060","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 039","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 005","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 065","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 070","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-01","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"ג","minimum":4,"slots":[{"person":"כבאי 041","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 033","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 014","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 046","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-01","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"ג","minimum":4,"slots":[{"person":"כבאי 058","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 040","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 027","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 009","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-01","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"ג","minimum":2,"slots":[{"person":"כבאי 035","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 064","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-02","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"א","minimum":7,"slots":[{"person":"כבאי 028","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 067","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 052","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 042","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 053","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 059","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 011","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 016","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 034","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-02","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 024","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 063","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 047","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 057","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-02","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 032","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 066","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 008","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 026","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-02","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"א","minimum":2,"slots":[{"person":"כבאי 062","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 069","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-03","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"ב","minimum":7,"slots":[{"person":"כבאי 031","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 029","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 013","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 020","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 048","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 002","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 036","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 018","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 023","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-03","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 041","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 049","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 007","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 051","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-03","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 021","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 068","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 010","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 006","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-03","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"ב","minimum":2,"slots":[{"person":"כבאי 004","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 061","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-04","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"ג","minimum":7,"slots":[{"person":"כבאי 015","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 050","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 025","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 065","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 070","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 039","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 005","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 003","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 044","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-04","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"ג","minimum":4,"slots":[{"person":"כבאי 024","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 022","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 045","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 014","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-04","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"ג","minimum":4,"slots":[{"person":"כבאי 054","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 058","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 040","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 027","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-04","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"ג","minimum":2,"slots":[{"person":"כבאי 035","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 064","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-05","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"א","minimum":7,"slots":[{"person":"כבאי 001","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 028","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 037","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 052","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 042","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 053","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 059","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 016","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 034","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-05","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 041","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 047","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 043","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 063","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-05","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"א","minimum":4,"slots":[{"person":"כבאי 009","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 032","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 008","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 066","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-05","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"א","minimum":2,"slots":[{"person":"כבאי 062","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 055","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-06","station_id":"102","sub_station":"eilat","label":"אילת","rotation_group":"ב","minimum":7,"slots":[{"person":"כבאי 002","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 031","role":"deputy","label":"סגן ראש משמרת","source":"auto"},{"person":"כבאי 030","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 038","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 018","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 020","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 029","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 036","role":"firefighter","label":"לוחם","source":"auto"},{"person":"כבאי 013","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-06","station_id":"102","sub_station":"shach","label":"שחמון","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 024","role":"shift_lead","label":"ראש משמרת","source":"auto"},{"person":"כבאי 056","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 049","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 007","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-06","station_id":"102","sub_station":"timna","label":"תמנע","rotation_group":"ב","minimum":4,"slots":[{"person":"כבאי 021","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 068","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 006","role":"team_cmd","label":"מפקד צוות","source":"auto"},{"person":"כבאי 010","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true},{"date":"2026-09-06","station_id":"102","sub_station":"yotv","label":"יטבתה","rotation_group":"ב","minimum":2,"slots":[{"person":"כבאי 004","role":"driver","label":"נהג","source":"auto"},{"person":"כבאי 061","role":"firefighter","label":"לוחם","source":"auto"}],"gaps":[],"rejected_manual":[],"below_minimum":false,"complete":true}],"summary":{"filled":157,"blocking_gaps":2,"days_below_minimum":1,"rejected_manual":0,"open_rows":2,"load":{"כבאי 002":3,"כבאי 015":3,"כבאי 028":3,"כבאי 031":3,"כבאי 012":2,"כבאי 067":2,"כבאי 029":3,"כבאי 050":2,"כבאי 011":2,"כבאי 016":3,"כבאי 034":3,"כבאי 037":2,"כבאי 024":4,"כבאי 041":4,"כבאי 045":2,"כבאי 043":2,"כבאי 057":2,"כבאי 026":2,"כבאי 010":3,"כבאי 027":3,"כבאי 008":3,"כבאי 032":3,"כבאי 066":3,"כבאי 055":2,"כבאי 061":3,"כבאי 069":2,"כבאי 001":2,"כבאי 018":3,"כבאי 023":2,"כבאי 038":2,"כבאי 036":3,"כבאי 013":3,"כבאי 020":3,"כבאי 048":2,"כבאי 051":2,"כבאי 007":3,"כבאי 056":2,"כבאי 021":3,"כבאי 068":3,"כבאי 006":3,"כבאי 054":2,"כבאי 004":3,"כבאי 017":1,"כבאי 003":2,"כבאי 044":2,"כבאי 060":1,"כבאי 039":2,"כבאי 005":2,"כבאי 065":2,"כבאי 070":2,"כבאי 033":1,"כבאי 014":2,"כבאי 046":1,"כבאי 058":2,"כבאי 040":2,"כבאי 009":2,"כבאי 035":2,"כבאי 064":2,"כבאי 052":2,"כבאי 042":2,"כבאי 053":2,"כבאי 059":2,"כבאי 063":2,"כבאי 047":2,"כבאי 062":2,"כבאי 049":2,"כבאי 025":1,"כבאי 022":1,"כבאי 030":1},"fairness":{"min":1,"max":4,"spread":3}},"carry":{"load":{"כבאי 002":3,"כבאי 015":3,"כבאי 028":3,"כבאי 031":3,"כבאי 012":2,"כבאי 067":2,"כבאי 029":3,"כבאי 050":2,"כבאי 011":2,"כבאי 016":3,"כבאי 034":3,"כבאי 037":2,"כבאי 024":4,"כבאי 041":4,"כבאי 045":2,"כבאי 043":2,"כבאי 057":2,"כבאי 026":2,"כבאי 010":3,"כבאי 027":3,"כבאי 008":3,"כבאי 032":3,"כבאי 066":3,"כבאי 055":2,"כבאי 061":3,"כבאי 069":2,"כבאי 001":2,"כבאי 018":3,"כבאי 023":2,"כבאי 038":2,"כבאי 036":3,"כבאי 013":3,"כבאי 020":3,"כבאי 048":2,"כבאי 051":2,"כבאי 007":3,"כבאי 056":2,"כבאי 021":3,"כבאי 068":3,"כבאי 006":3,"כבאי 054":2,"כבאי 004":3,"כבאי 017":1,"כבאי 003":2,"כבאי 044":2,"כבאי 060":1,"כבאי 039":2,"כבאי 005":2,"כבאי 065":2,"כבאי 070":2,"כבאי 033":1,"כבאי 014":2,"כבאי 046":1,"כבאי 058":2,"כבאי 040":2,"כבאי 009":2,"כבאי 035":2,"כבאי 064":2,"כבאי 052":2,"כבאי 042":2,"כבאי 053":2,"כבאי 059":2,"כבאי 063":2,"כבאי 047":2,"כבאי 062":2,"כבאי 049":2,"כבאי 025":1,"כבאי 022":1,"כבאי 030":1},"lastDay":{"כבאי 002":20702,"כבאי 015":20700,"כבאי 028":20701,"כבאי 031":20702,"כבאי 012":20697,"כבאי 067":20698,"כבאי 029":20702,"כבאי 050":20700,"כבאי 011":20698,"כבאי 016":20701,"כבאי 034":20701,"כבאי 037":20701,"כבאי 024":20702,"כבאי 041":20701,"כבאי 045":20700,"כבאי 043":20701,"כבאי 057":20698,"כבאי 026":20698,"כבאי 010":20702,"כבאי 027":20700,"כבאי 008":20701,"כבאי 032":20701,"כבאי 066":20701,"כבאי 055":20701,"כבאי 061":20702,"כבאי 069":20698,"כבאי 001":20701,"כבאי 018":20702,"כבאי 023":20699,"כבאי 038":20702,"כבאי 036":20702,"כבאי 013":20702,"כבאי 020":20702,"כבאי 048":20699,"כבאי 051":20699,"כבאי 007":20702,"כבאי 056":20702,"כבאי 021":20702,"כבאי 068":20702,"כבאי 006":20702,"כבאי 054":20700,"כבאי 004":20702,"כבאי 017":20696,"כבאי 003":20700,"כבאי 044":20700,"כבאי 060":20697,"כבאי 039":20700,"כבאי 005":20700,"כבאי 065":20700,"כבאי 070":20700,"כבאי 033":20697,"כבאי 014":20700,"כבאי 046":20697,"כבאי 058":20700,"כבאי 040":20700,"כבאי 009":20701,"כבאי 035":20700,"כבאי 064":20700,"כבאי 052":20701,"כבאי 042":20701,"כבאי 053":20701,"כבאי 059":20701,"כבאי 063":20701,"כבאי 047":20701,"כבאי 062":20701,"כבאי 049":20702,"כבאי 025":20700,"כבאי 022":20700,"כבאי 030":20702},"byRole":{"כבאי 002":{"shift_lead":2,"team_cmd":1},"כבאי 015":{"deputy":1,"shift_lead":2},"כבאי 028":{"team_cmd":1,"shift_lead":1,"deputy":1},"כבאי 031":{"team_cmd":1,"shift_lead":1,"deputy":1},"כבאי 012":{"firefighter":1,"deputy":1},"כבאי 067":{"firefighter":1,"deputy":1},"כבאי 029":{"deputy":1,"team_cmd":1},"כבאי 050":{"deputy":1},"כבאי 011":{"team_cmd":1},"כבאי 016":{"driver":1,"firefighter":2},"כבאי 034":{"driver":1,"firefighter":2},"כבאי 037":{"driver":2},"כבאי 024":{"shift_lead":4},"כבאי 041":{"team_cmd":1,"shift_lead":3},"כבאי 045":{"firefighter":1,"team_cmd":1},"כבאי 043":{"team_cmd":1},"כבאי 057":{"driver":1,"firefighter":1},"כבאי 026":{"team_cmd":1,"firefighter":1},"כבאי 010":{"firefighter":2,"team_cmd":1},"כבאי 027":{"team_cmd":1,"firefighter":1},"כבאי 008":{"team_cmd":2},"כבאי 032":{"driver":3},"כבאי 066":{"driver":2,"firefighter":1},"כבאי 055":{"firefighter":2},"כבאי 061":{"firefighter":2},"כבאי 069":{"driver":1,"firefighter":1},"כבאי 001":{"shift_lead":2},"כבאי 018":{"driver":2,"firefighter":1},"כבאי 023":{"driver":1,"firefighter":1},"כבאי 038":{"driver":2},"כבאי 036":{"team_cmd":2,"firefighter":1},"כבאי 013":{"team_cmd":1,"driver":1,"firefighter":1},"כבאי 020":{"firefighter":1,"driver":1,"team_cmd":1},"כבאי 048":{"firefighter":1,"driver":1},"כבאי 051":{"driver":1,"firefighter":1},"כבאי 007":{"team_cmd":2,"firefighter":1},"כבאי 056":{"firefighter":1,"driver":1},"כבאי 021":{"driver":3},"כבאי 068":{"driver":3},"כבאי 006":{"team_cmd":2,"firefighter":1},"כבאי 054":{"firefighter":1,"driver":1},"כבאי 004":{"driver":3},"כבאי 017":{"firefighter":1},"כבאי 003":{"driver":1,"firefighter":1},"כבאי 044":{"driver":1,"firefighter":1},"כבאי 060":{"driver":1},"כבאי 039":{"team_cmd":2},"כבאי 005":{"team_cmd":2},"כבאי 065":{"firefighter":1,"driver":1},"כבאי 070":{"firefighter":1,"driver":1},"כבאי 033":{"driver":1},"כבאי 014":{"team_cmd":1,"firefighter":1},"כבאי 046":{"firefighter":1},"כבאי 058":{"driver":2},"כבאי 040":{"driver":1,"team_cmd":1},"כבאי 009":{"firefighter":1,"driver":1},"כבאי 035":{"driver":2},"כבאי 064":{"firefighter":2},"כבאי 052":{"driver":2},"כבאי 042":{"driver":2},"כבאי 053":{"driver":1,"team_cmd":1},"כבאי 059":{"team_cmd":2},"כבאי 063":{"driver":1,"firefighter":1},"כבאי 047":{"team_cmd":1,"driver":1},"כבאי 062":{"driver":2},"כבאי 049":{"driver":1,"team_cmd":1},"כבאי 025":{"driver":1},"כבאי 022":{"driver":1},"כבאי 030":{"driver":1}}}},"events":[{"id":"e1","title":"יום גיבוש","sub":"פרטי משימה","date":"2026-08-30","hours":"כל היום","kind":"green","people":["כבאי 002","כבאי 015","כבאי 028"]},{"id":"e2","title":"השתלמות","sub":"פרטי משימה","date":"2026-09-02","hours":"08:00–15:00","kind":"cyan","people":["כבאי 001","כבאי 036"]},{"id":"e3","title":"אבטחה","sub":"פרטי משימה","date":"2026-09-03","hours":"14:00–24:00","kind":"yellow","people":["כבאי 012","כבאי 029"]},{"id":"e4","title":"משמרת","sub":"פרטי משימה","date":"2026-09-03","hours":"23:00–07:00","kind":"orange","people":["כבאי 012","כבאי 029"]},{"id":"e5","title":"אבטחה","sub":"פרטי משימה","date":"2026-09-04","hours":"22:30–07:30","kind":"yellow","people":["כבאי 023"]},{"id":"e6","title":"ניצבים וילך","sub":"פרטי משימה","date":"2026-09-05","hours":"06:00–17:00","kind":"orange","people":["כבאי 039","כבאי 020"]},{"id":"e7","title":"אבטחה","sub":"פרטי משימה","date":"2026-09-06","hours":"17:45–08:00","kind":"yellow","people":["כבאי 026","כבאי 010"]}],"absence_rows":{"unavailable":{"2026-08-31":["כבאי 019","כבאי 030","כבאי 032","כבאי 035","כבאי 037","כבאי 060","כבאי 069"],"2026-09-01":["כבאי 016","כבאי 017","כבאי 021","כבאי 023","כבאי 052","כבאי 057","כבאי 066"],"2026-09-03":["כבאי 019","כבאי 030","כבאי 037","כבאי 058","כבאי 059","כבאי 060","כבאי 069"],"2026-09-04":["כבאי 017","כבאי 018","כבאי 021"],"2026-09-05":["כבאי 011","כבאי 026","כבאי 045","כבאי 060"],"2026-09-06":["כבאי 017","כבאי 019","כבאי 047","כבאי 058","כבאי 069"],"2026-08-30":["כבאי 033","כבאי 035"],"2026-09-02":["כבאי 035"]}},"unconfirmed":["כבאי 015","כבאי 027","כבאי 006","כבאי 053"],"qualifications":{"כבאי 001":["חובש"],"כבאי 002":["אלמ״ק"],"כבאי 015":["חוקר שריפות"],"כבאי 028":["חובש"],"כבאי 031":[],"כבאי 012":["אלמ״ק"],"כבאי 067":["חובש"],"כבאי 029":["חוקר שריפות"],"כבאי 050":[],"כבאי 011":["חובש","אלמ״ק"],"כבאי 036":[],"כבאי 039":[],"כבאי 059":["חובש","חוקר שריפות"],"כבאי 020":["נהג","אלמ״ק"],"כבאי 025":["נהג"],"כבאי 042":["נהג","חובש"],"כבאי 013":["נהג"],"כבאי 005":["נהג","אלמ״ק","חוקר שריפות"],"כבאי 053":["נהג","חובש"],"כבאי 048":["נהג"],"כבאי 070":["נהג"],"כבאי 034":["נהג","חובש","אלמ״ק"],"כבאי 018":["נהג","חוקר שריפות"],"כבאי 003":["נהג"],"כבאי 052":["נהג","חובש"],"כבאי 023":["נהג","אלמ״ק"],"כבאי 044":["נהג"],"כבאי 016":["נהג","חובש","חוקר שריפות"],"כבאי 038":["נהג"],"כבאי 065":["נהג","אלמ״ק"],"כבאי 037":["נהג","חובש"],"כבאי 030":["נהג"],"כבאי 060":["נהג","חוקר שריפות"],"כבאי 024":["חובש"],"כבאי 041":["אלמ״ק"],"כבאי 045":["חוקר שריפות"],"כבאי 043":["חובש"],"כבאי 007":[],"כבאי 014":["אלמ״ק"],"כבאי 047":["נהג","חובש"],"כבאי 049":["נהג","חוקר שריפות"],"כבאי 022":["נהג"],"כבאי 063":["נהג","חובש","אלמ״ק"],"כבאי 056":["נהג"],"כבאי 046":["נהג"],"כבאי 057":["נהג","חובש","חוקר שריפות"],"כבאי 051":["נהג","אלמ״ק"],"כבאי 033":["נהג"],"כבאי 026":["חובש"],"כבאי 010":["אלמ״ק"],"כבאי 027":["חוקר שריפות"],"כבאי 008":["חובש"],"כבאי 006":[],"כבאי 040":["נהג","אלמ״ק"],"כבאי 009":["נהג","חובש"],"כבאי 068":["נהג","חוקר שריפות"],"כבאי 054":["נהג"],"כבאי 066":["נהג","חובש","אלמ״ק"],"כבאי 021":["נהג"],"כבאי 058":["נהג"],"כבאי 032":["נהג","חובש","חוקר שריפות"],"כבאי 055":["חובש"],"כבאי 061":["אלמ״ק"],"כבאי 064":["חוקר שריפות"],"כבאי 062":["נהג","חובש"],"כבאי 004":["נהג"],"כבאי 017":["נהג","אלמ״ק"],"כבאי 069":["נהג","חובש"],"כבאי 019":["נהג","חוקר שריפות"],"כבאי 035":["נהג"]},"days":["2026-08-30","2026-08-31","2026-09-01","2026-09-02","2026-09-03","2026-09-04","2026-09-05","2026-09-06"],"sub_order":["eilat","shach","timna","yotv"],"labels":{"eilat":"אילת","shach":"שחמון","timna":"תמנע","yotv":"יטבתה"},"minimums":{"eilat":7,"shach":4,"timna":4,"yotv":2},"requirements":{"eilat":[{"role":"shift_lead","label":"ראש משמרת","count":1,"required":true},{"role":"deputy","label":"סגן ראש משמרת","count":1,"required":true},{"role":"team_cmd","label":"מפקד צוות","count":2,"required":true},{"role":"driver","label":"נהג","count":3,"required":true},{"role":"firefighter","label":"לוחם","count":2,"required":false}],"shach":[{"role":"shift_lead","label":"ראש משמרת","count":1,"required":true},{"role":"team_cmd","label":"מפקד צוות","count":1,"required":true},{"role":"driver","label":"נהג","count":1,"required":true},{"role":"firefighter","label":"לוחם","count":1,"required":false}],"timna":[{"role":"team_cmd","label":"מפקד צוות","count":1,"required":true},{"role":"driver","label":"נהג","count":2,"required":true},{"role":"firefighter","label":"לוחם","count":1,"required":false}],"yotv":[{"role":"driver","label":"נהג","count":1,"required":true},{"role":"firefighter","label":"לוחם","count":1,"required":true}]}}</script>
+<script>
+  window.RESQ_FIXTURE = JSON.parse(document.getElementById('fixture').textContent);
+</script>
+<script src="schedule-planner.js"></script>
+</body>
+</html>
