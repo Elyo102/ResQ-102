@@ -203,7 +203,7 @@ function createScheduleRuntime(deps) {
     const view = ['view_my', 'view_station', 'respond_own'];
     return {
       firefighter: view,
-      scheduler: view.concat(['edit_draft', 'run_planner', 'publish', 'rollback'])
+      scheduler: view.concat(['edit_draft', 'run_planner', 'publish'])
     };
   }
 

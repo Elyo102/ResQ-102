@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
+const service = read('functions/schedule-service.js');
 const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
@@ -53,6 +54,14 @@ check('manager authority is decided on the server', () => {
   assert.ok(rules.includes("hasOnly(['full_name', 'phone', 'email', 'photo_url'])"));
   assert.ok(runtime.includes('MANAGER_ROLES.indexOf(role) !== -1'));
   assert.ok(runtime.includes('function requireManager(ctx)'));
+});
+check('runtime declares only capabilities implemented by the service', () => {
+  const start = runtime.indexOf('function capabilities()');
+  const end = runtime.indexOf('function serviceFor(ctx', start);
+  const declared = Array.from(runtime.slice(start, end).matchAll(/'([a-z_]+)'/g), (match) => match[1]);
+  const supported = new Set(Array.from(service.matchAll(/^\s+[A-Z_]+:\s*'([a-z_]+)'/gm), (match) => match[1]));
+  assert.ok(declared.length > 0);
+  declared.forEach((action) => assert.ok(supported.has(action), action));
 });
 check('source and policy content are server-digested', () => {
   assert.ok(runtime.includes('const actual = digest(basis)'));
@@ -242,5 +251,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 43);
-console.log('\n43 schedule runtime source checks passed.');
+assert.equal(passed, 44);
+console.log('\n44 schedule runtime source checks passed.');
