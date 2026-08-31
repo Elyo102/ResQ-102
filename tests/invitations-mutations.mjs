@@ -43,9 +43,9 @@ const mutations = [
     expected: 'caught'
   },
   {
-    name: 'approval ignores expiry',
-    find: "!Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when",
-    replace: 'false',
+    name: 'approval accepts redemption recorded after expiry',
+    find: '!Number.isFinite(redeemedAt) || !Number.isFinite(expiresAt) || redeemedAt >= expiresAt',
+    replace: '!Number.isFinite(redeemedAt) || !Number.isFinite(expiresAt) || false',
     expected: 'caught'
   },
   {

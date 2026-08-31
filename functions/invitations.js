@@ -212,11 +212,13 @@ function createInvitations(deps) {
 
   function assertApprovable(invite, requestValue, at) {
     const request = requestValue && typeof requestValue === 'object' ? requestValue : {};
-    const when = nowMillis(at);
+    void at;
+    const redeemedAt = invite && typeof invite === 'object' ? toMillis(invite.redeemed_at) : NaN;
+    const expiresAt = invite && typeof invite === 'object' ? toMillis(invite.expires_at) : NaN;
     if (!invite || typeof invite !== 'object' || invite.max_uses !== 1 ||
         invite.revoked_at || invite.approved_at || invite.approved_by ||
         !invite.redeemed_by ||
-        !Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when) {
+        !Number.isFinite(redeemedAt) || !Number.isFinite(expiresAt) || redeemedAt >= expiresAt) {
       throw new InvitationError('invalid-invitation', 'invitation is not approvable');
     }
     const uid = cleanRequired(request.uid, 'uid', 128);

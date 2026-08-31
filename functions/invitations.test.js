@@ -438,11 +438,23 @@ function test(label, fn) {
     }, 'invalid-invitation');
   });
 
-  test('approval rechecks expiry and rejects an expired invitation', function () {
+  test('approval remains possible after expiry when redemption happened in time', function () {
     const api = buildApi(NOW + 100 * HOUR);
     const issued = buildApi().issue(superGate, baseInput);
     const redeemed = Object.assign({}, issued.doc, {
       redeemed_by:'u_new', redeemed_at:new Date(NOW + HOUR)
+    });
+    const locked = api.assertApprovable(redeemed, {
+      uid:'u_new', email:'new.user@example.com'
+    });
+    assert.equal(locked.stationId, 'eilat_102');
+  });
+
+  test('approval rejects a redemption recorded after invitation expiry', function () {
+    const api = buildApi(NOW + 100 * HOUR);
+    const issued = buildApi().issue(superGate, baseInput);
+    const redeemed = Object.assign({}, issued.doc, {
+      redeemed_by:'u_new', redeemed_at:new Date(NOW + 73 * HOUR)
     });
     expectCode(function () {
       api.assertApprovable(redeemed, {

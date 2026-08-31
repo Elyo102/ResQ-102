@@ -28,11 +28,14 @@ function emptySnapshot() {
   return { forEach() {} };
 }
 
-function loadScheduleFromProduction(paths) {
+function loadScheduleFromProduction(paths, failingPath) {
   const fakeDb = {
     collection(path) {
       paths.push(path);
-      return { async get() { return emptySnapshot(); } };
+      return { async get() {
+        if (path === failingPath) throw new Error('simulated read failure');
+        return emptySnapshot();
+      } };
     }
   };
   return new Function('db', grabFunction('loadSchedule') + '\nreturn loadSchedule;')(fakeDb);
@@ -55,6 +58,18 @@ assert.deepEqual(paths, [
   'stations/beer_sheva_101/shift_overrides'
 ], 'each schedule read remains inside its explicit station');
 
+const failedRotationPaths = [];
+const rotationFailure = loadScheduleFromProduction(
+  failedRotationPaths, 'stations/eilat_102/rotations');
+await assert.rejects(() => rotationFailure('eilat_102'), /schedule rotations read failed/,
+  'rotation read failures fail closed instead of returning an empty schedule');
+
+const failedOverridePaths = [];
+const overrideFailure = loadScheduleFromProduction(
+  failedOverridePaths, 'stations/eilat_102/shift_overrides');
+await assert.rejects(() => overrideFailure('eilat_102'), /schedule overrides read failed/,
+  'override read failures fail closed instead of returning an incomplete schedule');
+
 const scanMonth = grabFunction('scanMonth');
 assert.match(scanMonth, /loadSchedule\(STATION_ID\)/,
   'single-station monthly scan keeps its explicit pilot station');
@@ -69,10 +84,16 @@ assert.match(swapSource, /loadSchedule\(sid\)/,
   'swap trigger passes the event station to the schedule loader');
 assert.doesNotMatch(swapSource, /loadSchedule\(\s*\)/,
   'swap trigger never performs an implicit schedule read');
+assert.match(swapSource, /status:\s*'cmd_to'/,
+  'a failed rest check returns the swap to the last approval stage');
+assert.match(swapSource, /rest_check_pending:\s*true/,
+  'a failed rest check is explicitly marked for retry');
+assert.match(swapSource, /האישור לא נכנס לתוקף/,
+  'users are told that the approval did not take effect');
 
 const calls = Array.from(source.matchAll(/\bloadSchedule\s*\(([^)]*)\)/g),
   match => match[1].trim());
 assert.deepEqual(calls, ['sid', 'STATION_ID', 'sid'],
   'all production definitions and call sites remain explicit and reviewed');
 
-console.log('Station boundary checks passed: 11');
+console.log('Station boundary checks passed: 16');

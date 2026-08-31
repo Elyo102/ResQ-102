@@ -128,11 +128,13 @@ check('approval records an auditable terminal state', function () {
   assert.ok(body[0].includes('assertMayAssign'));
 });
 
-check('approval rechecks expiry after redemption', function () {
+check('approval accepts a timely redemption after expiry but rejects late redemption', function () {
   const body = source.match(/function assertApprovable\([\s\S]*?\n  }\n\n  function resolveScopedInput/);
   assert.ok(body);
+  assert.ok(body[0].includes('redeemed_at'));
   assert.ok(body[0].includes('expires_at'));
-  assert.ok(body[0].includes('<= when'));
+  assert.ok(body[0].includes('redeemedAt >= expiresAt'));
+  assert.equal(body[0].includes('<= when'), false);
 });
 
 check('the contract has at least 35 executable checks', function () {

@@ -2545,11 +2545,15 @@ async function loadSchedule(sid) {
   try {
     const rs = await db.collection('stations/' + sid + '/rotations').get();
     rs.forEach(d => rotations.push(d.data() || {}));
-  } catch (e) { console.error('rotations read failed', e); }
+  } catch (e) {
+    throw new Error('schedule rotations read failed');
+  }
   try {
     const os = await db.collection('stations/' + sid + '/shift_overrides').get();
     os.forEach(d => { overrides[d.id] = d.data() || {}; });
-  } catch (e) { console.error('overrides read failed', e); }
+  } catch (e) {
+    throw new Error('schedule overrides read failed');
+  }
   return { rotations, overrides };
 }
 
@@ -3426,10 +3430,22 @@ exports.onSwapChange = onDocumentWritten(
           return;
         }
       } catch (e) {
-        // כשל בבדיקה לא מבטל החלפה שאושרה בידי שני מפקדים.
-        // הוא נרשם, וההחלפה ממשיכה — שקט עדיף על ביטול שרירותי
-        // שאיש לא יבין.
-        console.error('rest check failed', e);
+        // כשל זמני בקריאה אינו יכול להפוך לאישור שקט. מחזירים את
+        // ההחלפה לשלב האישור האחרון, כך שאפשר לנסות שוב אחרי שהמסד
+        // חזר, בלי להמציא תוצאת מנוחה ובלי למחוק את הבקשה.
+        await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
+          status: 'cmd_to',
+          rest_check_pending: true,
+          rest_check_failed_at: new Date().toISOString()
+        }, { merge: true });
+
+        await pushToUsers(sid, both, 'swap_mine',
+          'ההחלפה ממתינה לבדיקת מנוחה',
+          'לא ניתן היה להשלים את בדיקת המנוחה. האישור לא נכנס לתוקף.',
+          url, true);
+
+        console.error('rest check failed; swap returned to cmd_to');
+        return;
       }
     }
 
