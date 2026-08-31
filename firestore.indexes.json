@@ -101,6 +101,20 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "schedule_responses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "publication_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -177,6 +191,22 @@
     {
       "collectionGroup": "attendance_shadow_people",
       "fieldPath": "issues",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_outbox",
+      "fieldPath": "status",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "schedule_outbox",
+      "fieldPath": "expires_at",
+      "ttl": true,
       "indexes": []
     }
   ]

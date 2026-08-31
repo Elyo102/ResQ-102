@@ -31,7 +31,7 @@ for (const id of ['knob', 'master', 'mState', 'ready',
 }
 check(firebaseConfig.hosting.ignore.includes('roster-import.js'),
       'Firebase Hosting excludes roster-import.js as defense in depth');
-check(worker.includes("const CACHE = 'resq-v41e-release1'"),
+check(worker.includes("const CACHE = 'resq-v42f-release1'"),
       'the service-worker cache is rotated away from the exposed copy');
 
 const server = http.createServer((req, res) => {

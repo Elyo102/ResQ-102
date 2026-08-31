@@ -115,6 +115,30 @@ function createPublication(deps) {
     if (!isNonEmptyString(plan.station_id)) throw new PublicationError('plan-station', what + ' בלי station_id');
     if (!isNonEmptyString(plan.source_snapshot)) throw new PublicationError('plan-source', what + ' בלי תמונת מקור');
     if (!isNonEmptyString(plan.source_version)) throw new PublicationError('plan-version', what + ' בלי גרסת מקור');
+    if (!isNonEmptyString(plan.contract_station_id)
+        || plan.contract_station_id !== plan.station_id) {
+      throw new PublicationError('plan-contract-station', what + ' עם חוזה תחנה לא תואם');
+    }
+    if (!isNonEmptyString(plan.source_revision)) {
+      throw new PublicationError('plan-source-revision', what + ' בלי מהדורת מקור');
+    }
+    if (!isNonEmptyString(plan.source_digest)) {
+      throw new PublicationError('plan-source-digest', what + ' בלי חתימת מקור');
+    }
+    if (!isNonEmptyString(plan.policy_version) || !isNonEmptyString(plan.policy_digest)) {
+      throw new PublicationError('plan-policy-digest', what + ' בלי גרסה או חתימת מדיניות');
+    }
+    if (plan.source_complete !== true) {
+      throw new PublicationError('plan-source-incomplete', what + ' אינו מבוסס על מקור מלא');
+    }
+    for (const row of plan.rows) {
+      if (!isPlainObject(row) || row.station_id !== plan.station_id) {
+        throw new PublicationError('plan-row-station', what + ' כולל שורה מתחנה אחרת');
+      }
+      if (!Array.isArray(row.slots)) {
+        throw new PublicationError('plan-row-slots', what + ' כולל שורה בלי slots');
+      }
+    }
     return plan;
   }
 
@@ -385,12 +409,32 @@ function createPublication(deps) {
     if (!isNonEmptyString(inp.actor)) {
       throw new PublicationError('actor-required', 'חובה לדעת מי מפרסם — ההודעה נוקבת בשם');
     }
+    if (!isInt(inp.publication_revision) || inp.publication_revision < 1) {
+      throw new PublicationError('publication-revision', 'חובה למסור גרסת פרסום חיובית');
+    }
+    if (!isNonEmptyString(inp.source_draft_id)) {
+      throw new PublicationError('source-draft-id', 'חובה לזהות את הטיוטה שממנה פורסם הסידור');
+    }
+    if (inp.previous) {
+      if (!isNonEmptyString(inp.previous_publication_id)) {
+        throw new PublicationError('previous-publication-id', 'חובה לזהות את הפרסום הקודם');
+      }
+    } else if (inp.previous_publication_id !== null) {
+      throw new PublicationError('previous-publication-id', 'פרסום ראשון חייב לציין previous_publication_id=null');
+    }
 
     const contentHash = hash(stable({
       rows: next.rows,
       events: inp.next_events || null,
       station: next.station_id,
-      version: next.source_version
+      contract_station_id: next.contract_station_id,
+      source_snapshot: next.source_snapshot,
+      source_version: next.source_version,
+      source_revision: next.source_revision,
+      source_digest: next.source_digest,
+      policy_version: next.policy_version,
+      policy_digest: next.policy_digest,
+      source_complete: next.source_complete
     }));
 
     // לחיצה כפולה: אותו מזהה ואותו תוכן = אין פרסום שני ואין התראה שנייה.
@@ -444,6 +488,7 @@ function createPublication(deps) {
         detail: Object.freeze(changes.map((c) => Object.freeze({
           kind: c.kind,
           date: c.date,
+          item_id: (c.to || c.from || {}).id || c.date,
           sub_station_label: (c.to || c.from || {}).sub_station_label || null,
           role_label: (c.to || c.from || {}).role_label || null,
           hours: (c.to || c.from || {}).hours || null,
@@ -456,10 +501,18 @@ function createPublication(deps) {
 
     const publication = Object.freeze({
       id: inp.publication_id,
+      revision: inp.publication_revision,
       station_id: next.station_id,
       source_snapshot: next.source_snapshot || null,
       source_version: next.source_version,
+      source_revision: next.source_revision,
+      source_digest: next.source_digest,
+      policy_version: next.policy_version,
+      policy_digest: next.policy_digest,
+      source_draft_id: inp.source_draft_id,
+      previous_publication_id: inp.previous_publication_id,
       content_hash: contentHash,
+      content_digest: contentHash,
       published_at: at,
       published_by: inp.actor,
       first_publication: !inp.previous,

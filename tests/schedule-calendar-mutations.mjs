@@ -53,12 +53,12 @@ const MUTATIONS = [
   ['תחנה זרה שמתקבלת', 'engine',
     "if (input.station_id !== policy.station_id) {", "if (false) {", ['engine', 'source']],
   ['גרסת מדיניות זרה שמתקבלת', 'engine',
-    "if (!isNonEmptyString(input.policy_digest) || input.policy_digest !== policy.version) {",
+    "if (!isNonEmptyString(input.policy_digest) || input.policy_digest !== policy.digest) {",
     "if (false) {", ['engine', 'source']],
   ['צילום מקור שאינו נדרש', 'engine',
     "if (!isNonEmptyString(input.source_snapshot)) {", "if (false) {", ['engine', 'source']],
   ['אדם מגרסה אחרת שמתקבל', 'engine',
-    "if (!isNonEmptyString(p.source_version) || p.source_version !== input.source_revision) {",
+    "if (!isNonEmptyString(p.source_version) || p.source_version !== input.source_version) {",
     "if (false) {", ['engine', 'source']],
 
   // ---- תאריכים ----
@@ -166,8 +166,8 @@ const MUTATIONS = [
   ['הדגשת המשתמש שמבוטלת', 'service',
     "          is_me: s.person === viewer", "          is_me: false", ['service']],
   ['יום שלפני ואחרי שנעלמים', 'service',
-    "      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events)),",
-    "      previous_day: Object.freeze(dayBlock(plan, inp.date, actor.id, events)),", ['service']]
+    "      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events, inp.roster)),",
+    "      previous_day: Object.freeze(dayBlock(plan, inp.date, actor.id, events, inp.roster)),", ['service']]
 ];
 
 function runSuite(key) {

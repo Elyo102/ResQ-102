@@ -21,12 +21,16 @@ function throwsCode(fn, code) {
 
 const CLOCK = () => '2026-09-01T06:00:00.000Z';
 const V = 'v1';
+const REV = 'r17';
+const SOURCE_DIGEST = 'source-digest-v1';
+const POLICY_DIGEST = 'policy-digest-v1';
 const ST = '102';
 
 function policy(over) {
   return Object.assign({
     station_id: ST,
     version: V,
+    digest: POLICY_DIGEST,
     sub_stations: {
       eilat: {
         label: 'אילת',
@@ -60,7 +64,9 @@ function mk(over) {
 function person(id, sub, roles, over) {
   return Object.assign({
     id, station_id: ST, sub_station: sub, active: true, roles,
-    source_snapshot: 'snap_1', source_version: V
+    source_snapshot: 'snap_1', source_version: V,
+    contract_station_id: ST, source_revision: REV,
+    source_digest: SOURCE_DIGEST, source_complete: true
   }, over || {});
 }
 
@@ -77,8 +83,8 @@ function roster() {
 
 const BASE = {
   station_id: ST, source_snapshot: 'snap_1', source_version: V,
-  contract_station_id: ST, source_revision: V, source_digest: 'digest_snap_1',
-  policy_digest: V, source_complete: true,
+  contract_station_id: ST, source_revision: REV, source_digest: SOURCE_DIGEST,
+  policy_digest: POLICY_DIGEST, source_complete: true,
   availability: {}, locked: {}, carry: {}
 };
 function run(engine, over) {
@@ -161,8 +167,8 @@ t('גרסת מדיניות שאינה תואמת — סירוב', () =>
   throwsCode(() => run(mk(), { policy_digest: 'v2' }), 'policy-digest-mismatch'));
 t('חוזה מקור מתחנה אחרת — סירוב', () =>
   throwsCode(() => run(mk(), { contract_station_id: '999' }), 'contract-station-mismatch'));
-t('גרסת מקור שאינה תואמת לחוזה — סירוב', () =>
-  throwsCode(() => run(mk(), { source_revision: 'v2' }), 'source-revision-mismatch'));
+t('מהדורת מקור שאינה תואמת לרשומות הסגל — סירוב', () =>
+  throwsCode(() => run(mk(), { source_revision: 'r18' }), 'person-source-contract'));
 t('מקור שאינו מסומן כמלא — סירוב', () =>
   throwsCode(() => run(mk(), { source_complete: false }), 'source-incomplete'));
 t('בלי תמונת זמינות מפורשת — סירוב', () => {
@@ -271,6 +277,7 @@ t('התאמה מלאה נמצאת גם כשבחירה חמדנית הייתה מ
     policy: {
       station_id: ST,
       version: V,
+      digest: POLICY_DIGEST,
       sub_stations: {
         eilat: {
           label: 'אילת',

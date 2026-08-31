@@ -35,10 +35,14 @@ function HASH(s) {
 
 const STATION = '102';
 const VERSION = 'v1';
+const SOURCE_REVISION = 'r17';
+const SOURCE_DIGEST = 'digest_snap_1';
+const POLICY_DIGEST = 'policy-digest-v1';
 
 const POLICY = {
   station_id: STATION,
   version: VERSION,
+  digest: POLICY_DIGEST,
   sub_stations: {
     eilat: {
       label: 'אילת', minimum: 3,
@@ -70,7 +74,9 @@ const CAPS = {
 function person(id, sub, roles, over) {
   return Object.assign({
     id, station_id: STATION, sub_station: sub, active: true, roles,
-    source_snapshot: 'snap_1', source_version: VERSION
+    source_snapshot: 'snap_1', source_version: VERSION,
+    contract_station_id: STATION, source_revision: SOURCE_REVISION,
+    source_digest: SOURCE_DIGEST, source_complete: true
   }, over || {});
 }
 
@@ -85,8 +91,8 @@ const ROSTER = [
 
 const REQ = {
   station_id: STATION, source_snapshot: 'snap_1', source_version: VERSION,
-  contract_station_id: STATION, source_revision: VERSION, source_digest: 'digest_snap_1',
-  policy_digest: VERSION, source_complete: true,
+  contract_station_id: STATION, source_revision: SOURCE_REVISION, source_digest: SOURCE_DIGEST,
+  policy_digest: POLICY_DIGEST, source_complete: true,
   availability: {}, locked: {}, carry: {},
   days: ['2026-09-01', '2026-09-02', '2026-09-03'], roster: ROSTER
 };
@@ -117,6 +123,14 @@ function responseInput(over) {
       id: 'p', revision: 2, station_id: STATION,
       assigned_items: [{ id: '2026-09-01', person: 'גדי' }]
     }
+  }, over || {});
+}
+
+function publishRequest(over) {
+  const hasPrevious = Boolean(over && Object.prototype.hasOwnProperty.call(over, 'previous') && over.previous !== null);
+  return Object.assign({
+    publication_id: 'pub_default', publication_revision: hasPrevious ? 2 : 1,
+    source_draft_id: 'draft_1', previous_publication_id: hasPrevious ? 'pub_previous' : null
   }, over || {});
 }
 
@@ -315,7 +329,7 @@ t('המסלול המלא מייצר התראה אישית למי שהוזז בל
 
   const result = service.publish({
     actor: SCHEDULER,
-    request: { next: edited, previous: first, publication_id: 'pub_1' }
+    request: publishRequest({ next: edited, previous: first, publication_id: 'pub_1' })
   });
 
   const notified = result.notifications.map((n) => n.person).sort();
@@ -328,7 +342,7 @@ t('המסלול המלא מייצר התראה אישית למי שהוזז בל
 t('פרסום ראשון מודיע לכל מי ששובץ', () => {
   const { service, engine } = build();
   const plan = engine.planPeriod(REQ);
-  const r = service.publish({ actor: SCHEDULER, request: { next: plan, previous: null, publication_id: 'pub_0' } });
+  const r = service.publish({ actor: SCHEDULER, request: publishRequest({ next: plan, previous: null, publication_id: 'pub_0' }) });
   assert.ok(r.notifications.length > 0);
   assert.strictEqual(r.publication.first_publication, true);
 });
@@ -357,7 +371,7 @@ t('אחראי אינו יכול לפרסם תוכנית של תחנה אחרת',
   plan.rows.forEach((row) => { row.station_id = '999'; });
   throwsCode(() => service.publish({
     actor: SCHEDULER,
-    request: { next: plan, previous: null, publication_id: 'cross-station' }
+    request: publishRequest({ next: plan, previous: null, publication_id: 'cross-station' })
   }), 'plan-station-mismatch');
 });
 
@@ -366,10 +380,10 @@ t('לחיצה כפולה על פרסום — אין התראה שנייה', () =
   const first = engine.planPeriod(REQ);
   const edited = JSON.parse(JSON.stringify(first));
   edited.rows[0].slots.pop();
-  const a = service.publish({ actor: SCHEDULER, request: { next: edited, previous: first, publication_id: 'pub_2' } });
+  const a = service.publish({ actor: SCHEDULER, request: publishRequest({ next: edited, previous: first, publication_id: 'pub_2' }) });
   const b = service.publish({
     actor: SCHEDULER,
-    request: { next: edited, previous: first, publication_id: 'pub_2', existing_publication: a.publication }
+    request: publishRequest({ next: edited, previous: first, publication_id: 'pub_2', existing_publication: a.publication })
   });
   assert.ok(a.notifications.length > 0);
   assert.strictEqual(b.duplicate, true);
@@ -501,7 +515,9 @@ function loadRoster(n) {
     const roles = ['firefighter'];
     if (i % 7 === 0) roles.push('shift_lead');
     if (i % 3 === 0) roles.push('driver');
-    out.push(person('P' + i, sub, roles, { source_snapshot: 'load' }));
+    out.push(person('P' + i, sub, roles, {
+      source_snapshot: 'load', source_revision: 'load-r17', source_digest: 'digest_load'
+    }));
   }
   return out;
 }
@@ -525,8 +541,8 @@ if (process.env.RESQ_LOAD === '1') {
       const t0 = Date.now();
       const plan = engine.planPeriod({
         station_id: STATION, source_snapshot: 'load', source_version: VERSION,
-        contract_station_id: STATION, source_revision: VERSION, source_digest: 'digest_load',
-        policy_digest: VERSION, source_complete: true, availability: {}, locked: {}, carry: {},
+        contract_station_id: STATION, source_revision: 'load-r17', source_digest: 'digest_load',
+        policy_digest: POLICY_DIGEST, source_complete: true, availability: {}, locked: {}, carry: {},
         days: loadDays(days), roster: loadRoster(people)
       });
       const ms = Date.now() - t0;
@@ -542,16 +558,16 @@ if (process.env.RESQ_LOAD === '1') {
   t('עומס · מעבר למגבלת הסגל נחסם', () =>
     throwsCode(() => createCalendarEngine({ clock: CLOCK, policy: POLICY }).planPeriod({
       station_id: STATION, source_snapshot: 'load', source_version: VERSION,
-      contract_station_id: STATION, source_revision: VERSION, source_digest: 'digest_load',
-      policy_digest: VERSION, source_complete: true, availability: {}, locked: {}, carry: {},
+      contract_station_id: STATION, source_revision: 'load-r17', source_digest: 'digest_load',
+      policy_digest: POLICY_DIGEST, source_complete: true, availability: {}, locked: {}, carry: {},
       days: ['2026-01-01'], roster: loadRoster(20001)
     }), 'roster-too-large'));
 
   t('עומס · מעבר למגבלת הימים נחסם', () =>
     throwsCode(() => createCalendarEngine({ clock: CLOCK, policy: POLICY }).planPeriod({
       station_id: STATION, source_snapshot: 'load', source_version: VERSION,
-      contract_station_id: STATION, source_revision: VERSION, source_digest: 'digest_load',
-      policy_digest: VERSION, source_complete: true, availability: {}, locked: {}, carry: {},
+      contract_station_id: STATION, source_revision: 'load-r17', source_digest: 'digest_load',
+      policy_digest: POLICY_DIGEST, source_complete: true, availability: {}, locked: {}, carry: {},
       days: loadDays(1001), roster: loadRoster(10)
     }), 'days-too-many'));
 }

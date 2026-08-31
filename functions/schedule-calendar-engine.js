@@ -120,6 +120,9 @@ function normalizePolicy(raw) {
   if (!isNonEmptyString(raw.version)) {
     throw new CalendarError('policy-version', 'למדיניות חייבת להיות גרסה');
   }
+  if (!isNonEmptyString(raw.digest)) {
+    throw new CalendarError('policy-digest', 'למדיניות חייבת להיות חתימת תוכן שנוצרה בשרת');
+  }
 
   const subs = raw.sub_stations;
   if (!isPlainObject(subs) || Object.keys(subs).length === 0) {
@@ -221,6 +224,7 @@ function normalizePolicy(raw) {
   return Object.freeze({
     station_id: raw.station_id,
     version: raw.version,
+    digest: raw.digest,
     sub_stations: Object.freeze(outSubs),
     sub_keys: Object.freeze(subKeys.slice()),
     min_gap_days: raw.rest.min_gap_days,
@@ -249,14 +253,14 @@ function assertSameSource(policy, input) {
   if (!isNonEmptyString(input.contract_station_id) || input.contract_station_id !== input.station_id) {
     throw new CalendarError('contract-station-mismatch', 'חוזה המקור אינו שייך לתחנה שבקלט');
   }
-  if (!isNonEmptyString(input.source_revision) || input.source_revision !== input.source_version) {
-    throw new CalendarError('source-revision-mismatch', 'גרסת המקור אינה תואמת לחוזה המקור');
+  if (!isNonEmptyString(input.source_revision)) {
+    throw new CalendarError('source-revision-required', 'חובה למסור מהדורת מקור');
   }
   if (!isNonEmptyString(input.source_digest)) {
     throw new CalendarError('source-digest-required', 'חובה למסור גיבוב של מקור הנתונים');
   }
-  if (!isNonEmptyString(input.policy_digest) || input.policy_digest !== policy.version) {
-    throw new CalendarError('policy-digest-mismatch', 'גרסת המדיניות אינה תואמת למדיניות שהוזרקה למנוע');
+  if (!isNonEmptyString(input.policy_digest) || input.policy_digest !== policy.digest) {
+    throw new CalendarError('policy-digest-mismatch', 'חתימת המדיניות אינה תואמת למדיניות שהוזרקה למנוע');
   }
   if (input.source_complete !== true) {
     throw new CalendarError('source-incomplete', 'מקור הנתונים אינו מסומן כמלא');
@@ -313,8 +317,14 @@ function normalizeRoster(roster, policy, input) {
     if (p.source_snapshot !== input.source_snapshot) {
       throw new CalendarError('person-snapshot-mismatch', 'האדם ' + p.id + ' מצילום מקור אחר');
     }
-    if (!isNonEmptyString(p.source_version) || p.source_version !== input.source_revision) {
+    if (!isNonEmptyString(p.source_version) || p.source_version !== input.source_version) {
       throw new CalendarError('person-version-mismatch', 'האדם ' + p.id + ' מגרסת מקור אחרת');
+    }
+    if (p.contract_station_id !== input.contract_station_id
+        || p.source_revision !== input.source_revision
+        || p.source_digest !== input.source_digest
+        || p.source_complete !== true) {
+      throw new CalendarError('person-source-contract', 'האדם ' + p.id + ' אינו מאותו חוזה מקור מלא');
     }
     byId.set(p.id, p);
   }

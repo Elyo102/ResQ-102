@@ -23,6 +23,10 @@ const attendanceShadow = require('./attendance-shadow-runner');
 const bulkImportDisabled = require('./bulk-import-disabled');
 const registrationSafety = require('./registration-safety');
 const identityCoordinatorModule = require('./identity-coordinator');
+const scheduleCalendar = require('./schedule-calendar-engine');
+const schedulePublication = require('./schedule-publication');
+const scheduleService = require('./schedule-service');
+const scheduleRuntimeModule = require('./schedule-runtime');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -123,6 +127,30 @@ const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator(
 const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
   db: db,
   admin: admin
+});
+const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
+  db: db,
+  FieldValue: FV,
+  clock: function () { return new Date().toISOString(); },
+  hash: function (value) {
+    return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+  },
+  randomId: randomToken,
+  createEngine: scheduleCalendar.createCalendarEngine,
+  createPublication: schedulePublication.createPublication,
+  createService: scheduleService.createScheduleService,
+  isSuper: isSuperAdmin,
+  sendPush: async function (sid, uid, type, title, body, url, important) {
+    const result = await pushToOne(sid, uid, type, title, body, url, important);
+    if (!result || result.failed || Number(result.sent || 0) < 1) {
+      const code = result && result.error_code
+        ? result.error_code : 'NO_ACTIVE_PUSH_TOKEN';
+      const error = new Error(code);
+      error.code = code;
+      throw error;
+    }
+    return result;
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -3133,7 +3161,9 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     let snap;
     try {
       snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();
-    } catch (e) { return { sent: 0 }; }
+    } catch (e) {
+      return { sent: 0, failed: true, error_code: String((e && e.code) || 'TOKEN_READ_FAILED') };
+    }
     if (!snap.exists) return { sent: 0 };
 
     const v = snap.data() || {};
@@ -3143,7 +3173,8 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     // קריאת פתע נמצאת ברשימה הזו מסיבה אחרת: היא הזעקה, ומי
     // שכיבה התראות עדיין צריך להגיע לתחנה.
     const must = type === 'swap_mine' || type === 'report_mine' ||
-                 type === 'callout'   || type === 'guard_mine';
+                 type === 'callout'   || type === 'guard_mine' ||
+                 type === 'schedule_mine';
     if (!must && prefs[type] === false) return { sent: 0 };
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
@@ -3167,7 +3198,7 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
       });
     } catch (e) {
       console.error('push failed for ' + uid + ': ' + e.message);
-      return { sent: 0 };
+      return { sent: 0, failed: true, error_code: String((e && e.code) || 'FCM_SEND_FAILED') };
     }
 
     let sent = 0;
@@ -5023,3 +5054,84 @@ exports.systemHealth = onSchedule({
     button(CONSOLE_URL, 'לקונסולה')
   ));
 });
+
+
+// =======================================================================
+//  מנוע סידור חודשי חדש · 42F
+// =======================================================================
+// ברירת המחדל היא off. עצם פריסת הקוד אינה מפעילה מנוע, אינה משנה
+// סידור קיים ואינה שולחת הודעה. הפעלה דורשת מסמך מדיניות, מקור חתום
+// ומצב runtime מפורש. התחנה לעולם אינה מתקבלת מגוף הבקשה.
+
+async function invokeSchedule(method, req) {
+  try {
+    return await scheduleRuntime[method](req);
+  } catch (error) {
+    if (error instanceof scheduleRuntimeModule.ScheduleRuntimeError) {
+      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, {
+        schedule_code: error.code
+      });
+    }
+    throw error;
+  }
+}
+
+exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getStatus', req));
+
+exports.getScheduleManagerSetup = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getManagerSetup', req));
+
+exports.runSchedulePlanner = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('runPlanner', req));
+
+exports.getScheduleDraftPreview = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getDraftPreview', req));
+
+exports.publishSchedule = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('publish', req));
+
+exports.rollbackSchedule = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('rollback', req));
+
+exports.getMyScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getMy', req));
+
+exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getStation', req));
+
+exports.respondToSchedule = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('respond', req));
+
+// טריגר השליחה רץ רק כאשר רשומת outbox עוברת במפורש ל-queued.
+// הרשומות נוצרות blocked ורק הטרנזקציה שמחליפה את הפרסום הפעיל
+// משחררת אותן, לכן פוש אינו יכול להקדים פרסום.
+exports.deliverScheduleOutbox = onDocumentWritten({
+  document: 'stations/{sid}/schedule_publications/{publicationId}/schedule_outbox/{outboxId}'
+}, async (event) => {
+  const after = event.data && event.data.after;
+  if (!after || !after.exists) return;
+  const next = after.data() || {};
+  const before = event.data.before && event.data.before.exists
+    ? (event.data.before.data() || {}) : {};
+  if (next.status !== 'queued' || before.status === 'queued') return;
+  await scheduleRuntime.deliverOutbox(after.ref);
+});
+
+// אם פונקציית הפרסום הסתיימה אחרי החלפת המצב הפעיל ולפני ששחררה
+// את התור, או אם FCM היה זמנית לא זמין, הריצה הזאת ממשיכה בבטחה.
+exports.resumeScheduleOutbox = onSchedule({
+  schedule: 'every 5 minutes',
+  timeZone: 'Asia/Jerusalem',
+  timeoutSeconds: 120,
+  region: 'europe-west1'
+}, async () => scheduleRuntime.resumeOutbox());

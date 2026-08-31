@@ -132,6 +132,15 @@ function createScheduleService(deps) {
     if (!isNonEmptyString(plan.source_snapshot) || !isNonEmptyString(plan.source_version)) {
       throw new ServiceError('plan-source-required', 'לתוכנית חסר זיהוי מקור מלא');
     }
+    if (!isNonEmptyString(plan.contract_station_id)
+        || plan.contract_station_id !== plan.station_id
+        || !isNonEmptyString(plan.source_revision)
+        || !isNonEmptyString(plan.source_digest)
+        || !isNonEmptyString(plan.policy_version)
+        || !isNonEmptyString(plan.policy_digest)
+        || plan.source_complete !== true) {
+      throw new ServiceError('plan-source-contract', 'לתוכנית חסר חוזה מקור מלא ותואם');
+    }
     for (const row of plan.rows) {
       if (!isPlainObject(row) || row.station_id !== rules.station_id) {
         throw new ServiceError('plan-row-station-mismatch', 'אחת משורות התוכנית שייכת לתחנה אחרת');
@@ -161,6 +170,12 @@ function createScheduleService(deps) {
     if (!p) return [];
     return Array.isArray(p.qualifications) ? p.qualifications.slice()
       : (Array.isArray(p.roles) ? p.roles.slice() : []);
+  }
+
+  function personName(roster, id) {
+    if (!Array.isArray(roster)) return id;
+    const person = roster.filter((entry) => entry && entry.id === id)[0];
+    return person && isNonEmptyString(person.name) ? person.name : id;
   }
 
   /**
@@ -198,7 +213,7 @@ function createScheduleService(deps) {
           rotation_group: row.rotation_group === undefined ? null : row.rotation_group,
           cancelled: s.cancelled === true,
           crew: row.slots.filter((x) => x.person !== person)
-            .map((x) => ({ person: x.person, role_label: x.label || null }))
+            .map((x) => ({ uid: x.person, person: personName(inp.roster, x.person), role_label: x.label || null }))
             .sort((a, b) => (a.person < b.person ? -1 : a.person > b.person ? 1 : 0)),
           qualifications: qualificationsOf(inp.roster, person),
           change: changes[row.date] || null,
@@ -213,8 +228,9 @@ function createScheduleService(deps) {
       .map((e) => ({
         id: e.id, title: e.title, date: e.date, hours: e.hours || null,
         cancelled: e.cancelled === true,
+        change: changes[e.id] || null,
         answer: answers[e.id] || null,
-        requires_answer: !answers[e.id]
+        requires_answer: e.cancelled !== true && !!changes[e.id] && !answers[e.id]
       }));
 
     days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -242,7 +258,7 @@ function createScheduleService(deps) {
     return dt.getUTCFullYear() + '-' + p(dt.getUTCMonth() + 1) + '-' + p(dt.getUTCDate());
   }
 
-  function dayBlock(plan, date, viewer, events) {
+  function dayBlock(plan, date, viewer, events, roster) {
     const subs = [];
     for (const row of plan.rows) {
       if (row.date !== date) continue;
@@ -252,7 +268,8 @@ function createScheduleService(deps) {
         minimum: row.minimum === undefined ? null : row.minimum,
         below_minimum: row.below_minimum === true,
         people: row.slots.map((s) => ({
-          person: s.person,
+          uid: s.person,
+          person: personName(roster, s.person),
           role_label: s.label || null,
           hours: s.hours || null,
           cancelled: s.cancelled === true,
@@ -265,7 +282,11 @@ function createScheduleService(deps) {
       .map((e) => ({
         id: e.id, title: e.title, hours: e.hours || null,
         cancelled: e.cancelled === true,
-        people: Array.isArray(e.people) ? e.people.slice() : [],
+        people: Array.isArray(e.people) ? e.people.map((id) => ({
+          uid: id,
+          person: personName(roster, id),
+          is_me: id === viewer
+        })) : [],
         includes_me: Array.isArray(e.people) && e.people.indexOf(viewer) > -1
       }));
     return { date, sub_stations: subs, events: dayEvents };
@@ -288,9 +309,9 @@ function createScheduleService(deps) {
       view: 'station',
       viewer: actor.id,
       generated_at: clock(),
-      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events)),
-      day: Object.freeze(dayBlock(plan, inp.date, actor.id, events)),
-      next_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, 1), actor.id, events))
+      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events, inp.roster)),
+      day: Object.freeze(dayBlock(plan, inp.date, actor.id, events, inp.roster)),
+      next_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, 1), actor.id, events, inp.roster))
     });
   }
 

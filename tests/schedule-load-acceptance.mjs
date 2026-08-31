@@ -7,11 +7,15 @@ const { createCalendarEngine } = require('../functions/schedule-calendar-engine.
 
 const station = 'load-test-station';
 const version = 'load-v1';
+const revision = 'load-r17';
+const sourceDigest = 'digest-synthetic-load';
+const policyDigest = 'policy-digest-load-v1';
 const engine = createCalendarEngine({
   clock: () => '2026-09-01T00:00:00.000Z',
   policy: {
     station_id: station,
     version,
+    digest: policyDigest,
     sub_stations: {
       main: {
         label: 'תחנת בדיקה',
@@ -32,7 +36,11 @@ const roster = Array.from({ length: 1000 }, (_, i) => ({
   active: true,
   roles: ['firefighter'],
   source_snapshot: 'synthetic-load-snapshot',
-  source_version: version
+  source_version: version,
+  contract_station_id: station,
+  source_revision: revision,
+  source_digest: sourceDigest,
+  source_complete: true
 }));
 const days = engine.daysBetween('2026-09-01', '2026-09-30');
 const heapBefore = process.memoryUsage().heapUsed;
@@ -42,9 +50,9 @@ const result = engine.planPeriod({
   source_snapshot: 'synthetic-load-snapshot',
   source_version: version,
   contract_station_id: station,
-  source_revision: version,
-  source_digest: 'digest-synthetic-load',
-  policy_digest: version,
+  source_revision: revision,
+  source_digest: sourceDigest,
+  policy_digest: policyDigest,
   source_complete: true,
   availability: {},
   locked: {},
@@ -72,16 +80,20 @@ const boundaryRoster = Array.from({ length: 5000 }, (_, i) => ({
   active: true,
   roles: ['firefighter'],
   source_snapshot: 'synthetic-boundary-snapshot',
-  source_version: version
+  source_version: version,
+  contract_station_id: station,
+  source_revision: 'boundary-r17',
+  source_digest: 'digest-synthetic-boundary',
+  source_complete: true
 }));
 assert.throws(() => engine.planPeriod({
   station_id: station,
   source_snapshot: 'synthetic-boundary-snapshot',
   source_version: version,
   contract_station_id: station,
-  source_revision: version,
+  source_revision: 'boundary-r17',
   source_digest: 'digest-synthetic-boundary',
-  policy_digest: version,
+  policy_digest: policyDigest,
   source_complete: true,
   availability: {},
   locked: {},

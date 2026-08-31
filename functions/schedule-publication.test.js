@@ -35,9 +35,19 @@ const mk = (over) => createPublication(Object.assign({ clock: CLOCK, hash: HASH,
 function plan(rows) {
   return {
     kind: 'schedule-plan', station_id: '102', source_snapshot: 'snap_1',
-    source_version: 'v1', policy_version: 'v1', rows,
+    source_version: 'v1', contract_station_id: '102', source_revision: 'r17',
+    source_digest: 'source-digest-v1', policy_version: 'v1', policy_digest: 'policy-digest-v1',
+    source_complete: true, rows,
     summary: { blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0 }
   };
+}
+
+function publicationInput(over) {
+  const hasPrevious = Boolean(over && Object.prototype.hasOwnProperty.call(over, 'previous') && over.previous !== null);
+  return Object.assign({
+    publication_id: 'pub_default', publication_revision: hasPrevious ? 2 : 1,
+    source_draft_id: 'draft_1', previous_publication_id: hasPrevious ? 'pub_previous' : null, actor: 'רמי'
+  }, over || {});
 }
 function row(date, sub, label, slots, group) {
   return {
@@ -75,7 +85,7 @@ t('המודול אינו מייבא crypto', () => {
 /* ================= 2. פרסום ראשון וטיוטה שקטה ================= */
 
 t('פרסום ראשון שולח לכל אדם את השיבוצים הראשונים שלו', () => {
-  const r = mk().planPublication({ next: P1, previous: null, publication_id: 'pub_1', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'pub_1' }));
   assert.strictEqual(r.notifications.length, 2);
   r.notifications.forEach((n) => {
     assert.strictEqual(n.push.title, 'ResQ · הסידור פורסם');
@@ -85,13 +95,13 @@ t('פרסום ראשון שולח לכל אדם את השיבוצים הראשו
 });
 
 t('פרסום ראשון כולל גם אירוע אישי לאדם שאין לו משמרת', () => {
-  const r = mk().planPublication({
+  const r = mk().planPublication(publicationInput({
     next: P1,
     previous: null,
     next_events: [event({ id: 'course_1', title: 'קורס', date: '2026-09-02', people: ['גיא'] })],
     publication_id: 'pub_first_event',
     actor: 'רמי'
-  });
+  }));
   const mine = r.notifications.find((n) => n.person === 'גיא');
   assert.ok(mine);
   assert.deepStrictEqual(mine.detail.map((x) => x.kind), [CHANGE.EVENT_ASSIGNED]);
@@ -100,29 +110,29 @@ t('פרסום ראשון כולל גם אירוע אישי לאדם שאין ל�
 t('אי אפשר לפרסם תוכנית עם חוסר חוסם', () => {
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.summary.blocking_gaps = 1;
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: bad, previous: null, publication_id: 'blocked', actor: 'רמי'
-  }), 'plan-not-publishable');
+  })), 'plan-not-publishable');
 });
 
 t('אי אפשר לפרסם תוכנית עם שיבוץ ידני שנדחה', () => {
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.summary.rejected_manual = 1;
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: bad, previous: null, publication_id: 'rejected', actor: 'רמי'
-  }), 'plan-not-publishable');
+  })), 'plan-not-publishable');
 });
 
 t('אי אפשר לפרסם שורה שלא הושלמה', () => {
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.rows[0].complete = false;
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: bad, previous: null, publication_id: 'open-row', actor: 'רמי'
-  }), 'plan-not-publishable');
+  })), 'plan-not-publishable');
 });
 
 t('אין שינוי — אין התראות', () => {
-  const r = mk().planPublication({ next: P1, previous: P1, publication_id: 'pub_2', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next: P1, previous: P1, publication_id: 'pub_2', actor: 'רמי' }));
   assert.strictEqual(r.notifications.length, 0);
 });
 
@@ -134,10 +144,10 @@ t('אין בקוד שום שליחה בפועל', () => {
 /* ================= 3. איתור שינוי ================= */
 
 function changeKinds(prev, next, evPrev, evNext) {
-  const r = mk().planPublication({
+  const r = mk().planPublication(publicationInput({
     next, previous: prev, previous_events: evPrev, next_events: evNext,
     publication_id: 'pub_x', actor: 'רמי'
-  });
+  }));
   const map = {};
   r.notifications.forEach((n) => { map[n.person] = n.detail.map((x) => x.kind); });
   return map;
@@ -216,7 +226,7 @@ t('אירוע מסומן כמבוטל', () => {
 
 t('מי שלא נגעו בו אינו מקבל התראה', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('רון', 'team_cmd', 'מפקד צוות'), slot('גיא', 'driver', 'נהג')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const people = r.notifications.map((n) => n.person);
   // דן ורון קיבלו שינוי צוות, גיא הוא החדש. איש מלבד השלושה אינו קיים.
   assert.deepStrictEqual(people.slice().sort(), ['גיא', 'דן', 'רון']);
@@ -232,7 +242,7 @@ t('שלושה שינויים לאדם — התראה אחת', () => {
   const prev = plan([
     row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('רון', 'team_cmd', 'מפקד צוות')])
   ]);
-  const r = mk().planPublication({ next, previous: prev, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: prev, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן');
   assert.strictEqual(mine.length, 1, 'נשלחו ' + mine.length + ' התראות במקום אחת');
   assert.ok(mine[0].change_count >= 2);
@@ -241,31 +251,31 @@ t('שלושה שינויים לאדם — התראה אחת', () => {
 
 t('שינוי אחד — נוסח יחיד', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
   assert.strictEqual(mine.push.body, 'שינוי אחד בסידור שלך');
 });
 
 t('לחיצה פותחת את הסידור שלי', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   assert.strictEqual(r.notifications[0].push.route, 'my-schedule');
 });
 
 t('ההתראה נוקבת במי שינה', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי מושיק' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי מושיק' }));
   assert.strictEqual(r.notifications[0].changed_by, 'רמי מושיק');
 });
 
 t('בלי מי שמפרסם — סירוב', () =>
-  throwsCode(() => mk().planPublication({ next: P1, previous: null, publication_id: 'p' }), 'actor-required'));
+  throwsCode(() => mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'p', actor: '' })), 'actor-required'));
 
 /* ================= 5. אין דליפה במסך הנעילה ================= */
 
 t('מטען הפוש מכיל אך ורק את שדות רשימת ההיתר', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   r.notifications.forEach((n) => n.push.items.forEach((item) => {
     assert.deepStrictEqual(Object.keys(item).sort(), PUSH_FIELDS.slice().sort(),
       'מטען עם שדות אחרים: ' + Object.keys(item).join(','));
@@ -274,7 +284,7 @@ t('מטען הפוש מכיל אך ורק את שדות רשימת ההיתר', 
 
 t('אין שמות של אנשים אחרים במטען הפוש — גם בשינוי צוות', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('גיא_סודי', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
   const json = JSON.stringify(mine.push);
   assert.strictEqual(json.indexOf('גיא_סודי'), -1, 'שם של אדם אחר דלף לפוש');
@@ -283,20 +293,20 @@ t('אין שמות של אנשים אחרים במטען הפוש — גם בש�
 
 t('שם האדם עצמו אינו חלק ממטען הפוש', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
   assert.strictEqual(JSON.stringify(mine.push.items).indexOf('דן'), -1);
 });
 
 t('כותרת אירוע חופשית אינה יוצאת למסך הנעילה', () => {
   const title = 'בדיקה רפואית פרטית';
-  const r = mk().planPublication({
+  const r = mk().planPublication(publicationInput({
     next: P1,
     previous: P1,
     next_events: [event({ id: 'private_1', title, date: '2026-09-03', people: ['דן'] })],
     publication_id: 'private-title',
     actor: 'רמי'
-  });
+  }));
   assert.strictEqual(JSON.stringify(r.notifications[0].push).indexOf(title), -1);
   assert.deepStrictEqual(Object.keys(r.notifications[0].push.items[0]).sort(), PUSH_FIELDS.slice().sort());
 });
@@ -307,7 +317,7 @@ t('התראה גדולה נחתכת לגודל בטוח ומדווחת כמה ש
     rows.push(row('D' + String(i).padStart(3, '0'), 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]));
   }
   const next = plan(rows);
-  const r = mk().planPublication({ next, previous: plan([]), publication_id: 'large', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: plan([]), publication_id: 'large', actor: 'רמי' }));
   const push = r.notifications[0].push;
   assert.strictEqual(push.items.length, 20);
   assert.strictEqual(push.truncated_changes, 480);
@@ -318,7 +328,7 @@ t('שדה אסור בקלט אינו מגיע לפוש', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [
     slot('דן', 'team_cmd', 'מפקד צוות', { reason: 'ניתוח גב', absence_kind: 'sick' }),
     slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const json = JSON.stringify(r.notifications.map((n) => n.push));
   assert.strictEqual(json.indexOf('ניתוח גב'), -1);
   FORBIDDEN_KEYS.forEach((k) => assert.strictEqual(json.indexOf('"' + k + '"'), -1, 'מפתח אסור: ' + k));
@@ -326,7 +336,7 @@ t('שדה אסור בקלט אינו מגיע לפוש', () => {
 
 t('הפירוט הפנימי כן מכיל את הצוות — הוא לא במסך הנעילה', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('גיא', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'p', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
   const crewChange = mine.detail.filter((x) => x.kind === CHANGE.CREW_CHANGED)[0];
   assert.ok(crewChange && crewChange.crew.indexOf('גיא') > -1);
@@ -336,12 +346,12 @@ t('הפירוט הפנימי כן מכיל את הצוות — הוא לא במ�
 
 t('אותו מזהה ואותו תוכן — אין פרסום שני ואין התראה שנייה', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const first = mk().planPublication({ next, previous: P1, publication_id: 'pub_7', actor: 'רמי' });
+  const first = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'pub_7', actor: 'רמי' }));
   assert.ok(first.notifications.length > 0);
-  const again = mk().planPublication({
+  const again = mk().planPublication(publicationInput({
     next, previous: P1, publication_id: 'pub_7', actor: 'רמי',
     existing_publication: first.publication
-  });
+  }));
   assert.strictEqual(again.duplicate, true);
   assert.strictEqual(again.notifications.length, 0);
   assert.strictEqual(again.audit.action, 'publish_duplicate_ignored');
@@ -350,15 +360,15 @@ t('אותו מזהה ואותו תוכן — אין פרסום שני ואין �
 t('אותו מזהה עם תוכן אחר — סירוב מפורש', () => {
   const a = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   const b = plan([row('2026-09-01', 'eilat', 'אילת', [slot('רון', 'driver', 'נהג')])]);
-  const first = mk().planPublication({ next: a, previous: P1, publication_id: 'pub_8', actor: 'רמי' });
-  throwsCode(() => mk().planPublication({
+  const first = mk().planPublication(publicationInput({ next: a, previous: P1, publication_id: 'pub_8', actor: 'רמי' }));
+  throwsCode(() => mk().planPublication(publicationInput({
     next: b, previous: P1, publication_id: 'pub_8', actor: 'רמי', existing_publication: first.publication
-  }), 'publication-conflict');
+  })), 'publication-conflict');
 });
 
 t('מפתח ייחוד לכל אדם ולכל פרסום', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  const r = mk().planPublication({ next, previous: P1, publication_id: 'pub_9', actor: 'רמי' });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'pub_9', actor: 'רמי' }));
   const keys = r.notifications.map((n) => n.dedupe_key);
   assert.strictEqual(new Set(keys).size, keys.length);
   keys.forEach((k) => assert.ok(k.indexOf('pub_9:') === 0));
@@ -366,8 +376,8 @@ t('מפתח ייחוד לכל אדם ולכל פרסום', () => {
 });
 
 t('גיבוב יציב — אותו תוכן, אותו גיבוב', () => {
-  const a = mk().planPublication({ next: P1, previous: null, publication_id: 'x', actor: 'רמי' });
-  const b = mk().planPublication({ next: P1, previous: null, publication_id: 'x', actor: 'רמי' });
+  const a = mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'x', actor: 'רמי' }));
+  const b = mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'x', actor: 'רמי' }));
   assert.strictEqual(a.publication.content_hash, b.publication.content_hash);
 });
 
@@ -412,37 +422,40 @@ t('ניסיון חוזר בלי התראה — סירוב', () =>
 /* ================= 8. אימות קלט ================= */
 
 t('בלי תוכנית — סירוב', () =>
-  throwsCode(() => mk().planPublication({ publication_id: 'p', actor: 'a' }), 'plan-required'));
+  throwsCode(() => mk().planPublication(publicationInput({ publication_id: 'p', actor: 'a' })), 'plan-required'));
 t('בלי publication_id — סירוב', () =>
-  throwsCode(() => mk().planPublication({ next: P1, actor: 'a' }), 'publication-id'));
+  throwsCode(() => mk().planPublication(publicationInput({ next: P1, publication_id: '', actor: 'a' })), 'publication-id'));
 t('השוואה בין שתי תחנות — סירוב', () => {
-  const other = Object.assign({}, P1, { station_id: '999' });
-  throwsCode(() => mk().planPublication({ next: P1, previous: other, publication_id: 'p', actor: 'a' }), 'station-mismatch');
+  const other = JSON.parse(JSON.stringify(P1));
+  other.station_id = '999';
+  other.contract_station_id = '999';
+  other.rows.forEach((entry) => { entry.station_id = '999'; });
+  throwsCode(() => mk().planPublication(publicationInput({ next: P1, previous: other, publication_id: 'p', actor: 'a' })), 'station-mismatch');
 });
 t('אותו אדם פעמיים באותו תאריך — סירוב', () => {
   const bad = plan([
     row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]),
     row('2026-09-01', 'timna', 'תמנע', [slot('דן', 'driver', 'נהג')])
   ]);
-  throwsCode(() => mk().planPublication({ next: bad, previous: P1, publication_id: 'p', actor: 'a' }), 'duplicate-assignment');
+  throwsCode(() => mk().planPublication(publicationInput({ next: bad, previous: P1, publication_id: 'p', actor: 'a' })), 'duplicate-assignment');
 });
 t('אירוע בלי מזהה — סירוב', () =>
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: P1, previous: P1, next_events: [event({ title: 'x', date: '2026-09-01', people: [] })],
-    publication_id: 'p', actor: 'a' }), 'event-id'));
+    publication_id: 'p', actor: 'a' })), 'event-id'));
 t('אירוע מתחנה אחרת — סירוב', () =>
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: P1, previous: P1,
     next_events: [event({ id: 'foreign', title: 'x', date: '2026-09-01', people: ['דן'], station_id: '999' })],
-    publication_id: 'p', actor: 'a' }), 'event-station-mismatch'));
+    publication_id: 'p', actor: 'a' })), 'event-station-mismatch'));
 t('אירוע מתמונת מקור אחרת — סירוב', () =>
-  throwsCode(() => mk().planPublication({
+  throwsCode(() => mk().planPublication(publicationInput({
     next: P1, previous: P1,
     next_events: [event({ id: 'stale', title: 'x', date: '2026-09-01', people: ['דן'], source_snapshot: 'snap_old' })],
-    publication_id: 'p', actor: 'a' }), 'event-source-mismatch'));
+    publication_id: 'p', actor: 'a' })), 'event-source-mismatch'));
 
 t('התוצאה קפואה', () => {
-  const r = mk().planPublication({ next: P1, previous: null, publication_id: 'p', actor: 'a' });
+  const r = mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'p', actor: 'a' }));
   assert.ok(Object.isFrozen(r) && Object.isFrozen(r.publication) && Object.isFrozen(r.notifications));
 });
 
