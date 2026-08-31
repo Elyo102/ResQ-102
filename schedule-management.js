@@ -1,5 +1,5 @@
 import { firebaseConfig } from './firebase-config.js?v=41a';
-import { renderNav, renderStuckNav } from './nav.js?v=42f';
+import { renderNav, renderStuckNav } from './nav.js?v=42f2';
 import { initPWA } from './pwa.js?v=41a';
 import { initAppCheck } from './appcheck.js?v=41a1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -104,9 +104,27 @@ function setMode(status) {
   box.lastElementChild.textContent = text;
 }
 
+function setPageTitle(name) {
+  const titles = {
+    station: ['סידור', 'סידור התחנה'],
+    mine: ['סידור', 'הסידור שלי'],
+    manage: ['ניהול', 'ניהול סידור עבודה']
+  };
+  const next = titles[name] || titles.station;
+  $('crumb').textContent = next[0];
+  $('pageTitle').textContent = next[1];
+  document.title = 'ResQ · ' + next[1];
+}
+
+function renderScheduleNav() {
+  const tab = state.tab || 'station';
+  renderNav(state.claims, 'schedule-management.html?tab=' + tab,
+    state.user.displayName || state.user.email || '');
+}
+
 function chooseTab(name, replaceUrl = true) {
-  if (name === 'manage' && (!state.status || !state.status.manager)) name = 'mine';
-  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'mine';
+  if (name === 'manage' && (!state.status || !state.status.manager)) name = 'station';
+  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station';
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.classList.toggle('on', button.dataset.tab === name);
@@ -115,13 +133,17 @@ function chooseTab(name, replaceUrl = true) {
   $('manageView').hidden = name !== 'manage';
   $('mineView').hidden = name !== 'mine';
   $('stationView').hidden = name !== 'station';
+  $('mode').hidden = name !== 'manage';
+  setPageTitle(name);
+  renderScheduleNav();
   if (replaceUrl) {
     const url = new URL(location.href);
     url.searchParams.set('tab', name);
     history.replaceState(null, '', url);
   }
-  if (name === 'mine') renderMine();
+  if (name === 'mine') loadMine();
   if (name === 'station') loadStation();
+  if (name === 'manage') { setMode(state.status); loadSetup(); }
 }
 
 function renderPolicy() {
@@ -474,7 +496,6 @@ async function loadSetup() {
 async function boot(user) {
   state.user = user;
   try { state.claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { state.claims = {}; }
-  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
   $('who').textContent = user.displayName || user.email || '';
   $('appMain').classList.remove('hide');
   try {
@@ -486,12 +507,10 @@ async function boot(user) {
       location.replace('./schedule.html');
       return;
     }
-    setMode(state.status);
     setRollbackAvailability();
     $('manageTab').hidden = !state.status.manager;
     $('startMonth').value = monthStart();
-    await Promise.all([loadSetup(), loadMine()]);
-    chooseTab(new URLSearchParams(location.search).get('tab') || (state.status.manager ? 'manage' : 'mine'));
+    chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
     location.replace('./schedule.html');
   }
@@ -518,6 +537,10 @@ $('publish').addEventListener('click', publishDraft);
 $('rollback').addEventListener('click', rollbackSchedule);
 
 onAuthStateChanged(auth, (user) => {
-  if (!user) { location.replace('./login.html?next=schedule-management.html'); return; }
+  if (!user) {
+    const target = (location.pathname.split('/').pop() || 'schedule-management.html') + location.search;
+    location.replace('./login.html?next=' + encodeURIComponent(target));
+    return;
+  }
   boot(user);
 });

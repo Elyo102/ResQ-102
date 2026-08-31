@@ -67,6 +67,10 @@ export const ROLES = [
 // **מעל** התפקיד. אלדד הוא לוחם אש וגם מנהל-על, ודריסה
 // הייתה מנתקת אותו מהמערכת שלו.
 export const SUPER_HE = 'מנהל מערכת';
+// אחראי/ת סידור הוא תפקיד נוסף. הוא בכוונה לא נכנס ל-ROLES:
+// אדם ממשיך להיות, למשל, לוחם אש וגם מקבל סמכות ממוקדת לעריכת
+// הסידור — בלי לרשת סמכויות של מפקד/ת או של משאבי אנוש.
+export const SCHEDULE_MANAGER_HE = 'אחראי/ת סידור';
 
 // ---------------------------------------------------------------
 //  נגזרות
@@ -103,6 +107,9 @@ export function roleRank(id) {
 
 export function isSuper(c) {
   return !!c && (c.super === true || c.role === 'super_admin');
+}
+export function isScheduleManager(c) {
+  return !!c && c.schedule_manager === true;
 }
 export function isMember(c) {
   return isSuper(c) || (!!c && MEMBER_ROLES.indexOf(c.role) !== -1);

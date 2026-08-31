@@ -10,6 +10,10 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const {
   createIdentityCoordinator, stableHash, registrationFingerprint, profileMatches
 } = require('./identity-coordinator');
+const { createCalendarEngine } = require('./schedule-calendar-engine');
+const { createPublication } = require('./schedule-publication');
+const { createScheduleService } = require('./schedule-service');
+const { createScheduleRuntime, ScheduleRuntimeError } = require('./schedule-runtime');
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   console.error('FIRESTORE_EMULATOR_HOST is required; refusing to run against a real project.');
@@ -28,6 +32,7 @@ class FakeAuth {
     this.users = new Map();
     this.setCalls = 0;
     this.revokeCalls = 0;
+    this.events = [];
     this.failSetBefore = 0;
     this.failRevoke = 0;
   }
@@ -47,6 +52,7 @@ class FakeAuth {
 
   async setCustomUserClaims(uid, claims) {
     this.setCalls++;
+    this.events.push('auth:' + uid);
     if (this.failSetBefore > 0) {
       this.failSetBefore--;
       throw new Error('injected Auth failure before write');
@@ -58,6 +64,7 @@ class FakeAuth {
 
   async revokeRefreshTokens() {
     this.revokeCalls++;
+    this.events.push('revoke');
     if (this.failRevoke > 0) {
       this.failRevoke--;
       throw new Error('injected revoke failure');
@@ -194,6 +201,89 @@ function roleParams(uid, opId, previousClaims, wantedEmp) {
       };
     }
   };
+}
+
+function scheduleManagerParams(uid, opId, previousClaims, enabled) {
+  const previous = Object.assign({}, previousClaims || {});
+  const version = 'sm_' + stableHash(opId + ':' + uid + ':' + String(enabled)).slice(0, 40);
+  const desired = Object.assign({}, previous);
+  if (enabled) {
+    desired.schedule_manager = true;
+    desired.schedule_manager_version = version;
+  } else {
+    delete desired.schedule_manager;
+    delete desired.schedule_manager_version;
+  }
+  const desiredState = {
+    kind: 'schedule_manager_grant', uid: uid,
+    stationId: String(previous.stationId || ''), enabled: enabled,
+    version: version
+  };
+  return {
+    uid: uid,
+    opId: opId,
+    kind: 'set_schedule_manager',
+    actorUid: 'u_super',
+    actorEmail: 'super@example.com',
+    previousClaims: previous,
+    desiredClaims: desired,
+    desiredState: desiredState,
+    intentFingerprint: stableHash({
+      kind: 'set_schedule_manager', uid: uid, enabled: enabled,
+      // A retry rereads the current claims after the first attempt has
+      // completed. Its intent must therefore be based only on immutable
+      // request data, not on previous/desired claims.
+      stationId: desiredState.stationId, version: version
+    }),
+    auditAction: enabled ? 'grant_schedule_manager' : 'revoke_schedule_manager',
+    auditDetails: { test: true, enabled: enabled },
+    planSummary: {
+      kind: 'set_schedule_manager', role: String(previous.role || ''),
+      stationId: desiredState.stationId, enabled: enabled
+    }
+  };
+}
+
+function scheduleManagerStateHook(fakeAuth, writes) {
+  return async function (operation) {
+    const state = operation.desired_state || {};
+    writes.push({
+      uid: String(operation.target_uid || ''),
+      active: state.enabled === true,
+      version: String(state.version || '')
+    });
+    // The live claim must still be the old one while the server-side grant
+    // record is committed. This makes a grant record impossible to observe
+    // only after Auth has already been changed.
+    const live = await fakeAuth.getUser(operation.target_uid);
+    assert.deepEqual(live.customClaims, operation.previous_claims || {},
+      'grant state must be written before the Auth claim changes');
+    await db.doc('schedule_manager_grants/' + operation.target_uid).set({
+      uid: operation.target_uid,
+      stationId: state.stationId,
+      active: state.enabled === true,
+      version: state.version,
+      operation_id: operation.op_id
+    });
+  };
+}
+
+// This is deliberately constructed from the same Firestore instance and the
+// same claims record that the coordinator changed above. It proves the
+// boundary between the identity operation and the schedule runtime, rather
+// than duplicating either side with a hand-written grant fixture.
+function scheduleRuntimeForCoordinator() {
+  return createScheduleRuntime({
+    db: db,
+    FieldValue: FV,
+    clock: function () { return '2026-09-01T06:00:00.000Z'; },
+    hash: stableHash,
+    randomId: function () { ids++; return 'runtime-request-' + String(ids); },
+    createEngine: createCalendarEngine,
+    createPublication: createPublication,
+    createService: createScheduleService,
+    sendPush: async function () { return { sent:0 }; }
+  });
 }
 
 async function test(name, fn) {
@@ -584,6 +674,247 @@ async function rejectsCode(code, promise) {
                             'request_fingerprint','actor_uid']) {
       assert.equal(Object.prototype.hasOwnProperty.call(completed, piiField), false, piiField);
     }
+  });
+
+  await test('schedule-manager grant preserves primary claims, stores state before Auth, and revokes the actor', async function () {
+    // The target is also the actor here. A claim-only operation must revoke
+    // that user's refresh tokens too; otherwise a removed manager can keep a
+    // stale editing token alive.
+    const uid = 'u_super';
+    const before = {
+      role:'commander', stationId:'eilat_102', districtId:'south', shift:'B', emp:'6811',
+      super:true, unrelated_claim:'kept'
+    };
+    const fake = new FakeAuth(); fake.seed(uid, before);
+    const writes = [];
+    const service = coordinator(fake, {
+      applyClaimsState: scheduleManagerStateHook(fake, writes)
+    });
+    const params = scheduleManagerParams(uid, 'schedule-manager-enable-6811', before, true);
+    const acquired = await service.acquireClaimsChange(params);
+    assert.equal(acquired.type, 'acquired');
+    assert.equal(acquired.operation.kind, 'set_schedule_manager');
+    assert.deepEqual(acquired.operation.desired_claims, params.desiredClaims);
+
+    const result = await service.runClaimsChange(uid, acquired.operation.op_id,
+      { ok:true, uid:uid, enabled:true });
+    assert.deepEqual(result, { ok:true, uid:uid, enabled:true });
+    assert.deepEqual((await fake.getUser(uid)).customClaims, params.desiredClaims,
+      'the additional capability must not erase the primary claims');
+    assert.equal(fake.revokeCalls, 1, 'even the acting manager must be revoked');
+    assert.deepEqual(fake.events, ['auth:' + uid, 'revoke'],
+      'state hook runs before Auth; Auth is written before token revocation');
+    assert.deepEqual(writes, [{
+      uid:uid, active:true, version:params.desiredState.version
+    }]);
+    assert.deepEqual((await db.doc('schedule_manager_grants/' + uid).get()).data(), {
+      uid:uid, stationId:'eilat_102', active:true,
+      version:params.desiredState.version,
+      operation_id:acquired.operation.op_id
+    });
+    const completed = (await db.doc('identity_operations/' + uid).get()).data();
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.kind, 'set_schedule_manager');
+    for (const privateField of ['previous_claims', 'desired_claims', 'desired_state', 'actor_uid']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(completed, privateField), false,
+        'completed operation must remove ' + privateField);
+    }
+
+    // The callable rereads Auth on every request. Once the grant is complete,
+    // that snapshot includes schedule_manager, unlike the original snapshot
+    // above. Reusing the same operation id must still identify the same plan
+    // and return its stored result without repeating any state/Auth/token work.
+    const grantRetryParams = scheduleManagerParams(uid, params.opId,
+      (await fake.getUser(uid)).customClaims, true);
+    assert.equal(grantRetryParams.intentFingerprint, params.intentFingerprint,
+      'grant retry must retain its immutable intent fingerprint after claims change');
+    const grantWrites = writes.length;
+    const grantSetCalls = fake.setCalls;
+    const grantRevokeCalls = fake.revokeCalls;
+    const grantRetry = await service.acquireClaimsChange(grantRetryParams);
+    assert.equal(grantRetry.type, 'completed');
+    assert.deepEqual(grantRetry.operation.result, result);
+    const grantReplay = await service.runClaimsChange(uid, grantRetry.operation.op_id,
+      { ok:true, uid:uid, enabled:false });
+    assert.deepEqual(grantReplay, result);
+    assert.equal(writes.length, grantWrites, 'grant retry must not rewrite grant state');
+    assert.equal(fake.setCalls, grantSetCalls, 'grant retry must not rewrite Auth claims');
+    assert.equal(fake.revokeCalls, grantRevokeCalls, 'grant retry must not revoke tokens again');
+
+    // A real second change waits for the fence. Advance only the emulator
+    // fixture so the revocation path can be verified independently.
+    await db.doc('identity_operations/' + uid).set({
+      fence_until: Timestamp.fromMillis(Date.now() - 1)
+    }, { merge:true });
+    const revokeParams = scheduleManagerParams(uid, 'schedule-manager-revoke-6811',
+      params.desiredClaims, false);
+    const revocation = await service.acquireClaimsChange(revokeParams);
+    await service.runClaimsChange(uid, revocation.operation.op_id,
+      { ok:true, uid:uid, enabled:false });
+    assert.deepEqual((await fake.getUser(uid)).customClaims, before,
+      'revoking the additional role must retain every primary claim');
+    assert.equal(fake.revokeCalls, 2, 'revocation must also invalidate the old manager token');
+    const inactiveGrant = (await db.doc('schedule_manager_grants/' + uid).get()).data();
+    assert.equal(inactiveGrant.active, false);
+    assert.equal(inactiveGrant.version, revokeParams.desiredState.version);
+
+    // The same protection is required for revocation: the retry sees the
+    // post-revocation claims, but must still retrieve the completed operation.
+    const revokeRetryParams = scheduleManagerParams(uid, revokeParams.opId,
+      (await fake.getUser(uid)).customClaims, false);
+    assert.equal(revokeRetryParams.intentFingerprint, revokeParams.intentFingerprint,
+      'revoke retry must retain its immutable intent fingerprint after claims change');
+    const revokeWrites = writes.length;
+    const revokeSetCalls = fake.setCalls;
+    const revokeRevokeCalls = fake.revokeCalls;
+    const revokeRetry = await service.acquireClaimsChange(revokeRetryParams);
+    assert.equal(revokeRetry.type, 'completed');
+    assert.deepEqual(revokeRetry.operation.result, { ok:true, uid:uid, enabled:false });
+    const revokeReplay = await service.runClaimsChange(uid, revokeRetry.operation.op_id,
+      { ok:true, uid:uid, enabled:true });
+    assert.deepEqual(revokeReplay, { ok:true, uid:uid, enabled:false });
+    assert.equal(writes.length, revokeWrites, 'revoke retry must not rewrite grant state');
+    assert.equal(fake.setCalls, revokeSetCalls, 'revoke retry must not rewrite Auth claims');
+    assert.equal(fake.revokeCalls, revokeRevokeCalls, 'revoke retry must not revoke tokens again');
+  });
+
+  await test('a completed primary-role change may be followed immediately by one schedule-manager change, but claim changes stay fenced', async function () {
+    const uid = 'schedule_manager_after_role';
+    const before = {
+      role:'firefighter', stationId:'eilat_102', districtId:'south', shift:'A', emp:'6819'
+    };
+    const fake = new FakeAuth(); fake.seed(uid, before);
+    const service = coordinator(fake);
+    // The role operation is already complete but still inside its normal
+    // stale-worker fence. The admin flow may now add the separate role
+    // immediately; it must not make a user wait after saving two controls.
+    await db.doc('identity_operations/' + uid).set({
+      status:'completed', kind:'set_role', op_id:'role-completed-before-schedule-6819',
+      fence_until:Timestamp.fromMillis(Date.now() + 120000)
+    });
+    const granted = await service.acquireClaimsChange(
+      scheduleManagerParams(uid, 'schedule-manager-after-role-6819', before, true));
+    assert.equal(granted.type, 'acquired');
+
+    // The exception is deliberately narrow. Two claims-only mutations still
+    // honour the fence, so a rapid grant/revoke cannot race itself.
+    await db.doc('identity_operations/' + uid).set({
+      status:'completed', kind:'set_schedule_manager', op_id:granted.operation.op_id,
+      fence_until:Timestamp.fromMillis(Date.now() + 120000)
+    });
+    await rejectsCode('resource-exhausted', service.acquireClaimsChange(
+      scheduleManagerParams(uid, 'schedule-manager-fenced-again-6819', before, false)));
+  });
+
+  await test('schedule-manager recovery does not repeat state and an idempotent replay does not repeat Auth or revoke', async function () {
+    const uid = 'schedule_manager_recovery';
+    const before = {
+      role:'firefighter', stationId:'eilat_102', districtId:'south', shift:'A', emp:'6821'
+    };
+    const fake = new FakeAuth(); fake.seed(uid, before); fake.failSetBefore = 1;
+    const writes = [];
+    const service = coordinator(fake, {
+      applyClaimsState: scheduleManagerStateHook(fake, writes)
+    });
+    const params = scheduleManagerParams(uid, 'schedule-manager-recovery-6821', before, true);
+    const acquired = await service.acquireClaimsChange(params);
+
+    await rejectsCode('unavailable', service.runClaimsChange(uid, acquired.operation.op_id,
+      { ok:true, uid:uid, enabled:true }));
+    assert.deepEqual((await fake.getUser(uid)).customClaims, before,
+      'an Auth outage leaves the original primary claims intact');
+    assert.equal(writes.length, 1, 'the grant state was committed once before the outage');
+    assert.equal((await db.doc('identity_operations/' + uid).get()).data().phase, 'state_applied');
+    assert.equal((await db.doc('schedule_manager_grants/' + uid).get()).data().active, true);
+
+    await service.markNeedsRecovery(uid, acquired.operation.op_id,
+      new Error('operator resumes after an Auth outage'));
+    const waiting = (await db.doc('identity_operations/' + uid).get()).data();
+    assert.equal(waiting.status, 'needs_recovery');
+    assert.equal(waiting.phase, 'state_applied');
+    const resumed = await service.resumeOperation({
+      uid:uid, opId:waiting.op_id, planFingerprint:waiting.plan_fingerprint,
+      actorUid:'u_super', actorEmail:'super@example.com'
+    });
+    assert.equal(resumed.type, 'resumed');
+    assert.equal(resumed.operation.phase, 'state_applied');
+
+    const result = await service.runClaimsChange(uid, waiting.op_id,
+      { ok:true, uid:uid, enabled:true });
+    assert.equal(result.enabled, true);
+    assert.deepEqual((await fake.getUser(uid)).customClaims, params.desiredClaims);
+    assert.equal(writes.length, 1, 'recovery resumes after state instead of replaying it');
+    assert.equal(fake.setCalls, 2, 'one failed Auth attempt and one successful retry');
+    assert.equal(fake.revokeCalls, 1);
+
+    const setCalls = fake.setCalls;
+    const revokeCalls = fake.revokeCalls;
+    const replay = await service.runClaimsChange(uid, waiting.op_id,
+      { ok:true, uid:uid, enabled:false });
+    assert.deepEqual(replay, result, 'completed operation returns the stored result');
+    assert.equal(writes.length, 1);
+    assert.equal(fake.setCalls, setCalls);
+    assert.equal(fake.revokeCalls, revokeCalls);
+  });
+
+  await test('a coordinator grant activates the runtime for a historical station profile and revocation blocks the already-issued token', async function () {
+    const uid = 'schedule_manager_runtime_e2e';
+    const sid = 'coord_runtime_e2e';
+    const before = {
+      role:'firefighter', stationId:sid, districtId:'south', shift:'A', emp:'6825'
+    };
+    const fake = new FakeAuth();
+    fake.seed(uid, before);
+    const writes = [];
+    const service = coordinator(fake, {
+      applyClaimsState: scheduleManagerStateHook(fake, writes)
+    });
+
+    // Existing coordinator profiles use the historical `station` field. The
+    // schedule runtime must accept that live profile without relaxing its
+    // fail-closed alias resolver.
+    await db.doc('stations/' + sid + '/users/' + uid).set({
+      station: sid, role:'firefighter', is_active:true, full_name:'כבאי אחראי סידור'
+    });
+    const api = scheduleRuntimeForCoordinator();
+    const grant = scheduleManagerParams(uid, 'schedule-manager-runtime-grant-6825', before, true);
+    const acquired = await service.acquireClaimsChange(grant);
+    await service.runClaimsChange(uid, acquired.operation.op_id,
+      { ok:true, uid:uid, enabled:true });
+
+    // Preserve the claims snapshot as an already-issued ID token. The
+    // coordinator returns a copy, so the later Auth revocation cannot mutate
+    // this request by accident.
+    const issuedClaims = (await fake.getUser(uid)).customClaims;
+    const issuedRequest = {
+      auth: { uid:uid, token:Object.assign({ name:'כבאי אחראי סידור' }, issuedClaims) },
+      data: {}
+    };
+    const status = await api.getStatus(issuedRequest);
+    assert.equal(status.manager, true,
+      'the runtime must recognize coordinator-issued claims plus its live grant');
+    const setup = await api.getManagerSetup(issuedRequest);
+    assert.equal(setup.configured, false,
+      'manager-only setup access must succeed even before a station config exists');
+    assert.equal(writes.length, 1);
+
+    // A completed claims change is fenced briefly. Advance the emulator-only
+    // operation fixture so this separate revocation is legal immediately.
+    await db.doc('identity_operations/' + uid).set({
+      fence_until: Timestamp.fromMillis(Date.now() - 1)
+    }, { merge:true });
+    const revoke = scheduleManagerParams(uid, 'schedule-manager-runtime-revoke-6825',
+      issuedClaims, false);
+    const revocation = await service.acquireClaimsChange(revoke);
+    await service.runClaimsChange(uid, revocation.operation.op_id,
+      { ok:true, uid:uid, enabled:false });
+
+    assert.equal((await fake.getUser(uid)).customClaims.schedule_manager, undefined,
+      'Auth no longer carries the capability after revocation');
+    assert.equal((await db.doc('schedule_manager_grants/' + uid).get()).data().active, false,
+      'the live server grant is disabled by the same coordinator operation');
+    await assert.rejects(api.getManagerSetup(issuedRequest),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
   });
 
   await test('finalize failure preserves processing state and retry returns one result', async function () {

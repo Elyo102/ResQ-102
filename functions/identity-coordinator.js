@@ -590,6 +590,101 @@ function createIdentityCoordinator(deps) {
     });
   }
 
+  // שינוי claim נוסף (שאינו משנה תפקיד, תחנה, משמרת או מספר עובד).
+  //
+  // Firebase Auth מחליף את כל ה-claims בכל כתיבה. לכן פעולה קטנה
+  // כגון "אחראי/ת סידור" עוברת דרך אותו מנגנון עמיד של שינוי זהות:
+  // תוכנית נעולה, נעילה לכל משתמש, audit, ביטול טוקנים והמשך בטוח
+  // אחרי כשל. אין להשתמש ב-runAssignment כאן — הוא נועד גם לשכתב
+  // פרופיל, roster ומספר עובד.
+  async function acquireClaimsChange(params) {
+    if (!/^[a-f0-9]{64}$/.test(String(params.intentFingerprint || ''))) {
+      throw httpsError('invalid-argument', 'טביעת כוונת שינוי ההרשאה חסרה או אינה תקינה.');
+    }
+    if (!/^[a-z_]{3,80}$/.test(String(params.kind || ''))) {
+      throw httpsError('invalid-argument', 'סוג שינוי ההרשאה אינו תקין.');
+    }
+    const now = Date.now();
+    const opRef = controlRef(params.uid);
+    const auditRef = db.collection('admin_audit').doc();
+
+    return db.runTransaction(async function (tx) {
+      const snap = await tx.get(opRef);
+      const existing = snap.exists ? (snap.data() || {}) : null;
+      if (existing) {
+        if (existing.status === 'completed' && existing.op_id === params.opId) {
+          if (sameIntent(existing, params)) return { type: 'completed', operation: existing };
+          throw httpsError('aborted', 'מזהה הפעולה כבר שייך לתוכנית אחרת.', operationConflict(existing));
+        }
+        if (activeOperation(existing)) {
+          if (existing.status === 'processing' && sameIntent(existing, params)) {
+            return { type: 'resumed', operation: existing };
+          }
+          throw httpsError('aborted', 'מתבצע כבר שינוי הרשאה אחר לאותו משתמש.',
+            operationConflict(existing));
+        }
+        if (existing.status === 'completed' && timestampMillis(existing.fence_until) > now) {
+          // אחרי הגדרת תפקיד ראשי ניתן להוסיף מיד את ההרשאה
+          // המשנית, בלי להשאיר את המנהל מול מסך המתנה. זה בטוח
+          // רק כשהפעולה הקודמת כבר הושלמה: כל worker ישן בודק
+          // op_id לפני כל שלב ולכן לא יכול לדרוס את תוכנית ה-claim
+          // החדשה. בין שתי פעולות claims, או אחרי כל פעולה אחרת,
+          // הגדר נשארת בתוקף כרגיל.
+          const followsCompletedAssignment = params.kind === 'set_schedule_manager' &&
+            ['set_role', 'approve'].indexOf(existing.kind) !== -1;
+          if (!followsCompletedAssignment) {
+            throw httpsError('resource-exhausted',
+              'השינוי הקודם הושלם זה עתה. המתן מספר דקות לפני שינוי הרשאה נוסף.', {
+                retry_after_ms: timestampMillis(existing.fence_until) - now
+              });
+          }
+        }
+      }
+
+      const previousClaims = canonical(params.previousClaims || {});
+      const desiredClaims = canonical(params.desiredClaims || {});
+      const desiredState = canonical(params.desiredState || null);
+      const planFingerprint = stableHash({
+        fingerprint_version: 1,
+        uid: params.uid,
+        kind: params.kind,
+        previous_claims: previousClaims,
+        desired_claims: desiredClaims,
+        desired_state: desiredState
+      });
+      const op = {
+        op_id: params.opId,
+        target_uid: params.uid,
+        kind: params.kind,
+        status: 'processing',
+        phase: 'prepared',
+        actor_uid: params.actorUid,
+        request_id: '',
+        request_generation: '',
+        intent_fingerprint: params.intentFingerprint,
+        plan_fingerprint: planFingerprint,
+        fingerprint_version: 1,
+        plan_summary: canonical(params.planSummary || { kind: params.kind }),
+        previous_claims: previousClaims,
+        desired_claims: desiredClaims,
+        desired_state: desiredState,
+        desired_profile: null,
+        previous_emp: String((params.previousClaims || {}).emp || ''),
+        previous_station: String((params.previousClaims || {}).stationId || ''),
+        desired_emp: String((params.desiredClaims || {}).emp || ''),
+        audit_path: auditRef.path,
+        started_at: FV.serverTimestamp(),
+        updated_at: FV.serverTimestamp(),
+        lease_until: leaseUntil(now),
+        assigned: assignmentFields(params.previousClaims).length > 0
+      };
+      tx.set(opRef, op);
+      tx.set(auditRef, auditDocument(params, params.auditAction,
+        Object.assign({}, params.auditDetails || {}, { operation_id: params.opId })));
+      return { type: 'acquired', operation: op };
+    });
+  }
+
   async function advancePhase(uid, opId, fromPhases, nextPhase) {
     const now = Date.now();
     return db.runTransaction(async function (tx) {
@@ -874,6 +969,24 @@ function createIdentityCoordinator(deps) {
     return getOperation(uid);
   }
 
+  async function applyClaimsState(uid, opId) {
+    let op = await getOperation(uid);
+    if (!op) throw recoveryError('מסמך פעולת ההרשאה חסר.');
+    if (op.status === 'completed' && op.op_id === opId) return op;
+    if (op.op_id !== opId || op.status !== 'processing') {
+      throw recoveryError('פעולת ההרשאה אינה פעילה עוד.');
+    }
+    if (['state_applied', 'auth_applied', 'tokens_revoked'].indexOf(op.phase) !== -1) return op;
+    if (op.phase !== 'prepared') {
+      throw recoveryError('שלב פעולת ההרשאה אינו מאפשר עדכון מצב שרת.');
+    }
+    if (typeof hooks.applyClaimsState === 'function') {
+      await hooks.applyClaimsState(canonical(op));
+    }
+    await advancePhase(uid, opId, ['prepared'], 'state_applied');
+    return getOperation(uid);
+  }
+
   async function revokeTokens(uid, opId, skip) {
     const op = await getOperation(uid);
     if (!op) throw recoveryError('מסמך פעולת הזהות חסר.');
@@ -1083,6 +1196,34 @@ function createIdentityCoordinator(deps) {
     });
   }
 
+  async function finalizeClaimsChange(uid, opId, result) {
+    if (typeof hooks.beforeFinalize === 'function') await hooks.beforeFinalize(uid, opId);
+    const live = await auth.getUser(uid);
+    let op = await getOperation(uid);
+    if (!op) throw recoveryError('מסמך פעולת ההרשאה חסר.');
+    if (op.status === 'completed' && op.op_id === opId) return op.result;
+    if (!sameValue((live && live.customClaims) || {}, op.desired_claims || {})) {
+      throw recoveryError('הרשאות המשתמש לא תאמו לתוכנית לפני סיום הפעולה.');
+    }
+    const now = Date.now();
+    return db.runTransaction(async function (tx) {
+      const ref = controlRef(uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw recoveryError('מסמך פעולת ההרשאה חסר.');
+      op = snap.data() || {};
+      if (op.status === 'completed' && op.op_id === opId) return op.result;
+      if (op.op_id !== opId || op.status !== 'processing' || op.phase !== 'tokens_revoked') {
+        throw recoveryError('פעולת ההרשאה אינה מוכנה לסיום בטוח.');
+      }
+      tx.set(ref, completedDocument(op, result, assignmentFields(op.desired_claims).length > 0, now));
+      if (op.audit_path) {
+        tx.set(db.doc(op.audit_path), { outcome: 'done', completed_at: FV.serverTimestamp() },
+          { merge: true });
+      }
+      return canonical(result);
+    });
+  }
+
   async function runAssignment(uid, opId, result, skipRevoke) {
     try {
       let op = await getOperation(uid);
@@ -1143,6 +1284,24 @@ function createIdentityCoordinator(deps) {
       if (completed && completed.status === 'completed' && completed.op_id === opId) {
         return completed.result;
       }
+      throw error;
+    }
+  }
+
+  async function runClaimsChange(uid, opId, result) {
+    try {
+      let op = await getOperation(uid);
+      if (op && op.status === 'completed' && op.op_id === opId) return op.result;
+      await applyClaimsState(uid, opId);
+      await applyAuth(uid, opId, ['state_applied']);
+      await revokeTokens(uid, opId, false);
+      return await finalizeClaimsChange(uid, opId, result);
+    } catch (error) {
+      let completed = await getOperation(uid).catch(function () { return null; });
+      if (completed && completed.status === 'completed' && completed.op_id === opId) return completed.result;
+      if (error && error.identityRecovery) await markNeedsRecovery(uid, opId, error);
+      completed = await getOperation(uid).catch(function () { return null; });
+      if (completed && completed.status === 'completed' && completed.op_id === opId) return completed.result;
       throw error;
     }
   }
@@ -1294,12 +1453,14 @@ function createIdentityCoordinator(deps) {
   return {
     acquireAssignment,
     acquireBootstrap,
+    acquireClaimsChange,
     getOperation,
     markNeedsRecovery,
     resumeOperation,
     runAssignment,
     runClear,
     runBootstrap,
+    runClaimsChange,
     rejectRequest
   };
 }

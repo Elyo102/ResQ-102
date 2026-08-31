@@ -13,7 +13,7 @@
 // אף אחד לא בולט.
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
-  { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  { href: 'schedule-management.html?tab=station', label: 'סידור התחנה', who: 'member', dot: '#4d94ff', group: 'station' },
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
@@ -26,7 +26,8 @@ const ITEMS = [
   { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5', group: 'station' },
   { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63', group: 'station' },
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b', group: 'admin' },
-  { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f', group: 'admin' },
+  { href: 'admin.html',    label: 'ניהול',       who: 'schedule_admin',  dot: '#f0523f', group: 'admin' },
+  { href: 'schedule-management.html?tab=manage', label: 'ניהול סידור עבודה', who: 'schedule_manager', dot: '#347dbd', group: 'admin' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
   { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a', group: 'admin' },
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' }
@@ -47,12 +48,17 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=40';
+import { STAFF_ROLES, MEMBER_ROLES, isScheduleManager } from './roles.js?v=42f2';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';
   if (who === 'any')    return true;
   if (who === 'super')  return isSuper;
+  if (who === 'schedule_manager') return isScheduleManager(claims);
+  // מסך הניהול נדרש למנהל-העל כדי למנות אחראי/ת סידור, ולבעל/ת
+  // המינוי כדי לראות או לערוך את המחזור הישן בזמן שהמנוע החדש כבוי.
+  // דרגה פיקודית לבדה אינה מספיקה.
+  if (who === 'schedule_admin') return isSuper || isScheduleManager(claims);
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(claims.role) !== -1;
   // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
   // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.

@@ -18,6 +18,7 @@ const { createScheduleRuntime, ScheduleRuntimeError } = require('./schedule-runt
 
 const SID = 'schedule_it';
 const CLOCK = () => '2026-09-01T06:00:00.000Z';
+const MANAGER_VERSION = 'sm_manager_v20260901_0001';
 const hash = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
 const randomId = () => crypto.randomBytes(12).toString('hex');
 
@@ -86,7 +87,7 @@ function sourceBasis() {
   };
 }
 
-function runtime(sendPush) {
+function runtime(sendPush, isSuper) {
   return createScheduleRuntime({
     db,
     FieldValue: admin.firestore.FieldValue,
@@ -96,13 +97,20 @@ function runtime(sendPush) {
     createEngine: createCalendarEngine,
     createPublication,
     createService: createScheduleService,
-    isSuper: () => false,
+    isSuper: isSuper || (() => false),
     sendPush: sendPush || (async () => ({ sent: 1 }))
   });
 }
 
-function req(uid, role, data) {
-  return { auth: { uid, token: { stationId: SID, role, name: uid } }, data: data || {} };
+function req(uid, role, data, tokenExtra) {
+  const managerGrant = uid === 'manager' ? {
+    schedule_manager: true,
+    schedule_manager_version: MANAGER_VERSION
+  } : {};
+  return {
+    auth: { uid, token: Object.assign({ stationId: SID, role, name: uid }, managerGrant, tokenExtra || {}) },
+    data: data || {}
+  };
 }
 
 async function seed() {
@@ -110,10 +118,27 @@ async function seed() {
   await station.set({ name: 'Integration Station' });
   await Promise.all([
     station.collection('users').doc('manager').set({
-      stationId: SID, role: 'commander', full_name: 'מנהל בדיקה'
+      // writeProfile in the existing identity coordinator uses this historical
+      // field name. The runtime must support it without weakening alias checks.
+      station: SID, role: 'commander', full_name: 'מנהל בדיקה'
     }),
     station.collection('users').doc('viewer').set({
       stationId: SID, role: 'firefighter', full_name: 'כבאי בדיקה'
+    }),
+    station.collection('users').doc('commander_without_grant').set({
+      stationId: SID, role: 'commander', full_name: 'מפקד ללא מינוי'
+    }),
+    station.collection('users').doc('super_without_grant').set({
+      stationId: SID, role: 'super_admin', full_name: 'מנהל-על ללא מינוי'
+    }),
+    station.collection('users').doc('super_with_stale_manager').set({
+      stationId: SID, role: 'super_admin', full_name: 'מנהל-על עם מינוי ישן'
+    }),
+    db.collection('schedule_manager_grants').doc('manager').set({
+      uid: 'manager', stationId: SID, active: true, version: MANAGER_VERSION
+    }),
+    db.collection('schedule_manager_grants').doc('super_with_stale_manager').set({
+      uid: 'super_with_stale_manager', stationId: SID, active: true, version: MANAGER_VERSION
     })
   ]);
   await station.collection('schedule_policies').doc('policy_v1').set(Object.assign({}, policyBasis, {
@@ -170,6 +195,36 @@ async function test(name, fn) {
       (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
   });
 
+  await test('every supported station alias works for existing station members', async () => {
+    const users = db.collection('stations').doc(SID).collection('users');
+    for (const [uid, alias] of [
+      ['alias_station_id', { stationId: SID }],
+      ['alias_station_id_legacy', { station_id: SID }],
+      ['alias_station_legacy', { station: SID }]
+    ]) {
+      await users.doc(uid).set(Object.assign({ role: 'firefighter', full_name: uid }, alias));
+      const status = await api.getStatus(req(uid, 'firefighter'));
+      assert.equal(status.manager, false);
+    }
+    const managerStatus = await api.getStatus(req('manager', 'commander'));
+    assert.equal(managerStatus.manager, true);
+  });
+
+  await test('missing, malformed, or conflicting station aliases are rejected', async () => {
+    const users = db.collection('stations').doc(SID).collection('users');
+    for (const [uid, profile] of [
+      ['missing_station_alias', {}],
+      ['malformed_station_alias', { station: 'not a station id' }],
+      ['conflict_station_and_id', { station: SID, stationId: 'other_99' }],
+      ['conflict_station_and_legacy_id', { station: SID, station_id: 'other_99' }],
+      ['conflict_station_ids', { stationId: SID, station_id: 'other_99' }]
+    ]) {
+      await users.doc(uid).set(Object.assign({ role: 'firefighter', full_name: uid }, profile));
+      await assert.rejects(api.getStatus(req(uid, 'firefighter')),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
+    }
+  });
+
   await test('a client-writable profile flag alone never grants schedule management', async () => {
     const viewerRef = db.doc('stations/' + SID + '/users/viewer');
     await viewerRef.update({ schedule_manager: true });
@@ -177,6 +232,34 @@ async function test(name, fn) {
       request_id: 'self_promote', start: '2026-10-01', months: 1, overrides: []
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
     await viewerRef.update({ schedule_manager: false });
+  });
+
+  await test('schedule management requires an exact signed claim and matching live grant', async () => {
+    const request = { request_id: 'grant_required', start: '2026-10-01', months: 1, overrides: [] };
+    await assert.rejects(api.runPlanner(req('viewer', 'firefighter', request, {
+      schedule_manager: true,
+      schedule_manager_version: MANAGER_VERSION
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    await assert.rejects(api.runPlanner(req('manager', 'commander', request, {
+      schedule_manager: 'true',
+      schedule_manager_version: MANAGER_VERSION
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    await assert.rejects(api.runPlanner(req('manager', 'commander', request, {
+      schedule_manager: true,
+      schedule_manager_version: 'sm_manager_v20260901_replaced'
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+  });
+
+  await test('a commander or super user without the additional appointment cannot edit', async () => {
+    const request = { request_id: 'rank_is_not_schedule_authority', start: '2026-10-01', months: 1, overrides: [] };
+    await assert.rejects(api.runPlanner(req('commander_without_grant', 'commander', request)),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    const elevated = runtime(undefined, (auth) => auth && auth.token && auth.token.super === true);
+    await assert.rejects(elevated.getManagerSetup(req('super_without_grant', 'super_admin', {}, { super: true })),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    await assert.rejects(elevated.getManagerSetup(req('super_with_stale_manager', 'super_admin', {}, {
+      super: true, schedule_manager: true, schedule_manager_version: MANAGER_VERSION
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
   });
 
   let draftId;
@@ -377,6 +460,12 @@ async function test(name, fn) {
     assert.ok(mineAfter.days.every((day) => !day.answer));
   });
 
+  await test('revoking the live grant blocks an already-issued manager token immediately', async () => {
+    await db.collection('schedule_manager_grants').doc('manager').update({ active: false });
+    await assert.rejects(api.getManagerSetup(req('manager', 'commander')),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+  });
+
   await test('zero delivered devices is retried and is never marked sent', async () => {
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     const outbox = await db.collection('stations/' + SID + '/schedule_publications/'
@@ -438,8 +527,8 @@ async function test(name, fn) {
     assert.equal((await ref.get()).data().status, 'cancelled');
   });
 
-  assert.equal(passed, 19);
-  console.log('\n19 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 24);
+  console.log('\n24 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

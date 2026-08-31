@@ -120,7 +120,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div style="font-size:34px">🔒</div>
       <div style="font-size:17px;font-weight:600">אין לך הרשאה לדף הזה</div>
       <div style="font-size:13px;color:var(--muted)">
-        הדף מיועד למנהל המערכת בלבד.
+        הדף מיועד למנהל המערכת או לאחראי/ת סידור.
       </div>
       <div style="font-size:12px;color:var(--muted);margin-top:8px" id="denyWho"></div>
     </div>
@@ -215,6 +215,21 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         באותו חשבון ובאותה כניסה.
       </div>
 
+      <div id="scheduleManagerWrap">
+        <label>תפקיד נוסף — אחראי/ת סידור</label>
+        <select id="rScheduleManager">
+          <option value="keep">להשאיר כמו שהוא</option>
+          <option value="yes">לתת אחראי/ת סידור</option>
+          <option value="no">לבטל אחראי/ת סידור</option>
+        </select>
+        <div class="ln" id="rScheduleManagerNote" style="font-size:12px">
+          הרשאה זו מאפשרת לערוך, לפרסם ולבטל פרסום של סידור עבודה בלבד.
+          היא אינה משנה תפקיד ראשי, תחנה, משמרת או ניהול מערכת.
+        </div>
+        <button id="btnScheduleManager" class="ghost" type="button">שמור אחראי/ת סידור</button>
+        <div class="msg" id="scheduleManagerMsg"></div>
+      </div>
+
       <label>מחוז</label>
       <select id="rDistrict">
         <option value="south">דרום</option>
@@ -229,9 +244,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="msg" id="roleMsg"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="rotationCard">
       <h2>מחזור הסידור</h2>
       <div id="rotState" class="rotstate">טוען...</div>
+      <div class="rotstate hide" id="rotationReadOnly">
+        אפשר לצפות במחזור הסידור, אך עריכתו מותרת רק לאחראי/ת סידור שמונו לכך.
+      </div>
 
       <label>תאריך עוגן — יום שאתה יודע בוודאות מי עבד בו</label>
       <input type="date" id="anchorDate">
@@ -286,8 +304,8 @@ import { getFunctions, httpsCallable }
 import { CREWS, CREW_HE, crewOnDate, toKey } from './rotation.js?v=38';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
   from './stations.js?v=38';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=38';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=38';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42f2';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42f2';
 import { initPWA } from './pwa.js?v=38';
 import { watchCallouts } from './callout.js?v=38';
 
@@ -307,10 +325,13 @@ const callReject   = httpsCallable(fns, 'rejectRegistration');
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
+const callSetScheduleManager = httpsCallable(fns, 'setScheduleManager');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 let roleOperationId = '';
+let scheduleManagerOperationId = '';
+let canManageSchedule = false;
 
 function newOperationId(prefix){
   const bytes = new Uint8Array(16);
@@ -433,19 +454,16 @@ onAuthStateChanged(auth, async user => {
   const isSuper  = claims.super === true ||
                    String(user.email || '').toLowerCase() === SUPER_ADMIN;
 
-  // אישור בקשות ושינוי תפקידים דורשים מנהל-על בשרת. עריכת מחזור
-  // הסידור דורשת סגל בלבד — כך קובעים כללי האבטחה. לכן הדף נפתח
-  // לשניהם, וכל מקטע מוצג רק למי שרשאי להשתמש בו.
+  // אישור בקשות ושינוי תפקידים דורשים מנהל-על בשרת. צפייה במחזור
+  // פתוחה למי שהגיע לכאן, אבל עריכתו דורשת מינוי נוסף ומפורש של
+  // "אחראי/ת סידור" — לא די בדרגת מפקד/ת או ברכזת כוח אדם.
   //
   // אימות מייל היה כאן תנאי סף והוסר מהמערכת ב-22.8 — התנאי נשאר
   // בקוד והשאיר מנהלים בחוץ.
-  // אותה רשימה כמו staff() בכללי האבטחה וכמו nav.js. שני
-  // התפקידים שנוספו ב-23.8 לא הגיעו לכאן, והסרגל הציג להם
-  // כפתור שמוביל למסך "אין הרשאה".
-  const isStaff = ['deputy', 'commander', 'station_commander',
-                   'hr_coordinator'].indexOf(claims.role) !== -1;
-  const roleOk  = isSuper || isStaff;
+  const isScheduleManager = claims.schedule_manager === true;
+  const roleOk  = isSuper || isScheduleManager;
   const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
+                  (isScheduleManager ? ' · אחראי/ת סידור' : '') +
                   (claims.stationId ? ' · ' + stationName(claims.stationId) : '');
 
   if (!roleOk) {
@@ -455,7 +473,7 @@ onAuthStateChanged(auth, async user => {
     $('work').classList.add('hide');
     $('denyCard').classList.remove('hide');
     renderStuckNav(user.email || '');
-    $('denyWho').textContent = 'מחובר כ־' + user.email + ' · אין הרשאת ניהול';
+    $('denyWho').textContent = 'מחובר כ־' + user.email + ' · אין הרשאת ניהול או אחראי/ת סידור';
     // אימות מייל אינו תנאי סף יותר, ולכן הכפתור כאן רק היה מטעה.
     $('btnVerify').classList.add('hide');
     return;
@@ -472,6 +490,8 @@ onAuthStateChanged(auth, async user => {
   // מקטעים למנהל-על בלבד.
   $('reqCard').classList.toggle('hide', !isSuper);
   $('usersCard').classList.toggle('hide', !isSuper);
+  canManageSchedule = isScheduleManager;
+  setRotationEditorAccess(canManageSchedule);
 
   if (isSuper) loadRequests();
   loadRotation();
@@ -787,6 +807,15 @@ async function loadRotation(){
   $('specEnd').value    = base.special_end || '08:00';
 }
 
+function setRotationEditorAccess(enabled){
+  const fields = ['anchorDate', 'anchorCrew', 'shiftStart', 'shiftEnd', 'cmdStart', 'specEnd', 'btnRot'];
+  fields.forEach(function (id) {
+    const field = $(id);
+    if (field) field.disabled = !enabled;
+  });
+  $('rotationReadOnly').classList.toggle('hide', enabled);
+}
+
 // חישוב מספר שעות בין שתי שעות ביממה של 24 שעות
 function hoursSpan(start, end){
   const s = start.split(':'), e = end.split(':');
@@ -807,6 +836,10 @@ function fullShiftHours(start, end){
 }
 
 $('btnRot').onclick = async () => {
+  if (!canManageSchedule) {
+    msg('rotMsg', 'עריכת מחזור מותרת רק לאחראי/ת סידור שמונו לכך.', 'err');
+    return;
+  }
   const btn = $('btnRot');
   const anchor = $('anchorDate').value;
   const crew   = $('anchorCrew').value;
@@ -911,9 +944,11 @@ $('btnUsers').onclick = async () => {
       const row = document.createElement('div');
       row.className = 'req';
 
-      const roleTxt = c.super === true
-        ? 'מנהל מערכת'
-        : (ROLE_HE[c.role] || (c.role ? c.role : 'ללא תפקיד'));
+      // מציגים את כל ההרשאות המשלימות בלי להפוך את התפקיד
+      // הארגוני הראשי לרשימה. כך רואים, למשל, "לוחם אש ·
+      // מנהל מערכת · אחראי/ת סידור" ולא מאבדים את תפקיד השטח.
+      const primaryRole = ROLE_HE[c.role] || (c.role ? c.role : 'ללא תפקיד');
+      const roleTxt = (c.super === true ? 'מנהל מערכת · ' : '') + primaryRole;
 
       row.innerHTML =
         '<div class="nm">' + esc(u.email) + '</div>' +
@@ -923,6 +958,9 @@ $('btnUsers').onclick = async () => {
         (c.emp ? '<div class="ln">מספר עובד: <b>' + esc(c.emp) + '</b></div>' : '') +
         (c.districtId ? '<div class="ln">מחוז: <b>' +
            esc(DIST_HE[c.districtId] || c.districtId) + '</b></div>' : '') +
+        (c.schedule_manager === true
+          ? '<div class="match found">אחראי/ת סידור</div>'
+          : '') +
         (u.email_verified
           ? '<div class="match found">המייל מאומת</div>'
           : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
@@ -979,8 +1017,14 @@ function fillPicker(users) {
 
 $('rPick').onchange = function () {
   roleOperationId = '';
+  scheduleManagerOperationId = '';
   const uid = $('rPick').value;
-  if (!uid) return;
+  $('rScheduleManager').value = 'keep';
+  if (!uid) {
+    $('rScheduleManagerNote').textContent =
+      'בחר אדם קיים כדי להעניק או לבטל את התפקיד הנוסף של אחראי/ת סידור.';
+    return;
+  }
   const u = PICK_USERS.filter(function (x) { return x.uid === uid; })[0];
   if (!u) return;
   const c = u.claims || {};
@@ -998,9 +1042,12 @@ $('rPick').onchange = function () {
   if (c.stationId)  $('rStation').value  = c.stationId;
   if (c.districtId) $('rDistrict').value = c.districtId;
 
-  // ניהול המערכת נשאר "להשאיר כמו שהוא" בכוונה. הוא הרשאה
-  // נפרדת, ומי שבא לתקן משמרת לא אמור להעניק או להסיר אותה
-  // בלי לשים לב.
+  // ההרשאות הנוספות נשארות "להשאיר" בכוונה. מי שבא לתקן
+  // משמרת או תפקיד ראשי לא אמור להעניק/לבטל אותן בלי בחירה
+  // מפורשת נוספת.
+  $('rScheduleManagerNote').textContent = c.schedule_manager === true
+    ? 'כרגע: אחראי/ת סידור פעיל/ה. אפשר לבטל כאן רק את סמכות הסידור.'
+    : 'כרגע: אין סמכות עריכה בסידור. הענקה כאן לא משנה את התפקיד הראשי.';
   // חתימת msg כאן היא (אלמנט, טקסט, סוג) — לא (טקסט, סוג, אלמנט)
   // כמו בשאר המסכים. שוני קטן שאין סיבה שיפיל קריאה.
   msg('roleMsg', 'נטען: ' + (u.full_name || u.email) +
@@ -1017,6 +1064,69 @@ $('rStation').innerHTML = stationOptions(STATION_ID);
       roleOperationId = '';
     });
   });
+
+// בחירת פעולה נוספת מכינה מזהה חדש לניסיון הבא, אך אינה משנה
+// תפקיד ראשי ואינה נשלחת יחד איתו. כך אין "שמור" אחד שעלול
+// לשנות שתי סמכויות שונות בלי שהמנהל ראה זאת.
+$('rScheduleManager').addEventListener('change', function () {
+  scheduleManagerOperationId = '';
+});
+
+$('btnScheduleManager').onclick = async () => {
+  const btn = $('btnScheduleManager');
+  const choice = $('rScheduleManager').value;
+  const uid = $('rPick').value;
+  const selected = PICK_USERS.filter(function (u) { return u.uid === uid; })[0];
+
+  if (!uid || !selected) {
+    msg('scheduleManagerMsg', 'יש לבחור אדם קיים מרשימת המשתמשים קודם.', 'err');
+    return;
+  }
+  if (choice === 'keep') {
+    msg('scheduleManagerMsg', 'בחר אם לתת או לבטל את תפקיד אחראי/ת הסידור.', 'err');
+    return;
+  }
+  if (choice === 'no' && !confirm('לבטל את סמכות עריכת הסידור עבור ' +
+      (selected.full_name || selected.email) + '?')) return;
+
+  btn.disabled = true;
+  msg('scheduleManagerMsg', 'שומר את ההרשאה הנוספת...', 'info');
+  try {
+    if (!scheduleManagerOperationId) {
+      scheduleManagerOperationId = newOperationId('schedule-manager-');
+    }
+    const res = await callSetScheduleManager({
+      uid: uid,
+      operation_id: scheduleManagerOperationId,
+      enabled: choice === 'yes'
+    });
+    msg('scheduleManagerMsg', (res.data || {}).message || 'תפקיד אחראי/ת הסידור עודכן.', 'ok');
+    $('rScheduleManager').value = 'keep';
+    scheduleManagerOperationId = '';
+  } catch (e) {
+    let text = e.message || String(e);
+    const details = e.details || {};
+    if (details.operation_in_progress && details.operation_id && details.plan_fingerprint &&
+        confirm('נמצאה פעולה שמורה לאותו אדם. להמשיך אותה בדיוק כפי שננעלה?')) {
+      try {
+        const resumed = await callResumeIdentity({
+          uid: String(details.target_uid || details.uid || uid),
+          operation_id: String(details.operation_id),
+          plan_fingerprint: String(details.plan_fingerprint)
+        });
+        msg('scheduleManagerMsg', (resumed.data || {}).message || 'הפעולה השמורה הושלמה.', 'ok');
+        $('rScheduleManager').value = 'keep';
+        scheduleManagerOperationId = '';
+        btn.disabled = false;
+        return;
+      } catch (resumeError) {
+        text = resumeError.message || String(resumeError);
+      }
+    }
+    msg('scheduleManagerMsg', 'נכשל: ' + text, 'err');
+  }
+  btn.disabled = false;
+};
 
 $('btnRole').onclick = async () => {
   const btn   = $('btnRole');

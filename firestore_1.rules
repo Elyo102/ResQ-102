@@ -6,9 +6,10 @@ rules_version = '2';
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
-//  התפקיד נקרא מתוך טוקן ההזדהות, לא ממסמך ב-Firestore.
-//  אין בקובץ הזה אף קריאת get() — אפס קריאות מסמך לכל בדיקת הרשאה.
-//  בגרסה הקודמת כל פעולה עלתה 4-5 קריאות שגוגל מחייבת עליהן.
+//  ההרשאות הרגילות נשענות על טוקן ההזדהות, לא על מסמך לקוח.
+//  חריגים מעטים ומכוונים קוראים מצב שרת חי בלבד: הורה של תגובה,
+//  פעולת זהות, דוח Shadow, ופרופיל/מינוי חי של אחראי/ת סידור.
+//  החריגים מאפשרים חסימה מיידית של טוקן ישן, ואינם נתיב סמכות ללקוח.
 //
 //  מקור האמת להרשאות: הטוקן.
 //  המסמך ב-users הוא לתצוגה בלבד, ורק השרת כותב אליו.
@@ -89,6 +90,36 @@ service cloud.firestore {
       return isSuper()
              || (inStation(sid) && claim('role') in
                  ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
+    }
+
+    // נשמר זהה לכללי הייצור גם אם הקובץ ההיסטורי ישמש בעתיד:
+    // המינוי הוא תוספת לחבר/ת תחנה פעיל/ה, ולא נתיב עוקף לדרגת
+    // מחוז או למנהל-על בלי תפקיד תחנתי חתום. הנתיב מוכיח את
+    // התחנה; השרת מאמת את שדות השיוך ההיסטוריים לפני המינוי.
+    function scheduleEligibleMember(sid) {
+      let profilePath = /databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid);
+      let profile = get(profilePath).data;
+      return exists(profilePath)
+             && inStation(sid)
+             && claim('role') in ['firefighter',
+                                  'deputy_team_leader', 'team_leader',
+                                  'deputy', 'commander',
+                                  'station_commander', 'hr_coordinator']
+             && profile.get('is_active', true) != false
+             && profile.get('active', true) != false
+             && profile.get('role', '') == claim('role');
+    }
+
+    // עריכת סידור דורשת מינוי נוסף, מסמך שרת חי וגרסה תואמת.
+    function scheduleManager(sid) {
+      let grant = get(/databases/$(database)/documents/schedule_manager_grants/$(request.auth.uid)).data;
+      return scheduleEligibleMember(sid)
+             && claim('schedule_manager') == true
+             && claim('schedule_manager_version') != ''
+             && grant.get('active', false) == true
+             && grant.get('uid', '') == request.auth.uid
+             && grant.get('stationId', '') == sid
+             && grant.get('version', '') == claim('schedule_manager_version');
     }
 
     // מפקד התחנה. השם הארוך במכוון — stationCmd מול commander
@@ -702,16 +733,18 @@ service cloud.firestore {
 
       match /rotations/{rotationId} {
         allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow write: if scheduleManager(sid);
       }
 
       match /shift_overrides/{overrideId} {
         allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow write: if scheduleManager(sid);
       }
 
       match /postings/{postingId} {
         allow read:  if member(sid);
+        // הודעות מבצעיות אינן עריכת סידור. הן נשארות תחת
+        // סמכות הסגל הקיימת ואינן דרך לעקוף מחזור או חריגה.
         allow write: if staff(sid);
       }
 

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
-  <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42f">
+  <title>ResQ · סידור עבודה</title>
+  <link rel="stylesheet" href="./theme.css?v=42f2">
   <style>
     :root{--sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-green:#dcefdc;
       --sched-yellow:#fff2cf;--sched-orange:#fbe1d2;--sched-bg:#eef2f7}
@@ -16,7 +16,8 @@
     button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #87b8e4;outline-offset:2px}
     [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}.head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}.head h1{font-size:26px;margin:0}.head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:flex;gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs button{flex:1}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -49,20 +50,20 @@
 <body>
 <main class="shell hide" id="appMain">
   <header class="head">
-    <div class="crumb">ניהול › ניהול סידור עבודה</div>
-    <h1>ניהול סידור עבודה</h1>
+    <div class="crumb" id="crumb">סידור</div>
+    <h1 id="pageTitle">סידור עבודה</h1>
     <span class="who" id="who">מתחבר…</span>
   </header>
 
-  <div class="mode" id="mode"><span class="dot"></span><span>בודק את מצב המנוע…</span></div>
+  <div class="mode" id="mode" hidden><span class="dot"></span><span>בודק את מצב המנוע…</span></div>
 
-  <nav class="tabs" aria-label="תצוגות הסידור">
-    <button type="button" data-tab="manage" id="manageTab">ניהול</button>
-    <button type="button" data-tab="mine">הסידור שלי</button>
-    <button type="button" data-tab="station">סידור התחנה</button>
+  <nav class="tabs" aria-label="תצוגות הסידור" role="tablist">
+    <button type="button" data-tab="station" role="tab" aria-controls="stationView">סידור התחנה</button>
+    <button type="button" data-tab="mine" role="tab" aria-controls="mineView">הסידור שלי</button>
+    <button type="button" data-tab="manage" id="manageTab" role="tab" aria-controls="manageView" hidden>ניהול סידור עבודה</button>
   </nav>
 
-  <section id="manageView" hidden>
+  <section id="manageView" role="tabpanel" hidden>
     <div class="manage-grid">
       <article class="card">
         <h2>יצירת טיוטה</h2>
@@ -108,17 +109,17 @@
     </article>
   </section>
 
-  <section id="mineView" hidden>
+  <section id="mineView" role="tabpanel" hidden>
     <div class="day-nav"><button class="nav-day" data-move="-1" aria-label="יום קודם">›</button><div class="date"><b id="mineDateTitle">הסידור שלי</b><small id="mineDate"></small></div><button class="nav-day" data-move="1" aria-label="יום הבא">‹</button></div>
     <div class="mine-list" id="mineContent"><div class="loader"></div></div>
   </section>
 
-  <section id="stationView" hidden>
+  <section id="stationView" role="tabpanel" hidden>
     <div class="day-nav"><button class="nav-day" data-move="-1" aria-label="יום קודם">›</button><div class="date"><b id="stationDateTitle">סידור התחנה</b><small id="stationDate"></small></div><button class="nav-day" data-move="1" aria-label="יום הבא">‹</button></div>
     <div class="station-days" id="stationContent"><div class="loader"></div></div>
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42f"></script>
+<script type="module" src="./schedule-management.js?v=42f2"></script>
 </body>
 </html>

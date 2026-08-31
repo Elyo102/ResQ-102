@@ -1,5 +1,7 @@
 'use strict';
 
+const stationProfile = require('./station-profile');
+
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
  *
@@ -23,7 +25,7 @@ class ScheduleRuntimeError extends Error {
 
 const MODE = Object.freeze({ OFF: 'off', SHADOW: 'shadow', NEW: 'new' });
 const MODES = Object.freeze(Object.keys(MODE).map((key) => MODE[key]));
-const MANAGER_ROLES = Object.freeze(['deputy', 'commander', 'station_commander']);
+const SCHEDULE_MANAGER_GRANTS = 'schedule_manager_grants';
 const MEMBER_ROLES = Object.freeze([
   'firefighter', 'deputy_team_leader', 'team_leader',
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
@@ -138,6 +140,20 @@ function createScheduleRuntime(deps) {
     return out;
   }
 
+  // עריכה של סידור אינה נגזרת מדרגה פיקודית. רק המינוי הנוסף
+  // "אחראי/ת סידור" נותן אותה. המסמך הפנימי נותן לביטול תוקף
+  // מיידי, גם מול ID token ישן שעדיין לא פג.
+  async function hasLiveScheduleManagerGrant(token, uid, sid) {
+    if (!token || token.schedule_manager !== true) return false;
+    const version = String(token.schedule_manager_version || '');
+    if (!/^[a-z0-9_-]{16,100}$/.test(version)) return false;
+    const snap = await db.collection(SCHEDULE_MANAGER_GRANTS).doc(uid).get();
+    if (!snap.exists) return false;
+    const grant = snap.data() || {};
+    return grant.active === true && String(grant.uid || '') === String(uid) &&
+      String(grant.stationId || '') === String(sid) && String(grant.version || '') === version;
+  }
+
   async function context(req) {
     if (!req || !req.auth || !req.auth.uid) {
       throw new ScheduleRuntimeError('unauthenticated', 'צריך להיות מחובר.', 'unauthenticated');
@@ -160,11 +176,11 @@ function createScheduleRuntime(deps) {
         'החשבון אינו קיים ברשימת המשתמשים הפעילה של התחנה.', 'permission-denied');
     }
     const user = userSnap.data() || {};
-    const liveStation = String(user.stationId || user.station_id || '');
-    const conflictingStationFields = nonEmpty(user.stationId) && nonEmpty(user.station_id)
-      && user.stationId !== user.station_id;
+    const liveStation = stationProfile.resolveStationAliases(user, function (value) {
+      return ID_RE.test(value);
+    });
     const liveActive = user.is_active !== false && user.active !== false;
-    if (!liveActive || conflictingStationFields || liveStation !== sid) {
+    if (!liveActive || !liveStation.ok || liveStation.stationId !== sid) {
       throw new ScheduleRuntimeError('live-user-inactive',
         'החשבון אינו פעיל או שאינו משויך לתחנה.', 'permission-denied');
     }
@@ -176,16 +192,21 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('claims-stale',
         'הרשאות החשבון אינן מסונכרנות. יש לצאת ולהיכנס מחדש.', 'permission-denied');
     }
+    // מנהל-על רשאי לצפות גם כשנתוני התפקיד שלו בהחלפה, אבל אינו
+    // מקבל מכך סמכות עריכה. מינוי סידור דורש תמיד תפקיד תחנתי חי
+    // ותואם לטוקן, גם אם החשבון מחזיק super=true.
+    const managerEligible = MEMBER_ROLES.indexOf(role) !== -1 &&
+      String(token.role || '') === role;
+    const manager = managerEligible &&
+      await hasLiveScheduleManagerGrant(token, req.auth.uid, sid);
     return Object.freeze({
       uid: req.auth.uid,
       sid,
       role,
       name: String(user.full_name || user.name || token.name || req.auth.uid).slice(0, 120),
-      // מינוי אחראי סידור הוא claim חתום שהשרת בלבד יכול להנפיק.
-      // לעולם אין סומכים על שדה במסמך הפרופיל שהלקוח קורא.
-      manager: isSuper(req.auth)
-        || token.schedule_manager === true
-        || MANAGER_ROLES.indexOf(role) !== -1,
+      // מינוי אחראי סידור הוא claim חתום + מסמך שרת חי. לעולם
+      // אין סומכים על שדה במסמך הפרופיל שהלקוח קורא.
+      manager: manager,
       user
     });
   }
@@ -232,7 +253,7 @@ function createScheduleRuntime(deps) {
   function requireManager(ctx) {
     if (!ctx.manager) {
       throw new ScheduleRuntimeError('manager-required',
-        'עריכה ופרסום מותרים לאחראי סידור ולקצינים בלבד.', 'permission-denied');
+        'עריכה ופרסום מותרים רק לאחראי/ת סידור שמונו לכך.', 'permission-denied');
     }
   }
 
@@ -1399,6 +1420,6 @@ module.exports = {
   createScheduleRuntime,
   ScheduleRuntimeError,
   MODE,
-  MANAGER_ROLES,
+  SCHEDULE_MANAGER_GRANTS,
   MEMBER_ROLES
 };

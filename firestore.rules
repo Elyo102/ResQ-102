@@ -6,10 +6,10 @@ rules_version = '2';
 //
 //  מה השתנה מגרסה 1.1
 //  -------------------
-//  התפקיד נקרא מתוך טוקן ההזדהות, לא ממסמך ב-Firestore.
-//  ההרשאות הרגילות אינן קוראות מסמכים. חריג יחיד: פתיחת תגובה
-//  קוראת פעם אחת את הודעת-האב כדי למנוע דליפה אחרי שהוסתרה.
-//  בגרסה הישנה כל פעולה עלתה 4-5 קריאות שגוגל מחייבת עליהן.
+//  ההרשאות הרגילות נשענות על טוקן ההזדהות, לא על מסמך לקוח.
+//  חריגים מעטים ומכוונים קוראים מצב שרת חי בלבד: הורה של תגובה,
+//  פעולת זהות, דוח Shadow, ופרופיל/מינוי חי של אחראי/ת סידור.
+//  החריגים מאפשרים חסימה מיידית של טוקן ישן, ואינם נתיב סמכות ללקוח.
 //
 //  מקור האמת להרשאות: הטוקן.
 //  המסמך ב-users הוא לתצוגה בלבד, ורק השרת כותב אליו.
@@ -124,6 +124,41 @@ service cloud.firestore {
       return isSuper()
              || (inStation(sid) && claim('role') in
                  ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
+    }
+
+    // מינוי "אחראי/ת סידור" הוא תוספת לחבר/ת תחנה פעיל/ה, לא
+    // תפקיד עצמאי ולא קיצור דרך לדרגת מחוז. בניגוד ל-member(),
+    // השער הזה אינו נותן למנהל-על לעקוף את התפקיד הארגוני החתום.
+    // הנתיב עצמו מוכיח את התחנה; בדיקת השיוך ההיסטורי המלאה
+    // מתבצעת בשרת לפני הנפקת המינוי. כאן נבדקים המסמך החי,
+    // פעילותו והתאמת התפקיד לטוקן כדי לחסום מינוי ישן מיד.
+    function scheduleEligibleMember(sid) {
+      let profilePath = /databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid);
+      let profile = get(profilePath).data;
+      return exists(profilePath)
+             && inStation(sid)
+             && claim('role') in ['firefighter',
+                                  'deputy_team_leader', 'team_leader',
+                                  'deputy', 'commander',
+                                  'station_commander', 'hr_coordinator']
+             && profile.get('is_active', true) != false
+             && profile.get('active', true) != false
+             && profile.get('role', '') == claim('role');
+    }
+
+    // עריכת סידור אינה נגזרת מדרגה, ואף מנהל-על אינו עוקף אותה.
+    // המינוי מורכב משני חלקים: claim חתום בטוקן ומסמך חי שנכתב
+    // רק בשרת. כך ביטול מינוי חוסם מיד גם מכשיר שמחזיק טוקן ישן.
+    // מסמך חסר או ערך שאינו תואם נכשלים סגור.
+    function scheduleManager(sid) {
+      let grant = get(/databases/$(database)/documents/schedule_manager_grants/$(request.auth.uid)).data;
+      return scheduleEligibleMember(sid)
+             && claim('schedule_manager') == true
+             && claim('schedule_manager_version') != ''
+             && grant.get('active', false) == true
+             && grant.get('uid', '') == request.auth.uid
+             && grant.get('stationId', '') == sid
+             && grant.get('version', '') == claim('schedule_manager_version');
     }
 
     // מי רשאי לכתוב בלוג המשמרת. סגל פיקודי **ועוד** שתי דרגות
@@ -274,6 +309,14 @@ service cloud.firestore {
     }
 
     match /identity_operations/{uid} {
+      allow read, write: if false;
+    }
+
+    // מצב חי של "אחראי/ת סידור". הוא נכתב רק בידי פונקציית
+    // השרת יחד עם ה-claim החתום, ומשמש לחסימה מיידית במקרה של
+    // ביטול — גם אם למכשיר נשאר ID token ישן. שום לקוח אינו
+    // רשאי לקרוא או לשנות אותו ישירות.
+    match /schedule_manager_grants/{uid} {
       allow read, write: if false;
     }
 
@@ -900,16 +943,18 @@ service cloud.firestore {
 
       match /rotations/{rotationId} {
         allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow write: if scheduleManager(sid);
       }
 
       match /shift_overrides/{overrideId} {
         allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow write: if scheduleManager(sid);
       }
 
       match /postings/{postingId} {
         allow read:  if member(sid);
+        // הודעות מבצעיות אינן עריכת סידור. הן נשארות תחת
+        // סמכות הסגל הקיימת ואינן דרך לעקוף מחזור או חריגה.
         allow write: if staff(sid);
       }
 

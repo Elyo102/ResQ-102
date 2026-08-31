@@ -111,10 +111,9 @@ async function test(name, fn) {
 const browser = await chromium.launch();
 try {
   const manager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
-  await prepare(manager, 'commander', {
+  await prepare(manager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }, { data:statusAfterRollback }],
     getScheduleManagerSetup:[{ data:setup }],
-    getMyScheduleV2:[{ data:mine }, { data:mine }],
     getStationScheduleV2:[{ data:station }],
     runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:'2026-09-30',
       summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
@@ -124,10 +123,22 @@ try {
   });
   const managerPage = await manager.newPage();
   managerPage.on('dialog', (dialog) => dialog.accept());
-  await managerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await managerPage.goto(base, { waitUntil:'load' });
   await managerPage.locator('#appMain:not(.hide)').waitFor();
 
-  await test('manager sees the management panel and signed policy', async () => {
+  await test('schedule manager defaults to the station schedule without background personal or management reads', async () => {
+    assert.equal(await managerPage.locator('#stationView').isVisible(), true);
+    assert.equal(await managerPage.locator('#mineView').isVisible(), false);
+    assert.equal(await managerPage.locator('#manageView').isVisible(), false);
+    assert.equal(await managerPage.locator('[data-tab="station"]').getAttribute('aria-selected'), 'true');
+    assert.match(managerPage.url(), /schedule-management\.html\?tab=station$/);
+    const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.ok(calls.some((entry) => entry.name === 'getStationScheduleV2'));
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
+  });
+  await test('schedule manager can open the management panel and signed policy deliberately', async () => {
+    await managerPage.locator('[data-tab="manage"]').click();
     assert.equal(await managerPage.locator('#manageTab').isVisible(), true);
     assert.equal(await managerPage.locator('#manageView').isVisible(), true);
     assert.match(await managerPage.locator('#sourceSummary').textContent(), /מהדורה 7/);
@@ -176,7 +187,7 @@ try {
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }, { data:mineAnswered }],
-    getStationScheduleV2:[{ data:station }],
+    getStationScheduleV2:[{ data:station }, { data:station }],
     respondToSchedule:[{ data:{ duplicate:false, response_id:'r_1', answer:'confirm' } }]
   });
   const phonePage = await phone.newPage();
@@ -186,9 +197,18 @@ try {
   await test('firefighter cannot see management even through a direct URL', async () => {
     assert.equal(await phonePage.locator('#manageTab').isVisible(), false);
     assert.equal(await phonePage.locator('#manageView').isVisible(), false);
-    assert.equal(await phonePage.locator('#mineView').isVisible(), true);
+    assert.equal(await phonePage.locator('#mineView').isVisible(), false);
+    assert.equal(await phonePage.locator('#stationView').isVisible(), true);
+    assert.equal(await phonePage.locator('[data-tab="station"]').getAttribute('aria-selected'), 'true');
+    assert.match(phonePage.url(), /schedule-management\.html\?tab=station$/);
+    const calls = await phonePage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.ok(calls.some((entry) => entry.name === 'getStationScheduleV2'));
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
   await test('personal mobile view shows crew, event and answer action', async () => {
+    await phonePage.locator('[data-tab="mine"]').click();
+    await phonePage.locator('#mineContent .assignment').first().waitFor();
     assert.match(await phonePage.locator('#mineContent').textContent(), /טל חודרה/);
     assert.match(await phonePage.locator('#mineContent').textContent(), /קורס חילוץ/);
     await phonePage.locator('.assignment .confirm').first().click();
@@ -224,10 +244,37 @@ try {
     await phonePage.screenshot({ path:path.join(process.env.SCHEDULE_SCREENSHOT_DIR, 'schedule-management-mobile.png'), fullPage:true });
   }
   await phone.close();
+
+  const signedOut = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(signedOut, 'none', {});
+  const signedOutPage = await signedOut.newPage();
+  await signedOutPage.goto(base + '?tab=mine', { waitUntil:'load' });
+  await signedOutPage.waitForURL(/login\.html\?next=/);
+  await test('a signed-out personal schedule route preserves its exact return tab', async () => {
+    assert.match(decodeURIComponent(signedOutPage.url()), /next=schedule-management\.html\?tab=mine$/);
+  });
+  await signedOut.close();
+
+  const returned = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(returned, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }]
+  });
+  const returnedPage = await returned.newPage();
+  await returnedPage.goto('http://127.0.0.1:' + server.address().port +
+    '/login.html?next=' + encodeURIComponent('schedule-management.html?tab=mine'), { waitUntil:'load' });
+  await returnedPage.waitForURL(/schedule-management\.html\?tab=mine$/);
+  await returnedPage.locator('#mineView').waitFor();
+  await test('login accepts the safe personal schedule return target without losing the tab', async () => {
+    assert.equal(await returnedPage.locator('#mineView').isVisible(), true);
+    assert.equal(await returnedPage.locator('#stationView').isVisible(), false);
+    assert.match(returnedPage.url(), /schedule-management\.html\?tab=mine$/);
+  });
+  await returned.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 8);
-console.log('\n8 schedule management browser checks passed.');
+assert.equal(passed, 11);
+console.log('\n11 schedule management browser checks passed.');

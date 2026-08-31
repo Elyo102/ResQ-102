@@ -72,14 +72,19 @@ function same(actual, expected, label) {
   }
 }
 
+const stationSchedule = 'schedule-management.html?tab=station';
+const manageSchedule = 'schedule-management.html?tab=manage';
 const member = [
-  'login.html', 'schedule-management.html', 'board.html', 'attendance.html', 'guards.html',
+  'login.html', stationSchedule, 'board.html', 'attendance.html', 'guards.html',
   'faults.html', 'forms.html', 'sign.html', 'swaps.html', 'quals.html',
   'alerts.html', 'people.html'
 ];
-const staff = member.concat(['access.html', 'admin.html', 'stats.html']);
+// מסך הניהול הכללי אינו עוד דרך עקיפה לעריכת סידור. דרגה פיקודית
+// לבדה מקבלת גישה וסיכום, אך מינוי אחראי/ת סידור הוא שמוסיף את
+// מסך הניהול ואת מנוע הסידור.
+const staff = member.concat(['access.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
-const all = audit.concat(['import.html', 'check.html']);
+const all = audit.concat(['admin.html', 'import.html', 'check.html']);
 const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
@@ -89,6 +94,11 @@ const roles = [
   ['station_commander', { role:'station_commander' }, audit, 3],
   ['hr_coordinator', { role:'hr_coordinator' }, audit, 3],
   ['district_commander', { role:'district_commander' }, ['login.html'], 1],
+  // "אחראי/ת סידור" הוא תפקיד נוסף, לא תפקיד ראשי חלופי. הוא
+  // יכול להיות כבאי רגיל ועדיין לראות רק את כלי ניהול הסידור הנוסף.
+  ['schedule_manager', { role:'firefighter', schedule_manager:true }, member.concat(['admin.html', manageSchedule]), 3],
+  // מנהל-על אינו מקבל את כלי הסידור אוטומטית: גם לו נדרש התפקיד
+  // הנוסף המפורש, אחרת ההבטחה "רק אחראי/ת סידור עורכים" נשברת.
   ['super', { role:'firefighter', super:true }, all, 3]
 ];
 
@@ -106,13 +116,39 @@ try {
     await test(name + ' keeps the exact permitted destinations', async () => {
       const page = await open(matrixContext, claims);
       const hrefs = await page.locator('.navPanel a').evaluateAll(nodes =>
-        nodes.map(node => new URL(node.href).pathname.split('/').pop()));
+        nodes.map(node => {
+          const url = new URL(node.href);
+          return url.pathname.split('/').pop() + url.search;
+        }));
       same(hrefs, expectedLinks, name + ' destination set changed');
       const doors = await page.locator('button.door').count();
       if (doors !== expectedDoors) throw new Error('expected ' + expectedDoors + ' doors, got ' + doors);
       await page.close();
     });
   }
+
+  await test('schedule manager link is under administration while station schedule stays under station', async () => {
+    const page = await open(matrixContext, { role:'firefighter', schedule_manager:true }, stationSchedule);
+    const adminLinks = await page.locator('#panel-admin a').evaluateAll(nodes => nodes.map(node => {
+      const url = new URL(node.href);
+      return url.pathname.split('/').pop() + url.search;
+    }));
+    const stationLinks = await page.locator('#panel-station a').evaluateAll(nodes => nodes.map(node => {
+      const url = new URL(node.href);
+      return url.pathname.split('/').pop() + url.search;
+    }));
+    if (!adminLinks.includes(manageSchedule)) throw new Error('schedule manager link is not in administration');
+    if (stationLinks.includes(manageSchedule)) throw new Error('schedule manager link leaked into station group');
+    if (!stationLinks.includes(stationSchedule)) throw new Error('station schedule link is missing from station group');
+    const current = await page.locator('a[aria-current="page"]').evaluateAll(nodes => nodes.map(node => {
+      const url = new URL(node.href);
+      return url.pathname.split('/').pop() + url.search;
+    }));
+    if (JSON.stringify(current) !== JSON.stringify([stationSchedule])) {
+      throw new Error('station schedule is not the exact current destination: ' + JSON.stringify(current));
+    }
+    await page.close();
+  });
   await matrixContext.close();
 
   const mobile = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });

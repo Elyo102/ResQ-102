@@ -29,6 +29,7 @@ test('identity data is one restore-consistency group', () => {
   const expected = [
     'registration_requests/{uid}', 'emp_index/{emp}',
     'emp_reservations/{emp}', 'identity_operations/{uid}',
+    'schedule_manager_grants/{uid}',
     'meta/{docId}',
     'stations/{sid}/pending_users/{code}',
     'stations/{sid}/users/{uid}', 'stations/{sid}/roster/{uid}'
@@ -40,6 +41,19 @@ test('identity data is one restore-consistency group', () => {
     assert.equal(item.consistencyGroup, backupPolicy.IDENTITY_CONSISTENCY_GROUP);
     assert.equal(item.restorePolicy, 'restore_with_identity_reconciliation');
   }
+});
+
+test('schedule-manager appointments are restored only with identity reconciliation', () => {
+  const grant = backupPolicy.getPolicy('schedule_manager_grants/{uid}');
+  assert.ok(grant);
+  assert.equal(grant.scope, 'root');
+  assert.equal(grant.classification, 'source_of_truth');
+  assert.equal(grant.monitorPolicy, 'integrity_group');
+  assert.equal(grant.backupPolicy, 'identity_consistency_export');
+  assert.equal(grant.restorePolicy, 'restore_with_identity_reconciliation');
+  assert.equal(grant.sensitivity, 'restricted_identity');
+  assert.equal(grant.consistencyGroup, backupPolicy.IDENTITY_CONSISTENCY_GROUP);
+  assert.equal(grant.humanReadable, 'forbidden');
 });
 
 test('activity monitoring requires an explicit contract and detects silence', () => {

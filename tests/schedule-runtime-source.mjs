@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
+const stationProfile = read('functions/station-profile.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
 const service = read('functions/schedule-service.js');
 const index = read('functions/index.js');
@@ -14,6 +15,9 @@ const backup = read('functions/backup-policy.js');
 const ui = read('schedule-management.js');
 const html = read('schedule-management.html');
 const nav = read('nav.js');
+const legacySchedule = read('schedule.html');
+const legacyAdmin = read('admin.html');
+const legacyRules = read('firestore_1.rules');
 const worker = read('firebase-messaging-sw.js');
 const workflow = read('.github/workflows/tests.yml');
 const indexes = JSON.parse(read('firestore.indexes.json'));
@@ -35,10 +39,15 @@ check('client station fields are rejected', () => {
 check('station comes from the authenticated token', () => {
   assert.ok(runtime.includes("const sid = String(token.stationId || '').trim()"));
 });
-check('live ResQ stationId is checked and conflicting aliases fail closed', () => {
-  assert.ok(runtime.includes("String(user.stationId || user.station_id || '')"));
-  assert.ok(runtime.includes('conflictingStationFields'));
-  assert.ok(runtime.includes('liveStation !== sid'));
+check('all historical station aliases are accepted, while ambiguity fails closed', () => {
+  assert.ok(runtime.includes('stationProfile.resolveStationAliases(user'));
+  assert.ok(index.includes('stationProfile.resolveStationAliases(profile'));
+  assert.ok(stationProfile.includes("['stationId', 'station_id', 'station']"));
+  assert.ok(stationProfile.includes("reason: 'missing'"));
+  assert.ok(stationProfile.includes("reason: 'invalid'"));
+  assert.ok(stationProfile.includes("reason: 'conflict'"));
+  assert.ok(stationProfile.includes('unique.length !== 1'));
+  assert.ok(runtime.includes('!liveStation.ok || liveStation.stationId !== sid'));
 });
 check('disabled live users are rejected', () => {
   assert.ok(runtime.includes('user.is_active !== false && user.active !== false'));
@@ -47,12 +56,32 @@ check('token and live role must agree', () => {
   assert.ok(runtime.includes("String(token.role || '') !== role"));
   assert.ok(runtime.includes("'claims-stale'"));
 });
-check('manager authority is decided on the server', () => {
-  assert.ok(runtime.includes('token.schedule_manager === true'));
+check('manager authority requires an exact signed claim and matching live server grant', () => {
+  const grantStart = runtime.indexOf('async function hasLiveScheduleManagerGrant');
+  const grantEnd = runtime.indexOf('\n\n  async function context', grantStart);
+  const grant = runtime.slice(grantStart, grantEnd);
+  const contextStart = runtime.indexOf('async function context');
+  const contextEnd = runtime.indexOf('\n\n  function actor', contextStart);
+  const context = runtime.slice(contextStart, contextEnd);
+  assert.ok(grantStart > -1 && grantEnd > grantStart);
+  assert.ok(runtime.includes("const SCHEDULE_MANAGER_GRANTS = 'schedule_manager_grants'"));
+  assert.ok(grant.includes('token.schedule_manager !== true'));
+  assert.ok(grant.includes('token.schedule_manager_version'));
+  assert.ok(grant.includes('db.collection(SCHEDULE_MANAGER_GRANTS).doc(uid).get()'));
+  assert.ok(grant.includes('grant.active === true'));
+  assert.ok(grant.includes("String(grant.stationId || '') === String(sid)"));
+  assert.ok(grant.includes("String(grant.version || '') === version"));
+  assert.ok(context.includes('const manager = managerEligible &&'));
+  assert.ok(context.includes('await hasLiveScheduleManagerGrant(token, req.auth.uid, sid)'));
+  assert.ok(context.includes('const managerEligible = MEMBER_ROLES.indexOf(role) !== -1'));
+  assert.ok(context.includes("String(token.role || '') === role"));
+  assert.equal(grant.includes('isSuper'), false);
+  assert.equal(grant.includes('MANAGER_ROLES'), false);
   assert.equal(runtime.includes('user.schedule_manager === true'), false);
+  assert.ok(rules.includes('match /schedule_manager_grants/{uid}'));
+  assert.ok(rules.includes('match /schedule_manager_grants/{uid} {\n      allow read, write: if false;'));
   assert.ok(rules.includes('affectedKeys()'));
   assert.ok(rules.includes("hasOnly(['full_name', 'phone', 'email', 'photo_url'])"));
-  assert.ok(runtime.includes('MANAGER_ROLES.indexOf(role) !== -1'));
   assert.ok(runtime.includes('function requireManager(ctx)'));
 });
 check('runtime declares only capabilities implemented by the service', () => {
@@ -197,8 +226,10 @@ check('runtime integration covers spoofing, events, idempotency and stale pushes
   for (const token of ['station spoofing is rejected', 'answer only an event assigned',
     'publication request is idempotent', 'publication is no longer active']) assert.ok(integration.includes(token), token);
 });
-check('runtime integration covers privilege escalation, stale drafts, leases and rollback', () => {
+check('runtime integration covers strict appointment, stale drafts, leases and rollback', () => {
   for (const token of ['profile flag alone never grants', 'policy changed under the same id',
+    'exact signed claim and matching live grant', 'commander or super user without the additional appointment',
+    'revoking the live grant blocks an already-issued manager token',
     'expired sending lease', 'rolled back only by creating a new revision']) {
     assert.ok(integration.includes(token), token);
   }
@@ -235,9 +266,43 @@ check('dynamic schedule data is inserted as text, not HTML', () => {
   assert.equal(/\.innerHTML\s*=/.test(ui), false);
   assert.ok(ui.includes('.textContent ='));
 });
-check('the new schedule replaces the navigation target but keeps old page for rollback', () => {
-  assert.ok(nav.includes("href: 'schedule-management.html'"));
+check('station schedule is the navigation default and management is an additional appointment', () => {
+  assert.ok(nav.includes("href: 'schedule-management.html?tab=station'"));
+  assert.ok(nav.includes("href: 'schedule-management.html?tab=manage'"));
+  assert.ok(nav.includes("who: 'schedule_manager'"));
   assert.ok(fs.existsSync(path.join(root, 'schedule.html')));
+});
+check('the legacy schedule cannot bypass the additional appointment', () => {
+  // The runtime can deliberately fall back to the legacy screen while a
+  // station has not yet configured the new engine. It must therefore carry
+  // the exact same authorization boundary as the new engine.
+  assert.ok(legacySchedule.includes('claims.schedule_manager === true'));
+  assert.equal(legacySchedule.includes("['deputy', 'commander', 'station_commander', 'hr_coordinator']"), false);
+  assert.ok(legacySchedule.includes('if (!canEditOvr)'));
+  assert.ok(legacyAdmin.includes('const isScheduleManager = claims.schedule_manager === true'));
+  assert.ok(legacyAdmin.includes('canManageSchedule = isScheduleManager'));
+  assert.ok(legacyAdmin.includes("const fields = ['anchorDate', 'anchorCrew', 'shiftStart', 'shiftEnd', 'cmdStart', 'specEnd', 'btnRot']"));
+  assert.ok(legacyAdmin.includes("if (!canManageSchedule)"));
+  assert.ok(legacyAdmin.includes('id="rotationReadOnly"'));
+  assert.ok(nav.includes("who: 'schedule_admin'"));
+  for (const source of [rules, legacyRules]) {
+    const managerStart = source.indexOf('function scheduleManager(sid)');
+    const managerEnd = source.indexOf('\n    //', managerStart + 1);
+    const manager = source.slice(managerStart, managerEnd);
+    const rotations = source.slice(source.indexOf('match /rotations/{rotationId}'), source.indexOf('match /shift_overrides/{overrideId}'));
+    const overrides = source.slice(source.indexOf('match /shift_overrides/{overrideId}'), source.indexOf('match /postings/{postingId}'));
+    const postings = source.slice(source.indexOf('match /postings/{postingId}'), source.indexOf('// ---------- נוכחות'));
+    assert.ok(source.includes('function scheduleEligibleMember(sid)'));
+    assert.ok(manager.includes('return scheduleEligibleMember(sid)'));
+    assert.ok(source.includes("profile.get('is_active', true) != false"));
+    assert.ok(source.includes("profile.get('role', '') == claim('role')"));
+    assert.ok(rotations.includes('allow write: if scheduleManager(sid);'));
+    assert.ok(overrides.includes('allow write: if scheduleManager(sid);'));
+    // postings is a separate, currently unwired operational-message path.
+    // It must not silently become a schedule-event write path without a new review.
+    assert.ok(postings.includes('הודעות מבצעיות אינן עריכת סידור'));
+    assert.ok(postings.includes('allow write: if staff(sid);'));
+  }
 });
 check('the offline shell contains both new schedule assets', () => {
   assert.ok(worker.includes("'./schedule-management.html'"));
@@ -254,5 +319,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 44);
-console.log('\n44 schedule runtime source checks passed.');
+assert.equal(passed, 45);
+console.log('\n45 schedule runtime source checks passed.');

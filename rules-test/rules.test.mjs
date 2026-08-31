@@ -119,6 +119,41 @@ const cmdNew  = who('u_new',  'new@x.com',  { emp: '204', role: 'commander',    
 // בכל השאר הם לוחם אש לכל דבר, וזה בדיוק מה שנבדק כאן.
 const teamA   = who('u_tl',   'tl@x.com',   { emp: '111', role: 'team_leader',        stationId: SID, shift: 'א' });
 const dteamA  = who('u_dtl',  'dtl@x.com',  { emp: '112', role: 'deputy_team_leader', stationId: SID, shift: 'א' });
+
+// "אחראי/ת סידור" אינו תפקיד ארגוני. זהו מינוי נוסף, ולכן אותו
+// uid נבדק כאן עם ארבעה טוקנים שונים: המינוי התקין ושלוש זיופים.
+// גרסה חתומה חייבת להתאים למסמך החי; מחרוזת "true" אינה boolean.
+const SCHEDULE_MANAGER_VERSION = 'schedule-manager-test-v1';
+const scheduleManager = who('u_schedule_manager', 'schedule-manager@x.com', {
+  emp: '501', role: 'firefighter', stationId: SID, shift: 'א',
+  schedule_manager: true, schedule_manager_version: SCHEDULE_MANAGER_VERSION
+});
+// אותו מינוי חי, אך תפקיד מחוזי שאינו חבר תחנה. המינוי חייב להיחסם
+// גם אם claim ישן נשאר בטעות אחרי שינוי תפקיד.
+const scheduleManagerDistrict = who('u_schedule_manager', 'schedule-manager@x.com', {
+  emp: '501', role: 'district_commander', stationId: SID, shift: 'א',
+  schedule_manager: true, schedule_manager_version: SCHEDULE_MANAGER_VERSION
+});
+const scheduleManagerInactive = who('u_schedule_manager_inactive', 'schedule-manager-inactive@x.com', {
+  emp: '502', role: 'firefighter', stationId: SID, shift: 'א',
+  schedule_manager: true, schedule_manager_version: 'schedule-manager-inactive-v1'
+});
+const scheduleManagerStaleRole = who('u_schedule_manager_stale_role', 'schedule-manager-stale-role@x.com', {
+  emp: '503', role: 'commander', stationId: SID, shift: 'א',
+  schedule_manager: true, schedule_manager_version: 'schedule-manager-stale-role-v1'
+});
+const scheduleManagerStringClaim = who('u_schedule_manager', 'schedule-manager@x.com', {
+  emp: '501', role: 'firefighter', stationId: SID, shift: 'א',
+  schedule_manager: 'true', schedule_manager_version: SCHEDULE_MANAGER_VERSION
+});
+const scheduleManagerWrongVersion = who('u_schedule_manager', 'schedule-manager@x.com', {
+  emp: '501', role: 'firefighter', stationId: SID, shift: 'א',
+  schedule_manager: true, schedule_manager_version: 'schedule-manager-wrong-version'
+});
+const scheduleManagerWrongStation = who('u_schedule_manager', 'schedule-manager@x.com', {
+  emp: '501', role: 'firefighter', stationId: 'other_99', shift: 'א',
+  schedule_manager: true, schedule_manager_version: SCHEDULE_MANAGER_VERSION
+});
 const anon    = env.unauthenticatedContext().firestore();
 
 // ---------- זריעת נתונים ----------
@@ -141,6 +176,41 @@ await env.withSecurityRulesDisabled(async (c) => {
     { role: 'hr_coordinator', crew: '', employee_number: '402', is_active: false, full_name: 'רכזת מושבתת' });
   await setDoc(doc(d, `stations/${SID}/users/u_hr_stale`),
     { role: 'firefighter', crew: 'א', employee_number: '403', is_active: true, full_name: 'רכזת לשעבר' });
+  await setDoc(doc(d, `stations/${SID}/users/u_schedule_manager`),
+    { role: 'firefighter', crew: 'א', employee_number: '501', is_active: true, full_name: 'אחראי סידור' });
+  await setDoc(doc(d, `stations/${SID}/users/u_schedule_manager_inactive`),
+    { role: 'firefighter', crew: 'א', employee_number: '502', is_active: false, full_name: 'אחראי סידור מושבת' });
+  await setDoc(doc(d, `stations/${SID}/users/u_schedule_manager_stale_role`),
+    { role: 'firefighter', crew: 'א', employee_number: '503', is_active: true, full_name: 'אחראי סידור עם role ישן' });
+
+  // שער העריכה מורכב מטוקן חתום וממסמך חי. הזריעה עוקפת כללים
+  // בכוונה: המסמך הזה נוצר אך ורק ב-Cloud Function בפרודקשן.
+  await setDoc(doc(d, 'schedule_manager_grants/u_schedule_manager'), {
+    uid: 'u_schedule_manager', stationId: SID,
+    version: SCHEDULE_MANAGER_VERSION, active: true
+  });
+  await setDoc(doc(d, 'schedule_manager_grants/u_schedule_manager_inactive'), {
+    uid: 'u_schedule_manager_inactive', stationId: SID,
+    version: 'schedule-manager-inactive-v1', active: true
+  });
+  await setDoc(doc(d, 'schedule_manager_grants/u_schedule_manager_stale_role'), {
+    uid: 'u_schedule_manager_stale_role', stationId: SID,
+    version: 'schedule-manager-stale-role-v1', active: true
+  });
+
+  // מסמכים קיימים, כדי שהבדיקות יכסו גם update וגם delete — לא רק
+  // יצירה חדשה. כל ניסיון לא מורשה משתמש באותם מסמכים ולכן שום
+  // ניסיון קודם אינו יכול לשנות את תנאי הבדיקה.
+  for (const collectionName of ['rotations', 'shift_overrides']) {
+    await setDoc(doc(d, `stations/${SID}/${collectionName}/guard_update`),
+      { source: 'seed', sequence: 1 });
+    await setDoc(doc(d, `stations/${SID}/${collectionName}/guard_delete`),
+      { source: 'seed', sequence: 1 });
+    await setDoc(doc(d, `stations/${SID}/${collectionName}/manager_update`),
+      { source: 'seed', sequence: 1 });
+    await setDoc(doc(d, `stations/${SID}/${collectionName}/manager_delete`),
+      { source: 'seed', sequence: 1 });
+  }
 
   // נוכחות — הלב של המערכת
   await setDoc(doc(d, `stations/${SID}/attendance/att_ff_a`),
@@ -1480,7 +1550,78 @@ await ok('מפקד צוות כן רואה את הסידור',
     .then(() => getDocs(collection(teamA, `stations/${SID}/broadcasts`))));
 
 // ============================================================
-head('20 · מנוע סידור חודשי — לקוחות אינם עוקפים את השרת');
+head('20 · אחראי/ת סידור — עריכה דורשת מינוי חי');
+// ============================================================
+// מפקד, רכזת ומנהל-על רשאים לראות את הסידור, אך אף דרגה אינה
+// מחליפה את המינוי המפורש. בודקים create/update/delete בשני
+// הנתיבים הישנים, כדי שאי אפשר יהיה לעקוף את מנוע הסידור החדש.
+const LEGACY_SCHEDULE_COLLECTIONS = [
+  ['מחזור', 'rotations'],
+  ['חריגת סידור', 'shift_overrides']
+];
+
+async function legacyScheduleWritesBlocked(roleName, client, marker) {
+  for (const [collectionHe, collectionName] of LEGACY_SCHEDULE_COLLECTIONS) {
+    const base = `stations/${SID}/${collectionName}`;
+    await blocked(`🔒 ${roleName} אינו יוצר ${collectionHe} בלי מינוי`,
+      setDoc(doc(client, `${base}/${marker}_create`), {
+        source: 'rules-test', marker: marker, operation: 'create'
+      }));
+    await blocked(`🔒 ${roleName} אינו מעדכן ${collectionHe} בלי מינוי`,
+      updateDoc(doc(client, `${base}/guard_update`), { marker: marker }));
+    await blocked(`🔒 ${roleName} אינו מוחק ${collectionHe} בלי מינוי`,
+      deleteDoc(doc(client, `${base}/guard_delete`)));
+  }
+}
+
+for (const [roleName, client, marker] of [
+  ['מפקד משמרת', cmdA, 'commander'],
+  ['רכזת כוח אדם', hrUser, 'hr'],
+  ['מנהל-על', superA, 'super'],
+  ['מפקד מחוז עם מינוי ישן ולא-כשיר', scheduleManagerDistrict, 'district_old_grant'],
+  ['אחראי סידור מושבת עם token ישן', scheduleManagerInactive, 'inactive_old_grant'],
+  ['אחראי סידור עם תפקיד פרופיל מיושן', scheduleManagerStaleRole, 'stale_profile_role']
+]) {
+  await legacyScheduleWritesBlocked(roleName, client, marker);
+}
+
+for (const [collectionHe, collectionName] of LEGACY_SCHEDULE_COLLECTIONS) {
+  await ok(`כבאי רגיל קורא ${collectionHe} לצפייה בסידור התחנה`,
+    getDoc(doc(ff, `stations/${SID}/${collectionName}/guard_update`)));
+}
+
+for (const [collectionHe, collectionName] of LEGACY_SCHEDULE_COLLECTIONS) {
+  const base = `stations/${SID}/${collectionName}`;
+  await ok(`אחראי סידור ממונה יוצר ${collectionHe}`,
+    setDoc(doc(scheduleManager, `${base}/manager_create`), {
+      source: 'rules-test', operation: 'create'
+    }));
+  await ok(`אחראי סידור ממונה מעדכן ${collectionHe}`,
+    updateDoc(doc(scheduleManager, `${base}/manager_update`), { sequence: 2 }));
+  await ok(`אחראי סידור ממונה מוחק ${collectionHe}`,
+    deleteDoc(doc(scheduleManager, `${base}/manager_delete`)));
+}
+
+for (const [roleName, client, marker] of [
+  ['claim במחרוזת', scheduleManagerStringClaim, 'string_claim'],
+  ['גרסת claim שגויה', scheduleManagerWrongVersion, 'wrong_version'],
+  ['תחנה שגויה ב-claim', scheduleManagerWrongStation, 'wrong_station']
+]) {
+  await legacyScheduleWritesBlocked(roleName, client, marker);
+}
+
+// ביטול שרתי חייב לחסום מיד גם אם למכשיר נשאר token ישן שנראה תקין.
+await env.withSecurityRulesDisabled(async (c) => {
+  await setDoc(doc(c.firestore(), 'schedule_manager_grants/u_schedule_manager'), {
+    uid: 'u_schedule_manager', stationId: SID,
+    version: SCHEDULE_MANAGER_VERSION, active: false
+  });
+});
+
+await legacyScheduleWritesBlocked('אחראי סידור שבוטל', scheduleManager, 'revoked_live_grant');
+
+// ============================================================
+head('21 · מנוע סידור חודשי — לקוחות אינם עוקפים את השרת');
 // ============================================================
 // המידע במסלולים האלה כולל תמונת סגל מלאה, טיוטות, תגובות ותור
 // התראות. כל הצפייה והעריכה נעשות דרך Callable Functions בלבד.

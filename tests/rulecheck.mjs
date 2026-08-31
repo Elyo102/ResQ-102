@@ -95,7 +95,9 @@ head('אילוץ ארכיטקטוני');
   // המערכת בנויה על claims; חריגים חייבים להיות קריאות מדויקות:
   // תגובה בודקת שהודעת-האב לא הוסתרה, דוח Shadow בודק שרק הדור
   // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל
-  // ושתפקידו החי תואם לטוקן.
+  // ושתפקידו החי תואם לטוקן. שני החריגים של אחראי/ת סידור הם
+  // הפרופיל התחנתי החי (פעילות ותפקיד) ומסמך המינוי החי. יחד הם
+  // מאפשרים לבטל עריכה מיידית גם מטוקן ישן, בלי לפתוח נתיב עוקף.
   const gets = [...CODE.matchAll(/(?<![.\w])(get|exists|getAfter)\s*\(/g)];
   const replyParentReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/sub_stations\/\$\(subId\)\/bulletin_messages\/\$\(messageId\)\s*\)/g
@@ -109,12 +111,19 @@ head('אילוץ ארכיטקטוני');
   const identityOperationReads = [...CODE.matchAll(
     /(?<![.\w])(get|exists)\s*\(\s*\/databases\/\$\(database\)\/documents\/identity_operations\/\$\(uid\)\s*\)/g
   )];
-  if (gets.length === 6 &&
+  const scheduleManagerGrantReads = [...CODE.matchAll(
+    /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/schedule_manager_grants\/\$\(request\.auth\.uid\)\s*\)/g
+  )];
+  const scheduleManagerProfilePaths = [...CODE.matchAll(
+    /let profilePath = \/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/users\/\$\(request\.auth\.uid\);\s*\n\s*let profile = get\(profilePath\)\.data;\s*\n\s*return exists\(profilePath\)/g
+  )];
+  if (gets.length === 9 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
-      shadowUserReads.length === 1 && identityOperationReads.length === 3) {
-    ok('קריאות מוגבלות: שלושת נתיבי Shadow/תגובה ובקרת פעולת זהות');
+      shadowUserReads.length === 1 && identityOperationReads.length === 3 &&
+      scheduleManagerGrantReads.length === 1 && scheduleManagerProfilePaths.length === 1) {
+    ok('קריאות מוגבלות: Shadow/תגובה, פעולת זהות, ופרופיל ומינוי סידור חיים');
   } else if (gets.length) {
-    fail(gets.length + ' קריאות get()/exists() — רק ארבעת הנתיבים המאושרים מותרים',
+    fail(gets.length + ' קריאות get()/exists() — רק נתיבי האבטחה המדויקים מאושרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
   } else {
     fail('חסרות בדיקות נתיבי-האב המאושרות',

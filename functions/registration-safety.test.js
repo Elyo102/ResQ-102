@@ -138,9 +138,92 @@ async function rejectsWith(label, promise, code) {
     'the initial role check must include the desired station scope');
   assert.ok(setRole[0].includes('planned.super === true, planned'),
     'the post-acquisition check must revalidate the immutable plan scope');
+  assert.ok(setRole[0].includes('SCHEDULE_MANAGER_ELIGIBLE_ROLES.indexOf(role) !== -1'),
+    'an active schedule-manager appointment must be revoked before a role downgrade');
+  assert.ok(setRole[0].includes('!remainingScheduleManagerEligible'),
+    'the role-change guard must reject every role that cannot hold a schedule-manager appointment');
   assert.ok(indexSource.includes('if (!sid || !did || KNOWN_DISTRICTS.indexOf(did) === -1)'),
     'a non-super role setter with partial scope claims must fail closed');
-  console.log('✓ role assignment and removal use the same durable per-uid coordinator');
+  console.log('✓ role assignment and removal use the same durable per-uid coordinator and cannot retain an invalid schedule-manager appointment');
+
+  const scheduleManager = indexSource.match(
+    /exports\.setScheduleManager[\s\S]*?\/\/ ממשיך רק תוכנית זהות/
+  );
+  assert.ok(scheduleManager, 'setScheduleManager section exists');
+  for (const token of ['requireSuperAdmin(req)', 'enforceAppCheck: true',
+                       "kind: 'set_schedule_manager'", 'resolveUser(d)',
+                       'identityCoordinator.acquireClaimsChange',
+                       'identityCoordinator.runClaimsChange', 'desiredState:',
+                       'schedule_manager_version']) {
+    assert.ok(scheduleManager[0].includes(token),
+      'schedule-manager change must contain ' + token);
+  }
+  for (const token of ['setCustomUserClaims(', 'db.runTransaction(',
+                       'scheduleManagerGrantRef(', 'd.role', 'd.stationId',
+                       'd.emp']) {
+    assert.equal(scheduleManager[0].includes(token), false,
+      'schedule-manager export must not directly trust or write ' + token);
+  }
+  assert.equal(/\bd\.schedule_manager\b/.test(scheduleManager[0]), false,
+    'schedule-manager export must not trust a client-provided capability flag');
+  assert.ok(scheduleManager[0].includes('profileSnap'),
+    'schedule-manager assignment must verify the live station profile');
+  assert.ok(scheduleManager[0].includes('stationProfile.resolveStationAliases(profile'),
+    'schedule-manager assignment must resolve every historical station alias strictly');
+  assert.ok(scheduleManager[0].includes('!profileStation.ok'),
+    'schedule-manager assignment must fail closed for missing, malformed, or conflicting station aliases');
+  assert.ok(scheduleManager[0].includes('if (enabled === false)'),
+    'revoking a schedule-manager appointment must begin before profile eligibility checks');
+  assert.ok(scheduleManager[0].includes('const grantSnap = await db.collection(SCHEDULE_MANAGER_GRANTS).doc(user.uid).get()'),
+    'revocation may use only the server-private grant to retain its station state');
+  assert.ok(scheduleManager[0].includes('if (enabled) {'),
+    'active-profile and eligible-role checks must apply only when granting the appointment');
+  const grantOnlyStart = scheduleManager[0].indexOf('if (enabled) {');
+  const grantOnlyEnd = scheduleManager[0].indexOf('\n\n  const suppliedOpId', grantOnlyStart);
+  assert.ok(grantOnlyStart > -1 && grantOnlyEnd > grantOnlyStart,
+    'the grant-only eligibility branch must be delimited before the identity plan');
+  const grantOnly = scheduleManager[0].slice(grantOnlyStart, grantOnlyEnd);
+  const beforeGrantOnly = scheduleManager[0].slice(0, grantOnlyStart);
+  assert.equal(beforeGrantOnly.includes('profileSnap'), false,
+    'revocation must not read or reject an inactive, missing, or malformed live profile');
+  for (const token of ["profile.is_active === false", "profile.active === false",
+                       '!profileStation.ok', 'profileStation.stationId !== stationId',
+                       "String(profile.role || '') !== role"]) {
+    assert.ok(grantOnly.includes(token),
+      'only an enabled grant must reject an ineligible live profile: ' + token);
+  }
+  const revokeOnlyStart = scheduleManager[0].indexOf('if (enabled === false)');
+  assert.ok(revokeOnlyStart > -1 && revokeOnlyStart < grantOnlyStart,
+    'revocation must be selected before the grant-only eligibility branch');
+  const revokeOnly = scheduleManager[0].slice(revokeOnlyStart, grantOnlyStart);
+  assert.ok(revokeOnly.includes('grantSnap'),
+    'revocation must recover station state from the private live grant');
+  assert.equal(revokeOnly.includes('profileSnap'), false,
+    'revocation must remain possible after the station profile is inactive or invalid');
+
+  const grantState = indexSource.match(
+    /async function applyScheduleManagerGrantState[\s\S]*?\n}\n\nconst identityCoordinator/
+  );
+  assert.ok(grantState, 'server-private schedule-manager state hook exists');
+  assert.ok(grantState[0].includes('(enabled && !STATION_ID_RE.test(stationId))'),
+    'only enabled grants may require a valid station id; revocation must fail closed only on malformed operation data');
+  assert.ok(grantState[0].includes('active: enabled'),
+    'the server-private grant must be disabled by the same revocation operation');
+  const scheduleManagerIntent = scheduleManager[0].match(
+    /const intentFingerprint = identityCoordinatorModule\.stableHash\([\s\S]*?\n  \}\);/
+  );
+  assert.ok(scheduleManagerIntent, 'schedule-manager operation has an intent fingerprint');
+  const scheduleManagerIntentCode = scheduleManagerIntent[0].replace(/\/\/.*$/gm, '');
+  for (const token of ["kind: 'set_schedule_manager'", 'uid: user.uid',
+                       'enabled: enabled', 'stationId: stationId', 'version: version']) {
+    assert.ok(scheduleManagerIntentCode.includes(token),
+      'schedule-manager retry fingerprint must include immutable ' + token);
+  }
+  for (const mutableField of ['before', 'desired', 'previous_claims', 'desired_claims']) {
+    assert.equal(new RegExp('\\b' + mutableField + '\\s*:').test(scheduleManagerIntentCode), false,
+      'schedule-manager retry fingerprint must not include mutable ' + mutableField);
+  }
+  console.log('✓ additional schedule authority uses a durable server-only claim operation');
 
   const boot = indexSource.match(
     /exports\.bootstrapSuperAdmin[\s\S]*?\/\/ ---------------------------------------------------------------------\r?\n\/\/  2\. אישור/
@@ -175,13 +258,24 @@ async function rejectsWith(label, promise, code) {
   );
   assert.ok(clearFlow && clearFlow[0].indexOf("applyAuth(uid, opId, ['prepared'])") <
             clearFlow[0].indexOf('applyDeactivation(uid, opId)'));
-  console.log('✓ assignment grants after profile; removal revokes before deactivation');
+  const claimsFlow = coordinatorSource.match(
+    /async function runClaimsChange[\s\S]*?\r?\n  }\r?\n\r?\n  async function resumeOperation/
+  );
+  assert.ok(claimsFlow, 'claim-only coordinator flow exists');
+  assert.ok(claimsFlow[0].indexOf('applyClaimsState(uid, opId)') <
+            claimsFlow[0].indexOf("applyAuth(uid, opId, ['state_applied'])"),
+    'server grant state must commit before Auth claims');
+  assert.ok(claimsFlow[0].indexOf("applyAuth(uid, opId, ['state_applied'])") <
+            claimsFlow[0].indexOf('revokeTokens(uid, opId, false)'),
+    'claim-only changes must revoke refresh tokens after Auth');
+  console.log('✓ assignment grants after profile; removal revokes before deactivation; additional claims are durable');
 
   const resume = indexSource.match(
     /exports\.resumeIdentityOperation[\s\S]*?\/\/ ---------------------------------------------------------------------\r?\n\/\/  4\. כניסה/
   );
   assert.ok(resume && resume[0].includes('requireSuperAdmin(req)'));
   assert.ok(resume[0].includes('identityCoordinator.resumeOperation'));
+  assert.ok(resume[0].includes("'set_schedule_manager'"));
   assert.equal(resume[0].includes('d.role'), false);
   assert.equal(resume[0].includes('d.emp'), false);
   console.log('✓ recovery is super-only and accepts no replacement identity plan');
@@ -224,7 +318,7 @@ async function rejectsWith(label, promise, code) {
   assert.equal(adminSource.includes("deleteDoc(doc(db, 'registration_requests'"), false);
   console.log('✓ clients preserve request identity and expose processing/recovery states');
 
-  console.log('\n23 registration safety checks passed.');
+  console.log('\n24 registration safety checks passed.');
 })().catch(function (error) {
   console.error(error);
   process.exit(1);

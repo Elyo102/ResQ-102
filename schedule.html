@@ -454,8 +454,11 @@ onAuthStateChanged(auth, async user => {
   if (!authContextCurrent(authContext)) return;
 
   const sid = claims.stationId || STATION_ID;
-  const localCanEditOvr = claims.super === true || claims.role === 'super_admin' ||
-    ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(claims.role) !== -1;
+  // צפייה בסידור שייכת לכל חבר תחנה. עריכה היא מינוי נוסף,
+  // מפורש, ואינה נגזרת ממפקד/ת, רכזת כוח אדם או מנהל-על.
+  // כללי Firestore בודקים בנוסף מסמך מינוי חי, כך שטוקן ישן
+  // אחרי ביטול לא יכול לכתוב גם אם הכפתור עדיין מוצג לרגע.
+  const localCanEditOvr = claims.schedule_manager === true;
   let localMe = null;
 
   try {
@@ -637,6 +640,10 @@ function ovErr(text){
 
 async function addOverride(){
   ovErr('');
+  if (!canEditOvr) {
+    ovErr('עריכת סידור מותרת רק לאחראי/ת סידור שמונו לכך.');
+    return;
+  }
   const date = $('ovDate').value;
   const kind = $('ovKind').value;
   const crew = $('ovCrew').value;
@@ -670,6 +677,10 @@ async function addOverride(){
 }
 
 async function removeOverride(date){
+  if (!canEditOvr) {
+    ovErr('עריכת סידור מותרת רק לאחראי/ת סידור שמונו לכך.');
+    return;
+  }
   try {
     await deleteDoc(doc(db, 'stations', SID, 'shift_overrides', date));
     delete overrides[date];

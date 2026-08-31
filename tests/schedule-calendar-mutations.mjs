@@ -176,6 +176,17 @@ function runSuite(key) {
   return r.status === 0;
 }
 
+// הקבצים מגיעים לעיתים עם CRLF ב-Windows, בעוד שמוטציות מרובות־שורות
+// נכתבו עם LF. מחפשים ומחליפים במבנה אחיד, אך מחזירים את סגנון השורות
+// המקורי לקובץ שהבדיקה משנה זמנית.
+function replaceMutation(source, from, to) {
+  const hasCrLf = source.includes('\r\n');
+  const normalized = source.replace(/\r\n/g, '\n');
+  if (!normalized.includes(from)) return null;
+  const mutated = normalized.replace(from, to);
+  return hasCrLf ? mutated.replace(/\n/g, '\r\n') : mutated;
+}
+
 const originals = {};
 for (const k of Object.keys(TARGETS)) originals[k] = readFileSync(TARGETS[k], 'utf8');
 
@@ -187,8 +198,9 @@ try {
   for (const [name, target, from, to, suites] of MUTATIONS) {
     if (from === 'NO-OP-PLACEHOLDER') { caught += 1; continue; }
     const src = originals[target];
-    if (!src.includes(from)) { notFound.push(name); continue; }
-    writeFileSync(TARGETS[target], src.replace(from, to));
+    const mutated = replaceMutation(src, from, to);
+    if (mutated === null) { notFound.push(name); continue; }
+    writeFileSync(TARGETS[target], mutated);
     let failedSomewhere = false;
     for (const s of suites) if (!runSuite(s)) { failedSomewhere = true; break; }
     writeFileSync(TARGETS[target], src);

@@ -27,6 +27,7 @@ const scheduleCalendar = require('./schedule-calendar-engine');
 const schedulePublication = require('./schedule-publication');
 const scheduleService = require('./schedule-service');
 const scheduleRuntimeModule = require('./schedule-runtime');
+const stationProfile = require('./station-profile');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -60,6 +61,14 @@ const VALID_ROLES = [
   'firefighter', 'deputy_team_leader', 'team_leader',
   'deputy', 'commander', 'station_commander',
   'hr_coordinator', 'district_commander'
+];
+// "אחראי/ת סידור" הוא מינוי לתחנה, ולכן אפשר למנות רק אדם
+// שהוא חבר בתחנה. מפקד מחוז אינו חבר בתחנה באף מסך או כלל
+// אבטחה, ומינויו כאן היה יוצר הרשאה שנראית תקינה אך אינה יכולה
+// להשתמש במנוע הסידור.
+const SCHEDULE_MANAGER_ELIGIBLE_ROLES = [
+  'firefighter', 'deputy_team_leader', 'team_leader',
+  'deputy', 'commander', 'station_commander', 'hr_coordinator'
 ];
 const VALID_SHIFTS = ['A', 'B', 'C'];
 
@@ -112,6 +121,60 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+
+// "אחראי/ת סידור" הוא תפקיד נוסף, לא דרגה ראשית. הוא נשמר גם
+// במסמך שרת פנימי כדי שביטול התפקיד יחסום את מנוע הסידור מיד —
+// אפילו אם למכשיר נשאר טוקן ישן עד שיפוג.
+const SCHEDULE_MANAGER_GRANTS = 'schedule_manager_grants';
+
+function scheduleManagerGrantRef(uid) {
+  return db.collection(SCHEDULE_MANAGER_GRANTS).doc(String(uid || ''));
+}
+
+async function applyScheduleManagerGrantState(operation) {
+  const state = operation && operation.desired_state || {};
+  if (state.kind !== 'schedule_manager_grant') return;
+  const uid = String(operation.target_uid || '');
+  const stationId = String(state.stationId || '');
+  const version = String(state.version || '');
+  const enabled = state.enabled === true;
+  if (!uid || (enabled && !STATION_ID_RE.test(stationId)) ||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(String(operation.op_id || '')) ||
+      !/^[a-z0-9_-]{16,100}$/.test(version)) {
+    throw new HttpsError('failed-precondition', 'תוכנית אחראי הסידור אינה תקינה.');
+  }
+  const desired = operation.desired_claims || {};
+  if (enabled !== (desired.schedule_manager === true)) {
+    throw new HttpsError('failed-precondition', 'תוכנית אחראי הסידור אינה עקבית.');
+  }
+  if (enabled && String(desired.schedule_manager_version || '') !== version) {
+    throw new HttpsError('failed-precondition', 'גרסת הרשאת הסידור אינה עקבית.');
+  }
+
+  await db.runTransaction(async function (tx) {
+    const opRef = db.doc('identity_operations/' + uid);
+    const opSnap = await tx.get(opRef);
+    if (!opSnap.exists) throw new HttpsError('failed-precondition', 'פעולת הזהות חסרה.');
+    const live = opSnap.data() || {};
+    const liveState = live.desired_state || {};
+    if (live.op_id !== operation.op_id || live.kind !== 'set_schedule_manager' ||
+        live.status !== 'processing' || liveState.kind !== state.kind ||
+        String(liveState.uid || '') !== uid || String(liveState.stationId || '') !== stationId ||
+        liveState.enabled !== enabled || String(liveState.version || '') !== version) {
+      throw new HttpsError('failed-precondition', 'פעולת אחראי הסידור השתנתה בזמן העדכון.');
+    }
+    tx.set(scheduleManagerGrantRef(uid), {
+      uid: uid,
+      stationId: stationId,
+      active: enabled,
+      version: version,
+      operation_id: String(operation.op_id),
+      updated_at: FV.serverTimestamp(),
+      updated_by: String(operation.actor_uid || '')
+    }, { merge: true });
+  });
+}
+
 const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator({
   db: db,
   auth: admin.auth(),
@@ -119,6 +182,7 @@ const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator(
   Timestamp: admin.firestore.Timestamp,
   HttpsError: HttpsError,
   randomId: function () { return crypto.randomBytes(16).toString('hex'); },
+  hooks: { applyClaimsState: applyScheduleManagerGrantState },
   // פעולות הזהות מוגבלות ל-120 שניות. גדר של שלוש דקות מונעת
   // מ-worker ישן שהתעורר מאוחר לדרוס פעולה חדשה על אותו משתמש.
   leaseMs: 5 * 60 * 1000,
@@ -720,6 +784,15 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   const auth = gate.auth;
   const d = req.data || {};
 
+  // "אחראי/ת סידור" אינו עוד ערך בבורר התפקיד הראשי. פעולה זו
+  // מטפלת בתפקיד הארגוני בלבד; הנפקת/ביטול הסמכות הנוספת עוברים
+  // בפונקציה ייעודית של מנהל-על עם audit וביטול טוקנים.
+  if (Object.prototype.hasOwnProperty.call(d, 'schedule_manager') ||
+      Object.prototype.hasOwnProperty.call(d, 'schedule_manager_version')) {
+    throw new HttpsError('invalid-argument',
+      'אחראי/ת סידור מוגדר/ת בנפרד ואינו/ה תפקיד ראשי.');
+  }
+
   const user   = await resolveUser(d);
   const before = user.customClaims || {};
   const role   = String(d.role || '');
@@ -761,6 +834,23 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   };
   assertMayAssign(gate, role === 'none' ? '' : role, before, user.uid,
                   d.super === true, desiredScope);
+
+  // העברת תחנה, הסרת השיוך, או שינוי לתפקיד שאינו חבר תחנה אינם
+  // מוחקים בשקט סמכות נוספת. קודם מבטלים אותה בפעולה הייעודית;
+  // ביטול זה גם חוסם מיידית טוקן ישן דרך שער הסידור החי. בלי השער
+  // הזה אפשר היה להשאיר claim תקין על מפקד מחוז, למרות שמינוי כזה
+  // אינו חוקי ואין לו גישה למנוע החדש.
+  const hasScheduleManager = before.schedule_manager === true;
+  const scheduleManagerVersion = String(before.schedule_manager_version || '');
+  const movingStation = role !== 'none' &&
+    String(requestedStationId || '') !== String(before.stationId || '');
+  const remainingScheduleManagerEligible =
+    SCHEDULE_MANAGER_ELIGIBLE_ROLES.indexOf(role) !== -1;
+  if (hasScheduleManager && (!/^[a-z0-9_-]{16,100}$/.test(scheduleManagerVersion) ||
+      !remainingScheduleManagerEligible || movingStation)) {
+    throw new HttpsError('failed-precondition',
+      'יש לבטל קודם את תפקיד אחראי/ת הסידור לפני הסרת השיוך, מעבר תחנה או שינוי לתפקיד שאינו חבר תחנה.');
+  }
 
   if (role === 'none') {
     const suppliedOpId = String(d.operation_id || '');
@@ -852,6 +942,13 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   }
 
   if (wantSuper) claims.super = true;
+
+  // Firebase Auth מחליף את כל ה-claims בכתיבה אחת. שמירה מפורשת
+  // מונעת מצב שבו תיקון משמרת רגיל מוחק לאדם את תפקיד הסידור.
+  if (hasScheduleManager) {
+    claims.schedule_manager = true;
+    claims.schedule_manager_version = scheduleManagerVersion;
+  }
 
   if (JSON.stringify(claims).length > 900) {
     throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי.');
@@ -963,8 +1060,123 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
     message: 'התפקיד הוגדר. המשתמש צריך להתנתק ולהתחבר מחדש כדי שהשינוי ייכנס לתוקף.'
   };
   if (acquired.type === 'completed') return operation.result;
-  return identityCoordinator.runAssignment(user.uid, operation.op_id, result,
-    user.uid === auth.uid);
+  return identityCoordinator.runAssignment(user.uid, operation.op_id, result, false);
+});
+
+// ---------------------------------------------------------------------
+//  3א. אחראי/ת סידור — סמכות נוספת, לא תפקיד ארגוני
+// ---------------------------------------------------------------------
+
+exports.setScheduleManager = onCall({ timeoutSeconds: 120, enforceAppCheck: true }, async (req) => {
+  const auth = requireSuperAdmin(req);
+  const d = req.data || {};
+  const allowedKeys = ['uid', 'email', 'operation_id', 'enabled'];
+  if (Object.keys(d).some(function (key) { return allowedKeys.indexOf(key) === -1; })) {
+    throw new HttpsError('invalid-argument',
+      'פעולת אחראי/ת הסידור מקבלת רק משתמש, בחירה ומזהה פעולה.');
+  }
+  const enabled = d.enabled;
+  if (enabled !== true && enabled !== false) {
+    throw new HttpsError('invalid-argument', 'יש לבחור אם להעניק או לבטל את תפקיד אחראי/ת הסידור.');
+  }
+  const hasUid = typeof d.uid === 'string' && d.uid.trim() !== '';
+  const hasEmail = typeof d.email === 'string' && d.email.trim() !== '';
+  if (hasUid === hasEmail) {
+    throw new HttpsError('invalid-argument',
+      'יש לבחור משתמש אחד בלבד לפי מזהה או כתובת מייל.');
+  }
+
+  const user = await resolveUser(d);
+  const before = user.customClaims || {};
+  const role = String(before.role || '');
+  const claimedStationId = String(before.stationId || '');
+  // ביטול אינו מותנה בפרופיל תקין: אם המשתמש הושבת, עבר תחנה או
+  // שהפרופיל שלו כבר סותר את ה-claims, זו בדיוק הסיבה שחייבים
+  // להיות מסוגלים לסגור את המינוי. מעדיפים את התחנה שבמסמך החי
+  // של המינוי כדי לא לשחזר נתון claims ישן רק לצורך פעולת הביטול.
+  let stationId = claimedStationId;
+  if (enabled === false) {
+    const grantSnap = await db.collection(SCHEDULE_MANAGER_GRANTS).doc(user.uid).get();
+    const grantStationId = grantSnap.exists ?
+      String((grantSnap.data() || {}).stationId || '') : '';
+    if (STATION_ID_RE.test(grantStationId)) stationId = grantStationId;
+  }
+  if (enabled) {
+    if (SCHEDULE_MANAGER_ELIGIBLE_ROLES.indexOf(role) === -1 || !stationId || !before.emp) {
+      throw new HttpsError('failed-precondition',
+        'אפשר למנות אחראי/ת סידור רק למשתמש פעיל שכבר משויך לתחנה ולתפקיד.');
+    }
+    const profileSnap = await db.doc('stations/' + stationId + '/users/' + user.uid).get();
+    const profile = profileSnap.exists ? (profileSnap.data() || {}) : null;
+    const profileStation = stationProfile.resolveStationAliases(profile, function (value) {
+      return STATION_ID_RE.test(value);
+    });
+    if (!profile || profile.is_active === false || profile.active === false ||
+        !profileStation.ok || profileStation.stationId !== stationId ||
+        String(profile.role || '') !== role) {
+      throw new HttpsError('failed-precondition',
+        'החשבון אינו פעיל בתחנה או שתפקידו אינו מסונכרן. תקן את השיוך לפני מינוי אחראי/ת סידור.');
+    }
+  }
+
+  const suppliedOpId = String(d.operation_id || '');
+  const opId = /^[A-Za-z0-9_-]{16,100}$/.test(suppliedOpId) ? suppliedOpId :
+    'schedule-manager-' + crypto.randomBytes(16).toString('hex');
+  // הגרסה נגזרת ממזהה הפעולה, ולכן ניסיון חוזר עם אותה פעולה
+  // נשאר בדיוק אותו מינוי ולא מייצר הרשאה שנייה.
+  const version = 'sm_' + crypto.createHash('sha256').update(opId + ':' + user.uid + ':' + enabled)
+    .digest('hex').slice(0, 40);
+  const desired = Object.assign({}, before);
+  if (enabled) {
+    desired.schedule_manager = true;
+    desired.schedule_manager_version = version;
+  } else {
+    delete desired.schedule_manager;
+    delete desired.schedule_manager_version;
+  }
+  if (JSON.stringify(desired).length > 900) {
+    throw new HttpsError('invalid-argument', 'ההרשאות ארוכות מדי. לא בוצע שינוי.');
+  }
+
+  const intentFingerprint = identityCoordinatorModule.stableHash({
+    kind: 'set_schedule_manager', uid: user.uid, enabled: enabled,
+    // זו הכוונה הבלתי משתנה של בקשת המנהל. אסור לכלול כאן את
+    // before/desired: אחרי הצלחה הם משתנים, ואז ניסיון חוזר עם
+    // אותו מזהה פעולה היה נראה בטעות כפעולה אחרת.
+    stationId: stationId, version: version
+  });
+  const acquired = await identityCoordinator.acquireClaimsChange({
+    uid: user.uid,
+    opId: opId,
+    kind: 'set_schedule_manager',
+    actorUid: auth.uid,
+    actorEmail: auth.token.email,
+    previousClaims: before,
+    desiredClaims: desired,
+    desiredState: {
+      kind: 'schedule_manager_grant', uid: user.uid, stationId: stationId,
+      enabled: enabled, version: version
+    },
+    intentFingerprint: intentFingerprint,
+    auditAction: enabled ? 'grant_schedule_manager' : 'revoke_schedule_manager',
+    auditDetails: {
+      email: String(user.email || '').toLowerCase(), stationId: stationId,
+      before_enabled: before.schedule_manager === true, after_enabled: enabled
+    },
+    planSummary: {
+      kind: 'set_schedule_manager', role: role, stationId: stationId,
+      enabled: enabled
+    }
+  });
+  const operation = acquired.operation || await identityCoordinator.getOperation(user.uid);
+  const result = {
+    ok: true, uid: user.uid, enabled: enabled,
+    message: enabled ?
+      'תפקיד אחראי/ת הסידור הוענק. המשתמש צריך להתנתק ולהתחבר מחדש.' :
+      'תפקיד אחראי/ת הסידור בוטל. הגישה לעריכת סידור נחסמה מיד.'
+  };
+  if (acquired.type === 'completed') return operation.result;
+  return identityCoordinator.runClaimsChange(user.uid, operation.op_id, result);
 });
 
 // ממשיך רק תוכנית זהות שכבר ננעלה בשרת. הלקוח אינו שולח כאן
@@ -988,7 +1200,7 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
     if (uid !== auth.uid || email !== SUPER_ADMIN_EMAIL) {
       throw new HttpsError('permission-denied', 'אתחול מנהל ניתן להמשך רק בידי אותו חשבון.');
     }
-  } else if (['approve', 'set_role', 'clear_role'].indexOf(before.kind) === -1) {
+  } else if (['approve', 'set_role', 'clear_role', 'set_schedule_manager'].indexOf(before.kind) === -1) {
     throw new HttpsError('failed-precondition', 'סוג פעולת הזהות אינו ניתן להמשך.');
   }
 
@@ -1019,6 +1231,15 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
     return identityCoordinator.runBootstrap(uid, operation.op_id, {
       ok: true,
       message: 'הגדרת מנהל המערכת הושלמה. התחבר מחדש כדי לרענן הרשאות.'
+    });
+  }
+  if (operation.kind === 'set_schedule_manager') {
+    const enabled = operation.desired_claims && operation.desired_claims.schedule_manager === true;
+    return identityCoordinator.runClaimsChange(uid, operation.op_id, {
+      ok: true, uid: uid, enabled: enabled,
+      message: enabled ?
+        'תפקיד אחראי/ת הסידור הוענק. המשתמש צריך להתנתק ולהתחבר מחדש.' :
+        'תפקיד אחראי/ת הסידור בוטל. הגישה לעריכת סידור נחסמה מיד.'
     });
   }
   return identityCoordinator.runAssignment(uid, operation.op_id, {

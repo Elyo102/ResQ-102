@@ -7,6 +7,13 @@ const ROLES = {
            stationId: 'eilat_102', districtId: 'south', shift: 'C' },
   firefighter: { role: 'firefighter', emp: '17',
                  stationId: 'eilat_102', districtId: 'south', shift: 'A' },
+  // "אחראי/ת סידור" הוא כושר נוסף, ולא תפקיד ראשי. הבדל זה
+  // חיוני לבדיקות: אותו לוחם אש יכול לצפות ולערוך רק כשה-claim
+  // המפורש קיים ומותאם לגרסה שהשרת נתן לו.
+  schedule_manager: { role: 'firefighter', emp: '19',
+                      stationId: 'eilat_102', districtId: 'south', shift: 'A',
+                      schedule_manager: true,
+                      schedule_manager_version: 'sm_browser_test_v1' },
   team:        { role: 'team_leader', emp: '18',
                  stationId: 'eilat_102', districtId: 'south', shift: 'A' },
   // מפקד משמרת ב'. לא מנהל-על ולא רכז — ולכן נעול למשמרת שלו.

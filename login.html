@@ -463,8 +463,8 @@ import { DISTRICTS, stationsInDistrict, stationName, districtName,
          subStationsForStation } from './stations.js?v=40';
 import { renderNav, clearNav } from './nav.js?v=40';
 import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=40';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42f1';
-import { APP_VERSION, APP_DATE } from './version.js?v=42f1';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42f2';
+import { APP_VERSION, APP_DATE } from './version.js?v=42f2';
 import { watchCallouts } from './callout.js?v=40';
 import { initBulletin, destroyBulletin } from './bulletin.js?v=40';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -898,7 +898,11 @@ function returnToCaller(){
   let next = '';
   try { next = new URLSearchParams(location.search).get('next') || ''; }
   catch (ignore) {}
-  if (RETURNABLE.indexOf(next) === -1) return false;
+  // קישורי פוש לסידור האישי כוללים ?tab=mine. מאפשרים רק את
+  // שלושת הטאבים הידועים של אותו קובץ — לא כתובת חופשית שעלולה
+  // להפוך את פרמטר next לניתוב חיצוני.
+  const isScheduleTab = /^schedule-management\.html\?tab=(?:station|mine|manage)$/.test(next);
+  if (RETURNABLE.indexOf(next) === -1 && !isScheduleTab) return false;
   location.replace('./' + next);
   return true;
 }
