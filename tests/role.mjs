@@ -123,6 +123,11 @@ for (const role of Object.keys(EXPECT)) {
   });
   await ctx.addInitScript('window.__SMOKE_ROLE = ' + JSON.stringify(role) + ';');
   const pg = await ctx.newPage();
+  // פעולות אופציונליות נוגעות גם במסכים שחסומים לתפקיד הנבדק.
+  // ברירת המחדל של Playwright (30 שניות) הפכה כל כפתור שאינו קיים
+  // להמתנה ארוכה, ולכן משתמש pending נראה כמו בדיקה תקועה.
+  pg.setDefaultTimeout(2_000);
+  pg.setDefaultNavigationTimeout(10_000);
 
   await pg.goto('http://localhost:'+PORT+'/login.html', {waitUntil:'load'});
 

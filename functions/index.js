@@ -23,6 +23,10 @@ const attendanceShadow = require('./attendance-shadow-runner');
 const bulkImportDisabled = require('./bulk-import-disabled');
 const registrationSafety = require('./registration-safety');
 const identityCoordinatorModule = require('./identity-coordinator');
+const scheduleCalendar = require('./schedule-calendar-engine');
+const schedulePublication = require('./schedule-publication');
+const scheduleService = require('./schedule-service');
+const scheduleRuntimeModule = require('./schedule-runtime');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -123,6 +127,30 @@ const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator(
 const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
   db: db,
   admin: admin
+});
+const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
+  db: db,
+  FieldValue: FV,
+  clock: function () { return new Date().toISOString(); },
+  hash: function (value) {
+    return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+  },
+  randomId: randomToken,
+  createEngine: scheduleCalendar.createCalendarEngine,
+  createPublication: schedulePublication.createPublication,
+  createService: scheduleService.createScheduleService,
+  isSuper: isSuperAdmin,
+  sendPush: async function (sid, uid, type, title, body, url, important) {
+    const result = await pushToOne(sid, uid, type, title, body, url, important);
+    if (!result || result.failed || Number(result.sent || 0) < 1) {
+      const code = result && result.error_code
+        ? result.error_code : 'NO_ACTIVE_PUSH_TOKEN';
+      const error = new Error(code);
+      error.code = code;
+      throw error;
+    }
+    return result;
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -272,6 +300,30 @@ function requireSuperAdmin(req) {
     throw new HttpsError('permission-denied', 'הפעולה מותרת למנהל המערכת בלבד.');
   }
   return auth;
+}
+
+// מזהה התחנה לפעולות שהמשתמש מפעיל נקבע רק מההרשאות
+// החתומות שלו. אין ברירת מחדל לתחנת הפיילוט: חשבון ללא
+// שיוך תקין נעצר כדי שלא יכתוב בטעות נתונים לתחנה אחרת.
+const STATION_ID_RE = /^[a-z0-9_-]{2,80}$/;
+
+function callerStation(req, auth) {
+  const data = (req && req.data) || null;
+  if (data && Object.prototype.hasOwnProperty.call(data, 'stationId')) {
+    throw new HttpsError('invalid-argument',
+      'התחנה נקבעת לפי ההרשאות של החשבון ואינה נשלחת מהלקוח.');
+  }
+
+  const sid = String((auth && auth.token && auth.token.stationId) || '');
+  if (!sid) {
+    throw new HttpsError('failed-precondition',
+      'לחשבון אין שיוך לתחנה. פנה למנהל המערכת.');
+  }
+  if (!STATION_ID_RE.test(sid)) {
+    throw new HttpsError('failed-precondition',
+      'שיוך התחנה בחשבון אינו תקין. פנה למנהל המערכת.');
+  }
+  return sid;
 }
 
 // ---------- שער השיבוץ ----------
@@ -2512,17 +2564,24 @@ function isWorking(rotations, overrides, crew, dateKey) {
   return !!(ov && Array.isArray(ov.extra_crews) && ov.extra_crews.indexOf(crew) !== -1);
 }
 
-async function loadSchedule() {
+async function loadSchedule(sid) {
+  if (typeof sid !== 'string' || !sid.trim() || sid !== sid.trim()) {
+    throw new Error('loadSchedule requires an explicit station id');
+  }
   const rotations = [];
   const overrides = {};
   try {
-    const rs = await db.collection('stations/' + STATION_ID + '/rotations').get();
+    const rs = await db.collection('stations/' + sid + '/rotations').get();
     rs.forEach(d => rotations.push(d.data() || {}));
-  } catch (e) { console.error('rotations read failed', e); }
+  } catch (e) {
+    throw new Error('schedule rotations read failed');
+  }
   try {
-    const os = await db.collection('stations/' + STATION_ID + '/shift_overrides').get();
+    const os = await db.collection('stations/' + sid + '/shift_overrides').get();
     os.forEach(d => { overrides[d.id] = d.data() || {}; });
-  } catch (e) { console.error('overrides read failed', e); }
+  } catch (e) {
+    throw new Error('schedule overrides read failed');
+  }
   return { rotations, overrides };
 }
 
@@ -2596,7 +2655,7 @@ function scanPerson(person, recs, sched, mk, limit, cutoff) {
 // הנוכחי נסרק עד היום בלבד, אחרת כל משמרת עתידית נספרת
 // כדיווח חסר.
 async function scanMonth(mk, cutoff) {
-  const sched = await loadSchedule();
+  const sched = await loadSchedule(STATION_ID);
   const cfg = await hrConfig();
 
   const people = [];
@@ -3102,7 +3161,9 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     let snap;
     try {
       snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();
-    } catch (e) { return { sent: 0 }; }
+    } catch (e) {
+      return { sent: 0, failed: true, error_code: String((e && e.code) || 'TOKEN_READ_FAILED') };
+    }
     if (!snap.exists) return { sent: 0 };
 
     const v = snap.data() || {};
@@ -3112,7 +3173,8 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     // קריאת פתע נמצאת ברשימה הזו מסיבה אחרת: היא הזעקה, ומי
     // שכיבה התראות עדיין צריך להגיע לתחנה.
     const must = type === 'swap_mine' || type === 'report_mine' ||
-                 type === 'callout'   || type === 'guard_mine';
+                 type === 'callout'   || type === 'guard_mine' ||
+                 type === 'schedule_mine';
     if (!must && prefs[type] === false) return { sent: 0 };
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
@@ -3136,7 +3198,7 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
       });
     } catch (e) {
       console.error('push failed for ' + uid + ': ' + e.message);
-      return { sent: 0 };
+      return { sent: 0, failed: true, error_code: String((e && e.code) || 'FCM_SEND_FAILED') };
     }
 
     let sent = 0;
@@ -3367,7 +3429,7 @@ exports.onSwapChange = onDocumentWritten(
     // שיהיו חוקיות אחרי שהצד השני יבחר תאריך אחר.
     if (now === 'approved' && was !== 'approved') {
       try {
-        const sched = await loadSchedule();
+        const sched = await loadSchedule(sid);
         const apSnap = await db.collection('stations/' + sid + '/swaps')
           .where('status', '==', 'approved').get();
         const approved = [];
@@ -3399,10 +3461,22 @@ exports.onSwapChange = onDocumentWritten(
           return;
         }
       } catch (e) {
-        // כשל בבדיקה לא מבטל החלפה שאושרה בידי שני מפקדים.
-        // הוא נרשם, וההחלפה ממשיכה — שקט עדיף על ביטול שרירותי
-        // שאיש לא יבין.
-        console.error('rest check failed', e);
+        // כשל זמני בקריאה אינו יכול להפוך לאישור שקט. מחזירים את
+        // ההחלפה לשלב האישור האחרון, כך שאפשר לנסות שוב אחרי שהמסד
+        // חזר, בלי להמציא תוצאת מנוחה ובלי למחוק את הבקשה.
+        await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
+          status: 'cmd_to',
+          rest_check_pending: true,
+          rest_check_failed_at: new Date().toISOString()
+        }, { merge: true });
+
+        await pushToUsers(sid, both, 'swap_mine',
+          'ההחלפה ממתינה לבדיקת מנוחה',
+          'לא ניתן היה להשלים את בדיקת המנוחה. האישור לא נכנס לתוקף.',
+          url, true);
+
+        console.error('rest check failed; swap returned to cmd_to');
+        return;
       }
     }
 
@@ -3558,7 +3632,7 @@ exports.sendBroadcast = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3670,7 +3744,7 @@ exports.sendCallout = onCall(
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3825,7 +3899,7 @@ exports.closeCallout = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3888,7 +3962,7 @@ exports.guardSignup = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -3937,7 +4011,7 @@ exports.assignGuard = onCall(async (req) => {
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
   const t = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const isSuper = t.super === true ||
                   String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   const role = t.role || '';
@@ -4159,8 +4233,7 @@ exports.claimPushToken = onCall(async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
-  const t   = auth.token || {};
-  const sid = t.stationId || PUSH_STATION;
+  const sid = callerStation(req, auth);
   const me  = auth.uid;
 
   const token = String((req.data || {}).token || '').trim();
@@ -4981,3 +5054,84 @@ exports.systemHealth = onSchedule({
     button(CONSOLE_URL, 'לקונסולה')
   ));
 });
+
+
+// =======================================================================
+//  מנוע סידור חודשי חדש · 42F
+// =======================================================================
+// ברירת המחדל היא off. עצם פריסת הקוד אינה מפעילה מנוע, אינה משנה
+// סידור קיים ואינה שולחת הודעה. הפעלה דורשת מסמך מדיניות, מקור חתום
+// ומצב runtime מפורש. התחנה לעולם אינה מתקבלת מגוף הבקשה.
+
+async function invokeSchedule(method, req) {
+  try {
+    return await scheduleRuntime[method](req);
+  } catch (error) {
+    if (error instanceof scheduleRuntimeModule.ScheduleRuntimeError) {
+      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, {
+        schedule_code: error.code
+      });
+    }
+    throw error;
+  }
+}
+
+exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getStatus', req));
+
+exports.getScheduleManagerSetup = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getManagerSetup', req));
+
+exports.runSchedulePlanner = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('runPlanner', req));
+
+exports.getScheduleDraftPreview = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getDraftPreview', req));
+
+exports.publishSchedule = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('publish', req));
+
+exports.rollbackSchedule = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 540,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('rollback', req));
+
+exports.getMyScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getMy', req));
+
+exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getStation', req));
+
+exports.respondToSchedule = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('respond', req));
+
+// טריגר השליחה רץ רק כאשר רשומת outbox עוברת במפורש ל-queued.
+// הרשומות נוצרות blocked ורק הטרנזקציה שמחליפה את הפרסום הפעיל
+// משחררת אותן, לכן פוש אינו יכול להקדים פרסום.
+exports.deliverScheduleOutbox = onDocumentWritten({
+  document: 'stations/{sid}/schedule_publications/{publicationId}/schedule_outbox/{outboxId}'
+}, async (event) => {
+  const after = event.data && event.data.after;
+  if (!after || !after.exists) return;
+  const next = after.data() || {};
+  const before = event.data.before && event.data.before.exists
+    ? (event.data.before.data() || {}) : {};
+  if (next.status !== 'queued' || before.status === 'queued') return;
+  await scheduleRuntime.deliverOutbox(after.ref);
+});
+
+// אם פונקציית הפרסום הסתיימה אחרי החלפת המצב הפעיל ולפני ששחררה
+// את התור, או אם FCM היה זמנית לא זמין, הריצה הזאת ממשיכה בבטחה.
+exports.resumeScheduleOutbox = onSchedule({
+  schedule: 'every 5 minutes',
+  timeZone: 'Asia/Jerusalem',
+  timeoutSeconds: 120,
+  region: 'europe-west1'
+}, async () => scheduleRuntime.resumeOutbox());

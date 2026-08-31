@@ -13,7 +13,7 @@
 // אף אחד לא בולט.
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
-  { href: 'schedule.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },

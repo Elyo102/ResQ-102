@@ -568,6 +568,9 @@ await blocked('🔒 כבאי מעביר את עצמו למשמרת אחרת',
 await blocked('🔒 כבאי משנה לעצמו מספר עובד',
   updateDoc(doc(ff, `stations/${SID}/users/u_ff`), { employee_number: '999' }));
 
+await blocked('🔒 כבאי אינו ממנה את עצמו לאחראי סידור',
+  updateDoc(doc(ff, `stations/${SID}/users/u_ff`), { schedule_manager: true }));
+
 await blocked('🔒 כבאי מפעיל מחדש חשבון מושבת',
   updateDoc(doc(ff, `stations/${SID}/users/u_ff`), { is_active: false }));
 
@@ -576,6 +579,9 @@ await blocked('🔒 כבאי מוחק את הפרופיל שלו',
 
 await ok('רכז כוח אדם מעדכן פרופיל של כבאי',
   updateDoc(doc(hrUser, `stations/${SID}/users/u_ff`), { full_name: 'שם חדש' }));
+
+await blocked('🔒 רכז כוח אדם אינו ממנה אחראי סידור דרך הפרופיל',
+  updateDoc(doc(hrUser, `stations/${SID}/users/u_ff`), { schedule_manager: true }));
 
 // ============================================================
 head('3 · ספריית הכבאים — למה "מחובר" אינו "עובד"');
@@ -1472,6 +1478,36 @@ await blocked('🔒 מפקד צוות קורא חתימה שמורה של כבא
 await ok('מפקד צוות כן רואה את הסידור',
   getDoc(doc(teamA, `stations/${SID}/roster/u_ff`)).catch(() => null)
     .then(() => getDocs(collection(teamA, `stations/${SID}/broadcasts`))));
+
+// ============================================================
+head('20 · מנוע סידור חודשי — לקוחות אינם עוקפים את השרת');
+// ============================================================
+// המידע במסלולים האלה כולל תמונת סגל מלאה, טיוטות, תגובות ותור
+// התראות. כל הצפייה והעריכה נעשות דרך Callable Functions בלבד.
+const SCHEDULE_PATHS = [
+  `stations/${SID}/schedule_state/runtime`,
+  `stations/${SID}/schedule_policies/policy_v1`,
+  `stations/${SID}/schedule_sources/source_v1`,
+  `stations/${SID}/schedule_sources/source_v1/people/u_ff`,
+  `stations/${SID}/schedule_drafts/draft_v1`,
+  `stations/${SID}/schedule_drafts/draft_v1/rows/row_v1`,
+  `stations/${SID}/schedule_publications/pub_v1`,
+  `stations/${SID}/schedule_publications/pub_v1/schedule_outbox/out_v1`,
+  `stations/${SID}/schedule_responses/response_v1`,
+  `stations/${SID}/schedule_audit/audit_v1`
+];
+
+for (const [roleName, client] of [
+  ['לוחם אש', ff], ['מפקד תחנה', stCmd], ['מנהל-על', superA],
+  ['משתמש מתחנה אחרת', outside]
+]) {
+  for (const path of SCHEDULE_PATHS) {
+    await blocked(`🔒 ${roleName} אינו קורא ישירות ${path}`,
+      getDoc(doc(client, path)));
+    await blocked(`🔒 ${roleName} אינו כותב ישירות ${path}`,
+      setDoc(doc(client, path), { tampered: true }));
+  }
+}
 
 // ============================================================
 //  סיכום

@@ -417,10 +417,8 @@ service cloud.firestore {
         // וסטטוס פעיל נקבעים בשרת ולא ניתנים לשינוי מהדפדפן.
         allow update: if signedIn()
                       && request.auth.uid == uid
-                      && request.resource.data.role          == resource.data.role
-                      && request.resource.data.crew          == resource.data.crew
-                      && request.resource.data.employee_number == resource.data.employee_number
-                      && request.resource.data.is_active     == resource.data.is_active;
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['full_name', 'phone', 'email', 'photo_url']);
 
         // ---------- רכז/ת כוח אדם ----------
         //
@@ -447,9 +445,8 @@ service cloud.firestore {
         // כל השאר — שם, טלפון, מייל, שיוך משמרת — פתוח לה,
         // כולל שיוך משמרת, בדיוק כמו היום.
         allow update: if hr(sid)
-                      && request.resource.data.employee_number == resource.data.employee_number
-                      && request.resource.data.get('role', '') == resource.data.get('role', '')
-                      && request.resource.data.is_active == resource.data.is_active;
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['full_name', 'phone', 'email', 'crew', 'shift', 'photo_url']);
 
         // מנהל-על — בלי מגבלה. הוא גם היחיד שמעביר מספר עובד.
         allow update: if isSuper();
@@ -1418,6 +1415,52 @@ service cloud.firestore {
         match /attendance_shadow_people/{uid} {
           allow read, write: if false;
         }
+      }
+
+      // ---------- מנוע סידור חודשי חדש ----------
+      // כל הנתיבים האלה הם תמונות שרת חתומות: מדיניות, מקור,
+      // טיוטות, פרסומים, תור פוש, תגובות ויומן ביקורת. המסכים
+      // משתמשים רק בפונקציות Callable שמבצעות זיהוי תחנה והרשאה
+      // מול מסמך משתמש חי. גם מנהל-על אינו עוקף את השער הזה דרך
+      // SDK בדפדפן, ולכן אין מסלול כתיבה או קריאה ישירה בכלל.
+      match /schedule_state/{stateId} {
+        allow read, write: if false;
+      }
+      match /schedule_policies/{policyId} {
+        allow read, write: if false;
+      }
+      match /schedule_sources/{sourceId} {
+        allow read, write: if false;
+        match /{document=**} {
+          allow read, write: if false;
+        }
+      }
+      match /schedule_drafts/{draftId} {
+        allow read, write: if false;
+        match /{document=**} {
+          allow read, write: if false;
+        }
+      }
+      match /schedule_publications/{publicationId} {
+        allow read, write: if false;
+        match /rows/{rowId} {
+          allow read, write: if false;
+        }
+        match /events/{eventId} {
+          allow read, write: if false;
+        }
+        match /people/{uid} {
+          allow read, write: if false;
+        }
+        match /schedule_outbox/{notificationId} {
+          allow read, write: if false;
+        }
+      }
+      match /schedule_responses/{responseId} {
+        allow read, write: if false;
+      }
+      match /schedule_audit/{entryId} {
+        allow read, write: if false;
       }
 
       match /monthly_reports/{docId} {
