@@ -31,11 +31,110 @@ export function isIOS() {
 // במטמון — דפדפן מרשה אחד לכל תחום.
 export function registerSW() {
   if (!('serviceWorker' in navigator)) return Promise.resolve(null);
-  return navigator.serviceWorker.register('./firebase-messaging-sw.js')
+  return navigator.serviceWorker.register('./firebase-messaging-sw.js', { updateViaCache: 'none' })
     .catch(function (e) {
       console.warn('SW registration: ' + (e && e.message));
       return null;
     });
+}
+
+function releaseCacheName(version) {
+  const key = String(version || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return 'resq-v' + key + '-release1';
+}
+
+// מבקש מעובד חדש להפוך לפעיל, אבל לא מחכה לנצח. ההאזנה
+// נרשמת לפני ההודעה כדי שגם מעבר מצב מהיר לא ילך לאיבוד.
+export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
+  if (!worker || worker.state === 'activated') return Promise.resolve(true);
+  const limit = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 5000;
+
+  return new Promise(function (resolve) {
+    let done = false;
+    let timer = null;
+
+    function cleanup() {
+      if (timer !== null) clearTimeout(timer);
+      if (worker.removeEventListener) worker.removeEventListener('statechange', onState);
+      if (serviceWorker && serviceWorker.removeEventListener) {
+        serviceWorker.removeEventListener('controllerchange', onController);
+      }
+    }
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(Boolean(ok));
+    }
+    function onState() {
+      if (worker.state === 'activated') finish(true);
+      else if (worker.state === 'redundant') finish(false);
+    }
+    function onController() { finish(true); }
+
+    if (worker.addEventListener) worker.addEventListener('statechange', onState);
+    if (serviceWorker && serviceWorker.addEventListener) {
+      serviceWorker.addEventListener('controllerchange', onController);
+    }
+    timer = setTimeout(function () { finish(worker.state === 'activated'); }, limit);
+
+    try { worker.postMessage({ type: 'RESQ_SKIP_WAITING' }); }
+    catch (ignore) { finish(false); }
+    onState();
+  });
+}
+
+// רענון יזום מהפרופיל. מוחקים רק מטמוני ResQ ישנים ורק אחרי
+// שהעובד החדש הופעל; מטמון חדש או מטמון של רכיב אחר לעולם לא נמחק.
+export async function refreshInstalledApp(options) {
+  const o = options || {};
+  const serviceWorker = o.serviceWorker ||
+    (typeof navigator !== 'undefined' ? navigator.serviceWorker : null);
+  const cacheStorage = o.cacheStorage ||
+    (typeof caches !== 'undefined' ? caches : null);
+  const locationLike = o.location ||
+    (typeof window !== 'undefined' ? window.location : null);
+  const now = typeof o.now === 'function' ? o.now : Date.now;
+  let workerActivated = true;
+
+  if (serviceWorker && typeof serviceWorker.getRegistration === 'function') {
+    let registration = null;
+    try { registration = await serviceWorker.getRegistration(); }
+    catch (ignore) { workerActivated = false; }
+
+    if (registration) {
+      let updateOk = true;
+      try { await registration.update(); }
+      catch (ignore) { updateOk = false; }
+      const candidate = registration.waiting || registration.installing;
+      if (candidate) {
+        workerActivated = await activateAvailableWorker(
+          candidate, serviceWorker, o.timeoutMs
+        );
+      } else if (!updateOk) workerActivated = false;
+    }
+  }
+
+  const keep = releaseCacheName(o.version);
+  const deleted = [];
+  if (workerActivated && cacheStorage && typeof cacheStorage.keys === 'function') {
+    try {
+      const keys = await cacheStorage.keys();
+      const old = keys.filter(function (key) {
+        return String(key).startsWith('resq-') && key !== keep;
+      });
+      await Promise.all(old.map(async function (key) {
+        if (await cacheStorage.delete(key)) deleted.push(key);
+      }));
+    } catch (ignore) {}
+  }
+
+  if (locationLike && typeof locationLike.replace === 'function') {
+    const next = new URL(locationLike.href);
+    next.searchParams.set('updated', String(o.version) + '-' + now());
+    locationLike.replace(next.toString());
+  }
+  return { workerActivated, keptCache: keep, deletedCaches: deleted };
 }
 
 // מציג שורת הזמנה להתקנה. מחזיר true אם הוצגה.
