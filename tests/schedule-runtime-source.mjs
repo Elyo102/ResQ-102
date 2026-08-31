@@ -58,6 +58,12 @@ check('source and policy content are server-digested', () => {
   assert.ok(runtime.includes('const actual = digest(basis)'));
   assert.ok((runtime.match(/content_digest/g) || []).length >= 5);
 });
+check('digest ordering is deterministic across operating systems', () => {
+  assert.ok(runtime.includes('function compareCanonical(left, right)'));
+  assert.equal(runtime.includes('.localeCompare('), false);
+  assert.ok(integration.includes('assert.notDeepEqual(declaredPeople'));
+  assert.ok(integration.includes('.sort(compareCanonical)'));
+});
 check('source subcollection counts are verified', () => {
   for (const field of ['person_count', 'availability_count', 'locked_count', 'event_count']) {
     assert.ok(runtime.includes(field), field);
@@ -236,5 +242,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 42);
-console.log('\n42 schedule runtime source checks passed.');
+assert.equal(passed, 43);
+console.log('\n43 schedule runtime source checks passed.');

@@ -64,6 +64,14 @@ function stable(value) {
   return JSON.stringify(value === undefined ? null : value);
 }
 
+// Digests must be identical on every OS and Node/ICU build. localeCompare()
+// is locale-sensitive, so every order that feeds a digest uses code-unit order.
+function compareCanonical(left, right) {
+  const a = String(left);
+  const b = String(right);
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+
 function isoDayOffset(iso, offset) {
   if (!DATE_RE.test(String(iso || ''))) {
     throw new ScheduleRuntimeError('date-invalid', 'התאריך חייב להיות בצורת YYYY-MM-DD', 'invalid-argument');
@@ -241,7 +249,7 @@ function createScheduleRuntime(deps) {
 
   async function readSorted(collection) {
     const snap = await collection.get();
-    return snap.docs.slice().sort((a, b) => a.id.localeCompare(b.id));
+    return snap.docs.slice().sort((a, b) => compareCanonical(a.id, b.id));
   }
 
   async function loadPolicy(ctx, id) {
@@ -371,7 +379,7 @@ function createScheduleRuntime(deps) {
         person: entry.person,
         role: entry.role || null
       };
-    }).sort((a, b) => stable(a).localeCompare(stable(b)));
+    }).sort((a, b) => compareCanonical(stable(a), stable(b)));
   }
 
   function effectiveSource(ctx, source, policy, overrides) {
@@ -465,9 +473,9 @@ function createScheduleRuntime(deps) {
     const rows = plan.rows.slice().sort((a, b) => {
       const ak = a.date + '|' + a.sub_station;
       const bk = b.date + '|' + b.sub_station;
-      return ak.localeCompare(bk);
+      return compareCanonical(ak, bk);
     });
-    const orderedEvents = (events || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const orderedEvents = (events || []).slice().sort((a, b) => compareCanonical(a.id, b.id));
     const peopleById = new Map();
     (people || []).forEach((person) => {
       if (!person || !nonEmpty(person.id) || peopleById.has(person.id)) return;
@@ -525,9 +533,9 @@ function createScheduleRuntime(deps) {
     }
     const pair = await Promise.all([rowsQuery.get(), eventsQuery.get()]);
     const rows = pair[0].docs.map((doc) => (doc.data() || {}).row)
-      .sort((a, b) => (a.date + '|' + a.sub_station).localeCompare(b.date + '|' + b.sub_station));
+      .sort((a, b) => compareCanonical(a.date + '|' + a.sub_station, b.date + '|' + b.sub_station));
     const events = pair[1].docs.map((doc) => doc.data() || {})
-      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      .sort((a, b) => compareCanonical(a.id, b.id));
     let peopleDocs;
     if (Array.isArray(dates) && dates.length) {
       const ids = new Set();
@@ -558,7 +566,7 @@ function createScheduleRuntime(deps) {
       rows, summary: meta.summary || { blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0 }
     };
     if (!dates) {
-      const orderedPeople = roster.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const orderedPeople = roster.slice().sort((a, b) => compareCanonical(a.id, b.id));
       const actualDigest = digest({
         contract: {
           station_id: plan.station_id, source_snapshot: plan.source_snapshot,

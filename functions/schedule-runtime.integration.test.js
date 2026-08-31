@@ -29,6 +29,11 @@ function stable(value) {
   return JSON.stringify(value === undefined ? null : value);
 }
 function digest(value) { return hash(stable(value)); }
+function compareCanonical(left, right) {
+  const a = String(left);
+  const b = String(right);
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
 
 const policyBasis = {
   station_id: SID,
@@ -72,10 +77,12 @@ function sourceBasis() {
     revision: 'source-r1',
     carry: {},
     counts: { people: people.length, availability: 0, locked: 0, events: events.length },
-    people: people.map(([id, data]) => Object.assign({ id }, data)),
+    people: people.map(([id, data]) => Object.assign({ id }, data))
+      .sort((a, b) => compareCanonical(a.id, b.id)),
     availability: {},
     locked: {},
     events: events.map(([id, data]) => Object.assign({ id }, data))
+      .sort((a, b) => compareCanonical(a.id, b.id))
   };
 }
 
@@ -115,6 +122,12 @@ async function seed() {
   }));
   const source = station.collection('schedule_sources').doc('source_v1');
   const basis = sourceBasis();
+  const declaredPeople = people.map(([id]) => id);
+  assert.notDeepEqual(declaredPeople, basis.people.map((person) => person.id));
+  assert.deepEqual(basis.people.map((person) => person.id),
+    basis.people.map((person) => person.id).slice().sort(compareCanonical));
+  assert.deepEqual(basis.events.map((event) => event.id),
+    basis.events.map((event) => event.id).slice().sort(compareCanonical));
   await source.set({
     station_id: SID,
     version: basis.version,
