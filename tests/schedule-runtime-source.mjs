@@ -129,6 +129,9 @@ check('publication retry resumes the same request rather than duplicating it', (
 check('outbox delivery rechecks the active publication', () => {
   assert.ok(runtime.includes("publication_id !== data.publication_id"));
   assert.ok(runtime.includes("status: 'cancelled'"));
+  assert.ok(runtime.includes('runtimeData.mode !== MODE.NEW'));
+  assert.ok(runtime.includes("cancel_reason: 'runtime-not-new'"));
+  assert.ok(integration.includes('off and shadow cancel queued retry and expired sending'));
 });
 check('push retries end in a dead-letter state', () => {
   assert.ok(runtime.includes('publication.planRetry('));

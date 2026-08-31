@@ -388,6 +388,35 @@ async function test(name, fn) {
     assert.equal((await outbox.docs[0].ref.get()).data().status, 'retry');
   });
 
+  await test('off and shadow cancel queued retry and expired sending pushes before delivery', async () => {
+    const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
+    const outbox = await db.collection('stations/' + SID + '/schedule_publications/'
+      + active.publication_id + '/schedule_outbox').limit(1).get();
+    assert.ok(outbox.size > 0);
+    const ref = outbox.docs[0].ref;
+    let sendCalls = 0;
+    const gated = runtime(async () => { sendCalls += 1; return { sent: 1 }; });
+    for (const mode of ['off', 'shadow']) {
+      await db.doc('stations/' + SID + '/schedule_state/runtime').update({ mode });
+      for (const status of ['queued', 'retry', 'sending']) {
+        await ref.update({
+          status,
+          next_attempt_at: null,
+          lease_token: status === 'sending' ? 'expired-' + mode : null,
+          lease_until: status === 'sending' ? new Date('2026-08-30T00:00:00.000Z') : null,
+          cancel_reason: null
+        });
+        if (status === 'queued') await gated.deliverOutbox(ref);
+        else await gated.resumeOutbox();
+        const after = (await ref.get()).data();
+        assert.equal(after.status, 'cancelled', mode + '/' + status);
+        assert.equal(after.cancel_reason, 'runtime-not-new', mode + '/' + status);
+      }
+    }
+    assert.equal(sendCalls, 0);
+    await db.doc('stations/' + SID + '/schedule_state/runtime').update({ mode: 'new' });
+  });
+
   await test('an expired sending lease is recovered instead of losing the push forever', async () => {
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     const outbox = await db.collection('stations/' + SID + '/schedule_publications/'
@@ -409,8 +438,8 @@ async function test(name, fn) {
     assert.equal((await ref.get()).data().status, 'cancelled');
   });
 
-  assert.equal(passed, 18);
-  console.log('\n18 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 19);
+  console.log('\n19 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

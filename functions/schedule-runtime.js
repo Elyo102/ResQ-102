@@ -1268,6 +1268,15 @@ function createScheduleRuntime(deps) {
       if (!snap.exists) return;
       const data = snap.data() || {};
       if (data.status !== 'queued') return;
+      const runtime = await tx.get(runtimeRef(data.station_id));
+      const runtimeData = runtime.exists ? (runtime.data() || {}) : {};
+      if (runtimeData.mode !== MODE.NEW) {
+        tx.update(ref, {
+          status: 'cancelled', cancel_reason: 'runtime-not-new',
+          cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
       const pointer = await tx.get(activeRef(data.station_id));
       if (!pointer.exists || (pointer.data() || {}).publication_id !== data.publication_id) {
         tx.update(ref, { status: 'cancelled', cancelled_at: FV.serverTimestamp() });
@@ -1333,6 +1342,7 @@ function createScheduleRuntime(deps) {
       .where('status', 'in', ['blocked', 'retry', 'sending', 'queued']).limit(100).get();
     let queued = 0;
     const now = Date.parse(clock());
+    const modeByStation = new Map();
     for (const doc of snap.docs) {
       const value = doc.data() || {};
       if (!ID_RE.test(String(value.station_id || '')) || !ID_RE.test(String(value.publication_id || ''))) continue;
@@ -1343,6 +1353,18 @@ function createScheduleRuntime(deps) {
       }
       if (value.status === 'retry' && nonEmpty(value.next_attempt_at)
           && Date.parse(value.next_attempt_at) > now) continue;
+      if (!modeByStation.has(value.station_id)) {
+        const runtime = await runtimeRef(value.station_id).get();
+        const runtimeData = runtime.exists ? (runtime.data() || {}) : {};
+        modeByStation.set(value.station_id, runtimeData.mode === MODE.NEW ? MODE.NEW : MODE.OFF);
+      }
+      if (modeByStation.get(value.station_id) !== MODE.NEW) {
+        await doc.ref.update({
+          status: 'cancelled', cancel_reason: 'runtime-not-new',
+          cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        continue;
+      }
       const pointer = await activeRef(value.station_id).get();
       if (pointer.exists && (pointer.data() || {}).publication_id === value.publication_id) {
         if (value.status === 'queued') await deliverOutbox(doc.ref);
