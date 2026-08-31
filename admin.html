@@ -327,17 +327,94 @@ const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callSetScheduleManager = httpsCallable(fns, 'setScheduleManager');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
+const callScheduleStatus = httpsCallable(fns, 'getScheduleRuntimeStatus');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 let roleOperationId = '';
 let scheduleManagerOperationId = '';
 let canManageSchedule = false;
+let adminAuthGeneration = 0;
+let adminUser = null;
+let adminClaims = {};
+let scheduleManagerTimer = null;
 
 function newOperationId(prefix){
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return prefix + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
+
+// הכרטיס החתום הוא רמז בלבד. מסמך המינוי החי נבדק בשרת כדי
+// שביטול יסתיר את כלי העריכה גם אם למכשיר נשאר כרטיס ישן.
+function effectiveAdminClaims(){
+  const claims = Object.assign({}, adminClaims);
+  if (!canManageSchedule) {
+    delete claims.schedule_manager;
+    delete claims.schedule_manager_version;
+  }
+  return claims;
+}
+
+function adminContextCurrent(generation, user){
+  return generation === adminAuthGeneration && auth.currentUser && user &&
+    auth.currentUser.uid === user.uid;
+}
+
+async function readLiveScheduleManager(generation, user){
+  if (!adminContextCurrent(generation, user) ||
+      adminClaims.schedule_manager !== true) return false;
+  try {
+    const result = await callScheduleStatus({});
+    if (!adminContextCurrent(generation, user)) return false;
+    return !!(result && result.data && result.data.manager === true);
+  } catch (ignore) {
+    // בעיית רשת אינה עילה לסמכות. נשארים לקריאה בלבד.
+    return false;
+  }
+}
+
+function renderAdminNav(){
+  if (!adminUser) return;
+  renderNav(effectiveAdminClaims(), 'admin.html', adminUser.email || '');
+}
+
+function applyScheduleManagerAccess(live, notice){
+  const wasManager = canManageSchedule;
+  canManageSchedule = live === true;
+  setRotationEditorAccess(canManageSchedule);
+  renderAdminNav();
+  if (wasManager && !canManageSchedule && notice) {
+    msg('rotMsg', notice, 'err');
+  }
+  return canManageSchedule;
+}
+
+async function refreshScheduleManagerAccess(notice){
+  const user = adminUser;
+  const generation = adminAuthGeneration;
+  if (!user || !adminContextCurrent(generation, user)) return false;
+  const live = await readLiveScheduleManager(generation, user);
+  if (!adminContextCurrent(generation, user)) return false;
+  applyScheduleManagerAccess(live, notice);
+  return canManageSchedule;
+}
+
+function startScheduleManagerMonitor(){
+  if (scheduleManagerTimer) clearInterval(scheduleManagerTimer);
+  if (adminClaims.schedule_manager !== true) return;
+  scheduleManagerTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      refreshScheduleManagerAccess('המינוי לעריכת הסידור אינו פעיל יותר.');
+    }
+  }, 60_000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' &&
+      adminClaims.schedule_manager === true) {
+    refreshScheduleManagerAccess('המינוי לעריכת הסידור אינו פעיל יותר.');
+  }
+});
 
 // בורר התפקידים נבנה מיד, לפני כל טעינת נתונים. אם הוא ייבנה
 // בתוך onAuthStateChanged, מסך שנתקע בטעינה היה מציג בורר ריק
@@ -436,6 +513,12 @@ $('btnVerify').onclick = async () => {
 $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
+  const generation = ++adminAuthGeneration;
+  if (scheduleManagerTimer) clearInterval(scheduleManagerTimer);
+  scheduleManagerTimer = null;
+  adminUser = null;
+  adminClaims = {};
+  canManageSchedule = false;
   if (!user) {
     goSignIn();
     return;
@@ -449,6 +532,10 @@ onAuthStateChanged(auth, async user => {
     const t = await user.getIdTokenResult();
     claims = t.claims || {};
   } catch (ignore) {}
+  if (!adminContextCurrent(generation, user)) return;
+
+  adminUser = user;
+  adminClaims = claims;
 
   const verified = user.emailVerified === true;
   const isSuper  = claims.super === true ||
@@ -460,7 +547,8 @@ onAuthStateChanged(auth, async user => {
   //
   // אימות מייל היה כאן תנאי סף והוסר מהמערכת ב-22.8 — התנאי נשאר
   // בקוד והשאיר מנהלים בחוץ.
-  const isScheduleManager = claims.schedule_manager === true;
+  const isScheduleManager = await readLiveScheduleManager(generation, user);
+  if (!adminContextCurrent(generation, user)) return;
   const roleOk  = isSuper || isScheduleManager;
   const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
                   (isScheduleManager ? ' · אחראי/ת סידור' : '') +
@@ -481,7 +569,7 @@ onAuthStateChanged(auth, async user => {
 
   $('denyCard').classList.add('hide');
 
-  renderNav(claims, 'admin.html', user.email || '');
+  renderAdminNav();
   watchCallouts(db, claims.stationId || STATION_ID, user.uid, { name: user.email || '' });
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
@@ -490,8 +578,8 @@ onAuthStateChanged(auth, async user => {
   // מקטעים למנהל-על בלבד.
   $('reqCard').classList.toggle('hide', !isSuper);
   $('usersCard').classList.toggle('hide', !isSuper);
-  canManageSchedule = isScheduleManager;
-  setRotationEditorAccess(canManageSchedule);
+  applyScheduleManagerAccess(isScheduleManager);
+  startScheduleManagerMonitor();
 
   if (isSuper) loadRequests();
   loadRotation();
@@ -836,7 +924,8 @@ function fullShiftHours(start, end){
 }
 
 $('btnRot').onclick = async () => {
-  if (!canManageSchedule) {
+  if (!await refreshScheduleManagerAccess(
+    'המינוי לעריכת הסידור אינו פעיל יותר.')) {
     msg('rotMsg', 'עריכת מחזור מותרת רק לאחראי/ת סידור שמונו לכך.', 'err');
     return;
   }

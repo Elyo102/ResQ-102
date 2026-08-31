@@ -464,6 +464,8 @@ async function test(name, fn) {
     await db.collection('schedule_manager_grants').doc('manager').update({ active: false });
     await assert.rejects(api.getManagerSetup(req('manager', 'commander')),
       (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    const status = await api.getStatus(req('manager', 'commander'));
+    assert.equal(status.manager, false);
   });
 
   await test('zero delivered devices is retried and is never marked sent', async () => {

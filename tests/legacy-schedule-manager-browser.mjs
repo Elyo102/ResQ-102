@@ -27,7 +27,7 @@ const server = http.createServer((request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = 'http://127.0.0.1:' + server.address().port + '/';
 
-async function prepare(context, role) {
+async function prepare(context, role, options = {}) {
   await context.route('**/firebasejs/**', (route) => {
     const name = route.request().url().split('/').pop().split('?')[0];
     const file = path.join(stub, name);
@@ -37,24 +37,42 @@ async function prepare(context, role) {
       body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};'
     });
   });
-  await context.addInitScript((roleName) => { window.__SMOKE_ROLE = roleName; }, role);
+  await context.addInitScript((input) => {
+    window.__SMOKE_ROLE = input.role;
+    window.__SCHEDULE_MANAGER_LIVE = input.live === true;
+    window.__CALLABLE_PLAN = input.plan || {};
+  }, {
+    role: role,
+    live: options.liveScheduleManager === undefined ? role === 'schedule_manager' :
+      options.liveScheduleManager === true,
+    plan: options.callablePlan || {}
+  });
 }
 
-async function schedulePage(browser, role) {
+async function schedulePage(browser, role, options) {
   const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-  await prepare(context, role);
+  await prepare(context, role, options);
   const page = await context.newPage();
   await page.goto(base + 'schedule.html', { waitUntil:'load' });
   await page.locator('#mainView:not(.hide)').waitFor();
   return { context, page };
 }
 
-async function adminPage(browser, role) {
+async function adminPage(browser, role, options) {
   const context = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
-  await prepare(context, role);
+  await prepare(context, role, options);
   const page = await context.newPage();
   await page.goto(base + 'admin.html', { waitUntil:'load' });
   await page.locator('#work:not(.hide)').waitFor();
+  return { context, page };
+}
+
+async function deniedAdminPage(browser, role, options) {
+  const context = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(context, role, options);
+  const page = await context.newPage();
+  await page.goto(base + 'admin.html', { waitUntil:'load' });
+  await page.locator('#denyCard:not(.hide)').waitFor();
   return { context, page };
 }
 
@@ -83,6 +101,65 @@ try {
       assert.equal(await page.locator('#ovrCard').isVisible(), true);
       assert.equal(await page.locator('#ovAdd').isVisible(), true);
       assert.equal(await page.locator('#ovAdd').isEnabled(), true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  await test('a stale schedule-manager token cannot expose or invoke the legacy override editor', async () => {
+    const { context, page } = await schedulePage(browser, 'schedule_manager', {
+      liveScheduleManager:false
+    });
+    try {
+      assert.equal(await page.locator('#ovrCard').isVisible(), false);
+      const nav = await page.$$eval('#appNav a', (items) => items.map((item) => item.textContent.trim()));
+      assert.equal(nav.includes('ניהול סידור עבודה'), false);
+      await page.evaluate(() => document.getElementById('ovAdd').click());
+      await page.waitForTimeout(30);
+      const writes = await page.evaluate(() => window.__FIRESTORE_WRITES || []);
+      assert.equal(writes.length, 0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  await test('a live editor is rechecked before a legacy write and is locked after revocation', async () => {
+    const { context, page } = await schedulePage(browser, 'schedule_manager');
+    try {
+      await page.evaluate(() => { window.__SCHEDULE_MANAGER_LIVE = false; });
+      await page.evaluate(() => document.getElementById('ovAdd').click());
+      await page.waitForTimeout(30);
+      assert.equal(await page.locator('#ovrCard').isVisible(), false);
+      const writes = await page.evaluate(() => window.__FIRESTORE_WRITES || []);
+      assert.equal(writes.length, 0);
+      const calls = await page.evaluate(() => window.__CALLABLE_CALLS || []);
+      assert.ok(calls.filter((call) => call.name === 'getScheduleRuntimeStatus').length >= 2);
+    } finally {
+      await context.close();
+    }
+  });
+
+  await test('an unavailable live permission check fails closed for the legacy editor', async () => {
+    const { context, page } = await schedulePage(browser, 'schedule_manager', {
+      callablePlan:{ getScheduleRuntimeStatus:[{ reject:true, code:'functions/unavailable' }] }
+    });
+    try {
+      assert.equal(await page.locator('#ovrCard').isVisible(), false);
+      const nav = await page.$$eval('#appNav a', (items) => items.map((item) => item.textContent.trim()));
+      assert.equal(nav.includes('ניהול סידור עבודה'), false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  await test('a stale schedule-manager token cannot retain the legacy administration route', async () => {
+    const { context, page } = await deniedAdminPage(browser, 'schedule_manager', {
+      liveScheduleManager:false
+    });
+    try {
+      assert.equal(await page.locator('#work').isVisible(), false);
+      const nav = await page.$$eval('#appNav a', (items) => items.map((item) => item.textContent.trim()));
+      assert.equal(nav.includes('ניהול סידור עבודה'), false);
     } finally {
       await context.close();
     }
@@ -118,5 +195,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 4);
-console.log('\n4 legacy schedule-manager browser checks passed.');
+assert.equal(passed, 8);
+console.log('\n8 legacy schedule-manager browser checks passed.');

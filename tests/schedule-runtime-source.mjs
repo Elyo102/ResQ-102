@@ -244,9 +244,29 @@ check('the production UI initializes App Check before callable use', () => {
 check('the production UI has no direct Firestore access or fixture path', () => {
   assert.equal(/firebase-firestore|getFirestore|\bfixture\b|__demo/i.test(ui), false);
 });
-check('an off runtime keeps the existing live schedule in service', () => {
-  assert.ok(ui.includes("state.status.mode === 'off' || (state.status.mode === 'shadow' && !state.status.manager)"));
-  assert.ok(ui.includes("location.replace('./schedule.html')"));
+check('an inactive runtime keeps the station schedule screen open and explains why management is blocked', () => {
+  assert.equal(ui.includes("location.replace('./schedule.html')"), false);
+  assert.ok(ui.includes("function managementActionsAllowed(status = state.status)"));
+  assert.ok(ui.includes("פעולות הניהול חסומות עד שיוגדרו חוקי תחנה"));
+  assert.ok(ui.includes("צפייה בסידור התחנה זמינה"));
+  assert.ok(ui.includes("chooseTab(requestedTab)"));
+  assert.ok(ui.includes("name === 'manage' && (!state.status || !state.status.manager)"));
+});
+check('the UI refreshes live runtime status before writes and when the page becomes visible', () => {
+  assert.ok(ui.includes('async function recheckManagementAction(target, needsNewMode)'));
+  assert.ok(ui.includes("await recheckManagementAction('runMessage', false)"));
+  assert.ok(ui.includes("await recheckManagementAction('publishMessage', true)"));
+  assert.ok(ui.includes("await recheckManagementAction('rollbackMessage', true)"));
+  assert.ok(ui.includes('status = await refreshRuntimeStatus();'));
+  assert.ok(ui.includes("document.addEventListener('visibilitychange'"));
+  assert.ok(ui.includes("document.visibilityState !== 'visible'"));
+});
+check('management controls are disabled in an off, unconfigured, or nonmanager runtime', () => {
+  assert.ok(ui.includes("['startMonth', 'months', 'addOverride', 'runPlanner']"));
+  assert.ok(ui.includes("$(id).disabled = state.busy || !allowed"));
+  assert.ok(ui.includes("#overrideList input, #overrideList select, #overrideList button"));
+  assert.ok(ui.includes("|| !publishingAllowed() || gaps > 0"));
+  assert.ok(ui.includes("state.busy || !publishingAllowed() || !active"));
 });
 check('personal schedule reads only the requested day', () => {
   assert.ok(runtime.includes('const active = await activeSnapshot(ctx, [date])'));
@@ -255,6 +275,8 @@ check('personal schedule reads only the requested day', () => {
 check('management visibility is driven by server status', () => {
   assert.ok(ui.includes("$('manageTab').hidden = !state.status.manager"));
   assert.ok(ui.includes("name === 'manage' && (!state.status || !state.status.manager)"));
+  assert.ok(ui.includes('function effectiveScheduleManagementClaims()'));
+  assert.ok(ui.includes('renderNav(effectiveScheduleManagementClaims()'));
 });
 check('the UI exposes both personal and station views', () => {
   assert.ok(html.includes('הסידור שלי'));
@@ -273,14 +295,20 @@ check('station schedule is the navigation default and management is an additiona
   assert.ok(fs.existsSync(path.join(root, 'schedule.html')));
 });
 check('the legacy schedule cannot bypass the additional appointment', () => {
-  // The runtime can deliberately fall back to the legacy screen while a
-  // station has not yet configured the new engine. It must therefore carry
-  // the exact same authorization boundary as the new engine.
-  assert.ok(legacySchedule.includes('claims.schedule_manager === true'));
+  // The legacy view uses a signed claim only as a hint; the live server
+  // status remains the client-side editor gate after a grant is revoked.
+  assert.ok(legacySchedule.includes('async function readLiveScheduleManager(context)'));
+  assert.ok(legacySchedule.includes('schedulePageClaims.schedule_manager !== true'));
+  assert.ok(legacySchedule.includes('callScheduleStatus({})'));
+  assert.ok(legacySchedule.includes('result.data && result.data.manager === true'));
+  assert.ok(legacySchedule.includes('const localCanEditOvr = await readLiveScheduleManager(authContext)'));
+  assert.equal(legacySchedule.includes('const localCanEditOvr = claims.schedule_manager === true'), false);
   assert.equal(legacySchedule.includes("['deputy', 'commander', 'station_commander', 'hr_coordinator']"), false);
   assert.ok(legacySchedule.includes('if (!canEditOvr)'));
-  assert.ok(legacyAdmin.includes('const isScheduleManager = claims.schedule_manager === true'));
-  assert.ok(legacyAdmin.includes('canManageSchedule = isScheduleManager'));
+  assert.ok(legacyAdmin.includes('const isScheduleManager = await readLiveScheduleManager(generation, user)'));
+  assert.equal(legacyAdmin.includes('const isScheduleManager = claims.schedule_manager === true'), false);
+  assert.ok(legacyAdmin.includes('applyScheduleManagerAccess(isScheduleManager)'));
+  assert.ok(legacyAdmin.includes('canManageSchedule = live === true'));
   assert.ok(legacyAdmin.includes("const fields = ['anchorDate', 'anchorCrew', 'shiftStart', 'shiftEnd', 'cmdStart', 'specEnd', 'btnRot']"));
   assert.ok(legacyAdmin.includes("if (!canManageSchedule)"));
   assert.ok(legacyAdmin.includes('id="rotationReadOnly"'));
@@ -319,5 +347,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 45);
-console.log('\n45 schedule runtime source checks passed.');
+assert.equal(passed, 47);
+console.log('\n47 schedule runtime source checks passed.');

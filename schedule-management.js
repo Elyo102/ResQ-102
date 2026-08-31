@@ -96,12 +96,102 @@ function setMode(status) {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
   } else box.classList.add('bad');
-  if (!status.configured) text += ' עדיין חסרים חוקי תחנה או מקור כוח-אדם חתום.';
+  if (!status.configured) text += ' פעולות הניהול חסומות עד שיוגדרו חוקי תחנה ומקור כוח-אדם חתום.';
+  if (!status.manager) text += ' צפייה בסידור התחנה זמינה; עריכה ופרסום שמורים לאחראי/ת סידור שמונו לכך.';
+  if (status.unavailable) {
+    box.classList.add('bad');
+    text = 'אי אפשר כרגע לאמת את מצב מנוע הסידור. צפייה ופעולות ניהול חדשות חסומות עד לרענון.';
+  }
   if (status.manager && status.active && Number(status.active.delivery_alerts || 0) > 0) {
     box.classList.remove('good'); box.classList.add('bad');
     text += ' יש ' + status.active.delivery_alerts + ' התראות שלא נמסרו ודורשות טיפול.';
   }
   box.lastElementChild.textContent = text;
+}
+
+// הלקוח אינו מקור סמכות, אבל הוא אינו שולח פעולה שאינה אפשרית לפי
+// המצב החי האחרון. השרת בודק שוב את אותן ההרשאות לפני כל כתיבה.
+function managementActionsAllowed(status = state.status) {
+  return Boolean(status && status.manager === true && status.configured === true
+    && (status.mode === 'shadow' || status.mode === 'new'));
+}
+
+function publishingAllowed(status = state.status) {
+  return managementActionsAllowed(status) && status.mode === 'new';
+}
+
+function responseAllowed(status = state.status) {
+  return Boolean(status && status.mode !== 'off' && !status.unavailable);
+}
+
+function managementBlockedText(status, needsNewMode) {
+  if (!status || status.unavailable) return 'לא ניתן לאמת כרגע את ההרשאה ואת מצב המנוע. הפעולה לא נשלחה.';
+  if (!status.manager) return 'הפעולה לא נשלחה: רק אחראי/ת סידור שמונו לכך יכולים לערוך את הסידור.';
+  if (!status.configured) return 'הפעולה לא נשלחה: חסרים חוקי תחנה או מקור כוח-אדם חתום.';
+  if (status.mode === 'off') return 'הפעולה לא נשלחה: מנוע הסידור החדש כבוי.';
+  if (needsNewMode && status.mode !== 'new') return 'הפעולה לא נשלחה: במצב בדיקה אפשר להכין טיוטה, אך אי אפשר לפרסם או להחזיר גרסה.';
+  return 'הפעולה לא נשלחה: מצב מנוע הסידור השתנה.';
+}
+
+function updateManagementControls() {
+  const allowed = managementActionsAllowed();
+  ['startMonth', 'months', 'addOverride', 'runPlanner'].forEach((id) => {
+    $(id).disabled = state.busy || !allowed;
+  });
+  document.querySelectorAll('#overrideList input, #overrideList select, #overrideList button').forEach((control) => {
+    control.disabled = state.busy || !allowed;
+  });
+  const preview = state.draftPreview;
+  $('previewPrev').disabled = state.busy || !allowed || !preview || preview.week_start <= preview.from;
+  const last = preview && (preview.days || [])[preview.days.length - 1];
+  $('previewNext').disabled = state.busy || !allowed || !last || last.date >= preview.to;
+  $('reviewDraft').disabled = state.busy || !allowed || !state.draftPreview;
+  updatePublishAvailability();
+  setRollbackAvailability();
+}
+
+function updateModeVisibility() {
+  const status = state.status;
+  $('mode').hidden = Boolean(status && state.tab !== 'manage' && status.mode === 'new' && status.configured);
+}
+
+function applyRuntimeStatus() {
+  if (!state.status) return;
+  setMode(state.status);
+  $('manageTab').hidden = !state.status.manager;
+  // גם התפריט מקבל רק את הסמכות החיה. כרטיס ישן אינו משאיר
+  // קישור "ניהול סידור עבודה" אחרי שהמינוי בוטל בשרת.
+  renderScheduleNav();
+  updateManagementControls();
+  if (!state.status.manager && state.tab === 'manage') {
+    chooseTab('station');
+    return;
+  }
+  updateModeVisibility();
+}
+
+async function refreshRuntimeStatus() {
+  state.status = (await call.status({})).data;
+  applyRuntimeStatus();
+  return state.status;
+}
+
+function unavailableRuntimeStatus() {
+  return { mode: 'off', configured: false, manager: false, active: null, unavailable: true };
+}
+
+async function recheckManagementAction(target, needsNewMode) {
+  try {
+    const status = await refreshRuntimeStatus();
+    const allowed = needsNewMode ? publishingAllowed(status) : managementActionsAllowed(status);
+    if (allowed) return true;
+    message(target, managementBlockedText(status, needsNewMode), 'err');
+  } catch (error) {
+    state.status = unavailableRuntimeStatus();
+    applyRuntimeStatus();
+    message(target, managementBlockedText(state.status, needsNewMode), 'err');
+  }
+  return false;
 }
 
 function setPageTitle(name) {
@@ -116,9 +206,18 @@ function setPageTitle(name) {
   document.title = 'ResQ · ' + next[1];
 }
 
+function effectiveScheduleManagementClaims() {
+  const claims = Object.assign({}, state.claims);
+  if (!state.status || state.status.manager !== true) {
+    delete claims.schedule_manager;
+    delete claims.schedule_manager_version;
+  }
+  return claims;
+}
+
 function renderScheduleNav() {
   const tab = state.tab || 'station';
-  renderNav(state.claims, 'schedule-management.html?tab=' + tab,
+  renderNav(effectiveScheduleManagementClaims(), 'schedule-management.html?tab=' + tab,
     state.user.displayName || state.user.email || '');
 }
 
@@ -133,8 +232,8 @@ function chooseTab(name, replaceUrl = true) {
   $('manageView').hidden = name !== 'manage';
   $('mineView').hidden = name !== 'mine';
   $('stationView').hidden = name !== 'station';
-  $('mode').hidden = name !== 'manage';
   setPageTitle(name);
+  updateModeVisibility();
   renderScheduleNav();
   if (replaceUrl) {
     const url = new URL(location.href);
@@ -176,7 +275,7 @@ function option(select, value, label) {
 }
 
 function addOverride(initial = {}) {
-  if (!state.setup || !state.setup.configured) return;
+  if (!managementActionsAllowed() || !state.setup || !state.setup.configured) return;
   const row = node('div', 'override');
   const dateWrap = node('div');
   const dateLabelNode = node('label', '', 'תאריך');
@@ -243,7 +342,7 @@ function renderSummary(summary) {
 function updatePublishAvailability() {
   const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
   $('publish').disabled = state.busy || !state.draft || !state.draftPreview
-    || !$('reviewDraft').checked || !state.status || state.status.mode !== 'new' || gaps > 0;
+    || !$('reviewDraft').checked || !publishingAllowed() || gaps > 0;
 }
 
 function renderDraftPreview(preview) {
@@ -255,8 +354,7 @@ function renderDraftPreview(preview) {
   const first = (preview.days || [])[0];
   const last = (preview.days || [])[preview.days.length - 1];
   $('previewRange').textContent = first && last ? first.date + ' — ' + last.date : preview.week_start;
-  $('previewPrev').disabled = preview.week_start <= preview.from;
-  $('previewNext').disabled = !last || last.date >= preview.to;
+  updateManagementControls();
 }
 
 async function loadDraftPreview(start, resetApproval) {
@@ -264,8 +362,7 @@ async function loadDraftPreview(start, resetApproval) {
   state.previewStart = start || state.draft.from;
   state.draftPreview = null;
   if (resetApproval !== false) $('reviewDraft').checked = false;
-  $('reviewDraft').disabled = true;
-  updatePublishAvailability();
+  updateManagementControls();
   clear($('draftPreview')); $('draftPreview').appendChild(node('div', 'loader'));
   $('draftPreviewCard').classList.remove('hide');
   message('previewMessage', 'טוען את הטיוטה לבדיקה…', 'info');
@@ -278,21 +375,21 @@ async function loadDraftPreview(start, resetApproval) {
     state.draftPreview = preview;
     state.previewStart = preview.week_start;
     renderDraftPreview(preview);
-    $('reviewDraft').disabled = false;
     message('previewMessage', 'הטיוטה מוצגת לבדיקה. היא עדיין לא פורסמה.', 'ok');
   } catch (error) {
     message('previewMessage', errorText(error), 'err');
   }
-  updatePublishAvailability();
+  updateManagementControls();
 }
 
 async function runPlanner() {
   if (state.busy) return;
-  state.busy = true; $('runPlanner').disabled = true; state.draft = null; state.draftPreview = null;
+  state.busy = true; updateManagementControls(); state.draft = null; state.draftPreview = null;
   $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
   $('draftPreviewCard').classList.add('hide');
   message('runMessage', 'המנוע בונה טיוטה ובודק את כל החוקים…', 'info');
   try {
+    if (!await recheckManagementAction('runMessage', false)) return;
     const startMonth = $('startMonth').value;
     if (!/^\d{4}-\d{2}$/.test(startMonth)) throw new Error('יש לבחור חודש התחלה.');
     const result = (await call.run({
@@ -304,7 +401,7 @@ async function runPlanner() {
     message('runMessage', 'הטיוטה הושלמה. היא עדיין לא פורסמה ולא נשלחה שום הודעה.', 'ok');
     await loadDraftPreview(result.from, true);
   } catch (error) { message('runMessage', errorText(error), 'err'); }
-  finally { state.busy = false; $('runPlanner').disabled = false; updatePublishAvailability(); }
+  finally { state.busy = false; updateManagementControls(); }
 }
 
 async function publishDraft() {
@@ -312,9 +409,10 @@ async function publishDraft() {
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
   if (!confirm('לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.')) return;
-  state.busy = true; $('publish').disabled = true;
+  state.busy = true; updateManagementControls();
   message('publishMessage', 'מפרסם את הסידור בפעולה אחת…', 'info');
   try {
+    if (!await recheckManagementAction('publishMessage', true)) return;
     const result = (await call.publish({
       draft_id: state.draft.draft_id,
       expected_content_digest: state.draftPreview.expected_content_digest,
@@ -326,17 +424,15 @@ async function publishDraft() {
     $('reviewDraft').checked = false;
     $('reviewDraft').disabled = true;
     $('draftPreviewCard').classList.add('hide');
-    state.status = (await call.status({})).data;
-    setMode(state.status); setRollbackAvailability();
+    await refreshRuntimeStatus();
     await Promise.all([loadMine(), loadStation()]);
   } catch (error) { message('publishMessage', errorText(error), 'err'); }
-  finally { state.busy = false; setRollbackAvailability(); updatePublishAvailability(); }
+  finally { state.busy = false; updateManagementControls(); }
 }
 
 function setRollbackAvailability() {
   const active = state.status && state.status.active;
-  $('rollback').disabled = state.busy || !state.status || state.status.mode !== 'new'
-    || !state.status.manager || !active || active.can_rollback !== true
+  $('rollback').disabled = state.busy || !publishingAllowed() || !active || active.can_rollback !== true
     || !active.previous_publication_id;
 }
 
@@ -346,23 +442,28 @@ async function rollbackSchedule() {
   const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
     + 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.';
   if (!confirm(text)) return;
-  state.busy = true; setRollbackAvailability();
+  state.busy = true; updateManagementControls();
   message('rollbackMessage', 'מחזיר לגרסה הקודמת בפעולה בטוחה…', 'info');
   try {
+    if (!await recheckManagementAction('rollbackMessage', true)) return;
+    const liveActive = state.status && state.status.active;
+    if (!liveActive || liveActive.can_rollback !== true || !liveActive.previous_publication_id) {
+      message('rollbackMessage', 'הפעולה לא נשלחה: אין גרסה קודמת זמינה להחזרה.', 'err');
+      return;
+    }
     const result = (await call.rollback({
       request_id: requestId('rollback'),
-      expected_active_publication_id: active.publication_id,
-      target_publication_id: active.previous_publication_id,
+      expected_active_publication_id: liveActive.publication_id,
+      target_publication_id: liveActive.previous_publication_id,
       reason_code: 'operational_safety'
     })).data;
     message('rollbackMessage', 'החזרה הושלמה כגרסה ' + result.revision + '.', 'ok');
-    state.status = (await call.status({})).data;
-    setMode(state.status); setRollbackAvailability();
+    await refreshRuntimeStatus();
     await Promise.all([loadMine(), loadStation()]);
   } catch (error) {
     message('rollbackMessage', errorText(error), 'err');
   } finally {
-    state.busy = false; setRollbackAvailability();
+    state.busy = false; updateManagementControls();
   }
 }
 
@@ -435,6 +536,19 @@ async function respond(itemId, answer, reasonCode) {
   if (state.busy || !state.mine || !state.mine.publication_id) return;
   state.busy = true;
   try {
+    let status;
+    try {
+      status = await refreshRuntimeStatus();
+    } catch (_) {
+      state.status = unavailableRuntimeStatus();
+      applyRuntimeStatus();
+      alert('הפעולה לא נשלחה: אי אפשר לאמת כרגע את מצב מנוע הסידור.');
+      return;
+    }
+    if (!responseAllowed(status)) {
+      alert('הפעולה לא נשלחה: מנוע הסידור החדש אינו פעיל כרגע.');
+      return;
+    }
     await call.respond({
       request_id: requestId('answer'), publication_id: state.mine.publication_id,
       item_id: itemId, answer, reason_code: reasonCode
@@ -488,7 +602,7 @@ async function loadStation() {
 }
 
 async function loadSetup() {
-  if (!state.status.manager) return;
+  if (!managementActionsAllowed()) { renderPolicy(); return; }
   try { state.setup = (await call.setup({})).data; renderPolicy(); }
   catch (error) { message('runMessage', errorText(error), 'err'); }
 }
@@ -498,21 +612,15 @@ async function boot(user) {
   try { state.claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { state.claims = {}; }
   $('who').textContent = user.displayName || user.email || '';
   $('appMain').classList.remove('hide');
+  $('startMonth').value = monthStart();
+  const requestedTab = new URLSearchParams(location.search).get('tab') || 'station';
   try {
-    state.status = (await call.status({})).data;
-    // פריסה של הקוד לבדה אינה מחליפה את הסידור החי. כל עוד מנהל
-    // המערכת לא הפעיל במפורש shadow/new, מחזירים את המשתמש למסך
-    // הוותיק. כך אפשר לפרוס בחשיכה בלי ליצור מסך ריק לכבאים.
-    if (state.status.mode === 'off' || (state.status.mode === 'shadow' && !state.status.manager)) {
-      location.replace('./schedule.html');
-      return;
-    }
-    setRollbackAvailability();
-    $('manageTab').hidden = !state.status.manager;
-    $('startMonth').value = monthStart();
-    chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
+    await refreshRuntimeStatus();
+    chooseTab(requestedTab);
   } catch (error) {
-    location.replace('./schedule.html');
+    state.status = unavailableRuntimeStatus();
+    applyRuntimeStatus();
+    chooseTab(requestedTab);
   }
 }
 
@@ -535,6 +643,14 @@ $('addOverride').addEventListener('click', () => addOverride());
 $('runPlanner').addEventListener('click', runPlanner);
 $('publish').addEventListener('click', publishDraft);
 $('rollback').addEventListener('click', rollbackSchedule);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !state.user) return;
+  refreshRuntimeStatus().catch(() => {
+    state.status = unavailableRuntimeStatus();
+    applyRuntimeStatus();
+  });
+});
 
 onAuthStateChanged(auth, (user) => {
   if (!user) {

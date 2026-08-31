@@ -78,6 +78,9 @@ const statusAfterPublish = { mode:'new', configured:true, manager:true,
 const statusAfterRollback = { mode:'new', configured:true, manager:true,
   active:{ publication_id:'p_rollback', revision:6, previous_publication_id:'p_new', can_rollback:true } };
 const statusFirefighter = { mode:'new', configured:true, manager:false, active:{ publication_id:'p_live', revision:4 } };
+const statusOffManager = { mode:'off', configured:true, manager:true, active:{ publication_id:'p_live', revision:4 } };
+const statusOffFirefighter = { mode:'off', configured:false, manager:false, active:null };
+const statusShadowFirefighter = { mode:'shadow', configured:true, manager:false, active:{ publication_id:'p_live', revision:4 } };
 const setup = {
   mode:'new', configured:true,
   policy:{ id:'policy_1', version:'1', digest:'abc', sub_stations:[{
@@ -112,7 +115,10 @@ const browser = await chromium.launch();
 try {
   const manager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
   await prepare(manager, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }, { data:statusAfterRollback }],
+    getScheduleRuntimeStatus:[
+      { data:statusManager }, { data:statusManager }, { data:statusManager },
+      { data:statusAfterPublish }, { data:statusAfterPublish }, { data:statusAfterRollback }
+    ],
     getScheduleManagerSetup:[{ data:setup }],
     getStationScheduleV2:[{ data:station }],
     runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:'2026-09-30',
@@ -183,9 +189,93 @@ try {
   });
   await manager.close();
 
+  const inactive = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(inactive, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusOffFirefighter }],
+    getStationScheduleV2:[{ data:{ active:false } }]
+  });
+  const inactivePage = await inactive.newPage();
+  await inactivePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await inactivePage.locator('#appMain:not(.hide)').waitFor();
+  await test('an off runtime keeps the station view open and explains why management is unavailable', async () => {
+    assert.equal(await inactivePage.locator('#stationView').isVisible(), true);
+    assert.equal(await inactivePage.locator('#manageView').isVisible(), false);
+    assert.equal(await inactivePage.locator('#mode').isVisible(), true);
+    assert.match(await inactivePage.locator('#mode').textContent(), /המנוע החדש כבוי/);
+    assert.match(await inactivePage.locator('#mode').textContent(), /צפייה בסידור התחנה זמינה/);
+    assert.equal(await inactivePage.locator('#startMonth').isDisabled(), true);
+    assert.equal(await inactivePage.locator('#months').isDisabled(), true);
+    assert.equal(await inactivePage.locator('#addOverride').isDisabled(), true);
+    assert.equal(await inactivePage.locator('#runPlanner').isDisabled(), true);
+    assert.match(inactivePage.url(), /schedule-management\.html\?tab=station$/);
+    const calls = await inactivePage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.some((entry) => entry.name === 'runSchedulePlanner'), false);
+  });
+  await inactive.close();
+
+  const shadowViewer = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(shadowViewer, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusShadowFirefighter }],
+    getStationScheduleV2:[{ data:station }]
+  });
+  const shadowViewerPage = await shadowViewer.newPage();
+  await shadowViewerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await shadowViewerPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a nonmanager in shadow mode remains on the station schedule and cannot expose management', async () => {
+    assert.equal(await shadowViewerPage.locator('#stationView').isVisible(), true);
+    assert.equal(await shadowViewerPage.locator('#manageTab').isVisible(), false);
+    assert.equal(await shadowViewerPage.locator('#mode').isVisible(), true);
+    assert.match(await shadowViewerPage.locator('#mode').textContent(), /מצב בדיקה/);
+    assert.equal(await shadowViewerPage.locator('#runPlanner').isDisabled(), true);
+    assert.match(shadowViewerPage.url(), /schedule-management\.html\?tab=station$/);
+  });
+  await shadowViewer.close();
+
+  const staleManager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(staleManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusOffManager }, { data:statusOffManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleV2:[{ data:station }]
+  });
+  const staleManagerPage = await staleManager.newPage();
+  await staleManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await staleManagerPage.locator('#manageView').waitFor();
+  await test('a live status refresh blocks a stale manager before planner writes and after returning to the tab', async () => {
+    await staleManagerPage.locator('#runPlanner').click();
+    await staleManagerPage.locator('#runMessage .err').waitFor();
+    assert.match(await staleManagerPage.locator('#runMessage').textContent(), /הפעולה לא נשלחה/);
+    assert.equal(await staleManagerPage.locator('#runPlanner').isDisabled(), true);
+    let calls = await staleManagerPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.some((entry) => entry.name === 'runSchedulePlanner'), false);
+    await staleManagerPage.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await staleManagerPage.waitForTimeout(20);
+    assert.equal(await staleManagerPage.locator('#runPlanner').isDisabled(), true);
+    calls = await staleManagerPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 3);
+  });
+  await staleManager.close();
+
+  const revokedManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(revokedManager, 'schedule_manager', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusFirefighter }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleV2:[{ data:station }]
+  });
+  const revokedManagerPage = await revokedManager.newPage();
+  await revokedManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await revokedManagerPage.locator('#manageView').waitFor();
+  await test('a live revocation removes the management link as well as the editor', async () => {
+    assert.equal(await revokedManagerPage.locator('a[href="./schedule-management.html?tab=manage"]').count(), 1);
+    await revokedManagerPage.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await revokedManagerPage.locator('#stationView').waitFor();
+    assert.equal(await revokedManagerPage.locator('#manageTab').isVisible(), false);
+    assert.equal(await revokedManagerPage.locator('a[href="./schedule-management.html?tab=manage"]').count(), 0);
+  });
+  await revokedManager.close();
+
   const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(phone, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }, { data:mineAnswered }],
     getStationScheduleV2:[{ data:station }, { data:station }],
     respondToSchedule:[{ data:{ duplicate:false, response_id:'r_1', answer:'confirm' } }]
@@ -276,5 +366,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 11);
-console.log('\n11 schedule management browser checks passed.');
+assert.equal(passed, 15);
+console.log('\n15 schedule management browser checks passed.');

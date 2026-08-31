@@ -303,8 +303,10 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, collection, getDocs, setDoc, deleteDoc,
-         serverTimestamp }
+          serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { renderNav, clearNav, renderStuckNav } from './nav.js?v=38';
 import { ROLE_HE as ROLES_HE } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
@@ -324,6 +326,8 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const callScheduleStatus = httpsCallable(fns, 'getScheduleRuntimeStatus');
 
 const $ = id => document.getElementById(id);
 initPWA({ offer: false });
@@ -376,6 +380,10 @@ let canEditOvr = false;
 let SID = '';
 let authGeneration = 0;
 let stopScheduleCallouts = function () {};
+let schedulePageUser = null;
+let schedulePageClaims = {};
+let schedulePageContext = null;
+let scheduleManagerTimer = null;
 
 function clearFitnessView(){
   fit = {};
@@ -396,6 +404,11 @@ function stopCalloutWatch(){
 
 function clearSessionView(){
   stopCalloutWatch();
+  if (scheduleManagerTimer) clearInterval(scheduleManagerTimer);
+  scheduleManagerTimer = null;
+  schedulePageUser = null;
+  schedulePageClaims = {};
+  schedulePageContext = null;
   clearFitnessView();
   me = null;
   rotations = [];
@@ -425,6 +438,71 @@ function fitnessContextCurrent(context){
   return authContextCurrent(context) && SID === context.sid;
 }
 
+// הכרטיס החתום הוא רמז בלבד. מסמך המינוי החי נבדק בשרת כדי
+// שביטול יסתיר את כלי העריכה גם אם למכשיר נשאר כרטיס ישן.
+function effectiveScheduleClaims(){
+  const claims = Object.assign({}, schedulePageClaims);
+  if (!canEditOvr) {
+    delete claims.schedule_manager;
+    delete claims.schedule_manager_version;
+  }
+  return claims;
+}
+
+function renderLiveScheduleNav(){
+  if (!schedulePageUser) return;
+  renderNav(effectiveScheduleClaims(), 'schedule.html',
+    (me && me.full_name) || schedulePageUser.email || '');
+}
+
+async function readLiveScheduleManager(context){
+  if (!context || !authContextCurrent(context) ||
+      schedulePageClaims.schedule_manager !== true) return false;
+  try {
+    const result = await callScheduleStatus({});
+    if (!authContextCurrent(context)) return false;
+    return !!(result && result.data && result.data.manager === true);
+  } catch (ignore) {
+    // אין רשת או שהשרת אינו זמין: נשארים לצפייה בלבד. אין fallback
+    // ל-claim ישן, כי הוא בדיוק הערך שעלול להישאר אחרי ביטול.
+    return false;
+  }
+}
+
+function setLegacyScheduleEditorAccess(live, reason){
+  const wasEditor = canEditOvr;
+  canEditOvr = live === true;
+  $('ovrCard').classList.toggle('hide', !canEditOvr);
+  renderLiveScheduleNav();
+  if (wasEditor && !canEditOvr && reason) ovErr(reason);
+  return canEditOvr;
+}
+
+async function refreshLegacyScheduleEditorAccess(reason){
+  const context = schedulePageContext;
+  if (!context || !authContextCurrent(context)) return false;
+  const live = await readLiveScheduleManager(context);
+  if (!authContextCurrent(context)) return false;
+  return setLegacyScheduleEditorAccess(live, reason);
+}
+
+function startLegacyScheduleManagerMonitor(){
+  if (scheduleManagerTimer) clearInterval(scheduleManagerTimer);
+  if (schedulePageClaims.schedule_manager !== true) return;
+  scheduleManagerTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      refreshLegacyScheduleEditorAccess('המינוי לעריכת הסידור אינו פעיל יותר.');
+    }
+  }, 60_000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' &&
+      schedulePageClaims.schedule_manager === true) {
+    refreshLegacyScheduleEditorAccess('המינוי לעריכת הסידור אינו פעיל יותר.');
+  }
+});
+
 // ---------- כניסה ----------
 
 $('btnIn').onclick = async () => {
@@ -453,12 +531,17 @@ onAuthStateChanged(auth, async user => {
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
   if (!authContextCurrent(authContext)) return;
 
+  schedulePageUser = user;
+  schedulePageClaims = claims;
+  schedulePageContext = authContext;
+
   const sid = claims.stationId || STATION_ID;
   // צפייה בסידור שייכת לכל חבר תחנה. עריכה היא מינוי נוסף,
   // מפורש, ואינה נגזרת ממפקד/ת, רכזת כוח אדם או מנהל-על.
-  // כללי Firestore בודקים בנוסף מסמך מינוי חי, כך שטוקן ישן
-  // אחרי ביטול לא יכול לכתוב גם אם הכפתור עדיין מוצג לרגע.
-  const localCanEditOvr = claims.schedule_manager === true;
+  // הבדיקה החיה בשרת וכללי Firestore בודקים בנוסף מסמך מינוי חי,
+  // כך שטוקן ישן אחרי ביטול אינו מקבל כלי עריכה ואינו יכול לכתוב.
+  const localCanEditOvr = await readLiveScheduleManager(authContext);
+  if (!authContextCurrent(authContext)) return;
   let localMe = null;
 
   try {
@@ -537,15 +620,15 @@ onAuthStateChanged(auth, async user => {
   $('meSub').textContent  = (ROLE_HE[me.role] || me.role) +
                             (me.crew ? ' · ' + CREW_HE[me.crew] : '');
 
-  renderNav(claims, 'schedule.html',
-            (me.full_name || user.email || '') +
-            (claims.emp ? ' · מס׳ ' + claims.emp : ''));
+  renderLiveScheduleNav();
 
   stopScheduleCallouts = watchCallouts(
     db, SID, authContext.uid, { name: me.full_name || user.email || '' });
 
   $('authView').classList.add('hide');
   $('mainView').classList.remove('hide');
+
+  startLegacyScheduleManagerMonitor();
 
   const now = new Date();
   viewYear  = now.getFullYear();
@@ -640,8 +723,9 @@ function ovErr(text){
 
 async function addOverride(){
   ovErr('');
-  if (!canEditOvr) {
-    ovErr('עריכת סידור מותרת רק לאחראי/ת סידור שמונו לכך.');
+  if (!await refreshLegacyScheduleEditorAccess(
+    'המינוי לעריכת הסידור אינו פעיל יותר.')) {
+    ovErr('אין כרגע מינוי חי לעריכת הסידור. בדוק חיבור או פנה למנהל המערכת.');
     return;
   }
   const date = $('ovDate').value;
@@ -677,8 +761,9 @@ async function addOverride(){
 }
 
 async function removeOverride(date){
-  if (!canEditOvr) {
-    ovErr('עריכת סידור מותרת רק לאחראי/ת סידור שמונו לכך.');
+  if (!await refreshLegacyScheduleEditorAccess(
+    'המינוי לעריכת הסידור אינו פעיל יותר.')) {
+    ovErr('אין כרגע מינוי חי לעריכת הסידור. בדוק חיבור או פנה למנהל המערכת.');
     return;
   }
   try {

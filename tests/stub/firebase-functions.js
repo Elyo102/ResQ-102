@@ -22,7 +22,11 @@ export function httpsCallable(_functions, name){
 
     const plans = (typeof window !== 'undefined' && window.__CALLABLE_PLAN) || {};
     const list = Array.isArray(plans[name]) ? plans[name] : [];
-    const step = list.length ? list.shift() : { data:{ ok:true, id:'stub-message' } };
+    const statusDefault = name === 'getScheduleRuntimeStatus' ? {
+      mode:'off', configured:false,
+      manager: typeof window !== 'undefined' && window.__SCHEDULE_MANAGER_LIVE === true
+    } : { ok:true, id:'stub-message' };
+    const step = list.length ? list.shift() : { data:statusDefault };
     const delay = Number(step && step.delay) || 0;
 
     return new Promise((resolve, reject) => setTimeout(() => {

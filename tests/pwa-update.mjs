@@ -50,6 +50,7 @@ async function scenario(kind, activate = true, updateFails = false) {
     'resq-v41e-release1',
     'resq-v42f1-release1',
     'resq-v42f2-release1',
+    'resq-v42f3-release1',
     'shared-non-resq-cache'
   ];
   const deleted = [];
@@ -64,7 +65,7 @@ async function scenario(kind, activate = true, updateFails = false) {
   };
 
   const result = await refreshInstalledApp({
-    version: '42F.2', serviceWorker: sw, cacheStorage, location,
+    version: '42F.3', serviceWorker: sw, cacheStorage, location,
     timeoutMs: activate ? 50 : 1, now: () => 12345
   });
   return { result, worker, updates, deleted, replaced };
@@ -74,9 +75,9 @@ for (const kind of ['waiting', 'installing', 'active']) {
   const got = await scenario(kind);
   assert.equal(got.updates, 1, kind + ': update runs once');
   assert.equal(got.result.workerActivated, true, kind + ': worker is active');
-  assert.deepEqual(got.deleted, ['resq-v41e-release1', 'resq-v42f1-release1'], kind + ': only old ResQ caches are deleted');
+  assert.deepEqual(got.deleted, ['resq-v41e-release1', 'resq-v42f1-release1', 'resq-v42f2-release1'], kind + ': only old ResQ caches are deleted');
   assert.equal(got.replaced.length, 1, kind + ': reload runs once');
-  assert.match(got.replaced[0], /updated=42F\.2-12345/, kind + ': reload URL is fresh');
+  assert.match(got.replaced[0], /updated=42F\.3-12345/, kind + ': reload URL is fresh');
   if (got.worker) {
     assert.deepEqual(got.worker.messages, [{ type: 'RESQ_SKIP_WAITING' }],
       kind + ': activation message is sent once');
