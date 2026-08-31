@@ -463,8 +463,8 @@ import { DISTRICTS, stationsInDistrict, stationName, districtName,
          subStationsForStation } from './stations.js?v=40';
 import { renderNav, clearNav } from './nav.js?v=40';
 import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=40';
-import { initPWA } from './pwa.js?v=40';
-import { APP_VERSION, APP_DATE } from './version.js?v=41e1';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42f1';
+import { APP_VERSION, APP_DATE } from './version.js?v=42f1';
 import { watchCallouts } from './callout.js?v=40';
 import { initBulletin, destroyBulletin } from './bulletin.js?v=40';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -1249,19 +1249,7 @@ $('btnUpdate').onclick = async function () {
   m.className = 'note new';
   m.textContent = 'יש גרסה חדשה (' + server.v + '). מעדכן…';
 
-  // סדר הפעולות חשוב. מוחקים את המטמון **לפני** הרענון,
-  // אחרת הדפדפן מגיש שוב בדיוק את הקבצים הישנים ושום דבר
-  // לא משתנה — וזה נראה בדיוק כמו כפתור שבור.
-  try {
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (reg) await reg.update();
-  } catch (ignore) {}
-  try {
-    const keys = await caches.keys();
-    await Promise.all(keys.map(k => caches.delete(k)));
-  } catch (ignore) {}
-
-  window.location.reload();
+  await refreshInstalledApp({ version: server.v });
 };
 
 // ---------- שינוי סיסמה ----------
