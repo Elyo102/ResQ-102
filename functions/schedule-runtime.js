@@ -1260,6 +1260,38 @@ function createScheduleRuntime(deps) {
     });
   }
 
+  /**
+   * מחזיר סיבת ביטול יציבה אם הנמען כבר אינו חבר תחנה פעיל,
+   * או null אם מותר לשלוח לו.
+   *
+   * שלוש הסיבות נפרדות בכוונה ולא מאוחדות לאחת: „לא נמצא"
+   * ו„הושבת" ו„עבר תחנה" הם שלושה מצבים שונים, ומי שיקרא את
+   * המסמך אחר כך צריך לדעת מה קרה. הסיבות הן קבועות ואינן
+   * מכילות שם, מזהה או כל פרט מזהה אחר.
+   *
+   * אותם כללים בדיוק שאוכף context() בכיוון הקריאה, כדי ששני
+   * הכיוונים לא ייפרדו.
+   */
+  function recipientCancelReason(memberSnap, stationId) {
+    if (!memberSnap || !memberSnap.exists) return 'recipient-not-member';
+    const user = memberSnap.data() || {};
+
+    // אותה בדיקה בדיוק כמו ב-context(), שורה מול שורה. שתי
+    // הגרסאות חייבות להישאר זהות: אם הכיוון היוצא יהיה מקל
+    // יותר מהנכנס, נוצר חור; אם יהיה מחמיר יותר, אנשים
+    // לגיטימיים יפסיקו לקבל התראות.
+    const liveActive = user.is_active !== false && user.active !== false;
+    if (!liveActive) return 'recipient-inactive';
+
+    const liveStation = String(user.stationId || user.station_id || '');
+    const conflictingStationFields = nonEmpty(user.stationId) && nonEmpty(user.station_id)
+      && user.stationId !== user.station_id;
+    if (conflictingStationFields || liveStation !== stationId) {
+      return 'recipient-station-mismatch';
+    }
+    return null;
+  }
+
   async function deliverOutbox(ref) {
     if (!ref || typeof ref.get !== 'function') return { skipped: true };
     let claimed = null;
@@ -1282,6 +1314,38 @@ function createScheduleRuntime(deps) {
         tx.update(ref, { status: 'cancelled', cancelled_at: FV.serverTimestamp() });
         return;
       }
+      // בדיקת חברות חיה ברגע השליחה, לא ברגע הפרסום.
+      //
+      // ההודעה נבנית כשמפרסמים סידור, והיא יוצאת מאוחר יותר.
+      // בין שני הרגעים אדם יכול לעזוב את התחנה, לעבור לתחנה
+      // אחרת או להיות מושבת. עד עכשיו המסלול הזה בדק רק שני
+      // דברים — שמצב הריצה הוא new ושמצביע הפרסום תואם —
+      // ולכן מי שעזב עדיין קיבל התראה, כל עוד נשאר לו מסמך
+      // טוקן פוש. pushToOne קורא את push_tokens/{uid} ואינו
+      // מצליב מול users/{uid}.
+      //
+      // מסלול **הקריאה** כבר אוכף חברות חיה ב-context(), ולכן
+      // הפער היה בכיוון היוצא בלבד. כאן הוא נסגר, באותם כללים
+      // בדיוק: מסמך קיים · פעיל · ומשויך לאותה תחנה.
+      //
+      // הקריאה נעשית לפני כל כתיבה בעסקה, כי Firestore אוסר
+      // קריאה אחרי כתיבה באותה עסקה.
+      //
+      // הביטול סופי ואידמפוטנטי: המסמך עובר ל-cancelled עם
+      // סיבה יציבה ואינו חוזר לתור. ניסיון חוזר אינו הדרך
+      // לטפל באדם שעזב — הוא לא יחזור להיות חבר בגלל שנחכה.
+      const memberSnap = await tx.get(
+        stationRef(data.station_id).collection('users').doc(String(data.person || ''))
+      );
+      const memberCancel = recipientCancelReason(memberSnap, data.station_id);
+      if (memberCancel) {
+        tx.update(ref, {
+          status: 'cancelled', cancel_reason: memberCancel,
+          cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
+
       const leaseToken = 'l_' + randomId();
       tx.update(ref, {
         status: 'sending', claimed_at: FV.serverTimestamp(), lease_token: leaseToken,
