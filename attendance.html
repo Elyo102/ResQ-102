@@ -188,6 +188,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        padding:2px 12px 13px; margin-top:12px }
   .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
   .otHead b{ color:var(--on-soft) }
+  .ot.req{ border-color:var(--bad-bd); background:var(--bad-bg) }
+  .ot.req .otHead, .ot.req .otHead b, .reqTag{ color:var(--bad) }
+  .reqTag{ font-weight:700 }
   .sum-line{ display:flex; justify-content:space-between; gap:12px;
              padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .sum-line:last-child{ border-bottom:0 }
@@ -363,7 +366,8 @@ import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
   from './rotation.js?v=38';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
-         overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
+         overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
+         SHAPES, shapeOf, shapeHe }
   from './hours.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
@@ -1350,13 +1354,16 @@ function editDay(key, rec){
   const v = rec || dflt;
   const p = key.split('-');
   const shape0 = rec ? shapeOf(rec) : 'regular';
+  const reasonMark = ' · נימוק חובה';
 
   const types = DAY_TYPES.map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
-    '>' + t.he + '</option>').join('');
+    '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
+    '</option>').join('');
   const shapes = SHAPES.map(s =>
     '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
-    '>' + s.he + '</option>').join('');
+    '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
+    '</option>').join('');
   const siteOpts = '<option value="">בלי תחנה</option>' + sites.map(s =>
     '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
     '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
@@ -1393,7 +1400,7 @@ function editDay(key, rec){
     '<div id="dOtBox" class="ot hide">' +
       '<div class="otHead" id="dOtHead"></div>' +
       '<label for="dOtReason">נימוק · חובה</label>' +
-      '<input type="text" id="dOtReason" maxlength="120" value="' +
+      '<input type="text" id="dOtReason" maxlength="120" aria-describedby="dOtHead" value="' +
         esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
     '</div>' +
 
@@ -1459,13 +1466,27 @@ function editDay(key, rec){
 
     $('dOtBox').classList.toggle('hide', !why);
     if (why) {
-      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — משאבי אנוש צריכים ' +
-        'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.';
+      const reasonInput = $('dOtReason');
+      const filled = !!reasonInput.value.trim();
+      reasonInput.required = true;
+      reasonInput.setAttribute('aria-required', 'true');
+      reasonInput.setAttribute('aria-invalid', filled ? 'false' : 'true');
+      $('dOtBox').classList.toggle('req', !filled);
+      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — ' +
+        (filled
+          ? 'הנימוק יישמר עם היום.'
+          : '<span class="reqTag">חובה למלא נימוק.</span> משאבי אנוש צריכים ' +
+            'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.');
+    } else {
+      $('dOtReason').required = false;
+      $('dOtReason').setAttribute('aria-required', 'false');
+      $('dOtReason').setAttribute('aria-invalid', 'false');
+      $('dOtBox').classList.remove('req');
     }
   };
 
   ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
-  ['dStart','dEnd','dStart2','dEnd2'].forEach(id => { $(id).oninput = sync; });
+  ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
 
   $('dSave').onclick = async () => {
