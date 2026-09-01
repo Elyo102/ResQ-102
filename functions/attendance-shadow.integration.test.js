@@ -218,10 +218,16 @@ async function main() {
     assert.equal(reportValue.build_status, 'complete');
     // The first day of a month has no earlier snapshot days to miss, while
     // later days legitimately report missing_snapshot_days in this fixture.
-    // Lock the contract instead of a calendar-dependent boolean: the gate
-    // passes exactly when no blocking reason exists, and legacy_source stays
-    // informational rather than becoming a hidden blocker.
-    assert.equal(reportValue.gate_pass, reportValue.gate_reasons.length === 0);
+    // Lock the contract against the fixture data rather than comparing two
+    // values derived from the same gateReasons array. On day one there are no
+    // earlier snapshots to miss; on later days the fixture is intentionally
+    // incomplete and must fail closed for that exact reason.
+    const hasMissingSnapshots = reportValue.missing_snapshot_days.length > 0;
+    assert.equal(
+      reportValue.gate_reasons.includes('missing_snapshot_days'),
+      hasMissingSnapshots
+    );
+    assert.equal(reportValue.gate_pass, !hasMissingSnapshots);
     assert.equal(reportValue.gate_reasons.includes('data_warnings'), false);
     assert.equal(reportValue.auto_activation_allowed, false);
     assert.equal(reportValue.totals.legacy_source_rows, 2);
@@ -312,6 +318,24 @@ async function main() {
     rows.forEach(function (item) {
       assert.ok((item.data().conflict_codes || []).includes('swap_rest_violation'));
     });
+  });
+
+  await test('partial month with a real snapshot fails closed for missing days', async function () {
+    const parts = today.split('-').map(Number);
+    // Day three of the previous month is deterministic even when this suite
+    // runs on the first or last day of the current month, and it avoids the
+    // separate future-period gate intentionally exercised below.
+    const partialDate = new Date(Date.UTC(parts[0], parts[1] - 2, 3))
+      .toISOString().slice(0, 10);
+    await service.runStation({
+      sid: SID, date: partialDate, trigger: 'manual', requestedBy: 'u_hr'
+    });
+    const report = (await db.doc(
+      `stations/${SID}/attendance_shadow_reports/${partialDate.slice(0, 7)}`
+    ).get()).data();
+    assert.ok(report.missing_snapshot_days.length >= 2);
+    assert.ok(report.gate_reasons.includes('missing_snapshot_days'));
+    assert.equal(report.gate_pass, false);
   });
 
   await test('future empty report can never pass the activation gate', async function () {
