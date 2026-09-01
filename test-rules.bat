@@ -50,7 +50,16 @@ echo.
 echo [3/3] Starting Firestore and running the tests...
 echo       First run downloads the emulator ^(137 MB^). Be patient.
 echo.
-call firebase emulators:exec --only firestore --project station-102 "cd rules-test && npm test"
+rem  demo-resq ולא station-102.
+rem
+rem  Firebase חוסם כל מזהה פרויקט שמתחיל ב-demo- מלהתחבר
+rem  לשירותים אמיתיים. זו רשת ביטחון, לא מוסכמת שמות: אם
+rem  האמולטור לא עלה, או שלקוח כלשהו לא הופנה אליו, מזהה
+rem  ייצור פירושו שפנייה אמיתית לא תיעצר בשום מקום.
+rem
+rem  .github/workflows/tests.yml משתמש ב-demo-resq בכל ששת
+rem  שלבי האמולטור. הסקריפט הזה היה היחיד שלא.
+call firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
 set RESULT=%errorlevel%
 
 echo.

@@ -8,7 +8,21 @@ import { chromium } from 'playwright';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json' };
-const today = '2026-08-31';
+// התאריך נגזר מהשעון ואינו נכתב קשיח.
+//
+// המסך מחשב „היום" מהשעון האמיתי, ולכן פיקסצ'ר עם תאריך קבוע
+// ירוק ביום שבו נכתב ואדום בכל יום אחר. זה בדיוק מה שקרה:
+// הבדיקה עברה ב-31.8.2026 ונפלה ב-1.9 על
+// „אין לך שיבוץ או אירוע ביום הזה" — כשל של הבדיקה, לא של המוצר.
+//
+// אזור הזמן ננעל במפורש, וגם הדפדפן מקבל אותו, כדי ששני הצדדים
+// יסכימו על „היום" גם כשה-CI רץ ב-UTC. בלי זה הבדיקה הייתה
+// מהבהבת שלוש שעות בכל לילה.
+const TZ = 'Asia/Jerusalem';
+const dayIn = (offset) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+}).format(new Date(Date.now() + offset * 86400000));
+const today = dayIn(0);
 
 const server = http.createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
@@ -58,9 +72,9 @@ function day(date, label, me) {
 
 const station = {
   mode:'new', active:true, publication_id:'p_live', revision:4,
-  previous_day:day('2026-08-30', '', false),
+  previous_day:day(dayIn(-1), '', false),
   day:day(today, 'קורס חילוץ', true),
-  next_day:day('2026-09-01', '', false)
+  next_day:day(dayIn(1), '', false)
 };
 const draftPreview = {
   draft_id:'draft_1', expected_content_digest:'digest_preview_1',
@@ -110,7 +124,7 @@ async function test(name, fn) {
 
 const browser = await chromium.launch();
 try {
-  const manager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  const manager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL', timezoneId:TZ });
   await prepare(manager, 'commander', {
     getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }, { data:statusAfterRollback }],
     getScheduleManagerSetup:[{ data:setup }],
@@ -172,7 +186,7 @@ try {
   });
   await manager.close();
 
-  const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL', timezoneId:TZ });
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }, { data:mineAnswered }],
