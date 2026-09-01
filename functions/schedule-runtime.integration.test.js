@@ -86,7 +86,8 @@ function sourceBasis() {
   };
 }
 
-function runtime(sendPush) {
+function runtime(sendPush, hooks) {
+  const testHooks = plain(hooks) ? hooks : {};
   return createScheduleRuntime({
     db,
     FieldValue: admin.firestore.FieldValue,
@@ -97,12 +98,76 @@ function runtime(sendPush) {
     createPublication,
     createService: createScheduleService,
     isSuper: () => false,
-    sendPush: sendPush || (async () => ({ sent: 1 }))
+    sendPush: sendPush || (async () => ({ sent: 1 })),
+    // These optional hooks are a narrowly-scoped race-test seam.  Production
+    // leaves them undefined; the runtime must make its own final live checks.
+    beforeOutboxSend: testHooks.beforeOutboxSend,
+    beforeSnapshotFinalize: testHooks.beforeSnapshotFinalize
   });
 }
 
-function req(uid, role, data) {
-  return { auth: { uid, token: { stationId: SID, role, name: uid } }, data: data || {} };
+function req(uid, role, data, extraToken) {
+  return { auth: { uid, token: Object.assign({ stationId: SID, role, name: uid }, extraToken || {}) }, data: data || {} };
+}
+
+function station() { return db.collection('stations').doc(SID); }
+function activePointer() { return station().collection('schedule_state').doc('active'); }
+function managerAccess() { return station().collection('schedule_access').doc('manager'); }
+
+function outboxValue(publicationId, patch) {
+  return Object.assign({
+    station_id: SID,
+    publication_id: publicationId,
+    revision: 999,
+    person: 'viewer',
+    dedupe_key: 'integration_' + randomId(),
+    push: { title: 'בדיקת סידור', body: 'עדכון בדיקה' },
+    detail: [],
+    changed_by: 'manager',
+    attempt: 0,
+    status: 'queued',
+    expires_at: new Date('2026-10-01T00:00:00.000Z'),
+    created_at: new Date('2026-09-01T06:00:00.000Z')
+  }, patch || {});
+}
+
+async function settleOtherUnfinishedOutbox(keepRef) {
+  const keepPath = keepRef ? keepRef.path : null;
+  const snap = await db.collectionGroup('schedule_outbox').get();
+  const batch = db.batch();
+  let writes = 0;
+  snap.docs.forEach((doc) => {
+    const value = doc.data() || {};
+    if (value.station_id !== SID || doc.ref.path === keepPath) return;
+    if (['blocked', 'retry', 'sending', 'queued'].indexOf(value.status) === -1) return;
+    batch.update(doc.ref, {
+      status: 'sent', lease_token: null, lease_until: null,
+      next_attempt_at: null, updated_at: admin.firestore.FieldValue.serverTimestamp()
+    });
+    writes += 1;
+  });
+  if (writes) await batch.commit();
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+async function within(promise, milliseconds, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' timed out')), milliseconds);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function seed() {
@@ -110,12 +175,25 @@ async function seed() {
   await station.set({ name: 'Integration Station' });
   await Promise.all([
     station.collection('users').doc('manager').set({
-      stationId: SID, role: 'commander', full_name: 'מנהל בדיקה'
+      station: SID, role: 'commander', full_name: 'מנהל בדיקה'
     }),
     station.collection('users').doc('viewer').set({
-      stationId: SID, role: 'firefighter', full_name: 'כבאי בדיקה'
+      station: SID, role: 'firefighter', full_name: 'כבאי בדיקה'
+    }),
+    station.collection('users').doc('commander').set({
+      station: SID, role: 'commander', full_name: 'מפקד ללא מינוי'
+    }),
+    station.collection('users').doc('deputy').set({
+      station: SID, role: 'deputy', full_name: 'סגן ללא מינוי'
+    }),
+    station.collection('users').doc('hr').set({
+      station: SID, role: 'hr_coordinator', full_name: 'רכזת ללא מינוי'
     })
   ]);
+  await station.collection('schedule_access').doc('manager').set({
+    schema_version: 1, station_id: SID, uid: 'manager',
+    roles: ['schedule_manager'], active: true, revision: 1
+  });
   await station.collection('schedule_policies').doc('policy_v1').set(Object.assign({}, policyBasis, {
     complete: true,
     content_digest: digest(policyBasis)
@@ -170,13 +248,37 @@ async function test(name, fn) {
       (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
   });
 
+  await test('primary roles do not implicitly grant schedule editing', async () => {
+    for (const [uid, role] of [['commander', 'commander'], ['deputy', 'deputy'], ['hr', 'hr_coordinator']]) {
+      const status = await api.getStatus(req(uid, role));
+      assert.equal(status.manager, false, uid);
+      await assert.rejects(api.getManagerSetup(req(uid, role)),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    }
+  });
+
   await test('a client-writable profile flag alone never grants schedule management', async () => {
     const viewerRef = db.doc('stations/' + SID + '/users/viewer');
     await viewerRef.update({ schedule_manager: true });
     await assert.rejects(api.runPlanner(req('viewer', 'firefighter', {
       request_id: 'self_promote', start: '2026-10-01', months: 1, overrides: []
-    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+    }, { schedule_manager: true })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
     await viewerRef.update({ schedule_manager: false });
+  });
+
+  await test('a live grant enables management and a live revoke removes it without token refresh', async () => {
+    const accessRef = db.doc('stations/' + SID + '/schedule_access/viewer');
+    await accessRef.set({
+      schema_version: 1, station_id: SID, uid: 'viewer',
+      roles: ['schedule_manager'], active: true, revision: 1
+    });
+    assert.equal((await api.getStatus(req('viewer', 'firefighter'))).manager, true);
+    await api.getManagerSetup(req('viewer', 'firefighter'));
+    await accessRef.update({ roles: [], active: false, revision: 2 });
+    assert.equal((await api.getStatus(req('viewer', 'firefighter'))).manager, false);
+    await assert.rejects(api.runPlanner(req('viewer', 'firefighter', {
+      request_id: 'revoked_manager', start: '2026-10-01', months: 1, overrides: []
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
   });
 
   let draftId;
@@ -438,8 +540,188 @@ async function test(name, fn) {
     assert.equal((await ref.get()).data().status, 'cancelled');
   });
 
-  assert.equal(passed, 19);
-  console.log('\n19 schedule runtime Firestore integration checks passed.');
+  await test('a blocked notification for a staging publication survives outbox resume', async () => {
+    const before = (await activePointer().get()).data() || {};
+    const stagedId = 'p_stage_' + randomId();
+    const stagedRef = station().collection('schedule_publications').doc(stagedId);
+    const ref = stagedRef.collection('schedule_outbox').doc('n_stage_' + randomId());
+    await stagedRef.set({
+      station_id: SID, status: 'staging', operation: 'publish',
+      created_at: admin.firestore.FieldValue.serverTimestamp()
+    });
+    await ref.set(outboxValue(stagedId, { status: 'blocked' }));
+    await settleOtherUnfinishedOutbox(ref);
+    let sends = 0;
+    await runtime(async () => { sends += 1; return { sent: 1 }; }).resumeOutbox();
+    const after = (await ref.get()).data() || {};
+    assert.equal(after.status, 'blocked');
+    assert.equal(sends, 0);
+    assert.equal((await activePointer().get()).data().publication_id, before.publication_id);
+  });
+
+  await test('an expired notification is cancelled before delivery or resume can send it', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_expired_' + randomId());
+    let sends = 0;
+    const guarded = runtime(async () => { sends += 1; return { sent: 1 }; });
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'queued',
+      expires_at: new Date('2026-08-31T23:59:59.000Z')
+    }));
+    await settleOtherUnfinishedOutbox(ref);
+    await guarded.deliverOutbox(ref);
+    let after = (await ref.get()).data() || {};
+    assert.equal(after.status, 'cancelled');
+    assert.equal(sends, 0);
+
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'retry', next_attempt_at: null,
+      expires_at: new Date('2026-08-31T23:59:59.000Z')
+    }));
+    await guarded.resumeOutbox();
+    after = (await ref.get()).data() || {};
+    assert.equal(after.status, 'cancelled');
+    assert.equal(sends, 0);
+  });
+
+  await test('a pointer change after claim and before send cancels the notification without sending', async () => {
+    const pointerRef = activePointer();
+    const before = (await pointerRef.get()).data() || {};
+    assert.ok(before.publication_id);
+    const ref = station().collection('schedule_publications').doc(before.publication_id)
+      .collection('schedule_outbox').doc('n_pointer_race_' + randomId());
+    await ref.set(outboxValue(before.publication_id, {
+      revision: Number(before.revision), status: 'queued'
+    }));
+    await settleOtherUnfinishedOutbox(ref);
+    let hooks = 0;
+    let sends = 0;
+    const guarded = runtime(async () => { sends += 1; return { sent: 1 }; }, {
+      beforeOutboxSend: async () => {
+        hooks += 1;
+        await pointerRef.set(Object.assign({}, before, {
+          publication_id: 'p_pointer_changed_' + randomId()
+        }));
+      }
+    });
+    try {
+      await guarded.deliverOutbox(ref);
+      const after = (await ref.get()).data() || {};
+      assert.equal(hooks, 1);
+      assert.equal(sends, 0);
+      assert.equal(after.status, 'cancelled');
+    } finally {
+      await pointerRef.set(before);
+    }
+  });
+
+  await test('concurrent outbox resumes claim a queued notification only once', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_concurrent_' + randomId());
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'queued'
+    }));
+    await settleOtherUnfinishedOutbox(ref);
+    const entered = deferred();
+    const release = deferred();
+    let sends = 0;
+    const concurrent = runtime(async () => {
+      sends += 1;
+      entered.resolve();
+      await release.promise;
+      return { sent: 1 };
+    });
+    const first = concurrent.resumeOutbox();
+    const second = concurrent.resumeOutbox();
+    try {
+      await within(entered.promise, 5000, 'concurrent outbox send');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(sends, 1);
+    } finally {
+      release.resolve();
+      await Promise.all([first, second]);
+    }
+    assert.equal(sends, 1);
+    assert.equal(((await ref.get()).data() || {}).status, 'sent');
+  });
+
+  await test('revocation during snapshot finalization leaves no complete draft or active publication', async () => {
+    const accessRef = managerAccess();
+    const accessBefore = (await accessRef.get()).data() || {};
+    const activeBefore = (await activePointer().get()).data() || {};
+    const revoked = Object.assign({}, accessBefore, {
+      roles: [], active: false, revision: Number(accessBefore.revision || 0) + 1
+    });
+
+    const draftRequest = 'revoke_draft_finalize_' + randomId();
+    const draftId = 'd_' + hash(SID + '|manager|' + draftRequest).slice(0, 40);
+    const draftRef = station().collection('schedule_drafts').doc(draftId);
+    let draftFinalizers = 0;
+    const draftRuntime = runtime(null, {
+      beforeSnapshotFinalize: async (info) => {
+        if (!info || info.kind !== 'draft') return;
+        draftFinalizers += 1;
+        await accessRef.set(revoked);
+      }
+    });
+    try {
+      await assert.rejects(draftRuntime.runPlanner(req('manager', 'commander', {
+        request_id: draftRequest, start: '2026-11-01', months: 1, overrides: []
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-revoked');
+      assert.equal(draftFinalizers, 1);
+      const draftSnap = await draftRef.get();
+      const stagedDraft = draftSnap.exists ? draftSnap.data() || {} : {};
+      assert.notEqual(stagedDraft.status, 'complete');
+      assert.notEqual(stagedDraft.status, 'active');
+      assert.equal((await activePointer().get()).data().publication_id, activeBefore.publication_id);
+      const draftQueued = await draftRef.collection('schedule_outbox').where('status', '==', 'queued').get();
+      assert.equal(draftQueued.size, 0);
+    } finally {
+      await accessRef.set(accessBefore);
+    }
+
+    const publishDraft = await api.runPlanner(req('manager', 'commander', {
+      request_id: 'revoke_publish_draft_' + randomId(), start: '2026-11-01', months: 1, overrides: []
+    }));
+    const preview = await api.getDraftPreview(req('manager', 'commander', {
+      draft_id: publishDraft.draft_id, start: '2026-11-01'
+    }));
+    const publishRequest = 'revoke_publish_finalize_' + randomId();
+    const publicationIdDuringRevoke = 'p_' + hash(SID + '|manager|' + publishRequest).slice(0, 40);
+    const publicationRef = station().collection('schedule_publications').doc(publicationIdDuringRevoke);
+    let publicationFinalizers = 0;
+    const publicationRuntime = runtime(null, {
+      beforeSnapshotFinalize: async (info) => {
+        if (!info || info.kind !== 'publication') return;
+        publicationFinalizers += 1;
+        await accessRef.set(revoked);
+      }
+    });
+    try {
+      await assert.rejects(publicationRuntime.publish(req('manager', 'commander', {
+        draft_id: publishDraft.draft_id,
+        expected_content_digest: preview.expected_content_digest,
+        request_id: publishRequest
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-revoked');
+      assert.equal(publicationFinalizers, 1);
+      const publicationSnap = await publicationRef.get();
+      const stagedPublication = publicationSnap.exists ? publicationSnap.data() || {} : {};
+      assert.notEqual(stagedPublication.status, 'complete');
+      assert.notEqual(stagedPublication.status, 'active');
+      assert.equal((await activePointer().get()).data().publication_id, activeBefore.publication_id);
+      const queued = await publicationRef.collection('schedule_outbox').where('status', '==', 'queued').get();
+      assert.equal(queued.size, 0);
+    } finally {
+      await accessRef.set(accessBefore);
+    }
+  });
+
+  assert.equal(passed, 26);
+  console.log('\n26 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

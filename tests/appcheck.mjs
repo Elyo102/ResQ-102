@@ -25,11 +25,33 @@ check(source.includes('isTokenAutoRefreshEnabled: true'),
   'App Check tokens refresh automatically');
 
 const html = fs.readdirSync(root).filter(file => file.endsWith('.html'));
-const imports = html.flatMap(file => {
-  const body = fs.readFileSync(path.join(root, file), 'utf8');
+// schedule.html is deliberately a signed-in transition shell.  It makes no
+// callable or Firestore request, so it must not be counted as an App Check
+// consumer (nor quietly regain a legacy data path later).
+const transitionShell = fs.readFileSync(path.join(root, 'schedule.html'), 'utf8');
+check(!transitionShell.includes('initAppCheck'),
+  'legacy schedule transition shell does not initialize an unused App Check client');
+check(!/firebase-firestore|firebase-functions|getFirestore|getDocs|collection\(|httpsCallable|initAppCheck|rotations|shift_overrides/.test(transitionShell),
+  'legacy schedule transition shell has no Firestore, callable, or legacy schedule data path');
+check(transitionShell.includes("location.replace('./schedule-management.html?tab=station')"),
+  'legacy schedule transition shell redirects to the new station schedule');
+check(transitionShell.includes("location.replace('./login.html?next=schedule-management.html')"),
+  'unauthenticated legacy schedule requests go only to the login next target');
+
+// index.html is the static login landing. schedule-management.html delegates
+// its Firebase bootstrap to its adjacent module, so include that module in
+// the screen source rather than losing the App Check assertion during the
+// split. The remaining 20 are the actual Firebase consumers.
+const firebaseScreens = html.filter(file => !['index.html', 'schedule.html'].includes(file));
+const imports = firebaseScreens.flatMap(file => {
+  let body = fs.readFileSync(path.join(root, file), 'utf8');
+  if (file === 'schedule-management.html') {
+    body += '\n' + fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
+  }
   return body.includes('initAppCheck') ? [{ file, body }] : [];
 });
-check(imports.length === 20, 'all 20 Firebase screens initialize App Check');
+check(imports.length === firebaseScreens.length,
+  'all ' + firebaseScreens.length + ' Firebase screens initialize App Check');
 for (const item of imports) {
   check(item.body.includes("./appcheck.js?v=41a1"),
     item.file + ' uses the current App Check cache version');

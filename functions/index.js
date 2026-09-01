@@ -27,6 +27,7 @@ const scheduleCalendar = require('./schedule-calendar-engine');
 const schedulePublication = require('./schedule-publication');
 const scheduleService = require('./schedule-service');
 const scheduleRuntimeModule = require('./schedule-runtime');
+const scheduleAccessAdminModule = require('./schedule-access-admin');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -151,6 +152,15 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
     }
     return result;
   }
+});
+const scheduleAccessAdmin = scheduleAccessAdminModule.createScheduleAccessAdmin({
+  db: db,
+  getUser: function (uid) { return admin.auth().getUser(uid); },
+  isSuper: isSuperAdmin,
+  HttpsError: HttpsError,
+  FieldValue: FV,
+  openAudit: openAudit,
+  sealAudit: sealAudit
 });
 
 // ---------------------------------------------------------------------
@@ -5082,6 +5092,15 @@ exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req)
 exports.getScheduleManagerSetup = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getManagerSetup', req));
 
+// מינוי "אחראי/ת סידור" נפרד מהתפקיד הראשי ומן הטוקן. שתי
+// הפעולות מפיקות את התחנה מהזהות החיה בשרת; הדפדפן אינו רשאי
+// לשלוח stationId ואינו מקבל גישה ישירה למסמכי schedule_access.
+exports.getScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req) =>
+  scheduleAccessAdmin.list(req));
+
+exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req) =>
+  scheduleAccessAdmin.set(req));
+
 exports.runSchedulePlanner = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 540,
@@ -5113,8 +5132,8 @@ exports.respondToSchedule = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('respond', req));
 
 // טריגר השליחה רץ רק כאשר רשומת outbox עוברת במפורש ל-queued.
-// הרשומות נוצרות blocked ורק הטרנזקציה שמחליפה את הפרסום הפעיל
-// משחררת אותן, לכן פוש אינו יכול להקדים פרסום.
+// הרשומות נוצרות blocked; שחרור השרת בודק טרנזקציונית את הפרסום
+// הפעיל ואת ה-pointer לפני המעבר, לכן פוש אינו יכול להקדים פרסום.
 exports.deliverScheduleOutbox = onDocumentWritten({
   document: 'stations/{sid}/schedule_publications/{publicationId}/schedule_outbox/{outboxId}'
 }, async (event) => {

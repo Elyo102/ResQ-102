@@ -8,7 +8,18 @@ import { chromium } from 'playwright';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json' };
-const today = '2026-08-31';
+// המסך עצמו מחשב "היום" לפי שעון ישראל. הבדיקה חייבת להשתמש באותו
+// יום, אחרת היא יכולה לעבור או להיכשל רק בגלל חצות ולא בגלל ממשק.
+const today = new Intl.DateTimeFormat('en-CA', {
+  timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+}).format(new Date());
+function shiftDay(iso, amount) {
+  const date = new Date(iso + 'T00:00:00.000Z');
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+const yesterday = shiftDay(today, -1);
+const tomorrow = shiftDay(today, 1);
 
 const server = http.createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
@@ -58,13 +69,13 @@ function day(date, label, me) {
 
 const station = {
   mode:'new', active:true, publication_id:'p_live', revision:4,
-  previous_day:day('2026-08-30', '', false),
+  previous_day:day(yesterday, '', false),
   day:day(today, 'קורס חילוץ', true),
-  next_day:day('2026-09-01', '', false)
+  next_day:day(tomorrow, '', false)
 };
 const draftPreview = {
   draft_id:'draft_1', expected_content_digest:'digest_preview_1',
-  from:today, to:'2026-09-30', week_start:today,
+  from:today, to:shiftDay(today, 30), week_start:today,
   days:Array.from({ length:7 }, (_, index) => {
     const value = new Date(today + 'T00:00:00.000Z');
     value.setUTCDate(value.getUTCDate() + index);
@@ -78,6 +89,9 @@ const statusAfterPublish = { mode:'new', configured:true, manager:true,
 const statusAfterRollback = { mode:'new', configured:true, manager:true,
   active:{ publication_id:'p_rollback', revision:6, previous_publication_id:'p_new', can_rollback:true } };
 const statusFirefighter = { mode:'new', configured:true, manager:false, active:{ publication_id:'p_live', revision:4 } };
+const statusOff = { mode:'off', configured:false, manager:false, active:null };
+const statusShadowMember = { mode:'shadow', configured:true, manager:false, active:null };
+const statusShadowManager = { mode:'shadow', configured:true, manager:true, active:null };
 const setup = {
   mode:'new', configured:true,
   policy:{ id:'policy_1', version:'1', digest:'abc', sub_stations:[{
@@ -111,12 +125,14 @@ async function test(name, fn) {
 const browser = await chromium.launch();
 try {
   const manager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
-  await prepare(manager, 'commander', {
+  // המינוי הוא תוספת חיה ונפרדת מהתפקיד הראשי; גם לוחם אש יכול
+  // להיות אחראי/ת סידור, ואין הרשאת עריכה אוטומטית למפקד.
+  await prepare(manager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }, { data:statusAfterRollback }],
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:mine }, { data:mine }],
     getStationScheduleV2:[{ data:station }],
-    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:'2026-09-30',
+    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30),
       summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
     getScheduleDraftPreview:[{ data:draftPreview }],
     publishSchedule:[{ data:{ publication_id:'p_new', revision:5, notified_people:2 } }],
@@ -176,22 +192,40 @@ try {
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }, { data:mineAnswered }],
-    getStationScheduleV2:[{ data:station }],
+    getStationScheduleV2:[{ data:station }, { data:station }],
     respondToSchedule:[{ data:{ duplicate:false, response_id:'r_1', answer:'confirm' } }]
   });
   const phonePage = await phone.newPage();
-  await phonePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await phonePage.goto(base, { waitUntil:'load' });
   await phonePage.locator('#appMain:not(.hide)').waitFor();
 
-  await test('firefighter cannot see management even through a direct URL', async () => {
-    assert.equal(await phonePage.locator('#manageTab').isVisible(), false);
-    assert.equal(await phonePage.locator('#manageView').isVisible(), false);
-    assert.equal(await phonePage.locator('#mineView').isVisible(), true);
+  await test('station schedule is the default mobile view for every member', async () => {
+    assert.equal(await phonePage.locator('#stationView').isVisible(), true);
+    await phonePage.locator('#stationContent .day').first().waitFor();
   });
-  await test('personal mobile view shows crew, event and answer action', async () => {
+
+  const direct = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(direct, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleV2:[{ data:station }]
+  });
+  const directPage = await direct.newPage();
+  await directPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await directPage.locator('#appMain:not(.hide)').waitFor();
+  await test('non-manager is sent to the station schedule even through a direct management URL', async () => {
+    assert.equal(await directPage.locator('#manageTab').isVisible(), false);
+    assert.equal(await directPage.locator('#manageView').isVisible(), false);
+    assert.equal(await directPage.locator('#stationView').isVisible(), true);
+    await directPage.locator('#stationContent .day').first().waitFor();
+  });
+  await direct.close();
+
+  await test('personal mobile view remains available after station is the default', async () => {
+    await phonePage.locator('[data-tab="mine"]').dispatchEvent('click');
     assert.match(await phonePage.locator('#mineContent').textContent(), /טל חודרה/);
     assert.match(await phonePage.locator('#mineContent').textContent(), /קורס חילוץ/);
-    await phonePage.locator('.assignment .confirm').first().click();
+    await phonePage.locator('.assignment .confirm').first().dispatchEvent('click');
     await phonePage.getByText('אישרתי', { exact:true }).waitFor();
     const response = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
       .find((entry) => entry.name === 'respondToSchedule');
@@ -202,7 +236,7 @@ try {
     assert.equal(mineCall.payload.date, today);
   });
   await test('station mobile view shows yesterday, today and tomorrow with names', async () => {
-    await phonePage.locator('[data-tab="station"]').click();
+    await phonePage.locator('[data-tab="station"]').dispatchEvent('click');
     await phonePage.locator('#stationContent .day').first().waitFor();
     assert.equal(await phonePage.locator('#stationContent .day').count(), 3);
     assert.match(await phonePage.locator('#stationContent').textContent(), /טל חודרה/);
@@ -224,10 +258,74 @@ try {
     await phonePage.screenshot({ path:path.join(process.env.SCHEDULE_SCREENSHOT_DIR, 'schedule-management-mobile.png'), fullPage:true });
   }
   await phone.close();
+
+  const off = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(off, 'firefighter', { getScheduleRuntimeStatus:[{ data:statusOff }] });
+  const offPage = await off.newPage();
+  await offPage.goto(base, { waitUntil:'load' });
+  await offPage.locator('#appMain:not(.hide)').waitFor();
+  await test('off mode stays on the new page without fetching a legacy schedule', async () => {
+    assert.match(offPage.url(), /schedule-management\.html/);
+    assert.equal(await offPage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await offPage.locator('#scheduleTabs').isVisible(), false);
+    const calls = await offPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+  });
+  await off.close();
+
+  const shadowMember = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(shadowMember, 'firefighter', { getScheduleRuntimeStatus:[{ data:statusShadowMember }] });
+  const shadowMemberPage = await shadowMember.newPage();
+  await shadowMemberPage.goto(base, { waitUntil:'load' });
+  await shadowMemberPage.locator('#appMain:not(.hide)').waitFor();
+  await test('shadow mode is fail-closed for a member until a new schedule is published', async () => {
+    assert.equal(await shadowMemberPage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await shadowMemberPage.locator('#scheduleTabs').isVisible(), false);
+    const calls = await shadowMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+  });
+  await shadowMember.close();
+
+  const shadowManager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(shadowManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusShadowManager }],
+    getScheduleManagerSetup:[{ data:setup }]
+  });
+  const shadowManagerPage = await shadowManager.newPage();
+  await shadowManagerPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await shadowManagerPage.locator('#appMain:not(.hide)').waitFor();
+  await test('an appointed manager may prepare a shadow draft without exposing member views', async () => {
+    assert.equal(await shadowManagerPage.locator('#manageView').isVisible(), true);
+    assert.equal(await shadowManagerPage.locator('#mineTab').isVisible(), false);
+    assert.equal(await shadowManagerPage.locator('#stationTab').isVisible(), false);
+    const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+  });
+  await shadowManager.close();
+
+  const statusError = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(statusError, 'firefighter', {
+    getScheduleRuntimeStatus:[{ reject:true, code:'functions/unavailable', message:'offline' }]
+  });
+  const statusErrorPage = await statusError.newPage();
+  await statusErrorPage.goto(base, { waitUntil:'load' });
+  await statusErrorPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a status failure remains on a data-free new-page error state', async () => {
+    assert.match(statusErrorPage.url(), /schedule-management\.html/);
+    assert.equal(await statusErrorPage.locator('#availabilityView').isVisible(), true);
+    assert.match(await statusErrorPage.locator('#availabilityText').textContent(), /לא מציגה נתונים ישנים/);
+    const calls = await statusErrorPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+  });
+  await statusError.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 8);
-console.log('\n8 schedule management browser checks passed.');
+assert.equal(passed, 13);
+console.log('\n13 schedule management browser checks passed.');

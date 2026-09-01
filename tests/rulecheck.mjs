@@ -95,7 +95,8 @@ head('אילוץ ארכיטקטוני');
   // המערכת בנויה על claims; חריגים חייבים להיות קריאות מדויקות:
   // תגובה בודקת שהודעת-האב לא הוסתרה, דוח Shadow בודק שרק הדור
   // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל
-  // ושתפקידו החי תואם לטוקן.
+  // ושתפקידו החי תואם לטוקן. מינוי אחראי הסידור נבדק ב-Functions;
+  // אין נתיב כתיבה ישיר מהלקוח ולכן הכללים אינם צריכים לקרוא אותו.
   const gets = [...CODE.matchAll(/(?<![.\w])(get|exists|getAfter)\s*\(/g)];
   const replyParentReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/sub_stations\/\$\(subId\)\/bulletin_messages\/\$\(messageId\)\s*\)/g

@@ -99,11 +99,8 @@ for (const token of ['body.art{ background:#070d18', 'body.art h1{ color:#f4f7fb
 }
 
 const schedule = read('schedule.html');
-for (const token of ['<main id="mainView"', '<h1 class="screen-title">', 'aria-label="החודש הקודם"', 'aria-label="החודש הבא"', 'role="list"', "setAttribute('role', 'listitem')", "createElement('button')", 'min-width:44px;min-height:44px']) {
-  check(schedule.includes(token), 'schedule accessibility contains ' + token);
-}
-for (const id of ['ovKind','ovDate','ovCrew','ovNote']) {
-  check(new RegExp('<label[^>]+for=["\\\']' + id + '["\\\']').test(schedule), 'schedule label is associated with ' + id);
+for (const token of ['<main aria-live="polite">', '<h1>מעביר לסידור העבודה החדש</h1>', 'id="status"', 'aria-hidden="true"']) {
+  check(schedule.includes(token), 'schedule transition accessibility contains ' + token);
 }
 
 const attendance = read('attendance.html');

@@ -899,13 +899,15 @@ service cloud.firestore {
       }
 
       match /rotations/{rotationId} {
-        allow read:  if member(sid);
-        allow write: if staff(sid);
+        // מנוע הסידור החדש הוא הנתיב היחיד. גם קריאה ישירה נסגרת:
+        // מסך ישן או טוקן תחנה שהתיישן אינם יכולים לעקוף את בדיקות
+        // הזהות החיה, הטיוטה, הפרסום ותור ה-Push של השרת.
+        allow read, write: if false;
       }
 
       match /shift_overrides/{overrideId} {
-        allow read:  if member(sid);
-        allow write: if staff(sid);
+        // כנ"ל: חריגה ידנית נכנסת לטיוטה במנוע החדש בלבד.
+        allow read, write: if false;
       }
 
       match /postings/{postingId} {
@@ -1424,6 +1426,11 @@ service cloud.firestore {
       // מול מסמך משתמש חי. גם מנהל-על אינו עוקף את השער הזה דרך
       // SDK בדפדפן, ולכן אין מסלול כתיבה או קריאה ישירה בכלל.
       match /schedule_state/{stateId} {
+        allow read, write: if false;
+      }
+      // מינוי "אחראי/ת סידור" נבדק רק על ידי פונקציות השרת מול
+      // רישום חי. הדפדפן אינו רשאי לקרוא, להעניק או להסיר אותו.
+      match /schedule_access/{uid} {
         allow read, write: if false;
       }
       match /schedule_policies/{policyId} {

@@ -178,6 +178,12 @@ function runSuite(key) {
 
 const originals = {};
 for (const k of Object.keys(TARGETS)) originals[k] = readFileSync(TARGETS[k], 'utf8');
+// Worktrees on Windows may preserve CRLF in the targets while the deliberately
+// multi-line mutation needles below use LF.  Keep the exact raw bytes for the
+// finally restoration; normalize only the transient source used for matching
+// and mutation so every guard is tested regardless of checkout line endings.
+const mutationSources = {};
+for (const k of Object.keys(TARGETS)) mutationSources[k] = originals[k].replace(/\r\n/g, '\n');
 
 let caught = 0;
 const survived = [];
@@ -186,7 +192,7 @@ const notFound = [];
 try {
   for (const [name, target, from, to, suites] of MUTATIONS) {
     if (from === 'NO-OP-PLACEHOLDER') { caught += 1; continue; }
-    const src = originals[target];
+    const src = mutationSources[target];
     if (!src.includes(from)) { notFound.push(name); continue; }
     writeFileSync(TARGETS[target], src.replace(from, to));
     let failedSomewhere = false;

@@ -89,9 +89,9 @@ function dateLabel(iso) {
 function setMode(status) {
   const box = $('mode');
   box.className = 'mode';
-  let text = 'המנוע החדש כבוי. הסידור הקיים ממשיך לעבוד ללא שינוי.';
+  let text = 'המנוע החדש אינו זמין להצגת סידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב בדיקה: אפשר ליצור טיוטות, אך אי אפשר לפרסם אותן למשתמשים.';
+    text = 'מצב בדיקה: אפשר ליצור טיוטות, אך אין סידור פעיל לצפייה או לפרסום.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
@@ -104,9 +104,43 @@ function setMode(status) {
   box.lastElementChild.textContent = text;
 }
 
+function hideScheduleViews() {
+  $('manageView').hidden = true;
+  $('mineView').hidden = true;
+  $('stationView').hidden = true;
+}
+
+function showUnavailable(title, text) {
+  hideScheduleViews();
+  $('scheduleTabs').hidden = true;
+  $('availabilityTitle').textContent = title;
+  $('availabilityText').textContent = text;
+  $('availabilityView').hidden = false;
+}
+
+function showScheduleViews() {
+  $('availabilityView').hidden = true;
+  $('scheduleTabs').hidden = false;
+  $('mineTab').hidden = false;
+  $('stationTab').hidden = false;
+  $('scheduleTabs').classList.remove('manage-only');
+}
+
+function showShadowManagement() {
+  $('availabilityView').hidden = true;
+  $('scheduleTabs').hidden = false;
+  $('manageTab').hidden = false;
+  $('mineTab').hidden = true;
+  $('stationTab').hidden = true;
+  $('scheduleTabs').classList.add('manage-only');
+}
+
 function chooseTab(name, replaceUrl = true) {
-  if (name === 'manage' && (!state.status || !state.status.manager)) name = 'mine';
-  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'mine';
+  // הסידור התחנתי הוא נקודת הכניסה המשותפת: כך כל כבאי רואה את
+  // תמונת התחנה לפני שהוא עובר לסידור האישי. כתובת ניהול אינה דרך
+  // לעקוף את המינוי החי של אחראי/ת הסידור.
+  if (name === 'manage' && (!state.status || !state.status.manager)) name = 'station';
+  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station';
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.classList.toggle('on', button.dataset.tab === name);
@@ -286,7 +320,8 @@ async function runPlanner() {
 }
 
 async function publishDraft() {
-  if (state.busy || !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
+  if (!state.status || state.status.mode !== 'new' || state.busy ||
+      !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
   if (!confirm('לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.')) return;
@@ -410,7 +445,8 @@ function renderMine() {
 }
 
 async function respond(itemId, answer, reasonCode) {
-  if (state.busy || !state.mine || !state.mine.publication_id) return;
+  if (!state.status || state.status.mode !== 'new' || state.busy ||
+      !state.mine || !state.mine.publication_id) return;
   state.busy = true;
   try {
     await call.respond({
@@ -423,6 +459,7 @@ async function respond(itemId, answer, reasonCode) {
 }
 
 async function loadMine() {
+  if (!state.status || state.status.mode !== 'new') return;
   try {
     state.mine = (await call.mine({ date: state.mineDate || localDate() })).data;
   } catch (error) { state.mine = { active: false, error: errorText(error) }; }
@@ -455,7 +492,7 @@ function stationBlock(block, title) {
 }
 
 async function loadStation() {
-  if (!state.status) return;
+  if (!state.status || state.status.mode !== 'new') return;
   $('stationDateTitle').textContent = dateLabel(state.stationDate); $('stationDate').textContent = state.stationDate;
   const box = $('stationContent'); clear(box); box.appendChild(node('div', 'loader'));
   try {
@@ -479,21 +516,45 @@ async function boot(user) {
   $('appMain').classList.remove('hide');
   try {
     state.status = (await call.status({})).data;
-    // פריסה של הקוד לבדה אינה מחליפה את הסידור החי. כל עוד מנהל
-    // המערכת לא הפעיל במפורש shadow/new, מחזירים את המשתמש למסך
-    // הוותיק. כך אפשר לפרוס בחשיכה בלי ליצור מסך ריק לכבאים.
-    if (state.status.mode === 'off' || (state.status.mode === 'shadow' && !state.status.manager)) {
-      location.replace('./schedule.html');
+    setMode(state.status || {});
+
+    // אין נתיב חזרה לנתוני Firestore ישנים. במצב off אין סידור
+    // חדש לצפייה, ובמצב shadow הוא מוצג רק לאחראי/ת סידור כדי להכין
+    // טיוטה. שני המצבים נשארים בדף זה ונכשלים סגור.
+    if (!state.status || state.status.mode === 'off' ||
+        (state.status.mode !== 'new' && state.status.mode !== 'shadow')) {
+      showUnavailable('הסידור החדש עדיין אינו פעיל',
+        'לא מוצג סידור ישן. אחראי/ת הסידור ישלים/תשלים את ההגדרות והפרסום במנוע החדש.');
       return;
     }
-    setMode(state.status);
+
+    if (state.status.mode === 'shadow' && !state.status.manager) {
+      showUnavailable('הסידור החדש בבדיקה',
+        'עדיין לא פורסם סידור פעיל. כאשר יפורסם, הסידור התחנתי והאישי יופיעו כאן.');
+      return;
+    }
+
     setRollbackAvailability();
     $('manageTab').hidden = !state.status.manager;
     $('startMonth').value = monthStart();
+
+    if (state.status.mode === 'shadow') {
+      showShadowManagement();
+      await loadSetup();
+      chooseTab('manage');
+      return;
+    }
+
+    showScheduleViews();
     await Promise.all([loadSetup(), loadMine()]);
-    chooseTab(new URLSearchParams(location.search).get('tab') || (state.status.manager ? 'manage' : 'mine'));
+    chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
-    location.replace('./schedule.html');
+    state.status = null;
+    const box = $('mode');
+    box.className = 'mode bad';
+    box.lastElementChild.textContent = 'לא ניתן לאמת את מצב מנוע הסידור.';
+    showUnavailable('לא ניתן לטעון את הסידור כרגע',
+      'המערכת לא מציגה נתונים ישנים כאשר בדיקת ההרשאה או מצב המנוע נכשלה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
   }
 }
 

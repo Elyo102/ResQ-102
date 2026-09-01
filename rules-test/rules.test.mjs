@@ -142,6 +142,35 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/users/u_hr_stale`),
     { role: 'firefighter', crew: 'א', employee_number: '403', is_active: true, full_name: 'רכזת לשעבר' });
 
+  // מינוי הסידור הוא יכולת נפרדת מהתפקיד הראשי. רק הכבאי הזה
+  // מחזיק ברשומה חיה ותקינה; כל הדמויות הבכירות האחרות ייבדקו
+  // בהמשך ללא מינוי כדי לנעול שאין "קיצור דרך" לפי דרגה.
+  await setDoc(doc(d, `stations/${SID}/schedule_access/u_ff`), {
+    schema_version: 1,
+    station_id: SID,
+    uid: 'u_ff',
+    roles: ['schedule_manager'],
+    active: true,
+    revision: 1
+  });
+  // מסלולי הסידור הוותיקים נשמרים לקריאה בלבד עד לסיום המעבר.
+  // יש מסמכים קיימים כדי לבדוק גם update/delete, לא רק create.
+  await setDoc(doc(d, `stations/${SID}/rotations/A`), {
+    crew: 'A', cycle_days: 3
+  });
+  await setDoc(doc(d, `stations/${SID}/shift_overrides/2026-09-01`), {
+    date: '2026-09-01', kind: 'holiday'
+  });
+  // גם מינוי ישן שנשאר בתחנה הקודמת אחרי העברה אינו פותח מסלול.
+  await setDoc(doc(d, `stations/${SID}/schedule_access/u_out`), {
+    schema_version: 1,
+    station_id: SID,
+    uid: 'u_out',
+    roles: ['schedule_manager'],
+    active: true,
+    revision: 1
+  });
+
   // נוכחות — הלב של המערכת
   await setDoc(doc(d, `stations/${SID}/attendance/att_ff_a`),
     { emp_number: '101', crew: 'א', status: 'draft',    hours: 24 });
@@ -1508,6 +1537,56 @@ for (const [roleName, client] of [
       setDoc(doc(client, path), { tampered: true }));
   }
 }
+
+// ============================================================
+head('21 · הסידור הישן סגור — אין עקיפה של מנוע הפרסום וההתראות');
+// ============================================================
+// המנוע החדש מחליף את שני המסלולים. גם קריאה ישירה חסומה כדי שטוקן
+// ישן או שיוך שהוסר לא יוכלו להציג סידור שאינו עבר בדיקות חיות בשרת.
+const LEGACY_ROTATION = `stations/${SID}/rotations/A`;
+const LEGACY_OVERRIDE = `stations/${SID}/shift_overrides/2026-09-01`;
+
+for (const [roleName, client] of [
+  ['מפקד', cmdA], ['סגן מפקד', deputyA], ['מפקד תחנה', stCmd],
+  ['רכז/ת כוח אדם', hrUser], ['מנהל-על', superA],
+  ['אחראי/ת סידור פעיל/ה', ff], ['ממונה שהועבר/ה מתחנה אחרת', outside]
+]) {
+  await blocked(`🔒 ${roleName} אינו קורא מחזור ישן ישירות`,
+    getDoc(doc(client, LEGACY_ROTATION)));
+  await blocked(`🔒 ${roleName} אינו קורא חריגה ישנה ישירות`,
+    getDoc(doc(client, LEGACY_OVERRIDE)));
+  await blocked(`🔒 ${roleName} אינו כותב מחזור ישן ישירות`,
+    setDoc(doc(client, LEGACY_ROTATION), { crew: 'A', cycle_days: 3 }));
+  await blocked(`🔒 ${roleName} אינו כותב חריגה ישנה ישירות`,
+    setDoc(doc(client, LEGACY_OVERRIDE), { date: '2026-09-01', kind: 'holiday' }));
+}
+
+await blocked('🔒 גם אחראי/ת סידור אינו מעדכן מחזור ישן',
+  updateDoc(doc(ff, LEGACY_ROTATION), { cycle_days: 4 }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק מחזור ישן',
+  deleteDoc(doc(ff, LEGACY_ROTATION)));
+await blocked('🔒 גם אחראי/ת סידור אינו מעדכן חריגה ישנה',
+  updateDoc(doc(ff, LEGACY_OVERRIDE), { kind: 'swap' }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק חריגה ישנה',
+  deleteDoc(doc(ff, LEGACY_OVERRIDE)));
+await blocked('🔒 גם אחראי/ת סידור אינו קורא את רשומת המינוי ישירות',
+  getDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`)));
+await blocked('🔒 גם אחראי/ת סידור אינו סורק רשומות מינוי ישירות',
+  getDocs(collection(ff, `stations/${SID}/schedule_access`)));
+await blocked('🔒 גם אחראי/ת סידור אינו יוצר רשומת מינוי ישירות',
+  setDoc(doc(ff, `stations/${SID}/schedule_access/u_ffb`), { active: true }));
+await blocked('🔒 גם אחראי/ת סידור אינו משנה את רשומת המינוי ישירות',
+  updateDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`), { active: false }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק את רשומת המינוי ישירות',
+  deleteDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`)));
+
+await env.withSecurityRulesDisabled(async (c) => {
+  await setDoc(doc(c.firestore(), `stations/${SID}/schedule_access/u_ff`), {
+    schema_version: 1, station_id: SID, uid: 'u_ff', roles: [], active: false, revision: 2
+  });
+});
+await blocked('🔒 ביטול מינוי לא פותח כתיבת חריגה ישנה',
+  updateDoc(doc(ff, LEGACY_OVERRIDE), { kind: 'swap' }));
 
 // ============================================================
 //  סיכום

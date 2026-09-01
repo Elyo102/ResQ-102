@@ -8,15 +8,19 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
 const service = read('functions/schedule-service.js');
+const access = read('functions/schedule-access.js');
+const accessAdmin = read('functions/schedule-access-admin.js');
 const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
 const ui = read('schedule-management.js');
 const html = read('schedule-management.html');
+const legacySchedule = read('schedule.html');
 const nav = read('nav.js');
 const worker = read('firebase-messaging-sw.js');
 const workflow = read('.github/workflows/tests.yml');
 const indexes = JSON.parse(read('firestore.indexes.json'));
+const manifest = JSON.parse(read('manifest.json'));
 
 let passed = 0;
 function check(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
@@ -35,25 +39,32 @@ check('client station fields are rejected', () => {
 check('station comes from the authenticated token', () => {
   assert.ok(runtime.includes("const sid = String(token.stationId || '').trim()"));
 });
-check('live ResQ stationId is checked and conflicting aliases fail closed', () => {
-  assert.ok(runtime.includes("String(user.stationId || user.station_id || '')"));
-  assert.ok(runtime.includes('conflictingStationFields'));
-  assert.ok(runtime.includes('liveStation !== sid'));
+check('live ResQ station aliases, including identity-coordinator station, fail closed on conflict', () => {
+  assert.ok(access.includes("['stationId', 'station_id', 'station']"));
+  assert.ok(runtime.includes('scheduleAccess.activeMember(user, sid)'));
 });
 check('disabled live users are rejected', () => {
-  assert.ok(runtime.includes('user.is_active !== false && user.active !== false'));
+  assert.ok(access.includes('user.is_active !== false && user.active !== false'));
+  assert.ok(runtime.includes('scheduleAccess.activeMember(user, sid)'));
 });
 check('token and live role must agree', () => {
   assert.ok(runtime.includes("String(token.role || '') !== role"));
   assert.ok(runtime.includes("'claims-stale'"));
 });
-check('manager authority is decided on the server', () => {
-  assert.ok(runtime.includes('token.schedule_manager === true'));
-  assert.equal(runtime.includes('user.schedule_manager === true'), false);
-  assert.ok(rules.includes('affectedKeys()'));
-  assert.ok(rules.includes("hasOnly(['full_name', 'phone', 'email', 'photo_url'])"));
-  assert.ok(runtime.includes('MANAGER_ROLES.indexOf(role) !== -1'));
+check('manager authority is live, local and separate from the primary role', () => {
+  assert.equal(runtime.includes('token.schedule_manager === true'), false);
+  assert.equal(runtime.includes('MANAGER_ROLES'), false);
+  assert.ok(runtime.includes("collection('schedule_access').doc(uid)"));
+  assert.ok(runtime.includes('scheduleAccess.isManagerAccess(access, sid, req.auth.uid)'));
+  assert.ok(access.includes("const SCHEDULE_MANAGER_ROLE = 'schedule_manager'"));
+  assert.ok(access.includes('access.roles.length !== 1'));
+  assert.ok(access.includes('function activeMember'));
   assert.ok(runtime.includes('function requireManager(ctx)'));
+});
+check('revocation is rechecked at every schedule write boundary', () => {
+  assert.ok(runtime.includes('function requireLiveManager(userSnap, accessSnap, ctx)'));
+  assert.ok((runtime.match(/requireLiveManager\(/g) || []).length >= 4);
+  assert.ok(runtime.includes("'manager-revoked'"));
 });
 check('runtime declares only capabilities implemented by the service', () => {
   const start = runtime.indexOf('function capabilities()');
@@ -108,29 +119,31 @@ check('publishing requires the exact digest returned by draft preview', () => {
   assert.ok(html.includes('id="reviewDraft"'));
 });
 check('publication activation and audit share one transaction', () => {
-  const publishBody = runtime.slice(runtime.indexOf('async function publish'), runtime.indexOf('async function getMy'));
+  const start = runtime.indexOf('async function publish');
+  const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
   const body = publishBody.slice(publishBody.lastIndexOf('await db.runTransaction(async (tx) => {'));
   assert.ok(body.includes('tx.set(activeRef(ctx.sid)'));
   assert.ok(body.includes("collection('schedule_audit')"));
   assert.ok(body.includes("status: 'active'"));
 });
 check('notifications are blocked until activation commits', () => {
-  const publishBody = runtime.slice(runtime.indexOf('async function publish'), runtime.indexOf('async function getMy'));
+  const start = runtime.indexOf('async function publish');
+  const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
   const blocked = publishBody.indexOf("status: 'blocked'");
   const transaction = publishBody.lastIndexOf('await db.runTransaction(async (tx) => {');
-  const queue = publishBody.lastIndexOf('await queueOutbox(pubRef)');
-  assert.ok(blocked > -1 && blocked < transaction && transaction < queue);
+  const release = publishBody.lastIndexOf('await releaseOutbox(pubRef)');
+  assert.ok(blocked > -1 && blocked < transaction && transaction < release);
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
   assert.ok(runtime.includes('existingData.request_fingerprint !== requestFingerprint'));
-  assert.ok(runtime.includes('await queueOutbox(pubRef)'));
+  assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
 });
 check('outbox delivery rechecks the active publication', () => {
-  assert.ok(runtime.includes("publication_id !== data.publication_id"));
+  assert.ok(runtime.includes('publicationMatches(value, pointer, publication)'));
   assert.ok(runtime.includes("status: 'cancelled'"));
-  assert.ok(runtime.includes('runtimeData.mode !== MODE.NEW'));
-  assert.ok(runtime.includes("cancel_reason: 'runtime-not-new'"));
+  assert.ok(runtime.includes('runtime.mode !== MODE.NEW'));
+  assert.ok(runtime.includes("cancelOutbox(tx, ref, 'runtime-not-new')"));
   assert.ok(integration.includes('off and shadow cancel queued retry and expired sending'));
 });
 check('push retries end in a dead-letter state', () => {
@@ -144,6 +157,56 @@ check('outbox uses expiring leases and recovers every unfinished state', () => {
   assert.ok(runtime.includes('lease_token'));
   assert.ok(runtime.includes("['blocked', 'retry', 'sending', 'queued']"));
   assert.ok(runtime.includes('expires_at: new Date'));
+});
+check('outbox release never blindly overwrites a blocked row', () => {
+  const start = runtime.indexOf('async function releaseOutbox');
+  const end = runtime.indexOf('function cancelOutbox', start);
+  const body = runtime.slice(start, end);
+  const reconcileStart = runtime.indexOf('async function reconcileOutbox');
+  const reconcileEnd = runtime.indexOf('async function publish', reconcileStart);
+  const reconcile = runtime.slice(reconcileStart, reconcileEnd);
+  const resumeStart = runtime.indexOf('async function resumeOutbox');
+  const resume = runtime.slice(resumeStart);
+  assert.ok(start > -1 && end > start);
+  assert.ok(body.includes('await db.runTransaction(async (tx) => {'));
+  assert.ok(body.includes("value.status !== 'blocked'"));
+  assert.ok(body.includes('tx.update(item.ref'));
+  assert.equal(body.includes('await commitWrites(ops)'), false);
+  assert.ok(reconcile.includes('await db.runTransaction(async (tx) => {'));
+  assert.ok(resume.includes('await reconcileOutbox(doc.ref, now)'));
+  assert.equal(resume.includes('await doc.ref.update('), false);
+});
+check('outbox expiry and active-pointer are rechecked immediately before send', () => {
+  const validateStart = runtime.indexOf('async function validateOutboxForSend');
+  const start = runtime.indexOf('async function deliverOutbox');
+  const end = runtime.indexOf('async function resumeOutbox', start);
+  const body = runtime.slice(start, end);
+  const validation = runtime.slice(validateStart, start);
+  const send = body.indexOf('await sendPush');
+  const hook = body.lastIndexOf('await beforeOutboxSend', send);
+  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token)', send);
+  assert.ok(validateStart > -1 && start > validateStart && end > start && send > -1);
+  assert.ok(hook > -1 && hook < guard && guard < send);
+  assert.ok(validation.includes('await db.runTransaction(async (tx) => {'));
+  assert.ok(validation.includes('outboxExpired(value, now)'));
+  assert.ok(validation.includes('publicationMatches(value, pointer, publication)'));
+  assert.ok(validation.includes("'publication-not-active'"));
+});
+check('snapshot completion rechecks live manager access after rows are staged', () => {
+  const start = runtime.indexOf('async function stageSnapshot');
+  const end = runtime.indexOf('async function finalizeDraft', start);
+  const body = runtime.slice(start, end);
+  const finalizerStart = runtime.indexOf('async function finalizeDraft');
+  const finalizerEnd = runtime.indexOf('async function requireLiveManagerNow', finalizerStart);
+  const finalizer = runtime.slice(finalizerStart, finalizerEnd);
+  assert.ok(start > -1 && end > start);
+  assert.ok(body.includes('await commitWrites(ops)'));
+  assert.ok(body.includes('snapshot_complete: true'));
+  assert.equal(body.includes("status: 'complete'"), false);
+  assert.ok(finalizer.includes('await beforeSnapshotFinalize({ kind: \'draft\''));
+  assert.ok(finalizer.includes('await db.runTransaction(async (tx) => {'));
+  assert.ok(finalizer.includes('requireLiveManager('));
+  assert.ok(finalizer.includes("status: 'complete'"));
 });
 check('personal changes are loaded only for the authenticated uid', () => {
   assert.ok(runtime.includes("where('person', '==', ctx.uid)"));
@@ -160,11 +223,36 @@ check('responses support owned dates and owned event ids', () => {
 check('all schedule callables enforce App Check', () => {
   for (const name of ['getScheduleRuntimeStatus', 'getScheduleManagerSetup', 'runSchedulePlanner',
     'getScheduleDraftPreview',
-    'publishSchedule', 'rollbackSchedule', 'getMyScheduleV2', 'getStationScheduleV2', 'respondToSchedule']) {
+    'publishSchedule', 'rollbackSchedule', 'getMyScheduleV2', 'getStationScheduleV2', 'respondToSchedule',
+    'getScheduleManagerAccess', 'setScheduleManagerAccess']) {
     const start = index.indexOf('exports.' + name);
     assert.ok(start > -1, name);
     assert.ok(index.slice(start, start + 220).includes('enforceAppCheck: true'), name);
   }
+});
+check('schedule manager appointments use a server-only, strict station boundary', () => {
+  assert.ok(index.includes("require('./schedule-access-admin')"));
+  assert.ok(index.includes('scheduleAccessAdmin.list(req)'));
+  assert.ok(index.includes('scheduleAccessAdmin.set(req)'));
+  assert.ok(accessAdmin.includes("dataOf(req, ['uid', 'enabled'])"));
+  assert.ok(accessAdmin.includes('const target = await getUser(uid)'));
+  assert.ok(accessAdmin.includes('scheduleAccess.activeMember(profile, stationId)'));
+  assert.equal(accessAdmin.includes('setCustomUserClaims'), false);
+  assert.equal(accessAdmin.includes('schedule_manager === true'), false);
+});
+check('the legacy schedule URL is a no-data transition to the new station schedule', () => {
+  assert.ok(legacySchedule.includes("location.replace('./schedule-management.html?tab=station')"));
+  assert.equal(/firebase-firestore|getFirestore|collection\(|getDoc\(|onSnapshot|setDoc|updateDoc|deleteDoc|writeBatch/.test(legacySchedule), false);
+});
+check('legacy schedule storage is fully closed and schedule access remains private', () => {
+  for (const pathName of ['rotations', 'shift_overrides']) {
+    const start = rules.indexOf('match /' + pathName + '/');
+    assert.ok(start > -1, pathName);
+    assert.ok(rules.slice(start, start + 360).includes('allow read, write: if false'), pathName);
+  }
+  const start = rules.indexOf('match /schedule_access/{uid}');
+  assert.ok(start > -1);
+  assert.ok(rules.slice(start, start + 160).includes('allow read, write: if false'));
 });
 check('rollback creates a new audited revision and never repoints an old document', () => {
   const body = runtime.slice(runtime.indexOf('async function rollback'), runtime.indexOf('async function getMy'));
@@ -176,15 +264,15 @@ check('rollback creates a new audited revision and never repoints an old documen
   assert.ok(html.includes('חזור לגרסה הקודמת'));
 });
 check('clients cannot directly read or write schedule storage', () => {
-  for (const pathName of ['schedule_state', 'schedule_policies', 'schedule_sources', 'schedule_drafts',
+  for (const pathName of ['rotations', 'shift_overrides', 'schedule_state', 'schedule_access', 'schedule_policies', 'schedule_sources', 'schedule_drafts',
     'schedule_publications', 'schedule_responses', 'schedule_audit']) {
     const start = rules.indexOf('match /' + pathName + '/');
     assert.ok(start > -1, pathName);
-    assert.ok(rules.slice(start, start + 120).includes('allow read, write: if false'), pathName);
+    assert.ok(rules.slice(start, start + 360).includes('allow read, write: if false'), pathName);
   }
 });
 check('every new schedule collection has an explicit backup policy', () => {
-  for (const pathName of ['schedule_state', 'schedule_policies', 'schedule_sources', 'schedule_drafts',
+  for (const pathName of ['schedule_state', 'schedule_access', 'schedule_policies', 'schedule_sources', 'schedule_drafts',
     'schedule_publications', 'schedule_outbox', 'schedule_responses', 'schedule_audit']) {
     assert.ok(backup.includes(pathName), pathName);
   }
@@ -199,7 +287,10 @@ check('runtime integration covers spoofing, events, idempotency and stale pushes
 });
 check('runtime integration covers privilege escalation, stale drafts, leases and rollback', () => {
   for (const token of ['profile flag alone never grants', 'policy changed under the same id',
-    'expired sending lease', 'rolled back only by creating a new revision']) {
+    'expired sending lease', 'rolled back only by creating a new revision',
+    'blocked notification for a staging publication', 'expired notification is cancelled before delivery',
+    'pointer change after claim and before send', 'concurrent outbox resumes claim',
+    'revocation during snapshot finalization']) {
     assert.ok(integration.includes(token), token);
   }
 });
@@ -213,9 +304,14 @@ check('the production UI initializes App Check before callable use', () => {
 check('the production UI has no direct Firestore access or fixture path', () => {
   assert.equal(/firebase-firestore|getFirestore|\bfixture\b|__demo/i.test(ui), false);
 });
-check('an off runtime keeps the existing live schedule in service', () => {
-  assert.ok(ui.includes("state.status.mode === 'off' || (state.status.mode === 'shadow' && !state.status.manager)"));
-  assert.ok(ui.includes("location.replace('./schedule.html')"));
+check('an unavailable runtime fails closed without reopening the legacy schedule', () => {
+  assert.ok(ui.includes('showUnavailable('));
+  assert.equal(ui.includes("location.replace('./schedule.html')"), false);
+});
+check('station schedule is the default view and denied management falls back to it', () => {
+  assert.ok(ui.includes("if (name === 'manage' && (!state.status || !state.status.manager)) name = 'station'"));
+  assert.ok(ui.includes("['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station'"));
+  assert.ok(ui.includes("|| 'station'"));
 });
 check('personal schedule reads only the requested day', () => {
   assert.ok(runtime.includes('const active = await activeSnapshot(ctx, [date])'));
@@ -235,9 +331,12 @@ check('dynamic schedule data is inserted as text, not HTML', () => {
   assert.equal(/\.innerHTML\s*=/.test(ui), false);
   assert.ok(ui.includes('.textContent ='));
 });
-check('the new schedule replaces the navigation target but keeps old page for rollback', () => {
+check('the new station schedule is the only navigation and PWA shortcut target', () => {
   assert.ok(nav.includes("href: 'schedule-management.html'"));
   assert.ok(fs.existsSync(path.join(root, 'schedule.html')));
+  const shortcut = manifest.shortcuts.find((item) => item && item.short_name === 'סידור');
+  assert.ok(shortcut);
+  assert.equal(shortcut.url, './schedule-management.html?tab=station');
 });
 check('the offline shell contains both new schedule assets', () => {
   assert.ok(worker.includes("'./schedule-management.html'"));
@@ -254,5 +353,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 44);
-console.log('\n44 schedule runtime source checks passed.');
+assert.equal(passed, 52);
+console.log('\n52 schedule runtime source checks passed.');

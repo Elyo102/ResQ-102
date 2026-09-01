@@ -1,5 +1,7 @@
 'use strict';
 
+const scheduleAccess = require('./schedule-access');
+
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
  *
@@ -23,7 +25,6 @@ class ScheduleRuntimeError extends Error {
 
 const MODE = Object.freeze({ OFF: 'off', SHADOW: 'shadow', NEW: 'new' });
 const MODES = Object.freeze(Object.keys(MODE).map((key) => MODE[key]));
-const MANAGER_ROLES = Object.freeze(['deputy', 'commander', 'station_commander']);
 const MEMBER_ROLES = Object.freeze([
   'firefighter', 'deputy_team_leader', 'team_leader',
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
@@ -96,6 +97,12 @@ function createScheduleRuntime(deps) {
   const createService = d.createService;
   const isSuper = typeof d.isSuper === 'function' ? d.isSuper : function () { return false; };
   const sendPush = d.sendPush;
+  // Lifecycle hooks are dependency-injected test seams only.  The production
+  // wiring does not provide them; they let the emulator prove race boundaries.
+  const beforeSnapshotFinalize = typeof d.beforeSnapshotFinalize === 'function'
+    ? d.beforeSnapshotFinalize : async function () {};
+  const beforeOutboxSend = typeof d.beforeOutboxSend === 'function'
+    ? d.beforeOutboxSend : async function () {};
 
   if (!db || typeof db.collection !== 'function' || typeof db.runTransaction !== 'function') {
     throw new ScheduleRuntimeError('db-required', 'חובה להזריק Firestore');
@@ -130,6 +137,24 @@ function createScheduleRuntime(deps) {
     return stationRef(sid).collection('schedule_state').doc('active');
   }
 
+  function scheduleAccessRef(sid, uid) {
+    return stationRef(sid).collection('schedule_access').doc(uid);
+  }
+
+  function liveUserRef(sid, uid) {
+    return stationRef(sid).collection('users').doc(uid);
+  }
+
+  function requireLiveManager(userSnap, accessSnap, ctx) {
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    const access = accessSnap && accessSnap.exists ? (accessSnap.data() || {}) : null;
+    if (!scheduleAccess.activeMember(user, ctx.sid)
+        || !scheduleAccess.isManagerAccess(access, ctx.sid, ctx.uid)) {
+      throw new ScheduleRuntimeError('manager-revoked',
+        'מינוי אחראי/ת הסידור אינו פעיל עוד.', 'permission-denied');
+    }
+  }
+
   function requireId(value, code, label) {
     const out = String(value || '').trim();
     if (!ID_RE.test(out)) {
@@ -154,17 +179,13 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('station-required',
         'לחשבון אין שיוך תחנה תקין.', 'failed-precondition');
     }
-    const userSnap = await stationRef(sid).collection('users').doc(req.auth.uid).get();
+    const userSnap = await liveUserRef(sid, req.auth.uid).get();
     if (!userSnap.exists) {
       throw new ScheduleRuntimeError('live-user-required',
         'החשבון אינו קיים ברשימת המשתמשים הפעילה של התחנה.', 'permission-denied');
     }
     const user = userSnap.data() || {};
-    const liveStation = String(user.stationId || user.station_id || '');
-    const conflictingStationFields = nonEmpty(user.stationId) && nonEmpty(user.station_id)
-      && user.stationId !== user.station_id;
-    const liveActive = user.is_active !== false && user.active !== false;
-    if (!liveActive || conflictingStationFields || liveStation !== sid) {
+    if (!scheduleAccess.activeMember(user, sid)) {
       throw new ScheduleRuntimeError('live-user-inactive',
         'החשבון אינו פעיל או שאינו משויך לתחנה.', 'permission-denied');
     }
@@ -176,16 +197,19 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('claims-stale',
         'הרשאות החשבון אינן מסונכרנות. יש לצאת ולהיכנס מחדש.', 'permission-denied');
     }
+    // Never use a token claim or the profile itself for this capability:
+    // an access record is read live for every call so a removal takes effect
+    // immediately, without waiting for a token refresh.
+    const accessSnap = await scheduleAccessRef(sid, req.auth.uid).get();
+    const access = accessSnap.exists ? (accessSnap.data() || {}) : null;
     return Object.freeze({
       uid: req.auth.uid,
       sid,
       role,
       name: String(user.full_name || user.name || token.name || req.auth.uid).slice(0, 120),
-      // מינוי אחראי סידור הוא claim חתום שהשרת בלבד יכול להנפיק.
-      // לעולם אין סומכים על שדה במסמך הפרופיל שהלקוח קורא.
-      manager: isSuper(req.auth)
-        || token.schedule_manager === true
-        || MANAGER_ROLES.indexOf(role) !== -1,
+      // The primary role remains unrelated to schedule editing.  A commander,
+      // deputy or HR coordinator is view-only until explicitly appointed.
+      manager: scheduleAccess.isManagerAccess(access, sid, req.auth.uid),
       user
     });
   }
@@ -232,7 +256,7 @@ function createScheduleRuntime(deps) {
   function requireManager(ctx) {
     if (!ctx.manager) {
       throw new ScheduleRuntimeError('manager-required',
-        'עריכה ופרסום מותרים לאחראי סידור ולקצינים בלבד.', 'permission-denied');
+        'עריכה ופרסום מותרים לאחראי/ת סידור שמונה/תה במפורש.', 'permission-denied');
     }
   }
 
@@ -469,6 +493,37 @@ function createScheduleRuntime(deps) {
     return value;
   }
 
+  function timeMillis(value) {
+    if (value && typeof value.toMillis === 'function') return Number(value.toMillis());
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+    return Date.parse(String(value || ''));
+  }
+
+  function outboxExpired(value, now) {
+    const expiresAt = timeMillis(value && value.expires_at);
+    // Notifications without a valid, future expiry are fail-closed.  Firestore
+    // TTL cleanup is asynchronous and therefore cannot be a delivery guard.
+    return !Number.isFinite(expiresAt) || expiresAt <= now;
+  }
+
+  function isManagerRevoked(error) {
+    return error instanceof ScheduleRuntimeError && error.code === 'manager-revoked';
+  }
+
+  async function cancelStagedSnapshot(ref, reason) {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      if (value.status !== 'staging') return;
+      tx.update(ref, {
+        status: 'cancelled', cancel_reason: reason,
+        cancelled_at: FV.serverTimestamp()
+      });
+    });
+  }
+
   async function stageSnapshot(ref, meta, plan, events, people) {
     const rows = plan.rows.slice().sort((a, b) => {
       const ak = a.date + '|' + a.sub_station;
@@ -516,12 +571,44 @@ function createScheduleRuntime(deps) {
       });
     });
     await commitWrites(ops);
+    // Child documents may take several batches.  The snapshot remains staging
+    // until a final transaction rechecks the live appointment and publishes
+    // its completion atomically.  Never make staged data usable by itself.
     await ref.set(Object.assign({}, meta, {
-      status: 'complete', row_count: rows.length, event_count: orderedEvents.length,
+      snapshot_complete: true, row_count: rows.length, event_count: orderedEvents.length,
       person_count: peopleById.size,
-      content_digest: contentDigest, completed_at: FV.serverTimestamp()
+      content_digest: contentDigest, snapshot_completed_at: FV.serverTimestamp()
     }), { merge: true });
     return contentDigest;
+  }
+
+  async function finalizeDraft(ctx, ref, expectedDigest) {
+    try {
+      await beforeSnapshotFinalize({ kind: 'draft', ref, ctx });
+      await db.runTransaction(async (tx) => {
+        const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref];
+        const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+        requireLiveManager(snaps[0], snaps[1], ctx);
+        const draft = snaps[2].exists ? (snaps[2].data() || {}) : {};
+        if (draft.status !== 'staging' || draft.snapshot_complete !== true
+            || draft.station_id !== ctx.sid || draft.content_digest !== expectedDigest) {
+          throw new ScheduleRuntimeError('draft-snapshot-changed',
+            'הטיוטה השתנתה או אינה שלמה ולכן נעצרה.', 'aborted');
+        }
+        tx.update(ref, { status: 'complete', completed_at: FV.serverTimestamp() });
+      });
+    } catch (error) {
+      if (isManagerRevoked(error)) await cancelStagedSnapshot(ref, 'manager-revoked');
+      throw error;
+    }
+  }
+
+  async function requireLiveManagerNow(ctx) {
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+    });
   }
 
   async function readSnapshot(ref, meta, dates) {
@@ -676,6 +763,10 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('request-conflict',
           'אותו מזהה פעולה כבר שימש לקלט אחר.', 'already-exists');
       }
+      if (before.status === 'cancelled') {
+        throw new ScheduleRuntimeError('draft-cancelled',
+          'הטיוטה בוטלה ולכן יש להתחיל פעולה חדשה.', 'aborted');
+      }
       if (before.status !== 'complete') {
         throw new ScheduleRuntimeError('draft-staging', 'הטיוטה עדיין נבנית. נסה שוב בעוד רגע.', 'aborted');
       }
@@ -699,7 +790,18 @@ function createScheduleRuntime(deps) {
       months
     });
     const plan = flattenPlanSet(planSet);
-    await ref.create({
+    // Planning can take time.  Re-read the live access record at the write
+    // boundary so a manager removed while the plan was calculated cannot
+    // create a usable draft after revocation.
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[2].exists) {
+        throw new ScheduleRuntimeError('draft-race',
+          'טיוטה עם אותו מזהה נוצרה במקביל. רענן ונסה שוב.', 'aborted');
+      }
+      tx.create(ref, {
       station_id: ctx.sid, status: 'staging', request_id: requestId,
       request_fingerprint: fingerprint, source_id: source.id, policy_id: policy.id,
       base_source_digest: source.digest, base_policy_digest: policy.digest,
@@ -710,8 +812,10 @@ function createScheduleRuntime(deps) {
       policy_version: plan.policy_version, policy_digest: plan.policy_digest,
       generated_at: plan.generated_at, from: plan.from, to: plan.to,
       summary: plan.summary, months
+      });
     });
-    await stageSnapshot(ref, {}, plan, effective.events, effective.roster);
+    const contentDigest = await stageSnapshot(ref, {}, plan, effective.events, effective.roster);
+    await finalizeDraft(ctx, ref, contentDigest);
     return { duplicate: false, draft_id: draftId, summary: plan.summary, from: plan.from, to: plan.to };
   }
 
@@ -798,14 +902,122 @@ function createScheduleRuntime(deps) {
     return { ref, meta, plan: value.plan, events: value.events, roster: value.roster };
   }
 
-  async function queueOutbox(ref) {
+  async function activePublicationGate(ref) {
+    let active = false;
+    await db.runTransaction(async (tx) => {
+      const publicationSnap = await tx.get(ref);
+      if (!publicationSnap.exists) return;
+      const publication = publicationSnap.data() || {};
+      const stationId = String(publication.station_id || '');
+      const publicationId = String(ref.id || '');
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) return;
+      const refs = [runtimeRef(stationId), activeRef(stationId)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      const runtime = snaps[0].exists ? (snaps[0].data() || {}) : {};
+      const pointer = snaps[1].exists ? (snaps[1].data() || {}) : {};
+      active = runtime.mode === MODE.NEW && publication.status === 'active'
+        && pointer.publication_id === publicationId
+        && Number(pointer.revision || 0) === Number(publication.revision || 0);
+    });
+    return active;
+  }
+
+  async function releaseOutbox(ref) {
+    // The active-pointer transaction is the release authority.  It deliberately
+    // does not depend on the original actor: a schedule validly activated just
+    // before that actor was revoked must still notify its affected people.
+    if (!await activePublicationGate(ref)) return { released: 0 };
     const snap = await ref.collection('schedule_outbox').where('status', '==', 'blocked').get();
-    const ops = snap.docs.map((doc) => ({
-      ref: doc.ref,
-      data: { status: 'queued', queued_at: FV.serverTimestamp() },
-      kind: 'update'
-    }));
-    await commitWrites(ops);
+    let released = 0;
+    const now = Date.parse(clock());
+    for (let index = 0; index < snap.docs.length; index += 100) {
+      const refs = snap.docs.slice(index, index + 100).map((doc) => doc.ref);
+      await db.runTransaction(async (tx) => {
+        const current = await Promise.all(refs.map((item) => tx.get(item)));
+        current.forEach((item) => {
+          if (!item.exists) return;
+          const value = item.data() || {};
+          // A transaction reads the current status so a delayed releaser can
+          // never resurrect a sent/cancelled notification from a stale query.
+          if (value.status !== 'blocked') return;
+          if (outboxExpired(value, now)) {
+            cancelOutbox(tx, item.ref, 'outbox-expired');
+            return;
+          }
+          tx.update(item.ref, { status: 'queued', queued_at: FV.serverTimestamp() });
+          released += 1;
+        });
+      });
+    }
+    return { released };
+  }
+
+  function cancelOutbox(tx, ref, reason) {
+    tx.update(ref, {
+      status: 'cancelled', cancel_reason: reason,
+      cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+    });
+  }
+
+  async function reconcileOutbox(ref, now) {
+    let deliver = false;
+    let queued = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      const stationId = String(value.station_id || '');
+      const publicationId = String(value.publication_id || '');
+      const status = String(value.status || '');
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)
+          || ['blocked', 'retry', 'sending', 'queued'].indexOf(status) === -1) {
+        if (status !== 'sent' && status !== 'cancelled') cancelOutbox(tx, ref, 'outbox-invalid');
+        return;
+      }
+      if (outboxExpired(value, now)) {
+        cancelOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const checks = await Promise.all(refs.map((item) => tx.get(item)));
+      const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
+      const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
+      const publication = checks[2].exists ? (checks[2].data() || {}) : {};
+      if (runtime.mode !== MODE.NEW) {
+        cancelOutbox(tx, ref, 'runtime-not-new');
+        return;
+      }
+      if (publication.status === 'staging' || publication.status === 'complete') {
+        // blocked is the intentional pre-activation state.  A scheduler must
+        // never cancel it just because the pointer has not committed yet.
+        if (status !== 'blocked') cancelOutbox(tx, ref, 'publication-not-active');
+        return;
+      }
+      if (publication.status !== 'active'
+          || pointer.publication_id !== publicationId
+          || Number(pointer.revision || 0) !== Number(value.revision || 0)) {
+        cancelOutbox(tx, ref, 'publication-not-active');
+        return;
+      }
+      if (status === 'queued') {
+        deliver = true;
+        return;
+      }
+      if (status === 'retry') {
+        const nextAttempt = timeMillis(value.next_attempt_at);
+        if (Number.isFinite(nextAttempt) && nextAttempt > now) return;
+      }
+      if (status === 'sending') {
+        const leaseUntil = timeMillis(value.lease_until);
+        if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
+      }
+      tx.update(ref, {
+        status: 'queued', queued_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+      });
+      queued = true;
+    });
+    return { queued, deliver };
   }
 
   async function publish(req) {
@@ -880,12 +1092,17 @@ function createScheduleRuntime(deps) {
           throw new ScheduleRuntimeError('publication-conflict',
             'מזהה הפרסום הפעיל אינו תואם לבקשה.', 'already-exists');
         }
-        await queueOutbox(pubRef);
+        await requireLiveManagerNow(ctx);
+        await releaseOutbox(pubRef);
         return { duplicate: true, publication_id: pubId, revision: (active.data() || {}).revision };
       }
       if (existingData.request_fingerprint !== requestFingerprint) {
         throw new ScheduleRuntimeError('publication-conflict',
           'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
+      }
+      if (existingData.status === 'cancelled') {
+        throw new ScheduleRuntimeError('publication-cancelled',
+          'הפרסום בוטל ולכן יש להתחיל פעולה חדשה.', 'aborted');
       }
     } else await pubRef.create({
       station_id: ctx.sid, status: 'staging', request_id: requestId,
@@ -917,10 +1134,13 @@ function createScheduleRuntime(deps) {
       }
     }));
     await commitWrites(outboxOps);
-    await db.runTransaction(async (tx) => {
+    await beforeSnapshotFinalize({ kind: 'publication', ref: pubRef, ctx });
+    try {
+      await db.runTransaction(async (tx) => {
       const policyRef = stationRef(ctx.sid).collection('schedule_policies').doc(draftMeta.policy_id);
       const sourceRef = stationRef(ctx.sid).collection('schedule_sources').doc(draftMeta.source_id);
-      const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), draftRef, pubRef, policyRef, sourceRef];
+      const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), draftRef, pubRef, policyRef, sourceRef,
+        liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
       const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
       const liveConfig = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
@@ -928,6 +1148,7 @@ function createScheduleRuntime(deps) {
       const livePub = snaps[3].exists ? (snaps[3].data() || {}) : {};
       const livePolicy = snaps[4].exists ? (snaps[4].data() || {}) : {};
       const liveSource = snaps[5].exists ? (snaps[5].data() || {}) : {};
+      requireLiveManager(snaps[6], snaps[7], ctx);
       if (liveConfig.mode !== MODE.NEW || liveConfig.active_source_id !== draftMeta.source_id
           || liveConfig.active_policy_id !== draftMeta.policy_id) {
         throw new ScheduleRuntimeError('publish-config-changed', 'הגדרות הסידור השתנו בזמן הפרסום.', 'aborted');
@@ -936,7 +1157,8 @@ function createScheduleRuntime(deps) {
       if (actualPrevious !== expectedPrevious || Number(liveActive.revision || 0) !== revision - 1) {
         throw new ScheduleRuntimeError('publish-race', 'פורסם סידור אחר במקביל. יש לרענן.', 'aborted');
       }
-      if (liveDraft.status !== 'complete' || livePub.status !== 'complete'
+      if (liveDraft.status !== 'complete' || livePub.status !== 'staging'
+          || livePub.snapshot_complete !== true
           || liveDraft.content_digest !== expectedContentDigest
           || livePub.content_digest !== expectedContentDigest
           || livePub.content_digest !== draftMeta.content_digest) {
@@ -959,8 +1181,12 @@ function createScheduleRuntime(deps) {
         previous_publication_id: expectedPrevious, by: ctx.uid,
         at: FV.serverTimestamp()
       });
-    });
-    await queueOutbox(pubRef);
+      });
+    } catch (error) {
+      if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
+      throw error;
+    }
+    await releaseOutbox(pubRef);
     return {
       duplicate: false,
       publication_id: pubId,
@@ -997,7 +1223,8 @@ function createScheduleRuntime(deps) {
         && firstPub.rollback_from_publication_id === expectedActive
         && firstPub.rollback_target_publication_id === targetId
         && firstPub.rollback_reason_code === reasonCode) {
-      await queueOutbox(pubRef);
+      await requireLiveManagerNow(ctx);
+      await releaseOutbox(pubRef);
       return { duplicate: true, publication_id: pubId, revision: firstActive.revision };
     }
 
@@ -1042,12 +1269,17 @@ function createScheduleRuntime(deps) {
       const active = await activeRef(ctx.sid).get();
       if (active.exists && (active.data() || {}).publication_id === pubId
           && existingData.request_fingerprint === requestFingerprint) {
-        await queueOutbox(pubRef);
+        await requireLiveManagerNow(ctx);
+        await releaseOutbox(pubRef);
         return { duplicate: true, publication_id: pubId, revision: (active.data() || {}).revision };
       }
       if (existingData.request_fingerprint !== requestFingerprint) {
         throw new ScheduleRuntimeError('rollback-conflict',
           'מזהה החזרה כבר שימש לפעולה אחרת.', 'already-exists');
+      }
+      if (existingData.status === 'cancelled') {
+        throw new ScheduleRuntimeError('rollback-cancelled',
+          'החזרה זו בוטלה ולכן יש להתחיל פעולה חדשה.', 'aborted');
       }
     } else {
       await pubRef.create({
@@ -1090,15 +1322,19 @@ function createScheduleRuntime(deps) {
       }
     }));
     await commitWrites(outboxOps);
-    await db.runTransaction(async (tx) => {
+    await beforeSnapshotFinalize({ kind: 'rollback', ref: pubRef, ctx });
+    try {
+      await db.runTransaction(async (tx) => {
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid),
-        current.ref, target.ref, pubRef];
+        current.ref, target.ref, pubRef, liveUserRef(ctx.sid, ctx.uid),
+        scheduleAccessRef(ctx.sid, ctx.uid)];
       const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
       const liveConfig = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
       const liveCurrent = snaps[2].exists ? (snaps[2].data() || {}) : {};
       const liveTarget = snaps[3].exists ? (snaps[3].data() || {}) : {};
       const livePub = snaps[4].exists ? (snaps[4].data() || {}) : {};
+      requireLiveManager(snaps[5], snaps[6], ctx);
       if (liveConfig.mode !== MODE.NEW) {
         throw new ScheduleRuntimeError('rollback-mode-changed',
           'מצב המנוע השתנה בזמן החזרה.', 'aborted');
@@ -1111,7 +1347,7 @@ function createScheduleRuntime(deps) {
       }
       if (liveCurrent.status !== 'active' || liveTarget.status !== 'active'
           || liveTarget.content_digest !== target.meta.content_digest
-          || livePub.status !== 'complete') {
+          || livePub.status !== 'staging' || livePub.snapshot_complete !== true) {
         throw new ScheduleRuntimeError('rollback-snapshot-changed',
           'אחת מתמונות הסידור השתנתה בזמן החזרה.', 'aborted');
       }
@@ -1129,8 +1365,12 @@ function createScheduleRuntime(deps) {
         target_publication_id: targetId,
         reason_code: reasonCode, by: ctx.uid, at: FV.serverTimestamp()
       });
-    });
-    await queueOutbox(pubRef);
+      });
+    } catch (error) {
+      if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
+      throw error;
+    }
+    await releaseOutbox(pubRef);
     return {
       duplicate: false, publication_id: pubId, revision,
       rolled_back_to: targetId, notified_people: planned.notifications.length
@@ -1260,6 +1500,49 @@ function createScheduleRuntime(deps) {
     });
   }
 
+  function publicationMatches(value, pointer, publication) {
+    return publication.status === 'active'
+      && pointer.publication_id === value.publication_id
+      && Number(pointer.revision || 0) === Number(value.revision || 0);
+  }
+
+  async function validateOutboxForSend(ref, leaseToken) {
+    let sendable = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      if (value.status !== 'sending' || value.lease_token !== leaseToken) return;
+      const stationId = String(value.station_id || '');
+      const publicationId = String(value.publication_id || '');
+      const now = Date.parse(clock());
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) {
+        cancelOutbox(tx, ref, 'outbox-invalid');
+        return;
+      }
+      if (outboxExpired(value, now)) {
+        cancelOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const checks = await Promise.all(refs.map((item) => tx.get(item)));
+      const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
+      const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
+      const publication = checks[2].exists ? (checks[2].data() || {}) : {};
+      if (runtime.mode !== MODE.NEW) {
+        cancelOutbox(tx, ref, 'runtime-not-new');
+        return;
+      }
+      if (!publicationMatches(value, pointer, publication)) {
+        cancelOutbox(tx, ref, 'publication-not-active');
+        return;
+      }
+      sendable = true;
+    });
+    return sendable;
+  }
+
   async function deliverOutbox(ref) {
     if (!ref || typeof ref.get !== 'function') return { skipped: true };
     let claimed = null;
@@ -1268,29 +1551,44 @@ function createScheduleRuntime(deps) {
       if (!snap.exists) return;
       const data = snap.data() || {};
       if (data.status !== 'queued') return;
-      const runtime = await tx.get(runtimeRef(data.station_id));
-      const runtimeData = runtime.exists ? (runtime.data() || {}) : {};
-      if (runtimeData.mode !== MODE.NEW) {
-        tx.update(ref, {
-          status: 'cancelled', cancel_reason: 'runtime-not-new',
-          cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
-        });
+      const stationId = String(data.station_id || '');
+      const publicationId = String(data.publication_id || '');
+      const now = Date.parse(clock());
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) {
+        cancelOutbox(tx, ref, 'outbox-invalid');
         return;
       }
-      const pointer = await tx.get(activeRef(data.station_id));
-      if (!pointer.exists || (pointer.data() || {}).publication_id !== data.publication_id) {
-        tx.update(ref, { status: 'cancelled', cancelled_at: FV.serverTimestamp() });
+      if (outboxExpired(data, now)) {
+        cancelOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const checks = await Promise.all(refs.map((item) => tx.get(item)));
+      const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
+      const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
+      const publication = checks[2].exists ? (checks[2].data() || {}) : {};
+      if (runtime.mode !== MODE.NEW) {
+        cancelOutbox(tx, ref, 'runtime-not-new');
+        return;
+      }
+      if (!publicationMatches(data, pointer, publication)) {
+        cancelOutbox(tx, ref, 'publication-not-active');
         return;
       }
       const leaseToken = 'l_' + randomId();
       tx.update(ref, {
         status: 'sending', claimed_at: FV.serverTimestamp(), lease_token: leaseToken,
-        lease_until: new Date(Date.parse(clock()) + OUTBOX_LEASE_MS)
+        lease_until: new Date(now + OUTBOX_LEASE_MS)
       });
       claimed = Object.assign({}, data, { lease_token: leaseToken });
     });
     if (!claimed) return { skipped: true };
     try {
+      await beforeOutboxSend(claimed);
+      // The second transaction is as close as possible to the external call.
+      // It closes pointer/mode/expiry changes that happened after the claim.
+      if (!await validateOutboxForSend(ref, claimed.lease_token)) return { skipped: true };
       const push = claimed.push || {};
       const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
         push.title || 'ResQ · הסידור שלך', push.body || 'הסידור שלך עודכן',
@@ -1338,45 +1636,22 @@ function createScheduleRuntime(deps) {
   }
 
   async function resumeOutbox() {
-    const snap = await db.collectionGroup('schedule_outbox')
-      .where('status', 'in', ['blocked', 'retry', 'sending', 'queued']).limit(100).get();
+    // Query each lifecycle state independently: a large staging backlog must
+    // not starve an active retry or a previously queued delivery.
+    const collected = new Map();
+    for (const status of ['retry', 'sending', 'queued', 'blocked']) {
+      const snap = await db.collectionGroup('schedule_outbox')
+        .where('status', '==', status).limit(100).get();
+      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+    }
     let queued = 0;
     const now = Date.parse(clock());
-    const modeByStation = new Map();
-    for (const doc of snap.docs) {
-      const value = doc.data() || {};
-      if (!ID_RE.test(String(value.station_id || '')) || !ID_RE.test(String(value.publication_id || ''))) continue;
-      if (value.status === 'sending') {
-        const until = value.lease_until && typeof value.lease_until.toMillis === 'function'
-          ? value.lease_until.toMillis() : Date.parse(value.lease_until || '');
-        if (Number.isFinite(until) && until > now) continue;
-      }
-      if (value.status === 'retry' && nonEmpty(value.next_attempt_at)
-          && Date.parse(value.next_attempt_at) > now) continue;
-      if (!modeByStation.has(value.station_id)) {
-        const runtime = await runtimeRef(value.station_id).get();
-        const runtimeData = runtime.exists ? (runtime.data() || {}) : {};
-        modeByStation.set(value.station_id, runtimeData.mode === MODE.NEW ? MODE.NEW : MODE.OFF);
-      }
-      if (modeByStation.get(value.station_id) !== MODE.NEW) {
-        await doc.ref.update({
-          status: 'cancelled', cancel_reason: 'runtime-not-new',
-          cancelled_at: FV.serverTimestamp(), lease_token: null, lease_until: null
-        });
-        continue;
-      }
-      const pointer = await activeRef(value.station_id).get();
-      if (pointer.exists && (pointer.data() || {}).publication_id === value.publication_id) {
-        if (value.status === 'queued') await deliverOutbox(doc.ref);
-        else await doc.ref.update({
-          status: 'queued', queued_at: FV.serverTimestamp(), lease_token: null, lease_until: null
-        });
-        queued += 1;
-      } else {
-        await doc.ref.update({ status: 'cancelled', cancelled_at: FV.serverTimestamp() });
-      }
+    for (const doc of collected.values()) {
+      const result = await reconcileOutbox(doc.ref, now);
+      if (result.queued) queued += 1;
+      if (result.deliver) await deliverOutbox(doc.ref);
     }
-    return { scanned: snap.size, queued };
+    return { scanned: collected.size, queued };
   }
 
   return Object.freeze({
@@ -1399,6 +1674,5 @@ module.exports = {
   createScheduleRuntime,
   ScheduleRuntimeError,
   MODE,
-  MANAGER_ROLES,
   MEMBER_ROLES
 };

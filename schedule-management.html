@@ -16,7 +16,7 @@
     button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #87b8e4;outline-offset:2px}
     [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}.head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}.head h1{font-size:26px;margin:0}.head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}.tabs.manage-only{grid-template-columns:1fr}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -56,10 +56,15 @@
 
   <div class="mode" id="mode"><span class="dot"></span><span>בודק את מצב המנוע…</span></div>
 
-  <nav class="tabs" aria-label="תצוגות הסידור">
+  <section class="card" id="availabilityView" hidden aria-live="polite">
+    <h2 id="availabilityTitle">הסידור החדש אינו זמין כרגע</h2>
+    <div class="sub" id="availabilityText"></div>
+  </section>
+
+  <nav class="tabs" id="scheduleTabs" aria-label="תצוגות הסידור">
     <button type="button" data-tab="manage" id="manageTab">ניהול</button>
-    <button type="button" data-tab="mine">הסידור שלי</button>
-    <button type="button" data-tab="station">סידור התחנה</button>
+    <button type="button" data-tab="mine" id="mineTab">הסידור שלי</button>
+    <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
   </nav>
 
   <section id="manageView" hidden>
