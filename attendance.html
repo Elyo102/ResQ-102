@@ -188,6 +188,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        padding:2px 12px 13px; margin-top:12px }
   .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
   .otHead b{ color:var(--on-soft) }
+  /* אדום כל עוד הנימוק חסר, וכתום ברגע שנכתב.
+     חסר הוא חסימה — אי אפשר לשמור בלעדיו — ולכן אדום.
+     אחרי שנכתב זו כבר הערה ולא מניעה. */
+  .ot.req{ border-color:var(--bad-bd); background:var(--bad-bg) }
+  .ot.req .otHead{ color:var(--bad) }
+  .ot.req .otHead b{ color:var(--bad) }
+  .reqTag{ color:var(--bad); font-weight:700 }
   .sum-line{ display:flex; justify-content:space-between; gap:12px;
              padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .sum-line:last-child{ border-bottom:0 }
@@ -364,7 +371,8 @@ import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
   from './rotation.js?v=38';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
-         overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
+         overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
+         SHAPES, shapeOf, shapeHe }
   from './hours.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
@@ -1219,12 +1227,23 @@ function editDay(key, rec){
   const p = key.split('-');
   const shape0 = rec ? shapeOf(rec) : 'regular';
 
+  // סימון מראש של מה שמחייב נימוק.
+  //
+  // עד עכשיו הכבאי גילה שנדרש נימוק רק **אחרי** שבחר, כשקופסת
+  // הנימוק נפתחה. הסימון בתפריט עצמו אומר לו לפני הבחירה, וזה
+  // ההבדל בין „למה זה מבקש ממני עוד דבר" לבין „ידעתי".
+  //
+  // המקור הוא REASON_TYPES ב-hours.js ולא רשימה שנייה כאן —
+  // רשימה שנייה הייתה יוצאת מסנכרון ביום שמוסיפים סוג יום.
+  const reasonMark = ' · נימוק חובה';
   const types = DAY_TYPES.map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
-    '>' + t.he + '</option>').join('');
+    '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
+    '</option>').join('');
   const shapes = SHAPES.map(s =>
     '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
-    '>' + s.he + '</option>').join('');
+    '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
+    '</option>').join('');
   const siteOpts = '<option value="">בלי תחנה</option>' + sites.map(s =>
     '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
     '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
@@ -1327,13 +1346,19 @@ function editDay(key, rec){
 
     $('dOtBox').classList.toggle('hide', !why);
     if (why) {
-      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — משאבי אנוש צריכים ' +
-        'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.';
+      // אדום כל עוד ריק, כתום ברגע שנכתב משהו. חסר הוא חסימה.
+      const filled = !!$('dOtReason').value.trim();
+      $('dOtBox').classList.toggle('req', !filled);
+      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — ' +
+        (filled
+          ? 'הנימוק יישמר עם היום.'
+          : '<span class="reqTag">חובה למלא נימוק.</span> משאבי אנוש צריכים ' +
+            'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.');
     }
   };
 
   ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
-  ['dStart','dEnd','dStart2','dEnd2'].forEach(id => { $(id).oninput = sync; });
+  ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
 
   $('dSave').onclick = async () => {
