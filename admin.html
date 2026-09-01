@@ -33,9 +33,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
         padding:18px;margin-bottom:14px}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
-  input{width:100%;padding:10px;background:var(--input);color:var(--txt);
+  input{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
-  button{background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
+  button{min-height:44px;background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
         padding:10px 18px;font-size:14px;cursor:pointer;margin-top:14px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
@@ -60,7 +60,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
   .msg.info{display:block;background:var(--chip);color:var(--dim)}
   h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
-  select{width:100%;padding:10px;background:var(--input);color:var(--txt);
+  select{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
   .two{display:flex;gap:12px}
   .two>div{flex:1}
@@ -69,6 +69,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .rotstate b{color:var(--txt)}
   .schedule-link{display:inline-block;margin-top:12px;color:var(--accent);font-weight:600}
   .schedule-link.hide{display:none}
+  .transfer-choice{display:block;width:100%;text-align:right;background:var(--panel);
+    color:var(--txt);border:1px solid var(--line);margin-top:8px}
+  .transfer-choice.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--chip)}
+  .transfer-meta{font-size:12px;color:var(--muted);margin-top:4px}
+  @media(max-width:520px){
+    body{padding:10px}.card{padding:14px}.two{display:block}.two>div+div{margin-top:8px}
+    .acts{display:block}.acts button{width:100%}
+  }
 </style>
 </head>
 <body>
@@ -256,6 +264,42 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div id="scheduleAccessList"></div>
     </div>
 
+    <div class="card hide" id="stationTransferCard">
+      <h2>העברת עובד לתחנה אחרת</h2>
+      <div class="rotstate">
+        ההעברה נפתחת בתחנת המקור, אך העובד נשאר משויך אליה עד
+        שרכז/ת משאבי אנוש או מפקד/ת תחנת היעד מאשרים. השם משמש
+        לחיפוש בלבד; הבחירה נשמרת לפי מזהה החשבון.
+      </div>
+
+      <div id="transferSourcePanel" class="hide">
+        <label for="transferSearch">חיפוש עובד לפי שם</label>
+        <div class="two">
+          <div><input id="transferSearch" type="search" autocomplete="off"
+                      placeholder="לפחות שני תווים"></div>
+          <div><button type="button" id="transferSearchButton" style="width:100%;margin-top:0">חפש</button></div>
+        </div>
+        <div id="transferResults"></div>
+
+        <label for="transferTarget">תחנת יעד</label>
+        <select id="transferTarget"><option value="">— בחר תחנת יעד —</option></select>
+        <button type="button" id="transferCreate" disabled>שלח לאישור תחנת היעד</button>
+        <div class="msg" id="transferCreateMsg"></div>
+
+        <div id="transferOutgoingPanel" class="hide">
+          <h2 style="margin-top:24px">בקשות שיצאו מהתחנה שלי</h2>
+          <button type="button" id="transferOutgoingRefresh" class="ghost">רענן בקשות יוצאות</button>
+          <div class="msg" id="transferOutgoingMsg"></div>
+          <div id="transferOutgoing"><div class="empty">אין בקשות טעונות.</div></div>
+        </div>
+      </div>
+
+      <h2 style="margin-top:24px">בקשות שממתינות לתחנה שלי</h2>
+      <button type="button" id="transferRefresh" class="ghost">רענן בקשות</button>
+      <div class="msg" id="transferIncomingMsg"></div>
+      <div id="transferIncoming"><div class="empty">אין בקשות טעונות.</div></div>
+    </div>
+
     <div class="card" id="scheduleManagementCard">
       <h2>ניהול סידור עבודה</h2>
       <div class="rotstate">
@@ -323,6 +367,11 @@ const callReindex  = httpsCallable(fns, 'reindexDirectory');
 const callGetScheduleRuntimeStatus = httpsCallable(fns, 'getScheduleRuntimeStatus');
 const callGetScheduleManagerAccess = httpsCallable(fns, 'getScheduleManagerAccess');
 const callSetScheduleManagerAccess = httpsCallable(fns, 'setScheduleManagerAccess');
+const callSearchTransfers = httpsCallable(fns, 'searchStationTransferCandidates');
+const callCreateTransfer = httpsCallable(fns, 'createStationTransfer');
+const callListTransfers = httpsCallable(fns, 'listStationTransfers');
+const callDecideTransfer = httpsCallable(fns, 'decideStationTransfer');
+const callCancelTransfer = httpsCallable(fns, 'cancelStationTransfer');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 let roleOperationId = '';
@@ -566,6 +615,355 @@ $('scheduleAccessPick').onchange = updateScheduleAccessButtons;
 $('btnScheduleAccessEnable').onclick = function () { setScheduleAccess(true); };
 $('btnScheduleAccessDisable').onclick = function () { setScheduleAccess(false); };
 
+// ---------------------------------------------------------------------
+// העברת עובד בין תחנות
+// ---------------------------------------------------------------------
+let canCreateStationTransfer = false;
+let canApproveStationTransfer = false;
+let canListOutgoingStationTransfer = false;
+let transferSelected = null;
+let transferPeople = [];
+let transferTargets = [];
+let transferStationId = '';
+let transferGeneration = 0;
+let transferDecisionInflight = new Set();
+
+function transferRoleName(role){
+  return ROLE_HE[String(role || '')] || String(role || 'ללא תפקיד');
+}
+
+function captureTransferTargets(data){
+  // targets הוא חוזה שרת. הלקוח אינו מנחש תחנות מ-STATIONS ואינו
+  // מקבל טקסט חופשי. שדה חסר שומר את הרשימה שכבר אומתה בתגובה
+  // קודמת; מערך ריק מפורש מנקה אותה ונכשל סגור.
+  if (!data || !Object.prototype.hasOwnProperty.call(data, 'targets')) return;
+  const source = Array.isArray(data.targets) ? data.targets : [];
+  const seen = new Set();
+  transferTargets = source.reduce(function (rows, raw) {
+    const id = String((raw || {}).station_id || '').trim();
+    const name = String((raw || {}).name || '').trim();
+    if (!/^[a-z0-9_-]{2,80}$/.test(id) || !name || seen.has(id)) return rows;
+    seen.add(id); rows.push({ station_id:id, name:name.slice(0, 160) });
+    return rows;
+  }, []).sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
+}
+
+function renderTransferTargets(sourceStationId){
+  const select = $('transferTarget');
+  clearNode(select);
+  const first = document.createElement('option');
+  first.value = ''; first.textContent = '— בחר תחנת יעד —';
+  select.appendChild(first);
+  transferTargets.filter(function (station) { return station.station_id !== sourceStationId; })
+    .forEach(function (station) {
+      const option = document.createElement('option');
+      option.value = station.station_id; option.textContent = station.name;
+      select.appendChild(option);
+    });
+  if (select.options.length === 1) {
+    first.textContent = 'אין כרגע תחנת יעד פעילה שהשרת אישר';
+  }
+  updateTransferCreateButton();
+}
+
+function updateTransferCreateButton(){
+  $('transferCreate').disabled = !canCreateStationTransfer || !transferSelected ||
+    !$('transferTarget').value;
+}
+
+function selectTransferPerson(uid){
+  transferSelected = transferPeople.find(function (person) { return person.uid === uid; }) || null;
+  $('transferResults').querySelectorAll('[data-transfer-uid]').forEach(function (button) {
+    button.classList.toggle('selected', !!transferSelected &&
+      button.getAttribute('data-transfer-uid') === transferSelected.uid);
+  });
+  renderTransferTargets(transferSelected ? transferSelected.station_id : transferStationId);
+}
+
+function renderTransferPeople(){
+  const box = $('transferResults');
+  clearNode(box);
+  if (!transferPeople.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'לא נמצאו עובדים פעילים.';
+    box.appendChild(empty); return;
+  }
+  transferPeople.forEach(function (person) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'transfer-choice';
+    button.setAttribute('data-transfer-uid', person.uid);
+    const title = document.createElement('div');
+    title.textContent = person.full_name || 'ללא שם';
+    const meta = document.createElement('div');
+    meta.className = 'transfer-meta';
+    meta.textContent = [
+      person.employee_number ? 'מספר עובד ' + person.employee_number : '',
+      transferRoleName(person.role),
+      person.shift ? 'משמרת ' + person.shift : '',
+      stationName(person.station_id)
+    ].filter(Boolean).join(' · ');
+    button.append(title, meta);
+    button.onclick = function () { selectTransferPerson(person.uid); };
+    box.appendChild(button);
+  });
+}
+
+async function searchTransferPeople(){
+  if (!canCreateStationTransfer) return;
+  const query = $('transferSearch').value.trim();
+  if (query.length < 2) {
+    msg('transferCreateMsg', 'יש להזין לפחות שני תווים בשם.', 'err'); return;
+  }
+  const generation = transferGeneration;
+  $('transferSearchButton').disabled = true;
+  msg('transferCreateMsg', 'מחפש...', 'info');
+  try {
+    const result = await callSearchTransfers({ name: query });
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    captureTransferTargets(data);
+    transferPeople = Array.isArray(data.people) ? data.people : [];
+    transferSelected = null;
+    renderTransferPeople();
+    renderTransferTargets(transferStationId);
+    msg('transferCreateMsg', transferPeople.length + ' תוצאות. בחר אדם במפורש.', 'ok');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    transferPeople = []; transferSelected = null; renderTransferPeople();
+    msg('transferCreateMsg', 'החיפוש נכשל: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferSearchButton').disabled = false;
+  }
+}
+
+async function createTransferRequest(){
+  if (!canCreateStationTransfer || !transferSelected || !$('transferTarget').value) return;
+  const generation = transferGeneration;
+  $('transferCreate').disabled = true;
+  msg('transferCreateMsg', 'שולח בקשה לתחנת היעד...', 'info');
+  try {
+    const result = await callCreateTransfer({
+      target_uid: transferSelected.uid,
+      target_station_id: $('transferTarget').value,
+      request_id: newOperationId('transfer-')
+    });
+    if (generation !== transferGeneration) return;
+    captureTransferTargets(result.data || {});
+    msg('transferCreateMsg',
+      'הבקשה נשלחה. העובד נשאר בתחנה הנוכחית עד אישור היעד.', 'ok');
+    transferSelected = null; transferPeople = [];
+    $('transferSearch').value = ''; renderTransferPeople();
+    renderTransferTargets(transferStationId);
+    if (canListOutgoingStationTransfer) await loadOutgoingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferCreateMsg', 'שליחת הבקשה נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  }
+  updateTransferCreateButton();
+}
+
+function transferStatusName(status){
+  const names = {
+    pending_target:'ממתינה לאישור תחנת היעד', processing:'בתהליך העברה',
+    needs_recovery:'ממתינה להשלמת מערכת', completed:'הושלמה',
+    rejected:'נדחתה', cancelled:'בוטלה'
+  };
+  return names[String(status || '')] || String(status || 'מצב לא ידוע');
+}
+
+function renderOutgoingTransfers(rows){
+  const box = $('transferOutgoing'); clearNode(box);
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'אין בקשות העברה פעילות שיצאו מהתחנה.';
+    box.appendChild(empty); return;
+  }
+  rows.forEach(function (transfer) {
+    const row = document.createElement('div'); row.className = 'req';
+    row.setAttribute('data-transfer-request', transfer.request_id);
+    row.setAttribute('data-transfer-status', transfer.status || '');
+    const name = document.createElement('div'); name.className = 'nm';
+    name.textContent = transfer.full_name || 'ללא שם';
+    const details = document.createElement('div'); details.className = 'ln';
+    const target = transferTargets.find(function (station) {
+      return station.station_id === transfer.target_station_id;
+    });
+    details.textContent = [
+      'אל ' + (target ? target.name : stationName(transfer.target_station_id)),
+      transferRoleName(transfer.role), transfer.shift ? 'משמרת ' + transfer.shift : '',
+      transferStatusName(transfer.status)
+    ].filter(Boolean).join(' · ');
+    row.append(name, details);
+    if (transfer.status === 'pending_target') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const cancel = document.createElement('button'); cancel.type = 'button';
+      cancel.className = 'no'; cancel.textContent = 'בטל בקשה';
+      cancel.setAttribute('data-transfer-cancel', transfer.request_id);
+      cancel.onclick = function () { cancelTransferRequest(transfer.request_id, row); };
+      actions.appendChild(cancel); row.appendChild(actions);
+    }
+    box.appendChild(row);
+  });
+}
+
+async function loadOutgoingTransfers(){
+  if (!canListOutgoingStationTransfer) {
+    renderOutgoingTransfers([]); return;
+  }
+  const generation = transferGeneration;
+  $('transferOutgoingRefresh').disabled = true;
+  try {
+    const result = await callListTransfers({ direction:'outgoing' });
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    captureTransferTargets(data);
+    renderTransferTargets(transferSelected ? transferSelected.station_id : transferStationId);
+    const rows = Array.isArray(data.transfers) ? data.transfers : [];
+    renderOutgoingTransfers(rows);
+    msg('transferOutgoingMsg', rows.length ? rows.length + ' בקשות פעילות.' : '',
+      rows.length ? 'info' : '');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    renderOutgoingTransfers([]);
+    msg('transferOutgoingMsg', 'טעינת הבקשות היוצאות נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferOutgoingRefresh').disabled = false;
+  }
+}
+
+async function cancelTransferRequest(requestId, row){
+  if (!canListOutgoingStationTransfer) return;
+  if (!confirm('לבטל את בקשת ההעברה? העובד יישאר בתחנה הנוכחית.')) return;
+  const generation = transferGeneration;
+  row.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
+  msg('transferOutgoingMsg', 'מבטל בקשה...', 'info');
+  try {
+    const result = await callCancelTransfer({ request_id:requestId });
+    if (generation !== transferGeneration) return;
+    captureTransferTargets(result.data || {});
+    msg('transferOutgoingMsg', 'הבקשה בוטלה. העובד נשאר בתחנה הנוכחית.', 'ok');
+    await loadOutgoingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferOutgoingMsg', 'ביטול הבקשה נכשל: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+    row.querySelectorAll('button').forEach(function (button) { button.disabled = false; });
+  }
+}
+
+function renderIncomingTransfers(rows){
+  const box = $('transferIncoming'); clearNode(box);
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'אין בקשות שממתינות לאישור התחנה.';
+    box.appendChild(empty); return;
+  }
+  rows.forEach(function (transfer) {
+    const row = document.createElement('div'); row.className = 'req';
+    row.setAttribute('data-transfer-request', transfer.request_id);
+    row.setAttribute('data-transfer-status', transfer.status || '');
+    const name = document.createElement('div'); name.className = 'nm';
+    name.textContent = transfer.full_name || 'ללא שם';
+    const details = document.createElement('div'); details.className = 'ln';
+    details.textContent = [
+      'מ-' + stationName(transfer.source_station_id),
+      transferRoleName(transfer.role),
+      transfer.shift ? 'משמרת ' + transfer.shift : '',
+      transferStatusName(transfer.status)
+    ].filter(Boolean).join(' · ');
+    row.append(name, details);
+    if (transfer.status === 'pending_target') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const approve = document.createElement('button'); approve.type = 'button';
+      approve.className = 'ok'; approve.textContent = 'אשר העברה';
+      approve.setAttribute('data-transfer-approve', transfer.request_id);
+      const reject = document.createElement('button'); reject.type = 'button';
+      reject.className = 'no'; reject.textContent = 'דחה';
+      reject.setAttribute('data-transfer-reject', transfer.request_id);
+      approve.onclick = function () { decideTransferRequest(transfer.request_id, 'approve', row); };
+      reject.onclick = function () { decideTransferRequest(transfer.request_id, 'reject', row); };
+      actions.append(approve, reject); row.appendChild(actions);
+    } else if (transfer.status === 'needs_recovery') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const retry = document.createElement('button'); retry.type = 'button';
+      retry.className = 'ok'; retry.textContent = 'השלם העברה / נסה שוב';
+      retry.setAttribute('data-transfer-retry', transfer.request_id);
+      retry.onclick = function () { decideTransferRequest(transfer.request_id, 'approve', row); };
+      actions.appendChild(retry); row.appendChild(actions);
+    }
+    box.appendChild(row);
+  });
+}
+
+async function loadIncomingTransfers(){
+  if (!canApproveStationTransfer) {
+    renderIncomingTransfers([]); return;
+  }
+  const generation = transferGeneration;
+  $('transferRefresh').disabled = true;
+  try {
+    const result = await callListTransfers({ direction: 'incoming' });
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    const rows = Array.isArray(data.transfers) ? data.transfers : [];
+    renderIncomingTransfers(rows);
+    msg('transferIncomingMsg', rows.length ? rows.length + ' בקשות ממתינות.' : '',
+      rows.length ? 'info' : '');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    renderIncomingTransfers([]);
+    msg('transferIncomingMsg', 'טעינת הבקשות נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferRefresh').disabled = false;
+  }
+}
+
+async function decideTransferRequest(requestId, decision, row){
+  const inflight = transferDecisionInflight;
+  if (!canApproveStationTransfer || inflight.has(requestId)) return;
+  const generation = transferGeneration;
+  const isRecovery = row.getAttribute('data-transfer-status') === 'needs_recovery';
+  inflight.add(requestId);
+  row.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
+  msg('transferIncomingMsg', decision === 'approve'
+    ? (isRecovery ? 'משלים את ההעברה...' : 'מעביר את העובד...')
+    : 'דוחה בקשה...', 'info');
+  try {
+    const payload = {
+      request_id: requestId,
+      decision: decision
+    };
+    if (decision === 'reject') payload.reason_code = 'not_accepted';
+    await callDecideTransfer(payload);
+    if (generation !== transferGeneration) return;
+    msg('transferIncomingMsg', decision === 'approve'
+      ? (isRecovery ? 'השלמת ההעברה הצליחה.'
+        : 'ההעברה הושלמה. העובד יצטרך להתחבר מחדש.')
+      : 'הבקשה נדחתה.', 'ok');
+    await loadIncomingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferIncomingMsg', 'הפעולה נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+    row.querySelectorAll('button').forEach(function (button) { button.disabled = false; });
+  } finally {
+    inflight.delete(requestId);
+  }
+}
+
+$('transferSearchButton').onclick = searchTransferPeople;
+$('transferSearch').addEventListener('keydown', function (event) {
+  if (event.key === 'Enter') { event.preventDefault(); searchTransferPeople(); }
+});
+$('transferTarget').onchange = updateTransferCreateButton;
+$('transferCreate').onclick = createTransferRequest;
+$('transferRefresh').onclick = loadIncomingTransfers;
+$('transferOutgoingRefresh').onclick = loadOutgoingTransfers;
+
 // ---------- כניסה ----------
 
 $('btnIn').onclick = async () => {
@@ -597,6 +995,7 @@ $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
   scheduleAccessGeneration += 1;
+  transferGeneration += 1;
   if (!user) {
     goSignIn();
     return;
@@ -606,7 +1005,23 @@ onAuthStateChanged(auth, async user => {
   // מוצג קישור לניהול. נתוני הסידור הישנים חסומים גם לקריאה.
   canManageScheduleAccess = false;
   isSuperScheduleAccessOperator = false;
+  canCreateStationTransfer = false;
+  canApproveStationTransfer = false;
+  canListOutgoingStationTransfer = false;
+  transferSelected = null;
+  transferPeople = [];
+  transferTargets = [];
+  transferStationId = '';
+  transferDecisionInflight = new Set();
+  renderTransferPeople();
+  renderTransferTargets('');
+  renderOutgoingTransfers([]);
+  renderIncomingTransfers([]);
+  msg('transferCreateMsg', '', '');
+  msg('transferOutgoingMsg', '', '');
+  msg('transferIncomingMsg', '', '');
   $('scheduleAccessCard').classList.add('hide');
+  $('stationTransferCard').classList.add('hide');
   $('legacyRotationCard').classList.add('hide');
   $('scheduleManagementLink').classList.add('hide');
   $('legacyRotationManageLink').classList.add('hide');
@@ -675,8 +1090,27 @@ onAuthStateChanged(auth, async user => {
   isSuperScheduleAccessOperator = isSuper;
   $('scheduleAccessCard').classList.toggle('hide', !canManageScheduleAccess);
 
+  // העברה היא סמכות כוח-אדם נפרדת: HR במקור יוצר בקשה;
+  // HR או מפקד התחנה ביעד מאשרים. super יכול לפתוח בקשה עבור
+  // בעל תפקיד בכיר, אך אינו עוקף את אישור תחנת היעד.
+  canCreateStationTransfer = isSuper || claims.role === 'hr_coordinator';
+  canApproveStationTransfer = claims.role === 'hr_coordinator' ||
+    claims.role === 'station_commander';
+  // list(direction=outgoing) קשור לתחנת המקור החיה של HR. מנהל-על
+  // רשאי לפתוח בקשה ממוקדת אך אינו מקבל רשימת תחנה ללא מקור מפורש.
+  canListOutgoingStationTransfer = !isSuper && claims.role === 'hr_coordinator';
+  transferStationId = String(claims.stationId || '');
+  $('stationTransferCard').classList.toggle('hide',
+    !canCreateStationTransfer && !canApproveStationTransfer);
+  $('transferSourcePanel').classList.toggle('hide', !canCreateStationTransfer);
+  $('transferOutgoingPanel').classList.toggle('hide', !canListOutgoingStationTransfer);
+  transferPeople = []; transferSelected = null;
+  renderTransferPeople(); renderTransferTargets(transferStationId);
+
   if (isSuper) loadRequests();
   if (canManageScheduleAccess) loadScheduleAccess(isSuper ? $('rPick').value : '');
+  if (canApproveStationTransfer) loadIncomingTransfers();
+  if (canListOutgoingStationTransfer) loadOutgoingTransfers();
   // אין טעינת collections סידור ישנות. המינוי החי נותן רק נתיב
   // למנוע החדש; כל השאר מקבלים הודעת מעבר נטולת נתונים.
   $('legacyRotationCard').classList.remove('hide');

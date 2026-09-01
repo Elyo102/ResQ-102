@@ -14,7 +14,7 @@
 // בלי לשאול את השרת על כל אדם בנפרד.
 
 import { collection, query, where, orderBy, limit, onSnapshot,
-         doc, updateDoc }
+         doc, updateDoc, FieldPath }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
@@ -141,11 +141,14 @@ function alarm() {
 }
 
 export function ackCallout(db, sid, calloutId, uid, name, answer) {
-  const patch = {};
-  patch['acks.' + uid] = {
-    resp: answer, name: name || '', at: new Date().toISOString()
-  };
-  return updateDoc(doc(db, 'stations', sid, 'callouts', calloutId), patch);
+  // Firestore treats dots in string keys as path separators.  A FieldPath
+  // keeps every valid Firebase Auth UID, including a dotted UID, as one
+  // literal key below `acks`, matching the flat `acks[uid]` reader.
+  return updateDoc(
+    doc(db, 'stations', sid, 'callouts', calloutId),
+    new FieldPath('acks', uid),
+    { resp: answer, name: name || '', at: new Date().toISOString() }
+  );
 }
 
 // מאזין לקריאות שנוגעות למשתמש הזה ומקפיץ את הראשונה שעדיין

@@ -91,6 +91,7 @@ function runtime(sendPush, hooks) {
   return createScheduleRuntime({
     db,
     FieldValue: admin.firestore.FieldValue,
+    FieldPath: admin.firestore.FieldPath,
     clock: CLOCK,
     hash,
     randomId,
@@ -102,7 +103,9 @@ function runtime(sendPush, hooks) {
     // These optional hooks are a narrowly-scoped race-test seam.  Production
     // leaves them undefined; the runtime must make its own final live checks.
     beforeOutboxSend: testHooks.beforeOutboxSend,
-    beforeSnapshotFinalize: testHooks.beforeSnapshotFinalize
+    beforeSnapshotFinalize: testHooks.beforeSnapshotFinalize,
+    beforeEffectiveViewRecheck: testHooks.beforeEffectiveViewRecheck,
+    beforeLiveGuardViewRecheck: testHooks.beforeLiveGuardViewRecheck
   });
 }
 
@@ -149,6 +152,25 @@ async function settleOtherUnfinishedOutbox(keepRef) {
   if (writes) await batch.commit();
 }
 
+// The document trigger fans out the first chunk in production; the scheduled
+// recovery owns later chunks.  Calling the same runtime entry point here
+// proves the large-recipient path without relying on emulator trigger timing.
+async function fanoutGuardJobs(api, guardId) {
+  for (let loop = 0; loop < 32; loop += 1) {
+    const jobs = await station().collection('guard_notification_jobs')
+      .where('guard_id', '==', guardId).get();
+    let queued = 0;
+    for (const job of jobs.docs) {
+      const current = (await job.ref.get()).data() || {};
+      if (current.status !== 'queued') continue;
+      queued += 1;
+      await api.fanoutGuardOutbox(job.ref);
+    }
+    if (!queued) return;
+  }
+  throw new Error('guard notification fanout did not settle');
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -179,6 +201,18 @@ async function seed() {
     }),
     station.collection('users').doc('viewer').set({
       station: SID, role: 'firefighter', full_name: 'כבאי בדיקה'
+    }),
+    station.collection('users').doc('driver2').set({
+      station: SID, role: 'firefighter', full_name: 'נהג בדיקה'
+    }),
+    station.collection('users').doc('fighter2').set({
+      station: SID, role: 'firefighter', full_name: 'לוחם בדיקה'
+    }),
+    station.collection('users').doc('team_leader').set({
+      station: SID, role: 'team_leader', full_name: 'מפקד צוות בדיקה'
+    }),
+    station.collection('users').doc('deputy_team_leader').set({
+      station: SID, role: 'deputy_team_leader', full_name: 'סגן מפקד צוות בדיקה'
     }),
     station.collection('users').doc('commander').set({
       station: SID, role: 'commander', full_name: 'מפקד ללא מינוי'
@@ -222,6 +256,18 @@ async function seed() {
   people.forEach(([id, data]) => batch.set(source.collection('people').doc(id), data));
   events.forEach(([id, data]) => batch.set(source.collection('events').doc(id), data));
   await batch.commit();
+  const legacy = db.batch();
+  [
+    ['manager', { full_name: 'מנהל בדיקה', crew: 'A', is_active: true }],
+    ['viewer', { full_name: 'כבאי בדיקה', crew: 'A', is_active: true }],
+    ['driver2', { full_name: 'נהג בדיקה', crew: 'B', is_active: true }],
+    ['fighter2', { full_name: 'לוחם בדיקה', crew: 'C', is_active: true }]
+  ].forEach(([uid, value]) => legacy.set(station.collection('roster').doc(uid), value));
+  ['A', 'B', 'C'].forEach((crew, position) => legacy.set(station.collection('rotations').doc(crew), {
+    anchor_date: '2026-09-01', cycle_days: 3, position_in_cycle: position,
+    crew, is_active: true
+  }));
+  await legacy.commit();
   await station.collection('schedule_state').doc('runtime').set({
     mode: 'shadow', active_policy_id: 'policy_v1', active_source_id: 'source_v1'
   });
@@ -241,6 +287,43 @@ async function test(name, fn) {
   await test('station spoofing is rejected before any schedule work', async () => {
     await assert.rejects(api.getStatus(req('viewer', 'firefighter', { stationId: 'other' })),
       (error) => error instanceof ScheduleRuntimeError && error.code === 'client-station-forbidden');
+  });
+
+  await test('guard signup rejects both client station spellings before reading a guard', async () => {
+    for (const field of ['stationId', 'station_id']) {
+      await assert.rejects(api.signupGuard(req('viewer', 'firefighter', Object.assign({
+        id: 'guard_station_spoof', join: true
+      }, { [field]: 'other_station' }))),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'client-station-forbidden', field);
+    }
+  });
+
+  await test('team leaders can sign up for an open guard but cannot manage it without an appointment', async () => {
+    const created = await api.manageGuard(req('manager', 'commander', {
+      action: 'create', request_id: 'team_leader_signup_create', details: {
+        title: 'אבטחת תפקידי שטח', kind: 'other', place: '', date: '2026-09-19',
+        start: '08:00', end: '12:00', slots: 2, need_quals: [], notes: ''
+      }
+    }));
+    assert.match(created.guard_id, /^[A-Za-z0-9_-]+$/);
+    const guardRef = station().collection('guards').doc(created.guard_id);
+    try {
+      for (const [uid, role] of [
+        ['team_leader', 'team_leader'],
+        ['deputy_team_leader', 'deputy_team_leader']
+      ]) {
+        const signup = await api.signupGuard(req(uid, role, { id: created.guard_id, join: true }));
+        assert.equal(signup.changed, true, uid);
+        await assert.rejects(api.manageGuard(req(uid, role, {
+          action: 'cancel', request_id: 'team_leader_no_grant_' + uid,
+          guard_id: created.guard_id, expected_revision: 1
+        })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required', uid);
+      }
+      const signups = (await guardRef.get()).data().signups || {};
+      assert.deepEqual(Object.keys(signups).sort(), ['deputy_team_leader', 'team_leader']);
+    } finally {
+      await guardRef.delete();
+    }
   });
 
   await test('live user state is required in addition to token claims', async () => {
@@ -281,6 +364,809 @@ async function test(name, fn) {
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
   });
 
+  await test('off and shadow safely expose the current station and personal legacy schedules', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    for (const mode of ['shadow', 'off']) {
+      await runtimeRef.update({ mode });
+      const stationView = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(stationView.mode, mode);
+      assert.equal(stationView.source, 'legacy');
+      assert.equal(stationView.day.date, '2026-09-01');
+      assert.ok(stationView.day.sub_stations.some((block) =>
+        block.people.some((person) => person.uid === 'viewer')));
+      const mine = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(mine.source, 'legacy');
+      assert.deepEqual(mine.days.map((day) => day.date), ['2026-09-01']);
+      const serialized = JSON.stringify(mine);
+      assert.equal(serialized.includes('email'), false);
+      assert.equal(serialized.includes('phone'), false);
+      assert.equal(serialized.includes('medical'), false);
+    }
+    await runtimeRef.update({ mode: 'shadow' });
+  });
+
+  await test('legacy guards remain flexible while their schedule projection stays private', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const guards = station().collection('guards');
+    const inactiveRef = station().collection('roster').doc('inactive');
+    const docs = [
+      ['guard_empty', {
+        title: 'אבטחה פתוחה', date: '2026-09-01', start: '07:00', end: '10:00',
+        slots: 2, status: 'open', assigned: []
+      }],
+      ['guard_partial', {
+        title: 'אבטחה חלקית', date: '2026-09-01', start: '12:00', end: '16:00',
+        slots: 2, status: 'staffed', assigned: ['inactive', 'foreign_user']
+      }],
+      ['guard_mine', {
+        title: 'אבטחת לילה', date: '2026-09-01', start: '22:00', end: '06:00',
+        slots: 2, status: 'staffed', assigned: ['viewer', 'inactive'],
+        notes: 'private notes sentinel', place: 'secret place sentinel',
+        signups: { viewer: { name: 'private signup sentinel' } },
+        need_quals: ['secret_qualification'], by_uid: 'guard_owner',
+        by_name: 'guard owner name', kind: 'secret kind', created_at: 'not for schedule',
+        future_private_field: 'future private sentinel'
+      }],
+      ['guard_cancelled', {
+        title: 'אבטחה מבוטלת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'cancelled', assigned: ['viewer']
+      }],
+      ['guard_bad_uid', {
+        title: 'אבטחה פגומה', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', assigned: ['viewer', 'uid/bad']
+      }],
+      ['guard_over_capacity', {
+        title: 'אבטחה מעל קיבולת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', assigned: ['viewer', 'driver2']
+      }],
+      ['guard_foreign_station', {
+        title: 'אבטחה מתחנה אחרת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', station_id: 'other_102', assigned: ['viewer']
+      }]
+    ];
+    const write = db.batch();
+    write.set(inactiveRef, { full_name: 'אדם לא פעיל', crew: 'A', is_active: false });
+    docs.forEach(([id, value]) => write.set(guards.doc(id), value));
+    await write.commit();
+    try {
+      for (const mode of ['shadow', 'off']) {
+        await runtimeRef.update({ mode });
+        const stationView = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' }));
+        const stationEvents = stationView.day.events || [];
+        assert.deepEqual(stationEvents.map((event) => event.id).sort(),
+          ['guard_empty', 'guard_mine', 'guard_partial']);
+        const open = stationEvents.find((event) => event.id === 'guard_empty');
+        const partial = stationEvents.find((event) => event.id === 'guard_partial');
+        const mineEvent = stationEvents.find((event) => event.id === 'guard_mine');
+        assert.deepEqual(open.people, []);
+        assert.deepEqual(partial.people, []);
+        assert.equal(mineEvent.hours, '22:00–06:00');
+        assert.deepEqual(mineEvent.people, [{ person: 'כבאי בדיקה', is_me: true }]);
+        assert.deepEqual(Object.keys(mineEvent.people[0]).sort(), ['is_me', 'person']);
+        assert.equal(mineEvent.includes_me, true);
+
+        const mine = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+        assert.deepEqual(mine.events.map((event) => event.id), ['guard_mine']);
+        assert.deepEqual(Object.keys(mine.events[0]).sort(),
+          ['answer', 'cancelled', 'change', 'date', 'hours', 'id', 'requires_answer', 'title']);
+        const serialized = JSON.stringify({ stationView, mine });
+        for (const secret of [
+          'private notes sentinel', 'secret place sentinel', 'private signup sentinel',
+          'secret_qualification', 'guard_owner', 'guard owner name', 'secret kind',
+          'future private sentinel', 'inactive', 'foreign_user'
+        ]) assert.equal(serialized.includes(secret), false, secret);
+      }
+    } finally {
+      const remove = db.batch();
+      remove.delete(inactiveRef);
+      docs.forEach(([id]) => remove.delete(guards.doc(id)));
+      await remove.commit();
+      await runtimeRef.update({ mode: 'shadow' });
+    }
+  });
+
+  await test('a live schedule manager can keep guards flexible without reopening a direct-write path', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const guardCollection = station().collection('guards');
+    const spy = [];
+    const guardApi = runtime(async (...args) => {
+      spy.push(args);
+      return { sent: 1 };
+    });
+    const ids = [];
+    await runtimeRef.update({ mode: 'off' });
+    try {
+      await assert.rejects(guardApi.manageGuard(req('commander', 'commander', {
+        action: 'create', request_id: 'guard_unappointed_01', details: {
+          title: 'לא מורשה', kind: 'other', place: '', date: '2026-09-20',
+          start: '08:00', end: '12:00', slots: 1, need_quals: [], notes: ''
+        }
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+
+      const created = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_flexible_01', details: {
+          title: 'אבטחה גמישה', kind: 'other', place: 'מקום בדיקה', date: '2026-09-20',
+          start: '22:00', end: '06:00', slots: 1, need_quals: [], notes: 'הערה פנימית'
+        }
+      }));
+      ids.push(created.guard_id);
+      assert.equal(created.status, 'open');
+      assert.equal(created.revision, 1);
+      assert.equal(created.assigned, 0);
+      const createdDoc = (await guardCollection.doc(created.guard_id).get()).data() || {};
+      assert.equal(createdDoc.status, 'open');
+      assert.deepEqual(createdDoc.assigned, []);
+      assert.equal(createdDoc.revision, 1);
+
+      const staffed = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_flexible_02', guard_id: created.guard_id,
+        expected_revision: 1, uids: ['viewer']
+      }));
+      assert.equal(staffed.status, 'staffed');
+      assert.equal(staffed.revision, 2);
+      assert.equal(staffed.added, 1);
+      const duplicate = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_flexible_02', guard_id: created.guard_id,
+        expected_revision: 1, uids: ['viewer']
+      }));
+      assert.equal(duplicate.duplicate, true);
+      assert.equal((await guardCollection.doc(created.guard_id).get()).data().revision, 2);
+      await assert.rejects(guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_flexible_stale', guard_id: created.guard_id,
+        expected_revision: 1, details: { date: '2026-09-21' }
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'guard-revision-conflict');
+
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const assignedOutbox = await station().collection('guard_outbox').where('guard_id', '==', created.guard_id).get();
+      assert.equal(assignedOutbox.size, 1);
+      const firstOutbox = assignedOutbox.docs[0];
+      const firstPayload = firstOutbox.data() || {};
+      assert.deepEqual(Object.keys(firstPayload).filter((key) =>
+        ['notes', 'place', 'title', 'assigned', 'signups', 'need_quals'].indexOf(key) !== -1), []);
+      assert.equal((await guardApi.deliverGuardOutbox(firstOutbox.ref)).sent, true);
+      assert.equal(spy.length, 1);
+      assert.equal(spy[0][0], SID);
+      assert.equal(spy[0][1], 'viewer');
+      assert.equal(spy[0][2], 'guard_mine');
+      assert.equal(JSON.stringify(spy[0]).includes('אבטחה גמישה'), false);
+      assert.equal(JSON.stringify(spy[0]).includes('הערה פנימית'), false);
+
+      const moved = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_flexible_03', guard_id: created.guard_id,
+        expected_revision: 2, details: { date: '2026-09-21' }
+      }));
+      assert.equal(moved.status, 'staffed');
+      assert.equal(moved.revision, 3);
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const unstaffed = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_flexible_04', guard_id: created.guard_id,
+        expected_revision: 3, uids: []
+      }));
+      assert.equal(unstaffed.status, 'open');
+      assert.equal(unstaffed.revision, 4);
+      assert.equal(unstaffed.removed, 1);
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const cancelled = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'cancel', request_id: 'guard_flexible_05', guard_id: created.guard_id,
+        expected_revision: 4
+      }));
+      assert.equal(cancelled.status, 'cancelled');
+      assert.equal(cancelled.revision, 5);
+      await assert.rejects(guardApi.manageGuard(req('manager', 'commander', {
+        action: 'edit', request_id: 'guard_flexible_terminal', guard_id: created.guard_id,
+        expected_revision: 5, details: { title: 'אסור' }
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'guard-terminal');
+
+      // A removal remains meaningful after a later edit/cancellation, as long
+      // as the person was not assigned again.  It is not silently lost just
+      // because the event itself remains operationally flexible.
+      const outboxes = await station().collection('guard_outbox').where('guard_id', '==', created.guard_id).get();
+      const removed = outboxes.docs.find((doc) => {
+        const value = doc.data() || {};
+        return value.kind === 'removed' && Number(value.revision) === 4;
+      });
+      assert.ok(removed);
+      assert.equal((await guardApi.deliverGuardOutbox(removed.ref)).sent, true);
+      assert.equal(spy.length, 2);
+
+      // A delayed ordinary update, in contrast, must self-cancel after a
+      // later revision has replaced it.
+      const stale = outboxes.docs.find((doc) => Number((doc.data() || {}).revision) === 3);
+      assert.ok(stale);
+      const staleResult = await guardApi.deliverGuardOutbox(stale.ref);
+      assert.equal(staleResult.skipped, true);
+      assert.equal((await stale.ref.get()).data().status, 'cancelled');
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      if (ids.length) await batch.commit();
+      await runtimeRef.update({ mode: 'shadow' });
+    }
+  });
+
+  await test('a newly open guard uses a generic durable invitation and stays flexible', async () => {
+    const guardCollection = station().collection('guards');
+    const pushes = [];
+    const guardApi = runtime(async (...args) => {
+      pushes.push(args);
+      return { sent: 1 };
+    });
+    const ids = [];
+    try {
+      const created = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_open_notice_01', details: {
+          title: 'שם שאסור לדלוף', kind: 'other', place: 'מקום שאסור לדלוף',
+          date: '2026-09-28', start: '18:00', end: '22:00', slots: 1,
+          need_quals: [], notes: 'הערה שאסור לדלוף'
+        }
+      }));
+      ids.push(created.guard_id);
+      // The creation event is deliberately delayed until after an edit.  Its
+      // original revision, not the latest one, is the retry/idempotency key.
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_open_notice_02',
+        guard_id: created.guard_id, expected_revision: 1,
+        details: { date: '2026-09-29' }
+      }));
+      const queued = await guardApi.enqueueGuardOpenNotifications({
+        sid: SID, guard_id: created.guard_id, revision: 1
+      });
+      // All eight active members seeded above receive the generic invitation:
+      // this is an open opportunity, not a role-specific appointment.  The
+      // list is explicit so adding/removing a recipient cannot silently alter
+      // the notification audience.
+      assert.deepEqual(queued, { queued: 8, jobs: 1, duplicate: false });
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_open_notice_03',
+        guard_id: created.guard_id, expected_revision: 2,
+        details: { date: '2026-09-30' }
+      }));
+      const duplicate = await guardApi.enqueueGuardOpenNotifications({
+        sid: SID, guard_id: created.guard_id, revision: 1
+      });
+      assert.deepEqual(duplicate, { duplicate: true, jobs: 0 });
+      const jobs = await station().collection('guard_notification_jobs')
+        .where('guard_id', '==', created.guard_id).get();
+      assert.equal(jobs.size, 2); // manifest + one recipient chunk
+      const jobDoc = jobs.docs.find((doc) => (doc.data() || {}).status === 'queued');
+      const manifestDoc = jobs.docs.find((doc) => (doc.data() || {}).audience_manifest === true);
+      assert.ok(jobDoc);
+      assert.ok(manifestDoc);
+      const job = jobDoc.data() || {};
+      const manifest = manifestDoc.data() || {};
+      assert.deepEqual(job.notifications.map((notice) => notice.uid), [
+        'commander', 'deputy', 'deputy_team_leader', 'driver2',
+        'fighter2', 'hr', 'team_leader', 'viewer'
+      ]);
+      assert.equal(job.notifications.every((notice) => notice.kind === 'open'), true);
+      assert.equal(job.revision, 1);
+      assert.equal(manifest.audience_size, 8);
+      assert.equal(JSON.stringify(job).includes('שם שאסור לדלוף'), false);
+      assert.equal(JSON.stringify(job).includes('מקום שאסור לדלוף'), false);
+      assert.equal(JSON.stringify(job).includes('הערה שאסור לדלוף'), false);
+
+      // A quick edit does not erase the invitation: it still directs the
+      // recipient to the current schedule, while the text carries no stale
+      // date, place, title or personnel data.
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const outbox = await station().collection('guard_outbox')
+        .where('guard_id', '==', created.guard_id).get();
+      assert.equal(outbox.size, 8);
+      const notice = outbox.docs.find((doc) => (doc.data() || {}).recipient_uid === 'viewer');
+      assert.ok(notice);
+      assert.equal((notice.data() || {}).kind, 'open');
+      assert.equal(JSON.stringify(notice.data()).includes('שם שאסור לדלוף'), false);
+      assert.equal((await guardApi.deliverGuardOutbox(notice.ref)).sent, true);
+      assert.equal(pushes.length, 1);
+      assert.equal(pushes[0][1], 'viewer');
+      assert.equal(pushes[0][2], 'guard_open');
+      assert.equal(pushes[0][5], './guards.html');
+      assert.equal(pushes[0][6], false);
+      assert.equal(JSON.stringify(pushes[0]).includes('שם שאסור לדלוף'), false);
+      assert.equal(JSON.stringify(pushes[0]).includes('מקום שאסור לדלוף'), false);
+      assert.equal(JSON.stringify(pushes[0]).includes('הערה שאסור לדלוף'), false);
+
+      const cancelled = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_open_notice_04', details: {
+          title: 'ביטול לפני פאנאאוט', kind: 'other', place: '',
+          date: '2026-09-30', start: '08:00', end: '12:00', slots: 1,
+          need_quals: [], notes: ''
+        }
+      }));
+      ids.push(cancelled.guard_id);
+      await guardApi.enqueueGuardOpenNotifications({
+        sid: SID, guard_id: cancelled.guard_id, revision: 1
+      });
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'cancel', request_id: 'guard_open_notice_05',
+        guard_id: cancelled.guard_id, expected_revision: 1
+      }));
+      await fanoutGuardJobs(guardApi, cancelled.guard_id);
+      const suppressed = await station().collection('guard_outbox')
+        .where('guard_id', '==', cancelled.guard_id).get();
+      assert.equal(suppressed.size, 0);
+
+      const inactiveRecipient = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_open_notice_06', details: {
+          title: 'נמען שעזב', kind: 'other', place: '',
+          date: '2026-10-01', start: '08:00', end: '12:00', slots: 1,
+          need_quals: [], notes: ''
+        }
+      }));
+      ids.push(inactiveRecipient.guard_id);
+      await guardApi.enqueueGuardOpenNotifications({
+        sid: SID, guard_id: inactiveRecipient.guard_id, revision: 1
+      });
+      await fanoutGuardJobs(guardApi, inactiveRecipient.guard_id);
+      const staleRecipient = (await station().collection('guard_outbox')
+        .where('guard_id', '==', inactiveRecipient.guard_id).get()).docs
+        .find((doc) => (doc.data() || {}).recipient_uid === 'viewer');
+      const retryRecipient = (await station().collection('guard_outbox')
+        .where('guard_id', '==', inactiveRecipient.guard_id).get()).docs
+        .find((doc) => (doc.data() || {}).recipient_uid === 'driver2');
+      assert.ok(staleRecipient);
+      assert.ok(retryRecipient);
+      const viewerRef = station().collection('users').doc('viewer');
+      const viewerBefore = (await viewerRef.get()).data() || {};
+      await viewerRef.update({ active: false });
+      try {
+        assert.deepEqual(await guardApi.deliverGuardOutbox(staleRecipient.ref), { skipped: true });
+        assert.equal((await staleRecipient.ref.get()).data().status, 'cancelled');
+        assert.equal(pushes.length, 1);
+      } finally {
+        await viewerRef.set(viewerBefore);
+      }
+      const driverRef = station().collection('users').doc('driver2');
+      const driverBefore = (await driverRef.get()).data() || {};
+      const unfinished = await station().collection('guard_outbox').get();
+      const settle = db.batch();
+      unfinished.docs.forEach((doc) => {
+        if (doc.ref.path === retryRecipient.ref.path) return;
+        const value = doc.data() || {};
+        if (['queued', 'retry', 'sending'].indexOf(value.status) !== -1) {
+          settle.update(doc.ref, {
+            status: 'sent', lease_token: null, lease_until: null, next_attempt_at: null
+          });
+        }
+      });
+      await settle.commit();
+      await driverRef.update({ active: false });
+      try {
+        await retryRecipient.ref.update({ status: 'retry', next_attempt_at: null });
+        await guardApi.resumeGuardOutbox();
+        const retryAfter = (await retryRecipient.ref.get()).data() || {};
+        assert.equal(retryAfter.status, 'cancelled');
+        assert.equal(retryAfter.cancel_reason, 'recipient-inactive');
+        assert.equal(pushes.length, 1);
+      } finally {
+        await driverRef.set(driverBefore);
+      }
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      if (ids.length) await batch.commit();
+    }
+  });
+
+  await test('guard signup is transactional with terminal state and preserves a dotted Firebase UID', async () => {
+    const guardCollection = station().collection('guards');
+    const pushes = [];
+    const guardApi = runtime(async (...args) => {
+      pushes.push(args);
+      return { sent: 1 };
+    });
+    const ids = [];
+    const dottedUser = station().collection('users').doc('dot.user');
+    const dottedRoster = station().collection('roster').doc('dot.user');
+    await Promise.all([
+      dottedUser.set({ station: SID, role: 'firefighter', full_name: 'כבאי עם נקודה' }),
+      dottedRoster.set({ crew: 'A', is_active: true, full_name: 'כבאי עם נקודה' })
+    ]);
+    try {
+      const created = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_signup_atomic_01', details: {
+          title: 'אבטחת הרשמה', kind: 'other', place: '', date: '2026-09-22',
+          start: '08:00', end: '12:00', slots: 2, need_quals: [], notes: ''
+        }
+      }));
+      ids.push(created.guard_id);
+
+      const raced = await Promise.allSettled([
+        guardApi.signupGuard(req('viewer', 'firefighter', { id: created.guard_id, join: true })),
+        guardApi.manageGuard(req('manager', 'commander', {
+          action: 'cancel', request_id: 'guard_signup_atomic_02', guard_id: created.guard_id,
+          expected_revision: 1
+        }))
+      ]);
+      assert.equal(raced[1].status, 'fulfilled');
+      assert.equal((await guardCollection.doc(created.guard_id).get()).data().status, 'cancelled');
+      await assert.rejects(guardApi.signupGuard(req('viewer', 'firefighter', {
+        id: created.guard_id, join: false
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'guard-terminal');
+
+      const dotted = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_signup_atomic_03', details: {
+          title: 'אבטחת מזהה', kind: 'other', place: '', date: '2026-09-23',
+          start: '08:00', end: '12:00', slots: 1, need_quals: [], notes: ''
+        }
+      }));
+      ids.push(dotted.guard_id);
+      const signed = await guardApi.signupGuard(req('dot.user', 'firefighter', {
+        id: dotted.guard_id, join: true
+      }));
+      assert.equal(signed.changed, true);
+      const signups = (await guardCollection.doc(dotted.guard_id).get()).data().signups || {};
+      assert.ok(Object.prototype.hasOwnProperty.call(signups, 'dot.user'));
+      assert.equal(Object.prototype.hasOwnProperty.call(signups, 'dot'), false);
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_signup_atomic_04', guard_id: dotted.guard_id,
+        expected_revision: 1, details: { date: '2026-09-24' }
+      }));
+      await fanoutGuardJobs(guardApi, dotted.guard_id);
+      const dottedOutbox = await station().collection('guard_outbox')
+        .where('guard_id', '==', dotted.guard_id).get();
+      assert.equal(dottedOutbox.size, 1);
+      assert.equal((dottedOutbox.docs[0].data() || {}).recipient_uid, 'dot.user');
+      assert.equal((await guardApi.deliverGuardOutbox(dottedOutbox.docs[0].ref)).sent, true);
+      assert.equal(pushes[0][1], 'dot.user');
+
+      // Firebase permits a dot in a UID.  Manual staffing and the epoch used
+      // to supersede delayed removals must preserve that exact identity too.
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_signup_atomic_05',
+        guard_id: dotted.guard_id, expected_revision: 2, uids: ['dot.user']
+      }));
+      const dottedLegacyView = await guardApi.getStation(req('dot.user', 'firefighter', {
+        date: '2026-09-24'
+      }));
+      const dottedLegacyGuard = dottedLegacyView.day.events
+        .find((event) => event.id === dotted.guard_id);
+      assert.ok(dottedLegacyGuard);
+      assert.deepEqual(dottedLegacyGuard.people, [{ person: 'כבאי עם נקודה', is_me: true }]);
+      assert.equal(JSON.stringify(dottedLegacyGuard).includes('dot.user'), false);
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_signup_atomic_06',
+        guard_id: dotted.guard_id, expected_revision: 3, uids: []
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_signup_atomic_07',
+        guard_id: dotted.guard_id, expected_revision: 4, uids: ['dot.user']
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_signup_atomic_08',
+        guard_id: dotted.guard_id, expected_revision: 5, uids: []
+      }));
+      await fanoutGuardJobs(guardApi, dotted.guard_id);
+      const dottedGuard = (await guardCollection.doc(dotted.guard_id).get()).data() || {};
+      assert.equal((dottedGuard.assignment_epochs || {})['dot.user'], 6);
+      const dotRemoval = (await station().collection('guard_outbox')
+        .where('guard_id', '==', dotted.guard_id).get()).docs
+        .find((doc) => {
+          const value = doc.data() || {};
+          return value.kind === 'removed' && Number(value.revision) === 6;
+        });
+      assert.ok(dotRemoval);
+      assert.equal((await guardApi.deliverGuardOutbox(dotRemoval.ref)).sent, true);
+      assert.equal(pushes[1][1], 'dot.user');
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      batch.delete(dottedUser);
+      batch.delete(dottedRoster);
+      await batch.commit();
+    }
+  });
+
+  await test('a large guard signup list never blocks a flexible reschedule and fans out in chunks', async () => {
+    const guardCollection = station().collection('guards');
+    const guardApi = runtime();
+    const guardId = 'guard_signup_fanout_401';
+    const limitGuardId = 'guard_signup_limit_1000';
+    const legacyGuardId = 'guard_signup_legacy_1001';
+    const limitUser = station().collection('users').doc('limit_user');
+    await limitUser.set({ station: SID, role: 'firefighter', full_name: 'כבאי מגבלה' });
+    const atLimit = { limit_user: { at: CLOCK() } };
+    for (let index = 0; index < 999; index += 1) {
+      atLimit['limit_' + String(index).padStart(3, '0')] = { at: CLOCK() };
+    }
+    await guardCollection.doc(limitGuardId).set({
+      title: 'אבטחת תקרה', kind: 'other', place: '', date: '2026-09-24',
+      start: '10:00', end: '12:00', slots: 1, need_quals: [], notes: '',
+      status: 'open', revision: 1, assigned: [], signups: atLimit
+    });
+    const signups = {};
+    for (let index = 0; index < 401; index += 1) {
+      signups['interest_' + String(index).padStart(3, '0')] = { at: CLOCK() };
+    }
+    await guardCollection.doc(guardId).set({
+      title: 'אבטחת עניין רב', kind: 'other', place: '', date: '2026-09-24',
+      start: '18:00', end: '22:00', slots: 2, need_quals: [], notes: '',
+      status: 'open', revision: 1, assigned: [], signups
+    });
+    try {
+      await assert.rejects(guardApi.signupGuard(req('viewer', 'firefighter', {
+        id: limitGuardId, join: true
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'guard-signup-limit');
+      const withdrew = await guardApi.signupGuard(req('limit_user', 'firefighter', {
+        id: limitGuardId, join: false
+      }));
+      assert.equal(withdrew.changed, true);
+
+      const moved = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'reschedule', request_id: 'guard_signup_fanout_01', guard_id: guardId,
+        expected_revision: 1, details: { date: '2026-09-25' }
+      }));
+      assert.equal(moved.revision, 2);
+      assert.equal(moved.notified_people, 401);
+      const job = await station().collection('guard_notification_jobs')
+        .where('guard_id', '==', guardId).get();
+      assert.equal(job.size, 2);
+      assert.deepEqual(job.docs.map((doc) => (doc.data().notifications || []).length).sort((a, b) => a - b),
+        [101, 300]);
+
+      await fanoutGuardJobs(guardApi, guardId);
+      const completed = await Promise.all(job.docs.map(async (doc) => (await doc.ref.get()).data() || {}));
+      assert.ok(completed.every((value) => value.status === 'complete'));
+      assert.deepEqual(completed.map((value) => value.cursor).sort((a, b) => a - b), [101, 300]);
+      const outbox = await station().collection('guard_outbox').where('guard_id', '==', guardId).get();
+      assert.equal(outbox.size, 401);
+      assert.ok(outbox.docs.every((doc) => (doc.data() || {}).status === 'queued'));
+
+      // A historical guard can predate the signup cap.  Its cancellation is
+      // still an operational action: the recipients are split into jobs, not
+      // used as a reason to keep a stale guard alive.
+      const legacySignups = {};
+      for (let index = 0; index < 1001; index += 1) {
+        legacySignups['legacy_' + String(index).padStart(4, '0')] = { at: CLOCK() };
+      }
+      await guardCollection.doc(legacyGuardId).set({
+        title: 'אבטחה היסטורית', kind: 'other', place: '', date: '2026-09-26',
+        start: '18:00', end: '22:00', slots: 1, need_quals: [], notes: '',
+        status: 'open', revision: 1, assigned: [], signups: legacySignups
+      });
+      const cancelled = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'cancel', request_id: 'guard_signup_legacy_cancel', guard_id: legacyGuardId,
+        expected_revision: 1
+      }));
+      assert.equal(cancelled.status, 'cancelled');
+      assert.equal(cancelled.notified_people, 1001);
+      const legacyJobs = await station().collection('guard_notification_jobs')
+        .where('guard_id', '==', legacyGuardId).get();
+      assert.equal(legacyJobs.size, 4);
+      assert.equal(legacyJobs.docs.reduce((sum, doc) =>
+        sum + ((doc.data().notifications || []).length), 0), 1001);
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      [guardId, limitGuardId, legacyGuardId].forEach((id) => batch.delete(guardCollection.doc(id)));
+      batch.delete(limitUser);
+      await batch.commit();
+    }
+  });
+
+  await test('a retained assignee receives the replacement update after a team change', async () => {
+    const guardCollection = station().collection('guards');
+    const guardApi = runtime();
+    const ids = [];
+    try {
+      const created = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_supersession_01', details: {
+          title: 'אבטחת החלפת שיבוץ', kind: 'other', place: '', date: '2026-09-26',
+          start: '10:00', end: '14:00', slots: 2, need_quals: [], notes: ''
+        }
+      }));
+      ids.push(created.guard_id);
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_supersession_02', guard_id: created.guard_id,
+        expected_revision: 1, uids: ['viewer']
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_supersession_03', guard_id: created.guard_id,
+        expected_revision: 2, uids: ['viewer', 'fighter2']
+      }));
+
+      // The original assignment is stale at revision 3.  The newer intent
+      // must contain both the new assignee and an update for the person kept
+      // on the team, rather than silently dropping that person.
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const outbox = await station().collection('guard_outbox')
+        .where('guard_id', '==', created.guard_id).get();
+      assert.equal(outbox.size, 2);
+      const notices = outbox.docs.map((doc) => doc.data() || {});
+      assert.ok(notices.some((item) => item.recipient_uid === 'viewer'
+        && item.kind === 'updated' && Number(item.revision) === 3));
+      assert.ok(notices.some((item) => item.recipient_uid === 'fighter2'
+        && item.kind === 'assigned' && Number(item.revision) === 3));
+      assert.equal(notices.some((item) => Number(item.revision) === 2), false);
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      if (ids.length) await batch.commit();
+    }
+  });
+
+  await test('an old removal cannot revive after the same firefighter is re-added and removed again', async () => {
+    const guardCollection = station().collection('guards');
+    const guardApi = runtime();
+    const ids = [];
+    try {
+      const created = await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'create', request_id: 'guard_removal_epoch_01', details: {
+          title: 'אבטחת רצף', kind: 'other', place: '', date: '2026-09-27',
+          start: '10:00', end: '14:00', slots: 1, need_quals: [], notes: ''
+        }
+      }));
+      ids.push(created.guard_id);
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_removal_epoch_02', guard_id: created.guard_id,
+        expected_revision: 1, uids: ['viewer']
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_removal_epoch_03', guard_id: created.guard_id,
+        expected_revision: 2, uids: []
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_removal_epoch_04', guard_id: created.guard_id,
+        expected_revision: 3, uids: ['viewer']
+      }));
+      await guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_removal_epoch_05', guard_id: created.guard_id,
+        expected_revision: 4, uids: []
+      }));
+
+      await fanoutGuardJobs(guardApi, created.guard_id);
+      const guard = (await guardCollection.doc(created.guard_id).get()).data() || {};
+      assert.equal((guard.assignment_epochs || {}).viewer, 5);
+      const outbox = await station().collection('guard_outbox')
+        .where('guard_id', '==', created.guard_id).get();
+      assert.equal(outbox.size, 1);
+      const removal = outbox.docs[0].data() || {};
+      assert.equal(removal.recipient_uid, 'viewer');
+      assert.equal(removal.kind, 'removed');
+      assert.equal(removal.revision, 5);
+      assert.equal(removal.membership_epoch, 5);
+    } finally {
+      const collections = ['guard_outbox', 'guard_notification_jobs', 'guard_operations', 'guard_audit'];
+      for (const name of collections) {
+        const snap = await station().collection(name).get();
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        if (!snap.empty) await batch.commit();
+      }
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      if (ids.length) await batch.commit();
+    }
+  });
+
+  await test('a contradictory station field in the legacy roster fails closed', async () => {
+    const ref = station().collection('roster').doc('viewer');
+    const before = (await ref.get()).data();
+    await ref.update({ station_id: 'other_station' });
+    try {
+      await assert.rejects(api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-roster-station');
+    } finally {
+      await ref.set(before);
+    }
+  });
+
+  await test('legacy roster reads accept the exact cap and reject one extra record', async () => {
+    const roster = station().collection('roster');
+    const atCap = [];
+    for (let index = 0; index < 496; index += 1) {
+      atCap.push(roster.doc('cap_' + String(index).padStart(3, '0')));
+    }
+    const insert = db.batch();
+    atCap.forEach((ref) => insert.set(ref, { is_active: false }));
+    await insert.commit();
+    try {
+      const accepted = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(accepted.source, 'legacy');
+      const overflow = roster.doc('cap_overflow');
+      await overflow.set({ is_active: false });
+      try {
+        await assert.rejects(api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+          (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-roster-too-large');
+      } finally {
+        await overflow.delete();
+      }
+    } finally {
+      const remove = db.batch();
+      atCap.forEach((ref) => remove.delete(ref));
+      await remove.commit();
+    }
+  });
+
+  await test('legacy guard reads reject one record above the bounded per-date cap', async () => {
+    const guards = station().collection('guards');
+    const refs = [];
+    const write = db.batch();
+    for (let index = 0; index <= 250; index += 1) {
+      const ref = guards.doc('guard_cap_' + String(index).padStart(3, '0'));
+      refs.push(ref);
+      write.set(ref, {
+        title: 'אבטחת תקרה ' + index, date: '2026-09-15', start: '08:00', end: '10:00',
+        slots: 1, status: 'open', assigned: []
+      });
+    }
+    await write.commit();
+    try {
+      await assert.rejects(api.getMy(req('viewer', 'firefighter', { date: '2026-09-15' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-guards-too-large');
+    } finally {
+      const remove = db.batch();
+      refs.forEach((ref) => remove.delete(ref));
+      await remove.commit();
+    }
+  });
+
+  await test('a legacy override date is authoritative only in its document id', async () => {
+    const ref = station().collection('shift_overrides').doc('2026-09-01');
+    const before = await ref.get();
+    await ref.set({ date: '2026-09-02', kind: 'swap', crew: 'A' });
+    try {
+      await assert.rejects(api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-override-date');
+      // Station view intentionally includes yesterday/today/tomorrow, so it
+      // must stop when its adjacent date is corrupt.  The personal one-day
+      // view proves the mismatched payload was not silently moved to 2/9.
+      const nextDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-02' }));
+      assert.equal(nextDay.source, 'legacy');
+      assert.deepEqual(nextDay.days, []);
+    } finally {
+      if (before.exists) await ref.set(before.data() || {});
+      else await ref.delete();
+    }
+  });
+
+  await test('a mode change during a legacy schedule read fails instead of returning stale data', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    await runtimeRef.update({ mode: 'shadow' });
+    const racing = runtime(null, {
+      beforeEffectiveViewRecheck: async (info) => {
+        if (info && info.kind === 'legacy') await runtimeRef.update({ mode: 'new' });
+      }
+    });
+    await assert.rejects(racing.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-changed');
+    await runtimeRef.update({ mode: 'shadow' });
+  });
+
   let draftId;
   let previewDigest;
   await test('shadow mode creates a complete immutable draft but cannot publish', async () => {
@@ -312,6 +1198,70 @@ async function test(name, fn) {
     }));
     assert.equal(again.duplicate, true);
     assert.equal(again.draft_id, draftId);
+  });
+
+  await test('a manual lock rejected after an earlier automatic assignment never stages a draft', async () => {
+    const policyRef = station().collection('schedule_policies').doc('policy_v1');
+    const sourceRef = station().collection('schedule_sources').doc('source_v1');
+    const lockedRef = sourceRef.collection('locked').doc('main');
+    const availabilityRef = sourceRef.collection('availability').doc('driver2');
+    const changedPolicy = JSON.parse(JSON.stringify(policyBasis));
+    changedPolicy.rest.min_gap_days = 1;
+    const changedSource = sourceBasis();
+    changedSource.availability = { driver2: { '2026-09-01': true } };
+    changedSource.locked = {
+      main: { '2026-09-02': [{ person: 'manager', role: 'driver' }] }
+    };
+    changedSource.counts.availability = 1;
+    changedSource.counts.locked = 1;
+    const requestId = 'manual_rest_rejected';
+    const rejectedDraftRef = station().collection('schedule_drafts').doc(
+      'd_' + hash(SID + '|manager|' + requestId).slice(0, 40));
+
+    try {
+      await policyRef.set(Object.assign({}, changedPolicy, {
+        complete: true, content_digest: digest(changedPolicy)
+      }));
+      await lockedRef.set({ days: changedSource.locked.main });
+      await availabilityRef.set({ days: changedSource.availability.driver2 });
+      await sourceRef.set({
+        station_id: SID,
+        version: changedSource.version,
+        revision: changedSource.revision,
+        complete: true,
+        carry: changedSource.carry,
+        person_count: changedSource.counts.people,
+        availability_count: changedSource.counts.availability,
+        locked_count: changedSource.counts.locked,
+        event_count: changedSource.counts.events,
+        content_digest: digest(changedSource)
+      });
+
+      await assert.rejects(api.runPlanner(req('manager', 'commander', {
+        request_id: requestId, start: '2026-09-01', months: 1, overrides: []
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'manual-assignment-rejected');
+      assert.equal((await rejectedDraftRef.get()).exists, false,
+        'a rejected manual lock must fail before staging a draft');
+    } finally {
+      await Promise.all([lockedRef.delete(), availabilityRef.delete()]);
+      const original = sourceBasis();
+      await sourceRef.set({
+        station_id: SID,
+        version: original.version,
+        revision: original.revision,
+        complete: true,
+        carry: original.carry,
+        person_count: original.counts.people,
+        availability_count: original.counts.availability,
+        locked_count: original.counts.locked,
+        event_count: original.counts.events,
+        content_digest: digest(original)
+      });
+      await policyRef.set(Object.assign({}, policyBasis, {
+        complete: true, content_digest: digest(policyBasis)
+      }));
+    }
   });
 
   await test('a changed source count fails closed', async () => {
@@ -377,6 +1327,58 @@ async function test(name, fn) {
     assert.equal(result.duplicate, true);
     assert.equal(result.publication_id, publicationId);
     assert.equal((await outbox.docs[0].ref.get()).data().status, 'queued');
+  });
+
+  await test('new schedule reads bind the active pointer to a complete signed publication', async () => {
+    const pointerRef = station().collection('schedule_state').doc('active');
+    const pointer = (await pointerRef.get()).data();
+    const pubRef = station().collection('schedule_publications').doc(publicationId);
+    const publication = (await pubRef.get()).data();
+    const expectBlocked = async (code) => {
+      await assert.rejects(api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === code);
+    };
+    await pointerRef.update({ revision: pointer.revision + 1 });
+    await expectBlocked('active-publication-pointer-mismatch');
+    await pointerRef.set(pointer);
+    await pointerRef.update({ content_digest: 'wrong_digest' });
+    await expectBlocked('active-publication-pointer-mismatch');
+    await pointerRef.set(pointer);
+    await pubRef.update({ station_id: 'other_station' });
+    await expectBlocked('active-publication-invalid');
+    await pubRef.set(publication);
+    await pubRef.update({ snapshot_complete: false });
+    await expectBlocked('active-publication-invalid');
+    await pubRef.set(publication);
+  });
+
+  await test('a full publication digest is verified before a one-day view is sliced', async () => {
+    const pubRef = station().collection('schedule_publications').doc(publicationId);
+    const rows = await pubRef.collection('rows').where('date', '==', '2026-09-02').limit(1).get();
+    assert.equal(rows.size, 1);
+    const ref = rows.docs[0].ref;
+    const before = (await ref.get()).data();
+    const changed = JSON.parse(JSON.stringify(before));
+    changed.row.slots[0].role = 'tampered_role';
+    await ref.set(changed);
+    try {
+      await assert.rejects(api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'snapshot-digest-mismatch');
+    } finally {
+      await ref.set(before);
+    }
+  });
+
+  await test('a mode change during a V2 schedule read fails instead of returning stale data', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const racing = runtime(null, {
+      beforeEffectiveViewRecheck: async (info) => {
+        if (info && info.kind === 'v2') await runtimeRef.update({ mode: 'shadow' });
+      }
+    });
+    await assert.rejects(racing.getMy(req('viewer', 'firefighter', { date: '2026-09-01' })),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-changed');
+    await runtimeRef.update({ mode: 'new' });
   });
 
   let assignedDate;
@@ -477,6 +1479,319 @@ async function test(name, fn) {
     assert.equal(duplicate.publication_id, active.publication_id);
     const mineAfter = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
     assert.ok(mineAfter.days.every((day) => !day.answer));
+  });
+
+  await test('new schedule keeps live guards flexible, private and separate from responses', async () => {
+    const guards = station().collection('guards');
+    const inactiveRef = station().collection('roster').doc('inactive_v2');
+    const dottedUser = station().collection('users').doc('dot.user');
+    const dottedRoster = station().collection('roster').doc('dot.user');
+    const docs = [
+      ['g_v2_empty', {
+        title: 'אבטחה פתוחה', date: '2026-09-01', start: '07:00', end: '10:00',
+        slots: 2, status: 'open', assigned: []
+      }],
+      ['g_v2_partial', {
+        title: 'אבטחה חלקית', date: '2026-09-01', start: '12:00', end: '16:00',
+        slots: 2, status: 'staffed', assigned: ['inactive_v2', 'foreign_user']
+      }],
+      ['g_v2_mine', {
+        title: 'אבטחת לילה', date: '2026-09-01', start: '22:00', end: '06:00',
+        slots: 2, status: 'staffed', assigned: ['viewer', 'inactive_v2'],
+        notes: 'private v2 notes sentinel', place: 'secret v2 place sentinel',
+        signups: { viewer: { name: 'private v2 signup sentinel' } },
+        need_quals: ['secret_v2_qualification'], by_uid: 'guard_owner_v2',
+        by_name: 'guard owner v2 name', kind: 'secret v2 kind',
+        future_private_field: 'future v2 private sentinel'
+      }],
+      ['g_v2_dot', {
+        title: 'אבטחת מזהה עם נקודה', date: '2026-09-01', start: '18:00', end: '20:00',
+        slots: 1, status: 'staffed', assigned: ['dot.user']
+      }],
+      ['g_v2_cancelled', {
+        title: 'אבטחה מבוטלת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'cancelled', assigned: ['viewer']
+      }],
+      ['g_v2_bad_uid', {
+        title: 'אבטחה פגומה', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', assigned: ['viewer', 'uid/bad']
+      }],
+      ['g_v2_over_capacity', {
+        title: 'אבטחה מעל קיבולת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', assigned: ['viewer', 'driver2']
+      }],
+      ['g_v2_foreign_station', {
+        title: 'אבטחה מתחנה אחרת', date: '2026-09-01', start: '08:00', end: '09:00',
+        slots: 1, status: 'open', station_id: 'other_102', assigned: ['viewer']
+      }]
+    ];
+    const write = db.batch();
+    write.set(inactiveRef, { full_name: 'אדם לא פעיל', crew: 'A', is_active: false });
+    write.set(dottedUser, { station: SID, role: 'firefighter', full_name: 'כבאי עם נקודה' });
+    write.set(dottedRoster, { full_name: 'כבאי עם נקודה', crew: 'A', is_active: true });
+    docs.forEach(([id, value]) => write.set(guards.doc(id), value));
+    await write.commit();
+    try {
+      const pointerBefore = (await activePointer().get()).data();
+      const outboxBefore = await station().collection('schedule_publications')
+        .doc(pointerBefore.publication_id).collection('schedule_outbox').get();
+      const stationView = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(stationView.mode, 'new');
+      assert.equal(stationView.day.guards_status, 'ready');
+      assert.deepEqual(stationView.day.guards.map((guard) => guard.id).sort(),
+        ['g:g_v2_dot', 'g:g_v2_empty', 'g:g_v2_mine', 'g:g_v2_partial']);
+      const empty = stationView.day.guards.find((guard) => guard.id === 'g:g_v2_empty');
+      const partial = stationView.day.guards.find((guard) => guard.id === 'g:g_v2_partial');
+      const mineGuard = stationView.day.guards.find((guard) => guard.id === 'g:g_v2_mine');
+      assert.deepEqual(empty.people, []);
+      assert.deepEqual(partial.people, []);
+      assert.equal(mineGuard.hours, '22:00–06:00');
+      assert.deepEqual(mineGuard.people, [{ person: 'כבאי בדיקה', is_me: true }]);
+      assert.deepEqual(Object.keys(mineGuard.people[0]).sort(), ['is_me', 'person']);
+
+      const dottedStationView = await api.getStation(req('dot.user', 'firefighter', { date: '2026-09-01' }));
+      const dottedGuard = dottedStationView.day.guards.find((guard) => guard.id === 'g:g_v2_dot');
+      assert.ok(dottedGuard);
+      assert.deepEqual(dottedGuard.people, [{ person: 'כבאי עם נקודה', is_me: true }]);
+      assert.equal(JSON.stringify(dottedGuard).includes('dot.user'), false);
+      assert.equal(mineGuard.includes_me, true);
+
+      const mine = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(mine.guards_status, 'ready');
+      assert.deepEqual(mine.guards.map((guard) => guard.id), ['g:g_v2_mine']);
+      assert.deepEqual(Object.keys(mine.guards[0]).sort(), ['date', 'hours', 'id', 'title']);
+      await assert.rejects(api.respond(req('viewer', 'firefighter', {
+        request_id: 'guard_response_forbidden', publication_id: pointerBefore.publication_id,
+        item_id: 'g:g_v2_mine', answer: 'confirm'
+      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'item-id');
+
+      const serialized = JSON.stringify({ stationView, mine });
+      for (const secret of [
+        'private v2 notes sentinel', 'secret v2 place sentinel', 'private v2 signup sentinel',
+        'secret_v2_qualification', 'guard_owner_v2', 'guard owner v2 name', 'secret v2 kind',
+        'future v2 private sentinel', 'inactive_v2', 'foreign_user'
+      ]) assert.equal(serialized.includes(secret), false, secret);
+
+      await guards.doc('g_v2_mine').update({ title: 'אבטחת לילה מעודכנת' });
+      const updated = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      assert.equal(updated.guards[0].title, 'אבטחת לילה מעודכנת');
+      assert.deepEqual((await activePointer().get()).data(), pointerBefore);
+      assert.equal((await station().collection('schedule_publications').doc(pointerBefore.publication_id)
+        .collection('schedule_outbox').get()).size, outboxBefore.size);
+
+      // A postponement is an ordinary live guard edit: it must move between
+      // dates without publishing a new immutable schedule revision.
+      await guards.doc('g_v2_mine').update({ date: '2026-09-02' });
+      const oldDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+      const newDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-02' }));
+      assert.deepEqual(oldDay.guards, []);
+      assert.deepEqual(newDay.guards.map((guard) => guard.id), ['g:g_v2_mine']);
+      assert.equal(newDay.guards[0].title, 'אבטחת לילה מעודכנת');
+      assert.ok((await api.getStation(req('viewer', 'firefighter', { date: '2026-09-02' })))
+        .day.guards.some((guard) => guard.id === 'g:g_v2_mine'));
+      assert.deepEqual((await activePointer().get()).data(), pointerBefore);
+      assert.equal((await station().collection('schedule_publications').doc(pointerBefore.publication_id)
+        .collection('schedule_outbox').get()).size, outboxBefore.size);
+
+      await guards.doc('g_v2_mine').update({ status: 'cancelled' });
+      const cancelled = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-02' }));
+      assert.equal(cancelled.day.guards.some((guard) => guard.id === 'g:g_v2_mine'), false);
+      assert.deepEqual((await api.getMy(req('viewer', 'firefighter', { date: '2026-09-02' }))).guards, []);
+    } finally {
+      const remove = db.batch();
+      remove.delete(inactiveRef);
+      remove.delete(dottedUser);
+      remove.delete(dottedRoster);
+      docs.forEach(([id]) => remove.delete(guards.doc(id)));
+      await remove.commit();
+    }
+  });
+
+  await test('new schedule preserves the published view when live guard reads exceed their cap', async () => {
+    const guards = station().collection('guards');
+    const refs = [];
+    const write = db.batch();
+    for (let index = 0; index <= 250; index += 1) {
+      const ref = guards.doc('g_v2_cap_' + String(index).padStart(3, '0'));
+      refs.push(ref);
+      write.set(ref, {
+        title: 'אבטחת תקרה ' + index, date: '2026-09-15', start: '08:00', end: '10:00',
+        slots: 1, status: 'open', assigned: []
+      });
+    }
+    await write.commit();
+    try {
+      const stationView = await api.getStation(req('viewer', 'firefighter', { date: '2026-09-15' }));
+      assert.equal(stationView.active, true);
+      assert.equal(stationView.day.guards_status, 'unavailable');
+      assert.deepEqual(stationView.day.guards, []);
+      assert.ok(Array.isArray(stationView.day.sub_stations));
+    } finally {
+      const remove = db.batch();
+      refs.forEach((ref) => remove.delete(ref));
+      await remove.commit();
+    }
+  });
+
+  await test('a V2 pointer change after the live guard sidecar fails closed', async () => {
+    const pointerRef = activePointer();
+    const before = (await pointerRef.get()).data() || {};
+    const racing = runtime(null, {
+      beforeLiveGuardViewRecheck: async (info) => {
+        if (info && info.kind === 'v2-guards') await pointerRef.update({ revision: before.revision + 1 });
+      }
+    });
+    try {
+      await assert.rejects(racing.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-active-changed');
+    } finally {
+      await pointerRef.set(before);
+    }
+  });
+
+  await test('a V2 mode change after the live guard sidecar fails closed', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const racing = runtime(null, {
+      beforeLiveGuardViewRecheck: async (info) => {
+        if (info && info.kind === 'v2-guards') await runtimeRef.update({ mode: 'shadow' });
+      }
+    });
+    try {
+      await assert.rejects(racing.getMy(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-changed');
+    } finally {
+      await runtimeRef.update({ mode: 'new' });
+    }
+  });
+
+  await test('a V2 pointer change during a read fails instead of returning a stale publication', async () => {
+    const pointerRef = activePointer();
+    const before = (await pointerRef.get()).data() || {};
+    const alternate = (await station().collection('schedule_publications').doc(publicationId).get()).data() || {};
+    assert.equal(alternate.status, 'active');
+    assert.equal(alternate.snapshot_complete, true);
+    const racing = runtime(null, {
+      beforeEffectiveViewRecheck: async (info) => {
+        if (info && info.kind === 'v2') {
+          await pointerRef.set(Object.assign({}, before, {
+            publication_id: publicationId,
+            revision: alternate.revision,
+            content_digest: alternate.content_digest
+          }));
+        }
+      }
+    });
+    try {
+      await assert.rejects(racing.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-active-changed');
+      await pointerRef.delete();
+      await assert.rejects(racing.getStation(req('viewer', 'firefighter', { date: '2026-09-01' })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-active-changed');
+    } finally {
+      await pointerRef.set(before);
+    }
+  });
+
+  await test('inactive missing and foreign schedule recipients are cancelled before claim', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const viewerRef = station().collection('users').doc('viewer');
+    const viewerBefore = (await viewerRef.get()).data() || {};
+    const foreignRef = station().collection('users').doc('foreign_outbox_recipient');
+    let sends = 0;
+    const guarded = runtime(async () => { sends += 1; return { sent: 1 }; });
+    try {
+      await viewerRef.update({ active: false });
+      await foreignRef.set({
+        station: 'other_station', role: 'firefighter', active: true,
+        full_name: 'נמען בתחנה אחרת'
+      });
+      for (const person of ['viewer', 'missing_outbox_recipient', 'foreign_outbox_recipient']) {
+        const ref = station().collection('schedule_publications').doc(active.publication_id)
+          .collection('schedule_outbox').doc('n_inactive_' + randomId());
+        await ref.set(outboxValue(active.publication_id, {
+          revision: Number(active.revision), status: 'queued', person
+        }));
+        assert.deepEqual(await guarded.deliverOutbox(ref), { skipped: true });
+        const after = (await ref.get()).data() || {};
+        assert.equal(after.status, 'cancelled', person);
+        assert.equal(after.cancel_reason, 'recipient-inactive', person);
+      }
+      assert.equal(sends, 0);
+    } finally {
+      await viewerRef.set(viewerBefore);
+      await foreignRef.delete();
+    }
+  });
+
+  await test('station departure after claim is rechecked immediately before schedule push', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const viewerRef = station().collection('users').doc('viewer');
+    const viewerBefore = (await viewerRef.get()).data() || {};
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_departure_race_' + randomId());
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'queued', person: 'viewer'
+    }));
+    await settleOtherUnfinishedOutbox(ref);
+    let hooks = 0;
+    let sends = 0;
+    const guarded = runtime(async () => { sends += 1; return { sent: 1 }; }, {
+      beforeOutboxSend: async () => {
+        hooks += 1;
+        await viewerRef.update({ active: false });
+      }
+    });
+    try {
+      assert.deepEqual(await guarded.deliverOutbox(ref), { skipped: true });
+      const after = (await ref.get()).data() || {};
+      assert.equal(hooks, 1);
+      assert.equal(sends, 0);
+      assert.equal(after.status, 'cancelled');
+      assert.equal(after.cancel_reason, 'recipient-inactive');
+    } finally {
+      await viewerRef.set(viewerBefore);
+    }
+  });
+
+  await test('resume cancels inactive retry and expired sending rows without resurrecting them', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const viewerRef = station().collection('users').doc('viewer');
+    const viewerBefore = (await viewerRef.get()).data() || {};
+    const retryRef = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_inactive_retry_' + randomId());
+    const sendingRef = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_inactive_sending_' + randomId());
+    await settleOtherUnfinishedOutbox();
+    await Promise.all([
+      retryRef.set(outboxValue(active.publication_id, {
+        revision: Number(active.revision), status: 'retry', person: 'viewer', next_attempt_at: null
+      })),
+      sendingRef.set(outboxValue(active.publication_id, {
+        revision: Number(active.revision), status: 'sending', person: 'viewer',
+        lease_token: 'expired-recipient', lease_until: new Date('2026-08-31T00:00:00.000Z')
+      }))
+    ]);
+    let sends = 0;
+    const guarded = runtime(async () => { sends += 1; return { sent: 1 }; });
+    try {
+      await viewerRef.update({ active: false });
+      await guarded.resumeOutbox();
+      for (const ref of [retryRef, sendingRef]) {
+        const after = (await ref.get()).data() || {};
+        assert.equal(after.status, 'cancelled');
+        assert.equal(after.cancel_reason, 'recipient-inactive');
+      }
+      await viewerRef.set(viewerBefore);
+      await guarded.resumeOutbox();
+      assert.equal((await retryRef.get()).data().status, 'cancelled');
+      assert.equal((await sendingRef.get()).data().status, 'cancelled');
+      assert.equal(sends, 0);
+    } finally {
+      await viewerRef.set(viewerBefore);
+    }
   });
 
   await test('zero delivered devices is retried and is never marked sent', async () => {
@@ -720,8 +2035,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 26);
-  console.log('\n26 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 53);
+  console.log('\n53 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

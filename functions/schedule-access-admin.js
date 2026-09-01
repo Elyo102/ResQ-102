@@ -54,7 +54,7 @@ function createScheduleAccessAdmin(deps) {
   }
 
   function requireAuth(req) {
-    if (!req || !req.auth || !scheduleAccess.validId(req.auth.uid)) {
+    if (!req || !req.auth || !scheduleAccess.validUid(req.auth.uid)) {
       throw fail('unauthenticated', 'צריך להיות מחובר.');
     }
     return req.auth;
@@ -89,6 +89,7 @@ function createScheduleAccessAdmin(deps) {
     return plain(record) &&
       record.schema_version === scheduleAccess.SCHEDULE_ACCESS_SCHEMA_VERSION &&
       record.station_id === stationId && record.uid === uid && record.active === false &&
+      Number.isSafeInteger(record.revision) && record.revision >= 1 &&
       Array.isArray(record.roles) && record.roles.length === 0;
   }
 
@@ -152,8 +153,8 @@ function createScheduleAccessAdmin(deps) {
       if (typeof data.uid !== 'string') {
         throw fail('invalid-argument', 'מזהה המשתמש אינו תקין.');
       }
-      const uid = data.uid.trim();
-      if (!scheduleAccess.validId(uid)) {
+      const uid = data.uid;
+      if (!scheduleAccess.validUid(uid)) {
         throw fail('invalid-argument', 'מזהה המשתמש אינו תקין.');
       }
 
@@ -206,7 +207,7 @@ function createScheduleAccessAdmin(deps) {
     for (const doc of userDocs) {
       const uid = String(doc.id || '');
       const profile = doc.data() || {};
-      if (!scheduleAccess.validId(uid) || !scheduleAccess.activeMember(profile, stationId)) continue;
+      if (!scheduleAccess.validUid(uid) || !scheduleAccess.activeMember(profile, stationId)) continue;
       const grant = grants[uid] || null;
       members.push(memberView(stationId, uid, profile, grant));
     }
@@ -221,8 +222,8 @@ function createScheduleAccessAdmin(deps) {
   async function set(req) {
     const data = dataOf(req, ['uid', 'enabled']);
     const auth = requireAuth(req);
-    const uid = String(data.uid || '').trim();
-    if (!scheduleAccess.validId(uid)) {
+    const uid = typeof data.uid === 'string' ? data.uid : '';
+    if (!scheduleAccess.validUid(uid)) {
       throw fail('invalid-argument', 'מזהה המשתמש אינו תקין.');
     }
     if (data.enabled !== true && data.enabled !== false) {

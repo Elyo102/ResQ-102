@@ -1,6 +1,11 @@
 'use strict';
 
 const scheduleAccess = require('./schedule-access');
+const effectiveReaderModule = require('./schedule-effective-reader');
+const operationalProjection = require('./schedule-operational-projection');
+const guardEvents = require('./guard-events');
+const guardManagement = require('./schedule-guard-management');
+const guardBoardProjection = require('./guard-board-projection');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -30,6 +35,7 @@ const MEMBER_ROLES = Object.freeze([
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
 ]);
 const ID_RE = /^[A-Za-z0-9_-]{2,120}$/;
+const AUTH_UID_RE = guardManagement.AUTH_UID_RE;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BATCH_WRITES = 350;
 const MAX_ROW_BYTES = 850000;
@@ -37,8 +43,48 @@ const MAX_OVERRIDES = 5000;
 const MAX_SOURCE_PEOPLE = 20000;
 const MAX_SOURCE_GROUP = 20000;
 const MAX_SOURCE_TOTAL = 50000;
+// Compatibility reads power the existing station schedule while V2 is off or
+// in Shadow.  They must not turn one screen load into an unbounded Firestore
+// scan.  These limits are an I/O safety boundary, not a claim about every
+// historical record.
+const MAX_LEGACY_ROSTER = 500;
+const MAX_LEGACY_ROTATIONS = 20;
+const MAX_LEGACY_OVERRIDES = 500;
+const MAX_LEGACY_SWAPS_PER_QUERY = 250;
+const MAX_LEGACY_SWAPS = 1000;
+const MAX_LEGACY_GUARDS_PER_QUERY = 250;
+const MAX_LEGACY_GUARDS = 1000;
+const MAX_LEGACY_GUARD_ASSIGNED = 20;
+const LEGACY_IN_QUERY_SIZE = 30;
+const MAX_GUARD_BOARD_DAYS = 366;
+const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 const OUTBOX_LEASE_MS = 10 * 60 * 1000;
 const OUTBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const GUARD_OUTBOX_MAX_ATTEMPTS = 3;
+const GUARD_OUTBOX_BACKOFF_MS = Object.freeze([60000, 300000]);
+const GUARD_NOTIFICATION_FANOUT_CHUNK = 300;
+// Interest remains a convenience list, not an unbounded recipient database.
+// This protects the guard document itself while leaving an unstaffed guard
+// perfectly valid.  Existing historical documents above the limit are still
+// actionable: their notifications are split into small server jobs below.
+const MAX_GUARD_SIGNUPS = 1000;
+// Removed-member epochs exist only to supersede a delayed removal push.  A
+// single guard never needs an unbounded membership history.
+const MAX_GUARD_ASSIGNMENT_EPOCHS = 1000;
+const MAX_GUARD_NOTIFICATION_JOB_WRITES = 400;
+const MAX_GUARD_NOTIFICATION_RECIPIENTS =
+  GUARD_NOTIFICATION_FANOUT_CHUNK * MAX_GUARD_NOTIFICATION_JOB_WRITES;
+// The first "open guard" notice is station-wide.  Bound the live audience
+// read independently from the job/write limit, so a malformed large station
+// cannot turn an asynchronous trigger into an unbounded Firestore scan.
+const MAX_GUARD_OPEN_AUDIENCE = 5000;
+const GUARD_MUTABLE_FIELDS = Object.freeze([
+  'title', 'kind', 'place', 'date', 'start', 'end', 'slots', 'need_quals',
+  'notes', 'assigned', 'status'
+]);
+const ANALYTICS_ROLES = Object.freeze([
+  'deputy', 'commander', 'station_commander', 'hr_coordinator'
+]);
 const DRAFT_PREVIEW_DAYS = 7;
 const ROLLBACK_REASONS = Object.freeze([
   'configuration_error', 'wrong_roster', 'wrong_assignment', 'operational_safety', 'other'
@@ -89,6 +135,7 @@ function createScheduleRuntime(deps) {
   const d = plain(deps) ? deps : {};
   const db = d.db;
   const FV = d.FieldValue;
+  const FieldPath = d.FieldPath;
   const clock = d.clock;
   const hash = d.hash;
   const randomId = d.randomId;
@@ -103,12 +150,21 @@ function createScheduleRuntime(deps) {
     ? d.beforeSnapshotFinalize : async function () {};
   const beforeOutboxSend = typeof d.beforeOutboxSend === 'function'
     ? d.beforeOutboxSend : async function () {};
+  const beforeEffectiveViewRecheck = typeof d.beforeEffectiveViewRecheck === 'function'
+    ? d.beforeEffectiveViewRecheck : async function () {};
+  // This seam exists only to prove that the final active-pointer read really
+  // happens *after* the live guards sidecar.  Production never supplies it.
+  const beforeLiveGuardViewRecheck = typeof d.beforeLiveGuardViewRecheck === 'function'
+    ? d.beforeLiveGuardViewRecheck : async function () {};
 
   if (!db || typeof db.collection !== 'function' || typeof db.runTransaction !== 'function') {
     throw new ScheduleRuntimeError('db-required', 'חובה להזריק Firestore');
   }
   if (!FV || typeof FV.serverTimestamp !== 'function') {
     throw new ScheduleRuntimeError('field-value-required', 'חובה להזריק FieldValue');
+  }
+  if (typeof FieldPath !== 'function') {
+    throw new ScheduleRuntimeError('field-path-required', 'חובה להזריק FieldPath');
   }
   if (typeof clock !== 'function' || typeof hash !== 'function' || typeof randomId !== 'function') {
     throw new ScheduleRuntimeError('runtime-dependencies', 'חסרות תלויות זמן, גיבוב או מזהים');
@@ -145,6 +201,10 @@ function createScheduleRuntime(deps) {
     return stationRef(sid).collection('users').doc(uid);
   }
 
+  function recipientIsActive(snap, sid) {
+    return !!snap && snap.exists && scheduleAccess.activeMember(snap.data() || {}, sid);
+  }
+
   function requireLiveManager(userSnap, accessSnap, ctx) {
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     const access = accessSnap && accessSnap.exists ? (accessSnap.data() || {}) : null;
@@ -167,6 +227,10 @@ function createScheduleRuntime(deps) {
     if (!req || !req.auth || !req.auth.uid) {
       throw new ScheduleRuntimeError('unauthenticated', 'צריך להיות מחובר.', 'unauthenticated');
     }
+    const uid = String(req.auth.uid);
+    if (!AUTH_UID_RE.test(uid)) {
+      throw new ScheduleRuntimeError('auth-uid-invalid', 'מזהה החשבון אינו תקין.', 'unauthenticated');
+    }
     const data = plain(req.data) ? req.data : {};
     if (Object.prototype.hasOwnProperty.call(data, 'stationId')
         || Object.prototype.hasOwnProperty.call(data, 'station_id')) {
@@ -179,7 +243,7 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('station-required',
         'לחשבון אין שיוך תחנה תקין.', 'failed-precondition');
     }
-    const userSnap = await liveUserRef(sid, req.auth.uid).get();
+    const userSnap = await liveUserRef(sid, uid).get();
     if (!userSnap.exists) {
       throw new ScheduleRuntimeError('live-user-required',
         'החשבון אינו קיים ברשימת המשתמשים הפעילה של התחנה.', 'permission-denied');
@@ -200,16 +264,17 @@ function createScheduleRuntime(deps) {
     // Never use a token claim or the profile itself for this capability:
     // an access record is read live for every call so a removal takes effect
     // immediately, without waiting for a token refresh.
-    const accessSnap = await scheduleAccessRef(sid, req.auth.uid).get();
+    const accessSnap = await scheduleAccessRef(sid, uid).get();
     const access = accessSnap.exists ? (accessSnap.data() || {}) : null;
     return Object.freeze({
-      uid: req.auth.uid,
+      uid,
       sid,
       role,
-      name: String(user.full_name || user.name || token.name || req.auth.uid).slice(0, 120),
+      super: isSuper(req.auth),
+      name: String(user.full_name || user.name || token.name || uid).slice(0, 120),
       // The primary role remains unrelated to schedule editing.  A commander,
       // deputy or HR coordinator is view-only until explicitly appointed.
-      manager: scheduleAccess.isManagerAccess(access, sid, req.auth.uid),
+      manager: scheduleAccess.isManagerAccess(access, sid, uid),
       user
     });
   }
@@ -258,6 +323,523 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('manager-required',
         'עריכה ופרסום מותרים לאחראי/ת סידור שמונה/תה במפורש.', 'permission-denied');
     }
+  }
+
+  function requireAnalytics(ctx) {
+    // A live schedule manager needs the same assignment-load view while
+    // staffing a guard, even when their primary station role is firefighter.
+    // That appointment is deliberately separate from every base role.
+    if (!ctx.manager && !ctx.super && ANALYTICS_ROLES.indexOf(ctx.role) === -1) {
+      throw new ScheduleRuntimeError('guard-statistics-forbidden',
+        'נתוני עומס זמינים רק לתפקידי ניהול מורשים.', 'permission-denied');
+    }
+  }
+
+  // Guards are deliberately independent from a published monthly plan.  A
+  // station can open, postpone, staff, unstaff or cancel one at any time; the
+  // only authority boundary is a *live* schedule-manager appointment.
+  function guardRef(sid, guardId) {
+    return stationRef(sid).collection('guards').doc(guardId);
+  }
+
+  function guardOperationRef(sid, requestId) {
+    return stationRef(sid).collection('guard_operations').doc(requestId);
+  }
+
+  function guardAuditRef(sid, requestId) {
+    return stationRef(sid).collection('guard_audit')
+      .doc('a_' + hash('guard-audit|' + sid + '|' + requestId).slice(0, 48));
+  }
+
+  function guardOutboxRef(sid, requestId, uid) {
+    return stationRef(sid).collection('guard_outbox')
+      .doc('go_' + hash('guard-outbox|' + sid + '|' + requestId + '|' + uid).slice(0, 48));
+  }
+
+  function guardNotificationJobRef(sid, requestId, part) {
+    return stationRef(sid).collection('guard_notification_jobs')
+      .doc('gj_' + hash('guard-notification-job|' + sid + '|' + requestId + '|' + part).slice(0, 48));
+  }
+
+  function guardCreateId(ctx, requestId) {
+    return 'g_' + hash('guard|' + ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 48);
+  }
+
+  function guardCommandError(error) {
+    if (!(error instanceof guardManagement.GuardManagementError)) throw error;
+    const code = error.code;
+    const httpCode = code === 'guard-not-found' ? 'not-found'
+      : (code === 'guard-revision-conflict' ? 'aborted'
+        : (code === 'guard-already-exists' ? 'already-exists'
+          : (code === 'guard-command-invalid' || code === 'guard-details-invalid'
+            || code === 'guard-id-invalid' || code === 'guard-existing-invalid'
+            ? 'invalid-argument' : 'failed-precondition')));
+    throw new ScheduleRuntimeError(code, error.message, httpCode);
+  }
+
+  function changedGuardFields(before, after) {
+    if (!before) return GUARD_MUTABLE_FIELDS.slice();
+    return GUARD_MUTABLE_FIELDS.filter((field) => stable(before[field]) !== stable(after[field]));
+  }
+
+  function guardResult(plan, duplicate) {
+    return {
+      ok: true,
+      duplicate: duplicate === true,
+      changed: plan.changed === true,
+      guard_id: plan.guard_id,
+      status: plan.after.status,
+      revision: Number(plan.after.revision),
+      assigned: Array.isArray(plan.after.assigned) ? plan.after.assigned.length : 0,
+      added: Array.isArray(plan.added) ? plan.added.length : 0,
+      removed: Array.isArray(plan.removed) ? plan.removed.length : 0,
+      notified_people: Array.isArray(plan.notifications) ? plan.notifications.length : 0
+    };
+  }
+
+  function guardRequestFingerprint(ctx, command) {
+    return digest({
+      station_id: ctx.sid,
+      actor_uid: ctx.uid,
+      action: command.action,
+      request_id: command.request_id,
+      guard_id: command.guard_id || null,
+      expected_revision: command.expected_revision === undefined ? null : command.expected_revision,
+      details: command.details || null,
+      uids: command.uids || null
+    });
+  }
+
+  function putOwnMapValue(target, key, value) {
+    Object.defineProperty(target, key, {
+      value, enumerable: true, configurable: true, writable: true
+    });
+  }
+
+  function previousAssignmentEpochs(raw) {
+    const source = raw && raw.assignment_epochs;
+    if (source === undefined) return {};
+    if (!plain(source)) {
+      throw new ScheduleRuntimeError('guard-assignment-epochs-invalid',
+        'היסטוריית השיבוץ באבטחה אינה תקינה.', 'failed-precondition');
+    }
+    const result = {};
+    const uids = Object.keys(source);
+    if (uids.length > MAX_GUARD_ASSIGNMENT_EPOCHS) {
+      throw new ScheduleRuntimeError('guard-assignment-history-limit',
+        'היסטוריית השיבוץ באבטחה גדולה מדי לעדכון בטוח.', 'failed-precondition');
+    }
+    for (const uid of uids) {
+      const value = source[uid];
+      if (!AUTH_UID_RE.test(uid) || !Number.isSafeInteger(value) || value < 1) {
+        throw new ScheduleRuntimeError('guard-assignment-epochs-invalid',
+          'היסטוריית השיבוץ באבטחה אינה תקינה.', 'failed-precondition');
+      }
+      putOwnMapValue(result, uid, value);
+    }
+    return result;
+  }
+
+  function nextAssignmentEpochs(raw, action, plan) {
+    if (action !== 'set_assignees' || !plan.changed) return null;
+    const result = previousAssignmentEpochs(raw);
+    for (const uid of plan.added.concat(plan.removed)) {
+      putOwnMapValue(result, uid, Number(plan.after.revision));
+    }
+    if (Object.keys(result).length > MAX_GUARD_ASSIGNMENT_EPOCHS) {
+      throw new ScheduleRuntimeError('guard-assignment-history-limit',
+        'היסטוריית השיבוץ באבטחה גדולה מדי לעדכון בטוח.', 'failed-precondition');
+    }
+    return result;
+  }
+
+  function notificationChunks(plan, assignmentEpochs) {
+    const notices = plan.notifications.map((notice) => {
+      const item = { uid: notice.uid, kind: notice.kind };
+      if ((notice.kind === 'assigned' || notice.kind === 'removed') && assignmentEpochs) {
+        item.membership_epoch = Number(assignmentEpochs[notice.uid]);
+      }
+      return item;
+    });
+    const chunks = [];
+    for (let offset = 0; offset < notices.length; offset += GUARD_NOTIFICATION_FANOUT_CHUNK) {
+      chunks.push(notices.slice(offset, offset + GUARD_NOTIFICATION_FANOUT_CHUNK));
+    }
+    if (notices.length > MAX_GUARD_NOTIFICATION_RECIPIENTS
+        || chunks.length > MAX_GUARD_NOTIFICATION_JOB_WRITES) {
+      throw new ScheduleRuntimeError('guard-notification-limit',
+        'מספר האנשים לעדכון גבוה מדי לפעולה אחת. יש לפצל את השינוי.', 'resource-exhausted');
+    }
+    return chunks;
+  }
+
+  // A newly opened guard is an operationally flexible opportunity, not an
+  // immutable appointment.  Its audience comes from the same live `users`
+  // authority used by every other schedule call — never from a stale roster
+  // or client-supplied uid list.
+  function openGuardRecipientIds(users, sid, creatorUid) {
+    const docs = users && Array.isArray(users.docs) ? users.docs : [];
+    if (docs.length > MAX_GUARD_OPEN_AUDIENCE) {
+      // This is a permanent capacity condition, not a transient Firestore
+      // failure.  The caller records a terminal manifest below so Eventarc
+      // does not retry the same 5,001-document read forever.
+      return Object.freeze({ recipients: Object.freeze([]), over_limit: true });
+    }
+    const unique = new Set();
+    for (const doc of docs) {
+      const uid = String(doc && doc.id || '');
+      const profile = doc && typeof doc.data === 'function' ? (doc.data() || {}) : {};
+      if (!AUTH_UID_RE.test(uid) || uid === creatorUid
+          || !scheduleAccess.activeMember(profile, sid)) continue;
+      unique.add(uid);
+    }
+    return Object.freeze({
+      recipients: Object.freeze(Array.from(unique).sort(compareCanonical)),
+      over_limit: false
+    });
+  }
+
+  function openGuardRequestId(sid, guardId, revision) {
+    return 'open_' + hash('guard-open|' + sid + '|' + guardId + '|' + revision).slice(0, 48);
+  }
+
+  async function enqueueGuardOpenNotifications(input) {
+    const raw = plain(input) ? input : {};
+    const sid = requireId(raw.sid, 'guard-station-invalid', 'תחנת האבטחה');
+    const guardId = requireId(raw.guard_id, 'guard-id-invalid', 'מזהה האבטחה');
+    // This is the creation event's revision, not the revision observed by a
+    // delayed/retried trigger.  It is the stable idempotency key: later edits
+    // may leave the guard open, but must never mint another "new guard" push.
+    const eventRevision = Number(raw.revision);
+    if (!Number.isSafeInteger(eventRevision) || eventRevision < 1) {
+      return { skipped: true, reason: 'event-revision-invalid' };
+    }
+    const now = Date.parse(clock());
+    if (!Number.isFinite(now)) {
+      throw new ScheduleRuntimeError('clock-invalid', 'שעון השרת אינו תקין.');
+    }
+    const targetRef = guardRef(sid, guardId);
+    return db.runTransaction(async (tx) => {
+      const manifestRef = guardNotificationJobRef(sid, openGuardRequestId(sid, guardId, eventRevision), 0);
+      const initial = await Promise.all([tx.get(targetRef), tx.get(manifestRef)]);
+      const snap = initial[0];
+      if (!snap.exists) return { skipped: true, reason: 'guard-not-found' };
+      // The manifest is the immutable audience boundary.  A Firestore event
+      // is at-least-once: never recompute recipients or append a new part on
+      // a later retry after the station roster has changed.
+      if (initial[1].exists) return { duplicate: true, jobs: 0 };
+      const guard = snap.data() || {};
+      const currentRevision = Number(guard.revision || 0);
+      // A rapid assignment, postponement, cancellation or completion wins
+      // over an eventual creation trigger.  Leaving an unstaffed guard open
+      // remains normal and continues to qualify for its generic invitation.
+      if (guard.status !== 'open'
+          || !Number.isSafeInteger(currentRevision) || currentRevision < eventRevision
+          || !DATE_RE.test(String(guard.date || ''))
+          || !/^\d{2}:\d{2}$/.test(String(guard.start || ''))
+          || !/^\d{2}:\d{2}$/.test(String(guard.end || ''))) {
+        return { skipped: true, reason: 'guard-not-open' };
+      }
+      const users = await tx.get(stationRef(sid).collection('users')
+        .limit(MAX_GUARD_OPEN_AUDIENCE + 1));
+      const audience = openGuardRecipientIds(users, sid, String(guard.by_uid || ''));
+      const recipients = audience.recipients;
+      const requestId = openGuardRequestId(sid, guardId, eventRevision);
+      const chunks = audience.over_limit ? [] : notificationChunks({
+        notifications: recipients.map((uid) => ({ uid, kind: 'open' }))
+      }, null);
+      // Part zero is a completed server-only manifest, even for an empty
+      // audience.  Recipient chunks start at one so the manifest is both a
+      // retry sentinel and an immutable audit of the event revision.
+      tx.create(manifestRef, {
+        station_id: sid,
+        guard_id: guardId,
+        revision: eventRevision,
+        date: String(guard.date),
+        start: String(guard.start),
+        end: String(guard.end),
+        request_id: requestId,
+        part: 0,
+        notifications: [],
+        audience_manifest: true,
+        audience_size: audience.over_limit ? null : recipients.length,
+        audience_limit: audience.over_limit ? MAX_GUARD_OPEN_AUDIENCE : null,
+        cursor: 0,
+        status: audience.over_limit ? 'failed' : 'complete',
+        expires_at: new Date(now + OUTBOX_TTL_MS),
+        created_at: FV.serverTimestamp(),
+        completed_at: audience.over_limit ? null : FV.serverTimestamp(),
+        failed_at: audience.over_limit ? FV.serverTimestamp() : null,
+        lease_token: null,
+        lease_until: null,
+        last_error: audience.over_limit ? 'AUDIENCE_LIMIT' : null
+      });
+      chunks.forEach((notifications, offset) => {
+        tx.create(guardNotificationJobRef(sid, requestId, offset + 1), {
+          station_id: sid,
+          guard_id: guardId,
+          revision: eventRevision,
+          date: String(guard.date),
+          start: String(guard.start),
+          end: String(guard.end),
+          request_id: requestId,
+          part: offset + 1,
+          notifications,
+          cursor: 0,
+          status: 'queued',
+          expires_at: new Date(now + OUTBOX_TTL_MS),
+          created_at: FV.serverTimestamp(),
+          lease_token: null,
+          lease_until: null,
+          last_error: null
+        });
+      });
+      return audience.over_limit
+        ? { skipped: true, reason: 'recipient-limit', jobs: 0 }
+        : { queued: recipients.length, jobs: chunks.length, duplicate: false };
+    });
+  }
+
+  function guardWriteData(ctx, plan, assignmentEpochs) {
+    const value = {};
+    GUARD_MUTABLE_FIELDS.forEach((field) => { value[field] = plan.after[field]; });
+    // Revision is a server-owned concurrency token, not an editable guard
+    // field.  It must still be persisted with every real mutation.
+    value.revision = Number(plan.after.revision);
+    value.updated_by = ctx.uid;
+    value.updated_at = FV.serverTimestamp();
+    if (plan.before === null) {
+      value.by_uid = ctx.uid;
+      value.created_by = ctx.uid;
+      value.created_at = FV.serverTimestamp();
+      value.signups = {};
+    }
+    if (plan.added && plan.added.length || plan.removed && plan.removed.length) {
+      value.assigned_by = ctx.uid;
+      value.assigned_at = FV.serverTimestamp();
+    }
+    if (plan.after.status === 'cancelled') {
+      value.cancelled_by = ctx.uid;
+      value.cancelled_at = FV.serverTimestamp();
+    }
+    if (plan.after.status === 'done') {
+      value.completed_by = ctx.uid;
+      value.completed_at = FV.serverTimestamp();
+    }
+    if (assignmentEpochs) value.assignment_epochs = assignmentEpochs;
+    return value;
+  }
+
+  async function manageGuard(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    let command;
+    try {
+      command = guardManagement.parseCommand(plain(req.data) ? req.data : {});
+    } catch (error) {
+      guardCommandError(error);
+    }
+    const requestFingerprint = guardRequestFingerprint(ctx, command);
+    const deterministicGuardId = command.action === 'create'
+      ? guardCreateId(ctx, command.request_id) : command.guard_id;
+    const targetRef = guardRef(ctx.sid, deterministicGuardId);
+    const operationRef = guardOperationRef(ctx.sid, command.request_id);
+    const requestedUids = command.action === 'set_assignees' ? command.uids : [];
+    const uniqueUids = Array.from(new Set(requestedUids)).sort(compareCanonical);
+    const now = Date.parse(clock());
+    if (!Number.isFinite(now)) {
+      throw new ScheduleRuntimeError('clock-invalid', 'שעון השרת אינו תקין.');
+    }
+
+    return db.runTransaction(async (tx) => {
+      // Every read precedes every write.  In particular, the appointment is
+      // reread inside the transaction so revoking it wins a concurrent click.
+      const actorUserRef = liveUserRef(ctx.sid, ctx.uid);
+      const accessRef = scheduleAccessRef(ctx.sid, ctx.uid);
+      const personRefs = uniqueUids.map((uid) => liveUserRef(ctx.sid, uid));
+      const refs = [actorUserRef, accessRef, operationRef, targetRef].concat(personRefs);
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+
+      const existingOperation = snaps[2].exists ? (snaps[2].data() || {}) : null;
+      if (existingOperation) {
+        if (existingOperation.actor_uid !== ctx.uid
+            || existingOperation.request_fingerprint !== requestFingerprint
+            || !plain(existingOperation.result)) {
+          throw new ScheduleRuntimeError('guard-request-conflict',
+            'מזהה הפעולה כבר שייך לבקשה אחרת.', 'already-exists');
+        }
+        return Object.assign({}, existingOperation.result, { duplicate: true });
+      }
+
+      const activeUids = [];
+      for (let i = 0; i < uniqueUids.length; i += 1) {
+        const person = snaps[4 + i];
+        if (person && person.exists && scheduleAccess.activeMember(person.data() || {}, ctx.sid)) {
+          activeUids.push(uniqueUids[i]);
+        }
+      }
+
+      const existingGuard = snaps[3].exists ? (snaps[3].data() || {}) : null;
+      let plan;
+      try {
+        plan = guardManagement.operation(
+          existingGuard,
+          command,
+          activeUids,
+          deterministicGuardId
+        );
+      } catch (error) {
+        guardCommandError(error);
+      }
+
+      const assignmentEpochs = nextAssignmentEpochs(existingGuard, command.action, plan);
+      const notificationJobs = notificationChunks(plan, assignmentEpochs);
+
+      const result = guardResult(plan, false);
+      const operationData = {
+        station_id: ctx.sid,
+        request_id: command.request_id,
+        actor_uid: ctx.uid,
+        request_fingerprint: requestFingerprint,
+        action: command.action,
+        guard_id: plan.guard_id,
+        result,
+        expires_at: new Date(now + OUTBOX_TTL_MS),
+        created_at: FV.serverTimestamp()
+      };
+      tx.create(operationRef, operationData);
+
+      if (!plan.changed) return result;
+
+      const write = guardWriteData(ctx, plan, assignmentEpochs);
+      if (plan.before === null) tx.create(targetRef, write);
+      else tx.update(targetRef, write);
+
+      tx.create(guardAuditRef(ctx.sid, command.request_id), {
+        station_id: ctx.sid,
+        guard_id: plan.guard_id,
+        action: command.action,
+        actor_uid: ctx.uid,
+        before_revision: plan.before ? Number(plan.before.revision) : 0,
+        after_revision: Number(plan.after.revision),
+        before_status: plan.before ? plan.before.status : null,
+        after_status: plan.after.status,
+        changed_fields: changedGuardFields(plan.before, plan.after),
+        created_at: FV.serverTimestamp()
+      });
+
+      // This is an allow-list on purpose.  Event text, location, notes,
+      // sign-ups and the names of other people never enter a push payload or
+      // its durable retry record.
+      notificationJobs.forEach((notifications, part) => {
+        tx.create(guardNotificationJobRef(ctx.sid, command.request_id, part), {
+          station_id: ctx.sid,
+          guard_id: plan.guard_id,
+          revision: Number(plan.after.revision),
+          date: plan.after.date,
+          start: plan.after.start,
+          end: plan.after.end,
+          request_id: command.request_id,
+          part,
+          notifications,
+          cursor: 0,
+          status: 'queued',
+          expires_at: new Date(now + OUTBOX_TTL_MS),
+          created_at: FV.serverTimestamp(),
+          lease_token: null,
+          lease_until: null,
+          last_error: null
+        });
+      });
+      return result;
+    });
+  }
+
+  // Registering interest is deliberately not an operational-notification
+  // revision: it does not change the time, status or team.  The transaction is the
+  // important part: a cancellation/complete operation and a late signup
+  // serialize on the same guard document, so a signup can never land after a
+  // terminal state.  Keeping the revision unchanged also means an ordinary
+  // manager notification is not made stale by someone merely pressing
+  // "interested".
+  async function signupGuard(req) {
+    const ctx = await context(req);
+    const raw = plain(req.data) ? req.data : {};
+    const allowed = ['id', 'join'];
+    if (Object.keys(raw).some((key) => allowed.indexOf(key) === -1)) {
+      throw new ScheduleRuntimeError('guard-signup-invalid',
+        'בקשת ההרשמה כוללת שדה שאינו מורשה.', 'invalid-argument');
+    }
+    const guardId = requireId(raw.id, 'guard-id-invalid', 'מזהה האבטחה');
+    const join = Object.prototype.hasOwnProperty.call(raw, 'join') ? raw.join : true;
+    if (typeof join !== 'boolean') {
+      throw new ScheduleRuntimeError('guard-signup-invalid',
+        'מצב ההרשמה אינו תקין.', 'invalid-argument');
+    }
+    const targetRef = guardRef(ctx.sid, guardId);
+    return db.runTransaction(async (tx) => {
+      // Re-read the live member inside the transaction.  A station removal
+      // that races the click therefore wins before the guard is touched.
+      const snaps = await Promise.all([
+        tx.get(liveUserRef(ctx.sid, ctx.uid)),
+        tx.get(targetRef)
+      ]);
+      const user = snaps[0].exists ? (snaps[0].data() || {}) : null;
+      if (!scheduleAccess.activeMember(user, ctx.sid)
+          || (!isSuper(req.auth) && MEMBER_ROLES.indexOf(String(user && user.role || '')) === -1)
+          || (!isSuper(req.auth) && String(user && user.role || '') !== ctx.role)) {
+        throw new ScheduleRuntimeError('live-user-inactive',
+          'החשבון אינו פעיל או שאינו משויך לתחנה.', 'permission-denied');
+      }
+      if (!snaps[1].exists) {
+        throw new ScheduleRuntimeError('guard-not-found', 'האבטחה לא נמצאה.', 'not-found');
+      }
+      const guard = snaps[1].data() || {};
+      if (guard.status === 'cancelled' || guard.status === 'done') {
+        throw new ScheduleRuntimeError('guard-terminal',
+          'אבטחה שבוטלה או הסתיימה אינה פתוחה להרשמה.', 'failed-precondition');
+      }
+      if (guard.status !== 'open' && guard.status !== 'staffed') {
+        throw new ScheduleRuntimeError('guard-status-invalid',
+          'מצב האבטחה אינו מאפשר הרשמה.', 'failed-precondition');
+      }
+      const assigned = Array.isArray(guard.assigned) ? guard.assigned : [];
+      if (assigned.indexOf(ctx.uid) !== -1) {
+        throw new ScheduleRuntimeError('guard-already-assigned',
+          'אתה כבר משובץ. ביטול עובר דרך אחראי/ת הסידור.', 'failed-precondition');
+      }
+      if (guard.signups !== undefined && !plain(guard.signups)) {
+        throw new ScheduleRuntimeError('guard-signups-invalid',
+          'רשימת ההרשמה באבטחה אינה תקינה.', 'failed-precondition');
+      }
+      const signups = plain(guard.signups) ? guard.signups : {};
+      const joined = Object.prototype.hasOwnProperty.call(signups, ctx.uid);
+      if (joined === join) return { ok: true, joined: join, changed: false };
+      // Leaving is always allowed.  Only a new interest is bounded, so a
+      // large old list can never make a cancellation or an opt-out impossible.
+      if (join) {
+        const interested = new Set(assigned.concat(Object.keys(signups)));
+        if (interested.size >= MAX_GUARD_SIGNUPS) {
+          throw new ScheduleRuntimeError('guard-signup-limit',
+            'רשימת המתעניינים באבטחה מלאה. אפשר לנסות שוב אם יתפנה מקום.',
+            'resource-exhausted');
+        }
+      }
+
+      const displayName = String(user.full_name || user.name || ctx.uid).trim();
+      const crew = String(user.crew || user.shift || '').trim();
+      const safeName = CONTROL_RE.test(displayName) ? ctx.uid : displayName.slice(0, 120);
+      const safeCrew = CONTROL_RE.test(crew) ? '' : crew.slice(0, 40);
+      // Firebase Auth UIDs may legally contain a dot.  FieldPath keeps that
+      // UID one literal map key rather than treating it as a dotted update
+      // path (which could otherwise write below an unintended signup key).
+      tx.update(targetRef,
+        new FieldPath('signups', ctx.uid),
+        join ? { name: safeName, crew: safeCrew, at: clock() } : FV.delete(),
+        'updated_at', FV.serverTimestamp());
+      return { ok: true, joined: join, changed: true };
+    });
   }
 
   function requireMode(config, allowed) {
@@ -670,6 +1252,24 @@ function createScheduleRuntime(deps) {
     return { plan, events, roster };
   }
 
+  // A caller may request a small visual window, but the immutable snapshot is
+  // always read and hashed as a whole first.  Reading only matching rows would
+  // make the content digest a promise rather than an actual integrity check.
+  function sliceVerifiedSnapshot(snapshot, dates) {
+    if (!Array.isArray(dates) || !dates.length) return snapshot;
+    const wanted = new Set(dates);
+    const rows = snapshot.plan.rows.filter((row) => wanted.has(row.date));
+    const events = snapshot.events.filter((event) => wanted.has(event.date));
+    const people = new Set();
+    rows.forEach((row) => (row.slots || []).forEach((slot) => people.add(slot.person)));
+    events.forEach((event) => (event.people || []).forEach((id) => people.add(id)));
+    return {
+      plan: Object.assign({}, snapshot.plan, { rows }),
+      events,
+      roster: snapshot.roster.filter((person) => people.has(person.id))
+    };
+  }
+
   async function getStatus(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
@@ -790,6 +1390,15 @@ function createScheduleRuntime(deps) {
       months
     });
     const plan = flattenPlanSet(planSet);
+    // A draft may deliberately contain staffing gaps for a manager to review,
+    // but it must never contain a manual placement the engine has rejected.
+    // Unlike source setup, this gate sees the exact requested start/months and
+    // therefore also catches a preceding automatic assignment that violates
+    // the rest rule on a later manual lock.  Fail before any draft is staged.
+    if (Number(plan.summary.rejected_manual || 0) > 0) {
+      throw new ScheduleRuntimeError('manual-assignment-rejected',
+        'אחד השיבוצים הידניים סותר את כללי הסידור בטווח שנבחר.', 'failed-precondition');
+    }
     // Planning can take time.  Re-read the live access record at the write
     // boundary so a manager removed while the plan was calculated cannot
     // create a usable draft after revocation.
@@ -859,7 +1468,7 @@ function createScheduleRuntime(deps) {
       if (date > meta.to) break;
       dates.push(date);
     }
-    const snapshot = await readSnapshot(ref, meta, dates);
+    const snapshot = sliceVerifiedSnapshot(await readSnapshot(ref, meta), dates);
     const service = serviceFor(ctx);
     const days = dates.map((date) => service.buildStationSchedule({
       actor: actor(ctx), plan: snapshot.plan, events: snapshot.events,
@@ -879,13 +1488,27 @@ function createScheduleRuntime(deps) {
     const pointer = await activeRef(ctx.sid).get();
     if (!pointer.exists || !nonEmpty((pointer.data() || {}).publication_id)) return null;
     const p = pointer.data() || {};
+    if (!integer(p.revision) || p.revision < 1 || !nonEmpty(p.content_digest)) {
+      throw new ScheduleRuntimeError('active-pointer-invalid',
+        'מצביע הסידור הפעיל אינו שלם ולכן התצוגה נעצרה.');
+    }
     const ref = stationRef(ctx.sid).collection('schedule_publications').doc(p.publication_id);
     const snap = await ref.get();
-    if (!snap.exists || (snap.data() || {}).status !== 'active') {
+    if (!snap.exists) {
       throw new ScheduleRuntimeError('active-publication-missing', 'הפרסום הפעיל אינו שלם.');
     }
     const meta = snap.data() || {};
-    const value = await readSnapshot(ref, meta, dates);
+    if (meta.station_id !== ctx.sid || meta.status !== 'active'
+        || meta.snapshot_complete !== true || !integer(meta.revision)
+        || !nonEmpty(meta.content_digest)) {
+      throw new ScheduleRuntimeError('active-publication-invalid',
+        'הפרסום הפעיל אינו שלם או אינו שייך לתחנה.');
+    }
+    if (meta.revision !== p.revision || meta.content_digest !== p.content_digest) {
+      throw new ScheduleRuntimeError('active-publication-pointer-mismatch',
+        'מצביע הסידור אינו תואם לגרסה החתומה ולכן התצוגה נעצרה.');
+    }
+    const value = sliceVerifiedSnapshot(await readSnapshot(ref, meta), dates);
     return { pointer: p, ref, meta, plan: value.plan, events: value.events, roster: value.roster };
   }
 
@@ -894,7 +1517,8 @@ function createScheduleRuntime(deps) {
     const ref = stationRef(ctx.sid).collection('schedule_publications').doc(id);
     const snap = await ref.get();
     const meta = snap.exists ? (snap.data() || {}) : {};
-    if (!snap.exists || meta.status !== 'active' || meta.station_id !== ctx.sid) {
+    if (!snap.exists || meta.status !== 'active' || meta.station_id !== ctx.sid
+        || meta.snapshot_complete !== true || !nonEmpty(meta.content_digest)) {
       throw new ScheduleRuntimeError('rollback-target-missing',
         'גרסת היעד לחזרה אינה קיימת או אינה שלמה.');
     }
@@ -968,8 +1592,9 @@ function createScheduleRuntime(deps) {
       const value = snap.data() || {};
       const stationId = String(value.station_id || '');
       const publicationId = String(value.publication_id || '');
+      const person = String(value.person || '');
       const status = String(value.status || '');
-      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId) || !AUTH_UID_RE.test(person)
           || ['blocked', 'retry', 'sending', 'queued'].indexOf(status) === -1) {
         if (status !== 'sent' && status !== 'cancelled') cancelOutbox(tx, ref, 'outbox-invalid');
         return;
@@ -979,13 +1604,18 @@ function createScheduleRuntime(deps) {
         return;
       }
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
-      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
+        liveUserRef(stationId, person)];
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
       if (runtime.mode !== MODE.NEW) {
         cancelOutbox(tx, ref, 'runtime-not-new');
+        return;
+      }
+      if (!recipientIsActive(checks[3], stationId)) {
+        cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
       if (publication.status === 'staging' || publication.status === 'complete') {
@@ -1377,18 +2007,689 @@ function createScheduleRuntime(deps) {
     };
   }
 
+  function requestedViewDate(req, fallback) {
+    const data = req && req.data === undefined ? {} : (req && req.data);
+    if (!plain(data) || Object.keys(data).some((key) => key !== 'date')) {
+      throw new ScheduleRuntimeError('schedule-view-input',
+        'תצוגת הסידור מקבלת תאריך בלבד.', 'invalid-argument');
+    }
+    const value = Object.prototype.hasOwnProperty.call(data, 'date') ? String(data.date || '') : fallback;
+    return isoDayOffset(value, 0);
+  }
+
+  // The legacy guard screens used to read the entire raw collection.  The
+  // replacement callables accept one explicit, bounded calendar range.  They
+  // never derive a default range from the server clock: an omitted boundary
+  // must be an error rather than an accidental full-history read.
+  function requestedGuardBoardRange(req) {
+    const data = req && req.data === undefined ? {} : (req && req.data);
+    if (!plain(data) || Object.keys(data).some((key) => key !== 'from' && key !== 'to')) {
+      throw new ScheduleRuntimeError('guard-board-input',
+        'תצוגת האבטחות מקבלת התחלה וסיום בלבד.', 'invalid-argument');
+    }
+    if (!Object.prototype.hasOwnProperty.call(data, 'from')
+        || !Object.prototype.hasOwnProperty.call(data, 'to')) {
+      throw new ScheduleRuntimeError('guard-board-input',
+        'חובה לבחור התחלה וסיום לתצוגת האבטחות.', 'invalid-argument');
+    }
+    const from = isoDayOffset(String(data.from || ''), 0);
+    const to = isoDayOffset(String(data.to || ''), 0);
+    if (from > to) {
+      throw new ScheduleRuntimeError('guard-board-range',
+        'תאריך ההתחלה של האבטחות חייב להיות לפני תאריך הסיום.', 'invalid-argument');
+    }
+    const dates = [];
+    let cursor = from;
+    while (cursor <= to) {
+      dates.push(cursor);
+      if (dates.length > MAX_GUARD_BOARD_DAYS) {
+        throw new ScheduleRuntimeError('guard-board-range',
+          'טווח האבטחות גדול מהתקרה הבטוחה לתצוגה.', 'invalid-argument');
+      }
+      cursor = isoDayOffset(cursor, 1);
+    }
+    return Object.freeze({ from, to, dates: Object.freeze(dates) });
+  }
+
+  function dateChunks(dates) {
+    const chunks = [];
+    for (let index = 0; index < dates.length; index += LEGACY_IN_QUERY_SIZE) {
+      chunks.push(dates.slice(index, index + LEGACY_IN_QUERY_SIZE));
+    }
+    return chunks;
+  }
+
+  // Copy only the fields that a projection is permitted to inspect.  The raw
+  // Firestore document also carries audit data, assignment epochs and future
+  // operational fields; none of those should even enter the projection
+  // boundary by accident.
+  function guardBoardSignups(value) {
+    if (!plain(value)) return value;
+    const result = {};
+    Object.keys(value).sort(compareCanonical).forEach((uid) => {
+      const item = plain(value[uid]) ? value[uid] : {};
+      result[uid] = { name: item.name, crew: item.crew };
+    });
+    return result;
+  }
+
+  function guardBoardCandidate(doc, sid) {
+    if (!doc || !doc.exists || typeof doc.id !== 'string' || !ID_RE.test(doc.id)) return null;
+    const value = doc.data() || {};
+    if (!plain(value)) return null;
+    return Object.freeze({
+      id: doc.id,
+      // `guard-board-projection` deliberately receives the same `{id,value}`
+      // envelope as a Firestore document, but `value` itself is an explicit
+      // allow-list copy rather than `doc.data()`.
+      value: Object.freeze({
+        stationId: value.stationId,
+        station_id: value.station_id,
+        station: value.station,
+        title: value.title,
+        kind: value.kind,
+        place: value.place,
+        date: value.date,
+        start: value.start,
+        end: value.end,
+        // Historical guard documents predate the explicit state field.  The
+        // writer has always treated that omission as an open guard, so preserve
+        // it here instead of making old valid work silently disappear.
+        status: value.status === undefined ? 'open' : value.status,
+        slots: value.slots,
+        need_quals: value.need_quals,
+        notes: value.notes,
+        revision: value.revision,
+        assigned: Array.isArray(value.assigned) ? value.assigned.slice() : value.assigned,
+        signups: guardBoardSignups(value.signups)
+      })
+    });
+  }
+
+  function guardBoardMembers(docs, ctx) {
+    // Assignment writes are validated against the live `users` collection,
+    // not the older planning `roster`.  The same authority must drive the
+    // reader, otherwise a legitimate assignee can disappear from an open
+    // guard solely because a roster sync is late.
+    const members = (Array.isArray(docs) ? docs : []).map((doc) => {
+      const user = doc && typeof doc.data === 'function' ? (doc.data() || {}) : {};
+      return {
+        uid: doc && doc.id,
+        active: scheduleAccess.activeMember(user, ctx.sid),
+        is_active: scheduleAccess.activeMember(user, ctx.sid)
+      };
+    });
+    // `context` already verified this account against its live user document.
+    // Preserve that fact even if a just-created document is absent from a
+    // collection query's eventual local cache.
+    if (!members.some((person) => person.uid === ctx.uid && person.active === true)) {
+      members.push({ uid: ctx.uid, active: true, is_active: true });
+    }
+    return members;
+  }
+
+  async function readGuardBoardInput(ctx, range) {
+    const root = stationRef(ctx.sid);
+    try {
+      // A single bounded range query avoids issuing thirteen parallel `in`
+      // queries for a year-long board and stops at the global guard cap
+      // before Firestore can read thousands of documents that the caller will
+      // not be permitted to receive anyway.
+      const reads = await Promise.all([
+        root.collection('users').limit(MAX_LEGACY_ROSTER + 1).get(),
+        root.collection('guards')
+          .where('date', '>=', range.from)
+          .where('date', '<=', range.to)
+          .orderBy('date')
+          .limit(MAX_LEGACY_GUARDS + 1).get()
+      ]);
+      if (reads[0].size > MAX_LEGACY_ROSTER) {
+        throw new ScheduleRuntimeError('guard-board-users-too-large',
+          'רשימת המשתמשים הפעילים גדולה מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const guardDocs = boundedGuardDocuments([reads[1]]);
+      const guards = Array.from(guardDocs.values()).sort((left, right) =>
+        compareCanonical(left.id, right.id)).map((doc) => guardBoardCandidate(doc, ctx.sid)).filter(Boolean);
+      return Object.freeze({
+        station_id: ctx.sid,
+        dates: range.dates,
+        roster: Object.freeze(guardBoardMembers(reads[0].docs, ctx)),
+        guards: Object.freeze(guards),
+        viewer_uid: ctx.uid
+      });
+    } catch (error) {
+      if (error instanceof ScheduleRuntimeError) throw error;
+      throw new ScheduleRuntimeError('guard-board-unavailable',
+        'לא הצלחנו לקרוא את האבטחות כרגע. אפשר לנסות שוב.', 'unavailable');
+    }
+  }
+
+  // A guard document contains operational notes and audit data that have no
+  // place in the schedule.  This bridge reads only the fields required to
+  // validate a safe projection; it always creates a new object before the
+  // pure guard module sees it.
+  function legacyGuardCandidate(doc, sid) {
+    if (!doc || !doc.exists || typeof doc.id !== 'string' || !ID_RE.test(doc.id)) return null;
+    const value = doc.data() || {};
+    if (!plain(value)) return null;
+    for (const key of ['stationId', 'station_id', 'station']) {
+      if (value[key] !== undefined && value[key] !== null && value[key] !== ''
+          && value[key] !== sid) return null;
+    }
+    const assignedRaw = value.assigned === undefined || value.assigned === null ? [] : value.assigned;
+    if (!Array.isArray(assignedRaw) || assignedRaw.length > MAX_LEGACY_GUARD_ASSIGNED
+        || !Number.isSafeInteger(value.slots) || value.slots < 1
+        || value.slots > MAX_LEGACY_GUARD_ASSIGNED) return null;
+    const assigned = new Set();
+    for (const uid of assignedRaw) {
+      if (typeof uid !== 'string' || !AUTH_UID_RE.test(uid)) return null;
+      assigned.add(uid);
+    }
+    // The server assignment path writes a unique set.  Historical duplicates
+    // are collapsed before this check so a harmless repeated value never
+    // makes a still-open guard disappear, while over-capacity data does.
+    if (assigned.size > value.slots) return null;
+    return Object.freeze({
+      id: doc.id,
+      date: value.date,
+      title: value.title,
+      start: value.start,
+      end: value.end,
+      status: value.status,
+      assigned: Object.freeze(Array.from(assigned).sort(compareCanonical))
+    });
+  }
+
+  function legacyGuardRoster(roster) {
+    return (Array.isArray(roster) ? roster : []).map((person) => ({
+      uid: person && person.id,
+      active: person && person.active,
+      is_active: person && person.is_active
+    }));
+  }
+
+  function legacyGuardPeople(roster) {
+    const people = new Map();
+    (Array.isArray(roster) ? roster : []).forEach((person) => {
+      if (!plain(person) || typeof person.id !== 'string' || !AUTH_UID_RE.test(person.id)) return;
+      if (person.active === false || person.is_active === false) return;
+      let display = person.id;
+      for (const key of ['full_name', 'name']) {
+        const value = person[key];
+        if (typeof value !== 'string') continue;
+        const normalized = value.trim();
+        if (normalized && normalized.length <= 120 && !CONTROL_RE.test(normalized)) {
+          display = normalized;
+          break;
+        }
+      }
+      people.set(person.id, Object.freeze({ uid: person.id, display }));
+    });
+    return people;
+  }
+
+  function legacyGuardEvents(guardDocs, range, roster, sid) {
+    const guards = Array.from(guardDocs.values())
+      .sort((left, right) => compareCanonical(left.id, right.id))
+      .map((doc) => legacyGuardCandidate(doc, sid))
+      .filter(Boolean);
+    const projected = guardEvents.stationGuardEvents({
+      guards,
+      dates: range.dates,
+      roster: legacyGuardRoster(roster),
+      station_id: sid
+    }).events;
+    const knownPeople = legacyGuardPeople(roster);
+    return projected.map((event) => Object.freeze({
+      id: event.id,
+      date: event.date,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      status: event.status,
+      people: Object.freeze(event.people.map((uid) => knownPeople.get(uid)).filter(Boolean))
+    }));
+  }
+
+  function legacyRosterProjection(docs, sid) {
+    return (Array.isArray(docs) ? docs : []).map((doc) => {
+      const value = doc && typeof doc.data === 'function' ? (doc.data() || {}) : {};
+      // The collection path is the authority for station scope.  A conflicting
+      // embedded station is corrupted data, never permission to reinterpret
+      // this person as a member of another station.
+      for (const key of ['stationId', 'station_id', 'station']) {
+        if (value[key] !== undefined && value[key] !== null && value[key] !== ''
+            && value[key] !== sid) {
+          throw new ScheduleRuntimeError('legacy-roster-station',
+            'נתוני הסידור מכילים שיוך תחנה סותר.', 'failed-precondition');
+        }
+      }
+      return {
+        id: doc && doc.id,
+        station_id: sid,
+        full_name: value.full_name,
+        name: value.name,
+        crew: value.crew,
+        active: value.active,
+        is_active: value.is_active
+      };
+    });
+  }
+
+  function boundedGuardDocuments(snapshots) {
+    const guardDocs = new Map();
+    (Array.isArray(snapshots) ? snapshots : []).forEach((snap) => {
+      if (!snap || snap.size > MAX_LEGACY_GUARDS_PER_QUERY) {
+        throw new ScheduleRuntimeError('legacy-guards-too-large',
+          'אבטחות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      (snap.docs || []).forEach((doc) => guardDocs.set(doc.id, doc));
+    });
+    if (guardDocs.size > MAX_LEGACY_GUARDS) {
+      throw new ScheduleRuntimeError('legacy-guards-too-large',
+        'אבטחות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+    }
+    return guardDocs;
+  }
+
+  async function readLiveGuardProjection(ctx, dates) {
+    const requestedDates = Array.isArray(dates) ? dates.slice() : [];
+    if (!requestedDates.length || requestedDates.some((value) => !DATE_RE.test(value))) {
+      return Object.freeze({ status: 'unavailable', events: Object.freeze([]) });
+    }
+    const root = stationRef(ctx.sid);
+    try {
+      const chunks = dateChunks(requestedDates);
+      const reads = await Promise.all([
+        root.collection('roster').limit(MAX_LEGACY_ROSTER + 1).get(),
+        Promise.all(chunks.map((chunk) => root.collection('guards')
+          .where('date', 'in', chunk).limit(MAX_LEGACY_GUARDS_PER_QUERY + 1).get()))
+      ]);
+      if (reads[0].size > MAX_LEGACY_ROSTER) {
+        throw new ScheduleRuntimeError('legacy-roster-too-large',
+          'רשימת הסגל הקיימת גדולה מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const guardDocs = boundedGuardDocuments(reads[1]);
+      const roster = legacyRosterProjection(reads[0].docs, ctx.sid);
+      return Object.freeze({
+        status: 'ready',
+        events: Object.freeze(legacyGuardEvents(guardDocs, { dates: requestedDates }, roster, ctx.sid))
+      });
+    } catch (error) {
+      // Guards are live, operational sidecar data.  A read or cap failure must
+      // never turn a verified published schedule into a blank schedule, and
+      // must never be rendered as if there were simply no guards.
+      return Object.freeze({ status: 'unavailable', events: Object.freeze([]) });
+    }
+  }
+
+  async function legacyProjectionInput(ctx, range) {
+    const dates = range && Array.isArray(range.dates) ? range.dates.slice() : [];
+    if (!dates.length || dates.some((value) => !DATE_RE.test(value))) {
+      throw new ScheduleRuntimeError('legacy-range-invalid',
+        'טווח הסידור הקיים אינו תקין.', 'invalid-argument');
+    }
+    const root = stationRef(ctx.sid);
+    try {
+      const chunks = dateChunks(dates);
+      const overrideRefs = dates.map((date) => root.collection('shift_overrides').doc(date));
+      const reads = await Promise.all([
+        root.collection('roster').limit(MAX_LEGACY_ROSTER + 1).get(),
+        root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get(),
+        overrideRefs.length ? db.getAll.apply(db, overrideRefs) : Promise.resolve([]),
+        Promise.all(chunks.map((chunk) => root.collection('swaps')
+          .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get())),
+        Promise.all(chunks.map((chunk) => root.collection('swaps')
+          .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get())),
+        Promise.all(chunks.map((chunk) => root.collection('guards')
+          .where('date', 'in', chunk).limit(MAX_LEGACY_GUARDS_PER_QUERY + 1).get()))
+      ]);
+      if (reads[0].size > MAX_LEGACY_ROSTER) {
+        throw new ScheduleRuntimeError('legacy-roster-too-large',
+          'רשימת הסגל הקיימת גדולה מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      if (reads[1].size > MAX_LEGACY_ROTATIONS) {
+        throw new ScheduleRuntimeError('legacy-rotations-too-large',
+          'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const overrideDocs = new Map();
+      reads[2].filter((doc) => doc && doc.exists).forEach((doc) => overrideDocs.set(doc.id, doc));
+      if (overrideDocs.size > MAX_LEGACY_OVERRIDES) {
+        throw new ScheduleRuntimeError('legacy-overrides-too-large',
+          'חריגי הסידור בטווח גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const swapDocs = new Map();
+      reads[3].concat(reads[4]).forEach((snap) => {
+        if (snap.size > MAX_LEGACY_SWAPS_PER_QUERY) {
+          throw new ScheduleRuntimeError('legacy-swaps-too-large',
+            'החלפות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+        }
+        snap.docs.forEach((doc) => swapDocs.set(doc.id, doc));
+      });
+      if (swapDocs.size > MAX_LEGACY_SWAPS) {
+        throw new ScheduleRuntimeError('legacy-swaps-too-large',
+          'החלפות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const guardDocs = boundedGuardDocuments(reads[5]);
+      const roster = legacyRosterProjection(reads[0].docs, ctx.sid);
+      const overrides = {};
+      Array.from(overrideDocs.values()).sort((left, right) => compareCanonical(left.id, right.id))
+        .forEach((doc) => {
+          const value = doc.data() || {};
+          if (value.date !== undefined && value.date !== null && value.date !== ''
+              && value.date !== doc.id) {
+            throw new ScheduleRuntimeError('legacy-override-date',
+              'חריג סידור מכיל תאריך סותר ולכן אינו מוצג.', 'failed-precondition');
+          }
+          // The historic schedule uses the document id as its only effective
+          // date.  Normalize it explicitly so a stale payload field cannot
+          // move an override into another day inside the projection.
+          overrides[doc.id] = Object.assign({}, value, { date: doc.id });
+        });
+      return {
+        station_id: ctx.sid,
+        roster,
+        events: legacyGuardEvents(guardDocs, range, roster, ctx.sid),
+        legacy: {
+          rotations: reads[1].docs.map((doc) => doc.data() || {}),
+          overrides,
+          // A bounded equality query can return the same swap through either
+          // endpoint.  Deduplicate by canonical document id and restore the
+          // legacy collection's document-id order before projection, because
+          // personWorks applies the first matching approved swap.
+          swaps: Array.from(swapDocs.values()).sort((left, right) =>
+            compareCanonical(left.id, right.id)).map((doc) => doc.data() || {})
+        }
+      };
+    } catch (error) {
+      if (error instanceof ScheduleRuntimeError) throw error;
+      throw new ScheduleRuntimeError('legacy-schedule-unavailable',
+        'לא ניתן לקרוא את הסידור הקיים בבטחה.', 'unavailable');
+    }
+  }
+
+  function effectiveReaderFor(ctx) {
+    return effectiveReaderModule.createScheduleEffectiveReader({
+      resolveLiveContext: async function () {
+        return { station_id: ctx.sid, uid: ctx.uid, active: true };
+      },
+      readRuntime: async function () {
+        return { mode: (await configuration(ctx.sid)).mode };
+      },
+      readLegacy: async function (liveCtx, range) {
+        if (!liveCtx || liveCtx.station_id !== ctx.sid || liveCtx.uid !== ctx.uid) {
+          throw new ScheduleRuntimeError('effective-context-mismatch',
+            'הקשר הסידור השתנה ולכן הקריאה נעצרה.', 'aborted');
+        }
+        return legacyProjectionInput(ctx, range);
+      },
+      readActivePublication: async function (liveCtx) {
+        if (!liveCtx || liveCtx.station_id !== ctx.sid || liveCtx.uid !== ctx.uid) {
+          throw new ScheduleRuntimeError('effective-context-mismatch',
+            'הקשר הסידור השתנה ולכן הקריאה נעצרה.', 'aborted');
+        }
+        // activeSnapshot always reads and hashes the entire immutable snapshot
+        // before this adapter exposes a range to the pure reader.
+        const active = await activeSnapshot(ctx);
+        if (!active) return null;
+        return {
+          pointer: {
+            station_id: ctx.sid,
+            publication_id: active.ref.id,
+            revision: Number(active.pointer.revision),
+            content_digest: active.meta.content_digest
+          },
+          publication: {
+            id: active.ref.id,
+            publication_id: active.ref.id,
+            station_id: active.meta.station_id,
+            status: active.meta.status,
+            snapshot_complete: active.meta.snapshot_complete === true,
+            revision: Number(active.meta.revision),
+            content_digest: active.meta.content_digest
+          },
+          snapshot: {
+            publication_id: active.ref.id,
+            content_digest: active.meta.content_digest,
+            plan: active.plan,
+            roster: active.roster
+          }
+        };
+      },
+      createOperationalProjection: operationalProjection.createOperationalProjection
+    });
+  }
+
+  async function effectiveStationWindow(ctx, from, to) {
+    try {
+      return await effectiveReaderFor(ctx).getStation({ data: { from, to } });
+    } catch (error) {
+      if (error instanceof ScheduleRuntimeError) throw error;
+      throw new ScheduleRuntimeError('effective-schedule-invalid',
+        'לא ניתן לאמת את הסידור להצגה ולכן הוא לא מוצג.', 'failed-precondition');
+    }
+  }
+
+  async function checkedLegacyWindow(ctx, config, from, to) {
+    const window = await effectiveStationWindow(ctx, from, to);
+    await beforeEffectiveViewRecheck({ kind: 'legacy', ctx, mode: config.mode });
+    const after = await configuration(ctx.sid);
+    if (after.mode !== config.mode || window.provenance.mode !== config.mode) {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+    return window;
+  }
+
+  async function activeSnapshotStillCurrent(ctx, config, active) {
+    const after = await configuration(ctx.sid);
+    if (after.mode !== config.mode) {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+    // Publication and rollback update the active pointer without changing the
+    // runtime mode.  The response has one linearization point: a final read
+    // must still name the exact signed publication read above.
+    const pointer = await activeRef(ctx.sid).get();
+    const value = pointer.exists ? (pointer.data() || {}) : {};
+    const unchanged = active
+      ? pointer.exists
+        && value.publication_id === active.pointer.publication_id
+        && value.revision === active.pointer.revision
+        && value.content_digest === active.pointer.content_digest
+      : !nonEmpty(value.publication_id);
+    if (!unchanged) {
+      throw new ScheduleRuntimeError('schedule-active-changed',
+        'הסידור הפעיל השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+  }
+
+  async function checkedActiveSnapshot(ctx, config, dates) {
+    const active = await activeSnapshot(ctx, dates);
+    await beforeEffectiveViewRecheck({ kind: 'v2', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    return active;
+  }
+
+  function guardPresentationId(event) {
+    // `:` is deliberately outside the immutable source-event id alphabet.
+    // This is presentation-only: it can never be mistaken for a published
+    // event id by the response endpoint or by publication/outbox logic.
+    return 'g:' + event.id;
+  }
+
+  function stationGuardsForDate(events, date, viewer) {
+    return Object.freeze((Array.isArray(events) ? events : []).filter((event) => event.date === date)
+      .map((event) => {
+        const people = Object.freeze((event.people || []).map((person) => Object.freeze({
+          person: person.display,
+          is_me: person.uid === viewer
+        })));
+        return Object.freeze({
+          id: guardPresentationId(event),
+          title: event.title,
+          hours: event.start + '–' + event.end,
+          people,
+          includes_me: people.some((person) => person.is_me)
+        });
+      }));
+  }
+
+  function myGuardsForDate(events, date, viewer) {
+    return Object.freeze((Array.isArray(events) ? events : []).filter((event) => event.date === date
+      && (event.people || []).some((person) => person.uid === viewer)).map((event) => Object.freeze({
+      id: guardPresentationId(event),
+      title: event.title,
+      date: event.date,
+      hours: event.start + '–' + event.end
+    })));
+  }
+
+  function stationViewWithGuards(view, sidecar, date, viewer) {
+    const source = sidecar || { status: 'unavailable', events: [] };
+    function decorate(block) {
+      return Object.freeze(Object.assign({}, block, {
+        guards_status: source.status,
+        guards: stationGuardsForDate(source.events, block.date, viewer)
+      }));
+    }
+    return Object.freeze(Object.assign({}, view, {
+      previous_day: decorate(view.previous_day),
+      day: decorate(view.day),
+      next_day: decorate(view.next_day)
+    }));
+  }
+
+  function myViewWithGuards(view, sidecar, date, viewer) {
+    const source = sidecar || { status: 'unavailable', events: [] };
+    return Object.freeze(Object.assign({}, view, {
+      guards_status: source.status,
+      guards: myGuardsForDate(source.events, date, viewer)
+    }));
+  }
+
+  function legacyDayBlock(day, viewer, events) {
+    const grouped = new Map();
+    (day.assignments || []).forEach((assignment) => {
+      const crew = assignment.crew || 'station';
+      if (!grouped.has(crew)) grouped.set(crew, []);
+      grouped.get(crew).push({
+        uid: assignment.uid,
+        person: assignment.display,
+        role_label: assignment.crew ? 'צוות ' + assignment.crew : null,
+        hours: null,
+        is_me: assignment.uid === viewer
+      });
+    });
+    return {
+      date: day.date,
+      sub_stations: Array.from(grouped.keys()).sort().map((crew) => ({
+        sub_station: 'legacy_' + crew,
+        label: crew === 'station' ? 'תחנה' : 'משמרת ' + crew,
+        minimum: null,
+        below_minimum: false,
+        people: grouped.get(crew).slice().sort((left, right) =>
+          compareCanonical(left.uid, right.uid))
+      })),
+      events: (events || []).filter((event) => event.date === day.date).map((event) => ({
+        id: event.id,
+        title: event.title,
+        hours: event.start + '–' + event.end,
+        cancelled: false,
+        people: (event.people || []).map((person) => ({
+          person: person.display,
+          is_me: person.uid === viewer
+        })),
+        includes_me: (event.people || []).some((person) => person.uid === viewer)
+      }))
+    };
+  }
+
+  function legacyStationView(ctx, window, date) {
+    const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+    return {
+      mode: window.provenance.mode,
+      active: true,
+      source: 'legacy',
+      provenance: window.provenance,
+      previous_day: legacyDayBlock(byDate.get(isoDayOffset(date, -1)) || {
+        date: isoDayOffset(date, -1), assignments: []
+      }, ctx.uid, window.events),
+      day: legacyDayBlock(byDate.get(date) || { date, assignments: [] }, ctx.uid, window.events),
+      next_day: legacyDayBlock(byDate.get(isoDayOffset(date, 1)) || {
+        date: isoDayOffset(date, 1), assignments: []
+      }, ctx.uid, window.events)
+    };
+  }
+
+  function legacyMyView(ctx, window, date) {
+    const day = (window.days || []).filter((item) => item.date === date)[0]
+      || { date, assignments: [] };
+    const mine = (day.assignments || []).filter((assignment) => assignment.uid === ctx.uid);
+    return {
+      mode: window.provenance.mode,
+      active: true,
+      source: 'legacy',
+      provenance: window.provenance,
+      days: mine.map((assignment) => ({
+        date,
+        sub_station: assignment.crew || 'station',
+        sub_station_label: assignment.crew ? 'משמרת ' + assignment.crew : 'תחנה',
+        role: null,
+        role_label: assignment.crew ? 'צוות ' + assignment.crew : null,
+        hours: null,
+        shift: assignment.crew ? 'משמרת ' + assignment.crew : null,
+        qualifications: [],
+        crew: (day.assignments || []).filter((person) => person.uid !== ctx.uid
+          && person.crew === assignment.crew).map((person) => ({
+          uid: person.uid, person: person.display, role_label: person.crew ? 'צוות ' + person.crew : null
+        })),
+        change: null,
+        answer: null,
+        requires_answer: false
+      })),
+      events: (window.events || []).filter((event) => event.date === date
+        && (event.people || []).some((person) => person.uid === ctx.uid)).map((event) => ({
+        id: event.id,
+        title: event.title,
+        date: event.date,
+        hours: event.start + '–' + event.end,
+        cancelled: false,
+        change: null,
+        answer: null,
+        requires_answer: false
+      })),
+      pending_answers: 0
+    };
+  }
+
   async function getMy(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
-    if (config.mode === MODE.OFF) return { mode: MODE.OFF, active: false, days: [] };
-    const data = plain(req.data) ? req.data : {};
-    const date = String(data.date || '');
-    isoDayOffset(date, 0);
-    const active = await activeSnapshot(ctx, [date]);
+    const date = requestedViewDate(req, clock().slice(0, 10));
+    if (config.mode !== MODE.NEW) {
+      const window = await checkedLegacyWindow(ctx, config, date, date);
+      if (window.source !== 'legacy') {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      return legacyMyView(ctx, window, date);
+    }
+    const active = await checkedActiveSnapshot(ctx, config, [date]);
     if (!active) return { mode: config.mode, active: false, days: [] };
-    const responseSnap = await stationRef(ctx.sid).collection('schedule_responses')
-      .where('publication_id', '==', active.pointer.publication_id)
-      .where('person', '==', ctx.uid).get();
+    const reads = await Promise.all([
+      stationRef(ctx.sid).collection('schedule_responses')
+        .where('publication_id', '==', active.pointer.publication_id)
+        .where('person', '==', ctx.uid).get(),
+      active.ref.collection('schedule_outbox').where('person', '==', ctx.uid).get(),
+      readLiveGuardProjection(ctx, [date])
+    ]);
+    // The guards sidecar is live and intentionally outside the signed
+    // publication.  Recheck the signed pointer after it was read so a
+    // publication change can never combine an old plan with a new response.
+    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    const responseSnap = reads[0];
     const answers = {};
     responseSnap.docs.forEach((doc) => {
       const value = doc.data() || {};
@@ -1396,8 +2697,7 @@ function createScheduleRuntime(deps) {
         answers[value.item_id] = { status: value.answer === 'confirm' ? 'confirmed' : 'declined' };
       }
     });
-    const changeSnap = await active.ref.collection('schedule_outbox')
-      .where('person', '==', ctx.uid).get();
+    const changeSnap = reads[1];
     const changes = {};
     changeSnap.docs.forEach((doc) => {
       const value = doc.data() || {};
@@ -1407,11 +2707,11 @@ function createScheduleRuntime(deps) {
         if (nonEmpty(itemId)) changes[itemId] = change;
       });
     });
-    const view = serviceFor(ctx).buildMySchedule({
+    const view = myViewWithGuards(serviceFor(ctx).buildMySchedule({
       actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster,
       changes_by_date: changes,
       answers_by_date: answers
-    });
+    }), reads[2], date, ctx.uid);
     return Object.assign({ mode: config.mode, active: true,
       publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view);
   }
@@ -1419,17 +2719,85 @@ function createScheduleRuntime(deps) {
   async function getStation(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
-    const data = plain(req.data) ? req.data : {};
-    const date = String(data.date || clock().slice(0, 10));
+    const date = requestedViewDate(req, clock().slice(0, 10));
     const dates = [isoDayOffset(date, -1), date, isoDayOffset(date, 1)];
-    if (config.mode === MODE.OFF) return { mode: MODE.OFF, active: false };
-    const active = await activeSnapshot(ctx, dates);
+    if (config.mode !== MODE.NEW) {
+      const window = await checkedLegacyWindow(ctx, config, dates[0], dates[2]);
+      if (window.source !== 'legacy') {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      return legacyStationView(ctx, window, date);
+    }
+    const active = await checkedActiveSnapshot(ctx, config, dates);
     if (!active) return { mode: config.mode, active: false };
-    const view = serviceFor(ctx).buildStationSchedule({
+    const sidecar = await readLiveGuardProjection(ctx, dates);
+    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    const view = stationViewWithGuards(serviceFor(ctx).buildStationSchedule({
       actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
-    });
+    }), sidecar, date, ctx.uid);
     return Object.assign({ mode: config.mode, active: true,
       publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view);
+  }
+
+  // The four legacy guard readers deliberately bypass the monthly-engine mode:
+  // guards remain live operational work whether the new planner is off,
+  // shadowing, or active.  They all use the same station derived from the
+  // authenticated, live account and the same bounded server-side input.
+  async function getGuardBoard(req) {
+    const ctx = await context(req);
+    const range = requestedGuardBoardRange(req);
+    const input = await readGuardBoardInput(ctx, range);
+    return Object.freeze({
+      from: range.from,
+      to: range.to,
+      guards: guardBoardProjection.memberBoard(input)
+    });
+  }
+
+  async function getGuardManagerBoard(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const range = requestedGuardBoardRange(req);
+    const input = await readGuardBoardInput(ctx, range);
+    // The transaction makes a concurrent appointment revocation win after
+    // the raw read and before detailed guard records leave the server.
+    await requireLiveManagerNow(ctx);
+    return Object.freeze({
+      from: range.from,
+      to: range.to,
+      guards: guardBoardProjection.managerBoard(input)
+    });
+  }
+
+  async function getMyGuardAttendance(req) {
+    const ctx = await context(req);
+    const range = requestedGuardBoardRange(req);
+    const input = await readGuardBoardInput(ctx, range);
+    // There is deliberately no subject/uid field.  HR can open another
+    // employee's attendance report, but that must never expand into a second
+    // person's guard history through this callable.
+    return Object.freeze({
+      from: range.from,
+      to: range.to,
+      guards: guardBoardProjection.personalAttendance(input)
+    });
+  }
+
+  async function getGuardLoadStatistics(req) {
+    const ctx = await context(req);
+    requireAnalytics(ctx);
+    const range = requestedGuardBoardRange(req);
+    const input = await readGuardBoardInput(ctx, range);
+    // A firefighter can reach this endpoint only through the live schedule
+    // manager appointment.  Recheck that short-lived authority before return.
+    if (ctx.manager) await requireLiveManagerNow(ctx);
+    return Object.freeze({
+      from: range.from,
+      to: range.to,
+      guards: guardBoardProjection.loadRows(input)
+    });
   }
 
   async function respond(req) {
@@ -1515,8 +2883,9 @@ function createScheduleRuntime(deps) {
       if (value.status !== 'sending' || value.lease_token !== leaseToken) return;
       const stationId = String(value.station_id || '');
       const publicationId = String(value.publication_id || '');
+      const person = String(value.person || '');
       const now = Date.parse(clock());
-      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) {
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId) || !AUTH_UID_RE.test(person)) {
         cancelOutbox(tx, ref, 'outbox-invalid');
         return;
       }
@@ -1525,7 +2894,8 @@ function createScheduleRuntime(deps) {
         return;
       }
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
-      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
+        liveUserRef(stationId, person)];
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
@@ -1536,6 +2906,10 @@ function createScheduleRuntime(deps) {
       }
       if (!publicationMatches(value, pointer, publication)) {
         cancelOutbox(tx, ref, 'publication-not-active');
+        return;
+      }
+      if (!recipientIsActive(checks[3], stationId)) {
+        cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
       sendable = true;
@@ -1553,8 +2927,9 @@ function createScheduleRuntime(deps) {
       if (data.status !== 'queued') return;
       const stationId = String(data.station_id || '');
       const publicationId = String(data.publication_id || '');
+      const person = String(data.person || '');
       const now = Date.parse(clock());
-      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) {
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId) || !AUTH_UID_RE.test(person)) {
         cancelOutbox(tx, ref, 'outbox-invalid');
         return;
       }
@@ -1563,7 +2938,8 @@ function createScheduleRuntime(deps) {
         return;
       }
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
-      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef];
+      const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
+        liveUserRef(stationId, person)];
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
@@ -1574,6 +2950,10 @@ function createScheduleRuntime(deps) {
       }
       if (!publicationMatches(data, pointer, publication)) {
         cancelOutbox(tx, ref, 'publication-not-active');
+        return;
+      }
+      if (!recipientIsActive(checks[3], stationId)) {
+        cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
       const leaseToken = 'l_' + randomId();
@@ -1654,6 +3034,480 @@ function createScheduleRuntime(deps) {
     return { scanned: collected.size, queued };
   }
 
+  function cancelGuardNotificationJob(tx, ref, reason) {
+    tx.update(ref, {
+      status: 'cancelled',
+      cancel_reason: reason,
+      cancelled_at: FV.serverTimestamp(),
+      lease_token: null,
+      lease_until: null
+    });
+  }
+
+  function guardNotificationJobValue(value) {
+    const stationId = String(value && value.station_id || '');
+    const guardId = String(value && value.guard_id || '');
+    const revision = Number(value && value.revision);
+    const requestId = String(value && value.request_id || '');
+    const part = Number(value && value.part);
+    const cursor = Number(value && value.cursor);
+    const notifications = value && value.notifications;
+    if (!ID_RE.test(stationId) || !ID_RE.test(guardId) || !ID_RE.test(requestId)
+        || !Number.isSafeInteger(revision) || revision < 1
+        || !Number.isSafeInteger(part) || part < 0
+        || !Number.isSafeInteger(cursor) || cursor < 0
+        || !DATE_RE.test(String(value && value.date || ''))
+        || !/^\d{2}:\d{2}$/.test(String(value && value.start || ''))
+        || !/^\d{2}:\d{2}$/.test(String(value && value.end || ''))
+        || !Array.isArray(notifications) || notifications.length > GUARD_NOTIFICATION_FANOUT_CHUNK
+        || cursor > notifications.length) return null;
+    const seen = new Set();
+    const parsed = [];
+    for (const item of notifications) {
+      const uid = String(item && item.uid || '');
+      const kind = String(item && item.kind || '');
+      const hasEpoch = !!item && Object.prototype.hasOwnProperty.call(item, 'membership_epoch');
+      const membershipEpoch = hasEpoch ? Number(item.membership_epoch) : null;
+      if (!AUTH_UID_RE.test(uid)
+          || ['open', 'assigned', 'removed', 'updated', 'rescheduled', 'cancelled', 'completed'].indexOf(kind) === -1
+          || ((kind === 'assigned' || kind === 'removed')
+            && (!hasEpoch || !Number.isSafeInteger(membershipEpoch) || membershipEpoch < 1))
+          || (hasEpoch && (kind !== 'assigned' && kind !== 'removed'
+            || !Number.isSafeInteger(membershipEpoch) || membershipEpoch < 1))
+          || seen.has(uid)) return null;
+      seen.add(uid);
+      parsed.push(Object.freeze({ uid, kind, membership_epoch: membershipEpoch }));
+    }
+    return Object.freeze({
+      station_id: stationId,
+      guard_id: guardId,
+      revision,
+      request_id: requestId,
+      part,
+      date: String(value.date),
+      start: String(value.start),
+      end: String(value.end),
+      expires_at: value.expires_at,
+      cursor,
+      notifications: Object.freeze(parsed)
+    });
+  }
+
+  async function fanoutGuardOutbox(ref) {
+    if (!ref || typeof ref.get !== 'function') return { skipped: true };
+    // The children and the cursor advance in the *same* transaction.  A
+    // worker that loses a retry race neither creates duplicate child notices
+    // nor leaves a completed chunk stuck behind an expired lease.
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { skipped: true };
+      const value = snap.data() || {};
+      if (value.status !== 'queued') return { skipped: true };
+      const now = Date.parse(clock());
+      if (outboxExpired(value, now)) {
+        cancelGuardNotificationJob(tx, ref, 'outbox-expired');
+        return { skipped: true };
+      }
+      const job = guardNotificationJobValue(value);
+      if (!job) {
+        cancelGuardNotificationJob(tx, ref, 'outbox-invalid');
+        return { skipped: true };
+      }
+      const guard = await tx.get(guardRef(job.station_id, job.guard_id));
+      if (!guard.exists) {
+        cancelGuardNotificationJob(tx, ref, 'guard-not-found');
+        return { skipped: true };
+      }
+      if (job.cursor >= job.notifications.length) {
+        tx.update(ref, { status: 'complete', completed_at: FV.serverTimestamp() });
+        return { delivered: 0, remaining: 0 };
+      }
+      const nextCursor = Math.min(job.cursor + GUARD_NOTIFICATION_FANOUT_CHUNK, job.notifications.length);
+      const notices = job.notifications.slice(job.cursor, nextCursor)
+        .filter((notice) => guardNoticeCurrent(
+          notice.kind, notice.uid, job.revision, guard, notice.membership_epoch
+        ));
+      const childRefs = notices.map((notice) => guardOutboxRef(
+        job.station_id, job.request_id, notice.uid
+      ));
+      // All reads precede writes, including the deterministic children left by
+      // an older interrupted version of this worker.
+      const existing = await Promise.all(childRefs.map((childRef) => tx.get(childRef)));
+      for (let index = 0; index < childRefs.length; index += 1) {
+        if (existing[index].exists) continue;
+        const notice = notices[index];
+        const child = {
+          station_id: job.station_id,
+          guard_id: job.guard_id,
+          revision: job.revision,
+          recipient_uid: notice.uid,
+          kind: notice.kind,
+          date: job.date,
+          start: job.start,
+          end: job.end,
+          request_id: job.request_id,
+          status: 'queued',
+          attempt: 0,
+          expires_at: job.expires_at,
+          created_at: FV.serverTimestamp(),
+          lease_token: null,
+          lease_until: null,
+          last_error: null
+        };
+        if (Number.isSafeInteger(notice.membership_epoch)) {
+          child.membership_epoch = notice.membership_epoch;
+        }
+        tx.create(childRefs[index], child);
+      }
+      tx.update(ref, {
+        cursor: nextCursor,
+        status: nextCursor >= job.notifications.length ? 'complete' : 'queued',
+        completed_at: nextCursor >= job.notifications.length ? FV.serverTimestamp() : null,
+        lease_token: null,
+        lease_until: null,
+        updated_at: FV.serverTimestamp()
+      });
+      return { delivered: notices.length, remaining: job.notifications.length - nextCursor };
+    });
+  }
+
+  async function reconcileGuardNotificationJob(ref, now) {
+    let fanout = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      if (value.status !== 'queued' && value.status !== 'sending') return;
+      if (outboxExpired(value, now)) {
+        cancelGuardNotificationJob(tx, ref, 'outbox-expired');
+        return;
+      }
+      if (!guardNotificationJobValue(value)) {
+        cancelGuardNotificationJob(tx, ref, 'outbox-invalid');
+        return;
+      }
+      if (value.status === 'sending') {
+        const leaseUntil = timeMillis(value.lease_until);
+        if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
+        tx.update(ref, {
+          status: 'queued', queued_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+      }
+      fanout = true;
+    });
+    return { fanout };
+  }
+
+  async function resumeGuardNotificationJobs() {
+    const collected = new Map();
+    for (const status of ['queued', 'sending']) {
+      const snap = await db.collectionGroup('guard_notification_jobs')
+        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
+      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+    }
+    const now = Date.parse(clock());
+    let fanned = 0;
+    for (const doc of collected.values()) {
+      const result = await reconcileGuardNotificationJob(doc.ref, now);
+      if (!result.fanout) continue;
+      await fanoutGuardOutbox(doc.ref);
+      fanned += 1;
+    }
+    return { scanned: collected.size, fanned };
+  }
+
+  function cancelGuardOutbox(tx, ref, reason) {
+    tx.update(ref, {
+      status: 'cancelled',
+      cancel_reason: reason,
+      cancelled_at: FV.serverTimestamp(),
+      lease_token: null,
+      lease_until: null
+    });
+  }
+
+  function guardNoticeCurrent(kind, recipient, revision, guard, membershipEpoch) {
+    if (['open', 'assigned', 'removed', 'updated', 'rescheduled', 'cancelled', 'completed'].indexOf(kind) === -1
+        || !AUTH_UID_RE.test(recipient) || !Number.isSafeInteger(revision) || revision < 1
+        || !guard || !guard.exists) return false;
+    const current = guard.data() || {};
+    const currentRevision = Number(current.revision || 0);
+    // Unlike a personal assignment, an open guard is an opportunity for the
+    // station.  A harmless later edit must not suppress its generic prompt;
+    // being staffed, cancelled or completed must.  Its message intentionally
+    // has no title, place or time, so this relaxed revision comparison cannot
+    // send stale operational details.
+    if (kind === 'open') {
+      return Number.isSafeInteger(currentRevision) && currentRevision >= revision
+        && current.status === 'open';
+    }
+    // A removal is different from a snapshot update: it remains meaningful
+    // after an unrelated edit or cancellation.  It must not, however, revive
+    // after the person was added and removed again.  The server-owned epoch
+    // records the last membership transition for that UID.
+    if (kind === 'removed') {
+      const assigned = Array.isArray(current.assigned) ? current.assigned : [];
+      const epochs = plain(current.assignment_epochs) ? current.assignment_epochs : null;
+      return Number.isSafeInteger(currentRevision) && currentRevision >= revision
+        && assigned.indexOf(recipient) === -1
+        && Number.isSafeInteger(membershipEpoch) && membershipEpoch >= 1
+        && epochs && Number(epochs[recipient]) === membershipEpoch;
+    }
+    return currentRevision === revision;
+  }
+
+  function guardOutboxCurrent(value, guard) {
+    const status = String(value && value.status || '');
+    const guardId = String(value && value.guard_id || '');
+    if (['queued', 'retry', 'sending'].indexOf(status) === -1
+        || !ID_RE.test(guardId)
+        || !DATE_RE.test(String(value && value.date || ''))
+        || !/^\d{2}:\d{2}$/.test(String(value && value.start || ''))
+        || !/^\d{2}:\d{2}$/.test(String(value && value.end || ''))) return false;
+    return guardNoticeCurrent(
+      String(value.kind || ''),
+      String(value.recipient_uid || ''),
+      Number(value.revision),
+      guard,
+      value.membership_epoch
+    );
+  }
+
+  function guardOutboxText(value) {
+    const when = String(value.date) + ' · ' + String(value.start) + '–' + String(value.end);
+    switch (value.kind) {
+      case 'open': return {
+        title: 'נפתחה אבטחה בתחנה',
+        body: 'נפתחה אבטחה חדשה. בדוק/י את הסידור המעודכן להרשמה או לשיבוץ.'
+      };
+      case 'assigned': return { title: 'שובצת לאבטחה', body: 'אבטחה נוספה לסידור שלך: ' + when };
+      case 'removed': return { title: 'הוסרת משיבוץ אבטחה', body: 'האבטחה אינה משובצת לך עוד: ' + when };
+      case 'rescheduled': return { title: 'מועד האבטחה השתנה', body: 'בדוק/י את המועד החדש בסידור שלך: ' + when };
+      case 'cancelled': return { title: 'אבטחה בוטלה', body: 'האבטחה בוטלה: ' + when };
+      case 'completed': return { title: 'אבטחה נסגרה', body: 'האבטחה הסתיימה: ' + when };
+      default: return { title: 'אבטחה עודכנה', body: 'יש עדכון לאבטחה בסידור שלך: ' + when };
+    }
+  }
+
+  function guardOutboxDelivery(value) {
+    if (value.kind === 'open') {
+      return { type: 'guard_open', url: './guards.html', important: false };
+    }
+    return {
+      type: 'guard_mine',
+      url: './schedule-management.html?tab=mine&date=' + encodeURIComponent(value.date),
+      important: true
+    };
+  }
+
+  async function validateGuardOutboxForSend(ref, leaseToken) {
+    let sendable = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      if (value.status !== 'sending' || value.lease_token !== leaseToken) return;
+      const now = Date.parse(clock());
+      if (outboxExpired(value, now)) {
+        cancelGuardOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const sid = String(value.station_id || '');
+      const guardId = String(value.guard_id || '');
+      const recipient = String(value.recipient_uid || '');
+      if (!ID_RE.test(sid) || !ID_RE.test(guardId) || !AUTH_UID_RE.test(recipient)) {
+        cancelGuardOutbox(tx, ref, 'outbox-invalid');
+        return;
+      }
+      const related = await Promise.all([
+        tx.get(guardRef(sid, guardId)),
+        tx.get(liveUserRef(sid, recipient))
+      ]);
+      const guard = related[0];
+      if (!guardOutboxCurrent(value, guard)) {
+        cancelGuardOutbox(tx, ref, 'guard-revision-stale');
+        return;
+      }
+      if (!recipientIsActive(related[1], sid)) {
+        cancelGuardOutbox(tx, ref, 'recipient-inactive');
+        return;
+      }
+      sendable = true;
+    });
+    return sendable;
+  }
+
+  async function deliverGuardOutbox(ref) {
+    if (!ref || typeof ref.get !== 'function') return { skipped: true };
+    let claimed = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      if (value.status !== 'queued') return;
+      const now = Date.parse(clock());
+      if (outboxExpired(value, now)) {
+        cancelGuardOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const sid = String(value.station_id || '');
+      const guardId = String(value.guard_id || '');
+      const recipient = String(value.recipient_uid || '');
+      if (!ID_RE.test(sid) || !ID_RE.test(guardId) || !AUTH_UID_RE.test(recipient)) {
+        cancelGuardOutbox(tx, ref, 'outbox-invalid');
+        return;
+      }
+      const related = await Promise.all([
+        tx.get(guardRef(sid, guardId)),
+        tx.get(liveUserRef(sid, recipient))
+      ]);
+      const guard = related[0];
+      if (!guardOutboxCurrent(value, guard)) {
+        cancelGuardOutbox(tx, ref, 'guard-revision-stale');
+        return;
+      }
+      if (!recipientIsActive(related[1], sid)) {
+        cancelGuardOutbox(tx, ref, 'recipient-inactive');
+        return;
+      }
+      const leaseToken = 'l_' + randomId();
+      tx.update(ref, {
+        status: 'sending',
+        claimed_at: FV.serverTimestamp(),
+        lease_token: leaseToken,
+        lease_until: new Date(now + OUTBOX_LEASE_MS)
+      });
+      claimed = Object.assign({}, value, { lease_token: leaseToken });
+    });
+    if (!claimed) return { skipped: true };
+    try {
+      if (!await validateGuardOutboxForSend(ref, claimed.lease_token)) return { skipped: true };
+      const message = guardOutboxText(claimed);
+      const deliveryTarget = guardOutboxDelivery(claimed);
+      const delivery = await sendPush(
+        claimed.station_id,
+        claimed.recipient_uid,
+        deliveryTarget.type,
+        message.title,
+        message.body,
+        deliveryTarget.url,
+        deliveryTarget.important
+      );
+      if (!delivery || Number(delivery.sent || 0) < 1) {
+        const error = new Error('NO_ACTIVE_PUSH_TOKEN');
+        error.code = 'NO_ACTIVE_PUSH_TOKEN';
+        throw error;
+      }
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const value = snap.exists ? (snap.data() || {}) : {};
+        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return;
+        tx.update(ref, {
+          status: 'sent',
+          sent_at: FV.serverTimestamp(),
+          delivered_devices: Number(delivery.sent),
+          last_error: null,
+          lease_token: null,
+          lease_until: null
+        });
+      });
+      return { sent: true };
+    } catch (error) {
+      const nextAttempt = Number(claimed.attempt || 0) + 1;
+      const retrying = nextAttempt < GUARD_OUTBOX_MAX_ATTEMPTS;
+      const wait = GUARD_OUTBOX_BACKOFF_MS[Math.min(nextAttempt - 1, GUARD_OUTBOX_BACKOFF_MS.length - 1)];
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const value = snap.exists ? (snap.data() || {}) : {};
+        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return;
+        tx.update(ref, {
+          status: retrying ? 'retry' : 'failed',
+          attempt: nextAttempt,
+          next_attempt_at: retrying ? new Date(Date.parse(clock()) + wait) : null,
+          last_error: String(error && error.code || 'SEND_FAILED').slice(0, 80),
+          lease_token: null,
+          lease_until: null,
+          updated_at: FV.serverTimestamp()
+        });
+      });
+      return { sent: false, status: retrying ? 'retry' : 'failed' };
+    }
+  }
+
+  async function reconcileGuardOutbox(ref, now) {
+    let queued = false;
+    let deliver = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const value = snap.data() || {};
+      const status = String(value.status || '');
+      if (['queued', 'retry', 'sending'].indexOf(status) === -1) return;
+      if (outboxExpired(value, now)) {
+        cancelGuardOutbox(tx, ref, 'outbox-expired');
+        return;
+      }
+      const sid = String(value.station_id || '');
+      const guardId = String(value.guard_id || '');
+      const recipient = String(value.recipient_uid || '');
+      if (!ID_RE.test(sid) || !ID_RE.test(guardId) || !AUTH_UID_RE.test(recipient)) {
+        cancelGuardOutbox(tx, ref, 'outbox-invalid');
+        return;
+      }
+      const related = await Promise.all([
+        tx.get(guardRef(sid, guardId)),
+        tx.get(liveUserRef(sid, recipient))
+      ]);
+      const guard = related[0];
+      if (!guardOutboxCurrent(value, guard)) {
+        cancelGuardOutbox(tx, ref, 'guard-revision-stale');
+        return;
+      }
+      if (!recipientIsActive(related[1], sid)) {
+        cancelGuardOutbox(tx, ref, 'recipient-inactive');
+        return;
+      }
+      if (status === 'queued') {
+        deliver = true;
+        return;
+      }
+      if (status === 'retry') {
+        const nextAttemptAt = timeMillis(value.next_attempt_at);
+        if (Number.isFinite(nextAttemptAt) && nextAttemptAt > now) return;
+      }
+      if (status === 'sending') {
+        const leaseUntil = timeMillis(value.lease_until);
+        if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
+      }
+      tx.update(ref, {
+        status: 'queued',
+        queued_at: FV.serverTimestamp(),
+        lease_token: null,
+        lease_until: null
+      });
+      queued = true;
+    });
+    return { queued, deliver };
+  }
+
+  async function resumeGuardOutbox() {
+    const jobs = await resumeGuardNotificationJobs();
+    const collected = new Map();
+    for (const status of ['retry', 'sending', 'queued']) {
+      const snap = await db.collectionGroup('guard_outbox')
+        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
+      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+    }
+    const now = Date.parse(clock());
+    let queued = 0;
+    for (const doc of collected.values()) {
+      const result = await reconcileGuardOutbox(doc.ref, now);
+      if (result.queued) queued += 1;
+      if (result.deliver) await deliverGuardOutbox(doc.ref);
+    }
+    return { scanned: collected.size, queued, jobs };
+  }
+
   return Object.freeze({
     getStatus,
     getManagerSetup,
@@ -1663,9 +3517,20 @@ function createScheduleRuntime(deps) {
     rollback,
     getMy,
     getStation,
+    getGuardBoard,
+    getGuardManagerBoard,
+    getMyGuardAttendance,
+    getGuardLoadStatistics,
     respond,
+    manageGuard,
+    signupGuard,
+    enqueueGuardOpenNotifications,
     deliverOutbox,
     resumeOutbox,
+    fanoutGuardOutbox,
+    resumeGuardNotificationJobs,
+    deliverGuardOutbox,
+    resumeGuardOutbox,
     MODE
   });
 }

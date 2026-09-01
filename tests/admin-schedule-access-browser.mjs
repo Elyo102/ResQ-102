@@ -61,6 +61,55 @@ const afterRevoke = {
     member.uid === 'u_fire' ? { ...member, enabled:false } : member)
 };
 
+function jerusalemDay() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(new Date()).reduce((out, part) => {
+    out[part.type] = part.value;
+    return out;
+  }, {});
+  return parts.year + '-' + parts.month + '-' + parts.day;
+}
+
+function shiftDay(iso, amount) {
+  const value = new Date(iso + 'T00:00:00.000Z');
+  value.setUTCDate(value.getUTCDate() + amount);
+  return value.toISOString().slice(0, 10);
+}
+
+// אלה צורות התשובה המאושרות מהקורא בצד השרת במצב legacy. הבדיקה
+// בכוונה אינה מחקה Firestore או את הסידור הישן בדפדפן.
+const legacyToday = jerusalemDay();
+function legacyDay(date, isMe) {
+  return {
+    date,
+    sub_stations:[{
+      sub_station:'legacy_A', label:'משמרת א', minimum:null, below_minimum:false,
+      people:[
+        { uid:'stub-uid', person:'אלדד יונה', role_label:'צוות א', hours:null, is_me:isMe },
+        { uid:'crew_1', person:'טל חודרה', role_label:'צוות א', hours:null, is_me:false }
+      ]
+    }],
+    events:[]
+  };
+}
+const legacyMine = {
+  mode:'off', active:true, source:'legacy',
+  days:[{
+    date:legacyToday, sub_station:'legacy_A', sub_station_label:'משמרת א',
+    role:null, role_label:'צוות א', hours:null, shift:'משמרת א', qualifications:[],
+    crew:[{ uid:'crew_1', person:'טל חודרה', role_label:'צוות א' }],
+    change:null, answer:null, requires_answer:false
+  }],
+  events:[], pending_answers:0
+};
+const legacyStation = {
+  mode:'off', active:true, source:'legacy',
+  previous_day:legacyDay(shiftDay(legacyToday, -1), false),
+  day:legacyDay(legacyToday, true),
+  next_day:legacyDay(shiftDay(legacyToday, 1), false)
+};
+
 const browser = await chromium.launch();
 try {
   const hr = await browser.newContext({ viewport:{ width:1280, height:1000 }, locale:'he-IL' });
@@ -228,18 +277,38 @@ try {
 
   const legacySchedule = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(legacySchedule, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:true } }]
+    // המינוי נשאר חי, אך מצב off הוא צפייה בלבד ואין בו ניהול.
+    getScheduleRuntimeStatus:[{ data:{ mode:'off', configured:false, manager:true, active:null } }],
+    getMyScheduleV2:[{ data:legacyMine }],
+    getStationScheduleV2:[{ data:legacyStation }]
   });
   const legacySchedulePage = await legacySchedule.newPage();
   await legacySchedulePage.goto(base.replace('/admin.html', '/schedule.html'), { waitUntil:'load' });
   await legacySchedulePage.waitForURL(/schedule-management\.html\?tab=station/);
   await legacySchedulePage.locator('#appMain:not(.hide)').waitFor();
-  await test('legacy schedule URL redirects to the new fail-closed schedule page', async () => {
+  await legacySchedulePage.locator('#stationContent .day').first().waitFor();
+  await test('legacy schedule URL redirects to a server-mediated station schedule in off mode', async () => {
     assert.match(legacySchedulePage.url(), /schedule-management\.html\?tab=station/);
-    assert.equal(await legacySchedulePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await legacySchedulePage.locator('#availabilityView').isVisible(), false);
+    assert.equal(await legacySchedulePage.locator('#scheduleTabs').isVisible(), true);
+    assert.equal(await legacySchedulePage.locator('#stationView').isVisible(), true);
+    assert.equal(await legacySchedulePage.locator('#mineTab').isVisible(), true);
+    assert.equal(await legacySchedulePage.locator('#manageTab').isVisible(), false);
+    assert.equal(await legacySchedulePage.locator('#manageView').isVisible(), false);
+    assert.match(await legacySchedulePage.locator('#stationContent').textContent(), /משמרת א/);
+
+    await legacySchedulePage.locator('[data-tab="mine"]').click();
+    assert.equal(await legacySchedulePage.locator('#mineView').isVisible(), true);
+    assert.match(await legacySchedulePage.locator('#mineContent').textContent(), /טל חודרה/);
+
     const calls = await legacySchedulePage.evaluate(() => window.__CALLABLE_CALLS || []);
-    assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
-    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+    assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 1);
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+    assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
+    assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
+    const firestoreWrites = await legacySchedulePage.evaluate(() => window.__FIRESTORE_WRITES || []);
+    assert.equal(firestoreWrites.length, 0);
   });
   await legacySchedule.close();
 

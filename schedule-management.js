@@ -86,17 +86,32 @@ function dateLabel(iso) {
   } catch (_) { return iso; }
 }
 
+function canViewSchedule() {
+  return !!state.status && ['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1;
+}
+
+// עריכה אינה נגזרת מהתפקיד הראשי. גם מפקד/ת או רכז/ת משאבי אנוש
+// צריכים מינוי חי ונפרד של אחראי/ת סידור, ומצב off אינו מאפשר ניהול.
+function canManageSchedule() {
+  return !!state.status && state.status.manager === true
+    && ['shadow', 'new'].indexOf(state.status.mode) !== -1;
+}
+
 function setMode(status) {
   const box = $('mode');
   box.className = 'mode';
-  let text = 'המנוע החדש אינו זמין להצגת סידור.';
+  let text = 'לא ניתן לאמת את מצב מנוע הסידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב בדיקה: אפשר ליצור טיוטות, אך אין סידור פעיל לצפייה או לפרסום.';
+    text = 'מצב בדיקה: הסידור הקיים מוצג בקריאה מאובטחת. אפשר להכין טיוטות, אך הן אינן מתפרסמות.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
+  } else if (status.mode === 'off') {
+    text = 'הסידור הקיים מוצג בקריאה מאובטחת. מנוע הסידור החדש עדיין כבוי.';
   } else box.classList.add('bad');
-  if (!status.configured) text += ' עדיין חסרים חוקי תחנה או מקור כוח-אדם חתום.';
+  if (status.mode !== 'off' && !status.configured) {
+    text += ' עדיין חסרים חוקי תחנה או מקור כוח-אדם חתום.';
+  }
   if (status.manager && status.active && Number(status.active.delivery_alerts || 0) > 0) {
     box.classList.remove('good'); box.classList.add('bad');
     text += ' יש ' + status.active.delivery_alerts + ' התראות שלא נמסרו ודורשות טיפול.';
@@ -123,23 +138,16 @@ function showScheduleViews() {
   $('scheduleTabs').hidden = false;
   $('mineTab').hidden = false;
   $('stationTab').hidden = false;
+  $('manageTab').hidden = !canManageSchedule();
   $('scheduleTabs').classList.remove('manage-only');
-}
-
-function showShadowManagement() {
-  $('availabilityView').hidden = true;
-  $('scheduleTabs').hidden = false;
-  $('manageTab').hidden = false;
-  $('mineTab').hidden = true;
-  $('stationTab').hidden = true;
-  $('scheduleTabs').classList.add('manage-only');
+  $('scheduleTabs').classList.toggle('views-only', !canManageSchedule());
 }
 
 function chooseTab(name, replaceUrl = true) {
   // הסידור התחנתי הוא נקודת הכניסה המשותפת: כך כל כבאי רואה את
   // תמונת התחנה לפני שהוא עובר לסידור האישי. כתובת ניהול אינה דרך
   // לעקוף את המינוי החי של אחראי/ת הסידור.
-  if (name === 'manage' && (!state.status || !state.status.manager)) name = 'station';
+  if (name === 'manage' && !canManageSchedule()) name = 'station';
   if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station';
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
@@ -427,21 +435,38 @@ function eventCard(item) {
   card.appendChild(inner); return card;
 }
 
+function guardCard(item) {
+  // Guards are live operational information, not signed schedule events.
+  // They deliberately have no response or confirmation controls.
+  const card = node('article', 'assignment guard-card');
+  card.appendChild(node('div', 'place', 'אבטחה'));
+  const inner = node('div', 'inner');
+  inner.append(node('b', '', item.title), node('div', 'role', item.hours || item.date));
+  card.appendChild(inner); return card;
+}
+
 function renderMine() {
   const box = $('mineContent'); clear(box);
   if (!state.mine || !state.mine.active) {
-    box.appendChild(node('div', 'empty', state.status && state.status.mode === 'off'
-      ? 'המנוע החדש עדיין כבוי. הסידור הקיים ממשיך להיות זמין במסך הישן.'
-      : 'עדיין לא פורסם סידור חדש.'));
+    box.appendChild(node('div', 'empty', state.mine && state.mine.error
+      ? 'לא ניתן לטעון את הסידור האישי כרגע. ' + state.mine.error
+      : 'אין סידור פעיל להצגה ביום הזה.'));
     return;
   }
   const date = state.mineDate || localDate(); state.mineDate = date;
   $('mineDateTitle').textContent = dateLabel(date); $('mineDate').textContent = date;
   const days = (state.mine.days || []).filter((item) => item.date === date);
   const events = (state.mine.events || []).filter((item) => item.date === date);
+  const guards = (state.mine.guards || []).filter((item) => item.date === date);
   days.forEach((item) => box.appendChild(assignmentCard(item)));
   events.forEach((item) => box.appendChild(eventCard(item)));
-  if (!days.length && !events.length) box.appendChild(node('div', 'empty', 'אין לך שיבוץ או אירוע ביום הזה.'));
+  guards.forEach((item) => box.appendChild(guardCard(item)));
+  if (state.mine.guards_status === 'unavailable') {
+    box.appendChild(node('div', 'msg info', 'לא ניתן לטעון אבטחות כרגע. הסידור נשאר מוצג.'));
+  }
+  if (!days.length && !events.length && !guards.length && state.mine.guards_status !== 'unavailable') {
+    box.appendChild(node('div', 'empty', 'אין לך שיבוץ, אירוע או אבטחה ביום הזה.'));
+  }
 }
 
 async function respond(itemId, answer, reasonCode) {
@@ -459,7 +484,7 @@ async function respond(itemId, answer, reasonCode) {
 }
 
 async function loadMine() {
-  if (!state.status || state.status.mode !== 'new') return;
+  if (!canViewSchedule()) return;
   try {
     state.mine = (await call.mine({ date: state.mineDate || localDate() })).data;
   } catch (error) { state.mine = { active: false, error: errorText(error) }; }
@@ -487,12 +512,26 @@ function stationBlock(block, title) {
     if (names.length) item.appendChild(node('div', '', names.join(' · ')));
     column.appendChild(item);
   });
-  if (!(block.sub_stations || []).length && !(block.events || []).length) column.appendChild(node('div', 'empty', 'אין סידור ליום הזה.'));
+  (block.guards || []).forEach((guard) => {
+    const item = node('div', 'event guard' + (guard.includes_me ? ' me' : ''));
+    item.append(node('b', '', 'אבטחה · ' + guard.title), document.createTextNode(guard.hours ? ' · ' + guard.hours : ''));
+    const names = (guard.people || []).map((person) => typeof person === 'string' ? person : person.person);
+    if (names.length) item.appendChild(node('div', '', names.join(' · ')));
+    else item.appendChild(node('div', 'role', 'טרם אוישה'));
+    column.appendChild(item);
+  });
+  if (block.guards_status === 'unavailable') {
+    column.appendChild(node('div', 'msg info', 'לא ניתן לטעון אבטחות כרגע. הסידור נשאר מוצג.'));
+  }
+  if (!(block.sub_stations || []).length && !(block.events || []).length && !(block.guards || []).length
+      && block.guards_status !== 'unavailable') {
+    column.appendChild(node('div', 'empty', 'אין סידור ליום הזה.'));
+  }
   return column;
 }
 
 async function loadStation() {
-  if (!state.status || state.status.mode !== 'new') return;
+  if (!canViewSchedule()) return;
   $('stationDateTitle').textContent = dateLabel(state.stationDate); $('stationDate').textContent = state.stationDate;
   const box = $('stationContent'); clear(box); box.appendChild(node('div', 'loader'));
   try {
@@ -503,7 +542,7 @@ async function loadStation() {
 }
 
 async function loadSetup() {
-  if (!state.status.manager) return;
+  if (!canManageSchedule()) return;
   try { state.setup = (await call.setup({})).data; renderPolicy(); }
   catch (error) { message('runMessage', errorText(error), 'err'); }
 }
@@ -518,33 +557,14 @@ async function boot(user) {
     state.status = (await call.status({})).data;
     setMode(state.status || {});
 
-    // אין נתיב חזרה לנתוני Firestore ישנים. במצב off אין סידור
-    // חדש לצפייה, ובמצב shadow הוא מוצג רק לאחראי/ת סידור כדי להכין
-    // טיוטה. שני המצבים נשארים בדף זה ונכשלים סגור.
-    if (!state.status || state.status.mode === 'off' ||
-        (state.status.mode !== 'new' && state.status.mode !== 'shadow')) {
+    if (!canViewSchedule()) {
       showUnavailable('הסידור החדש עדיין אינו פעיל',
-        'לא מוצג סידור ישן. אחראי/ת הסידור ישלים/תשלים את ההגדרות והפרסום במנוע החדש.');
-      return;
-    }
-
-    if (state.status.mode === 'shadow' && !state.status.manager) {
-      showUnavailable('הסידור החדש בבדיקה',
-        'עדיין לא פורסם סידור פעיל. כאשר יפורסם, הסידור התחנתי והאישי יופיעו כאן.');
+        'לא ניתן לקבוע איזו תצוגת סידור בטוחה להצגה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
       return;
     }
 
     setRollbackAvailability();
-    $('manageTab').hidden = !state.status.manager;
     $('startMonth').value = monthStart();
-
-    if (state.status.mode === 'shadow') {
-      showShadowManagement();
-      await loadSetup();
-      chooseTab('manage');
-      return;
-    }
-
     showScheduleViews();
     await Promise.all([loadSetup(), loadMine()]);
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');

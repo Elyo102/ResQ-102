@@ -133,8 +133,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card">
     <h2>גיבוי</h2>
     <div class="note">
-      מוריד את כל נתוני התחנה לקובץ אחד במחשב שלך. סידור, סגל,
-      נוכחות, תקלות, אבטחות, טפסים והחלפות — הכל.
+      מוריד נתונים שהדפדפן רשאי לקרוא לקובץ אחד במחשב שלך. סידור,
+      סגל, נוכחות, תקלות, טפסים והחלפות.
+      <br><br>
+      <b>אבטחות אינן נכללות בקובץ הזה.</b> הן נקראות ונכתבות
+      דרך מסלול השרת בלבד, כדי שלא ייצא מידע רגיש מהדפדפן.
       <br><br>
       <b>זה גיבוי ידני, וזו לא ההגנה העיקרית.</b> ההגנה
       האמיתית היא <b>Point-In-Time Recovery</b> ו-<b>Delete
@@ -147,7 +150,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       להיכנס למערכת, ולשמור עותק מחוץ לגוגל.
     </div>
     <div style="display:flex;gap:9px;flex-wrap:wrap">
-      <button id="btnBackup">הורד גיבוי מלא</button>
+      <button id="btnBackup">הורד גיבוי מקומי</button>
     </div>
     <div id="bk"></div>
   </div>
@@ -157,9 +160,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div class="note" id="seedNote">
       מערכת שזה עתה נפרסה ריקה, ומסך ריק נראה בדיוק כמו מסך
       שנכשל בטעינה. הכפתור ממלא את המערכת בכשירויות, סבב, לוח
-      ציוות, אבטחות, תקלות וטפסים — <b>עם האנשים האמיתיים
+      ציוות, תקלות וטפסים — <b>עם האנשים האמיתיים
       מהסגל שלך</b>, כדי שתראה גם שהמסכים עובדים וגם שהם
       קריאים.
+      <br><br>
+      אבטחות אינן נוצרות או נמחקות כאן. הן מנוהלות במסלול
+      השרת במסך האבטחות.
       <br><br>
       כל רשומה מסומנת, והמחיקה מוחקת בדיוק אותן. סגל, משתמשים
       והרשאות לא נוגעים בהם.
@@ -174,7 +180,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card">
     <h2>בדיקת פריסה</h2>
     <div class="note" id="depNote">
-      אחרי <b>deploy.bat</b>. עובר על כל אוסף, כל פונקציה וכל אינדקס,
+      אחרי <b>deploy.bat</b>. עובר על האוספים, הפונקציות והאינדקסים
+      שהדפדפן רשאי לבדוק,
       וכותב מסמך בדיקה אחד לכל אוסף כדי לוודא שגם הכתיבה עובדת —
       ומוחק אותו מיד. קריאה לבדה לא מגלה כלל כתיבה שבור.
     </div>
@@ -253,7 +260,7 @@ function line(box, key, value, cls){
 const MARK = '__selfcheck';
 const SUB_STATION_PROBE_ID = '__selfcheck_archived_site';
 
-// האוספים, ומה מצופה מכל אחד מהם כשכותבים לו מסמך בדיקה
+// האוספים שהדפדפן רשאי לבדוק, ומה מצופה מכל אחד מהם כשכותבים לו מסמך בדיקה
 // **גנרי** — שלושה שדות ותו לא.
 //
 // **למה שלושה מצבים ולא שניים.** הגרסה הקודמת ידעה רק
@@ -280,7 +287,6 @@ const COLLECTIONS = [
   { name: 'attendance',       he: 'נוכחות',           mode: 'strict' },
   { name: 'monthly_reports',  he: 'דוחות חודשיים',    mode: 'strict' },
   { name: 'swaps',            he: 'החלפות',           mode: 'strict' },
-  { name: 'guards',           he: 'אבטחות',           mode: 'strict' },
   { name: 'faults',           he: 'תקלות',            mode: 'strict' },
   { name: 'vehicle_views',    he: 'תמונות רכב',       mode: 'strict' },
   { name: 'handovers',        he: 'מסירות אחריות',    mode: 'strict' },
@@ -301,10 +307,7 @@ const INDEXED = [
   { he: 'נוכחות לפי עובד וחודש',
     build: (sid, uid, emp) => query(collection(db, 'stations', sid, 'attendance'),
       where('emp_number', '==', String(emp || '0')),
-      where('month', '==', '2026-01'), limit(1)) },
-  { he: 'אבטחות לפי תאריך ומצב',
-    build: (sid) => query(collection(db, 'stations', sid, 'guards'),
-      where('date', '==', '2099-01-01'), where('status', '==', 'open'), limit(1)) }
+      where('month', '==', '2026-01'), limit(1)) }
 ];
 
 const FUNCTIONS = [
@@ -357,7 +360,7 @@ async function roster(sid){
 const BACKUP_COLS = [
   'roster', 'users', 'quals', 'member_quals', 'rotations',
   'shift_overrides', 'sub_stations', 'vehicles', 'vehicle_views',
-  'attendance', 'monthly_reports', 'swaps', 'guards', 'faults',
+  'attendance', 'monthly_reports', 'swaps', 'faults',
   'handovers', 'redline_waivers', 'broadcasts', 'callouts',
   'scans', 'hr_reports', 'submissions', 'config'
 ];
@@ -370,9 +373,16 @@ $('btnBackup').onclick = async function () {
   // myStation() קורא את השיוך מהטוקן — אותה דרך שכל שאר
   // המסך משתמש בה.
   const sid = await myStation();
-  const data = { station: sid, taken_at: new Date().toISOString(),
-                 by: (auth.currentUser || {}).email || '', collections: {} };
-  const lines = [];
+  const data = {
+    station: sid,
+    taken_at: new Date().toISOString(),
+    by: (auth.currentUser || {}).email || '',
+    excluded_collections: {
+      guards: 'אבטחות נגישות דרך השרת בלבד ואינן מיוצאות מהדפדפן.'
+    },
+    collections: {}
+  };
+  const lines = ['<div class="row warn"><span>guards</span><b>שרת בלבד — לא נכלל</b></div>'];
   let docs = 0;
 
   for (const name of BACKUP_COLS) {
@@ -465,11 +475,10 @@ $('btnSeed').onclick = async () => {
        'קו אדום ולוח ציוות', 'ok');
 
   // תנועה
-  for (const g of SEED.guards(people))      await put(['guards'], null, g);
   for (const f of SEED.faults(people))      await put(['faults'], null, f);
   for (const s2 of SEED.submissions(people)) await put(['submissions'], null, s2);
   for (const w of SEED.swaps(people))       await put(['swaps'], null, w);
-  line('seed', 'תנועה', 'אבטחות, תקלות, טפסים והחלפה פתוחה', 'ok');
+  line('seed', 'תנועה', 'תקלות, טפסים והחלפה פתוחה. אבטחות מנוהלות במסלול השרת.', 'ok');
 
   line('seed', 'סיכום', made + ' רשומות נוצרו' +
        (failed ? ' · ' + failed + ' נכשלו — כנראה חוק שחוסם. ' +
@@ -621,6 +630,13 @@ $('btnDeploy').onclick = async () => {
     tally.warn++;
   }
 
+  // אבטחות אינן נבדקות ב-Firestore מהדפדפן. כל קריאה או כתיבה
+  // ישירה תיחסם לאחר סגירת הכלל, והמסכים משתמשים במסלול השרת.
+  head('dep', 'אבטחות — מסלול שרת');
+  say('dep', 'אבטחות',
+      'לא נבדקות ישירות בדפדפן בכוונה. יש לאמת את מסלול השרת בבדיקת אינטגרציה.',
+      'warn');
+
   // ---------- אינדקסים ----------
   head('dep', 'אינדקסים');
   for (const ix of INDEXED) {
@@ -679,7 +695,7 @@ $('btnDeploy').onclick = async () => {
     tally.ok + ' תקינים · ' + tally.warn + ' אזהרות · ' +
     tally.bad + ' כשלים · מתוך ' + total +
     (tally.bad ? ' — שלח לי את הרשימה ואני מתקן.'
-               : tally.warn ? ' — האזהרות לרוב נפתרות בהמתנה של דקה.'
+               : tally.warn ? ' — עיין באזהרות; חלקן דורשות בדיקה נפרדת.'
                : ' — הפריסה תקינה.') + '</div></div>';
 
   b.disabled = false; depBusy = false;

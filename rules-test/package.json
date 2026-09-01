@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node rules.test.mjs"
+    "test": "node rules.test.mjs && node schedule-access-isolation.test.mjs && node station-transfer.test.mjs"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^4.0.1"

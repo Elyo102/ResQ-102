@@ -189,10 +189,26 @@ dataPaths.forEach(function (pair) {
 });
 ok('טעינת חודש לוכדת snapshot', /const snapshot = \{[\s\S]{0,180}?subject: subjectGeneration/.test(att));
 ok('חודש ישן אינו מתפרסם', /generation === monthLoadGeneration/.test(att));
-ok('טעינת אדם לוכדת uid', /uid: SUBJ\.uid[\s\S]{0,2600}?guardHasMe\(v, snapshot\.uid\)/.test(att));
+ok('אבטחות נקראות בחודש המוצג במדויק',
+   /function guardMonthRange\(year, month\)[\s\S]{0,180}?from: dateKey\(year, month, 1\)[\s\S]{0,180}?to: dateKey\(year, month, daysInMonth\(year, month\)\)/.test(att));
+ok('אבטחות אישיות נקראות רק לחשבון המחובר',
+   /function readMyGuardAttendance\(snapshot\)[\s\S]{0,700}?snapshot\.subjectUid !== snapshot\.viewerUid\) return \[\]/.test(att));
+ok('תוצאת אבטחות ישנה אינה יכולה לדרוס חדשה',
+   /let guardLoadGeneration = 0;/.test(att) &&
+   /function beginMyGuardAttendance\(snapshot\)[\s\S]{0,220}?\+\+guardLoadGeneration/.test(att) &&
+   /guardResult\.generation === guardLoadGeneration/.test(att) &&
+   /freshGuards\.generation === guardLoadGeneration/.test(att));
+ok('טווח האבטחות לא מקבל subject או uid מהדפדפן',
+   /callMyGuardAttendance\(range\)/.test(att) &&
+   !/callMyGuardAttendance\(\{[\s\S]{0,200}?(?:subject|uid)/.test(att));
+ok('המסך אינו קורא מסמכי אבטחה גולמיים',
+   !/collection\(db, 'stations', snapshot\.sid, 'guards'\)/.test(att) &&
+   !/guardHasMe/.test(att));
 ok('אדם ישן אינו מתפרסם', /generation === staticLoadGeneration/.test(att));
 ok('מעבר אדם מאפס מידע שתלוי ב-uid',
    /const previousUid = SUBJ && SUBJ\.uid[\s\S]{0,260}?previousUid !== SUBJ\.uid[\s\S]{0,180}?mySite = ''[\s\S]{0,100}?myGuards = \[\]/.test(att));
+ok('מילוי אוטומטי של אבטחה אינו משתמש במקום',
+   /notes: g\.title \|\| ''/.test(att) && !/g\.place/.test(att));
 ok('טעינת חודש נועלת גם את פעולות שעון המשמרת',
    /function setMonthBusy\(busy\)[\s\S]{0,320}?'btnStart','btnStop'/.test(att));
 ok('שחרור פעולה מכבד חודש שעדיין בטעינה',
@@ -213,6 +229,10 @@ const allowed = [
   "' · מס׳ ' + ME.emp",            // כותרת הזהות
   'CREW_HE[ME.crew]',              // כותרת הזהות
   'watchCallouts(db, SID, ME.uid', // קריאות פתע — למי שמחובר
+  'viewerUid: ME && ME.uid',       // גבול קריאת אבטחות אישית
+  'viewerUid:ME && ME.uid',        // אותו גבול בתוך פעולת סנכרון
+  'ME && ME.uid === snapshot.viewerUid', // אימות דור הטעינה של אותה זהות
+  'action.viewerUid !== (ME && ME.uid)', // ביטול סנכרון אם הזהות התחלפה
   'emp !== ME.emp',                // האם צריך לחתום על האישור
   'edited_by:      ME.uid',        // חותמת
   'body.edited_by      = ME.uid',  // חותמת באישור

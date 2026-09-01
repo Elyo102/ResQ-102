@@ -192,6 +192,10 @@ function styleOnce() {
     '@media (prefers-reduced-motion:reduce){',
     '  #appNav a{transition:none}',
     '  #appNav a:hover{transform:none}}',
+    // בדפים המצומצמים הגוף עובר ל־12px ריפוד כבר ב־620px. חישוב
+    // ה־full-bleed מול רוחב החלון מונע גלישה לצד, בלי להניח ריפוד קבוע.
+    '@media (max-width:620px){',
+    '  #appNav{margin:-12px calc(50% - 50vw) 14px}}',
 
     // ----------------------------------------------------------------
     //  טלפון
@@ -211,7 +215,7 @@ function styleOnce() {
     //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
     //      על הניווט
     '@media (max-width:560px){',
-    '  #appNav{gap:6px;padding:8px 10px;margin:-18px -18px 14px}',
+    '  #appNav{gap:6px;padding:8px 10px}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',

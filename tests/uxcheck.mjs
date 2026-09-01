@@ -37,6 +37,8 @@ check(visibleVersion === serverVersion.v && visibleDate === serverVersion.d,
       'visible and server release versions stay synchronized');
 check(loginPage.includes("./version.js?v=" + versionKey),
       'login imports the release-specific version module');
+check(loginPage.includes("./pwa.js?v=" + versionKey),
+      'login imports the release-specific PWA update runtime');
 check(serviceWorker.includes("const CACHE = 'resq-v" + versionKey + "-release1'"),
       'service worker cache belongs to the visible release');
 check(serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
@@ -99,6 +101,12 @@ for (const token of ['body.art{ background:#070d18', 'body.art h1{ color:#f4f7fb
 }
 
 const schedule = read('schedule.html');
+const scheduleManagement = read('schedule-management.html');
+check(schedule.includes("./theme.css?v=" + versionKey),
+      'legacy schedule transition loads the release-specific theme');
+check(scheduleManagement.includes("./theme.css?v=" + versionKey) &&
+      scheduleManagement.includes("./schedule-management.js?v=" + versionKey),
+      'new schedule screen loads release-specific assets');
 for (const token of ['<main aria-live="polite">', '<h1>מעביר לסידור העבודה החדש</h1>', 'id="status"', 'aria-hidden="true"']) {
   check(schedule.includes(token), 'schedule transition accessibility contains ' + token);
 }

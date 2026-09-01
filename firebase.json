@@ -7,12 +7,25 @@
     {
       "source": "functions",
       "codebase": "default",
+      "predeploy": [
+        "npm --prefix tests run static"
+      ],
       "ignore": [
         "node_modules",
         ".git",
+        ".gitignore",
+        ".env",
+        ".env.*",
+        ".runtimeconfig.json",
+        "*adminsdk*.json",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "*.local",
+        "*.test.js",
+        "**/*.test.js",
+        "count-station-claims.js",
+        "run-station-claims-audit.js",
+        "**/fixtures/**"
       ]
     }
   ],

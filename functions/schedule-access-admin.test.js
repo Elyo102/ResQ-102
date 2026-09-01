@@ -212,6 +212,22 @@ async function rejects(fn, code) {
     assert.equal(db.read('stations/alpha_1/schedule_access/firefighter').revision, 2);
   });
 
+  await test('a disabled record without a valid revision is repaired instead of treated as a completed revoke', async () => {
+    const { db, service } = fixture();
+    const path = 'stations/alpha_1/schedule_access/firefighter';
+    db.write(path, {
+      schema_version: 1, station_id: 'alpha_1', uid: 'firefighter',
+      roles: [], active: false
+    });
+    const actor = request('hr', claims('alpha_1', 'hr_coordinator'));
+    const repaired = await service.set(request('hr', actor.auth.token, { uid: 'firefighter', enabled: false }));
+    assert.equal(repaired.changed, true);
+    assert.equal(repaired.revision, 1);
+    const exact = await service.set(request('hr', actor.auth.token, { uid: 'firefighter', enabled: false }));
+    assert.equal(exact.changed, false);
+    assert.equal(exact.revision, 1);
+  });
+
   await test('HR cannot grant or revoke itself', async () => {
     const { db, audits, service } = fixture();
     await rejects(() => service.set(request('hr', claims('alpha_1', 'hr_coordinator'), {
@@ -308,8 +324,8 @@ async function rejects(fn, code) {
     assert.equal(audits.length, 0);
   });
 
-  assert.equal(passed, 14);
-  console.log('\n14 schedule access administration unit checks passed.');
+  assert.equal(passed, 15);
+  console.log('\n15 schedule access administration unit checks passed.');
 })().catch((error) => {
   console.error(error && error.stack || error);
   process.exitCode = 1;

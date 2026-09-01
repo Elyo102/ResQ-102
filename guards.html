@@ -178,6 +178,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <div class="card">
             <h2>אבטחות קרובות</h2>
             <div class="note" id="openNote">—</div>
+            <div class="msg" id="openMsg" role="status" aria-live="polite"></div>
             <div id="openList"></div>
           </div>
         </div>
@@ -296,8 +297,8 @@ import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs,
+         query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
@@ -309,6 +310,12 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const guardCall = Object.freeze({
+  status: httpsCallable(fns, 'getScheduleRuntimeStatus'),
+  manage: httpsCallable(fns, 'manageScheduleGuard'),
+  board: httpsCallable(fns, 'getScheduleGuardBoard'),
+  managerBoard: httpsCallable(fns, 'getScheduleGuardManagerBoard')
+});
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
@@ -327,9 +334,178 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
-let people = [], guards = [], quals = [], held = {};
+let people = [], guards = [], memberGuards = [], managerGuards = [], quals = [], held = {};
 let rotations = [], overrides = {}, swaps = [], busy = {};
 let loadMap = {}, ctx = {};
+
+// פעולות ניהול חייבות לקבל מזהה אידמפוטנטי שנוצר אקראית באופן
+// קריפטוגרפי. אין נפילה לשעון או למחולל לא-קריפטוגרפי: בהיעדר crypto עדיף
+// לסרב לפעולה מאשר להסתכן בכפילות או ב-retry של פעולה אחרת.
+function requestId(prefix){
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') {
+    return prefix + '_' + c.randomUUID().replace(/-/g, '');
+  }
+  if (c && typeof c.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    return prefix + '_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error('secure-request-id-unavailable');
+}
+
+function isManagerAccessError(error){
+  const code = String((error && error.code) || '');
+  return code.indexOf('permission-denied') !== -1 ||
+         code.indexOf('unauthenticated') !== -1;
+}
+
+function isRevisionConflict(error){
+  const code = String((error && error.code) || '');
+  return code.indexOf('aborted') !== -1 ||
+         code.indexOf('failed-precondition') !== -1;
+}
+
+function managementErrorText(error){
+  if (isManagerAccessError(error)) {
+    return 'אין כרגע הרשאה לניהול אבטחות. רענן את הדף או פנה למנהל המערכת.';
+  }
+  if (isRevisionConflict(error)) {
+    return 'האבטחה השתנתה בינתיים. הנתונים נטענו מחדש — בדוק ונסה שוב.';
+  }
+  const code = String((error && error.code) || '');
+  if (code.indexOf('invalid-argument') !== -1) {
+    return 'אחד מפרטי האבטחה אינו תקין. בדוק את השדות ונסה שוב.';
+  }
+  return 'לא הצלחנו לשמור את השינוי. נסה שוב.';
+}
+
+async function showManagementFailure(error, fallbackBox){
+  if (isManagerAccessError(error)) {
+    // הודעה נראית גם אם השלילה סגרה את חלון העריכה או את כרטיס
+    // הפתיחה. אין להשאיר פעולה ניהולית פתוחה לאחר שהשרת שלל מינוי.
+    setManagerAccess(false);
+    msg(managementErrorText(error), 'err', 'openMsg');
+    return;
+  }
+  if (isRevisionConflict(error)) {
+    // החלון מחזיק את אובייקט האבטחה הישן, ולכן טעינה בלבד אינה
+    // מספיקה: סוגרים אותו, טוענים את הגרסה החדשה, ורק אז מזמינים
+    // לפתוח מחדש את הפעולה. אחרת הניסיון הבא ישלח שוב revision ישן.
+    $('ov').style.display = 'none';
+    await loadAll();
+    msg(managementErrorText(error), 'err', 'openMsg');
+    return;
+  }
+  msg(managementErrorText(error), 'err', fallbackBox);
+}
+
+function setManagerAccess(allowed){
+  const changed = CAN_MANAGE !== (allowed === true);
+  CAN_MANAGE = allowed === true;
+  $('newCard').classList.toggle('hide', !CAN_MANAGE);
+  $('tabLoad').classList.toggle('hide', !CAN_MANAGE);
+  $('tabLog').classList.toggle('hide', !CAN_MANAGE);
+  // אם המינוי נשלל במהלך פעולה, מסירים מייד את כלי הניהול שכבר
+  // צוירו וגם מנקים את הפרטים המפורטים שכבר הגיעו לדפדפן. האכיפה
+  // נשארת בשרת, אך המסך והזיכרון אינם נשארים מטעים.
+  if (!CAN_MANAGE) {
+    $('ov').style.display = 'none';
+    managerGuards = [];
+    // שמות הסגל, הכשירויות והמטריצה שלהם נחוצים רק לחלונות
+    // השיבוץ של אחראי/ת סידור. צופה רגיל מקבל את מצב האבטחה
+    // המצומצם מהשרת, ולכן אין סיבה לשמור אצלו נתונים אלה בזיכרון.
+    people = [];
+    quals = [];
+    held = {};
+    loadMap = {};
+    if ($('tabLoad').classList.contains('on') || $('tabLog').classList.contains('on')) {
+      selectGuardView('tabOpen');
+    }
+  }
+  if (changed && ME) syncGuardView();
+}
+
+function selectGuardView(tabId){
+  VIEWS.forEach(function (x) {
+    const selected = x[0] === tabId;
+    $(x[0]).classList.toggle('on', selected);
+    $(x[1]).classList.toggle('hide', !selected);
+  });
+}
+
+function isDetailedGuard(g){
+  return CAN_MANAGE && Array.isArray((g || {}).assigned);
+}
+
+function guardIsMine(g){
+  return isDetailedGuard(g)
+    ? isAssigned(g, ME && ME.uid)
+    : !!(g && g.viewer_assigned === true);
+}
+
+function guardSignedByMe(g){
+  return isDetailedGuard(g)
+    ? isSignedUp(g, ME && ME.uid)
+    : !!(g && g.viewer_signed_up === true);
+}
+
+function guardAssignedCount(g){
+  if (isDetailedGuard(g)) return assignedOf(g).length;
+  const value = Number(g && g.assigned_count);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function guardOpenSlots(g){
+  if (isDetailedGuard(g)) return openSlots(g);
+  const value = Number(g && g.open_slots);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function personalLoad(){
+  const result = { off:0, shift:0, hours:0 };
+  guards.filter(guardIsMine).forEach(function (g) {
+    if (g.status === 'cancelled') return;
+    const duty = dutyKind(ctx, ME.uid, ME.crew, String(g.date || ''));
+    if (duty === 'off') {
+      result.off += 1;
+      result.hours += guardHours(g) || 0;
+    } else {
+      result.shift += 1;
+    }
+  });
+  result.hours = Math.round(result.hours * 100) / 100;
+  return result;
+}
+
+function syncGuardView(){
+  guards = (CAN_MANAGE ? managerGuards : memberGuards).slice()
+    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')) ||
+      String(a.start || '').localeCompare(String(b.start || '')) ||
+      String(a.id || '').localeCompare(String(b.id || '')));
+  ctx = { rotations, overrides, swaps, guards };
+  // Only the manager board contains other people's assignment identifiers.
+  // A member's own load is computed separately from their two boolean flags.
+  loadMap = CAN_MANAGE ? loadByPerson(people, guards, ctx, defaultSince()) : {};
+  if (ME) { renderOpen(); renderMine(); renderLoad(); renderLog(); }
+}
+
+async function refreshManagerAccess(){
+  try {
+    const result = await guardCall.status();
+    setManagerAccess(!!(result && result.data && result.data.manager === true));
+  } catch (ignore) {
+    // כשל App Check/רשת אינו מונע צפייה והרשמה, אבל אינו פותח
+    // ניהול על סמך claim ישן בדפדפן.
+    setManagerAccess(false);
+  }
+  return CAN_MANAGE;
+}
+
+function expectedRevision(g){
+  const value = Number((g || {}).revision);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 // ---------- הרשאה ----------
 
@@ -352,8 +528,11 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  // מי פותח אבטחות ומשבץ. זהה ל-staff() בכללי האבטחה.
-  CAN_MANAGE = isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1;
+  // ניהול אבטחות אינו נגזר מהתפקיד הראשי או מה-claim. גם מפקד/ת
+  // או רכז/ת HR צריכים מינוי חי נפרד של "אחראי/ת סידור". השרת
+  // יאכוף זאת שוב בכל פעולה; הקריאה כאן היא רק כדי לא לצייר כלי
+  // ניהול למי שלא מונה.
+  CAN_MANAGE = false;
   ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '',
          role: c.role || '', full_name: '' };
   // מי רשאי לקרוא את הנוכחות של כל התחנה — אותה קבוצה
@@ -372,12 +551,75 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'guards.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
-  if (CAN_MANAGE) $('newCard').classList.remove('hide');
+  await refreshManagerAccess();
   setupNew();
   await loadAll();
 });
 
 // ---------- טעינה ----------
+
+function guardDayOffset(key, offset){
+  const d = new Date(String(key || '') + 'T12:00:00');
+  d.setDate(d.getDate() + offset);
+  return toKey(d);
+}
+
+function guardBoardRanges(){
+  const today = toKey(new Date());
+  return {
+    upcoming: { from:today, to:guardDayOffset(today, 365) },
+    history: { from:guardDayOffset(today, -365), to:guardDayOffset(today, -1) }
+  };
+}
+
+function boardRows(result){
+  const rows = result && result.data && result.data.guards;
+  return Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : [];
+}
+
+function mergeBoardRows(parts){
+  const byId = new Map();
+  (parts || []).forEach(rows => rows.forEach(row => byId.set(String(row.id || ''), row)));
+  return Array.from(byId.values()).filter(row => row.id);
+}
+
+async function loadGuardBoards(){
+  const ranges = guardBoardRanges();
+  // Both reads are bounded to one calendar year.  The first serves normal
+  // viewing and the second preserves the member's own recent history without
+  // reopening an unbounded raw collection read.
+  const memberReads = [guardCall.board(ranges.upcoming), guardCall.board(ranges.history)];
+  const managerReads = CAN_MANAGE
+    ? [guardCall.managerBoard(ranges.upcoming), guardCall.managerBoard(ranges.history)] : [];
+  const managerPromise = managerReads.length ? Promise.all(managerReads) : null;
+  let member;
+  try {
+    member = await Promise.all(memberReads);
+  } catch (error) {
+    if (managerPromise) await managerPromise.catch(() => {});
+    memberGuards = [];
+    managerGuards = [];
+    throw error;
+  }
+  memberGuards = mergeBoardRows(member.map(boardRows));
+  if (!managerPromise) {
+    managerGuards = [];
+    return;
+  }
+  try {
+    const manager = await managerPromise;
+    // A failed write can revoke the local view while the reads are in flight.
+    // Never put a detailed response back into memory after that revocation.
+    managerGuards = CAN_MANAGE ? mergeBoardRows(manager.map(boardRows)) : [];
+  } catch (error) {
+    managerGuards = [];
+    if (isManagerAccessError(error)) {
+      setManagerAccess(false);
+      return;
+    }
+    throw error;
+  }
+}
 
 async function loadAll(){
   // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
@@ -392,6 +634,10 @@ async function loadAll(){
   // לרשת, ולכן כל השמונה יוצאות באותו רגע. מחכים להן פעם
   // אחת ב-flush.
   const jobs = [];
+  // מסמכי הסגל והכשירויות משמשים רק להצעת שיבוץ ולעריכה. הרשאת
+  // הצפייה הרגילה באבטחות אינה סיבה להוריד אותם לטלפון; מצב האבטחה
+  // הרגיל מגיע כולו מ-getScheduleGuardBoard.
+  const managerDataRequested = CAN_MANAGE === true;
   // ref אופציונלי: אוסף שקריאה גורפת שלו נדחית זקוק לשאילתה
   // מסוננת. ראה את ההערה אצל attendance למטה.
   const grab = (name, fn, ref) => {
@@ -403,28 +649,27 @@ async function loadAll(){
     })());
   };
   const flush = () => Promise.all(jobs);
+  const guardBoards = loadGuardBoards();
 
   people = [];
-  await grab('roster', s => s.forEach(d => {
-    const v = d.data() || {};
-    if (v.is_active === false) return;
-    people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
-                  emp: String(v.emp || v.emp_number || '') });
-  }));
-
-  guards = [];
-  await grab('guards', s => s.forEach(d =>
-    guards.push(Object.assign({ id: d.id }, d.data() || {}))));
-
   quals = [];
-  await grab('quals', s => s.forEach(d =>
-    quals.push(Object.assign({ id: d.id }, d.data() || {}))));
-
   held = {};
-  await grab('member_quals', s => s.forEach(d => {
-    const v = d.data() || {};
-    held[d.id] = Array.isArray(v.quals) ? v.quals : [];
-  }));
+  if (managerDataRequested) {
+    await grab('roster', s => s.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
+                    emp: String(v.emp || v.emp_number || '') });
+    }));
+
+    await grab('quals', s => s.forEach(d =>
+      quals.push(Object.assign({ id: d.id }, d.data() || {}))));
+
+    await grab('member_quals', s => s.forEach(d => {
+      const v = d.data() || {};
+      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+    }));
+  }
 
   rotations = [];
   await grab('rotations', s => s.forEach(d =>
@@ -481,14 +726,28 @@ async function loadAll(){
              where('date', '>=', busyFrom)));
 
   await flush();
+  try {
+    await guardBoards;
+  } catch (error) {
+    // There is intentionally no fallback to Firestore here.  A temporary
+    // callable failure is visible, whereas a fallback would bypass the
+    // privacy boundary that protects notes, place and fellow firefighters.
+    memberGuards = [];
+    managerGuards = [];
+    msg('לא הצלחנו לטעון את האבטחות כרגע. אפשר לנסות לרענן.', 'err', 'openMsg');
+  }
+
+  // מינוי יכול להישלל בזמן שהקריאות המקבילות בתנועה. לא משאירים
+  // את נתוני הניהול בזיכרון רק מפני שהם יצאו רגע קודם לכן.
+  if (!CAN_MANAGE) {
+    people = [];
+    quals = [];
+    held = {};
+    loadMap = {};
+  }
 
   people.sort((a,b) => String(a.name).localeCompare(String(b.name),'he'));
-  guards.sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
-
-  ctx = { rotations, overrides, swaps, guards };
-  loadMap = loadByPerson(people, guards, ctx, defaultSince());
-
-  renderOpen(); renderMine(); renderLoad(); renderLog();
+  syncGuardView();
 }
 
 function qualName(id){
@@ -509,10 +768,8 @@ const VIEWS = [['tabOpen','viewOpen'],['tabMine','viewMine'],
                ['tabLoad','viewLoad'],['tabLog','viewLog']];
 VIEWS.forEach(function (v) {
   $(v[0]).onclick = function () {
-    VIEWS.forEach(function (x) {
-      $(x[0]).classList.toggle('on', x[0] === v[0]);
-      $(x[1]).classList.toggle('hide', x[1] !== v[1]);
-    });
+    if (!CAN_MANAGE && (v[0] === 'tabLoad' || v[0] === 'tabLog')) return;
+    selectGuardView(v[0]);
   };
 });
 
@@ -533,6 +790,10 @@ function fillQualSelect(){
 }
 
 async function createGuard(){
+  if (!CAN_MANAGE) {
+    msg('אין כרגע הרשאה לניהול אבטחות.', 'err');
+    return;
+  }
   const title = $('nTitle').value.trim();
   const date  = $('nDate').value;
   const start = $('nStart').value, end = $('nEnd').value;
@@ -546,34 +807,205 @@ async function createGuard(){
   const q = $('nQual').value;
   const b = $('btnNew'); b.disabled = true;
   try {
-    await addDoc(collection(db, 'stations', SID, 'guards'), {
-      title: title, kind: $('nKind').value, place: $('nPlace').value.trim(),
-      date: date, start: start, end: end, slots: slots,
-      need_quals: q ? [q] : [], notes: $('nNotes').value.trim(),
-      status: 'open', signups: {}, assigned: [],
-      by_uid: ME.uid, by_name: ME.full_name || '',
-      created_key: new Date().toISOString(),
-      created_at: serverTimestamp()
+    // התחנה, מי שיצר, חותמות הזמן וההתראות אינם נתוני דפדפן.
+    // השרת גוזר אותם מהזהות ומבצע כתיבה אחת אידמפוטנטית.
+    await guardCall.manage({
+      action: 'create',
+      request_id: requestId('guard_create'),
+      details: {
+        title: title,
+        kind: $('nKind').value,
+        place: $('nPlace').value.trim(),
+        date: date,
+        start: start,
+        end: end,
+        slots: slots,
+        need_quals: q ? [q] : [],
+        notes: $('nNotes').value.trim()
+      }
     });
     msg('האבטחה נפתחה ומופיעה ביומן.', 'ok');
     $('nTitle').value = ''; $('nPlace').value = ''; $('nNotes').value = '';
     await loadAll();
   } catch (e) {
-    msg('הפתיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+    await showManagementFailure(e, 'newMsg');
+  } finally {
+    b.disabled = false;
   }
-  b.disabled = false;
+}
+
+function showDialog(){ $('ov').style.display = 'flex'; }
+
+function dialogMessage(text, kind){ msg(text, kind, 'dlgMsg'); }
+
+function buildSelect(select, entries, selected){
+  select.innerHTML = '';
+  entries.forEach(function (entry) {
+    const option = document.createElement('option');
+    option.value = String(entry.id || '');
+    option.textContent = String(entry.label || entry.name || entry.id || '');
+    option.selected = selected instanceof Set && selected.has(option.value);
+    select.appendChild(option);
+  });
+}
+
+function openEdit(g){
+  if (!CAN_MANAGE) return;
+  const d = $('dlg');
+  // המבנה קבוע בלבד. פרטי האבטחה עצמם מוכנסים להמשך באמצעות .value
+  // ו-textContent, כדי שכותרת או הערה שמכילים סימנים מיוחדים לא
+  // ייכנסו ל-HTML של החלון.
+  d.innerHTML =
+    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent);margin:0 0 3px"></h2>' +
+    '<div class="note" id="dlgWhen" style="margin-bottom:12px"></div>' +
+    '<label for="eTitle">מה האירוע</label><input id="eTitle" maxlength="80">' +
+    '<label for="eKind">סוג</label><select id="eKind"></select>' +
+    '<label for="ePlace">מקום</label><input id="ePlace" maxlength="120">' +
+    '<div class="row3"><div><label for="eStart">משעה</label><input id="eStart" type="time">' +
+    '</div><div><label for="eEnd">עד שעה</label><input id="eEnd" type="time"></div>' +
+    '<div><label for="eSlots">כמה אנשים</label><input id="eSlots" type="number" min="1" max="20"></div></div>' +
+    '<label for="eQual">כשירויות נדרשות (אפשר לבחור כמה)</label>' +
+    '<select id="eQual" multiple size="4"></select>' +
+    '<label for="eNotes">הערות</label><textarea id="eNotes" maxlength="1000"></textarea>' +
+    '<div id="dlgMsg" class="msg" role="status" aria-live="polite"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
+    '<button class="btn go" id="dlgSave">שמור שינויים</button>' +
+    '<button class="btn" id="dlgClose">סגור</button></div>';
+  $('dlgTitle').textContent = 'עריכת אבטחה';
+  $('dlgWhen').textContent = dmy(g.date) + ' · אפשר לשנות תאריך בנפרד.';
+  $('eTitle').value = String(g.title || '');
+  buildSelect($('eKind'), GUARD_KINDS.map(k => ({ id:k.id, label:k.he })),
+    new Set([String(g.kind || 'other')]));
+  $('ePlace').value = String(g.place || '');
+  $('eStart').value = String(g.start || '');
+  $('eEnd').value = String(g.end || '');
+  $('eSlots').value = String(g.slots || '');
+  buildSelect($('eQual'), quals.map(q => ({ id:q.id, label:q.name || q.he || q.id })),
+    new Set((g.need_quals || []).map(value => String(value))));
+  $('eNotes').value = String(g.notes || '');
+  $('dlgClose').onclick = closeDlg;
+  $('dlgSave').onclick = () => saveEdit(g);
+  showDialog();
+}
+
+function editDetails(){
+  const title = $('eTitle').value.trim();
+  const start = $('eStart').value;
+  const end = $('eEnd').value;
+  const slots = Number($('eSlots').value || 0);
+  if (!title) { dialogMessage('צריך לכתוב מה האירוע.', 'err'); return null; }
+  if (!start || !end) { dialogMessage('צריך שעת התחלה ושעת סיום.', 'err'); return null; }
+  if (!(slots > 0 && slots <= 20)) { dialogMessage('מספר האנשים חייב להיות בין 1 ל-20.', 'err'); return null; }
+  return {
+    title: title,
+    kind: $('eKind').value,
+    place: $('ePlace').value.trim(),
+    start: start,
+    end: end,
+    slots: slots,
+    need_quals: Array.from($('eQual').selectedOptions).map(option => option.value),
+    notes: $('eNotes').value.trim()
+  };
+}
+
+async function saveEdit(g){
+  if (!CAN_MANAGE) { dialogMessage('אין כרגע הרשאה לניהול אבטחות.', 'err'); return; }
+  const details = editDetails();
+  if (!details) return;
+  const b = $('dlgSave'); b.disabled = true;
+  try {
+    await guardCall.manage({
+      action: 'edit',
+      request_id: requestId('guard_edit'),
+      guard_id: String(g.id || ''),
+      expected_revision: expectedRevision(g),
+      details: details
+    });
+    closeDlg();
+    await loadAll();
+    msg('פרטי האבטחה עודכנו.', 'ok', 'openMsg');
+  } catch (e) {
+    await showManagementFailure(e, 'dlgMsg');
+  } finally {
+    b.disabled = false;
+  }
+}
+
+function openReschedule(g){
+  if (!CAN_MANAGE) return;
+  const d = $('dlg');
+  d.innerHTML =
+    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent);margin:0 0 3px"></h2>' +
+    '<div class="note" id="dlgWhen" style="margin-bottom:12px"></div>' +
+    '<label for="rDate">תאריך חדש</label><input id="rDate" type="date">' +
+    '<div id="dlgMsg" class="msg" role="status" aria-live="polite"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
+    '<button class="btn go" id="dlgSave">שמור תאריך</button>' +
+    '<button class="btn" id="dlgClose">סגור</button></div>';
+  $('dlgTitle').textContent = 'דחייה או שינוי תאריך';
+  $('dlgWhen').textContent = String(g.title || '') + ' · התאריך הנוכחי: ' + dmy(g.date);
+  $('rDate').value = String(g.date || '');
+  $('dlgClose').onclick = closeDlg;
+  $('dlgSave').onclick = () => saveReschedule(g);
+  showDialog();
+}
+
+async function saveReschedule(g){
+  if (!CAN_MANAGE) { dialogMessage('אין כרגע הרשאה לניהול אבטחות.', 'err'); return; }
+  const date = $('rDate').value;
+  if (!date) { dialogMessage('צריך לבחור תאריך.', 'err'); return; }
+  const b = $('dlgSave'); b.disabled = true;
+  try {
+    await guardCall.manage({
+      action: 'reschedule',
+      request_id: requestId('guard_reschedule'),
+      guard_id: String(g.id || ''),
+      expected_revision: expectedRevision(g),
+      details: { date: date }
+    });
+    closeDlg();
+    await loadAll();
+    msg('תאריך האבטחה עודכן.', 'ok', 'openMsg');
+  } catch (e) {
+    await showManagementFailure(e, 'dlgMsg');
+  } finally {
+    b.disabled = false;
+  }
+}
+
+async function cancelGuard(g, button){
+  if (!CAN_MANAGE) return;
+  if (!globalThis.confirm('לבטל את האבטחה? פעולה זו תשאיר היסטוריה ותעדכן את מי שמושפע ממנה.')) return;
+  button.disabled = true;
+  try {
+    await guardCall.manage({
+      action: 'cancel',
+      request_id: requestId('guard_cancel'),
+      guard_id: String(g.id || ''),
+      expected_revision: expectedRevision(g)
+    });
+    await loadAll();
+    msg('האבטחה בוטלה.', 'ok', 'openMsg');
+  } catch (e) {
+    await showManagementFailure(e, 'openMsg');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---------- ציור אבטחה ----------
 
-function guardCard(g, forMe){
+function guardCard(g){
   const el = document.createElement('div');
-  el.className = 'g' + (isAssigned(g, ME.uid) ? ' mine' : '');
+  const detailed = isDetailedGuard(g);
+  const mine = guardIsMine(g);
+  el.className = 'g' + (mine ? ' mine' : '');
 
   const hrs = guardHours(g);
   const duty = dutyKind(ctx, ME.uid, ME.crew, String(g.date || ''));
-  const asg = assignedOf(g);
-  const room = openSlots(g);
+  const asg = detailed ? assignedOf(g) : [];
+  const assignedCount = guardAssignedCount(g);
+  const room = guardOpenSlots(g);
 
   const head = document.createElement('div');
   head.className = 'top';
@@ -589,33 +1021,54 @@ function guardCard(g, forMe){
   const meta = document.createElement('div');
   meta.className = 'meta';
   const bits = [kindHe(g.kind)];
-  if (g.place) bits.push(g.place);
+  if (detailed && g.place) bits.push(g.place);
   bits.push('<span style="color:' + stateColor(g.status) + '">' +
             esc(stateHe(g.status)) + '</span>');
-  if ((g.need_quals || []).length) {
+  if (g.status === 'open' && assignedCount === 0) {
+    // אבטחה פתוחה בלי משובצים היא מצב תפעולי רגיל, לא כשל ולא
+    // אזהרה. אפשר להירשם עכשיו או לשבץ אותה אחר כך.
+    bits.push('<span style="color:var(--note)">טרם אוישה — אפשר לשבץ בהמשך</span>');
+  }
+  if (!detailed) {
+    bits.push(assignedCount + ' משובצים');
+    if (room) bits.push(room + ' מקומות פנויים');
+  }
+  if (detailed && (g.need_quals || []).length) {
     bits.push('דרוש: ' + g.need_quals.map(qualName).map(esc).join(', '));
   }
-  meta.innerHTML = bits.join(' · ') + (g.notes ? '<br>' + esc(g.notes) : '');
+  meta.innerHTML = bits.join(' · ') + (detailed && g.notes ? '<br>' + esc(g.notes) : '');
   el.appendChild(meta);
 
   const slots = document.createElement('div');
   slots.className = 'slots';
-  asg.forEach(function (u) {
+  if (detailed) asg.forEach(function (u) {
     const s = document.createElement('span');
     s.className = 'who';
     s.textContent = nameOf(u);
     slots.appendChild(s);
   });
-  for (let i = 0; i < room; i++) {
+  if (detailed) for (let i = 0; i < room; i++) {
     const s = document.createElement('span');
     s.className = 'who empty';
     s.textContent = 'מקום פנוי';
     slots.appendChild(s);
   }
+  if (!detailed) {
+    const count = document.createElement('span');
+    count.className = 'who';
+    count.textContent = assignedCount + ' משובצים';
+    slots.appendChild(count);
+    if (room) {
+      const open = document.createElement('span');
+      open.className = 'who empty';
+      open.textContent = room === 1 ? 'מקום פנוי' : room + ' מקומות פנויים';
+      slots.appendChild(open);
+    }
+  }
   el.appendChild(slots);
 
-  const nSign = signupsOf(g).length;
-  if (nSign) {
+  const nSign = detailed ? signupsOf(g).length : 0;
+  if (detailed && nSign) {
     const sg = document.createElement('div');
     sg.className = 'meta';
     sg.style.marginTop = '8px';
@@ -630,14 +1083,14 @@ function guardCard(g, forMe){
   const past = String(g.date || '') < toKey(new Date());
   const live = g.status === 'open' || g.status === 'staffed';
 
-  if (live && !past && !isAssigned(g, ME.uid)) {
+  if (live && !past && !mine) {
     const b = document.createElement('button');
-    b.className = 'btn sm' + (isSignedUp(g, ME.uid) ? '' : ' ok');
-    b.textContent = isSignedUp(g, ME.uid) ? 'בטל הרשמה' : 'אני מעוניין';
+    b.className = 'btn sm' + (guardSignedByMe(g) ? '' : ' ok');
+    b.textContent = guardSignedByMe(g) ? 'בטל הרשמה' : 'אני מעוניין';
     b.onclick = () => toggleSignup(g, b);
     acts.appendChild(b);
   }
-  if (isAssigned(g, ME.uid)) {
+  if (mine) {
     const s = document.createElement('span');
     s.className = 'who';
     s.style.background = 'var(--ok-bg)';
@@ -645,12 +1098,30 @@ function guardCard(g, forMe){
     s.textContent = '✓ אתה משובץ';
     acts.appendChild(s);
   }
-  if (CAN_MANAGE && live) {
-    const b = document.createElement('button');
-    b.className = 'btn sm go';
-    b.textContent = 'שבץ';
-    b.onclick = () => openAssign(g);
-    acts.appendChild(b);
+  if (CAN_MANAGE && detailed && live) {
+    const assign = document.createElement('button');
+    assign.className = 'btn sm go';
+    assign.textContent = 'שבץ';
+    assign.onclick = () => openAssign(g);
+    acts.appendChild(assign);
+
+    const edit = document.createElement('button');
+    edit.className = 'btn sm';
+    edit.textContent = 'ערוך';
+    edit.onclick = () => openEdit(g);
+    acts.appendChild(edit);
+
+    const reschedule = document.createElement('button');
+    reschedule.className = 'btn sm';
+    reschedule.textContent = 'שנה תאריך';
+    reschedule.onclick = () => openReschedule(g);
+    acts.appendChild(reschedule);
+
+    const cancel = document.createElement('button');
+    cancel.className = 'btn sm';
+    cancel.textContent = 'בטל אבטחה';
+    cancel.onclick = () => cancelGuard(g, cancel);
+    acts.appendChild(cancel);
   }
   if (acts.children.length) el.appendChild(acts);
 
@@ -659,7 +1130,7 @@ function guardCard(g, forMe){
 
 async function toggleSignup(g, btn){
   btn.disabled = true;
-  const on = isSignedUp(g, ME.uid);
+  const on = guardSignedByMe(g);
   try {
     await httpsCallable(fns, 'guardSignup')(
       { id: g.id, join: !on });
@@ -690,10 +1161,10 @@ function renderOpen(){
 function renderMine(){
   const box = $('mineList');
   box.innerHTML = '';
-  const list = guards.filter(g => isAssigned(g, ME.uid) || isSignedUp(g, ME.uid));
+  const list = guards.filter(g => guardIsMine(g) || guardSignedByMe(g));
   list.sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
 
-  const mine = loadMap[ME.uid] || { off:0, shift:0, hours:0 };
+  const mine = CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 }) : personalLoad();
   $('mineNote').textContent =
     'בשנה האחרונה: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
     ' שעות) · ' + mine.shift + ' בתוך המשמרת.';
@@ -709,6 +1180,11 @@ function renderMine(){
 // ---------- חלוקת עומס ----------
 
 function renderLoad(){
+  if (!CAN_MANAGE) {
+    $('balList').innerHTML = '';
+    $('rankList').innerHTML = '';
+    return;
+  }
   const rank = fairnessRank(loadMap);
   const max = Math.max(1, ...rank.map(r => r.off));
 
@@ -751,6 +1227,10 @@ function renderLoad(){
 // ---------- לוג ----------
 
 function renderLog(){
+  if (!CAN_MANAGE) {
+    $('logTbl').innerHTML = '';
+    return;
+  }
   const rows = logRows(guards, people, ctx);
   const t = $('logTbl');
   t.innerHTML =
@@ -778,17 +1258,50 @@ function renderLog(){
 
 // ---------- שיבוץ ----------
 
-let dlgPick = {};
+// UIDs are server-validated identifiers and may legally equal "__proto__".
+// A dictionary without Object.prototype keeps selection state correct for every
+// valid UID and prevents property-name collisions from changing the result.
+let dlgPick = Object.create(null);
+
+function assignmentRows(g){
+  // recommend() מוציא משובצים קיימים מן ההצעות בכוונה. בחלון
+  // העריכה הם חייבים לחזור כרשומות בחירה, אחרת אפשר רק להוסיף
+  // אנשים ולעולם אי אפשר להסיר מי שכבר שובץ.
+  const current = Array.from(new Set(assignedOf(g)
+    .map(uid => String(uid || ''))
+    .filter(Boolean)));
+  const assignedRows = current.map(function (uid) {
+    const person = people.filter(p => String(p.uid) === uid)[0] || {};
+    const load = loadMap[uid] || {};
+    const crew = person.crew || load.crew || '';
+    return {
+      uid: uid,
+      name: person.name || load.name || nameOf(uid),
+      crew: crew,
+      emp: person.emp || load.emp || '',
+      signed: isSignedUp(g, uid),
+      blocked: false,
+      missingQuals: [],
+      duty: dutyKind(ctx, uid, crew, String(g.date || '')),
+      assigned: true
+    };
+  });
+  const suggestedRows = recommend(g, people, loadMap, ctx, busy,
+    { needQuals: g.need_quals || [], memberQuals: held });
+  return { current: current, suggested: suggestedRows,
+           rows: assignedRows.concat(suggestedRows) };
+}
 
 function openAssign(g){
-  dlgPick = {};
-  const rows = recommend(g, people, loadMap, ctx, busy,
-    { needQuals: g.need_quals || [], memberQuals: held });
-  const auto = autoPick(g, rows);
+  if (!CAN_MANAGE) return;
+  dlgPick = Object.create(null);
+  const assignment = assignmentRows(g);
+  const cur = assignment.current;
+  cur.forEach(u => dlgPick[u] = true);
+  const auto = autoPick(g, assignment.suggested);
   auto.forEach(u => dlgPick[u] = true);
 
   const d = $('dlg');
-  const cur = assignedOf(g);
   d.innerHTML =
     '<h2 style="font-size:17px;color:var(--accent);margin:0 0 3px">' +
       esc(g.title || '') + '</h2>' +
@@ -796,14 +1309,14 @@ function openAssign(g){
       esc(dmy(g.date)) + ' · ' + esc(g.start) + '–' + esc(g.end) +
       ' · ' + g.slots + ' מקומות</div>' +
     (cur.length
-      ? '<div class="note" style="margin-bottom:10px">משובצים כבר: ' +
-        cur.map(nameOf).map(esc).join(', ') + '</div>'
+      ? '<div class="note" style="margin-bottom:10px">' +
+        'המשובצים הנוכחיים מסומנים. אפשר להסיר סימון כדי לבטל שיבוץ.</div>'
       : '') +
     '<div class="note" style="margin-bottom:6px">' +
       (signupsOf(g).length
         ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
         : 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.') +
-    '</div>' +
+      '<br>בלחיצה על שמירה נשלחת לשרת הרשימה המלאה והעדכנית.</div>' +
     '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
       'border:1px solid var(--line);border-radius:9px;padding:2px 12px;' +
       'background:var(--input)"></div>' +
@@ -814,13 +1327,17 @@ function openAssign(g){
     '</div>';
 
   const list = $('dlgList');
-  rows.forEach(function (r) {
+  assignment.rows.forEach(function (r) {
     const el = document.createElement('label');
-    el.className = 'rec' + (r.blocked ? ' blocked' : '');
+    el.className = 'rec' + (r.blocked && !r.assigned ? ' blocked' : '');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
+    cb.value = r.uid;
     cb.checked = !!dlgPick[r.uid];
-    cb.disabled = r.blocked;
+    // משובץ קיים תמיד ניתן לבחירה כדי שאפשר יהיה להסירו, גם אם
+    // היום אינו כשיר או אינו פעיל עוד. השרת בודק מחדש את כל מי
+    // שנשאר ברשימה לפני שהוא שומר.
+    cb.disabled = !!r.blocked && !r.assigned;
     cb.onchange = function () {
       if (cb.checked) dlgPick[r.uid] = true; else delete dlgPick[r.uid];
     };
@@ -830,9 +1347,13 @@ function openAssign(g){
     nm.innerHTML = '<b>' + esc(r.name) + '</b>' +
       (r.crew ? ' <span class="note">' + esc(CREW_HE[r.crew] || r.crew) +
         '</span>' : '') +
-      '<em>' + esc(whyPicked(r)) + '</em>';
+      '<em>' + esc(r.assigned ? 'משובץ כעת — אפשר להסיר' : whyPicked(r)) + '</em>';
     el.appendChild(nm);
-    if (r.signed) {
+    if (r.assigned) {
+      const s = document.createElement('span');
+      s.className = 'sg'; s.textContent = 'משובץ';
+      el.appendChild(s);
+    } else if (r.signed) {
       const s = document.createElement('span');
       s.className = 'sg'; s.textContent = 'נרשם';
       el.appendChild(s);
@@ -846,7 +1367,7 @@ function openAssign(g){
     el.appendChild(dt);
     list.appendChild(el);
   });
-  if (!rows.length) {
+  if (!assignment.rows.length) {
     list.innerHTML = '<div class="note" style="padding:12px">' +
       'אין אף אחד להציע.</div>';
   }
@@ -860,8 +1381,13 @@ function closeDlg(){ $('ov').style.display = 'none'; }
 $('ov').onclick = function (e) { if (e.target === $('ov')) closeDlg(); };
 
 async function saveAssign(g){
-  const picked = Object.keys(dlgPick);
-  const all = assignedOf(g).concat(picked.filter(u => !isAssigned(g, u)));
+  if (!CAN_MANAGE) {
+    msg('אין כרגע הרשאה לניהול אבטחות.', 'err', 'dlgMsg');
+    return;
+  }
+  // זו הרשימה השלמה, לא "מי להוסיף". כך הסרת סימון של משובץ
+  // קיים מגיעה לשרת במפורש ומאפשרת להשאיר אבטחה לא מאוישת.
+  const all = Object.keys(dlgPick).filter(Boolean).sort();
   if (all.length > Number(g.slots || 0)) {
     msg('בחרת ' + all.length + ' לתוך ' + g.slots + ' מקומות. ' +
         'הסר מישהו או הגדל את מספר המקומות.', 'err', 'dlgMsg');
@@ -869,13 +1395,19 @@ async function saveAssign(g){
   }
   const b = $('dlgSave'); b.disabled = true;
   try {
-    await httpsCallable(fns, 'assignGuard')({ id: g.id, uids: all });
+    await guardCall.manage({
+      action: 'set_assignees',
+      request_id: requestId('guard_assign'),
+      guard_id: String(g.id || ''),
+      expected_revision: expectedRevision(g),
+      uids: all
+    });
     closeDlg();
     await loadAll();
   } catch (e) {
+    await showManagementFailure(e, 'dlgMsg');
+  } finally {
     b.disabled = false;
-    msg('השיבוץ נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
-        'err', 'dlgMsg');
   }
 }
 </script>

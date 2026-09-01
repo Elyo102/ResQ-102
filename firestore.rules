@@ -91,6 +91,21 @@ service cloud.firestore {
       return signedIn() && claim('stationId') == sid;
     }
 
+    // Claims can remain in an already-issued ID token for up to an hour after
+    // a transfer or removal.  The server-owned membership mirror is therefore
+    // the immediate revocation boundary: an old token is not enough when the
+    // live station record is missing, inactive, moved, or has a different
+    // primary role.  Super remains a deliberate global break-glass identity.
+    function liveStationIdentity(sid) {
+      let user = get(/databases/$(database)/documents/stations/$(sid)/users/$(request.auth.uid)).data;
+      return inStation(sid)
+             && user.get('is_active', true) != false
+             && user.get('active', true) != false
+             && user.get('role', '') == claim('role')
+             && user.get('station', sid) == sid
+             && user.get('stationId', sid) == sid;
+    }
+
     // סגן מפקד משמרת ומפקד תחנה, 23.8.2026.
     //
     // הסגן אינו הערה על מפקד — הוא תפקיד. אלדד חוזר בכל דרישה
@@ -113,7 +128,7 @@ service cloud.firestore {
 
     function member(sid) {
       return isSuper()
-             || (inStation(sid)
+             || (liveStationIdentity(sid)
                  && claim('role') in ['firefighter',
                                       'deputy_team_leader', 'team_leader',
                                       'deputy', 'commander',
@@ -122,7 +137,7 @@ service cloud.firestore {
 
     function staff(sid) {
       return isSuper()
-             || (inStation(sid) && claim('role') in
+             || (liveStationIdentity(sid) && claim('role') in
                  ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
     }
 
@@ -131,7 +146,7 @@ service cloud.firestore {
     // ולכן היא נשאלת בשם משלה ולא נגזרת מאחת מהן.
     function logWriter(sid) {
       return isSuper()
-             || (inStation(sid) && claim('role') in
+             || (liveStationIdentity(sid) && claim('role') in
                  ['deputy_team_leader', 'team_leader', 'deputy',
                   'commander', 'station_commander', 'hr_coordinator']);
     }
@@ -140,11 +155,11 @@ service cloud.firestore {
     // הם שני דברים שונים לגמרי, ושם דומה מדי היה מזמין טעות.
     function stationCommander(sid) {
       return isSuper()
-             || (inStation(sid) && claim('role') == 'station_commander');
+             || (liveStationIdentity(sid) && claim('role') == 'station_commander');
     }
 
     function hr(sid) {
-      return isSuper() || (inStation(sid) && claim('role') == 'hr_coordinator');
+      return isSuper() || (liveStationIdentity(sid) && claim('role') == 'hr_coordinator');
     }
 
     // מבקרי חודש הצל של הנוכחות האוטומטית. המידע המסכם כולל
@@ -274,6 +289,17 @@ service cloud.firestore {
     }
 
     match /identity_operations/{uid} {
+      allow read, write: if false;
+    }
+
+    // בקשות העברה ונעילותיהן מכילות תמונת זהות ותוכנית מעבר.
+    // הן נגישות רק דרך callables שבודקים את תחנת המקור והיעד;
+    // אף לקוח, כולל super, אינו קורא או משנה אותן ישירות.
+    match /station_transfer_requests/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /station_transfer_locks/{uid} {
       allow read, write: if false;
     }
 
@@ -409,7 +435,8 @@ service cloud.firestore {
       // רשימת אנשי התחנה לתצוגה מגיעה מאוסף roster נפרד.
       match /users/{uid} {
         allow read: if staff(sid)
-                    || (signedIn() && request.auth.uid == uid);
+                    || (signedIn() && request.auth.uid == uid
+                        && liveStationIdentity(sid));
 
         allow create, delete: if false;
 
@@ -417,6 +444,7 @@ service cloud.firestore {
         // וסטטוס פעיל נקבעים בשרת ולא ניתנים לשינוי מהדפדפן.
         allow update: if signedIn()
                       && request.auth.uid == uid
+                      && liveStationIdentity(sid)
                       && request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['full_name', 'phone', 'email', 'photo_url']);
 
@@ -1050,45 +1078,40 @@ service cloud.firestore {
       //
       //   קריאה   כל חבר תחנה. אבטחה אינה סוד, וכל אחד צריך
       //           לראות מה פתוח כדי להירשם
-      //   פתיחה   סגל בלבד — מפקד, רכז כוח אדם, מנהל-על
-      //   שיבוץ   דרך פונקציית שרת בלבד
+      //   פתיחה/עריכה/שיבוץ/ביטול  רק דרך שער השרת של אחראי/ת
+      //                              הסידור שמונה/תה בפועל
       //
       // הרשמה עצמית עוברת גם היא דרך השרת (guardSignup), ולכן
       // הכלל כאן חוסם כתיבה ישירה של signups מהדפדפן. הסיבה:
       // הרשמה משנה מסמך משותף, ומשתמש שיכול לכתוב לתוכו יכול
       // גם למחוק את ההרשמות של האחרים.
       //
-      // אבטחה שאין עליה שיבוץ פתוחה לעריכה בידי הסגל. משיש
-      // שיבוץ — רק השרת נוגע, אחרת מפקד יכול לשנות תאריך מתחת
-      // לרגליים של מי שכבר תכנן את היום שלו.
+      // גם פתיחה של אבטחה לא מאוישת אינה נכתבת ישירות. השער
+      // בשרת מאמת מינוי חי, תחנה, revision ו-idempotency, מתעד
+      // את הפעולה, ומייצר עדכון אישי בלי לחשוף פרטי עמיתים.
 
       match /guards/{gId} {
-        allow read: if member(sid);
+        // מסמך האבטחה הגולמי כולל מקום, הערות, רשימות התעניינות
+        // ותיעוד פעולה. הדפדפן אינו קורא אותו כלל: ארבע פעולות
+        // Callable מחזירות היטל מצומצם לפי זהות ותפקיד. גם אחראי/ת
+        // סידור עובר/ת בשער השרת כדי שהמינוי החי ייבדק מחדש.
+        allow read, create, update, delete: if false;
+      }
 
-        allow create: if staff(sid)
-                      && request.resource.data.get('by_uid', '') == request.auth.uid
-                      && request.resource.data.get('title', '') is string
-                      && request.resource.data.get('title', '').size() > 0
-                      && request.resource.data.get('title', '').size() <= 80
-                      && request.resource.data.get('date', '') is string
-                      && request.resource.data.get('date', '').size() == 10
-                      && request.resource.data.get('slots', 0) is int
-                      && request.resource.data.get('slots', 0) > 0
-                      && request.resource.data.get('slots', 0) <= 20
-                      && request.resource.data.get('assigned', []).size() == 0;
-
-        // עריכה מהדפדפן רק כשאין עדיין משובצים, ורק לשדות
-        // התיאור. signups ו-assigned נכתבים בשרת בלבד.
-        allow update: if staff(sid)
-                      && resource.data.get('assigned', []).size() == 0
-                      && request.resource.data.diff(resource.data)
-                           .affectedKeys().hasOnly([
-                             'title','kind','place','date','start','end',
-                             'slots','need_quals','notes','status'
-                           ]);
-
-        allow delete: if staff(sid)
-                      && resource.data.get('assigned', []).size() == 0;
+      // Trace, de-duplication and notification retry records are server-only.
+      // A member may read the guard itself, never other recipients or notes
+      // attached to a management action.
+      match /guard_operations/{operationId} {
+        allow read, write: if false;
+      }
+      match /guard_audit/{auditId} {
+        allow read, write: if false;
+      }
+      match /guard_notification_jobs/{jobId} {
+        allow read, write: if false;
+      }
+      match /guard_outbox/{outboxId} {
+        allow read, write: if false;
       }
 
 
@@ -1157,6 +1180,21 @@ service cloud.firestore {
       // מפקד מאשר רק את המשמרת שלו — seesShift אוכף את זה.
 
       match /swaps/{swapId} {
+        // These two helpers deliberately do not read the live user document.
+        // They are safe only under the single member(sid) gate on allow update
+        // below.  Keeping that live read outside the five state transitions
+        // avoids Firestore's 1,000-expression limit while preserving immediate
+        // revocation for a stale token.
+        function swapStaffAfterMember() {
+          return isSuper() || claim('role') in
+            ['deputy', 'commander', 'station_commander', 'hr_coordinator'];
+        }
+
+        function swapSeesShiftAfterMember(crew) {
+          return isSuper() || claim('role') in ['hr_coordinator', 'station_commander']
+                 || myShift() == '' || myShift() == crew;
+        }
+
         allow read: if member(sid);
 
         // שני מסלולים ליצירה:
@@ -1185,78 +1223,68 @@ service cloud.firestore {
         //
         // הצד של המבקש נעול לגמרי: מי שלוקח לא משנה את התאריך
         // או את המשמרת של מי שפרסם.
-        allow update: if member(sid)
-                      && resource.data.get('status', '') == 'open'
-                      && request.resource.data.get('status', '') == 'cmd_from'
-                      && request.resource.data.get('to_uid', '') == request.auth.uid
-                      && resource.data.get('from_uid', '') != request.auth.uid
-                      && request.resource.data.get('to_date', '') != ''
-                      && request.resource.data.get('to_crew', '') != ''
-                      && request.resource.data.get('from_uid', '')  == resource.data.get('from_uid', '')
-                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
-                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '');
+        // All update transitions share one live-membership read.  Separate
+        // allow clauses caused the rules engine to evaluate that document read
+        // five times on the final commander approval and exceed its expression
+        // budget.  The transition predicates remain unchanged inside this OR.
+        allow update: if member(sid) && (
+          // לקיחת בקשה פתוחה.
+          (resource.data.get('status', '') == 'open'
+           && request.resource.data.get('status', '') == 'cmd_from'
+           && request.resource.data.get('to_uid', '') == request.auth.uid
+           && resource.data.get('from_uid', '') != request.auth.uid
+           && request.resource.data.get('to_date', '') != ''
+           && request.resource.data.get('to_crew', '') != ''
+           && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+           && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+           && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', ''))
 
-        // הכבאי השני מסכים או מסרב. הוא לא יכול לאשר סופית.
-        //
-        // התאריכים נעולים כאן כמו האנשים והמשמרות. בגרסה
-        // הקודמת רק from_uid, to_uid ושתי המשמרות היו נעולים,
-        // והכבאי המסכים יכול היה לשנות את היום שהמבקש מוסר —
-        // ולהעביר את הבקשה למפקדים כאילו הוסכם עליה. בדיקת
-        // האבטחה תפסה את זה ב-25.8.2026.
-        allow update: if member(sid)
-                      && resource.data.get('to_uid', '') == request.auth.uid
-                      && resource.data.get('status', '') == 'peer'
-                      && request.resource.data.get('status', '') in ['cmd_from', 'rejected']
-                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
-                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
-                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
-                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
-                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
+          // הכבאי השני מסכים או מסרב.
+          || (resource.data.get('to_uid', '') == request.auth.uid
+              && resource.data.get('status', '') == 'peer'
+              && request.resource.data.get('status', '') in ['cmd_from', 'rejected']
+              && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+              && request.resource.data.get('to_uid', '') == resource.data.get('to_uid', '')
+              && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+              && request.resource.data.get('to_crew', '') == resource.data.get('to_crew', '')
+              && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+              && request.resource.data.get('to_date', '') == resource.data.get('to_date', ''))
 
-        // מפקד המשמרת של המבקש.
-        //
-        // מפקד מאשר או דוחה — הוא אינו עורך. גם לו התאריכים
-        // נעולים: מה שמאושר חייב להיות מה שהוגש.
-        allow update: if staff(sid)
-                      && seesShift(sid, resource.data.get('from_crew', ''))
-                      && resource.data.get('status', '') == 'cmd_from'
-                      && request.resource.data.get('status', '') in ['cmd_to', 'rejected']
-                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
-                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
-                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
-                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
-                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
+          // מפקד משמרת המקור מאשר או דוחה.
+          || (swapStaffAfterMember()
+              && swapSeesShiftAfterMember(resource.data.get('from_crew', ''))
+              && resource.data.get('status', '') == 'cmd_from'
+              && request.resource.data.get('status', '') in ['cmd_to', 'rejected']
+              && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+              && request.resource.data.get('to_uid', '') == resource.data.get('to_uid', '')
+              && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+              && request.resource.data.get('to_crew', '') == resource.data.get('to_crew', '')
+              && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+              && request.resource.data.get('to_date', '') == resource.data.get('to_date', ''))
 
-        // מפקד המשמרת השנייה. רק הוא יכול להביא ל-approved.
-        //
-        // ואינו אותו אדם שאישר את השלב הקודם. רכז כוח אדם
-        // ומנהל-על עוברים את seesShift לכל המשמרות, ולכן בלי
-        // התנאי הזה אדם אחד יכול היה להעביר בקשה משני שלבי
-        // המפקדים לבדו — בזמן שכל התכנון הוא ששניים אישרו.
-        allow update: if staff(sid)
-                      && seesShift(sid, resource.data.get('to_crew', ''))
-                      && request.auth.uid != resource.data.get('from_appr_uid', '')
-                      && resource.data.get('status', '') == 'cmd_to'
-                      && request.resource.data.get('status', '') in ['approved', 'rejected']
-                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
-                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
-                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '')
-                      && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
-                      && request.resource.data.get('to_date', '')   == resource.data.get('to_date', '');
+          // מפקד המשמרת השנייה מאשר סופית או דוחה.
+          || (swapStaffAfterMember()
+              && swapSeesShiftAfterMember(resource.data.get('to_crew', ''))
+              && request.auth.uid != resource.data.get('from_appr_uid', '')
+              && resource.data.get('status', '') == 'cmd_to'
+              && request.resource.data.get('status', '') in ['approved', 'rejected']
+              && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+              && request.resource.data.get('to_uid', '') == resource.data.get('to_uid', '')
+              && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+              && request.resource.data.get('to_crew', '') == resource.data.get('to_crew', '')
+              && request.resource.data.get('from_date', '') == resource.data.get('from_date', '')
+              && request.resource.data.get('to_date', '') == resource.data.get('to_date', ''))
 
-        // ביטול על ידי אחד השניים, כל עוד לא אושרה.
-        allow update: if member(sid)
-                      && (resource.data.get('from_uid', '') == request.auth.uid
-                          || resource.data.get('to_uid', '') == request.auth.uid)
-                      && resource.data.get('status', '') != 'approved'
-                      && request.resource.data.get('status', '') == 'cancelled'
-                      && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
-                      && request.resource.data.get('to_uid', '')   == resource.data.get('to_uid', '')
-                      && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
-                      && request.resource.data.get('to_crew', '')   == resource.data.get('to_crew', '');
+          // אחד משני הכבאים מבטל לפני אישור סופי.
+          || ((resource.data.get('from_uid', '') == request.auth.uid
+               || resource.data.get('to_uid', '') == request.auth.uid)
+              && resource.data.get('status', '') != 'approved'
+              && request.resource.data.get('status', '') == 'cancelled'
+              && request.resource.data.get('from_uid', '') == resource.data.get('from_uid', '')
+              && request.resource.data.get('to_uid', '') == resource.data.get('to_uid', '')
+              && request.resource.data.get('from_crew', '') == resource.data.get('from_crew', '')
+              && request.resource.data.get('to_crew', '') == resource.data.get('to_crew', ''))
+        );
 
         allow delete: if isSuper();
       }

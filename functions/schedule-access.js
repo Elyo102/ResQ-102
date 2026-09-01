@@ -9,6 +9,10 @@
 const SCHEDULE_ACCESS_SCHEMA_VERSION = 1;
 const SCHEDULE_MANAGER_ROLE = 'schedule_manager';
 const ID_RE = /^[A-Za-z0-9_-]{2,120}$/;
+// Firebase auth UIDs are document-key segments, not station/request ids.
+// They may contain a dot; slash/control are forbidden because they cannot be
+// addressed as one Firestore document id in this data model.
+const AUTH_UID_RE = /^[^\u0000-\u001F\u007F/]{1,128}$/;
 
 function plain(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -20,6 +24,10 @@ function nonEmptyString(value) {
 
 function validId(value) {
   return ID_RE.test(String(value || ''));
+}
+
+function validUid(value) {
+  return AUTH_UID_RE.test(typeof value === 'string' ? value : '');
 }
 
 function liveStation(user) {
@@ -45,15 +53,16 @@ function activeMember(user, stationId) {
 }
 
 function isManagerAccess(access, stationId, uid) {
-  if (!plain(access) || !validId(stationId) || !validId(uid)) return false;
+  if (!plain(access) || !validId(stationId) || !validUid(uid)) return false;
   if (access.schema_version !== SCHEDULE_ACCESS_SCHEMA_VERSION || access.active !== true) return false;
   if (access.station_id !== stationId || access.uid !== uid) return false;
+  if (!Number.isSafeInteger(access.revision) || access.revision < 1) return false;
   if (!Array.isArray(access.roles) || access.roles.length !== 1) return false;
   return access.roles[0] === SCHEDULE_MANAGER_ROLE;
 }
 
 function nextRecord(previous, stationId, uid, enabled) {
-  if (!validId(stationId) || !validId(uid) || typeof enabled !== 'boolean') {
+  if (!validId(stationId) || !validUid(uid) || typeof enabled !== 'boolean') {
     throw new TypeError('invalid schedule access input');
   }
   const prior = plain(previous) ? previous : {};
@@ -73,6 +82,7 @@ module.exports = Object.freeze({
   SCHEDULE_ACCESS_SCHEMA_VERSION,
   SCHEDULE_MANAGER_ROLE,
   validId,
+  validUid,
   liveStation,
   activeMember,
   isManagerAccess,

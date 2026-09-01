@@ -358,7 +358,6 @@ import { renderNav, renderStuckNav } from './nav.js?v=38';
 import { MEMBER_ROLES } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
 import { watchCallouts } from './callout.js?v=38';
-import { isAssigned as guardHasMe } from './guards.js?v=38';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
   from './rotation.js?v=38';
@@ -372,6 +371,8 @@ import { getAuth, onAuthStateChanged }
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -379,6 +380,8 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const callMyGuardAttendance = httpsCallable(fns, 'getMyGuardAttendance');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
@@ -409,6 +412,7 @@ let PEOPLE = [];
 let subjectGeneration = 0;
 let staticLoadGeneration = 0;
 let monthLoadGeneration = 0;
+let guardLoadGeneration = 0;
 
 // האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
 function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
@@ -426,11 +430,76 @@ function stamp(body) {
 }
 let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [];
-let myGuards = [];   // אבטחות שאני משובץ אליהן
+let myGuards = [];   // אבטחות אישיות של החשבון המחובר בלבד
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
 let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
 let swaps   = [];          // כל ההחלפות המאושרות בתחנה; הסינון לאדם נעשה בחישוב
+
+const GUARD_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const GUARD_TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+function guardMonthRange(year, month){
+  return {
+    from: dateKey(year, month, 1),
+    to: dateKey(year, month, daysInMonth(year, month))
+  };
+}
+
+// ה-callable מחזיר היטל אישי מצומצם, אבל גם כאן בונים עצם חדש
+// מהשדות היחידים שהמסך צריך. כך שדה עתידי בתשובת השרת לא יכול
+// להפוך בטעות לנתון שמופיע בדוח השעות או במילוי האוטומטי.
+function personalGuardRows(result){
+  const rows = result && result.data && Array.isArray(result.data.guards)
+    ? result.data.guards : [];
+  return rows.map(function (item) {
+    if (!item || typeof item !== 'object') return null;
+    const date = String(item.date || '');
+    const start = String(item.start || '');
+    const end = String(item.end || '');
+    if (!GUARD_DATE_RE.test(date) || !GUARD_TIME_RE.test(start) || !GUARD_TIME_RE.test(end)) {
+      return null;
+    }
+    return {
+      id: typeof item.id === 'string' ? item.id : '',
+      date: date,
+      title: typeof item.title === 'string' ? item.title : '',
+      start: start,
+      end: end,
+      status: typeof item.status === 'string' ? item.status : ''
+    };
+  }).filter(function (item) {
+    // ההתנהגות הישנה דילגה על ביטולים, ולכן ביטול אינו ממלא
+    // מראש יום עבודה בדוח.
+    return item && item.status !== 'cancelled';
+  });
+}
+
+async function readMyGuardAttendance(snapshot){
+  // השרת תמיד מחזיר את האבטחות של החשבון המחובר, לא של subject.
+  // רכזת כוח אדם שעורכת מישהו אחר מקבלת כאן רשימה ריקה במכוון:
+  // אסור להציג את האבטחות שלה בתוך הדוח של עובד אחר.
+  if (!snapshot || snapshot.subjectUid !== snapshot.viewerUid) return [];
+  const range = guardMonthRange(snapshot.year, snapshot.month);
+  try {
+    const result = await callMyGuardAttendance(range);
+    return personalGuardRows(result);
+  } catch (ignore) {
+    // כמו הקריאה הישירה שהוחלפה: כשל זמני באבטחות אינו מוחק את
+    // דוח השעות כולו. ברירת המחדל הריקה בטוחה יותר מנתון ישן.
+    return [];
+  }
+}
+
+// טעינת אבטחות יכולה להתחיל גם מתוך סנכרון וגם מתוך טעינת חודש.
+// רק מי שהתחיל אחרון רשאי לפרסם את תוצאתו; אחרת תשובה ישנה
+// לאותו חודש ולאותו אדם עלולה לדרוס תוצאה חדשה יותר.
+function beginMyGuardAttendance(snapshot){
+  const generation = ++guardLoadGeneration;
+  return readMyGuardAttendance(snapshot).then(function (guards) {
+    return { generation: generation, guards: guards };
+  });
+}
 
 function siteHoursOf(id){
   const s = sites.filter(x => x.id === id)[0];
@@ -546,27 +615,14 @@ async function loadStatic(){
   };
   const next = {};
 
-  // ששת המקורות אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
+  // חמשת המקורות אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
-  // כל משימה עדיין מבודדת בכשל, בדיוק כמו ששת ה-try/catch
+  // כל משימה עדיין מבודדת בכשל, בדיוק כמו חמשת ה-try/catch
   // שהיו כאן קודם — מקור חסר אינו מוחק נתון שמקור אחר החזיר.
   const loadRotations = async function () {
     try {
       const rs = await getDocs(collection(db, 'stations', snapshot.sid, 'rotations'));
       next.rotations = rs.docs.map(d => d.data());
-    } catch (ignore) {}
-  };
-
-  const loadGuards = async function () {
-    try {
-      const gs = await getDocs(collection(db, 'stations', snapshot.sid, 'guards'));
-      const found = [];
-      gs.forEach(d => {
-        const v = Object.assign({ id: d.id }, d.data() || {});
-        if (v.status === 'cancelled') return;
-        if (guardHasMe(v, snapshot.uid)) found.push(v);
-      });
-      next.myGuards = found;
     } catch (ignore) {}
   };
 
@@ -642,7 +698,7 @@ async function loadStatic(){
   };
 
   await Promise.all([
-    loadRotations(), loadGuards(), loadOverrides(),
+    loadRotations(), loadOverrides(),
     loadBoardSite(), loadSwaps(), loadSites()
   ]);
 
@@ -652,7 +708,6 @@ async function loadStatic(){
   if (!current) return false;
 
   if (Object.prototype.hasOwnProperty.call(next, 'rotations')) rotations = next.rotations;
-  if (Object.prototype.hasOwnProperty.call(next, 'myGuards')) myGuards = next.myGuards;
   if (Object.prototype.hasOwnProperty.call(next, 'overrides')) overrides = next.overrides;
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
@@ -685,6 +740,8 @@ async function loadMonth(){
     sid: SID,
     emp: String(SUBJ.emp),
     subject: subjectGeneration,
+    subjectUid: SUBJ.uid,
+    viewerUid: ME && ME.uid,
     year: viewYear,
     month: viewMonth
   };
@@ -692,12 +749,13 @@ async function loadMonth(){
   const nextRecords = {};
   let nextReport = null;
   let attendanceError = null;
+  const guardRequest = beginMyGuardAttendance(snapshot);
   setMonthBusy(true);
 
   // רשומות החודש ומצב הדוח הן שתי קריאות עצמאיות. שתיהן
   // מתחילות יחד ובונות תוצאה מקומית. רק דור הטעינה האחרון
   // רשאי לפרסם אותה, כך שחודש איטי לא יכול לדרוס חודש חדש.
-  await Promise.all([
+  const loaded = await Promise.all([
     (async function () {
       // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
       // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
@@ -722,17 +780,21 @@ async function loadMonth(){
                                    snapshot.emp + '_' + mk));
         if (r.exists()) nextReport = r.data();
       } catch (ignore) {}
-    })()
+    })(),
+    guardRequest
   ]);
+  const guardResult = loaded[2];
 
   const current = generation === monthLoadGeneration &&
     snapshot.subject === subjectGeneration && SID === snapshot.sid &&
     SUBJ && String(SUBJ.emp) === snapshot.emp &&
+    SUBJ.uid === snapshot.subjectUid && ME && ME.uid === snapshot.viewerUid &&
     viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
 
   records = nextRecords;
   report = nextReport;
+  if (guardResult.generation === guardLoadGeneration) myGuards = guardResult.guards;
   if (attendanceError) {
     const code = String(attendanceError.code || '');
     if (code.indexOf('failed-precondition') !== -1) {
@@ -1046,15 +1108,25 @@ $('btnManual').onclick = () => {
 
 $('btnSync').onclick = async () => {
   const b = $('btnSync'); b.disabled = true;
-  const action = { subject:subjectGeneration, year:viewYear, month:viewMonth };
+  const action = {
+    subject:subjectGeneration, subjectUid:SUBJ.uid, viewerUid:ME && ME.uid,
+    year:viewYear, month:viewMonth
+  };
   try {
-    // הסידור נטען מחדש — הוא יכול היה להשתנות מאז שהמסך נפתח.
-    const fresh = await loadStatic();
+    // הסידור והאבטחות האישיות נטענים מחדש — שניהם יכולים היו
+    // להשתנות מאז שהמסך נפתח. האבטחות נשארות אישיות גם בזמן
+    // שרכזת כוח אדם פותחת דוח של עובד אחר.
+    const guardRequest = beginMyGuardAttendance(action);
+    const loaded = await Promise.all([loadStatic(), guardRequest]);
+    const fresh = loaded[0];
+    const freshGuards = loaded[1];
     if (!fresh || action.subject !== subjectGeneration ||
+        action.subjectUid !== (SUBJ && SUBJ.uid) || action.viewerUid !== (ME && ME.uid) ||
         action.year !== viewYear || action.month !== viewMonth) {
       msg('התיקון בוטל כי האדם או החודש השתנו בזמן הטעינה.', 'info');
       return;
     }
+    if (freshGuards.generation === guardLoadGeneration) myGuards = freshGuards.guards;
 
     const bt = baseTimes();
     const last = daysInMonth(viewYear, viewMonth);
@@ -1210,8 +1282,9 @@ function editDay(key, rec){
   const g = myGuardOn(key);
   const dflt = (g && !workingOn(key))
     ? { day_type: 'guard', start: g.start || bt.start, end: g.end || bt.end,
-        sub_station: mySite, notes: (g.title || '') +
-          (g.place ? ' · ' + g.place : '') }
+        // תצוגת האבטחות האישית אינה כוללת מקום. כותרת האבטחה
+        // מספיקה כהקשר למילוי מראש, בלי להרחיב את מידע המיקום.
+        sub_station: mySite, notes: g.title || '' }
     : { day_type: 'regular', start: bt.start, end: bt.end,
         sub_station: mySite, notes: '' };
 

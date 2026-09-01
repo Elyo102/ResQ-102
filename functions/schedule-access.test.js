@@ -54,6 +54,13 @@ test('only the exact live local schedule-manager record grants management', () =
   assert.equal(access.isManagerAccess(manager({ active: false }), SID, UID), false);
 });
 
+test('an incomplete or corrupt access revision never grants schedule management', () => {
+  for (const revision of [undefined, null, 0, -1, 1.5, '1']) {
+    assert.equal(access.isManagerAccess(manager({ revision }), SID, UID), false, String(revision));
+  }
+  assert.equal(access.isManagerAccess(manager({ revision: Number.MAX_SAFE_INTEGER + 1 }), SID, UID), false);
+});
+
 test('a live record is versioned and revocation clears the only role', () => {
   const grant = access.nextRecord(null, SID, UID, true);
   assert.deepEqual(grant, {
@@ -73,5 +80,5 @@ test('invalid ids or enable flags cannot create an access record', () => {
   assert.equal(access.isManagerAccess(manager(), SID, '__proto__'), false);
 });
 
-assert.equal(passed, 7);
-console.log('\n7 schedule access unit checks passed.');
+assert.equal(passed, 8);
+console.log('\n8 schedule access unit checks passed.');

@@ -206,12 +206,14 @@ import { watchCallouts } from './callout.js?v=38';
 import { CREW_HE } from './rotation.js?v=38';
 import { mergeFleet } from './faults.js?v=38';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=38';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -219,6 +221,9 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const guardStatsCall = httpsCallable(fns, 'getGuardLoadStatistics');
+const scheduleStatusCall = httpsCallable(fns, 'getScheduleRuntimeStatus');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
@@ -234,6 +239,7 @@ function esc(s){
 let SID = '', ME = null, WIN = '365';
 let fleet = [], faults = [], guards = [], swaps = [], people = [];
 let rotations = [], overrides = {}, ctx = {};
+let guardLoadError = '';
 
 // ---------- הרשאה ----------
 
@@ -247,7 +253,12 @@ onAuthStateChanged(auth, async user => {
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   // אנליטיקה היא כלי ניהול. כבאי רואה את העומס שלו במסך
   // האבטחות; כאן מסתכלים על אנשים אחרים, וזה לא לכולם.
-  const isStaff = isSuper ||
+  let liveManager = false;
+  try {
+    const status = await scheduleStatusCall();
+    liveManager = !!(status && status.data && status.data.manager === true);
+  } catch (ignore) {}
+  const isStaff = isSuper || liveManager ||
     ['deputy','commander','station_commander','hr_coordinator']
       .indexOf(c.role) !== -1;
 
@@ -278,6 +289,33 @@ onAuthStateChanged(auth, async user => {
 
 // ---------- טעינה ----------
 
+function guardDayOffset(key, offset){
+  const d = new Date(String(key || '') + 'T12:00:00');
+  d.setDate(d.getDate() + offset);
+  return toKey(d);
+}
+
+function guardStatisticsRange(){
+  const today = toKey(new Date());
+  // "הכול" הוסר מלוח העומס: מסלול השרת נושא לכל היותר שנה אחת,
+  // כדי שהמסך לא יהפוך לקריאת היסטוריה בלתי מוגבלת. גם אם טאב ישן
+  // שולח את הערך הישן, נשמרת תקרת השנה הבטוחה.
+  const from = sinceKey(WIN, new Date()) || guardDayOffset(today, -365);
+  return { from:from, to:today };
+}
+
+async function loadGuardStatistics(){
+  guardLoadError = '';
+  try {
+    const result = await guardStatsCall(guardStatisticsRange());
+    const rows = result && result.data && result.data.guards;
+    guards = Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : [];
+  } catch (error) {
+    guards = [];
+    guardLoadError = 'לא הצלחנו לטעון את נתוני האבטחות לחלון שנבחר.';
+  }
+}
+
 async function loadAll(){
   // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
   //
@@ -298,6 +336,7 @@ async function loadAll(){
     })());
   };
   const flush = () => Promise.all(jobs);
+  const guardStats = loadGuardStatistics();
 
   people = [];
   await grab('roster', s => s.forEach(d => {
@@ -309,10 +348,6 @@ async function loadAll(){
   faults = [];
   await grab('faults', s => s.forEach(d =>
     faults.push(Object.assign({ id: d.id }, d.data() || {}))));
-
-  guards = [];
-  await grab('guards', s => s.forEach(d =>
-    guards.push(Object.assign({ id: d.id }, d.data() || {}))));
 
   swaps = [];
   await grab('swaps', s => s.forEach(d => swaps.push(d.data() || {})));
@@ -340,6 +375,7 @@ async function loadAll(){
   }));
 
   await flush();
+  await guardStats;
 
   fleet = mergeFleet(boardVehicles, anchors);
   ctx = { rotations, overrides,
@@ -353,11 +389,17 @@ async function loadAll(){
 function buildWindows(){
   const bar = $('winBar');
   bar.innerHTML = '';
-  WINDOWS.forEach(function (w) {
+  WINDOWS.filter(w => w.id !== 'all').forEach(function (w) {
     const b = document.createElement('button');
     b.textContent = w.he;
     b.className = w.id === WIN ? 'on' : '';
-    b.onclick = function () { WIN = w.id; buildWindows(); render(); };
+    b.onclick = async function () {
+      WIN = w.id;
+      buildWindows();
+      await loadGuardStatistics();
+      ctx = { rotations, overrides, swaps:swaps.filter(s => s.status === 'approved'), guards };
+      render();
+    };
     bar.appendChild(b);
   });
 }
@@ -425,7 +467,8 @@ function renderLoad(since){
   const fair = fairness(map);
   const max = Math.max(1, ...rank.map(r => r.score));
 
-  $('lLead').innerHTML = '<div class="lead ' +
+  $('lLead').innerHTML = (guardLoadError
+    ? '<div class="lead bad">' + esc(guardLoadError) + '</div>' : '') + '<div class="lead ' +
     (fair.spread > Math.max(2, (fair.avg || 0) * 0.5) ? 'bad' : 'ok') + '">' +
     esc(fair.he) +
     (rank.length && rank[0].score

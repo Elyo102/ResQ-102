@@ -50,7 +50,10 @@ const result = await page.evaluate(() => ({
   interactiveMs: Date.now() - window.__PERF_STARTED,
   dataRequests: window.__N || 0,
   dataSpanMs: (window.__TN || Date.now()) - (window.__T0 || Date.now()),
-  dataPaths: (window.__DATA_PATHS || []).slice()
+  dataPaths: (window.__DATA_PATHS || []).slice(),
+  guardCalls: (window.__CALLABLE_CALLS || [])
+    .filter(call => call && call.name === 'getMyGuardAttendance')
+    .map(call => call.payload)
 }));
 
 console.log('Attendance slow-network benchmark');
@@ -69,13 +72,26 @@ function check(ok, message) {
   console.log((ok ? '✓ ' : '✗ ') + message);
 }
 
-const criticalPaths = ['/rotations','/guards','/shift_overrides','/config/board',
+const criticalPaths = ['/rotations','/shift_overrides','/config/board',
   '/shifts/C','/swaps','/sub_stations','/attendance','/monthly_reports/1_'];
-check(result.dataRequests === 14, 'benchmark keeps the expected 14 data requests');
+check(!result.dataPaths.some(path => /\/guards$/.test(path)),
+      'attendance does not read raw guard documents in the browser');
 criticalPaths.forEach(suffix => {
   check(result.dataPaths.some(p => p.includes(suffix)),
         'benchmark exercised ' + suffix);
 });
+const initialRange = await page.evaluate(() => {
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const pad = value => String(value).padStart(2, '0');
+  return {
+    from: year + '-' + pad(month + 1) + '-01',
+    to: year + '-' + pad(month + 1) + '-' + pad(new Date(year, month + 1, 0).getDate())
+  };
+});
+check(result.guardCalls.length === 1 &&
+      JSON.stringify(result.guardCalls[0]) === JSON.stringify(initialRange),
+      'attendance asks the server for exactly the displayed month');
 
 // שתי טעינות חודש בכוונה יוצאות יחד: הראשונה איטית והשנייה
 // מהירה. אחרי שהאיטית חוזרת, הכותרת חייבת להישאר של האחרונה.
@@ -100,6 +116,9 @@ check(await page.locator('#work').getAttribute('aria-busy') === 'false',
 // לאדם אחר וחוזרים בצורה רגילה, כדי לוודא שמידע של אדם קודם
 // אינו משמש fallback גם כאשר שתי הטעינות הצליחו.
 await page.locator('#pickWho option[value="17"]').waitFor({ state:'attached' });
+const guardCallsBeforeOther = await page.evaluate(() =>
+  (window.__CALLABLE_CALLS || []).filter(call => call && call.name === 'getMyGuardAttendance')
+    .map(call => call.payload));
 await page.selectOption('#pickWho', '17');
 await page.evaluate(() => document.getElementById('pickGo').click());
 await page.waitForFunction(() =>
@@ -108,6 +127,11 @@ await page.waitForFunction(() =>
 const otherSiteRow = (await page.locator('#rows tr.sug').first().textContent()) || '';
 check(otherSiteRow.includes('שחמון') && !otherSiteRow.includes('ראשית'),
       'switching subject publishes that subject\'s default site');
+const guardCallsAfterOther = await page.evaluate(() =>
+  (window.__CALLABLE_CALLS || []).filter(call => call && call.name === 'getMyGuardAttendance')
+    .map(call => call.payload));
+check(guardCallsAfterOther.length === guardCallsBeforeOther.length,
+      'opening another employee never fetches the viewer\'s guards into that report');
 
 await page.evaluate(() => document.getElementById('pickBack').click());
 await page.waitForFunction(() =>
@@ -116,6 +140,94 @@ await page.waitForFunction(() =>
 const selfSiteRow = (await page.locator('#rows tr.sug').first().textContent()) || '';
 check(selfSiteRow.includes('ראשית') && !selfSiteRow.includes('שחמון'),
       'returning to self clears the previous subject\'s default site');
+const guardCallsAfterSelf = await page.evaluate(() =>
+  (window.__CALLABLE_CALLS || []).filter(call => call && call.name === 'getMyGuardAttendance').map(call => call.payload));
+check(guardCallsAfterSelf.length === guardCallsBeforeOther.length + 1 &&
+      JSON.stringify(guardCallsAfterSelf[guardCallsAfterSelf.length - 1]) ===
+        JSON.stringify(guardCallsBeforeOther[guardCallsBeforeOther.length - 1]),
+      'returning to self restores only the current month of personal guards');
+
+// שתי קריאות לאותו אדם ולאותו חודש: הראשונה מחזירה מידע ישן
+// לאט, והשנייה מידע חדש מהר. רק החדשה רשאית להישאר במסך. כל יום
+// מקבל גם ביטול לפני השורה הפעילה, כדי לבדוק שביטול ומיקום פרטי
+// אינם מגיעים למילוי האוטומטי.
+const guardRace = await page.evaluate(range => {
+  const dates = [];
+  const cursor = new Date(range.from + 'T00:00:00');
+  const end = new Date(range.to + 'T00:00:00');
+  const key = date => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') +
+    '-' + String(date.getDate()).padStart(2, '0');
+  while (cursor <= end) {
+    dates.push(key(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const rows = (title, place, includeCancelled) => dates.flatMap((date, index) => {
+    const active = { id:'active_' + index, date, title, start:'10:00', end:'12:00',
+      status:'open', place, future_secret:'never-render-me' };
+    if (!includeCancelled) return [active];
+    return [{ id:'cancelled_' + index, date, title:'CANCELLED MUST NOT WIN',
+      start:'08:00', end:'09:00', status:'cancelled', place:'CANCELLED SECRET' }, active];
+  });
+  const manualDates = dates.filter(date => {
+    const at = new Date(date + 'T12:00:00Z');
+    const anchor = new Date('2026-01-01T12:00:00Z');
+    const diff = Math.round((at - anchor) / 86400000);
+    // Stub rotation: crew C works index 2 of a three-day cycle.
+    return ((diff % 3) + 3) % 3 !== 2;
+  });
+  const before = (window.__CALLABLE_CALLS || []).filter(call =>
+    call && call.name === 'getMyGuardAttendance').length;
+  window.__CALLABLE_PLAN = {
+    getMyGuardAttendance: [
+      { delay:650, data:{ guards:rows('OLD GUARD MUST NOT WIN', 'OLD SECRET PLACE', false) } },
+      { delay:20, data:{ guards:rows('NEW GUARD WINS', 'NEW SECRET PLACE', true) } }
+    ]
+  };
+  const sync = document.getElementById('btnSync');
+  sync.disabled = false; sync.click();
+  sync.disabled = false; sync.click();
+  return { before, range, manualDates };
+}, guardCallsAfterSelf[guardCallsAfterSelf.length - 1]);
+await page.waitForFunction(before => (window.__CALLABLE_CALLS || []).filter(call =>
+  call && call.name === 'getMyGuardAttendance').length >= before + 2, guardRace.before);
+await page.waitForTimeout(900);
+const guardRacePayloads = await page.evaluate(before => (window.__CALLABLE_CALLS || []).filter(call =>
+  call && call.name === 'getMyGuardAttendance').slice(before).map(call => call.payload), guardRace.before);
+check(guardRacePayloads.length === 2 && guardRacePayloads.every(payload =>
+  JSON.stringify(payload) === JSON.stringify(guardRace.range)),
+      'same-month guard retries keep the exact requested range');
+// קריאת פתע מדומה יכולה להישאר פתוחה מעל החלונית. היא נבדקת
+// במסך ייעודי; כאן היא רק מסתירה את כפתור הסגירה של בדיקת המילוי.
+await page.addStyleTag({ content:'#coWrap{display:none!important}' });
+let guardAutoFill = null;
+for (const date of guardRace.manualDates.slice(0, 4)) {
+  await page.evaluate(chosenDate => {
+    const NativeDate = window.Date;
+    const fixed = new NativeDate(chosenDate + 'T12:00:00');
+    class ManualDate extends NativeDate {
+      constructor(...args) { super(...(args.length ? args : [fixed.getTime()])); }
+      static now() { return fixed.getTime(); }
+    }
+    window.Date = ManualDate;
+    try {
+      const button = document.getElementById('btnManual');
+      button.disabled = false;
+      button.click();
+    } finally {
+      window.Date = NativeDate;
+    }
+  }, date);
+  await page.locator('#ov').waitFor({ state:'visible', timeout:3000 });
+  const type = await page.locator('#dType').inputValue();
+  const notes = await page.locator('#dNotes').inputValue();
+  await page.locator('#dCancel').click({ force:true });
+  await page.locator('#ov').waitFor({ state:'hidden', timeout:3000 });
+  if (type === 'guard') { guardAutoFill = notes; break; }
+}
+check(guardAutoFill === 'NEW GUARD WINS',
+      'the newest personal guards win; cancelled and stale guards do not autofill');
+check(guardAutoFill !== null && !guardAutoFill.includes('SECRET PLACE'),
+      'guard autofill does not expose a place or an extra response field');
 
 // אותו תרחיש על אדם: מעבר לאדם אחר מתחיל לאט, וחזרה לעצמי
 // מתחילה מהר. ההרצה הישנה אינה רשאית לפרסם או לפתוח loadMonth.
@@ -144,7 +256,7 @@ const subjectRace = await page.evaluate(before => {
     siteText: (document.querySelector('#rows tr.sug') || {}).textContent || ''
   };
 }, beforeSubjectRace);
-check(subjectRace.delta === 16 && subjectRace.monthReads === 2,
+check(subjectRace.delta === 14 && subjectRace.monthReads === 2,
       'a stale subject load is discarded before starting a month load');
 check(subjectRace.otherHidden && subjectRace.backHidden && subjectRace.busy === 'false',
       'the latest subject remains active after the stale load returns');

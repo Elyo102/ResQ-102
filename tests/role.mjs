@@ -32,7 +32,7 @@ const EXPECT = {
                  swaps:{ work:true, appr:true, pend:2 },
                  alerts:{ work:true, send:true, key:true, opts:4 },
                  callout:{ card:true, opts:5, pick:false },
-                 guards:{ work:true, create:true },
+                 guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
                  waiver:{ shown:true, btns:1 } },
@@ -56,7 +56,7 @@ const EXPECT = {
                  swaps:{ work:true, appr:true, pend:1 },
                  alerts:{ work:true, send:true, key:false, opts:1 },
                  callout:{ card:true, opts:2, pick:false },
-                 guards:{ work:true, create:true },
+                 guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
   hr:          { nav:['לוח מודעות','סידור','נוכחות','תקלות','טפסים','החלפות','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','בקרת שעות','גישה','ניהול','נתונים'],
@@ -67,7 +67,7 @@ const EXPECT = {
                  swaps:{ work:true, appr:true, pend:2 },
                  alerts:{ work:true, send:true, key:false, opts:4 },
                  callout:{ card:true, opts:5, pick:false },
-                 guards:{ work:true, create:true },
+                 guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
   // סגן מפקד משמרת: אותן סמכויות כמו מפקד, נעול למשמרת ב'.
@@ -78,7 +78,7 @@ const EXPECT = {
                  board:{ work:true, edit:true }, crews:['B'],
                  swaps:{ work:true, appr:true, pend:1 },
                  callout:{ card:true, opts:2, pick:false },
-                 guards:{ work:true, create:true },
+                 guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
                  waiver:{ shown:true, btns:1 },
@@ -91,7 +91,7 @@ const EXPECT = {
                  board:{ work:true, edit:true }, crews:['A','B','C'],
                  swaps:{ work:true, appr:true, pend:2 },
                  callout:{ card:true, opts:5, pick:false },
-                 guards:{ work:true, create:true },
+                 guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
                  // רכז כוח אדם רואה את הבקשה ואינו מכריע בה
@@ -273,7 +273,8 @@ for (const role of Object.keys(EXPECT)) {
     if (!okC) { bad++; console.log('    ציפיתי: ' + JSON.stringify(wantC)); }
   }
 
-  // אבטחות. כל חבר תחנה רואה ונרשם; רק סגל פותח אבטחה חדשה.
+  // אבטחות. כל חבר תחנה רואה ונרשם; פתיחה ושיבוץ דורשים מינוי חי
+  // ונפרד של אחראי/ת סידור, ולכן אינם נגזרים מן התפקיד הראשי כאן.
   await pg.goto('http://localhost:'+PORT+'/guards.html', {waitUntil:'load'});
   await pg.waitForTimeout(1700);
   const gWork = await pg.isVisible('#work').catch(()=>false);
