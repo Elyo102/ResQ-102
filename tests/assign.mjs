@@ -232,7 +232,7 @@ const allowed = [
   'viewerUid: ME && ME.uid',       // גבול קריאת אבטחות אישית
   'viewerUid:ME && ME.uid',        // אותו גבול בתוך פעולת סנכרון
   'ME && ME.uid === snapshot.viewerUid', // אימות דור הטעינה של אותה זהות
-  'action.viewerUid !== (ME && ME.uid)', // ביטול סנכרון אם הזהות התחלפה
+  'action.viewerUid === (ME && ME.uid)', // התאמת סנכרון לזהות שפתחה את הפעולה
   'emp !== ME.emp',                // האם צריך לחתום על האישור
   'edited_by:      ME.uid',        // חותמת
   'body.edited_by      = ME.uid',  // חותמת באישור
