@@ -520,6 +520,160 @@ function fresh() {
     A.CODE.TOO_MANY_DAYS);
 }
 
+/* ===== 12 · ⭐ פעילויות · „שום דבר לא מתאפס" ===== */
+//
+// הכרעת אלדד, 1.9.2026: „סטטיסטיקת אירועים אבטחות משמרות פר כל
+// עובד תשמר תמיד. הסידור יהיה שנתי, שום דבר לא מתאפס."
+{
+  const days = [
+    day('2026-01-05'),
+    day('2026-01-12', { activity_kind: 'guard', day_type: 'guard',
+      hours: 8, off_day: true }),
+    day('2026-02-02', { activity_kind: 'guard', day_type: 'guard',
+      hours: 8, off_day: false }),
+    day('2026-03-03', { activity_kind: 'event', day_type: 'meeting', hours: 3 })
+  ];
+  const { summary: s } = agg.rebuild({ emp_number:'102', year:'2026', days });
+
+  eq('12.1 שלוש הפעילויות נספרות בנפרד',
+    Object.keys(s.by_activity).sort(), ['event','guard','shift']);
+  eq('12.2 אבטחות', s.by_activity.guard.days, 2);
+  eq('12.3 אירועים', s.by_activity.event.days, 1);
+  eq('12.4 ⭐ אבטחה ביום חופש נספרת בנפרד — היא מזינה את ההוגנות',
+    s.guard_off_days, 1);
+  eq('12.5 והשעות נצברות בכל מקרה', s.hours, 43);
+
+  throws('12.6 סוג פעילות לא מוכר נדחה',
+    () => agg.rebuild({ emp_number:'102', year:'2026',
+      days:[day('2026-01-05', { activity_kind: 'party' })] }), A.CODE.SHAPE);
+
+  // דלתא שמשנה אבטחה מיום חופש ליום עבודה חייבת להוריד את המונה.
+  const detail = { days: {} };
+  for (const rec of days) {
+    const c = A.contributionOf(rec);
+    detail.days[c.date] = { date:c.date, month:c.month, day_type:c.day_type,
+      sub_station:c.sub_station, hours:c.hours,
+      countable:c.countable, is_shift:c.is_shift,
+      activity_kind:c.activity_kind, off_day:c.off_day };
+  }
+  const moved = agg.planDelta({ summary: s, detail,
+    before: days[1],
+    after: day('2026-01-12', { activity_kind:'guard', day_type:'guard',
+      hours: 8, off_day: false }) });
+  eq('12.7 ⭐ ביטול „יום חופש" על אבטחה מוריד את המונה',
+    moved.summary.guard_off_days, 0);
+  eq('12.8 והאבטחות עצמן נשארות', moved.summary.by_activity.guard.days, 2);
+
+  // ⭐ פירוט ישן שנשמר לפני שהמימד נוסף — אסור לו להשחית.
+  // הוא נקרא כ-shift, ולכן ההפרש חייב להיות מדווח ולא שקט.
+  const legacyDetail = { days: { '2026-01-12': { date:'2026-01-12',
+    month:'01', day_type:'guard', sub_station:'rashit', hours:8,
+    countable:true, is_shift:true } } };
+  const legacy = agg.planDelta({ summary: s, detail: legacyDetail,
+    before: days[1], after: days[1] });
+  eq('12.9 ⭐ תרומה זהה נשארת no-op גם מול פירוט ישן', legacy.kind, 'noop');
+  eq('12.10 והמונה לא זז', legacy.summary.guard_off_days, 1);
+}
+
+/* ===== 13 · ⭐⭐ גלגול על פני שנים · האיפוס שבהשמטה ===== */
+{
+  const yearOf = (y, shifts, guards) => agg.rebuild({
+    emp_number: '102', year: y,
+    days: [].concat(
+      Array.from({ length: shifts }, (unused, i) =>
+        day(y + '-01-' + String(i + 1).padStart(2, '0'))),
+      Array.from({ length: guards }, (unused, i) =>
+        day(y + '-02-' + String(i + 1).padStart(2, '0'),
+          { activity_kind:'guard', day_type:'guard', hours:8, off_day:true })))
+  }).summary;
+
+  const y24 = yearOf('2024', 3, 2);
+  const y25 = yearOf('2025', 4, 1);
+  const y26 = yearOf('2026', 2, 3);
+
+  const all = agg.rollup({ summaries: [y26, y24, y25] });
+  eq('13.1 השנים ממוינות', all.years, ['2024','2025','2026']);
+  eq('13.2 ⭐ המשמרות נצברות על פני שלוש שנים', all.shifts, 3 + 4 + 2 + 2 + 1 + 3);
+  eq('13.3 ⭐⭐ ואבטחות ביום חופש אינן מתאפסות במעבר שנה',
+    all.guard_off_days, 2 + 1 + 3);
+  eq('13.4 והפעילויות נצברות', all.by_activity.guard.days, 6);
+  eq('13.5 ⭐ הרצף שלם', all.continuous, true);
+  eq('13.6 ואפשר לסמוך על הסכום', all.trustworthy, true);
+
+  // ⭐ הצורה שבה איפוס באמת קורה: לא מחיקה, השמטה.
+  const gap = agg.rollup({ summaries: [y24, y26] });
+  eq('13.7 ⭐⭐ שנה שנשמטה נתפסת', gap.continuous, false);
+  eq('13.8 ומדווחת בשמה', gap.missing_years, ['2025']);
+  eq('13.9 ⭐⭐ והסכום מסומן כלא-אמין', gap.trustworthy, false);
+  ok('13.10 אף שהמספר עצמו נראה תקין לחלוטין', gap.shifts === 3 + 2 + 2 + 3);
+
+  const stale = agg.rollup({ summaries: [y24, y25,
+    Object.assign({}, y26, { stale: true })] });
+  eq('13.11 ⭐ שנה שסומנה stale פוסלת את הסכום', stale.trustworthy, false);
+  eq('13.12 ומדווחת בשמה', stale.stale_years, ['2026']);
+  eq('13.13 אבל הרצף עצמו שלם', stale.continuous, true);
+
+  throws('13.14 ⭐ גלגול שמערבב שני עובדים נדחה',
+    () => agg.rollup({ summaries: [y24,
+      Object.assign({}, y25, { emp_number: '103' })] }), A.CODE.EMP_MISMATCH);
+  throws('13.15 אותה שנה פעמיים נדחית',
+    () => agg.rollup({ summaries: [y24, y24] }), A.CODE.SHAPE);
+  throws('13.16 רשימה ריקה נדחית',
+    () => agg.rollup({ summaries: [] }), A.CODE.SHAPE);
+
+  const one = agg.rollup({ summaries: [y26] });
+  eq('13.17 שנה אחת היא רצף שלם', one.continuous, true);
+  eq('13.18 עם אותם מספרים', one.shifts, y26.shifts);
+}
+
+/* ===== 14 · מוטציות על הגלגול ===== */
+{
+  const src = fs.readFileSync(modPath, 'utf8');
+  const tmp = join(__TESTS, '_mut_annual2.cjs');
+  function mutate(from, to, label, exercise) {
+    if (src.indexOf(from) === -1) { ok(label, false, 'הטקסט לא נמצא'); return; }
+    fs.writeFileSync(tmp, src.split(from).join(to));
+    let caught = false;
+    try { delete require_.cache[require_.resolve(tmp)]; exercise(require_(tmp)); }
+    catch (e) { caught = true; }
+    fs.unlinkSync(tmp);
+    ok(label, caught, 'המוטציה עברה בלי שאיש שם לב');
+  }
+  const yearOf = (M, y, shifts) => M.createAnnualAggregator({ clock: CLOCK })
+    .rebuild({ emp_number:'102', year:y,
+      days: Array.from({ length: shifts }, (unused, i) =>
+        day(y + '-01-' + String(i + 1).padStart(2, '0'))) }).summary;
+
+  mutate("      if (years.indexOf(String(y)) === -1) missing.push(String(y));", "",
+    '14.1 ⭐⭐ השתקת „שנה חסרה" — נתפסת',
+    (M) => {
+      const a2 = M.createAnnualAggregator({ clock: CLOCK });
+      const r = a2.rollup({ summaries: [yearOf(M,'2024',2), yearOf(M,'2026',2)] });
+      if (r.continuous !== false || r.missing_years.length !== 1) {
+        throw new Error('caught');
+      }
+    });
+
+  mutate("      trustworthy: missing.length === 0 && stale.length === 0,",
+    "      trustworthy: true,",
+    '14.2 ⭐⭐ סכום שמוצהר אמין למרות שנה חסרה — נתפס',
+    (M) => {
+      const a2 = M.createAnnualAggregator({ clock: CLOCK });
+      const r = a2.rollup({ summaries: [yearOf(M,'2024',2), yearOf(M,'2026',2)] });
+      if (r.trustworthy !== false) throw new Error('caught');
+    });
+
+  mutate("      s.guard_off_days += sign;", "",
+    '14.3 ⭐ אבטחת יום חופש שמפסיקה להיספר — נתפסת',
+    (M) => {
+      const a2 = M.createAnnualAggregator({ clock: CLOCK });
+      const r = a2.rebuild({ emp_number:'102', year:'2026', days:[
+        day('2026-01-12', { activity_kind:'guard', day_type:'guard',
+          hours:8, off_day:true })] });
+      if (r.summary.guard_off_days !== 1) throw new Error('caught');
+    });
+}
+
 /* ---------------------------- סיכום ---------------------------- */
 console.log('');
 console.log('attendance-annual · סיכום שנתי ועדכון בטוח');

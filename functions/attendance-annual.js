@@ -80,6 +80,22 @@ const LIMITS = Object.freeze({
 const SHIFT_DAY_TYPES = Object.freeze(
   ['regular', 'swap', 'extra', 'meeting', 'guard']);
 
+/* סוגי פעילות שנספרים לעובד.
+ *
+ * הכרעת אלדד, 1.9.2026, מילה במילה:
+ *   „ככלל אני רוצה שסטטיסטיקת אירועים אבטחות משמרות פר כל עובד
+ *    תשמר תמיד. הסידור יהיה שנתי, שום דבר לא מתאפס."
+ *
+ * לכן שלוש הפעילויות נספרות באותו מסמך שנתי, ולכן קיים
+ * `rollup` שסוכם על פני שנים ו**מדווח על שנה חסרה** במקום
+ * להחזיר סכום שנראה תקין. שנה שנשמטה היא איפוס בתחפושת. */
+const ACTIVITY = Object.freeze({
+  SHIFT: 'shift',
+  GUARD: 'guard',
+  EVENT: 'event'
+});
+const ACTIVITY_KINDS = Object.freeze([ACTIVITY.SHIFT, ACTIVITY.GUARD, ACTIVITY.EVENT]);
+
 const CODE = Object.freeze({
   SHAPE: 'annual-shape',
   YEAR_MISMATCH: 'annual-year-mismatch',
@@ -201,10 +217,24 @@ function contributionOf(record) {
   const hours = record.hours;
   const countable = isFiniteNumber(hours) && hours >= 0;
 
+  // סוג הפעילות. ברירת מחדל 'shift' כדי שכל רשומת נוכחות
+  // קיימת תמשיך להתנהג בדיוק כמו קודם.
+  const activity = ACTIVITY_KINDS.indexOf(record.activity_kind) !== -1
+    ? record.activity_kind : ACTIVITY.SHIFT;
+  if (record.activity_kind !== undefined && record.activity_kind !== null
+      && ACTIVITY_KINDS.indexOf(record.activity_kind) === -1) {
+    throw new AnnualError(CODE.SHAPE,
+      'סוג פעילות לא מוכר: ' + String(record.activity_kind));
+  }
+
   return Object.freeze({
     date,
     month: date.slice(5, 7),
     day_type: dayType,
+    activity_kind: activity,
+    // אבטחה ביום חופש היא הנתון שמזין את דירוג ההוגנות, ולכן
+    // היא נספרת בנפרד ולא נגזרת מחדש בכל מסך.
+    off_day: activity === ACTIVITY.GUARD && record.off_day === true,
     // תחנת קצה ריקה היא מצב חוקי — לא כל יום מיוחס לתחנת קצה.
     sub_station: isNonEmptyString(record.sub_station) ? record.sub_station : '',
     hours: countable ? round2(hours) : 0,
@@ -221,7 +251,8 @@ function contributionOf(record) {
 function contributionKey(c) {
   if (!c) return 'none';
   return [c.date, c.day_type, c.sub_station, c.hours,
-    c.countable ? '1' : '0', c.is_shift ? '1' : '0'].join('|');
+    c.countable ? '1' : '0', c.is_shift ? '1' : '0',
+    c.activity_kind, c.off_day ? '1' : '0'].join('|');
 }
 
 /* -------------------------- מבנה הסיכום -------------------------- */
@@ -257,9 +288,11 @@ function newSummary(emp, uid, year) {
     hours: 0,
     days: 0,
     uncountable_days: 0,
+    guard_off_days: 0,
     by_month: {},
     by_sub_station: {},
     by_day_type: {},
+    by_activity: {},
     contribution_keys: {},   // date → contributionKey. זהו ה"בסיס".
     digest: '',
     revision: 0,
@@ -364,7 +397,11 @@ function createAnnualAggregator(deps) {
     s.hours = round2(s.hours + sign * c.hours);
     bump(s.by_month, c.month, c, sign);
     bump(s.by_day_type, c.day_type, c, sign);
+    bump(s.by_activity, c.activity_kind, c, sign);
     if (c.sub_station) bump(s.by_sub_station, c.sub_station, c, sign);
+    if (c.activity_kind === ACTIVITY.GUARD && c.off_day === true) {
+      s.guard_off_days += sign;
+    }
   }
 
   /* ---------------------- הפירוט המתגלגל ---------------------- */
@@ -549,12 +586,14 @@ function createAnnualAggregator(deps) {
     }).summary;
 
     const drift = [];
-    for (const field of ['shifts', 'hours', 'days', 'uncountable_days']) {
+    for (const field of ['shifts', 'hours', 'days', 'uncountable_days',
+      'guard_off_days']) {
       if (stored[field] !== fresh[field]) {
         drift.push({ field, stored: stored[field], actual: fresh[field] });
       }
     }
-    for (const group of ['by_month', 'by_sub_station', 'by_day_type']) {
+    for (const group of ['by_month', 'by_sub_station', 'by_day_type',
+      'by_activity']) {
       const a = stored[group] || {}, b = fresh[group] || {};
       for (const k of new Set(Object.keys(a).concat(Object.keys(b)))) {
         if (JSON.stringify(a[k] || null) !== JSON.stringify(b[k] || null)) {
@@ -593,7 +632,11 @@ function createAnnualAggregator(deps) {
   function plainContribution(c) {
     return { date: c.date, month: c.month, day_type: c.day_type,
       sub_station: c.sub_station, hours: c.hours,
-      countable: c.countable, is_shift: c.is_shift };
+      countable: c.countable, is_shift: c.is_shift,
+      // ⭐ מימד הפעילות חייב לשבת בפירוט. בלעדיו דלתא על יום
+      // אבטחה מחסרת „משמרת" ומוסיפה „אבטחה", והמונים נשברים
+      // בשקט אחרי תיקון אחד.
+      activity_kind: c.activity_kind, off_day: c.off_day };
   }
 
   function normalizeStoredContribution(raw) {
@@ -607,7 +650,10 @@ function createAnnualAggregator(deps) {
       sub_station: isNonEmptyString(raw.sub_station) ? raw.sub_station : '',
       hours: isFiniteNumber(raw.hours) ? round2(raw.hours) : 0,
       countable: raw.countable === true,
-      is_shift: raw.is_shift === true
+      is_shift: raw.is_shift === true,
+      activity_kind: ACTIVITY_KINDS.indexOf(raw.activity_kind) !== -1
+        ? raw.activity_kind : ACTIVITY.SHIFT,
+      off_day: raw.off_day === true
     });
   }
 
@@ -623,16 +669,121 @@ function createAnnualAggregator(deps) {
     return n;
   }
 
+  /* ------------------ גלגול על פני שנים ------------------ *
+   *
+   * ⭐ „שום דבר לא מתאפס" הופך כאן לתכונה בדוקה ולא לכוונה.
+   *
+   * הסיכום נשמר לפי שנה, ולכן אפשר לטעות ולחשוב שהמעבר ל-1
+   * בינואר מאפס משהו. הוא אינו מאפס — מסמכי השנים הקודמות
+   * נשארים — אבל **קורא ששוכח לטעון שנה מקבל סכום שנראה תקין
+   * לחלוטין**. זו הצורה שבה איפוס קורה בפועל: לא במחיקה,
+   * בהשמטה.
+   *
+   * לכן rollup **מדווח כל פער ברצף השנים**, ואינו מסכם בשקט.
+   */
+  function rollup(input) {
+    if (!isPlainObject(input) || !Array.isArray(input.summaries)) {
+      throw new AnnualError(CODE.SHAPE, 'חובה למסור רשימת סיכומים');
+    }
+    const list = input.summaries.slice();
+    if (!list.length) {
+      throw new AnnualError(CODE.SHAPE, 'אין סיכומים לגלגל');
+    }
+
+    let emp = null;
+    const years = [];
+    const totals = { shifts: 0, hours: 0, days: 0,
+      uncountable_days: 0, guard_off_days: 0 };
+    const byActivity = {};
+    const bySubStation = {};
+    const byDayType = {};
+    const stale = [];
+
+    for (const sum of list) {
+      if (!isPlainObject(sum) || !/^\d{4}$/.test(String(sum.year || ''))) {
+        throw new AnnualError(CODE.SHAPE, 'סיכום שנתי אינו תקין');
+      }
+      if (sum.schema_version !== SCHEMA_VERSION) {
+        throw new AnnualError(CODE.SHAPE, 'גרסת סכמה לא נתמכת בשנה ' + sum.year);
+      }
+      if (emp === null) emp = String(sum.emp_number);
+      else if (String(sum.emp_number) !== emp) {
+        throw new AnnualError(CODE.EMP_MISMATCH,
+          'הגלגול מערבב שני עובדים. ' + emp + ' מול ' + sum.emp_number);
+      }
+      if (years.indexOf(sum.year) !== -1) {
+        throw new AnnualError(CODE.SHAPE, 'השנה ' + sum.year + ' מופיעה פעמיים');
+      }
+      years.push(sum.year);
+      if (sum.stale === true) stale.push(sum.year);
+
+      for (const k of Object.keys(totals)) {
+        totals[k] = k === 'hours'
+          ? round2(totals[k] + (isFiniteNumber(sum[k]) ? sum[k] : 0))
+          : totals[k] + (isFiniteNumber(sum[k]) ? sum[k] : 0);
+      }
+      mergeBuckets(byActivity, sum.by_activity);
+      mergeBuckets(bySubStation, sum.by_sub_station);
+      mergeBuckets(byDayType, sum.by_day_type);
+    }
+
+    years.sort();
+
+    // ⭐ פער ברצף. 2024 ו-2026 בלי 2025 אינם „שנתיים" — הם
+    // שלוש שנים שאחת מהן נשמטה.
+    const missing = [];
+    const first = Number(years[0]), last = Number(years[years.length - 1]);
+    for (let y = first; y <= last; y += 1) {
+      if (years.indexOf(String(y)) === -1) missing.push(String(y));
+    }
+
+    return {
+      emp_number: emp,
+      years,
+      from_year: years[0],
+      to_year: years[years.length - 1],
+      // ⭐ שני הדגלים האלה הם כל תכלית הפונקציה.
+      continuous: missing.length === 0,
+      missing_years: missing,
+      stale_years: stale,
+      trustworthy: missing.length === 0 && stale.length === 0,
+      shifts: totals.shifts,
+      hours: totals.hours,
+      days: totals.days,
+      uncountable_days: totals.uncountable_days,
+      guard_off_days: totals.guard_off_days,
+      by_activity: byActivity,
+      by_sub_station: bySubStation,
+      by_day_type: byDayType,
+      generated_at: now()
+    };
+  }
+
+  function mergeBuckets(into, from) {
+    if (!isPlainObject(from)) return;
+    for (const key of Object.keys(from)) {
+      const b = from[key];
+      if (!isPlainObject(b)) continue;
+      if (!into[key]) into[key] = { shifts: 0, hours: 0, days: 0 };
+      into[key].shifts += isFiniteNumber(b.shifts) ? b.shifts : 0;
+      into[key].days += isFiniteNumber(b.days) ? b.days : 0;
+      into[key].hours = round2(into[key].hours + (isFiniteNumber(b.hours) ? b.hours : 0));
+    }
+  }
+
   return Object.freeze({
     rebuild,
     planDelta,
     planRetention,
     verify,
+    rollup,
     contributionOf,
     contributionKey,
     assertNoPii,
     SCHEMA_VERSION,
     SHIFT_DAY_TYPES,
+    ACTIVITY,
+    ACTIVITY_KINDS,
     LIMITS,
     CODE,
     NOTE
@@ -647,6 +798,8 @@ module.exports = {
   assertNoPii,
   SCHEMA_VERSION,
   SHIFT_DAY_TYPES,
+  ACTIVITY,
+  ACTIVITY_KINDS,
   LIMITS,
   CODE,
   NOTE,
