@@ -216,7 +216,13 @@ async function main() {
     const reportValue = report.data();
     assert.equal(reportValue.status, 'complete');
     assert.equal(reportValue.build_status, 'complete');
-    assert.equal(reportValue.gate_pass, false);
+    // The first day of a month has no earlier snapshot days to miss, while
+    // later days legitimately report missing_snapshot_days in this fixture.
+    // Lock the contract instead of a calendar-dependent boolean: the gate
+    // passes exactly when no blocking reason exists, and legacy_source stays
+    // informational rather than becoming a hidden blocker.
+    assert.equal(reportValue.gate_pass, reportValue.gate_reasons.length === 0);
+    assert.equal(reportValue.gate_reasons.includes('data_warnings'), false);
     assert.equal(reportValue.auto_activation_allowed, false);
     assert.equal(reportValue.totals.legacy_source_rows, 2);
     assert.equal(reportValue.totals.blocking_warning_rows, 0);
