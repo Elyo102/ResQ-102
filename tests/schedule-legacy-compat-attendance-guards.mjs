@@ -72,9 +72,18 @@ for (const [name, raw] of pages) {
       /(?:collection|doc)\s*\([\s\S]{0,180}?['"]shift_overrides['"]/);
   });
 
-  test(name + ': invokes compatibility with an empty object and no station selector', () => {
-    const calls = source.match(/(?:callLegacyScheduleCompatibilityContext|guardCall\.compatibility)\s*\(\s*\{\s*\}\s*\)/g) || [];
-    assert.equal(calls.length, 1);
+  test(name + ': invokes compatibility with the smallest explicit range and no station selector', () => {
+    if (name === 'attendance') {
+      assert.match(source,
+        /callLegacyScheduleCompatibilityContext\s*\(\s*guardMonthRange\(snapshot\.year,\s*snapshot\.month\)\s*\)/);
+    } else {
+      assert.match(source,
+        /history:\s*\{\s*from:guardDayOffset\(today,\s*-31\),\s*to:guardDayOffset\(today,\s*-1\)\s*\}/);
+      assert.match(source,
+        /upcoming:\s*\{\s*from:today,\s*to:guardDayOffset\(today,\s*365\)\s*\}/);
+      assert.match(source,
+        /guardCall\.compatibility\s*\(\s*\{\s*from:\s*ranges\.history\.from,\s*to:\s*ranges\.upcoming\.to\s*\}\s*\)/);
+    }
     assert.doesNotMatch(source,
       /(?:callLegacyScheduleCompatibilityContext|guardCall\.compatibility)\s*\([^)]*(?:station|sid|SID)/);
   });
@@ -147,6 +156,12 @@ for (const [name, raw] of pages) {
       assert.match(source, /const generation = \+\+staticLoadGeneration/);
       assert.match(source, /const next = \{\}/);
       assert.match(source, /generation === staticLoadGeneration/);
+      assert.match(source, /year:\s*viewYear/);
+      assert.match(source, /month:\s*viewMonth/);
+      assert.match(source,
+        /viewYear === snapshot\.year && viewMonth === snapshot\.month/);
+      assert.match(source,
+        /\$\('next'\)\.onclick[\s\S]{0,260}?await loadStatic\(\)[\s\S]{0,80}?await loadMonth\(\)/);
     } else {
       assert.match(source, /const generation = \+\+guardLoadGeneration/);
       assert.match(source, /const next = \{ people:\[\], quals:\[\], held:\{\}, swaps:\[\], busy:\{\} \}/);

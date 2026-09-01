@@ -39,6 +39,41 @@ function rejects(code, extra) {
     (error) => error.code === code, code);
 }
 
+test('compatibility range accepts exact canonical inclusive boundaries up to 397 days', () => {
+  const oneDay = compat.parseLegacyCompatibilityRange({
+    from: '2026-09-01', to: '2026-09-01'
+  });
+  assert.deepEqual(oneDay, { from: '2026-09-01', to: '2026-09-01', days: 1 });
+  assert.equal(Object.isFrozen(oneDay), true);
+  const maximum = compat.parseLegacyCompatibilityRange({
+    from: '2026-09-01', to: '2027-10-02'
+  });
+  assert.equal(maximum.days, 397);
+  assert.equal(compat.MAX_OVERRIDES, 397);
+});
+
+test('compatibility range rejects missing, foreign and non-object request fields', () => {
+  for (const value of [undefined, null, [], {},
+    { from: '2026-09-01' }, { to: '2026-09-01' },
+    { from: '2026-09-01', to: '2026-09-01', sid: 'foreign' },
+    { from: '2026-09-01', to: '2026-09-01', stationId: 'foreign' }]) {
+    assert.throws(() => compat.parseLegacyCompatibilityRange(value),
+      (error) => error.code === 'legacy-compatibility-request');
+  }
+});
+
+test('compatibility range rejects impossible, reversed and 398-day ranges', () => {
+  for (const value of [
+    { from: '2026-02-30', to: '2026-09-01' },
+    { from: '2026-09-01', to: 'not-a-date' },
+    { from: '2026-09-02', to: '2026-09-01' },
+    { from: '2026-09-01', to: '2027-10-03' }
+  ]) {
+    assert.throws(() => compat.parseLegacyCompatibilityRange(value),
+      (error) => error.code === 'legacy-compatibility-range');
+  }
+});
+
 test('off and shadow return the exact public response shape', () => {
   for (const mode of ['off', 'shadow']) {
     const out = compat.projectLegacyScheduleCompatibility(input({
@@ -291,5 +326,5 @@ test('both collection caps accept the boundary and reject one extra row', () => 
   })), (error) => error.code === 'legacy-overrides-too-large');
 });
 
-assert.equal(passed, 14);
-console.log('\n14 legacy schedule compatibility unit checks passed.');
+assert.equal(passed, 17);
+console.log('\n17 legacy schedule compatibility unit checks passed.');

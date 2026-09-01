@@ -624,7 +624,7 @@ function guardBoardRanges(){
   const today = toKey(new Date());
   return {
     upcoming: { from:today, to:guardDayOffset(today, 365) },
-    history: { from:guardDayOffset(today, -365), to:guardDayOffset(today, -1) }
+    history: { from:guardDayOffset(today, -31), to:guardDayOffset(today, -1) }
   };
 }
 
@@ -639,11 +639,9 @@ function mergeBoardRows(parts){
   return Array.from(byId.values()).filter(row => row.id);
 }
 
-async function loadGuardBoards(managerRequested){
-  const ranges = guardBoardRanges();
-  // Both reads are bounded to one calendar year.  The first serves normal
-  // viewing and the second preserves the member's own recent history without
-  // reopening an unbounded raw collection read.
+async function loadGuardBoards(managerRequested, ranges){
+  // The future board is bounded to one year and raw history to the previous
+  // 31 days. Older history belongs in the yearly aggregate, not on the phone.
   const memberReads = [guardCall.board(ranges.upcoming), guardCall.board(ranges.history)];
   const managerReads = managerRequested
     ? [guardCall.managerBoard(ranges.upcoming), guardCall.managerBoard(ranges.history)] : [];
@@ -698,7 +696,11 @@ async function loadAll(){
   };
   const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
   const jobs = [];
-  const compatibilityRequest = guardCall.compatibility({}).then(function (result) {
+  const ranges = guardBoardRanges();
+  const compatibilityRequest = guardCall.compatibility({
+    from: ranges.history.from,
+    to: ranges.upcoming.to
+  }).then(function (result) {
     return { data: legacyCompatibilityData(result), error: null };
   }).catch(function (error) {
     return { data: null, error: error };
@@ -718,7 +720,7 @@ async function loadAll(){
     })());
   };
   const flush = () => Promise.all(jobs);
-  const guardBoards = loadGuardBoards(managerDataRequested);
+  const guardBoards = loadGuardBoards(managerDataRequested, ranges);
 
   if (managerDataRequested) {
     await grab('roster', s => s.forEach(d => {

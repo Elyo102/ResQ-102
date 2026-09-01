@@ -39,7 +39,10 @@ function noRawScheduleRead(source) {
 
 test('statistics reads the allowlisted compatibility callable, never raw schedule documents', () => {
   assert.match(stats, /httpsCallable\(fns,\s*'getLegacyScheduleCompatibilityContext'\)/);
-  assert.match(stats, /legacyScheduleCall\(\{\}\)/);
+  assert.match(stats, /legacyScheduleCall\(guardStatisticsRange\('365'\)\)/);
+  assert.match(stats, /guardDayOffset\(today,\s*-365\)/);
+  assert.doesNotMatch(stats,
+    /legacyScheduleCall\s*\([^)]*(?:station|sid|SID)/);
   noRawScheduleRead(stats);
 });
 
@@ -70,8 +73,30 @@ test('statistics rejects a missing or non-array guard board instead of publishin
 
 test('swaps reads the allowlisted compatibility callable with no station argument', () => {
   assert.match(swaps, /httpsCallable\(fns,\s*'getLegacyScheduleCompatibilityContext'\)/);
-  assert.match(swaps, /legacyScheduleCall\(\{\}\)/);
+  assert.match(swaps, /legacyScheduleCall\(swapDateWindow\.schedule\)/);
+  assert.match(swaps, /SWAP_COMPATIBILITY_PAST_DAYS\s*=\s*31/);
+  assert.match(swaps, /SWAP_COMPATIBILITY_FUTURE_DAYS\s*=\s*365/);
+  assert.doesNotMatch(swaps,
+    /legacyScheduleCall\s*\([^)]*(?:station|sid|SID)/);
   noRawScheduleRead(swaps);
+});
+
+test('swap inputs leave one schedule day on each side for the rest rule', () => {
+  const windowBody = functionBody(swaps, 'swapCompatibilityWindow');
+  assert.match(windowBody,
+    /from:\s*swapDayOffset\(today,\s*-SWAP_COMPATIBILITY_PAST_DAYS\)/);
+  assert.match(windowBody,
+    /to:\s*swapDayOffset\(today,\s*SWAP_COMPATIBILITY_FUTURE_DAYS\)/);
+  assert.match(windowBody,
+    /min:\s*swapDayOffset\(today,\s*-\(SWAP_COMPATIBILITY_PAST_DAYS\s*-\s*1\)\)/);
+  assert.match(windowBody,
+    /max:\s*swapDayOffset\(today,\s*SWAP_COMPATIBILITY_FUTURE_DAYS\s*-\s*1\)/);
+  assert.match(swaps, /applySwapDateBounds\(\$\('myDate'\)\)/);
+  assert.match(swaps, /applySwapDateBounds\(\$\('hisDate'\)\)/);
+  assert.match(swaps, /id="tkDate" min="['"]?\s*\+\s*esc\(bounds\.min\)/);
+  assert.match(swaps, /if \(!swapDateAllowed\(my\)\)/);
+  assert.match(swaps, /if \(!swapDateAllowed\(his\)\)/);
+  assert.match(swaps, /if \(!swapDateAllowed\(d\)\)/);
 });
 
 test('every swap path that derives duty or rest fails closed without schedule context', () => {
@@ -98,6 +123,9 @@ test('the diagnostic page neither probes, seeds nor exports raw schedule collect
   assert.doesNotMatch(checkPage, /put\(\['rotations'\]/);
   assert.doesNotMatch(checkPage, /SEED\.rotations\(\)/);
   assert.match(checkPage, /getLegacyScheduleCompatibilityContext/);
+  assert.match(checkPage, /scheduleProbeRange\(\)/);
+  assert.doesNotMatch(checkPage,
+    /getLegacyScheduleCompatibilityContext['"]\)\(\s*\{\s*\}\s*\)/);
   assert.match(checkPage, /getScheduleRuntimeStatus/);
   assert.match(checkPage, /mode === 'new'/);
   assert.match(checkPage, /getStationScheduleV2/);
@@ -114,5 +142,5 @@ test('the browser stub supplies only the projected compatibility shape', () => {
   assert.doesNotMatch(projection, /note:|email|medical|by_uid|created_at|updated_at/);
 });
 
-assert.equal(passed, 9);
-console.log('\n9 legacy compatibility page checks passed.');
+assert.equal(passed, 10);
+console.log('\n10 legacy compatibility page checks passed.');

@@ -85,9 +85,6 @@ criticalPaths.forEach(suffix => {
   check(result.dataPaths.some(p => p.includes(suffix)),
         'benchmark exercised ' + suffix);
 });
-check(result.compatibilityCalls.length === 1 &&
-      JSON.stringify(result.compatibilityCalls[0]) === '{}',
-      'attendance loads the allowlisted legacy schedule through one station-free callable');
 const initialRange = await page.evaluate(() => {
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
@@ -97,6 +94,11 @@ const initialRange = await page.evaluate(() => {
     to: year + '-' + pad(month + 1) + '-' + pad(new Date(year, month + 1, 0).getDate())
   };
 });
+check(result.compatibilityCalls.length === 1 &&
+      JSON.stringify(result.compatibilityCalls[0]) === JSON.stringify(initialRange) &&
+      !Object.hasOwn(result.compatibilityCalls[0], 'sid') &&
+      !Object.hasOwn(result.compatibilityCalls[0], 'station'),
+      'attendance loads exactly the displayed month through one station-free callable');
 check(result.guardCalls.length === 1 &&
       JSON.stringify(result.guardCalls[0]) === JSON.stringify(initialRange),
       'attendance asks the server for exactly the displayed month');
@@ -105,8 +107,14 @@ check(result.guardCalls.length === 1 &&
 // מהירה. אחרי שהאיטית חוזרת, הכותרת חייבת להישאר של האחרונה.
 await page.waitForTimeout(lagMs + 120);
 const monthStart = await page.locator('#moLabel').textContent();
+const compatibilityBeforeMonthRace = await page.evaluate(() =>
+  (window.__CALLABLE_CALLS || []).filter(call =>
+    call && call.name === 'getLegacyScheduleCompatibilityContext').length);
 await page.evaluate(() => {
-  window.__SMOKE_LAG_PLAN = [700, 700, 40, 40];
+  window.__SMOKE_LAG_PLAN = [
+    700,700,700,700,
+    40,40,40,40,40,40
+  ];
   const next = document.getElementById('next');
   next.disabled = false; next.click();
   next.disabled = false; next.click();
@@ -119,6 +127,15 @@ check(winningMonth !== monthStart && finalMonth === winningMonth,
       'a slow older month cannot overwrite the latest month');
 check(await page.locator('#work').getAttribute('aria-busy') === 'false',
       'month loading releases the busy state');
+const compatibilityMonthRace = await page.evaluate(before =>
+  (window.__CALLABLE_CALLS || []).filter(call =>
+    call && call.name === 'getLegacyScheduleCompatibilityContext')
+    .slice(before).map(call => call.payload), compatibilityBeforeMonthRace);
+check(compatibilityMonthRace.length === 2 && compatibilityMonthRace.every(payload =>
+  payload && /^\d{4}-\d{2}-01$/.test(payload.from) &&
+  /^\d{4}-\d{2}-(?:28|29|30|31)$/.test(payload.to) &&
+  !Object.hasOwn(payload, 'sid') && !Object.hasOwn(payload, 'station')),
+      'each month navigation requests only that month and never a station selector');
 
 // תחנת ברירת המחדל והאבטחות תלויות באדם שנבחר. קודם עוברים
 // לאדם אחר וחוזרים בצורה רגילה, כדי לוודא שמידע של אדם קודם

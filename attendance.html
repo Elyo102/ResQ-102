@@ -669,7 +669,9 @@ async function loadStatic(){
     uid: SUBJ.uid,
     emp: String(SUBJ.emp),
     crew: SUBJ.crew || '',
-    mySite: mySite
+    mySite: mySite,
+    year: viewYear,
+    month: viewMonth
   };
   const next = {};
   let compatibilityFailure = null;
@@ -680,8 +682,10 @@ async function loadStatic(){
   // עצמו נכשל בקול ועוצר את החישוב במקום לפרסם תוצאה מטעה.
   const loadLegacyCompatibility = async function () {
     try {
-      // עצם ריק במכוון: התחנה נגזרת מהזהות החיה בשרת.
-      const result = await callLegacyScheduleCompatibilityContext({});
+      // התחנה נגזרת מהזהות החיה בשרת; הדפדפן שולח רק
+      // את הטווח המזערי שנדרש לחודש המוצג.
+      const result = await callLegacyScheduleCompatibilityContext(
+        guardMonthRange(snapshot.year, snapshot.month));
       next.compatibility = legacyCompatibilityData(result);
     } catch (error) {
       compatibilityFailure = error;
@@ -752,7 +756,8 @@ async function loadStatic(){
 
   const current = generation === staticLoadGeneration &&
     SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
-    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew;
+    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew &&
+    viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
 
   if (compatibilityFailure || !next.compatibility) {
@@ -1828,11 +1833,13 @@ async function loadApprovals(){
 
 $('prev').onclick = async () => {
   viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-  msg('', ''); await loadMonth();
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
 };
 $('next').onclick = async () => {
   viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
-  msg('', ''); await loadMonth();
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
 };
 </script>
 </body>

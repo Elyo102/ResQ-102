@@ -82,19 +82,92 @@ try {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/swaps.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
-    await page.locator('#myDate').fill('2026-09-02');
-    await page.locator('#hisDate').fill('2026-09-03');
+    const dates = await page.evaluate(() => {
+      const key = date => date.getFullYear() + '-' +
+        String(date.getMonth() + 1).padStart(2, '0') + '-' +
+        String(date.getDate()).padStart(2, '0');
+      const offset = (value, days) => {
+        const date = new Date(value + 'T12:00:00');
+        date.setDate(date.getDate() + days);
+        return key(date);
+      };
+      const input = document.querySelector('#myDate');
+      return { mine:offset(input.min, 2), his:offset(input.min, 3),
+        expected:{ from:offset(input.min, -1), to:offset(input.max, 1) } };
+    });
+    await page.locator('#myDate').fill(dates.mine);
+    await page.locator('#hisDate').fill(dates.his);
     assert.match(await page.locator('#myCrewLine').textContent(), /בסיס הסידור אינו זמין/);
     assert.match(await page.locator('#hisCrewLine').textContent(), /בסיס הסידור אינו זמין/);
     await page.waitForFunction(() => !document.querySelector('#btnSend')?.disabled);
     assert.match(await page.locator('#myCrewLine').textContent(), /עובדת ביום זה/);
     assert.match(await page.locator('#hisCrewLine').textContent(), /עובדת ביום זה/);
+    const calls = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call && call.name === 'getLegacyScheduleCompatibilityContext')
+      .map(call => call.payload));
+    assert.deepEqual(calls, [dates.expected]);
+    assert.equal(Object.hasOwn(calls[0], 'sid'), false);
+    assert.equal(Object.hasOwn(calls[0], 'station'), false);
     await context.close();
     console.log('✓ delayed compatibility success refreshes both selected swap dates');
+  }
+
+  // Statistics reuses one annual compatibility snapshot for all shorter
+  // workload tabs. The request is 365 days back plus today: 366 inclusive.
+  {
+    const context = await contextWithPlan({
+      getGuardLoadStatistics:[{ data:{ guards:[] } }]
+    });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/stats.html`, { waitUntil:'load' });
+    await page.locator('#work').waitFor({ state:'visible' });
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(call =>
+      call && call.name === 'getLegacyScheduleCompatibilityContext'));
+    const value = await page.evaluate(() => {
+      const key = date => date.getFullYear() + '-' +
+        String(date.getMonth() + 1).padStart(2, '0') + '-' +
+        String(date.getDate()).padStart(2, '0');
+      const today = new Date();
+      const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 365, 12);
+      const call = (window.__CALLABLE_CALLS || []).find(item =>
+        item && item.name === 'getLegacyScheduleCompatibilityContext');
+      return { payload:call && call.payload, expected:{ from:key(from), to:key(today) } };
+    });
+    assert.deepEqual(value.payload, value.expected);
+    assert.equal(Object.hasOwn(value.payload, 'sid'), false);
+    await context.close();
+    console.log('✓ statistics requests exactly 366 inclusive days without a station selector');
+  }
+
+  // Guard viewing retains one raw month and one future year. Both the guard
+  // boards and schedule classification share the same date snapshot.
+  {
+    const context = await contextWithPlan({});
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/guards.html`, { waitUntil:'load' });
+    await page.locator('#work').waitFor({ state:'visible' });
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(call =>
+      call && call.name === 'getLegacyScheduleCompatibilityContext'));
+    const value = await page.evaluate(() => {
+      const key = date => date.getFullYear() + '-' +
+        String(date.getMonth() + 1).padStart(2, '0') + '-' +
+        String(date.getDate()).padStart(2, '0');
+      const today = new Date();
+      const shift = days => new Date(today.getFullYear(), today.getMonth(),
+        today.getDate() + days, 12);
+      const call = (window.__CALLABLE_CALLS || []).find(item =>
+        item && item.name === 'getLegacyScheduleCompatibilityContext');
+      return { payload:call && call.payload,
+        expected:{ from:key(shift(-31)), to:key(shift(365)) } };
+    });
+    assert.deepEqual(value.payload, value.expected);
+    assert.equal(Object.hasOwn(value.payload, 'station'), false);
+    await context.close();
+    console.log('✓ guards requests 31 past days through 365 future days');
   }
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n2/2 legacy compatibility browser checks passed.');
+console.log('\n4/4 legacy compatibility browser checks passed.');

@@ -445,9 +445,12 @@ check('legacy compatibility validates and normalizes a complete operational cycl
   assert.ok(integration.includes("{ shift_hours: true }, 'legacy-rotation-hours'"));
   assert.ok(integration.includes("date: null, kind: 'standby', crew: '', extra_crews: ['B']"));
 });
-check('legacy compatibility accepts no client context and is App Check protected', () => {
-  assert.ok(runtime.includes('Object.keys(req.data).length !== 0'));
-  assert.ok(runtime.includes("'legacy-compatibility-request'"));
+check('legacy compatibility accepts only an exact bounded client date range and is App Check protected', () => {
+  assert.ok(runtime.includes('legacyCompatibility.parseLegacyCompatibilityRange(req && req.data)'));
+  assert.ok(legacyCompat.includes("'legacy-compatibility-request'"));
+  assert.ok(legacyCompat.includes("'legacy-compatibility-range'"));
+  assert.ok(legacyCompat.includes('function parseLegacyCompatibilityRange(input)'));
+  assert.ok(legacyCompat.includes('const MAX_OVERRIDES = 397'));
   const start = index.indexOf('exports.getLegacyScheduleCompatibilityContext');
   assert.ok(start > -1);
   const body = index.slice(start, start + 280);
@@ -460,14 +463,16 @@ check('legacy compatibility is bounded and rechecks mode and live membership aft
   const body = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   assert.ok(body.includes("root.collection('rotations').limit(legacyCompatibility.MAX_ROTATIONS + 1)"));
-  assert.ok(body.includes("root.collection('shift_overrides').limit(legacyCompatibility.MAX_OVERRIDES + 1)"));
+  assert.ok(body.includes("root.collection('shift_overrides')"));
+  assert.ok(body.includes('.orderBy(FieldPath.documentId()).startAt(range.from).endAt(range.to)'));
+  assert.ok(body.includes('.limit(legacyCompatibility.MAX_OVERRIDES + 1).get()'));
   assert.ok(body.includes("before.mode === MODE.NEW"));
   assert.ok(body.includes("kind: 'legacy-compatibility'"));
   assert.ok(body.includes('configuration(ctx.sid)'));
   assert.ok(body.includes('liveUserRef(ctx.sid, ctx.uid).get()'));
   assert.ok(body.includes('requireLiveCompatibilityViewer(finalReads[1], ctx)'));
 });
-check('emulator coverage includes compatibility privacy, identity, mode and both caps', () => {
+check('emulator coverage includes compatibility privacy, identity, mode, ranges and caps', () => {
   for (const token of ['active members receive only allow-listed legacy compatibility fields',
     'foreign, inactive and unapproved identities cannot read compatibility data',
     'super admin compatibility access still requires live same-station membership',
@@ -475,7 +480,8 @@ check('emulator coverage includes compatibility privacy, identity, mode and both
     'a mode switch during compatibility reads fails closed',
     'a station membership change during compatibility reads fails closed',
     'rotation reads accept the cap and reject one extra row',
-    'override reads reject one record above the bounded cap']) {
+    'accepts 397 inclusive days and rejects a 398-day request',
+    'override query includes both boundaries, ignores malformed outside and fails closed inside']) {
     assert.ok(integration.includes(token), token);
   }
 });

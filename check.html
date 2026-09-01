@@ -326,6 +326,17 @@ async function myStation(){
   return c.stationId || 'eilat_102';
 }
 
+function scheduleProbeRange(){
+  const key = function (date) {
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') +
+      '-' + String(date.getDate()).padStart(2, '0');
+  };
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7, 12);
+  const to = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7, 12);
+  return { from:key(from), to:key(to) };
+}
+
 // הסגל האמיתי. בלעדיו אין למי לשבץ אבטחה, ואין טעם ליצור
 // נתונים שמצביעים על אף אחד.
 async function roster(sid){
@@ -659,7 +670,8 @@ $('btnDeploy').onclick = async () => {
       say('dep', 'בסיס הסידור', 'קריאת מנוע חדש ✓ · פרסום פעיל: ' +
           (value.active ? 'כן' : 'לא'), 'ok');
     } else if (mode === 'off' || mode === 'shadow') {
-      const response = await httpsCallable(fns, 'getLegacyScheduleCompatibilityContext')({});
+      const response = await httpsCallable(fns, 'getLegacyScheduleCompatibilityContext')(
+        scheduleProbeRange());
       const value = response && response.data;
       const valid = value && value.mode === mode && Array.isArray(value.rotations) &&
         value.overrides && typeof value.overrides === 'object' &&

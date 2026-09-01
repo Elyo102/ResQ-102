@@ -7,7 +7,10 @@
 
 const LEGACY_MODES = Object.freeze(['off', 'shadow']);
 const MAX_ROTATIONS = 20;
-const MAX_OVERRIDES = 500;
+// The compatibility bridge retains at most 31 past days, today, and 365
+// future days in one request.  A canonical override id represents one day,
+// so this is both the request span and response-row ceiling.
+const MAX_OVERRIDES = 397;
 const ROTATION_FIELDS = Object.freeze([
   'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
   'shift_start', 'shift_end', 'shift_hours', 'commander_start',
@@ -52,6 +55,31 @@ function realDate(value) {
   if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
   const date = new Date(value + 'T00:00:00.000Z');
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function parseLegacyCompatibilityRange(input) {
+  if (!plain(input)) {
+    fail('legacy-compatibility-request',
+      'Legacy compatibility requires an exact from/to request.');
+  }
+  const keys = Object.keys(input).sort();
+  if (keys.length !== 2 || keys[0] !== 'from' || keys[1] !== 'to'
+      || !own(input, 'from') || !own(input, 'to')) {
+    fail('legacy-compatibility-request',
+      'Legacy compatibility accepts only from and to.');
+  }
+  if (!realDate(input.from) || !realDate(input.to) || input.from > input.to) {
+    fail('legacy-compatibility-range',
+      'Legacy compatibility requires an ordered canonical date range.');
+  }
+  const fromTime = new Date(input.from + 'T00:00:00.000Z').getTime();
+  const toTime = new Date(input.to + 'T00:00:00.000Z').getTime();
+  const days = ((toTime - fromTime) / 86400000) + 1;
+  if (!Number.isSafeInteger(days) || days > MAX_OVERRIDES) {
+    fail('legacy-compatibility-range',
+      'Legacy compatibility date range exceeds the safe limit.');
+  }
+  return Object.freeze({ from: input.from, to: input.to, days });
 }
 
 function safeScalar(value, field) {
@@ -277,6 +305,7 @@ function projectLegacyScheduleCompatibility(input) {
 }
 
 module.exports = Object.freeze({
+  parseLegacyCompatibilityRange,
   projectLegacyScheduleCompatibility,
   LegacyScheduleCompatibilityError,
   ROTATION_FIELDS,

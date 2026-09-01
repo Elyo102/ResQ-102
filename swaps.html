@@ -434,12 +434,62 @@ function dmy(k){
   return Number(p[2]) + '.' + Number(p[1]);
 }
 
+const SWAP_COMPATIBILITY_PAST_DAYS = 31;
+const SWAP_COMPATIBILITY_FUTURE_DAYS = 365;
+
+function swapDateKey(date){
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') +
+    '-' + String(date.getDate()).padStart(2, '0');
+}
+
+function swapDayOffset(key, offset){
+  const date = new Date(String(key || '') + 'T12:00:00');
+  date.setDate(date.getDate() + offset);
+  return swapDateKey(date);
+}
+
+function swapCompatibilityWindow(){
+  const today = swapDateKey(new Date());
+  return {
+    schedule: {
+      from: swapDayOffset(today, -SWAP_COMPATIBILITY_PAST_DAYS),
+      to: swapDayOffset(today, SWAP_COMPATIBILITY_FUTURE_DAYS)
+    },
+    // Leave one complete day on both sides for swapRestCheck. A selectable
+    // boundary without its adjacent day could approve 48 consecutive hours
+    // from incomplete schedule data.
+    input: {
+      min: swapDayOffset(today, -(SWAP_COMPATIBILITY_PAST_DAYS - 1)),
+      max: swapDayOffset(today, SWAP_COMPATIBILITY_FUTURE_DAYS - 1)
+    }
+  };
+}
+
+function canonicalSwapDate(value){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(String(value) + 'T12:00:00');
+  return !Number.isNaN(date.getTime()) && swapDateKey(date) === value;
+}
+
 let SID = '', ME = null, IS_STAFF = false, MY_SHIFT = '', UNLOCKED = false;
 let CAN_LOG = false, MY_ROLE = '', logMsgs = [], logStop = null, logSeen = '';
 let people = [], quals = [], held = {}, swaps = [], rotations = [], overrides = {};
 let peer = null;
 let scheduleReady = false;
 let scheduleLoadError = 'בסיס הסידור עדיין נטען.';
+let swapDateWindow = null;
+
+function applySwapDateBounds(input){
+  if (!input) return;
+  const bounds = (swapDateWindow || swapCompatibilityWindow()).input;
+  input.min = bounds.min;
+  input.max = bounds.max;
+}
+
+function swapDateAllowed(value){
+  const bounds = (swapDateWindow || swapCompatibilityWindow()).input;
+  return canonicalSwapDate(value) && value >= bounds.min && value <= bounds.max;
+}
 
 function qualName(id){
   const q = quals.filter(x => x.id === id)[0];
@@ -693,7 +743,8 @@ async function loadLegacyScheduleCompatibility(){
   scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. לא ניתן לחשב או לשלוח החלפה בבטחה.';
   $('btnSend').disabled = true;
   try {
-    const result = await legacyScheduleCall({});
+    swapDateWindow = swapDateWindow || swapCompatibilityWindow();
+    const result = await legacyScheduleCall(swapDateWindow.schedule);
     const value = result && result.data;
     if (!value || (value.mode !== 'off' && value.mode !== 'shadow') ||
         !Array.isArray(value.rotations) || !value.overrides ||
@@ -848,6 +899,9 @@ document.addEventListener('keydown', function (e) {
 // שאתה מכיר — וזה בדיוק מה שהמסך הזה בא להחליף.
 
 function setupMode(){
+  swapDateWindow = swapCompatibilityWindow();
+  applySwapDateBounds($('myDate'));
+  applySwapDateBounds($('hisDate'));
   $('wantCrew').innerHTML = '<option value="">כל משמרת</option>' +
     ['A','B','C'].filter(c => c !== ME.crew).map(c =>
       '<option value="' + c + '">משמרת ' + esc(CREW_HE[c] || c) +
@@ -889,6 +943,10 @@ function crewLine(inputId, outId){
   const box = $(outId);
   if (!v) { box.textContent = '—'; return; }
   if ($(inputId).disabled) { box.textContent = 'מי שיתפוס יבחר את היום שלו.'; return; }
+  if (!swapDateAllowed(v)) {
+    box.textContent = 'התאריך מחוץ לטווח ההחלפות הבטוח.';
+    return;
+  }
   if (!scheduleReady) {
     box.textContent = 'בסיס הסידור אינו זמין — לא ניתן לזהות משמרת.';
     return;
@@ -908,9 +966,9 @@ $('btnSend').onclick = async () => {
 
   const OPEN = MODE === 'open';
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(my))  { msg('צריך לבחור את היום שלך.', 'err'); return; }
+  if (!swapDateAllowed(my))  { msg('צריך לבחור את היום שלך בטווח המותר.', 'err'); return; }
   if (OPEN) { await sendOpen(my); return; }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(his)) { msg('צריך לבחור את היום שלו.', 'err'); return; }
+  if (!swapDateAllowed(his)) { msg('צריך לבחור את היום שלו בטווח המותר.', 'err'); return; }
   if (!peer) { msg('צריך לבחור עם מי מחליפים.', 'err'); return; }
   if (my === his) { msg('שני התאריכים זהים. בהחלפה יום מול יום צריך שני ימים.', 'err'); return; }
   if (!ME.crew || !peer.crew) {
@@ -1054,13 +1112,19 @@ function renderOpenBoard(){
 // למפקדים.
 function takeOpen(s){
   if (!requireSchedule('openMsg')) return;
+  if (!swapDateAllowed(s.from_date)) {
+    msg('הבקשה מחוץ לטווח ההחלפות הנבדק ואי אפשר להמשיך אותה.', 'err', 'openMsg');
+    return;
+  }
+  const bounds = (swapDateWindow || swapCompatibilityWindow()).input;
   openOv(
     '<h3 id="dlgTitle">החלפה עם ' + esc(s.from_name) + '</h3>' +
     '<div class="hint">הוא לא עובד ב-' + esc(dmy(s.from_date)) +
       ' ואתה נכנס במקומו. בתמורה — באיזה יום שלך הוא ייכנס במקומך?</div>' +
     '<label for="tkDate">' +
       'היום שלי</label>' +
-    '<input type="date" id="tkDate" style="width:100%;padding:10px;' +
+    '<input type="date" id="tkDate" min="' + esc(bounds.min) + '" max="' + esc(bounds.max) +
+      '" style="width:100%;padding:10px;' +
       'background:var(--input);color:var(--txt);border:1px solid var(--line);' +
       'border-radius:7px;font-size:15px;font-family:inherit">' +
     '<div class="msg" id="tkMsg" role="status" aria-live="polite"></div>' +
@@ -1072,8 +1136,8 @@ function takeOpen(s){
 
   $('tkGo').onclick = async () => {
     const d = $('tkDate').value;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      msg('צריך לבחור יום.', 'err', 'tkMsg'); return;
+    if (!swapDateAllowed(d)) {
+      msg('צריך לבחור יום בטווח המותר.', 'err', 'tkMsg'); return;
     }
     if (d === s.from_date) {
       msg('זה אותו יום. בהחלפה יום מול יום צריך שני ימים.', 'err', 'tkMsg');
@@ -1313,6 +1377,10 @@ function canApprove(crew){
 // אין ברירה — אבל היא לא מתקבלת בעיוורון.
 function reviewDialog(s){
   if (!requireSchedule('apprMsg')) return;
+  if (!swapDateAllowed(s.from_date) || !swapDateAllowed(s.to_date)) {
+    msg('הבקשה מחוץ לטווח הסידור הנבדק ולכן אי אפשר לאשר אותה.', 'err', 'apprMsg');
+    return;
+  }
   const first = s.status === 'cmd_from';
   const crew  = first ? s.from_crew : s.to_crew;
   const date  = first ? s.from_date : s.to_date;

@@ -113,6 +113,10 @@ function req(uid, role, data, extraToken) {
   return { auth: { uid, token: Object.assign({ stationId: SID, role, name: uid }, extraToken || {}) }, data: data || {} };
 }
 
+function compatibilityRange(patch) {
+  return Object.assign({ from: '2026-09-01', to: '2026-09-30' }, patch || {});
+}
+
 function station() { return db.collection('stations').doc(SID); }
 function activePointer() { return station().collection('schedule_state').doc('active'); }
 function managerAccess() { return station().collection('schedule_access').doc('manager'); }
@@ -331,12 +335,23 @@ async function test(name, fn) {
       (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
   });
 
-  await test('legacy compatibility accepts only an empty request and rejects station spoofing', async () => {
-    for (const data of [{ stationId: 'other_station' }, { station_id: 'other_station' },
-      { from: '2026-09-01' }, { unexpected: true }]) {
+  await test('legacy compatibility requires an exact canonical range and rejects station spoofing', async () => {
+    for (const data of [{}, { stationId: 'other_station' }, { station_id: 'other_station' },
+      { from: '2026-09-01' }, { to: '2026-09-30' }, { unexpected: true },
+      compatibilityRange({ stationId: 'other_station' })]) {
       await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', data)),
         (error) => error instanceof ScheduleRuntimeError
           && error.code === 'legacy-compatibility-request');
+    }
+    for (const data of [
+      { from: '2026-02-30', to: '2026-09-30' },
+      { from: '2026-09-30', to: '2026-09-01' },
+      { from: '2026-09-01', to: '2027-10-03' }
+    ]) {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', data)),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-compatibility-range'
+          && error.httpCode === 'invalid-argument');
     }
   });
 
@@ -357,7 +372,7 @@ async function test(name, fn) {
       updated_at: 'override timestamp', unknown_future_field: 'override unknown sentinel'
     });
     try {
-      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', {}));
+      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange()));
       assert.equal(out.mode, 'shadow');
       assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides']);
       assert.ok(out.rotations.some((row) => row.crew === 'A' && row.shift_hours === 24));
@@ -379,7 +394,7 @@ async function test(name, fn) {
   });
 
   await test('foreign, inactive and unapproved identities cannot read compatibility data', async () => {
-    await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {}, {
+    await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange(), {
       stationId: 'other_station'
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
 
@@ -387,7 +402,7 @@ async function test(name, fn) {
     const viewerBefore = (await viewerRef.get()).data() || {};
     await viewerRef.set(Object.assign({}, viewerBefore, { active: false }));
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
     } finally {
       await viewerRef.set(viewerBefore);
@@ -396,7 +411,7 @@ async function test(name, fn) {
     const pendingRef = station().collection('users').doc('pending_user');
     await pendingRef.set({ station: SID, active: true, role: '', full_name: 'ממתין לאישור' });
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('pending_user', 'firefighter', {})),
+      await assert.rejects(api.getLegacyCompatibility(req('pending_user', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'role-forbidden');
     } finally {
       await pendingRef.delete();
@@ -408,10 +423,10 @@ async function test(name, fn) {
     await superRef.set({ station: SID, active: true, role: '', full_name: 'מנהל מערכת' });
     const superRuntime = runtime(null, { isSuper: () => true });
     try {
-      const accepted = await superRuntime.getLegacyCompatibility(req('super_viewer', '', {}));
+      const accepted = await superRuntime.getLegacyCompatibility(req('super_viewer', '', compatibilityRange()));
       assert.equal(accepted.mode, 'shadow');
       await superRef.update({ station: 'other_station' });
-      await assert.rejects(superRuntime.getLegacyCompatibility(req('super_viewer', '', {})),
+      await assert.rejects(superRuntime.getLegacyCompatibility(req('super_viewer', '', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
     } finally {
       await superRef.delete();
@@ -422,7 +437,7 @@ async function test(name, fn) {
     const runtimeRef = station().collection('schedule_state').doc('runtime');
     await runtimeRef.update({ mode: 'new' });
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError
           && error.code === 'legacy-compatibility-mode');
     } finally {
@@ -438,7 +453,7 @@ async function test(name, fn) {
       }
     });
     try {
-      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-changed');
     } finally {
       await runtimeRef.update({ mode: 'shadow' });
@@ -456,7 +471,7 @@ async function test(name, fn) {
       }
     });
     try {
-      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError
           && error.code === 'legacy-compatibility-viewer-changed');
     } finally {
@@ -479,7 +494,7 @@ async function test(name, fn) {
     }
     await write.commit();
     try {
-      const atCap = await api.getLegacyCompatibility(req('viewer', 'firefighter', {}));
+      const atCap = await api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange()));
       assert.equal(atCap.rotations.length, 3);
       assert.deepEqual(atCap.rotations.map((row) => row.crew), ['A', 'B', 'C']);
       assert.equal(atCap.rotations[0].shift_start, '07:00');
@@ -488,7 +503,7 @@ async function test(name, fn) {
       await overflow.set({ crew: 'overflow', position_in_cycle: 20, cycle_days: 21,
         anchor_date: '2026-09-01', is_active: false });
       try {
-        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
           (error) => error instanceof ScheduleRuntimeError
             && error.code === 'legacy-rotations-too-large');
       } finally {
@@ -513,7 +528,7 @@ async function test(name, fn) {
       const original = rotationBefore[index].data() || {};
       await rotationRefs[index].set(Object.assign({}, original, patch));
       try {
-        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
           (error) => error instanceof ScheduleRuntimeError && error.code === code, code);
       } finally {
         await restoreRotations();
@@ -531,7 +546,7 @@ async function test(name, fn) {
       Object.assign({}, rotationBefore[index].data() || {}, { is_active: false })));
     await inactive.commit();
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError
           && error.code === 'legacy-rotation-active-cycle');
     } finally {
@@ -541,36 +556,52 @@ async function test(name, fn) {
     const overrideRef = station().collection('shift_overrides').doc('2026-09-11');
     await overrideRef.set({ date: '2026-09-11', kind: 'unknown', crew: '', extra_crews: [] });
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-override-kind');
     } finally {
       await overrideRef.delete();
     }
   });
 
-  await test('legacy compatibility override reads reject one record above the bounded cap', async () => {
+  await test('legacy compatibility accepts 397 inclusive days and rejects a 398-day request', async () => {
+    const accepted = await api.getLegacyCompatibility(req('viewer', 'firefighter', {
+      from: '2026-09-01', to: '2027-10-02'
+    }));
+    assert.equal(accepted.mode, 'shadow');
+    await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {
+      from: '2026-09-01', to: '2027-10-03'
+    })), (error) => error instanceof ScheduleRuntimeError
+      && error.code === 'legacy-compatibility-range'
+      && error.httpCode === 'invalid-argument');
+  });
+
+  await test('override query includes both boundaries, ignores malformed outside and fails closed inside', async () => {
     const collection = station().collection('shift_overrides');
-    const refs = Array.from({ length: 501 }, (_, index) => {
-      const date = new Date(Date.UTC(2027, 0, 1 + index)).toISOString().slice(0, 10);
-      return collection.doc(date);
-    });
-    for (let start = 0; start < refs.length; start += 500) {
-      const write = db.batch();
-      refs.slice(start, start + 500).forEach((ref) => write.set(ref, {
-        date: ref.id, kind: 'holiday', crew: '', extra_crews: []
-      }));
-      await write.commit();
-    }
+    const ids = ['2028-01-09', '2028-01-10', '2028-01-15', '2028-01-20', '2028-01-21'];
+    const refs = ids.map((id) => collection.doc(id));
+    const write = db.batch();
+    refs.forEach((ref, index) => write.set(ref, {
+      date: ref.id,
+      kind: index === 0 || index === refs.length - 1 ? 'malformed-outside' : 'holiday',
+      crew: '', extra_crews: []
+    }));
+    await write.commit();
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
-        (error) => error instanceof ScheduleRuntimeError
-          && error.code === 'legacy-overrides-too-large');
+      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', {
+        from: '2028-01-10', to: '2028-01-20'
+      }));
+      assert.deepEqual(Object.keys(out.overrides), ['2028-01-10', '2028-01-15', '2028-01-20']);
+      await refs[2].set({
+        date: refs[2].id, kind: 'malformed-inside', crew: '', extra_crews: []
+      });
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {
+        from: '2028-01-10', to: '2028-01-20'
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'legacy-override-kind');
     } finally {
-      for (let start = 0; start < refs.length; start += 500) {
-        const remove = db.batch();
-        refs.slice(start, start + 500).forEach((ref) => remove.delete(ref));
-        await remove.commit();
-      }
+      const remove = db.batch();
+      refs.forEach((ref) => remove.delete(ref));
+      await remove.commit();
     }
   });
 
@@ -2278,8 +2309,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 63);
-  console.log('\n63 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 64);
+  console.log('\n64 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

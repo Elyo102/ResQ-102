@@ -334,7 +334,9 @@ async function loadGuardStatistics(windowId){
 async function loadLegacyScheduleCompatibility(){
   scheduleLoadError = '';
   try {
-    const result = await legacyScheduleCall({});
+    // The workload screen can switch among shorter windows without another
+    // network read, so it requests the single bounded annual context once.
+    const result = await legacyScheduleCall(guardStatisticsRange('365'));
     const value = result && result.data;
     if (!value || (value.mode !== 'off' && value.mode !== 'shadow') ||
         !Array.isArray(value.rotations) || !value.overrides ||

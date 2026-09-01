@@ -2409,10 +2409,15 @@ function createScheduleRuntime(deps) {
     }
   }
 
-  function requireEmptyLegacyCompatibilityRequest(req) {
-    if (!req || !plain(req.data) || Object.keys(req.data).length !== 0) {
-      throw new ScheduleRuntimeError('legacy-compatibility-request',
-        'קריאת התאימות אינה מקבלת נתונים מהדפדפן.', 'invalid-argument');
+  function requestedLegacyCompatibilityRange(req) {
+    try {
+      return legacyCompatibility.parseLegacyCompatibilityRange(req && req.data);
+    } catch (error) {
+      if (error instanceof legacyCompatibility.LegacyScheduleCompatibilityError) {
+        throw new ScheduleRuntimeError(error.code,
+          'קריאת התאימות מקבלת טווח תאריכים תקין בלבד.', 'invalid-argument');
+      }
+      throw error;
     }
   }
 
@@ -2427,7 +2432,7 @@ function createScheduleRuntime(deps) {
   }
 
   async function getLegacyCompatibility(req) {
-    requireEmptyLegacyCompatibilityRequest(req);
+    const range = requestedLegacyCompatibilityRange(req);
     const ctx = await context(req);
     const before = await configuration(ctx.sid);
     if (before.mode === MODE.NEW) {
@@ -2438,7 +2443,9 @@ function createScheduleRuntime(deps) {
     try {
       const reads = await Promise.all([
         root.collection('rotations').limit(legacyCompatibility.MAX_ROTATIONS + 1).get(),
-        root.collection('shift_overrides').limit(legacyCompatibility.MAX_OVERRIDES + 1).get()
+        root.collection('shift_overrides')
+          .orderBy(FieldPath.documentId()).startAt(range.from).endAt(range.to)
+          .limit(legacyCompatibility.MAX_OVERRIDES + 1).get()
       ]);
       if (reads[0].size > legacyCompatibility.MAX_ROTATIONS) {
         throw new ScheduleRuntimeError('legacy-rotations-too-large',
