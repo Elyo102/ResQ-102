@@ -293,7 +293,7 @@ import { CREW_HE } from './rotation.js?v=38';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, defaultSince } from './guards.js?v=38';
+         autoPick, whyPicked, logRows, defaultSince, unavailableWhy } from './guards.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -314,7 +314,8 @@ const guardCall = Object.freeze({
   status: httpsCallable(fns, 'getScheduleRuntimeStatus'),
   manage: httpsCallable(fns, 'manageScheduleGuard'),
   board: httpsCallable(fns, 'getScheduleGuardBoard'),
-  managerBoard: httpsCallable(fns, 'getScheduleGuardManagerBoard')
+  managerBoard: httpsCallable(fns, 'getScheduleGuardManagerBoard'),
+  compatibility: httpsCallable(fns, 'getLegacyScheduleCompatibilityContext')
 });
 
 const $ = id => document.getElementById(id);
@@ -335,8 +336,61 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
 let people = [], guards = [], memberGuards = [], managerGuards = [], quals = [], held = {};
-let rotations = [], overrides = {}, swaps = [], busy = {};
+let rotations = [], overrides = {}, swaps = [], busy = {}, scheduleCompatibilityMode = '';
 let loadMap = {}, ctx = {};
+let scheduleClassificationAvailable = false;
+let guardLoadGeneration = 0;
+
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
+}
+
+function showLegacyCompatibilityFailure(){
+  scheduleCompatibilityMode = '';
+  scheduleClassificationAvailable = false;
+  rotations = [];
+  overrides = {};
+  loadMap = {};
+  ctx = { rotations:[], overrides:{}, swaps, guards };
+  msg('האבטחות זמינות, אך סיווג יום משמרת/חופש וחלוקת העומס אינם זמינים כרגע. אפשר לצפות, להירשם ולנהל שיבוצים ידנית.', 'err', 'openMsg');
+}
 
 // פעולות ניהול חייבות לקבל מזהה אידמפוטנטי שנוצר אקראית באופן
 // קריפטוגרפי. אין נפילה לשעון או למחולל לא-קריפטוגרפי: בהיעדר crypto עדיף
@@ -463,6 +517,7 @@ function guardOpenSlots(g){
 }
 
 function personalLoad(){
+  if (!scheduleClassificationAvailable) return null;
   const result = { off:0, shift:0, hours:0 };
   guards.filter(guardIsMine).forEach(function (g) {
     if (g.status === 'cancelled') return;
@@ -486,7 +541,8 @@ function syncGuardView(){
   ctx = { rotations, overrides, swaps, guards };
   // Only the manager board contains other people's assignment identifiers.
   // A member's own load is computed separately from their two boolean flags.
-  loadMap = CAN_MANAGE ? loadByPerson(people, guards, ctx, defaultSince()) : {};
+  loadMap = CAN_MANAGE && scheduleClassificationAvailable
+    ? loadByPerson(people, guards, ctx, defaultSince()) : {};
   if (ME) { renderOpen(); renderMine(); renderLoad(); renderLog(); }
 }
 
@@ -583,13 +639,13 @@ function mergeBoardRows(parts){
   return Array.from(byId.values()).filter(row => row.id);
 }
 
-async function loadGuardBoards(){
+async function loadGuardBoards(managerRequested){
   const ranges = guardBoardRanges();
   // Both reads are bounded to one calendar year.  The first serves normal
   // viewing and the second preserves the member's own recent history without
   // reopening an unbounded raw collection read.
   const memberReads = [guardCall.board(ranges.upcoming), guardCall.board(ranges.history)];
-  const managerReads = CAN_MANAGE
+  const managerReads = managerRequested
     ? [guardCall.managerBoard(ranges.upcoming), guardCall.managerBoard(ranges.history)] : [];
   const managerPromise = managerReads.length ? Promise.all(managerReads) : null;
   let member;
@@ -597,25 +653,24 @@ async function loadGuardBoards(){
     member = await Promise.all(memberReads);
   } catch (error) {
     if (managerPromise) await managerPromise.catch(() => {});
-    memberGuards = [];
-    managerGuards = [];
     throw error;
   }
-  memberGuards = mergeBoardRows(member.map(boardRows));
+  const nextMemberGuards = mergeBoardRows(member.map(boardRows));
   if (!managerPromise) {
-    managerGuards = [];
-    return;
+    return { memberGuards: nextMemberGuards, managerGuards: [] };
   }
   try {
     const manager = await managerPromise;
-    // A failed write can revoke the local view while the reads are in flight.
-    // Never put a detailed response back into memory after that revocation.
-    managerGuards = CAN_MANAGE ? mergeBoardRows(manager.map(boardRows)) : [];
+    return {
+      memberGuards: nextMemberGuards,
+      managerGuards: managerRequested ? mergeBoardRows(manager.map(boardRows)) : []
+    };
   } catch (error) {
-    managerGuards = [];
     if (isManagerAccessError(error)) {
+      // שלילה חיה גוברת גם על טעינה ישנה: מסירים מיד את כלי
+      // הניהול, אבל את תוצאת הלוח מפרסמת רק הטעינה העדכנית.
       setManagerAccess(false);
-      return;
+      return { memberGuards: nextMemberGuards, managerGuards: [] };
     }
     throw error;
   }
@@ -624,67 +679,67 @@ async function loadGuardBoards(){
 async function loadAll(){
   // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
   //
-  // הגרסה הקודמת חיכתה לכל אוסף לפני שביקשה את הבא. שמונה
-  // אוספים כפול כ-200 מילישניות הלוך-חזור מטלפון סלולרי הם
+  // הגרסה הקודמת חיכתה לכל מקור לפני שביקשה את הבא. כמה
+  // מקורות כפול כ-200 מילישניות הלוך-חזור מטלפון סלולרי הם
   // כמעט שתי שניות של מסך ריק — והנתונים אינם תלויים זה בזה,
   // אז ההמתנה הייתה מיותרת לגמרי.
   //
   // grab מפעיל מיד ואוסף את ההבטחה. הקריאות באתר הקריאה
   // נשארו עם await, וזה בסדר: await על undefined אינו הליכה
   // לרשת, ולכן כל השמונה יוצאות באותו רגע. מחכים להן פעם
-  // אחת ב-flush.
+  // אחת ב-flush; תוצאותיהן נשארות מקומיות עד שער הדור למטה.
+  const generation = ++guardLoadGeneration;
+  const snapshot = {
+    sid: SID,
+    uid: ME && ME.uid,
+    crew: (ME && ME.crew) || '',
+    manager: CAN_MANAGE === true,
+    wide: WIDE === true
+  };
+  const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
   const jobs = [];
+  const compatibilityRequest = guardCall.compatibility({}).then(function (result) {
+    return { data: legacyCompatibilityData(result), error: null };
+  }).catch(function (error) {
+    return { data: null, error: error };
+  });
   // מסמכי הסגל והכשירויות משמשים רק להצעת שיבוץ ולעריכה. הרשאת
   // הצפייה הרגילה באבטחות אינה סיבה להוריד אותם לטלפון; מצב האבטחה
   // הרגיל מגיע כולו מ-getScheduleGuardBoard.
-  const managerDataRequested = CAN_MANAGE === true;
+  const managerDataRequested = snapshot.manager;
   // ref אופציונלי: אוסף שקריאה גורפת שלו נדחית זקוק לשאילתה
   // מסוננת. ראה את ההערה אצל attendance למטה.
   const grab = (name, fn, ref) => {
     jobs.push((async () => {
       try {
-        const s = await getDocs(ref || collection(db, 'stations', SID, name));
+        const s = await getDocs(ref || collection(db, 'stations', snapshot.sid, name));
         fn(s);
       } catch (ignore) {}
     })());
   };
   const flush = () => Promise.all(jobs);
-  const guardBoards = loadGuardBoards();
+  const guardBoards = loadGuardBoards(managerDataRequested);
 
-  people = [];
-  quals = [];
-  held = {};
   if (managerDataRequested) {
     await grab('roster', s => s.forEach(d => {
       const v = d.data() || {};
       if (v.is_active === false) return;
-      people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
+      next.people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
                     emp: String(v.emp || v.emp_number || '') });
     }));
 
     await grab('quals', s => s.forEach(d =>
-      quals.push(Object.assign({ id: d.id }, d.data() || {}))));
+      next.quals.push(Object.assign({ id: d.id }, d.data() || {}))));
 
     await grab('member_quals', s => s.forEach(d => {
       const v = d.data() || {};
-      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+      next.held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     }));
   }
 
-  rotations = [];
-  await grab('rotations', s => s.forEach(d =>
-    rotations.push(Object.assign({ id: d.id }, d.data() || {}))));
-
-  overrides = {};
-  await grab('shift_overrides', s => s.forEach(d => {
-    const v = d.data() || {};
-    if (v.date) overrides[v.date] = v;
-  }));
-
-  swaps = [];
   await grab('swaps', s => s.forEach(d => {
     const v = d.data() || {};
-    if (v.status === 'approved') swaps.push(v);
+    if (v.status === 'approved') next.swaps.push(v);
   }));
 
   // מי לא זמין ובאיזה תאריך — נלמד מהנוכחות שכבר דווחה.
@@ -709,33 +764,60 @@ async function loadAll(){
     const d = new Date(); d.setDate(d.getDate() - 7); return toKey(d);
   })();
 
-  busy = {};
   await grab('attendance', s => s.forEach(d => {
     const v = d.data() || {};
     const why = v.day_type === 'vacation' ? 'בחופש'
               : v.day_type === 'sick'     ? 'במחלה'
               : v.day_type === 'reserve'  ? 'במילואים' : '';
     if (!why || !v.date || !v.uid) return;
-    if (!busy[v.date]) busy[v.date] = {};
-    busy[v.date][v.uid] = why;
-  }), WIDE
-     ? query(collection(db, 'stations', SID, 'attendance'),
+    if (!next.busy[v.date]) next.busy[v.date] = {};
+    next.busy[v.date][v.uid] = why;
+  }), snapshot.wide
+     ? query(collection(db, 'stations', snapshot.sid, 'attendance'),
              where('date', '>=', busyFrom))
-     : query(collection(db, 'stations', SID, 'attendance'),
-             where('crew', '==', ME.crew || '\u0000'),
+     : query(collection(db, 'stations', snapshot.sid, 'attendance'),
+             where('crew', '==', snapshot.crew || '\u0000'),
              where('date', '>=', busyFrom)));
 
   await flush();
+  const compatibility = await compatibilityRequest;
+  let boards = { memberGuards:[], managerGuards:[] };
+  let boardFailure = null;
   try {
-    await guardBoards;
+    boards = await guardBoards;
   } catch (error) {
     // There is intentionally no fallback to Firestore here.  A temporary
     // callable failure is visible, whereas a fallback would bypass the
     // privacy boundary that protects notes, place and fellow firefighters.
-    memberGuards = [];
-    managerGuards = [];
-    msg('לא הצלחנו לטעון את האבטחות כרגע. אפשר לנסות לרענן.', 'err', 'openMsg');
+    boardFailure = error;
   }
+
+  // תשובה מטען ישן אינה רשאית לדרוס תחנה, משתמש או טעינה
+  // חדשים. כל הנתונים נאספו למשתנים מקומיים עד לנקודה הזאת.
+  const current = generation === guardLoadGeneration && SID === snapshot.sid &&
+    ME && ME.uid === snapshot.uid;
+  if (!current) return false;
+
+  if (compatibility.error || !compatibility.data) {
+    scheduleCompatibilityMode = '';
+    scheduleClassificationAvailable = false;
+    rotations = [];
+    overrides = {};
+  } else {
+    scheduleCompatibilityMode = compatibility.data.mode;
+    scheduleClassificationAvailable = true;
+    rotations = compatibility.data.rotations;
+    overrides = compatibility.data.overrides;
+  }
+  people = next.people;
+  quals = next.quals;
+  held = next.held;
+  swaps = next.swaps;
+  busy = next.busy;
+  memberGuards = boards.memberGuards;
+  // A failed write can revoke the local view while the reads are in flight.
+  // Never put a detailed response back into memory after that revocation.
+  managerGuards = CAN_MANAGE && managerDataRequested ? boards.managerGuards : [];
 
   // מינוי יכול להישלל בזמן שהקריאות המקבילות בתנועה. לא משאירים
   // את נתוני הניהול בזיכרון רק מפני שהם יצאו רגע קודם לכן.
@@ -748,6 +830,13 @@ async function loadAll(){
 
   people.sort((a,b) => String(a.name).localeCompare(String(b.name),'he'));
   syncGuardView();
+  if (boardFailure) {
+    $('openNote').textContent = 'לא ניתן לקבוע אם קיימות אבטחות קרובות עד שהלוח ייטען מחדש.';
+    msg('לא הצלחנו לטעון את לוח האבטחות כרגע. אפשר לנסות לרענן.', 'err', 'openMsg');
+    return false;
+  }
+  if (!scheduleClassificationAvailable) showLegacyCompatibilityFailure();
+  return true;
 }
 
 function qualName(id){
@@ -1002,7 +1091,8 @@ function guardCard(g){
   el.className = 'g' + (mine ? ' mine' : '');
 
   const hrs = guardHours(g);
-  const duty = dutyKind(ctx, ME.uid, ME.crew, String(g.date || ''));
+  const duty = scheduleClassificationAvailable
+    ? dutyKind(ctx, ME.uid, ME.crew, String(g.date || '')) : '';
   const asg = detailed ? assignedOf(g) : [];
   const assignedCount = guardAssignedCount(g);
   const room = guardOpenSlots(g);
@@ -1014,8 +1104,10 @@ function guardCard(g){
     '<span class="when">' + esc(dmy(g.date)) + ' · ' +
       esc(g.start || '') + '–' + esc(g.end || '') +
       (hrs ? ' · ' + hrs + ' ש׳' : '') + '</span>' +
-    '<span class="tag ' + (duty === 'off' ? 'off' : 'shift') + '">' +
-      esc(DUTY_HE[duty]) + '</span>';
+    (duty
+      ? '<span class="tag ' + (duty === 'off' ? 'off' : 'shift') + '">' +
+          esc(DUTY_HE[duty]) + '</span>'
+      : '<span class="tag">סיווג משמרת לא זמין</span>');
   el.appendChild(head);
 
   const meta = document.createElement('div');
@@ -1164,10 +1256,13 @@ function renderMine(){
   const list = guards.filter(g => guardIsMine(g) || guardSignedByMe(g));
   list.sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
 
-  const mine = CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 }) : personalLoad();
-  $('mineNote').textContent =
-    'בשנה האחרונה: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
-    ' שעות) · ' + mine.shift + ' בתוך המשמרת.';
+  const mine = scheduleClassificationAvailable
+    ? (CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 }) : personalLoad())
+    : null;
+  $('mineNote').textContent = mine
+    ? 'בשנה האחרונה: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
+      ' שעות) · ' + mine.shift + ' בתוך המשמרת.'
+    : 'האבטחות שלך מוצגות, אך סיווג יום משמרת/חופש אינו זמין כרגע.';
 
   if (!list.length) {
     box.innerHTML = '<div class="note" style="padding-top:8px">' +
@@ -1182,6 +1277,11 @@ function renderMine(){
 function renderLoad(){
   if (!CAN_MANAGE) {
     $('balList').innerHTML = '';
+    $('rankList').innerHTML = '';
+    return;
+  }
+  if (!scheduleClassificationAvailable) {
+    $('balList').innerHTML = '<div class="note">חלוקת העומס אינה זמינה בלי נתוני סידור תקפים.</div>';
     $('rankList').innerHTML = '';
     return;
   }
@@ -1229,6 +1329,10 @@ function renderLoad(){
 function renderLog(){
   if (!CAN_MANAGE) {
     $('logTbl').innerHTML = '';
+    return;
+  }
+  if (!scheduleClassificationAvailable) {
+    $('logTbl').innerHTML = '<tbody><tr><td class="note">יומן סיווג המשמרות אינו זמין בלי נתוני סידור תקפים.</td></tr></tbody>';
     return;
   }
   const rows = logRows(guards, people, ctx);
@@ -1282,14 +1386,46 @@ function assignmentRows(g){
       signed: isSignedUp(g, uid),
       blocked: false,
       missingQuals: [],
-      duty: dutyKind(ctx, uid, crew, String(g.date || '')),
+      duty: scheduleClassificationAvailable
+        ? dutyKind(ctx, uid, crew, String(g.date || '')) : '',
       assigned: true
     };
   });
-  const suggestedRows = recommend(g, people, loadMap, ctx, busy,
-    { needQuals: g.need_quals || [], memberQuals: held });
+  const suggestedRows = scheduleClassificationAvailable
+    ? recommend(g, people, loadMap, ctx, busy,
+        { needQuals: g.need_quals || [], memberQuals: held })
+    : manualAssignmentRows(g, current);
   return { current: current, suggested: suggestedRows,
            rows: assignedRows.concat(suggestedRows) };
+}
+
+function manualAssignmentRows(g, current){
+  const signed = signupsOf(g).map(function (s) { return String(s.uid || ''); }).filter(Boolean);
+  const pool = signed.length ? signed : people.map(function (p) { return String(p.uid || ''); });
+  const need = Array.isArray(g.need_quals) ? g.need_quals.filter(Boolean) : [];
+  const rows = [];
+  Array.from(new Set(pool)).forEach(function (uid) {
+    if (!uid || current.indexOf(uid) !== -1) return;
+    const person = people.filter(function (p) { return String(p.uid) === uid; })[0];
+    if (!person) return;
+    const mine = Array.isArray(held[uid]) ? held[uid] : [];
+    const why = unavailableWhy(g, uid, { guards:guards }, busy);
+    rows.push({
+      uid:uid, name:person.name, crew:person.crew, emp:person.emp,
+      off:0, shift:0, total:0, last:'', signed:signed.indexOf(uid) !== -1,
+      blocked:!!why, why:why,
+      missingQuals:need.filter(function (q) { return mine.indexOf(q) === -1; }),
+      duty:'', manual:true
+    });
+  });
+  rows.sort(function (a, b) {
+    if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
+    if (a.missingQuals.length !== b.missingQuals.length) {
+      return a.missingQuals.length - b.missingQuals.length;
+    }
+    return String(a.name).localeCompare(String(b.name), 'he');
+  });
+  return rows;
 }
 
 function openAssign(g){
@@ -1298,7 +1434,7 @@ function openAssign(g){
   const assignment = assignmentRows(g);
   const cur = assignment.current;
   cur.forEach(u => dlgPick[u] = true);
-  const auto = autoPick(g, assignment.suggested);
+  const auto = scheduleClassificationAvailable ? autoPick(g, assignment.suggested) : [];
   auto.forEach(u => dlgPick[u] = true);
 
   const d = $('dlg');
@@ -1314,8 +1450,12 @@ function openAssign(g){
       : '') +
     '<div class="note" style="margin-bottom:6px">' +
       (signupsOf(g).length
-        ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
-        : 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.') +
+        ? (scheduleClassificationAvailable
+            ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
+            : 'מתוך הנרשמים. הבחירה ידנית כי סיווג המשמרות אינו זמין.')
+        : (scheduleClassificationAvailable
+            ? 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.'
+            : 'אין נרשמים — כל הסגל מוצג לבחירה ידנית ללא דירוג עומס.')) +
       '<br>בלחיצה על שמירה נשלחת לשרת הרשימה המלאה והעדכנית.</div>' +
     '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
       'border:1px solid var(--line);border-radius:9px;padding:2px 12px;' +
@@ -1347,7 +1487,8 @@ function openAssign(g){
     nm.innerHTML = '<b>' + esc(r.name) + '</b>' +
       (r.crew ? ' <span class="note">' + esc(CREW_HE[r.crew] || r.crew) +
         '</span>' : '') +
-      '<em>' + esc(r.assigned ? 'משובץ כעת — אפשר להסיר' : whyPicked(r)) + '</em>';
+      '<em>' + esc(r.assigned ? 'משובץ כעת — אפשר להסיר'
+        : (r.manual ? 'בחירה ידנית — סיווג משמרת לא זמין' : whyPicked(r))) + '</em>';
     el.appendChild(nm);
     if (r.assigned) {
       const s = document.createElement('span');
@@ -1361,10 +1502,12 @@ function openAssign(g){
     // האם האבטחה נופלת ביום המשמרת שלו או ביום החופש שלו.
     // זה משנה למי שמשבץ: הוצאת אדם מיום החופש שלו היא בקשה,
     // ובתוך המשמרת זו פשוט משימה.
-    const dt = document.createElement('span');
-    dt.className = 'tag ' + (r.duty === 'off' ? 'off' : 'shift');
-    dt.textContent = DUTY_HE[r.duty];
-    el.appendChild(dt);
+    if (r.duty) {
+      const dt = document.createElement('span');
+      dt.className = 'tag ' + (r.duty === 'off' ? 'off' : 'shift');
+      dt.textContent = DUTY_HE[r.duty];
+      el.appendChild(dt);
+    }
     list.appendChild(el);
   });
   if (!assignment.rows.length) {

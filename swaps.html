@@ -396,6 +396,8 @@ import { getAuth, onAuthStateChanged }
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { MEMBER_ROLES, STAFF_ROLES, mayWriteLog, roleHe }
   from './roles.js?v=38';
 import { MAX_TEXT, validateMessage, messageDoc, groupByDay, timeOf,
@@ -408,6 +410,8 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const legacyScheduleCall = httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
@@ -434,6 +438,8 @@ let SID = '', ME = null, IS_STAFF = false, MY_SHIFT = '', UNLOCKED = false;
 let CAN_LOG = false, MY_ROLE = '', logMsgs = [], logStop = null, logSeen = '';
 let people = [], quals = [], held = {}, swaps = [], rotations = [], overrides = {};
 let peer = null;
+let scheduleReady = false;
+let scheduleLoadError = 'בסיס הסידור עדיין נטען.';
 
 function qualName(id){
   const q = quals.filter(x => x.id === id)[0];
@@ -647,6 +653,7 @@ async function sendLog(){
 // ---------- טעינה ----------
 
 async function loadAll(){
+  const scheduleLoad = loadLegacyScheduleCompatibility();
   try {
     const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
     people = [];
@@ -677,22 +684,47 @@ async function loadAll(){
     });
   } catch (ignore) {}
 
-  try {
-    const rr = await getDocs(collection(db, 'stations', SID, 'rotations'));
-    rotations = rr.docs.map(d => d.data());
-  } catch (ignore) {}
-
-  try {
-    const os = await getDocs(collection(db, 'stations', SID, 'shift_overrides'));
-    overrides = {};
-    os.forEach(d => {
-      const v = d.data() || {};
-      overrides[d.id] = { kind: v.kind || '', crew: v.crew || '',
-                          extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [] };
-    });
-  } catch (ignore) {}
-
+  await scheduleLoad;
   await loadSwaps();
+}
+
+async function loadLegacyScheduleCompatibility(){
+  scheduleReady = false;
+  scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. לא ניתן לחשב או לשלוח החלפה בבטחה.';
+  $('btnSend').disabled = true;
+  try {
+    const result = await legacyScheduleCall({});
+    const value = result && result.data;
+    if (!value || (value.mode !== 'off' && value.mode !== 'shadow') ||
+        !Array.isArray(value.rotations) || !value.overrides ||
+        typeof value.overrides !== 'object' || Array.isArray(value.overrides)) {
+      throw new Error('legacy-schedule-contract');
+    }
+    rotations = value.rotations;
+    overrides = value.overrides;
+    scheduleReady = true;
+    scheduleLoadError = '';
+    $('btnSend').disabled = false;
+    msg('', '', 'newMsg');
+    // setupMode runs before this network request completes. A user can select
+    // either date while the schedule is still unavailable, so refresh both
+    // labels from the now-published compatibility state instead of leaving the
+    // stale fail-closed text on screen.
+    crewLine('myDate', 'myCrewLine');
+    crewLine('hisDate', 'hisCrewLine');
+    return true;
+  } catch (error) {
+    rotations = [];
+    overrides = {};
+    msg(scheduleLoadError, 'err', 'newMsg');
+    return false;
+  }
+}
+
+function requireSchedule(box){
+  if (scheduleReady) return true;
+  msg(scheduleLoadError || 'בסיס הסידור אינו זמין.', 'err', box || 'newMsg');
+  return false;
 }
 
 async function loadSwaps(){
@@ -857,6 +889,10 @@ function crewLine(inputId, outId){
   const box = $(outId);
   if (!v) { box.textContent = '—'; return; }
   if ($(inputId).disabled) { box.textContent = 'מי שיתפוס יבחר את היום שלו.'; return; }
+  if (!scheduleReady) {
+    box.textContent = 'בסיס הסידור אינו זמין — לא ניתן לזהות משמרת.';
+    return;
+  }
   const d = new Date(v + 'T00:00:00');
   const c = crewOnDate(rotations, d, overrides);
   box.innerHTML = c
@@ -866,6 +902,7 @@ function crewLine(inputId, outId){
 
 $('btnSend').onclick = async () => {
   msg('', '');
+  if (!requireSchedule('newMsg')) return;
   const my  = $('myDate').value;
   const his = $('hisDate').value;
 
@@ -1016,6 +1053,7 @@ function renderOpenBoard(){
 // הסכמתו — ולכן אין שלב "הסכמת הכבאי" והבקשה עוברת ישר
 // למפקדים.
 function takeOpen(s){
+  if (!requireSchedule('openMsg')) return;
   openOv(
     '<h3 id="dlgTitle">החלפה עם ' + esc(s.from_name) + '</h3>' +
     '<div class="hint">הוא לא עובד ב-' + esc(dmy(s.from_date)) +
@@ -1274,6 +1312,7 @@ function canApprove(crew){
 // ומה בדיוק המשמרת מאבדת. ההחלטה נשארת של המפקד — לפעמים
 // אין ברירה — אבל היא לא מתקבלת בעיוורון.
 function reviewDialog(s){
+  if (!requireSchedule('apprMsg')) return;
   const first = s.status === 'cmd_from';
   const crew  = first ? s.from_crew : s.to_crew;
   const date  = first ? s.from_date : s.to_date;

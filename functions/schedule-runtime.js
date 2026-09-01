@@ -6,6 +6,7 @@ const operationalProjection = require('./schedule-operational-projection');
 const guardEvents = require('./guard-events');
 const guardManagement = require('./schedule-guard-management');
 const guardBoardProjection = require('./guard-board-projection');
+const legacyCompatibility = require('./schedule-legacy-compat');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -2408,6 +2409,76 @@ function createScheduleRuntime(deps) {
     }
   }
 
+  function requireEmptyLegacyCompatibilityRequest(req) {
+    if (!req || !plain(req.data) || Object.keys(req.data).length !== 0) {
+      throw new ScheduleRuntimeError('legacy-compatibility-request',
+        'קריאת התאימות אינה מקבלת נתונים מהדפדפן.', 'invalid-argument');
+    }
+  }
+
+  function requireLiveCompatibilityViewer(userSnap, ctx) {
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    const role = String(user && user.role || '');
+    if (!scheduleAccess.activeMember(user, ctx.sid)
+        || (!ctx.super && (MEMBER_ROLES.indexOf(role) === -1 || role !== ctx.role))) {
+      throw new ScheduleRuntimeError('legacy-compatibility-viewer-changed',
+        'השיוך החי לתחנה השתנה בזמן הקריאה.', 'permission-denied');
+    }
+  }
+
+  async function getLegacyCompatibility(req) {
+    requireEmptyLegacyCompatibilityRequest(req);
+    const ctx = await context(req);
+    const before = await configuration(ctx.sid);
+    if (before.mode === MODE.NEW) {
+      throw new ScheduleRuntimeError('legacy-compatibility-mode',
+        'תצוגת התאימות אינה זמינה לאחר הפעלת המנוע החדש.', 'failed-precondition');
+    }
+    const root = stationRef(ctx.sid);
+    try {
+      const reads = await Promise.all([
+        root.collection('rotations').limit(legacyCompatibility.MAX_ROTATIONS + 1).get(),
+        root.collection('shift_overrides').limit(legacyCompatibility.MAX_OVERRIDES + 1).get()
+      ]);
+      if (reads[0].size > legacyCompatibility.MAX_ROTATIONS) {
+        throw new ScheduleRuntimeError('legacy-rotations-too-large',
+          'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      if (reads[1].size > legacyCompatibility.MAX_OVERRIDES) {
+        throw new ScheduleRuntimeError('legacy-overrides-too-large',
+          'חריגי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      const projected = legacyCompatibility.projectLegacyScheduleCompatibility({
+        mode: before.mode,
+        rotations: reads[0].docs.map((doc) => ({ id: doc.id, value: doc.data() || {} })),
+        overrides: reads[1].docs.map((doc) => ({ id: doc.id, value: doc.data() || {} }))
+      });
+
+      // Close both races independently: a station transfer/revocation and a
+      // switch to the new engine can happen while the bounded reads are in
+      // flight.  Neither may return a stale legacy snapshot.
+      await beforeEffectiveViewRecheck({ kind: 'legacy-compatibility', ctx, mode: before.mode });
+      const finalReads = await Promise.all([
+        configuration(ctx.sid),
+        liveUserRef(ctx.sid, ctx.uid).get()
+      ]);
+      if (finalReads[0].mode !== before.mode || finalReads[0].mode === MODE.NEW) {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      requireLiveCompatibilityViewer(finalReads[1], ctx);
+      return projected;
+    } catch (error) {
+      if (error instanceof ScheduleRuntimeError) throw error;
+      if (error instanceof legacyCompatibility.LegacyScheduleCompatibilityError) {
+        throw new ScheduleRuntimeError(error.code, 'נתוני הסידור הקיים אינם תקינים.',
+          error.code.endsWith('-too-large') ? 'resource-exhausted' : 'failed-precondition');
+      }
+      throw new ScheduleRuntimeError('legacy-compatibility-unavailable',
+        'לא ניתן לקרוא את נתוני הסידור הקיים בבטחה.', 'unavailable');
+    }
+  }
+
   function effectiveReaderFor(ctx) {
     return effectiveReaderModule.createScheduleEffectiveReader({
       resolveLiveContext: async function () {
@@ -3517,6 +3588,7 @@ function createScheduleRuntime(deps) {
     rollback,
     getMy,
     getStation,
+    getLegacyCompatibility,
     getGuardBoard,
     getGuardManagerBoard,
     getMyGuardAttendance,

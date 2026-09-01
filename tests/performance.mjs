@@ -51,6 +51,9 @@ const result = await page.evaluate(() => ({
   dataRequests: window.__N || 0,
   dataSpanMs: (window.__TN || Date.now()) - (window.__T0 || Date.now()),
   dataPaths: (window.__DATA_PATHS || []).slice(),
+  compatibilityCalls: (window.__CALLABLE_CALLS || [])
+    .filter(call => call && call.name === 'getLegacyScheduleCompatibilityContext')
+    .map(call => call.payload),
   guardCalls: (window.__CALLABLE_CALLS || [])
     .filter(call => call && call.name === 'getMyGuardAttendance')
     .map(call => call.payload)
@@ -72,14 +75,19 @@ function check(ok, message) {
   console.log((ok ? '✓ ' : '✗ ') + message);
 }
 
-const criticalPaths = ['/rotations','/shift_overrides','/config/board',
+const criticalPaths = ['/config/board',
   '/shifts/C','/swaps','/sub_stations','/attendance','/monthly_reports/1_'];
 check(!result.dataPaths.some(path => /\/guards$/.test(path)),
       'attendance does not read raw guard documents in the browser');
+check(!result.dataPaths.some(path => /\/(?:rotations|shift_overrides)$/.test(path)),
+      'attendance does not read raw legacy schedule documents in the browser');
 criticalPaths.forEach(suffix => {
   check(result.dataPaths.some(p => p.includes(suffix)),
         'benchmark exercised ' + suffix);
 });
+check(result.compatibilityCalls.length === 1 &&
+      JSON.stringify(result.compatibilityCalls[0]) === '{}',
+      'attendance loads the allowlisted legacy schedule through one station-free callable');
 const initialRange = await page.evaluate(() => {
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
@@ -234,8 +242,8 @@ check(guardAutoFill !== null && !guardAutoFill.includes('SECRET PLACE'),
 const beforeSubjectRace = await page.evaluate(() => window.__N || 0);
 await page.evaluate(() => {
   window.__SMOKE_LAG_PLAN = [
-    700,700,700,700,700,700,700,
-    40,40,40,40,40,40,40,40,40
+    700,700,700,700,
+    40,40,40,40,40,40
   ];
   const pick = document.getElementById('pickWho');
   pick.value = '17';
@@ -256,7 +264,7 @@ const subjectRace = await page.evaluate(before => {
     siteText: (document.querySelector('#rows tr.sug') || {}).textContent || ''
   };
 }, beforeSubjectRace);
-check(subjectRace.delta === 14 && subjectRace.monthReads === 2,
+check(subjectRace.delta === 10 && subjectRace.monthReads === 2,
       'a stale subject load is discarded before starting a month load');
 check(subjectRace.otherHidden && subjectRace.backHidden && subjectRace.busy === 'false',
       'the latest subject remains active after the stale load returns');
@@ -267,7 +275,7 @@ check(subjectRace.siteText.includes('ראשית') && !subjectRace.siteText.inclu
 // לפני טעינת החודש החדש ואסור לו להפעיל את עצמו או את שעון
 // המשמרת בזמן שהמסך עדיין מחזיק נתונים מהחודש הקודם.
 await page.evaluate(() => {
-  window.__SMOKE_LAG_PLAN = new Array(7).fill(300).concat([700, 700]);
+  window.__SMOKE_LAG_PLAN = new Array(4).fill(300).concat([700, 700]);
   const sync = document.getElementById('btnSync');
   sync.disabled = false; sync.click();
   const next = document.getElementById('next');

@@ -10,6 +10,7 @@ const integration = read('functions/schedule-runtime.integration.test.js');
 const service = read('functions/schedule-service.js');
 const access = read('functions/schedule-access.js');
 const accessAdmin = read('functions/schedule-access-admin.js');
+const legacyCompat = read('functions/schedule-legacy-compat.js');
 const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
@@ -245,7 +246,7 @@ check('all schedule callables enforce App Check', () => {
   for (const name of ['getScheduleRuntimeStatus', 'getScheduleManagerSetup', 'runSchedulePlanner',
     'getScheduleDraftPreview',
     'publishSchedule', 'rollbackSchedule', 'getMyScheduleV2', 'getStationScheduleV2', 'respondToSchedule',
-    'getScheduleManagerAccess', 'setScheduleManagerAccess']) {
+    'getLegacyScheduleCompatibilityContext', 'getScheduleManagerAccess', 'setScheduleManagerAccess']) {
     const start = index.indexOf('exports.' + name);
     assert.ok(start > -1, name);
     assert.ok(index.slice(start, start + 220).includes('enforceAppCheck: true'), name);
@@ -407,6 +408,76 @@ check('legacy guard rendering uses a safe station form and personal responses om
   assert.ok(legacyDay.includes('person: person.display'));
   assert.equal(stationGuard.includes('uid: person.uid'), false);
   assert.equal(legacyDay.includes('uid: person.uid'), false);
+});
+check('legacy compatibility uses an explicit allowlist and never a raw-document copy', () => {
+  assert.ok(runtime.includes("require('./schedule-legacy-compat')"));
+  for (const field of ['crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+    'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+    'commander_shift_hours', 'special_end', 'special_shift_hours']) {
+    assert.ok(legacyCompat.includes("'" + field + "'"), field);
+  }
+  assert.ok(legacyCompat.includes("const OVERRIDE_FIELDS = Object.freeze(['date', 'kind', 'crew', 'extra_crews'])"));
+  for (const forbidden of ['note', 'email', 'medical', 'by_uid', 'created_at', 'updated_at']) {
+    assert.equal(legacyCompat.includes(forbidden), false, forbidden);
+  }
+  assert.equal(legacyCompat.includes('Object.assign({}, value)'), false);
+  assert.equal(/\.\.\.\s*value/.test(legacyCompat), false);
+});
+check('legacy compatibility validates and normalizes a complete operational cycle', () => {
+  for (const token of [
+    "const CREWS = Object.freeze(['A', 'B', 'C'])",
+    "const OVERRIDE_KINDS = Object.freeze(['swap', 'holiday', 'training', 'standby'])",
+    'function projectRotations(entries)',
+    "row.value.is_active !== false",
+    'function strictNumber(value)',
+    'strictNumber(left.value.position_in_cycle) - strictNumber(right.value.position_in_cycle)',
+    'ROTATION_TIMING_DEFAULTS',
+    "'legacy-rotation-active-cycle'", "'legacy-rotation-crew'",
+    "'legacy-rotation-anchor'", "'legacy-rotation-cycle'",
+    "'legacy-rotation-position'", "'legacy-rotation-time'",
+    "'legacy-rotation-hours'", "'legacy-rotation-field-consistency'",
+    "'legacy-override-kind'", "'legacy-override-assignment'"
+  ]) assert.ok(legacyCompat.includes(token), token);
+  assert.equal(legacyCompat.includes('const hours = Number(value)'), false,
+    'boolean/array/object coercion must never validate an hour field');
+  assert.ok(integration.includes(
+    'semantically corrupt legacy cycles and overrides fail closed with stable codes'));
+  assert.ok(integration.includes("{ shift_hours: true }, 'legacy-rotation-hours'"));
+  assert.ok(integration.includes("date: null, kind: 'standby', crew: '', extra_crews: ['B']"));
+});
+check('legacy compatibility accepts no client context and is App Check protected', () => {
+  assert.ok(runtime.includes('Object.keys(req.data).length !== 0'));
+  assert.ok(runtime.includes("'legacy-compatibility-request'"));
+  const start = index.indexOf('exports.getLegacyScheduleCompatibilityContext');
+  assert.ok(start > -1);
+  const body = index.slice(start, start + 280);
+  assert.ok(body.includes('enforceAppCheck: true'));
+  assert.ok(body.includes("invokeSchedule('getLegacyCompatibility', req)"));
+});
+check('legacy compatibility is bounded and rechecks mode and live membership after reads', () => {
+  const start = runtime.indexOf('async function getLegacyCompatibility(req)');
+  const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
+  const body = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(body.includes("root.collection('rotations').limit(legacyCompatibility.MAX_ROTATIONS + 1)"));
+  assert.ok(body.includes("root.collection('shift_overrides').limit(legacyCompatibility.MAX_OVERRIDES + 1)"));
+  assert.ok(body.includes("before.mode === MODE.NEW"));
+  assert.ok(body.includes("kind: 'legacy-compatibility'"));
+  assert.ok(body.includes('configuration(ctx.sid)'));
+  assert.ok(body.includes('liveUserRef(ctx.sid, ctx.uid).get()'));
+  assert.ok(body.includes('requireLiveCompatibilityViewer(finalReads[1], ctx)'));
+});
+check('emulator coverage includes compatibility privacy, identity, mode and both caps', () => {
+  for (const token of ['active members receive only allow-listed legacy compatibility fields',
+    'foreign, inactive and unapproved identities cannot read compatibility data',
+    'super admin compatibility access still requires live same-station membership',
+    'new mode explicitly refuses the legacy compatibility endpoint',
+    'a mode switch during compatibility reads fails closed',
+    'a station membership change during compatibility reads fails closed',
+    'rotation reads accept the cap and reject one extra row',
+    'override reads reject one record above the bounded cap']) {
+    assert.ok(integration.includes(token), token);
+  }
 });
 check('new schedule keeps guards live, private, and outside signed events and responses', () => {
   const myStart = runtime.indexOf('async function getMy(req)');
@@ -664,5 +735,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 64);
-console.log('\n64 schedule runtime source checks passed.');
+assert.equal(passed, 69);
+console.log('\n69 schedule runtime source checks passed.');

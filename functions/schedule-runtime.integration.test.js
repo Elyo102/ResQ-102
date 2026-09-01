@@ -98,7 +98,7 @@ function runtime(sendPush, hooks) {
     createEngine: createCalendarEngine,
     createPublication,
     createService: createScheduleService,
-    isSuper: () => false,
+    isSuper: typeof testHooks.isSuper === 'function' ? testHooks.isSuper : () => false,
     sendPush: sendPush || (async () => ({ sent: 1 })),
     // These optional hooks are a narrowly-scoped race-test seam.  Production
     // leaves them undefined; the runtime must make its own final live checks.
@@ -329,6 +329,249 @@ async function test(name, fn) {
   await test('live user state is required in addition to token claims', async () => {
     await assert.rejects(api.getStatus(req('ghost', 'firefighter')),
       (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
+  });
+
+  await test('legacy compatibility accepts only an empty request and rejects station spoofing', async () => {
+    for (const data of [{ stationId: 'other_station' }, { station_id: 'other_station' },
+      { from: '2026-09-01' }, { unexpected: true }]) {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', data)),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-compatibility-request');
+    }
+  });
+
+  await test('active members receive only allow-listed legacy compatibility fields', async () => {
+    const rotationRef = station().collection('rotations').doc('A');
+    const overrideRef = station().collection('shift_overrides').doc('2026-09-01');
+    const rotationBefore = await rotationRef.get();
+    const overrideBefore = await overrideRef.get();
+    await rotationRef.set(Object.assign({}, rotationBefore.data() || {}, {
+      shift_hours: 24, note: 'rotation medical sentinel', email: 'rotation@example.test',
+      medical: 'rotation private sentinel', by_uid: 'rotation-owner',
+      created_at: 'rotation timestamp', unknown_future_field: 'rotation unknown sentinel'
+    }));
+    await overrideRef.set({
+      date: null, kind: 'standby', crew: '', extra_crews: ['B'],
+      note: 'override medical sentinel', email: 'override@example.test',
+      medical: 'override private sentinel', by_uid: 'override-owner',
+      updated_at: 'override timestamp', unknown_future_field: 'override unknown sentinel'
+    });
+    try {
+      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', {}));
+      assert.equal(out.mode, 'shadow');
+      assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides']);
+      assert.ok(out.rotations.some((row) => row.crew === 'A' && row.shift_hours === 24));
+      assert.deepEqual(out.overrides['2026-09-01'], {
+        date: '2026-09-01', kind: 'standby', crew: '', extra_crews: ['B']
+      });
+      const serialized = JSON.stringify(out);
+      for (const secret of ['rotation medical sentinel', 'rotation@example.test',
+        'rotation private sentinel', 'rotation-owner', 'rotation timestamp',
+        'rotation unknown sentinel', 'override medical sentinel', 'override@example.test',
+        'override private sentinel', 'override-owner', 'override timestamp',
+        'override unknown sentinel']) assert.equal(serialized.includes(secret), false, secret);
+    } finally {
+      if (rotationBefore.exists) await rotationRef.set(rotationBefore.data() || {});
+      else await rotationRef.delete();
+      if (overrideBefore.exists) await overrideRef.set(overrideBefore.data() || {});
+      else await overrideRef.delete();
+    }
+  });
+
+  await test('foreign, inactive and unapproved identities cannot read compatibility data', async () => {
+    await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {}, {
+      stationId: 'other_station'
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
+
+    const viewerRef = station().collection('users').doc('viewer');
+    const viewerBefore = (await viewerRef.get()).data() || {};
+    await viewerRef.set(Object.assign({}, viewerBefore, { active: false }));
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
+    } finally {
+      await viewerRef.set(viewerBefore);
+    }
+
+    const pendingRef = station().collection('users').doc('pending_user');
+    await pendingRef.set({ station: SID, active: true, role: '', full_name: 'ממתין לאישור' });
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('pending_user', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'role-forbidden');
+    } finally {
+      await pendingRef.delete();
+    }
+  });
+
+  await test('super admin compatibility access still requires live same-station membership', async () => {
+    const superRef = station().collection('users').doc('super_viewer');
+    await superRef.set({ station: SID, active: true, role: '', full_name: 'מנהל מערכת' });
+    const superRuntime = runtime(null, { isSuper: () => true });
+    try {
+      const accepted = await superRuntime.getLegacyCompatibility(req('super_viewer', '', {}));
+      assert.equal(accepted.mode, 'shadow');
+      await superRef.update({ station: 'other_station' });
+      await assert.rejects(superRuntime.getLegacyCompatibility(req('super_viewer', '', {})),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
+    } finally {
+      await superRef.delete();
+    }
+  });
+
+  await test('new mode explicitly refuses the legacy compatibility endpoint', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    await runtimeRef.update({ mode: 'new' });
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-compatibility-mode');
+    } finally {
+      await runtimeRef.update({ mode: 'shadow' });
+    }
+  });
+
+  await test('a mode switch during compatibility reads fails closed', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const racing = runtime(null, {
+      beforeEffectiveViewRecheck: async (info) => {
+        if (info && info.kind === 'legacy-compatibility') await runtimeRef.update({ mode: 'new' });
+      }
+    });
+    try {
+      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-changed');
+    } finally {
+      await runtimeRef.update({ mode: 'shadow' });
+    }
+  });
+
+  await test('a station membership change during compatibility reads fails closed', async () => {
+    const viewerRef = station().collection('users').doc('viewer');
+    const viewerBefore = (await viewerRef.get()).data() || {};
+    const racing = runtime(null, {
+      beforeEffectiveViewRecheck: async (info) => {
+        if (info && info.kind === 'legacy-compatibility') {
+          await viewerRef.set(Object.assign({}, viewerBefore, { station: 'other_station' }));
+        }
+      }
+    });
+    try {
+      await assert.rejects(racing.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-compatibility-viewer-changed');
+    } finally {
+      await viewerRef.set(viewerBefore);
+    }
+  });
+
+  await test('legacy compatibility rotation reads accept the cap and reject one extra row', async () => {
+    const collection = station().collection('rotations');
+    const refs = [];
+    const write = db.batch();
+    for (let index = 0; index < 17; index += 1) {
+      const ref = collection.doc(index === 0
+        ? '00_inactive_first'
+        : 'compat_cap_' + String(index).padStart(2, '0'));
+      refs.push(ref);
+      write.set(ref, { crew: 'A', position_in_cycle: 0, cycle_days: 3,
+        anchor_date: '2026-09-01', is_active: false,
+        shift_start: '01:00', shift_end: '02:00', shift_hours: 1 });
+    }
+    await write.commit();
+    try {
+      const atCap = await api.getLegacyCompatibility(req('viewer', 'firefighter', {}));
+      assert.equal(atCap.rotations.length, 3);
+      assert.deepEqual(atCap.rotations.map((row) => row.crew), ['A', 'B', 'C']);
+      assert.equal(atCap.rotations[0].shift_start, '07:00');
+      assert.equal(atCap.rotations.some((row) => row.is_active === false), false);
+      const overflow = collection.doc('compat_cap_overflow');
+      await overflow.set({ crew: 'overflow', position_in_cycle: 20, cycle_days: 21,
+        anchor_date: '2026-09-01', is_active: false });
+      try {
+        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+          (error) => error instanceof ScheduleRuntimeError
+            && error.code === 'legacy-rotations-too-large');
+      } finally {
+        await overflow.delete();
+      }
+    } finally {
+      const remove = db.batch();
+      refs.forEach((ref) => remove.delete(ref));
+      await remove.commit();
+    }
+  });
+
+  await test('semantically corrupt legacy cycles and overrides fail closed with stable codes', async () => {
+    const rotationRefs = ['A', 'B', 'C'].map((crew) => station().collection('rotations').doc(crew));
+    const rotationBefore = await Promise.all(rotationRefs.map((ref) => ref.get()));
+    async function restoreRotations() {
+      const restore = db.batch();
+      rotationRefs.forEach((ref, index) => restore.set(ref, rotationBefore[index].data() || {}));
+      await restore.commit();
+    }
+    async function corruptRotation(index, patch, code) {
+      const original = rotationBefore[index].data() || {};
+      await rotationRefs[index].set(Object.assign({}, original, patch));
+      try {
+        await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+          (error) => error instanceof ScheduleRuntimeError && error.code === code, code);
+      } finally {
+        await restoreRotations();
+      }
+    }
+    await corruptRotation(0, { cycle_days: -1 }, 'legacy-rotation-cycle');
+    await corruptRotation(1, { anchor_date: '2026-09-02' }, 'legacy-rotation-anchor');
+    await corruptRotation(2, { position_in_cycle: 1 }, 'legacy-rotation-position');
+    await corruptRotation(0, { is_active: null }, 'legacy-rotation-active-flag');
+    await corruptRotation(0, { shift_start: '25:00' }, 'legacy-rotation-time');
+    await corruptRotation(0, { shift_hours: true }, 'legacy-rotation-hours');
+
+    const inactive = db.batch();
+    rotationRefs.forEach((ref, index) => inactive.set(ref,
+      Object.assign({}, rotationBefore[index].data() || {}, { is_active: false })));
+    await inactive.commit();
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-rotation-active-cycle');
+    } finally {
+      await restoreRotations();
+    }
+
+    const overrideRef = station().collection('shift_overrides').doc('2026-09-11');
+    await overrideRef.set({ date: '2026-09-11', kind: 'unknown', crew: '', extra_crews: [] });
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-override-kind');
+    } finally {
+      await overrideRef.delete();
+    }
+  });
+
+  await test('legacy compatibility override reads reject one record above the bounded cap', async () => {
+    const collection = station().collection('shift_overrides');
+    const refs = Array.from({ length: 501 }, (_, index) => {
+      const date = new Date(Date.UTC(2027, 0, 1 + index)).toISOString().slice(0, 10);
+      return collection.doc(date);
+    });
+    for (let start = 0; start < refs.length; start += 500) {
+      const write = db.batch();
+      refs.slice(start, start + 500).forEach((ref) => write.set(ref, {
+        date: ref.id, kind: 'holiday', crew: '', extra_crews: []
+      }));
+      await write.commit();
+    }
+    try {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {})),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'legacy-overrides-too-large');
+    } finally {
+      for (let start = 0; start < refs.length; start += 500) {
+        const remove = db.batch();
+        refs.slice(start, start + 500).forEach((ref) => remove.delete(ref));
+        await remove.commit();
+      }
+    }
   });
 
   await test('primary roles do not implicitly grant schedule editing', async () => {
@@ -2035,8 +2278,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 53);
-  console.log('\n53 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 63);
+  console.log('\n63 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

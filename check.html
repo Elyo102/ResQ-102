@@ -280,8 +280,6 @@ const COLLECTIONS = [
   { name: 'users',            he: 'משתמשים',          mode: 'closed' },
   { name: 'quals',            he: 'כשירויות',         mode: 'strict' },
   { name: 'member_quals',     he: 'כשירויות אישיות',  mode: 'strict' },
-  { name: 'rotations',        he: 'סבב משמרות',       mode: 'open'   },
-  { name: 'shift_overrides',  he: 'חריגות סידור',     mode: 'open'   },
   { name: 'sub_stations',     he: 'תחנות משנה',       mode: 'open'   },
   { name: 'vehicles',         he: 'רכבי עיגון',       mode: 'open'   },
   { name: 'attendance',       he: 'נוכחות',           mode: 'strict' },
@@ -358,8 +356,8 @@ async function roster(sid){
 // יזכור.
 
 const BACKUP_COLS = [
-  'roster', 'users', 'quals', 'member_quals', 'rotations',
-  'shift_overrides', 'sub_stations', 'vehicles', 'vehicle_views',
+  'roster', 'users', 'quals', 'member_quals',
+  'sub_stations', 'vehicles', 'vehicle_views',
   'attendance', 'monthly_reports', 'swaps', 'faults',
   'handovers', 'redline_waivers', 'broadcasts', 'callouts',
   'scans', 'hr_reports', 'submissions', 'config'
@@ -378,11 +376,17 @@ $('btnBackup').onclick = async function () {
     taken_at: new Date().toISOString(),
     by: (auth.currentUser || {}).email || '',
     excluded_collections: {
-      guards: 'אבטחות נגישות דרך השרת בלבד ואינן מיוצאות מהדפדפן.'
+      guards: 'אבטחות נגישות דרך השרת בלבד ואינן מיוצאות מהדפדפן.',
+      rotations: 'סבבי משמרות נגישים דרך השרת בלבד ואינם מיוצאים מהדפדפן.',
+      shift_overrides: 'חריגות סידור הן מידע מוגבל ואינן מיוצאות מהדפדפן.'
     },
     collections: {}
   };
-  const lines = ['<div class="row warn"><span>guards</span><b>שרת בלבד — לא נכלל</b></div>'];
+  const lines = [
+    '<div class="row warn"><span>guards</span><b>שרת בלבד — לא נכלל</b></div>',
+    '<div class="row warn"><span>rotations</span><b>שרת בלבד — לא נכלל</b></div>',
+    '<div class="row warn"><span>shift_overrides</span><b>מידע מוגבל — לא נכלל</b></div>'
+  ];
   let docs = 0;
 
   for (const name of BACKUP_COLS) {
@@ -468,10 +472,9 @@ $('btnSeed').onclick = async () => {
   for (const q of SEED.QUALS) await put(['quals'], q.id, q);
   for (const t of SEED.SITES) await put(['sub_stations'], t.id, t);
   for (const v of SEED.ANCHORS) await put(['vehicles'], null, v);
-  for (const r of SEED.rotations()) await put(['rotations'], r.crew, r);
   await put(['config'], 'redline', SEED.REDLINE);
   await put(['config'], 'board', SEED.board());
-  line('seed', 'הגדרות', 'כשירויות, תחנות משנה, רכבי עיגון, סבב, ' +
+  line('seed', 'הגדרות', 'כשירויות, תחנות משנה, רכבי עיגון, ' +
        'קו אדום ולוח ציוות', 'ok');
 
   // תנועה
@@ -500,7 +503,8 @@ $('btnWipe').onclick = async () => {
   if (!sid) { b.disabled = false; seedBusy = false; return; }
 
   let gone = 0, stuck = 0;
-  for (const col of SEED.WIPE) {
+  for (const col of SEED.WIPE.filter(name =>
+    name !== 'rotations' && name !== 'shift_overrides')) {
     try {
       const s = await getDocs(collection(db, 'stations', sid, col));
       for (const d of s.docs) {
@@ -636,6 +640,39 @@ $('btnDeploy').onclick = async () => {
   say('dep', 'אבטחות',
       'לא נבדקות ישירות בדפדפן בכוונה. יש לאמת את מסלול השרת בבדיקת אינטגרציה.',
       'warn');
+
+  // מחזור וחריגות הם אוספי שרת בלבד. בדיקת בריאות עוברת דרך
+  // ה-callable המתאים למצב הפעיל ומאמתת את צורת התשובה בלי לקרוא
+  // מסמך גולמי. במצב new, סירוב של גשר ה-legacy הוא התנהגות תקינה.
+  head('dep', 'בסיס הסידור — מסלול שרת');
+  try {
+    const statusResponse = await httpsCallable(fns, 'getScheduleRuntimeStatus')({});
+    const status = statusResponse && statusResponse.data;
+    const mode = status && status.mode;
+    if (mode === 'new') {
+      const date = new Date().toISOString().slice(0, 10);
+      const response = await httpsCallable(fns, 'getStationScheduleV2')({ date:date });
+      const value = response && response.data;
+      if (!value || value.mode !== 'new' || typeof value.active !== 'boolean') {
+        throw new Error('תשובת מנוע חדש במבנה לא צפוי');
+      }
+      say('dep', 'בסיס הסידור', 'קריאת מנוע חדש ✓ · פרסום פעיל: ' +
+          (value.active ? 'כן' : 'לא'), 'ok');
+    } else if (mode === 'off' || mode === 'shadow') {
+      const response = await httpsCallable(fns, 'getLegacyScheduleCompatibilityContext')({});
+      const value = response && response.data;
+      const valid = value && value.mode === mode && Array.isArray(value.rotations) &&
+        value.overrides && typeof value.overrides === 'object' &&
+        !Array.isArray(value.overrides);
+      if (!valid) throw new Error('תשובת שרת במבנה לא צפוי');
+      say('dep', 'סבב וחריגות', 'קריאת שרת מסוננת ✓ · מצב ' + value.mode, 'ok');
+    } else {
+      throw new Error('מצב סידור לא מוכר');
+    }
+  } catch (e) {
+    say('dep', 'סבב וחריגות', 'מסלול השרת נכשל · ' +
+        (e.code || e.message || 'שגיאה לא ידועה'), 'bad');
+  }
 
   // ---------- אינדקסים ----------
   head('dep', 'אינדקסים');

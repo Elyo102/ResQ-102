@@ -382,6 +382,8 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const callMyGuardAttendance = httpsCallable(fns, 'getMyGuardAttendance');
+const callLegacyScheduleCompatibilityContext =
+  httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
@@ -429,7 +431,7 @@ function stamp(body) {
   });
 }
 let viewYear, viewMonth;
-let rotations = [], overrides = {}, sites = [];
+let rotations = [], overrides = {}, sites = [], scheduleCompatibilityMode = '';
 let myGuards = [];   // אבטחות אישיות של החשבון המחובר בלבד
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
@@ -508,6 +510,62 @@ function siteHoursOf(id){
 function siteName(id){
   const s = sites.filter(x => x.id === id)[0];
   return s ? s.name : '';
+}
+
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+// ההקשר מגיע רק מהשרת, ללא stationId מהדפדפן. גם כאן מעתיקים
+// רשימת היתר בלבד: תשובה פגומה או מצב new אינם הופכים בטעות
+// למערכים ריקים שמסווגים את כל אנשי התחנה כמי שאינם במשמרת.
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
+}
+
+function showLegacyCompatibilityFailure(){
+  scheduleCompatibilityMode = '';
+  rotations = [];
+  overrides = {};
+  swaps = [];
+  $('rows').innerHTML = '';
+  $('tSug').textContent = '—';
+  setMonthBusy(true);
+  msg('לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. רענן את הדף ונסה שוב.', 'err');
 }
 
 // ---------- הרשאה ----------
@@ -614,30 +672,20 @@ async function loadStatic(){
     mySite: mySite
   };
   const next = {};
+  let compatibilityFailure = null;
 
-  // חמשת המקורות אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
+  // ארבעת המקורות והקשר הסידור אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
-  // כל משימה עדיין מבודדת בכשל, בדיוק כמו חמשת ה-try/catch
-  // שהיו כאן קודם — מקור חסר אינו מוחק נתון שמקור אחר החזיר.
-  const loadRotations = async function () {
+  // המקורות שאינם בסיס לחישוב עדיין מבודדים בכשל; הקשר הסידור
+  // עצמו נכשל בקול ועוצר את החישוב במקום לפרסם תוצאה מטעה.
+  const loadLegacyCompatibility = async function () {
     try {
-      const rs = await getDocs(collection(db, 'stations', snapshot.sid, 'rotations'));
-      next.rotations = rs.docs.map(d => d.data());
-    } catch (ignore) {}
-  };
-
-  const loadOverrides = async function () {
-    try {
-      const os = await getDocs(collection(db, 'stations', snapshot.sid, 'shift_overrides'));
-      const found = {};
-      os.forEach(d => {
-        const v = d.data() || {};
-        found[d.id] = { kind: v.kind || '', crew: v.crew || '',
-                        extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
-                        note: v.note || '' };
-      });
-      next.overrides = found;
-    } catch (ignore) {}
+      // עצם ריק במכוון: התחנה נגזרת מהזהות החיה בשרת.
+      const result = await callLegacyScheduleCompatibilityContext({});
+      next.compatibility = legacyCompatibilityData(result);
+    } catch (error) {
+      compatibilityFailure = error;
+    }
   };
 
   // איפה אני משובץ בלוח הציוות של המשמרת שלי. משמש כברירת
@@ -698,7 +746,7 @@ async function loadStatic(){
   };
 
   await Promise.all([
-    loadRotations(), loadOverrides(),
+    loadLegacyCompatibility(),
     loadBoardSite(), loadSwaps(), loadSites()
   ]);
 
@@ -707,8 +755,14 @@ async function loadStatic(){
     String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew;
   if (!current) return false;
 
-  if (Object.prototype.hasOwnProperty.call(next, 'rotations')) rotations = next.rotations;
-  if (Object.prototype.hasOwnProperty.call(next, 'overrides')) overrides = next.overrides;
+  if (compatibilityFailure || !next.compatibility) {
+    showLegacyCompatibilityFailure();
+    return false;
+  }
+
+  scheduleCompatibilityMode = next.compatibility.mode;
+  rotations = next.compatibility.rotations;
+  overrides = next.compatibility.overrides;
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
   if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;

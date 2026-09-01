@@ -168,6 +168,64 @@ await test('a commander without a live schedule-manager appointment sees guards 
   });
   await unavailable.close();
 
+  const doubleFailure = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(doubleFailure, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:{ manager:false, mode:'new' } }],
+    getLegacyScheduleCompatibilityContext:[
+      { reject:true, code:'functions/failed-precondition', message:'runtime-mode-new' }
+    ],
+    getScheduleGuardBoard:[
+      { reject:true, code:'functions/unavailable', message:'offline' },
+      { reject:true, code:'functions/unavailable', message:'offline' }
+    ]
+  });
+  const doubleFailurePage = await doubleFailure.newPage();
+  await doubleFailurePage.goto(base, { waitUntil:'load' });
+  await doubleFailurePage.locator('#work:not(.hide)').waitFor();
+  await doubleFailurePage.waitForFunction(() =>
+    document.querySelector('#openMsg').textContent.includes('לוח האבטחות'));
+  await test('a board failure takes precedence over mode:new classification failure', async () => {
+    assert.equal(await doubleFailurePage.locator('#openList .g').count(), 0);
+    assert.match(await doubleFailurePage.locator('#openNote').textContent(), /לא ניתן לקבוע/);
+    const notice = await doubleFailurePage.locator('#openMsg').textContent();
+    assert.match(notice, /לא הצלחנו לטעון את לוח האבטחות/);
+    assert.equal(notice.includes('האבטחות זמינות'), false,
+      'the screen must not claim availability after the board read failed');
+  });
+  await doubleFailure.close();
+
+  const newMode = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(newMode, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'new' } }],
+    getLegacyScheduleCompatibilityContext:[
+      { reject:true, code:'functions/failed-precondition', message:'runtime-mode-new' }
+    ]
+  });
+  const newModePage = await newMode.newPage();
+  await open(newModePage);
+  await test('mode:new keeps guard boards and manual management live while schedule classification fails closed', async () => {
+    const card = newModePage.locator('#openList .g', { hasText:'הופעה בפארק' });
+    assert.equal(await card.count(), 1, 'the independent guard board remains visible');
+    assert.match(await newModePage.locator('#openMsg').textContent(), /סיווג.+אינם זמינים/);
+    assert.equal(await card.locator('.tag.off, .tag.shift').count(), 0,
+      'the screen must not invent a duty classification from empty legacy data');
+    assert.equal(await card.locator('.acts button').count(), 4,
+      'create/assign/edit/reschedule/cancel management remains available');
+
+    await card.getByRole('button', { name:'שבץ' }).click();
+    await newModePage.locator('#dlgList input[type=checkbox]').first().waitFor();
+    assert.deepEqual(await newModePage.locator('#dlgList input[type=checkbox]:checked')
+      .evaluateAll(inputs => inputs.map(input => input.value)), ['stub-uid', 'u3'],
+      'manual mode retains existing assignees but adds nobody from a fictitious load ranking');
+    assert.match(await newModePage.locator('#dlg').textContent(), /בחירה ידנית/);
+    await newModePage.locator('#dlgClose').click();
+
+    await card.getByRole('button', { name:'ערוך' }).click();
+    assert.equal(await newModePage.locator('#dlgSave').isVisible(), true,
+      'editing is operational even when schedule classification is unavailable');
+  });
+  await newMode.close();
+
   const manager = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(manager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:{ manager:true } }],

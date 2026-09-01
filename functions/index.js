@@ -5126,6 +5126,13 @@ exports.getMyScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
 exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStation', req));
 
+// Temporary server-only bridge for operational screens that still evaluate
+// the legacy rotation cycle while runtime.mode is off or shadow.  The callable
+// accepts no station or range input and returns only the allow-listed fields;
+// direct client reads remain closed in Firestore rules.
+exports.getLegacyScheduleCompatibilityContext = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getLegacyCompatibility', req));
+
 // Raw guard documents contain notes, places, sign-up records and audit data.
 // These read-only callables are the only browser boundary for the legacy guard
 // screens; each runtime method returns an explicit, role-appropriate projection.
