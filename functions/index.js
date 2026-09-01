@@ -3996,11 +3996,28 @@ exports.guardSignup = onCall(async (req) => {
     if (u.exists) name = (u.data() || {}).full_name || '';
   } catch (e) {}
 
-  const patch = {};
-  patch['signups.' + auth.uid] = join
-    ? { name: name, crew: t.shift || '', at: new Date().toISOString() }
-    : FV.delete();
-  await ref.update(patch);
+  // המפתח נמסר כ-FieldPath ולא כמחרוזת „signups.<uid>".
+  //
+  // ב-update(), נקודה בתוך מחרוזת מפתח היא **מפריד נתיב** ולא
+  // תו רגיל. Firebase Auth מרשה נקודה ב-uid, ולכן עבור uid כזה
+  // המחרוזת כתבה מפה מקוננת — signups.user.name — בזמן שהקורא
+  // ב-guards.js פונה ל-signups["user.name"] בגישה שטוחה ולא
+  // מוצא דבר.
+  //
+  // שלוש תוצאות, כולן שקטות: ההרשמה נכתבת ואינה נראית;
+  // signupsOf מונה „user" כאדם שלא נרשם; ושני uid שונים —
+  // „user" ו-„user.name" — דורסים זה את זה. גם ביטול ההרשמה
+  // מוחק את הענף הלא נכון.
+  //
+  // FieldPath מטפל בשם השדה כערך יחיד, ולכן הנקודה נשמרת כתו.
+  // עבור uid נקי התוצאה זהה בדיוק לקודם — אין שינוי במבנה
+  // הנתונים הקיים ואין צורך בהגירה.
+  await ref.update(
+    new admin.firestore.FieldPath('signups', auth.uid),
+    join
+      ? { name: name, crew: t.shift || '', at: new Date().toISOString() }
+      : FV.delete()
+  );
 
   return { ok: true, joined: join };
 });

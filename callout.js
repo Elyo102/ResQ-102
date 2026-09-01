@@ -14,7 +14,7 @@
 // בלי לשאול את השרת על כל אדם בנפרד.
 
 import { collection, query, where, orderBy, limit, onSnapshot,
-         doc, updateDoc }
+         doc, updateDoc, FieldPath }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
@@ -140,12 +140,25 @@ function alarm() {
   } catch (ignore) {}
 }
 
+// המפתח נמסר כ-FieldPath ולא כמחרוזת „acks.<uid>".
+//
+// ב-updateDoc(), נקודה בתוך מחרוזת מפתח היא מפריד נתיב. עבור
+// uid שמכיל נקודה — וב-Firebase Auth זה חוקי — התשובה נכתבה
+// כמפה מקוננת, בזמן שהמאזין למטה בודק `v.acks && v.acks[uid]`
+// בגישה שטוחה.
+//
+// התוצאה כאן חמורה יותר מהרשמה שלא נראית: „כבר עניתי" לעולם
+// לא נתפס, ולכן **קריאת הפתע ממשיכה לקפוץ על המסך של מי
+// שכבר ענה, בכל מסך, בלי דרך לסגור אותה** — כי הדרך היחידה
+// החוצה היא לענות, והתשובה לא נרשמת במקום שנבדק.
+//
+// עבור uid נקי התוצאה זהה לקודם. אין שינוי בנתונים הקיימים.
 export function ackCallout(db, sid, calloutId, uid, name, answer) {
-  const patch = {};
-  patch['acks.' + uid] = {
-    resp: answer, name: name || '', at: new Date().toISOString()
-  };
-  return updateDoc(doc(db, 'stations', sid, 'callouts', calloutId), patch);
+  return updateDoc(
+    doc(db, 'stations', sid, 'callouts', calloutId),
+    new FieldPath('acks', uid),
+    { resp: answer, name: name || '', at: new Date().toISOString() }
+  );
 }
 
 // מאזין לקריאות שנוגעות למשתמש הזה ומקפיץ את הראשונה שעדיין

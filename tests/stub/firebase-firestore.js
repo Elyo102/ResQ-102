@@ -807,6 +807,22 @@ export function getDocs(q){
 
 export function updateDoc(){ return Promise.resolve(); }
 
+// שם שדה כערך יחיד ולא כמחרוזת עם נקודות.
+//
+// נדרש כי callout.js כותב מפתח שמכיל uid, ו-uid עם נקודה היה
+// נכתב כנתיב מקונן. הסטאב אינו כותב לשום מקום, ולכן די בכך
+// שהמחלקה קיימת ושומרת את המקטעים — בלעדיה הייבוא נכשל וכל
+// מסך שטוען את callout.js אינו עולה בבדיקה.
+export class FieldPath {
+  constructor(...segments){ this.segments = segments; }
+  isEqual(other){
+    return !!other && Array.isArray(other.segments) &&
+      other.segments.length === this.segments.length &&
+      this.segments.every(function (s, i) { return s === other.segments[i]; });
+  }
+  toString(){ return this.segments.join('.'); }
+}
+
 // מאזין מדומה: מוסר את התוצאה פעם אחת ומחזיר פונקציית ביטול.
 // מספיק כדי לבדוק שהחלון קופץ ושהרשימות מצוירות; אין כאן
 // עדכון חי, ואין בו צורך בבדיקה.
