@@ -141,7 +141,20 @@ function styleOnce() {
     '  align-items:center;flex-wrap:wrap;box-sizing:border-box;',
     '  align-self:stretch;flex:none;',
     '  background:var(--card);border-bottom:1px solid var(--line);',
-    '  padding:12px 16px;margin:-18px -18px 18px;',
+    // הסרגל נמתח מקצה לקצה על ידי מרווח שלילי שמבטל את הריפוד
+    // של הדף. הריפוד **אינו זהה בכל המסכים** — 12, 18 או 20
+    // פיקסלים — ולכן ערך קשיח נכון בחלק מהם ושובר את השאר.
+    //
+    // ב-12 פיקסלים הסרגל יצא רחב מהמסך ב-12 פיקסלים, וחמישה
+    // מסכים גלשו לרוחב בטלפון: attendance · forms · schedule ·
+    // sign · swaps. ב-20 פיקסלים הוא נכנס פנימה ולא נגע בקצה.
+    //
+    // --nav-bleed נמדד מהריפוד בפועל ב-syncBleed(), ונקבע מחדש
+    // בכל שינוי גודל. 18 כאן הוא נפילה לאחור בלבד, למקרה
+    // שהמדידה לא רצה.
+    '  padding:12px 16px;',
+    '  margin-block:calc(-1 * var(--nav-bleed, 18px)) 18px;',
+    '  margin-inline:calc(-1 * var(--nav-bleed, 18px));',
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
     '#appNav .brand{font-weight:800;font-size:17px;color:var(--txt);',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
@@ -211,7 +224,12 @@ function styleOnce() {
     //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
     //      על הניווט
     '@media (max-width:560px){',
-    '  #appNav{gap:6px;padding:8px 10px;margin:-18px -18px 14px}',
+    // גם כאן המרווח השלילי נגזר מהריפוד בפועל ולא נכתב קשיח.
+    // זו השורה שגרמה לגלישה בטלפון, כי דווקא במסך צר היא
+    // גוברת על הכלל שלמעלה.
+    '  #appNav{gap:6px;padding:8px 10px;',
+    '    margin-block:calc(-1 * var(--nav-bleed, 18px)) 14px;',
+    '    margin-inline:calc(-1 * var(--nav-bleed, 18px))}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',
@@ -393,6 +411,39 @@ export function renderNav(claims, current, who) {
   });
 
   document.body.insertBefore(nav, document.body.firstChild);
+  syncBleed(nav);
+}
+
+/**
+ * מודד את הריפוד האופקי בפועל של ההורה וקובע לפיו את
+ * --nav-bleed, כדי שהסרגל ייגע בשני הקצוות ולא יחרוג מהם.
+ *
+ * למה נמדד ולא נכתב: הריפוד אינו זהה בכל המסכים — 12, 18 או
+ * 20 פיקסלים — וערך קשיח אחד לא יכול להיות נכון בכולם. עד
+ * היום הוא היה 18, ולכן חמישה מסכים עם ריפוד 12 גלשו לרוחב
+ * בטלפון, ו-board.html עם ריפוד 20 נכנס פנימה ולא נגע בקצה.
+ *
+ * שני הצדדים נמדדים בנפרד ונלקח הקטן שבהם. ריפוד א-סימטרי
+ * הוא נדיר, אבל מרווח שלילי גדול מהריפוד גורם לגלישה — ולכן
+ * במקרה של ספק עדיף להיכנס פיקסל פנימה מאשר לשבור את המסך.
+ *
+ * מופעל מחדש בשינוי גודל, כי הריפוד עשוי להשתנות בשבירה.
+ */
+function syncBleed(nav) {
+  const el = nav || document.getElementById('appNav');
+  if (!el || !el.parentElement) return;
+  const apply = function () {
+    const cs = getComputedStyle(el.parentElement);
+    const left = parseFloat(cs.paddingLeft) || 0;
+    const right = parseFloat(cs.paddingRight) || 0;
+    const bleed = Math.max(0, Math.min(left, right));
+    el.style.setProperty('--nav-bleed', bleed + 'px');
+  };
+  apply();
+  if (!syncBleed.bound) {
+    syncBleed.bound = true;
+    window.addEventListener('resize', function () { apply(); });
+  }
 }
 
 // ---------- בהיר / כהה ----------
