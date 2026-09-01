@@ -307,6 +307,50 @@ function guardStatisticsRange(windowId){
   return { from:from, to:today };
 }
 
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+// Keep the client boundary closed even though the server already projects an
+// allowlist. A future server refactor must not make raw schedule fields visible
+// or usable by this management screen by accident.
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode:data.mode, rotations:safeRotations, overrides:safeOverrides };
+}
+
 async function loadGuardStatistics(windowId){
   const selectedWindow = windowId || WIN;
   const generation = ++guardLoadGeneration;
@@ -336,13 +380,9 @@ async function loadLegacyScheduleCompatibility(){
   try {
     // The workload screen can switch among shorter windows without another
     // network read, so it requests the single bounded annual context once.
-    const result = await legacyScheduleCall(guardStatisticsRange('365'));
-    const value = result && result.data;
-    if (!value || (value.mode !== 'off' && value.mode !== 'shadow') ||
-        !Array.isArray(value.rotations) || !value.overrides ||
-        typeof value.overrides !== 'object' || Array.isArray(value.overrides)) {
-      throw new Error('legacy-schedule-contract');
-    }
+    const value = legacyCompatibilityData(
+      await legacyScheduleCall(guardStatisticsRange('365'))
+    );
     rotations = value.rotations;
     overrides = value.overrides;
     return true;

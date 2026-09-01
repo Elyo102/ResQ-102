@@ -567,8 +567,11 @@ function showLegacyCompatibilityFailure(){
   overrides = {};
   swaps = [];
   $('rows').innerHTML = '';
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear + ' · נתונים לא זמינים';
+  $('tHours').textContent = '—';
+  $('tDays').textContent = '—';
   $('tSug').textContent = '—';
-  setMonthBusy(true);
+  setMonthUnavailable();
   msg('לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. רענן את הדף ונסה שוב.', 'err');
 }
 
@@ -790,11 +793,28 @@ function setMonthBusy(busy){
   });
 }
 
+// כשל תאימות הוא מצב סופי של בקשת הרשת, לא טעינה אינסופית.
+// מאפשרים מעבר חודש כניסיון חוזר, אך משאירים כל פעולה שמחשבת או
+// שומרת נתונים חסומה עד שבסיס הסידור נטען מחדש בהצלחה.
+function setMonthUnavailable(){
+  setMonthBusy(false);
+  $('work').setAttribute('aria-busy', 'false');
+  ['btnFill','btnSubmit','btnView','btnSync','btnRecalc','btnUnsubmit',
+   'btnApprove','btnReopen','btnStart','btnStop','btnManual'].forEach(function (id) {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+  document.querySelectorAll('.days button').forEach(function (el) {
+    el.disabled = true;
+  });
+}
+
 // פעולה שהתחילה לפני מעבר חודש עלולה להסתיים בזמן שהחודש
 // החדש עדיין נטען. במקרה כזה אסור לה להפעיל את הכפתור מחדש;
 // loadMonth האחרון ישחרר את כל הכפתורים רק אחרי שהנתונים הוחלפו.
 function releaseMonthAction(button){
-  button.disabled = $('work').getAttribute('aria-busy') === 'true';
+  button.disabled = $('work').getAttribute('aria-busy') === 'true' ||
+    !scheduleCompatibilityMode;
 }
 
 async function loadMonth(){
@@ -1183,9 +1203,13 @@ $('btnSync').onclick = async () => {
     const loaded = await Promise.all([loadStatic(), guardRequest]);
     const fresh = loaded[0];
     const freshGuards = loaded[1];
-    if (!fresh || action.subject !== subjectGeneration ||
-        action.subjectUid !== (SUBJ && SUBJ.uid) || action.viewerUid !== (ME && ME.uid) ||
-        action.year !== viewYear || action.month !== viewMonth) {
+    const sameTarget = action.subject === subjectGeneration &&
+      action.subjectUid === (SUBJ && SUBJ.uid) && action.viewerUid === (ME && ME.uid) &&
+      action.year === viewYear && action.month === viewMonth;
+    // loadStatic already rendered the real compatibility error. Do not replace
+    // it with the unrelated "person or month changed" message.
+    if (!fresh) return;
+    if (!sameTarget) {
       msg('התיקון בוטל כי האדם או החודש השתנו בזמן הטעינה.', 'info');
       return;
     }
