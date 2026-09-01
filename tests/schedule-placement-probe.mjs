@@ -189,11 +189,27 @@ function plan(overrides) {
   eq('3.4 מתחנת הבית לתחנת היעד',
     [p.posting.from, p.posting.to], ['rashit','yotvata']);
 
-  eq('3.5 ⭐ המנוע אינו יכול לקבל אותה היום',
-    p.posting.engine_accepts_today, false);
+  // יכולת המנוע **מוזרקת**. planner נבנה בלי ההצהרה, ולכן
+  // נכשל-סגור: מניח שהמנוע אינו יודע, ומזהיר.
+  eq('3.5 ⭐ בלי הצהרה — נכשל-סגור', p.posting.engine_accepts_today, false);
   eq('3.6 ⭐ והתכנון מסומן חסום', p.blocked, true);
   ok('3.7 עם אזהרה חוסמת שמסבירה למה',
     p.warnings.some(w => w.code === P.WARN.POSTING_NEEDS_ENGINE && w.blocking === true));
+
+  const wired = P.createPlacementPlanner({ clock: CLOCK,
+    engine_supports_postings: true });
+  const pw = wired.planPlacement({ policy: POLICY, roster: ROSTER,
+    request: { subject:{kind:'member',person:'uid-eldad'},
+      sub_station:'yotvata', role:'driver',
+      span:{kind:'week'}, anchor_date:'2026-09-01' } });
+  eq('3.5b ⭐ עם הצהרה — המנוע מקבל', pw.posting.engine_accepts_today, true);
+  eq('3.6b ואינו חסום', pw.blocked, false);
+  ok('3.7b ובלי האזהרה החוסמת',
+    !pw.warnings.some(w => w.code === P.WARN.POSTING_NEEDS_ENGINE));
+  ok('3.7c אבל אזהרת פינוי תחנת הבית נשארת — היא עובדה ולא חסם',
+    pw.warnings.some(w => w.code === P.WARN.POSTING_VACATES_HOME));
+  eq('3.7d והשורות זהות בשני המקרים',
+    JSON.stringify(pw.overrides), JSON.stringify(p.overrides));
 
   eq('3.8 ⭐ המפה שהמנוע צריך, uid → תאריך → תחנה',
     p.posting_map, { 'uid-eldad': { '2026-09-01':'yotvata',
@@ -486,17 +502,22 @@ const ROWS = [
 // כל אחת מהן היא הנחה שהמודולים בנויים עליה. אם קודקס משנה
 // את המנוע — כאן זה נשבר, ולא בהרצה חודשית.
 {
-  ok('11.1 ⭐ הכשירות עדיין נמדדת מול תחנת השיוך ולא מול תחנה אפקטיבית ליום',
-    engineSrc.includes('person.sub_station !== ctx.sub')
+  // ⭐ שלוש הטענות האלה נכתבו כשהמנוע עוד לא הכיר הצבה, ונועדו
+  // ליפול ברגע שהוא כן. הן נפלו, והפכו לצורתן השנייה: עכשיו הן
+  // נועלות שהחיווט **נשאר**.
+  ok('11.1 ⭐ הכשירות נמדדת מול תחנה אפקטיבית ליום',
+    engineSrc.includes('effectiveSub(ctx.postings, person, ctx.date) !== ctx.sub')
     && engineSrc.includes('REASON.OUT_OF_SUB_STATION'));
 
-  ok('11.1b ⭐ גם מאגרי ההיצע עדיין קוראים person.sub_station — '
-     + 'זה המקום השני שהצבה חייבת לגעת בו',
-    engineSrc.includes('const sub = person.sub_station;'));
+  ok('11.1b ⭐ גם מאגרי ההיצע מכירים הצבה — המקום השני שקל לפספס',
+    /function buildIndexes\(byId, postings\)/.test(engineSrc));
 
-  ok('11.1c ⭐ הסגל עדיין שטוח: תחנה אחת לאדם לכל ההרצה',
-    engineSrc.includes('byId.set(p.id, p)')
-    && !/sub_station_by_date|effectiveSub|posting_map/.test(engineSrc));
+  ok('11.1c ⭐ ובהיעדר הצבה מוחזר השיוך הארגוני, בלי ברירת מחדל אחרת',
+    /if \(!forPerson\) return person\.sub_station;/.test(engineSrc)
+    && /isNonEmptyString\(posted\) \? posted : person\.sub_station/.test(engineSrc));
+
+  ok('11.1d ⭐ וההצבה אינה כותבת לשיוך הארגוני עצמו',
+    !/person\.sub_station\s*=[^=]/.test(engineSrc));
 
   ok('11.2 ⭐ blockCode עדיין רץ גם על שיבוץ ידני',
     /source: 'manual'/.test(engineSrc) && /rejected\.push/.test(engineSrc));
@@ -573,16 +594,20 @@ const ROWS = [
     });
 
   mutate(srcP,
-    "engine_accepts_today: false",
-    "engine_accepts_today: true",
-    '12.1b ⭐ טענה שהמנוע כן מקבל הצבה נתפסת',
+    "const supportsPostings = d.engine_supports_postings === true;",
+    "const supportsPostings = true;",
+    '12.1b ⭐⭐ ברירת מחדל שמניחה שהמנוע יודע — נתפסת',
     (M) => {
+      // הכשל המסוכן: מי שלא הצהיר מקבל blocked:false, מריץ,
+      // וכל יום בהצבה נדחה בשקט ל-rejected_manual.
       const pl = M.createPlacementPlanner({ clock: CLOCK });
       const r = pl.planPlacement({ policy: POLICY, roster: ROSTER,
         request: { subject:{kind:'member',person:'uid-eldad'},
           sub_station:'yotvata', role:'driver',
           span:{kind:'week'}, anchor_date:'2026-09-01' } });
-      if (r.posting.engine_accepts_today !== false) throw new Error('caught');
+      if (r.posting.engine_accepts_today !== false || r.blocked !== true) {
+        throw new Error('caught');
+      }
     });
 
   mutate(srcP,

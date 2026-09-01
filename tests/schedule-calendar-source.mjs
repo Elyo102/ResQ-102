@@ -86,18 +86,47 @@ t('גרסת האדם נבדקת מול גרסת הקלט', () =>
 t('assertSameSource נקראת מ-planPeriod', () =>
   ok(/planPeriod[\s\S]{0,400}assertSameSource\(policy, inp\)/.test(E), 'planPeriod אינה מאמתת מקור'));
 
-/* ================= אין העברה בין תחנות קצה ================= */
+/* ============ חציית תחנות קצה · רק דרך הצבה מפורשת ============ */
+//
+// הטענה כאן השתנתה יחד עם ההתנהגות, במכוון.
+//
+// עד כה נטען שהשער בודק `person.sub_station !== ctx.sub`. השיוך
+// היה יחיד לכל ההרצה, ולכן הצבה זמנית — „שבץ אותו בתמנע
+// לשלושה ימים, הוא נשאר בראשית" — לא הייתה ניתנת לביטוי:
+// כל יום נדחה ל-rejected_manual, שדה שאף מסך אינו מציג.
+//
+// עכשיו השער מודד מול **תחנת קצה אפקטיבית ליום**. הכלל עצמו
+// לא נחלש: מי שאינו מוצב מקבל בדיוק את השיוך הארגוני שלו,
+// והחסימה נשארת ראשונה. מה שהשתנה הוא שקיימת דרך מפורשת,
+// מאומתת ומתועדת לחצות — ולא שקטה.
 
 t('שיוך תחנת הקצה נבדק בשער הכשירות', () =>
-  ok(/person\.sub_station !== ctx\.sub/.test(E), 'אין חסימת חציית תחנות קצה'));
+  ok(/effectiveSub\(ctx\.postings, person, ctx\.date\) !== ctx\.sub/.test(E),
+    'אין חסימת חציית תחנות קצה'));
 t('חסימת חציית תחנות קצה היא הבדיקה הראשונה', () => {
   const body = E.slice(E.indexOf('function blockCode'));
-  const first = body.indexOf('person.sub_station !== ctx.sub');
+  const first = body.indexOf('effectiveSub(ctx.postings, person, ctx.date) !== ctx.sub');
   const active = body.indexOf('person.active !== true');
   ok(first > -1 && first < active, 'סדר הבדיקות השתנה');
 });
+t('בהיעדר הצבה מוחזר השיוך הארגוני ולא ברירת מחדל אחרת', () => {
+  const fn = E.slice(E.indexOf('function effectiveSub('));
+  ok(/if \(!forPerson\) return person\.sub_station;/.test(fn)
+     && /isNonEmptyString\(posted\) \? posted : person\.sub_station/.test(fn),
+    'effectiveSub אינו נופל חזרה לשיוך הארגוני');
+});
+t('הצבה אינה כותבת לשיוך הארגוני', () =>
+  ok(!/person\.sub_station\s*=[^=]/.test(E), 'ההצבה משנה שיוך ארגוני'));
+t('כל הצבה שנמסרת נאכפת', () =>
+  ok(E.includes("'posting-person-unknown'")
+     && E.includes("'posting-date-outside-period'")
+     && E.includes("'posting-sub-station-unknown'"),
+    'הצבה לא תקינה נבלעת בשקט'));
 t('המאגר נבנה לפי תחנת קצה', () =>
   ok(/pools\[sub\]\[role\]/.test(E), 'אין אינדוקס לפי תחנת קצה'));
+t('והמאגר מכיר גם תחנות שהאדם מוצב בהן', () =>
+  ok(/function buildIndexes\(byId, postings\)/.test(E),
+    'מאגרי ההיצע אינם מכירים הצבה — המקום השני שקל לפספס'));
 
 /* ================= אין דליפת מידע אישי ================= */
 

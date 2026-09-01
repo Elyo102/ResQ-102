@@ -401,6 +401,16 @@ function createPlacementPlanner(deps) {
   }
   const clock = d.clock;
 
+  /* האם המנוע שאליו השורות האלה הולכות יודע לקרוא posting_map.
+   *
+   * מוזרק ולא קבוע: המודול הזה טהור ואינו רואה את המנוע, ולכן
+   * אינו יכול לטעון עליו דבר מעצמו. טענה קשיחה כאן הייתה הופכת
+   * לשקר ביום שהמנוע מתעדכן — או, גרוע יותר, ביום שהוא נסוג.
+   *
+   * ברירת המחדל **false**, כלומר נכשל-סגור: מי שלא הצהיר מקבל
+   * אזהרה חוסמת ולא שורות שיידחו בשקט. */
+  const supportsPostings = d.engine_supports_postings === true;
+
   /**
    * @param {object} input
    *   request  {subject, sub_station, role|null, span, anchor_date,
@@ -519,12 +529,13 @@ function createPlacementPlanner(deps) {
         to: target.key,
         dates,
         // לא „אולי". נבדק מול טקסט המקור בסעיף 11 של הבדיקה.
-        engine_accepts_today: false,
-        required_engine_change:
-          'schedule-calendar-engine.js:381 ו-:650 קוראים person.sub_station. '
-          + 'הצבה דורשת תחנת קצה אפקטיבית ליום — effectiveSub(person, date) — '
-          + 'בשני המקומות. שינוי השיוך בסגל אינו תחליף: הוא מזיז את האדם '
-          + 'לתחנה החדשה לכל ההרצה, כולל הימים שהוא אמור לחזור.'
+        engine_accepts_today: supportsPostings,
+        required_engine_change: supportsPostings ? null
+          : 'blockCode ומאגרי ההיצע ב-schedule-calendar-engine.js קוראים '
+          + 'person.sub_station. הצבה דורשת תחנת קצה אפקטיבית ליום — '
+          + 'effectiveSub(person, date) — בשני המקומות. שינוי השיוך בסגל '
+          + 'אינו תחליף: הוא מזיז את האדם לתחנה החדשה לכל ההרצה, כולל '
+          + 'הימים שהוא אמור לחזור.'
       };
       // המפה בצורה שהמנוע יוכל להתייעץ בה ישירות.
       postingMap = {};
@@ -537,13 +548,15 @@ function createPlacementPlanner(deps) {
         person: subject.person
       }));
 
-      warnings.push({
-        code: WARN.POSTING_NEEDS_ENGINE,
-        blocking: true,
-        detail: 'המנוע מחזיק תחנת קצה אחת לאדם לכל ההרצה. בלי חיווט '
-          + 'posting_map, כל ' + dates.length + ' הימים יידחו ל-rejected_manual '
-          + 'עם OUT_OF_SUB_STATION, והסידור ייצא ריק בלי הודעת שגיאה.'
-      });
+      if (!supportsPostings) {
+        warnings.push({
+          code: WARN.POSTING_NEEDS_ENGINE,
+          blocking: true,
+          detail: 'המנוע מחזיק תחנת קצה אחת לאדם לכל ההרצה. בלי חיווט '
+            + 'posting_map, כל ' + dates.length + ' הימים יידחו ל-rejected_manual '
+            + 'עם OUT_OF_SUB_STATION, והסידור ייצא ריק בלי הודעת שגיאה.'
+        });
+      }
       warnings.push({
         code: WARN.POSTING_VACATES_HOME,
         blocking: false,

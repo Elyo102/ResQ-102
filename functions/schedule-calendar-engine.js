@@ -53,7 +53,9 @@ const LIMITS = Object.freeze({
   MAX_COUNT_PER_ROLE: 500,
   MAX_MONTHS: 3,
   MAX_PLANNED_SLOTS: 1000000,
-  MAX_CANDIDATE_EDGES: 50000000
+  MAX_CANDIDATE_EDGES: 50000000,
+  MAX_POSTED_PEOPLE: 2000,
+  MAX_POSTINGS_PER_PERSON: 200
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -374,11 +376,35 @@ function createCalendarEngine(deps) {
   }
 
   /**
+   * תחנת הקצה של אדם **ביום מסוים**.
+   *
+   * עד כה לאדם הייתה תחנה אחת לכל ההרצה, ולכן הצבה זמנית —
+   * „שבץ אותו בתמנע לשלושה ימים, הוא נשאר בראשית" — לא הייתה
+   * ניתנת לביטוי כלל. שיבוץ ידני בתחנה שאינה שיוכו נדחה ב-
+   * OUT_OF_SUB_STATION בכל אחד מהימים, לתוך rejected_manual,
+   * ואף מסך אינו מציג את השדה הזה: הסידור יצא ריק בלי שגיאה.
+   *
+   * שינוי השיוך בסגל אינו תחליף — הוא מזיז את האדם לתחנה
+   * החדשה **לכל ההרצה**, כולל הימים שהוא אמור לחזור בהם.
+   *
+   * postings היא מפה דלילה: uid → תאריך → תחנת קצה. יום שאינו
+   * בה מחזיר את השיוך הארגוני, שאינו משתנה לעולם.
+   */
+  function effectiveSub(postings, person, date) {
+    const forPerson = postings && postings[person.id];
+    if (!forPerson) return person.sub_station;
+    const posted = forPerson[date];
+    return isNonEmptyString(posted) ? posted : person.sub_station;
+  }
+
+  /**
    * מחזיר null אם האדם כשיר, אחרת **קוד סיבה ניטרלי**.
    * לעולם לא קטגוריית היעדרות ולעולם לא טקסט חופשי מהקלט.
    */
   function blockCode(person, role, ctx) {
-    if (person.sub_station !== ctx.sub) return REASON.OUT_OF_SUB_STATION;
+    if (effectiveSub(ctx.postings, person, ctx.date) !== ctx.sub) {
+      return REASON.OUT_OF_SUB_STATION;
+    }
     if (person.active !== true) return REASON.INACTIVE;
     if (person.roles.indexOf(role) === -1) return REASON.NO_QUALIFIED;
     if (ctx.unavailable) return REASON.NOT_AVAILABLE;
@@ -461,7 +487,8 @@ function createCalendarEngine(deps) {
         const code = probeRole === null
           ? REASON.NO_QUALIFIED
           : blockCode(person, probeRole, {
-            sub, day, group, taken, state: ctx.state,
+            sub, day, date, group, taken, state: ctx.state,
+            postings: ctx.postings,
             unavailable: isUnavailable(ctx.availability, id, date)
           });
         if (code) {
@@ -526,7 +553,8 @@ function createCalendarEngine(deps) {
         const pool = ctx.pools[sub][demand.role] || [];
         for (const person of pool) {
           const code = blockCode(person, demand.role, {
-            sub, day, group, taken, state: ctx.state,
+            sub, day, date, group, taken, state: ctx.state,
+            postings: ctx.postings,
             unavailable: isUnavailable(ctx.availability, person.id, date)
           });
           if (!code) eligible.push(person);
@@ -582,7 +610,8 @@ function createCalendarEngine(deps) {
           const pool = ctx.pools[sub][row.role] || [];
           for (const person of pool) {
             const code = blockCode(person, row.role, {
-              sub, day, group, taken: new Set([...taken, ...personDemand.keys()]), state: ctx.state,
+              sub, day, date, group, taken: new Set([...taken, ...personDemand.keys()]),
+              state: ctx.state, postings: ctx.postings,
               unavailable: isUnavailable(ctx.availability, person.id, date)
             });
             const reason = code || REASON.ALREADY_ASSIGNED;
@@ -635,7 +664,7 @@ function createCalendarEngine(deps) {
 
   /* ---------------- תקופה ---------------- */
 
-  function buildIndexes(byId) {
+  function buildIndexes(byId, postings) {
     const pools = {};
     const supply = {};
     for (const sub of policy.sub_keys) {
@@ -647,13 +676,25 @@ function createCalendarEngine(deps) {
       }
     }
     for (const person of byId.values()) {
-      const sub = person.sub_station;
-      if (!pools[sub]) continue;
-      for (const role of person.roles) {
-        if (!pools[sub][role]) continue;
-        if (person.active !== true) continue;
-        pools[sub][role].push(person);
-        supply[sub][role] += 1;
+      if (person.active !== true) continue;
+      // תחנת הבית, ובנוסף כל תחנה שהאדם מוצב בה ולו ליום אחד.
+      // המועמדות היא לכל ההרצה; blockCode הוא שמכריע יום-יום,
+      // דרך effectiveSub. בלי זה האדם לעולם לא ייבחן שם.
+      const subs = [person.sub_station];
+      const forPerson = postings && postings[person.id];
+      if (forPerson) {
+        for (const date of Object.keys(forPerson)) {
+          const posted = forPerson[date];
+          if (subs.indexOf(posted) === -1) subs.push(posted);
+        }
+      }
+      for (const sub of subs) {
+        if (!pools[sub]) continue;
+        for (const role of person.roles) {
+          if (!pools[sub][role]) continue;
+          pools[sub][role].push(person);
+          supply[sub][role] += 1;
+        }
       }
     }
     for (const sub of policy.sub_keys) {
@@ -662,6 +703,64 @@ function createCalendarEngine(deps) {
       }
     }
     return { pools, supply };
+  }
+
+  /**
+   * הצבות זמניות. מפה דלילה uid → תאריך → תחנת קצה.
+   *
+   * שדה **רשות**: קלט קיים שאינו מכיר אותה מתנהג בדיוק כמקודם.
+   * זו הסיבה היחידה שהוא רשות ולא חובה מפורשת כמו availability
+   * ו-locked — קלט ישן חייב להמשיך לרוץ.
+   *
+   * מה שכן נאכף בקפדנות הוא כל מה שנמסר: אדם שאינו בסגל,
+   * תאריך שאינו בהרצה ותחנה שאינה בתקן — כולם שגיאה. הצבה
+   * ליום שאינו מתוכנן אינה „לא מזיקה": היא בקשה של אחראי סידור
+   * שלא תתקיים, ובליעה שקטה שלה משאירה אותו בטוח שהיא כן.
+   */
+  function normalizePostings(raw, byId, days) {
+    if (raw === undefined || raw === null) return null;
+    if (!isPlainObject(raw)) {
+      throw new CalendarError('postings-shape', 'מפת ההצבות אינה תקינה');
+    }
+    const people = Object.keys(raw);
+    if (!people.length) return null;
+    if (people.length > LIMITS.MAX_POSTED_PEOPLE) {
+      throw new CalendarError('postings-too-many', 'יותר מדי אנשים מוצבים בהרצה אחת');
+    }
+    const plannedDates = new Set(days.map((d) => d.date));
+    const out = {};
+    for (const id of people) {
+      const person = byId.get(id);
+      if (!person) {
+        throw new CalendarError('posting-person-unknown', 'הצבה לאדם שאינו בסגל: ' + id);
+      }
+      const forPerson = raw[id];
+      if (!isPlainObject(forPerson)) {
+        throw new CalendarError('posting-shape', 'הצבות של ' + id + ' אינן תקינות');
+      }
+      const dates = Object.keys(forPerson);
+      if (dates.length > LIMITS.MAX_POSTINGS_PER_PERSON) {
+        throw new CalendarError('postings-too-many', 'יותר מדי ימי הצבה ל-' + id);
+      }
+      const mapped = {};
+      for (const date of dates) {
+        if (!ISO_DATE.test(date)) {
+          throw new CalendarError('posting-date', 'תאריך הצבה לא תקין: ' + date);
+        }
+        if (!plannedDates.has(date)) {
+          throw new CalendarError('posting-date-outside-period',
+            'הצבה בתאריך ' + date + ' שאינו בהרצה');
+        }
+        const target = forPerson[date];
+        if (!isNonEmptyString(target) || !policy.sub_stations[target]) {
+          throw new CalendarError('posting-sub-station-unknown',
+            'הצבה לתחנת קצה שאינה בתקן: ' + String(target));
+        }
+        mapped[date] = target;
+      }
+      if (Object.keys(mapped).length) out[id] = Object.freeze(mapped);
+    }
+    return Object.keys(out).length ? Object.freeze(out) : null;
   }
 
   function planPeriod(input) {
@@ -722,14 +821,16 @@ function createCalendarEngine(deps) {
       }
     }
 
-    const { pools, supply } = buildIndexes(byId);
+    const postings = normalizePostings(inp.postings, byId, days);
+    const { pools, supply } = buildIndexes(byId, postings);
     const candidateUpperBound = days.length * policy.sub_keys.reduce((sum, sub) => sum
       + policy.sub_stations[sub].requirements.reduce((n, row) => n
         + row.count * (pools[sub][row.role] || []).length, 0), 0);
     if (candidateUpperBound > LIMITS.MAX_CANDIDATE_EDGES) {
       throw new CalendarError('candidate-edges-too-many', 'יותר מדי אפשרויות שיבוץ בהרצה אחת');
     }
-    const ctx = { byId, availability, locked, state, pools, supply, edgeCount: 0 };
+    const ctx = { byId, availability, locked, state, pools, supply,
+      postings, edgeCount: 0 };
 
     const rows = [];
     days.forEach((entry, i) => {

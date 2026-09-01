@@ -27,7 +27,11 @@ const SUITES = {
   engine: ['node', [FN('schedule-calendar-engine.test.js')]],
   publication: ['node', [FN('schedule-publication.test.js')]],
   service: ['node', [FN('schedule-service.integration.test.js')]],
-  source: ['node', [TS('schedule-calendar-source.mjs')]]
+  source: ['node', [TS('schedule-calendar-source.mjs')]],
+  // חבילת ההצבה. הבדיקות הקיימות אינן מוסרות postings בכלל,
+  // ולכן מוטציה שמנטרלת הצבה שורדת אצלן — בצדק. היא נתפסת
+  // רק כאן, ולכן החבילה רשומה במפורש.
+  posting: ['node', [TS('schedule-posting-probe.mjs')]]
 };
 
 /** [שם, קובץ, מחרוזת מקור, תחליף, חבילות בדיקה שאמורות ליפול] */
@@ -71,9 +75,19 @@ const MUTATIONS = [
   ['ימים הפוכים שמתקבלים', 'engine',
     "if (out[i].day <= out[i - 1].day) {", "if (false) {", ['engine']],
 
-  // ---- אין העברה בין תחנות קצה ----
+  // ---- חציית תחנות קצה · רק דרך הצבה מפורשת ----
+  //
+  // השער מודד מול תחנת קצה אפקטיבית ליום. הסרתו מחזירה את
+  // המצב שבו כל אדם כשיר בכל תחנה, בכל יום — וזו בדיוק
+  // הדליפה שהשער קיים בשבילה.
   ['חציית תחנות קצה שמותרת', 'engine',
-    "if (person.sub_station !== ctx.sub) return REASON.OUT_OF_SUB_STATION;", "", ['engine', 'source']],
+    "    if (effectiveSub(ctx.postings, person, ctx.date) !== ctx.sub) {\n      return REASON.OUT_OF_SUB_STATION;\n    }", "", ['engine', 'source']],
+  // והמלכודת ההפוכה: effectiveSub שמתעלם מההצבה ומחזיר תמיד
+  // את השיוך הארגוני. אז ההצבה נראית כאילו התקבלה, וכל יום
+  // בה נדחה בשקט ל-rejected_manual — בדיוק המצב שלפני השינוי.
+  ['הצבה שמתעלמים ממנה', 'engine',
+    "    const posted = forPerson[date];\n    return isNonEmptyString(posted) ? posted : person.sub_station;",
+    "    return person.sub_station;", ['posting']],
   ['אדם לא פעיל שמשובץ', 'engine',
     "if (person.active !== true) return REASON.INACTIVE;", "", ['engine']],
   ['כשירות שאינה נבדקת', 'engine',
