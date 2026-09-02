@@ -314,6 +314,12 @@
       "indexes": []
     },
     {
+      "collectionGroup": "schedule_source_operations",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "guard_notification_jobs",
       "fieldPath": "status",
       "indexes": [

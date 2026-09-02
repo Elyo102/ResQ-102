@@ -100,9 +100,18 @@ eq('1.7 כבאי אינו רשאי', A.mayChangeMode({ role: 'firefighter' }), f
 eq('1.8 בלי שחקן כלל', A.mayChangeMode(null), false);
 eq('1.9 super שאינו בוליאני אינו super', A.mayChangeMode({ role: 'x', super: 'true' }), false);
 
-// station_commander אינו ברשימה — במכוון, עד להכרעה מפורשת.
-eq('1.10 station_commander אינו ברשימה כרגע',
+// ⭐ הכרעה מפורשת, לא השמטה: מפקד התחנה אינו מזיז את המנוע.
+eq('1.10 station_commander אינו רשאי',
   A.mayChangeMode({ role: 'station_commander' }), false);
+
+// ⭐ מנהל-על הוא דגל שהשרת מחשב מזהות מאומתת, ולא שם של תפקיד.
+// תפקיד הוא שדה בפרופיל, ופרופיל אינו הוכחת זהות.
+eq('1.10a מחרוזת התפקיד super_admin אינה מספיקה',
+  A.mayChangeMode({ role: 'super_admin' }), false);
+eq('1.10b גם לא בשילוב עם מינוי אחראי סידור',
+  A.mayChangeMode({ role: 'super_admin', manager: true }), false);
+eq('1.10c רק הדגל עצמו',
+  A.mayChangeMode({ role: 'super_admin', super: true }), true);
 
 throwsCode('1.11 אחראי סידור נעצר בתכנון',
   () => change({ actor: { uid: 'u', role: 'firefighter', manager: true } }), CODE.FORBIDDEN);
@@ -249,6 +258,10 @@ eq('6.9 והיעדים חסומים', notAllowed.targets.map((t) => t.blocked_by
 
 ok('7.1 רשימת המורשים היא בדיוק שני תפקידים',
   /AUTHORITY_ROLES = Object\.freeze\(\['commander', 'deputy'\]\)/.test(MOD_SRC));
+ok('7.1a station_commander אינו מופיע כערך במודול',
+  !/['"]station_commander['"]/.test(MOD_SRC));
+ok('7.1b super_admin אינו מופיע כערך במודול',
+  !/['"]super_admin['"]/.test(MOD_SRC));
 ok('7.2 המודול אינו קורא את שדה `manager` בכלל',
   MOD_SRC.indexOf('actor.manager') === -1 && MOD_SRC.indexOf('.manager') === -1);
 // המודול מסביר את ההכרעה בהערה, וזה רצוי. מה שאסור הוא שהמינוי

@@ -1483,6 +1483,14 @@ service cloud.firestore {
       match /schedule_mode_audit/{entryId} {
         allow read, write: if false;
       }
+      // יבוא מקור כוח האדם. רשומת מניעת הכפילות והיומן נושאים uid
+      // ומצביעים על מי ייבא — שניהם חסומים לדפדפן גם לקריאה.
+      match /schedule_source_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_source_audit/{entryId} {
+        allow read, write: if false;
+      }
       match /schedule_sources/{sourceId} {
         allow read, write: if false;
         match /{document=**} {

@@ -179,6 +179,28 @@
       background:var(--panel,#f3f6fa);color:var(--muted,#5a6573)}
     .modenow.on{background:var(--good-bg,#e4f4ec);color:var(--good,#176d4e)}
     .modegrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+    /* ---------------- יבוא מקור כוח האדם ---------------- */
+    .paste{width:100%;min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;
+      font-size:12px;line-height:1.6;white-space:pre;direction:ltr;text-align:start}
+    .maprow{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:12px}
+    .actvals{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .actval{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
+      border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:6px 10px;
+      background:var(--card,#fff);min-height:40px}
+    .actval input{width:18px;min-height:18px;accent-color:var(--sched-blue)}
+    .actval code{font-family:ui-monospace,Menlo,monospace;font-size:11px;
+      background:var(--panel,#f3f6fa);border-radius:4px;padding:1px 5px;direction:ltr}
+    .rep{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
+    .rep th,.rep td{text-align:start;padding:7px 9px;border-bottom:1px solid var(--line-soft,#eef2f7)}
+    .rep th{font-size:11px;color:var(--muted,#748091);font-weight:800}
+    .rep td.n{font-weight:800;font-variant-numeric:tabular-nums;width:64px}
+    .rep code{font-size:10.5px;color:var(--muted,#748091);direction:ltr}
+    .repwrap{max-height:320px;overflow:auto;border:1px solid var(--line,#dfe5ec);
+      border-radius:10px;margin-top:10px}
+    .counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .count{background:var(--panel,#f7f9fc);border-radius:9px;padding:8px 12px;font-size:12px;font-weight:700}
+    .count b{font-size:18px;display:block;font-variant-numeric:tabular-nums}
+    .count.bad{background:var(--bad-bg,#fef2f2);color:var(--bad,#dc2626)}
     .modegrid .wide{grid-column:1/-1}
     @media(max-width:700px){.modegrid{grid-template-columns:1fr}}
 
@@ -281,6 +303,39 @@
       </div>
       <div class="changes" id="policyChanges"></div>
       <div id="policyMessage" aria-live="polite"></div>
+    </article>
+
+    <article class="card" id="sourceCard">
+      <h2>מקור כוח אדם</h2>
+      <div class="sub" id="sourceSummaryLine">—</div>
+      <div class="sub">העתיקו את הטווח מהגיליון והדביקו כאן, כולל שורת הכותרות.
+        המערכת אינה ניגשת לגיליון ואינה שומרת ממנו דבר מלבד מה שנשמר במקור.
+        <b>הזיהוי הוא מספר עובד</b> — התאמה לפי שם אינה מתבצעת, כי שני אנשים
+        באותו שם אינם מקרה נדיר.</div>
+      <label for="sourcePaste" style="margin-top:12px">הדבקה מהגיליון</label>
+      <textarea id="sourcePaste" class="paste" spellcheck="false"
+        placeholder="מספר עובד&#9;שם&#9;תחנת קצה&#9;תפקידים&#9;פעיל"></textarea>
+      <div class="maprow" id="sourceMap" hidden></div>
+      <div id="sourceActive" hidden>
+        <label style="margin-top:12px">אילו ערכים בעמודת „פעיל" משמעותם שהאדם פעיל?</label>
+        <div class="actvals" id="sourceActiveValues"></div>
+      </div>
+      <div class="btns">
+        <button class="btn" id="sourceParse" type="button">קרא את ההדבקה</button>
+        <button class="btn primary" id="sourceCheck" type="button" disabled>בדוק מול חוקי התחנה</button>
+        <button class="btn dark" id="sourceSave" type="button" disabled>שמור את המקור</button>
+      </div>
+      <div class="counts" id="sourceCounts" hidden></div>
+      <label class="req-flag" id="sourceAcceptWrap" hidden style="margin-top:10px">
+        <input id="sourceAccept" type="checkbox">
+        <span id="sourceAcceptText"></span>
+      </label>
+      <div class="repwrap" id="sourceReportWrap" hidden>
+        <table class="rep"><thead><tr>
+          <th>שורה</th><th>מה חסר</th><th>קוד</th>
+        </tr></thead><tbody id="sourceReport"></tbody></table>
+      </div>
+      <div id="sourceMessage" aria-live="polite"></div>
     </article>
 
     <div class="manage-grid">

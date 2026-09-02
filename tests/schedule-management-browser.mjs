@@ -569,6 +569,123 @@ try {
   });
   await offManager.close();
 
+  const importer = await browser.newContext({ viewport:{ width:1280, height:1000 }, locale:'he-IL' });
+  await prepare(importer, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }, { data:setup }],
+    previewScheduleSource:[{ data:{
+      kind:'created', blocked:false, source_id:'source_1_aaa', version:'v1', revision:'1',
+      digest:'d1', content_key:'k1', counts:{ people:2, availability:0, locked:0, events:0 },
+      mode:'new', active_source_id:'source_1',
+      report:{ total:4, accepted:2, rejected:2,
+        by_code:{ 'row-no-employee-number':1, 'row-active-missing':1 },
+        rows:[
+          { row:4, code:'row-no-employee-number', text:'אין מספר עובד. זיהוי לפי שם אינו מתבצע.' },
+          { row:5, code:'row-active-missing', text:'אין סימון פעיל/לא פעיל מפורש.' }
+        ] } } }],
+    saveScheduleSource:[{ data:{ duplicate:false, written:true, activated:true,
+      kind:'created', source_id:'source_1_aaa', version:'v1', revision:'1',
+      counts:{ people:2, availability:0, locked:0, events:0 },
+      report:{ total:4, accepted:2, rejected:2, by_code:{}, rows:[] } } }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }]
+  });
+  const importPage = await importer.newPage();
+  importPage.on('dialog', (dialog) => dialog.accept());
+  await importPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await importPage.locator('#appMain:not(.hide)').waitFor();
+
+  await test('the import shows the real values in the sheet instead of guessing them', async () => {
+    // ⭐ ההדבקה היא מה שהמסך מקבל. הוא אינו ניגש לגיליון.
+    await importPage.locator('#sourcePaste').fill(
+      ['מספר עובד\tשם\tתחנה\tתפקידים\tסטטוס',
+        '1001\tבדיקה אלף\tאילת\tנהג\tמשבץ',
+        '1002\tבדיקה בית\tאילת\tלוחם, נהג\tמשבץ',
+        '\tבדיקה גימל\tאילת\tלוחם\tמשבץ',
+        '1004\tבדיקה דלת\tאילת\tלוחם\tחל"ת'].join('\n'));
+    await importPage.locator('#sourceParse').click();
+    await importPage.locator('#sourceMap:not([hidden])').waitFor();
+    assert.equal(await importPage.locator('#sourceMap select').count(), 5);
+    // בלי מיפוי מלא אי אפשר לבדוק.
+    assert.equal(await importPage.locator('#sourceCheck').isEnabled(), false);
+
+    const fields = ['employee_number', 'full_name', 'sub_station', 'roles', 'active'];
+    for (let index = 0; index < fields.length; index++) {
+      await importPage.locator('#sourceMap select[data-field="' + fields[index] + '"]')
+        .selectOption(String(index));
+    }
+    await importPage.locator('#sourceActive:not([hidden])').waitFor();
+    // ⭐ הערכים הם מה שבאמת יש בעמודה — לא רשימה שהמצאתי.
+    const values = await importPage.locator('#sourceActiveValues code').allTextContents();
+    assert.deepEqual(values.slice().sort(), ['חל"ת', 'משבץ'].sort(),
+      'הוצגו ערכים שאינם מההדבקה: ' + JSON.stringify(values));
+    // ⭐ עדיין לא סומן ערך אחד כפעיל. מקור שכולו לא פעיל אינו מקור,
+    // ולכן אין מה לשלוח.
+    assert.equal(await importPage.locator('#sourceCheck').isEnabled(), false);
+    assert.match(await importPage.locator('#sourceActiveValues').textContent(),
+      /0 פעילים · 4 לא פעילים/);
+  });
+
+  await test('rows leave the browser with an explicit boolean and mapped role ids', async () => {
+    await importPage.locator('#sourceActiveValues label').filter({ hasText:'משבץ' })
+      .locator('input').check();
+    // הפילוח נאמר במספרים לפני השליחה.
+    assert.match(await importPage.locator('#sourceActiveValues').textContent(),
+      /3 פעילים · 1 לא פעילים/);
+    assert.equal(await importPage.locator('#sourceCheck').isEnabled(), true);
+    await importPage.locator('#sourceCheck').click();
+    await importPage.locator('#sourceMessage .ok, #sourceMessage .warn').first().waitFor();
+
+    const sent = (await importPage.evaluate(() => window.__CALLABLE_CALLS))
+      .find((entry) => entry.name === 'previewScheduleSource');
+    assert.ok(sent);
+    assert.equal(sent.payload.rows.length, 4);
+    // מספר השורה הוא מספר השורה בגיליון, כולל הכותרת.
+    assert.equal(sent.payload.rows[0].row, 2);
+    // ⭐ „פעיל" הוא בוליאני שאדם סיווג, לא מחרוזת שהשרת ינחש.
+    assert.equal(sent.payload.rows[0].active, true);
+    assert.equal(sent.payload.rows[3].active, false);
+    // תוויות עבריות מחוקי התחנה הומרו למזהי התפקידים, בהתאמה מדויקת.
+    assert.deepEqual(sent.payload.rows[0].roles, ['driver']);
+    assert.deepEqual(sent.payload.rows[1].roles, ['firefighter', 'driver']);
+    assert.deepEqual(sent.payload.rows[2].roles, ['firefighter']);
+    // המיפוי בין מספר עובד ל-uid נקרא בשרת, ואינו נשלח מהדפדפן.
+    assert.equal(Object.hasOwn(sent.payload, 'known'), false);
+    assert.equal(Object.hasOwn(sent.payload, 'stationId'), false);
+    assert.equal(Object.hasOwn(sent.payload, 'station_id'), false);
+  });
+
+  await test('nobody is dropped from the roster without someone seeing the number', async () => {
+    // הדוח מדבר בשורות: מספר שורה, מה חסר, קוד.
+    assert.equal(await importPage.locator('#sourceReport tr').count(), 2);
+    const text = await importPage.locator('#sourceReport').textContent();
+    assert.match(text, /אין מספר עובד/);
+    assert.match(text, /row-no-employee-number/);
+    // ⭐ ובלי שמות — אף שם מההדבקה אינו מגיע לדוח.
+    assert.doesNotMatch(text, /בדיקה גימל/);
+    assert.doesNotMatch(text, /בדיקה דלת/);
+
+    assert.match(await importPage.locator('#sourceCounts').textContent(), /2/);
+    // ⭐ שמירה חסומה עד שמישהו מאשר את המספר המדויק.
+    assert.equal(await importPage.locator('#sourceSave').isEnabled(), false);
+    assert.match(await importPage.locator('#sourceAcceptText').textContent(),
+      /ראיתי ש-2 שורות/);
+
+    await importPage.locator('#sourceAccept').check();
+    assert.equal(await importPage.locator('#sourceSave').isEnabled(), true);
+    await importPage.locator('#sourceSave').click();
+    await importPage.locator('#sourceMessage .ok').waitFor();
+
+    const saved = (await importPage.evaluate(() => window.__CALLABLE_CALLS))
+      .find((entry) => entry.name === 'saveScheduleSource');
+    assert.ok(saved);
+    // המספר המדויק נשלח לשרת, שמשווה אותו למספר האמיתי.
+    assert.equal(saved.payload.accept_rejected, 2);
+    assert.equal(saved.payload.activate, true);
+    assert.equal(saved.payload.expected_source_id, 'source_1');
+    assert.ok(String(saved.payload.request_id || '').startsWith('source_'));
+  });
+  await importer.close();
+
   const commander = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(commander, 'commander', {
     // מפקד בלי מינוי אחראי סידור: אין לו לשונית ניהול, ויש לו המתג.
@@ -658,5 +775,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 19);
-console.log('\n19 schedule management browser checks passed.');
+assert.equal(passed, 22);
+console.log('\n22 schedule management browser checks passed.');

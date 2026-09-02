@@ -9,6 +9,7 @@ const guardBoardProjection = require('./guard-board-projection');
 const legacyCompatibility = require('./schedule-legacy-compat');
 const policyAuthorModule = require('./schedule-policy-author');
 const modeAuthorityModule = require('./schedule-mode-authority');
+const sourceAuthorModule = require('./schedule-source-author');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -198,6 +199,7 @@ function createScheduleRuntime(deps) {
   // ⭐ טהור ובלי תלויות. מי רשאי להזיז מצב, ולאן מותר להזיז —
   // החלטה שאפשר לבדוק בלי Firestore ובלי דפדפן.
   const modeAuthority = modeAuthorityModule.createModeAuthority();
+  const sourceAuthor = sourceAuthorModule.createSourceAuthor({ clock, hash });
 
   function stationRef(sid) {
     return db.collection('stations').doc(sid);
@@ -1429,6 +1431,257 @@ function createScheduleRuntime(deps) {
 
   function policyRef(sid, policyId) {
     return stationRef(sid).collection('schedule_policies').doc(policyId);
+  }
+
+  /* ==================================================================
+   *  מקור כוח האדם · הכתיבה
+   * ------------------------------------------------------------------
+   *  אותו פער בדיוק כמו במדיניות: `loadSource` קורא, `runPlanner`
+   *  דורש, ואיש אינו כותב.
+   *
+   *  ⭐ הכתיבה מדורגת ולא טרנזקציונית, כי 300 אנשים הם 300 מסמכים
+   *  ותקרת הטרנזקציה נמוכה מזה. זה בטוח **בזכות** `loadSource`:
+   *  הוא דורש `complete === true` וגם התאמה מדויקת של הספירות, ולכן
+   *  מקור שנכתב חלקית אינו „מקור עם פחות אנשים" — הוא מקור שאי אפשר
+   *  לטעון בכלל. הדגל נכתב אחרון, בטרנזקציה, אחרי בדיקה חוזרת של
+   *  המינוי החי.
+   * ================================================================== */
+
+  function sourceRef(sid, sourceId) {
+    return stationRef(sid).collection('schedule_sources').doc(sourceId);
+  }
+
+  function sourceOperationRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_source_operations').doc(requestId);
+  }
+
+  function sourceAuditRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_source_audit')
+      .doc('sa_' + hash('source-audit|' + sid + '|' + requestId).slice(0, 48));
+  }
+
+  function sourceOperationExpiry() {
+    const now = timeMillis(clock());
+    return new Date((Number.isFinite(now) ? now : Date.parse(clock())) + OUTBOX_TTL_MS);
+  }
+
+  // רשימת המשתמשים החיה של התחנה, כמיפוי מספר עובד → uid.
+  // ⭐ נקראת **בשרת בלבד**. הדפדפן שולח שורות, ולעולם לא את המיפוי
+  // הזה: מי שיכול לספק מיפוי משלו יכול לשבץ אדם אחר במקום עצמו.
+  async function stationDirectory(ctx) {
+    const snap = await stationRef(ctx.sid).collection('users')
+      .limit(MAX_SOURCE_PEOPLE + 1).get();
+    if (snap.size > MAX_SOURCE_PEOPLE) {
+      throw new ScheduleRuntimeError('station-directory-too-large',
+        'רשימת המשתמשים של התחנה גדולה מהתקרה הבטוחה.', 'resource-exhausted');
+    }
+    const out = [];
+    snap.docs.forEach((doc) => {
+      const user = doc.data() || {};
+      if (!scheduleAccess.activeMember(user, ctx.sid)) return;
+      const employee = user.employee_number === undefined || user.employee_number === null
+        ? '' : String(user.employee_number).trim();
+      if (!employee) return;
+      out.push({ uid: doc.id, employee_number: employee });
+    });
+    return out;
+  }
+
+  // המדיניות הפעילה, בצורה שהמודול מצפה לה. בלי מדיניות אין לפי מה
+  // לדעת אילו תחנות קצה ואילו תפקידים קיימים.
+  async function sourcePolicyContext(ctx, config) {
+    if (!config.active_policy_id) {
+      throw new ScheduleRuntimeError('source-policy-required',
+        'אי אפשר לייבא מקור לפני שהוגדרו חוקי תחנה.', 'failed-precondition');
+    }
+    const policy = await loadPolicy(ctx, config.active_policy_id);
+    return { station_id: ctx.sid, sub_stations: policy.value.sub_stations };
+  }
+
+  function sourceRows(data) {
+    const rows = Array.isArray(data.rows) ? data.rows : null;
+    if (!rows || !rows.length) {
+      throw new ScheduleRuntimeError('source-rows-required',
+        'לא נמסרו שורות לייבוא.', 'invalid-argument');
+    }
+    if (rows.length > MAX_SOURCE_PEOPLE) {
+      throw new ScheduleRuntimeError('source-rows-too-many',
+        'יותר מדי שורות בייבוא אחד.', 'invalid-argument');
+    }
+    return rows;
+  }
+
+  function authorSource(ctx, data, policy, directory, previous) {
+    try {
+      return sourceAuthor.planSource({
+        station_id: ctx.sid,
+        rows: sourceRows(data),
+        known: directory,
+        policy,
+        previous,
+        actor_uid: ctx.uid,
+        accept_rejected: data.accept_rejected
+      });
+    } catch (error) {
+      if (error && error.name === 'SourceAuthorError') {
+        const wrapped = new ScheduleRuntimeError(error.code, error.message, 'invalid-argument');
+        // הדוח מוחזר גם בכישלון: בלעדיו אי אפשר לדעת מה לתקן.
+        if (error.detail) wrapped.detail = error.detail;
+        throw wrapped;
+      }
+      throw error;
+    }
+  }
+
+  async function readActiveSource(sid, activeId) {
+    if (!nonEmpty(activeId)) return null;
+    const snap = await sourceRef(sid, activeId).get();
+    if (!snap.exists) return null;
+    return Object.assign({ id: activeId }, snap.data() || {});
+  }
+
+  // ⭐ הדוח יוצא לדפדפן; היומן לא. שניהם נגזרים מאותו מקור, וההבדל
+  // הוא שהיומן מחזיק ספירות בלבד ואף לא מספר שורה — שורה מזהה אדם
+  // בגיליון.
+  function sourcePlanView(plan, config) {
+    return {
+      kind: plan.kind,
+      source_id: plan.source_id,
+      version: plan.version,
+      revision: plan.revision,
+      digest: plan.digest,
+      content_key: plan.content_key,
+      counts: plan.counts,
+      report: plan.report,
+      mode: config.mode,
+      active_source_id: config.active_source_id || null
+    };
+  }
+
+  async function previewSource(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const config = await configuration(ctx.sid);
+    const policy = await sourcePolicyContext(ctx, config);
+    const directory = await stationDirectory(ctx);
+    const previous = await readActiveSource(ctx.sid, config.active_source_id);
+    // התצוגה המקדימה מריצה את אותו קוד בדיוק, ובלי `accept_rejected`
+    // היא נופלת על הדחיות — וזה הדוח שמוחזר.
+    try {
+      const plan = authorSource(ctx, Object.assign({}, data,
+        { accept_rejected: undefined }), policy, directory, previous);
+      return Object.assign(sourcePlanView(plan, config), { blocked: false });
+    } catch (error) {
+      if (error instanceof ScheduleRuntimeError && error.detail && error.detail.report) {
+        return {
+          kind: 'blocked', blocked: true, code: error.code, message: error.message,
+          report: error.detail.report, mode: config.mode,
+          active_source_id: config.active_source_id || null
+        };
+      }
+      throw error;
+    }
+  }
+
+  async function saveSource(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    if (typeof data.activate !== 'boolean') {
+      throw new ScheduleRuntimeError('source-activate-required',
+        'יש להצהיר במפורש אם המקור נכנס לתוקף.', 'invalid-argument');
+    }
+    const expected = data.expected_source_id === undefined || data.expected_source_id === null
+      ? null : requireId(data.expected_source_id, 'source-id', 'מזהה המקור הקודם');
+
+    const opRef = sourceOperationRef(ctx.sid, requestId);
+    const existing = await opRef.get();
+    if (existing.exists) {
+      const op = existing.data() || {};
+      if (op.request_hash !== hash(stable({
+        station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+        rows: data.rows, expected, activate: data.activate,
+        accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected
+      }))) {
+        throw new ScheduleRuntimeError('source-request-reused',
+          'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+      }
+      return Object.assign({ duplicate: true }, op.result || {});
+    }
+
+    const config = await configuration(ctx.sid);
+    if (expected !== (config.active_source_id || null)) {
+      throw new ScheduleRuntimeError('source-conflict',
+        'מקור כוח האדם השתנה מאז שהמסך נטען. יש לרענן ולבדוק מה השתנה.', 'aborted');
+    }
+    const policy = await sourcePolicyContext(ctx, config);
+    const directory = await stationDirectory(ctx);
+    const previous = await readActiveSource(ctx.sid, config.active_source_id);
+    const plan = authorSource(ctx, data, policy, directory, previous);
+
+    const requestHash = hash(stable({
+      station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+      rows: data.rows, expected, activate: data.activate,
+      accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected
+    }));
+
+    if (plan.kind === 'unchanged') {
+      const view = Object.assign(sourcePlanView(plan, config),
+        { written: false, activated: false });
+      await opRef.set({
+        station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
+        created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+      });
+      return Object.assign({ duplicate: false }, view);
+    }
+
+    const ref = sourceRef(ctx.sid, plan.source_id);
+    /* שלב א' — המסמך נכתב **בלי** `complete` ובלי חתימה. במצב הזה
+     * `loadSource` דוחה אותו, ולכן מקור חצי-כתוב אינו ניתן להרצה. */
+    await ref.set(Object.assign({}, plan.meta, {
+      complete: false, content_digest: null, staged_at: FV.serverTimestamp()
+    }));
+    await commitWrites(plan.people.map((person) => ({
+      ref: ref.collection('people').doc(person.id), data: person.data
+    })));
+
+    /* שלב ב' — הסגירה. טרנזקציה קצרה שבודקת שוב את המינוי החי,
+     * שהמצביע לא זז, ורק אז מסמנת שלם ומצביעה. */
+    const view = Object.assign(sourcePlanView(plan, config),
+      { written: true, activated: data.activate === true });
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid),
+        runtimeRef(ctx.sid)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      const runtimeData = snaps[2].exists ? (snaps[2].data() || {}) : {};
+      const liveSource = nonEmpty(runtimeData.active_source_id)
+        ? runtimeData.active_source_id : null;
+      if (liveSource !== expected) {
+        throw new ScheduleRuntimeError('source-conflict',
+          'מקור כוח האדם השתנה בזמן הכתיבה.', 'aborted');
+      }
+      tx.set(ref, {
+        complete: true, content_digest: plan.digest, completed_at: FV.serverTimestamp()
+      }, { merge: true });
+      if (data.activate === true) {
+        tx.set(runtimeRef(ctx.sid), { active_source_id: plan.source_id }, { merge: true });
+      }
+      tx.set(sourceAuditRef(ctx.sid, requestId), Object.assign({
+        station_id: ctx.sid, request_id: requestId, source_id: plan.source_id,
+        version: plan.version, revision: plan.revision,
+        supersedes: previous ? previous.id : null,
+        activated: data.activate === true,
+        actor_uid: ctx.uid
+      }, plan.audit));
+      tx.set(opRef, {
+        station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
+        created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+      });
+    });
+    return Object.assign({ duplicate: false }, view);
   }
 
   function policyOperationRef(sid, requestId) {
@@ -4139,6 +4392,8 @@ function createScheduleRuntime(deps) {
     getManagerSetup,
     previewPolicy,
     savePolicy,
+    previewSource,
+    saveSource,
     getModeOptions,
     setRuntimeMode,
     runPlanner,

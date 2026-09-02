@@ -15,6 +15,8 @@ const call = Object.freeze({
   setup: httpsCallable(functions, 'getScheduleManagerSetup'),
   modeOptions: httpsCallable(functions, 'getScheduleModeOptions'),
   modeSet: httpsCallable(functions, 'setScheduleRuntimeMode'),
+  sourcePreview: httpsCallable(functions, 'previewScheduleSource'),
+  sourceSave: httpsCallable(functions, 'saveScheduleSource'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
   policySave: httpsCallable(functions, 'saveSchedulePolicy'),
   run: httpsCallable(functions, 'runSchedulePlanner'),
@@ -34,6 +36,9 @@ const state = {
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
   modeView: null, modeTarget: null, modeBusy: false,
+  // יבוא מקור כוח האדם
+  sourceTable: null, sourceMap: null, sourceActive: null,
+  sourcePlan: null, sourceBusy: false,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
   tab: null, busy: false
@@ -201,6 +206,333 @@ function chooseTab(name, replaceUrl = true) {
   }
   if (name === 'mine') loadMineRange();
   if (name === 'station') loadStationRange();
+}
+
+/* ==================================================================
+ *  יבוא מקור כוח האדם
+ * ------------------------------------------------------------------
+ *  ⭐ המסך אינו ניגש לגיליון. הוא מקבל הדבקה.
+ *
+ *  זו אינה עצלנות אלא הגבול הנכון: קריאה מהגיליון דורשת הרשאה
+ *  מתמשכת לחשבון שמחזיק את רשימת כל אנשי התחנה, והמסך הזה לא
+ *  צריך אותה כדי לעשות את עבודתו. העתק-הדבק הוא קריאה חד-פעמית
+ *  שאדם ביצע במודע.
+ *
+ *  ⭐ ואין כאן ניחוש עמודות. שמות העמודות בגיליון אינם ידועים לי,
+ *  ולכן האדם ממפה אותן — ורואה בדיוק אילו ערכים יש בעמודת „פעיל"
+ *  לפני שהוא מחליט מה מהם משמעותו פעיל. „כן"/"TRUE"/"1" הם ניחוש
+ *  שנראה עובד עד שתחנה אחת כותבת „פעילה".
+ * ================================================================== */
+
+const SOURCE_FIELDS = [
+  { key: 'employee_number', label: 'מספר עובד', required: true },
+  { key: 'full_name', label: 'שם', required: true },
+  { key: 'sub_station', label: 'תחנת קצה', required: true },
+  { key: 'roles', label: 'תפקידים', required: true },
+  { key: 'active', label: 'פעיל', required: true }
+];
+
+// מפריד שדות: טאב כשהוא קיים (זה מה שגיליון מדביק), אחרת פסיק.
+function splitLine(line) {
+  return (line.indexOf('\t') !== -1 ? line.split('\t') : line.split(','))
+    .map((cell) => cell.trim());
+}
+
+function parsePaste(text) {
+  const lines = String(text || '').split(/\r?\n/).filter((line) => line.trim().length);
+  if (lines.length < 2) return null;
+  const header = splitLine(lines[0]);
+  const rows = [];
+  for (let index = 1; index < lines.length; index++) {
+    const cells = splitLine(lines[index]);
+    // ⭐ מספר השורה הוא מספר השורה **בגיליון**, כולל הכותרת. זה
+    // המספר שיופיע בדוח, וזה מה שמאפשר למצוא אותה שם.
+    rows.push({ row: index + 1, cells });
+  }
+  return { header, rows };
+}
+
+function guessNothing(select, header) {
+  clear(select);
+  const none = node('option', '', '— לא ממופה —');
+  none.value = '';
+  select.appendChild(none);
+  header.forEach((name, index) => {
+    const item = node('option', '', name || ('עמודה ' + (index + 1)));
+    item.value = String(index);
+    select.appendChild(item);
+  });
+}
+
+function renderSourceMap() {
+  const box = $('sourceMap');
+  const table = state.sourceTable;
+  clear(box);
+  box.hidden = !table;
+  if (!table) return;
+  SOURCE_FIELDS.forEach((field) => {
+    const wrap = node('div');
+    wrap.appendChild(node('label', '', field.label));
+    const select = node('select');
+    select.dataset.field = field.key;
+    guessNothing(select, table.header);
+    if (state.sourceMap && state.sourceMap[field.key] !== undefined
+        && state.sourceMap[field.key] !== null) {
+      select.value = String(state.sourceMap[field.key]);
+    }
+    select.addEventListener('change', () => {
+      state.sourceMap = state.sourceMap || {};
+      state.sourceMap[field.key] = select.value === '' ? null : Number(select.value);
+      state.sourcePlan = null;
+      renderSourceActive();
+      updateSourceButtons();
+    });
+    wrap.appendChild(select);
+    box.appendChild(wrap);
+  });
+}
+
+// הערכים שבאמת יש בעמודה, ולא רשימה שהמצאתי.
+function renderSourceActive() {
+  const box = $('sourceActive');
+  const list = $('sourceActiveValues');
+  const column = state.sourceMap && state.sourceMap.active;
+  clear(list);
+  if (!state.sourceTable || column === null || column === undefined) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const values = [];
+  state.sourceTable.rows.forEach((row) => {
+    const value = (row.cells[column] === undefined ? '' : row.cells[column]).trim();
+    if (values.indexOf(value) === -1) values.push(value);
+  });
+  values.sort();
+  // ⭐ כל ערך שקיים בעמודה מקבל מצב מפורש. „לא סומן" הוא לא פעיל,
+  // וזו סמנטיקה של תיבות סימון שאדם מבין — אבל רק בזכות זה שכל
+  // הערכים מוצגים, עם כמה שורות בכל אחד. ערך שלא הוצג לא יכול
+  // ליפול לצד הלא נכון בשקט, כי אין ערך שלא מוצג.
+  state.sourceActive = state.sourceActive || {};
+  values.forEach((value) => {
+    state.sourceActive[value] = state.sourceActive[value] === true;
+  });
+  values.forEach((value) => {
+    const label = node('label', 'actval');
+    const input = node('input');
+    input.type = 'checkbox';
+    input.checked = state.sourceActive[value] === true;
+    input.addEventListener('change', () => {
+      state.sourceActive[value] = input.checked;
+      state.sourcePlan = null;
+      renderActiveSummary();
+      updateSourceButtons();
+    });
+    label.appendChild(input);
+    label.appendChild(node('code', '', value === '' ? '(ריק)' : value));
+    const count = state.sourceTable.rows.filter((row) =>
+      (row.cells[column] === undefined ? '' : row.cells[column]).trim() === value).length;
+    label.appendChild(node('span', '', '· ' + count));
+    list.appendChild(label);
+  });
+
+  // הפילוח נאמר במספרים לפני השליחה, כדי ש„סימנתי את הערך הלא
+  // נכון" ייראה כאן ולא יתגלה כשחסרים אנשים בסידור. הוא מתעדכן
+  // בכל סימון, ולא רק בציור הראשון.
+  const summary = node('div', 'sub');
+  summary.id = 'sourceActiveSummary';
+  list.appendChild(summary);
+  renderActiveSummary();
+}
+
+function renderActiveSummary() {
+  const summary = $('sourceActiveSummary');
+  const column = state.sourceMap && state.sourceMap.active;
+  if (!summary || !state.sourceTable || column === null || column === undefined) return;
+  const active = state.sourceTable.rows.filter((row) =>
+    state.sourceActive[(row.cells[column] === undefined ? '' : row.cells[column]).trim()] === true);
+  summary.textContent = 'לפי הסימון: ' + active.length + ' פעילים · '
+    + (state.sourceTable.rows.length - active.length) + ' לא פעילים.';
+}
+
+// תוויות התפקידים ותחנות הקצה מחוקי התחנה, להתאמה **מדויקת**.
+// אין כאן התאמה מקורבת: ערך שאינו תווית ואינו מזהה עובר כמות
+// שהוא, והשרת דוחה אותו בקוד ברור.
+function policyLookup() {
+  const subs = {};
+  const roles = {};
+  if (state.policy) {
+    Object.keys(state.policy.sub_stations).forEach((id) => {
+      const sub = state.policy.sub_stations[id];
+      subs[id] = id;
+      if (sub.label) subs[sub.label] = id;
+      sub.requirements.forEach((item) => {
+        roles[item.role] = item.role;
+        if (item.label) roles[item.label] = item.role;
+      });
+    });
+  }
+  return { subs, roles };
+}
+
+function sourceRowsForServer() {
+  const table = state.sourceTable;
+  const map = state.sourceMap || {};
+  if (!table) return null;
+  const look = policyLookup();
+  const cell = (row, key) => {
+    const index = map[key];
+    if (index === null || index === undefined) return '';
+    return (row.cells[index] === undefined ? '' : row.cells[index]).trim();
+  };
+  return table.rows.map((row) => {
+    const rawActive = cell(row, 'active');
+    const rawRoles = cell(row, 'roles');
+    return {
+      row: row.row,
+      employee_number: cell(row, 'employee_number'),
+      full_name: cell(row, 'full_name'),
+      sub_station: look.subs[cell(row, 'sub_station')] || cell(row, 'sub_station'),
+      // ⭐ „פעיל" הוא בוליאני מפורש שהאדם סיווג. ערך שלא סומן אינו
+      // הופך ל-false בשקט — הוא נשלח כלא-בוליאני, והשרת דוחה אותו.
+      active: state.sourceActive
+        && Object.prototype.hasOwnProperty.call(state.sourceActive, rawActive)
+        ? state.sourceActive[rawActive] === true : null,
+      roles: rawRoles.split(/[,;|]/).map((value) => value.trim()).filter(Boolean)
+        .map((value) => look.roles[value] || value)
+    };
+  });
+}
+
+function updateSourceButtons() {
+  const table = state.sourceTable;
+  const map = state.sourceMap || {};
+  const mapped = SOURCE_FIELDS.every((field) =>
+    map[field.key] !== null && map[field.key] !== undefined);
+  // מקור שכולו לא פעיל אינו מקור; אין טעם לשלוח אותו לשרת.
+  const anyActive = !!state.sourceActive
+    && Object.keys(state.sourceActive).some((key) => state.sourceActive[key] === true);
+  $('sourceCheck').disabled = state.sourceBusy || !table || !mapped || !anyActive;
+  const plan = state.sourcePlan;
+  const needsAccept = !!plan && plan.report && plan.report.rejected > 0;
+  $('sourceSave').disabled = state.sourceBusy || !plan || plan.blocked === true
+    || (needsAccept && !$('sourceAccept').checked);
+}
+
+function renderSourceReport(report, blockedCode) {
+  const counts = $('sourceCounts');
+  clear(counts);
+  counts.hidden = !report;
+  if (!report) {
+    $('sourceReportWrap').hidden = true;
+    $('sourceAcceptWrap').hidden = true;
+    return;
+  }
+  [['נקראו', report.total, false], ['ייכנסו למקור', report.accepted, false],
+    ['לא ייכנסו', report.rejected, report.rejected > 0]].forEach(([label, value, bad]) => {
+    const box = node('div', 'count' + (bad ? ' bad' : ''));
+    box.append(node('b', '', value), node('span', '', label));
+    counts.appendChild(box);
+  });
+
+  const body = $('sourceReport');
+  clear(body);
+  (report.rows || []).forEach((item) => {
+    const tr = node('tr');
+    const n = node('td', 'n', item.row);
+    tr.append(n, node('td', '', item.text || item.code));
+    const code = node('td');
+    code.appendChild(node('code', '', item.code));
+    tr.appendChild(code);
+    body.appendChild(tr);
+  });
+  $('sourceReportWrap').hidden = !(report.rows || []).length;
+
+  // ⭐ האישור נוקב במספר. אי אפשר לאשר „בערך" — וזה גם מה שנשלח
+  // לשרת, שמשווה אותו למספר האמיתי.
+  const wrap = $('sourceAcceptWrap');
+  wrap.hidden = !(report.rejected > 0) || blockedCode === 'source-author-empty-result';
+  if (!wrap.hidden) {
+    $('sourceAcceptText').textContent =
+      'ראיתי ש-' + report.rejected + ' שורות לא ייכנסו למקור, ואני מאשר/ת. '
+      + 'כל אחת מהן היא אדם שהמנוע לא ישבץ.';
+  }
+}
+
+async function checkSource() {
+  if (state.sourceBusy) return;
+  const rows = sourceRowsForServer();
+  if (!rows) return;
+  state.sourceBusy = true;
+  state.sourcePlan = null;
+  $('sourceAccept').checked = false;
+  updateSourceButtons();
+  message('sourceMessage', 'בודק את הרשימה מול חוקי התחנה…', 'info');
+  try {
+    const result = (await call.sourcePreview({ rows })).data;
+    state.sourcePlan = result;
+    renderSourceReport(result.report, result.code);
+    if (result.blocked) {
+      message('sourceMessage', result.message, 'warn');
+    } else if (result.kind === 'unchanged') {
+      message('sourceMessage', 'הרשימה זהה למקור השמור. אין מה לשמור.', 'ok');
+    } else {
+      message('sourceMessage',
+        result.counts.people + ' אנשים ייכנסו למקור, כמהדורה ' + result.revision + '.', 'ok');
+    }
+  } catch (error) {
+    renderSourceReport(null);
+    message('sourceMessage', errorText(error), 'err');
+  } finally {
+    state.sourceBusy = false;
+    updateSourceButtons();
+  }
+}
+
+async function saveSource() {
+  if (state.sourceBusy || !state.sourcePlan || state.sourcePlan.blocked) return;
+  const rows = sourceRowsForServer();
+  const rejected = state.sourcePlan.report ? state.sourcePlan.report.rejected : 0;
+  if (rejected > 0 && !$('sourceAccept').checked) return;
+  if (!confirm('לשמור את המקור? ' + state.sourcePlan.counts.people
+    + ' אנשים ייכנסו, ו-' + rejected + ' שורות לא. '
+    + 'שמירת מקור אינה משנה סידור שפורסם ואינה שולחת הודעה.')) return;
+  state.sourceBusy = true;
+  updateSourceButtons();
+  message('sourceMessage', 'שומר את המקור…', 'info');
+  try {
+    const result = (await call.sourceSave({
+      request_id: requestId('source'),
+      rows,
+      activate: true,
+      expected_source_id: state.sourcePlan.active_source_id,
+      accept_rejected: rejected > 0 ? rejected : undefined
+    })).data;
+    message('sourceMessage', result.written
+      ? 'המקור נשמר כמהדורה ' + result.revision + ' עם ' + result.counts.people + ' אנשים.'
+        + (result.activated ? ' הוא המקור הפעיל.' : '')
+      : 'המקור לא השתנה.', 'ok');
+    state.sourcePlan = null;
+    $('sourceAccept').checked = false;
+    renderSourceReport(null);
+    await loadSetup();
+    await loadModeOptions();
+    state.status = (await call.status({})).data;
+    setMode(state.status);
+  } catch (error) {
+    message('sourceMessage', errorText(error), 'err');
+  } finally {
+    state.sourceBusy = false;
+    updateSourceButtons();
+  }
+}
+
+function renderSourceSummary() {
+  const setup = state.setup;
+  $('sourceSummaryLine').textContent = setup && setup.source
+    ? 'מקור פעיל · גרסה ' + setup.source.version + ' · מהדורה ' + setup.source.revision
+      + ((setup.people || []).length ? ' · ' + setup.people.length + ' אנשים פעילים' : '')
+    : 'אין מקור כוח-אדם פעיל. בלעדיו המנוע אינו יכול לתכנן.';
 }
 
 /* ==================================================================
@@ -1284,6 +1616,7 @@ async function loadSetup() {
     state.policy = policyFromSetup(state.setup);
     state.policyDirty = false;
     renderPolicy();
+    renderSourceSummary();
   } catch (error) { message('policyMessage', errorText(error), 'err'); }
 }
 
@@ -1343,6 +1676,26 @@ $('savePolicy').addEventListener('click', savePolicy);
 $('modeConfirm').addEventListener('input', updateModeApply);
 $('modeReason').addEventListener('change', updateModeApply);
 $('modeApply').addEventListener('click', applyModeChange);
+$('sourceParse').addEventListener('click', () => {
+  const table = parsePaste($('sourcePaste').value);
+  if (!table) {
+    message('sourceMessage', 'צריך לפחות שורת כותרות ושורת נתונים אחת.', 'err');
+    return;
+  }
+  state.sourceTable = table;
+  state.sourceMap = null;
+  state.sourceActive = null;
+  state.sourcePlan = null;
+  renderSourceMap();
+  renderSourceActive();
+  renderSourceReport(null);
+  message('sourceMessage', 'נקראו ' + table.rows.length + ' שורות ו-'
+    + table.header.length + ' עמודות. יש למפות את העמודות.', 'info');
+  updateSourceButtons();
+});
+$('sourceAccept').addEventListener('change', updateSourceButtons);
+$('sourceCheck').addEventListener('click', checkSource);
+$('sourceSave').addEventListener('click', saveSource);
 addEventListener('resize', refitAll);
 
 onAuthStateChanged(auth, (user) => {

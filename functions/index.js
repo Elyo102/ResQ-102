@@ -5118,6 +5118,17 @@ exports.setScheduleRuntimeMode = onCall({
 exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('previewPolicy', req));
 
+// מקור כוח האדם. השורות מגיעות מהלקוח; **המיפוי בין מספר עובד
+// ל-uid נקרא בשרת בלבד**, אחרת מי שיכול לספק מיפוי משלו יכול
+// לשבץ אדם אחר במקומו.
+exports.previewScheduleSource = onCall({
+  enforceAppCheck: true, timeoutSeconds: 300, memory: '1GiB'
+}, async (req) => invokeSchedule('previewSource', req));
+
+exports.saveScheduleSource = onCall({
+  enforceAppCheck: true, timeoutSeconds: 540, memory: '1GiB'
+}, async (req) => invokeSchedule('saveSource', req));
+
 exports.saveSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('savePolicy', req));
 
