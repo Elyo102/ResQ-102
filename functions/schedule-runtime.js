@@ -145,6 +145,10 @@ function createScheduleRuntime(deps) {
   const createService = d.createService;
   const isSuper = typeof d.isSuper === 'function' ? d.isSuper : function () { return false; };
   const sendPush = d.sendPush;
+  // Operational telemetry is intentionally code-only.  Never pass the raw
+  // exception or request context here: either can contain personal data.
+  const reportError = typeof d.reportError === 'function'
+    ? d.reportError : function (code) { console.error(code); };
   // Lifecycle hooks are dependency-injected test seams only.  The production
   // wiring does not provide them; they let the emulator prove race boundaries.
   const beforeSnapshotFinalize = typeof d.beforeSnapshotFinalize === 'function'
@@ -200,6 +204,13 @@ function createScheduleRuntime(deps) {
 
   function liveUserRef(sid, uid) {
     return stationRef(sid).collection('users').doc(uid);
+  }
+
+  function reportRuntimeError(code) {
+    try {
+      const pending = reportError(code);
+      if (pending && typeof pending.catch === 'function') pending.catch(function () {});
+    } catch (ignore) {}
   }
 
   function recipientIsActive(snap, sid) {
@@ -2432,8 +2443,8 @@ function createScheduleRuntime(deps) {
   }
 
   async function getLegacyCompatibility(req) {
-    const range = requestedLegacyCompatibilityRange(req);
     const ctx = await context(req);
+    const range = requestedLegacyCompatibilityRange(req);
     const before = await configuration(ctx.sid);
     if (before.mode === MODE.NEW) {
       throw new ScheduleRuntimeError('legacy-compatibility-mode',
@@ -2481,6 +2492,7 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError(error.code, 'נתוני הסידור הקיים אינם תקינים.',
           error.code.endsWith('-too-large') ? 'resource-exhausted' : 'failed-precondition');
       }
+      reportRuntimeError('legacy-compatibility-unexpected');
       throw new ScheduleRuntimeError('legacy-compatibility-unavailable',
         'לא ניתן לקרוא את נתוני הסידור הקיים בבטחה.', 'unavailable');
     }

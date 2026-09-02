@@ -105,7 +105,8 @@ function runtime(sendPush, hooks) {
     beforeOutboxSend: testHooks.beforeOutboxSend,
     beforeSnapshotFinalize: testHooks.beforeSnapshotFinalize,
     beforeEffectiveViewRecheck: testHooks.beforeEffectiveViewRecheck,
-    beforeLiveGuardViewRecheck: testHooks.beforeLiveGuardViewRecheck
+    beforeLiveGuardViewRecheck: testHooks.beforeLiveGuardViewRecheck,
+    reportError: testHooks.reportError
   });
 }
 
@@ -336,13 +337,20 @@ async function test(name, fn) {
   });
 
   await test('legacy compatibility requires an exact canonical range and rejects station spoofing', async () => {
-    for (const data of [{}, { stationId: 'other_station' }, { station_id: 'other_station' },
-      { from: '2026-09-01' }, { to: '2026-09-30' }, { unexpected: true },
-      compatibilityRange({ stationId: 'other_station' })]) {
+    for (const data of [{}, { from: '2026-09-01' }, { to: '2026-09-30' },
+      { unexpected: true }]) {
       await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', data)),
         (error) => error instanceof ScheduleRuntimeError
           && error.code === 'legacy-compatibility-request');
     }
+    for (const data of [{ stationId: 'other_station' }, { station_id: 'other_station' },
+      compatibilityRange({ stationId: 'other_station' })]) {
+      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', data)),
+        (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'client-station-forbidden');
+    }
+    await assert.rejects(api.getLegacyCompatibility({ data: {} }),
+      (error) => error instanceof ScheduleRuntimeError && error.code === 'unauthenticated');
     for (const data of [
       { from: '2026-02-30', to: '2026-09-30' },
       { from: '2026-09-30', to: '2026-09-01' },
@@ -374,11 +382,12 @@ async function test(name, fn) {
     try {
       const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange()));
       assert.equal(out.mode, 'shadow');
-      assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides']);
+      assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides', 'warnings']);
       assert.ok(out.rotations.some((row) => row.crew === 'A' && row.shift_hours === 24));
       assert.deepEqual(out.overrides['2026-09-01'], {
         date: '2026-09-01', kind: 'standby', crew: '', extra_crews: ['B']
       });
+      assert.deepEqual(out.warnings, []);
       const serialized = JSON.stringify(out);
       for (const secret of ['rotation medical sentinel', 'rotation@example.test',
         'rotation private sentinel', 'rotation-owner', 'rotation timestamp',
@@ -479,6 +488,36 @@ async function test(name, fn) {
     }
   });
 
+  await test('unexpected compatibility failures emit only one stable non-PII code', async () => {
+    const privateSentinel = 'private-person@example.test';
+    const reports = [];
+    const failing = runtime(null, {
+      beforeEffectiveViewRecheck: async () => { throw new Error(privateSentinel); },
+      reportError: function () { reports.push(Array.from(arguments)); }
+    });
+    await assert.rejects(failing.getLegacyCompatibility(
+      req('viewer', 'firefighter', compatibilityRange())),
+    (error) => error instanceof ScheduleRuntimeError
+      && error.code === 'legacy-compatibility-unavailable');
+    assert.deepEqual(reports, [['legacy-compatibility-unexpected']]);
+    assert.equal(JSON.stringify(reports).includes(privateSentinel), false);
+
+    for (const reportError of [
+      () => { throw new Error('logger sync failure'); },
+      () => Promise.reject(new Error('logger async failure'))
+    ]) {
+      const loggerFailure = runtime(null, {
+        beforeEffectiveViewRecheck: async () => { throw new Error(privateSentinel); },
+        reportError
+      });
+      await assert.rejects(loggerFailure.getLegacyCompatibility(
+        req('viewer', 'firefighter', compatibilityRange())),
+      (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'legacy-compatibility-unavailable');
+    }
+    await Promise.resolve();
+  });
+
   await test('legacy compatibility rotation reads accept the cap and reject one extra row', async () => {
     const collection = station().collection('rotations');
     const refs = [];
@@ -516,7 +555,7 @@ async function test(name, fn) {
     }
   });
 
-  await test('semantically corrupt legacy cycles and overrides fail closed with stable codes', async () => {
+  await test('corrupt legacy cycles fail closed while one bad override is isolated with a stable warning', async () => {
     const rotationRefs = ['A', 'B', 'C'].map((crew) => station().collection('rotations').doc(crew));
     const rotationBefore = await Promise.all(rotationRefs.map((ref) => ref.get()));
     async function restoreRotations() {
@@ -556,8 +595,11 @@ async function test(name, fn) {
     const overrideRef = station().collection('shift_overrides').doc('2026-09-11');
     await overrideRef.set({ date: '2026-09-11', kind: 'unknown', crew: '', extra_crews: [] });
     try {
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange())),
-        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-override-kind');
+      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', compatibilityRange()));
+      assert.equal(out.overrides['2026-09-11'], undefined);
+      assert.deepEqual(out.warnings, [
+        { code: 'legacy-override-kind-invalid', count: 1 }
+      ]);
     } finally {
       await overrideRef.delete();
     }
@@ -575,7 +617,7 @@ async function test(name, fn) {
       && error.httpCode === 'invalid-argument');
   });
 
-  await test('override query includes both boundaries, ignores malformed outside and fails closed inside', async () => {
+  await test('override query includes both boundaries and isolates malformed rows only inside the range', async () => {
     const collection = station().collection('shift_overrides');
     const ids = ['2028-01-09', '2028-01-10', '2028-01-15', '2028-01-20', '2028-01-21'];
     const refs = ids.map((id) => collection.doc(id));
@@ -591,13 +633,49 @@ async function test(name, fn) {
         from: '2028-01-10', to: '2028-01-20'
       }));
       assert.deepEqual(Object.keys(out.overrides), ['2028-01-10', '2028-01-15', '2028-01-20']);
+      assert.deepEqual(out.warnings, []);
       await refs[2].set({
         date: refs[2].id, kind: 'malformed-inside', crew: '', extra_crews: []
       });
-      await assert.rejects(api.getLegacyCompatibility(req('viewer', 'firefighter', {
+      const warned = await api.getLegacyCompatibility(req('viewer', 'firefighter', {
         from: '2028-01-10', to: '2028-01-20'
-      })), (error) => error instanceof ScheduleRuntimeError
-        && error.code === 'legacy-override-kind');
+      }));
+      assert.deepEqual(Object.keys(warned.overrides), ['2028-01-10', '2028-01-20']);
+      assert.deepEqual(warned.warnings, [
+        { code: 'legacy-override-kind-invalid', count: 1 }
+      ]);
+    } finally {
+      const remove = db.batch();
+      refs.forEach((ref) => remove.delete(ref));
+      await remove.commit();
+    }
+  });
+
+  await test('all malformed overrides return valid rotations, no rows and exact non-PII warning counts', async () => {
+    const collection = station().collection('shift_overrides');
+    const ids = ['2028-02-01', '2028-02-02', '2028-02-03', '2028-02-04', '2028-02-05'];
+    const refs = ids.map((id) => collection.doc(id));
+    const privateSentinel = 'private-person@example.test';
+    const write = db.batch();
+    write.set(refs[0], { date: ids[0], kind: 'unknown', note: privateSentinel });
+    write.set(refs[1], { date: ids[1], kind: 'unknown' });
+    write.set(refs[2], { date: ids[2], kind: 'standby', crew: '', extra_crews: [] });
+    write.set(refs[3], { date: ids[3], kind: 'holiday', extra_crews: privateSentinel });
+    write.set(refs[4], { date: '2028-02-06', kind: 'holiday' });
+    await write.commit();
+    try {
+      const out = await api.getLegacyCompatibility(req('viewer', 'firefighter', {
+        from: ids[0], to: ids[4]
+      }));
+      assert.deepEqual(out.rotations.map((row) => row.crew), ['A', 'B', 'C']);
+      assert.deepEqual(out.overrides, {});
+      assert.deepEqual(out.warnings, [
+        { code: 'legacy-override-assignment-invalid', count: 1 },
+        { code: 'legacy-override-date-mismatch', count: 1 },
+        { code: 'legacy-override-field-invalid', count: 1 },
+        { code: 'legacy-override-kind-invalid', count: 2 }
+      ]);
+      assert.equal(JSON.stringify(out).includes(privateSentinel), false);
     } finally {
       const remove = db.batch();
       refs.forEach((ref) => remove.delete(ref));
@@ -2309,8 +2387,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 64);
-  console.log('\n64 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 66);
+  console.log('\n66 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

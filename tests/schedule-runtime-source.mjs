@@ -422,6 +422,9 @@ check('legacy compatibility uses an explicit allowlist and never a raw-document 
   }
   assert.equal(legacyCompat.includes('Object.assign({}, value)'), false);
   assert.equal(/\.\.\.\s*value/.test(legacyCompat), false);
+  assert.ok(legacyCompat.includes('const OVERRIDE_WARNING_BY_ERROR = Object.freeze({'));
+  assert.ok(legacyCompat.includes('warnings: Object.freeze(warnings)'));
+  assert.ok(legacyCompat.includes("Object.freeze({ code, count: warningCounts[code] })"));
 });
 check('legacy compatibility validates and normalizes a complete operational cycle', () => {
   for (const token of [
@@ -430,6 +433,7 @@ check('legacy compatibility validates and normalizes a complete operational cycl
     'function projectRotations(entries)',
     "row.value.is_active !== false",
     'function strictNumber(value)',
+    "else if (field === 'is_active') out[field] = true",
     'strictNumber(left.value.position_in_cycle) - strictNumber(right.value.position_in_cycle)',
     'ROTATION_TIMING_DEFAULTS',
     "'legacy-rotation-active-cycle'", "'legacy-rotation-crew'",
@@ -441,7 +445,7 @@ check('legacy compatibility validates and normalizes a complete operational cycl
   assert.equal(legacyCompat.includes('const hours = Number(value)'), false,
     'boolean/array/object coercion must never validate an hour field');
   assert.ok(integration.includes(
-    'semantically corrupt legacy cycles and overrides fail closed with stable codes'));
+    'corrupt legacy cycles fail closed while one bad override is isolated with a stable warning'));
   assert.ok(integration.includes("{ shift_hours: true }, 'legacy-rotation-hours'"));
   assert.ok(integration.includes("date: null, kind: 'standby', crew: '', extra_crews: ['B']"));
 });
@@ -462,6 +466,9 @@ check('legacy compatibility is bounded and rechecks mode and live membership aft
   const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
   const body = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
+  assert.ok(body.indexOf('const ctx = await context(req);')
+    < body.indexOf('const range = requestedLegacyCompatibilityRange(req);'),
+  'authentication and live membership must precede range parsing');
   assert.ok(body.includes("root.collection('rotations').limit(legacyCompatibility.MAX_ROTATIONS + 1)"));
   assert.ok(body.includes("root.collection('shift_overrides')"));
   assert.ok(body.includes('.orderBy(FieldPath.documentId()).startAt(range.from).endAt(range.to)'));
@@ -471,6 +478,10 @@ check('legacy compatibility is bounded and rechecks mode and live membership aft
   assert.ok(body.includes('configuration(ctx.sid)'));
   assert.ok(body.includes('liveUserRef(ctx.sid, ctx.uid).get()'));
   assert.ok(body.includes('requireLiveCompatibilityViewer(finalReads[1], ctx)'));
+  assert.ok(body.includes("reportRuntimeError('legacy-compatibility-unexpected')"));
+  assert.ok(runtime.includes("reportError(code)"));
+  assert.ok(integration.includes(
+    'unexpected compatibility failures emit only one stable non-PII code'));
 });
 check('emulator coverage includes compatibility privacy, identity, mode, ranges and caps', () => {
   for (const token of ['active members receive only allow-listed legacy compatibility fields',
@@ -481,7 +492,8 @@ check('emulator coverage includes compatibility privacy, identity, mode, ranges 
     'a station membership change during compatibility reads fails closed',
     'rotation reads accept the cap and reject one extra row',
     'accepts 397 inclusive days and rejects a 398-day request',
-    'override query includes both boundaries, ignores malformed outside and fails closed inside']) {
+    'override query includes both boundaries and isolates malformed rows only inside the range',
+    'all malformed overrides return valid rotations, no rows and exact non-PII warning counts']) {
     assert.ok(integration.includes(token), token);
   }
 });

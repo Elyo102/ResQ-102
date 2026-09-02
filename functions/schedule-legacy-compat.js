@@ -7,9 +7,9 @@
 
 const LEGACY_MODES = Object.freeze(['off', 'shadow']);
 const MAX_ROTATIONS = 20;
-// The compatibility bridge retains at most 31 past days, today, and 365
-// future days in one request.  A canonical override id represents one day,
-// so this is both the request span and response-row ceiling.
+// A caller may request any ordered inclusive range of at most 397 days.  A
+// canonical override id represents one day, so the same number is also the
+// response-row ceiling; this module deliberately does not assume "today".
 const MAX_OVERRIDES = 397;
 const ROTATION_FIELDS = Object.freeze([
   'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
@@ -21,6 +21,27 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const CREWS = Object.freeze(['A', 'B', 'C']);
 const OVERRIDE_KINDS = Object.freeze(['swap', 'holiday', 'training', 'standby']);
+const OVERRIDE_WARNING_CODES = Object.freeze([
+  'legacy-override-assignment-invalid',
+  'legacy-override-date-invalid',
+  'legacy-override-date-mismatch',
+  'legacy-override-document-invalid',
+  'legacy-override-field-invalid',
+  'legacy-override-kind-invalid'
+]);
+// Only validation failures thrown by projectOverride are recoverable.  The
+// public warning is deliberately less detailed than the internal exception:
+// it never contains a document id, date, field value, message or raw row.
+const OVERRIDE_WARNING_BY_ERROR = Object.freeze({
+  'legacy-document-invalid': 'legacy-override-document-invalid',
+  'legacy-override-date-invalid': 'legacy-override-date-invalid',
+  'legacy-override-date-mismatch': 'legacy-override-date-mismatch',
+  'legacy-field-invalid': 'legacy-override-field-invalid',
+  'legacy-override-kind': 'legacy-override-kind-invalid',
+  'legacy-override-crew': 'legacy-override-assignment-invalid',
+  'legacy-override-assignment': 'legacy-override-assignment-invalid',
+  'legacy-override-extra-crews': 'legacy-override-assignment-invalid'
+});
 const ROTATION_CLOCK_FIELDS = Object.freeze([
   'shift_start', 'shift_end', 'commander_start', 'special_end'
 ]);
@@ -118,6 +139,7 @@ function projectRotation(entry, timing) {
   const out = {};
   for (const field of ROTATION_FIELDS) {
     if (own(timing, field)) out[field] = timing[field];
+    else if (field === 'is_active') out[field] = true;
     else if (field === 'cycle_days' || field === 'position_in_cycle') out[field] = strictNumber(value[field]);
     else if (own(value, field)) out[field] = safeScalar(value[field], field);
   }
@@ -266,6 +288,12 @@ function projectOverride(entry) {
   return Object.freeze(out);
 }
 
+function recoverableOverrideWarning(error) {
+  if (!(error instanceof LegacyScheduleCompatibilityError)
+      || !own(OVERRIDE_WARNING_BY_ERROR, error.code)) return null;
+  return OVERRIDE_WARNING_BY_ERROR[error.code];
+}
+
 function projectLegacyScheduleCompatibility(input) {
   if (!plain(input) || LEGACY_MODES.indexOf(input.mode) === -1
       || !Array.isArray(input.rotations) || !Array.isArray(input.overrides)) {
@@ -284,23 +312,36 @@ function projectLegacyScheduleCompatibility(input) {
   const rotations = projectRotations(input.rotations);
 
   const overrides = {};
-  input.overrides.slice().sort((left, right) => {
+  const warningCounts = Object.create(null);
+  const sortedOverrides = input.overrides.slice().sort((left, right) => {
     const a = String(left && left.id || '');
     const b = String(right && right.id || '');
     return a < b ? -1 : (a > b ? 1 : 0);
-  }).forEach((entry) => {
-    const projected = projectOverride(entry);
+  });
+  for (const entry of sortedOverrides) {
+    let projected;
+    try {
+      projected = projectOverride(entry);
+    } catch (error) {
+      const warningCode = recoverableOverrideWarning(error);
+      if (!warningCode) throw error;
+      warningCounts[warningCode] = (warningCounts[warningCode] || 0) + 1;
+      continue;
+    }
     if (own(overrides, projected.date)) {
       throw new LegacyScheduleCompatibilityError('legacy-override-duplicate',
         'Legacy override date appears more than once.');
     }
     overrides[projected.date] = projected;
-  });
+  }
+  const warnings = OVERRIDE_WARNING_CODES.filter((code) => warningCounts[code] > 0)
+    .map((code) => Object.freeze({ code, count: warningCounts[code] }));
 
   return Object.freeze({
     mode: input.mode,
     rotations: Object.freeze(rotations),
-    overrides: Object.freeze(overrides)
+    overrides: Object.freeze(overrides),
+    warnings: Object.freeze(warnings)
   });
 }
 
@@ -310,6 +351,7 @@ module.exports = Object.freeze({
   LegacyScheduleCompatibilityError,
   ROTATION_FIELDS,
   OVERRIDE_FIELDS,
+  OVERRIDE_WARNING_CODES,
   CREWS,
   OVERRIDE_KINDS,
   MAX_ROTATIONS,

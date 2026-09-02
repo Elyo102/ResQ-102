@@ -39,6 +39,12 @@ function rejects(code, extra) {
     (error) => error.code === code, code);
 }
 
+function warning(extra, code, count) {
+  const out = compat.projectLegacyScheduleCompatibility(input(extra));
+  assert.deepEqual(out.warnings, [{ code, count: count || 1 }]);
+  return out;
+}
+
 test('compatibility range accepts exact canonical inclusive boundaries up to 397 days', () => {
   const oneDay = compat.parseLegacyCompatibilityRange({
     from: '2026-09-01', to: '2026-09-01'
@@ -79,12 +85,13 @@ test('off and shadow return the exact public response shape', () => {
     const out = compat.projectLegacyScheduleCompatibility(input({
       mode, overrides: [override('2026-09-01')]
     }));
-    assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides']);
+    assert.deepEqual(Object.keys(out), ['mode', 'rotations', 'overrides', 'warnings']);
     assert.equal(out.mode, mode);
     assert.deepEqual(out.rotations.map((row) => row.crew), ['A', 'B', 'C']);
     assert.deepEqual(out.overrides['2026-09-01'], {
       date: '2026-09-01', kind: 'standby', crew: '', extra_crews: ['B']
     });
+    assert.deepEqual(out.warnings, []);
   }
 });
 
@@ -146,6 +153,12 @@ test('a complete active A/B/C cycle is mandatory and inactive rows never affect 
   assert.deepEqual(out.rotations.map((row) => row.crew), ['A', 'B', 'C']);
   assert.equal(out.rotations[0].shift_start, '07:00');
   assert.equal(out.rotations.some((row) => row.is_active === false), false);
+  const missingFlagRows = validRotations();
+  delete missingFlagRows[0].value.is_active;
+  const normalizedFlags = compat.projectLegacyScheduleCompatibility(input({
+    rotations: missingFlagRows
+  }));
+  assert.ok(normalizedFlags.rotations.every((row) => row.is_active === true));
 });
 
 test('cycle anchor, length and positions must be canonical and consistent', () => {
@@ -222,29 +235,29 @@ test('active flags, clock fields and hour fields are strict and consistent', () 
   });
 });
 
-test('override kinds form a closed set with kind-specific crew semantics', () => {
-  rejects('legacy-override-kind', {
+test('invalid override kinds and assignments are isolated behind closed warning codes', () => {
+  warning({
     overrides: [override('2026-09-01', { kind: 'unknown' })]
-  });
-  rejects('legacy-override-crew', {
+  }, 'legacy-override-kind-invalid');
+  warning({
     overrides: [override('2026-09-01', { kind: 'swap', crew: 'X', extra_crews: [] })]
-  });
-  rejects('legacy-override-assignment', {
+  }, 'legacy-override-assignment-invalid');
+  warning({
     overrides: [override('2026-09-01', { kind: 'swap', crew: 'B', extra_crews: ['C'] })]
-  });
-  rejects('legacy-override-assignment', {
+  }, 'legacy-override-assignment-invalid');
+  warning({
     overrides: [override('2026-09-01', { kind: 'standby', crew: 'A' })]
-  });
-  rejects('legacy-override-extra-crews', {
+  }, 'legacy-override-assignment-invalid');
+  warning({
     overrides: [override('2026-09-01', { kind: 'standby', extra_crews: [] })]
-  });
-  rejects('legacy-override-extra-crews', {
+  }, 'legacy-override-assignment-invalid');
+  warning({
     overrides: [override('2026-09-01', { kind: 'standby', extra_crews: ['B', 'B'] })]
-  });
+  }, 'legacy-override-assignment-invalid');
   for (const kind of ['holiday', 'training']) {
-    rejects('legacy-override-assignment', {
+    warning({
       overrides: [override('2026-09-01', { kind, crew: 'A', extra_crews: [] })]
-    });
+    }, 'legacy-override-assignment-invalid');
   }
 });
 
@@ -255,9 +268,9 @@ test('override payload dates normalize absent values and reject only a nonempty 
     }));
     assert.equal(out.overrides['2026-09-01'].date, '2026-09-01');
   }
-  rejects('legacy-override-date-mismatch', {
+  warning({
     overrides: [override('2026-09-01', { date: '2026-09-02' })]
-  });
+  }, 'legacy-override-date-mismatch');
 });
 
 test('historic assignment-neutral overrides still satisfy the exact client contract', () => {
@@ -270,8 +283,8 @@ test('historic assignment-neutral overrides still satisfy the exact client contr
   assert.equal(Object.isFrozen(out.overrides['2026-09-03'].extra_crews), true);
 });
 
-test('invalid calendar document ids and duplicate dates fail closed', () => {
-  rejects('legacy-override-date-invalid', { overrides: [override('2026-02-30')] });
+test('invalid calendar document ids are isolated while duplicate projected dates fail closed', () => {
+  warning({ overrides: [override('2026-02-30')] }, 'legacy-override-date-invalid');
   rejects('legacy-override-duplicate', {
     overrides: [override('2026-09-01'), override('2026-09-01')]
   });
@@ -285,9 +298,67 @@ test('nested values cannot use an allowed field as a privacy tunnel', () => {
       C: { shift_start: { email: 'private@example.test' } }
     })
   });
-  rejects('legacy-field-invalid', {
+  const out = warning({
     overrides: [override('2026-09-01', { extra_crews: ['B', { email: 'private@example.test' }] })]
+  }, 'legacy-override-field-invalid');
+  assert.equal(JSON.stringify(out).includes('private@example.test'), false);
+});
+
+test('bad override rows are skipped independently with sorted non-PII counts', () => {
+  const privateSentinel = 'private-person@example.test';
+  const out = compat.projectLegacyScheduleCompatibility(input({
+    overrides: [
+      override('2026-09-01', { kind: 'holiday', crew: '', extra_crews: [] }),
+      override('2026-09-02', { kind: 'unknown', note: privateSentinel }),
+      override('2026-09-03', { kind: 'standby', extra_crews: [] }),
+      { id: '2026-09-04', value: { kind: 'holiday', extra_crews: privateSentinel } },
+      { id: '2026-09-05', value: null },
+      override('2026-09-06', { date: '2026-09-07' }),
+      override('not-a-date')
+    ]
+  }));
+  assert.deepEqual(Object.keys(out.overrides), ['2026-09-01']);
+  assert.deepEqual(out.warnings, [
+    { code: 'legacy-override-assignment-invalid', count: 1 },
+    { code: 'legacy-override-date-invalid', count: 1 },
+    { code: 'legacy-override-date-mismatch', count: 1 },
+    { code: 'legacy-override-document-invalid', count: 1 },
+    { code: 'legacy-override-field-invalid', count: 1 },
+    { code: 'legacy-override-kind-invalid', count: 1 }
+  ]);
+  assert.equal(JSON.stringify(out).includes(privateSentinel), false);
+  assert.equal(Object.isFrozen(out.warnings), true);
+  assert.ok(out.warnings.every((item) => Object.isFrozen(item)
+    && Object.keys(item).join(',') === 'code,count'
+    && Number.isSafeInteger(item.count) && item.count > 0
+    && compat.OVERRIDE_WARNING_CODES.includes(item.code)));
+});
+
+test('all invalid overrides still return valid rotations and exact bounded warning counts', () => {
+  const rows = [
+    override('2026-09-01', { kind: 'unknown' }),
+    override('2026-09-02', { kind: 'unknown' }),
+    override('2026-09-03', { kind: 'swap', crew: 'X', extra_crews: [] })
+  ];
+  const out = compat.projectLegacyScheduleCompatibility(input({ overrides: rows }));
+  assert.deepEqual(out.rotations.map((row) => row.crew), ['A', 'B', 'C']);
+  assert.deepEqual(out.overrides, {});
+  assert.deepEqual(out.warnings, [
+    { code: 'legacy-override-assignment-invalid', count: 1 },
+    { code: 'legacy-override-kind-invalid', count: 2 }
+  ]);
+  assert.ok(out.warnings.reduce((sum, item) => sum + item.count, 0) <= compat.MAX_OVERRIDES);
+});
+
+test('unknown exceptions inside an override remain fail closed', () => {
+  const value = {};
+  Object.defineProperty(value, 'kind', {
+    enumerable: true,
+    get: () => { throw new Error('unexpected projector failure'); }
   });
+  assert.throws(() => compat.projectLegacyScheduleCompatibility(input({
+    overrides: [{ id: '2026-09-01', value }]
+  })), /unexpected projector failure/);
 });
 
 test('output and nested arrays are immutable detached copies', () => {
@@ -300,6 +371,7 @@ test('output and nested arrays are immutable detached copies', () => {
   assert.equal(Object.isFrozen(out), true);
   assert.equal(Object.isFrozen(out.rotations), true);
   assert.equal(Object.isFrozen(out.overrides), true);
+  assert.equal(Object.isFrozen(out.warnings), true);
   assert.equal(Object.isFrozen(out.overrides['2026-09-01'].extra_crews), true);
 });
 
@@ -321,10 +393,10 @@ test('both collection caps accept the boundary and reject one extra row', () => 
   })), (error) => error.code === 'legacy-rotations-too-large');
   assert.throws(() => compat.projectLegacyScheduleCompatibility(input({
     mode: 'off', overrides: overrides.concat({
-      id: '2027-05-16', value: { date: '2027-05-16', kind: 'holiday' }
+      id: '2027-05-16', value: { date: '2027-05-16', kind: 'unknown' }
     })
   })), (error) => error.code === 'legacy-overrides-too-large');
 });
 
-assert.equal(passed, 17);
-console.log('\n17 legacy schedule compatibility unit checks passed.');
+assert.equal(passed, 20);
+console.log('\n20 legacy schedule compatibility unit checks passed.');
