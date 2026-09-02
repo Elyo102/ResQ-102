@@ -354,7 +354,7 @@ check('the station policy has a server write path and the browser never picks th
   assert.ok(index.includes("exports.saveSchedulePolicy = onCall({ enforceAppCheck: true }"));
   assert.ok(index.includes("exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }"));
   const start = runtime.indexOf('async function savePolicy(req)');
-  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
   const save = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   // התחנה והזהות מגיעות מ-context, ולעולם לא מגוף הבקשה.
@@ -365,7 +365,7 @@ check('the station policy has a server write path and the browser never picks th
 
 check('saving a policy never turns the engine on by itself', () => {
   const start = runtime.indexOf('async function savePolicy(req)');
-  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
   const save = runtime.slice(start, end);
   // המצביע למדיניות הפעילה מתעדכן; `mode` אינו נכתב כאן בשום מקרה.
   // ⭐ הכתיבה היחידה למסמך הרנטיים היא המצביע. אין כאן כתיבת mode
@@ -379,7 +379,7 @@ check('saving a policy never turns the engine on by itself', () => {
 
 check('a concurrent policy edit is refused instead of silently overwritten', () => {
   const start = runtime.indexOf('async function savePolicy(req)');
-  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
   const save = runtime.slice(start, end);
   assert.ok(save.includes("if (expected !== activeId)"));
   assert.ok(save.includes("'policy-conflict'"));

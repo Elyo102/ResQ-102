@@ -1474,6 +1474,15 @@ service cloud.firestore {
       match /schedule_policy_audit/{entryId} {
         allow read, write: if false;
       }
+      // שינוי מצב מנוע הסידור. גם הרשומה שמונעת כתיבה כפולה וגם
+      // היומן נושאים uid של מי שהזיז את המנוע, ולכן שניהם חסומים
+      // לדפדפן גם לקריאה.
+      match /schedule_mode_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_mode_audit/{entryId} {
+        allow read, write: if false;
+      }
       match /schedule_sources/{sourceId} {
         allow read, write: if false;
         match /{document=**} {

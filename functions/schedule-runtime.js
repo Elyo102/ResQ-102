@@ -8,6 +8,7 @@ const guardManagement = require('./schedule-guard-management');
 const guardBoardProjection = require('./guard-board-projection');
 const legacyCompatibility = require('./schedule-legacy-compat');
 const policyAuthorModule = require('./schedule-policy-author');
+const modeAuthorityModule = require('./schedule-mode-authority');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -194,6 +195,9 @@ function createScheduleRuntime(deps) {
   // ו-hash של הרנטיים — כדי שהחתימה שהוא יוצר תהיה בדיוק זו
   // ש-`loadPolicy` יחשב מחדש.
   const policyAuthor = policyAuthorModule.createPolicyAuthor({ clock, hash });
+  // ⭐ טהור ובלי תלויות. מי רשאי להזיז מצב, ולאן מותר להזיז —
+  // החלטה שאפשר לבדוק בלי Firestore ובלי דפדפן.
+  const modeAuthority = modeAuthorityModule.createModeAuthority();
 
   function stationRef(sid) {
     return db.collection('stations').doc(sid);
@@ -1601,6 +1605,197 @@ function createScheduleRuntime(deps) {
         created_at: clock(), expires_at: policyOperationExpiry(), result: view
       });
       return Object.assign({ duplicate: false }, view);
+    });
+  }
+
+  /* ==================================================================
+   *  מצב מנוע הסידור · המתג
+   * ------------------------------------------------------------------
+   *  ⭐ **הרשאת עריכה אינה הרשאת הפעלה.**
+   *
+   *  `schedule_manager` הוא מינוי תפעולי — לערוך, לשבץ, להריץ
+   *  ולפרסם. הזזת מצב המנוע משנה את מה שכל התחנה רואה, והיא
+   *  שייכת לפיקוד. `requireManager` **אינו** נקרא כאן, ובמכוון.
+   *
+   *  הבדיקה המקדימה אינה „האם יש מצביעים" אלא **האם המסמכים
+   *  נטענים בפועל**: מצביע למדיניות פגומה אינו מוכנות, והמקום
+   *  לגלות את זה הוא לפני ההפעלה ולא בהרצה הראשונה.
+   * ================================================================== */
+
+  function modeOperationRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_mode_operations').doc(requestId);
+  }
+
+  function modeAuditRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_mode_audit')
+      .doc('ma_' + hash('mode-audit|' + sid + '|' + requestId).slice(0, 48));
+  }
+
+  function modeOperationExpiry() {
+    const now = timeMillis(clock());
+    return new Date((Number.isFinite(now) ? now : Date.parse(clock())) + OUTBOX_TTL_MS);
+  }
+
+  // המסמכים נטענים באמת, על כל בדיקות החתימה והספירה שלהם. כשל
+  // אינו מתפרש כ„עדיין לא הוגדר" — הוא נאמר בקוד שלו.
+  async function modeReadiness(ctx, config) {
+    const out = { policy: false, source: false, people: 0, problems: [] };
+    if (config.active_policy_id) {
+      try {
+        await loadPolicy(ctx, config.active_policy_id);
+        out.policy = true;
+      } catch (error) {
+        out.problems.push(error instanceof ScheduleRuntimeError ? error.code : 'policy-unreadable');
+      }
+    }
+    if (config.active_source_id) {
+      try {
+        const source = await loadSource(ctx, config.active_source_id);
+        out.source = true;
+        out.people = source.peopleRaw.filter((person) => person.active === true).length;
+      } catch (error) {
+        out.problems.push(error instanceof ScheduleRuntimeError ? error.code : 'source-unreadable');
+      }
+    }
+    return out;
+  }
+
+  function modeActor(ctx) {
+    // ⭐ `manager` אינו נמסר. לא כדי לחסוך שדה — כדי שלא תהיה דרך
+    // שבה מינוי אחראי סידור ישפיע על ההחלטה הזאת, גם לא בטעות.
+    return { uid: ctx.uid, role: ctx.role, super: ctx.super === true };
+  }
+
+  function modeError(error) {
+    if (error && error.name === 'ModeAuthorityError') {
+      const http = error.code === modeAuthority.CODE.FORBIDDEN ? 'permission-denied'
+        : (error.code === modeAuthority.CODE.NOT_READY ? 'failed-precondition' : 'invalid-argument');
+      throw new ScheduleRuntimeError(error.code, error.message, http);
+    }
+    throw error;
+  }
+
+  async function getModeOptions(req) {
+    const ctx = await context(req);
+    const config = await configuration(ctx.sid);
+    const actor = modeActor(ctx);
+    if (!modeAuthority.mayChangeMode(actor)) {
+      // מי שאינו רשאי מקבל תשובה קצרה ואמיתית, בלי מפת מצבים
+      // ובלי מה חסר כדי להפעיל.
+      return { may_change: false, current: config.mode, ready: false, targets: [] };
+    }
+    const readiness = await modeReadiness(ctx, config);
+    const view = modeAuthority.options({ current: config.mode, actor, readiness });
+    return Object.assign({}, view, {
+      readiness: {
+        policy: readiness.policy, source: readiness.source,
+        people: readiness.people, problems: readiness.problems
+      }
+    });
+  }
+
+  async function setRuntimeMode(req) {
+    const ctx = await context(req);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const actor = modeActor(ctx);
+
+    // ההרשאה נבדקת לפני כל קריאה נוספת: מי שאינו רשאי אינו אמור
+    // לגרום לשרת לקרוא את המקור כולו.
+    if (!modeAuthority.mayChangeMode(actor)) {
+      throw new ScheduleRuntimeError(modeAuthority.CODE.FORBIDDEN,
+        'שינוי מצב מנוע הסידור מותר לפיקוד התחנה בלבד. '
+        + 'מינוי אחראי/ת סידור אינו כולל את ההרשאה הזאת.', 'permission-denied');
+    }
+
+    /* ⭐ טביעת האצבע נגזרת מה**בקשה**, לא מהתוצאה.
+     *
+     * זה מה שמאפשר לענות נכון על ניסיון חוזר. אילו הייתה נגזרת
+     * מ-`from → to`, ניסיון חוזר אחרי שהפעולה כבר הצליחה היה נראה
+     * כבקשה אחרת לגמרי — כי המצב כבר זז — ומי שרשת התנתקה לו באמצע
+     * לא היה יכול לדעת אם המנוע נכבה או לא. */
+    const opRef = modeOperationRef(ctx.sid, requestId);
+    const fingerprint = digest({
+      station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+      target: String(data.target || ''), reason_code: data.reason_code || null,
+      expected_mode: nonEmpty(data.expected_mode) ? data.expected_mode : null
+    });
+
+    function replay(snap) {
+      if (!snap.exists) return null;
+      const op = snap.data() || {};
+      if (op.fingerprint !== fingerprint) {
+        throw new ScheduleRuntimeError('mode-request-reused',
+          'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+      }
+      return Object.assign({ duplicate: true }, op.result || {});
+    }
+
+    // מסלול מהיר לניסיון חוזר: אין טעם לקרוא את המקור כולו כדי
+    // לענות תשובה שכבר נשמרה. הטרנזקציה בודקת שוב, והיא הקובעת.
+    const early = replay(await opRef.get());
+    if (early) return early;
+
+    const before = await configuration(ctx.sid);
+
+    // הגנה מדריסה נבדקת לפני הכול: המצב שנמסר הוא מה שהאדם ראה
+    // במסך, וגם „כבר במצב שביקשת" הוא תשובה שונה כשהמסך היה ישן.
+    if (nonEmpty(data.expected_mode) && data.expected_mode !== before.mode) {
+      throw new ScheduleRuntimeError('mode-conflict',
+        'מצב המנוע השתנה מאז שהמסך נטען. הוא כעת „' + before.mode + '". '
+        + 'יש לרענן ולבדוק מה השתנה.', 'aborted');
+    }
+
+    // ⭐ הבדיקה המקדימה יקרה, ובכוונה מחוץ לטרנזקציה: היא קוראת את
+    // המקור כולו. נקודת ההכרעה היא הקריאה החוזרת בתוך הטרנזקציה.
+    const readiness = data.target === MODE.OFF
+      ? { policy: true, source: true, people: 1, problems: [] }
+      : await modeReadiness(ctx, before);
+
+    let plan;
+    try {
+      plan = modeAuthority.planModeChange({
+        current: before.mode,
+        target: data.target,
+        actor,
+        confirmation: data.confirmation,
+        reason_code: data.reason_code,
+        readiness
+      });
+    } catch (error) { modeError(error); }
+
+    if (plan.kind === 'unchanged') {
+      return { duplicate: false, changed: false, mode: before.mode, from: before.mode,
+        to: before.mode, transition: null };
+    }
+
+    return await db.runTransaction(async (tx) => {
+      const opSnap = await tx.get(opRef);
+      const runtimeSnap = await tx.get(runtimeRef(ctx.sid));
+      const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      const liveMode = MODES.indexOf(runtimeData.mode) !== -1 ? runtimeData.mode : MODE.OFF;
+
+      const replayed = replay(opSnap);
+      if (replayed) return replayed;
+
+      if (liveMode !== plan.from) {
+        throw new ScheduleRuntimeError('mode-conflict',
+          'מצב המנוע השתנה בזמן הפעולה. הוא כעת „' + liveMode + '".', 'aborted');
+      }
+
+      const result = {
+        changed: true, mode: plan.to, from: plan.from, to: plan.to,
+        transition: plan.transition, reason_code: plan.audit.reason_code
+      };
+      tx.set(runtimeRef(ctx.sid), { mode: plan.to }, { merge: true });
+      tx.set(modeAuditRef(ctx.sid, requestId), Object.assign({
+        station_id: ctx.sid, at: clock(), request_id: requestId
+      }, plan.audit));
+      tx.set(opRef, {
+        station_id: ctx.sid, actor_uid: ctx.uid, fingerprint,
+        created_at: clock(), expires_at: modeOperationExpiry(), result
+      });
+      return Object.assign({ duplicate: false }, result);
     });
   }
 
@@ -3944,6 +4139,8 @@ function createScheduleRuntime(deps) {
     getManagerSetup,
     previewPolicy,
     savePolicy,
+    getModeOptions,
+    setRuntimeMode,
     runPlanner,
     getDraftPreview,
     publish,

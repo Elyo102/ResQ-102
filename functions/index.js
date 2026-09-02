@@ -5103,6 +5103,18 @@ exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req)
 // את ההפרשים והאזהרות כדי שאדם יראה מה הוא עומד לשנות.
 // `saveSchedulePolicy` כותב מסמך מדיניות חדש ומצביע עליו, ואינו
 // משנה `mode`, אינו נוגע בסידור שפורסם ואינו שולח הודעה לאיש.
+// מצב מנוע הסידור. ⭐ ההרשאה כאן אינה `schedule_manager` — היא
+// פיקוד התחנה או מנהל-על. שינוי מצב משנה את מה שכל התחנה רואה,
+// והוא דורש הקלדת המצב המבוקש, סיבה מרשימה סגורה, ותיעוד.
+exports.getScheduleModeOptions = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getModeOptions', req));
+
+exports.setScheduleRuntimeMode = onCall({
+  enforceAppCheck: true,
+  timeoutSeconds: 300,
+  memory: '1GiB'
+}, async (req) => invokeSchedule('setRuntimeMode', req));
+
 exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('previewPolicy', req));
 

@@ -13,6 +13,8 @@ const functions = getFunctions(app, 'europe-west1');
 const call = Object.freeze({
   status: httpsCallable(functions, 'getScheduleRuntimeStatus'),
   setup: httpsCallable(functions, 'getScheduleManagerSetup'),
+  modeOptions: httpsCallable(functions, 'getScheduleModeOptions'),
+  modeSet: httpsCallable(functions, 'setScheduleRuntimeMode'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
   policySave: httpsCallable(functions, 'saveSchedulePolicy'),
   run: httpsCallable(functions, 'runSchedulePlanner'),
@@ -30,6 +32,8 @@ const state = {
   draftPreview: null, previewStart: null,
   // חוקי התחנה, כפי שהמסך אוסף אותם
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
+  // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
+  modeView: null, modeTarget: null, modeBusy: false,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
   tab: null, busy: false
@@ -197,6 +201,148 @@ function chooseTab(name, replaceUrl = true) {
   }
   if (name === 'mine') loadMineRange();
   if (name === 'station') loadStationRange();
+}
+
+/* ==================================================================
+ *  מצב מנוע הסידור · המתג
+ * ------------------------------------------------------------------
+ *  ⭐ הכרטיס הזה אינו שייך לאחראי/ת הסידור.
+ *
+ *  עריכה, שיבוץ, הרצה ופרסום — מינוי אחראי/ת סידור. הזזת מצב
+ *  המנוע משנה את מה שכל התחנה רואה, והיא שייכת לפיקוד. המסך אינו
+ *  מחליט מי רשאי: הוא שואל את השרת ומציג את מה שהשרת אמר.
+ * ================================================================== */
+
+const MODE_LABEL = { off: 'כבוי', shadow: 'בדיקה', new: 'פעיל' };
+
+function renderModeCard() {
+  const view = state.modeView;
+  const card = $('modeCard');
+  if (!view || view.may_change !== true) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const now = $('modeNow');
+  now.textContent = MODE_LABEL[view.current] || view.current || '—';
+  now.classList.toggle('on', view.current === 'new');
+
+  $('modeHelp').textContent = view.current === 'off'
+    ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
+      + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
+    : (view.current === 'shadow'
+      ? 'מצב בדיקה. אפשר להכין טיוטות ולראות מה המנוע מייצר; פרסום אינו אפשרי, ואיש אינו מקבל הודעה.'
+      : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
+
+  const box = $('modeTargets');
+  clear(box);
+  (view.targets || []).forEach((target) => {
+    const button = node('button', 'pill',
+      'העבר ל' + (target.label || target.to));
+    button.type = 'button';
+    button.disabled = target.available !== true;
+    button.setAttribute('aria-pressed', state.modeTarget === target.to ? 'true' : 'false');
+    if (target.available !== true) {
+      button.title = target.blocked_by === 'not_ready'
+        ? 'חסרים חוקי תחנה או מקור כוח-אדם' : 'אין הרשאה';
+    }
+    button.addEventListener('click', () => {
+      state.modeTarget = state.modeTarget === target.to ? null : target.to;
+      $('modeConfirm').value = '';
+      clear($('modeMessage'));
+      renderModeCard();
+    });
+    box.appendChild(button);
+  });
+
+  // מה חסר נאמר, ולא מוסתר מאחורי כפתור מעומעם.
+  if (view.ready === false && (view.readiness || null)) {
+    const missing = [];
+    if (view.readiness.policy !== true) missing.push('חוקי תחנה');
+    if (view.readiness.source !== true) missing.push('מקור כוח-אדם חתום');
+    if (view.readiness.policy === true && view.readiness.source === true
+        && !(view.readiness.people > 0)) missing.push('אנשים במקור');
+    if (missing.length) {
+      const detail = (view.readiness.problems || []).length
+        ? ' הקריאה נכשלה בקוד: ' + view.readiness.problems.join(', ') + '.' : '';
+      box.appendChild(node('div', 'sub', 'כדי להפעיל חסרים: ' + missing.join(' · ') + '.' + detail));
+    }
+  }
+
+  const form = $('modeForm');
+  form.hidden = !state.modeTarget;
+  if (state.modeTarget) {
+    $('modeConfirmHint').textContent =
+      'כדי לאשר, הקלד/י בדיוק: ' + state.modeTarget
+      + ' — ההקלדה נשמרת ביומן יחד עם מי ביקש/ה, מתי ומאיזה מצב.';
+    $('modeApply').textContent = 'העבר את המנוע ל' + (MODE_LABEL[state.modeTarget] || state.modeTarget);
+  }
+  updateModeApply();
+}
+
+function updateModeApply() {
+  const ready = !!state.modeTarget
+    && $('modeConfirm').value.trim() === state.modeTarget
+    && !!$('modeReason').value;
+  $('modeApply').disabled = state.modeBusy || !ready;
+}
+
+async function loadModeOptions() {
+  try {
+    state.modeView = (await call.modeOptions({})).data;
+  } catch (error) {
+    // כשל בקריאת האפשרויות אינו מסתיר את המסך ואינו ממציא הרשאה.
+    state.modeView = null;
+  }
+  renderModeCard();
+}
+
+async function applyModeChange() {
+  if (state.modeBusy || !state.modeTarget || !state.modeView) return;
+  const target = state.modeTarget;
+  const from = state.modeView.current;
+  const text = target === 'off'
+    ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
+    : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
+      + (target === 'new' ? 'מרגע זה פרסום יחליף את הסידור הפעיל וישלח עדכונים אישיים.'
+        : 'זהו מצב בדיקה: אפשר להכין טיוטות, ואיש אינו מקבל הודעה.');
+  if (!confirm(text)) return;
+  state.modeBusy = true;
+  updateModeApply();
+  message('modeMessage', 'משנה את מצב המנוע…', 'info');
+  try {
+    const result = (await call.modeSet({
+      request_id: requestId('mode'),
+      target,
+      confirmation: $('modeConfirm').value.trim(),
+      reason_code: $('modeReason').value,
+      expected_mode: from
+    })).data;
+    message('modeMessage', result.changed
+      ? 'מצב המנוע שונה מ„' + (MODE_LABEL[result.from] || result.from)
+        + '" ל„' + (MODE_LABEL[result.to] || result.to) + '".'
+        + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '')
+      : 'המנוע כבר היה במצב הזה. שום דבר לא השתנה.', 'ok');
+    state.modeTarget = null;
+    $('modeConfirm').value = '';
+    $('modeReason').value = '';
+    // המצב השתנה — כל מה שנגזר ממנו נטען מחדש מהשרת.
+    state.status = (await call.status({})).data;
+    setMode(state.status);
+    invalidateRange();
+    showScheduleViews();
+    await loadModeOptions();
+    await loadSetup();
+    if (state.tab === 'station') await loadStationRange();
+    if (state.tab === 'mine') await loadMineRange();
+    setRollbackAvailability();
+    updatePublishAvailability();
+  } catch (error) {
+    message('modeMessage', errorText(error), 'err');
+  } finally {
+    state.modeBusy = false;
+    renderModeCard();
+  }
 }
 
 /* ==================================================================
@@ -1161,7 +1307,7 @@ async function boot(user) {
     $('startMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
-    await loadSetup();
+    await Promise.all([loadSetup(), loadModeOptions()]);
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
     state.status = null;
@@ -1194,6 +1340,9 @@ $('runPlanner').addEventListener('click', runPlanner);
 $('publish').addEventListener('click', publishDraft);
 $('rollback').addEventListener('click', rollbackSchedule);
 $('savePolicy').addEventListener('click', savePolicy);
+$('modeConfirm').addEventListener('input', updateModeApply);
+$('modeReason').addEventListener('change', updateModeApply);
+$('modeApply').addEventListener('click', applyModeChange);
 addEventListener('resize', refitAll);
 
 onAuthStateChanged(auth, (user) => {

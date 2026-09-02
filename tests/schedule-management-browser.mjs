@@ -258,6 +258,9 @@ try {
     // שני תפקידים + קו מינימום + ימי מנוחה. כל אחד מהם ערך שהתחנה
     // קובעת, ולכן כל אחד מהם צעד נפרד ולא טקסט לקריאה.
     assert.equal(await managerPage.locator('#policySteps .step').count(), 4);
+    // ⭐ אחראי/ת סידור אינו/ה מקבל/ת את מתג המנוע. השרת אומר
+    // may_change:false, והמסך מציית — הוא אינו מחליט בעצמו.
+    assert.equal(await managerPage.locator('#modeCard').isVisible(), false);
     assert.equal(await managerPage.locator('#policySteps .step.min').count(), 1);
     // בלי שינוי אין מה לשמור.
     assert.equal(await managerPage.locator('#savePolicy').isEnabled(), false);
@@ -566,6 +569,74 @@ try {
   });
   await offManager.close();
 
+  const commander = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(commander, 'commander', {
+    // מפקד בלי מינוי אחראי סידור: אין לו לשונית ניהול, ויש לו המתג.
+    getScheduleRuntimeStatus:[{ data:{ mode:'off', configured:false, manager:false, active:null } },
+      { data:{ mode:'shadow', configured:true, manager:false, active:null } }],
+    getScheduleModeOptions:[
+      { data:{ may_change:true, current:'off', ready:true,
+        targets:[{ to:'shadow', kind:'enable_shadow', label:'בדיקה', available:true, blocked_by:null }],
+        readiness:{ policy:true, source:true, people:44, problems:[] } } },
+      { data:{ may_change:true, current:'shadow', ready:true,
+        targets:[{ to:'new', kind:'promote', label:'פעיל', available:true, blocked_by:null },
+          { to:'off', kind:'disable', label:'כבוי', available:true, blocked_by:null }],
+        readiness:{ policy:true, source:true, people:44, problems:[] } } }],
+    setScheduleRuntimeMode:[{ data:{ duplicate:false, changed:true, mode:'shadow',
+      from:'off', to:'shadow', transition:'enable_shadow', reason_code:'initial_activation' } }],
+    getStationScheduleRange:[{ data:legacyRange('off') }, { data:legacyRange('off') },
+      { data:legacyRange('shadow') }, { data:legacyRange('shadow') }]
+  });
+  const commanderPage = await commander.newPage();
+  commanderPage.on('dialog', (dialog) => dialog.accept());
+  await commanderPage.goto(base, { waitUntil:'load' });
+  await commanderPage.locator('#appMain:not(.hide)').waitFor();
+
+  await test('command sees the engine switch, and it will not move on a click alone', async () => {
+    await commanderPage.locator('#modeCard:not([hidden])').waitFor();
+    // המתג קיים, לשונית הניהול לא — שתי הרשאות שונות.
+    assert.equal(await commanderPage.locator('#manageTab').isVisible(), false);
+    assert.equal(await commanderPage.locator('#modeNow').textContent(), 'כבוי');
+    assert.equal(await commanderPage.locator('#modeTargets .pill').count(), 1);
+
+    await commanderPage.locator('#modeTargets .pill').first().click();
+    await commanderPage.locator('#modeForm:not([hidden])').waitFor();
+    // ⭐ בחירת יעד אינה מספיקה: בלי סיבה ובלי הקלדה הכפתור נעול.
+    assert.equal(await commanderPage.locator('#modeApply').isEnabled(), false);
+
+    await commanderPage.locator('#modeReason').selectOption('initial_activation');
+    assert.equal(await commanderPage.locator('#modeApply').isEnabled(), false);
+
+    await commanderPage.locator('#modeConfirm').fill('shadowx');
+    assert.equal(await commanderPage.locator('#modeApply').isEnabled(), false);
+
+    await commanderPage.locator('#modeConfirm').fill('shadow');
+    assert.equal(await commanderPage.locator('#modeApply').isEnabled(), true);
+    const before = await commanderPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(before.some((entry) => entry.name === 'setScheduleRuntimeMode'), false);
+  });
+
+  await test('the mode change carries the state the screen saw, and never a station', async () => {
+    await commanderPage.locator('#modeApply').click();
+    await commanderPage.locator('#modeMessage .ok').waitFor();
+    assert.match(await commanderPage.locator('#modeMessage').textContent(), /„כבוי" ל„בדיקה"/);
+    const calls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS);
+    const sent = calls.find((entry) => entry.name === 'setScheduleRuntimeMode');
+    assert.ok(sent);
+    assert.equal(sent.payload.target, 'shadow');
+    assert.equal(sent.payload.confirmation, 'shadow');
+    assert.equal(sent.payload.reason_code, 'initial_activation');
+    // ⭐ הגנה מדריסה: מה שהמסך ראה נשלח לשרת.
+    assert.equal(sent.payload.expected_mode, 'off');
+    assert.equal(Object.hasOwn(sent.payload, 'stationId'), false);
+    assert.equal(Object.hasOwn(sent.payload, 'station_id'), false);
+    assert.ok(String(sent.payload.request_id || '').startsWith('mode_'));
+    // אחרי השינוי המסך נטען מחדש מהשרת ולא מניח מה קרה.
+    assert.equal(await commanderPage.locator('#modeNow').textContent(), 'בדיקה');
+    assert.equal(await commanderPage.locator('#modeForm').isVisible(), false);
+  });
+  await commander.close();
+
   const statusError = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(statusError, 'firefighter', {
     getScheduleRuntimeStatus:[{ reject:true, code:'functions/unavailable', message:'offline' }]
@@ -587,5 +658,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 17);
-console.log('\n17 schedule management browser checks passed.');
+assert.equal(passed, 19);
+console.log('\n19 schedule management browser checks passed.');
