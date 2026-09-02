@@ -102,38 +102,6 @@ export function board() {
 //
 // people = [{uid, name, crew}] מהסגל האמיתי.
 
-export function guards(people) {
-  if (!people.length) return [];
-  const p = i => people[i % people.length];
-  return [
-    { title: 'משחק ליגה', kind: 'sport', place: 'אצטדיון טוטו טרנר',
-      date: key(shift(6)), start: '18:00', end: '23:00', slots: 2,
-      need_quals: [], notes: '', status: 'open',
-      signups: sign([p(0), p(1)]), assigned: [] },
-    { title: 'הופעה בפארק', kind: 'show', place: 'פארק העיר',
-      date: key(shift(11)), start: '20:00', end: '01:00', slots: 2,
-      need_quals: ['q_medic'], notes: 'להגיע עם רכב סער',
-      status: 'staffed', signups: {},
-      assigned: [p(2).uid, p(3).uid] },
-    { title: 'עבודות חמות במספנה', kind: 'hotwork', place: 'נמל אילת',
-      date: key(shift(-14)), start: '08:00', end: '14:00', slots: 1,
-      need_quals: [], notes: '', status: 'done',
-      signups: {}, assigned: [p(1).uid] },
-    { title: 'טקס יום הזיכרון', kind: 'crowd', place: 'גן העצמאות',
-      date: key(shift(-30)), start: '10:00', end: '13:00', slots: 2,
-      need_quals: [], notes: '', status: 'done',
-      signups: {}, assigned: [p(0).uid, p(2).uid] }
-  ];
-}
-
-function sign(list) {
-  const out = {};
-  list.forEach(function (p) {
-    out[p.uid] = { name: p.name, crew: p.crew, at: new Date().toISOString() };
-  });
-  return out;
-}
-
 export function faults(people) {
   if (!people.length) return [];
   const p = i => people[i % people.length];
@@ -214,7 +182,7 @@ export function swaps(people) {
 // נשארות — הן מה שהתחנה תעבוד איתו, ומחיקה שלהן הייתה
 // מרוקנת את המערכת בדיוק אחרי שהוגדרה.
 
-export const WIPE = ['guards', 'faults', 'submissions', 'swaps',
+export const WIPE = ['faults', 'submissions', 'swaps',
                      'handovers', 'broadcasts'];
 
 export const KEEPS = 'כשירויות, סבב, לוח ציוות, קו אדום ותחנות משנה ' +

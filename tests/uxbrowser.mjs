@@ -63,6 +63,23 @@ await attendance.keyboard.press('Enter');
 await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'false', 'attendance dialog opens semantically');
 await attendance.waitForFunction(() => document.activeElement?.id === 'dType');
 await check(await attendance.evaluate(() => document.activeElement?.id === 'dType'), 'attendance dialog focuses its first control');
+await check((await attendance.locator('#dType option[value="swap"]').textContent()).includes('נימוק חובה'),
+            'attendance marks reason-required day types before selection');
+await attendance.locator('#dType').selectOption('swap');
+await check(await attendance.locator('#dOtBox').evaluate(el => !el.classList.contains('hide') && el.classList.contains('req')),
+            'attendance shows a blocking red reason state while the required reason is empty');
+await check(await attendance.locator('#dOtReason').evaluate(el => el.required &&
+  el.getAttribute('aria-required') === 'true' && el.getAttribute('aria-invalid') === 'true'),
+            'attendance exposes the missing required reason to assistive technology');
+await attendance.locator('#dOtReason').fill('צורך תפעולי');
+await check(await attendance.locator('#dOtBox').evaluate(el => !el.classList.contains('req')) &&
+  await attendance.locator('#dOtReason').getAttribute('aria-invalid') === 'false',
+            'attendance clears the blocking reason state as soon as a reason is entered');
+await attendance.locator('#dType').selectOption('regular');
+await check(await attendance.locator('#dOtReason').evaluate(el => !el.required &&
+  el.getAttribute('aria-required') === 'false' && el.getAttribute('aria-invalid') === 'false'),
+            'attendance clears required semantics when the selected day no longer needs a reason');
+await attendance.locator('#dType').focus();
 await attendance.keyboard.press('Shift+Tab');
 await check(await attendance.evaluate(() => document.activeElement?.id === 'dCancel'), 'Shift+Tab wraps to the last dialog control');
 await attendance.keyboard.press('Tab');

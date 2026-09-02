@@ -794,7 +794,16 @@ export function getDocs(q){
   if (/\/monthly_reports$/.test(p)) return delayed(listSnap(REPORTS));
   if (/\/swaps$/.test(p))           return delayed(listSnap(SWAPS));
   if (/\/callouts$/.test(p))        return delayed(listSnap(CALLOUTS));
-  if (/\/guards$/.test(p))          return delayed(listSnap(GUARDS));
+  if (/\/guards$/.test(p)) {
+    // בדיקות קונפליקט אופטימי יכולות להציג גרסה חדשה בקריאה הבאה
+    // בלי לשנות את נתוני ברירת המחדל של שאר מסכי הדפדפן.
+    const revision = typeof window !== 'undefined' &&
+      Number.isSafeInteger(window.__GUARD_G2_REVISION)
+      ? window.__GUARD_G2_REVISION : null;
+    const rows = revision == null ? GUARDS : GUARDS.map(pair =>
+      pair[0] === 'g2' ? [pair[0], Object.assign({}, pair[1], { revision:revision })] : pair);
+    return delayed(listSnap(rows));
+  }
   if (/\/photos$/.test(p))          return delayed(listSnap(FAULT_PHOTOS));
   if (/\/faults$/.test(p))          return delayed(listSnap(FAULTS));
   if (/\/vehicles$/.test(p))        return delayed(listSnap(VEHICLES));
@@ -806,6 +815,21 @@ export function getDocs(q){
 }
 
 export function updateDoc(){ return Promise.resolve(); }
+
+// Minimal SDK-compatible FieldPath for browser tests.  The stub does not
+// persist updateDoc writes, but the export and literal segments are required
+// so modules using dotted Auth UIDs load and exercise the real call shape.
+export class FieldPath {
+  constructor(...segments){ this.segments = segments; }
+  isEqual(other){
+    return !!other && Array.isArray(other.segments) &&
+      other.segments.length === this.segments.length &&
+      this.segments.every(function (segment, index) {
+        return segment === other.segments[index];
+      });
+  }
+  toString(){ return this.segments.join('.'); }
+}
 
 // מאזין מדומה: מוסר את התוצאה פעם אחת ומחזיר פונקציית ביטול.
 // מספיק כדי לבדוק שהחלון קופץ ושהרשימות מצוירות; אין כאן

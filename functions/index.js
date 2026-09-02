@@ -27,6 +27,8 @@ const scheduleCalendar = require('./schedule-calendar-engine');
 const schedulePublication = require('./schedule-publication');
 const scheduleService = require('./schedule-service');
 const scheduleRuntimeModule = require('./schedule-runtime');
+const scheduleAccessAdminModule = require('./schedule-access-admin');
+const stationTransferModule = require('./station-transfer');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -131,6 +133,7 @@ const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
 const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   db: db,
   FieldValue: FV,
+  FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
   hash: function (value) {
     return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
@@ -151,6 +154,80 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
     }
     return result;
   }
+});
+const scheduleAccessAdmin = scheduleAccessAdminModule.createScheduleAccessAdmin({
+  db: db,
+  getUser: function (uid) { return admin.auth().getUser(uid); },
+  isSuper: isSuperAdmin,
+  HttpsError: HttpsError,
+  FieldValue: FV,
+  openAudit: openAudit,
+  sealAudit: sealAudit
+});
+
+// The browser catalogue currently contains one regional station.  Future
+// stations can be activated without trusting a client value by creating a
+// server-owned stations/{sid} document with districtId and active=true.
+const BUILTIN_TRANSFER_STATIONS = Object.freeze({
+  eilat_102: Object.freeze({
+    id: 'eilat_102', name: 'תחנת כיבוי אילת', districtId: 'south', active: true
+  })
+});
+
+async function resolveTransferStation(stationId, tx) {
+  const sid = String(stationId || '');
+  if (!STATION_ID_RE.test(sid)) return null;
+  const ref = db.collection('stations').doc(sid);
+  const snap = tx && typeof tx.get === 'function' ? await tx.get(ref) : await ref.get();
+  if (!snap.exists) return BUILTIN_TRANSFER_STATIONS[sid] || null;
+  const value = snap.data() || {};
+  const districtId = String(value.districtId || '');
+  if (value.active !== true || KNOWN_DISTRICTS.indexOf(districtId) === -1) return null;
+  return {
+    id: sid,
+    name: String(value.name || sid).slice(0, 160),
+    districtId: districtId,
+    active: true
+  };
+}
+
+async function listTransferStations() {
+  const byId = {};
+  Object.keys(BUILTIN_TRANSFER_STATIONS).forEach(function (sid) {
+    byId[sid] = BUILTIN_TRANSFER_STATIONS[sid];
+  });
+  const snap = await db.collection('stations').limit(250).get();
+  (snap.docs || []).forEach(function (doc) {
+    const sid = String(doc.id || '');
+    if (!STATION_ID_RE.test(sid)) return;
+    const value = doc.data() || {};
+    const districtId = String(value.districtId || '');
+    if (value.active !== true || KNOWN_DISTRICTS.indexOf(districtId) === -1) {
+      delete byId[sid];
+      return;
+    }
+    byId[sid] = {
+      id: sid,
+      name: String(value.name || sid).slice(0, 160),
+      districtId: districtId,
+      active: true
+    };
+  });
+  return Object.keys(byId).sort().map(function (sid) { return byId[sid]; });
+}
+
+const stationTransfer = stationTransferModule.createStationTransferService({
+  db: db,
+  getUser: function (uid) { return admin.auth().getUser(uid); },
+  isSuper: isSuperAdmin,
+  HttpsError: HttpsError,
+  FieldValue: FV,
+  identityCoordinator: identityCoordinator,
+  stableHash: identityCoordinatorModule.stableHash,
+  namePrefixes: namePrefixes,
+  rankOf: rankOf,
+  resolveStation: resolveTransferStation,
+  listStations: listTransferStations
 });
 
 // ---------------------------------------------------------------------
@@ -752,6 +829,15 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   // רשאית גם למחוק אותו מהמערכת.
   const requestedStationId = String(d.stationId || before.stationId || '');
   const requestedDistrictId = String(d.districtId || before.districtId || '');
+
+  // An already assigned person may move stations only through the two-party
+  // transfer workflow.  Without this guard a super could still use the legacy
+  // role editor to bypass destination-station approval entirely.
+  if (role !== 'none' && before.stationId &&
+      requestedStationId !== String(before.stationId)) {
+    throw new HttpsError('failed-precondition',
+      'מעבר תחנה דורש בקשת העברה ואישור של תחנת היעד. השתמש במסלול העברת עובד.');
+  }
   const desiredScope = role === 'none' ? {
     stationId: String(before.stationId || ''),
     districtId: String(before.districtId || '')
@@ -992,6 +1078,13 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
     throw new HttpsError('failed-precondition', 'סוג פעולת הזהות אינו ניתן להמשך.');
   }
 
+  if (before.kind === 'set_role' && before.previous_station &&
+      String(((before.desired_profile || {}).stationId) || '') !==
+        String(before.previous_station)) {
+    throw new HttpsError('failed-precondition',
+      'פעולת התפקיד הישנה כוללת מעבר תחנה ללא אישור יעד ולכן אינה ניתנת להמשך.');
+  }
+
   if (uid === auth.uid && (before.previous_claims || {}).super === true &&
       (before.desired_claims == null || before.desired_claims.super !== true)) {
     throw new HttpsError('failed-precondition',
@@ -1031,6 +1124,30 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
       'שינוי התפקיד השמור הושלם. המשתמש צריך להתחבר מחדש.'
   }, uid === auth.uid);
 });
+
+// ---------------------------------------------------------------------
+//  3b. העברת עובד בין תחנות — בקשה במקור ואישור ביעד
+// ---------------------------------------------------------------------
+
+exports.searchStationTransferCandidates = onCall({
+  enforceAppCheck: true, timeoutSeconds: 60
+}, async (req) => stationTransfer.search(req));
+
+exports.createStationTransfer = onCall({
+  enforceAppCheck: true, timeoutSeconds: 120
+}, async (req) => stationTransfer.create(req));
+
+exports.listStationTransfers = onCall({
+  enforceAppCheck: true, timeoutSeconds: 60
+}, async (req) => stationTransfer.list(req));
+
+exports.decideStationTransfer = onCall({
+  enforceAppCheck: true, timeoutSeconds: 120
+}, async (req) => stationTransfer.decide(req));
+
+exports.cancelStationTransfer = onCall({
+  enforceAppCheck: true, timeoutSeconds: 60
+}, async (req) => stationTransfer.cancel(req));
 
 // ---------------------------------------------------------------------
 //  4. כניסה עם מספר עובד
@@ -3098,7 +3215,7 @@ exports.runReportNow = onCall(
 // מייל שנשלח ב-dailyReminderCheck_ כשנשארו בדיוק ארבעה ימים
 // לסוף החודש. אותו יום, אותו נוסח, ערוץ אחר.
 
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentWritten, onDocumentCreated } = require('firebase-functions/v2/firestore');
 
 const PUSH_STATION = 'eilat_102';
 
@@ -3944,168 +4061,60 @@ exports.closeCallout = onCall(async (req) => {
 // מחשב את ההבחנה (היא נגזרת מהסבב בצד הלקוח), אבל הנוסח של
 // ההתראה כן מזכיר את התאריך, כדי שהכבאי יידע מיד במה מדובר.
 
-async function guardDoc(sid, id) {
-  const ref = db.doc('stations/' + sid + '/guards/' + id);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', 'האבטחה לא נמצאה.');
-  return { ref, v: snap.data() || {} };
-}
-
 function guardWhen(v) {
   const d = dmyS(v.date);
   const t = (v.start || '') + '–' + (v.end || '');
   return d + ' ' + t;
 }
 
-exports.guardSignup = onCall(async (req) => {
-  const auth = req.auth;
-  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+// Interest in an open guard is a server transaction.  This prevents a late
+// browser request from recreating a signup after the manager cancelled or
+// completed the guard, and applies the same live station check as the rest of
+// the schedule surface.
+exports.guardSignup = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('signupGuard', req));
 
-  const t = auth.token || {};
-  const sid = callerStation(req, auth);
-  const isSuper = t.super === true ||
-                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
-  const role = t.role || '';
-  // אותה סיבה כמו ב-sendBroadcast: מפקד צוות לא היה יכול
-  // להירשם לאבטחה, בזמן שלוחם אש כן.
-  if (!isSuper && ['firefighter','deputy_team_leader','team_leader',
-       'deputy','commander','station_commander',
-       'hr_coordinator'].indexOf(role) === -1) {
-    throw new HttpsError('permission-denied', 'אין לך הרשאה.');
-  }
 
-  const id = String((req.data || {}).id || '').trim();
-  const join = (req.data || {}).join !== false;
-  if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה אבטחה.');
-
-  const { ref, v } = await guardDoc(sid, id);
-  if (v.status === 'cancelled') {
-    throw new HttpsError('failed-precondition', 'האבטחה בוטלה.');
-  }
-  // מי שכבר שובץ לא מבטל את עצמו בלחיצה. שיבוץ הוא החלטה של
-  // המפקד, וביטול שלו עובר דרכו.
-  const assigned = Array.isArray(v.assigned) ? v.assigned : [];
-  if (assigned.indexOf(auth.uid) !== -1) {
-    throw new HttpsError('failed-precondition',
-      'אתה כבר משובץ. ביטול עובר דרך מפקד המשמרת.');
-  }
-
-  let name = '';
-  try {
-    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
-    if (u.exists) name = (u.data() || {}).full_name || '';
-  } catch (e) {}
-
-  const patch = {};
-  patch['signups.' + auth.uid] = join
-    ? { name: name, crew: t.shift || '', at: new Date().toISOString() }
-    : FV.delete();
-  await ref.update(patch);
-
-  return { ok: true, joined: join };
+// Compatibility name for a browser cached before the new controls arrived.
+// It deliberately delegates to the live schedule-manager gateway; legacy
+// callers that lack an idempotency token or a revision fail closed instead of
+// retaining the old commander/HR bypass.
+exports.assignGuard = onCall({ enforceAppCheck: true }, async (req) => {
+  const d = req && req.data ? req.data : {};
+  return invokeSchedule('manageGuard', Object.assign({}, req, {
+    data: {
+      action: 'set_assignees',
+      request_id: d.request_id,
+      guard_id: d.id,
+      expected_revision: d.expected_revision,
+      uids: d.uids
+    }
+  }));
 });
 
 
-exports.assignGuard = onCall(async (req) => {
-  const auth = req.auth;
-  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
-
-  const t = auth.token || {};
-  const sid = callerStation(req, auth);
-  const isSuper = t.super === true ||
-                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
-  const role = t.role || '';
-  if (!isSuper && ['commander','deputy','station_commander',
-                   'hr_coordinator'].indexOf(role) === -1) {
-    throw new HttpsError('permission-denied',
-      'שיבוץ לאבטחה שמור למפקד משמרת ולרכז כוח אדם.');
-  }
-
-  const d = req.data || {};
-  const id = String(d.id || '').trim();
-  if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה אבטחה.');
-
-  const raw = Array.isArray(d.uids) ? d.uids : [];
-  const want = Array.from(new Set(raw.map(String).filter(Boolean)));
-
-  const { ref, v } = await guardDoc(sid, id);
-  if (v.status === 'cancelled') {
-    throw new HttpsError('failed-precondition', 'האבטחה בוטלה.');
-  }
-
-  const slots = Number(v.slots || 0);
-  if (want.length > slots) {
-    throw new HttpsError('invalid-argument',
-      'נבחרו ' + want.length + ' אנשים ל-' + slots + ' מקומות.');
-  }
-
-  // רק סגל פעיל בתחנה. uid שנשלח מהדפדפן ואינו ברשימה נופל.
-  const live = await uidsInCrew(sid, '');
-  const uids = want.filter(u => live.indexOf(u) !== -1);
-  if (uids.length !== want.length) {
-    throw new HttpsError('invalid-argument',
-      'חלק מהנבחרים אינם סגל פעיל בתחנה.');
-  }
-
-  const before = Array.isArray(v.assigned) ? v.assigned : [];
-  const added   = uids.filter(u => before.indexOf(u) === -1);
-  const removed = before.filter(u => uids.indexOf(u) === -1);
-
-  let name = '';
-  try {
-    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
-    if (u.exists) name = (u.data() || {}).full_name || '';
-  } catch (e) {}
-
-  await ref.set({
-    assigned: uids,
-    status: uids.length >= slots ? 'staffed' : 'open',
-    assigned_by: auth.uid, assigned_by_name: name,
-    assigned_at: FV.serverTimestamp()
-  }, { merge: true });
-
-  const when = guardWhen(v);
-  if (added.length) {
-    await pushToUsers(sid, added, 'guard_mine',
-      'שובצת לאבטחה',
-      (v.title || 'אבטחה') + ' · ' + when +
-        (v.place ? ' · ' + v.place : ''),
-      './guards.html', true);
-  }
-  if (removed.length) {
-    await pushToUsers(sid, removed, 'guard_mine',
-      'הוסרת משיבוץ',
-      (v.title || 'אבטחה') + ' · ' + when + ' — אינך משובץ יותר.',
-      './guards.html');
-  }
-
-  return { ok: true, assigned: uids.length, added: added.length,
-           removed: removed.length };
-});
-
-
-// אבטחה חדשה נפתחה — מודיעים למי שיכול להירשם.
+// אבטחה חדשה נפתחה — מתעדים התראה גנרית למי שיכול להירשם.
 //
 // לכל התחנה ולא רק למשמרת: אבטחה ביום חופש היא בהגדרה יום
 // שהמשמרת שלך לא עובדת בו, ולכן צמצום לפי משמרת היה מסתיר
-// אותה בדיוק ממי שהיא רלוונטית לו.
-exports.onGuardOpen = onDocumentWritten(
-  'stations/{sid}/guards/{gId}',
+// אותה בדיוק ממי שהיא רלוונטית לו.  הטריגר אינו שולח Push בעצמו:
+// הוא יוצר משימות דטרמיניסטיות בתור השרת, עם ניסיון חוזר ודילוג אם
+// האבטחה אוישה, נדחתה, בוטלה או נסגרה לפני הפאנאאוט.
+exports.onGuardOpen = onDocumentCreated({
+  document: 'stations/{sid}/guards/{gId}',
+  retry: true,
+  region: 'europe-west1',
+  timeoutSeconds: 120
+},
   async (event) => {
     const sid = event.params.sid;
-    const before = event.data && event.data.before && event.data.before.data();
-    const after  = event.data && event.data.after  && event.data.after.data();
-    if (!after || before) return;                 // רק יצירה חדשה
-    if (after.status === 'cancelled') return;
-
-    const uids = (await uidsInCrew(sid, '')).filter(u => u !== after.by_uid);
-    if (!uids.length) return;
-
-    await pushToUsers(sid, uids, 'guard_open',
-      'אבטחה חדשה — ' + (after.title || ''),
-      guardWhen(after) + (after.place ? ' · ' + after.place : '') +
-        ' · ' + (after.slots || 0) + ' מקומות. פתוח להרשמה.',
-      './guards.html');
+    const after = event.data && event.data.data();
+    if (!after) return;
+    await scheduleRuntime.enqueueGuardOpenNotifications({
+      sid: sid,
+      guard_id: event.params.gId,
+      revision: after.revision
+    });
   });
 
 
@@ -4371,7 +4380,6 @@ const MAIL_FROM_ADDR = 'fire102.shits@gmail.com';
 const MAIL_ATTEMPTS  = 3;
 
 const { defineSecret } = require('firebase-functions/params');
-const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 
@@ -5082,6 +5090,15 @@ exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req)
 exports.getScheduleManagerSetup = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getManagerSetup', req));
 
+// מינוי "אחראי/ת סידור" נפרד מהתפקיד הראשי ומן הטוקן. שתי
+// הפעולות מפיקות את התחנה מהזהות החיה בשרת; הדפדפן אינו רשאי
+// לשלוח stationId ואינו מקבל גישה ישירה למסמכי schedule_access.
+exports.getScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req) =>
+  scheduleAccessAdmin.list(req));
+
+exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req) =>
+  scheduleAccessAdmin.set(req));
+
 exports.runSchedulePlanner = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 540,
@@ -5109,12 +5126,73 @@ exports.getMyScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
 exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStation', req));
 
+// Temporary server-only bridge for operational screens that still evaluate
+// the legacy rotation cycle while runtime.mode is off or shadow.  The callable
+// accepts no station or range input and returns only the allow-listed fields;
+// direct client reads remain closed in Firestore rules.
+exports.getLegacyScheduleCompatibilityContext = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getLegacyCompatibility', req));
+
+// Raw guard documents contain notes, places, sign-up records and audit data.
+// These read-only callables are the only browser boundary for the legacy guard
+// screens; each runtime method returns an explicit, role-appropriate projection.
+exports.getScheduleGuardBoard = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getGuardBoard', req));
+
+exports.getScheduleGuardManagerBoard = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getGuardManagerBoard', req));
+
+exports.getMyGuardAttendance = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getMyGuardAttendance', req));
+
+exports.getGuardLoadStatistics = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getGuardLoadStatistics', req));
+
 exports.respondToSchedule = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('respond', req));
 
+// Guard operations stay live even while the monthly engine is off or in
+// shadow mode.  Authority is nevertheless the same live, explicit
+// schedule-manager appointment used by the engine itself.
+exports.manageScheduleGuard = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('manageGuard', req));
+
+// Guard notifications have their own outbox: unlike publication notices they
+// must not depend on an active monthly publication or on runtime.mode === new.
+exports.fanoutScheduleGuardNotifications = onDocumentWritten({
+  document: 'stations/{sid}/guard_notification_jobs/{jobId}'
+}, async (event) => {
+  const after = event.data && event.data.after;
+  if (!after || !after.exists) return;
+  const next = after.data() || {};
+  const before = event.data.before && event.data.before.exists
+    ? (event.data.before.data() || {}) : {};
+  if (next.status !== 'queued' || before.status === 'queued') return;
+  await scheduleRuntime.fanoutGuardOutbox(after.ref);
+});
+
+exports.deliverScheduleGuardOutbox = onDocumentWritten({
+  document: 'stations/{sid}/guard_outbox/{outboxId}'
+}, async (event) => {
+  const after = event.data && event.data.after;
+  if (!after || !after.exists) return;
+  const next = after.data() || {};
+  const before = event.data.before && event.data.before.exists
+    ? (event.data.before.data() || {}) : {};
+  if (next.status !== 'queued' || before.status === 'queued') return;
+  await scheduleRuntime.deliverGuardOutbox(after.ref);
+});
+
+exports.resumeScheduleGuardOutbox = onSchedule({
+  schedule: 'every 5 minutes',
+  timeZone: 'Asia/Jerusalem',
+  timeoutSeconds: 120,
+  region: 'europe-west1'
+}, async () => scheduleRuntime.resumeGuardOutbox());
+
 // טריגר השליחה רץ רק כאשר רשומת outbox עוברת במפורש ל-queued.
-// הרשומות נוצרות blocked ורק הטרנזקציה שמחליפה את הפרסום הפעיל
-// משחררת אותן, לכן פוש אינו יכול להקדים פרסום.
+// הרשומות נוצרות blocked; שחרור השרת בודק טרנזקציונית את הפרסום
+// הפעיל ואת ה-pointer לפני המעבר, לכן פוש אינו יכול להקדים פרסום.
 exports.deliverScheduleOutbox = onDocumentWritten({
   document: 'stations/{sid}/schedule_publications/{publicationId}/schedule_outbox/{outboxId}'
 }, async (event) => {

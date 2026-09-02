@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(here, '..', 'functions', 'index.js'), 'utf8');
+const runtime = fs.readFileSync(path.join(here, '..', 'functions', 'schedule-runtime.js'), 'utf8');
 
 const reMatch = source.match(/const STATION_ID_RE = (\/.*\/);/);
 const fnMatch = source.match(/function callerStation\(req, auth\) \{[\s\S]*?\n\}/);
@@ -48,8 +49,6 @@ const exportsToCheck = [
   'sendBroadcast',
   'sendCallout',
   'closeCallout',
-  'guardSignup',
-  'assignGuard',
   'claimPushToken'
 ];
 
@@ -69,5 +68,58 @@ for (let i = 0; i < exportsToCheck.length; i += 1) {
 
 assert.equal((source.match(/stationId\s*\|\|\s*PUSH_STATION/g) || []).length, 0,
   'no user-triggered function may silently fall back to PUSH_STATION');
+
+// Guard operations intentionally use the schedule-runtime gateway rather
+// than the legacy callerStation helper.  The gateway is stricter: it rejects
+// both station spellings supplied by a client, derives sid from the token,
+// and verifies the live member before opening a station document.
+const signupStart = source.indexOf('exports.guardSignup =');
+const assignStart = source.indexOf('exports.assignGuard =', signupStart);
+const guardOpenStart = source.indexOf('exports.onGuardOpen =', assignStart);
+assert.ok(signupStart !== -1 && assignStart > signupStart && guardOpenStart > assignStart,
+  'guard callable wrappers must remain ordered and present');
+const signupWrapper = source.slice(signupStart, assignStart);
+const assignWrapper = source.slice(assignStart, guardOpenStart);
+assert.match(signupWrapper, /onCall\(\{\s*enforceAppCheck:\s*true\s*\}/,
+  'guard signup must enforce App Check');
+assert.match(signupWrapper, /invokeSchedule\('signupGuard',\s*req\)/,
+  'guard signup must delegate the original request to the server gateway');
+assert.doesNotMatch(signupWrapper, /\b(callerStation|db|sid|stationId|station_id)\b/,
+  'guard signup wrapper must not derive or accept a station itself');
+
+assert.match(assignWrapper, /onCall\(\{\s*enforceAppCheck:\s*true\s*\}/,
+  'legacy guard assignment must enforce App Check');
+assert.match(assignWrapper, /invokeSchedule\('manageGuard',\s*Object\.assign\(\{\},\s*req/,
+  'legacy guard assignment must use the server manager gateway');
+assert.match(assignWrapper, /data:\s*\{[\s\S]*action:\s*'set_assignees'[\s\S]*request_id:[\s\S]*guard_id:[\s\S]*expected_revision:[\s\S]*uids:/,
+  'legacy guard assignment must build an explicit allowlisted payload');
+assert.doesNotMatch(assignWrapper, /\b(callerStation|db|sid|stationId|station_id)\b/,
+  'legacy guard assignment must not accept a station payload');
+
+const contextStart = runtime.indexOf('async function context(req) {');
+const actorStart = runtime.indexOf('function actor(ctx) {', contextStart);
+const runtimeSignupStart = runtime.indexOf('async function signupGuard(req) {');
+const modeStart = runtime.indexOf('function requireMode(config, allowed) {', runtimeSignupStart);
+assert.ok(contextStart !== -1 && actorStart > contextStart
+  && runtimeSignupStart !== -1 && modeStart > runtimeSignupStart,
+  'schedule runtime context and signup gate must exist');
+const runtimeContext = runtime.slice(contextStart, actorStart);
+const runtimeSignup = runtime.slice(runtimeSignupStart, modeStart);
+assert.match(runtimeContext, /hasOwnProperty\.call\(data, 'stationId'\)/,
+  'runtime must reject camel-case station spoofing');
+assert.match(runtimeContext, /hasOwnProperty\.call\(data, 'station_id'\)/,
+  'runtime must reject snake-case station spoofing');
+assert.match(runtimeContext, /const sid\s*=\s*String\(token\.stationId\s*\|\|\s*''\)\.trim\(\);/,
+  'runtime must derive station only from the authenticated token');
+assert.match(runtimeContext, /liveUserRef\(sid, uid\)\.get\(\)/,
+  'runtime must verify the live station member');
+assert.match(runtimeContext, /scheduleAccess\.activeMember\(user, sid\)/,
+  'runtime must require an active station member');
+assert.match(runtimeSignup, /const ctx\s*=\s*await context\(req\);/,
+  'guard signup must enter the context gate before work');
+assert.match(runtimeSignup, /guardRef\(ctx\.sid, guardId\)/,
+  'guard signup must use only the server-derived station');
+assert.match(runtimeSignup, /const allowed\s*=\s*\['id', 'join'\];/,
+  'guard signup payload must be allowlisted after the context gate');
 
 console.log('Station source checks passed');

@@ -27,6 +27,7 @@ const R = await import(pathToFileURL(__j(__APP, 'roles.js')).href);
 const L = await import(pathToFileURL(__j(__APP, 'shiftlog.js')).href);
 
 const SERVER = readFileSync(__j(__APP, 'functions', 'index.js'), 'utf8');
+const SCHEDULE_RUNTIME = readFileSync(__j(__APP, 'functions', 'schedule-runtime.js'), 'utf8');
 const BULLETIN_SERVER = readFileSync(__j(__APP, 'functions', 'bulletin.js'), 'utf8');
 const RULES  = readFileSync(__j(__APP, 'firestore.rules'), 'utf8');
 
@@ -219,23 +220,46 @@ head('8 · מפקד צוות אינו חלש מלוחם אש');
 // ============================================================
 //
 //  התפקידים האלה אמורים להיות "לוחם אש ועוד כתיבה בלוג".
-//  בפועל הם קיבלו **פחות**: sendBroadcast ו-guardSignup
-//  החזיקו רשימות תפקידים משלהם, ובהן לוחם אש היה ושניהם לא.
+//  guardSignup עבר לשער schedule-runtime, לכן הבדיקה חייבת
+//  לבדוק את שני שערי ההרשאה שם ולא רשימת תפקידים ישנה בעטיפה.
+
+const scheduleMembersMatch = SCHEDULE_RUNTIME.match(
+  /const MEMBER_ROLES = Object\.freeze\(\[([\s\S]*?)\]\);/
+);
+const scheduleMembers = (scheduleMembersMatch ? scheduleMembersMatch[1] : '')
+  .split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+const signupStart = SCHEDULE_RUNTIME.indexOf('async function signupGuard(req) {');
+const modeStart = SCHEDULE_RUNTIME.indexOf('function requireMode(config, allowed) {', signupStart);
+const signupBody = signupStart === -1 || modeStart === -1
+  ? '' : SCHEDULE_RUNTIME.slice(signupStart, modeStart);
+const signupWrapperStart = SERVER.indexOf('exports.guardSignup =');
+const assignWrapperStart = SERVER.indexOf('exports.assignGuard =', signupWrapperStart);
+const signupWrapper = signupWrapperStart === -1 || assignWrapperStart === -1
+  ? '' : SERVER.slice(signupWrapperStart, assignWrapperStart);
+
+is('MEMBER_ROLES של שער הסידור נמצאה בשרת', !!scheduleMembersMatch, true);
+is('שער הסידור והלקוח מכירים אותם חברי תחנה',
+   scheduleMembers.slice().sort(), R.MEMBER_ROLES.slice().sort());
+is('עטיפת guardSignup מעבירה לשער הסידור עם App Check',
+   /onCall\(\{\s*enforceAppCheck:\s*true\s*\}[\s\S]*invokeSchedule\('signupGuard',\s*req\)/.test(signupWrapper), true);
+is('guardSignup נכנס קודם לשער זהות חי',
+   /const ctx\s*=\s*await context\(req\);/.test(signupBody), true);
+is('guardSignup קורא מחדש משתמש חי בתוך העסקה',
+   /tx\.get\(liveUserRef\(ctx\.sid, ctx\.uid\)\)/.test(signupBody), true);
+is('guardSignup מאמת חברות פעילה בתוך העסקה',
+   /scheduleAccess\.activeMember\(user, ctx\.sid\)/.test(signupBody), true);
+is('guardSignup מאמת תפקיד חי מול MEMBER_ROLES בתוך העסקה',
+   /MEMBER_ROLES\.indexOf\(String\(user && user\.role \|\| ''\)\)/.test(signupBody), true);
+is('guardSignup חוסם claim תפקיד מיושן בתוך העסקה',
+   /String\(user && user\.role \|\| ''\) !== ctx\.role/.test(signupBody), true);
 
 ['team_leader', 'deputy_team_leader'].forEach(function (r) {
   const bcBody = (SERVER.match(/exports\.sendBroadcast[\s\S]*?\n\}\);/) || [''])[0];
   const bc = bcBody.match(/if \(!wide && \[([\s\S]*?)\]/);
   is('sendBroadcast מתיר ל-' + r,
      !!bc && bc[1].indexOf("'" + r + "'") !== -1, true);
-  // ⚠️ העוגן הוא **גוף הפונקציה**, לא הדפוס הכללי.
-  //
-  // הגרסה הראשונה של הבדיקה חיפשה `if (!isSuper && [` בכל
-  // הקובץ — והדפוס הזה מופיע שלוש פעמים. היא תפסה את
-  // sendCallout בשורה 2779 ודיווחה על כשל בקוד תקין.
-  const gsBody = (SERVER.match(/exports\.guardSignup[\s\S]*?\n\}\);/) || [''])[0];
-  const gs = gsBody.match(/if \(!isSuper && \[([\s\S]*?)\]\.indexOf\(role\)/);
   is('guardSignup מתיר ל-' + r,
-     !!gs && gs[1].indexOf("'" + r + "'") !== -1, true);
+     scheduleMembers.indexOf(r) !== -1, true);
 });
 
 console.log('\n\x1b[1m════════════════════════════════════\x1b[0m');

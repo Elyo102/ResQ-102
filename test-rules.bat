@@ -50,7 +50,9 @@ echo.
 echo [3/3] Starting Firestore and running the tests...
 echo       First run downloads the emulator ^(137 MB^). Be patient.
 echo.
-call firebase emulators:exec --only firestore --project station-102 "cd rules-test && npm test"
+rem  demo-resq guarantees that an emulator-only test cannot accidentally
+rem  address the production Firebase project.
+call firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
 set RESULT=%errorlevel%
 
 echo.

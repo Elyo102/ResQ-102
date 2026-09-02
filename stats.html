@@ -206,12 +206,14 @@ import { watchCallouts } from './callout.js?v=38';
 import { CREW_HE } from './rotation.js?v=38';
 import { mergeFleet } from './faults.js?v=38';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy } from './stats.js?v=38';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -219,6 +221,10 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const guardStatsCall = httpsCallable(fns, 'getGuardLoadStatistics');
+const scheduleStatusCall = httpsCallable(fns, 'getScheduleRuntimeStatus');
+const legacyScheduleCall = httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
@@ -234,6 +240,9 @@ function esc(s){
 let SID = '', ME = null, WIN = '365';
 let fleet = [], faults = [], guards = [], swaps = [], people = [];
 let rotations = [], overrides = {}, ctx = {};
+let guardLoadError = '';
+let scheduleLoadError = '';
+let guardLoadGeneration = 0;
 
 // ---------- הרשאה ----------
 
@@ -247,7 +256,12 @@ onAuthStateChanged(auth, async user => {
                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
   // אנליטיקה היא כלי ניהול. כבאי רואה את העומס שלו במסך
   // האבטחות; כאן מסתכלים על אנשים אחרים, וזה לא לכולם.
-  const isStaff = isSuper ||
+  let liveManager = false;
+  try {
+    const status = await scheduleStatusCall();
+    liveManager = !!(status && status.data && status.data.manager === true);
+  } catch (ignore) {}
+  const isStaff = isSuper || liveManager ||
     ['deputy','commander','station_commander','hr_coordinator']
       .indexOf(c.role) !== -1;
 
@@ -272,11 +286,113 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'stats.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
-  buildWindows();
   await loadAll();
+  buildWindows();
 });
 
 // ---------- טעינה ----------
+
+function guardDayOffset(key, offset){
+  const d = new Date(String(key || '') + 'T12:00:00');
+  d.setDate(d.getDate() + offset);
+  return toKey(d);
+}
+
+function guardStatisticsRange(windowId){
+  const today = toKey(new Date());
+  // "הכול" הוסר מלוח העומס: מסלול השרת נושא לכל היותר שנה אחת,
+  // כדי שהמסך לא יהפוך לקריאת היסטוריה בלתי מוגבלת. גם אם טאב ישן
+  // שולח את הערך הישן, נשמרת תקרת השנה הבטוחה.
+  const from = sinceKey(windowId || WIN, new Date()) || guardDayOffset(today, -365);
+  return { from:from, to:today };
+}
+
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+// Keep the client boundary closed even though the server already projects an
+// allowlist. A future server refactor must not make raw schedule fields visible
+// or usable by this management screen by accident.
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode:data.mode, rotations:safeRotations, overrides:safeOverrides };
+}
+
+async function loadGuardStatistics(windowId){
+  const selectedWindow = windowId || WIN;
+  const generation = ++guardLoadGeneration;
+  let nextGuards = [];
+  let nextError = '';
+  try {
+    const result = await guardStatsCall(guardStatisticsRange(selectedWindow));
+    const rows = result && result.data && result.data.guards;
+    // A missing board is not an empty board. Treating a malformed/missing
+    // response as zero guards would publish a reassuring but false workload.
+    if (!Array.isArray(rows)) throw new Error('guard-statistics-contract');
+    nextGuards = rows.filter(row => row && typeof row === 'object');
+  } catch (error) {
+    nextError = 'לא הצלחנו לטעון את נתוני האבטחות לחלון שנבחר.';
+  }
+  // A slower earlier window must not overwrite the range label or the rows of
+  // the latest click. Publish only when both the request generation and the
+  // selected window still match.
+  if (generation !== guardLoadGeneration || WIN !== selectedWindow) return false;
+  guards = nextGuards;
+  guardLoadError = nextError;
+  return true;
+}
+
+async function loadLegacyScheduleCompatibility(){
+  scheduleLoadError = '';
+  try {
+    // The workload screen can switch among shorter windows without another
+    // network read, so it requests the single bounded annual context once.
+    const value = legacyCompatibilityData(
+      await legacyScheduleCall(guardStatisticsRange('365'))
+    );
+    rotations = value.rotations;
+    overrides = value.overrides;
+    return true;
+  } catch (error) {
+    rotations = [];
+    overrides = {};
+    scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. נתוני העומס לא יחושבו עד לרענון.';
+    return false;
+  }
+}
 
 async function loadAll(){
   // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
@@ -298,6 +414,8 @@ async function loadAll(){
     })());
   };
   const flush = () => Promise.all(jobs);
+  const guardStats = loadGuardStatistics(WIN);
+  const legacySchedule = loadLegacyScheduleCompatibility();
 
   people = [];
   await grab('roster', s => s.forEach(d => {
@@ -310,21 +428,8 @@ async function loadAll(){
   await grab('faults', s => s.forEach(d =>
     faults.push(Object.assign({ id: d.id }, d.data() || {}))));
 
-  guards = [];
-  await grab('guards', s => s.forEach(d =>
-    guards.push(Object.assign({ id: d.id }, d.data() || {}))));
-
   swaps = [];
   await grab('swaps', s => s.forEach(d => swaps.push(d.data() || {})));
-
-  rotations = [];
-  await grab('rotations', s => s.forEach(d => rotations.push(d.data() || {})));
-
-  overrides = {};
-  await grab('shift_overrides', s => s.forEach(d => {
-    const v = d.data() || {};
-    if (v.date) overrides[v.date] = v;
-  }));
 
   let boardVehicles = [];
   try {
@@ -340,6 +445,7 @@ async function loadAll(){
   }));
 
   await flush();
+  await Promise.all([guardStats, legacySchedule]);
 
   fleet = mergeFleet(boardVehicles, anchors);
   ctx = { rotations, overrides,
@@ -353,11 +459,17 @@ async function loadAll(){
 function buildWindows(){
   const bar = $('winBar');
   bar.innerHTML = '';
-  WINDOWS.forEach(function (w) {
+  WINDOWS.filter(w => w.id !== 'all').forEach(function (w) {
     const b = document.createElement('button');
     b.textContent = w.he;
     b.className = w.id === WIN ? 'on' : '';
-    b.onclick = function () { WIN = w.id; buildWindows(); render(); };
+    b.onclick = async function () {
+      WIN = w.id;
+      buildWindows();
+      if (!await loadGuardStatistics(w.id)) return;
+      ctx = { rotations, overrides, swaps:swaps.filter(s => s.status === 'approved'), guards };
+      render();
+    };
     bar.appendChild(b);
   });
 }
@@ -420,6 +532,12 @@ function renderVehicles(since){
 }
 
 function renderLoad(since){
+  if (scheduleLoadError || guardLoadError) {
+    $('lLead').innerHTML = '<div class="lead bad">' +
+      esc(scheduleLoadError || guardLoadError) + '</div>';
+    $('lList').innerHTML = '<div class="note">החישוב נעצר כדי לא להציג יום חופש או עומס שגוי.</div>';
+    return;
+  }
   const map = loadStats(people, guards, swaps, ctx, since);
   const rank = loadRank(map);
   const fair = fairness(map);

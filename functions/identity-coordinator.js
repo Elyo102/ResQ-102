@@ -94,18 +94,25 @@ function profileMatches(op, docs) {
     String(user.phone || '') === String(p.phone || '') &&
     String(user.role || '') === String(p.role || '') &&
     String(user.crew || '') === String(p.shift || '') &&
+    String(user.shift || '') === String(p.shift || '') &&
     String(user.station || '') === String(p.stationId || '') &&
-    String(user.district || '') === String(p.districtId || '') && user.is_active === true &&
+    String(user.stationId || '') === String(p.stationId || '') &&
+    String(user.district || '') === String(p.districtId || '') &&
+    String(user.districtId || '') === String(p.districtId || '') &&
+    user.is_active === true && user.active === true &&
     String(roster.full_name || '') === String(p.full_name || '') &&
     String(roster.role || '') === String(p.role || '') &&
-    String(roster.crew || '') === String(p.shift || '') && roster.is_active === true &&
+    String(roster.crew || '') === String(p.shift || '') &&
+    roster.is_active === true && roster.active === true &&
     String(directory.full_name || '') === String(p.full_name || '') &&
     sameValue(directory.name_prefixes || [], p.name_prefixes || []) &&
     String(directory.role || '') === String(p.role || '') &&
     String(directory.crew || '') === String(p.shift || '') &&
     String(directory.station || '') === String(p.stationId || '') &&
     String(directory.district || '') === String(p.districtId || '') &&
-    directory.is_active === true && String(index.uid || '') === String(op.uid || '') &&
+    directory.is_active === true && directory.active === true &&
+    directory.status === 'active' && directory.retired === false &&
+    String(index.uid || '') === String(op.uid || '') &&
     String(index.email || '').toLowerCase() === String(p.email || '').toLowerCase() &&
     String(index.stationId || '') === String(p.stationId || '') && activeIndex(index);
 }
@@ -712,9 +719,13 @@ function createIdentityCoordinator(deps) {
         phone: p.phone || '',
         role: p.role,
         crew: p.shift || '',
+        shift: p.shift || '',
         station: p.stationId,
+        stationId: p.stationId,
         district: p.districtId || '',
+        districtId: p.districtId || '',
         is_active: true,
+        active: true,
         updated_at: FV.serverTimestamp()
       }, { merge: true });
       tx.set(db.doc('stations/' + p.stationId + '/roster/' + uid), {
@@ -722,6 +733,7 @@ function createIdentityCoordinator(deps) {
         role: p.role,
         crew: p.shift || '',
         is_active: true,
+        active: true,
         updated_at: FV.serverTimestamp()
       }, { merge: true });
       tx.set(db.doc('directory/' + uid), {
@@ -732,6 +744,9 @@ function createIdentityCoordinator(deps) {
         station: p.stationId,
         district: p.districtId || '',
         is_active: true,
+        active: true,
+        status: 'active',
+        retired: false,
         updated_at: FV.serverTimestamp()
       }, { merge: true });
       tx.set(idxRef, {
@@ -754,7 +769,7 @@ function createIdentityCoordinator(deps) {
         });
       }
       if (op.previous_station && op.previous_station !== p.stationId) {
-        const off = { is_active: false, updated_at: FV.serverTimestamp() };
+        const off = { is_active: false, active: false, updated_at: FV.serverTimestamp() };
         tx.set(db.doc('stations/' + op.previous_station + '/users/' + uid), off, { merge: true });
         tx.set(db.doc('stations/' + op.previous_station + '/roster/' + uid), off, { merge: true });
       }
@@ -830,7 +845,8 @@ function createIdentityCoordinator(deps) {
       throw recoveryError('פעולת הזהות אינה פעילה עוד.');
     }
     if (['auth_applied', 'tokens_revoked', 'profile_applied'].indexOf(op.phase) !== -1 &&
-        op.kind !== 'set_role' && op.kind !== 'approve') {
+        op.kind !== 'set_role' && op.kind !== 'approve' &&
+        op.kind !== 'transfer_station') {
       return op;
     }
     if (['auth_applied', 'tokens_revoked'].indexOf(op.phase) !== -1) return op;

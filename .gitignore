@@ -70,3 +70,4 @@ firestore-debug.log
 ui-debug.log
 tests/.visual/
 tests/debug.log
+debug.log

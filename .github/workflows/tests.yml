@@ -52,6 +52,12 @@ jobs:
         working-directory: tests
         run: npm run browser
 
+      # סריקה נפרדת של כל דפי ה-HTML ברוחב טלפון. בדיקות הדפדפן
+      # הרגילות מכסות מסכים ממוקדים בלבד ואינן מחליפות שער overflow מלא.
+      - name: כל המסכים ברוחב טלפון
+        working-directory: tests
+        run: npm run browser:mobile
+
   # ---------- כללי האבטחה ----------
   rules:
     name: כללי אבטחה
@@ -92,6 +98,9 @@ jobs:
 
       - name: פעולות זהות והרשמה מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && npm run test:identity"
+
+      - name: העברת עובדים בין תחנות מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node station-transfer.integration.test.js"
 
       - name: נוכחות Shadow מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js"

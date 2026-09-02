@@ -59,6 +59,11 @@ const env = await initializeTestEnvironment({
   }
 });
 
+// The emulator is a long-lived process and may retain writes from a previous
+// invocation.  Start every suite from a clean database so create/delete
+// scenarios test the rules rather than stale fixture state.
+await env.clearFirestore();
+
 // ---------- דמויות ----------
 // כל אחת מחזיקה בדיוק את ה-claims שהשרת היה נותן לה.
 
@@ -131,6 +136,18 @@ await env.withSecurityRulesDisabled(async (c) => {
     { role: 'firefighter', crew: 'א', employee_number: '101', is_active: true, full_name: 'כבאי א' });
   await setDoc(doc(d, `stations/${SID}/users/u_ffb`),
     { role: 'firefighter', crew: 'ב', employee_number: '102', is_active: true, full_name: 'כבאי ב' });
+  await setDoc(doc(d, `stations/${SID}/users/u_cmda`),
+    { role: 'commander', crew: 'א', employee_number: '201', is_active: true, full_name: 'מפקד משמרת א' });
+  await setDoc(doc(d, `stations/${SID}/users/u_cmdb`),
+    { role: 'commander', crew: 'ב', employee_number: '202', is_active: true, full_name: 'מפקד משמרת ב' });
+  await setDoc(doc(d, `stations/${SID}/users/u_dep`),
+    { role: 'deputy', crew: 'א', employee_number: '203', is_active: true, full_name: 'סגן מפקד משמרת א' });
+  await setDoc(doc(d, `stations/${SID}/users/u_new`),
+    { role: 'commander', crew: '', employee_number: '204', is_active: true, full_name: 'מפקד ללא שיוך משמרת' });
+  await setDoc(doc(d, `stations/${SID}/users/u_tl`),
+    { role: 'team_leader', crew: 'א', employee_number: '111', is_active: true, full_name: 'מפקד צוות א' });
+  await setDoc(doc(d, `stations/${SID}/users/u_dtl`),
+    { role: 'deputy_team_leader', crew: 'א', employee_number: '112', is_active: true, full_name: 'סגן מפקד צוות א' });
   await setDoc(doc(d, `stations/${SID}/users/u_st`),
     { role: 'station_commander', crew: '', employee_number: '301', is_active: true, full_name: 'מפקד תחנה' });
   await setDoc(doc(d, `stations/${SID}/users/u_hr`),
@@ -141,6 +158,35 @@ await env.withSecurityRulesDisabled(async (c) => {
     { role: 'hr_coordinator', crew: '', employee_number: '402', is_active: false, full_name: 'רכזת מושבתת' });
   await setDoc(doc(d, `stations/${SID}/users/u_hr_stale`),
     { role: 'firefighter', crew: 'א', employee_number: '403', is_active: true, full_name: 'רכזת לשעבר' });
+
+  // מינוי הסידור הוא יכולת נפרדת מהתפקיד הראשי. רק הכבאי הזה
+  // מחזיק ברשומה חיה ותקינה; כל הדמויות הבכירות האחרות ייבדקו
+  // בהמשך ללא מינוי כדי לנעול שאין "קיצור דרך" לפי דרגה.
+  await setDoc(doc(d, `stations/${SID}/schedule_access/u_ff`), {
+    schema_version: 1,
+    station_id: SID,
+    uid: 'u_ff',
+    roles: ['schedule_manager'],
+    active: true,
+    revision: 1
+  });
+  // מסלולי הסידור הוותיקים נשמרים לקריאה בלבד עד לסיום המעבר.
+  // יש מסמכים קיימים כדי לבדוק גם update/delete, לא רק create.
+  await setDoc(doc(d, `stations/${SID}/rotations/A`), {
+    crew: 'A', cycle_days: 3
+  });
+  await setDoc(doc(d, `stations/${SID}/shift_overrides/2026-09-01`), {
+    date: '2026-09-01', kind: 'holiday'
+  });
+  // גם מינוי ישן שנשאר בתחנה הקודמת אחרי העברה אינו פותח מסלול.
+  await setDoc(doc(d, `stations/${SID}/schedule_access/u_out`), {
+    schema_version: 1,
+    station_id: SID,
+    uid: 'u_out',
+    roles: ['schedule_manager'],
+    active: true,
+    revision: 1
+  });
 
   // נוכחות — הלב של המערכת
   await setDoc(doc(d, `stations/${SID}/attendance/att_ff_a`),
@@ -251,6 +297,16 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/guards/g_full`), {
     by_uid: 'u_cmda', title: 'משובצת', date: '2026-09-06',
     slots: 1, assigned: ['u_ffb'], signups: [] });
+  // רשומות פנימיות של שער הסידור. הן קיימות כדי שהבדיקות יבדקו
+  // גם update/delete וגם קריאה, ולא רק ניסיון ליצור מסמך חדש.
+  await setDoc(doc(d, `stations/${SID}/guard_operations/go_seed`), {
+    request_id: 'go_seed', actor_uid: 'u_ff', action: 'set_assignees' });
+  await setDoc(doc(d, `stations/${SID}/guard_audit/ga_seed`), {
+    guard_id: 'g_open', actor_uid: 'u_ff', action: 'set_assignees' });
+  await setDoc(doc(d, `stations/${SID}/guard_notification_jobs/gnj_seed`), {
+    guard_id: 'g_open', status: 'queued' });
+  await setDoc(doc(d, `stations/${SID}/guard_outbox/go_seed`), {
+    guard_id: 'g_open', uid: 'u_ff', status: 'queued' });
 
   // ---- מסמכים אישיים ----
   await setDoc(doc(d, `stations/${SID}/documents/doc_mine`),
@@ -813,32 +869,69 @@ await ok('ראש משמרת מוחק פגיעת רכב שתוקנה',
 // ============================================================
 head('11 · אבטחות');
 // ============================================================
-// השיבוץ נקבע בשרת לפי חלוקת עומס הוגנת. כתיבה ישירה לשדה
-// assigned מהדפדפן היא עקיפה של החלוקה הזו.
-
-await blocked('🔒 כבאי פותח אבטחה (רק סגל)',
-  setDoc(doc(ff, `stations/${SID}/guards/g_new`), {
-    by_uid: 'u_ff', title: 'אבטחה', date: '2026-09-09',
-    slots: 2, assigned: [] }));
-
-await blocked('🔒 אבטחה נפתחת עם משובצים מראש',
-  setDoc(doc(cmdA, `stations/${SID}/guards/g_pre`), {
-    by_uid: 'u_cmda', title: 'אבטחה', date: '2026-09-09',
-    slots: 2, assigned: ['u_ff'] }));
-
-await blocked('🔒 מספר מקומות בלתי סביר',
-  setDoc(doc(cmdA, `stations/${SID}/guards/g_many`), {
-    by_uid: 'u_cmda', title: 'אבטחה', date: '2026-09-09',
-    slots: 500, assigned: [] }));
-
-await blocked('🔒 שיבוץ עצמי ישיר לשדה assigned',
-  updateDoc(doc(ff, `stations/${SID}/guards/g_open`), { assigned: ['u_ff'] }));
-
-await blocked('🔒 סגל משנה שיבוץ באבטחה שכבר משובצת',
-  updateDoc(doc(cmdA, `stations/${SID}/guards/g_full`), { assigned: [] }));
-
-await ok('כל חבר תחנה רואה את לוח האבטחות',
+// אבטחה פתוחה מוצגת לחבר/ת התחנה רק דרך השרת. המסמך הגולמי מכיל
+// פרטי מקום, הערות, התעניינות ותיעוד שאסור שיגיעו לדפדפן. גם
+// אחראי/ת סידור איננו רישיון לקריאה או כתיבה ישירה; המינוי החי
+// נבדק מחדש בשער השרת.
+await blocked('🔒 חבר/ת תחנה אינו/ה קורא/ת מסמך אבטחה גולמי',
+  getDoc(doc(ffB, `stations/${SID}/guards/g_open`)));
+await blocked('🔒 חבר/ת תחנה אינו/ה מציג/ה אוסף אבטחות גולמי',
+  getDocs(collection(ffB, `stations/${SID}/guards`)));
+await blocked('🔒 אחראי/ת סידור אינו/ה קורא/ת מסמך אבטחה גולמי',
   getDoc(doc(ff, `stations/${SID}/guards/g_open`)));
+await blocked('🔒 חבר/ה מתחנה אחרת אינו/ה קורא/ת אבטחה',
+  getDoc(doc(outside, `stations/${SID}/guards/g_open`)));
+
+const GUARD_DIRECT_WRITERS = [
+  ['לוחם/ת אש', 'firefighter', ffB],
+  ['אחראי/ת סידור', 'schedule_manager', ff],
+  ['מפקד/ת משמרת', 'commander', cmdA],
+  ['מנהל/ת-על', 'super', superA]
+];
+
+for (const [roleName, suffix, client] of GUARD_DIRECT_WRITERS) {
+  await blocked(`🔒 ${roleName} אינו/ה יוצר/ת אבטחה ישירות`,
+    setDoc(doc(client, `stations/${SID}/guards/g_client_${suffix}`), {
+      by_uid: 'forged', title: 'כתיבה ישירה', date: '2026-09-09',
+      slots: 2, assigned: [] }));
+  await blocked(`🔒 ${roleName} אינו/ה מעדכן/ת אבטחה ישירות`,
+    updateDoc(doc(client, `stations/${SID}/guards/g_open`), { assigned: ['u_ff'] }));
+  await blocked(`🔒 ${roleName} אינו/ה מוחק/ת אבטחה ישירות`,
+    deleteDoc(doc(client, `stations/${SID}/guards/g_full`)));
+}
+
+// operation/audit/outbox הם מצב פרטי של השער: מזהי פעולה, זהות
+// מבצע/ת, רשימות נמענים ותור retry. אפילו אחראי/ת הסידור אינם
+// קוראים או כותבים אותם מהדפדפן.
+const GUARD_SERVER_ONLY = [
+  ['guard_operations', 'go_seed'],
+  ['guard_audit', 'ga_seed'],
+  ['guard_notification_jobs', 'gnj_seed'],
+  ['guard_outbox', 'go_seed']
+];
+const GUARD_SERVER_ONLY_WRITERS = [
+  ['חבר/ת תחנה', 'member', ffB],
+  ['אחראי/ת סידור', 'manager', ff],
+  ['מנהל/ת-על', 'super', superA]
+];
+
+for (const [collectionName, seedId] of GUARD_SERVER_ONLY) {
+  const seedPath = `stations/${SID}/${collectionName}/${seedId}`;
+  await blocked(`🔒 אחראי/ת סידור אינו/ה קורא/ת ${collectionName}`,
+    getDoc(doc(ff, seedPath)));
+  await blocked(`🔒 אחראי/ת סידור אינו/ה מציג/ה ${collectionName}`,
+    getDocs(collection(ff, `stations/${SID}/${collectionName}`)));
+
+  for (const [roleName, suffix, client] of GUARD_SERVER_ONLY_WRITERS) {
+    await blocked(`🔒 ${roleName} אינו/ה יוצר/ת ${collectionName}`,
+      setDoc(doc(client, `stations/${SID}/${collectionName}/client_${suffix}`), {
+        forged: true }));
+    await blocked(`🔒 ${roleName} אינו/ה מעדכן/ת ${collectionName}`,
+      updateDoc(doc(client, seedPath), { forged: true }));
+    await blocked(`🔒 ${roleName} אינו/ה מוחק/ת ${collectionName}`,
+      deleteDoc(doc(client, seedPath)));
+  }
+}
 
 // ============================================================
 head('12 · מסמכים אישיים');
@@ -1508,6 +1601,56 @@ for (const [roleName, client] of [
       setDoc(doc(client, path), { tampered: true }));
   }
 }
+
+// ============================================================
+head('21 · הסידור הישן סגור — אין עקיפה של מנוע הפרסום וההתראות');
+// ============================================================
+// המנוע החדש מחליף את שני המסלולים. גם קריאה ישירה חסומה כדי שטוקן
+// ישן או שיוך שהוסר לא יוכלו להציג סידור שאינו עבר בדיקות חיות בשרת.
+const LEGACY_ROTATION = `stations/${SID}/rotations/A`;
+const LEGACY_OVERRIDE = `stations/${SID}/shift_overrides/2026-09-01`;
+
+for (const [roleName, client] of [
+  ['מפקד', cmdA], ['סגן מפקד', deputyA], ['מפקד תחנה', stCmd],
+  ['רכז/ת כוח אדם', hrUser], ['מנהל-על', superA],
+  ['אחראי/ת סידור פעיל/ה', ff], ['ממונה שהועבר/ה מתחנה אחרת', outside]
+]) {
+  await blocked(`🔒 ${roleName} אינו קורא מחזור ישן ישירות`,
+    getDoc(doc(client, LEGACY_ROTATION)));
+  await blocked(`🔒 ${roleName} אינו קורא חריגה ישנה ישירות`,
+    getDoc(doc(client, LEGACY_OVERRIDE)));
+  await blocked(`🔒 ${roleName} אינו כותב מחזור ישן ישירות`,
+    setDoc(doc(client, LEGACY_ROTATION), { crew: 'A', cycle_days: 3 }));
+  await blocked(`🔒 ${roleName} אינו כותב חריגה ישנה ישירות`,
+    setDoc(doc(client, LEGACY_OVERRIDE), { date: '2026-09-01', kind: 'holiday' }));
+}
+
+await blocked('🔒 גם אחראי/ת סידור אינו מעדכן מחזור ישן',
+  updateDoc(doc(ff, LEGACY_ROTATION), { cycle_days: 4 }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק מחזור ישן',
+  deleteDoc(doc(ff, LEGACY_ROTATION)));
+await blocked('🔒 גם אחראי/ת סידור אינו מעדכן חריגה ישנה',
+  updateDoc(doc(ff, LEGACY_OVERRIDE), { kind: 'swap' }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק חריגה ישנה',
+  deleteDoc(doc(ff, LEGACY_OVERRIDE)));
+await blocked('🔒 גם אחראי/ת סידור אינו קורא את רשומת המינוי ישירות',
+  getDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`)));
+await blocked('🔒 גם אחראי/ת סידור אינו סורק רשומות מינוי ישירות',
+  getDocs(collection(ff, `stations/${SID}/schedule_access`)));
+await blocked('🔒 גם אחראי/ת סידור אינו יוצר רשומת מינוי ישירות',
+  setDoc(doc(ff, `stations/${SID}/schedule_access/u_ffb`), { active: true }));
+await blocked('🔒 גם אחראי/ת סידור אינו משנה את רשומת המינוי ישירות',
+  updateDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`), { active: false }));
+await blocked('🔒 גם אחראי/ת סידור אינו מוחק את רשומת המינוי ישירות',
+  deleteDoc(doc(ff, `stations/${SID}/schedule_access/u_ff`)));
+
+await env.withSecurityRulesDisabled(async (c) => {
+  await setDoc(doc(c.firestore(), `stations/${SID}/schedule_access/u_ff`), {
+    schema_version: 1, station_id: SID, uid: 'u_ff', roles: [], active: false, revision: 2
+  });
+});
+await blocked('🔒 ביטול מינוי לא פותח כתיבת חריגה ישנה',
+  updateDoc(doc(ff, LEGACY_OVERRIDE), { kind: 'swap' }));
 
 // ============================================================
 //  סיכום

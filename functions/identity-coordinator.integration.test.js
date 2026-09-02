@@ -22,12 +22,15 @@ const FV = admin.firestore.FieldValue;
 const Timestamp = admin.firestore.Timestamp;
 let ids = 0;
 let passed = 0;
+const transferRunId = Date.now().toString(36);
+const transferEmpBase = 720000 + (Date.now() % 100000);
 
 class FakeAuth {
   constructor() {
     this.users = new Map();
     this.setCalls = 0;
     this.revokeCalls = 0;
+    this.revokeUids = [];
     this.failSetBefore = 0;
     this.failRevoke = 0;
   }
@@ -56,8 +59,9 @@ class FakeAuth {
     this.users.set(uid, user);
   }
 
-  async revokeRefreshTokens() {
+  async revokeRefreshTokens(uid) {
     this.revokeCalls++;
+    this.revokeUids.push(uid);
     if (this.failRevoke > 0) {
       this.failRevoke--;
       throw new Error('injected revoke failure');
@@ -196,6 +200,104 @@ function roleParams(uid, opId, previousClaims, wantedEmp) {
   };
 }
 
+function transferParams(uid, opId, previousClaims, targetStation, targetDistrict) {
+  const desiredClaims = {
+    role: previousClaims.role,
+    stationId: targetStation,
+    districtId: targetDistrict,
+    shift: previousClaims.shift,
+    emp: previousClaims.emp
+  };
+  return {
+    uid: uid,
+    opId: opId,
+    kind: 'transfer_station',
+    actorUid: 'u_target_approver',
+    actorEmail: 'target-approver@example.com',
+    previousClaims: previousClaims,
+    previousEmp: previousClaims.emp,
+    previousStation: previousClaims.stationId,
+    requireRequest: false,
+    attachPendingRequest: false,
+    requestId: '',
+    requestGeneration: '',
+    blockIfAssigned: false,
+    intentFingerprint: stableHash({
+      kind: 'transfer_station', uid: uid, source: previousClaims.stationId,
+      target: targetStation, desired_claims: desiredClaims
+    }),
+    employeeMode: 'fixed',
+    wantedEmp: previousClaims.emp,
+    auditAction: 'approve_station_transfer',
+    auditDetails: {
+      source_station_id: previousClaims.stationId,
+      target_station_id: targetStation,
+      test: true
+    },
+    makePlan: function () {
+      return {
+        desiredClaims: desiredClaims,
+        desiredProfile: {
+          full_name: 'כבאי ' + uid,
+          name_prefixes: ['כב', 'כבא'],
+          email: uid + '@example.com',
+          phone: '0500000000',
+          role: desiredClaims.role,
+          shift: desiredClaims.shift,
+          stationId: desiredClaims.stationId,
+          districtId: desiredClaims.districtId
+        }
+      };
+    }
+  };
+}
+
+async function seedTransferIdentity(uid, claims, targetStation) {
+  const source = claims.stationId;
+  const profile = {
+    employee_number: claims.emp,
+    full_name: 'כבאי ' + uid,
+    email: uid + '@example.com',
+    phone: '0500000000',
+    role: claims.role,
+    crew: claims.shift,
+    station: source,
+    district: claims.districtId,
+    is_active: true
+  };
+  await Promise.all([
+    db.doc('stations/' + source + '/users/' + uid).set(profile),
+    db.doc('stations/' + source + '/roster/' + uid).set({
+      full_name: profile.full_name, role: claims.role,
+      crew: claims.shift, is_active: true
+    }),
+    db.doc('stations/' + targetStation + '/users/' + uid).set({
+      is_active: false, active: false, station: 'stale_station',
+      stationId: 'stale_station', districtId: 'stale_district', shift: 'Z'
+    }),
+    db.doc('stations/' + targetStation + '/roster/' + uid).set({
+      is_active: false, active: false
+    }),
+    db.doc('directory/' + uid).set({
+      full_name: profile.full_name,
+      name_prefixes: ['כב', 'כבא'],
+      role: claims.role,
+      crew: claims.shift,
+      station: source,
+      district: claims.districtId,
+      is_active: true
+    }),
+    db.doc('emp_index/' + claims.emp).set({
+      uid: uid,
+      email: uid + '@example.com',
+      stationId: source,
+      status: 'active',
+      active: true,
+      retired: false
+    })
+  ]);
+}
+
 async function test(name, fn) {
   await fn();
   passed++;
@@ -212,7 +314,15 @@ async function rejectsCode(code, promise) {
   }
 }
 
+async function clearEmulator() {
+  const collections = await db.listCollections();
+  for (const collection of collections) await db.recursiveDelete(collection);
+}
+
 (async function run() {
+  // The suite is intentionally rerunnable. Durable identity documents from a
+  // previous emulator run must not turn fresh acquisition checks into replays.
+  await clearEmulator();
   await test('every planned profile and index field participates in final verification', async function () {
     const op = {
       uid:'profile-check', desired_emp:'6001',
@@ -222,11 +332,14 @@ async function rejectsCode(code, promise) {
     };
     const docs = {
       user:{ employee_number:'6001', full_name:'כבאי בדיקה', email:'profile@example.com',
-        phone:'0500000000', role:'firefighter', crew:'A', station:'eilat_102',
-        district:'south', is_active:true },
-      roster:{ full_name:'כבאי בדיקה', role:'firefighter', crew:'A', is_active:true },
+        phone:'0500000000', role:'firefighter', crew:'A', shift:'A',
+        station:'eilat_102', stationId:'eilat_102', district:'south', districtId:'south',
+        is_active:true, active:true },
+      roster:{ full_name:'כבאי בדיקה', role:'firefighter', crew:'A',
+        is_active:true, active:true },
       directory:{ full_name:'כבאי בדיקה', name_prefixes:['כב','כבא'], role:'firefighter',
-        crew:'A', station:'eilat_102', district:'south', is_active:true },
+        crew:'A', station:'eilat_102', district:'south', is_active:true, active:true,
+        status:'active', retired:false },
       index:{ uid:'profile-check', email:'profile@example.com', stationId:'eilat_102',
         status:'active', active:true, retired:false }
     };
@@ -234,12 +347,16 @@ async function rejectsCode(code, promise) {
     const mutations = [
       ['user','employee_number','x'], ['user','full_name','x'], ['user','email','x@x.com'],
       ['user','phone','x'], ['user','role','commander'], ['user','crew','B'],
-      ['user','station','other'], ['user','district','north'], ['user','is_active',false],
+      ['user','shift','B'], ['user','station','other'], ['user','stationId','other'],
+      ['user','district','north'], ['user','districtId','north'],
+      ['user','is_active',false], ['user','active',false],
       ['roster','full_name','x'], ['roster','role','commander'], ['roster','crew','B'],
-      ['roster','is_active',false], ['directory','full_name','x'],
+      ['roster','is_active',false], ['roster','active',false], ['directory','full_name','x'],
       ['directory','name_prefixes',['bad']], ['directory','role','commander'],
       ['directory','crew','B'], ['directory','station','other'],
       ['directory','district','north'], ['directory','is_active',false],
+      ['directory','active',false], ['directory','status','retired'],
+      ['directory','retired',true],
       ['index','uid','other'], ['index','email','x@x.com'], ['index','stationId','other'],
       ['index','active',false], ['index','retired',true]
     ];
@@ -657,6 +774,158 @@ async function rejectsCode(code, promise) {
     const result = await service.runAssignment(uid, waiting.op_id,
       { ok:true, emp:'6951' }, false);
     assert.equal(result.emp, '6951');
+  });
+
+  await test('transfer_station moves one live identity and completed replay is idempotent', async function () {
+    const uid = 'transfer_success_' + transferRunId;
+    const source = 'transfer_source';
+    const target = 'transfer_target';
+    const emp = String(transferEmpBase + 1);
+    const before = {
+      role: 'firefighter', stationId: source, districtId: 'south',
+      shift: 'A', emp: emp
+    };
+    const fake = new FakeAuth();
+    fake.seed(uid, before, uid + '@example.com');
+    await seedTransferIdentity(uid, before, target);
+    const service = coordinator(fake);
+    const params = transferParams(uid, 'transfer-success-operation-' + transferRunId,
+      before, target, 'north');
+    const acquired = await service.acquireAssignment(params);
+    assert.equal(acquired.type, 'acquired');
+
+    const expected = {
+      ok: true, uid: uid, status: 'completed',
+      source_station_id: source, target_station_id: target
+    };
+    const result = await service.runAssignment(uid, acquired.operation.op_id,
+      expected, false);
+    assert.deepEqual(result, expected);
+    assert.deepEqual((await fake.getUser(uid)).customClaims, {
+      role: 'firefighter', stationId: target, districtId: 'north',
+      shift: 'A', emp: emp
+    });
+    assert.equal(fake.setCalls, 1);
+    assert.equal(fake.revokeCalls, 1);
+    assert.deepEqual(fake.revokeUids, [uid]);
+
+    const sourceUser = (await db.doc('stations/' + source + '/users/' + uid).get()).data();
+    const sourceRoster = (await db.doc('stations/' + source + '/roster/' + uid).get()).data();
+    const targetUser = (await db.doc('stations/' + target + '/users/' + uid).get()).data();
+    const targetRoster = (await db.doc('stations/' + target + '/roster/' + uid).get()).data();
+    const directory = (await db.doc('directory/' + uid).get()).data();
+    const index = (await db.doc('emp_index/' + emp).get()).data();
+    assert.equal(sourceUser.is_active, false);
+    assert.equal(sourceUser.active, false);
+    assert.equal(sourceRoster.is_active, false);
+    assert.equal(sourceRoster.active, false);
+    assert.equal(targetUser.is_active, true);
+    assert.equal(targetUser.active, true);
+    assert.equal(targetUser.station, target);
+    assert.equal(targetUser.stationId, target);
+    assert.equal(targetUser.districtId, 'north');
+    assert.equal(targetUser.shift, 'A');
+    assert.equal(targetUser.employee_number, emp);
+    assert.equal(targetRoster.is_active, true);
+    assert.equal(targetRoster.active, true);
+    assert.equal(directory.is_active, true);
+    assert.equal(directory.active, true);
+    assert.equal(directory.status, 'active');
+    assert.equal(directory.retired, false);
+    assert.equal(directory.station, target);
+    assert.equal(index.uid, uid);
+    assert.equal(index.stationId, target);
+    assert.equal(index.active, true);
+    assert.equal(index.retired, false);
+
+    const replay = await service.runAssignment(uid, acquired.operation.op_id,
+      { ok: false, status: 'wrong-replay-result' }, false);
+    assert.deepEqual(replay, expected);
+    assert.equal(fake.setCalls, 1);
+    assert.equal(fake.revokeCalls, 1);
+    assert.equal((await db.doc('identity_operations/' + uid).get()).data().status,
+      'completed');
+  });
+
+  await test('transfer_station recovers after profile_applied without reopening source', async function () {
+    const uid = 'transfer_profile_retry_' + transferRunId;
+    const source = 'transfer_source';
+    const target = 'transfer_target';
+    const emp = String(transferEmpBase + 2);
+    const before = {
+      role: 'firefighter', stationId: source, districtId: 'south',
+      shift: 'B', emp: emp
+    };
+    const fake = new FakeAuth();
+    fake.seed(uid, before, uid + '@example.com');
+    fake.failSetBefore = 1;
+    await seedTransferIdentity(uid, before, target);
+    const service = coordinator(fake);
+    const params = transferParams(uid, 'transfer-profile-retry-' + transferRunId,
+      before, target, 'north');
+    const acquired = await service.acquireAssignment(params);
+
+    await rejectsCode('unavailable', service.runAssignment(uid,
+      acquired.operation.op_id, { ok: true, status: 'completed' }, false));
+    const waiting = (await db.doc('identity_operations/' + uid).get()).data();
+    assert.equal(waiting.status, 'processing');
+    assert.equal(waiting.phase, 'profile_applied');
+    assert.deepEqual((await fake.getUser(uid)).customClaims, before);
+    assert.equal((await db.doc('stations/' + source + '/users/' + uid).get()).data().is_active,
+      false);
+    assert.equal((await db.doc('stations/' + target + '/users/' + uid).get()).data().is_active,
+      true);
+    assert.equal(fake.revokeCalls, 0);
+
+    const result = await service.runAssignment(uid, acquired.operation.op_id,
+      { ok: true, status: 'completed' }, false);
+    assert.equal(result.status, 'completed');
+    assert.equal((await fake.getUser(uid)).customClaims.stationId, target);
+    assert.equal(fake.revokeCalls, 1);
+    assert.equal((await db.doc('identity_operations/' + uid).get()).data().status,
+      'completed');
+  });
+
+  await test('transfer_station recovers after auth_applied and revokes on retry', async function () {
+    const uid = 'transfer_auth_retry_' + transferRunId;
+    const source = 'transfer_source';
+    const target = 'transfer_target';
+    const emp = String(transferEmpBase + 3);
+    const before = {
+      role: 'firefighter', stationId: source, districtId: 'south',
+      shift: 'C', emp: emp
+    };
+    const fake = new FakeAuth();
+    fake.seed(uid, before, uid + '@example.com');
+    fake.failRevoke = 1;
+    await seedTransferIdentity(uid, before, target);
+    const service = coordinator(fake);
+    const params = transferParams(uid, 'transfer-auth-retry-' + transferRunId,
+      before, target, 'north');
+    const acquired = await service.acquireAssignment(params);
+
+    await rejectsCode('unavailable', service.runAssignment(uid,
+      acquired.operation.op_id, { ok: true, status: 'completed' }, false));
+    const waiting = (await db.doc('identity_operations/' + uid).get()).data();
+    assert.equal(waiting.status, 'processing');
+    assert.equal(waiting.phase, 'auth_applied');
+    assert.equal((await fake.getUser(uid)).customClaims.stationId, target);
+    assert.equal((await db.doc('stations/' + source + '/users/' + uid).get()).data().is_active,
+      false);
+    assert.equal((await db.doc('stations/' + target + '/users/' + uid).get()).data().is_active,
+      true);
+    assert.equal(fake.revokeCalls, 1);
+
+    const result = await service.runAssignment(uid, acquired.operation.op_id,
+      { ok: true, status: 'completed' }, false);
+    assert.equal(result.status, 'completed');
+    assert.equal(fake.revokeCalls, 2);
+    const replay = await service.runAssignment(uid, acquired.operation.op_id,
+      { ok: false, status: 'wrong-replay-result' }, false);
+    assert.equal(replay.status, 'completed');
+    assert.equal(fake.revokeCalls, 2);
+    assert.equal((await db.doc('identity_operations/' + uid).get()).data().status,
+      'completed');
   });
 
   await test('clear-role revokes first, preserves request on failure, then resumes', async function () {

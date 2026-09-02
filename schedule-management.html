@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42f">
+  <link rel="stylesheet" href="./theme.css?v=42f2">
   <style>
     :root{--sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-green:#dcefdc;
       --sched-yellow:#fff2cf;--sched-orange:#fbe1d2;--sched-bg:#eef2f7}
@@ -16,7 +16,7 @@
     button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #87b8e4;outline-offset:2px}
     [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}.head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}.head h1{font-size:26px;margin:0}.head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}.tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -39,7 +39,7 @@
     .answer{display:flex;gap:8px;margin-top:12px}.answer button{flex:1;border-radius:10px;font-weight:800}.confirm{background:#258568;color:#fff;border:1px solid #258568}.decline{background:#fff;border:1px solid #dcaaa6;color:#a12c27}
     .station-days{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.day{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:10px}.day h3{margin:0 0 8px;font-size:16px}.day h3 small{display:block;color:var(--muted,#748091);font-size:11px;font-weight:500;direction:ltr;unicode-bidi:isolate}
     .station{border-radius:12px;padding:10px;margin-bottom:8px}.station:nth-of-type(4n+1){background:var(--sched-blue-soft)}.station:nth-of-type(4n+2){background:var(--sched-green)}.station:nth-of-type(4n+3){background:var(--sched-yellow)}.station:nth-of-type(4n){background:var(--sched-orange)}
-    .station strong{display:block;color:#5f6977;font-size:12px;margin-bottom:4px}.member{font-size:14px;font-weight:700;line-height:1.7}.member.me{color:#1769a6;font-weight:900}.member small{font-weight:500;color:#697587}.event{padding:8px;border-radius:10px;background:#fff7df;margin-top:7px;font-size:13px}.event.me{border:2px solid #347dbd}
+    .station strong{display:block;color:#5f6977;font-size:12px;margin-bottom:4px}.member{font-size:14px;font-weight:700;line-height:1.7}.member.me{color:#1769a6;font-weight:900}.member small{font-weight:500;color:#697587}.event{padding:8px;border-radius:10px;background:#fff7df;margin-top:7px;font-size:13px}.event.me{border:2px solid #347dbd}.event.guard{background:#eaf3ff;border:1px solid #b8d3ef}.event.guard.me{border:2px solid #347dbd}.guard-card{border-color:#b8d3ef;background:#f7fbff}
     .draft-preview{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(190px,1fr);gap:10px;overflow-x:auto;padding:3px 1px 10px;scroll-snap-type:x proximity}.draft-preview>.day{scroll-snap-align:start}.review-draft{display:flex;align-items:center;gap:9px;margin-top:12px;font-weight:800;color:var(--txt,#1c2532)}.review-draft input{width:22px;min-height:22px;accent-color:var(--sched-blue)}
     .empty{text-align:center;color:var(--muted,#748091);padding:34px 12px}.loader{height:90px;border-radius:14px;background:linear-gradient(100deg,#eef1f5 20%,#f8fafc 40%,#eef1f5 60%);background-size:200% 100%;animation:load 1.2s infinite}@keyframes load{to{background-position:-200% 0}}
     @media(max-width:850px){.manage-grid{grid-template-columns:1fr}.station-days{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
@@ -56,10 +56,15 @@
 
   <div class="mode" id="mode"><span class="dot"></span><span>בודק את מצב המנוע…</span></div>
 
-  <nav class="tabs" aria-label="תצוגות הסידור">
+  <section class="card" id="availabilityView" hidden aria-live="polite">
+    <h2 id="availabilityTitle">הסידור החדש אינו זמין כרגע</h2>
+    <div class="sub" id="availabilityText"></div>
+  </section>
+
+  <nav class="tabs" id="scheduleTabs" aria-label="תצוגות הסידור">
     <button type="button" data-tab="manage" id="manageTab">ניהול</button>
-    <button type="button" data-tab="mine">הסידור שלי</button>
-    <button type="button" data-tab="station">סידור התחנה</button>
+    <button type="button" data-tab="mine" id="mineTab">הסידור שלי</button>
+    <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
   </nav>
 
   <section id="manageView" hidden>
@@ -119,6 +124,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42f"></script>
+<script type="module" src="./schedule-management.js?v=42f2"></script>
 </body>
 </html>

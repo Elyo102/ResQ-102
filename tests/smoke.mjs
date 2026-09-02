@@ -70,9 +70,10 @@ const MUST_ALL = {
   'attendance.html': ['#moLabel','#prev','#next','#tHours','#tDays','#tSug',
                       '#rows','#btnStart','#btnManual','#state','#ov','#dlg',
                       '#btnView','#btnSync','#btnRecalc'],
-  'schedule.html': ['#grid','#dows','#moLabel','#prev','#next',
-                    '#fitCard','#fitBoxes','#ovrCard','#ovKind','#ovDate',
-                    '#ovCrew','#ovNote','#ovAdd','#ovList'],
+  // schedule.html is now an authenticated transition shell. Once signed
+  // in it lands on the new engine; the old calendar/editor must not return.
+  'schedule.html': ['#appMain','#availabilityView','#scheduleTabs',
+                    '#manageTab','#mineTab','#stationTab'],
   'check.html': ['#who','#dir','#search','#fns','#btnRun','#btnAgain',
                  '#mkey','#btnScan','#btnReport','#runOut','#btnDeploy','#dep','#depSum','#btnSeed','#btnWipe','#seed'],
   'guards.html': ['#tabOpen','#tabMine','#tabLoad','#tabLog','#openList',

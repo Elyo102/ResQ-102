@@ -32,7 +32,7 @@
     {
       "name": "סידור עבודה",
       "short_name": "סידור",
-      "url": "./schedule.html",
+      "url": "./schedule-management.html?tab=station",
       "icons": [{ "src": "./resq-192.png", "sizes": "192x192" }]
     }
   ]

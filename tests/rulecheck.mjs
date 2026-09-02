@@ -94,8 +94,11 @@ head('אילוץ ארכיטקטוני');
   // get() ו-exists() עלולים לעלות קריאת מסמך לכל בדיקת הרשאה.
   // המערכת בנויה על claims; חריגים חייבים להיות קריאות מדויקות:
   // תגובה בודקת שהודעת-האב לא הוסתרה, דוח Shadow בודק שרק הדור
-  // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל
-  // ושתפקידו החי תואם לטוקן.
+  // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל.
+  // בנוסף, שער החברות הכללי קורא את אותו מסמך משתמש חי כדי שטוקן
+  // ישן לא ימשיך לעבוד אחרי העברה/השבתה. מינוי אחראי הסידור נבדק
+  // ב-Functions; אין נתיב כתיבה ישיר מהלקוח ולכן הכללים אינם צריכים
+  // לקרוא אותו.
   const gets = [...CODE.matchAll(/(?<![.\w])(get|exists|getAfter)\s*\(/g)];
   const replyParentReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/sub_stations\/\$\(subId\)\/bulletin_messages\/\$\(messageId\)\s*\)/g
@@ -103,18 +106,18 @@ head('אילוץ ארכיטקטוני');
   const shadowParentReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/attendance_shadow_reports\/\$\(monthKey\)\s*\)/g
   )];
-  const shadowUserReads = [...CODE.matchAll(
+  const liveUserReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/users\/\$\(request\.auth\.uid\)\s*\)/g
   )];
   const identityOperationReads = [...CODE.matchAll(
     /(?<![.\w])(get|exists)\s*\(\s*\/databases\/\$\(database\)\/documents\/identity_operations\/\$\(uid\)\s*\)/g
   )];
-  if (gets.length === 6 &&
+  if (gets.length === 7 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
-      shadowUserReads.length === 1 && identityOperationReads.length === 3) {
-    ok('קריאות מוגבלות: שלושת נתיבי Shadow/תגובה ובקרת פעולת זהות');
+      liveUserReads.length === 2 && identityOperationReads.length === 3) {
+    ok('קריאות מוגבלות: תגובה, Shadow, שתי בדיקות חברות חיה ופעולת זהות');
   } else if (gets.length) {
-    fail(gets.length + ' קריאות get()/exists() — רק ארבעת הנתיבים המאושרים מותרים',
+    fail(gets.length + ' קריאות get()/exists() — רק הנתיבים והכמויות המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
   } else {
     fail('חסרות בדיקות נתיבי-האב המאושרות',

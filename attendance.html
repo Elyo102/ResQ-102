@@ -188,6 +188,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        padding:2px 12px 13px; margin-top:12px }
   .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
   .otHead b{ color:var(--on-soft) }
+  .ot.req{ border-color:var(--bad-bd); background:var(--bad-bg) }
+  .ot.req .otHead, .ot.req .otHead b, .reqTag{ color:var(--bad) }
+  .reqTag{ font-weight:700 }
   .sum-line{ display:flex; justify-content:space-between; gap:12px;
              padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
   .sum-line:last-child{ border-bottom:0 }
@@ -358,13 +361,13 @@ import { renderNav, renderStuckNav } from './nav.js?v=38';
 import { MEMBER_ROLES } from './roles.js?v=38';
 import { initPWA } from './pwa.js?v=38';
 import { watchCallouts } from './callout.js?v=38';
-import { isAssigned as guardHasMe } from './guards.js?v=38';
 import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
   from './rotation.js?v=38';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
-         overtimeHours, reasonMissing, reasonWhy, SHAPES, shapeOf, shapeHe }
+         overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
+         SHAPES, shapeOf, shapeHe }
   from './hours.js?v=38';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
@@ -372,6 +375,8 @@ import { getAuth, onAuthStateChanged }
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -379,6 +384,10 @@ import { initAppCheck } from './appcheck.js?v=41a1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const callMyGuardAttendance = httpsCallable(fns, 'getMyGuardAttendance');
+const callLegacyScheduleCompatibilityContext =
+  httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
@@ -409,6 +418,7 @@ let PEOPLE = [];
 let subjectGeneration = 0;
 let staticLoadGeneration = 0;
 let monthLoadGeneration = 0;
+let guardLoadGeneration = 0;
 
 // האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
 function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
@@ -425,12 +435,77 @@ function stamp(body) {
   });
 }
 let viewYear, viewMonth;
-let rotations = [], overrides = {}, sites = [];
-let myGuards = [];   // אבטחות שאני משובץ אליהן
+let rotations = [], overrides = {}, sites = [], scheduleCompatibilityMode = '';
+let myGuards = [];   // אבטחות אישיות של החשבון המחובר בלבד
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
 let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
 let swaps   = [];          // כל ההחלפות המאושרות בתחנה; הסינון לאדם נעשה בחישוב
+
+const GUARD_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const GUARD_TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+function guardMonthRange(year, month){
+  return {
+    from: dateKey(year, month, 1),
+    to: dateKey(year, month, daysInMonth(year, month))
+  };
+}
+
+// ה-callable מחזיר היטל אישי מצומצם, אבל גם כאן בונים עצם חדש
+// מהשדות היחידים שהמסך צריך. כך שדה עתידי בתשובת השרת לא יכול
+// להפוך בטעות לנתון שמופיע בדוח השעות או במילוי האוטומטי.
+function personalGuardRows(result){
+  const rows = result && result.data && Array.isArray(result.data.guards)
+    ? result.data.guards : [];
+  return rows.map(function (item) {
+    if (!item || typeof item !== 'object') return null;
+    const date = String(item.date || '');
+    const start = String(item.start || '');
+    const end = String(item.end || '');
+    if (!GUARD_DATE_RE.test(date) || !GUARD_TIME_RE.test(start) || !GUARD_TIME_RE.test(end)) {
+      return null;
+    }
+    return {
+      id: typeof item.id === 'string' ? item.id : '',
+      date: date,
+      title: typeof item.title === 'string' ? item.title : '',
+      start: start,
+      end: end,
+      status: typeof item.status === 'string' ? item.status : ''
+    };
+  }).filter(function (item) {
+    // ההתנהגות הישנה דילגה על ביטולים, ולכן ביטול אינו ממלא
+    // מראש יום עבודה בדוח.
+    return item && item.status !== 'cancelled';
+  });
+}
+
+async function readMyGuardAttendance(snapshot){
+  // השרת תמיד מחזיר את האבטחות של החשבון המחובר, לא של subject.
+  // רכזת כוח אדם שעורכת מישהו אחר מקבלת כאן רשימה ריקה במכוון:
+  // אסור להציג את האבטחות שלה בתוך הדוח של עובד אחר.
+  if (!snapshot || snapshot.subjectUid !== snapshot.viewerUid) return [];
+  const range = guardMonthRange(snapshot.year, snapshot.month);
+  try {
+    const result = await callMyGuardAttendance(range);
+    return personalGuardRows(result);
+  } catch (ignore) {
+    // כמו הקריאה הישירה שהוחלפה: כשל זמני באבטחות אינו מוחק את
+    // דוח השעות כולו. ברירת המחדל הריקה בטוחה יותר מנתון ישן.
+    return [];
+  }
+}
+
+// טעינת אבטחות יכולה להתחיל גם מתוך סנכרון וגם מתוך טעינת חודש.
+// רק מי שהתחיל אחרון רשאי לפרסם את תוצאתו; אחרת תשובה ישנה
+// לאותו חודש ולאותו אדם עלולה לדרוס תוצאה חדשה יותר.
+function beginMyGuardAttendance(snapshot){
+  const generation = ++guardLoadGeneration;
+  return readMyGuardAttendance(snapshot).then(function (guards) {
+    return { generation: generation, guards: guards };
+  });
+}
 
 function siteHoursOf(id){
   const s = sites.filter(x => x.id === id)[0];
@@ -439,6 +514,65 @@ function siteHoursOf(id){
 function siteName(id){
   const s = sites.filter(x => x.id === id)[0];
   return s ? s.name : '';
+}
+
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+// ההקשר מגיע רק מהשרת, ללא stationId מהדפדפן. גם כאן מעתיקים
+// רשימת היתר בלבד: תשובה פגומה או מצב new אינם הופכים בטעות
+// למערכים ריקים שמסווגים את כל אנשי התחנה כמי שאינם במשמרת.
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
+}
+
+function showLegacyCompatibilityFailure(){
+  scheduleCompatibilityMode = '';
+  rotations = [];
+  overrides = {};
+  swaps = [];
+  $('rows').innerHTML = '';
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear + ' · נתונים לא זמינים';
+  $('tHours').textContent = '—';
+  $('tDays').textContent = '—';
+  $('tSug').textContent = '—';
+  setMonthUnavailable();
+  msg('לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. רענן את הדף ונסה שוב.', 'err');
 }
 
 // ---------- הרשאה ----------
@@ -542,46 +676,27 @@ async function loadStatic(){
     uid: SUBJ.uid,
     emp: String(SUBJ.emp),
     crew: SUBJ.crew || '',
-    mySite: mySite
+    mySite: mySite,
+    year: viewYear,
+    month: viewMonth
   };
   const next = {};
+  let compatibilityFailure = null;
 
-  // ששת המקורות אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
+  // ארבעת המקורות והקשר הסידור אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
-  // כל משימה עדיין מבודדת בכשל, בדיוק כמו ששת ה-try/catch
-  // שהיו כאן קודם — מקור חסר אינו מוחק נתון שמקור אחר החזיר.
-  const loadRotations = async function () {
+  // המקורות שאינם בסיס לחישוב עדיין מבודדים בכשל; הקשר הסידור
+  // עצמו נכשל בקול ועוצר את החישוב במקום לפרסם תוצאה מטעה.
+  const loadLegacyCompatibility = async function () {
     try {
-      const rs = await getDocs(collection(db, 'stations', snapshot.sid, 'rotations'));
-      next.rotations = rs.docs.map(d => d.data());
-    } catch (ignore) {}
-  };
-
-  const loadGuards = async function () {
-    try {
-      const gs = await getDocs(collection(db, 'stations', snapshot.sid, 'guards'));
-      const found = [];
-      gs.forEach(d => {
-        const v = Object.assign({ id: d.id }, d.data() || {});
-        if (v.status === 'cancelled') return;
-        if (guardHasMe(v, snapshot.uid)) found.push(v);
-      });
-      next.myGuards = found;
-    } catch (ignore) {}
-  };
-
-  const loadOverrides = async function () {
-    try {
-      const os = await getDocs(collection(db, 'stations', snapshot.sid, 'shift_overrides'));
-      const found = {};
-      os.forEach(d => {
-        const v = d.data() || {};
-        found[d.id] = { kind: v.kind || '', crew: v.crew || '',
-                        extra_crews: Array.isArray(v.extra_crews) ? v.extra_crews : [],
-                        note: v.note || '' };
-      });
-      next.overrides = found;
-    } catch (ignore) {}
+      // התחנה נגזרת מהזהות החיה בשרת; הדפדפן שולח רק
+      // את הטווח המזערי שנדרש לחודש המוצג.
+      const result = await callLegacyScheduleCompatibilityContext(
+        guardMonthRange(snapshot.year, snapshot.month));
+      next.compatibility = legacyCompatibilityData(result);
+    } catch (error) {
+      compatibilityFailure = error;
+    }
   };
 
   // איפה אני משובץ בלוח הציוות של המשמרת שלי. משמש כברירת
@@ -642,18 +757,24 @@ async function loadStatic(){
   };
 
   await Promise.all([
-    loadRotations(), loadGuards(), loadOverrides(),
+    loadLegacyCompatibility(),
     loadBoardSite(), loadSwaps(), loadSites()
   ]);
 
   const current = generation === staticLoadGeneration &&
     SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
-    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew;
+    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew &&
+    viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
 
-  if (Object.prototype.hasOwnProperty.call(next, 'rotations')) rotations = next.rotations;
-  if (Object.prototype.hasOwnProperty.call(next, 'myGuards')) myGuards = next.myGuards;
-  if (Object.prototype.hasOwnProperty.call(next, 'overrides')) overrides = next.overrides;
+  if (compatibilityFailure || !next.compatibility) {
+    showLegacyCompatibilityFailure();
+    return false;
+  }
+
+  scheduleCompatibilityMode = next.compatibility.mode;
+  rotations = next.compatibility.rotations;
+  overrides = next.compatibility.overrides;
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
   if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;
@@ -672,11 +793,28 @@ function setMonthBusy(busy){
   });
 }
 
+// כשל תאימות הוא מצב סופי של בקשת הרשת, לא טעינה אינסופית.
+// מאפשרים מעבר חודש כניסיון חוזר, אך משאירים כל פעולה שמחשבת או
+// שומרת נתונים חסומה עד שבסיס הסידור נטען מחדש בהצלחה.
+function setMonthUnavailable(){
+  setMonthBusy(false);
+  $('work').setAttribute('aria-busy', 'false');
+  ['btnFill','btnSubmit','btnView','btnSync','btnRecalc','btnUnsubmit',
+   'btnApprove','btnReopen','btnStart','btnStop','btnManual'].forEach(function (id) {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+  document.querySelectorAll('.days button').forEach(function (el) {
+    el.disabled = true;
+  });
+}
+
 // פעולה שהתחילה לפני מעבר חודש עלולה להסתיים בזמן שהחודש
 // החדש עדיין נטען. במקרה כזה אסור לה להפעיל את הכפתור מחדש;
 // loadMonth האחרון ישחרר את כל הכפתורים רק אחרי שהנתונים הוחלפו.
 function releaseMonthAction(button){
-  button.disabled = $('work').getAttribute('aria-busy') === 'true';
+  button.disabled = $('work').getAttribute('aria-busy') === 'true' ||
+    !scheduleCompatibilityMode;
 }
 
 async function loadMonth(){
@@ -685,6 +823,8 @@ async function loadMonth(){
     sid: SID,
     emp: String(SUBJ.emp),
     subject: subjectGeneration,
+    subjectUid: SUBJ.uid,
+    viewerUid: ME && ME.uid,
     year: viewYear,
     month: viewMonth
   };
@@ -692,12 +832,13 @@ async function loadMonth(){
   const nextRecords = {};
   let nextReport = null;
   let attendanceError = null;
+  const guardRequest = beginMyGuardAttendance(snapshot);
   setMonthBusy(true);
 
   // רשומות החודש ומצב הדוח הן שתי קריאות עצמאיות. שתיהן
   // מתחילות יחד ובונות תוצאה מקומית. רק דור הטעינה האחרון
   // רשאי לפרסם אותה, כך שחודש איטי לא יכול לדרוס חודש חדש.
-  await Promise.all([
+  const loaded = await Promise.all([
     (async function () {
       // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
       // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
@@ -722,17 +863,21 @@ async function loadMonth(){
                                    snapshot.emp + '_' + mk));
         if (r.exists()) nextReport = r.data();
       } catch (ignore) {}
-    })()
+    })(),
+    guardRequest
   ]);
+  const guardResult = loaded[2];
 
   const current = generation === monthLoadGeneration &&
     snapshot.subject === subjectGeneration && SID === snapshot.sid &&
     SUBJ && String(SUBJ.emp) === snapshot.emp &&
+    SUBJ.uid === snapshot.subjectUid && ME && ME.uid === snapshot.viewerUid &&
     viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
 
   records = nextRecords;
   report = nextReport;
+  if (guardResult.generation === guardLoadGeneration) myGuards = guardResult.guards;
   if (attendanceError) {
     const code = String(attendanceError.code || '');
     if (code.indexOf('failed-precondition') !== -1) {
@@ -1046,15 +1191,29 @@ $('btnManual').onclick = () => {
 
 $('btnSync').onclick = async () => {
   const b = $('btnSync'); b.disabled = true;
-  const action = { subject:subjectGeneration, year:viewYear, month:viewMonth };
+  const action = {
+    subject:subjectGeneration, subjectUid:SUBJ.uid, viewerUid:ME && ME.uid,
+    year:viewYear, month:viewMonth
+  };
   try {
-    // הסידור נטען מחדש — הוא יכול היה להשתנות מאז שהמסך נפתח.
-    const fresh = await loadStatic();
-    if (!fresh || action.subject !== subjectGeneration ||
-        action.year !== viewYear || action.month !== viewMonth) {
+    // הסידור והאבטחות האישיות נטענים מחדש — שניהם יכולים היו
+    // להשתנות מאז שהמסך נפתח. האבטחות נשארות אישיות גם בזמן
+    // שרכזת כוח אדם פותחת דוח של עובד אחר.
+    const guardRequest = beginMyGuardAttendance(action);
+    const loaded = await Promise.all([loadStatic(), guardRequest]);
+    const fresh = loaded[0];
+    const freshGuards = loaded[1];
+    const sameTarget = action.subject === subjectGeneration &&
+      action.subjectUid === (SUBJ && SUBJ.uid) && action.viewerUid === (ME && ME.uid) &&
+      action.year === viewYear && action.month === viewMonth;
+    // loadStatic already rendered the real compatibility error. Do not replace
+    // it with the unrelated "person or month changed" message.
+    if (!fresh) return;
+    if (!sameTarget) {
       msg('התיקון בוטל כי האדם או החודש השתנו בזמן הטעינה.', 'info');
       return;
     }
+    if (freshGuards.generation === guardLoadGeneration) myGuards = freshGuards.guards;
 
     const bt = baseTimes();
     const last = daysInMonth(viewYear, viewMonth);
@@ -1210,21 +1369,25 @@ function editDay(key, rec){
   const g = myGuardOn(key);
   const dflt = (g && !workingOn(key))
     ? { day_type: 'guard', start: g.start || bt.start, end: g.end || bt.end,
-        sub_station: mySite, notes: (g.title || '') +
-          (g.place ? ' · ' + g.place : '') }
+        // תצוגת האבטחות האישית אינה כוללת מקום. כותרת האבטחה
+        // מספיקה כהקשר למילוי מראש, בלי להרחיב את מידע המיקום.
+        sub_station: mySite, notes: g.title || '' }
     : { day_type: 'regular', start: bt.start, end: bt.end,
         sub_station: mySite, notes: '' };
 
   const v = rec || dflt;
   const p = key.split('-');
   const shape0 = rec ? shapeOf(rec) : 'regular';
+  const reasonMark = ' · נימוק חובה';
 
   const types = DAY_TYPES.map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
-    '>' + t.he + '</option>').join('');
+    '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
+    '</option>').join('');
   const shapes = SHAPES.map(s =>
     '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
-    '>' + s.he + '</option>').join('');
+    '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
+    '</option>').join('');
   const siteOpts = '<option value="">בלי תחנה</option>' + sites.map(s =>
     '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
     '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
@@ -1261,7 +1424,7 @@ function editDay(key, rec){
     '<div id="dOtBox" class="ot hide">' +
       '<div class="otHead" id="dOtHead"></div>' +
       '<label for="dOtReason">נימוק · חובה</label>' +
-      '<input type="text" id="dOtReason" maxlength="120" value="' +
+      '<input type="text" id="dOtReason" maxlength="120" aria-describedby="dOtHead" value="' +
         esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
     '</div>' +
 
@@ -1327,13 +1490,27 @@ function editDay(key, rec){
 
     $('dOtBox').classList.toggle('hide', !why);
     if (why) {
-      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — משאבי אנוש צריכים ' +
-        'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.';
+      const reasonInput = $('dOtReason');
+      const filled = !!reasonInput.value.trim();
+      reasonInput.required = true;
+      reasonInput.setAttribute('aria-required', 'true');
+      reasonInput.setAttribute('aria-invalid', filled ? 'false' : 'true');
+      $('dOtBox').classList.toggle('req', !filled);
+      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — ' +
+        (filled
+          ? 'הנימוק יישמר עם היום.'
+          : '<span class="reqTag">חובה למלא נימוק.</span> משאבי אנוש צריכים ' +
+            'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.');
+    } else {
+      $('dOtReason').required = false;
+      $('dOtReason').setAttribute('aria-required', 'false');
+      $('dOtReason').setAttribute('aria-invalid', 'false');
+      $('dOtBox').classList.remove('req');
     }
   };
 
   ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
-  ['dStart','dEnd','dStart2','dEnd2'].forEach(id => { $(id).oninput = sync; });
+  ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
 
   $('dSave').onclick = async () => {
@@ -1701,11 +1878,13 @@ async function loadApprovals(){
 
 $('prev').onclick = async () => {
   viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-  msg('', ''); await loadMonth();
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
 };
 $('next').onclick = async () => {
   viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
-  msg('', ''); await loadMonth();
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
 };
 </script>
 </body>

@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const backupPolicy = require('./backup-policy');
+const firestoreIndexes = require('../firestore.indexes.json');
 
 test('policy manifest is internally valid and path-unique', () => {
   assert.deepEqual(backupPolicy.validatePolicies(backupPolicy.DATA_POLICIES), []);
@@ -29,7 +30,8 @@ test('identity data is one restore-consistency group', () => {
   const expected = [
     'registration_requests/{uid}', 'emp_index/{emp}',
     'emp_reservations/{emp}', 'identity_operations/{uid}',
-    'meta/{docId}',
+    'meta/{docId}', 'station_transfer_requests/{requestId}',
+    'station_transfer_locks/{uid}',
     'stations/{sid}/pending_users/{code}',
     'stations/{sid}/users/{uid}', 'stations/{sid}/roster/{uid}'
   ].sort();
@@ -40,6 +42,31 @@ test('identity data is one restore-consistency group', () => {
     assert.equal(item.consistencyGroup, backupPolicy.IDENTITY_CONSISTENCY_GROUP);
     assert.equal(item.restorePolicy, 'restore_with_identity_reconciliation');
   }
+});
+
+test('station transfer locks are lifecycle-bound identity state, not TTL data', () => {
+  const item = backupPolicy.getPolicy('station_transfer_locks/{uid}');
+  assert.ok(item);
+  assert.equal(item.classification, 'temporary');
+  assert.equal(item.monitorPolicy, 'integrity_group');
+  assert.equal(item.backupPolicy, 'identity_consistency_export');
+  assert.equal(item.restorePolicy, 'restore_with_identity_reconciliation');
+  assert.equal(item.retention, 'lifecycle_bound_active_pointer');
+  assert.equal(item.consistencyGroup, backupPolicy.IDENTITY_CONSISTENCY_GROUP);
+  assert.equal(firestoreIndexes.fieldOverrides.some((override) =>
+    override.collectionGroup === 'station_transfer_locks' && override.ttl === true), false);
+});
+
+test('active station-transfer ownership and station lists have deployed indexes', () => {
+  ['target_uid', 'source_station_id', 'target_station_id'].forEach((fieldPath) => {
+    assert.equal(firestoreIndexes.indexes.some((index) =>
+      index.collectionGroup === 'station_transfer_requests' &&
+      index.queryScope === 'COLLECTION' &&
+      JSON.stringify(index.fields) === JSON.stringify([
+        { fieldPath, order:'ASCENDING' },
+        { fieldPath:'status', order:'ASCENDING' }
+      ])), true, 'missing station-transfer index for ' + fieldPath);
+  });
 });
 
 test('activity monitoring requires an explicit contract and detects silence', () => {
