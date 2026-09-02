@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
+const publication = read('functions/schedule-publication.js');
 const service = read('functions/schedule-service.js');
 const access = read('functions/schedule-access.js');
 const accessAdmin = read('functions/schedule-access-admin.js');
@@ -402,6 +403,44 @@ check('the policy author invents no business value and mirrors the runtime diges
   assert.ok(author.includes("fail(code, what + ' — ערך חסר. אין ברירת מחדל.')"));
   assert.ok(author.includes('complete: true'));
   assert.equal(/require\(['"]firebase/.test(author), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * ההתראה אומרת מתי ואיפה
+ * ------------------------------------------------------------------ */
+
+check('a guard notice names the date, the hours and the place', () => {
+  // „יש עדכון לאבטחה בסידור שלך" הוא נכון וחסר תועלת: הוא מחייב
+  // לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למחר.
+  assert.ok(runtime.includes('function guardPlaceText(value)'));
+  assert.ok(runtime.includes('function shortDate(iso)'));
+  const start = runtime.indexOf('function guardOutboxText(value)');
+  const end = runtime.indexOf('function guardOutboxDelivery(value)', start);
+  const text = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(text.includes('shortDate(value.date)'), 'התאריך אינו בהתראה');
+  assert.ok(text.includes('guardPlaceText(value)'), 'המקום אינו בהתראה');
+  // ⭐ המקום נלקח ממסמך האבטחה החי שכבר נקרא, ולא מעותק ישן בתור.
+  assert.ok(runtime.includes('lease_token: leaseToken, place: live.place'));
+  // והוא מנוקה לפני שהוא מגיע למסך נעול.
+  const clean = runtime.slice(runtime.indexOf('function guardPlaceText(value)'),
+    runtime.indexOf('function guardOutboxText(value)'));
+  assert.ok(clean.includes('replace(CONTROL_RE'), 'תווי בקרה אינם מוסרים');
+  assert.ok(clean.includes('.slice(0, 40)'), 'האורך אינו נחתך');
+});
+
+check('a schedule change notice names the date and the sub-station', () => {
+  assert.ok(publication.includes('function pushBody(items, changeCount, firstPublication)'));
+  assert.ok(publication.includes("sub_station_changed: 'שובצת מחדש'"));
+  // רשימת ההיתר גדלה בדיוק בשני שדות, ושניהם על האדם עצמו.
+  assert.ok(publication.includes(
+    "const PUSH_FIELDS = Object.freeze(['kind', 'date', 'sub_station', 'sub_station_label']);"));
+  // ⭐ ועדיין: שום שם של אדם אחר אינו נכנס למטען.
+  const build = publication.slice(publication.indexOf('function buildPush'),
+    publication.indexOf('function utf8Bytes'));
+  // `person` הוא שם הפרמטר — הנמען עצמו. מה שאסור הוא ש**ערך**
+  // שמזהה אדם ייכנס למטען.
+  assert.equal(/crew|full_name|\.person\b|names/.test(build), false, build.slice(0, 400));
 });
 
 check('the month strip reads the whole verified snapshot and is bounded', () => {
@@ -837,5 +876,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 74);
-console.log('\n74 schedule runtime source checks passed.');
+assert.equal(passed, 76);
+console.log('\n76 schedule runtime source checks passed.');

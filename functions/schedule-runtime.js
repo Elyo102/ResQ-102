@@ -4152,8 +4152,32 @@ function createScheduleRuntime(deps) {
     );
   }
 
+  /**
+   * `2026-09-04` → `4/9`. ידנית ולא דרך `Intl`, כדי שאותה התראה
+   * תיראה זהה בכל סביבה שבה הפונקציה רצה.
+   */
+  function shortDate(iso) {
+    const value = String(iso || '');
+    if (!DATE_RE.test(value)) return value;
+    return String(Number(value.slice(8, 10))) + '/' + String(Number(value.slice(5, 7)));
+  }
+
+  /**
+   * ⭐ המקום נכתב על מסך נעול, ולכן הוא מנוקה כאן ולא נסמך על מי
+   * שהקליד אותו: תווי בקרה מוסרים, והאורך נחתך.
+   */
+  function guardPlaceText(value) {
+    const place = String(value && value.place || '').replace(CONTROL_RE, ' ').trim();
+    return place ? place.slice(0, 40) : '';
+  }
+
+  /* ⭐ „יש עדכון לאבטחה בסידור שלך" הוא נכון וחסר תועלת. מתי ואיפה
+   * הם המידע שבגללו ההתראה נשלחה — בלעדיהם צריך לפתוח את
+   * האפליקציה רק כדי לדעת אם זה נוגע למחר. */
   function guardOutboxText(value) {
-    const when = String(value.date) + ' · ' + String(value.start) + '–' + String(value.end);
+    const place = guardPlaceText(value);
+    const when = shortDate(value.date) + ' · ' + String(value.start) + '–' + String(value.end)
+      + (place ? ' · ' + place : '');
     switch (value.kind) {
       case 'open': return {
         title: 'נפתחה אבטחה בתחנה',
@@ -4256,7 +4280,13 @@ function createScheduleRuntime(deps) {
         lease_token: leaseToken,
         lease_until: new Date(now + OUTBOX_LEASE_MS)
       });
-      claimed = Object.assign({}, value, { lease_token: leaseToken });
+      // ⭐ המקום נלקח ממסמך האבטחה **החי** שכבר נקרא כאן, ולא
+      // מעותק ששמור בשורת התור. כך אין קריאה נוספת, והכתובת
+      // שנשלחת היא זו שתקפה עכשיו ולא זו שהייתה כשהתור נוצר.
+      const live = guard && guard.exists ? (guard.data() || {}) : {};
+      claimed = Object.assign({}, value, {
+        lease_token: leaseToken, place: live.place
+      });
     });
     if (!claimed) return { skipped: true };
     try {

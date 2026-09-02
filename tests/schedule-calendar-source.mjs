@@ -117,9 +117,26 @@ t('רשימת ההיתר של הפוש קיימת וסגורה', () => {
   ok(/const PUSH_FIELDS = Object\.freeze\(\[/.test(P), 'אין רשימת היתר');
   const m = P.match(/const PUSH_FIELDS = Object\.freeze\(\[([^\]]*)\]/);
   const fields = m[1].split(',').map((x) => x.trim().replace(/'/g, '')).filter(Boolean);
-  const expected = ['kind', 'date'];
+  // ⭐ הרשימה מונה את התחנה שאליה **האדם עצמו** שובץ, כדי שההתראה
+  // תאמר לאיזה יום ולאיזו תחנה — זה מידע עליו ולא על אף אחד אחר.
+  // כל תוספת נוספת חייבת להפיל את הבדיקה הזאת ולהישקל בנפרד.
+  const expected = ['kind', 'date', 'sub_station', 'sub_station_label'];
   ok(fields.length === expected.length && expected.every((x) => fields.indexOf(x) > -1),
     'רשימת ההיתר השתנתה: ' + fields.join(','));
+  // ואף שדה ברשימה אינו נושא שם של אדם.
+  ok(!fields.some((x) => /person|name|crew|uid|full/.test(x)),
+    'שדה שמזהה אדם נכנס לרשימת ההיתר: ' + fields.join(','));
+});
+t('ההתראה אומרת לאיזה תאריך ולאיזו תחנה', () => {
+  // „שינוי אחד בסידור שלך" הוא נכון וחסר תועלת: הוא מחייב לפתוח
+  // את האפליקציה רק כדי לדעת אם זה נוגע למחר בבוקר.
+  ok(/function pushBody\(/.test(P), 'אין בונה נוסח להתראה');
+  ok(/function shortDate\(/.test(P), 'אין עיצוב תאריך קצר');
+  ok(!/Intl\./.test(P), 'עיצוב תלוי ICU במטען שנחתם ונשמר');
+  ok(/sub_station_changed: 'שובצת מחדש'/.test(P), 'שיבוץ מחדש אינו מנוסח');
+  const body = P.slice(P.indexOf('function itemText'), P.indexOf('function pushBody'));
+  ok(/item\.sub_station_label \|\| item\.sub_station/.test(body),
+    'התחנה אינה נאמרת בהתראה');
 });
 t('בונה הפוש עובר על רשימת ההיתר בלבד', () =>
   ok(/for \(const key of PUSH_FIELDS\)/.test(P), 'המטען אינו מסונן לפי הרשימה'));

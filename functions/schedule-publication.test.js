@@ -246,14 +246,48 @@ t('שלושה שינויים לאדם — התראה אחת', () => {
   const mine = r.notifications.filter((n) => n.person === 'דן');
   assert.strictEqual(mine.length, 1, 'נשלחו ' + mine.length + ' התראות במקום אחת');
   assert.ok(mine[0].change_count >= 2);
-  assert.ok(mine[0].push.body.indexOf('שינויים') > -1);
+  // ⭐ התראה אחת, אבל היא נוקבת בכל תאריך. „2 שינויים בסידור שלך"
+  // מחייב לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למחר.
+  assert.ok(mine[0].push.body.indexOf('1/9') > -1, mine[0].push.body);
+  assert.ok(mine[0].push.body.indexOf('2/9') > -1, mine[0].push.body);
+  assert.ok(mine[0].push.body.indexOf('אילת') > -1, mine[0].push.body);
+});
+
+t('שינוי בתחנת קצה אומר לאיזה תאריך ולאיזו תחנה', () => {
+  const next = plan([row('2026-09-01', 'timna', 'תמנע', [slot('דן', 'driver', 'נהג')])]);
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  // המעבר לתמנע גורר גם שינוי בהרכב הצוות, ולכן שני פריטים —
+  // ושניהם נוקבים בתאריך ובתחנה.
+  assert.ok(mine.push.body.indexOf('שובצת מחדש · 1/9 · תמנע') === 0, mine.push.body);
+  // והמטען עצמו נושא את השדות, לא רק את הטקסט.
+  const item = mine.push.items.find((x) => x.kind === 'sub_station_changed');
+  assert.ok(item);
+  assert.strictEqual(item.date, '2026-09-01');
+  assert.strictEqual(item.sub_station, 'timna');
+  assert.strictEqual(item.sub_station_label, 'תמנע');
+});
+
+t('ההתראה אינה נושאת שם של אף אדם אחר', () => {
+  // רון יוצא ואבי נכנס: הרכב הצוות של דן השתנה, ולכן הוא מקבל התראה.
+  const next = plan([row('2026-09-01', 'eilat', 'אילת',
+    [slot('דן', 'driver', 'נהג'), slot('אבי', 'team_cmd', 'מפקד צוות')])]);
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  const text = JSON.stringify(mine.push);
+  // ⭐ הרכב הצוות השתנה, והשם של מי שנוסף אינו במטען. מי שרוצה
+  // לדעת מי איתו פותח את האפליקציה.
+  assert.ok(text.indexOf('רון') === -1, text);
+  assert.ok(text.indexOf('אבי') === -1, text);
+  assert.ok(text.indexOf('רמי') === -1, text);
 });
 
 t('שינוי אחד — נוסח יחיד', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
-  assert.strictEqual(mine.push.body, 'שינוי אחד בסידור שלך');
+  // תאריך ותחנת קצה, ולא ספירה.
+  assert.strictEqual(mine.push.body, 'שונה התפקיד · 1/9 · אילת', mine.push.body);
 });
 
 t('לחיצה פותחת את הסידור שלי', () => {

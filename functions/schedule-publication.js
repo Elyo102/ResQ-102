@@ -47,7 +47,18 @@ const ALL_CHANGES = Object.freeze(Object.keys(CHANGE).map((k) => CHANGE[k]));
  */
 // מסך הנעילה מקבל רק סוג שינוי ותאריך. שמות, תפקידים, תחנות וכותרות
 // אירוע נטענים בתוך האפליקציה לאחר אימות המשתמש.
-const PUSH_FIELDS = Object.freeze(['kind', 'date']);
+/**
+ * רשימת ההיתר של מטען הפוש.
+ *
+ * ⭐ `sub_station` ו-`sub_station_label` הם **המקום שאליו האדם עצמו
+ * שובץ**. זה מידע עליו, לא על אף אחד אחר, והוא בדיוק מה שהופך
+ * התראה לשימושית: „שובצת מחדש" בלי לאיזה יום ולאיזו תחנה מחייב
+ * לפתוח את האפליקציה כדי לדעת אם זה נוגע למחר בבוקר.
+ *
+ * מה שנשאר מחוץ לרשימה נשאר מחוץ: שמות של אנשים אחרים, סיבות
+ * היעדרות, וכל שדה שאינו כאן.
+ */
+const PUSH_FIELDS = Object.freeze(['kind', 'date', 'sub_station', 'sub_station_label']);
 
 /** מפתחות שאסור שיופיעו בפלט בשום צורה. */
 const FORBIDDEN_KEYS = Object.freeze([
@@ -335,9 +346,15 @@ function createPublication(deps) {
   /* ---------------- מטען פוש · רשימת היתר ---------------- */
 
   function pickPushFields(change) {
+    // המקום שאליו שובץ עכשיו. בהסרה אין `to`, ואז המקום שממנו
+    // הוסר — כדי שיהיה ברור על איזה שיבוץ מדובר.
+    const place = change.to || change.from || null;
     const flat = {
       kind: change.kind,
-      date: change.date
+      date: change.date,
+      sub_station: place && isNonEmptyString(place.sub_station) ? place.sub_station : null,
+      sub_station_label: place && isNonEmptyString(place.sub_station_label)
+        ? place.sub_station_label : null
     };
     const out = {};
     // רשימת היתר ממצה: רק מה שברשימה יוצא, ובאותו סדר.
@@ -346,14 +363,67 @@ function createPublication(deps) {
   }
 
   /**
+   * `2026-09-04` → `4/9`.
+   *
+   * ידנית ולא דרך `Intl`: פורמט שתלוי ב-ICU של המכונה הופך את אותו
+   * מטען לשונה בין סביבות, וזה מטען שנחתם ונשמר.
+   */
+  function shortDate(iso) {
+    if (!isNonEmptyString(iso) || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+    return String(Number(iso.slice(8, 10))) + '/' + String(Number(iso.slice(5, 7)));
+  }
+
+  /* ⭐ מה ההתראה אומרת בפועל.
+   *
+   * „שינוי אחד בסידור שלך" הוא נכון וחסר תועלת: מי שמקבל אותו
+   * חייב לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למשמרת של מחר
+   * בבוקר. תאריך ותחנת קצה הם המידע שבגללו ההתראה נשלחה. */
+  const CHANGE_TEXT = Object.freeze({
+    assignment_added: 'שובצת',
+    assignment_removed: 'בוטל שיבוץ',
+    assignment_cancelled: 'בוטל שיבוץ',
+    assignment_restored: 'הוחזר שיבוץ',
+    sub_station_changed: 'שובצת מחדש',
+    station_changed: 'שובצת לתחנה אחרת',
+    role_changed: 'שונה התפקיד',
+    hours_changed: 'שונו השעות',
+    shift_changed: 'שונתה המשמרת',
+    rotation_changed: 'שונה הסבב',
+    crew_changed: 'השתנה הצוות',
+    event_assigned: 'שובצת לאירוע',
+    event_changed: 'אירוע עודכן',
+    event_cancelled: 'אירוע בוטל'
+  });
+
+  function itemText(item) {
+    const parts = [CHANGE_TEXT[item.kind] || 'עודכן שיבוץ'];
+    const when = shortDate(item.date);
+    if (when) parts.push(when);
+    // תחנת הקצה נאמרת רק כשהיא ידועה. אירוע אינו יושב בתחנת קצה,
+    // ואין להמציא לו אחת.
+    const where = item.sub_station_label || item.sub_station;
+    if (isNonEmptyString(where)) parts.push(where);
+    return parts.join(' · ');
+  }
+
+  function pushBody(items, changeCount, firstPublication) {
+    if (!items.length) {
+      return firstPublication ? 'הסידור שלך פורסם' : 'הסידור שלך עודכן';
+    }
+    if (items.length === 1 && changeCount === 1) return itemText(items[0]);
+    // שניים-שלושה נאמרים במלואם; מעבר לזה, הראשונים ומספר.
+    const shown = items.slice(0, 3).map(itemText);
+    const rest = changeCount - Math.min(3, items.length);
+    return shown.join(' | ') + (rest > 0 ? ' | ועוד ' + rest : '');
+  }
+
+  /**
    * מטען הפוש. **אין בו שמות של אנשים אחרים** — גם לא בשינוי הרכב צוות.
    * מי שרוצה לדעת מי איתו פותח את האפליקציה.
    */
   function buildPush(person, changes, publicationId, firstPublication) {
     const items = changes.slice(0, LIMITS.MAX_PUSH_ITEMS).map(pickPushFields);
-    const body = firstPublication
-      ? (items.length === 1 ? 'שיבוץ אחד פורסם עבורך' : items.length + ' שיבוצים ואירועים פורסמו עבורך')
-      : (items.length === 1 ? 'שינוי אחד בסידור שלך' : items.length + ' שינויים בסידור שלך');
+    const body = pushBody(items, changes.length, firstPublication);
     const push = {
       title: firstPublication ? 'ResQ · הסידור פורסם' : 'ResQ · הסידור שלך',
       body,
