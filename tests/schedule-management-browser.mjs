@@ -118,6 +118,45 @@ function legacyStation(mode) {
     next_day:legacyDay(tomorrow, false)
   };
 }
+// רצועת חודש. אותו מבנה יום בדיוק כמו בתצוגת היום, רק בטווח —
+// כי `getStationScheduleRange` בונה את הימים מאותו `dayBlock` בשרת.
+function monthRange(anchor) {
+  const year = Number(anchor.slice(0, 4));
+  const month = Number(anchor.slice(5, 7));
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (n) => String(n).padStart(2, '0');
+  return { from: anchor.slice(0, 7) + '-01', to: anchor.slice(0, 7) + '-' + pad(last), last };
+}
+function rangeDays(anchor, decorate) {
+  const bounds = monthRange(anchor);
+  const out = [];
+  for (let index = 1; index <= bounds.last; index++) {
+    out.push(decorate(anchor.slice(0, 7) + '-' + String(index).padStart(2, '0')));
+  }
+  return out;
+}
+const stationRange = {
+  mode:'new', active:true, source:'v2', publication_id:'p_live', revision:4,
+  from:monthRange(today).from, to:monthRange(today).to,
+  days:rangeDays(today, (date) => day(date, date === today ? 'קורס חילוץ' : '', date === today))
+};
+stationRange.days.find((item) => item.date === today).guards = [
+  { id:'g:guard_open', title:'אבטחת כוננות', hours:'18:00-23:00', people:[], includes_me:false },
+  { id:'g:guard_staffed', title:'אבטחת צוות', hours:'19:00-22:00',
+    people:[{ person:'חבר/ת האבטחה', is_me:false }], includes_me:false }
+];
+const stationRangeGuardsUnavailable = JSON.parse(JSON.stringify(stationRange));
+stationRangeGuardsUnavailable.days.forEach((item) => {
+  item.guards_status = 'unavailable'; item.guards = [];
+});
+function legacyRange(mode) {
+  return {
+    mode, active:true, source:'legacy', publication_id:null, revision:null,
+    from:monthRange(today).from, to:monthRange(today).to,
+    days:rangeDays(today, (date) => legacyDay(date, date === today))
+  };
+}
+
 const draftPreview = {
   draft_id:'draft_1', expected_content_digest:'digest_preview_1',
   from:today, to:shiftDay(today, 30), week_start:today,
@@ -127,6 +166,19 @@ const draftPreview = {
     return day(value.toISOString().slice(0, 10), index === 2 ? 'תרגיל תחנתי' : '', index === 0);
   })
 };
+// תוצאות נתיב הכתיבה של חוקי התחנה. הצורה היא בדיוק זו שהשרת
+// מחזיר: הפרשים, החלשות ואזהרות — ולעולם לא מסמך המדיניות עצמו,
+// שהוא הדבר שעליו חותמים.
+const policyWeakening = {
+  kind:'updated', policy_id:'policy_2', version:'v2', digest:'d2', content_key:'k2',
+  mode:'new', active_policy_id:'policy_1',
+  changes:[{ kind:'minimum', sub_station:'main', from:2, to:1, weakens:true }],
+  weakening:[{ kind:'minimum', sub_station:'main', from:2, to:1, weakens:true }],
+  warnings:[]
+};
+const policySaved = Object.assign({}, policyWeakening, {
+  duplicate:false, written:true, activated:true
+});
 const statusManager = { mode:'new', configured:true, manager:true,
   active:{ publication_id:'p_live', revision:4, previous_publication_id:null, can_rollback:false } };
 const statusAfterPublish = { mode:'new', configured:true, manager:true,
@@ -140,16 +192,24 @@ const statusShadowMember = { mode:'shadow', configured:true, manager:false, acti
 const statusShadowManager = { mode:'shadow', configured:true, manager:true, active:null };
 const setup = {
   mode:'new', configured:true,
-  policy:{ id:'policy_1', version:'1', digest:'abc', sub_stations:[{
-    id:'main', label:'אילת', minimum:2,
-    requirements:[{ role:'driver', label:'נהג', count:1, required:true }, { role:'firefighter', label:'לוחם', count:1, required:true }]
-  }] },
+  policy:{ id:'policy_1', active_policy_id:'policy_1', version:'v1', digest:'abc',
+    rest:{ min_gap_days:2 }, rotation:null, max_shifts_per_month:12,
+    sub_stations:[{
+      id:'main', label:'אילת', minimum:2,
+      requirements:[{ role:'driver', label:'נהג', count:1, required:true }, { role:'firefighter', label:'לוחם', count:1, required:true }]
+    }] },
   source:{ id:'source_1', version:'1', revision:'7' },
   people:[
     { id:'stub-uid', name:'אלדד יונה', sub_station:'main', roles:['firefighter'] },
     { id:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'] }
   ]
 };
+
+const setupAfterSave = JSON.parse(JSON.stringify(setup));
+setupAfterSave.policy.active_policy_id = 'policy_2';
+setupAfterSave.policy.id = 'policy_2';
+setupAfterSave.policy.version = 'v2';
+setupAfterSave.policy.sub_stations[0].minimum = 1;
 
 async function prepare(context, role, plans) {
   await context.route('**/firebasejs/**', (route) => {
@@ -175,9 +235,11 @@ try {
   // להיות אחראי/ת סידור, ואין הרשאת עריכה אוטומטית למפקד.
   await prepare(manager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }, { data:statusAfterRollback }],
-    getScheduleManagerSetup:[{ data:setup }],
+    getScheduleManagerSetup:[{ data:setup }, { data:setupAfterSave }],
+    previewSchedulePolicy:[{ data:policyWeakening }, { data:policyWeakening }],
+    saveSchedulePolicy:[{ data:policySaved }],
     getMyScheduleV2:[{ data:mine }, { data:mine }],
-    getStationScheduleV2:[{ data:station }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
     runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30),
       summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
     getScheduleDraftPreview:[{ data:draftPreview }],
@@ -193,15 +255,74 @@ try {
     assert.equal(await managerPage.locator('#manageTab').isVisible(), true);
     assert.equal(await managerPage.locator('#manageView').isVisible(), true);
     assert.match(await managerPage.locator('#sourceSummary').textContent(), /מהדורה 7/);
-    assert.equal(await managerPage.locator('#policy .policy-row').count(), 3);
+    // שני תפקידים + קו מינימום + ימי מנוחה. כל אחד מהם ערך שהתחנה
+    // קובעת, ולכן כל אחד מהם צעד נפרד ולא טקסט לקריאה.
+    assert.equal(await managerPage.locator('#policySteps .step').count(), 4);
+    assert.equal(await managerPage.locator('#policySteps .step.min').count(), 1);
+    // בלי שינוי אין מה לשמור.
+    assert.equal(await managerPage.locator('#savePolicy').isEnabled(), false);
   });
+  await test('a value that was never set blocks saving instead of becoming zero', async () => {
+    const duty = managerPage.locator('#policySteps .step .duty').first();
+    assert.equal(await duty.textContent(), 'חובה');
+    await duty.click();
+    assert.equal(await duty.textContent(), 'רשות');
+    // שינוי אמיתי — יש מה לשמור.
+    assert.equal(await managerPage.locator('#savePolicy').isEnabled(), true);
+    await duty.click();
+    // ⭐ „לא סימנו" אינו „רשות", ולכן הוא מצב שלישי שחוסם שמירה.
+    assert.equal(await duty.textContent(), '—');
+    assert.equal(await managerPage.locator('#savePolicy').isEnabled(), false);
+    assert.match(await managerPage.locator('#policyMessage').textContent(), /ערך חסר אינו אפס/);
+    await duty.click();
+    assert.equal(await duty.textContent(), 'חובה');
+  });
+
+  await test('lowering the minimum line is refused until a person confirms it', async () => {
+    const minStep = managerPage.locator('#policySteps .step.min');
+    assert.equal(await minStep.locator('.n').textContent(), '2');
+    await minStep.locator('button').first().click();
+    assert.equal(await minStep.locator('.n').textContent(), '1');
+
+    await managerPage.locator('#savePolicy').click();
+    await managerPage.locator('#policyMessage .warn').waitFor();
+    assert.match(await managerPage.locator('#policyMessage').textContent(), /מקל על התקן/);
+    assert.equal(await managerPage.locator('#policyChanges .change.weak').count(), 1);
+    let calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.some((entry) => entry.name === 'saveSchedulePolicy'), false);
+
+    await managerPage.locator('#confirmWeakening').check();
+    await managerPage.locator('#savePolicy').click();
+    await managerPage.locator('#policyMessage .ok').waitFor();
+    assert.match(await managerPage.locator('#policyMessage').textContent(), /נשמרו כגרסה v2/);
+    // שמירת חוקים אינה נוגעת בסידור שכבר פורסם.
+    assert.match(await managerPage.locator('#policyMessage').textContent(), /אינה משנה סידור שכבר פורסם/);
+
+    calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
+    const save = calls.find((entry) => entry.name === 'saveSchedulePolicy');
+    assert.ok(save);
+    assert.equal(save.payload.activate, true);
+    assert.equal(save.payload.confirm_weakening, true);
+    // ⭐ המסך שולח את מה שהוא ראה. בלי זה שתי לשוניות דורסות זו את זו.
+    assert.equal(save.payload.expected_policy_id, 'policy_1');
+    assert.equal(Object.hasOwn(save.payload, 'stationId'), false);
+    assert.equal(Object.hasOwn(save.payload, 'station_id'), false);
+    assert.equal(save.payload.draft.sub_stations.main.minimum, 1);
+    assert.equal(save.payload.draft.rest.min_gap_days, 2);
+    // ⭐ הצהרות שחייבות להישלח גם כשהן ריקות.
+    assert.equal(Object.hasOwn(save.payload.draft, 'rotation'), true);
+    assert.equal(Object.hasOwn(save.payload.draft, 'max_shifts_per_month'), true);
+    // סימון ההקלה מתאפס אחרי שמירה, כדי שלא יישאר מסומן לשינוי הבא.
+    assert.equal(await managerPage.locator('#confirmWeakening').isChecked(), false);
+  });
+
   await test('planner creates a draft without publishing it', async () => {
     await managerPage.locator('#runPlanner').click();
     await managerPage.locator('#runMessage .ok').waitFor();
     assert.match(await managerPage.locator('#runMessage').textContent(), /עדיין לא פורסמה/);
     assert.equal(await managerPage.locator('#draftSummary .metric').count(), 4);
     await managerPage.locator('#previewMessage .ok').waitFor();
-    assert.equal(await managerPage.locator('#draftPreview .day').count(), 7);
+    assert.equal(await managerPage.locator('#draftBoard .hcell').count(), 7);
     assert.match(await managerPage.locator('#draftPreview').textContent(), /טל חודרה/);
     assert.equal(await managerPage.locator('#publish').isEnabled(), false);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
@@ -237,8 +358,8 @@ try {
   const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
-    getMyScheduleV2:[{ data:mine }, { data:mineAnswered }],
-    getStationScheduleV2:[{ data:station }, { data:stationGuardsUnavailable }],
+    getMyScheduleV2:[{ data:mine }, { data:mineAnswered }, { data:mineAnswered }, { data:mineAnswered }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRangeGuardsUnavailable }, { data:stationRangeGuardsUnavailable }],
     respondToSchedule:[{ data:{ duplicate:false, response_id:'r_1', answer:'confirm' } }]
   });
   const phonePage = await phone.newPage();
@@ -247,17 +368,22 @@ try {
 
   await test('station schedule is the default mobile view for every member', async () => {
     assert.equal(await phonePage.locator('#stationView').isVisible(), true);
-    await phonePage.locator('#stationContent .day').first().waitFor();
+    await phonePage.locator('#stationBoard .hcell').first().waitFor();
     assert.match(await phonePage.locator('#stationContent').textContent(), /אבטחת כוננות/);
     assert.match(await phonePage.locator('#stationContent').textContent(), /טרם אוישה/);
     assert.match(await phonePage.locator('#stationContent').textContent(), /חבר\/ת האבטחה/);
+    // הרצועה היא חודש שלם בקריאה אחת, ולא שלושה ימים.
+    const range = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
+      .find((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(range.payload.from.slice(8), '01');
+    assert.equal(Object.hasOwn(range.payload, 'stationId'), false);
   });
 
   const direct = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(direct, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }],
-    getStationScheduleV2:[{ data:station }]
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }]
   });
   const directPage = await direct.newPage();
   await directPage.goto(base + '?tab=manage', { waitUntil:'load' });
@@ -266,16 +392,17 @@ try {
     assert.equal(await directPage.locator('#manageTab').isVisible(), false);
     assert.equal(await directPage.locator('#manageView').isVisible(), false);
     assert.equal(await directPage.locator('#stationView').isVisible(), true);
-    await directPage.locator('#stationContent .day').first().waitFor();
+    await directPage.locator('#stationBoard .hcell').first().waitFor();
   });
   await direct.close();
 
   await test('personal mobile view remains available after station is the default', async () => {
     await phonePage.locator('[data-tab="mine"]').dispatchEvent('click');
-    assert.match(await phonePage.locator('#mineContent').textContent(), /טל חודרה/);
-    assert.match(await phonePage.locator('#mineContent').textContent(), /קורס חילוץ/);
-    assert.match(await phonePage.locator('#mineContent').textContent(), /אבטחת אירוע/);
-    const guard = phonePage.locator('#mineContent .guard-card').filter({ hasText:'אבטחת אירוע' });
+    await phonePage.locator('#mineToday .assignment').first().waitFor();
+    assert.match(await phonePage.locator('#mineToday').textContent(), /טל חודרה/);
+    assert.match(await phonePage.locator('#mineToday').textContent(), /קורס חילוץ/);
+    assert.match(await phonePage.locator('#mineToday').textContent(), /אבטחת אירוע/);
+    const guard = phonePage.locator('#mineToday .guard-card').filter({ hasText:'אבטחת אירוע' });
     assert.equal(await guard.count(), 1);
     assert.equal(await guard.locator('.confirm,.decline').count(), 0);
     await phonePage.locator('.assignment .confirm').first().dispatchEvent('click');
@@ -288,14 +415,29 @@ try {
       .find((entry) => entry.name === 'getMyScheduleV2');
     assert.equal(mineCall.payload.date, today);
   });
-  await test('station mobile view shows yesterday, today and tomorrow with names', async () => {
+  await test('station mobile view is a full month strip, in one call', async () => {
     await phonePage.locator('[data-tab="station"]').dispatchEvent('click');
-    await phonePage.locator('#stationContent .day').first().waitFor();
-    assert.equal(await phonePage.locator('#stationContent .day').count(), 3);
+    await phonePage.locator('#stationBoard .hcell').first().waitFor();
+    const columns = await phonePage.locator('#stationBoard .hcell').count();
+    assert.ok(columns >= 28 && columns <= 31, 'חודש שלם, לא שלושה ימים: ' + columns);
     assert.match(await phonePage.locator('#stationContent').textContent(), /טל חודרה/);
-    assert.match(await phonePage.locator('#stationContent').textContent(), /היום שאחרי/);
-    assert.match(await phonePage.locator('#stationContent').textContent(), /לא ניתן לטעון אבטחות כרגע/);
-    assert.doesNotMatch(await phonePage.locator('#stationContent').textContent(), /אין סידור ליום הזה/);
+    // ⭐ שתי הלשוניות חולקות קריאה אחת לחודש. הקריאה הזאת קוראת
+    // את התמונה החתומה בשלמותה, ולכן כפילות שלה אינה ניואנס.
+    const before = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
+      .filter((entry) => entry.name === 'getStationScheduleRange').length;
+    assert.equal(before, 1);
+
+    // מעבר חודש הוא קריאה חדשה — וכאן הוא מחזיר כשל בקריאת אבטחות.
+    const current = Number((await phonePage.locator('.months button[aria-pressed="true"]')
+      .first().getAttribute('data-index')) || 0);
+    await phonePage.locator('#stationHead .months button').nth(current === 0 ? 1 : current - 1).click();
+    await phonePage.locator('#stationBoard .hcell').first().waitFor();
+    const after = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
+      .filter((entry) => entry.name === 'getStationScheduleRange').length;
+    assert.equal(after, 2);
+    // כשל בקריאת אבטחות נאמר, ואינו הופך את הלוח לריק.
+    assert.match(await phonePage.locator('#stationNote').textContent(), /לא ניתן לטעון אבטחות כרגע/);
+    assert.doesNotMatch(await phonePage.locator('#stationContent').textContent(), /אין סידור להצגה/);
   });
   await test('390px and 360px phones have no horizontal overflow and touch controls are large enough', async () => {
     for (const width of [390, 360]) {
@@ -306,7 +448,7 @@ try {
         return { tag:element.tagName, id:element.id, cls:String(element.className || ''), left:rect.left, right:rect.right, width:rect.width };
       }).filter((item) => item.left < -1 || item.right > innerWidth + 1).slice(0, 8));
       assert.ok(overflow <= 1, width + 'px overflow ' + overflow + ' ' + JSON.stringify(offenders));
-      const heights = await phonePage.locator('.tabs button,.nav-day').evaluateAll((nodes) => nodes
+      const heights = await phonePage.locator('.tabs button,.wkjump button,.pill').evaluateAll((nodes) => nodes
         .map((item) => item.getBoundingClientRect().height).filter((height) => height > 0));
       assert.ok(heights.every((height) => height >= 43.5), width + 'px ' + JSON.stringify(heights));
     }
@@ -320,8 +462,8 @@ try {
   const off = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(off, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusOff }],
-    getMyScheduleV2:[{ data:legacyMine('off') }],
-    getStationScheduleV2:[{ data:legacyStation('off') }]
+    getMyScheduleV2:[{ data:legacyMine('off') }, { data:legacyMine('off') }],
+    getStationScheduleRange:[{ data:legacyRange('off') }, { data:legacyRange('off') }, { data:legacyRange('off') }]
   });
   const offPage = await off.newPage();
   await offPage.goto(base, { waitUntil:'load' });
@@ -332,18 +474,23 @@ try {
     assert.equal(await offPage.locator('#scheduleTabs').isVisible(), true);
     assert.equal(await offPage.locator('#manageTab').isVisible(), false);
     assert.equal(await offPage.locator('#stationView').isVisible(), true);
-    await offPage.locator('#stationContent .day').first().waitFor();
+    await offPage.locator('#stationBoard .hcell').first().waitFor();
     assert.match(await offPage.locator('#stationContent').textContent(), /משמרת א/);
+    // ⭐ הרצועה עובדת גם לפני שהמנוע הופעל. אחרת המסך היה ריק
+    // בדיוק במצב שהתחנה נמצאת בו היום.
+    assert.match(await offPage.locator('#stationNote').textContent(), /מנוע הסידור החדש עדיין אינו פעיל/);
     const calls = await offPage.evaluate(() => window.__CALLABLE_CALLS || []);
-    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+    // הפאנל האישי נטען רק בלשונית „הסידור שלי", ולכן אינו נקרא כאן.
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
   await test('off mode keeps the personal legacy view available without an edit response', async () => {
     await offPage.locator('[data-tab="mine"]').click();
     assert.equal(await offPage.locator('#mineView').isVisible(), true);
+    await offPage.locator('#mineBoard .hcell').first().waitFor();
     assert.match(await offPage.locator('#mineContent').textContent(), /טל חודרה/);
-    assert.equal(await offPage.locator('#mineContent .confirm').count(), 0);
+    assert.equal(await offPage.locator('#mineToday .confirm').count(), 0);
     const calls = await offPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
   });
@@ -352,8 +499,8 @@ try {
   const shadowMember = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(shadowMember, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusShadowMember }],
-    getMyScheduleV2:[{ data:legacyMine('shadow') }],
-    getStationScheduleV2:[{ data:legacyStation('shadow') }]
+    getMyScheduleV2:[{ data:legacyMine('shadow') }, { data:legacyMine('shadow') }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }]
   });
   const shadowMemberPage = await shadowMember.newPage();
   await shadowMemberPage.goto(base + '?tab=manage', { waitUntil:'load' });
@@ -364,12 +511,13 @@ try {
     assert.equal(await shadowMemberPage.locator('#manageTab').isVisible(), false);
     assert.equal(await shadowMemberPage.locator('#manageView').isVisible(), false);
     assert.equal(await shadowMemberPage.locator('#stationView').isVisible(), true);
-    await shadowMemberPage.locator('#stationContent .day').first().waitFor();
+    await shadowMemberPage.locator('#stationBoard .hcell').first().waitFor();
     await shadowMemberPage.locator('[data-tab="mine"]').click();
+    await shadowMemberPage.locator('#mineBoard .hcell').first().waitFor();
     assert.match(await shadowMemberPage.locator('#mineContent').textContent(), /טל חודרה/);
     const calls = await shadowMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
   await shadowMember.close();
@@ -378,8 +526,8 @@ try {
   await prepare(shadowManager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusShadowManager }],
     getScheduleManagerSetup:[{ data:setup }],
-    getMyScheduleV2:[{ data:legacyMine('shadow') }],
-    getStationScheduleV2:[{ data:legacyStation('shadow') }]
+    getMyScheduleV2:[{ data:legacyMine('shadow') }, { data:legacyMine('shadow') }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }]
   });
   const shadowManagerPage = await shadowManager.newPage();
   await shadowManagerPage.goto(base + '?tab=station', { waitUntil:'load' });
@@ -389,13 +537,13 @@ try {
     assert.equal(await shadowManagerPage.locator('#mineTab').isVisible(), true);
     assert.equal(await shadowManagerPage.locator('#stationTab').isVisible(), true);
     assert.equal(await shadowManagerPage.locator('#stationView').isVisible(), true);
-    await shadowManagerPage.locator('#stationContent .day').first().waitFor();
+    await shadowManagerPage.locator('#stationBoard .hcell').first().waitFor();
     await shadowManagerPage.locator('[data-tab="manage"]').click();
     assert.equal(await shadowManagerPage.locator('#manageView').isVisible(), true);
     assert.match(await shadowManagerPage.locator('#sourceSummary').textContent(), /מהדורה 7/);
     const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
-    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1);
   });
   await shadowManager.close();
@@ -403,8 +551,8 @@ try {
   const offManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(offManager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusOffManager }],
-    getMyScheduleV2:[{ data:legacyMine('off') }],
-    getStationScheduleV2:[{ data:legacyStation('off') }]
+    getMyScheduleV2:[{ data:legacyMine('off') }, { data:legacyMine('off') }],
+    getStationScheduleRange:[{ data:legacyRange('off') }, { data:legacyRange('off') }, { data:legacyRange('off') }]
   });
   const offManagerPage = await offManager.newPage();
   await offManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
@@ -431,7 +579,7 @@ try {
     assert.match(await statusErrorPage.locator('#availabilityText').textContent(), /לא מציגה נתונים ישנים/);
     const calls = await statusErrorPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.some((entry) => entry.name === 'getMyScheduleV2'), false);
-    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleV2'), false);
+    assert.equal(calls.some((entry) => entry.name === 'getStationScheduleRange'), false);
   });
   await statusError.close();
 } finally {
@@ -439,5 +587,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 15);
-console.log('\n15 schedule management browser checks passed.');
+assert.equal(passed, 17);
+console.log('\n17 schedule management browser checks passed.');

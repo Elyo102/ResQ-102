@@ -5099,6 +5099,16 @@ exports.getScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req)
 exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req) =>
   scheduleAccessAdmin.set(req));
 
+// חוקי התחנה. `previewSchedulePolicy` אינו כותב דבר — הוא מחזיר
+// את ההפרשים והאזהרות כדי שאדם יראה מה הוא עומד לשנות.
+// `saveSchedulePolicy` כותב מסמך מדיניות חדש ומצביע עליו, ואינו
+// משנה `mode`, אינו נוגע בסידור שפורסם ואינו שולח הודעה לאיש.
+exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('previewPolicy', req));
+
+exports.saveSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('savePolicy', req));
+
 exports.runSchedulePlanner = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 540,
@@ -5125,6 +5135,11 @@ exports.getMyScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
 
 exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStation', req));
+
+// רצועת חודש בקריאה אחת. הטווח מוגבל בשרת ל-31 ימים; התחנה,
+// כרגיל, נגזרת מהזהות ואינה מתקבלת מהלקוח.
+exports.getStationScheduleRange = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getStationRange', req));
 
 // Temporary server-only bridge for operational screens that still evaluate
 // the legacy rotation cycle while runtime.mode is off or shadow.  The callable

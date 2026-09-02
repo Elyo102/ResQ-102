@@ -7,6 +7,7 @@ const guardEvents = require('./guard-events');
 const guardManagement = require('./schedule-guard-management');
 const guardBoardProjection = require('./guard-board-projection');
 const legacyCompatibility = require('./schedule-legacy-compat');
+const policyAuthorModule = require('./schedule-policy-author');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -58,6 +59,9 @@ const MAX_LEGACY_GUARDS = 1000;
 const MAX_LEGACY_GUARD_ASSIGNED = 20;
 const LEGACY_IN_QUERY_SIZE = 30;
 const MAX_GUARD_BOARD_DAYS = 366;
+// רצועת סידור התחנה מוגבלת לחודש בקריאה אחת. גלילה לחודש הבא
+// היא קריאה חדשה, ולא טווח שגדל בלי גבול.
+const MAX_STATION_RANGE_DAYS = 31;
 const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 const OUTBOX_LEASE_MS = 10 * 60 * 1000;
 const OUTBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -185,6 +189,11 @@ function createScheduleRuntime(deps) {
   function digest(value) {
     return hash(stable(value));
   }
+
+  // המודול שמייצר את מסמך המדיניות. טהור, ומקבל את אותם clock
+  // ו-hash של הרנטיים — כדי שהחתימה שהוא יוצר תהיה בדיוק זו
+  // ש-`loadPolicy` יחשב מחדש.
+  const policyAuthor = policyAuthorModule.createPolicyAuthor({ clock, hash });
 
   function stationRef(sid) {
     return db.collection('stations').doc(sid);
@@ -1314,8 +1323,59 @@ function createScheduleRuntime(deps) {
     const ctx = await context(req);
     requireManager(ctx);
     const config = await configuration(ctx.sid);
+
+    // ⭐ מקור בלי מדיניות אינו „לא מוגדר" — הוא המצב שממנו מתחילים.
+    //
+    // עד כאן התשובה במצב הזה הייתה רשימות ריקות, ולכן המסך לא יכול
+    // היה להציע דבר: לא תחנות קצה ולא תפקידים. אבל שניהם **קיימים
+    // במקור** — הם התחנות והתפקידים שיש בפועל לאנשים. מחזירים אותם
+    // כתצפית, לא כברירת מחדל: בלי כמויות, בלי קו מינימום, ובלי שום
+    // מספר שאיש לא בחר.
+    if (!config.active_policy_id && config.active_source_id) {
+      const source = await loadSource(ctx, config.active_source_id);
+      const people = source.peopleRaw.filter((person) => person.active === true);
+      const subs = new Map();
+      const roles = new Set();
+      people.forEach((person) => {
+        if (nonEmpty(person.sub_station) && !subs.has(person.sub_station)) {
+          subs.set(person.sub_station, {
+            id: person.sub_station,
+            label: nonEmpty(person.sub_station_label) ? person.sub_station_label : person.sub_station,
+            people: 0
+          });
+        }
+        if (nonEmpty(person.sub_station)) subs.get(person.sub_station).people += 1;
+        (Array.isArray(person.roles) ? person.roles : []).forEach((role) => {
+          if (nonEmpty(role)) roles.add(role);
+        });
+      });
+      return {
+        mode: config.mode,
+        configured: false,
+        policy: null,
+        missing: ['policy'],
+        source: { id: source.id, version: source.version, revision: source.revision },
+        observed: {
+          sub_stations: Array.from(subs.values()).sort((a, b) => compareCanonical(a.id, b.id)),
+          roles: Array.from(roles).sort(compareCanonical)
+        },
+        sub_stations: [],
+        people: people.map((person) => ({
+          id: person.id,
+          name: String(person.full_name || person.name || person.id).slice(0, 120),
+          sub_station: person.sub_station,
+          roles: Array.isArray(person.roles) ? person.roles.slice() : []
+        }))
+      };
+    }
+
     if (!config.active_policy_id || !config.active_source_id) {
-      return { mode: config.mode, configured: false, sub_stations: [], people: [] };
+      return {
+        mode: config.mode, configured: false, policy: null,
+        missing: [config.active_policy_id ? null : 'policy',
+          config.active_source_id ? null : 'source'].filter(Boolean),
+        sub_stations: [], people: []
+      };
     }
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const source = await loadSource(ctx, config.active_source_id);
@@ -1326,6 +1386,13 @@ function createScheduleRuntime(deps) {
         id: policy.id,
         version: policy.value.version,
         digest: policy.digest,
+        // ⭐ המסך שולח את המזהה הזה בשמירה. בלעדיו אין דרך לזהות
+        // ששני אנשים ערכו את אותם חוקים בשתי לשוניות.
+        active_policy_id: config.active_policy_id,
+        rest: policy.value.rest,
+        rotation: policy.value.rotation === undefined ? null : policy.value.rotation,
+        max_shifts_per_month: policy.value.max_shifts_per_month === undefined
+          ? null : policy.value.max_shifts_per_month,
         sub_stations: Object.keys(policy.value.sub_stations).sort().map((id) => ({
           id,
           label: policy.value.sub_stations[id].label,
@@ -1341,6 +1408,200 @@ function createScheduleRuntime(deps) {
         roles: Array.isArray(person.roles) ? person.roles.slice() : []
       }))
     };
+  }
+
+  /* ==================================================================
+   *  כתיבת חוקי התחנה · הדבר שהיה חסר
+   * ------------------------------------------------------------------
+   *  עד כאן שום קוד בריפו לא כתב `schedule_policies`. `loadPolicy`
+   *  קורא, `getManagerSetup` מציג, `runPlanner` דורש — ואיש אינו
+   *  יוצר. זו הסיבה היחידה שהמנוע כבוי: לא דגל ולא באג, פשוט לא
+   *  נבנה הדבר שמאכיל אותו.
+   *
+   *  שתי הפעולות כאן סוגרות בדיוק את הפער הזה, ולא יותר ממנו:
+   *  הן **אינן** משנות `mode`, אינן נוגעות בסידור שפורסם, ואינן
+   *  שולחות הודעה לאיש. הפעלת מנוע נשארת פעולה אנושית נפרדת.
+   * ================================================================== */
+
+  function policyRef(sid, policyId) {
+    return stationRef(sid).collection('schedule_policies').doc(policyId);
+  }
+
+  function policyOperationRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_policy_operations').doc(requestId);
+  }
+
+  // רשומת הפעולה קיימת רק כדי למנוע כתיבה כפולה של אותה בקשה.
+  // היא אינה היסטוריה — ההיסטוריה היא היומן — ולכן היא פגה מעצמה.
+  function policyOperationExpiry() {
+    const now = timeMillis(clock());
+    return new Date((Number.isFinite(now) ? now : Date.parse(clock())) + OUTBOX_TTL_MS);
+  }
+
+  function policyAuditRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_policy_audit')
+      .doc('pa_' + hash('policy-audit|' + sid + '|' + requestId).slice(0, 48));
+  }
+
+  // המדיניות הפעילה כפי שהיא **בשרת**, לא כפי שהדפדפן זוכר אותה.
+  // ההפרשים והגרסה נגזרים ממנה בלבד.
+  async function readActivePolicy(sid, activeId, tx) {
+    if (!nonEmpty(activeId)) return null;
+    const ref = policyRef(sid, activeId);
+    const snap = tx ? await tx.get(ref) : await ref.get();
+    if (!snap.exists) return null;
+    return Object.assign({ id: activeId }, snap.data() || {});
+  }
+
+  function authorPlan(ctx, data, previous) {
+    if (!plain(data.draft)) {
+      throw new ScheduleRuntimeError('policy-draft-required',
+        'חסרה טיוטת חוקי תחנה.', 'invalid-argument');
+    }
+    try {
+      return policyAuthor.planPolicy({
+        station_id: ctx.sid,
+        draft: data.draft,
+        previous,
+        actor_uid: ctx.uid
+      });
+    } catch (error) {
+      // קודי המודול סגורים ומנוסחים בעברית מובנת. הם מועברים כמות
+      // שהם — המסך צריך לומר לאחראי/ת הסידור מה חסר, לא „נכשל".
+      if (error && error.name === 'PolicyAuthorError') {
+        throw new ScheduleRuntimeError(error.code, error.message, 'invalid-argument');
+      }
+      throw error;
+    }
+  }
+
+  // התשובה למסך לעולם אינה כוללת את המסמך עצמו: הוא הדבר שעליו
+  // אנחנו חותמים, והדפדפן אינו צד בחתימה.
+  function policyPlanView(plan, config) {
+    return {
+      kind: plan.kind,
+      policy_id: plan.policy_id,
+      version: plan.version,
+      digest: plan.digest,
+      content_key: plan.content_key,
+      changes: plan.changes,
+      warnings: plan.warnings,
+      weakening: plan.weakening,
+      mode: config.mode,
+      active_policy_id: config.active_policy_id || null
+    };
+  }
+
+  async function previewPolicy(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const config = await configuration(ctx.sid);
+    const previous = await readActivePolicy(ctx.sid, config.active_policy_id, null);
+    const plan = authorPlan(ctx, plain(req.data) ? req.data : {}, previous);
+    return policyPlanView(plan, config);
+  }
+
+  async function savePolicy(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+
+    // ⭐ הפעלה היא הצהרה, לא ברירת מחדל. „שמרתי ולא ידעתי שזה
+    // נכנס לתוקף" הוא בדיוק מה שאסור שיקרה כאן.
+    if (typeof data.activate !== 'boolean') {
+      throw new ScheduleRuntimeError('policy-activate-required',
+        'יש להצהיר במפורש אם המדיניות נכנסת לתוקף.', 'invalid-argument');
+    }
+    // המסך שולח את מה שהוא ראה. אם בינתיים מישהו אחר שמר — שתי
+    // לשוניות פתוחות, שני אנשים — הפעולה נעצרת ואינה דורסת.
+    const expected = data.expected_policy_id === undefined || data.expected_policy_id === null
+      ? null : requireId(data.expected_policy_id, 'policy-id', 'מזהה המדיניות הקודמת');
+
+    const opRef = policyOperationRef(ctx.sid, requestId);
+    return await db.runTransaction(async (tx) => {
+      // כל הקריאות לפני כל הכתיבות. זו אינה קפדנות סגנונית —
+      // Firestore פשוט לא ירשה אחרת.
+      const opSnap = await tx.get(opRef);
+      const runtimeSnap = await tx.get(runtimeRef(ctx.sid));
+      const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      const activeId = nonEmpty(runtimeData.active_policy_id)
+        ? runtimeData.active_policy_id : null;
+      const previous = await readActivePolicy(ctx.sid, activeId, tx);
+      const config = Object.freeze({
+        mode: MODES.indexOf(runtimeData.mode) !== -1 ? runtimeData.mode : MODE.OFF,
+        active_policy_id: activeId
+      });
+
+      const plan = authorPlan(ctx, data, previous);
+      const fingerprint = digest({
+        station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+        content_key: plan.content_key, expected, activate: data.activate
+      });
+
+      if (opSnap.exists) {
+        const op = opSnap.data() || {};
+        if (op.fingerprint !== fingerprint) {
+          throw new ScheduleRuntimeError('policy-request-reused',
+            'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+        }
+        return Object.assign({ duplicate: true }, op.result || {});
+      }
+
+      if (expected !== activeId) {
+        throw new ScheduleRuntimeError('policy-conflict',
+          'חוקי התחנה השתנו מאז שהמסך נטען. יש לרענן ולראות מה השתנה '
+          + 'לפני שמירה חוזרת.', 'aborted');
+      }
+
+      // ⭐ החלשה אינה נחסמת — היא לפעמים הכוונה. היא דורשת אמירה
+      // מפורשת, כדי שאיש לא יוריד קו מינימום בלי לדעת שהוריד.
+      if (plan.weakening && plan.weakening.length && data.confirm_weakening !== true) {
+        throw new ScheduleRuntimeError('policy-weakening-unconfirmed',
+          'השינוי מקל על התקן ב-' + plan.weakening.length + ' מקומות. '
+          + 'יש לאשר זאת במפורש.', 'failed-precondition');
+      }
+
+      if (plan.kind === 'unchanged') {
+        const view = Object.assign(policyPlanView(plan, config),
+          { written: false, activated: false });
+        tx.set(opRef, {
+          station_id: ctx.sid, actor_uid: ctx.uid, fingerprint,
+          created_at: clock(), expires_at: policyOperationExpiry(), result: view
+        });
+        return Object.assign({ duplicate: false }, view);
+      }
+
+      const view = Object.assign(policyPlanView(plan, config), {
+        written: true,
+        activated: data.activate === true
+      });
+
+      tx.set(policyRef(ctx.sid, plan.policy_id), plan.document);
+      if (data.activate === true) {
+        tx.set(runtimeRef(ctx.sid), { active_policy_id: plan.policy_id }, { merge: true });
+      }
+      tx.set(policyAuditRef(ctx.sid, requestId), {
+        station_id: ctx.sid,
+        actor_uid: ctx.uid,
+        at: clock(),
+        policy_id: plan.policy_id,
+        version: plan.version,
+        content_digest: plan.digest,
+        supersedes: previous ? previous.id : null,
+        activated: data.activate === true,
+        change_count: plan.changes.length,
+        weakening_count: plan.weakening.length,
+        // ⭐ קודי אזהרה בלבד. שום טקסט חופשי ושום שם — יומן אינו
+        // מקום שצריך לבדוק מה מותר להיכנס אליו.
+        warning_codes: plan.warnings.map((w) => w.code)
+      });
+      tx.set(opRef, {
+        station_id: ctx.sid, actor_uid: ctx.uid, fingerprint,
+        created_at: clock(), expires_at: policyOperationExpiry(), result: view
+      });
+      return Object.assign({ duplicate: false }, view);
+    });
   }
 
   async function runPlanner(req) {
@@ -2806,6 +3067,86 @@ function createScheduleRuntime(deps) {
       publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view);
   }
 
+  /* ==================================================================
+   *  סידור התחנה כרצועת חודש
+   * ------------------------------------------------------------------
+   *  `getStation` מחזיר שלושה ימים, כי המסך הישן הציג יום אחד עם
+   *  חיצים. הלוח שאלדד ביקש הוא חודש שלם בגלילה אחת — ולכן צריך
+   *  קריאה אחת לטווח, ולא שלושים קריאות יום.
+   *
+   *  שני מסלולים, מכוונים:
+   *  · `new` — התמונה החתומה נקראת **בשלמותה** (ולא בחלון), כך
+   *    שבדיקת החתימה של `readSnapshot` באמת רצה. חלון מדלג עליה.
+   *  · `off`/`shadow` — אותו חלון תאימות שכבר משמש את `getStation`,
+   *    בקריאה אחת לכל הטווח. הרצועה עובדת גם לפני שהמנוע הופעל,
+   *    כדי שהמסך לא יהיה ריק בדיוק במצב שהתחנה נמצאת בו היום.
+   * ================================================================== */
+
+  function requestedStationRange(req) {
+    const data = req && req.data === undefined ? {} : (req && req.data);
+    if (!plain(data) || Object.keys(data).some((key) => key !== 'from' && key !== 'to')) {
+      throw new ScheduleRuntimeError('station-range-input',
+        'תצוגת הטווח מקבלת התחלה וסיום בלבד.', 'invalid-argument');
+    }
+    const from = isoDayOffset(String(data.from || ''), 0);
+    const to = isoDayOffset(String(data.to || ''), 0);
+    if (from > to) {
+      throw new ScheduleRuntimeError('station-range-input',
+        'תאריך ההתחלה חייב להיות לפני תאריך הסיום.', 'invalid-argument');
+    }
+    const dates = [];
+    let cursor = from;
+    while (cursor <= to) {
+      dates.push(cursor);
+      if (dates.length > MAX_STATION_RANGE_DAYS) {
+        throw new ScheduleRuntimeError('station-range-input',
+          'טווח התצוגה גדול מחודש אחד.', 'invalid-argument');
+      }
+      cursor = isoDayOffset(cursor, 1);
+    }
+    return Object.freeze({ from, to, dates: Object.freeze(dates) });
+  }
+
+  async function getStationRange(req) {
+    const ctx = await context(req);
+    const config = await configuration(ctx.sid);
+    const range = requestedStationRange(req);
+
+    if (config.mode !== MODE.NEW) {
+      const window = await checkedLegacyWindow(ctx, config, range.from, range.to);
+      if (window.source !== 'legacy') {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      return {
+        mode: window.provenance.mode, active: true, source: 'legacy',
+        provenance: window.provenance, from: range.from, to: range.to,
+        days: range.dates.map((date) => legacyDayBlock(
+          byDate.get(date) || { date, assignments: [] }, ctx.uid, window.events))
+      };
+    }
+
+    // ⭐ dates=null במכוון: כך `readSnapshot` קורא את התמונה כולה
+    // ומאמת את חתימת התוכן. קריאת חלון מדלגת על האימות הזה.
+    const active = await checkedActiveSnapshot(ctx, config, null);
+    if (!active) {
+      return { mode: config.mode, active: false, from: range.from, to: range.to, days: [] };
+    }
+    const sidecar = await readLiveGuardProjection(ctx, range.dates);
+    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    const service = serviceFor(ctx);
+    const days = range.dates.map((date) => stationViewWithGuards(service.buildStationSchedule({
+      actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
+    }), sidecar, date, ctx.uid).day);
+    return {
+      mode: config.mode, active: true, source: 'v2',
+      publication_id: active.pointer.publication_id, revision: active.pointer.revision,
+      from: range.from, to: range.to, days
+    };
+  }
+
   async function getStation(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
@@ -3601,12 +3942,15 @@ function createScheduleRuntime(deps) {
   return Object.freeze({
     getStatus,
     getManagerSetup,
+    previewPolicy,
+    savePolicy,
     runPlanner,
     getDraftPreview,
     publish,
     rollback,
     getMy,
     getStation,
+    getStationRange,
     getLegacyCompatibility,
     getGuardBoard,
     getGuardManagerBoard,

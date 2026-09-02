@@ -1464,6 +1464,16 @@ service cloud.firestore {
       match /schedule_policies/{policyId} {
         allow read, write: if false;
       }
+      // כתיבת חוקי תחנה נעשית רק דרך פונקציית שרת. רשומת הפעולה
+      // היא המנגנון שמונע כתיבה כפולה, והיומן הוא מה שמאפשר לדעת
+      // מי שינה תקן ומתי. שניהם חסומים לדפדפן לגמרי — גם לקריאה,
+      // כי הם נושאים uid של מי שפעל.
+      match /schedule_policy_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_policy_audit/{entryId} {
+        allow read, write: if false;
+      }
       match /schedule_sources/{sourceId} {
         allow read, write: if false;
         match /{document=**} {

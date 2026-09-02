@@ -14,6 +14,7 @@ const legacyCompat = read('functions/schedule-legacy-compat.js');
 const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
+const author = read('functions/schedule-policy-author.js');
 const ui = read('schedule-management.js');
 const html = read('schedule-management.html');
 const legacySchedule = read('schedule.html');
@@ -337,7 +338,88 @@ check('station schedule is the default view and denied management falls back to 
 });
 check('personal schedule reads only the requested day', () => {
   assert.ok(runtime.includes('const active = await checkedActiveSnapshot(ctx, config, [date])'));
-  assert.ok(ui.includes("call.mine({ date: state.mineDate || localDate() })"));
+  // הפאנל האישי נשאר יומי גם אחרי שהלוח הפך חודשי: האישור נשלח
+  // עם publication_id ו-item_id של יום, ואין קריאה שמחזירה את כל
+  // מה שממתין לתשובה לאורך חודש.
+  assert.ok(ui.includes("call.mine({ date: localDate() })"));
+});
+
+/* ------------------------------------------------------------------ *
+ * חוקי התחנה · נתיב הכתיבה שהיה חסר
+ * ------------------------------------------------------------------ */
+
+check('the station policy has a server write path and the browser never picks the station', () => {
+  assert.ok(runtime.includes('async function savePolicy(req)'));
+  assert.ok(runtime.includes('async function previewPolicy(req)'));
+  assert.ok(index.includes("exports.saveSchedulePolicy = onCall({ enforceAppCheck: true }"));
+  assert.ok(index.includes("exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }"));
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const save = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  // התחנה והזהות מגיעות מ-context, ולעולם לא מגוף הבקשה.
+  assert.ok(save.includes('const ctx = await context(req)'));
+  assert.ok(save.includes('requireManager(ctx)'));
+  assert.equal(/data\.(station_id|stationId)/.test(save), false);
+});
+
+check('saving a policy never turns the engine on by itself', () => {
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const save = runtime.slice(start, end);
+  // המצביע למדיניות הפעילה מתעדכן; `mode` אינו נכתב כאן בשום מקרה.
+  // ⭐ הכתיבה היחידה למסמך הרנטיים היא המצביע. אין כאן כתיבת mode
+  // בשום צורה — הפעלת מנוע נשארת פעולה אנושית נפרדת.
+  assert.equal(save.split('tx.set(runtimeRef').length, 2);
+  assert.ok(save.includes("tx.set(runtimeRef(ctx.sid), { active_policy_id: plan.policy_id }, { merge: true })"));
+  // הפעלה היא הצהרה מפורשת ולא ברירת מחדל.
+  assert.ok(save.includes("typeof data.activate !== 'boolean'"));
+  assert.ok(save.includes("'policy-activate-required'"));
+});
+
+check('a concurrent policy edit is refused instead of silently overwritten', () => {
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('async function runPlanner(req)', start);
+  const save = runtime.slice(start, end);
+  assert.ok(save.includes("if (expected !== activeId)"));
+  assert.ok(save.includes("'policy-conflict'"));
+  assert.ok(save.includes("'policy-request-reused'"));
+  // הקלה בתקן דורשת אמירה מפורשת של אדם.
+  assert.ok(save.includes("data.confirm_weakening !== true"));
+  assert.ok(save.includes("'policy-weakening-unconfirmed'"));
+  assert.ok(ui.includes('expected_policy_id: state.policy.active_policy_id'));
+});
+
+check('the policy author invents no business value and mirrors the runtime digest', () => {
+  assert.ok(author.includes('אין ברירות מחדל עסקיות'));
+  // ⭐ מראה מכוונת של stable() ברנטיים. אם אחד הצדדים ישתנה,
+  // `loadPolicy` יסרב למסמך שנכתב — והתקלה תתגלה מאוחר, אצל מישהו
+  // אחר. הבדיקה הזאת נועלת את שני הצדדים זה לזה.
+  const mirror = author.slice(author.indexOf('function stable(value) {'));
+  const source = runtime.slice(runtime.indexOf('function stable(value) {'));
+  const cut = (text) => text.slice(0, text.indexOf('\n}\n') + 2);
+  assert.equal(cut(mirror).split('isPlainObject').join('plain'), cut(source));
+  assert.ok(author.includes("fail(code, what + ' — ערך חסר. אין ברירת מחדל.')"));
+  assert.ok(author.includes('complete: true'));
+  assert.equal(/require\(['"]firebase/.test(author), false);
+});
+
+check('the month strip reads the whole verified snapshot and is bounded', () => {
+  assert.ok(runtime.includes('async function getStationRange(req)'));
+  assert.ok(runtime.includes('const MAX_STATION_RANGE_DAYS = 31'));
+  assert.ok(index.includes("exports.getStationScheduleRange = onCall({ enforceAppCheck: true }"));
+  const start = runtime.indexOf('async function getStationRange(req)');
+  const end = runtime.indexOf('async function getStation(req)', start);
+  const range = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  // ⭐ dates=null במכוון: קריאת חלון מדלגת על אימות חתימת התמונה.
+  assert.ok(range.includes('await checkedActiveSnapshot(ctx, config, null)'));
+  assert.ok(range.includes('await activeSnapshotStillCurrent(ctx, config, active)'));
+  assert.ok(range.includes('checkedLegacyWindow(ctx, config, range.from, range.to)'));
+  assert.equal(/data\.(station_id|stationId)/.test(range), false);
+  // שתי הלשוניות חולקות קריאה אחת לחודש.
+  assert.ok(ui.includes('function fetchRange(ym)'));
+  assert.ok(ui.includes('function invalidateRange()'));
 });
 check('management visibility is driven by server status', () => {
   assert.ok(ui.includes("$('manageTab').hidden = !canManageSchedule()"));
@@ -504,7 +586,7 @@ check('new schedule keeps guards live, private, and outside signed events and re
   const mine = runtime.slice(myStart, stationStart);
   const station = runtime.slice(stationStart, respondStart);
   const guardCardStart = ui.indexOf('function guardCard(item)');
-  const guardCardEnd = ui.indexOf('function renderMine()', guardCardStart);
+  const guardCardEnd = ui.indexOf('function renderMineToday()', guardCardStart);
   const guardCard = ui.slice(guardCardStart, guardCardEnd);
   assert.ok(runtime.includes('async function readLiveGuardProjection(ctx, dates)'));
   assert.ok(runtime.includes('function stationViewWithGuards(view, sidecar, date, viewer)'));
@@ -725,7 +807,9 @@ check('the UI exposes both personal and station views', () => {
   assert.ok(html.includes('הסידור שלי'));
   assert.ok(html.includes('סידור התחנה'));
   assert.ok(ui.includes("getMyScheduleV2"));
-  assert.ok(ui.includes("getStationScheduleV2"));
+  // סידור התחנה נקרא כרצועת חודש, ולא יום-יום. `getStationScheduleV2`
+  // נשאר בשרת לצרכנים אחרים, אך המסך הזה אינו קורא לו עוד.
+  assert.ok(ui.includes("getStationScheduleRange"));
 });
 check('dynamic schedule data is inserted as text, not HTML', () => {
   assert.equal(/\.innerHTML\s*=/.test(ui), false);
@@ -753,5 +837,5 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 69);
-console.log('\n69 schedule runtime source checks passed.');
+assert.equal(passed, 74);
+console.log('\n74 schedule runtime source checks passed.');

@@ -103,12 +103,24 @@ const legacyMine = {
   }],
   events:[], pending_answers:0
 };
-const legacyStation = {
-  mode:'off', active:true, source:'legacy',
-  previous_day:legacyDay(shiftDay(legacyToday, -1), false),
-  day:legacyDay(legacyToday, true),
-  next_day:legacyDay(shiftDay(legacyToday, 1), false)
-};
+// רצועת חודש. מסך הסידור קורא טווח בקריאה אחת, גם כשמנוע
+// הסידור החדש כבוי — אחרת המסך היה ריק בדיוק במצב הנוכחי.
+const legacyRange = (() => {
+  const year = Number(legacyToday.slice(0, 4));
+  const month = Number(legacyToday.slice(5, 7));
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (n) => String(n).padStart(2, '0');
+  const days = [];
+  for (let index = 1; index <= last; index++) {
+    const date = legacyToday.slice(0, 7) + '-' + pad(index);
+    days.push(legacyDay(date, date === legacyToday));
+  }
+  return {
+    mode:'off', active:true, source:'legacy', publication_id:null, revision:null,
+    from:legacyToday.slice(0, 7) + '-01', to:legacyToday.slice(0, 7) + '-' + pad(last),
+    days
+  };
+})();
 
 const browser = await chromium.launch();
 try {
@@ -280,13 +292,13 @@ try {
     // המינוי נשאר חי, אך מצב off הוא צפייה בלבד ואין בו ניהול.
     getScheduleRuntimeStatus:[{ data:{ mode:'off', configured:false, manager:true, active:null } }],
     getMyScheduleV2:[{ data:legacyMine }],
-    getStationScheduleV2:[{ data:legacyStation }]
+    getStationScheduleRange:[{ data:legacyRange }, { data:legacyRange }]
   });
   const legacySchedulePage = await legacySchedule.newPage();
   await legacySchedulePage.goto(base.replace('/admin.html', '/schedule.html'), { waitUntil:'load' });
   await legacySchedulePage.waitForURL(/schedule-management\.html\?tab=station/);
   await legacySchedulePage.locator('#appMain:not(.hide)').waitFor();
-  await legacySchedulePage.locator('#stationContent .day').first().waitFor();
+  await legacySchedulePage.locator('#stationBoard .hcell').first().waitFor();
   await test('legacy schedule URL redirects to a server-mediated station schedule in off mode', async () => {
     assert.match(legacySchedulePage.url(), /schedule-management\.html\?tab=station/);
     assert.equal(await legacySchedulePage.locator('#availabilityView').isVisible(), false);
@@ -299,12 +311,14 @@ try {
 
     await legacySchedulePage.locator('[data-tab="mine"]').click();
     assert.equal(await legacySchedulePage.locator('#mineView').isVisible(), true);
+    await legacySchedulePage.locator('#mineBoard .hcell').first().waitFor();
     assert.match(await legacySchedulePage.locator('#mineContent').textContent(), /טל חודרה/);
 
     const calls = await legacySchedulePage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 1);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+    // ⭐ שתי הלשוניות חולקות קריאת טווח אחת לחודש.
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
     const firestoreWrites = await legacySchedulePage.evaluate(() => window.__FIRESTORE_WRITES || []);

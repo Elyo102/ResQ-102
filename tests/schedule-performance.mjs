@@ -68,12 +68,23 @@ const legacyMine = {
   }],
   events:[], pending_answers:0
 };
-const legacyStation = {
-  mode:'off', active:true, source:'legacy',
-  previous_day:legacyDay(shiftDay(today, -1), false),
-  day:legacyDay(today, true),
-  next_day:legacyDay(shiftDay(today, 1), false)
-};
+// רצועת חודש שלם. זו הצורה שהמסך מבקש היום, וגם במצב off — כדי
+// שהלוח לא יהיה ריק בדיוק במצב שהתחנה נמצאת בו.
+const legacyRange = (() => {
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (value) => String(value).padStart(2, '0');
+  const days = [];
+  for (let index = 1; index <= last; index++) {
+    const date = today.slice(0, 7) + '-' + pad(index);
+    days.push(legacyDay(date, date === today));
+  }
+  return {
+    mode:'off', active:true, source:'legacy', publication_id:null, revision:null,
+    from:today.slice(0, 7) + '-01', to:today.slice(0, 7) + '-' + pad(last), days
+  };
+})();
 
 const browser = await chromium.launch();
 try {
@@ -84,27 +95,28 @@ try {
     route.fulfill({ status:200, contentType:'text/javascript',
       body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
-  await context.addInitScript(({ mine, station }) => {
+  await context.addInitScript(({ mine, range }) => {
     window.__SMOKE_ROLE = 'firefighter';
     window.__CALLABLE_PLAN = {
       getScheduleRuntimeStatus:[{ data:{ mode:'off', configured:false, manager:false, active:null } }],
       getMyScheduleV2:[{ data:mine }],
-      getStationScheduleV2:[{ data:station }]
+      getStationScheduleRange:[{ data:range }, { data:range }]
     };
-  }, { mine:legacyMine, station:legacyStation });
+  }, { mine:legacyMine, range:legacyRange });
 
   const page = await context.newPage();
   const started = Date.now();
   await page.goto(base + '/schedule.html', { waitUntil:'load' });
   await page.waitForURL(/schedule-management\.html\?tab=station/, { timeout:5000 });
-  await page.locator('#stationContent .day').first().waitFor({ state:'visible', timeout:5000 });
+  await page.locator('#stationBoard .hcell').first().waitFor({ state:'visible', timeout:5000 });
   const elapsed = Date.now() - started;
   const calls = await page.evaluate(() => window.__CALLABLE_CALLS || []);
 
   assert.ok(elapsed < 5000, 'legacy redirect took ' + elapsed + 'ms');
   assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 1);
-  assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-  assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleV2').length, 1);
+  // הפאנל האישי נטען רק בלשונית שלו; רצועת החודש נקראת פעם אחת.
+  assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0);
+  assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
   assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
   assert.equal(await page.locator('#availabilityView').isVisible(), false);
@@ -115,7 +127,11 @@ try {
   assert.match(await page.locator('#stationContent').textContent(), /משמרת א/);
   await page.locator('[data-tab="mine"]').click();
   assert.equal(await page.locator('#mineView').isVisible(), true);
+  await page.locator('#mineBoard .hcell').first().waitFor({ state:'visible', timeout:5000 });
   assert.match(await page.locator('#mineContent').textContent(), /טל חודרה/);
+  // ⭐ המעבר ללשונית האישית אינו קורא את הטווח שוב.
+  const afterMine = await page.evaluate(() => window.__CALLABLE_CALLS || []);
+  assert.equal(afterMine.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
   const firestoreWrites = await page.evaluate(() => window.__FIRESTORE_WRITES || []);
   assert.equal(firestoreWrites.length, 0);
 

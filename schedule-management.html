@@ -7,43 +7,198 @@
   <title>ResQ · ניהול סידור עבודה</title>
   <link rel="stylesheet" href="./theme.css?v=42f2">
   <style>
-    :root{--sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-green:#dcefdc;
-      --sched-yellow:#fff2cf;--sched-orange:#fbe1d2;--sched-bg:#eef2f7}
+    /* ==================================================================
+       לוח הסידור · רצועת חודש
+
+       הצבעים כולם מ-theme.css, כדי שהמסך הזה יתנהג כמו כל השאר
+       במצב כהה ובמצב בהיר. מה שנוסף כאן הוא רק מה שלא קיים שם:
+       ארבעת צבעי תחנות הקצה, ורוחב היום שנגזר מהמסך.
+       ================================================================== */
+    :root{
+      --sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-bg:#eef2f7;
+      /* תחנות קצה — גרסה כהה, שהיא ברירת המחדל של theme.css */
+      --s1:#17294a;--s1t:#c6dafc; --s2:#12301f;--s2t:#b6e8c9;
+      --s3:#332406;--s3t:#f5dda6; --s4:#241539;--s4t:#ddc8f6;
+      --dayw:96px;--stub:64px;
+    }
+    @media (prefers-color-scheme: light){
+      :root:not([data-theme="dark"]){
+        --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
+        --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+      }
+    }
+    :root[data-theme="light"]{
+      --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
+      --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+    }
     *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
     body{margin:0;min-height:100vh;background:var(--bg,var(--sched-bg));color:var(--txt,#1c2532);
-      font-family:"Segoe UI",Arial,sans-serif;padding:18px;overflow-x:hidden}
+      font-family:"Segoe UI",Arial,sans-serif;padding:18px;overflow-x:hidden;
+      font-variant-numeric:tabular-nums}
     button,input,select{font:inherit}button{min-height:44px;cursor:pointer}
     button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #87b8e4;outline-offset:2px}
-    [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}.head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-    .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}.head h1{font-size:26px;margin:0}.head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}.tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
+    [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}
+    .head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+    .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}
+    .head h1{font-size:26px;margin:0}
+    .head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
+    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
-    .card h2{font-size:18px;margin:0 0 5px}.sub{font-size:13px;color:var(--muted,#748091);line-height:1.55}.mode{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:#fff5d7;color:#765500;font-size:13px;font-weight:800;margin-bottom:13px}
-    .mode.good{background:#e4f4ec;color:#176d4e}.mode.bad{background:#fde8e6;color:#9c302b}.dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
-    .manage-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:13px}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:13px}
+    .card h2{font-size:18px;margin:0 0 5px}
+    .sub{font-size:13px;color:var(--muted,#748091);line-height:1.55}
+    .mode{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:var(--warn-bg,#fff5d7);color:var(--warn,#765500);font-size:13px;font-weight:800;margin-bottom:13px}
+    .mode.good{background:var(--good-bg,#e4f4ec);color:var(--good,#176d4e)}
+    .mode.bad{background:var(--bad-bg,#fde8e6);color:var(--bad,#9c302b)}
+    .dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
+    .manage-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:13px}
+    .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:13px}
     label{display:block;font-size:12px;font-weight:800;color:var(--muted,#748091);margin-bottom:5px}
-    input,select{width:100%;min-height:44px;border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--panel,#f8fafc);color:var(--txt,#1c2532);padding:8px 10px}
-    .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}.btn{border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--card,#fff);color:var(--txt,#1c2532);padding:9px 14px;font-weight:800}
-    .btn.primary{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}.btn.danger{background:#fff1f0;border-color:#f0b4b0;color:#a12c27}.btn:disabled{opacity:.52;cursor:not-allowed}
-    .policy{display:grid;gap:8px;margin-top:12px}.policy-row{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;background:var(--panel,#f7f9fc)}
-    .policy-row b{margin-inline-start:auto}.overrides{margin-top:12px}.override{display:grid;grid-template-columns:1fr 1fr 1.2fr 1fr auto;gap:7px;align-items:end;padding:8px;border-radius:12px;background:var(--panel,#f7f9fc);margin-top:7px}
-    .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.metric{background:var(--panel,#f7f9fc);padding:10px;border-radius:11px}.metric b{display:block;font-size:22px}.metric span{font-size:11px;color:var(--muted,#748091)}
-    .msg{padding:11px 12px;border-radius:11px;margin-top:10px;font-size:13px;line-height:1.55}.msg.ok{background:#e4f4ec;color:#176d4e}.msg.err{background:#fde8e6;color:#9c302b}.msg.info{background:#e7f0fb;color:#245d91}
-    .day-nav{display:flex;align-items:center;gap:10px;margin-bottom:12px}.day-nav .date{flex:1;text-align:center}.day-nav b{display:block;font-size:19px}.day-nav small{color:var(--muted,#748091);direction:ltr;unicode-bidi:isolate}
-    .nav-day{width:48px;border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff);font-size:20px;color:var(--sched-blue)}
-    .mine-list{display:grid;gap:10px}.assignment{border-radius:18px;padding:14px;background:var(--sched-blue-soft)}.assignment .place{font-size:14px;font-weight:800;color:#52657a}.assignment .inner{background:var(--card,#fff);border-radius:13px;padding:13px;margin-top:8px}
-    .person{display:flex;align-items:center;gap:10px}.avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:#e7eff8;color:#2b6da7;font-weight:900}.person b{font-size:18px}.role{font-size:13px;color:var(--muted,#748091)}
-    .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.chip{font-size:12px;font-weight:800;color:#5a6573;background:var(--panel,#f3f6fa);padding:4px 9px;border-radius:999px}.crew{font-size:13px;color:#566273;line-height:1.7;margin-top:10px}
-    .answer{display:flex;gap:8px;margin-top:12px}.answer button{flex:1;border-radius:10px;font-weight:800}.confirm{background:#258568;color:#fff;border:1px solid #258568}.decline{background:#fff;border:1px solid #dcaaa6;color:#a12c27}
-    .station-days{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.day{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:10px}.day h3{margin:0 0 8px;font-size:16px}.day h3 small{display:block;color:var(--muted,#748091);font-size:11px;font-weight:500;direction:ltr;unicode-bidi:isolate}
-    .station{border-radius:12px;padding:10px;margin-bottom:8px}.station:nth-of-type(4n+1){background:var(--sched-blue-soft)}.station:nth-of-type(4n+2){background:var(--sched-green)}.station:nth-of-type(4n+3){background:var(--sched-yellow)}.station:nth-of-type(4n){background:var(--sched-orange)}
-    .station strong{display:block;color:#5f6977;font-size:12px;margin-bottom:4px}.member{font-size:14px;font-weight:700;line-height:1.7}.member.me{color:#1769a6;font-weight:900}.member small{font-weight:500;color:#697587}.event{padding:8px;border-radius:10px;background:#fff7df;margin-top:7px;font-size:13px}.event.me{border:2px solid #347dbd}.event.guard{background:#eaf3ff;border:1px solid #b8d3ef}.event.guard.me{border:2px solid #347dbd}.guard-card{border-color:#b8d3ef;background:#f7fbff}
-    .draft-preview{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(190px,1fr);gap:10px;overflow-x:auto;padding:3px 1px 10px;scroll-snap-type:x proximity}.draft-preview>.day{scroll-snap-align:start}.review-draft{display:flex;align-items:center;gap:9px;margin-top:12px;font-weight:800;color:var(--txt,#1c2532)}.review-draft input{width:22px;min-height:22px;accent-color:var(--sched-blue)}
-    .empty{text-align:center;color:var(--muted,#748091);padding:34px 12px}.loader{height:90px;border-radius:14px;background:linear-gradient(100deg,#eef1f5 20%,#f8fafc 40%,#eef1f5 60%);background-size:200% 100%;animation:load 1.2s infinite}@keyframes load{to{background-position:-200% 0}}
-    @media(max-width:850px){.manage-grid{grid-template-columns:1fr}.station-days{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
-    @media(max-width:560px){body{padding:12px}#appNav{margin:-12px -12px 14px!important}.head h1{font-size:23px}.head .who{width:100%;margin:0}.tabs{position:sticky;top:6px;z-index:20}.tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}.override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}.override .remove{grid-column:1/-1}.card{padding:13px}.answer{flex-direction:column}}
+    input,select{width:100%;min-height:44px;border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--input,var(--panel,#f8fafc));color:var(--txt,#1c2532);padding:8px 10px}
+    .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+    .btn{border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--card,#fff);color:var(--txt,#1c2532);padding:9px 14px;font-weight:800}
+    .btn.primary{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .btn.dark{background:var(--txt,#1c2532);border-color:var(--txt,#1c2532);color:var(--card,#fff)}
+    .btn.danger{background:var(--bad-bg,#fff1f0);border-color:var(--bad-bd,#f0b4b0);color:var(--bad,#a12c27)}
+    .btn:disabled{opacity:.52;cursor:not-allowed}
+    .overrides{margin-top:12px}
+    .override{display:grid;grid-template-columns:1fr 1fr 1.2fr 1fr auto;gap:7px;align-items:end;padding:8px;border-radius:12px;background:var(--panel,#f7f9fc);margin-top:7px}
+    .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+    .metric{background:var(--panel,#f7f9fc);padding:10px;border-radius:11px}
+    .metric b{display:block;font-size:22px}.metric span{font-size:11px;color:var(--muted,#748091)}
+    .msg{padding:11px 12px;border-radius:11px;margin-top:10px;font-size:13px;line-height:1.55}
+    .msg.ok{background:var(--ok-bg,#e4f4ec);color:var(--ok-fg,#176d4e)}
+    .msg.err{background:var(--err-bg,#fde8e6);color:var(--err-fg,#9c302b)}
+    .msg.info{background:var(--info-bg,#e7f0fb);color:var(--info-fg,#245d91)}
+    .msg.warn{background:var(--warn-bg,#fff5d7);color:var(--warn,#765500)}
+    .empty{text-align:center;color:var(--muted,#748091);padding:34px 12px}
+    .loader{height:90px;border-radius:14px;background:linear-gradient(100deg,var(--panel,#eef1f5) 20%,var(--card,#f8fafc) 40%,var(--panel,#eef1f5) 60%);background-size:200% 100%;animation:load 1.2s infinite}
+    @keyframes load{to{background-position:-200% 0}}
+
+    /* ---------------- חוקי התחנה · הצעדים ---------------- */
+    .pills{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+    .pill{font-size:12px;font-weight:700;border:1px solid var(--line,#dfe5ec);
+      background:var(--card,#fff);color:var(--muted,#5a6573);border-radius:8px;
+      padding:6px 13px;min-height:44px}
+    .pill[aria-pressed="true"]{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .steps{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .step{display:flex;align-items:center;gap:7px;border:1px solid var(--line,#dfe5ec);
+      background:var(--card,#fff);border-radius:9px;padding:4px 10px 4px 4px}
+    .step span{font-size:12px;font-weight:700;color:var(--muted,#5a6573);white-space:nowrap}
+    .step .n{font-size:14px;font-weight:800;color:var(--txt,#1c2532);min-width:14px;text-align:center}
+    .step button{width:28px;height:28px;min-height:28px;border-radius:6px;
+      border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#5a6573);
+      font-size:14px;line-height:1;font-weight:800;padding:0}
+    .step button:hover:not(:disabled){background:var(--sched-blue);color:#fff;border-color:var(--sched-blue)}
+    .step button:disabled{opacity:.35;cursor:not-allowed}
+    .step.min{border-color:var(--bad-bd,#fca5a5);background:var(--bad-bg,#fef2f2)}
+    .step.min span,.step.min .n{color:var(--bad,#dc2626);font-weight:800}
+    .step.min button{border-color:var(--bad-bd,#fca5a5);color:var(--bad,#dc2626)}
+    .step.min button:hover:not(:disabled){background:var(--bad,#dc2626);color:#fff}
+    .step .duty{width:auto;padding:0 8px;font-size:11px;font-weight:800}
+    .step .duty[aria-pressed="true"]{background:var(--bad,#dc2626);border-color:var(--bad,#dc2626);color:#fff}
+    .req-flag{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;
+      color:var(--muted,#748091);margin:0}
+    .req-flag input{width:20px;min-height:20px;accent-color:var(--sched-blue)}
+    .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;
+      padding-top:12px;border-top:1px solid var(--line-soft,#eef2f7)}
+    .atright{margin-inline-start:auto;font-size:12px;color:var(--muted,#748091)}
+    .pubrow{display:flex;align-items:center;gap:9px;margin-top:10px;flex-wrap:wrap}
+    .draft-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;
+      color:var(--warn,#b45309);background:var(--warn-bg,#fef9c3);border-radius:7px;padding:6px 10px}
+    .draft-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+    .changes{display:grid;gap:5px;margin-top:10px}
+    .change{display:flex;gap:8px;align-items:center;font-size:12px;padding:7px 10px;
+      border-radius:8px;background:var(--panel,#f7f9fc);color:var(--dim,#566273)}
+    .change.weak{background:var(--bad-bg,#fef2f2);color:var(--bad,#dc2626);font-weight:700}
+    .change.warn{background:var(--warn-bg,#fff5d7);color:var(--warn,#765500)}
+
+    /* ---------------- הלוח ---------------- */
+    .boardhead{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+    .months{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0;scrollbar-width:none}
+    .months::-webkit-scrollbar{display:none}
+    .months button{font-size:12px;font-weight:700;border:1px solid transparent;min-height:36px;
+      background:transparent;color:var(--muted,#748091);border-radius:7px;padding:5px 9px;white-space:nowrap;min-height:44px}
+    .months button[aria-pressed="true"]{background:var(--card,#fff);border-color:var(--line,#dfe5ec);color:var(--txt,#1c2532)}
+    .wkjump{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+    .wkjump button{font-size:13px;font-weight:800;width:44px;height:44px;min-height:44px;
+      border-radius:8px;border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#748091);padding:0}
+    .wkjump b{font-size:12px;font-weight:700;color:var(--muted,#748091);min-width:62px;text-align:center}
+    .board{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
+      overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
+      /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
+         הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
+         בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
+      scroll-padding-inline-start:var(--stub);
+      border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+    .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:6px 3px 7px;
+      text-align:center;border-bottom:1px solid var(--line,#dfe5ec)}
+    .hcell.snap{scroll-snap-align:start}
+    .hcell .dw{font-size:10px;color:var(--muted,#748091);font-weight:600;line-height:1.3}
+    .hcell .dd{font-size:13px;font-weight:800;line-height:1.25}
+    .hcell.we .dw{color:var(--sched-blue)}
+    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--card,#fff);
+      border-bottom:1px solid var(--line,#dfe5ec)}
+    .stub{position:sticky;inset-inline-start:0;z-index:2;background:var(--card,#fff);
+      display:flex;flex-direction:column;justify-content:center;padding:0 9px;
+      border-inline-start:1px solid var(--line-soft,#eef2f7)}
+    .stub b{font-size:12px;font-weight:800;line-height:1.2}
+    .stub small{font-size:10px;color:var(--muted,#748091);font-weight:600}
+    .cell{padding:5px 6px 7px;border-inline-start:1px solid var(--card,#fff);
+      border-top:2px solid var(--card,#fff);min-width:0}
+    .cell.snap{scroll-snap-align:start}
+    .cell.s1{background:var(--s1)}.cell.s2{background:var(--s2)}
+    .cell.s3{background:var(--s3)}.cell.s4{background:var(--s4)}
+    .nm{font-size:12px;font-weight:500;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cell.s1 .nm{color:var(--s1t)}.cell.s2 .nm{color:var(--s2t)}
+    .cell.s3 .nm{color:var(--s3t)}.cell.s4 .nm{color:var(--s4t)}
+    .nm.lead{font-weight:800}
+    .nm.cancelled{text-decoration:line-through;opacity:.55}
+    .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
+      background:var(--card,#fff);padding:0 4px}
+    .rulebar{display:flex;align-items:center;gap:3px;margin:5px 0 4px;min-height:10px}
+    .ruleline{flex:1;height:0;border-top:2px solid var(--bad,#dc2626);border-radius:2px;min-width:8px}
+    .flag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:5px;
+      padding:2px 5px;margin-top:4px;white-space:nowrap;line-height:1.4}
+    .flag.under{color:#fff;background:var(--bad,#dc2626)}
+    .flag.evt{color:var(--txt,#1c2532);background:var(--warn-bg,#fff7df);
+      border:1px solid var(--warn,#e0a23c);display:block;margin-top:5px;white-space:normal}
+    .flag.guard{background:var(--info-bg,#eaf3ff);border:1px solid var(--sched-blue);
+      color:var(--txt,#1c2532);display:block;margin-top:5px;white-space:normal}
+    .board-note{font-size:12px;color:var(--muted,#748091);margin-top:8px;line-height:1.6}
+
+    /* ---------------- הפאנל האישי · אישור ודחייה ----------------
+       הלוח מראה את החודש. הפאנל הזה הוא המקום שבו אדם עונה על
+       השיבוץ שלו, והוא נשאר יומי מסיבה פשוטה: אין קריאה שמחזירה
+       את כל מה שממתין לתשובה לאורך חודש. הפאנל אינו קישוט —
+       בלעדיו „מאשר/ת" ו„לא יכול/ה" פשוט אינם קיימים במסך. */
+    .mine-list{display:grid;gap:10px;margin-bottom:13px}
+    .assignment{border-radius:18px;padding:14px;background:var(--panel,var(--sched-blue-soft))}
+    .assignment .place{font-size:14px;font-weight:800;color:var(--muted,#52657a)}
+    .assignment .inner{background:var(--card,#fff);border-radius:13px;padding:13px;margin-top:8px}
+    .person{display:flex;align-items:center;gap:10px}
+    .avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;
+      background:var(--info-bg,#e7eff8);color:var(--sched-blue);font-weight:900}
+    .person b{font-size:18px}.role{font-size:13px;color:var(--muted,#748091)}
+    .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+    .chip{font-size:12px;font-weight:800;color:var(--muted,#5a6573);background:var(--panel,#f3f6fa);padding:4px 9px;border-radius:999px}
+    .crew{font-size:13px;color:var(--dim,#566273);line-height:1.7;margin-top:10px}
+    .answer{display:flex;gap:8px;margin-top:12px}
+    .answer button{flex:1;border-radius:10px;font-weight:800;padding:9px 14px}
+    .confirm{background:var(--good,#258568);color:#fff;border:1px solid var(--good,#258568)}
+    .decline{background:var(--card,#fff);border:1px solid var(--bad-bd,#dcaaa6);color:var(--bad,#a12c27)}
+    .guard-card{border:1px solid var(--sched-blue);background:var(--info-bg,#f7fbff)}
+
+    @media(max-width:850px){.manage-grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:560px){
+      body{padding:12px}#appNav{margin:-12px -12px 14px!important}.head h1{font-size:23px}
+      .head .who{width:100%;margin:0}.tabs{position:sticky;top:6px;z-index:20}
+      .tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}
+      .override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}
+      .override .remove{grid-column:1/-1}.card{padding:13px}
+    }
   </style>
 </head>
 <body>
@@ -68,6 +223,24 @@
   </nav>
 
   <section id="manageView" hidden>
+    <article class="card" id="policyCard">
+      <h2>חוקי התחנה</h2>
+      <div class="sub" id="sourceSummary">טוען מדיניות ומקור נתונים…</div>
+      <div class="sub">כמה אנשים בכל תפקיד דרושים ביום, וקו המינימום של תחנת הקצה.
+        אלה החלטות של התחנה — המנוע אינו מניח אותן, וערך שלא נקבע הוא שגיאה ולא אפס.</div>
+      <div class="pills" id="policySubs"></div>
+      <div class="steps" id="policySteps"></div>
+      <div class="actions">
+        <button class="btn primary" id="savePolicy" type="button" disabled>שמור את חוקי התחנה</button>
+        <label class="req-flag" for="confirmWeakening">
+          <input id="confirmWeakening" type="checkbox"> מאשר/ת הקלה בתקן
+        </label>
+        <span class="atright" id="policyVersion"></span>
+      </div>
+      <div class="changes" id="policyChanges"></div>
+      <div id="policyMessage" aria-live="polite"></div>
+    </article>
+
     <div class="manage-grid">
       <article class="card">
         <h2>יצירת טיוטה</h2>
@@ -77,7 +250,8 @@
           <div><label for="months">אורך התכנון</label><select id="months"><option value="1">חודש</option><option value="2">חודשיים</option><option value="3">שלושה חודשים</option></select></div>
         </div>
         <div class="overrides">
-          <div class="sub"><b>שינויים ידניים לפני ההרצה</b> — גם הם עוברים את כל בדיקות הכשירות והמנוחה.</div>
+          <div class="sub"><b>שיבוץ ידני לפני ההרצה</b> — איתור עובד והצבתו בתחנת קצה ליום מסוים.
+            גם שיבוץ ידני עובר את כל בדיקות הכשירות והמנוחה.</div>
           <div id="overrideList"></div>
           <button class="btn" id="addOverride" type="button">+ הוסף שיבוץ ידני</button>
         </div>
@@ -87,40 +261,56 @@
       </article>
 
       <article class="card">
-        <h2>חוקי התחנה</h2>
-        <div class="sub" id="sourceSummary">טוען מדיניות ומקור נתונים…</div>
-        <div class="policy" id="policy"></div>
-        <div class="btns">
-          <button class="btn primary" id="publish" type="button" disabled>פרסם את הטיוטה</button>
+        <h2>פרסום</h2>
+        <div class="sub">הפרסום מחליף את הסידור הפעיל בפעולה אחת. רק לאחר מכן משתחררות הודעות הפוש.</div>
+        <div class="pubrow">
+          <button class="btn dark" id="publish" type="button" disabled>פרסום הסידור</button>
+          <span class="draft-badge" id="draftBadge" hidden>טיוטה</span>
           <button class="btn danger" id="rollback" type="button" disabled>חזור לגרסה הקודמת</button>
         </div>
-        <div class="sub">הפרסום מחליף את הסידור הפעיל בפעולה אחת. רק לאחר מכן משתחררות הודעות הפוש.</div>
         <div id="publishMessage" aria-live="polite"></div>
         <div id="rollbackMessage" aria-live="polite"></div>
       </article>
     </div>
+
     <article class="card hide" id="draftPreviewCard">
       <h2>תצוגה מקדימה של הטיוטה</h2>
-      <div class="sub">זה הסידור שיפורסם. עברו בין השבועות ובדקו שמות, תפקידים, אירועים וחוסרים לפני אישור.</div>
-      <div class="day-nav">
-        <button class="nav-day" id="previewPrev" type="button" aria-label="שבוע קודם">›</button>
-        <div class="date"><b id="previewTitle">טיוטה — טרם פורסמה</b><small id="previewRange"></small></div>
-        <button class="nav-day" id="previewNext" type="button" aria-label="שבוע הבא">‹</button>
+      <div class="sub">זה הסידור שיפורסם. עברו בין השבועות ובדקו שמות, אירועים וחוסרים לפני אישור.</div>
+      <div class="boardhead">
+        <b id="previewRange" style="font-size:12px;color:var(--muted,#748091);flex:1"></b>
+        <div class="wkjump">
+          <button id="previewPrev" type="button" aria-label="שבוע קודם">›</button>
+          <b id="previewTitle">טיוטה</b>
+          <button id="previewNext" type="button" aria-label="שבוע הבא">‹</button>
+        </div>
       </div>
-      <div class="draft-preview" id="draftPreview"><div class="loader"></div></div>
-      <label class="review-draft"><input id="reviewDraft" type="checkbox" disabled> בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו</label>
+      <div id="draftPreview"><div class="loader"></div></div>
+      <label class="req-flag" style="margin-top:12px;font-size:13px">
+        <input id="reviewDraft" type="checkbox" disabled>
+        בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו
+      </label>
       <div id="previewMessage" aria-live="polite"></div>
     </article>
   </section>
 
   <section id="mineView" hidden>
-    <div class="day-nav"><button class="nav-day" data-move="-1" aria-label="יום קודם">›</button><div class="date"><b id="mineDateTitle">הסידור שלי</b><small id="mineDate"></small></div><button class="nav-day" data-move="1" aria-label="יום הבא">‹</button></div>
-    <div class="mine-list" id="mineContent"><div class="loader"></div></div>
+    <div class="card">
+      <h2>הסידור שלי</h2>
+      <div class="sub">אותו לוח של התחנה. המשמרות שלך מסומנות במסגרת כחולה.</div>
+      <div class="pills" style="margin:10px 0 0">
+        <button class="pill" id="mineOnly" type="button" aria-pressed="false">רק הימים שלי</button>
+      </div>
+    </div>
+    <div class="mine-list" id="mineToday"></div>
+    <div class="boardhead" id="mineHead"></div>
+    <div id="mineContent"><div class="loader"></div></div>
+    <div class="board-note" id="mineNote"></div>
   </section>
 
   <section id="stationView" hidden>
-    <div class="day-nav"><button class="nav-day" data-move="-1" aria-label="יום קודם">›</button><div class="date"><b id="stationDateTitle">סידור התחנה</b><small id="stationDate"></small></div><button class="nav-day" data-move="1" aria-label="יום הבא">‹</button></div>
-    <div class="station-days" id="stationContent"><div class="loader"></div></div>
+    <div class="boardhead" id="stationHead"></div>
+    <div id="stationContent"><div class="loader"></div></div>
+    <div class="board-note" id="stationNote"></div>
   </section>
 </main>
 
