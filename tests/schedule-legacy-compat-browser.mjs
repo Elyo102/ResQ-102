@@ -45,6 +45,29 @@ async function contextWithPlan(plan) {
   return context;
 }
 
+function dateKey(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' +
+    String(date.getDate()).padStart(2, '0');
+}
+
+function shiftedDay(days) {
+  const today = new Date();
+  return dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12));
+}
+
+function compatibilityStep() {
+  return { data:{
+    mode:'shadow',
+    rotations:[
+      { crew:'A', position_in_cycle:0, cycle_days:3, anchor_date:'2026-01-01', is_active:true,
+        shift_start:'07:00', shift_end:'07:00', shift_hours:24 },
+      { crew:'B', position_in_cycle:1, cycle_days:3, anchor_date:'2026-01-01', is_active:true },
+      { crew:'C', position_in_cycle:2, cycle_days:3, anchor_date:'2026-01-01', is_active:true }
+    ],
+    overrides:{}
+  } };
+}
+
 try {
   // A malformed server response must stop workload calculation. It must never
   // be reinterpreted as a valid empty guard board.
@@ -139,15 +162,17 @@ try {
     console.log('✓ statistics requests exactly 366 inclusive days without a station selector');
   }
 
-  // Guard viewing retains one raw month and one future year. Both the guard
-  // boards and schedule classification share the same date snapshot.
+  // Guard viewing uses two independently bounded annual windows. A single
+  // 731-day compatibility request would exceed the server cap.
   {
-    const context = await contextWithPlan({});
+    const context = await contextWithPlan({
+      getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()]
+    });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/guards.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
-    await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(call =>
-      call && call.name === 'getLegacyScheduleCompatibilityContext'));
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).filter(call =>
+      call && call.name === 'getLegacyScheduleCompatibilityContext').length === 2);
     const value = await page.evaluate(() => {
       const key = date => date.getFullYear() + '-' +
         String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -155,19 +180,93 @@ try {
       const today = new Date();
       const shift = days => new Date(today.getFullYear(), today.getMonth(),
         today.getDate() + days, 12);
-      const call = (window.__CALLABLE_CALLS || []).find(item =>
-        item && item.name === 'getLegacyScheduleCompatibilityContext');
-      return { payload:call && call.payload,
-        expected:{ from:key(shift(-31)), to:key(shift(365)) } };
+      const compatibility = (window.__CALLABLE_CALLS || []).filter(item =>
+        item && item.name === 'getLegacyScheduleCompatibilityContext').map(item => item.payload);
+      const boards = (window.__CALLABLE_CALLS || []).filter(item =>
+        item && item.name === 'getScheduleGuardBoard').map(item => item.payload);
+      return { compatibility, boards, expected:{
+        history:{ from:key(shift(-365)), to:key(shift(-1)) },
+        upcoming:{ from:key(shift(0)), to:key(shift(365)) }
+      } };
     });
-    assert.deepEqual(value.payload, value.expected);
-    assert.equal(Object.hasOwn(value.payload, 'station'), false);
+    assert.deepEqual(value.compatibility, [value.expected.history, value.expected.upcoming]);
+    assert.deepEqual(value.boards, [value.expected.upcoming, value.expected.history]);
+    for (const payload of value.compatibility.concat(value.boards)) {
+      const days = Math.round((new Date(payload.to + 'T12:00:00') -
+        new Date(payload.from + 'T12:00:00')) / 86400000) + 1;
+      assert.ok(days <= 366, 'each request remains below both server caps');
+      assert.equal(Object.hasOwn(payload, 'station'), false);
+    }
     await context.close();
-    console.log('✓ guards requests 31 past days through 365 future days');
+    console.log('✓ guards requests separate 365-day history and 366-day future windows');
+  }
+
+  // A guard from seven months ago must affect the annual fairness history,
+  // while a future assignment must not. This is the user-visible regression
+  // that a request-shape assertion alone cannot catch.
+  {
+    const historic = { id:'old-guard', title:'אבטחה היסטורית', kind:'sport',
+      place:'', date:shiftedDay(-210), start:'10:00', end:'12:00', status:'staffed',
+      slots:1, need_quals:[], notes:'', revision:0, assigned:['u2'], signups:[] };
+    const future = { ...historic, id:'future-guard', title:'אבטחה עתידית',
+      date:shiftedDay(120) };
+    const context = await contextWithPlan({
+      getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'shadow' } }],
+      getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()],
+      getScheduleGuardBoard:[{ data:{ guards:[] } }, { data:{ guards:[] } }],
+      getScheduleGuardManagerBoard:[
+        { data:{ guards:[future] } }, { data:{ guards:[historic] } }
+      ]
+    });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/guards.html`, { waitUntil:'load' });
+    await page.locator('#work').waitFor({ state:'visible' });
+    await page.waitForFunction(() => document.querySelector('#mineNote')?.textContent
+      .includes('ב-12 החודשים האחרונים'));
+    const total = await page.evaluate(() => {
+      const person = Array.from(document.querySelectorAll('#balList .nm'))
+        .find(node => node.textContent.includes('טל חודרה'));
+      if (!person || !person.nextElementSibling || !person.nextElementSibling.nextElementSibling) {
+        return null;
+      }
+      const values = person.nextElementSibling.nextElementSibling.textContent.match(/\d+/g) || [];
+      return values.map(Number).reduce((sum, value) => sum + value, 0);
+    });
+    assert.equal(total, 1,
+      'the 210-day-old guard is counted exactly once and the future guard is excluded');
+    await context.close();
+    console.log('✓ annual guard load counts 2–12 month history and excludes future assignments');
+  }
+
+  // One successful half is not an annual snapshot. The board remains usable,
+  // but the workload claim and automatic ranking must fail closed.
+  {
+    const context = await contextWithPlan({
+      getLegacyScheduleCompatibilityContext:[
+        compatibilityStep(),
+        { reject:true, code:'functions/unavailable', message:'future half failed' }
+      ],
+      getScheduleGuardBoard:[
+        { data:{ guards:[{ id:'future-visible', title:'אבטחה פתוחה', kind:'sport',
+          date:shiftedDay(10), start:'10:00', end:'12:00', status:'open', slots:1,
+          assigned_count:0, open_slots:1, viewer_assigned:false, viewer_signed_up:false }] } },
+        { data:{ guards:[] } }
+      ]
+    });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/guards.html`, { waitUntil:'load' });
+    await page.locator('#openList .g').first().waitFor();
+    assert.doesNotMatch(await page.locator('#mineNote').textContent(), /12 החודשים האחרונים/);
+    assert.match(await page.locator('#mineNote').textContent(), /אינו זמין/);
+    assert.equal(await page.locator('#rankList .rec').count(), 0);
+    assert.match(await page.locator('#openList').textContent(), /אבטחה פתוחה/,
+      'the independent guard board stays available');
+    await context.close();
+    console.log('✓ a partial compatibility snapshot never publishes an annual ranking');
   }
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n4/4 legacy compatibility browser checks passed.');
+console.log('\n6/6 legacy compatibility browser checks passed.');

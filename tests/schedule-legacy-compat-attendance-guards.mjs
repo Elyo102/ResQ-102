@@ -78,11 +78,14 @@ for (const [name, raw] of pages) {
         /callLegacyScheduleCompatibilityContext\s*\(\s*guardMonthRange\(snapshot\.year,\s*snapshot\.month\)\s*\)/);
     } else {
       assert.match(source,
-        /history:\s*\{\s*from:guardDayOffset\(today,\s*-31\),\s*to:guardDayOffset\(today,\s*-1\)\s*\}/);
+        /history:\s*\{\s*from:guardDayOffset\(today,\s*-365\),\s*to:guardDayOffset\(today,\s*-1\)\s*\}/);
       assert.match(source,
         /upcoming:\s*\{\s*from:today,\s*to:guardDayOffset\(today,\s*365\)\s*\}/);
       assert.match(source,
-        /guardCall\.compatibility\s*\(\s*\{\s*from:\s*ranges\.history\.from,\s*to:\s*ranges\.upcoming\.to\s*\}\s*\)/);
+        /guardCall\.compatibility\(ranges\.history\)[\s\S]*?guardCall\.compatibility\(ranges\.upcoming\)/);
+      assert.doesNotMatch(source,
+        /guardCall\.compatibility\s*\(\s*\{\s*from:\s*ranges\.history\.from,\s*to:\s*ranges\.upcoming\.to/,
+        'guards must never request one 731-day compatibility range');
     }
     assert.doesNotMatch(source,
       /(?:callLegacyScheduleCompatibilityContext|guardCall\.compatibility)\s*\([^)]*(?:station|sid|SID)/);
@@ -124,6 +127,19 @@ for (const [name, raw] of pages) {
       /legacy-schedule-compatibility-shape/);
     assert.throws(() => adapt({ data:{ ...payload, overrides:{ bad:{ date:'bad', extra_crews:[] } } } }),
       /legacy-schedule-override-shape/);
+    if (name === 'guards') {
+      const merge = Function(extractFunction(source, 'mergeLegacyCompatibility') +
+        '\nreturn mergeLegacyCompatibility;')();
+      const first = adapt({ data:payload });
+      const second = adapt({ data:{ ...payload, overrides:{} } });
+      assert.equal(merge([first, second]).mode, 'off');
+      assert.throws(() => merge([first, { ...second, mode:'shadow' }]),
+        /legacy-schedule-compatibility-mismatch/);
+      assert.throws(() => merge([first, { ...second,
+        rotations:[{ ...second.rotations[0], crew:'B' }] }]),
+        /legacy-schedule-compatibility-mismatch/);
+      assert.throws(() => merge([first, first]), /legacy-schedule-override-overlap/);
+    }
   });
 
   test(name + ': exposes a Hebrew failure and clears only schedule-derived state', () => {
@@ -148,6 +164,9 @@ for (const [name, raw] of pages) {
     assert.match(source,
       /if \(compatibility\.error \|\| !compatibility\.data\) \{[\s\S]*?scheduleClassificationAvailable\s*=\s*false;[\s\S]*?memberGuards\s*=\s*boards\.memberGuards;[\s\S]*?syncGuardView\(\);[\s\S]*?showLegacyCompatibilityFailure\(\)/);
     assert.match(source, /loadMap\s*=\s*CAN_MANAGE\s*&&\s*scheduleClassificationAvailable/);
+    assert.match(source,
+      /loadByPerson\([\s\S]{0,180}?guardHistoryRange\s*&&\s*guardHistoryRange\.from,[\s\S]{0,120}?guardHistoryRange\s*&&\s*guardHistoryRange\.to/,
+      'annual ranking must be bounded at both ends and exclude future guards');
     assert.match(source, /scheduleClassificationAvailable[\s\S]*?\?\s*dutyKind/);
   });
 

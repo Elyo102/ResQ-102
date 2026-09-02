@@ -156,10 +156,11 @@ export const DUTY_HE = { shift: 'בתוך המשמרת', off: 'ביום חופש
 // guards   רשימת אבטחות
 // ctx      {rotations, overrides, swaps} — לקביעת במשמרת/חופש
 // sinceKey מאיזה תאריך לספור. ריק = הכל
+// untilKey עד איזה תאריך לספור. ריק = הכל
 //
 // מחזיר מפה uid → { off, shift, total, hours, last }
 
-export function loadByPerson(people, guards, ctx, sinceKey) {
+export function loadByPerson(people, guards, ctx, sinceKey, untilKey) {
   const out = {};
   (people || []).forEach(function (p) {
     out[p.uid] = { uid: p.uid, name: p.name || '', crew: p.crew || '',
@@ -171,6 +172,7 @@ export function loadByPerson(people, guards, ctx, sinceKey) {
     if (!g || g.status === 'cancelled') return;
     const key = String(g.date || '');
     if (sinceKey && key < sinceKey) return;
+    if (untilKey && key > untilKey) return;
 
     const hrs = guardHours(g) || 0;
     assignedOf(g).forEach(function (uid) {
@@ -363,7 +365,7 @@ export function logRows(guards, people, ctx) {
   return rows;
 }
 
-// חלון ברירת מחדל לספירת עומס: שנה אחורה. קצר מדי מעניש את מי
+// חלון ברירת מחדל לספירת עומס: 12 חודשים אחורה. קצר מדי מעניש את מי
 // שיצא לאחרונה; ארוך מדי גורר לנצח מישהו שעזב את המשמרת.
 export function defaultSince(today) {
   const d = today ? new Date(today) : new Date();

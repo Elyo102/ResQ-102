@@ -56,10 +56,24 @@ function repeatedBoard(rows, count = 100) {
   return Array.from({ length:count }, () => ({ data:{ guards:rows } }));
 }
 
+function compatibilityStep() {
+  return { data:{
+    mode:'shadow',
+    rotations:[
+      { crew:'A', position_in_cycle:0, cycle_days:3, anchor_date:'2026-01-01',
+        is_active:true, shift_start:'07:00', shift_end:'07:00', shift_hours:24 },
+      { crew:'B', position_in_cycle:1, cycle_days:3, anchor_date:'2026-01-01', is_active:true },
+      { crew:'C', position_in_cycle:2, cycle_days:3, anchor_date:'2026-01-01', is_active:true }
+    ],
+    overrides:{}
+  } };
+}
+
 function defaultGuardPlans() {
   return {
     getScheduleGuardBoard: repeatedBoard(MEMBER_GUARDS),
-    getScheduleGuardManagerBoard: repeatedBoard(managerGuards())
+    getScheduleGuardManagerBoard: repeatedBoard(managerGuards()),
+    getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()]
   };
 }
 

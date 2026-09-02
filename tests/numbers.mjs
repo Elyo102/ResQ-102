@@ -254,6 +254,8 @@ is('u2 — רק במשמרת',        [LM.u2.off, LM.u2.shift], [0, 1]);
 is('אבטחה מבוטלת לא נספרת', LM.u2.total, 1);
 is('u3 — לא יצא בכלל',      LM.u3.total, 0);
 is('חלון תאריכים חותך',     G.loadByPerson(PPL, GG, gctx, '2026-08-02').u1.total, 1);
+is('חלון תאריכים אינו סופר עתיד',
+  G.loadByPerson(PPL, GG, gctx, '', '2026-08-01').u1.total, 1);
 
 // דירוג: מי שלא יצא ביום חופש ראשון.
 const RK = G.fairnessRank(LM);

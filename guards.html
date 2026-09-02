@@ -293,7 +293,7 @@ import { CREW_HE } from './rotation.js?v=38';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, defaultSince, unavailableWhy } from './guards.js?v=38';
+         autoPick, whyPicked, logRows, unavailableWhy } from './guards.js?v=39';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -340,6 +340,7 @@ let rotations = [], overrides = {}, swaps = [], busy = {}, scheduleCompatibility
 let loadMap = {}, ctx = {};
 let scheduleClassificationAvailable = false;
 let guardLoadGeneration = 0;
+let guardHistoryRange = null;
 
 const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const COMPATIBILITY_ROTATION_FIELDS = [
@@ -380,6 +381,31 @@ function legacyCompatibilityData(result){
     };
   });
   return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
+}
+
+function mergeLegacyCompatibility(parts){
+  if (!Array.isArray(parts) || parts.length !== 2) {
+    throw new Error('legacy-schedule-compatibility-parts');
+  }
+  const history = parts[0];
+  const upcoming = parts[1];
+  if (!history || !upcoming || history.mode !== upcoming.mode ||
+      JSON.stringify(history.rotations) !== JSON.stringify(upcoming.rotations)) {
+    throw new Error('legacy-schedule-compatibility-mismatch');
+  }
+  const merged = {};
+  [history.overrides, upcoming.overrides].forEach(function (rows) {
+    Object.keys(rows).forEach(function (date) {
+      // The requested windows do not overlap. Seeing the same day twice means
+      // one response escaped its range, so combining it would publish an
+      // incoherent annual classification.
+      if (Object.prototype.hasOwnProperty.call(merged, date)) {
+        throw new Error('legacy-schedule-override-overlap');
+      }
+      merged[date] = rows[date];
+    });
+  });
+  return { mode:history.mode, rotations:history.rotations, overrides:merged };
 }
 
 function showLegacyCompatibilityFailure(){
@@ -516,12 +542,14 @@ function guardOpenSlots(g){
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function personalLoad(){
+function personalLoad(range){
   if (!scheduleClassificationAvailable) return null;
   const result = { off:0, shift:0, hours:0 };
   guards.filter(guardIsMine).forEach(function (g) {
     if (g.status === 'cancelled') return;
-    const duty = dutyKind(ctx, ME.uid, ME.crew, String(g.date || ''));
+    const date = String(g.date || '');
+    if (!range || date < range.from || date > range.to) return;
+    const duty = dutyKind(ctx, ME.uid, ME.crew, date);
     if (duty === 'off') {
       result.off += 1;
       result.hours += guardHours(g) || 0;
@@ -542,7 +570,9 @@ function syncGuardView(){
   // Only the manager board contains other people's assignment identifiers.
   // A member's own load is computed separately from their two boolean flags.
   loadMap = CAN_MANAGE && scheduleClassificationAvailable
-    ? loadByPerson(people, guards, ctx, defaultSince()) : {};
+    ? loadByPerson(people, guards, ctx,
+        guardHistoryRange && guardHistoryRange.from,
+        guardHistoryRange && guardHistoryRange.to) : {};
   if (ME) { renderOpen(); renderMine(); renderLoad(); renderLog(); }
 }
 
@@ -624,7 +654,7 @@ function guardBoardRanges(){
   const today = toKey(new Date());
   return {
     upcoming: { from:today, to:guardDayOffset(today, 365) },
-    history: { from:guardDayOffset(today, -31), to:guardDayOffset(today, -1) }
+    history: { from:guardDayOffset(today, -365), to:guardDayOffset(today, -1) }
   };
 }
 
@@ -640,8 +670,9 @@ function mergeBoardRows(parts){
 }
 
 async function loadGuardBoards(managerRequested, ranges){
-  // The future board is bounded to one year and raw history to the previous
-  // 31 days. Older history belongs in the yearly aggregate, not on the phone.
+  // Each board read is independently bounded by the server's 366-day cap.
+  // Keeping history and future separate avoids an unsafe 731-day request while
+  // giving the annual workload claim its complete source data.
   const memberReads = [guardCall.board(ranges.upcoming), guardCall.board(ranges.history)];
   const managerReads = managerRequested
     ? [guardCall.managerBoard(ranges.upcoming), guardCall.managerBoard(ranges.history)] : [];
@@ -697,11 +728,11 @@ async function loadAll(){
   const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
   const jobs = [];
   const ranges = guardBoardRanges();
-  const compatibilityRequest = guardCall.compatibility({
-    from: ranges.history.from,
-    to: ranges.upcoming.to
-  }).then(function (result) {
-    return { data: legacyCompatibilityData(result), error: null };
+  const compatibilityRequest = Promise.all([
+    guardCall.compatibility(ranges.history),
+    guardCall.compatibility(ranges.upcoming)
+  ]).then(function (results) {
+    return { data: mergeLegacyCompatibility(results.map(legacyCompatibilityData)), error: null };
   }).catch(function (error) {
     return { data: null, error: error };
   });
@@ -816,6 +847,7 @@ async function loadAll(){
   held = next.held;
   swaps = next.swaps;
   busy = next.busy;
+  guardHistoryRange = { from:ranges.history.from, to:ranges.history.to };
   memberGuards = boards.memberGuards;
   // A failed write can revoke the local view while the reads are in flight.
   // Never put a detailed response back into memory after that revocation.
@@ -1259,10 +1291,11 @@ function renderMine(){
   list.sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
 
   const mine = scheduleClassificationAvailable
-    ? (CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 }) : personalLoad())
+    ? (CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 })
+      : personalLoad(guardHistoryRange))
     : null;
   $('mineNote').textContent = mine
-    ? 'בשנה האחרונה: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
+    ? 'ב-12 החודשים האחרונים: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
       ' שעות) · ' + mine.shift + ' בתוך המשמרת.'
     : 'האבטחות שלך מוצגות, אך סיווג יום משמרת/חופש אינו זמין כרגע.';
 
