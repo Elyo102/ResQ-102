@@ -399,6 +399,79 @@ try {
   });
   await direct.close();
 
+  /* ------------------------------------------------------------------
+   * ג5 · הרשאת עריכה סמויה בנייד
+   *
+   * ⭐ מודל האיום כאן אינו „המשתמש רואה כפתור". הוא „למשתמש יש
+   * דפדפן". `hidden`, `disabled` ו-`display:none` הם תכונות DOM
+   * שאפשר להסיר בשורה אחת בקונסולה. לכן הבדיקה מסירה אותן בעצמה,
+   * ואז לוחצת בכוח על **כל** פקד ניהול.
+   *
+   * מה שנטען: אף קריאה משנה אינה יוצאת מהמסך. השרת ממילא עוצר —
+   * זה נבדק ב-schedule-hidden-authority-probe — אבל מסך שמנסה
+   * לשלוח פעולה שהוא יודע שאינה מותרת הוא מסך שמשקר לאדם.
+   * ------------------------------------------------------------------ */
+
+  const forced = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(forced, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }]
+  });
+  const forcedPage = await forced.newPage();
+  forcedPage.on('dialog', (dialog) => dialog.accept());
+  await forcedPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await forcedPage.locator('#appMain:not(.hide)').waitFor();
+
+  const MUTATING = ['saveSchedulePolicy', 'previewSchedulePolicy', 'saveScheduleSource',
+    'previewScheduleSource', 'runSchedulePlanner', 'publishSchedule', 'rollbackSchedule',
+    'setScheduleRuntimeMode', 'manageScheduleGuard', 'assignGuard',
+    'getScheduleManagerSetup', 'getScheduleDraftPreview', 'setScheduleManagerAccess'];
+
+  await test('a member with no appointment fires no managing call even with hidden and disabled stripped', async () => {
+    const before = await forcedPage.evaluate(() => window.__CALLABLE_CALLS.length);
+
+    // הסרת כל שכבת התצוגה, בדיוק כפי שאפשר לעשות מקונסולה.
+    const clicked = await forcedPage.evaluate(() => {
+      const ids = ['manageTab', 'manageView', 'modeCard', 'modeApply', 'savePolicy',
+        'sourceCheck', 'sourceSave', 'runPlanner', 'publish', 'rollback'];
+      const hit = [];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.hidden = false;
+        el.removeAttribute('hidden');
+        el.disabled = false;
+        el.removeAttribute('disabled');
+        el.classList.remove('hide');
+        el.style.display = '';
+        el.style.visibility = 'visible';
+        el.style.pointerEvents = 'auto';
+        hit.push(id);
+      }
+      // הלחיצה עצמה — אחרי שכל מה שחסם אותה הוסר.
+      for (const id of hit) {
+        const el = document.getElementById(id);
+        el.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true }));
+      }
+      return hit;
+    });
+
+    // ⭐ אם הפקדים לא היו בעמוד בכלל, הבדיקה לא בדקה כלום.
+    assert.ok(clicked.length >= 8, 'ציפיתי למצוא את פקדי הניהול ב-DOM, מצאתי ' + clicked.length);
+
+    await forcedPage.waitForTimeout(250);
+
+    const calls = await forcedPage.evaluate(() => window.__CALLABLE_CALLS);
+    const fired = calls.slice(before).map((entry) => entry.name)
+      .filter((name) => MUTATING.includes(name));
+    assert.deepEqual(fired, [], 'יצאו קריאות ניהול: ' + fired.join(', '));
+
+    // והמסך גם לא נפתח „חלקית": הלשונית עדיין אינה הלשונית הפעילה.
+    assert.equal(await forcedPage.locator('#stationView').isVisible(), true);
+  });
+  await forced.close();
+
   await test('personal mobile view remains available after station is the default', async () => {
     await phonePage.locator('[data-tab="mine"]').dispatchEvent('click');
     await phonePage.locator('#mineToday .assignment').first().waitFor();
@@ -775,5 +848,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 22);
-console.log('\n22 schedule management browser checks passed.');
+assert.equal(passed, 23);
+console.log('\n23 schedule management browser checks passed.');

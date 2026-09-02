@@ -1669,13 +1669,37 @@ $('previewNext').addEventListener('click', () => {
 });
 $('reviewDraft').addEventListener('change', updatePublishAvailability);
 $('addOverride').addEventListener('click', () => addOverride());
-$('runPlanner').addEventListener('click', runPlanner);
-$('publish').addEventListener('click', publishDraft);
-$('rollback').addEventListener('click', rollbackSchedule);
-$('savePolicy').addEventListener('click', savePolicy);
+// ⭐ `hidden` ו-`disabled` הם שכבת תצוגה בלבד. אפשר להסיר אותם
+// בשורה אחת מקונסולת הדפדפן, ואז המאזין נורה כרגיל. השרת אמנם
+// עוצר — `requireManager` על כל פעולה משנה — אבל מסך ששולח פעולה
+// שהוא יודע שאינה מותרת משקר לאדם וגם מייצר קריאה מיותרת.
+//
+// לכן כל פעולת ניהול עוברת דרך שער אחד. הוא נשען על **תשובת
+// השרת** (`state.status.manager`) ולא על התפקיד בטוקן ולא על
+// רוחב המסך, והוא מקום אחד — כדי שפעולה חדשה לא תישכח בחוץ.
+function managerAction(fn) {
+  return function (event) {
+    if (!canManageSchedule()) return;
+    return fn(event);
+  };
+}
+
+// שער המצב נפרד: הוא שייך לפיקוד ולא למינוי התפעולי, ולכן הוא
+// נשען על `may_change` שהשרת החזיר ולא על היכולת לנהל.
+function commandAction(fn) {
+  return function (event) {
+    if (!state.modeView || state.modeView.may_change !== true) return;
+    return fn(event);
+  };
+}
+
+$('runPlanner').addEventListener('click', managerAction(runPlanner));
+$('publish').addEventListener('click', managerAction(publishDraft));
+$('rollback').addEventListener('click', managerAction(rollbackSchedule));
+$('savePolicy').addEventListener('click', managerAction(savePolicy));
 $('modeConfirm').addEventListener('input', updateModeApply);
 $('modeReason').addEventListener('change', updateModeApply);
-$('modeApply').addEventListener('click', applyModeChange);
+$('modeApply').addEventListener('click', commandAction(applyModeChange));
 $('sourceParse').addEventListener('click', () => {
   const table = parsePaste($('sourcePaste').value);
   if (!table) {
@@ -1694,8 +1718,8 @@ $('sourceParse').addEventListener('click', () => {
   updateSourceButtons();
 });
 $('sourceAccept').addEventListener('change', updateSourceButtons);
-$('sourceCheck').addEventListener('click', checkSource);
-$('sourceSave').addEventListener('click', saveSource);
+$('sourceCheck').addEventListener('click', managerAction(checkSource));
+$('sourceSave').addEventListener('click', managerAction(saveSource));
 addEventListener('resize', refitAll);
 
 onAuthStateChanged(auth, (user) => {
