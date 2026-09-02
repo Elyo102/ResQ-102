@@ -882,5 +882,26 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 76);
-console.log('\n76 schedule runtime source checks passed.');
+// ⭐ נוסף אחרי תקלה אמיתית: `CONTROL_RE` נכתב עם תו NUL אמיתי במקום
+// עם רצף הבריחה. הקוד עבד, כל הבדיקות עברו — אבל גיט סיווג את
+// הקובץ כבינארי, ולכן הוא לא הציג diff בשום ביקורת קוד. קובץ
+// שאי אפשר לסקור הוא קובץ שאי אפשר למזג בבטחה.
+check('schedule source files carry no raw control bytes', () => {
+  const files = ['functions/schedule-runtime.js', 'functions/schedule-policy-author.js',
+    'functions/schedule-mode-authority.js', 'functions/schedule-source-author.js',
+    'functions/schedule-publication.js', 'schedule-management.js'];
+  for (const name of files) {
+    const bytes = fs.readFileSync(path.join(root, name));
+    for (const byte of bytes) {
+      // מותרים: \t (9), \n (10), \r (13). כל שאר תווי הבקרה אסורים.
+      if (byte < 0x20 && byte !== 9 && byte !== 10 && byte !== 13) {
+        assert.fail(name + ' מכיל תו בקרה גולמי 0x' + byte.toString(16)
+          + ' — יש לכתוב אותו כרצף בריחה');
+      }
+      if (byte === 0x7f) assert.fail(name + ' מכיל DEL גולמי');
+    }
+  }
+});
+
+assert.equal(passed, 77);
+console.log('\n77 schedule runtime source checks passed.');

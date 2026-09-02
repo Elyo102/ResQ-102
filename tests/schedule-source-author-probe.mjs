@@ -269,7 +269,7 @@ eq('4.7 תפקיד כפול',
   rejectCode((l) => { l[0].roles = ['driver', 'driver']; }), ROW.ROLE_DUPLICATE);
 eq('4.8 בלי שם', rejectCode((l) => { delete l[0].full_name; }), ROW.NAME_MISSING);
 eq('4.9 שם עם תווי בקרה',
-  rejectCode((l) => { l[0].full_name = 'בדיקהאלף'; }), ROW.NAME_INVALID);
+  rejectCode((l) => { l[0].full_name = 'בדיקה\u0007אלף'; }), ROW.NAME_INVALID);
 
 throwsCode('4.10 בלי חוקי תחנה', () => plan({ policy: null }), CODE.NO_POLICY);
 throwsCode('4.11 חוקי תחנה של תחנה אחרת',
