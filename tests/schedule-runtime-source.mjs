@@ -431,10 +431,16 @@ check('a guard notice names the date, the hours and the place', () => {
 
 check('a schedule change notice names the date and the sub-station', () => {
   assert.ok(publication.includes('function pushBody(items, changeCount, firstPublication)'));
-  assert.ok(publication.includes("sub_station_changed: 'שובצת מחדש'"));
-  // רשימת ההיתר גדלה בדיוק בשני שדות, ושניהם על האדם עצמו.
-  assert.ok(publication.includes(
-    "const PUSH_FIELDS = Object.freeze(['kind', 'date', 'sub_station', 'sub_station_label']);"));
+  assert.ok(publication.includes("sub_station_changed: 'הוזזת'"));
+  // ⭐ העברה ליום אחר היא שינוי אחד, לא ביטול ותוספת.
+  assert.ok(publication.includes('function pairMoves(items)'));
+  assert.ok(publication.includes("ASSIGNMENT_MOVED: 'assignment_moved'"));
+  // ואין „ביטול שיבוץ": שיבוץ משתנה, הוא אינו מבוטל.
+  assert.equal(publication.includes("'בוטל שיבוץ'"), false);
+  // רשימת ההיתר מונה רק שדות על האדם עצמו — לאן, מאיפה, ומתי.
+  assert.ok(publication.includes("const PUSH_FIELDS = Object.freeze(['kind', 'date', 'from_date',"));
+  // ⭐ מטען גדול מדי מצטמצם ואינו מפיל פרסום שלם.
+  assert.ok(publication.includes('while (items.length > 1 && utf8Bytes(stable(push))'));
   // ⭐ ועדיין: שום שם של אדם אחר אינו נכנס למטען.
   const build = publication.slice(publication.indexOf('function buildPush'),
     publication.indexOf('function utf8Bytes'));

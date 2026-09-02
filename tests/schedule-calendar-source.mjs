@@ -120,7 +120,8 @@ t('רשימת ההיתר של הפוש קיימת וסגורה', () => {
   // ⭐ הרשימה מונה את התחנה שאליה **האדם עצמו** שובץ, כדי שההתראה
   // תאמר לאיזה יום ולאיזו תחנה — זה מידע עליו ולא על אף אחד אחר.
   // כל תוספת נוספת חייבת להפיל את הבדיקה הזאת ולהישקל בנפרד.
-  const expected = ['kind', 'date', 'sub_station', 'sub_station_label'];
+  const expected = ['kind', 'date', 'from_date', 'sub_station', 'sub_station_label',
+    'from_sub_station', 'from_sub_station_label'];
   ok(fields.length === expected.length && expected.every((x) => fields.indexOf(x) > -1),
     'רשימת ההיתר השתנתה: ' + fields.join(','));
   // ואף שדה ברשימה אינו נושא שם של אדם.
@@ -133,7 +134,14 @@ t('ההתראה אומרת לאיזה תאריך ולאיזו תחנה', () => {
   ok(/function pushBody\(/.test(P), 'אין בונה נוסח להתראה');
   ok(/function shortDate\(/.test(P), 'אין עיצוב תאריך קצר');
   ok(!/Intl\./.test(P), 'עיצוב תלוי ICU במטען שנחתם ונשמר');
-  ok(/sub_station_changed: 'שובצת מחדש'/.test(P), 'שיבוץ מחדש אינו מנוסח');
+  // ⭐ „הוזזת" ולא „שובצת מחדש", ואין „ביטול שיבוץ": שיבוץ משתנה,
+  // הוא אינו מבוטל.
+  ok(/sub_station_changed: 'הוזזת'/.test(P), 'העברה אינה מנוסחת');
+  ok(/assignment_moved: 'הוזזת'/.test(P), 'העברה ליום אחר אינה מנוסחת');
+  ok(!/'בוטל שיבוץ'/.test(P), 'הניסוח „בוטל שיבוץ" חזר');
+  // והצמדת הסרה להוספה נעשית רק כשהיא חד-משמעית.
+  ok(/if \(removed\.length !== 1 \|\| added\.length !== 1\) return items;/.test(P),
+    'ההצמדה אינה מוגבלת למקרה החד-משמעי');
   const body = P.slice(P.indexOf('function itemText'), P.indexOf('function pushBody'));
   ok(/item\.sub_station_label \|\| item\.sub_station/.test(body),
     'התחנה אינה נאמרת בהתראה');
