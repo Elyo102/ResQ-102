@@ -1521,12 +1521,16 @@ async function test(name, fn) {
 
   let draftId;
   let previewDigest;
-  await test('shadow mode creates a complete immutable draft but cannot publish', async () => {
+  await test('shadow mode creates a complete immutable draft and prepares without activating or notifying', async () => {
     const made = await api.runPlanner(req('manager', 'commander', {
       request_id: 'draft_one', start: '2026-09-01', months: 1, overrides: plannerOverrides
     }));
     draftId = made.draft_id;
     assert.ok(draftId);
+    assert.equal(Number((made.summary || {}).blocking_gaps || 0), 0);
+    assert.equal(Number((made.summary || {}).days_below_minimum || 0), 0);
+    assert.equal(Number((made.summary || {}).open_rows || 0), 0);
+    assert.equal(Number((made.summary || {}).rejected_manual || 0), 0);
     const draft = await db.doc('stations/' + SID + '/schedule_drafts/' + draftId).get();
     assert.equal((draft.data() || {}).status, 'complete');
     assert.ok((draft.data() || {}).row_count > 0);
@@ -1539,9 +1543,29 @@ async function test(name, fn) {
     await assert.rejects(api.getDraftPreview(req('viewer', 'firefighter', {
       draft_id: draftId, start: '2026-09-01'
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
-    await assert.rejects(api.publish(req('manager', 'commander', {
-      draft_id: draftId, request_id: 'publish_shadow'
-    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'schedule-mode-blocked');
+    const activeBefore = await activePointer().get();
+    const prepared = await api.publish(req('manager', 'commander', {
+      draft_id: draftId, expected_content_digest: previewDigest, request_id: 'publish_shadow'
+    }));
+    assert.equal(prepared.prepared, true);
+    assert.equal(prepared.notified_people, 0);
+    assert.ok(prepared.publication_id);
+    const publicationRef = station().collection('schedule_publications').doc(prepared.publication_id);
+    const publication = (await publicationRef.get()).data() || {};
+    assert.equal(publication.status, 'prepared');
+    assert.equal(publication.snapshot_complete, true);
+    assert.equal(publication.content_digest, previewDigest);
+    assert.equal(publication.source_draft_id, draftId);
+    const outbox = await publicationRef.collection('schedule_outbox').get();
+    assert.ok(outbox.size > 0);
+    assert.equal(outbox.size, prepared.blocked_notifications);
+    assert.ok(outbox.docs.every((doc) => (doc.data() || {}).status === 'blocked'));
+    const activeAfter = await activePointer().get();
+    assert.equal(activeAfter.exists, activeBefore.exists);
+    assert.deepEqual(activeAfter.exists ? activeAfter.data() : null,
+      activeBefore.exists ? activeBefore.data() : null);
+    assert.equal((await station().collection('schedule_state').doc('runtime').get()).data().mode,
+      'shadow');
   });
 
   await test('the same draft request is idempotent', async () => {
