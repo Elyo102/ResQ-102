@@ -72,7 +72,10 @@ const ROW = Object.freeze({
   ROLE_DUPLICATE: 'row-role-duplicate',
   TOO_MANY_ROLES: 'row-too-many-roles',
   NAME_MISSING: 'row-name-missing',
-  NAME_INVALID: 'row-name-invalid'
+  NAME_INVALID: 'row-name-invalid',
+  // ⭐ P1-4. השם נלקח מהפרופיל החי; פרופיל בלי שם אינו יכול להופיע
+  // על לוח, וזה מצב שצריך לתקן במערכת ולא בגיליון.
+  PROFILE_NAME_MISSING: 'row-profile-name-missing'
 });
 
 const ROW_TEXT = Object.freeze({
@@ -89,7 +92,8 @@ const ROW_TEXT = Object.freeze({
   'row-role-duplicate': 'אותו תפקיד מופיע פעמיים.',
   'row-too-many-roles': 'יותר מדי תפקידים.',
   'row-name-missing': 'אין שם להצגה.',
-  'row-name-invalid': 'השם מכיל תווי בקרה.'
+  'row-name-invalid': 'השם מכיל תווי בקרה.',
+  'row-profile-name-missing': 'לחשבון אין שם בפרופיל. יש לתקן במערכת, לא בגיליון.'
 });
 
 const CODE = Object.freeze({
@@ -103,6 +107,9 @@ const CODE = Object.freeze({
   EMPTY_RESULT: 'source-author-empty-result',
   // ⭐ שלושת אלה נוספו אחרי ממצא P0-1 של Codex: יבוא סגל אִפֵּס
   // זמינות, נעילות ואירועים בלי לומר מילה.
+  // ⭐ P1-4. סגל פעיל שאינו בגיליון פשוט לא ישובץ — ואיש לא יבחין.
+  MISSING_STAFF: 'source-author-missing-staff',
+  MISSING_ACK_MISMATCH: 'source-author-missing-accept-mismatch',
   CARRY_SHAPE: 'source-author-carry-shape',
   CARRY_ORPHANED: 'source-author-carry-orphaned',
   CARRY_ACK_MISMATCH: 'source-author-carry-accept-mismatch'
@@ -190,6 +197,14 @@ function readRow(raw, index, policy, directory, seenEmployee) {
     return { rejected: Object.assign({ code: ROW.AMBIGUOUS, matches: matches.length }, line) };
   }
   const uid = matches[0].uid;
+  /* ⭐ P1-4. השם שיישמר בא מכאן — מהפרופיל החי — ולא מהגיליון.
+   * פרופיל בלי שם הוא תקלה במערכת, ולכן הוא נדחה בקוד משלו במקום
+   * ליפול חזרה על מה שהודבק. */
+  const liveName = isNonEmptyString(matches[0].full_name)
+    ? matches[0].full_name.trim().slice(0, LIMITS.MAX_NAME) : '';
+  if (!liveName) {
+    return { rejected: Object.assign({ code: ROW.PROFILE_NAME_MISSING }, line) };
+  }
 
   const sub = isNonEmptyString(raw.sub_station) ? raw.sub_station.trim() : '';
   if (!sub) return { rejected: Object.assign({ code: ROW.NO_SUB_STATION }, line) };
@@ -239,8 +254,12 @@ function readRow(raw, index, policy, directory, seenEmployee) {
         sub_station: sub,
         active: raw.active,
         roles: clean,
-        full_name: name.value,
-        employee_number: employee,
+        /* ⭐ P1-4. מהפרופיל החי, לא מהגיליון. שם שמגיע מהדבקה מופיע
+         * על הלוח של כל התחנה, ואין סיבה שעמודה בגיליון תקבע אותו. */
+        full_name: liveName,
+        /* מספר עובד **אינו** נשמר כאן. המנוע ושכבת השירות אינם
+         * קוראים אותו כלל (אימתתי ב-grep), ולכן שמירתו בתמונה היא
+         * החזקת מידע מזהה בלי שימוש. הוא נשאר במסמך המשתמש. */
         group: isNonEmptyString(raw.group) ? raw.group.trim().slice(0, LIMITS.MAX_ID) : null
       }
     }
@@ -284,7 +303,10 @@ function createSourceAuthor(deps) {
         ? '' : String(person.employee_number).trim();
       if (!employee || !isNonEmptyString(person.uid) || !AUTH_UID_RE.test(person.uid)) return;
       if (!map.has(employee)) map.set(employee, []);
-      map.get(employee).push({ uid: person.uid });
+      map.get(employee).push({
+        uid: person.uid,
+        full_name: isNonEmptyString(person.full_name) ? person.full_name.trim() : null
+      });
     });
     return map;
   }
@@ -380,6 +402,42 @@ function createSourceAuthor(deps) {
 
     const people = accepted.map((item) => item.person);
     const known = new Set(people.map((person) => person.id));
+
+    /* ==================================================================
+     * ⭐ P1-4 · מי שאינו בגיליון
+     *
+     * הגרסה הקודמת קיבלה כל גיליון כפי שהוא. גיליון חלקי — עמודה
+     * שנגררה, סינון שנשכח פתוח, העתקה של חצי טבלה — יצר מקור תקין
+     * לחלוטין שחסרים בו אנשים. הם פשוט לא שובצו, ואיש לא קיבל
+     * הודעה, כי מבחינת המערכת הם לא היו קיימים.
+     *
+     * לכן: כל מי שפעיל בתחנה ויש לו מספר עובד נספר. מי שאינו
+     * בגיליון מדווח כמספר, והפעלה של מקור חלקי דורשת אישור מספרי
+     * מדויק — בדיוק כמו שורה שנדחתה.
+     * ================================================================== */
+    const missingStaff = [];
+    directory.forEach((entries) => {
+      entries.forEach((entry) => {
+        if (!known.has(entry.uid)) missingStaff.push(entry.uid);
+      });
+    });
+    /* ⭐ החסימה קשורה ל**הפעלה**, לא לבדיקה. תצוגה מקדימה חייבת
+     * להראות את המספר כדי שיהיה מה לאשר; מה שאסור הוא שמקור חלקי
+     * ייכנס לתוקף בלי שאיש אמר את המספר בקול. */
+    if (missingStaff.length && input.activate === true) {
+      if (input.accept_missing === undefined || input.accept_missing === null) {
+        fail(CODE.MISSING_STAFF,
+          missingStaff.length + ' אנשים פעילים בתחנה אינם בגיליון, ולכן לא '
+          + 'ישובצו כלל. יש לאשר את המספר הזה במפורש.',
+          { missing: missingStaff.length });
+      }
+      if (input.accept_missing !== missingStaff.length) {
+        fail(CODE.MISSING_ACK_MISMATCH,
+          'אושרו ' + input.accept_missing + ' חסרים, ובפועל יש '
+          + missingStaff.length + '. הרשימה השתנתה מאז שנבדקה.',
+          { missing: missingStaff.length });
+      }
+    }
     const carried = carriedFrom(input.previous);
 
     /* אדם שיצא מהרשימה — הזמינות והנעילות שלו כבר אינן שייכות למקור.
@@ -505,12 +563,15 @@ function createSourceAuthor(deps) {
         id: event.id, data: event
       }))),
       carried_dropped: Object.freeze(Object.assign({}, orphaned)),
+      // ⭐ מספר בלבד. מי חסר הוא אדם, והדוח נשמר ומוצג.
+      missing_staff: missingStaff.length,
       counts, report,
-      audit: auditOf(stationId, input.actor_uid, report, digest, orphaned)
+      audit: auditOf(stationId, input.actor_uid, report, digest, orphaned,
+        missingStaff.length)
     });
   }
 
-  function auditOf(stationId, actor, report, digest, orphaned) {
+  function auditOf(stationId, actor, report, digest, orphaned, missingStaff) {
     return {
       at: new Date(clock()).toISOString(),
       station_id: stationId,
@@ -524,7 +585,8 @@ function createSourceAuthor(deps) {
       rejected_by_code: report.by_code,
       // ספירות בלבד — מי יצא מהמקור הוא אדם, ואין לו מקום ביומן.
       carry_dropped_availability: orphaned ? orphaned.availability : 0,
-      carry_dropped_locked: orphaned ? orphaned.locked : 0
+      carry_dropped_locked: orphaned ? orphaned.locked : 0,
+      missing_staff: Number(missingStaff || 0)
     };
   }
 

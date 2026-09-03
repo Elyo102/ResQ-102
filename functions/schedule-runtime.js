@@ -1484,7 +1484,13 @@ function createScheduleRuntime(deps) {
       const employee = user.employee_number === undefined || user.employee_number === null
         ? '' : String(user.employee_number).trim();
       if (!employee) return;
-      out.push({ uid: doc.id, employee_number: employee });
+      /* ⭐ P1-4. השם נמסר מהפרופיל החי ולא מהגיליון המודבק. שם
+       * שמגיע מהדבקה מופיע על הלוח של כל התחנה, ולכן הוא לא ייקבע
+       * בעמודה בגיליון. */
+      out.push({
+        uid: doc.id, employee_number: employee,
+        full_name: nonEmpty(user.full_name) ? String(user.full_name).trim() : null
+      });
     });
     return out;
   }
@@ -1523,7 +1529,10 @@ function createScheduleRuntime(deps) {
         previous,
         actor_uid: ctx.uid,
         accept_rejected: data.accept_rejected,
-        accept_carry_dropped: data.accept_carry_dropped
+        accept_carry_dropped: data.accept_carry_dropped,
+        accept_missing: data.accept_missing,
+        // ⭐ החסימה על סגל חסר חלה על הפעלה בלבד; תצוגה מקדימה מדווחת.
+        activate: data.activate === true
       });
     } catch (error) {
       if (error && error.name === 'SourceAuthorError') {
@@ -1580,6 +1589,8 @@ function createScheduleRuntime(deps) {
       // ⭐ מה שיוצא מהמקור חוזר למסך. רכזת חייבת לראות מספר לפני
       // שהיא מאשרת, ולא לגלות אחרי השמירה.
       carried_dropped: plan.carried_dropped || { availability: 0, locked: 0 },
+      // ⭐ כמה אנשים פעילים בתחנה אינם בגיליון. מספר, לא רשימה.
+      missing_staff: Number(plan.missing_staff || 0),
       mode: config.mode,
       active_source_id: config.active_source_id || null
     };
@@ -1632,7 +1643,8 @@ function createScheduleRuntime(deps) {
         rows: data.rows, expected, activate: data.activate,
         accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
         accept_carry_dropped: data.accept_carry_dropped === undefined
-          ? null : data.accept_carry_dropped
+          ? null : data.accept_carry_dropped,
+        accept_missing: data.accept_missing === undefined ? null : data.accept_missing
       }))) {
         throw new ScheduleRuntimeError('source-request-reused',
           'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
@@ -1655,7 +1667,8 @@ function createScheduleRuntime(deps) {
       rows: data.rows, expected, activate: data.activate,
       accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
       accept_carry_dropped: data.accept_carry_dropped === undefined
-        ? null : data.accept_carry_dropped
+        ? null : data.accept_carry_dropped,
+      accept_missing: data.accept_missing === undefined ? null : data.accept_missing
     }));
 
     if (plan.kind === 'unchanged') {

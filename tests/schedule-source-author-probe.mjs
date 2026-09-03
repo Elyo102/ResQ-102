@@ -88,11 +88,13 @@ const POLICY = {
       { role: 'ff', count: 1, required: true }] }
   }
 };
+/* ⭐ P1-4. הספרייה נושאת את השם מהפרופיל החי. השם שבגיליון אינו
+ * נשמר — עמודה בגיליון לא תקבע איך אדם נראה על הלוח של כל התחנה. */
 const KNOWN = [
-  { uid: 'uid-aaa', employee_number: '1001' },
-  { uid: 'uid-bbb', employee_number: '1002' },
-  { uid: 'uid-ccc', employee_number: '1003' },
-  { uid: 'uid-ddd', employee_number: '1004' }
+  { uid: 'uid-aaa', employee_number: '1001', full_name: 'פרופיל אלף' },
+  { uid: 'uid-bbb', employee_number: '1002', full_name: 'פרופיל בית' },
+  { uid: 'uid-ccc', employee_number: '1003', full_name: 'פרופיל גימל' },
+  { uid: 'uid-ddd', employee_number: '1004', full_name: 'פרופיל דלת' }
 ];
 function rows() {
   return [
@@ -354,8 +356,8 @@ ok('6.8 אין מספר עובד ביומן',
 ok('6.9 אין מספרי שורה ביומן', auditText.indexOf('"row"') === -1);
 eq('6.10 היומן מחזיק ספירות וקודים בלבד', Object.keys(plan().audit).sort(),
   ['accepted_rows', 'actor', 'at', 'carry_dropped_availability',
-    'carry_dropped_locked', 'content_digest', 'rejected_by_code',
-    'rejected_rows', 'station_id', 'total_rows']);
+    'carry_dropped_locked', 'content_digest', 'missing_staff',
+    'rejected_by_code', 'rejected_rows', 'station_id', 'total_rows']);
 eq('6.11 והשומר נשמר כ-uid בלבד', plan().audit.actor, 'uid-mgr');
 
 // שדות זרים שנתחבו לשורה אינם שורדים את הנרמול.
@@ -369,10 +371,16 @@ const leaked = JSON.stringify(plan({ rows: (() => {
 ok('6.12 דוא"ל שנתחב לשורה נשמט', leaked.indexOf('someone@example.com') === -1);
 ok('6.13 ת"ז שנתחבה נשמטת', leaked.indexOf('123456789') === -1);
 ok('6.14 הערה חופשית נשמטת', leaked.indexOf('לתאם עם המפקד') === -1);
+/* ⭐ P1-4. `employee_number` אינו כאן יותר. המנוע ושכבת השירות אינם
+ * קוראים אותו כלל, ולכן שמירתו בתמונת המקור הייתה החזקת מידע מזהה
+ * בלי שימוש. הרשימה סגורה, ולכן החזרתו תפיל את הבדיקה. */
 eq('6.15 מפתחות מסמך אדם סגורים',
   Object.keys(plan().people[0].data).sort(),
-  ['active', 'employee_number', 'full_name', 'group', 'id', 'roles',
-    'station_id', 'sub_station']);
+  ['active', 'full_name', 'group', 'id', 'roles', 'station_id', 'sub_station']);
+ok('6.16 מספר עובד אינו נשמר בתמונת המקור',
+  JSON.stringify(plan().people).indexOf('1001') === -1);
+eq('6.17 השם נלקח מהפרופיל החי ולא מהגיליון',
+  plan().people[0].data.full_name, 'פרופיל אלף');
 
 /* ==================================================================
  * 7 · מהדורות ו„לא השתנה"
@@ -473,7 +481,10 @@ const P = (api, over) => api.planSource(Object.assign({
 // ⭐ 9.1 — התאמה לפי שם. זו התקלה שכל הקובץ קיים כדי למנוע.
 survives('9.1 התאמה לפי שם נכנסת',
   "  const matches = directory.get(employee);",
-  "  let matches = directory.get(employee);\n  if (!matches) matches = [{ uid: 'guessed' }];",
+  // ⭐ השם נוסף למומצא בכוונה: אחרי P1-4 חשבון בלי שם נדחה בקוד אחר,
+  // והמוטציה הייתה „נתפסת" מהסיבה הלא נכונה ומפסיקה לבדוק את מה
+  // שהיא קיימת בשבילו — שזהות לעולם אינה מנוחשת משם.
+  "  let matches = directory.get(employee);\n  if (!matches) matches = [{ uid: 'guessed', full_name: 'שם מומצא' }];",
   (api) => {
     const list = rows(); list[0].employee_number = '9999';
     try { P(api, { rows: list }); return false; } catch (_) { return true; }
@@ -746,6 +757,67 @@ try {
   eq('13.20 ובלי אירועים', fresh.counts.events, 0);
 } catch (e) {
   ok('13.z צורה', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* ==================================================================
+ * 14 · ⭐ P1-4 · סגל פעיל שאינו בגיליון
+ *
+ * גיליון חלקי — עמודה שנגררה, סינון שנשכח פתוח, העתקה של חצי
+ * טבלה — יצר מקור תקין לחלוטין שחסרים בו אנשים. הם לא שובצו, ואיש
+ * לא קיבל הודעה, כי מבחינת המערכת הם לא היו קיימים.
+ * ================================================================== */
+
+try {
+  const half = rows().slice(0, 2);
+
+  // בדיקה מקדימה מדווחת ואינה חוסמת — אחרת אין מה לאשר.
+  const preview = plan({ rows: half });
+  eq('14.1 תצוגה מקדימה מדווחת כמה חסרים', preview.missing_staff, 2);
+  eq('14.2 ואינה חוסמת', preview.kind, 'created');
+
+  // הפעלה של מקור חלקי דורשת אישור מספרי מדויק.
+  let blocked = null;
+  try { plan({ rows: half, activate: true }); } catch (e) { blocked = e; }
+  ok('14.3 הפעלת מקור חלקי נחסמת בלי אישור',
+    !!blocked && blocked.code === CODE.MISSING_STAFF, blocked ? blocked.code : 'לא נחסם');
+  eq('14.4 והמספר מוחזר לתיקון', blocked && blocked.detail && blocked.detail.missing, 2);
+
+  let wrong = null;
+  try { plan({ rows: half, activate: true, accept_missing: 1 }); } catch (e) { wrong = e; }
+  ok('14.5 אישור שאינו מדויק נחסם',
+    !!wrong && wrong.code === CODE.MISSING_ACK_MISMATCH, wrong ? wrong.code : 'לא נחסם');
+
+  const acked = plan({ rows: half, activate: true, accept_missing: 2 });
+  eq('14.6 אישור מדויק מאפשר להפעיל', acked.missing_staff, 2);
+  eq('14.7 והיומן סופר אותם', acked.audit.missing_staff, 2);
+
+  // גיליון מלא — אין חסרים, ואין מה לאשר.
+  const full = plan({ activate: true });
+  eq('14.8 גיליון מלא אינו דורש אישור', full.missing_staff, 0);
+
+  // ⭐ ומי שחסר הוא אדם: המספר מדווח, השם והמזהה לא.
+  const text = JSON.stringify({ report: acked.report, audit: acked.audit,
+    missing: acked.missing_staff });
+  ok('14.9 אין מזהה של מי שחסר בדוח וביומן',
+    ['uid-ccc', 'uid-ddd', 'פרופיל גימל', 'פרופיל דלת']
+      .every((v) => text.indexOf(v) === -1));
+} catch (e) {
+  ok('14.x סגל חסר', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* --- פרופיל בלי שם אינו נופל חזרה על הגיליון --- */
+
+try {
+  const nameless = KNOWN.map((person) => person.employee_number === '1001'
+    ? { uid: person.uid, employee_number: person.employee_number } : person);
+  const out = plan({ known: nameless, accept_rejected: 1 });
+  const row = out.report.rows.find((item) => item.code === ROW.PROFILE_NAME_MISSING);
+  ok('14.10 חשבון בלי שם בפרופיל נדחה בקוד משלו', !!row, 'לא נמצא קוד');
+  // ⭐ והנקודה: הוא **לא** נכנס עם השם שהודבק בגיליון.
+  ok('14.11 והשם מהגיליון אינו משמש כגיבוי',
+    JSON.stringify(out.people).indexOf('בדיקה אלף') === -1);
+} catch (e) {
+  ok('14.y פרופיל בלי שם', false, (e && e.code) + ' · ' + e.message);
 }
 
 /* ==================================================================

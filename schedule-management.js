@@ -527,8 +527,15 @@ async function saveSource() {
   const rejected = state.sourcePlan.report ? state.sourcePlan.report.rejected : 0;
   if (rejected > 0 && !$('sourceAccept').checked) return;
   const dropped = droppedCount(state.sourcePlan);
+  /* ⭐ P1-4. אנשים פעילים בתחנה שאינם בגיליון פשוט לא ישובצו. זה
+   * המספר שחייב להיאמר בקול לפני ההפעלה, ולא להתגלות בעוד חודש. */
+  const missing = Number(state.sourcePlan.missing_staff || 0);
   if (!confirm('לשמור את המקור? ' + state.sourcePlan.counts.people
     + ' אנשים ייכנסו, ו-' + rejected + ' שורות לא. '
+    + (missing
+      ? '⚠ ' + missing + ' אנשים פעילים בתחנה אינם בגיליון כלל, ולכן לא '
+        + 'ישובצו. '
+      : '')
     + (dropped
       ? '⚠ ' + dropped + ' רשומות של זמינות או נעילה שייכות לאנשים שאינם '
         + 'ברשימה החדשה, והן ייצאו מהמקור. '
@@ -544,7 +551,8 @@ async function saveSource() {
       activate: true,
       expected_source_id: state.sourcePlan.active_source_id,
       accept_rejected: rejected > 0 ? rejected : undefined,
-      accept_carry_dropped: dropped > 0 ? dropped : undefined
+      accept_carry_dropped: dropped > 0 ? dropped : undefined,
+      accept_missing: missing > 0 ? missing : undefined
     })).data;
     message('sourceMessage', result.written
       ? 'המקור נשמר כמהדורה ' + result.revision + ' עם ' + result.counts.people + ' אנשים.'
