@@ -52,6 +52,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
  * קיים. זו הצורה הקנונית, זהה ל-`schedule-access.js`. */
 const AUTH_UID_RE = /^[^\u0000-\u001F\u007F/]{1,128}$/;
 const EMPLOYEE_RE = /^[0-9]{1,20}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // ⭐ רצף הברחה, לא התו עצמו. בגרסה קודמת היו כאן תווי בקרה
 // ממשיים — ובהם NUL. גיט סיווג את הקובץ כבינארי, ולכן
 // הוא לא הציג diff בשום ביקורת קוד.
@@ -158,6 +159,19 @@ function compareCanonical(left, right) {
   return a < b ? -1 : (a > b ? 1 : 0);
 }
 
+function hasOwnSubStation(policy, sub) {
+  return Object.prototype.hasOwnProperty.call(policy.sub_stations, sub);
+}
+
+/* התאמת regex לבדה מקבלת 30 בפברואר. round-trip ב-UTC מוודא שזה
+ * יום לוח אמיתי בלי להיות תלוי באזור הזמן של המכונה. */
+function validIsoDay(value) {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
+  const time = Date.parse(value + 'T00:00:00.000Z');
+  return Number.isFinite(time)
+    && new Date(time).toISOString().slice(0, 10) === value;
+}
+
 function cleanName(value) {
   if (!isNonEmptyString(value)) return { ok: false, code: ROW.NAME_MISSING };
   if (CONTROL_RE.test(value)) return { ok: false, code: ROW.NAME_INVALID };
@@ -208,7 +222,7 @@ function readRow(raw, index, policy, directory, seenEmployee) {
 
   const sub = isNonEmptyString(raw.sub_station) ? raw.sub_station.trim() : '';
   if (!sub) return { rejected: Object.assign({ code: ROW.NO_SUB_STATION }, line) };
-  if (!policy.sub_stations[sub]) {
+  if (!hasOwnSubStation(policy, sub)) {
     return { rejected: Object.assign({ code: ROW.SUB_STATION_UNKNOWN }, line) };
   }
 
@@ -402,6 +416,7 @@ function createSourceAuthor(deps) {
 
     const people = accepted.map((item) => item.person);
     const known = new Set(people.map((person) => person.id));
+    const peopleById = new Map(people.map((person) => [person.id, person]));
 
     /* ==================================================================
      * ⭐ P1-4 · מי שאינו בגיליון
@@ -440,9 +455,16 @@ function createSourceAuthor(deps) {
     }
     const carried = carriedFrom(input.previous);
 
-    /* אדם שיצא מהרשימה — הזמינות והנעילות שלו כבר אינן שייכות למקור.
-     * ⭐ אבל להשמיט אותן בשקט זה בדיוק הבאג שאני מתקן. הן נספרות,
-     * מדווחות, ודורשות אישור מספרי מדויק בדיוק כמו שורה שנדחתה. */
+    /* אדם שיצא מהרשימה — הזמינות והשיבוצים הידניים שלו כבר אינם
+     * שייכים למקור. ⭐ אבל להשמיט אותם בשקט זה בדיוק הבאג שאני מתקן.
+     * הם נספרים, מדווחים, ודורשים אישור מספרי מדויק בדיוק כמו שורה
+     * שנדחתה.
+     *
+     * חוזה `locked` הוא החוזה של המנוע, ולא גרסה שנייה שלו:
+     *   locked[sub_station][date] = [uid | { person, role }]
+     * מזהה המסמך בתת-האוסף הוא תחנת הקצה. האדם נמצא **בתוך** הרשומה.
+     * בעבר הקוד פירש את המפתח העליון כ-UID; המקור נשמר בהצלחה ואז
+     * המנוע דחה את אותו UID כתחנת קצה לא מוכרת. */
     const availability = {};
     const locked = {};
     const orphaned = { availability: 0, locked: 0 };
@@ -450,9 +472,55 @@ function createSourceAuthor(deps) {
       if (known.has(uid)) availability[uid] = carried.availability[uid];
       else orphaned.availability += 1;
     }
-    for (const uid of Object.keys(carried.locked).sort(compareCanonical)) {
-      if (known.has(uid)) locked[uid] = carried.locked[uid];
-      else orphaned.locked += 1;
+    for (const sub of Object.keys(carried.locked).sort(compareCanonical)) {
+      if (!hasOwnSubStation(policy, sub)) {
+        fail(CODE.CARRY_SHAPE,
+          'התוכן שעובר פגום: locked כולל תחנת קצה שאינה קיימת בחוקים.');
+      }
+      const days = carried.locked[sub];
+      if (!isPlainObject(days)) {
+        fail(CODE.CARRY_SHAPE,
+          'התוכן שעובר פגום: locked של תחנת קצה אינו אובייקט תאריכים.');
+      }
+      const allowedRoles = new Set((policy.sub_stations[sub].requirements || [])
+        .map((item) => item && item.role).filter(isNonEmptyString));
+      const keptDays = {};
+      for (const date of Object.keys(days).sort(compareCanonical)) {
+        const entries = days[date];
+        if (!validIsoDay(date) || !Array.isArray(entries)) {
+          fail(CODE.CARRY_SHAPE,
+            'התוכן שעובר פגום: locked חייב למפות תאריך למערך שיבוצים.');
+        }
+        const kept = [];
+        for (const raw of entries) {
+          const objectEntry = isPlainObject(raw);
+          const keys = objectEntry ? Object.keys(raw).sort(compareCanonical) : [];
+          const validKeys = keys.length >= 1 && keys.length <= 2
+            && keys.every((key) => key === 'person' || key === 'role');
+          const person = objectEntry ? raw.person : raw;
+          const hasRole = objectEntry
+            && Object.prototype.hasOwnProperty.call(raw, 'role');
+          const role = hasRole ? raw.role : null;
+          if ((!isNonEmptyString(person) || !AUTH_UID_RE.test(person))
+              || (objectEntry && !validKeys)
+              || (hasRole && role !== null
+                && (!isNonEmptyString(role) || !allowedRoles.has(role)))) {
+            fail(CODE.CARRY_SHAPE,
+              'התוכן שעובר פגום: רשומת שיבוץ ידני אינה תקינה.');
+          }
+          const current = peopleById.get(person);
+          if (!current || current.active !== true || current.sub_station !== sub
+              || (role !== null && current.roles.indexOf(role) === -1)) {
+            orphaned.locked += 1;
+            continue;
+          }
+          kept.push(raw);
+        }
+        // גם מערך ריק הוא חלק מהתמונה החתומה. כשאין יתומים, הצורה
+        // עוברת בדיוק; כשיש, רק הרשומות היתומות יוצאות מן המערך.
+        keptDays[date] = kept;
+      }
+      locked[sub] = keptDays;
     }
     /* אירועים אינם מפתוחים לפי אדם — הם של התחנה — ולכן עוברים כולם. */
     const events = carried.events;
@@ -486,7 +554,8 @@ function createSourceAuthor(deps) {
     const contentKey = String(hash(stable({ station_id: stationId, people })));
 
     const prev = isPlainObject(input.previous) ? input.previous : null;
-    if (prev && isNonEmptyString(prev.content_key) && prev.content_key === contentKey) {
+    if (prev && isNonEmptyString(prev.content_key) && prev.content_key === contentKey
+        && orphanTotal === 0) {
       return Object.freeze({
         kind: 'unchanged',
         source_id: prev.id || null,
@@ -556,8 +625,8 @@ function createSourceAuthor(deps) {
       availability: Object.freeze(Object.keys(availability).map((uid) => Object.freeze({
         id: uid, data: { days: availability[uid] }
       }))),
-      locked: Object.freeze(Object.keys(locked).map((uid) => Object.freeze({
-        id: uid, data: { days: locked[uid] }
+      locked: Object.freeze(Object.keys(locked).map((sub) => Object.freeze({
+        id: sub, data: { days: locked[sub] }
       }))),
       events: Object.freeze(events.map((event) => Object.freeze({
         id: event.id, data: event

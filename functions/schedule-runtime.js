@@ -40,9 +40,16 @@ const MEMBER_ROLES = Object.freeze([
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
 ]);
 const ID_RE = /^[A-Za-z0-9_-]{2,120}$/;
+// Must stay identical to schedule-policy-author.js.  Sub-station keys are
+// business identifiers with their own (shorter) contract; reusing ID_RE here
+// incorrectly rejected the valid one-character keys accepted by the policy.
+const SUB_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const AUTH_UID_RE = guardManagement.AUTH_UID_RE;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BATCH_WRITES = 350;
+// Leave headroom below Firestore's 10 MiB transaction request limit for
+// document paths, protocol overhead and index transforms.
+const MAX_SOURCE_TRANSACTION_BYTES = 7 * 1024 * 1024;
 const MAX_ROW_BYTES = 850000;
 const MAX_OVERRIDES = 5000;
 const MAX_SOURCE_PEOPLE = 20000;
@@ -168,6 +175,14 @@ function createScheduleRuntime(deps) {
   // happens *after* the live guards sidecar.  Production never supplies it.
   const beforeLiveGuardViewRecheck = typeof d.beforeLiveGuardViewRecheck === 'function'
     ? d.beforeLiveGuardViewRecheck : async function () {};
+  const afterSourceWriteChunk = typeof d.afterSourceWriteChunk === 'function'
+    ? d.afterSourceWriteChunk : async function () {};
+  // Test-only seam: production wiring omits it and therefore always uses the
+  // audited 350-write ceiling. It lets the emulator force a between-chunk race
+  // without creating hundreds of employee records.
+  const sourceWriteChunkSize = integer(d.sourceWriteChunkSize)
+      && d.sourceWriteChunkSize >= 1 && d.sourceWriteChunkSize <= MAX_BATCH_WRITES
+    ? d.sourceWriteChunkSize : MAX_BATCH_WRITES;
 
   if (!db || typeof db.collection !== 'function' || typeof db.runTransaction !== 'function') {
     throw new ScheduleRuntimeError('db-required', 'חובה להזריק Firestore');
@@ -887,6 +902,63 @@ function createScheduleRuntime(deps) {
     return snap.docs.slice().sort((a, b) => compareCanonical(a.id, b.id));
   }
 
+  function validateLockedSource(locked, peopleRaw, policyValue) {
+    const people = new Set((Array.isArray(peopleRaw) ? peopleRaw : [])
+      .map((person) => person && person.id).filter((id) => typeof id === 'string'));
+    const policySubs = policyValue && plain(policyValue.sub_stations)
+      ? policyValue.sub_stations : null;
+    for (const sub of Object.keys(locked).sort(compareCanonical)) {
+      if (!SUB_KEY_RE.test(sub)) {
+        throw new ScheduleRuntimeError('source-locked-sub-station-invalid',
+          'מקור הסידור כולל מזהה תחנת קצה לא תקין בנעילות.');
+      }
+      if (policySubs && !plain(policySubs[sub])) {
+        throw new ScheduleRuntimeError('source-locked-sub-station-unknown',
+          'מקור הסידור כולל נעילה לתחנת קצה שאינה קיימת במדיניות.');
+      }
+      const days = locked[sub];
+      if (!plain(days)) {
+        throw new ScheduleRuntimeError('source-locked-shape',
+          'מבנה השיבוצים הידניים במקור אינו תקין.');
+      }
+      const allowedRoles = policySubs
+        ? new Set((Array.isArray(policySubs[sub].requirements)
+          ? policySubs[sub].requirements : [])
+          .map((item) => item && item.role).filter(nonEmpty))
+        : null;
+      for (const date of Object.keys(days).sort(compareCanonical)) {
+        try { isoDayOffset(date, 0); } catch (_) {
+          throw new ScheduleRuntimeError('source-locked-date-invalid',
+            'מקור הסידור כולל תאריך נעילה לא תקין.');
+        }
+        const entries = days[date];
+        if (!Array.isArray(entries)) {
+          throw new ScheduleRuntimeError('source-locked-shape',
+            'כל יום נעול חייב להכיל מערך שיבוצים ידניים.');
+        }
+        for (const raw of entries) {
+          if (plain(raw) && Object.keys(raw)
+            .some((key) => ['person', 'role'].indexOf(key) === -1)) {
+            throw new ScheduleRuntimeError('source-locked-shape',
+              'רשומת שיבוץ ידני כוללת שדה שאינו מורשה.');
+          }
+          const person = plain(raw) ? raw.person : raw;
+          const role = plain(raw) ? raw.role : null;
+          if (typeof person !== 'string' || !AUTH_UID_RE.test(person) || !people.has(person)) {
+            throw new ScheduleRuntimeError('source-locked-person-unknown',
+              'מקור הסידור כולל נעילה לאדם שאינו נמצא בסגל.');
+          }
+          if (role !== null && role !== undefined
+              && (typeof role !== 'string' || !nonEmpty(role)
+                || (allowedRoles && !allowedRoles.has(role)))) {
+            throw new ScheduleRuntimeError('source-locked-role-unknown',
+              'מקור הסידור כולל נעילה לתפקיד שאינו קיים בתחנת הקצה.');
+          }
+        }
+      }
+    }
+  }
+
   async function loadPolicy(ctx, id) {
     const policyId = requireId(id, 'policy-id', 'מזהה המדיניות');
     const snap = await stationRef(ctx.sid).collection('schedule_policies').doc(policyId).get();
@@ -957,6 +1029,7 @@ function createScheduleRuntime(deps) {
     const locked = {};
     groups[2].forEach((doc) => { locked[doc.id] = (doc.data() || {}).days || {}; });
     const eventsRaw = groups[3].map((doc) => Object.assign({ id: doc.id }, doc.data() || {}));
+    validateLockedSource(locked, peopleRaw, null);
     const basis = {
       station_id: meta.station_id,
       version: meta.version,
@@ -978,11 +1051,23 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('source-digest-mismatch',
         'חתימת מקור הסידור אינה תואמת לתוכן.');
     }
+    /* `content_key` is an optimization, but it decides whether an import is
+     * skipped. It must therefore be derived from the already verified roster,
+     * never trusted as unsigned metadata. */
+    const actualContentKey = String(hash(stable({
+      station_id: meta.station_id,
+      people: peopleRaw
+    })));
+    if (!nonEmpty(meta.content_key) || meta.content_key !== actualContentKey) {
+      throw new ScheduleRuntimeError('source-content-key-mismatch',
+        'מפתח תוכן הסגל אינו תואם למקור החתום.');
+    }
     return {
       id: sourceId,
       version: meta.version,
       revision: meta.revision,
       digest: actual,
+      contentKey: actualContentKey,
       carry: plain(meta.carry) ? meta.carry : {},
       peopleRaw,
       availability,
@@ -1019,6 +1104,7 @@ function createScheduleRuntime(deps) {
 
   function effectiveSource(ctx, source, policy, overrides) {
     const locked = JSON.parse(JSON.stringify(source.locked));
+    validateLockedSource(locked, source.peopleRaw, policy.value);
     overrides.forEach((entry) => {
       locked[entry.sub_station] = locked[entry.sub_station] || {};
       locked[entry.sub_station][entry.date] = locked[entry.sub_station][entry.date] || [];
@@ -1545,32 +1631,134 @@ function createScheduleRuntime(deps) {
     }
   }
 
-  /* ⭐ P0-1. הגרסה הקודמת החזירה את מסמך המטא בלבד, ולכן הכותב לא
-   * ראה מעולם את הזמינות, הנעילות והאירועים — וכתב במקומם ריק. יבוא
-   * סגל מחק אותם. כאן נקראים גם שלושת תת-האוספים, בדיוק בצורה
-   * ש-`loadSource` בונה, כדי שהתוכן יעבור בית-בית ושהחתימה תתאים. */
+  /* מקור פעיל אינו "רמז" לייבוא הבא. הוא מקור חתום, ולכן עוברים דרך
+   * אותו loader יחיד שמאמת complete, ספירות, ילדים ו-digest. אם יש
+   * מצביע למסמך חסר או פגום אנחנו עוצרים; רק היעדר מצביע הוא "אין
+   * מקור קודם". כך אי אפשר להכשיר אובדן נתונים בחתימה חדשה. */
   async function readActiveSource(sid, activeId) {
     if (!nonEmpty(activeId)) return null;
-    const ref = sourceRef(sid, activeId);
-    const snap = await ref.get();
-    if (!snap.exists) return null;
-    const meta = snap.data() || {};
-    const groups = await Promise.all([
-      readSorted(ref.collection('availability')),
-      readSorted(ref.collection('locked')),
-      readSorted(ref.collection('events'))
-    ]);
-    const availability = {};
-    groups[0].forEach((doc) => { availability[doc.id] = (doc.data() || {}).days || {}; });
-    const locked = {};
-    groups[1].forEach((doc) => { locked[doc.id] = (doc.data() || {}).days || {}; });
-    const events = groups[2].map((doc) => Object.assign({ id: doc.id }, doc.data() || {}));
-    return Object.assign({ id: activeId }, meta, {
+    const loaded = await loadSource({ sid }, activeId);
+    const events = Array.isArray(loaded.eventsRaw) ? loaded.eventsRaw : [];
+    return {
+      id: loaded.id,
+      station_id: sid,
+      version: loaded.version,
+      revision: loaded.revision,
+      content_digest: loaded.digest,
+      content_key: loaded.contentKey,
+      person_count: loaded.peopleRaw.length,
+      availability_count: Object.keys(loaded.availability).length,
+      locked_count: Object.keys(loaded.locked).length,
+      event_count: events.length,
+      people: loaded.peopleRaw,
+      carry: loaded.carry,
       carried: {
-        carry: plain(meta.carry) ? meta.carry : {},
-        availability, locked, events
+        carry: loaded.carry,
+        availability: loaded.availability,
+        locked: loaded.locked,
+        events
       }
-    });
+    };
+  }
+
+  function requirePendingSourceOperation(opSnap, requestHash, operationOwner) {
+    if (!opSnap || !opSnap.exists) {
+      throw new ScheduleRuntimeError('source-operation-lost',
+        'הבעלות על פעולת שמירת המקור אבדה.', 'aborted');
+    }
+    const op = opSnap.data() || {};
+    if (op.request_hash !== requestHash) {
+      throw new ScheduleRuntimeError('source-request-reused',
+        'מזהה הפעולה שימש לבקשה אחרת בזמן הכתיבה.', 'aborted');
+    }
+    if (op.status !== 'pending' || op.owner_token !== operationOwner || plain(op.result)) {
+      throw new ScheduleRuntimeError('source-operation-lost',
+        'הבעלות על פעולת שמירת המקור השתנתה.', 'aborted');
+    }
+    return op;
+  }
+
+  function requireOwnedStagedSource(stagedSnap, plan, requestId, requestHash,
+      operationOwner) {
+    if (!stagedSnap || !stagedSnap.exists) {
+      throw new ScheduleRuntimeError('source-staging-lost',
+        'מסמך הביניים נעלם לפני הסגירה.', 'aborted');
+    }
+    const meta = stagedSnap.data() || {};
+    if (meta.complete === true
+        || meta.staged_by_request !== requestId
+        || meta.staged_request_hash !== requestHash
+        || meta.staged_owner_token !== operationOwner
+        || meta.staged_content_digest !== plan.digest
+        || meta.content_digest !== null
+        || nonEmpty(meta.cleanup_claimed_by)) {
+      throw new ScheduleRuntimeError('source-staging-changed',
+        'מסמך הביניים השתנה בזמן הכתיבה.', 'aborted');
+    }
+    for (const field of ['station_id', 'version', 'revision', 'content_key',
+      'person_count', 'availability_count', 'locked_count', 'event_count']) {
+      if (meta[field] !== plan.meta[field]) {
+        throw new ScheduleRuntimeError('source-staging-changed',
+          'מטא-נתוני המקור השתנו בזמן הכתיבה: ' + field, 'aborted');
+      }
+    }
+    return meta;
+  }
+
+  function sourceWriteChunks(ops) {
+    const chunks = [];
+    let current = [];
+    let bytes = 0;
+    for (const op of ops) {
+      const pathBytes = Buffer.byteLength(String(op && op.ref && op.ref.path || ''), 'utf8');
+      const dataBytes = Buffer.byteLength(stable(op && op.data), 'utf8');
+      // A conservative per-document allowance covers Firestore framing and
+      // field/index bookkeeping that is not visible in JSON size.
+      const operationBytes = pathBytes + dataBytes + 2048;
+      if (operationBytes > MAX_SOURCE_TRANSACTION_BYTES) {
+        throw new ScheduleRuntimeError('source-child-too-large',
+          'רשומת מקור גדולה מכדי להישמר בבטחה.', 'resource-exhausted');
+      }
+      if (current.length && (current.length >= sourceWriteChunkSize
+          || bytes + operationBytes > MAX_SOURCE_TRANSACTION_BYTES)) {
+        chunks.push(current);
+        current = [];
+        bytes = 0;
+      }
+      current.push(op);
+      bytes += operationBytes;
+    }
+    if (current.length) chunks.push(current);
+    return chunks;
+  }
+
+  async function commitOwnedSourceWrites(ops, control) {
+    const chunks = sourceWriteChunks(ops);
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      await db.runTransaction(async (tx) => {
+        const [opSnap, stagedSnap] = await Promise.all([
+          tx.get(control.opRef), tx.get(control.ref)
+        ]);
+        requirePendingSourceOperation(opSnap, control.requestHash, control.operationOwner);
+        requireOwnedStagedSource(stagedSnap, control.plan, control.requestId,
+          control.requestHash, control.operationOwner);
+        chunk.forEach((op) => {
+          if (op.kind === 'update') tx.update(op.ref, op.data);
+          else if (op.kind === 'create') tx.create(op.ref, op.data);
+          else tx.set(op.ref, op.data, op.options || undefined);
+        });
+        // A live writer renews its lease atomically with every chunk. A writer
+        // that lost ownership cannot renew or write on a transaction retry.
+        tx.set(control.opRef, {
+          lease_until: new Date(timeMillis(clock()) + OUTBOX_LEASE_MS)
+        }, { merge: true });
+      });
+      await afterSourceWriteChunk({
+        kind: 'source', ref: control.ref, ctx: control.ctx,
+        chunk_index: index, chunk_count: chunks.length
+      });
+    }
   }
 
   // ⭐ הדוח יוצא לדפדפן; היומן לא. שניהם נגזרים מאותו מקור, וההבדל
@@ -1633,23 +1821,31 @@ function createScheduleRuntime(deps) {
     }
     const expected = data.expected_source_id === undefined || data.expected_source_id === null
       ? null : requireId(data.expected_source_id, 'source-id', 'מזהה המקור הקודם');
+    const requestHash = hash(stable({
+      station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+      rows: data.rows, expected, activate: data.activate,
+      accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
+      accept_carry_dropped: data.accept_carry_dropped === undefined
+        ? null : data.accept_carry_dropped,
+      accept_missing: data.accept_missing === undefined ? null : data.accept_missing
+    }));
+    const operationOwner = 'src_' + randomId();
 
     const opRef = sourceOperationRef(ctx.sid, requestId);
     const existing = await opRef.get();
     if (existing.exists) {
       const op = existing.data() || {};
-      if (op.request_hash !== hash(stable({
-        station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
-        rows: data.rows, expected, activate: data.activate,
-        accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
-        accept_carry_dropped: data.accept_carry_dropped === undefined
-          ? null : data.accept_carry_dropped,
-        accept_missing: data.accept_missing === undefined ? null : data.accept_missing
-      }))) {
+      if (op.request_hash !== requestHash) {
         throw new ScheduleRuntimeError('source-request-reused',
           'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
       }
-      return Object.assign({ duplicate: true }, op.result || {});
+      if (plain(op.result)) return Object.assign({ duplicate: true }, op.result);
+      const leaseUntil = timeMillis(op.lease_until);
+      if (op.status === 'pending' && Number.isFinite(leaseUntil)
+          && leaseUntil > timeMillis(clock())) {
+        throw new ScheduleRuntimeError('source-request-in-flight',
+          'שמירת המקור כבר מתבצעת. יש להמתין ולנסות שוב.', 'aborted');
+      }
     }
 
     const config = await configuration(ctx.sid);
@@ -1662,26 +1858,62 @@ function createScheduleRuntime(deps) {
     const previous = await readActiveSource(ctx.sid, config.active_source_id);
     const plan = authorSource(ctx, data, policy, directory, previous);
 
-    const requestHash = hash(stable({
-      station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
-      rows: data.rows, expected, activate: data.activate,
-      accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
-      accept_carry_dropped: data.accept_carry_dropped === undefined
-        ? null : data.accept_carry_dropped,
-      accept_missing: data.accept_missing === undefined ? null : data.accept_missing
-    }));
-
     if (plan.kind === 'unchanged') {
       const view = Object.assign(sourcePlanView(plan, config),
         { written: false, activated: false });
-      await opRef.set({
-        station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
-        created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+      const outcome = await db.runTransaction(async (tx) => {
+        const [liveUserSnap, accessSnap, runtimeSnap, opSnap] = await Promise.all([
+          tx.get(liveUserRef(ctx.sid, ctx.uid)),
+          tx.get(scheduleAccessRef(ctx.sid, ctx.uid)),
+          tx.get(runtimeRef(ctx.sid)),
+          tx.get(opRef)
+        ]);
+        requireLiveManager(liveUserSnap, accessSnap, ctx);
+        const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+        const liveSource = nonEmpty(runtimeData.active_source_id)
+          ? runtimeData.active_source_id : null;
+        if (liveSource !== expected) {
+          throw new ScheduleRuntimeError('source-conflict',
+            'מקור כוח האדם השתנה בזמן בדיקת הייבוא.', 'aborted');
+        }
+        const livePolicyId = nonEmpty(runtimeData.active_policy_id)
+          ? runtimeData.active_policy_id : null;
+        if (livePolicyId !== (config.active_policy_id || null)) {
+          throw new ScheduleRuntimeError('source-policy-changed',
+            'חוקי התחנה הוחלפו בזמן בדיקת הייבוא.', 'aborted');
+        }
+        if (opSnap.exists) {
+          const op = opSnap.data() || {};
+          if (op.request_hash !== requestHash) {
+            throw new ScheduleRuntimeError('source-request-reused',
+              'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+          }
+          if (plain(op.result)) return { duplicate: true, result: op.result };
+          const leaseUntil = timeMillis(op.lease_until);
+          if (op.status === 'pending' && Number.isFinite(leaseUntil)
+              && leaseUntil > timeMillis(clock())) {
+            throw new ScheduleRuntimeError('source-request-in-flight',
+              'שמירת המקור כבר מתבצעת. יש להמתין ולנסות שוב.', 'aborted');
+          }
+        }
+        tx.set(opRef, {
+          status: 'complete',
+          station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
+          created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+        });
+        return { duplicate: false, result: view };
       });
-      return Object.assign({ duplicate: false }, view);
+      return Object.assign({ duplicate: outcome.duplicate }, outcome.result);
     }
 
-    const ref = sourceRef(ctx.sid, plan.source_id);
+    /* `plan.source_id` is content-derived. Different requests importing the
+     * same roster therefore used to share one staging document. Give every
+     * logical request its own deterministic namespace; retries converge, but
+     * competing requests can no longer overwrite or clean up one another. */
+    const sourceId = plan.source_id + '_'
+      + hash('source-stage|' + ctx.sid + '|' + requestId + '|' + requestHash).slice(0, 10);
+    const staged = Object.assign({}, plan, { source_id: sourceId });
+    const ref = sourceRef(ctx.sid, sourceId);
     /* שלב א' — המסמך נכתב **בלי** `complete` ובלי חתימה. במצב הזה
      * `loadSource` דוחה אותו, ולכן מקור חצי-כתוב אינו ניתן להרצה.
      *
@@ -1690,80 +1922,136 @@ function createScheduleRuntime(deps) {
      * על הדיסק לנצח. TTL של Firestore אינו יורד לתת-אוספים, ולכן
      * יש גם ניקוי מפורש ב-`catch` — ה-TTL הוא רשת הביטחון למקרה
      * שגם הניקוי לא הספיק לרוץ. */
-    await ref.set(Object.assign({}, plan.meta, {
-      complete: false, content_digest: null, staged_at: FV.serverTimestamp(),
-      expires_at: sourceOperationExpiry()
-    }));
-    /* ⭐ ארבעת התת-אוספים נכתבים יחד. מקור שנכתב עם `people` בלבד
-     * נראה תקין במסמך המטא ונקרא כריק — וזה בדיוק המחיקה השקטה של
-     * P0-1. `loadSource` סופר את המסמכים בפועל מול הספירה החתומה,
-     * ולכן השמטה כאן נופלת על `source-count-mismatch` ולא מתגנבת. */
-    await commitWrites([].concat(
-      plan.people.map((person) => ({
-        ref: ref.collection('people').doc(person.id), data: person.data
-      })),
-      plan.availability.map((item) => ({
-        ref: ref.collection('availability').doc(item.id), data: item.data
-      })),
-      plan.locked.map((item) => ({
-        ref: ref.collection('locked').doc(item.id), data: item.data
-      })),
-      plan.events.map((item) => ({
-        ref: ref.collection('events').doc(item.id), data: item.data
-      }))
-    ));
-
     /* שלב ב' — הסגירה. טרנזקציה קצרה שבודקת שוב את המינוי החי,
      * שהמצביע לא זז, ורק אז מסמנת שלם ומצביעה. */
-    const view = Object.assign(sourcePlanView(plan, config),
+    const view = Object.assign(sourcePlanView(staged, config),
       { written: true, activated: data.activate === true });
+    let stageOwned = false;
     try {
-    await db.runTransaction(async (tx) => {
-      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid),
-        runtimeRef(ctx.sid)];
-      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
-      requireLiveManager(snaps[0], snaps[1], ctx);
-      const runtimeData = snaps[2].exists ? (snaps[2].data() || {}) : {};
-      const liveSource = nonEmpty(runtimeData.active_source_id)
-        ? runtimeData.active_source_id : null;
-      if (liveSource !== expected) {
-        throw new ScheduleRuntimeError('source-conflict',
-          'מקור כוח האדם השתנה בזמן הכתיבה.', 'aborted');
-      }
-      /* ⭐ P1-7. הבדיקות האלה חוזרות **בתוך** הטרנזקציה, ולא רק לפניה:
-       * המדיניות והמקור הפעילים, ומזהה הפעולה. מקור שנחתם על בסיס
-       * מדיניות שהוחלפה בזמן הכתיבה הוא מקור שאי אפשר להריץ. */
-      const liveOp = await tx.get(opRef);
-      if (liveOp.exists && (liveOp.data() || {}).request_hash !== requestHash) {
-        throw new ScheduleRuntimeError('source-request-reused',
-          'מזהה הפעולה שימש לבקשה אחרת בזמן הכתיבה.', 'aborted');
-      }
-      const livePolicyId = nonEmpty(runtimeData.active_policy_id)
-        ? runtimeData.active_policy_id : null;
-      if (livePolicyId !== (config.active_policy_id || null)) {
-        throw new ScheduleRuntimeError('source-policy-changed',
-          'חוקי התחנה הוחלפו בזמן כתיבת המקור. יש לבדוק מחדש.', 'aborted');
-      }
-      tx.set(ref, {
-        complete: true, content_digest: plan.digest, completed_at: FV.serverTimestamp(),
-        // המקור נסגר — הוא כבר אינו טיוטה, ואין לו תאריך תפוגה.
-        expires_at: FV.delete()
-      }, { merge: true });
-      if (data.activate === true) {
-        tx.set(runtimeRef(ctx.sid), { active_source_id: plan.source_id }, { merge: true });
-      }
-      tx.set(sourceAuditRef(ctx.sid, requestId), Object.assign({
-        station_id: ctx.sid, request_id: requestId, source_id: plan.source_id,
-        version: plan.version, revision: plan.revision,
-        supersedes: previous ? previous.id : null,
-        activated: data.activate === true,
-        actor_uid: ctx.uid
-      }, plan.audit));
-      tx.set(opRef, {
-        station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
-        created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+      /* Claim the staging document atomically. A concurrent retry that raced
+       * past the first idempotency read must not reopen a completed source or
+       * join an in-flight writer and later clean up its children. */
+      const claim = await db.runTransaction(async (tx) => {
+        const [liveOp, stagedSnap] = await Promise.all([tx.get(opRef), tx.get(ref)]);
+        if (liveOp.exists) {
+          const op = liveOp.data() || {};
+          if (op.request_hash !== requestHash) {
+            throw new ScheduleRuntimeError('source-request-reused',
+              'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+          }
+          if (plain(op.result)) return { duplicate: true, result: op.result };
+          const leaseUntil = timeMillis(op.lease_until);
+          if (op.status === 'pending' && Number.isFinite(leaseUntil)
+              && leaseUntil > timeMillis(clock())) {
+            throw new ScheduleRuntimeError('source-request-in-flight',
+              'שמירת המקור כבר מתבצעת. יש להמתין ולנסות שוב.', 'aborted');
+          }
+        }
+        if (stagedSnap.exists) {
+          const meta = stagedSnap.data() || {};
+          const sameAbandonedStage = meta.complete !== true
+            && meta.staged_by_request === requestId
+            && meta.staged_request_hash === requestHash
+            && meta.staged_content_digest === plan.digest
+            && !nonEmpty(meta.cleanup_claimed_by);
+          if (!sameAbandonedStage) {
+            throw new ScheduleRuntimeError('source-staging-taken',
+              'מסמך הביניים שייך לפעולה אחרת.', 'aborted');
+          }
+        }
+        tx.set(opRef, {
+          status: 'pending', owner_token: operationOwner,
+          station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
+          created_at: clock(), lease_until: new Date(timeMillis(clock()) + OUTBOX_LEASE_MS),
+          expires_at: sourceOperationExpiry()
+        });
+        tx.set(ref, Object.assign({}, plan.meta, {
+          complete: false,
+          content_digest: null,
+          staged_content_digest: plan.digest,
+          staged_by_request: requestId,
+          staged_request_hash: requestHash,
+          staged_owner_token: operationOwner,
+          staged_at: FV.serverTimestamp(),
+          expires_at: sourceOperationExpiry()
+        }));
+        return { duplicate: false };
       });
-    });
+      if (claim.duplicate) return Object.assign({ duplicate: true }, claim.result);
+      stageOwned = true;
+
+      /* All four subcollections are one signed source. Any failure from the
+       * first child write onward is inside this crash-safe path. */
+      await commitOwnedSourceWrites([].concat(
+        plan.people.map((person) => ({
+          ref: ref.collection('people').doc(person.id), data: person.data
+        })),
+        plan.availability.map((item) => ({
+          ref: ref.collection('availability').doc(item.id), data: item.data
+        })),
+        plan.locked.map((item) => ({
+          ref: ref.collection('locked').doc(item.id), data: item.data
+        })),
+        plan.events.map((item) => ({
+          ref: ref.collection('events').doc(item.id), data: item.data
+        }))
+      ), {
+        opRef, ref, plan: staged, requestId, requestHash, operationOwner, ctx
+      });
+
+      await beforeSnapshotFinalize({ kind: 'source', ref, ctx });
+      await db.runTransaction(async (tx) => {
+        const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid),
+          runtimeRef(ctx.sid), ref, opRef];
+        const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+        requireLiveManager(snaps[0], snaps[1], ctx);
+        const runtimeData = snaps[2].exists ? (snaps[2].data() || {}) : {};
+        const stagedSnap = snaps[3];
+        const liveOp = snaps[4];
+
+        requirePendingSourceOperation(liveOp, requestHash, operationOwner);
+        requireOwnedStagedSource(stagedSnap, staged, requestId, requestHash,
+          operationOwner);
+
+        const liveSource = nonEmpty(runtimeData.active_source_id)
+          ? runtimeData.active_source_id : null;
+        if (liveSource !== expected) {
+          throw new ScheduleRuntimeError('source-conflict',
+            'מקור כוח האדם השתנה בזמן הכתיבה.', 'aborted');
+        }
+        const livePolicyId = nonEmpty(runtimeData.active_policy_id)
+          ? runtimeData.active_policy_id : null;
+        if (livePolicyId !== (config.active_policy_id || null)) {
+          throw new ScheduleRuntimeError('source-policy-changed',
+            'חוקי התחנה הוחלפו בזמן כתיבת המקור. יש לבדוק מחדש.', 'aborted');
+        }
+        tx.set(ref, {
+          complete: true,
+          content_digest: plan.digest,
+          completed_at: FV.serverTimestamp(),
+          expires_at: FV.delete(),
+          staged_content_digest: FV.delete(),
+          staged_by_request: FV.delete(),
+          staged_request_hash: FV.delete(),
+          staged_owner_token: FV.delete(),
+          cleanup_claimed_by: FV.delete()
+        }, { merge: true });
+        if (data.activate === true) {
+          tx.set(runtimeRef(ctx.sid), { active_source_id: sourceId }, { merge: true });
+        }
+        tx.set(sourceAuditRef(ctx.sid, requestId), Object.assign({
+          station_id: ctx.sid, request_id: requestId, source_id: sourceId,
+          version: plan.version, revision: plan.revision,
+          supersedes: previous ? previous.id : null,
+          activated: data.activate === true,
+          actor_uid: ctx.uid
+        }, plan.audit));
+        tx.set(opRef, {
+          status: 'complete',
+          station_id: ctx.sid, actor_uid: ctx.uid, request_hash: requestHash,
+          created_at: clock(), expires_at: sourceOperationExpiry(), result: view
+        });
+      });
     } catch (error) {
       /* ⭐ P1-7. הסגירה נכשלה, והמסמך המדורג כבר על הדיסק עם שמות
        * מלאים בתת-האוסף `people`. TTL של Firestore אינו יורד
@@ -1773,14 +2061,40 @@ function createScheduleRuntime(deps) {
        * הוא best-effort בכוונה: אם גם הוא נכשל, `expires_at` על
        * מסמך האב הוא רשת הביטחון, והשגיאה המקורית היא זו שחוזרת
        * לקורא — לא שגיאת הניקוי. */
-      await cleanupStagedSource(ref, plan).catch(() => {});
+      if (stageOwned) {
+        await cleanupStagedSource(ctx.sid, ref, staged, requestId, requestHash,
+          operationOwner).catch(() => {});
+        await releaseSourceOperationClaim(opRef, requestHash, operationOwner).catch(() => {});
+      }
       throw error;
     }
     return Object.assign({ duplicate: false }, view);
   }
 
   /* מוחק מקור מדורג שננטש, כולל תת-האוספים שנכתבו. */
-  async function cleanupStagedSource(ref, plan) {
+  async function cleanupStagedSource(sid, ref, plan, requestId, requestHash, operationOwner) {
+    /* Claim first, but keep the parent in place while deleting children. A
+     * finalizer sees the claim and aborts; another request cannot own this
+     * request-specific ref. */
+    const owned = await db.runTransaction(async (tx) => {
+      const [snap, runtimeSnap] = await Promise.all([
+        tx.get(ref), tx.get(runtimeRef(sid))
+      ]);
+      if (!snap.exists) return false;
+      const meta = snap.data() || {};
+      const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      if (meta.complete === true
+          || meta.staged_by_request !== requestId
+          || meta.staged_request_hash !== requestHash
+          || meta.staged_owner_token !== operationOwner
+          || meta.staged_content_digest !== plan.digest
+          || (nonEmpty(meta.cleanup_claimed_by) && meta.cleanup_claimed_by !== operationOwner)
+          || runtime.active_source_id === ref.id) return false;
+      tx.set(ref, { cleanup_claimed_by: operationOwner }, { merge: true });
+      return true;
+    });
+    if (!owned) return;
+
     const docs = [].concat(
       plan.people.map((item) => ref.collection('people').doc(item.id)),
       plan.availability.map((item) => ref.collection('availability').doc(item.id)),
@@ -1792,7 +2106,33 @@ function createScheduleRuntime(deps) {
       docs.slice(at, at + MAX_BATCH_WRITES).forEach((doc) => batch.delete(doc));
       await batch.commit();
     }
-    await ref.delete();
+    await db.runTransaction(async (tx) => {
+      const [snap, runtimeSnap] = await Promise.all([
+        tx.get(ref), tx.get(runtimeRef(sid))
+      ]);
+      if (!snap.exists) return;
+      const meta = snap.data() || {};
+      const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      if (meta.complete === true
+          || meta.staged_by_request !== requestId
+          || meta.staged_request_hash !== requestHash
+          || meta.staged_owner_token !== operationOwner
+          || meta.staged_content_digest !== plan.digest
+          || meta.cleanup_claimed_by !== operationOwner
+          || runtime.active_source_id === ref.id) return;
+      tx.delete(ref);
+    });
+  }
+
+  async function releaseSourceOperationClaim(opRef, requestHash, operationOwner) {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(opRef);
+      if (!snap.exists) return;
+      const op = snap.data() || {};
+      if (op.status !== 'pending' || op.request_hash !== requestHash
+          || op.owner_token !== operationOwner || plain(op.result)) return;
+      tx.delete(opRef);
+    });
   }
 
   function policyOperationRef(sid, requestId) {
@@ -2037,6 +2377,26 @@ function createScheduleRuntime(deps) {
     return { uid: ctx.uid, role: ctx.role, super: ctx.super === true };
   }
 
+  function requireLiveModeAuthority(userSnap, ctx, inactiveCode) {
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    if (!scheduleAccess.activeMember(user, ctx.sid)) {
+      throw new ScheduleRuntimeError(inactiveCode,
+        'המשתמש אינו פעיל בתחנה הזאת.', 'permission-denied');
+    }
+    const liveActor = {
+      uid: ctx.uid,
+      role: String(user.role || ''),
+      // Super-admin authority comes only from the verified auth claim.  A
+      // writable profile field must never be able to grant this authority.
+      super: ctx.super === true
+    };
+    if (!modeAuthority.mayChangeMode(liveActor)) {
+      throw new ScheduleRuntimeError(modeAuthority.CODE.FORBIDDEN,
+        'סמכות הפיקוד אינה פעילה עוד.', 'permission-denied');
+    }
+    return liveActor;
+  }
+
   function modeError(error) {
     if (error && error.name === 'ModeAuthorityError') {
       const http = error.code === modeAuthority.CODE.FORBIDDEN ? 'permission-denied'
@@ -2148,17 +2508,14 @@ function createScheduleRuntime(deps) {
         to: before.mode, transition: null };
     }
 
+    await beforeSnapshotFinalize({ kind: 'mode', ref: runtimeRef(ctx.sid), ctx });
     return await db.runTransaction(async (tx) => {
       const opSnap = await tx.get(opRef);
       const runtimeSnap = await tx.get(runtimeRef(ctx.sid));
       /* ⭐ P1-2. הזהות נקראת חיה כאן. מפקד שהוסר מהתחנה בין טעינת
        * המסך לבין הלחיצה אינו מזיז את מצב המנוע של התחנה. */
       const liveUserSnap = await tx.get(liveUserRef(ctx.sid, ctx.uid));
-      const liveUser = liveUserSnap.exists ? (liveUserSnap.data() || {}) : {};
-      if (!scheduleAccess.activeMember(liveUser, ctx.sid)) {
-        throw new ScheduleRuntimeError('mode-actor-inactive',
-          'המשתמש אינו פעיל בתחנה הזאת.', 'permission-denied');
-      }
+      requireLiveModeAuthority(liveUserSnap, ctx, 'mode-actor-inactive');
       const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
       const liveMode = MODES.indexOf(runtimeData.mode) !== -1 ? runtimeData.mode : MODE.OFF;
 
@@ -2654,6 +3011,7 @@ function createScheduleRuntime(deps) {
     const pubRef = candidate.ref;
     const preflightRef = stationRef(ctx.sid).collection('schedule_preflight').doc(candidateId);
 
+    await beforeSnapshotFinalize({ kind: 'cutover', ref: pubRef, ctx });
     let result = null;
     await db.runTransaction(async (tx) => {
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), pubRef, preflightRef,
@@ -2666,11 +3024,7 @@ function createScheduleRuntime(deps) {
 
       /* ⭐ הזהות נקראת מחדש **כאן**. מי שהוסר מהתחנה בין טעינת המסך
        * לבין הלחיצה אינו מעביר תחנה למנוע חדש. */
-      const liveUser = snaps[4].exists ? (snaps[4].data() || {}) : {};
-      if (liveUser.station_id !== ctx.sid || liveUser.active === false) {
-        throw new ScheduleRuntimeError('cutover-actor-inactive',
-          'המשתמש אינו פעיל בתחנה הזאת.', 'permission-denied');
-      }
+      requireLiveModeAuthority(snaps[4], ctx, 'cutover-actor-inactive');
 
       const liveMode = MODES.indexOf(liveRuntime.mode) !== -1 ? liveRuntime.mode : MODE.OFF;
       const livePolicy = await tx.get(stationRef(ctx.sid).collection('schedule_policies')

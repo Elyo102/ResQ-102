@@ -906,16 +906,111 @@ check('schedule source files carry no raw control bytes', () => {
 /* ⭐ P0-1. שלוש טענות שנועדו למנוע חזרה של המחיקה השקטה: המקור
  * הפעיל נקרא עם התוכן שעובר, וכל ארבעת התת-אוספים נכתבים. מקור
  * שנכתב עם `people` בלבד נראה תקין ונקרא כריק. */
-check('the active source is read with the content that carries over', () => {
+check('the active source is read through the verified loader, not a lookalike', () => {
   const src = read('functions/schedule-runtime.js');
   const at = src.indexOf('async function readActiveSource(');
   assert.ok(at > -1, 'readActiveSource לא נמצא');
   const body = src.slice(at, src.indexOf('\n  }', at));
-  for (const group of ['availability', 'locked', 'events']) {
-    assert.ok(body.indexOf("collection('" + group + "')") > -1,
-      'readActiveSource אינו קורא את ' + group);
-  }
+  assert.ok(/await loadSource\(/.test(body),
+    'readActiveSource אינו עובר דרך loadSource');
+  assert.ok(!/collection\('(people|availability|locked|events)'\)/.test(body),
+    'readActiveSource משכפל את קריאת תת-האוספים במקום להשתמש ב-loader המאומת');
   assert.ok(body.indexOf('carried:') > -1, 'readActiveSource אינו מחזיר carried');
+  assert.ok(body.indexOf('content_key') > -1,
+    'content_key אינו מועבר לזיהוי יבוא שלא השתנה');
+
+  const loadAt = src.indexOf('async function loadSource(');
+  assert.ok(loadAt > -1, 'loadSource לא נמצא');
+  const loadBody = src.slice(loadAt, loadAt + 5000);
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(loadBody.indexOf("collection('" + group + "')") > -1,
+      'loadSource אינו קורא את ' + group);
+  }
+  assert.ok(loadBody.indexOf('source-count-mismatch') > -1,
+    'loadSource אינו משווה ספירות למסמכים בפועל');
+  assert.ok(loadBody.indexOf('source-digest-mismatch') > -1,
+    'loadSource אינו מאמת מחדש את החתימה');
+});
+
+check('source content keys are recomputed from the verified people projection', () => {
+  const src = read('functions/schedule-runtime.js');
+  const loadAt = src.indexOf('async function loadSource(');
+  assert.ok(loadAt > -1, 'loadSource לא נמצא');
+  const loadBody = src.slice(loadAt, loadAt + 6000);
+  assert.ok(/const actualContentKey = String\(hash\(stable\(\{\s*station_id: meta\.station_id,\s*people: peopleRaw\s*\}\)\)\)/s.test(loadBody),
+    'content_key אינו מחושב מחדש מהתחנה ומהסגל המאומת');
+  assert.ok(loadBody.indexOf('meta.content_key !== actualContentKey') > -1,
+    'content_key השמור אינו מושווה לערך המחושב');
+  assert.ok(loadBody.indexOf("'source-content-key-mismatch'") > -1,
+    'אי-התאמת content_key אינה נכשלת סגור');
+  assert.ok(loadBody.indexOf('contentKey: actualContentKey') > -1,
+    'ה-loader עדיין מחזיר content_key לא מאומת מהמטא-דאטה');
+  assert.equal(loadBody.indexOf('contentKey: meta.content_key'), -1,
+    'ה-loader סומך ישירות על content_key לא חתום');
+});
+
+check('source staging is request-specific and closing verifies ownership', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  /* מוחק מקור מדורג', at));
+  assert.ok(/source-stage\|/.test(body),
+    'מזהה staging אינו קשור לבקשה');
+  assert.ok(!/sourceRef\(ctx\.sid, plan\.source_id\)/.test(body),
+    'המקור המדורג עדיין משתמש במזהה התוכן המשותף');
+  for (const guard of ['staged_by_request', 'staged_request_hash', 'staged_owner_token',
+    'staged_content_digest']) {
+    assert.ok(body.indexOf(guard) > -1, 'חסרה הגנת staging: ' + guard);
+  }
+  assert.ok(body.indexOf('requirePendingSourceOperation(') > -1,
+    'הסגירה אינה מאמתת בעלות על operation');
+  assert.ok(body.indexOf('requireOwnedStagedSource(') > -1,
+    'הסגירה אינה מאמתת בעלות על staging');
+  for (const guard of ['source-staging-lost', 'source-staging-changed']) {
+    assert.ok(src.indexOf(guard) > -1, 'חסר קוד כשל סגור: ' + guard);
+  }
+});
+
+check('every source child chunk is fenced by the current operation and staging owners', () => {
+  const src = read('functions/schedule-runtime.js');
+  const helperAt = src.indexOf('async function commitOwnedSourceWrites(');
+  const helperEnd = src.indexOf('\n  // ⭐ הדוח', helperAt);
+  assert.ok(helperAt > -1 && helperEnd > helperAt,
+    'כותב ה-chunks המגודר לא נמצא');
+  const helper = src.slice(helperAt, helperEnd);
+  assert.ok(helper.indexOf('db.runTransaction') > -1,
+    'כתיבת source child chunks אינה טרנזקציונית');
+  assert.ok(helper.indexOf('tx.get(control.opRef)') > -1,
+    'כל chunk אינו קורא מחדש את operation');
+  assert.ok(helper.indexOf('tx.get(control.ref)') > -1,
+    'כל chunk אינו קורא מחדש את staging');
+  assert.ok(helper.indexOf('requirePendingSourceOperation(') > -1,
+    'כל chunk אינו מאמת את owner token של operation');
+  assert.ok(helper.indexOf('requireOwnedStagedSource(') > -1,
+    'כל chunk אינו מאמת את owner token של staging');
+  assert.ok(helper.indexOf('lease_until: new Date(') > -1,
+    'כותב פעיל אינו מחדש lease בכל chunk');
+  assert.ok(src.indexOf('MAX_SOURCE_TRANSACTION_BYTES = 7 * 1024 * 1024') > -1,
+    'החלוקה אינה שומרת מרווח ממגבלת 10MiB של Firestore');
+
+  const saveAt = src.indexOf('async function saveSource(');
+  const cleanupAt = src.indexOf('async function cleanupStagedSource(', saveAt);
+  const saveBody = src.slice(saveAt, cleanupAt);
+  assert.ok(saveBody.indexOf('commitOwnedSourceWrites(') > -1,
+    'saveSource אינו משתמש בכותב המגודר');
+  assert.equal(saveBody.indexOf('await commitWrites([].concat('), -1,
+    'saveSource עדיין כותב children בבאצ׳ לא מגודר');
+});
+
+check('staged cleanup claims ownership and deletes the parent last', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function cleanupStagedSource(');
+  assert.ok(at > -1, 'cleanupStagedSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  function policyOperationRef(', at));
+  const claim = body.indexOf('cleanup_claimed_by: operationOwner');
+  const children = body.indexOf("collection('people').doc(");
+  const parent = body.lastIndexOf('tx.delete(ref)');
+  assert.ok(claim > -1 && children > claim, 'הניקוי מוחק ילדים לפני תפיסת בעלות');
+  assert.ok(parent > children, 'הניקוי מוחק את האב לפני הילדים');
 });
 
 check('saveSource writes all four sub-collections, not people alone', () => {
@@ -1030,7 +1125,8 @@ check('an abandoned staged source is cleaned up and has a TTL', () => {
   const body = src.slice(at, src.indexOf('\n  async function cleanupStagedSource', at));
   assert.ok(body.indexOf('expires_at: sourceOperationExpiry()') > -1,
     'המסמך המדורג נכתב בלי תאריך תפוגה');
-  assert.ok(body.indexOf('cleanupStagedSource(ref, plan)') > -1,
+  assert.ok(/cleanupStagedSource\(ctx\.sid, ref, staged, requestId, requestHash,\s*operationOwner\)/
+    .test(body),
     'אין ניקוי מפורש כשהסגירה נכשלת');
   assert.ok(body.indexOf('expires_at: FV.delete()') > -1,
     'תאריך התפוגה אינו מנוקה בסגירה — מקור שלם ימחק מעצמו');
@@ -1056,6 +1152,32 @@ check('the closing transaction re-reads the operation and the live policy', () =
     'מזהה הפעולה אינו נבדק שוב בתוך הטרנזקציה');
   assert.ok(body.indexOf("'source-policy-changed'") > -1,
     'חוקי התחנה אינם נבדקים שוב בתוך הטרנזקציה');
+});
+
+check('unchanged source saves claim idempotency inside a live CAS transaction', () => {
+  const src = read('functions/schedule-runtime.js');
+  const saveAt = src.indexOf('async function saveSource(');
+  const branchAt = src.indexOf("if (plan.kind === 'unchanged')", saveAt);
+  const branchEnd = src.indexOf('const sourceId =', branchAt);
+  assert.ok(saveAt > -1 && branchAt > saveAt && branchEnd > branchAt,
+    'ענף unchanged של saveSource לא נמצא');
+  const body = src.slice(branchAt, branchEnd);
+  assert.ok(body.indexOf('db.runTransaction') > -1,
+    'unchanged כותב מחוץ לטרנזקציה');
+  assert.ok(body.indexOf('tx.get(opRef)') > -1,
+    'unchanged אינו קורא את operation בתוך הטרנזקציה');
+  assert.ok(body.indexOf('requireLiveManager(') > -1,
+    'unchanged אינו קורא מחדש הרשאה חיה');
+  assert.ok(body.indexOf("'source-conflict'") > -1,
+    'unchanged אינו מבצע CAS על המצביע הפעיל');
+  assert.ok(body.indexOf("'source-policy-changed'") > -1,
+    'unchanged אינו מאמת מחדש את המדיניות הפעילה');
+  assert.ok(body.indexOf("'source-request-reused'") > -1,
+    'unchanged אינו דוחה שימוש חוזר ב-request_id עם hash אחר');
+  assert.ok(body.indexOf('tx.set(opRef') > -1,
+    'unchanged אינו רושם את הפעולה באותה טרנזקציה');
+  assert.equal(body.indexOf('opRef.set('), -1,
+    'unchanged עדיין מבצע כתיבה עיוורת מחוץ לטרנזקציה');
 });
 
 /* ⭐ P1-2 · הרשאה נקראת חיה ברגע הכתיבה, לא מהטוקן בתחילת הבקשה. */
@@ -1089,5 +1211,5 @@ check('expected_mode is mandatory, not merely honoured when present', () => {
     .test(body), 'expected_mode נבדק רק כשהוא נמסר');
 });
 
-assert.equal(passed, 89);
-console.log('\n89 schedule runtime source checks passed.');
+assert.equal(passed, 94);
+console.log('\n94 schedule runtime source checks passed.');

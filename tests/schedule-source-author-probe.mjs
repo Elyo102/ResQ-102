@@ -125,6 +125,9 @@ try {
     good.meta.locked_count, good.meta.event_count], [4, 0, 0, 0]);
   eq('1.7 מזהי מסמכים הם uid', good.people.map((p) => p.id).sort(),
     ['uid-aaa', 'uid-bbb', 'uid-ccc', 'uid-ddd']);
+  ok('1.7b uid אינו מספר העובד',
+    good.people.every((person) => !KNOWN.some((known) =>
+      known.employee_number === person.id)));
   // ⭐ `loadSource` בונה Object.assign({id: doc.id}, doc.data()) —
   // שדה `id` סותר בגוף המסמך היה גובר בשקט על מזהה המסמך.
   ok('1.8 שדה id בגוף המסמך זהה למזהה',
@@ -282,6 +285,10 @@ eq('4.2 פעיל כמחרוזת', rejectCode((l) => { l[0].active = 'כן'; }), 
 eq('4.3 בלי תחנת קצה', rejectCode((l) => { delete l[0].sub_station; }), ROW.NO_SUB_STATION);
 eq('4.4 תחנת קצה שאינה בחוקים',
   rejectCode((l) => { l[0].sub_station = 'yotvata'; }), ROW.SUB_STATION_UNKNOWN);
+for (const inherited of ['toString', 'constructor', '__proto__']) {
+  eq('4.4 prototype אינו תחנת קצה: ' + inherited,
+    rejectCode((l) => { l[0].sub_station = inherited; }), ROW.SUB_STATION_UNKNOWN);
+}
 eq('4.5 בלי תפקידים', rejectCode((l) => { l[0].roles = []; }), ROW.NO_ROLES);
 eq('4.6 תפקיד שאינו בחוקים',
   rejectCode((l) => { l[0].roles = ['paramedic']; }), ROW.ROLE_UNKNOWN);
@@ -437,12 +444,15 @@ ok('8.3 המיפוי אינו מתקבל מהלקוח',
 ok('8.4 המיפוי מגיע מרשימת המשתמשים החיה',
   RUNTIME_SRC.indexOf("stationRef(ctx.sid).collection('users')") !== -1);
 ok('8.5 ורק חברים פעילים', RUNTIME_SRC.indexOf('scheduleAccess.activeMember(user, ctx.sid)') !== -1);
-ok('8.6 הכתיבה מדורגת עם commitWrites', wired.indexOf('commitWrites(') !== -1);
+ok('8.6 הכתיבה מדורגת ומגודרת בכל chunk',
+  /await\s+commitOwnedSourceWrites\(\[\]\.concat\(/.test(wired)
+  && !/await\s+commitWrites\(\[\]\.concat\(/.test(wired));
 // ⭐ המסמך נכתב לא-שלם, ורק טרנזקציה סוגרת אותו.
 ok('8.7 המסמך נכתב תחילה כלא שלם', wired.indexOf('complete: false') !== -1);
 ok('8.8 והדגל נכתב בטרנזקציה', wired.indexOf('complete: true') !== -1
   && wired.indexOf('db.runTransaction') !== -1
-  && wired.indexOf('complete: false') < wired.indexOf('db.runTransaction'));
+  && wired.indexOf('tx.set(ref') !== -1
+  && wired.indexOf('complete: false') < wired.indexOf('complete: true'));
 ok('8.9 והמינוי החי נבדק שוב בסגירה', wired.indexOf('requireLiveManager(') !== -1);
 ok('8.10 התחנה אינה מתקבלת מהלקוח', !/data\.(station_id|stationId)/.test(wired));
 ok('8.11 המודול טהור', !/require\(['"]firebase/.test(AUTHOR_SRC));
@@ -477,6 +487,20 @@ const P = (api, over) => api.planSource(Object.assign({
   station_id: 'station-102', rows: rows(), known: KNOWN, policy: POLICY,
   previous: null, actor_uid: 'uid-mgr'
 }, over || {}));
+
+function mutationPrevious(api, locked) {
+  const first = P(api);
+  return Object.assign({ id: first.source_id }, first.meta, {
+    carried: { carry: {}, availability: {}, locked, events: [] }
+  });
+}
+
+function mutationLockResult(api, locked, nextRows, acceptedDropped) {
+  return P(api, {
+    rows: nextRows || rows(), previous: mutationPrevious(api, locked),
+    accept_carry_dropped: acceptedDropped
+  });
+}
 
 // ⭐ 9.1 — התאמה לפי שם. זו התקלה שכל הקובץ קיים כדי למנוע.
 survives('9.1 התאמה לפי שם נכנסת',
@@ -549,10 +573,18 @@ survives('9.7 תפקיד שאינו בחוקים מתקבל',
   });
 
 survives('9.8 תחנת קצה שאינה בחוקים מתקבלת',
-  "if (!policy.sub_stations[sub]) {",
+  "if (!hasOwnSubStation(policy, sub)) {",
   "if (false) {",
   (api) => {
     const list = rows(); list[0].sub_station = 'yotvata';
+    try { P(api, { rows: list }); return false; } catch (_) { return true; }
+  });
+
+survives('9.8b שם prototype מתקבל כתחנת קצה',
+  "  return Object.prototype.hasOwnProperty.call(policy.sub_stations, sub);",
+  "  return !!policy.sub_stations[sub];",
+  (api) => {
+    const list = rows(); list[0].sub_station = 'constructor';
     try { P(api, { rows: list }); return false; } catch (_) { return true; }
   });
 
@@ -595,6 +627,92 @@ survives('9.11 מקור ריק מתקבל',
     try { P(api, { rows: list, accept_rejected: 4 }); return false; } catch (_) { return true; }
   });
 
+/* ⭐ 9.12 — הרגרסיה של `locked`: המפתח העליון הוא תחנת קצה, לא UID.
+ * האישור נמסר למוטנט בכוונה, כדי שלא „ייתפס" רק משום שזרק שגיאה;
+ * הוא חייב להמשיך ואז להיחשף בכך שהשיבוץ התקין הושמט. */
+survives('9.12 נעילות חוזרות להסתנן לפי המפתח העליון כאילו היה UID',
+  "const current = peopleById.get(person);",
+  "const current = peopleById.get(sub);",
+  (api) => {
+    const first = P(api);
+    const previous = Object.assign({ id: first.source_id }, first.meta, {
+      carried: {
+        carry: {}, availability: {}, events: [],
+        locked: { rashit: {
+          '2026-09-10': [{ person: 'uid-bbb', role: 'driver' }]
+        } }
+      }
+    });
+    const changed = rows(); changed[0].group = 'crew-b';
+    const result = P(api, { rows: changed, previous, accept_carry_dropped: 1 });
+    const entries = result.locked.length === 1 && result.locked[0].id === 'rashit'
+      ? result.locked[0].data.days['2026-09-10'] : null;
+    return Array.isArray(entries) && entries.length === 1
+      && entries[0].person === 'uid-bbb';
+  });
+
+survives('9.13 בדיקת תאריך חוזרת ל-regex בלבד',
+  "  return Number.isFinite(time)\n    && new Date(time).toISOString().slice(0, 10) === value;",
+  "  return true;",
+  (api) => {
+    const error = caught(() => mutationLockResult(api, {
+      rashit: { '2026-02-30': ['uid-bbb'] }
+    }, rows(), 0));
+    return !!error && error.code === CODE.CARRY_SHAPE;
+  });
+
+survives('9.14 unchanged שוב מונע ניקוי יתום שאושר',
+  "\n        && orphanTotal === 0",
+  "",
+  (api) => {
+    const result = mutationLockResult(api, { rashit: { '2026-09-10': [
+      { person: 'uid-gone', role: 'driver' },
+      { person: 'uid-bbb', role: 'driver' }
+    ] } }, rows(), 1);
+    return result.kind === 'updated' && result.revision === '2'
+      && result.locked[0].data.days['2026-09-10'].length === 1
+      && result.locked[0].data.days['2026-09-10'][0].person === 'uid-bbb';
+  });
+
+survives('9.15 שיבוץ לאדם לא פעיל נשמר',
+  "current.active !== true",
+  "false",
+  (api) => {
+    const nextRows = rows(); nextRows[1].active = false;
+    const result = mutationLockResult(api, { rashit: { '2026-09-10': [
+      { person: 'uid-bbb', role: 'driver' },
+      { person: 'uid-aaa', role: 'driver' }
+    ] } }, nextRows, 1);
+    return result.locked[0].data.days['2026-09-10'].length === 1
+      && result.locked[0].data.days['2026-09-10'][0].person === 'uid-aaa';
+  });
+
+survives('9.16 שיבוץ נשמר אחרי מעבר תחנת קצה',
+  "current.sub_station !== sub",
+  "false",
+  (api) => {
+    const nextRows = rows(); nextRows[1].sub_station = 'timna';
+    const result = mutationLockResult(api, { rashit: { '2026-09-10': [
+      { person: 'uid-bbb', role: 'driver' },
+      { person: 'uid-aaa', role: 'driver' }
+    ] } }, nextRows, 1);
+    return result.locked[0].data.days['2026-09-10'].length === 1
+      && result.locked[0].data.days['2026-09-10'][0].person === 'uid-aaa';
+  });
+
+survives('9.17 שיבוץ נשמר אחרי הסרת תפקיד מהאדם',
+  "current.roles.indexOf(role) === -1",
+  "false",
+  (api) => {
+    const nextRows = rows(); nextRows[0].roles = ['officer'];
+    const result = mutationLockResult(api, { rashit: { '2026-09-10': [
+      { person: 'uid-aaa', role: 'driver' },
+      { person: 'uid-bbb', role: 'driver' }
+    ] } }, nextRows, 1);
+    return result.locked[0].data.days['2026-09-10'].length === 1
+      && result.locked[0].data.days['2026-09-10'][0].person === 'uid-bbb';
+  });
+
 /* ==================================================================
  * 13 · ⭐ P0-1 · יבוא סגל אינו מוחק את מה שלא ייבאו
  *
@@ -612,7 +730,17 @@ const CARRY = Object.freeze({
     'uid-a': { '2026-09-01': 'yes', '2026-09-02': 'no' },
     'uid-b': { '2026-09-03': 'yes' }
   },
-  locked: { 'uid-a': { '2026-09-10': 'course' } },
+  locked: {
+    rashit: {
+      '2026-09-10': [
+        'uid-aaa',
+        { person: 'uid-bbb', role: 'driver' }
+      ]
+    },
+    timna: {
+      '2026-09-11': [{ person: 'uid-ccc', role: 'ff' }]
+    }
+  },
   events: [
     { id: 'ev_1', title: 'תרגיל', date: '2026-09-05' },
     { id: 'ev_2', title: 'קורס', date: '2026-09-12' }
@@ -632,17 +760,17 @@ try {
     carry: CARRY.carry,
     availability: { [uids[0]]: CARRY.availability['uid-a'],
       [uids[1]]: CARRY.availability['uid-b'] },
-    locked: { [uids[0]]: CARRY.locked['uid-a'] },
+    locked: CARRY.locked,
     events: CARRY.events
   };
   const changed = rows();
-  changed[0].sub_station = 'timna';
+  changed[0].group = 'crew-b';
   const next = plan({ rows: changed, previous: activeWith(carried) });
 
   // --- הליבה: שום דבר לא נמחק ---
   eq('13.1 carry עובר כפי שהוא', next.meta.carry, CARRY.carry);
   eq('13.2 זמינות עוברת', next.availability.length, 2);
-  eq('13.3 נעילות עוברות', next.locked.length, 1);
+  eq('13.3 נעילות עוברות לפי תחנות קצה', next.locked.length, 2);
   eq('13.4 אירועים עוברים', next.events.length, 2);
 
   // ⭐ בית-בית, ולא „בערך". הרנטיים מחשב מחדש חתימה על התוכן הזה;
@@ -651,12 +779,19 @@ try {
     next.availability.find((x) => x.id === uids[0]).data.days,
     CARRY.availability['uid-a']);
   eq('13.6 הנעילה זהה בתוכן',
-    next.locked[0].data.days, CARRY.locked['uid-a']);
+    next.locked.find((item) => item.id === 'rashit').data.days, CARRY.locked.rashit);
+  eq('13.6b מזהה מסמך הנעילה הוא תחנת קצה ולא אדם',
+    next.locked.map((item) => item.id).sort(), ['rashit', 'timna']);
+  eq('13.6c האדם נשאר בתוך הרשומה',
+    next.locked.find((item) => item.id === 'rashit')
+      .data.days['2026-09-10'][1].person, 'uid-bbb');
+  ok('13.6d מספר העובד לא החליף את ה-uid בנעילה',
+    JSON.stringify(next.locked).indexOf('1002') === -1);
   eq('13.7 האירוע זהה בתוכן', next.events[0].data, CARRY.events[0]);
 
   // הספירות החתומות משקפות את מה שבאמת עובר.
   eq('13.8 הספירה סופרת זמינות', next.counts.availability, 2);
-  eq('13.9 הספירה סופרת נעילות', next.counts.locked, 1);
+  eq('13.9 הספירה סופרת מסמכי תחנת קצה', next.counts.locked, 2);
   eq('13.10 הספירה סופרת אירועים', next.counts.events, 2);
 
   // ⭐ והמבחן שהיה תופס את הבאג המקורי: אלה אינם אפס.
@@ -676,8 +811,26 @@ try {
   if (runtimeStable) {
     eq('13.11b החתימה מכסה את התוכן שעבר',
       next.digest, hash(runtimeStable(basisOf(next))));
+    const digestLockedA = JSON.parse(JSON.stringify(carried));
+    digestLockedA.locked.rashit['2026-09-10'] = [
+      { person: 'uid-bbb', role: 'driver' }
+    ];
+    const digestLockedB = JSON.parse(JSON.stringify(digestLockedA));
+    digestLockedB.locked.rashit['2026-09-10'][0].person = 'uid-aaa';
+    const digestA = plan({ rows: changed, previous: activeWith(digestLockedA) });
+    const digestB = plan({ rows: changed, previous: activeWith(digestLockedB) });
+    const isolatedA = basisOf(digestA), isolatedB = basisOf(digestB);
+    isolatedA.locked.rashit['2026-09-10'][0].person = '<person>';
+    isolatedB.locked.rashit['2026-09-10'][0].person = '<person>';
+    eq('13.11c בידוד החתימה: כל הבסיס פרט ל-person זהה', isolatedA, isolatedB);
+    ok('13.11d שינוי person בלבד משנה את החתימה',
+      digestA.digest !== digestB.digest);
   } else {
     ok('13.11b החתימה מכסה את התוכן שעבר', false, 'stable() של הרנטיים לא נטען');
+    ok('13.11c בידוד החתימה: המהדורה וצורת הנעילה זהות', false,
+      'stable() של הרנטיים לא נטען');
+    ok('13.11d שינוי person בלבד משנה את החתימה', false,
+      'stable() של הרנטיים לא נטען');
   }
 } catch (e) {
   ok('13.x העברת תוכן', false, (e && e.code) + ' · ' + e.message);
@@ -689,7 +842,10 @@ try {
   const carried = {
     carry: {},
     availability: { 'uid-gone': { '2026-09-01': 'yes' } },
-    locked: { 'uid-also-gone': { '2026-09-02': 'x' } },
+    locked: { rashit: { '2026-09-02': [
+      { person: 'uid-also-gone', role: 'driver' },
+      { person: 'uid-bbb', role: 'driver' }
+    ] } },
     events: []
   };
   let blocked = null;
@@ -702,14 +858,18 @@ try {
   // ⭐ שורות שונות בכוונה: יבוא זהה חוזר במסלול `unchanged`, שאינו
   // כותב דבר ולכן גם אינו מפיל איש. מה שנבדק כאן הוא המסלול שכן כותב.
   const moved = rows();
-  moved[0].sub_station = 'timna';
+  moved[0].group = 'crew-b';
 
   // אישור מספרי מדויק — בדיוק כמו שורה שנדחתה.
   const acked = plan({ rows: moved, previous: activeWith(carried),
     accept_carry_dropped: 2 });
   eq('13.13 אישור מדויק מאפשר להמשיך', acked.carried_dropped,
     { availability: 1, locked: 1 });
-  eq('13.14 והן באמת לא נכנסו', acked.counts.availability + acked.counts.locked, 0);
+  eq('13.14 הזמינות היתומה באמת לא נכנסה', acked.counts.availability, 0);
+  eq('13.14b השיבוץ התקין באותו מערך לא הושמט', acked.counts.locked, 1);
+  eq('13.14c הסינון נעשה לפי entry.person',
+    acked.locked[0].data.days['2026-09-02'],
+    [{ person: 'uid-bbb', role: 'driver' }]);
 
   let wrong = null;
   try { plan({ rows: moved, previous: activeWith(carried), accept_carry_dropped: 1 }); }
@@ -721,9 +881,92 @@ try {
   ok('13.16 היומן סופר את היוצאים בלי לנקוב בשם',
     acked.audit.carry_dropped_availability === 1
     && acked.audit.carry_dropped_locked === 1
-    && JSON.stringify(acked.audit).indexOf('uid-gone') === -1);
+    && JSON.stringify(acked.audit).indexOf('uid-gone') === -1
+    && JSON.stringify(acked.audit).indexOf('uid-also-gone') === -1);
 } catch (e) {
   ok('13.y יוצאים', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* --- גם roster זהה חייב להיכתב מחדש כשיש יתום שאושר --- */
+
+try {
+  const sameRosterCarry = {
+    carry: {}, availability: {}, events: [],
+    locked: { rashit: { '2026-09-14': [
+      { person: 'uid-gone', role: 'driver' },
+      { person: 'uid-bbb', role: 'driver' }
+    ] } }
+  };
+  const samePrevious = activeWith(sameRosterCarry);
+  const blockedSame = caught(() => plan({ previous: samePrevious }));
+  eq('13.16b roster זהה עם יתום נחסם בלי אישור',
+    blockedSame && blockedSame.code, CODE.CARRY_ORPHANED);
+  const wrongSame = caught(() => plan({
+    previous: samePrevious, accept_carry_dropped: 0
+  }));
+  eq('13.16c roster זהה דורש ack מדויק',
+    wrongSame && wrongSame.code, CODE.CARRY_ACK_MISMATCH);
+  const cleanedSame = plan({ previous: samePrevious, accept_carry_dropped: 1 });
+  eq('13.16d ניקוי יתום אינו חוזר בטעות כ-unchanged', cleanedSame.kind, 'updated');
+  eq('13.16e ניקוי יתום מעלה מהדורה', cleanedSame.revision, '2');
+  eq('13.16f היתום נוקה וה-sibling התקין נשמר',
+    cleanedSame.locked[0].data.days['2026-09-14'],
+    [{ person: 'uid-bbb', role: 'driver' }]);
+  eq('13.16g הניקוי נרשם כספירת assignment אחת',
+    cleanedSame.carried_dropped, { availability: 0, locked: 1 });
+} catch (e) {
+  ok('13.same roster cleanup', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* --- כשירות חיה של שיבוץ שנישא למקור החדש --- */
+
+function eligibilityCarry() {
+  return { carry: {}, availability: {}, events: [], locked: {
+    rashit: { '2026-09-15': [
+      { person: 'uid-bbb', role: 'driver' },
+      { person: 'uid-aaa', role: 'driver' }
+    ] }
+  } };
+}
+
+function eligibilityResult(nextRows) {
+  return plan({
+    rows: nextRows, previous: activeWith(eligibilityCarry()),
+    accept_carry_dropped: 1
+  });
+}
+
+try {
+  const inactiveRows = rows(); inactiveRows[1].active = false;
+  const inactive = eligibilityResult(inactiveRows);
+  eq('13.16h lock של אדם לא פעיל יורד ושומר sibling',
+    inactive.locked[0].data.days['2026-09-15'],
+    [{ person: 'uid-aaa', role: 'driver' }]);
+  eq('13.16i lock לא פעיל נספר ברמת assignment',
+    inactive.carried_dropped.locked, 1);
+
+  const movedRows = rows(); movedRows[1].sub_station = 'timna';
+  const moved = eligibilityResult(movedRows);
+  eq('13.16j lock של אדם שעבר תחנת קצה יורד ושומר sibling',
+    moved.locked[0].data.days['2026-09-15'],
+    [{ person: 'uid-aaa', role: 'driver' }]);
+
+  const roleRows = rows(); roleRows[0].roles = ['officer'];
+  const roleRemoved = eligibilityResult(roleRows);
+  eq('13.16k lock לתפקיד שהוסר מהאדם יורד ושומר sibling',
+    roleRemoved.locked[0].data.days['2026-09-15'],
+    [{ person: 'uid-bbb', role: 'driver' }]);
+
+  const twoInvalid = rows();
+  twoInvalid[0].roles = ['officer']; twoInvalid[1].active = false;
+  const wrongTwo = caught(() => plan({
+    rows: twoInvalid, previous: activeWith(eligibilityCarry()),
+    accept_carry_dropped: 1
+  }));
+  eq('13.16l כמה שינויי כשירות עדיין דורשים ack מדויק',
+    wrongTwo && wrongTwo.code, CODE.CARRY_ACK_MISMATCH);
+} catch (e) {
+  ok('13.eligibility cleanup', false, (e && e.code) + ' · ' + e.message);
 }
 
 /* --- מקור פעיל שאיננו יודעים לקרוא אינו „ריק" --- */
@@ -750,6 +993,68 @@ try {
     ok('13.18 צורה פגומה נחסמת', !!bad && bad.code === CODE.CARRY_SHAPE,
       bad ? bad.code : 'לא נחסם');
   }
+
+  const lockedError = (locked) => caught(() => plan({
+    previous: activeWith({ carry: {}, availability: {}, locked, events: [] })
+  }));
+  const uidKeyed = lockedError({
+    'uid-bbb': { '2026-09-10': ['uid-bbb'] }
+  });
+  ok('13.18b UID כמפתח עליון נחסם ואינו מתחזה לתחנת קצה',
+    !!uidKeyed && uidKeyed.code === CODE.CARRY_SHAPE,
+    uidKeyed ? uidKeyed.code : 'לא נחסם');
+  const unknownSub = lockedError({
+    yotvata: { '2026-09-10': ['uid-bbb'] }
+  });
+  ok('13.18c תחנת קצה שאינה במדיניות נחסמת',
+    !!unknownSub && unknownSub.code === CODE.CARRY_SHAPE,
+    unknownSub ? unknownSub.code : 'לא נחסם');
+  const scalarDay = lockedError({
+    rashit: { '2026-09-10': 'course' }
+  });
+  ok('13.18d ערך scalar במקום מערך שיבוצים נחסם',
+    !!scalarDay && scalarDay.code === CODE.CARRY_SHAPE,
+    scalarDay ? scalarDay.code : 'לא נחסם');
+  const badDate = lockedError({
+    rashit: { tomorrow: ['uid-bbb'] }
+  });
+  ok('13.18e מפתח שאינו תאריך נחסם',
+    !!badDate && badDate.code === CODE.CARRY_SHAPE,
+    badDate ? badDate.code : 'לא נחסם');
+  for (const impossible of ['2026-99-99', '2026-02-30', '2026-02-29']) {
+    const invalidDay = lockedError({
+      rashit: { [impossible]: ['uid-bbb'] }
+    });
+    ok('13.18 תאריך לוח לא קיים נחסם: ' + impossible,
+      !!invalidDay && invalidDay.code === CODE.CARRY_SHAPE,
+      invalidDay ? invalidDay.code : 'לא נחסם');
+  }
+  const leapRows = rows(); leapRows[0].group = 'leap-check';
+  const leap = plan({
+    rows: leapRows,
+    previous: activeWith({ carry: {}, availability: {}, events: [],
+      locked: { rashit: { '2028-02-29': ['uid-bbb'] } } })
+  });
+  eq('13.18 יום מעובר אמיתי מתקבל: 2028-02-29',
+    leap.locked[0].data.days['2028-02-29'], ['uid-bbb']);
+  const noPerson = lockedError({
+    rashit: { '2026-09-10': [{ role: 'driver' }] }
+  });
+  ok('13.18f רשומת אובייקט בלי person נחסמת',
+    !!noPerson && noPerson.code === CODE.CARRY_SHAPE,
+    noPerson ? noPerson.code : 'לא נחסם');
+  const wrongRole = lockedError({
+    timna: { '2026-09-10': [{ person: 'uid-ccc', role: 'officer' }] }
+  });
+  ok('13.18g תפקיד שאינו בתקן תחנת הקצה נחסם',
+    !!wrongRole && wrongRole.code === CODE.CARRY_SHAPE,
+    wrongRole ? wrongRole.code : 'לא נחסם');
+  const extraField = lockedError({
+    rashit: { '2026-09-10': [{ person: 'uid-bbb', role: 'driver', note: 'x' }] }
+  });
+  ok('13.18h רשומת שיבוץ עם שדה זר נחסמת',
+    !!extraField && extraField.code === CODE.CARRY_SHAPE,
+    extraField ? extraField.code : 'לא נחסם');
 
   // מקור ראשון בתחנה — אין ממה להעביר, וזה תקין.
   const fresh = plan({ previous: null });
