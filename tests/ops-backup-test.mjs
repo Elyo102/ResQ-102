@@ -11,7 +11,7 @@ let passed = 0;
 function check(name, fn) { fn(); console.log('PASS ' + name); passed++; }
 try {
   git('init'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Backup Fixture'); git('config', 'user.email', 'fixture@example.invalid');
-  fs.writeFileSync(path.join(root, '.gitignore'), '_גיבוי/\n_ניטור/\n_מסירות/\n_דיונים/\n');
+  fs.writeFileSync(path.join(root, '.gitignore'), '_גיבוי/\n_ניטור/\n_מסירות\n_דיונים/\n');
   fs.writeFileSync(path.join(root, 'source.js'), 'export const marker = 42;\n');
   git('add', '.'); git('commit', '-m', 'fixture');
   fs.mkdirSync(path.join(root, '_ניטור')); fs.writeFileSync(path.join(root, '_ניטור', 'feedback.md'), 'Private fixture שלום');
@@ -69,6 +69,7 @@ try {
     const link = path.join(root, '_מסירות');
     try {
       fs.symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+      assert.equal(git('status', '--porcelain', '--untracked-files=all').trim(), '', 'the link guard, not the dirty-tree guard, must be exercised');
       assert.throws(() => run(), /Links/);
     } finally { if (fs.existsSync(link)) fs.unlinkSync(link); fs.rmdirSync(outside); }
   });
