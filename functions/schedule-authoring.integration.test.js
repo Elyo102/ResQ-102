@@ -412,8 +412,8 @@ async function seed() {
 
 /* מזהה הפרסום המוכן, מהבדיקה שיוצרת אותו לבדיקות שצורכות אותו. */
 let preparedId = null;
-let preparedDraftId = null;
-let preparedDigest = null;
+let preflightSignature = null;
+let preflightChanges = 0;
 
 let passed = 0;
 async function test(name, fn) {
@@ -2091,6 +2091,34 @@ async function test(name, fn) {
       false, 'פרסום מוכן הזיז את המצביע הפעיל');
   });
 
+  await test('shadow to new is refused as a direct mode change', async () => {
+    /* ⭐ המסלול היחיד ל-new הוא המעבר החתום. החלפת מצב ישירה — גם
+     * בידי מפקד — משאירה את התחנה בלי לוח, ולכן נדחית בקוד משלה. */
+    const runtimeBefore = (await runtimeDoc().get()).data() || {};
+    const error = await caught(() => api.setRuntimeMode(req('commander', 'commander', {
+      request_id: 'mode_direct_new', target: 'new', expected_mode: 'shadow',
+      confirmation: 'new', reason_code: 'initial_activation'
+    })));
+    assert.ok(error, 'מעבר ישיר ל-new עבר');
+    assert.equal(error.code, 'cutover-required');
+    assert.deepEqual((await runtimeDoc().get()).data() || {}, runtimeBefore);
+    assert.equal((await station().collection('schedule_mode_operations')
+      .doc('mode_direct_new').get()).exists, false);
+  });
+
+  await test('a schedule manager cannot even preview the cutover', async () => {
+    /* ⭐ P0-2. הבדיקה הזאת הצהירה בעבר ש-`manager` מקבל דוח; זה היה
+     * `requireManager` שנעל את המפקד בחוץ ופתח את השלב הראשון למי
+     * שאינו רשאי לבצע את השני. שער אחד לשני השלבים: פיקוד. */
+    const error = await caught(() => api.previewCutover(req('manager', 'firefighter', {
+      candidate_publication_id: preparedId
+    })));
+    assert.ok(error, 'אחראי סידור קיבל דוח מעבר');
+    assert.equal(error.code, 'mode-authority-forbidden');
+    assert.equal((await station().collection('schedule_preflight')
+      .doc(preparedId).get()).exists, false, 'דוח נכתב למרות הסירוב');
+  });
+
   await test('previewCutover signs a report that carries no identifiers', async () => {
     const candidateRows = await station().collection('schedule_publications')
       .doc(preparedId).collection('rows').get();
@@ -2099,7 +2127,7 @@ async function test(name, fn) {
       return String((stored.row || {}).date || '');
     }).filter(Boolean));
     assert.ok(expectedDates.size > 0, 'הפרסום המוכן ריק ולכן ה-preflight אינו נבדק');
-    const report = await api.previewCutover(req('manager', 'firefighter', {
+    const report = await api.previewCutover(req('commander', 'commander', {
       candidate_publication_id: preparedId
     }));
     assert.ok(report.signature, 'הדוח אינו חתום');
@@ -2107,6 +2135,9 @@ async function test(name, fn) {
       'ה-preflight לא ספר במדויק את ימי הפרסום המוכן');
     assert.ok(report.counts.next_days > 0,
       'ה-preflight חזר ירוק על מועמד ריק');
+    assert.ok(report.expires_at && report.generated_at, 'הדוח ללא זמן ותפוגה');
+    assert.ok(report.changes && Number.isInteger(report.changes.count),
+      'הדוח אינו מונה שינויים מול הסידור הקיים');
     assert.equal(report.by_reason[CUTOVER_REASON.MISSING], 0,
       'פיקסצ׳ר התצוגה יצר MISSING מלאכותי בדוח המעבר');
     assert.equal(report.by_reason[CUTOVER_REASON.FOREIGN], 0,
@@ -2125,14 +2156,47 @@ async function test(name, fn) {
     const stored = (await station().collection('schedule_preflight')
       .doc(preparedId).get()).data() || {};
     assert.equal(stored.signature, report.signature);
+    /* ⭐ P0-4. השדות החתומים חייבים לשרוד את Firestore. `expires_at`
+     * נשמר כפי שנחתם; ה-TTL יושב בשדה נפרד. אחרת החתימה נשברת
+     * מול עצמה בקריאה הבאה — וכל מעבר נחסם. */
+    assert.equal(stored.expires_at, report.expires_at, 'expires_at החתום נדרס');
+    assert.ok(stored.ttl_expires_at && typeof stored.ttl_expires_at.toDate === 'function',
+      'אין ttl_expires_at נפרד לתפוגת המסמך');
+    preflightSignature = report.signature;
+    preflightChanges = Number(report.changes.count || 0);
+  });
+
+  await test('promotion without the exact report signature is refused', async () => {
+    const runtimeBefore = (await runtimeDoc().get()).data() || {};
+    const missing = await caught(() => api.promoteToNew(req('commander', 'commander', {
+      request_id: 'cut_nosig', candidate_publication_id: preparedId,
+      expected_mode: 'shadow'
+    })));
+    assert.ok(missing, 'מעבר בלי חתימת דוח עבר');
+    assert.equal(missing.code, 'cutover-signature-required');
+    const wrong = await caught(() => api.promoteToNew(req('commander', 'commander', {
+      request_id: 'cut_badsig', candidate_publication_id: preparedId,
+      expected_mode: 'shadow', expected_preflight_signature: 'not-the-report'
+    })));
+    assert.ok(wrong, 'מעבר עם חתימה זרה עבר');
+    assert.equal(wrong.code, 'cutover-signature-mismatch');
+    assert.deepEqual((await runtimeDoc().get()).data() || {}, runtimeBefore);
+    assert.equal(((await station().collection('schedule_publications')
+      .doc(preparedId).get()).data() || {}).status, 'prepared');
+    for (const id of ['cut_nosig', 'cut_badsig']) {
+      assert.equal((await station().collection('schedule_mode_operations')
+        .doc(id).get()).exists, false, 'רשומת פעולה נכתבה לבקשה שנדחתה: ' + id);
+    }
   });
 
   await test('a schedule manager cannot perform the cutover', async () => {
     const error = await caught(() => api.promoteToNew(req('manager', 'firefighter', {
       request_id: 'cut_mgr', candidate_publication_id: preparedId,
-      expected_mode: 'shadow'
+      expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+      accept_changes: preflightChanges > 0 ? preflightSignature : undefined
     })));
     assert.ok(error, 'אחראי סידור ביצע מעבר');
+    assert.equal(error.code, 'mode-authority-forbidden');
   });
 
   await test('a role revoked before the cutover transaction cannot promote', async () => {
@@ -2154,7 +2218,8 @@ async function test(name, fn) {
     try {
       const error = await caught(() => hooked.promoteToNew(req('commander', 'commander', {
         request_id: 'cut_role_race', candidate_publication_id: preparedId,
-        expected_mode: 'shadow'
+        expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+        accept_changes: preflightChanges > 0 ? preflightSignature : undefined
       })));
       assert.ok(error, 'הסרת תפקיד פיקודי בזמן המעבר לא נחסמה');
       assert.equal(error.code, 'mode-authority-forbidden');
@@ -2178,7 +2243,7 @@ async function test(name, fn) {
   });
 
   await test('the cutover activates publication, pointer and mode together', async () => {
-    const report = await api.previewCutover(req('manager', 'firefighter', {
+    const report = await api.previewCutover(req('commander', 'commander', {
       candidate_publication_id: preparedId
     }));
     if (report.blocked) {
@@ -2186,10 +2251,23 @@ async function test(name, fn) {
       // ומדווחים במקום „לתקן" בכך שמדלגים.
       assert.fail('preflight חסם את המעבר: ' + JSON.stringify(report.by_reason));
     }
+    /* ⭐ אישור השינויים הוא חתימת הדוח שהוצג — לא דגל. כשאין שינויים
+     * אין מה לאשר, וכשיש, רק החתימה המדויקת מאשרת אותם. */
+    if (Number(report.changes.count || 0) > 0) {
+      const unacknowledged = await caught(() => api.promoteToNew(req('commander', 'commander', {
+        request_id: 'cut_unack', candidate_publication_id: preparedId,
+        expected_mode: 'shadow', expected_preflight_signature: report.signature
+      })));
+      assert.ok(unacknowledged, 'מעבר עם שינויים לא מאושרים עבר');
+      assert.equal(unacknowledged.code, 'cutover-changes-unacknowledged');
+    }
     const result = await api.promoteToNew(req('commander', 'commander', {
       request_id: 'cut_1', candidate_publication_id: preparedId,
-      expected_mode: 'shadow'
+      expected_mode: 'shadow', expected_preflight_signature: report.signature,
+      accept_changes: Number(report.changes.count || 0) > 0 ? report.signature : undefined
     }));
+    preflightSignature = report.signature;
+    preflightChanges = Number(report.changes.count || 0);
     assert.equal(result.duplicate, false);
     const cfg = (await runtimeDoc().get()).data() || {};
     assert.equal(cfg.mode, 'new');
@@ -2211,13 +2289,15 @@ async function test(name, fn) {
   await test('a second competing promotion does not run twice', async () => {
     const again = await api.promoteToNew(req('commander', 'commander', {
       request_id: 'cut_1', candidate_publication_id: preparedId,
-      expected_mode: 'shadow'
+      expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+      accept_changes: preflightChanges > 0 ? preflightSignature : undefined
     }));
     assert.equal(again.duplicate, true, 'אותה בקשה בוצעה פעמיים');
     // ובקשה חדשה על אותו פרסום — הוא כבר פעיל.
     const error = await caught(() => api.promoteToNew(req('commander', 'commander', {
       request_id: 'cut_2', candidate_publication_id: preparedId,
-      expected_mode: 'shadow'
+      expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+      accept_changes: preflightChanges > 0 ? preflightSignature : undefined
     })));
     assert.ok(error, 'מעבר שני על פרסום פעיל לא נחסם');
   });
