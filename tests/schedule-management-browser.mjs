@@ -1073,14 +1073,26 @@ try {
     // אחרי השינוי המסך נטען מחדש מהשרת ולא מניח מה קרה.
     assert.equal(await commanderPage.locator('#modeNow').textContent(), 'בדיקה');
     assert.equal(await commanderPage.locator('#modeForm').isVisible(), false);
-    // גם תשובת שרת ישנה שמפרסמת `new` אינה יוצרת מסלול הפעלה ב-42G.0.
-    assert.equal(await commanderPage.locator('#modeTargets .pill').count(), 1);
-    assert.match(await commanderPage.locator('#modeTargets .pill').first().textContent(), /כבוי/);
-    assert.equal(calls.some((entry) => entry.name === 'setScheduleRuntimeMode'
+    /* ⭐ המתג ל-`new` מוצג (הכרעת אלדד: בנוי ואינרטי) — אבל הוא לעולם
+     * אינו נשלח דרך setScheduleRuntimeMode. המסלול שלו הוא המעבר
+     * החתום (preview → promote), ובלי מועמד מוכן הכפתור נעול ואומר למה. */
+    assert.equal(await commanderPage.locator('#modeTargets .pill').count(), 2);
+    const pills = await commanderPage.locator('#modeTargets .pill').allTextContents();
+    assert.ok(pills.some((t) => /פעיל/.test(t)) && pills.some((t) => /כבוי/.test(t)), pills.join(' | '));
+    await commanderPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    await commanderPage.locator('#modeForm:not([hidden])').waitFor();
+    assert.equal(await commanderPage.locator('#modeApply').isEnabled(), false);
+    assert.match(await commanderPage.locator('#modeApply').textContent(), /אין סידור מוכן/);
+    // הקלדת אישור וסיבה אינן רלוונטיות למעבר — הן מוסתרות, לא רק מנוטרלות.
+    assert.equal(await commanderPage.locator('#modeConfirm').isVisible(), false);
+    await commanderPage.locator('#modeApply').click({ force: true });
+    const after = await commanderPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(after.some((entry) => entry.name === 'setScheduleRuntimeMode'
       && entry.payload && entry.payload.target === 'new'), false);
+    assert.equal(after.some((entry) => entry.name === 'promoteScheduleToNew'), false);
     const factories = await commanderPage.evaluate(() => window.__CALLABLE_FACTORIES || []);
-    assert.equal(factories.includes('previewScheduleCutover'), false);
-    assert.equal(factories.includes('promoteScheduleToNew'), false);
+    assert.equal(factories.includes('previewScheduleCutover'), true);
+    assert.equal(factories.includes('promoteScheduleToNew'), true);
   });
   await commander.close();
 

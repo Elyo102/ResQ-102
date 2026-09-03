@@ -133,9 +133,9 @@ try {
  * ================================================================== */
 
 eq('2.1 כבוי → בדיקה', change().transition, 'enable_shadow');
-throwsCode('2.2 בדיקה → פעיל מושבת ב-42G.0',
-  () => change({ current: 'shadow', target: 'new', confirmation: 'new',
-    reason_code: 'validation_complete' }), CODE.TRANSITION_FORBIDDEN);
+eq('2.2 בדיקה → פעיל',
+  change({ current: 'shadow', target: 'new', confirmation: 'new',
+    reason_code: 'validation_complete' }).transition, 'promote');
 eq('2.3 פעיל → בדיקה',
   change({ current: 'new', target: 'shadow', reason_code: 'validation_failed' }).transition, 'demote');
 eq('2.4 בדיקה → כבוי',
@@ -152,7 +152,7 @@ throwsCode('2.6 כבוי → פעיל אסור',
 try {
   change({ target: 'new', confirmation: 'new' });
 } catch (e) {
-  ok('2.7 והשגיאה מסבירה למה', e.message.indexOf('מושבתת בגרסה זו') !== -1, e.message);
+  ok('2.7 והשגיאה מסבירה למה', e.message.indexOf('בלי שאיש יקבל הודעה') !== -1, e.message);
 }
 
 eq('2.8 אותו מצב אינו שינוי', change({ target: 'off', confirmation: 'off' }).kind, 'unchanged');
@@ -190,10 +190,10 @@ try {
 } catch (e) {
   eq('4.4 השגיאה מפרטת מה חסר', e.detail.missing, ['policy', 'source', 'people']);
 }
-throwsCode('4.5 העלאה לפעיל נשארת מושבתת גם כשהמוכנות חסרה',
+throwsCode('4.5 העלאה לפעיל דורשת מוכנות',
   () => change({ current: 'shadow', target: 'new', confirmation: 'new',
     reason_code: 'validation_complete', readiness: { policy: true, source: false, people: 3 } }),
-  CODE.TRANSITION_FORBIDDEN);
+  CODE.NOT_READY);
 
 // ⭐ מתג חירום שדורש שהמערכת תהיה תקינה כדי לפעול אינו מתג חירום.
 const killed = change({ current: 'new', target: 'off', confirmation: 'off',
@@ -237,9 +237,9 @@ eq('6.4 והסיבה נאמרת', offBlank.targets[0].blocked_by, 'not_ready');
 
 const shadowReady = A.options({ current: 'shadow', actor: { role: 'commander' },
   readiness: READY });
-eq('6.4a מ-shadow מוצע רק כיבוי, לא הפעלה',
-  shadowReady.targets.map((t) => t.to), ['off']);
-eq('6.4b הכיבוי זמין', shadowReady.targets[0].available, true);
+eq('6.4a מ-shadow מוצעים הפעלה וכיבוי',
+  shadowReady.targets.map((t) => t.to).sort(), ['new', 'off']);
+eq('6.4b הכיבוי זמין', shadowReady.targets.find((t) => t.to === 'off').available, true);
 
 const newMode = A.options({ current: 'new', actor: { role: 'deputy' },
   readiness: { policy: false, source: false, people: 0 } });
@@ -279,9 +279,9 @@ ok('7.4 המודול טהור — אין Firebase',
 ok('7.5 המודול אינו קורא שעון מערכת', MOD_SRC.indexOf('Date.now()') === -1);
 ok('7.6 off→new אינו ברשימת המעברים',
   !/from: MODE\.OFF, to: MODE\.NEW/.test(MOD_SRC));
-ok('7.6a shadow→new אינו ברשימת המעברים',
-  !/from: MODE\.SHADOW, to: MODE\.NEW/.test(MOD_SRC));
-ok('7.7 ארבעה מעברים בדיוק', mod.TRANSITIONS.length === 4);
+ok('7.6a shadow→new ברשימת המעברים — המעבר בנוי, לא מושבת',
+  /from: MODE\.SHADOW, to: MODE\.NEW, kind: 'promote'/.test(MOD_SRC));
+ok('7.7 חמישה מעברים בדיוק', mod.TRANSITIONS.length === 5);
 
 // ⭐ הנתיב בשרת אינו קורא ל-requireManager.
 const start = RUNTIME_SRC.indexOf('async function setRuntimeMode(req)');
@@ -303,8 +303,8 @@ ok('7.14 יומן נכתב', wired.indexOf('modeAuditRef(ctx.sid, requestId)') !
 ok('7.15 שתי הפעולות רשומות ב-index עם App Check',
   INDEX_SRC.indexOf("exports.setScheduleRuntimeMode = onCall({\n  enforceAppCheck: true") !== -1
   && INDEX_SRC.indexOf("exports.getScheduleModeOptions = onCall({ enforceAppCheck: true }") !== -1);
-ok('7.15a אין callable ציבורי לקידום ל-new',
-  INDEX_SRC.indexOf('exports.promoteScheduleToNew = onCall') === -1);
+ok('7.15a יש callable לקידום ל-new, ורק דרכו — עם App Check',
+  INDEX_SRC.indexOf("exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }") !== -1);
 ok('7.16 התחנה אינה מתקבלת מהלקוח בנתיב הזה',
   !/data\.(station_id|stationId)/.test(wired));
 
@@ -555,7 +555,7 @@ await (async () => {
     rt.setRuntimeMode(req({
       request_id: 'c_new', target: 'new', confirmation: 'new',
       reason_code: 'validation_complete', expected_mode: 'shadow'
-    })), 'mode-cutover-disabled');
+    })), 'cutover-required');
   eq('8.25b חסימת ההפעלה אינה כותבת operation',
     db._paths('stations/' + SID + '/schedule_mode_operations/c_new').length, 0);
 
@@ -565,7 +565,7 @@ await (async () => {
       request_id: 'c2', target: 'new', confirmation: 'new',
       reason_code: 'initial_activation', expected_mode: 'off'
     }));
-  }, 'mode-cutover-disabled');
+  }, 'cutover-required');
 
   await rejectsCode('8.27 בלי הקלדת המצב אין שינוי', () => rt.setRuntimeMode(req({
     request_id: 'c3', target: 'shadow', confirmation: true,
@@ -638,16 +638,16 @@ survives('9.3 קפיצה מכבוי לפעיל מותרת',
     } catch (_) { return true; }
   });
 
-survives('9.3a קידום מבדיקה לפעיל חוזר לרשימת המעברים',
-  "Object.freeze({ from: MODE.OFF, to: MODE.SHADOW, kind: 'enable_shadow' }),",
-  "Object.freeze({ from: MODE.OFF, to: MODE.SHADOW, kind: 'enable_shadow' }),\n  Object.freeze({ from: MODE.SHADOW, to: MODE.NEW, kind: 'promote' }),",
+survives('9.3a הסרת המעבר shadow→new נתפסת — המעבר הוא חלק מהחוזה',
+  "  Object.freeze({ from: MODE.SHADOW, to: MODE.NEW, kind: 'promote' }),\n",
+  "",
   (api) => {
     try {
       api.planModeChange({ current: 'shadow', target: 'new',
         actor: { uid: 'u', role: 'commander' }, confirmation: 'new',
         reason_code: 'validation_complete', readiness: READY });
-      return false;
-    } catch (_) { return true; }
+      return true;
+    } catch (_) { return false; }
   });
 
 survives('9.4 אישור מפורש מתבטל',

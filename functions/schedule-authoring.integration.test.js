@@ -1584,7 +1584,7 @@ async function test(name, fn) {
       confirmation: 'new', reason_code: 'initial_activation'
     })));
     assert.ok(error, 'הפעלת new דרך המתג הכללי עברה');
-    assert.equal(error.code, 'mode-cutover-disabled');
+    assert.equal(error.code, 'cutover-required');
     assert.equal(error.httpCode, 'failed-precondition');
   });
 
@@ -1656,7 +1656,7 @@ async function test(name, fn) {
         confirmation: 'new', reason_code: 'validation_complete'
       })));
       assert.ok(error, actor.uid + ' הפעיל new דרך המתג הכללי');
-      assert.equal(error.code, 'mode-cutover-disabled');
+      assert.equal(error.code, 'cutover-required');
       assert.equal(error.httpCode, 'failed-precondition');
       assert.equal((await station().collection('schedule_mode_operations')
         .doc(actor.requestId).get()).exists, false,
