@@ -86,6 +86,13 @@ function sourceBasis() {
   };
 }
 
+function sourceContentKey(basis) {
+  return digest({
+    station_id: basis.station_id,
+    people: basis.people
+  });
+}
+
 function runtime(sendPush, hooks) {
   const testHooks = plain(hooks) ? hooks : {};
   return createScheduleRuntime({
@@ -255,7 +262,8 @@ async function seed() {
     availability_count: 0,
     locked_count: 0,
     event_count: events.length,
-    content_digest: digest(basis)
+    content_digest: digest(basis),
+    content_key: sourceContentKey(basis)
   });
   const batch = db.batch();
   people.forEach(([id, data]) => batch.set(source.collection('people').doc(id), data));
@@ -1610,7 +1618,8 @@ async function test(name, fn) {
         availability_count: changedSource.counts.availability,
         locked_count: changedSource.counts.locked,
         event_count: changedSource.counts.events,
-        content_digest: digest(changedSource)
+        content_digest: digest(changedSource),
+        content_key: sourceContentKey(changedSource)
       });
 
       await assert.rejects(api.runPlanner(req('manager', 'commander', {
@@ -1632,7 +1641,8 @@ async function test(name, fn) {
         availability_count: original.counts.availability,
         locked_count: original.counts.locked,
         event_count: original.counts.events,
-        content_digest: digest(original)
+        content_digest: digest(original),
+        content_key: sourceContentKey(original)
       });
       await policyRef.set(Object.assign({}, policyBasis, {
         complete: true, content_digest: digest(policyBasis)
