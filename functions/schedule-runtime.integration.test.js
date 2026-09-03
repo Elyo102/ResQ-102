@@ -1586,6 +1586,7 @@ async function test(name, fn) {
    * מלאה היה הופך כל אחד מהם לבדיקה של המעבר במקום של מה שהוא בודק.
    * אומר את זה במפורש כדי שתחלוק עליי אם אתה חושב אחרת. */
   await test('the station enters new mode only through preflight and promotion', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
     // כניסה ישירה נדחית — זה מה שסוגר את חלון הלוח הריק.
     await assert.rejects(api.setRuntimeMode(req('manager', 'commander', {
       request_id: 'mode_direct', target: 'new', expected_mode: 'shadow',
