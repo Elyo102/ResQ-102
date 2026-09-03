@@ -289,8 +289,11 @@ try {
 
   const legacySchedule = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(legacySchedule, 'firefighter', {
-    // המינוי נשאר חי, אך מצב off הוא צפייה בלבד ואין בו ניהול.
+    /* ⭐ P1-1 · המינוי חי, והמנוע `off`. ההכרעה כאן התהפכה: הזנת
+     * חוקי תחנה ומקור **מותרת** ב-off, אחרת תחנה חדשה לא יכולה
+     * להתחיל. מה שנשאר חסום הוא הרצה ופרסום. */
     getScheduleRuntimeStatus:[{ data:{ mode:'off', configured:false, manager:true, active:null } }],
+    getScheduleManagerSetup:[{ data:{ mode:'off', configured:false, policy:null, source:null, people:[] } }],
     getMyScheduleV2:[{ data:legacyMine }],
     getStationScheduleRange:[{ data:legacyRange }, { data:legacyRange }]
   });
@@ -305,7 +308,8 @@ try {
     assert.equal(await legacySchedulePage.locator('#scheduleTabs').isVisible(), true);
     assert.equal(await legacySchedulePage.locator('#stationView').isVisible(), true);
     assert.equal(await legacySchedulePage.locator('#mineTab').isVisible(), true);
-    assert.equal(await legacySchedulePage.locator('#manageTab').isVisible(), false);
+    // הלשונית זמינה — אבל היא אינה הלשונית שאליה הכתובת מובילה.
+    assert.equal(await legacySchedulePage.locator('#manageTab').isVisible(), true);
     assert.equal(await legacySchedulePage.locator('#manageView').isVisible(), false);
     assert.match(await legacySchedulePage.locator('#stationContent').textContent(), /משמרת א/);
 
@@ -319,7 +323,6 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
     // ⭐ שתי הלשוניות חולקות קריאת טווח אחת לחודש.
     assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
-    assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
     const firestoreWrites = await legacySchedulePage.evaluate(() => window.__FIRESTORE_WRITES || []);
     assert.equal(firestoreWrites.length, 0);

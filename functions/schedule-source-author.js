@@ -45,6 +45,12 @@ const LIMITS = Object.freeze({
 });
 
 const ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+/* ⭐ P1-5. UID של Firebase אינו מוגבל לאותיות, ספרות, קו תחתון ומקף,
+ * והוא יכול להגיע ל-128 תווים. `ID_RE` דחה נקודה ודחה 121–128 —
+ * ומכיוון שהדחייה כאן היא `return` שקט, אדם עם UID כזה היה **נושר
+ * מהמיפוי בלי שאיש יידע**, ואז נדחה כ„לא נמצא במערכת" למרות שהוא
+ * קיים. זו הצורה הקנונית, זהה ל-`schedule-access.js`. */
+const AUTH_UID_RE = /^[^\u0000-\u001F\u007F/]{1,128}$/;
 const EMPLOYEE_RE = /^[0-9]{1,20}$/;
 // ⭐ רצף הברחה, לא התו עצמו. בגרסה קודמת היו כאן תווי בקרה
 // ממשיים — ובהם NUL. גיט סיווג את הקובץ כבינארי, ולכן
@@ -276,7 +282,7 @@ function createSourceAuthor(deps) {
       if (!isPlainObject(person)) return;
       const employee = person.employee_number === undefined || person.employee_number === null
         ? '' : String(person.employee_number).trim();
-      if (!employee || !isNonEmptyString(person.uid) || !ID_RE.test(person.uid)) return;
+      if (!employee || !isNonEmptyString(person.uid) || !AUTH_UID_RE.test(person.uid)) return;
       if (!map.has(employee)) map.set(employee, []);
       map.get(employee).push({ uid: person.uid });
     });

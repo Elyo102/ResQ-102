@@ -142,7 +142,14 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   createEngine: scheduleCalendar.createCalendarEngine,
   createPublication: schedulePublication.createPublication,
   createService: scheduleService.createScheduleService,
-  isSuper: isSuperAdmin,
+  /* ⭐ P1-3. סמכות „מנהל-על" למצב מנוע הסידור היא claim `super:true`
+   * **בלבד**. `isSuperAdmin` הכללי מקבל גם התאמת כתובת מייל קבועה,
+   * וכתובת מייל אינה claim מאומת — היא שדה בטוקן שאפשר להנפיק
+   * בדרכים אחרות. הזזת מצב המנוע משנה את מה שכל התחנה רואה, ולכן
+   * היא לא נשענת על ההתאמה הזאת. שאר המערכת ממשיכה כרגיל. */
+  isSuper: function (auth) {
+    return !!(auth && auth.token && auth.token.super === true);
+  },
   sendPush: async function (sid, uid, type, title, body, url, important) {
     const result = await pushToOne(sid, uid, type, title, body, url, important);
     if (!result || result.failed || Number(result.sent || 0) < 1) {

@@ -132,10 +132,32 @@ function canViewSchedule() {
   return !!state.status && ['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1;
 }
 
-// עריכה אינה נגזרת מהתפקיד הראשי. גם מפקד/ת או רכז/ת משאבי אנוש
-// צריכים מינוי חי ונפרד של אחראי/ת סידור, ומצב off אינו מאפשר ניהול.
+/* עריכה אינה נגזרת מהתפקיד הראשי. גם מפקד/ת או רכז/ת משאבי אנוש
+ * צריכים מינוי חי ונפרד של אחראי/ת סידור.
+ *
+ * ⭐ P1-1 · שינוי מכוון מול הגרסה הקודמת.
+ *
+ * קודם, המסך חסם ניהול כשהמנוע `off`. התוצאה הייתה לולאה סגורה:
+ * אי אפשר להעביר את המנוע ל-shadow בלי מדיניות ומקור תקינים
+ * (`modeReadiness` טוען אותם בפועל), ואי אפשר היה להזין מדיניות
+ * ומקור בלי שהמנוע כבר יהיה ב-shadow. תחנה חדשה לא יכלה להתחיל.
+ *
+ * לכן ההרשאה מפוצלת לשתיים:
+ *   `canManageSchedule` — הזנת חוקי תחנה ומקור כוח אדם. מותרת בכל
+ *     מצב, כולל `off`, כי היא **הכנה** ואינה משנה מה שאיש רואה.
+ *   `canRunSchedule`    — הרצת מנוע, הכנה, פרסום וחזרה. אלה נשארות
+ *     חסומות ב-`off` בדיוק כפי שהיו.
+ *
+ * השרת אינו סומך על ההפרדה הזאת: `runPlanner`, `getDraftPreview`
+ * ו-`publish` אוכפים `requireMode` בעצמם. המסך רק מפסיק להסתיר
+ * מסך שהשרת ממילא מרשה.
+ */
 function canManageSchedule() {
-  return !!state.status && state.status.manager === true
+  return !!state.status && state.status.manager === true;
+}
+
+function canRunSchedule() {
+  return canManageSchedule()
     && ['shadow', 'new'].indexOf(state.status.mode) !== -1;
 }
 
@@ -181,6 +203,7 @@ function showScheduleViews() {
   $('mineTab').hidden = false;
   $('stationTab').hidden = false;
   $('manageTab').hidden = !canManageSchedule();
+  updateRunAvailability();
   $('scheduleTabs').classList.remove('manage-only');
   $('scheduleTabs').classList.toggle('views-only', !canManageSchedule());
 }
@@ -1494,10 +1517,29 @@ function renderSummary(summary) {
 
 function updatePublishAvailability() {
   const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
+  /* ⭐ P0-2. ב-`shadow` פרסום הוא **הכנה**, ולכן הוא מותר שם — זה
+   * כל מה שסוגר את חלון הלוח הריק. ב-`off` הוא חסום כמו קודם. */
   const ready = !!state.draft && !!state.draftPreview && $('reviewDraft').checked
-    && !!state.status && state.status.mode === 'new' && gaps === 0;
+    && canRunSchedule() && gaps === 0;
   $('publish').disabled = state.busy || !ready;
+  $('publish').textContent = state.status && state.status.mode === 'shadow'
+    ? 'הכן את הסידור לקראת מעבר' : 'פרסום הסידור';
   $('draftBadge').hidden = !state.draft;
+}
+
+/* ⭐ P1-1. מסך הניהול נפתח עכשיו גם ב-`off`, כדי שאפשר יהיה להזין
+ * חוקי תחנה ומקור בתחנה חדשה. הפקדים שמריצים ומפרסמים נשארים
+ * חסומים שם — והשרת אוכף את זה בעצמו, ללא תלות במסך. */
+function updateRunAvailability() {
+  const may = canRunSchedule();
+  $('runPlanner').disabled = state.busy || !may;
+  if (!may) $('publish').disabled = true;
+  const note = $('runMessage');
+  if (note && !may && state.status && state.status.mode === 'off') {
+    message('runMessage',
+      'המנוע כבוי. אפשר להזין חוקי תחנה ומקור כוח אדם, '
+      + 'והרצה תתאפשר אחרי שהפיקוד יעביר את המנוע למצב צל.', 'info');
+  }
 }
 
 function renderDraftPreview(preview) {
@@ -1701,6 +1743,14 @@ function managerAction(fn) {
 
 // שער המצב נפרד: הוא שייך לפיקוד ולא למינוי התפעולי, ולכן הוא
 // נשען על `may_change` שהשרת החזיר ולא על היכולת לנהל.
+/* הרצה, הכנה ופרסום — חסומות ב-`off` גם למי שממונה. */
+function runAction(fn) {
+  return function (event) {
+    if (!canRunSchedule()) return;
+    return fn(event);
+  };
+}
+
 function commandAction(fn) {
   return function (event) {
     if (!state.modeView || state.modeView.may_change !== true) return;
@@ -1708,9 +1758,9 @@ function commandAction(fn) {
   };
 }
 
-$('runPlanner').addEventListener('click', managerAction(runPlanner));
-$('publish').addEventListener('click', managerAction(publishDraft));
-$('rollback').addEventListener('click', managerAction(rollbackSchedule));
+$('runPlanner').addEventListener('click', runAction(runPlanner));
+$('publish').addEventListener('click', runAction(publishDraft));
+$('rollback').addEventListener('click', runAction(rollbackSchedule));
 $('savePolicy').addEventListener('click', managerAction(savePolicy));
 $('modeConfirm').addEventListener('input', updateModeApply);
 $('modeReason').addEventListener('change', updateModeApply);

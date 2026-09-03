@@ -624,21 +624,54 @@ try {
   });
   await shadowManager.close();
 
+  /* ------------------------------------------------------------------
+   * ⭐ P1-1 · הכרעה שהתהפכה, ובכוונה.
+   *
+   * הבדיקה כאן דרשה קודם שמצב `off` יסתיר ניהול לגמרי. זה יצר לולאה
+   * סגורה: `modeReadiness` טוען מדיניות ומקור בפועל לפני שהוא מרשה
+   * מעבר ל-shadow, ואי אפשר היה להזין אותם בלי שהמנוע כבר יהיה
+   * ב-shadow. תחנה חדשה לא יכלה להתחיל לעבוד.
+   *
+   * מה שנדרש עכשיו: **הזנה** מותרת ב-`off`; **הרצה ופרסום** חסומות.
+   * ------------------------------------------------------------------ */
   const offManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(offManager, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusOffManager }],
+    getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:legacyMine('off') }, { data:legacyMine('off') }],
     getStationScheduleRange:[{ data:legacyRange('off') }, { data:legacyRange('off') }, { data:legacyRange('off') }]
   });
   const offManagerPage = await offManager.newPage();
   await offManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await offManagerPage.locator('#appMain:not(.hide)').waitFor();
-  await test('off mode does not expose management even to an appointed manager', async () => {
-    assert.equal(await offManagerPage.locator('#manageTab').isVisible(), false);
-    assert.equal(await offManagerPage.locator('#manageView').isVisible(), false);
-    assert.equal(await offManagerPage.locator('#stationView').isVisible(), true);
-    const calls = await offManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
-    assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
+  await test('off mode lets an appointed manager enter rules, but never run or publish', async () => {
+    // ההזנה פתוחה — אחרת אי אפשר להתחיל תחנה חדשה.
+    assert.equal(await offManagerPage.locator('#manageTab').isVisible(), true);
+    assert.equal(await offManagerPage.locator('#manageView').isVisible(), true);
+    // ⭐ אבל ההרצה חסומה, ולא רק מוסתרת.
+    assert.equal(await offManagerPage.locator('#runPlanner').isDisabled(), true);
+    assert.equal(await offManagerPage.locator('#publish').isDisabled(), true);
+    // ומתג המנוע אינו שלו — הוא של הפיקוד.
+    assert.equal(await offManagerPage.locator('#modeCard').isVisible(), false);
+  });
+
+  await test('force-clicking run in off mode fires no engine call', async () => {
+    const before = await offManagerPage.evaluate(() => window.__CALLABLE_CALLS.length);
+    await offManagerPage.evaluate(() => {
+      for (const id of ['runPlanner', 'publish', 'rollback']) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.disabled = false;
+        el.removeAttribute('disabled');
+        el.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true }));
+      }
+    });
+    await offManagerPage.waitForTimeout(200);
+    const calls = await offManagerPage.evaluate(() => window.__CALLABLE_CALLS);
+    const fired = calls.slice(before).map((entry) => entry.name)
+      .filter((name) => ['runSchedulePlanner', 'publishSchedule', 'rollbackSchedule']
+        .includes(name));
+    assert.deepEqual(fired, [], 'יצאה קריאת הרצה במצב off: ' + fired.join(', '));
   });
   await offManager.close();
 
@@ -848,5 +881,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 23);
-console.log('\n23 schedule management browser checks passed.');
+assert.equal(passed, 24);
+console.log('\n24 schedule management browser checks passed.');

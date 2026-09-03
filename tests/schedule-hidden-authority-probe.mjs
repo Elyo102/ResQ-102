@@ -114,13 +114,24 @@ const D = Object.freeze({
   // ⭐ כל פעולת ניהול קשורה דרך שער אחד. `hidden`/`disabled` הם
   // תצוגה בלבד — בדיקת הדפדפן הוכיחה שהסרתם הפעילה את המנוע —
   // ולכן המאזין עצמו חייב לשאול את תשובת השרת.
-  gatedListeners: (ui) => ['runPlanner', 'publish', 'rollback', 'savePolicy',
-    'sourceCheck', 'sourceSave'].every((id) =>
-    ui.indexOf("$('" + id + "').addEventListener('click', managerAction(") !== -1),
+  /* ⭐ P1-1 · השער התפצל, ובכוונה.
+   *
+   * הזנת חוקי תחנה ומקור מותרת בכל מצב, כולל `off` — בלעדיה תחנה
+   * חדשה נתקעת בלולאה: אי אפשר להעביר ל-shadow בלי מדיניות, ואי
+   * אפשר היה להזין מדיניות בלי shadow.
+   *
+   * הרצה, הכנה ופרסום נשארות חסומות ב-`off`. שתי הרשימות נבדקות
+   * בנפרד, כדי שהחלפה בין השערים לא תעבור בשקט. */
+  gatedListeners: (ui) =>
+    ['savePolicy', 'sourceCheck', 'sourceSave'].every((id) =>
+      ui.indexOf("$('" + id + "').addEventListener('click', managerAction(") !== -1)
+    && ['runPlanner', 'publish', 'rollback'].every((id) =>
+      ui.indexOf("$('" + id + "').addEventListener('click', runAction(") !== -1),
   modeListenerGated: (ui) =>
     ui.indexOf("$('modeApply').addEventListener('click', commandAction(") !== -1,
   gateAsksServer: (ui) =>
     /function managerAction\(fn\) \{[\s\S]{0,160}if \(!canManageSchedule\(\)\) return;/.test(ui)
+    && /function runAction\(fn\) \{[\s\S]{0,160}if \(!canRunSchedule\(\)\) return;/.test(ui)
     && /function commandAction\(fn\) \{[\s\S]{0,200}may_change !== true\) return;/.test(ui),
   // ⭐ אותו לקח: החלון נעצר בבלוק match הבא. חלון של 260 תווים היה
   // מוצא את `if false` של האוסף הבא ומדווח „סגור" על אוסף פתוח.
@@ -135,8 +146,9 @@ const D = Object.freeze({
   directNavBounced: (ui) =>
     ui.indexOf("if (name === 'manage' && !canManageSchedule()) name = 'station'") !== -1,
   tabHidden: (ui) => ui.indexOf("$('manageTab').hidden = !canManageSchedule()") !== -1,
+  // ⭐ מצב `off` חוסם **הרצה ופרסום**, לא הזנה. זו ההכרעה החדשה.
   offBlocks: (ui) =>
-    /canManageSchedule\(\)[\s\S]{0,200}\['shadow', 'new'\]\.indexOf\(state\.status\.mode\)/.test(ui),
+    /function canRunSchedule\(\) \{[\s\S]{0,220}\['shadow', 'new'\]\.indexOf\(state\.status\.mode\)/.test(ui),
   // ⭐ החלון נעצר ביצוא הבא ולא אחרי מספר תווים שרירותי. חלון קבוע
   // היה גולש אל ההגדרה הבאה ומוצא שם את enforceAppCheck של מישהו אחר —
   // כלומר מדווח „מוגן" על פונקציה חשופה. מוטציה 8.8 תפסה בדיוק את זה.
@@ -343,7 +355,8 @@ ok('6.3 המסך אינו טוען את ערכת Firestore', D.uiNoFirestore(UI)
 ok('7.1 כתובת ניהול ישירה מוחזרת', D.directNavBounced(UI));
 ok('7.2 הלשונית מוסתרת לפי תשובת השרת', D.tabHidden(UI));
 // ⭐ וגם: מצב off אינו מאפשר ניהול, גם למי שממונה.
-ok('7.3 מצב off חוסם ניהול גם לממונה', D.offBlocks(UI));
+// ⭐ 7.3 שינה משמעות ב-P1-1: `off` חוסם הרצה ופרסום, לא הזנה.
+ok('7.3 מצב off חוסם הרצה ופרסום גם לממונה', D.offBlocks(UI));
 
 /* ==================================================================
  * 8 · מוטציות · האם הבדיקה הזאת בכלל מסוגלת ליפול
@@ -469,9 +482,21 @@ mutate('8.16 המסך פותח נתיב רשת ידני',
 
 // --- אחסון סגור ---
 mutate('8.16b פעולת ניהול נקשרת בלי שער',
-  UI, "$('runPlanner').addEventListener('click', managerAction(runPlanner));",
-  "$('runPlanner').addEventListener('click', runPlanner);",
+  UI, "$('savePolicy').addEventListener('click', managerAction(savePolicy));",
+  "$('savePolicy').addEventListener('click', savePolicy);",
   (src) => D.gatedListeners(src));
+
+// ⭐ והמוטציה שהפיצול הופך להכרחית: הרצה שנקשרת לשער החלש. היא
+// תיראה תקינה — יש שער — אבל תאפשר הרצה במצב `off`.
+mutate('8.16b2 הרצה נקשרת לשער החלש',
+  UI, "$('runPlanner').addEventListener('click', runAction(runPlanner));",
+  "$('runPlanner').addEventListener('click', managerAction(runPlanner));",
+  (src) => D.gatedListeners(src));
+
+mutate('8.16b3 שער ההרצה מפסיק לשאול על המצב',
+  UI, 'function runAction(fn) {\n  return function (event) {\n    if (!canRunSchedule()) return;',
+  'function runAction(fn) {\n  return function (event) {',
+  (src) => D.gateAsksServer(src));
 
 mutate('8.16c מתג המנוע נקשר בלי שער',
   UI, "$('modeApply').addEventListener('click', commandAction(applyModeChange));",
