@@ -938,5 +938,36 @@ check('the author never hard-codes an empty carry basis again', () => {
     'carriedFrom נעלם; אין מי שיקרא את התוכן שעובר');
 });
 
-assert.equal(passed, 80);
-console.log('\n80 schedule runtime source checks passed.');
+/* ⭐ P0-2 · שלוש תצוגות החזירו לוח ריק כשהמצב `new` ואין פרסום פעיל.
+ * על המסך זה אינו „אין מידע" אלא כבאי שרואה שאין לו משמרות. */
+check('no schedule view can answer with an empty board', () => {
+  const src = read('functions/schedule-runtime.js');
+  const code = src.split('\n')
+    .filter((line) => line.trim().indexOf('*') !== 0 && line.indexOf('//') !== 0)
+    .join('\n');
+  // הצורה שהייתה הבאג. היא לא חוזרת בלי שהבדיקה תיפול.
+  assert.ok(!/active: false, days: \[\]/.test(code),
+    'תצוגה מחזירה לוח ריק — זה בדיוק חלון ה-cutover הריק');
+  assert.ok(!/if \(!active\) return \{ mode: config\.mode, active: false \}/.test(code),
+    'תצוגת יום מחזירה active:false בלי נפילה ל-legacy');
+  assert.ok(src.indexOf('async function legacyFallbackWindow(') > -1,
+    'אין נפילה מסודרת ל-legacy');
+});
+
+check('every view without an active snapshot falls back to legacy', () => {
+  const src = read('functions/schedule-runtime.js');
+  for (const fn of ['async function getMy(', 'async function getStation(',
+    'async function getStationRange(']) {
+    const at = src.indexOf(fn);
+    assert.ok(at > -1, fn + ' לא נמצא');
+    const body = src.slice(at, at + 4000);
+    const guard = body.indexOf('if (!active)');
+    assert.ok(guard > -1, fn + ' אינו בודק היעדר תמונה פעילה');
+    // ⭐ בתוך אותו בלוק חייבת להיות נפילה ל-legacy, ולא החזרת ריק.
+    assert.ok(body.slice(guard, guard + 400).indexOf('legacyFallbackWindow') > -1,
+      fn + ' אינו נופל ל-legacy כשאין תמונה פעילה');
+  }
+});
+
+assert.equal(passed, 82);
+console.log('\n82 schedule runtime source checks passed.');

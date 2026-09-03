@@ -3506,6 +3506,30 @@ function createScheduleRuntime(deps) {
     };
   }
 
+  /* ==================================================================
+   * ⭐ P0-2 · אין חלון שבו הלוח ריק
+   *
+   * שלוש תצוגות החזירו `{ active: false, days: [] }` כשהמצב הוא
+   * `new` ואין עדיין פרסום פעיל. המשמעות על המסך אינה „אין מידע"
+   * אלא **לוח ריק לכל התחנה** — כבאי פותח את הסידור ורואה שאין לו
+   * משמרות. במעבר shadow→new שקדם לפרסום, זה בדיוק מה שקרה.
+   *
+   * המעבר עצמו הוא אטומי (`promoteToNew`), ולכן החלון הזה לא אמור
+   * להיפתח. אבל „לא אמור" אינו הגנה: אם המצב הוא `new` ואין תמונה
+   * פעילה — מכל סיבה שהיא, כולל rollback או תקלה — הקורא מקבל את
+   * ה-legacy **המלא**, ולא ריק.
+   *
+   * הכלל: legacy מלא או new מלא. לעולם לא ביניים.
+   * ================================================================== */
+  async function legacyFallbackWindow(ctx, config, from, to) {
+    const window = await checkedLegacyWindow(ctx, config, from, to);
+    if (window.source !== 'legacy') {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+    return window;
+  }
+
   async function getMy(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
@@ -3519,7 +3543,11 @@ function createScheduleRuntime(deps) {
       return legacyMyView(ctx, window, date);
     }
     const active = await checkedActiveSnapshot(ctx, config, [date]);
-    if (!active) return { mode: config.mode, active: false, days: [] };
+    if (!active) {
+      const window = await legacyFallbackWindow(ctx, config, date, date);
+      return Object.assign(legacyMyView(ctx, window, date),
+        { mode: config.mode, fallback: 'legacy' });
+    }
     const reads = await Promise.all([
       stationRef(ctx.sid).collection('schedule_responses')
         .where('publication_id', '==', active.pointer.publication_id)
@@ -3623,7 +3651,14 @@ function createScheduleRuntime(deps) {
     // ומאמת את חתימת התוכן. קריאת חלון מדלגת על האימות הזה.
     const active = await checkedActiveSnapshot(ctx, config, null);
     if (!active) {
-      return { mode: config.mode, active: false, from: range.from, to: range.to, days: [] };
+      const window = await legacyFallbackWindow(ctx, config, range.from, range.to);
+      const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      return {
+        mode: config.mode, active: true, source: 'legacy', fallback: 'legacy',
+        provenance: window.provenance, from: range.from, to: range.to,
+        days: range.dates.map((date) => legacyDayBlock(
+          byDate.get(date) || { date, assignments: [] }, ctx.uid, window.events))
+      };
     }
     const sidecar = await readLiveGuardProjection(ctx, range.dates);
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
@@ -3653,7 +3688,11 @@ function createScheduleRuntime(deps) {
       return legacyStationView(ctx, window, date);
     }
     const active = await checkedActiveSnapshot(ctx, config, dates);
-    if (!active) return { mode: config.mode, active: false };
+    if (!active) {
+      const window = await legacyFallbackWindow(ctx, config, dates[0], dates[2]);
+      return Object.assign(legacyStationView(ctx, window, date),
+        { mode: config.mode, fallback: 'legacy' });
+    }
     const sidecar = await readLiveGuardProjection(ctx, dates);
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
     await activeSnapshotStillCurrent(ctx, config, active);
