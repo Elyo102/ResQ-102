@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { refreshInstalledApp } from '../pwa.js';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
 
 class Events {
   constructor() { this.listeners = new Map(); }
@@ -63,7 +69,7 @@ async function scenario(kind, activate = true, updateFails = false) {
   };
 
   const result = await refreshInstalledApp({
-    version: '42F.2', serviceWorker: sw, cacheStorage, location,
+    version: release.v, serviceWorker: sw, cacheStorage, location,
     timeoutMs: activate ? 50 : 1, now: () => 12345
   });
   return { result, worker, updates, deleted, replaced };
@@ -76,7 +82,8 @@ for (const kind of ['waiting', 'installing', 'active']) {
   assert.deepEqual(got.deleted, ['resq-v41e-release1', 'resq-v42f1-release1'],
     kind + ': every old ResQ cache is deleted after the new worker activates');
   assert.equal(got.replaced.length, 1, kind + ': reload runs once');
-  assert.match(got.replaced[0], /updated=42F\.2-12345/, kind + ': reload URL is fresh');
+  assert.ok(got.replaced[0].includes('updated=' + encodeURIComponent(release.v + '-12345')),
+    kind + ': reload URL is fresh');
   if (got.worker) {
     assert.deepEqual(got.worker.messages, [{ type: 'RESQ_SKIP_WAITING' }],
       kind + ': activation message is sent once');

@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=38">
+<link rel="stylesheet" href="./theme.css?v=42g0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ResQ">
@@ -218,8 +218,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
-import { renderNav, renderStuckNav } from './nav.js?v=38';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
+import { renderNav, renderStuckNav } from './nav.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -227,7 +227,7 @@ import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { getFirestore, collection, doc, getDocs, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { dryRun } from './histimport.js?v=38';
+import { dryRun } from './histimport.js?v=42g0';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
@@ -237,7 +237,7 @@ const esc = s => String(s == null ? '' : s)
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=41a1';
+import { initAppCheck } from './appcheck.js?v=42g0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');

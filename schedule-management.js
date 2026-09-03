@@ -1,7 +1,7 @@
-import { firebaseConfig } from './firebase-config.js?v=41a';
-import { renderNav, renderStuckNav } from './nav.js?v=42f';
-import { initPWA } from './pwa.js?v=41a';
-import { initAppCheck } from './appcheck.js?v=41a1';
+import { firebaseConfig } from './firebase-config.js?v=42g0';
+import { renderNav, renderStuckNav } from './nav.js?v=42g0';
+import { initPWA } from './pwa.js?v=42g0';
+import { initAppCheck } from './appcheck.js?v=42g0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';

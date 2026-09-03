@@ -55,21 +55,26 @@ if errorlevel 1 (
   echo           then open a NEW window and run this again.
   goto done
 )
-echo       found.
+set JAVA_VERSION=
+for /f "tokens=3" %%V in ('java -version 2^>^&1 ^| findstr /i "version"') do set JAVA_VERSION=%%~V
+set JAVA_MAJOR=
+for /f "tokens=1 delims=." %%M in ("%JAVA_VERSION%") do set JAVA_MAJOR=%%M
+if not "%JAVA_MAJOR%"=="21" (
+  echo       [X] JDK 21 required; found %JAVA_VERSION%.
+  echo           Install JDK 21 from https://adoptium.net
+  goto done
+)
+echo       JDK %JAVA_VERSION% found.
 
 echo.
 echo [2/3] Test dependencies...
 cd rules-test
-if not exist node_modules (
-  echo       First time - about a minute.
-  call npm ci --no-audit --no-fund
-  if errorlevel 1 (
-    echo       [X] npm ci failed. Send the error to Claude.
-    cd ..
-    goto done
-  )
-) else (
-  echo       already installed.
+echo       Installing the exact lockfile state.
+call npm ci --no-audit --no-fund
+if errorlevel 1 (
+  echo       [X] npm ci failed. Send the error to Claude.
+  cd ..
+  goto done
 )
 cd ..
 
@@ -79,7 +84,7 @@ echo.
 rem  demo-resq guarantees that an emulator-only test cannot accidentally
 rem  address the production Firebase project. The id station-102 must
 rem  never appear on this line.
-call firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
+call npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
 set RESULT=%errorlevel%
 
 echo.

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
+const releaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 let failed = 0;
 
 function check(ok, label) {
@@ -53,14 +55,14 @@ const imports = firebaseScreens.flatMap(file => {
 check(imports.length === firebaseScreens.length,
   'all ' + firebaseScreens.length + ' Firebase screens initialize App Check');
 for (const item of imports) {
-  check(item.body.includes("./appcheck.js?v=41a1"),
+  check(item.body.includes("./appcheck.js?v=" + releaseKey),
     item.file + ' uses the current App Check cache version');
   check((item.body.match(/await initAppCheck\(app\);/g) || []).length === 1,
     item.file + ' waits for App Check before accessing Firebase services');
 }
 
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
-check(worker.includes("const CACHE = 'resq-v42f2-release1'"),
+check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the PWA cache is rotated for the privacy fix');
 
 if (failed) {
