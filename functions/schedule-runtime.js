@@ -1683,9 +1683,16 @@ function createScheduleRuntime(deps) {
 
     const ref = sourceRef(ctx.sid, plan.source_id);
     /* שלב א' — המסמך נכתב **בלי** `complete` ובלי חתימה. במצב הזה
-     * `loadSource` דוחה אותו, ולכן מקור חצי-כתוב אינו ניתן להרצה. */
+     * `loadSource` דוחה אותו, ולכן מקור חצי-כתוב אינו ניתן להרצה.
+     *
+     * ⭐ P1-7. `expires_at` נחתם כאן ומנוקה בסגירה. מקור מדורג שננטש
+     * מכיל שמות מלאים בתת-האוסף `people`; בלי התאריך הזה הוא נשאר
+     * על הדיסק לנצח. TTL של Firestore אינו יורד לתת-אוספים, ולכן
+     * יש גם ניקוי מפורש ב-`catch` — ה-TTL הוא רשת הביטחון למקרה
+     * שגם הניקוי לא הספיק לרוץ. */
     await ref.set(Object.assign({}, plan.meta, {
-      complete: false, content_digest: null, staged_at: FV.serverTimestamp()
+      complete: false, content_digest: null, staged_at: FV.serverTimestamp(),
+      expires_at: sourceOperationExpiry()
     }));
     /* ⭐ ארבעת התת-אוספים נכתבים יחד. מקור שנכתב עם `people` בלבד
      * נראה תקין במסמך המטא ונקרא כריק — וזה בדיוק המחיקה השקטה של
@@ -1710,6 +1717,7 @@ function createScheduleRuntime(deps) {
      * שהמצביע לא זז, ורק אז מסמנת שלם ומצביעה. */
     const view = Object.assign(sourcePlanView(plan, config),
       { written: true, activated: data.activate === true });
+    try {
     await db.runTransaction(async (tx) => {
       const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid),
         runtimeRef(ctx.sid)];
@@ -1722,8 +1730,24 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('source-conflict',
           'מקור כוח האדם השתנה בזמן הכתיבה.', 'aborted');
       }
+      /* ⭐ P1-7. הבדיקות האלה חוזרות **בתוך** הטרנזקציה, ולא רק לפניה:
+       * המדיניות והמקור הפעילים, ומזהה הפעולה. מקור שנחתם על בסיס
+       * מדיניות שהוחלפה בזמן הכתיבה הוא מקור שאי אפשר להריץ. */
+      const liveOp = await tx.get(opRef);
+      if (liveOp.exists && (liveOp.data() || {}).request_hash !== requestHash) {
+        throw new ScheduleRuntimeError('source-request-reused',
+          'מזהה הפעולה שימש לבקשה אחרת בזמן הכתיבה.', 'aborted');
+      }
+      const livePolicyId = nonEmpty(runtimeData.active_policy_id)
+        ? runtimeData.active_policy_id : null;
+      if (livePolicyId !== (config.active_policy_id || null)) {
+        throw new ScheduleRuntimeError('source-policy-changed',
+          'חוקי התחנה הוחלפו בזמן כתיבת המקור. יש לבדוק מחדש.', 'aborted');
+      }
       tx.set(ref, {
-        complete: true, content_digest: plan.digest, completed_at: FV.serverTimestamp()
+        complete: true, content_digest: plan.digest, completed_at: FV.serverTimestamp(),
+        // המקור נסגר — הוא כבר אינו טיוטה, ואין לו תאריך תפוגה.
+        expires_at: FV.delete()
       }, { merge: true });
       if (data.activate === true) {
         tx.set(runtimeRef(ctx.sid), { active_source_id: plan.source_id }, { merge: true });
@@ -1740,7 +1764,35 @@ function createScheduleRuntime(deps) {
         created_at: clock(), expires_at: sourceOperationExpiry(), result: view
       });
     });
+    } catch (error) {
+      /* ⭐ P1-7. הסגירה נכשלה, והמסמך המדורג כבר על הדיסק עם שמות
+       * מלאים בתת-האוסף `people`. TTL של Firestore אינו יורד
+       * לתת-אוספים, ולכן הניקוי כאן מפורש — ומוחק בדיוק את מה
+       * שכתבנו, לפי המזהים שבידינו, בלי שאילתה.
+       *
+       * הוא best-effort בכוונה: אם גם הוא נכשל, `expires_at` על
+       * מסמך האב הוא רשת הביטחון, והשגיאה המקורית היא זו שחוזרת
+       * לקורא — לא שגיאת הניקוי. */
+      await cleanupStagedSource(ref, plan).catch(() => {});
+      throw error;
+    }
     return Object.assign({ duplicate: false }, view);
+  }
+
+  /* מוחק מקור מדורג שננטש, כולל תת-האוספים שנכתבו. */
+  async function cleanupStagedSource(ref, plan) {
+    const docs = [].concat(
+      plan.people.map((item) => ref.collection('people').doc(item.id)),
+      plan.availability.map((item) => ref.collection('availability').doc(item.id)),
+      plan.locked.map((item) => ref.collection('locked').doc(item.id)),
+      plan.events.map((item) => ref.collection('events').doc(item.id))
+    );
+    for (let at = 0; at < docs.length; at += MAX_BATCH_WRITES) {
+      const batch = db.batch();
+      docs.slice(at, at + MAX_BATCH_WRITES).forEach((doc) => batch.delete(doc));
+      await batch.commit();
+    }
+    await ref.delete();
   }
 
   function policyOperationRef(sid, requestId) {

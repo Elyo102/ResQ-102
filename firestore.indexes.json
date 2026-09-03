@@ -344,6 +344,12 @@
       "collectionGroup": "guards",
       "fieldPath": "assignment_epochs",
       "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_sources",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

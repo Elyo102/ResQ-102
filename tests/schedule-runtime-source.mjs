@@ -1023,5 +1023,40 @@ check('a prepared publication keeps its notifications while it waits', () => {
     'פרסום מוכן אינו מוכר למתזמן ההודעות');
 });
 
-assert.equal(passed, 85);
-console.log('\n85 schedule runtime source checks passed.');
+/* ⭐ P1-7 · מקור מדורג שננטש מחזיק שמות מלאים. */
+check('an abandoned staged source is cleaned up and has a TTL', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  async function cleanupStagedSource', at));
+  assert.ok(body.indexOf('expires_at: sourceOperationExpiry()') > -1,
+    'המסמך המדורג נכתב בלי תאריך תפוגה');
+  assert.ok(body.indexOf('cleanupStagedSource(ref, plan)') > -1,
+    'אין ניקוי מפורש כשהסגירה נכשלת');
+  assert.ok(body.indexOf('expires_at: FV.delete()') > -1,
+    'תאריך התפוגה אינו מנוקה בסגירה — מקור שלם ימחק מעצמו');
+  // ⭐ TTL של Firestore אינו יורד לתת-אוספים, ולכן הניקוי חייב
+  // למחוק אותם בעצמו.
+  const cleanup = src.slice(src.indexOf('async function cleanupStagedSource'));
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(cleanup.indexOf("collection('" + group + "')") > -1,
+      'הניקוי אינו מוחק את ' + group);
+  }
+  const indexes = JSON.parse(read('firestore.indexes.json'));
+  assert.ok(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_sources' && item.fieldPath === 'expires_at'
+    && item.ttl === true), 'אין TTL על schedule_sources');
+});
+
+check('the closing transaction re-reads the operation and the live policy', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const tx = src.indexOf('await db.runTransaction', at);
+  const body = src.slice(tx, src.indexOf('\n    } catch (error) {', tx));
+  assert.ok(body.indexOf('tx.get(opRef)') > -1,
+    'מזהה הפעולה אינו נבדק שוב בתוך הטרנזקציה');
+  assert.ok(body.indexOf("'source-policy-changed'") > -1,
+    'חוקי התחנה אינם נבדקים שוב בתוך הטרנזקציה');
+});
+
+assert.equal(passed, 87);
+console.log('\n87 schedule runtime source checks passed.');
