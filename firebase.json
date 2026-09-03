@@ -57,7 +57,15 @@
       "*.md"
     ],
 
+    "_הערה_headers": "הסדר כאן אינו סגנון. Firebase Hosting מחיל את הכלל התואם האחרון, ולכן כלל ספציפי שיושב לפני כלל כללי יותר מפסיד לו. '**/*.@(html|js|css)' תופס גם את firebase-messaging-sw.js, ולכן העובד חייב לשבת אחריו — אחרת Production מחזיר no-cache במקום no-store, וזה בדיוק מה שנמדד. tests/headercheck.mjs מחשב את הכלל האחרון התואם בפועל ונופל אם מישהו יחזיר את הסדר.",
+
     "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      },
       {
         "source": "/version.json",
         "headers": [
@@ -68,12 +76,6 @@
         "source": "/firebase-messaging-sw.js",
         "headers": [
           { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
-        ]
-      },
-      {
-        "source": "**/*.@(html|js|css)",
-        "headers": [
-          { "key": "Cache-Control", "value": "no-cache" }
         ]
       }
     ]
