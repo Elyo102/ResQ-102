@@ -28,6 +28,12 @@ const manifest = JSON.parse(read('manifest.json'));
 
 let passed = 0;
 function check(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
+/* קוד בלי הערות — כדי שטענה על קוד לא תסופק על ידי הערה. */
+function stripComments(text) {
+  return String(text)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
 
 check('missing runtime configuration is fail-closed off', () => {
   assert.ok(runtime.includes("const mode = MODES.indexOf(data.mode) !== -1 ? data.mode : MODE.OFF"));
@@ -1311,5 +1317,355 @@ check('expected_mode is mandatory, not merely honoured when present', () => {
     .test(body), 'expected_mode נבדק רק כשהוא נמסר');
 });
 
-assert.equal(passed, 99);
-console.log('\n99 schedule runtime source checks passed.');
+/* ⭐ החוזה בין `readSnapshot` לבין ה-preflight. הוא נשבר פעם אחת
+ * בשקט: קריאה מנתיב שאינו קיים החזירה ריק, ו-`||` הסתיר את זה. */
+check('the cutover preflight reads the snapshot rows from the real path', () => {
+  const src = read('functions/schedule-runtime.js');
+  assert.ok(src.indexOf('next_days: cutoverDaysFromRows(snapshot.plan.rows)') > -1,
+    'ה-preflight אינו קורא את plan.rows');
+  // הצורה שהייתה הבאג — ושני הנתיבים שבה אינם קיימים.
+  assert.ok(!/snapshot\.plan\.days/.test(src),
+    'חזרה קריאה מ-plan.days, שאינו קיים');
+  // ו-`readSnapshot` באמת מחזיר `rows` בתוך `plan`.
+  const at = src.indexOf('const plan = {');
+  const planLiteral = src.slice(at, src.indexOf('};', at));
+  assert.ok(/\brows,/.test(planLiteral),
+    'readSnapshot אינו מחזיר rows בתוך plan — החוזה השתנה');
+});
+
+/* ⭐ החיבור שנשבר בשקט: המעבר האטומי נבנה, יוצא ב-index.js — ולא
+ * היה על המסלול של המסך בכלל. */
+check('the cutover is the only road into new mode', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const at = runtime.indexOf('async function setRuntimeMode(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf("'cutover-required'") > -1,
+    'setRuntimeMode עדיין מרשה כניסה ישירה ל-new');
+  // ואחרי אימות המעבר, כדי ש-off→new יישאר „מעבר לא חוקי".
+  const forbid = body.indexOf("'cutover-required'");
+  const planned = body.indexOf('modeAuthority.planModeChange');
+  assert.ok(planned > -1 && forbid > planned,
+    'הסירוב קודם לאימות המעבר — off→new היה מקבל את ההסבר הלא נכון');
+});
+
+check('the screen actually calls the cutover it was given', () => {
+  const ui = read('schedule-management.js');
+  for (const name of ['previewScheduleCutover', 'promoteScheduleToNew']) {
+    assert.ok(ui.indexOf("httpsCallable(functions, '" + name + "')") > -1,
+      'המסך אינו יוצר callable עבור ' + name);
+  }
+  // ומעבר ל-new עובר דרכו, ולא דרך החלפת מצב.
+  assert.ok(/if \(target === 'new'\) \{ await promoteToNew\(\); return; \}/.test(ui),
+    'המסך עדיין שולח מעבר ל-new דרך setScheduleRuntimeMode');
+  assert.ok(ui.indexOf('call.cutoverPreview(') > -1
+    && ui.indexOf('call.cutoverPromote(') > -1,
+    'זרימת prepare→preflight→promote אינה במסך');
+  // ⭐ ההכנה ב-shadow אינה no-op שקט.
+  const pub = ui.slice(ui.indexOf('async function publishDraft('));
+  assert.ok(!/state\.status\.mode !== 'new'/.test(pub.slice(0, 400)),
+    'publishDraft עדיין חוזר מיד כשהמצב אינו new — כפתור ההכנה שקט');
+  assert.ok(pub.indexOf('const preparing = state.status.mode === ') > -1,
+    'publishDraft אינו מבחין בין הכנה לפרסום');
+  // ומזהה הבקשה נשמר לניסיון חוזר.
+  assert.ok(ui.indexOf('state.cutoverRequestId') > -1,
+    'אין request_id שנשמר לניסיון חוזר אחרי כשל רשת');
+});
+
+check('command can discover a prepared candidate without the manager', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  assert.ok(runtime.indexOf('async function preparedCandidate(') > -1,
+    'אין מצביע שרתי למועמד המוכן');
+  const at = runtime.indexOf('async function getModeOptions(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('preparedCandidate(ctx)') > -1,
+    'getModeOptions אינו חושף את המועמד');
+  // ⭐ ובלי שמות: מזהה, מהדורה, טווח וחתימה בלבד.
+  const fn = runtime.slice(runtime.indexOf('async function preparedCandidate('));
+  const decl = fn.slice(0, fn.indexOf('\n  }'));
+  assert.ok(!/person|full_name|roster|uid:/.test(decl),
+    'המצביע למועמד נושא מידע אישי');
+});
+
+check('the preflight report expires, and its expiry is signed', () => {
+  const cutover = read('functions/schedule-cutover.js');
+  assert.ok(cutover.indexOf('PREFLIGHT_TTL_MS') > -1, 'אין תוקף לדוח');
+  // הזמן בתוך הגוף החתום — אחרת אפשר להאריך תוקף בלי לשבור חתימה.
+  const body = cutover.slice(cutover.indexOf('const body = {'),
+    cutover.indexOf('const signature = String(hash(stable(body)));'));
+  assert.ok(body.indexOf('generated_at:') > -1 && body.indexOf('expires_at:') > -1,
+    'הזמן והתפוגה אינם בגוף החתום');
+  assert.ok(cutover.indexOf("fail(CODE.PREFLIGHT_EXPIRED") > -1,
+    'דוח שפג אינו נחסם');
+  // והדוח קשור לתצורה שהמועמד נבנה עליה.
+  assert.ok(cutover.indexOf('candidate_source_id') > -1
+    && cutover.indexOf('CODE.CANDIDATE_CONFIG') > -1,
+    'הדוח אינו קשור לתצורת המועמד');
+
+  /* ⭐⭐ שתי הטענות האלה **הסכימו עם באג**, וזו הפעם השלישית בסדרה
+   * הזאת. שתיהן דרשו בדיוק את הצורה שהייתה שבורה:
+   * `expires_at: new Date(report.expires_at)` דרס שדה שנמצא בתוך
+   * הגוף החתום; Firestore החזיר אותו כ-`Timestamp`; `stable()` ראה
+   * ערך אחר מזה שנחתם — והחתימה לא תאמה לעצמה. **כל מעבר נחסם.**
+   *
+   * שום בדיקה טהורה לא יכלה לראות את זה, כי בזיכרון `Date` נשאר
+   * `Date`. Codex מצא את זה באמולטור.
+   *
+   * החוזה עכשיו: שדה חתום אינו משמש גם כשדה תשתית. */
+  const runtime = read('functions/schedule-runtime.js');
+  /* ⭐ מהקוד, לא מהקובץ. ההערה שמעל התיקון **מצטטת** את הצורה
+   * השבורה כדי להסביר אותה — וטענה שקוראת את הקובץ הגולמי הייתה
+   * נופלת על ההסבר של התיקון עצמו. */
+  const runtimeCode = runtime.split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return t.indexOf('*') !== 0 && t.indexOf('//') !== 0 && t.indexOf('/*') !== 0;
+    }).join('\n');
+  const preflightWrite = runtimeCode.slice(
+    runtimeCode.indexOf("collection('schedule_preflight')"),
+    runtimeCode.indexOf('async function promoteToNew('));
+  assert.ok(!/[^_]expires_at: new Date\(report\.expires_at\)/.test(preflightWrite),
+    'ה-expires_at החתום נדרס ב-Date — החתימה לא תשרוד את הדיסק');
+  assert.ok(/ttl_expires_at: new Date\(report\.expires_at\)/.test(preflightWrite),
+    'אין שדה TTL נפרד; TTL ושדה חתום אינם יכולים להיות אותו שדה');
+
+  const indexes = JSON.parse(read('firestore.indexes.json'));
+  assert.ok(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_preflight' && item.fieldPath === 'ttl_expires_at'
+    && item.ttl === true), 'אין TTL על schedule_preflight');
+  assert.ok(!indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_preflight' && item.fieldPath === 'expires_at'),
+    'ה-TTL עדיין מצביע על השדה החתום');
+
+  /* והזמן נחתם בצורה שעוברת הלוך ושוב דרך האחסון בלי לשנות ייצוג. */
+  assert.ok(cutover.indexOf('function canonicalTime(') > -1,
+    'אין נרמול זמן קנוני');
+  assert.ok(/generated_at: canonicalTime\(/.test(cutover)
+    && /expires_at: canonicalTime\(/.test(cutover),
+    'הזמן נחתם בצורה שאינה קנונית');
+  assert.ok(/typeof value\.toDate === 'function'/.test(cutover),
+    'timeOf אינו יודע לקרוא Timestamp — וזה מה שחוזר מהדיסק');
+
+  /* ⭐ ושני העוגנים ש-TTL לבדו אינו סוגר: מי שהיה legacy, ומי היה
+   * הפרסום הפעיל. דוח יכול להיות טרי ובכל זאת לתאר עולם שזז. */
+  for (const anchor of ['legacy_revision', 'predecessor_publication_id']) {
+    assert.ok(body.indexOf(anchor + ':') > -1,
+      'העוגן ' + anchor + ' אינו בגוף החתום');
+  }
+  assert.ok(cutover.indexOf('const anchors = [') > -1,
+    'העוגנים אינם נבדקים בהכרעה');
+});
+
+check('the promotion re-reads identity the canonical way, role included', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const at = runtime.indexOf('async function promoteToNew(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  /* ⭐ הבודק היחיד. הגרסה הקודמת שכפלה את הבדיקה בתוך promoteToNew;
+   * הבסיס עכשיו מרכז אותה ב-`requireLiveModeAuthority`, והדרישה
+   * כאן היא שהמעבר קורא לה **בתוך** העסקה ועל המסמך החי. */
+  const txAt = body.indexOf('await db.runTransaction(');
+  const call = body.indexOf("requireLiveModeAuthority(snaps[4], ctx, 'cutover-actor-inactive')");
+  assert.ok(txAt > -1 && call > txAt, 'הזהות אינה נקראת חיה בתוך העסקה');
+  assert.ok(!/liveUser\.station_id !== ctx\.sid/.test(body),
+    'חזרה בדיקת station_id בלבד');
+  // ⭐ והבודק עצמו: חברות קנונית, ותפקיד חי — לא מהטוקן.
+  const helperAt = runtime.indexOf('function requireLiveModeAuthority(');
+  const helper = runtime.slice(helperAt, runtime.indexOf('\n  }\n', helperAt));
+  assert.ok(helper.indexOf('scheduleAccess.activeMember(user, ctx.sid)') > -1,
+    'בדיקת החברות אינה קנונית');
+  assert.ok(/role: String\(user\.role/.test(helper)
+    && helper.indexOf('modeAuthority.mayChangeMode(liveActor)') > -1,
+    'התפקיד אינו נקרא חי');
+  assert.ok(helper.indexOf('super: ctx.super === true') > -1,
+    'סמכות-על נלקחת מפרופיל ניתן לכתיבה ולא מה-claim');
+});
+
+/* ⭐ הטענה שונתה במפורש יחד עם הקוד. היא דרשה שהשומרים יופיעו
+ * בגוף `readActiveSource` — וזה בדיוק מה שהנציח את המראה השנייה:
+ * שומרים שנראים כמו של `loadSource` ואינם. עכשיו היא דורשת את
+ * הדבר החזק יותר — שהשומרים חיים ב-`loadSource`, ושהמסלול היחיד
+ * למקור הפעיל עובר דרכו. */
+check('the active source is validated before anything carries from it', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const loadAt = runtime.indexOf('async function loadSource(');
+  const loadBody = runtime.slice(loadAt, loadAt + 4000);
+  for (const guard of ['meta.complete !== true', "'source-count-required'",
+    "'source-count-mismatch'", "'source-digest-mismatch'"]) {
+    assert.ok(loadBody.indexOf(guard) > -1,
+      'loadSource אינו נופל סגור על ' + guard);
+  }
+  const at = runtime.indexOf('async function readActiveSource(');
+  const body = runtime.slice(at, runtime.indexOf('\n  // ⭐ הדוח יוצא לדפדפן', at));
+  assert.ok(/loadSource\(\{ sid \}, activeId\)/.test(body),
+    'המקור הפעיל אינו נקרא דרך הבודק המאומת');
+  /* ⭐ שונה במפורש עם הבסיס: מצביע פעיל למסמך חסר **חוסם**, ואינו
+   * הופך ל-null. שום כשל אינו נבלע — אין `catch` בגוף הזה בכלל. */
+  assert.ok(!/catch\s*\(/.test(body),
+    'שגיאות אימות נבלעות ומוחזר null — זו שוב מחיקה שקטה');
+});
+
+/* ==================================================================
+ * seq357 · ארבעה שערים שהיו קיימים־למראית־עין
+ * ================================================================== */
+
+/* (א) הכתיבות המדורגות היו **מחוץ** ל-try, ולכן batch שנפל לא הגיע
+ * לניקוי כלל והשאיר תת-אוסף `people` עם שמות מלאים. TTL על מסמך
+ * האב אינו יורד לתת-אוספים. */
+check('every staged write is inside the crash-safe path', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  /* מוחק מקור מדורג', at));
+
+  const tryAt = body.indexOf('\n    try {');
+  const stageAt = body.indexOf('tx.set(ref, Object.assign({}, plan.meta');
+  const childrenAt = body.indexOf('await commitOwnedSourceWrites([].concat(');
+  const cleanupAt = body.indexOf('cleanupStagedSource(');
+
+  assert.ok(tryAt > -1, 'אין try בכלל');
+  assert.ok(stageAt > tryAt, 'כתיבת המדורג מחוץ ל-try — כשל שלה לא ינוקה');
+  assert.ok(childrenAt > tryAt, 'כתיבת הילדים מחוץ ל-try — PII יישאר על הדיסק');
+  assert.ok(cleanupAt > childrenAt, 'הניקוי אינו אחרי הכתיבות');
+  // ⭐ והניקוי רץ רק על מדורג שהבקשה הזאת באמת תפסה.
+  assert.ok(/if \(stageOwned\) \{\s*await cleanupStagedSource\(/.test(body),
+    'הניקוי רץ גם על מדורג שלא נתפס — ומוחק של מישהו אחר');
+});
+
+/* (ב) `limit` לפני `sort`, ובהכנת shadow כל הפרסומים נושאים אותה
+ * `revision` — כלומר „המועמד הגבוה" נבחר מתוך קבוצה מקרית, מבין
+ * שווים. וזה המסך שהמפקד מאשר לפיו. */
+check('a prepared candidate is single and deterministic, or none at all', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function preparedCandidate(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+
+  assert.ok(!/\.limit\(5\)/.test(body), 'חזר limit(5) שרירותי');
+  assert.ok(/limit\(CAP \+ 1\)/.test(body),
+    'אין גילוי גלישה — קבוצה חסומה בלי +1 אינה יודעת שהיא חסרה');
+  assert.ok(!/Number\(b\.revision \|\| 0\) - Number\(a\.revision \|\| 0\)/.test(body),
+    'המיון עדיין לפי revision — ב-shadow כולן שוות');
+  assert.ok(body.indexOf('ambiguous: true') > -1,
+    'ריבוי מועמדים אינו מדווח; המסך יציג אחד שרירותי');
+  assert.ok(body.indexOf("reason: 'prepared-ambiguous'") > -1
+    && body.indexOf("reason: 'prepared-overflow'") > -1,
+    'שני מצבי הריבוי אינם מובחנים');
+});
+
+/* (ג) המפקד אישר דוח שהוצג לו. בלי החתימה הזאת, preview נוסף בין
+ * ההצגה לאישור היה גורם לו לאשר מסמך שלא ראה. */
+check('the commander approves the exact report he was shown', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function promoteToNew(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+
+  assert.ok(body.indexOf('cutover-signature-required') > -1,
+    'החתימה אינה חובה — לקוח שישמיט אותה מדלג על הבדיקה');
+  assert.ok(body.indexOf('cutover-signature-mismatch') > -1,
+    'החתימה אינה מושווית');
+  // ⭐ ובתוך העסקה. מחוצה לה זה עוד TOCTOU.
+  const txAt = body.indexOf('db.runTransaction');
+  assert.ok(body.indexOf('cutover-signature-mismatch') > txAt,
+    'ההשוואה מחוץ לטרנזקציה');
+  assert.ok(/livePreflight\.signature \|\| ''\) !== expectedSignature/.test(body),
+    'ההשוואה אינה מול הדוח החי שנקרא בעסקה');
+
+  // והלקוח שולח את החתימה של הדוח שהוא **הציג**, לא מ-state ישן.
+  const ui = read('schedule-management.js');
+  assert.ok(/expected_preflight_signature: report\.signature/.test(ui),
+    'המסך אינו שולח את חתימת הדוח שהציג');
+});
+
+/* (ד) `setRuntimeMode` קרא חברות חיה אך לא סמכות חיה. טוקן חי עד
+ * שעה — חלון של שעה שבו הרשאה שנשללה עדיין מזיזה את מצב המנוע. */
+check('mode change re-reads authority live, not only membership', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function setRuntimeMode(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  const txAt = body.indexOf('db.runTransaction');
+  assert.ok(txAt > -1, 'אין טרנזקציה');
+
+  const inTx = body.slice(txAt);
+  /* הבודק המרכזי של הבסיס, בתוך העסקה ועל המסמך החי — לא על הטוקן.
+   * מה שהוא בודק (חברות קנונית + תפקיד חי) מוכח בבדיקת ה-promote. */
+  assert.ok(/tx\.get\(liveUserRef\(ctx\.sid, ctx\.uid\)\)/.test(inTx),
+    'החברות אינה נקראת חיה');
+  assert.ok(inTx.indexOf("requireLiveModeAuthority(liveUserSnap, ctx, 'mode-actor-inactive')") > -1,
+    'הסמכות אינה נבדקת מחדש על התפקיד החי בתוך הטרנזקציה');
+  assert.ok(!/mayChangeMode\(modeActor\(ctx\)\)[\s\S]*db\.runTransaction[\s\S]*$/.test(body)
+    || inTx.indexOf('requireLiveModeAuthority(') > -1,
+    'הסמכות נבדקת פעם אחת בלבד, על הטוקן');
+});
+
+/* ==================================================================
+ * ⭐ ההיפוך של MISSING · מה נשאר חוסם
+ *
+ * הפיכת „אדם שינוי משמרת" ללא-חוסם היא ההחלשה היחידה בסדרה הזאת,
+ * והיא הכרעת מוצר מאושרת. הבדיקות כאן קיימות כדי שהיא **תישאר
+ * ההחלשה היחידה** — כלומר שאף שער אחר לא נסחף איתה.
+ * ================================================================== */
+
+check('the inversion did not take any other gate with it', () => {
+  const cut = read('functions/schedule-cutover.js');
+
+  // ארבעת החוסמים, מפורשים ברשימה אחת.
+  const at = cut.indexOf('const BLOCKING = Object.freeze([');
+  assert.ok(at > -1, 'אין רשימת חוסמים מפורשת');
+  const list = cut.slice(at, cut.indexOf(']);', at));
+  for (const reason of ['FOREIGN', 'DUPLICATE', 'EMPTY_DAY', 'OUT_OF_RANGE']) {
+    assert.ok(list.indexOf('REASON.' + reason) > -1,
+      reason + ' יצא מרשימת החוסמים — זו החלשה שלא אושרה');
+  }
+  assert.ok(list.indexOf('REASON.MISSING') === -1,
+    'MISSING חזר לרשימת החוסמים; המעבר ייחסם תמיד');
+
+  /* ⭐ וכל סיבה ב-REASON חייבת להיות באחת משתי הרשימות. סיבה חדשה
+   * שתיפול בין הכיסאות תהיה „לא חוסמת" בשקט. */
+  const reasonBlock = cut.slice(cut.indexOf('const REASON = Object.freeze({'),
+    cut.indexOf('});', cut.indexOf('const REASON = Object.freeze({')));
+  const names = (reasonBlock.match(/^\s{2}([A-Z_]+):/gm) || [])
+    .map((line) => line.trim().replace(':', ''));
+  assert.ok(names.length >= 5, 'לא זוהו הסיבות');
+  const advisory = cut.slice(cut.indexOf('const ADVISORY = Object.freeze(['),
+    cut.indexOf(']);', cut.indexOf('const ADVISORY = Object.freeze([')));
+  for (const name of names) {
+    assert.ok(list.indexOf('REASON.' + name) > -1 || advisory.indexOf('REASON.' + name) > -1,
+      'הסיבה ' + name + ' אינה חוסמת ואינה מדווחת — היא נעלמת בשקט');
+  }
+});
+
+/* התנאי שאסור היה לגעת בו: חוסר כוח אדם הוא שער נפרד של המדיניות
+ * והמנוע, ולא חלק מהשוואת ה-preflight. */
+check('a staffing shortfall is still its own separate blocker', () => {
+  const ui = read('schedule-management.js');
+  assert.ok(/blocking_gaps \|\| 0\);\s*\n\s*if \(gaps > 0\)/.test(ui),
+    'שער החוסרים בפרסום נעלם');
+  assert.ok(ui.indexOf('אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים') > -1,
+    'הודעת החוסרים נעלמה — השער אולי נשאר, אבל המשתמש לא יידע למה');
+  /* והוא חי בשכבה אחרת לגמרי מה-preflight — נבדק על **הקוד**, כי
+   * ההערה במודול מסבירה בדיוק למה `blocking_gaps` אינו שם. זו
+   * הפעם השלישית בסדרה הזאת שהערה מספקת גלאי; המסקנה קבועה: כל
+   * טענה על קוד נקראת מהמקור חסר-ההערות. */
+  const cutCode = read('functions/schedule-cutover.js').split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return t.indexOf('*') !== 0 && t.indexOf('//') !== 0 && t.indexOf('/*') !== 0;
+    }).join('\n');
+  assert.ok(cutCode.indexOf('blocking_gaps') === -1,
+    'שער החוסרים נבלע לתוך ה-preflight; שני שערים נפרדים הפכו לאחד');
+});
+
+/* האישור נקשר לחתימת הדוח, לא לדגל. */
+check('acknowledging changes is bound to the exact report', () => {
+  const cut = read('functions/schedule-cutover.js');
+  assert.ok(cut.indexOf('CHANGES_UNACKNOWLEDGED') > -1, 'אין קוד לאישור חסר');
+  assert.ok(/input\.accept_changes !== report\.signature/.test(cut),
+    'האישור אינו קשור לחתימה — אישור לדוח אחד יחול על אחר');
+  assert.ok(!/accept_changes === true/.test(cut),
+    'האישור חזר להיות דגל בוליאני');
+  const ui = read('schedule-management.js');
+  assert.ok(/accept = report\.signature/.test(ui),
+    'המסך אינו שולח את חתימת הדוח שהציג כאישור');
+  assert.ok(ui.indexOf('משנה ') > -1 && ui.indexOf('שיבוצים') > -1,
+    'המפקד אינו רואה כמה שיבוצים משתנים');
+});
+
+assert.equal(passed, 113);
+console.log('\n113 schedule runtime source checks passed.');

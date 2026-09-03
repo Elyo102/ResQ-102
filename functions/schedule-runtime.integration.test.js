@@ -1529,6 +1529,7 @@ async function test(name, fn) {
 
   let draftId;
   let previewDigest;
+  let preparedPublicationId = null;
   await test('shadow mode creates a complete immutable draft and prepares without activating or notifying', async () => {
     const made = await api.runPlanner(req('manager', 'commander', {
       request_id: 'draft_one', start: '2026-09-01', months: 1, overrides: plannerOverrides
@@ -1574,6 +1575,59 @@ async function test(name, fn) {
       activeBefore.exists ? activeBefore.data() : null);
     assert.equal((await station().collection('schedule_state').doc('runtime').get()).data().mode,
       'shadow');
+    preparedPublicationId = prepared.publication_id;
+  });
+
+  /* ⭐ seq340 · המסלול האמיתי, ולא כתיבה ישירה של `mode`.
+   *
+   * הבדיקה הזאת היא היחידה בקובץ שנכנסת ל-`new` דרך מחזור החיים.
+   * שאר המקומות שכותבים `mode: 'new'` הם **הקמת תרחיש** לבדיקות
+   * שאינן על המעבר, והשארתי אותם ככאלה בכוונה: להפוך אותם לזרימה
+   * מלאה היה הופך כל אחד מהם לבדיקה של המעבר במקום של מה שהוא בודק.
+   * אומר את זה במפורש כדי שתחלוק עליי אם אתה חושב אחרת. */
+  await test('the station enters new mode only through preflight and promotion', async () => {
+    // כניסה ישירה נדחית — זה מה שסוגר את חלון הלוח הריק.
+    await assert.rejects(api.setRuntimeMode(req('manager', 'commander', {
+      request_id: 'mode_direct', target: 'new', expected_mode: 'shadow',
+      confirmation: 'new', reason_code: 'initial_activation'
+    })), (error) => error instanceof ScheduleRuntimeError
+      && error.code === 'cutover-required');
+
+    const report = await api.previewCutover(req('manager', 'commander', {
+      candidate_publication_id: preparedPublicationId
+    }));
+    assert.ok(report.signature, 'הדוח אינו חתום');
+    if (report.blocked) {
+      // ממצא הוא ממצא, לא אי-נוחות בבדיקה.
+      assert.fail('preflight חסם: ' + JSON.stringify(report.by_reason));
+    }
+
+    /* ⭐ החתימה של הדוח שהוצג היא תנאי, ואישור השינויים הוא אותה
+     * חתימה — לא דגל. */
+    const missingSignature = await assert.rejects(api.promoteToNew(req('manager', 'commander', {
+      request_id: 'cutover_nosig',
+      candidate_publication_id: preparedPublicationId,
+      expected_mode: 'shadow'
+    })), (error) => error instanceof ScheduleRuntimeError
+      && error.code === 'cutover-signature-required');
+    void missingSignature;
+    const promoted = await api.promoteToNew(req('manager', 'commander', {
+      request_id: 'cutover_one',
+      candidate_publication_id: preparedPublicationId,
+      expected_mode: 'shadow',
+      expected_preflight_signature: report.signature,
+      accept_changes: Number((report.changes || {}).count || 0) > 0 ? report.signature : undefined
+    }));
+    assert.equal(promoted.duplicate, false);
+    assert.equal(((await runtimeRef.get()).data() || {}).mode, 'new');
+    const pointer = (await activePointer().get()).data() || {};
+    assert.equal(pointer.publication_id, preparedPublicationId);
+    // וההודעות שוחררו — רק אחרי ה-commit.
+    const outbox = await db.doc('stations/' + SID + '/schedule_publications/'
+      + preparedPublicationId).collection('schedule_outbox').get();
+    outbox.docs.forEach((doc) =>
+      assert.notEqual((doc.data() || {}).status, 'blocked',
+        'הודעה נשארה חסומה אחרי מעבר מוצלח'));
   });
 
   await test('the same draft request is idempotent', async () => {
@@ -2421,8 +2475,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 66);
-  console.log('\n66 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 67);
+  console.log('\n67 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);
