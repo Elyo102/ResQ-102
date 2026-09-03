@@ -3299,6 +3299,21 @@ function createScheduleRuntime(deps) {
     return { legacy, days, digest: String(hash(stable(days))) };
   }
 
+  /* ⭐ A (seq379) · אותו digest, **בתוך** העסקה של המעבר. כל קלט legacy
+   * שהדוח נחתם עליו (roster, rotations, overrides, swaps, guards בחלון)
+   * נקרא דרך `tx`, ולכן כתיבה לאחד מהם בין ה-preflight ל-commit מפילה
+   * את העסקה (Firestore מזהה קריאה שהתיישנה) — או משנה את ה-digest
+   * ונדחית ב-`cutover-legacy-changed`. אין כאן חלון. */
+  async function legacyComparisonDigestInTx(tx, ctx, from, to) {
+    const window = await effectiveReaderFor(ctx, { tx }).getStation({ data: { from, to } });
+    if (window.source !== 'legacy') {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן המעבר. יש לרענן.', 'aborted');
+    }
+    const days = cutoverDaysFromLegacy(window.days);
+    return { days, digest: String(hash(stable(days))) };
+  }
+
   async function previewCutover(req) {
     const ctx = await context(req);
     /* ⭐ שער הפיקוד, ולא שער המנהל — אותו שער בדיוק כמו ב-`promoteToNew`.
@@ -3445,23 +3460,33 @@ function createScheduleRuntime(deps) {
     }
 
     const opRef = modeOperationRef(ctx.sid, requestId);
-    const existingOp = await opRef.get();
+    /* ⭐ C (seq379) · טביעת האצבע קושרת את **מלוא הכוונה**: גם חתימת
+     * הדוח וגם אישור השינויים. ניסיון חוזר זהה מחזיר את התוצאה; אותו
+     * מזהה עם דוח אחר או אישור אחר — נדחה. */
     const fingerprint = digest({
       station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
-      candidate: candidateId, expected_mode: expectedMode
+      candidate: candidateId, expected_mode: expectedMode,
+      expected_preflight_signature: expectedSignature,
+      accept_changes: acceptChanges
     });
-    if (existingOp.exists) {
-      const op = existingOp.data() || {};
+    function replayOf(opSnap) {
+      if (!opSnap.exists) return null;
+      const op = opSnap.data() || {};
       if (op.fingerprint !== fingerprint) {
         throw new ScheduleRuntimeError('cutover-request-reused',
           'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
       }
       return Object.assign({ duplicate: true }, op.result || {});
     }
+    // מסלול מהיר לניסיון חוזר; הקובעת היא הקריאה בתוך העסקה.
+    const early = replayOf(await opRef.get());
+    if (early) return early;
 
     const candidate = await preparedPublication(ctx, candidateId);
     const pubRef = candidate.ref;
     const preflightRef = stationRef(ctx.sid).collection('schedule_preflight').doc(candidateId);
+    const from = String(candidate.meta.from || '');
+    const to = String(candidate.meta.to || '');
 
     await beforeSnapshotFinalize({ kind: 'cutover', ref: pubRef, ctx });
     /* ⭐ טביעת האצבע של הסידור הישן, נמדדת מחדש **עכשיו** ומושווית
@@ -3474,17 +3499,15 @@ function createScheduleRuntime(deps) {
      *
      * העוגן השני, `predecessor_publication_id`, כן נבדק אטומית:
      * המצביע הפעיל נקרא בתוך העסקה עצמה. */
-    const preConfig = await configuration(ctx.sid);
-    const legacyNow = preConfig.mode === MODE.SHADOW
-      ? await legacyComparisonDigest(ctx, preConfig,
-          String(candidate.meta.from || ''), String(candidate.meta.to || ''))
-      : null;
-
     let result = null;
-    await db.runTransaction(async (tx) => {
+    const outcome = await db.runTransaction(async (tx) => {
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), pubRef, preflightRef,
-        liveUserRef(ctx.sid, ctx.uid)];
+        liveUserRef(ctx.sid, ctx.uid), opRef];
       const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      /* ⭐ C · רשומת הפעולה נקראת **בתוך** העסקה, לפני כל בדיקת מעבר:
+       * שני promoters עם אותו מזהה — השני רואה את התוצאה, לא מבצע שוב. */
+      const replayed = replayOf(snaps[5]);
+      if (replayed) return { replayed };
       const liveRuntime = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
       const livePub = snaps[2].exists ? (snaps[2].data() || {}) : {};
@@ -3507,6 +3530,25 @@ function createScheduleRuntime(deps) {
         .doc(String(liveRuntime.active_policy_id || '_none')));
       const liveSource = await tx.get(stationRef(ctx.sid).collection('schedule_sources')
         .doc(String(liveRuntime.active_source_id || '_none')));
+
+      /* ⭐ A · טביעת האצבע של הסידור הישן — **בתוך** העסקה, מאותם
+       * מסמכים שהדוח נחתם עליהם. כתיבה ל-legacy בין ה-preview ל-commit
+       * מפילה את העסקה או משנה את ה-digest; שניהם אינם עוברים. */
+      const legacyNow = liveMode === MODE.SHADOW
+        ? await legacyComparisonDigestInTx(tx, ctx, from, to) : null;
+
+      /* ⭐ B · תור ההודעות של המועמד, כפי שהוא ברגע ה-commit: שלם,
+       * חסום, לא פג, ותואם למניפסט שנכתב בהכנה. תור ישן מפנה להכנה
+       * מחדש; אין חידוש פושים בשקט. */
+      const outboxSnap = await tx.get(pubRef.collection('schedule_outbox'));
+      requireBlockedOutbox(outboxSnap, {
+        manifest: livePub.outbox_manifest, sid: ctx.sid, pubId: candidateId,
+        revision: Number(livePub.revision || 0), now: Date.parse(clock())
+      }, (why) => {
+        throw new ScheduleRuntimeError('cutover-outbox-' + why.replace(/^outbox-/, ''),
+          'תור ההודעות של הסידור המוכן אינו תקין (' + why + '). '
+          + 'יש להכין את הסידור מחדש לפני המעבר.', 'failed-precondition');
+      });
 
       /* ההכרעה עצמה — המודול הטהור, על הערכים החיים. */
       let decision;
@@ -3573,11 +3615,13 @@ function createScheduleRuntime(deps) {
         mode: MODE.NEW, publication_id: candidateId, revision,
         preflight_signature: decision.preflight_signature
       };
-      tx.set(opRef, {
+      tx.create(opRef, {
         station_id: ctx.sid, actor_uid: ctx.uid, fingerprint,
         created_at: clock(), expires_at: modeOperationExpiry(), result
       });
+      return { replayed: null };
     });
+    if (outcome && outcome.replayed) return outcome.replayed;
 
     /* ⭐ ההודעות משתחררות **רק אחרי** ש-commit הצליח. שחרור שנכשל
      * כאן אינו מאבד דבר: השורות נשארות `blocked`, הפרסום כבר פעיל,
@@ -3601,6 +3645,49 @@ function createScheduleRuntime(deps) {
    * ההפעלה של פרסום מוכן קורית רק ב-`promoteToNew`, יחד עם המצב,
    * בטרנזקציה אחת.
    * ================================================================== */
+  /* ⭐ B (seq379) · מניפסט תור ההודעות של פרסום מוכן.
+   *
+   * נכתב על הפרסום באותה עסקה שמסמנת אותו `prepared`, ונבדק בשני
+   * המקומות שמסתמכים על התור: replay של הכנה, וההפעלה עצמה. פרסום
+   * מוכן שהתור שלו פג (30 יום), חסר, זר, שונה או כבר שוחרר — אינו
+   * מופעל; מכינים מחדש. אפס נמענים מותר כשזה מה שהוכן. */
+  function outboxManifestFor(notifications) {
+    const ids = (Array.isArray(notifications) ? notifications : []).map((notification) =>
+      'n_' + hash(notification.dedupe_key).slice(0, 40) + '|' + String(notification.person || ''));
+    ids.sort(compareCanonical);
+    return { count: ids.length, digest: String(hash(stable(ids))) };
+  }
+
+  function outboxManifestOfRows(rows) {
+    const ids = rows.map((row) => row.id + '|' + String(row.person || ''));
+    ids.sort(compareCanonical);
+    return { count: ids.length, digest: String(hash(stable(ids))) };
+  }
+
+  /* מאמת תור חסום מול המניפסט. `fail` — מה לזרוק; שני הקוראים
+   * זורקים קודים שונים לאותה מסקנה. */
+  function requireBlockedOutbox(snap, expect, fail) {
+    const rows = snap.docs.map((doc) => Object.assign({ id: doc.id }, doc.data() || {}));
+    const manifest = expect.manifest;
+    if (!plain(manifest) || !integer(manifest.count) || manifest.count < 0
+        || !nonEmpty(manifest.digest)) {
+      fail('outbox-manifest-missing');
+    }
+    const actual = outboxManifestOfRows(rows);
+    if (actual.count !== manifest.count || actual.digest !== manifest.digest) {
+      fail('outbox-manifest-mismatch');
+    }
+    for (const row of rows) {
+      if (row.station_id !== expect.sid || row.publication_id !== expect.pubId
+          || Number(row.revision) !== expect.revision
+          || row.status !== 'blocked' || row.attempt !== 0) {
+        fail('outbox-row-invalid');
+      }
+      if (outboxExpired(row, expect.now)) fail('outbox-expired');
+    }
+    return rows;
+  }
+
   function preparedReplayInvalid() {
     throw new ScheduleRuntimeError('publication-prepared-replay-invalid',
       'הפרסום המוכן אינו תואם לבקשה או שאינו שלם. יש לרענן ולהכין מחדש.',
@@ -3705,6 +3792,10 @@ function createScheduleRuntime(deps) {
       }
 
       if (outboxSnap.size !== expectedOutbox.size) preparedReplayInvalid();
+      requireBlockedOutbox(outboxSnap, {
+        manifest: livePub.outbox_manifest, sid: ctx.sid, pubId: value.pubId,
+        revision: value.revision, now: Date.parse(clock())
+      }, () => preparedReplayInvalid());
       for (const doc of outboxSnap.docs) {
         const expected = expectedOutbox.get(doc.id);
         const row = doc.data() || {};
@@ -3922,7 +4013,11 @@ function createScheduleRuntime(deps) {
       if (preparing) {
         /* ⭐ מוכן, ולא פעיל. המצביע אינו זז, ה-outbox נשאר `blocked`,
          * ואיש אינו מקבל הודעה. כל אלה קורים יחד ב-`promoteToNew`. */
-        tx.update(pubRef, { status: 'prepared', prepared_at: FV.serverTimestamp() });
+        tx.update(pubRef, {
+          status: 'prepared', prepared_at: FV.serverTimestamp(),
+          // ⭐ B · המניפסט של התור, באותה עסקה עם הסימון „מוכן".
+          outbox_manifest: outboxManifestFor(planned.notifications)
+        });
         tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
           action: 'prepare', publication_id: pubId, revision,
           previous_publication_id: expectedPrevious, by: ctx.uid,
@@ -4457,7 +4552,25 @@ function createScheduleRuntime(deps) {
     }
   }
 
-  async function legacyProjectionInput(ctx, range) {
+  /* ⭐ A (seq379). כל הקריאות עוברות דרך `reader`, כדי שאותה
+   * השלכה בדיוק תרוץ גם **בתוך** טרנזקציה: `dbReader` מחוץ לעסקה,
+   * `txReader(tx)` בתוכה. הקריאות תחומות (roster/rotations בתקרה,
+   * overrides לפי מזהה יום, swaps/guards ב-`in` על ≤31 ימים) — לא סריקה. */
+  function dbReader() {
+    return {
+      get: (target) => target.get(),
+      getAll: (refs) => (refs.length ? db.getAll.apply(db, refs) : Promise.resolve([]))
+    };
+  }
+  function txReader(tx) {
+    return {
+      get: (target) => tx.get(target),
+      getAll: (refs) => (refs.length ? tx.getAll.apply(tx, refs) : Promise.resolve([]))
+    };
+  }
+
+  async function legacyProjectionInput(ctx, range, readerArg) {
+    const reader = readerArg || dbReader();
     const dates = range && Array.isArray(range.dates) ? range.dates.slice() : [];
     if (!dates.length || dates.some((value) => !DATE_RE.test(value))) {
       throw new ScheduleRuntimeError('legacy-range-invalid',
@@ -4468,15 +4581,15 @@ function createScheduleRuntime(deps) {
       const chunks = dateChunks(dates);
       const overrideRefs = dates.map((date) => root.collection('shift_overrides').doc(date));
       const reads = await Promise.all([
-        root.collection('roster').limit(MAX_LEGACY_ROSTER + 1).get(),
-        root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get(),
-        overrideRefs.length ? db.getAll.apply(db, overrideRefs) : Promise.resolve([]),
-        Promise.all(chunks.map((chunk) => root.collection('swaps')
-          .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get())),
-        Promise.all(chunks.map((chunk) => root.collection('swaps')
-          .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get())),
-        Promise.all(chunks.map((chunk) => root.collection('guards')
-          .where('date', 'in', chunk).limit(MAX_LEGACY_GUARDS_PER_QUERY + 1).get()))
+        reader.get(root.collection('roster').limit(MAX_LEGACY_ROSTER + 1)),
+        reader.get(root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1)),
+        reader.getAll(overrideRefs),
+        Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
+          .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
+        Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
+          .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
+        Promise.all(chunks.map((chunk) => reader.get(root.collection('guards')
+          .where('date', 'in', chunk).limit(MAX_LEGACY_GUARDS_PER_QUERY + 1))))
       ]);
       if (reads[0].size > MAX_LEGACY_ROSTER) {
         throw new ScheduleRuntimeError('legacy-roster-too-large',
@@ -4620,12 +4733,18 @@ function createScheduleRuntime(deps) {
     }
   }
 
-  function effectiveReaderFor(ctx) {
+  function effectiveReaderFor(ctx, scoped) {
+    const inTx = scoped && scoped.tx ? scoped.tx : null;
     return effectiveReaderModule.createScheduleEffectiveReader({
       resolveLiveContext: async function () {
         return { station_id: ctx.sid, uid: ctx.uid, active: true };
       },
       readRuntime: async function () {
+        if (inTx) {
+          const snap = await inTx.get(runtimeRef(ctx.sid));
+          const data = snap.exists ? (snap.data() || {}) : {};
+          return { mode: MODES.indexOf(data.mode) !== -1 ? data.mode : MODE.OFF };
+        }
         return { mode: (await configuration(ctx.sid)).mode };
       },
       readLegacy: async function (liveCtx, range) {
@@ -4633,9 +4752,15 @@ function createScheduleRuntime(deps) {
           throw new ScheduleRuntimeError('effective-context-mismatch',
             'הקשר הסידור השתנה ולכן הקריאה נעצרה.', 'aborted');
         }
-        return legacyProjectionInput(ctx, range);
+        return legacyProjectionInput(ctx, range, inTx ? txReader(inTx) : null);
       },
       readActivePublication: async function (liveCtx) {
+        if (inTx) {
+          /* בתוך עסקה המתאם משרת רק את ה-legacy (shadow). קריאת
+           * הפרסום הפעיל בתוך עסקה אינה חוזה כאן — נופלים סגור. */
+          throw new ScheduleRuntimeError('effective-context-mismatch',
+            'קריאת פרסום פעיל בתוך עסקה אינה נתמכת.', 'aborted');
+        }
         if (!liveCtx || liveCtx.station_id !== ctx.sid || liveCtx.uid !== ctx.uid) {
           throw new ScheduleRuntimeError('effective-context-mismatch',
             'הקשר הסידור השתנה ולכן הקריאה נעצרה.', 'aborted');

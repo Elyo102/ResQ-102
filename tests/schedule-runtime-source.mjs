@@ -526,7 +526,7 @@ check('management visibility is driven by server status', () => {
 });
 check('off and shadow schedule views use only the server-side compatibility reader', () => {
   assert.ok(runtime.includes("const effectiveReaderModule = require('./schedule-effective-reader')"));
-  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range)'));
+  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range, readerArg)'));
   assert.ok(runtime.includes("if (config.mode !== MODE.NEW)"));
   assert.ok(ui.includes("['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1"));
   assert.ok(integration.includes('off and shadow safely expose the current station and personal legacy schedules'));
@@ -543,19 +543,23 @@ check('legacy compatibility reads are bounded by source-specific caps and date w
   assert.ok(integration.includes('legacy guard reads reject one record above the bounded per-date cap'));
 });
 check('legacy overrides use canonical document ids, never an untrusted payload date query', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range)');
-  const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg)');
+  const end = runtime.indexOf('function effectiveReaderFor(ctx, scoped)', start);
   const legacy = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   assert.ok(legacy.includes("const overrideRefs = dates.map((date) => root.collection('shift_overrides').doc(date))"));
-  assert.ok(legacy.includes('db.getAll.apply(db, overrideRefs)'));
+  // הקריאה עוברת דרך reader: מחוץ לעסקה זה db.getAll, בתוכה tx.getAll.
+  assert.ok(legacy.includes('reader.getAll(overrideRefs)'));
+  const readers = runtime.slice(runtime.indexOf('function dbReader()'), start);
+  assert.ok(readers.includes('db.getAll.apply(db, refs)') && readers.includes('tx.getAll.apply(tx, refs)'),
+    'שני ה-readers אינם מגדירים getAll');
   assert.ok(legacy.includes('overrideDocs.set(doc.id, doc)'));
   assert.ok(legacy.includes('compareCanonical(left.id, right.id)'));
   const beforeGuardQuery = legacy.slice(0, legacy.indexOf("root.collection('guards')"));
   assert.equal(beforeGuardQuery.includes(".where('date', 'in', chunk)"), false);
 });
 check('legacy guard events use a bounded trusted-station bridge before the final mode recheck', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range)');
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg)');
   const end = runtime.indexOf('async function checkedLegacyWindow', start);
   const body = runtime.slice(start, end);
   const guardRead = body.indexOf("root.collection('guards')");
@@ -643,7 +647,7 @@ check('legacy compatibility accepts only an exact bounded client date range and 
 });
 check('legacy compatibility is bounded and rechecks mode and live membership after reads', () => {
   const start = runtime.indexOf('async function getLegacyCompatibility(req)');
-  const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
+  const end = runtime.indexOf('function effectiveReaderFor(ctx, scoped)', start);
   const body = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   assert.ok(body.indexOf('const ctx = await context(req);')
@@ -1133,8 +1137,11 @@ check('preparing in shadow never activates, notifies or moves the pointer', () =
     'הכוונה אינה נגזרת מהמצב');
   assert.ok(/requireMode\(config, \[MODE\.NEW, MODE\.SHADOW\]\)/.test(body),
     'publish אינו מותר ב-shadow, ולכן חלון הלוח הריק נשאר פתוח');
-  assert.ok(body.indexOf("tx.update(pubRef, { status: 'prepared'") > -1,
+  assert.ok(/tx\.update\(pubRef, \{\s*status: 'prepared'/.test(body),
     'הכנה אינה מסמנת prepared');
+  // ⭐ B (seq379) · המניפסט של התור נכתב באותה עסקה עם הסימון.
+  assert.ok(/status: 'prepared',[\s\S]{0,200}outbox_manifest: outboxManifestFor\(planned\.notifications\)/.test(body),
+    'הכנה אינה כותבת מניפסט תור באותה עסקה');
   // ⭐ הליבה: ההודעות משתחררות רק כשהפרסום באמת פעיל.
   assert.ok(body.indexOf('if (!preparing) await releaseOutbox(pubRef);') > -1,
     'הכנה משחררת הודעות על סידור שאיש אינו רואה');
@@ -1673,5 +1680,64 @@ check('acknowledging changes is bound to the exact report', () => {
     'המפקד אינו רואה כמה שיבוצים משתנים');
 });
 
-assert.equal(passed, 113);
-console.log('\n113 schedule runtime source checks passed.');
+/* ⭐ seq379 A/B/C · שלושת החורים שנסגרו בעסקת המעבר. כל טענה כאן נבדקת
+ * על קוד בלי הערות, כדי שהערה לא תספק אותה. */
+check('the promotion transaction owns legacy, outbox and the operation record', () => {
+  const src = stripComments(read('functions/schedule-runtime.js'));
+  const at = src.indexOf('async function promoteToNew(req)');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  const txAt = body.indexOf('await db.runTransaction(');
+  assert.ok(txAt > -1, 'אין עסקה');
+  const before = body.slice(0, txAt);
+  const inTx = body.slice(txAt);
+
+  // A · ה-legacy נקרא בתוך העסקה, ולא לפניה.
+  assert.ok(!/legacyComparisonDigest\(ctx/.test(before), 'ה-legacy עדיין נקרא לפני העסקה');
+  assert.ok(inTx.indexOf('await legacyComparisonDigestInTx(tx, ctx, from, to)') > -1,
+    'ה-legacy אינו נקרא בתוך העסקה');
+  const txAtDef = src.indexOf('async function legacyComparisonDigestInTx(tx, ctx, from, to)');
+  const txDef = src.slice(txAtDef, src.indexOf('\n  }\n', txAtDef));
+  assert.ok(txDef.indexOf('effectiveReaderFor(ctx, { tx })') > -1,
+    'הקריאה בתוך העסקה אינה עוברת דרך המתאם עם tx');
+  const readers = src.slice(src.indexOf('function txReader(tx)'), src.indexOf('async function legacyProjectionInput('));
+  assert.ok(readers.indexOf('tx.get(target)') > -1 && readers.indexOf('tx.getAll.apply(tx, refs)') > -1,
+    'txReader אינו קורא דרך העסקה');
+  // וכל ששת מסלולי הקריאה של legacyProjectionInput עוברים דרך reader.
+  const lpAt = src.indexOf('async function legacyProjectionInput(');
+  const lp = src.slice(lpAt, src.indexOf('\n  }\n', lpAt));
+  assert.equal((lp.match(/reader\.get\(/g) || []).length, 5, 'לא כל הקריאות עוברות דרך reader.get');
+  assert.ok(lp.indexOf('reader.getAll(overrideRefs)') > -1, 'ה-overrides אינם נקראים דרך reader');
+  assert.ok(!/\.get\(\)/.test(lp), 'נשארה קריאה ישירה שעוקפת את ה-reader');
+
+  // B · התור נקרא בעסקה ומאומת מול המניפסט.
+  assert.ok(inTx.indexOf("await tx.get(pubRef.collection('schedule_outbox'))") > -1,
+    'התור אינו נקרא בתוך העסקה');
+  assert.ok(inTx.indexOf('requireBlockedOutbox(outboxSnap, {') > -1, 'התור אינו מאומת');
+  assert.ok(inTx.indexOf('manifest: livePub.outbox_manifest') > -1, 'האימות אינו מול המניפסט');
+  const validator = src.slice(src.indexOf('function requireBlockedOutbox(snap, expect, fail)'),
+    src.indexOf('function preparedReplayInvalid()'));
+  for (const why of ['outbox-manifest-missing', 'outbox-manifest-mismatch', 'outbox-row-invalid', 'outbox-expired']) {
+    assert.ok(validator.indexOf("fail('" + why + "')") > -1, 'האימות חסר ' + why);
+  }
+  assert.ok(validator.indexOf("row.status !== 'blocked'") > -1 && validator.indexOf('outboxExpired(row, expect.now)') > -1,
+    'האימות אינו בודק חסימה ותפוגה');
+  // ואותו validator משמש גם את ה-replay של הכנה.
+  const replayAt = src.indexOf('async function replayPreparedPublication(');
+  const replay = src.slice(replayAt, src.indexOf('\n  async function publish(req)', replayAt));
+  assert.ok(replay.indexOf('requireBlockedOutbox(outboxSnap, {') > -1, 'ה-replay אינו משתמש באותו validator');
+
+  // C · רשומת הפעולה נקראת בעסקה, לפני בדיקות המעבר; הטביעה קושרת את מלוא הכוונה.
+  const fp = body.slice(body.indexOf('const fingerprint = digest({'), body.indexOf('});', body.indexOf('const fingerprint = digest({')));
+  assert.ok(fp.indexOf('expected_preflight_signature: expectedSignature') > -1
+    && fp.indexOf('accept_changes: acceptChanges') > -1,
+    'טביעת האצבע אינה כוללת חתימה ואישור');
+  const refsAt = inTx.indexOf('liveUserRef(ctx.sid, ctx.uid), opRef]');
+  const replayAtTx = inTx.indexOf('const replayed = replayOf(snaps[5])');
+  const decideAt = inTx.indexOf('cutover.decidePromotion({');
+  assert.ok(refsAt > -1 && replayAtTx > refsAt && decideAt > replayAtTx,
+    'רשומת הפעולה אינה נקראת בעסקה לפני ההכרעה');
+  assert.ok(inTx.indexOf('tx.create(opRef, {') > -1, 'רשומת הפעולה נכתבת ב-set — שני promoters יכולים לדרוס');
+});
+
+assert.equal(passed, 114);
+console.log('\n114 schedule runtime source checks passed.');

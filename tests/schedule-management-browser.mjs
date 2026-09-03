@@ -1096,6 +1096,103 @@ try {
   });
   await commander.close();
 
+  /* ⭐ 378.1/378.2/378.5 · מחזור חיים אמיתי של המעבר, ולא רק שמות
+   * callables: preview → promote שאיבד תשובה → ניסיון חוזר ששולח את
+   * **אותה** בקשה בלי preview שני → הצלחה → כשל רענון שמדווח הצלחה. */
+  const cutoverCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  const cutoverModeView = { may_change:true, current:'shadow', ready:true,
+    targets:[{ to:'new', kind:'promote', label:'פעיל', available:true, blocked_by:null },
+      { to:'off', kind:'disable', label:'כבוי', available:true, blocked_by:null }],
+    readiness:{ policy:true, source:true, people:44, problems:[] },
+    candidate:{ publication_id:'p_ready', revision:1, from:today, to:shiftDay(today, 30),
+      content_hash:'h_ready', prepared_count:1, preflight:null } };
+  const cutoverReport = { signature:'sig_ready_1', blocked:false, generated_at:'2026-09-03T10:00:00.000Z',
+    expires_at:'2026-09-03T12:00:00.000Z', by_reason:{ 'preflight-missing':0 }, changes:{ count:2, days:[today] } };
+  await prepare(cutoverCtx, 'commander', {
+    getScheduleRuntimeStatus:[
+      { data:{ mode:'shadow', configured:true, manager:false, active:null } },
+      { data:{ mode:'shadow', configured:true, manager:false, active:null } },   // רענון אחרי הכשל
+      { reject:true, code:'functions/unavailable', message:'refresh failed' }      // רענון אחרי ההצלחה
+    ],
+    getScheduleModeOptions:[{ data:cutoverModeView }, { data:cutoverModeView }, { data:cutoverModeView }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }],
+    previewScheduleCutover:[{ data:cutoverReport }],
+    promoteScheduleToNew:[
+      { reject:true, code:'functions/unavailable', message:'response lost' },
+      { data:{ duplicate:true, mode:'new', publication_id:'p_ready', revision:1, preflight_signature:'sig_ready_1' } }
+    ]
+  });
+  const cutoverPage = await cutoverCtx.newPage();
+  cutoverPage.on('dialog', (dialog) => dialog.accept());
+  await cutoverPage.goto(base, { waitUntil:'load' });
+  await cutoverPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a cutover whose response was lost is retried as the same request, without a second preview', async () => {
+    await cutoverPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    await cutoverPage.locator('#modeForm:not([hidden])').waitFor();
+    assert.equal(await cutoverPage.locator('#modeApply').isEnabled(), true);
+    await cutoverPage.locator('#modeApply').click();
+    await cutoverPage.locator('#modeMessage .err').waitFor();
+    assert.match(await cutoverPage.locator('#modeMessage').textContent(), /אותה בקשה, לא מעבר חדש/);
+    let calls = await cutoverPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const firstPromote = calls.filter((entry) => entry.name === 'promoteScheduleToNew');
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleCutover').length, 1);
+    assert.equal(firstPromote.length, 1);
+    assert.equal(firstPromote[0].payload.expected_preflight_signature, 'sig_ready_1');
+    // ⭐ שינויים > 0 → האישור הוא חתימת הדוח, לא דגל.
+    assert.equal(firstPromote[0].payload.accept_changes, 'sig_ready_1');
+    assert.equal(firstPromote[0].payload.expected_mode, 'shadow');
+    assert.ok(String(firstPromote[0].payload.request_id || '').startsWith('cutover_'));
+    // הכפתור אומר שזה ניסיון חוזר (היעד נשאר נבחר אחרי הרענון; לחיצה
+    // נוספת על הגלולה הייתה מבטלת את הבחירה).
+    if (await cutoverPage.locator('#modeForm').isHidden()) {
+      await cutoverPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    }
+    await cutoverPage.locator('#modeForm:not([hidden])').waitFor();
+    assert.match(await cutoverPage.locator('#modeApply').textContent(), /נסה שוב/);
+    assert.equal(await cutoverPage.locator('#modeApply').isEnabled(), true);
+    await cutoverPage.locator('#modeApply').click();
+    await cutoverPage.locator('#modeMessage .warn').waitFor();
+    calls = await cutoverPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const promotes = calls.filter((entry) => entry.name === 'promoteScheduleToNew');
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleCutover').length, 1,
+      'הניסיון החוזר ביצע preview שני');
+    assert.equal(promotes.length, 2);
+    assert.deepEqual(promotes[1].payload, promotes[0].payload, 'הניסיון החוזר אינו אותה בקשה');
+    // ⭐ 378.2 · הצלחה + כשל רענון = הצלחה עם אזהרה, לא „המעבר נכשל".
+    const text = await cutoverPage.locator('#modeMessage').textContent();
+    assert.match(text, /התחנה עברה לסידור החדש/);
+    assert.match(text, /כבר בוצעה קודם/);
+    assert.match(text, /לא התרענן/);
+    assert.doesNotMatch(text, /המעבר נכשל|לא קיבל תשובה/);
+    assert.equal(calls.some((entry) => entry.name === 'setScheduleRuntimeMode'), false);
+  });
+  await cutoverCtx.close();
+
+  /* ⭐ 378.4 · שתי הכנות — אין מועמד. הכפתור נעול ואומר למה; אין
+   * publication_id undefined בשום קריאה. */
+  const ambiguousCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(ambiguousCtx, 'commander', {
+    getScheduleRuntimeStatus:[{ data:{ mode:'shadow', configured:true, manager:false, active:null } }],
+    getScheduleModeOptions:[{ data:Object.assign({}, cutoverModeView, {
+      candidate:{ ambiguous:true, prepared_count:2, reason:'prepared-ambiguous', publication_ids:['p_a', 'p_b'] } }) }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }]
+  });
+  const ambiguousPage = await ambiguousCtx.newPage();
+  ambiguousPage.on('dialog', (dialog) => dialog.accept());
+  await ambiguousPage.goto(base, { waitUntil:'load' });
+  await ambiguousPage.locator('#appMain:not(.hide)').waitFor();
+  await test('two prepared publications lock the switch and say so', async () => {
+    await ambiguousPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    await ambiguousPage.locator('#modeForm:not([hidden])').waitFor();
+    assert.equal(await ambiguousPage.locator('#modeApply').isEnabled(), false);
+    assert.match(await ambiguousPage.locator('#modeApply').textContent(), /2 סידורים מוכנים/);
+    await ambiguousPage.locator('#modeApply').click({ force: true });
+    const calls = await ambiguousPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'previewScheduleCutover'
+      || entry.name === 'promoteScheduleToNew'), false);
+  });
+  await ambiguousCtx.close();
+
   const statusError = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(statusError, 'firefighter', {
     getScheduleRuntimeStatus:[{ reject:true, code:'functions/unavailable', message:'offline' }]
@@ -1117,5 +1214,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 29);
-console.log('\n29 schedule management browser checks passed.');
+assert.equal(passed, 31);
+console.log('\n31 schedule management browser checks passed.');

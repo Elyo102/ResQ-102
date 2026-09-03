@@ -2242,6 +2242,95 @@ async function test(name, fn) {
     }
   });
 
+  /* ⭐ A (seq379) · הסידור הישן משתנה **אחרי** ה-preview ולפני ה-commit.
+   * הדוח נחתם על legacy_revision; ההפעלה קוראת את קלטי ה-legacy בתוך
+   * העסקה, ולכן רואה את השינוי ודוחה. שום דבר לא זז. */
+  await test('a legacy change between preview and commit is refused inside the transaction', async () => {
+    const rosterRef = station().collection('roster').doc('worker_a');
+    const runtimeBefore = (await runtimeDoc().get()).data() || {};
+    const activeBefore = await station().collection('schedule_state').doc('active').get();
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    let hooks = 0;
+    const hooked = runtime({
+      beforeSnapshotFinalize: async (info) => {
+        if (!info || info.kind !== 'cutover') return;
+        hooks += 1;
+        // אדם נכנס לצוות A במחזור הקיים — יום-אדם חדש ב-legacy.
+        await rosterRef.set({ full_name: 'פרופיל אלף', crew: 'A', active: true });
+      }
+    });
+    try {
+      const error = await caught(() => hooked.promoteToNew(req('commander', 'commander', {
+        request_id: 'cut_legacy_race', candidate_publication_id: preparedId,
+        expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+        accept_changes: preflightChanges > 0 ? preflightSignature : undefined
+      })));
+      assert.ok(error, 'שינוי בסידור הישן אחרי הבדיקה לא נחסם');
+      assert.equal(error.code, 'cutover-preflight-stale');
+      assert.equal(hooks, 1);
+      assert.deepEqual((await runtimeDoc().get()).data() || {}, runtimeBefore);
+      const activeAfter = await station().collection('schedule_state').doc('active').get();
+      assert.equal(activeAfter.exists, activeBefore.exists);
+      assert.equal(((await publicationRef.get()).data() || {}).status, 'prepared');
+      assert.equal((await station().collection('schedule_mode_operations')
+        .doc('cut_legacy_race').get()).exists, false, 'נכתבה רשומת פעולה למעבר שנדחה');
+    } finally {
+      await rosterRef.delete();
+    }
+  });
+
+  /* ⭐ B (seq379) · תור ההודעות של המועמד נבדק ברגע ה-commit מול המניפסט
+   * שנכתב בהכנה: שורה שפגה, שורה זרה, שורה חסרה — כולן מפנות להכנה
+   * מחדש. אין חידוש פושים בשקט. */
+  await test('a prepared candidate with a stale or altered outbox is not activated', async () => {
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    const manifest = ((await publicationRef.get()).data() || {}).outbox_manifest;
+    assert.ok(manifest && Number.isInteger(manifest.count) && manifest.digest,
+      'להכנה אין מניפסט תור');
+    const outbox = await publicationRef.collection('schedule_outbox').get();
+    assert.equal(outbox.size, manifest.count, 'המניפסט אינו סופר את התור');
+    assert.ok(outbox.size > 0, 'הפיקסצ׳ר צריך לפחות שורת תור אחת לבדיקה הזאת');
+    const first = outbox.docs[0];
+    const firstBefore = first.data() || {};
+    const runtimeBefore = (await runtimeDoc().get()).data() || {};
+    const promote = (requestId) => caught(() => api.promoteToNew(req('commander', 'commander', {
+      request_id: requestId, candidate_publication_id: preparedId,
+      expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+      accept_changes: preflightChanges > 0 ? preflightSignature : undefined
+    })));
+    try {
+      // שורה שפגה.
+      await first.ref.set({ expires_at: new Date(Date.now() - 60000) }, { merge: true });
+      const expired = await promote('cut_outbox_expired');
+      assert.ok(expired, 'תור שפג הופעל');
+      assert.equal(expired.code, 'cutover-outbox-expired');
+      await first.ref.set(firstBefore);
+      // שורה זרה שנוספה לתור.
+      const extraRef = publicationRef.collection('schedule_outbox').doc('n_unexpected_cutover');
+      await extraRef.set(Object.assign({}, firstBefore, { person: 'stranger', dedupe_key: 'x' }));
+      const extra = await promote('cut_outbox_extra');
+      assert.ok(extra, 'תור עם שורה זרה הופעל');
+      assert.equal(extra.code, 'cutover-outbox-manifest-mismatch');
+      await extraRef.delete();
+      // שורה שכבר שוחררה.
+      await first.ref.set({ status: 'queued' }, { merge: true });
+      const released = await promote('cut_outbox_released');
+      assert.ok(released, 'תור ששוחרר חלקית הופעל');
+      assert.equal(released.code, 'cutover-outbox-row-invalid');
+    } finally {
+      await first.ref.set(firstBefore);
+    }
+    assert.deepEqual((await runtimeDoc().get()).data() || {}, runtimeBefore);
+    assert.equal(((await publicationRef.get()).data() || {}).status, 'prepared');
+    for (const id of ['cut_outbox_expired', 'cut_outbox_extra', 'cut_outbox_released']) {
+      assert.equal((await station().collection('schedule_mode_operations').doc(id).get()).exists,
+        false, 'נכתבה רשומת פעולה למעבר שנדחה: ' + id);
+    }
+    // ⭐ ואחרי השחזור המלא המועמד עדיין תקין לבדיקה הבאה.
+    const restored = await publicationRef.collection('schedule_outbox').get();
+    assert.equal(restored.size, manifest.count);
+  });
+
   await test('the cutover activates publication, pointer and mode together', async () => {
     const report = await api.previewCutover(req('commander', 'commander', {
       candidate_publication_id: preparedId
@@ -2261,11 +2350,25 @@ async function test(name, fn) {
       assert.ok(unacknowledged, 'מעבר עם שינויים לא מאושרים עבר');
       assert.equal(unacknowledged.code, 'cutover-changes-unacknowledged');
     }
-    const result = await api.promoteToNew(req('commander', 'commander', {
+    /* ⭐ C (seq379) · שני promoters עם **אותו** מזהה בקשה, במקביל. אחד
+     * מבצע; השני קורא את רשומת הפעולה בתוך העסקה ומחזיר את התוצאה
+     * (duplicate) — לא הפעלה שנייה, לא audit שני. */
+    const payload = {
       request_id: 'cut_1', candidate_publication_id: preparedId,
       expected_mode: 'shadow', expected_preflight_signature: report.signature,
       accept_changes: Number(report.changes.count || 0) > 0 ? report.signature : undefined
-    }));
+    };
+    const both = await Promise.all([
+      api.promoteToNew(req('commander', 'commander', payload)),
+      api.promoteToNew(req('commander', 'commander', payload))
+    ]);
+    const result = both.find((r) => r.duplicate === false);
+    const echoed = both.find((r) => r.duplicate === true);
+    assert.ok(result && echoed, 'שני promoters מקבילים לא הסתיימו באחד מבצע ואחד מהדהד: '
+      + JSON.stringify(both));
+    assert.equal(echoed.publication_id, result.publication_id);
+    assert.equal((await station().collection('schedule_mode_audit')
+      .where('request_id', '==', 'cut_1').get()).size, 1, 'המעבר נרשם ביומן פעמיים');
     preflightSignature = report.signature;
     preflightChanges = Number(report.changes.count || 0);
     assert.equal(result.duplicate, false);
@@ -2293,6 +2396,13 @@ async function test(name, fn) {
       accept_changes: preflightChanges > 0 ? preflightSignature : undefined
     }));
     assert.equal(again.duplicate, true, 'אותה בקשה בוצעה פעמיים');
+    // ⭐ C · אותו מזהה עם כוונה אחרת (חתימה/אישור שונים) — נדחה, לא מהדהד.
+    const reused = await caught(() => api.promoteToNew(req('commander', 'commander', {
+      request_id: 'cut_1', candidate_publication_id: preparedId,
+      expected_mode: 'shadow', expected_preflight_signature: 'another-report'
+    })));
+    assert.ok(reused, 'מזהה בקשה שימש לכוונה אחרת ועבר');
+    assert.equal(reused.code, 'cutover-request-reused');
     // ובקשה חדשה על אותו פרסום — הוא כבר פעיל.
     const error = await caught(() => api.promoteToNew(req('commander', 'commander', {
       request_id: 'cut_2', candidate_publication_id: preparedId,

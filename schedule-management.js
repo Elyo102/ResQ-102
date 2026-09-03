@@ -45,6 +45,7 @@ const state = {
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
   modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
+  pendingCutover: null,
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false,
@@ -722,11 +723,22 @@ function updateModeApply() {
    * — הוא דורש **פרסום מוכן**. בלי מועמד אין מה לאשר, והכפתור
    * אומר את זה במקום להיות פעיל ולהיכשל בשרת. */
   if (state.modeTarget === 'new') {
-    const candidate = state.modeView && state.modeView.candidate;
+    const candidate = usableCandidate();
+    const raw = state.modeView && state.modeView.candidate;
     $('modeApply').disabled = state.modeBusy || !candidate;
-    $('modeApply').textContent = candidate
-      ? 'בדוק ואשר מעבר לסידור המוכן'
-      : 'אין סידור מוכן — אחראי/ת סידור צריך/ה להכין אחד';
+    if (candidate) {
+      $('modeApply').textContent = state.pendingCutover
+        && state.pendingCutover.candidate_publication_id === candidate.publication_id
+        ? 'נסה שוב את המעבר שלא קיבל תשובה'
+        : 'בדוק ואשר מעבר לסידור המוכן';
+    } else if (raw && raw.ambiguous) {
+      /* ⭐ 378.4 · יותר מהכנה אחת — אין „מועמד", ואין publication_id
+       * לנחש. המסך אומר מה יש ומה לעשות; הוא אינו מציע כפתור. */
+      $('modeApply').textContent = 'יש ' + Number(raw.prepared_count || 0)
+        + ' סידורים מוכנים — צריך להישאר אחד לפני המעבר';
+    } else {
+      $('modeApply').textContent = 'אין סידור מוכן — אחראי/ת סידור צריך/ה להכין אחד';
+    }
     return;
   }
   const ready = !!state.modeTarget
@@ -757,69 +769,110 @@ async function loadModeOptions() {
  * שתי הסמכויות נפרדות בכוונה: מי שבונה את הסידור אינו מי שמחליט
  * שכל התחנה עוברת אליו.
  * ================================================================== */
-async function promoteToNew() {
+/* מועמד שאפשר לפעול עליו: אחד, עם מזהה. `ambiguous` אינו מועמד. */
+function usableCandidate() {
   const candidate = state.modeView && state.modeView.candidate;
+  if (!candidate || candidate.ambiguous === true) return null;
+  if (typeof candidate.publication_id !== 'string' || !candidate.publication_id) return null;
+  return candidate;
+}
+
+/* ⭐ 378.1 · ניסיון חוזר אחרי תשובה שאבדה. ה-commit אולי הצליח; המצב
+ * כבר `new`; preview חדש ייכשל — ולא יגיע ל-replay. לכן קודם שולחים
+ * **בדיוק** את מה שנשלח קודם (אותו request_id, אותה חתימה, אותו
+ * אישור); השרת מזהה חזרה ומחזיר `duplicate`. הכוונה נשמרת עד תשובה
+ * מאומתת, ונמחקת רק אז. */
+async function promotePending() {
+  const pending = state.pendingCutover;
+  const result = (await call.cutoverPromote(pending)).data;
+  state.pendingCutover = null;
+  state.cutoverRequestId = null;
+  return result;
+}
+
+function cutoverSuccessText(result) {
+  return 'התחנה עברה לסידור החדש (מהדורה ' + result.revision + ').'
+    + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '');
+}
+
+async function promoteToNew() {
+  const candidate = usableCandidate();
   if (state.modeBusy || !candidate) return;
   state.modeBusy = true;
   updateModeApply();
+  let result = null;
   try {
-    message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
-    const report = (await call.cutoverPreview({
-      candidate_publication_id: candidate.publication_id
-    })).data;
-    if (report.blocked) {
-      const why = Object.keys(report.by_reason || {})
-        .filter((key) => report.by_reason[key] > 0)
-        .map((key) => REASON_TEXT[key] || key)
-        .join(' · ');
-      message('modeMessage',
-        'המעבר נחסם: ' + (why || 'נמצאו פערים') + '. '
-        + 'יש לתקן ולבנות טיוטה חדשה לפני המעבר.', 'err');
-      return;
-    }
-    /* ⭐ שינויי שיבוץ אינם חוסמים — אבל המפקד רואה **כמה**, ועל
-     * פני כמה ימים, ומאשר אותם בנפרד. האישור נשלח כחתימת הדוח
-     * הזה בדיוק, ולכן אינו חל על דוח אחר. */
-    const changes = report.changes || { count: 0, days: [] };
-    const changed = Number(changes.count || 0);
-    let accept = null;
-    if (changed > 0) {
-      const days = (changes.days || []).length;
-      if (!confirm('הסידור החדש משנה ' + changed + ' שיבוצים לעומת הסידור הקיים'
-        + (days ? ', על פני ' + days + ' ימים' : '') + '.\n\n'
-        + 'אלה אינם חוסרים — אין יום שנשאר ריק ואין מי שאינו ברשימת הסגל. '
-        + 'זה סידור אחר.\n\nלהמשיך?')) return;
-      accept = report.signature;
-    }
-    if (!confirm('להעביר את התחנה לסידור המוכן? '
-      + 'מרגע האישור כל התחנה רואה את הסידור החדש, וההודעות שהמתינו נשלחות.')) return;
+    const pending = state.pendingCutover;
+    if (pending && pending.candidate_publication_id === candidate.publication_id) {
+      message('modeMessage', 'שולח שוב את המעבר שלא קיבל תשובה…', 'info');
+      result = await promotePending();
+    } else {
+      state.pendingCutover = null;
+      message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
+      const report = (await call.cutoverPreview({
+        candidate_publication_id: candidate.publication_id
+      })).data;
+      if (report.blocked) {
+        const why = Object.keys(report.by_reason || {})
+          .filter((key) => report.by_reason[key] > 0)
+          .map((key) => (REASON_TEXT[key] || key) + ' ' + report.by_reason[key])
+          .join(' · ');
+        message('modeMessage',
+          'המעבר נחסם: ' + (why || 'נמצאו פערים') + '. '
+          + 'יש לתקן ולבנות טיוטה חדשה לפני המעבר.', 'err');
+        return;
+      }
+      /* ⭐ שינויי שיבוץ אינם חוסמים — אבל המפקד רואה **כמה**, ועל
+       * פני כמה ימים, ומאשר אותם בנפרד. האישור נשלח כחתימת הדוח
+       * הזה בדיוק, ולכן אינו חל על דוח אחר. */
+      const changes = report.changes || { count: 0, days: [] };
+      const changed = Number(changes.count || 0);
+      const missing = Number((report.by_reason || {})['preflight-missing'] || 0);
+      let accept = null;
+      if (changed > 0) {
+        const days = (changes.days || []).length;
+        if (!confirm('הסידור החדש משנה ' + changed + ' שיבוצים לעומת הסידור הקיים'
+          + (days ? ', על פני ' + days + ' ימים' : '') + '.'
+          + (missing > 0 ? '\n\nאזהרה: ' + missing + ' שיבוצים של אנשים מהסידור הקיים אינם בסידור החדש '
+            + '(אין יום שנשאר ריק). זו אזהרה, לא חסימה — האישור נרשם על חתימת הדוח.' : '')
+          + '\n\nלהמשיך?')) return;
+        accept = report.signature;
+      }
+      if (!confirm('להעביר את התחנה לסידור המוכן? '
+        + 'מרגע האישור כל התחנה רואה את הסידור החדש, וההודעות שהמתינו נשלחות.')) return;
 
-    /* ⭐ אותו `request_id` נשמר לניסיון חוזר. אם הרשת נופלת אחרי
-     * שה-commit הצליח, ניסיון שני עם אותו מזהה מדווח `duplicate`
-     * במקום לנסות מעבר שני. */
-    if (!state.cutoverRequestId) state.cutoverRequestId = requestId('cutover');
-    const result = (await call.cutoverPromote({
-      request_id: state.cutoverRequestId,
-      candidate_publication_id: candidate.publication_id,
-      /* ⭐ החתימה של הדוח ש**הוצג בשורה שלמעלה**, ולא זו שהשרת
-       * ימצא על הדיסק ברגע האישור. בין שתי הנקודות האלה יכול לרוץ
-       * preview נוסף ולדרוס את הדוח — והמפקד היה מאשר מסמך שלא
-       * ראה. השרת משווה אותה בתוך העסקה. */
-      expected_preflight_signature: report.signature,
-      accept_changes: accept,
-      expected_mode: state.modeView.current
-    })).data;
-    state.cutoverRequestId = null;
-    message('modeMessage',
-      'התחנה עברה לסידור החדש (מהדורה ' + result.revision + ').'
-      + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : ''), 'ok');
-    await refreshAfterModeChange();
+      /* ⭐ אותו `request_id` נשמר לניסיון חוזר, יחד עם מלוא הכוונה. */
+      if (!state.cutoverRequestId) state.cutoverRequestId = requestId('cutover');
+      state.pendingCutover = {
+        request_id: state.cutoverRequestId,
+        candidate_publication_id: candidate.publication_id,
+        /* ⭐ החתימה של הדוח ש**הוצג בשורה שלמעלה**, ולא זו שהשרת
+         * ימצא על הדיסק ברגע האישור. השרת משווה אותה בתוך העסקה. */
+        expected_preflight_signature: report.signature,
+        accept_changes: accept,
+        expected_mode: state.modeView.current
+      };
+      result = await promotePending();
+    }
   } catch (error) {
-    /* ⭐ ה-commit עשוי היה להצליח ושחרור ההודעות להיכשל. לכן רענון
-     * מהשרת ולא הנחה שכלום לא קרה. */
-    message('modeMessage', 'המעבר נכשל. (' + (error.code || error.message) + ') '
+    /* ⭐ אין תשובה מאומתת — הכוונה נשארת ב-pendingCutover, והכפתור
+     * הבא שולח אותה שוב לפני כל preview. */
+    message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. (' + (error.code || error.message) + ') '
+      + (state.pendingCutover ? 'אפשר לנסות שוב — אותה בקשה, לא מעבר חדש. ' : '')
       + 'המצב נטען מחדש מהשרת.', 'err');
     try { await refreshAfterModeChange(); } catch (_) { /* הודעה כבר הוצגה */ }
+    state.modeBusy = false;
+    updateModeApply();
+    return;
+  }
+  /* ⭐ 378.2 · ההצלחה העסקית קודם. כשל ברענון אחרי commit אינו „המעבר
+   * נכשל" — הוא „המעבר הצליח, המסך לא התרענן". */
+  message('modeMessage', cutoverSuccessText(result), 'ok');
+  try {
+    await refreshAfterModeChange();
+  } catch (_) {
+    message('modeMessage', cutoverSuccessText(result)
+      + ' מצב המסך לא התרענן; יש לרענן את הדף לפני פעולה נוספת.', 'warn');
   } finally {
     state.modeBusy = false;
     updateModeApply();
@@ -1815,6 +1868,9 @@ async function publishDraft() {
       state.status = (await call.status({})).data;
       setMode(state.status); setRollbackAvailability();
       await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+      // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
+      // רואה אותו מיד, בלי לרענן את הדף.
+      if (preparing && state.modeView && state.modeView.may_change === true) await loadModeOptions();
     } catch (_) {
       // The write already succeeded. Never invite a second write by presenting
       // a refresh failure as a failed prepare/publish operation.
