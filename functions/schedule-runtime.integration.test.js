@@ -1629,6 +1629,10 @@ async function test(name, fn) {
     outbox.docs.forEach((doc) =>
       assert.notEqual((doc.data() || {}).status, 'blocked',
         'הודעה נשארה חסומה אחרי מעבר מוצלח'));
+    const firstDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+    const firstEvent = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-03' }));
+    assert.ok(firstDay.pending_answers + firstEvent.pending_answers >= 2,
+      'The initial publication must request answers to new assignments and events');
   });
 
   await test('the same draft request is idempotent', async () => {
@@ -1739,9 +1743,58 @@ async function test(name, fn) {
     }));
   });
 
+  await test('publishing an unchanged active schedule creates no new notifications', async () => {
+    const before = (await activePointer().get()).data();
+    const result = await api.publish(req('manager', 'commander', {
+      draft_id: draftId, expected_content_digest: previewDigest,
+      request_id: 'publish_unchanged'
+    }));
+    assert.equal(result.revision, before.revision + 1);
+    assert.equal(result.notified_people, 0);
+    const publicationRef = station().collection('schedule_publications').doc(result.publication_id);
+    assert.equal((await publicationRef.get()).data().content_digest, before.content_digest);
+    assert.equal((await publicationRef.collection('schedule_outbox').get()).size, 0);
+    const unchangedDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
+    const unchangedEvent = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-03' }));
+    assert.equal(unchangedDay.pending_answers + unchangedEvent.pending_answers, 0,
+      'An unchanged publication must not create another answer request');
+  });
+
   let publicationId;
   let firstNewRevision = 0;
   await test('new mode activates one complete publication and only then queues pushes', async () => {
+    // The preceding cutover already activated draft_one. Build a real change,
+    // rather than expecting another notification for the identical schedule.
+    const previousPointer = (await activePointer().get()).data();
+    const previousRows = await station().collection('schedule_publications')
+      .doc(previousPointer.publication_id).collection('rows')
+      .where('date', '==', '2026-09-02').get();
+    const previousRow = previousRows.docs.map((doc) => (doc.data() || {}).row)
+      .find((row) => row && row.sub_station === 'main');
+    assert.ok(previousRow);
+    const previousSlot = previousRow.slots.find((slot) => slot.role === 'firefighter');
+    assert.ok(previousSlot && previousSlot.person);
+    const replacement = previousSlot.person === 'viewer' ? 'fighter2' : 'viewer';
+    const changed = await api.runPlanner(req('manager', 'commander', {
+      request_id: 'draft_notification_change', start: '2026-09-01', months: 1,
+      overrides: plannerOverrides.concat([
+        { date: '2026-09-02', sub_station: 'main', person: replacement, role: 'firefighter' }
+      ])
+    }));
+    const changedRows = await station().collection('schedule_drafts')
+      .doc(changed.draft_id).collection('rows').where('date', '==', '2026-09-02').get();
+    const changedRow = changedRows.docs.map((doc) => (doc.data() || {}).row)
+      .find((row) => row && row.sub_station === 'main');
+    assert.ok(changedRow);
+    const changedSlot = changedRow.slots.find((slot) => slot.role === 'firefighter');
+    assert.equal(changedSlot.person, replacement);
+    assert.notEqual(changedSlot.person, previousSlot.person);
+    const changedPreview = await api.getDraftPreview(req('manager', 'commander', {
+      draft_id: changed.draft_id, start: '2026-09-01'
+    }));
+    assert.notEqual(changedPreview.expected_content_digest, previousPointer.content_digest);
+    draftId = changed.draft_id;
+    previewDigest = changedPreview.expected_content_digest;
     await assert.rejects(api.publish(req('manager', 'commander', {
       draft_id: draftId, request_id: 'publish_without_preview'
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'draft-preview-required');
@@ -1836,7 +1889,6 @@ async function test(name, fn) {
     assert.ok(mine.days.length > 0);
     const eventDay = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-03' }));
     assert.equal(eventDay.events.length, 1);
-    assert.ok(mine.pending_answers + eventDay.pending_answers >= 2);
     assignedDate = mine.days[0].date;
     const station = await api.getStation(req('viewer', 'firefighter', { date: assignedDate }));
     assert.equal(station.active, true);
@@ -2483,8 +2535,8 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 67);
-  console.log('\n67 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 68);
+  console.log('\n68 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

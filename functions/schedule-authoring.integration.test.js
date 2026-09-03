@@ -412,6 +412,8 @@ async function seed() {
 
 /* מזהה הפרסום המוכן, מהבדיקה שיוצרת אותו לבדיקות שצורכות אותו. */
 let preparedId = null;
+let preparedDraftId = null;
+let preparedDigest = null;
 let preflightSignature = null;
 let preflightChanges = 0;
 
@@ -2303,7 +2305,9 @@ async function test(name, fn) {
     })));
     try {
       // שורה שפגה.
-      await first.ref.set({ expires_at: new Date(Date.now() - 60000) }, { merge: true });
+      const expiredAt = new Date(Date.parse(CLOCK()) - 60000);
+      assert.ok(Number.isFinite(expiredAt.getTime()) && expiredAt.getTime() < Date.parse(CLOCK()));
+      await first.ref.set({ expires_at: expiredAt }, { merge: true });
       const expired = await promote('cut_outbox_expired');
       assert.ok(expired, 'תור שפג הופעל');
       assert.equal(expired.code, 'cutover-outbox-expired');
