@@ -93,19 +93,27 @@ function globToRegExp(pattern) {
   return new RegExp('^' + out + '$');
 }
 
-/* הכלל התואם האחרון מנצח — זו הסמנטיקה של Hosting, וזה בדיוק מה
- * שנמדד ב-Production. */
+/* כל הכללים התואמים מוחלים לפי הסדר; עבור אותו מפתח, הערך המאוחר
+ * דורס את המוקדם. זו הסמנטיקה של Hosting וזה מה שנמדד ב-Production. */
 function resolveHeader(rules, path, key) {
   let value = null;
   let winner = null;
   for (const rule of rules) {
-    if (typeof rule.source !== 'string') continue;   // הערות בעברית
+    if (!rule || typeof rule.source !== 'string') {
+      throw new Error('כלל כותרת ללא source נתמך; regex/glob דורשים תמיכה מפורשת');
+    }
     if (!globToRegExp(rule.source).test(path)) continue;
     for (const h of rule.headers || []) {
       if (h.key.toLowerCase() === key.toLowerCase()) { value = h.value; winner = rule.source; }
     }
   }
   return { value, winner };
+}
+
+function hasDirective(value, directive) {
+  if (typeof value !== 'string') return false;
+  const wanted = String(directive).trim().toLowerCase();
+  return value.split(',').map((part) => part.trim().toLowerCase()).includes(wanted);
 }
 
 /* ==================================================================
@@ -129,6 +137,17 @@ let threw = false;
 try { globToRegExp('!(x).js'); } catch { threw = true; }
 ok('2.7 ⭐ תבנית שאיני מבין מפילה ולא נחשבת „לא מתאימה"', threw);
 
+let unsupportedHeaderRuleThrew = false;
+try {
+  resolveHeader([{ regex: '.*', headers: [{ key: 'Cache-Control', value: 'no-cache' }] }],
+    '/firebase-messaging-sw.js', 'Cache-Control');
+} catch { unsupportedHeaderRuleThrew = true; }
+ok('2.8 ⭐ כלל כותרת ללא source נתמך מפיל במקום להיעלם', unsupportedHeaderRuleThrew);
+
+ok('2.9 הוראות Cache-Control נבדקות כאסימונים שלמים',
+  hasDirective('no-cache, no-store, must-revalidate', 'no-store') &&
+  !hasDirective('no-cache, x-no-store, must-revalidate', 'no-store'));
+
 /* ==================================================================
  * 3 · המצב בפועל בקובץ
  * ================================================================== */
@@ -142,14 +161,14 @@ const eff = (p) => resolveHeader(rules || [], p, CC);
 
 const worker = eff('/firebase-messaging-sw.js');
 ok('3.1 ⭐ ה-Service Worker מקבל no-store בפועל',
-  !!worker.value && /no-store/.test(worker.value),
+  hasDirective(worker.value, 'no-store'),
   'הכלל שמנצח הוא „' + worker.winner + '" ונותן „' + worker.value + '"');
 ok('3.2 ומקבל גם must-revalidate',
-  !!worker.value && /must-revalidate/.test(worker.value));
+  hasDirective(worker.value, 'must-revalidate'));
 
 const ver = eff('/version.json');
 ok('3.3 version.json מקבל no-store בפועל',
-  !!ver.value && /no-store/.test(ver.value),
+  hasDirective(ver.value, 'no-store'),
   'הכלל שמנצח הוא „' + ver.winner + '"');
 
 /* והכלל הכללי לא נהרס תוך כדי: JS רגיל שומר על המדיניות שלו. */
@@ -159,7 +178,7 @@ for (const p of ['/index.html', '/schedule-management.html', '/schedule-manageme
   ok('3.4 ' + p + ' נשאר no-cache', r.value === 'no-cache',
     'קיבל „' + r.value + '" מהכלל „' + r.winner + '"');
   ok('3.5 ' + p + ' אינו מקבל no-store',
-    !!r.value && !/no-store/.test(r.value),
+    !!r.value && !hasDirective(r.value, 'no-store'),
     'קובץ רגיל שאינו נשמר במטמון כלל הוא נטל רשת מיותר');
 }
 
