@@ -671,6 +671,17 @@ function renderModeCard() {
     });
     box.appendChild(button);
   });
+  /* ⭐ 386.3 · בקשת מעבר שלא קיבלה תשובה מוצגת כאן תמיד — גם כשהשרת
+   * כבר אינו מציע `new` (כי הוא שם), וגם כשאין מועמד. הכפתור שולח
+   * את **אותה** בקשה; הוא לעולם אינו מתחיל מעבר חדש. */
+  if (state.pendingCutover && !(view.targets || []).some((target) => target && target.to === 'new')) {
+    const retry = node('button', 'pill retry', 'נסה שוב את המעבר שלא קיבל תשובה');
+    retry.type = 'button';
+    retry.id = 'cutoverRetry';
+    retry.disabled = state.modeBusy;
+    retry.addEventListener('click', () => { promoteToNew(); });
+    box.appendChild(retry);
+  }
 
   // מה חסר נאמר, ולא מוסתר מאחורי כפתור מעומעם.
   if (view.ready === false && (view.readiness || null)) {
@@ -719,18 +730,22 @@ function renderModeCard() {
 }
 
 function updateModeApply() {
+  const retry = document.getElementById('cutoverRetry');
+  if (retry) retry.disabled = state.modeBusy;
   /* ⭐ מעבר ל-`new` אינו החלפת מצב ולכן אינו דורש הקלדת אישור וסיבה
    * — הוא דורש **פרסום מוכן**. בלי מועמד אין מה לאשר, והכפתור
    * אומר את זה במקום להיות פעיל ולהיכשל בשרת. */
   if (state.modeTarget === 'new') {
     const candidate = usableCandidate();
     const raw = state.modeView && state.modeView.candidate;
-    $('modeApply').disabled = state.modeBusy || !candidate;
-    if (candidate) {
-      $('modeApply').textContent = state.pendingCutover
-        && state.pendingCutover.candidate_publication_id === candidate.publication_id
-        ? 'נסה שוב את המעבר שלא קיבל תשובה'
-        : 'בדוק ואשר מעבר לסידור המוכן';
+    const pending = state.pendingCutover;
+    $('modeApply').disabled = state.modeBusy || (!candidate && !pending);
+    if (pending) {
+      /* ⭐ 386.3 · הניסיון החוזר מוצג גם כשהמועמד כבר אינו „מוכן" —
+       * למשל אחרי commit שהתשובה שלו אבדה. */
+      $('modeApply').textContent = 'נסה שוב את המעבר שלא קיבל תשובה';
+    } else if (candidate) {
+      $('modeApply').textContent = 'בדוק ואשר מעבר לסידור המוכן';
     } else if (raw && raw.ambiguous) {
       /* ⭐ 378.4 · יותר מהכנה אחת — אין „מועמד", ואין publication_id
        * לנחש. המסך אומר מה יש ומה לעשות; הוא אינו מציע כפתור. */
@@ -782,9 +797,24 @@ function usableCandidate() {
  * **בדיוק** את מה שנשלח קודם (אותו request_id, אותה חתימה, אותו
  * אישור); השרת מזהה חזרה ומחזיר `duplicate`. הכוונה נשמרת עד תשובה
  * מאומתת, ונמחקת רק אז. */
+/* ⭐ 386.2 · תשובה פגומה אינה „הצלחה". הבקשה נמחקת רק כשהשרת החזיר
+ * את מה שחוזה ההצלחה מבטיח — ועל **אותו** פרסום שביקשנו. */
+function verifiedCutoverResult(pending, raw) {
+  const result = raw && typeof raw === 'object' ? raw : null;
+  if (!result || result.mode !== 'new'
+      || result.publication_id !== pending.candidate_publication_id
+      || !Number.isInteger(result.revision) || result.revision < 1
+      || typeof result.duplicate !== 'boolean') {
+    const error = new Error('השרת החזיר תשובה שאינה תואמת לבקשת המעבר. הבקשה נשמרה לניסיון חוזר.');
+    error.code = 'cutover-response-invalid';
+    throw error;
+  }
+  return result;
+}
+
 async function promotePending() {
   const pending = state.pendingCutover;
-  const result = (await call.cutoverPromote(pending)).data;
+  const result = verifiedCutoverResult(pending, (await call.cutoverPromote(pending)).data);
   state.pendingCutover = null;
   state.cutoverRequestId = null;
   return result;
@@ -796,18 +826,20 @@ function cutoverSuccessText(result) {
 }
 
 async function promoteToNew() {
+  if (state.modeBusy) return;
+  const pending = state.pendingCutover;
   const candidate = usableCandidate();
-  if (state.modeBusy || !candidate) return;
+  /* ⭐ 386.3 · בקשה ממתינה קודמת למועמד: אחרי commit אמיתי הרענון
+   * מחזיר `new` בלי מועמד מוכן — והניסיון החוזר חייב להישאר נגיש. */
+  if (!pending && !candidate) return;
   state.modeBusy = true;
   updateModeApply();
   let result = null;
   try {
-    const pending = state.pendingCutover;
-    if (pending && pending.candidate_publication_id === candidate.publication_id) {
+    if (pending) {
       message('modeMessage', 'שולח שוב את המעבר שלא קיבל תשובה…', 'info');
       result = await promotePending();
     } else {
-      state.pendingCutover = null;
       message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
       const report = (await call.cutoverPreview({
         candidate_publication_id: candidate.publication_id
@@ -861,9 +893,14 @@ async function promoteToNew() {
       + (state.pendingCutover ? 'אפשר לנסות שוב — אותה בקשה, לא מעבר חדש. ' : '')
       + 'המצב נטען מחדש מהשרת.', 'err');
     try { await refreshAfterModeChange(); } catch (_) { /* הודעה כבר הוצגה */ }
-    state.modeBusy = false;
-    updateModeApply();
     return;
+  } finally {
+    /* ⭐ 386.1 · כל יציאה — דוח חסום, ביטול באחד משני האישורים, כשל —
+     * משחררת את המסך. הרענון של ההצלחה רץ מחוץ ל-try הזה. */
+    if (result === null) {
+      state.modeBusy = false;
+      updateModeApply();
+    }
   }
   /* ⭐ 378.2 · ההצלחה העסקית קודם. כשל ברענון אחרי commit אינו „המעבר
    * נכשל" — הוא „המעבר הצליח, המסך לא התרענן". */

@@ -1740,15 +1740,22 @@ async function test(name, fn) {
   });
 
   let publicationId;
+  let firstNewRevision = 0;
   await test('new mode activates one complete publication and only then queues pushes', async () => {
     await assert.rejects(api.publish(req('manager', 'commander', {
       draft_id: draftId, request_id: 'publish_without_preview'
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'draft-preview-required');
+    /* המהדורה נגזרת מהמצביע החי: תרחיש המעבר שלפני זה כבר הפעיל
+     * פרסום (מהדורה 1), ולכן זו המהדורה הבאה — לא מספר קבוע. */
+    const pointerBefore = await activePointer().get();
+    const revisionBefore = pointerBefore.exists ? Number((pointerBefore.data() || {}).revision || 0) : 0;
     const result = await api.publish(req('manager', 'commander', {
       draft_id: draftId, expected_content_digest: previewDigest, request_id: 'publish_one'
     }));
     publicationId = result.publication_id;
-    assert.equal(result.revision, 1);
+    assert.equal(result.revision, revisionBefore + 1);
+    assert.ok(result.revision >= 2, 'המעבר שלפני התרחיש הזה לא הפעיל פרסום');
+    firstNewRevision = result.revision;
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     assert.equal(active.publication_id, publicationId);
     const pub = (await db.doc('stations/' + SID + '/schedule_publications/' + publicationId).get()).data();
@@ -1883,7 +1890,7 @@ async function test(name, fn) {
       request_id: 'publish_two'
     }));
     secondPublicationId = second.publication_id;
-    assert.equal(second.revision, 2);
+    assert.equal(second.revision, firstNewRevision + 1);
 
     const targetPerson = db.doc('stations/' + SID + '/schedule_publications/'
       + publicationId + '/people/viewer');
@@ -1899,7 +1906,7 @@ async function test(name, fn) {
       request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
       target_publication_id: publicationId, reason_code: 'wrong_assignment'
     }));
-    assert.equal(rolled.revision, 3);
+    assert.equal(rolled.revision, firstNewRevision + 2);
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     assert.equal(active.publication_id, rolled.publication_id);
     assert.equal(active.previous_publication_id, secondPublicationId);

@@ -1168,6 +1168,100 @@ try {
   });
   await cutoverCtx.close();
 
+  /* ⭐ 386.1 · דוח חסום וביטול באישור משחררים את המסך; לחיצה נוספת
+   * מבצעת preview נוסף — לא נתקעת על modeBusy. */
+  const blockedCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(blockedCtx, 'commander', {
+    getScheduleRuntimeStatus:[{ data:{ mode:'shadow', configured:true, manager:false, active:null } }],
+    getScheduleModeOptions:[{ data:cutoverModeView }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }],
+    previewScheduleCutover:[
+      { data:Object.assign({}, cutoverReport, { signature:'sig_blocked', blocked:true, by_reason:{ 'preflight-empty-day':1 } }) },
+      { data:cutoverReport },
+      { data:cutoverReport }
+    ]
+  });
+  const blockedPage = await blockedCtx.newPage();
+  let dismissNext = 0;
+  blockedPage.on('dialog', (dialog) => { if (dismissNext > 0) { dismissNext -= 1; dialog.dismiss(); } else dialog.accept(); });
+  await blockedPage.goto(base, { waitUntil:'load' });
+  await blockedPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a blocked report or a cancelled confirmation releases the screen for another attempt', async () => {
+    await blockedPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    await blockedPage.locator('#modeForm:not([hidden])').waitFor();
+    await blockedPage.locator('#modeApply').click();
+    await blockedPage.locator('#modeMessage .err').waitFor();
+    assert.match(await blockedPage.locator('#modeMessage').textContent(), /המעבר נחסם/);
+    assert.equal(await blockedPage.locator('#modeApply').isEnabled(), true, 'דוח חסום השאיר את המסך תפוס');
+    // ביטול באישור הראשון (שינויים) — משחרר.
+    dismissNext = 1;
+    await blockedPage.locator('#modeApply').click();
+    await blockedPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'previewScheduleCutover').length === 2);
+    await blockedPage.waitForFunction(() => !document.getElementById('modeApply').disabled);
+    // ביטול באישור השני (הסופי) — משחרר.
+    dismissNext = 0;
+    let armed = false;
+    blockedPage.removeAllListeners('dialog');
+    blockedPage.on('dialog', (dialog) => { if (armed) dialog.dismiss(); else { armed = true; dialog.accept(); } });
+    await blockedPage.locator('#modeApply').click();
+    await blockedPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'previewScheduleCutover').length === 3);
+    await blockedPage.waitForFunction(() => !document.getElementById('modeApply').disabled);
+    const calls = await blockedPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'promoteScheduleToNew').length, 0);
+  });
+  await blockedCtx.close();
+
+  /* ⭐ 386.2 + 386.3 · תשובה פגומה אינה מוחקת את הבקשה; ואחרי commit
+   * אמיתי שהתשובה שלו אבדה, הרענון מחזיר `new` בלי מועמד — והניסיון
+   * החוזר עדיין נגיש ושולח את אותה בקשה. */
+  const lostCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  const newModeView = { may_change:true, current:'new', ready:true,
+    targets:[{ to:'shadow', kind:'demote', label:'בדיקה', available:true, blocked_by:null },
+      { to:'off', kind:'disable', label:'כבוי', available:true, blocked_by:null }],
+    readiness:{ policy:true, source:true, people:44, problems:[] }, candidate:null };
+  await prepare(lostCtx, 'commander', {
+    getScheduleRuntimeStatus:[
+      { data:{ mode:'shadow', configured:true, manager:false, active:null } },
+      { data:{ mode:'new', configured:true, manager:false, active:{ publication_id:'p_ready', revision:1 } } },
+      { data:{ mode:'new', configured:true, manager:false, active:{ publication_id:'p_ready', revision:1 } } }
+    ],
+    getScheduleModeOptions:[{ data:cutoverModeView }, { data:newModeView }, { data:newModeView }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('new') }, { data:legacyRange('new') }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }, { data:mine }],
+    previewScheduleCutover:[{ data:cutoverReport }],
+    promoteScheduleToNew:[
+      { data:{} },                                                            // תשובה פגומה
+      { data:{ duplicate:true, mode:'new', publication_id:'p_ready', revision:1, preflight_signature:'sig_ready_1' } }
+    ]
+  });
+  const lostPage = await lostCtx.newPage();
+  lostPage.on('dialog', (dialog) => dialog.accept());
+  await lostPage.goto(base, { waitUntil:'load' });
+  await lostPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a malformed response keeps the request, and the retry survives the switch to new without a candidate', async () => {
+    await lostPage.locator('#modeTargets .pill', { hasText: 'פעיל' }).click();
+    await lostPage.locator('#modeForm:not([hidden])').waitFor();
+    await lostPage.locator('#modeApply').click();
+    await lostPage.locator('#modeMessage .err').waitFor();
+    assert.match(await lostPage.locator('#modeMessage').textContent(), /cutover-response-invalid/);
+    assert.match(await lostPage.locator('#modeMessage').textContent(), /אותה בקשה, לא מעבר חדש/);
+    // הרענון החזיר new בלי מועמד ובלי יעד `new` — ובכל זאת יש דרך לנסות שוב.
+    await lostPage.locator('#cutoverRetry').waitFor();
+    assert.equal(await lostPage.locator('#modeTargets .pill', { hasText: 'העבר לפעיל' }).count(), 0);
+    await lostPage.locator('#cutoverRetry').click();
+    await lostPage.locator('#modeMessage .ok, #modeMessage .warn').waitFor();
+    const calls = await lostPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const promotes = calls.filter((entry) => entry.name === 'promoteScheduleToNew');
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleCutover').length, 1, 'ניסיון חוזר ביצע preview');
+    assert.equal(promotes.length, 2);
+    assert.deepEqual(promotes[1].payload, promotes[0].payload, 'הניסיון החוזר אינו אותה בקשה');
+    assert.match(await lostPage.locator('#modeMessage').textContent(), /התחנה עברה לסידור החדש/);
+    assert.equal(await lostPage.locator('#cutoverRetry').count(), 0, 'הבקשה לא נמחקה אחרי תשובה מאומתת');
+  });
+  await lostCtx.close();
+
   /* ⭐ 378.4 · שתי הכנות — אין מועמד. הכפתור נעול ואומר למה; אין
    * publication_id undefined בשום קריאה. */
   const ambiguousCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
@@ -1214,5 +1308,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 31);
-console.log('\n31 schedule management browser checks passed.');
+assert.equal(passed, 33);
+console.log('\n33 schedule management browser checks passed.');

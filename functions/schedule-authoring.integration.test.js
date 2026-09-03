@@ -1638,11 +1638,14 @@ async function test(name, fn) {
     assert.equal(error.httpCode, 'aborted');
   });
 
-  await test('commander, deputy and super cannot activate new even when ready', async () => {
+  await test('the generic switch offers new to command, and refuses to perform it', async () => {
+    /* ⭐ שונה עם הכרעת אלדד: האפשרות `new` **מוצעת** למורשה — היא בנויה
+     * ומוצגת — אבל המתג הכללי לעולם אינו מבצע אותה. המסלול היחיד הוא
+     * המעבר החתום. */
     const options = await api.getModeOptions(req('commander', 'commander', {}));
-    assert.equal(options.ready, true, 'הפיקסצ׳ר אינו מוכן ולכן אינו מוכיח containment');
-    assert.deepEqual(options.targets.map((target) => target.to), ['off'],
-      'שרת האפשרויות עדיין מציע new ב-shadow');
+    assert.equal(options.ready, true, 'הפיקסצ׳ר אינו מוכן ולכן אינו מוכיח את השער');
+    assert.deepEqual(options.targets.map((target) => target.to).sort(), ['new', 'off'],
+      'שרת האפשרויות אינו מציע new למורשה ב-shadow');
     const actors = [
       { uid: 'commander', role: 'commander', api, requestId: 'mode_new_commander' },
       { uid: 'deputy', role: 'deputy', api, requestId: 'mode_new_deputy' },
