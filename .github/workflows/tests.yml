@@ -110,3 +110,8 @@ jobs:
 
       - name: מנוע סידור חודשי מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-runtime.integration.test.js"
+
+      # ⭐ נתיבי הכתיבה החדשים של 42G — מדיניות, מקור, מצב ומעבר —
+      # מול Firestore אמיתי. עד לכאן הם נבדקו מול double בלבד.
+      - name: כתיבת חוקי תחנה, מקור ומעבר לחי מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-authoring.integration.test.js"
