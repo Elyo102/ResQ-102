@@ -1892,6 +1892,13 @@ function createScheduleRuntime(deps) {
       // Firestore פשוט לא ירשה אחרת.
       const opSnap = await tx.get(opRef);
       const runtimeSnap = await tx.get(runtimeRef(ctx.sid));
+      /* ⭐ P1-2. המינוי נקרא **חי, כאן**, ולא רק מהטוקן בתחילת
+       * הבקשה. `requireManager(ctx)` בודק את מה שהיה נכון כשהטוקן
+       * הונפק; מי שהמינוי שלו הוסר בין הלחיצה לבין ה-commit היה
+       * ממשיך לכתוב. `saveSource` כבר עשה את זה — כאן זה היה חסר. */
+      const liveUserSnap = await tx.get(liveUserRef(ctx.sid, ctx.uid));
+      const liveAccessSnap = await tx.get(scheduleAccessRef(ctx.sid, ctx.uid));
+      requireLiveManager(liveUserSnap, liveAccessSnap, ctx);
       const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
       const activeId = nonEmpty(runtimeData.active_policy_id)
         ? runtimeData.active_policy_id : null;
@@ -2102,9 +2109,17 @@ function createScheduleRuntime(deps) {
 
     const before = await configuration(ctx.sid);
 
-    // הגנה מדריסה נבדקת לפני הכול: המצב שנמסר הוא מה שהאדם ראה
-    // במסך, וגם „כבר במצב שביקשת" הוא תשובה שונה כשהמסך היה ישן.
-    if (nonEmpty(data.expected_mode) && data.expected_mode !== before.mode) {
+    /* הגנה מדריסה נבדקת לפני הכול: המצב שנמסר הוא מה שהאדם ראה
+     * במסך, וגם „כבר במצב שביקשת" הוא תשובה שונה כשהמסך היה ישן.
+     *
+     * ⭐ P1-2. השדה **חובה**. קודם הוא נבדק רק אם נמסר, כלומר
+     * לקוח שהשמיט אותו קיבל דריסה עיוורת של מצב המנוע — בדיוק
+     * ההגנה שהשדה קיים בשבילה, מנוטרלת בהשמטה. */
+    if (!nonEmpty(data.expected_mode)) {
+      throw new ScheduleRuntimeError('mode-expected-required',
+        'יש למסור את מצב המנוע שהמסך ראה.', 'invalid-argument');
+    }
+    if (data.expected_mode !== before.mode) {
       throw new ScheduleRuntimeError('mode-conflict',
         'מצב המנוע השתנה מאז שהמסך נטען. הוא כעת „' + before.mode + '". '
         + 'יש לרענן ולבדוק מה השתנה.', 'aborted');
@@ -2136,6 +2151,14 @@ function createScheduleRuntime(deps) {
     return await db.runTransaction(async (tx) => {
       const opSnap = await tx.get(opRef);
       const runtimeSnap = await tx.get(runtimeRef(ctx.sid));
+      /* ⭐ P1-2. הזהות נקראת חיה כאן. מפקד שהוסר מהתחנה בין טעינת
+       * המסך לבין הלחיצה אינו מזיז את מצב המנוע של התחנה. */
+      const liveUserSnap = await tx.get(liveUserRef(ctx.sid, ctx.uid));
+      const liveUser = liveUserSnap.exists ? (liveUserSnap.data() || {}) : {};
+      if (!scheduleAccess.activeMember(liveUser, ctx.sid)) {
+        throw new ScheduleRuntimeError('mode-actor-inactive',
+          'המשתמש אינו פעיל בתחנה הזאת.', 'permission-denied');
+      }
       const runtimeData = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
       const liveMode = MODES.indexOf(runtimeData.mode) !== -1 ? runtimeData.mode : MODE.OFF;
 

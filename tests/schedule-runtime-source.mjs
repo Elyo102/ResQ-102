@@ -1058,5 +1058,36 @@ check('the closing transaction re-reads the operation and the live policy', () =
     'חוקי התחנה אינם נבדקים שוב בתוך הטרנזקציה');
 });
 
-assert.equal(passed, 87);
-console.log('\n87 schedule runtime source checks passed.');
+/* ⭐ P1-2 · הרשאה נקראת חיה ברגע הכתיבה, לא מהטוקן בתחילת הבקשה. */
+check('savePolicy and setRuntimeMode re-read live identity inside the transaction', () => {
+  const src = read('functions/schedule-runtime.js');
+  const policyAt = src.indexOf('async function savePolicy(');
+  const policyTx = src.indexOf('db.runTransaction', policyAt);
+  const policyBody = src.slice(policyTx, policyTx + 2500);
+  assert.ok(policyBody.indexOf('requireLiveManager(') > -1,
+    'savePolicy אינו קורא את המינוי החי בתוך הטרנזקציה');
+  assert.ok(policyBody.indexOf('tx.get(liveUserRef(') > -1,
+    'savePolicy אינו קורא את המשתמש החי בתוך הטרנזקציה');
+
+  const modeAt = src.indexOf('async function setRuntimeMode(');
+  const modeTx = src.indexOf('db.runTransaction', modeAt);
+  const modeBody = src.slice(modeTx, modeTx + 2500);
+  assert.ok(modeBody.indexOf('tx.get(liveUserRef(') > -1,
+    'setRuntimeMode אינו קורא את המשתמש החי בתוך הטרנזקציה');
+  assert.ok(modeBody.indexOf("'mode-actor-inactive'") > -1,
+    'setRuntimeMode אינו חוסם משתמש שאינו פעיל');
+});
+
+check('expected_mode is mandatory, not merely honoured when present', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function setRuntimeMode(');
+  const body = src.slice(at, at + 4000);
+  assert.ok(body.indexOf("'mode-expected-required'") > -1,
+    'אפשר להשמיט expected_mode ולקבל דריסה עיוורת');
+  // ⭐ והצורה שהייתה הבאג: בדיקה רק אם השדה נמסר.
+  assert.ok(!/if \(nonEmpty\(data\.expected_mode\) && data\.expected_mode !== before\.mode\)/
+    .test(body), 'expected_mode נבדק רק כשהוא נמסר');
+});
+
+assert.equal(passed, 89);
+console.log('\n89 schedule runtime source checks passed.');
