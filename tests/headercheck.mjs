@@ -36,6 +36,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
+/* ⭐ מתרגם אחד, במקום אחד. שני מימושים של אותה סמנטיקה הם שתי
+ * מראות שיסטו זו מזו, ואז אחת מהן תיתן ביטחון שווא. */
+import { globToRegExp } from './lib/hosting-glob.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 
@@ -47,51 +51,8 @@ function ok(name, cond, detail) {
 }
 
 /* ==================================================================
- * 1 · מנוע ההתאמה
- *
- * ⭐ הכלל החשוב כאן הוא מה קורה כשאני **לא מבין** תבנית. תבנית
- * שהמנוע לא יודע לתרגם חייבת להפיל את הבדיקה, לא להיחשב „לא
- * מתאימה" — אחרת מישהו יוסיף `!(...)` והשער ייפתח בשקט.
+ * 1 · פתרון הכלל המנצח
  * ================================================================== */
-
-function globToRegExp(pattern) {
-  let out = '';
-  let i = 0;
-  while (i < pattern.length) {
-    const ch = pattern[i];
-
-    // ‎@(a|b|c) — בדיוק אחד מהם.
-    if (ch === '@' && pattern[i + 1] === '(') {
-      const close = pattern.indexOf(')', i + 2);
-      if (close === -1) throw new Error('סוגר חסר ב-@( בתבנית: ' + pattern);
-      const alts = pattern.slice(i + 2, close).split('|');
-      out += '(?:' + alts.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')';
-      i = close + 1;
-      continue;
-    }
-
-    // extglob שאיני מממש. לא לנחש.
-    if ('!*+?'.includes(ch) && pattern[i + 1] === '(') {
-      throw new Error('תבנית extglob שאינה נתמכת (' + ch + '(): ' + pattern);
-    }
-
-    if (ch === '*' && pattern[i + 1] === '*') {
-      if (pattern[i + 2] === '/') { out += '(?:.*/)?'; i += 3; }
-      else { out += '.*'; i += 2; }
-      continue;
-    }
-    if (ch === '*') { out += '[^/]*'; i += 1; continue; }
-    if (ch === '?') { out += '[^/]'; i += 1; continue; }
-
-    if ('[]{}'.includes(ch)) {
-      throw new Error('תבנית עם ' + ch + ' שאינה נתמכת: ' + pattern);
-    }
-
-    out += ch.replace(/[.+^${}()|\\]/g, '\\$&');
-    i += 1;
-  }
-  return new RegExp('^' + out + '$');
-}
 
 /* כל הכללים התואמים מוחלים לפי הסדר; עבור אותו מפתח, הערך המאוחר
  * דורס את המוקדם. זו הסמנטיקה של Hosting וזה מה שנמדד ב-Production. */
