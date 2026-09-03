@@ -320,6 +320,16 @@
       "indexes": []
     },
     {
+      "collectionGroup": "schedule_sources",
+      "fieldPath": "expires_at",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
       "collectionGroup": "guard_notification_jobs",
       "fieldPath": "status",
       "indexes": [
@@ -343,12 +353,6 @@
     {
       "collectionGroup": "guards",
       "fieldPath": "assignment_epochs",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "schedule_sources",
-      "fieldPath": "expires_at",
-      "ttl": true,
       "indexes": []
     }
   ]

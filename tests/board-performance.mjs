@@ -51,6 +51,14 @@ async function scenario(options = {}) {
   await context.route('**://fonts.googleapis.com/**', route =>
     route.fulfill({ status:200, contentType:'text/css', body:'' }));
   await context.addInitScript(({ lag, failPaths, role }) => {
+    // This benchmark models a cold page before any user gesture. Headless
+    // Chromium on Windows can otherwise report synthetic activation and let
+    // the callout listener synchronously open an audio device, measuring the
+    // host audio stack instead of the board's data-request topology.
+    Object.defineProperty(navigator, 'userActivation', {
+      configurable: true,
+      value: Object.freeze({ hasBeenActive:false, isActive:false })
+    });
     window.__SMOKE_ROLE = role;
     window.__SMOKE_LAG = lag;
     window.__SMOKE_FAIL_PATHS = failPaths;
@@ -82,6 +90,9 @@ async function scenario(options = {}) {
     interactiveMs: Date.now() - window.__PERF_STARTED,
     dataRequests: window.__N || 0,
     dataSpanMs: (window.__TN || Date.now()) - (window.__T0 || Date.now()),
+    dataEvents: (window.__DATA_EVENTS || []).map(event => ({
+      path:event.path, started:event.started, finished:event.finished
+    })),
     dataPaths: (window.__DATA_PATHS || []).slice(),
     commandNodes: document.querySelectorAll('#chain .node').length,
     vehicleCards: document.querySelectorAll('#fleet .veh').length,
@@ -110,6 +121,24 @@ try {
     check(result.dataPaths.filter(p => p.includes(suffix)).length === 1,
           'benchmark reads ' + suffix + ' exactly once');
   });
+  const staticPaths = ['/faults','/redline_waivers','/quals','/roster',
+    '/member_quals','/sub_stations','/config/board'];
+  const staticEvents = result.dataEvents.filter(event =>
+    staticPaths.some(suffix => event.path.includes(suffix)));
+  const staticStartSpread = Math.max(...staticEvents.map(event => event.started)) -
+    Math.min(...staticEvents.map(event => event.started));
+  check(staticEvents.length === 7 && staticStartSpread <= 50,
+        'all seven independent board reads start in parallel');
+  const userEvent = result.dataEvents.find(event =>
+    event.path.includes('/users/stub-uid'));
+  const shiftEvent = result.dataEvents.find(event =>
+    event.path.includes('/shifts/C'));
+  const firstStaticStart = Math.min(...staticEvents.map(event => event.started));
+  const lastStaticFinish = Math.max(...staticEvents.map(event => event.finished));
+  check(!!userEvent && userEvent.finished <= firstStaticStart,
+        'the live user identity is resolved before board reads begin');
+  check(!!shiftEvent && shiftEvent.started >= lastStaticFinish,
+        'the crew assignment starts only after every static board read finishes');
   check(result.commandNodes === 4, 'board keeps all four command positions');
   check(result.vehicleCards === 3, 'board keeps all three configured vehicles');
   check(result.blockedVehicles === 1, 'board keeps the blocking vehicle state');

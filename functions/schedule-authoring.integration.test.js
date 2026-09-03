@@ -69,12 +69,17 @@ function runtime(testHooks) {
     randomId,
     createEngine: createCalendarEngine,
     createPublication,
-    createService: createScheduleService,
+    createService: hooks.createService || createScheduleService,
     isSuper: typeof hooks.isSuper === 'function' ? hooks.isSuper : () => false,
     sendPush: hooks.sendPush || (async () => ({ sent: 1 })),
     beforeSnapshotFinalize: hooks.beforeSnapshotFinalize,
     sourceWriteChunkSize: hooks.sourceWriteChunkSize,
     afterSourceWriteChunk: hooks.afterSourceWriteChunk,
+    sourceSweepCandidateLimit: hooks.sourceSweepCandidateLimit,
+    sourceSweepChildLimit: hooks.sourceSweepChildLimit,
+    sourceSweepChunkSize: hooks.sourceSweepChunkSize,
+    afterSourceSweepClaim: hooks.afterSourceSweepClaim,
+    afterSourceSweepChunk: hooks.afterSourceSweepChunk,
     reportError: hooks.reportError
   });
 }
@@ -169,6 +174,13 @@ async function collectionIds(ref) {
   return (await ref.get()).docs.map((doc) => doc.id).sort();
 }
 
+async function collectionState(ref) {
+  const snapshot = await ref.get();
+  return snapshot.docs.slice()
+    .sort((left, right) => left.id < right.id ? -1 : (left.id > right.id ? 1 : 0))
+    .map((doc) => ({ id: doc.id, data: doc.data() || {} }));
+}
+
 function sourceAuditRef(requestId) {
   return station().collection('schedule_source_audit')
     .doc('sa_' + hash('source-audit|' + SID + '|' + requestId).slice(0, 48));
@@ -183,6 +195,32 @@ async function cleanupSourceRequest(requestId) {
     sourceOperationRef(requestId).delete(),
     sourceAuditRef(requestId).delete()
   ]);
+}
+
+async function writeExpiredStage(sourceIdValue, requestId, groups, patch) {
+  const ref = station().collection('schedule_sources').doc(sourceIdValue);
+  const meta = Object.assign({
+    station_id: SID,
+    complete: false,
+    staged_by_request: requestId,
+    staged_request_hash: hash('sweep|' + requestId),
+    staged_owner_token: 'writer_' + requestId,
+    expires_at: new Date(Date.parse(CLOCK()) - 60000)
+  }, patch || {});
+  const batch = db.batch();
+  batch.set(ref, meta);
+  const sourceGroups = groups || {};
+  for (const name of SOURCE_GROUPS) {
+    (sourceGroups[name] || []).forEach((id) => {
+      const value = { marker: name };
+      // The sweeper never reads child payloads; this value proves a
+      // PII-bearing document is actually removed rather than ignored.
+      if (name === 'people') value.full_name = 'שם פרטי לבדיקה';
+      batch.set(ref.collection(name).doc(id), value);
+    });
+  }
+  await batch.commit();
+  return ref;
 }
 
 function changedSourceRows() {
@@ -374,6 +412,8 @@ async function seed() {
 
 /* מזהה הפרסום המוכן, מהבדיקה שיוצרת אותו לבדיקות שצורכות אותו. */
 let preparedId = null;
+let preparedDraftId = null;
+let preparedDigest = null;
 
 let passed = 0;
 async function test(name, fn) {
@@ -1358,6 +1398,163 @@ async function test(name, fn) {
   });
 
   /* ================================================================
+   * 3B · ניקוי מקורות מדורגים שננטשו
+   * ================================================================ */
+
+  await test('the source sweeper deletes expired incomplete children before the parent', async () => {
+    const ref = await writeExpiredStage('sweep_expired_clean', 'sweep_req_clean', {
+      people: ['person_a'], availability: ['availability_a'],
+      locked: ['locked_a'], events: ['event_a']
+    });
+    try {
+      const result = await api.sweepExpiredSources();
+      assert.equal(result.deleted_sources, 1);
+      assert.equal(result.deleted_children, 4);
+      assert.equal((await ref.get()).exists, false, 'ה-sweeper השאיר את האב');
+      for (const group of SOURCE_GROUPS) {
+        assert.equal((await ref.collection(group).get()).size, 0,
+          'ה-sweeper השאיר ילדים ב-' + group);
+      }
+    } finally {
+      await deleteSourceTree(ref);
+    }
+  });
+
+  await test('the source sweeper leaves future, complete, active and live-operation sources untouched', async () => {
+    const runtimeBefore = (await runtimeDoc().get()).data() || {};
+    const futureRef = await writeExpiredStage('sweep_future', 'sweep_req_future', {
+      people: ['future_person']
+    }, { expires_at: new Date(Date.parse(CLOCK()) + 60 * 60 * 1000) });
+    const completeRef = await writeExpiredStage('sweep_complete', 'sweep_req_complete', {
+      people: ['complete_person']
+    }, { complete: true });
+    const activeRefValue = await writeExpiredStage('sweep_active', 'sweep_req_active', {
+      people: ['active_person']
+    });
+    const liveRef = await writeExpiredStage('sweep_live_op', 'sweep_req_live_op', {
+      people: ['live_person']
+    });
+    const liveOp = sourceOperationRef('sweep_req_live_op');
+    try {
+      await runtimeDoc().set({ active_source_id: activeRefValue.id }, { merge: true });
+      await liveOp.set({
+        status: 'pending', owner_token: 'live_writer', request_hash: 'live_hash',
+        lease_until: new Date(Date.parse(CLOCK()) + 60 * 60 * 1000)
+      });
+      const result = await api.sweepExpiredSources();
+      assert.equal(result.deleted_sources, 0);
+      for (const ref of [futureRef, completeRef, activeRefValue, liveRef]) {
+        assert.equal((await ref.get()).exists, true, 'מקור מוגן נמחק: ' + ref.id);
+        assert.equal((await ref.collection('people').get()).size, 1,
+          'ילד של מקור מוגן נמחק: ' + ref.id);
+      }
+    } finally {
+      await runtimeDoc().set({ active_source_id: runtimeBefore.active_source_id || null }, { merge: true });
+      await liveOp.delete();
+      for (const ref of [futureRef, completeRef, activeRefValue, liveRef]) {
+        await deleteSourceTree(ref);
+      }
+    }
+  });
+
+  await test('only one concurrent source sweeper owns a live cleanup lease', async () => {
+    const ref = await writeExpiredStage('sweep_concurrent', 'sweep_req_concurrent', {
+      people: ['person_a', 'person_b']
+    });
+    let releaseClaim;
+    let claimArrived;
+    const gate = new Promise((resolve) => { releaseClaim = resolve; });
+    const arrived = new Promise((resolve) => { claimArrived = resolve; });
+    const first = runtime({
+      afterSourceSweepClaim: async (info) => {
+        if (!info || info.ref.path !== ref.path) return;
+        claimArrived();
+        await gate;
+      }
+    });
+    let firstPromise = null;
+    try {
+      firstPromise = first.sweepExpiredSources();
+      await bounded(arrived, 'first sweeper claim');
+      const second = await api.sweepExpiredSources();
+      assert.equal(second.deleted_sources, 0, 'sweeper שני מחק מקור בבעלות חיה');
+      assert.ok(second.skipped >= 1, 'sweeper שני לא דיווח על דילוג claim');
+      assert.equal((await ref.get()).exists, true, 'המקור נמחק לפני שחרור הבעלים');
+      releaseClaim();
+      const winner = await bounded(firstPromise, 'first sweeper completion');
+      assert.equal(winner.deleted_sources, 1);
+      assert.equal((await ref.get()).exists, false);
+    } finally {
+      releaseClaim();
+      if (firstPromise) await firstPromise.catch(() => {});
+      await deleteSourceTree(ref);
+    }
+  });
+
+  await test('a crashed source sweep keeps its parent anchor and a later run resumes safely', async () => {
+    const ref = await writeExpiredStage('sweep_crash_resume', 'sweep_req_crash', {
+      people: ['person_a', 'person_b'], events: ['event_a']
+    });
+    let now = Date.parse(CLOCK());
+    let chunks = 0;
+    const crashing = runtime({
+      clock: () => new Date(now).toISOString(),
+      sourceSweepChunkSize: 1,
+      afterSourceSweepChunk: async () => {
+        chunks += 1;
+        if (chunks === 1) throw new Error('intentional source sweep crash');
+      },
+      reportError: () => {}
+    });
+    try {
+      const error = await caught(() => crashing.sweepExpiredSources());
+      assert.ok(error, 'קריסת sweep לא הוחזרה כשגיאה');
+      assert.equal(error.code, 'source-sweep-partial-failure');
+      assert.equal((await ref.get()).exists, true, 'קריסה מחקה את עוגן האב');
+      assert.equal((await ref.collection('people').get()).size, 1,
+        'הקריסה לא התרחשה אחרי chunk יחיד');
+
+      now += 11 * 60 * 1000;
+      const resumed = await runtime({ clock: () => new Date(now).toISOString() })
+        .sweepExpiredSources();
+      assert.equal(resumed.deleted_sources, 1);
+      assert.equal((await ref.get()).exists, false);
+      for (const group of SOURCE_GROUPS) {
+        assert.equal((await ref.collection(group).get()).size, 0,
+          'resume השאיר orphan ב-' + group);
+      }
+    } finally {
+      await deleteSourceTree(ref);
+    }
+  });
+
+  await test('the source sweep child cap retains and releases the parent for the next run', async () => {
+    const ref = await writeExpiredStage('sweep_bounded', 'sweep_req_bounded', {
+      people: ['person_a', 'person_b', 'person_c']
+    });
+    try {
+      const limited = await runtime({
+        sourceSweepChildLimit: 1,
+        sourceSweepChunkSize: 1
+      }).sweepExpiredSources();
+      assert.equal(limited.deleted_children, 1);
+      assert.equal(limited.deleted_sources, 0);
+      assert.equal(limited.pending, 1);
+      const retained = await ref.get();
+      assert.equal(retained.exists, true, 'ה-cap מחק אב עם ילדים');
+      assert.equal((await ref.collection('people').get()).size, 2);
+      assert.equal(Object.prototype.hasOwnProperty.call(retained.data() || {}, 'cleanup_claimed_by'),
+        false, 'claim לא שוחרר אחרי עצירה מתוכננת');
+
+      const resumed = await api.sweepExpiredSources();
+      assert.equal(resumed.deleted_sources, 1);
+      assert.equal((await ref.get()).exists, false);
+    } finally {
+      await deleteSourceTree(ref);
+    }
+  });
+
+  /* ================================================================
    * 4 · מטריצת המצב
    * ================================================================ */
 
@@ -1381,14 +1578,14 @@ async function test(name, fn) {
     assert.equal(error.httpCode, 'permission-denied');
   });
 
-  await test('off to new directly is forbidden', async () => {
+  await test('the generic mode setter cannot activate new', async () => {
     const error = await caught(() => api.setRuntimeMode(req('commander', 'commander', {
       request_id: 'mode_jump', target: 'new', expected_mode: 'off',
       confirmation: 'new', reason_code: 'initial_activation'
     })));
-    assert.ok(error, 'קפיצה ישירה מ-off ל-new עברה');
-    assert.equal(error.code, 'mode-transition-forbidden');
-    assert.equal(error.httpCode, 'invalid-argument');
+    assert.ok(error, 'הפעלת new דרך המתג הכללי עברה');
+    assert.equal(error.code, 'mode-cutover-disabled');
+    assert.equal(error.httpCode, 'failed-precondition');
   });
 
   await test('a role revoked before the mode transaction cannot enable shadow', async () => {
@@ -1439,6 +1636,48 @@ async function test(name, fn) {
     assert.ok(error, 'expected_mode ישן לא נחסם');
     assert.equal(error.code, 'mode-conflict');
     assert.equal(error.httpCode, 'aborted');
+  });
+
+  await test('commander, deputy and super cannot activate new even when ready', async () => {
+    const options = await api.getModeOptions(req('commander', 'commander', {}));
+    assert.equal(options.ready, true, 'הפיקסצ׳ר אינו מוכן ולכן אינו מוכיח containment');
+    assert.deepEqual(options.targets.map((target) => target.to), ['off'],
+      'שרת האפשרויות עדיין מציע new ב-shadow');
+    const actors = [
+      { uid: 'commander', role: 'commander', api, requestId: 'mode_new_commander' },
+      { uid: 'deputy', role: 'deputy', api, requestId: 'mode_new_deputy' },
+      { uid: 'viewer', role: 'firefighter',
+        api: runtime({ isSuper: (auth) => auth && auth.uid === 'viewer' }),
+        requestId: 'mode_new_super' }
+    ];
+    for (const actor of actors) {
+      const error = await caught(() => actor.api.setRuntimeMode(req(actor.uid, actor.role, {
+        request_id: actor.requestId, target: 'new', expected_mode: 'shadow',
+        confirmation: 'new', reason_code: 'validation_complete'
+      })));
+      assert.ok(error, actor.uid + ' הפעיל new דרך המתג הכללי');
+      assert.equal(error.code, 'mode-cutover-disabled');
+      assert.equal(error.httpCode, 'failed-precondition');
+      assert.equal((await station().collection('schedule_mode_operations')
+        .doc(actor.requestId).get()).exists, false,
+      actor.uid + ' השאיר operation למרות חסימת ההפעלה');
+    }
+    assert.equal(((await runtimeDoc().get()).data() || {}).mode, 'shadow');
+  });
+
+  await test('shadow to off and off to shadow remain available', async () => {
+    const disabled = await api.setRuntimeMode(req('deputy', 'deputy', {
+      request_id: 'mode_shadow_off', target: 'off', expected_mode: 'shadow',
+      confirmation: 'off', reason_code: 'operational_safety'
+    }));
+    assert.equal(disabled.to, 'off');
+    assert.equal(((await runtimeDoc().get()).data() || {}).mode, 'off');
+    const restored = await api.setRuntimeMode(req('commander', 'commander', {
+      request_id: 'mode_off_shadow_again', target: 'shadow', expected_mode: 'off',
+      confirmation: 'shadow', reason_code: 'initial_activation'
+    }));
+    assert.equal(restored.to, 'shadow');
+    assert.equal(((await runtimeDoc().get()).data() || {}).mode, 'shadow');
   });
 
   await test('malformed locked source is rejected before any draft write', async () => {
@@ -1526,6 +1765,9 @@ async function test(name, fn) {
     const pub = (await station().collection('schedule_publications')
       .doc(result.publication_id).get()).data() || {};
     assert.equal(pub.status, 'prepared');
+    assert.equal(pub.snapshot_complete, true, 'הפרסום המוכן אינו תמונה שלמה');
+    assert.equal(pub.content_digest, preview.expected_content_digest,
+      'הפרסום המוכן אינו קשור לטיוטה שנבדקה');
     // ⭐ המצביע לא זז, ולכן אין סידור פעיל.
     const pointer = await station().collection('schedule_state').doc('active').get();
     assert.equal(pointer.exists, false, 'המצביע זז בזמן הכנה');
@@ -1533,8 +1775,293 @@ async function test(name, fn) {
     const outbox = await station().collection('schedule_publications')
       .doc(result.publication_id).collection('schedule_outbox').get();
     assert.ok(outbox.size > 0, 'לא נוצרו הודעות ממתינות');
+    assert.equal(result.blocked_notifications, outbox.size,
+      'ספירת ההודעות החסומות אינה תואמת ל-outbox');
     outbox.docs.forEach((doc) => assert.equal((doc.data() || {}).status, 'blocked'));
     preparedId = result.publication_id;
+    preparedDraftId = draft.draft_id;
+    preparedDigest = preview.expected_content_digest;
+  });
+
+  await test('shadow never treats a prepared request as an active replay or releases it', async () => {
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    const activeRef = station().collection('schedule_state').doc('active');
+    const originalPublication = (await publicationRef.get()).data() || {};
+    const outboxBefore = await collectionState(publicationRef.collection('schedule_outbox'));
+    try {
+      await publicationRef.set({ status: 'active' }, { merge: true });
+      await activeRef.set({
+        publication_id: preparedId, revision: originalPublication.revision,
+        content_digest: originalPublication.content_digest
+      });
+      const error = await caught(() => api.publish(req('manager', 'firefighter', {
+        request_id: 'pub_1', draft_id: preparedDraftId,
+        expected_content_digest: preparedDigest
+      })));
+      assert.ok(error, 'shadow accepted an active-publication replay');
+      assert.ok(['publication-conflict', 'publication-prepared-replay-invalid'].includes(error.code));
+      const outboxAfter = await collectionState(publicationRef.collection('schedule_outbox'));
+      assert.equal(stableValue(outboxAfter), stableValue(outboxBefore),
+        'shadow active replay released or rewrote an outbox row');
+      outboxAfter.forEach((row) => assert.equal(row.data.status, 'blocked'));
+    } finally {
+      await publicationRef.set(originalPublication);
+      await activeRef.delete();
+    }
+  });
+
+  await test('a lost prepared response replays without any write or audit', async () => {
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    const draftBefore = (await station().collection('schedule_drafts')
+      .doc(preparedDraftId).get()).data() || {};
+    const auditQuery = station().collection('schedule_audit')
+      .where('publication_id', '==', preparedId);
+    const before = {
+      publication: (await publicationRef.get()).data() || {},
+      rows: await collectionState(publicationRef.collection('rows')),
+      events: await collectionState(publicationRef.collection('events')),
+      people: await collectionState(publicationRef.collection('people')),
+      outbox: await collectionState(publicationRef.collection('schedule_outbox')),
+      audit: await collectionState(auditQuery)
+    };
+    assert.notEqual(draftBefore.source_digest, draftBefore.base_source_digest,
+      'the fixture does not distinguish effective and base source digests');
+    assert.equal(before.publication.source_digest, draftBefore.source_digest,
+      'the publication did not preserve the draft effective source digest');
+    for (const field of [
+      'source_snapshot', 'source_version', 'contract_station_id',
+      'source_revision', 'source_digest', 'source_complete',
+      'policy_version', 'policy_digest'
+    ]) {
+      assert.equal(before.publication[field], draftBefore[field],
+        'the publication detached ' + field + ' from its draft');
+    }
+    const replay = await api.publish(req('manager', 'firefighter', {
+      request_id: 'pub_1', draft_id: preparedDraftId,
+      expected_content_digest: preparedDigest
+    }));
+    assert.deepEqual(replay, {
+      duplicate: true, prepared: true, publication_id: preparedId,
+      revision: 1, notified_people: 0,
+      blocked_notifications: before.outbox.length,
+      summary: before.publication.summary
+    });
+    const after = {
+      publication: (await publicationRef.get()).data() || {},
+      rows: await collectionState(publicationRef.collection('rows')),
+      events: await collectionState(publicationRef.collection('events')),
+      people: await collectionState(publicationRef.collection('people')),
+      outbox: await collectionState(publicationRef.collection('schedule_outbox')),
+      audit: await collectionState(auditQuery)
+    };
+    assert.equal(stableValue(after), stableValue(before),
+      'prepared replay wrote snapshot, outbox or audit data');
+    assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
+      false, 'prepared replay moved the active pointer');
+  });
+
+  await test('prepared replay fails closed on every signed publication invariant', async () => {
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    const original = (await publicationRef.get()).data() || {};
+    const cases = [
+      ['status', 'complete'],
+      ['snapshot_complete', false],
+      ['content_digest', 'bad_digest'],
+      ['source_draft_id', 'other_draft'],
+      ['published_by', 'other_manager'],
+      ['revision', 2],
+      ['previous_publication_id', 'other_publication'],
+      ['source_snapshot', 'other_snapshot'],
+      ['source_version', 'other_source_version'],
+      ['contract_station_id', 'other_station'],
+      ['source_revision', 'other_source_revision'],
+      ['source_digest', 'bad_source_digest'],
+      ['source_complete', false],
+      ['policy_version', 'other_policy_version'],
+      ['policy_digest', 'bad_policy_digest']
+    ];
+    for (const [field, invalid] of cases) {
+      await publicationRef.set(Object.assign({}, original, { [field]: invalid }));
+      const error = await caught(() => api.publish(req('manager', 'firefighter', {
+        request_id: 'pub_1', draft_id: preparedDraftId,
+        expected_content_digest: preparedDigest
+      })));
+      assert.ok(error, field + ' mismatch was accepted as a prepared replay');
+      assert.ok(['publication-prepared-replay-invalid', 'publication-conflict']
+        .includes(error.code), field + ' failed with an unrelated error: ' + error.code);
+      assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
+        false, field + ' mismatch moved the active pointer');
+    }
+    await publicationRef.set(original);
+  });
+
+  await test('prepared replay requires the exact complete blocked outbox manifest', async () => {
+    const publicationRef = station().collection('schedule_publications').doc(preparedId);
+    const outbox = await publicationRef.collection('schedule_outbox').get();
+    assert.ok(outbox.size > 0, 'the prepared fixture has no outbox to corrupt');
+    const first = outbox.docs[0];
+    const original = first.data() || {};
+    const replay = () => api.publish(req('manager', 'firefighter', {
+      request_id: 'pub_1', draft_id: preparedDraftId,
+      expected_content_digest: preparedDigest
+    }));
+    try {
+      await first.ref.delete();
+      let error = await caught(replay);
+      assert.ok(error, 'a missing outbox row was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+      await first.ref.set(original);
+
+      await first.ref.set({ status: 'queued' }, { merge: true });
+      error = await caught(replay);
+      assert.ok(error, 'a non-blocked outbox row was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+      await first.ref.set(original);
+
+      await first.ref.set({ expires_at: new Date(Date.parse(CLOCK()) - 1) }, { merge: true });
+      error = await caught(replay);
+      assert.ok(error, 'an expired outbox row was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+      await first.ref.set(original);
+
+      for (const [field, invalid] of [
+        ['station_id', 'other_station'],
+        ['publication_id', 'other_publication'],
+        ['revision', Number(original.revision) + 1],
+        ['person', 'other_person'],
+        ['dedupe_key', original.dedupe_key + ':tampered'],
+        ['changed_by', 'other_manager'],
+        ['attempt', 1],
+        ['push', { title: 'tampered' }],
+        ['detail', { kind: 'tampered' }]
+      ]) {
+        await first.ref.set(Object.assign({}, original, { [field]: invalid }));
+        error = await caught(replay);
+        assert.ok(error, 'a modified outbox ' + field + ' was accepted');
+        assert.equal(error.code, 'publication-prepared-replay-invalid');
+        await first.ref.set(original);
+      }
+
+      const extraRef = publicationRef.collection('schedule_outbox').doc('n_unexpected');
+      await extraRef.set(original);
+      error = await caught(replay);
+      assert.ok(error, 'an unexpected outbox row was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+      await extraRef.delete();
+    } finally {
+      await first.ref.set(original);
+      await publicationRef.collection('schedule_outbox').doc('n_unexpected').delete();
+    }
+  });
+
+  await test('prepared replay rechecks live authority after its race boundary', async () => {
+    const accessRef = station().collection('schedule_access').doc('manager');
+    const original = (await accessRef.get()).data() || {};
+    let hooks = 0;
+    const hooked = runtime({
+      beforeSnapshotFinalize: async (info) => {
+        if (!info || info.kind !== 'prepared-replay') return;
+        hooks += 1;
+        await accessRef.set({ active: false }, { merge: true });
+      }
+    });
+    try {
+      const error = await caught(() => hooked.publish(req('manager', 'firefighter', {
+        request_id: 'pub_1', draft_id: preparedDraftId,
+        expected_content_digest: preparedDigest
+      })));
+      assert.ok(error, 'revoked manager replayed a prepared publication');
+      assert.equal(error.code, 'manager-revoked');
+      assert.equal(error.httpCode, 'permission-denied');
+      assert.equal(hooks, 1);
+      assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
+        false, 'revoked replay moved the active pointer');
+    } finally {
+      await accessRef.set(original);
+    }
+  });
+
+  await test('prepared replay rejects runtime and predecessor drift after its first reads', async () => {
+    const runtimeRef = runtimeDoc();
+    const originalRuntime = (await runtimeRef.get()).data() || {};
+    const activeRef = station().collection('schedule_state').doc('active');
+    const request = () => req('manager', 'firefighter', {
+      request_id: 'pub_1', draft_id: preparedDraftId,
+      expected_content_digest: preparedDigest
+    });
+    const modeHooked = runtime({
+      beforeSnapshotFinalize: async (info) => {
+        if (info && info.kind === 'prepared-replay') {
+          await runtimeRef.set({ mode: 'off' }, { merge: true });
+        }
+      }
+    });
+    try {
+      let error = await caught(() => modeHooked.publish(request()));
+      assert.ok(error, 'runtime mode drift was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+    } finally {
+      await runtimeRef.set(originalRuntime);
+    }
+
+    const pointerHooked = runtime({
+      beforeSnapshotFinalize: async (info) => {
+        if (info && info.kind === 'prepared-replay') {
+          await activeRef.set({
+            publication_id: 'other_publication', revision: 1,
+            content_digest: 'other_digest'
+          });
+        }
+      }
+    });
+    try {
+      const error = await caught(() => pointerHooked.publish(request()));
+      assert.ok(error, 'active predecessor drift was accepted');
+      assert.equal(error.code, 'publication-prepared-replay-invalid');
+    } finally {
+      await activeRef.delete();
+    }
+  });
+
+  await test('a prepared publication with an exact empty outbox also replays safely', async () => {
+    function createZeroNotificationService(deps) {
+      const base = createScheduleService(deps);
+      return Object.freeze(Object.assign({}, base, {
+        publish(input) {
+          const planned = base.publish(input);
+          return Object.freeze(Object.assign({}, planned, {
+            notifications: Object.freeze([])
+          }));
+        }
+      }));
+    }
+    const zeroApi = runtime({ createService: createZeroNotificationService });
+    const first = await zeroApi.publish(req('manager', 'firefighter', {
+      request_id: 'pub_zero_notifications', draft_id: preparedDraftId,
+      expected_content_digest: preparedDigest
+    }));
+    assert.equal(first.prepared, true);
+    assert.equal(first.blocked_notifications, 0);
+    const zeroRef = station().collection('schedule_publications').doc(first.publication_id);
+    assert.equal((await zeroRef.collection('schedule_outbox').get()).size, 0);
+    const auditBefore = await station().collection('schedule_audit')
+      .where('publication_id', '==', first.publication_id).get();
+    const replay = await zeroApi.publish(req('manager', 'firefighter', {
+      request_id: 'pub_zero_notifications', draft_id: preparedDraftId,
+      expected_content_digest: preparedDigest
+    }));
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.prepared, true);
+    assert.equal(replay.publication_id, first.publication_id);
+    assert.equal(replay.revision, first.revision);
+    assert.equal(replay.notified_people, 0);
+    assert.equal(replay.blocked_notifications, 0);
+    assert.deepEqual(replay.summary, first.summary);
+    assert.equal((await station().collection('schedule_audit')
+      .where('publication_id', '==', first.publication_id).get()).size, auditBefore.size,
+    'empty-manifest replay wrote a duplicate audit');
+    assert.equal((await zeroRef.collection('schedule_outbox').get()).size, 0,
+      'empty-manifest replay created an outbox row');
   });
 
   await test('resumeOutbox does not cancel a prepared publication while it waits', async () => {
@@ -1565,12 +2092,29 @@ async function test(name, fn) {
   });
 
   await test('previewCutover signs a report that carries no identifiers', async () => {
+    const candidateRows = await station().collection('schedule_publications')
+      .doc(preparedId).collection('rows').get();
+    const expectedDates = new Set(candidateRows.docs.map((doc) => {
+      const stored = doc.data() || {};
+      return String((stored.row || {}).date || '');
+    }).filter(Boolean));
+    assert.ok(expectedDates.size > 0, 'הפרסום המוכן ריק ולכן ה-preflight אינו נבדק');
     const report = await api.previewCutover(req('manager', 'firefighter', {
       candidate_publication_id: preparedId
     }));
     assert.ok(report.signature, 'הדוח אינו חתום');
+    assert.equal(report.counts.next_days, expectedDates.size,
+      'ה-preflight לא ספר במדויק את ימי הפרסום המוכן');
+    assert.ok(report.counts.next_days > 0,
+      'ה-preflight חזר ירוק על מועמד ריק');
     assert.equal(report.by_reason[CUTOVER_REASON.MISSING], 0,
       'פיקסצ׳ר התצוגה יצר MISSING מלאכותי בדוח המעבר');
+    assert.equal(report.by_reason[CUTOVER_REASON.FOREIGN], 0,
+      'ה-preflight מצא שיבוץ למזהה שאינו במקור');
+    assert.equal(report.by_reason[CUTOVER_REASON.DUPLICATE], 0,
+      'ה-preflight מצא שיבוץ כפול באותו יום');
+    assert.equal(report.by_reason[CUTOVER_REASON.OUT_OF_RANGE], 0,
+      'ה-preflight מצא יום מחוץ לטווח הפרסום');
     assert.equal(report.blocked, false, 'דוח המעבר נחסם על פיקסצ׳ר legacy');
     const text = JSON.stringify(report);
     for (const uid of ['manager', 'viewer', 'commander',

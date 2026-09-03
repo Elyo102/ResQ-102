@@ -190,8 +190,6 @@ const CALLABLES = Object.freeze([
   { name: 'manageScheduleGuard', method: 'manageGuard', gate: GATE.MANAGER },
   { name: 'getScheduleGuardManagerBoard', method: 'getGuardManagerBoard', gate: GATE.MANAGER },
   { name: 'previewScheduleCutover', method: 'previewCutover', gate: GATE.MANAGER },
-  // ⭐ המעבר עצמו שייך לפיקוד, לא לאחראי הסידור — כמו החלפת מצב.
-  { name: 'promoteScheduleToNew', method: 'promoteToNew', gate: GATE.COMMAND },
   { name: 'setScheduleRuntimeMode', method: 'setRuntimeMode', gate: GATE.COMMAND },
   { name: 'getScheduleModeOptions', method: 'getModeOptions', gate: GATE.COMMAND },
   { name: 'setScheduleManagerAccess', method: null, gate: GATE.HR },
@@ -246,6 +244,8 @@ eq('2.1 אין callable של סידור שאינו ברשימה', coverageMissin
 const absent = CALLABLES.filter((item) =>
   INDEX.indexOf('exports.' + item.name + ' = onCall') === -1);
 eq('2.2 כל מה שברשימה קיים במקור', absent.map((x) => x.name), []);
+ok('2.2a ב-42G.0 אין callable ציבורי לקידום המנוע',
+  INDEX.indexOf('exports.promoteScheduleToNew = onCall') === -1);
 
 // ⭐ App Check על כולם. בלי זה כל אחד ברשת יכול לנסות.
 CALLABLES.forEach((item) => {

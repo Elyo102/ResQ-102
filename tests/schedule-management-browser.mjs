@@ -341,7 +341,9 @@ try {
     await managerPage.locator('#publishMessage .ok').waitFor();
     assert.match(await managerPage.locator('#publishMessage').textContent(), /2 עדכונים לשליחה/);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
-    const publish = calls.find((entry) => entry.name === 'publishSchedule');
+    const publishCalls = calls.filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 1, 'happy path שלח publish יותר מפעם אחת');
+    const publish = publishCalls[0];
     assert.ok(publish);
     assert.equal(publish.payload.expected_content_digest, 'digest_preview_1');
   });
@@ -357,6 +359,179 @@ try {
     assert.equal(rollback.payload.stationId, undefined);
   });
   await manager.close();
+
+  /* ------------------------------------------------------------------
+   * Retry idempotency: a lost response is not permission to invent a
+   * second publication request. The id belongs to the reviewed
+   * draft+digest pair and survives transport failure.
+   * ------------------------------------------------------------------ */
+  const retryManager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  const retryPreviewOne = Object.assign({}, draftPreview, {
+    draft_id:'draft_retry_1', expected_content_digest:'digest_retry_1'
+  });
+  const retryPreviewTwo = Object.assign({}, draftPreview, {
+    draft_id:'draft_retry_2', expected_content_digest:'digest_retry_2'
+  });
+  await prepare(retryManager, 'firefighter', {
+    getScheduleRuntimeStatus:[
+      { data:statusShadowManager }, { data:statusShadowManager }, { data:statusShadowManager }
+    ],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[
+      { data:legacyMine('shadow') }, { data:legacyMine('shadow') },
+      { data:legacyMine('shadow') }, { data:legacyMine('shadow') }
+    ],
+    getStationScheduleRange:[
+      { data:legacyRange('shadow') }, { data:legacyRange('shadow') },
+      { data:legacyRange('shadow') }, { data:legacyRange('shadow') },
+      { data:legacyRange('shadow') }, { data:legacyRange('shadow') },
+      { data:legacyRange('shadow') }, { data:legacyRange('shadow') }
+    ],
+    runSchedulePlanner:[
+      { data:{ draft_id:'draft_retry_1', from:today, to:shiftDay(today, 30),
+        summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } },
+      { data:{ draft_id:'draft_retry_2', from:today, to:shiftDay(today, 30),
+        summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }
+    ],
+    getScheduleDraftPreview:[{ data:retryPreviewOne }, { data:retryPreviewTwo }],
+    publishSchedule:[
+      { reject:true, code:'functions/unavailable', message:'response lost' },
+      { data:{ prepared:true, publication_id:'p_retry_1', revision:1,
+        notified_people:0, blocked_notifications:2 } },
+      { data:{ prepared:true, publication_id:'p_retry_2', revision:2,
+        notified_people:0, blocked_notifications:1 } }
+    ]
+  });
+  const retryManagerPage = await retryManager.newPage();
+  retryManagerPage.on('dialog', (dialog) => dialog.accept());
+  await retryManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await retryManagerPage.locator('#appMain:not(.hide)').waitFor();
+
+  await test('a lost publish response retries the exact same request id', async () => {
+    await retryManagerPage.locator('#runPlanner').click();
+    await retryManagerPage.locator('#previewMessage .ok').waitFor();
+    await retryManagerPage.locator('#reviewDraft').check();
+    await retryManagerPage.locator('#publish').click();
+    await retryManagerPage.locator('#publishMessage .err').waitFor();
+    let publishCalls = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 1);
+    assert.match(String(publishCalls[0].payload.request_id || ''), /^publish_/);
+    const firstRequestId = publishCalls[0].payload.request_id;
+    assert.equal(await retryManagerPage.locator('#publish').isEnabled(), true,
+      'כשל תעבורה מחק את הטיוטה או חסם retry');
+
+    await retryManagerPage.locator('#publish').click();
+    await retryManagerPage.locator('#publishMessage .ok').waitFor();
+    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    publishCalls = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 2);
+    assert.equal(publishCalls[1].payload.request_id, firstRequestId,
+      'retry המציא request_id חדש לאותה טיוטה חתומה');
+    assert.equal(publishCalls[1].payload.draft_id, 'draft_retry_1');
+    assert.equal(publishCalls[1].payload.expected_content_digest, 'digest_retry_1');
+    const allCalls = await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(allCalls.some((entry) => entry.name === 'setScheduleRuntimeMode'
+      && entry.payload && entry.payload.target === 'new'), false);
+    assert.equal(allCalls.some((entry) => entry.name === 'promoteScheduleToNew'), false);
+  });
+
+  await test('success clears the retry and a new draft receives a new request id', async () => {
+    assert.equal(await retryManagerPage.locator('#draftPreviewCard').isVisible(), false);
+    assert.equal(await retryManagerPage.locator('#publish').isDisabled(), true);
+    const beforeIgnoredClick = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule').length;
+    await retryManagerPage.evaluate(() => document.getElementById('publish')
+      .dispatchEvent(new MouseEvent('click', { bubbles:true })));
+    assert.equal((await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule').length, beforeIgnoredClick,
+    'הצלחה השאירה ניסיון פרסום פעיל');
+
+    await retryManagerPage.locator('#runPlanner').click();
+    await retryManagerPage.locator('#previewMessage .ok').waitFor();
+    await retryManagerPage.locator('#reviewDraft').check();
+    await retryManagerPage.locator('#publish').click();
+    await retryManagerPage.locator('#publishMessage .ok').waitFor();
+    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    const publishCalls = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 3);
+    assert.notEqual(publishCalls[2].payload.request_id, publishCalls[1].payload.request_id,
+      'טיוטה חדשה ירשה request_id מטיוטה שכבר פורסמה');
+    assert.equal(publishCalls[2].payload.draft_id, 'draft_retry_2');
+    assert.equal(publishCalls[2].payload.expected_content_digest, 'digest_retry_2');
+  });
+  await test('successful publish clears the retained request before any refresh', async () => {
+    // A different draft/digest changes the request key by itself, so the
+    // behavioural assertion above would stay green if the explicit reset
+    // disappeared. Lock the ordering in the real publish path as well: once
+    // the server has confirmed success, retained retry state is cleared before
+    // the draft is discarded and before any fallible refresh begins.
+    const source = fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
+    const start = source.indexOf('async function publishDraft()');
+    const end = source.indexOf('\nfunction setRollbackAvailability()', start);
+    const body = source.slice(start, end);
+    const success = body.indexOf('const successText =');
+    const reset = body.indexOf('resetPublishRequest();', success);
+    const discard = body.indexOf('state.draft = null;', success);
+    const refresh = body.indexOf('state.status = (await call.status({})).data;', success);
+    assert.ok(start > -1 && end > start, 'publishDraft source boundary was not found');
+    assert.ok(success > -1 && reset > success,
+      'successful publish no longer clears its retained request id');
+    assert.ok(discard > reset,
+      'retry state is not cleared before the successful draft is discarded');
+    assert.ok(refresh > discard,
+      'fallible refresh moved ahead of successful publish cleanup');
+  });
+  await retryManager.close();
+
+  const refreshFailureManager = await browser.newContext({
+    viewport:{ width:1440, height:1000 }, locale:'he-IL'
+  });
+  await prepare(refreshFailureManager, 'firefighter', {
+    getScheduleRuntimeStatus:[
+      { data:statusShadowManager },
+      { reject:true, code:'functions/unavailable', message:'refresh failed' }
+    ],
+    getScheduleManagerSetup:[{ data:setup }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_refresh_failure', from:today,
+      to:shiftDay(today, 30),
+      summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:Object.assign({}, draftPreview, {
+      draft_id:'draft_refresh_failure', expected_content_digest:'digest_refresh_failure'
+    }) }],
+    publishSchedule:[{ data:{ prepared:true, publication_id:'p_refresh_failure', revision:1,
+      notified_people:0, blocked_notifications:2 } }]
+  });
+  const refreshFailurePage = await refreshFailureManager.newPage();
+  refreshFailurePage.on('dialog', (dialog) => dialog.accept());
+  await refreshFailurePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await refreshFailurePage.locator('#appMain:not(.hide)').waitFor();
+  await test('a refresh failure after success never sends publish twice', async () => {
+    await refreshFailurePage.locator('#runPlanner').click();
+    await refreshFailurePage.locator('#previewMessage .ok').waitFor();
+    await refreshFailurePage.locator('#reviewDraft').check();
+    await refreshFailurePage.locator('#publish').click();
+    await refreshFailurePage.locator('#publishMessage .warn').waitFor();
+    assert.match(await refreshFailurePage.locator('#publishMessage').textContent(), /לא התרענן/);
+    assert.match(await refreshFailurePage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    let publishCalls = (await refreshFailurePage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 1, 'כשל הרענון שלח publish פעם נוספת');
+    assert.equal(await refreshFailurePage.locator('#draftPreviewCard').isVisible(), false,
+      'כשל רענון החזיר טיוטה שכבר פורסמה');
+    await refreshFailurePage.evaluate(() => document.getElementById('publish')
+      .dispatchEvent(new MouseEvent('click', { bubbles:true })));
+    publishCalls = (await refreshFailurePage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 1, 'לחיצה אחרי הצלחה וכשל רענון פרסמה שוב');
+    const allCalls = await refreshFailurePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(allCalls.some((entry) => entry.name === 'setScheduleRuntimeMode'
+      && entry.payload && entry.payload.target === 'new'), false);
+    assert.equal(allCalls.some((entry) => entry.name === 'promoteScheduleToNew'), false);
+  });
+  await refreshFailureManager.close();
 
   const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(phone, 'firefighter', {
@@ -600,12 +775,18 @@ try {
 
   const shadowManager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
   await prepare(shadowManager, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:statusShadowManager }],
+    getScheduleRuntimeStatus:[{ data:statusShadowManager }, { data:statusShadowManager }],
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:legacyMine('shadow') }, { data:legacyMine('shadow') }],
-    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }]
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_shadow', from:today, to:shiftDay(today, 30),
+      summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:Object.assign({}, draftPreview, { draft_id:'draft_shadow' }) }],
+    publishSchedule:[{ data:{ prepared:true, publication_id:'p_prepared', revision:1,
+      notified_people:0, blocked_notifications:2 } }]
   });
   const shadowManagerPage = await shadowManager.newPage();
+  shadowManagerPage.on('dialog', (dialog) => dialog.accept());
   await shadowManagerPage.goto(base + '?tab=station', { waitUntil:'load' });
   await shadowManagerPage.locator('#appMain:not(.hide)').waitFor();
   await test('an appointed manager retains management in shadow while station remains the default', async () => {
@@ -621,6 +802,39 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0);
     assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1);
+  });
+
+  await test('shadow manager prepares a reviewed draft without activating it or notifying anyone', async () => {
+    await shadowManagerPage.locator('#runPlanner').click();
+    await shadowManagerPage.locator('#previewMessage .ok').waitFor();
+    await shadowManagerPage.locator('#reviewDraft').check();
+    assert.equal(await shadowManagerPage.locator('#publish').textContent(), 'הכן את הסידור');
+    assert.equal(await shadowManagerPage.locator('#publish').isEnabled(), true);
+    await shadowManagerPage.locator('#publish').click();
+    await shadowManagerPage.locator('#publishMessage .ok').waitFor();
+    const text = await shadowManagerPage.locator('#publishMessage').textContent();
+    assert.match(text, /הוכן לבדיקה בלבד/);
+    assert.match(text, /לא הופעל/);
+    assert.match(text, /הסידור הקיים נשאר פעיל/);
+    assert.match(text, /לא נשלחו הודעות/);
+
+    const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const publishCalls = calls.filter((entry) => entry.name === 'publishSchedule');
+    assert.equal(publishCalls.length, 1, 'happy path ב-shadow שלח publish יותר מפעם אחת');
+    const publish = publishCalls[0];
+    assert.ok(publish, 'הכנה ב-shadow לא קראה publishSchedule');
+    assert.equal(publish.payload.draft_id, 'draft_shadow');
+    assert.equal(publish.payload.expected_content_digest, 'digest_preview_1');
+    assert.equal(Object.hasOwn(publish.payload, 'stationId'), false);
+    assert.equal(Object.hasOwn(publish.payload, 'station_id'), false);
+    assert.equal(calls.some((entry) => entry.name === 'setScheduleRuntimeMode'
+      && entry.payload && entry.payload.target === 'new'), false);
+    assert.equal(calls.some((entry) => entry.name === 'promoteScheduleToNew'), false);
+    assert.equal(await shadowManagerPage.locator('#draftPreviewCard').isVisible(), false);
+
+    await shadowManagerPage.locator('[data-tab="station"]').click();
+    assert.match(await shadowManagerPage.locator('#stationNote').textContent(), /הסידור הקיים/);
+    assert.match(await shadowManagerPage.locator('#stationContent').textContent(), /אלדד יונה/);
   });
   await shadowManager.close();
 
@@ -857,6 +1071,14 @@ try {
     // אחרי השינוי המסך נטען מחדש מהשרת ולא מניח מה קרה.
     assert.equal(await commanderPage.locator('#modeNow').textContent(), 'בדיקה');
     assert.equal(await commanderPage.locator('#modeForm').isVisible(), false);
+    // גם תשובת שרת ישנה שמפרסמת `new` אינה יוצרת מסלול הפעלה ב-42G.0.
+    assert.equal(await commanderPage.locator('#modeTargets .pill').count(), 1);
+    assert.match(await commanderPage.locator('#modeTargets .pill').first().textContent(), /כבוי/);
+    assert.equal(calls.some((entry) => entry.name === 'setScheduleRuntimeMode'
+      && entry.payload && entry.payload.target === 'new'), false);
+    const factories = await commanderPage.evaluate(() => window.__CALLABLE_FACTORIES || []);
+    assert.equal(factories.includes('previewScheduleCutover'), false);
+    assert.equal(factories.includes('promoteScheduleToNew'), false);
   });
   await commander.close();
 
@@ -881,5 +1103,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 24);
-console.log('\n24 schedule management browser checks passed.');
+assert.equal(passed, 29);
+console.log('\n29 schedule management browser checks passed.');

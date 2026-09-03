@@ -16,6 +16,7 @@ const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
 const author = read('functions/schedule-policy-author.js');
+const modeAuthority = read('functions/schedule-mode-authority.js');
 const ui = read('schedule-management.js');
 const html = read('schedule-management.html');
 const legacySchedule = read('schedule.html');
@@ -119,7 +120,8 @@ check('publishing requires the exact digest returned by draft preview', () => {
   assert.ok(runtime.includes("'draft-preview-required'"));
   assert.ok(runtime.includes('liveDraft.content_digest !== expectedContentDigest'));
   assert.ok(ui.includes("httpsCallable(functions, 'getScheduleDraftPreview')"));
-  assert.ok(ui.includes('expected_content_digest: state.draftPreview.expected_content_digest'));
+  assert.ok(ui.includes('const expectedContentDigest = state.draftPreview.expected_content_digest'));
+  assert.ok(ui.includes('expected_content_digest: expectedContentDigest'));
   assert.ok(html.includes('תצוגה מקדימה של הטיוטה'));
   assert.ok(html.includes('id="reviewDraft"'));
 });
@@ -141,8 +143,53 @@ check('notifications are blocked until activation commits', () => {
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
-  assert.ok(runtime.includes('existingData.request_fingerprint !== requestFingerprint'));
+  assert.ok(runtime.includes('existingData.request_fingerprint !== fingerprintForExisting'));
   assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
+});
+check('prepared replay is bound to intent and starts only after the fingerprint matches', () => {
+  const publishStart = runtime.indexOf('async function publish(req)');
+  const publishEnd = runtime.indexOf('\n  async function rollback(req)', publishStart);
+  const body = runtime.slice(publishStart, publishEnd);
+  const fingerprint = body.indexOf("intent: preparing ? 'prepare' : 'activate'");
+  const mismatch = body.indexOf('existingData.request_fingerprint !== fingerprintForExisting');
+  const activeReplay = body.indexOf('if (pointsToExisting)');
+  const replay = body.indexOf("existingData.status === 'prepared'");
+  assert.ok(fingerprint > -1 && mismatch > fingerprint && activeReplay > mismatch
+    && replay > activeReplay,
+  'publication replay is not ordered behind its intent-bound fingerprint check');
+  assert.ok(body.slice(activeReplay, replay).includes('if (preparing || config.mode !== MODE.NEW'),
+    'active replay can release an outbox from shadow');
+  assert.ok(body.includes('return replayPreparedPublication(ctx'));
+});
+check('prepared replay verifies snapshot, live authority, runtime and predecessor without writes', () => {
+  const start = runtime.indexOf('async function replayPreparedPublication(ctx, input)');
+  const end = runtime.indexOf('\n  async function publish(req)', start);
+  const body = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(body.includes('await readSnapshot(value.pubRef, value.existingData)'));
+  assert.ok(body.includes('await requireLiveManagerNow(ctx)'));
+  assert.ok(body.includes("kind: 'prepared-replay'"));
+  assert.ok(body.includes('return db.runTransaction(async (tx) => {'));
+  assert.ok(body.includes('requireLiveManager(snaps[6], snaps[7], ctx)'));
+  assert.ok(body.includes('liveRuntime.mode !== MODE.SHADOW'));
+  assert.ok(body.includes('actualPrevious !== value.expectedPrevious'));
+  assert.ok(body.includes("livePub.status !== 'prepared'"));
+  assert.equal(/\btx\.(?:set|create|update|delete)\s*\(/.test(body), false,
+    'prepared replay performs a transaction write');
+});
+check('prepared replay requires the exact unexpired blocked outbox and returns its full contract', () => {
+  const start = runtime.indexOf('async function replayPreparedPublication(ctx, input)');
+  const end = runtime.indexOf('\n  async function publish(req)', start);
+  const body = runtime.slice(start, end);
+  assert.ok(body.includes("tx.get(value.pubRef.collection('schedule_outbox'))"));
+  assert.ok(body.includes('outboxSnap.size !== expectedOutbox.size'));
+  assert.ok(body.includes("row.status !== 'blocked'"));
+  assert.ok(body.includes('outboxExpired(row, Date.parse(clock()))'));
+  for (const field of ['duplicate: true', 'prepared: true', 'publication_id: value.pubId',
+    'revision: value.revision', 'notified_people: 0',
+    'blocked_notifications: expectedOutbox.size', 'summary: value.summary']) {
+    assert.ok(body.includes(field), field);
+  }
 });
 check('outbox delivery rechecks the active publication', () => {
   assert.ok(runtime.includes('publicationMatches(value, pointer, publication)'));
@@ -1006,11 +1053,16 @@ check('staged cleanup claims ownership and deletes the parent last', () => {
   const at = src.indexOf('async function cleanupStagedSource(');
   assert.ok(at > -1, 'cleanupStagedSource לא נמצא');
   const body = src.slice(at, src.indexOf('\n  function policyOperationRef(', at));
-  const claim = body.indexOf('cleanup_claimed_by: operationOwner');
+  const claim = body.indexOf('cleanup_claimed_by: cleanupToken');
   const children = body.indexOf("collection('people').doc(");
   const parent = body.lastIndexOf('tx.delete(ref)');
   assert.ok(claim > -1 && children > claim, 'הניקוי מוחק ילדים לפני תפיסת בעלות');
   assert.ok(parent > children, 'הניקוי מוחק את האב לפני הילדים');
+  assert.ok(body.indexOf('sourceWriteChunks(deletes)') > -1,
+    'הניקוי המיידי אינו שומר על מגבלת נפח הטרנזקציה');
+  assert.ok(body.indexOf('ownsCleanup(') > -1
+    && body.indexOf('cleanup_lease_until') > -1,
+  'מחיקת children אינה מגודרת ב-token וב-lease');
 });
 
 check('saveSource writes all four sub-collections, not people alone', () => {
@@ -1082,6 +1134,30 @@ check('preparing in shadow never activates, notifies or moves the pointer', () =
     'הכנה משחררת הודעות על סידור שאיש אינו רואה');
 });
 
+check('42G.0 has no public path that activates new mode', () => {
+  assert.equal(index.includes('exports.promoteScheduleToNew = onCall'), false,
+    'promoteScheduleToNew is still publicly exported');
+  assert.equal(modeAuthority.includes('from: MODE.SHADOW, to: MODE.NEW'), false,
+    'the generic mode transition still permits shadow to new');
+  const at = runtime.indexOf('async function setRuntimeMode(req)');
+  const end = runtime.indexOf('\n  async function runPlanner(req)', at);
+  const body = runtime.slice(at, end);
+  assert.ok(body.includes("if (data.target === MODE.NEW)"),
+    'setRuntimeMode does not explicitly reject new');
+  assert.ok(body.includes("'mode-cutover-disabled'"),
+    'the containment rejection has no stable error code');
+});
+
+check('cutover preview reads the verified publication rows', () => {
+  const at = runtime.indexOf('async function previewCutover(req)');
+  const end = runtime.indexOf('\n  async function promoteToNew(req)', at);
+  const body = runtime.slice(at, end);
+  assert.ok(body.includes('next_days: cutoverDaysFromRows(snapshot.plan.rows)'),
+    'preflight is not built from snapshot.plan.rows');
+  assert.equal(body.includes('snapshot.plan.days || snapshot.rows'), false,
+    'the empty-candidate fallback that made preflight false-green returned');
+});
+
 check('the cutover is one transaction, decided on live values', () => {
   const src = read('functions/schedule-runtime.js');
   const at = src.indexOf('async function promoteToNew(req)');
@@ -1119,7 +1195,7 @@ check('a prepared publication keeps its notifications while it waits', () => {
 });
 
 /* ⭐ P1-7 · מקור מדורג שננטש מחזיק שמות מלאים. */
-check('an abandoned staged source is cleaned up and has a TTL', () => {
+check('an abandoned staged source is cleaned explicitly without a parent-only TTL', () => {
   const src = read('functions/schedule-runtime.js');
   const at = src.indexOf('async function saveSource(');
   const body = src.slice(at, src.indexOf('\n  async function cleanupStagedSource', at));
@@ -1138,9 +1214,33 @@ check('an abandoned staged source is cleaned up and has a TTL', () => {
       'הניקוי אינו מוחק את ' + group);
   }
   const indexes = JSON.parse(read('firestore.indexes.json'));
+  assert.equal(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_sources' && item.fieldPath === 'expires_at'
+    && item.ttl === true), false,
+  'TTL על האב schedule_sources מוחק עוגן איתור ומשאיר ילדים יתומים');
   assert.ok(indexes.fieldOverrides.some((item) =>
     item.collectionGroup === 'schedule_sources' && item.fieldPath === 'expires_at'
-    && item.ttl === true), 'אין TTL על schedule_sources');
+    && item.ttl !== true && Array.isArray(item.indexes)
+    && item.indexes.some((index) => index.order === 'ASCENDING'
+      && index.queryScope === 'COLLECTION_GROUP')),
+  'חסר אינדקס collection-group למנקה המקורות המדורגים');
+  assert.ok(src.indexOf("collectionGroup('schedule_sources')") > -1
+    && src.indexOf(".where('expires_at', '<=', new Date(startedAt))") > -1
+    && src.indexOf('.limit(sourceSweepCandidateLimit)') > -1,
+  'המנקה אינו מאתר מועמדים שפגו בשאילתה מוגבלת');
+  assert.ok(src.indexOf('bytes + documentBytes > MAX_SOURCE_TRANSACTION_BYTES') > -1,
+    'מנקה הילדים מוגבל לפי כמות בלבד ולא לפי נפח Firestore');
+  const indexSource = read('functions/index.js');
+  assert.ok(indexSource.indexOf('exports.sweepExpiredScheduleSources = onSchedule({') > -1
+    && indexSource.indexOf('scheduleRuntime.sweepExpiredSources()') > -1,
+  'מנקה המקורות אינו מחובר לריצה שרתית מתוזמנת');
+  for (const group of [
+    'schedule_policy_operations', 'schedule_mode_operations', 'schedule_source_operations'
+  ]) {
+    assert.ok(indexes.fieldOverrides.some((item) =>
+      item.collectionGroup === group && item.fieldPath === 'expires_at'
+      && item.ttl === true), 'חסר TTL ליומן פעולות זמני: ' + group);
+  }
 });
 
 check('the closing transaction re-reads the operation and the live policy', () => {
@@ -1211,5 +1311,5 @@ check('expected_mode is mandatory, not merely honoured when present', () => {
     .test(body), 'expected_mode נבדק רק כשהוא נמסר');
 });
 
-assert.equal(passed, 94);
-console.log('\n94 schedule runtime source checks passed.');
+assert.equal(passed, 99);
+console.log('\n99 schedule runtime source checks passed.');

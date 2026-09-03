@@ -5116,14 +5116,11 @@ exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req)
 exports.getScheduleModeOptions = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getModeOptions', req));
 
-// ⭐ P0-2. שתי הפעולות שסוגרות את חלון הלוח הריק: בדיקה מול מה
-// שהתחנה רואה היום, ואז מעבר אטומי שמפעיל פרסום מוכן ומזיז את המצב
-// יחד. שער הפיקוד, לא שער אחראי הסידור.
+// ⭐ 42G.0 נשארת ב-off/shadow: אפשר להפיק דוח preflight על פרסום
+// מוכן, אך אין callable ציבורי שמקדם אותו ל-new. מסלול הקידום ייפתח
+// רק בגרסת cutover נפרדת אחרי השלמת חוזה ההפעלה.
 exports.previewScheduleCutover = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('previewCutover', req));
-
-exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }, async (req) =>
-  invokeSchedule('promoteToNew', req));
 
 exports.setScheduleRuntimeMode = onCall({
   enforceAppCheck: true,
@@ -5267,3 +5264,14 @@ exports.resumeScheduleOutbox = onSchedule({
   timeoutSeconds: 120,
   region: 'europe-west1'
 }, async () => scheduleRuntime.resumeOutbox());
+
+// Staged schedule sources can contain names in child collections.  A parent
+// TTL would orphan those children, so a bounded server-only sweeper claims an
+// expired incomplete source and removes children before the parent.
+exports.sweepExpiredScheduleSources = onSchedule({
+  schedule: 'every 60 minutes',
+  timeZone: 'Asia/Jerusalem',
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  region: 'europe-west1'
+}, async () => scheduleRuntime.sweepExpiredSources());

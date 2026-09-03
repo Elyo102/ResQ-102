@@ -10,7 +10,6 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
-const port = 8393;
 const lagMs = 180;
 const maxInteractiveMs = 1900;
 const maxDataSpanMs = 1500;
@@ -25,7 +24,10 @@ const server = http.createServer((req, res) => {
     : ext === '.css' ? 'text/css' : 'text/javascript' });
   res.end(fs.readFileSync(file));
 });
-await new Promise(resolve => server.listen(port, resolve));
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const address = server.address();
+if (!address || typeof address === 'string') throw new Error('performance-server-address');
+const port = address.port;
 
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
@@ -38,6 +40,14 @@ await context.route('**/firebasejs/**', route => {
 await context.route('**://fonts.googleapis.com/**', route =>
   route.fulfill({ status:200, contentType:'text/css', body:'' }));
 await context.addInitScript(({ lag }) => {
+  // A cold page has not received a user gesture, so callout.js must not try
+  // to open an audio device while this benchmark measures attendance data.
+  // Headless Chromium on Windows otherwise reports a synthetic activation;
+  // new AudioContext() can then block its main thread for several seconds.
+  Object.defineProperty(navigator, 'userActivation', {
+    configurable: true,
+    value: Object.freeze({ hasBeenActive:false, isActive:false })
+  });
   window.__SMOKE_ROLE = 'super';
   window.__SMOKE_LAG = lag;
   window.__PERF_STARTED = Date.now();
@@ -50,6 +60,9 @@ const result = await page.evaluate(() => ({
   interactiveMs: Date.now() - window.__PERF_STARTED,
   dataRequests: window.__N || 0,
   dataSpanMs: (window.__TN || Date.now()) - (window.__T0 || Date.now()),
+  dataEvents: (window.__DATA_EVENTS || []).map(event => ({
+    path: event.path, started: event.started, finished: event.finished
+  })),
   dataPaths: (window.__DATA_PATHS || []).slice(),
   compatibilityCalls: (window.__CALLABLE_CALLS || [])
     .filter(call => call && call.name === 'getLegacyScheduleCompatibilityContext')
@@ -63,9 +76,27 @@ console.log('Attendance slow-network benchmark');
 console.log('lag per data request:', lagMs + 'ms');
 console.log('time to usable report:', result.interactiveMs + 'ms');
 console.log('data requests started:', result.dataRequests);
-console.log('measured data span:', result.dataSpanMs + 'ms');
+console.log('all data work span:', result.dataSpanMs + 'ms');
+
+const criticalPaths = ['/users/stub-uid', '/config/board',
+  '/shifts/C','/swaps','/sub_stations','/attendance','/monthly_reports/1_'];
+const criticalEvents = result.dataEvents.filter(event =>
+  criticalPaths.some(suffix => event.path.includes(suffix)));
+const criticalStart = Math.min(...criticalEvents.map(event => event.started));
+const criticalFinish = Math.max(...criticalEvents.map(event => event.finished));
+const criticalDataSpanMs = criticalFinish - criticalStart;
+const staticEvents = criticalEvents.filter(event =>
+  ['/config/board','/shifts/C','/swaps','/sub_stations']
+    .some(suffix => event.path.includes(suffix)));
+const monthEvents = criticalEvents.filter(event =>
+  ['/attendance','/monthly_reports/1_']
+    .some(suffix => event.path.includes(suffix)));
+const startSpread = events => Math.max(...events.map(event => event.started)) -
+  Math.min(...events.map(event => event.started));
+console.log('critical data span:', criticalDataSpanMs + 'ms');
 let passed = result.interactiveMs <= maxInteractiveMs &&
-             result.dataSpanMs <= maxDataSpanMs;
+             result.dataSpanMs <= maxDataSpanMs &&
+             criticalDataSpanMs <= maxDataSpanMs;
 console.log(passed
   ? '✓ attendance data sources load without a serial request waterfall'
   : '✗ attendance loading regressed to a serial request waterfall');
@@ -75,8 +106,6 @@ function check(ok, message) {
   console.log((ok ? '✓ ' : '✗ ') + message);
 }
 
-const criticalPaths = ['/config/board',
-  '/shifts/C','/swaps','/sub_stations','/attendance','/monthly_reports/1_'];
 check(!result.dataPaths.some(path => /\/guards$/.test(path)),
       'attendance does not read raw guard documents in the browser');
 check(!result.dataPaths.some(path => /\/(?:rotations|shift_overrides)$/.test(path)),
@@ -85,6 +114,10 @@ criticalPaths.forEach(suffix => {
   check(result.dataPaths.some(p => p.includes(suffix)),
         'benchmark exercised ' + suffix);
 });
+check(staticEvents.length === 4 && startSpread(staticEvents) <= 50,
+      'board, shift, swaps and sub-stations start in parallel');
+check(monthEvents.length === 2 && startSpread(monthEvents) <= 50,
+      'attendance and its monthly report start in parallel');
 const initialRange = await page.evaluate(() => {
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();

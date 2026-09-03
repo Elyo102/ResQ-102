@@ -55,6 +55,13 @@ const MAX_OVERRIDES = 5000;
 const MAX_SOURCE_PEOPLE = 20000;
 const MAX_SOURCE_GROUP = 20000;
 const MAX_SOURCE_TOTAL = 50000;
+// A scheduled run must never turn one old import into an unbounded recursive
+// delete.  Sources above the per-run child budget keep their parent anchor and
+// are resumed by a later invocation.
+const MAX_SOURCE_SWEEP_CANDIDATES = 10;
+const MAX_SOURCE_SWEEP_CHILDREN = 1000;
+const MAX_SOURCE_SWEEP_CHUNK = 200;
+const SOURCE_CHILD_GROUPS = Object.freeze(['people', 'availability', 'locked', 'events']);
 // Compatibility reads power the existing station schedule while V2 is off or
 // in Shadow.  They must not turn one screen load into an unbounded Firestore
 // scan.  These limits are an I/O safety boundary, not a claim about every
@@ -177,12 +184,26 @@ function createScheduleRuntime(deps) {
     ? d.beforeLiveGuardViewRecheck : async function () {};
   const afterSourceWriteChunk = typeof d.afterSourceWriteChunk === 'function'
     ? d.afterSourceWriteChunk : async function () {};
+  const afterSourceSweepClaim = typeof d.afterSourceSweepClaim === 'function'
+    ? d.afterSourceSweepClaim : async function () {};
+  const afterSourceSweepChunk = typeof d.afterSourceSweepChunk === 'function'
+    ? d.afterSourceSweepChunk : async function () {};
   // Test-only seam: production wiring omits it and therefore always uses the
   // audited 350-write ceiling. It lets the emulator force a between-chunk race
   // without creating hundreds of employee records.
   const sourceWriteChunkSize = integer(d.sourceWriteChunkSize)
       && d.sourceWriteChunkSize >= 1 && d.sourceWriteChunkSize <= MAX_BATCH_WRITES
     ? d.sourceWriteChunkSize : MAX_BATCH_WRITES;
+  const sourceSweepCandidateLimit = integer(d.sourceSweepCandidateLimit)
+      && d.sourceSweepCandidateLimit >= 1
+      && d.sourceSweepCandidateLimit <= MAX_SOURCE_SWEEP_CANDIDATES
+    ? d.sourceSweepCandidateLimit : MAX_SOURCE_SWEEP_CANDIDATES;
+  const sourceSweepChildLimit = integer(d.sourceSweepChildLimit)
+      && d.sourceSweepChildLimit >= 1 && d.sourceSweepChildLimit <= MAX_SOURCE_SWEEP_CHILDREN
+    ? d.sourceSweepChildLimit : MAX_SOURCE_SWEEP_CHILDREN;
+  const sourceSweepChunkSize = integer(d.sourceSweepChunkSize)
+      && d.sourceSweepChunkSize >= 1 && d.sourceSweepChunkSize <= MAX_SOURCE_SWEEP_CHUNK
+    ? d.sourceSweepChunkSize : MAX_SOURCE_SWEEP_CHUNK;
 
   if (!db || typeof db.collection !== 'function' || typeof db.runTransaction !== 'function') {
     throw new ScheduleRuntimeError('db-required', 'חובה להזריק Firestore');
@@ -1917,11 +1938,11 @@ function createScheduleRuntime(deps) {
     /* שלב א' — המסמך נכתב **בלי** `complete` ובלי חתימה. במצב הזה
      * `loadSource` דוחה אותו, ולכן מקור חצי-כתוב אינו ניתן להרצה.
      *
-     * ⭐ P1-7. `expires_at` נחתם כאן ומנוקה בסגירה. מקור מדורג שננטש
-     * מכיל שמות מלאים בתת-האוסף `people`; בלי התאריך הזה הוא נשאר
-     * על הדיסק לנצח. TTL של Firestore אינו יורד לתת-אוספים, ולכן
-     * יש גם ניקוי מפורש ב-`catch` — ה-TTL הוא רשת הביטחון למקרה
-     * שגם הניקוי לא הספיק לרוץ. */
+     * ⭐ P1-7. `expires_at` נחתם כאן ומנוקה בסגירה. הוא משמש סמן
+     * לאיתור מקור מדורג שננטש. לא מופעל על `schedule_sources` TTL של
+     * Firestore: מחיקת האב אינה מוחקת את תתי-האוספים ועלולה להשאיר
+     * שמות ונתוני סידור יתומים. הניקוי ב-`catch` מוחק ילדים תחילה
+     * ואת האב אחרון. */
     /* שלב ב' — הסגירה. טרנזקציה קצרה שבודקת שוב את המינוי החי,
      * שהמצביע לא זז, ורק אז מסמנת שלם ומצביעה. */
     const view = Object.assign(sourcePlanView(staged, config),
@@ -2034,7 +2055,9 @@ function createScheduleRuntime(deps) {
           staged_by_request: FV.delete(),
           staged_request_hash: FV.delete(),
           staged_owner_token: FV.delete(),
-          cleanup_claimed_by: FV.delete()
+          cleanup_claimed_by: FV.delete(),
+          cleanup_claimed_at: FV.delete(),
+          cleanup_lease_until: FV.delete()
         }, { merge: true });
         if (data.activate === true) {
           tx.set(runtimeRef(ctx.sid), { active_source_id: sourceId }, { merge: true });
@@ -2054,13 +2077,10 @@ function createScheduleRuntime(deps) {
       });
     } catch (error) {
       /* ⭐ P1-7. הסגירה נכשלה, והמסמך המדורג כבר על הדיסק עם שמות
-       * מלאים בתת-האוסף `people`. TTL של Firestore אינו יורד
-       * לתת-אוספים, ולכן הניקוי כאן מפורש — ומוחק בדיוק את מה
-       * שכתבנו, לפי המזהים שבידינו, בלי שאילתה.
-       *
-       * הוא best-effort בכוונה: אם גם הוא נכשל, `expires_at` על
-       * מסמך האב הוא רשת הביטחון, והשגיאה המקורית היא זו שחוזרת
-       * לקורא — לא שגיאת הניקוי. */
+       * מלאים בתת-האוסף `people`. הניקוי כאן מפורש ומוחק את הילדים
+       * לפני האב, לפי מזהי הבעלות שבידינו. הוא best-effort; אם הוא נכשל,
+       * מסמך האב ו-`expires_at` נשארים כעוגן איתור לניקוי רקורסיבי עתידי.
+       * השגיאה המקורית היא שחוזרת לקורא — לא שגיאת הניקוי. */
       if (stageOwned) {
         await cleanupStagedSource(ctx.sid, ref, staged, requestId, requestHash,
           operationOwner).catch(() => {});
@@ -2073,55 +2093,315 @@ function createScheduleRuntime(deps) {
 
   /* מוחק מקור מדורג שננטש, כולל תת-האוספים שנכתבו. */
   async function cleanupStagedSource(sid, ref, plan, requestId, requestHash, operationOwner) {
-    /* Claim first, but keep the parent in place while deleting children. A
-     * finalizer sees the claim and aborts; another request cannot own this
-     * request-specific ref. */
+    /* The immediate cleanup uses its own fenced lease.  A blind batch here
+     * creates an ABA race: a delayed worker could delete children recreated by
+     * a later retry after the source id was reclaimed. */
+    const cleanupToken = 'cleanup_' + randomId();
+    const opRef = sourceOperationRef(sid, requestId);
+    function ownsCleanup(sourceSnap, runtimeSnap, operationSnap, now) {
+      if (!sourceSnap.exists || !operationSnap.exists) return false;
+      const meta = sourceSnap.data() || {};
+      const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      const op = operationSnap.data() || {};
+      return meta.complete !== true
+        && meta.staged_by_request === requestId
+        && meta.staged_request_hash === requestHash
+        && meta.staged_owner_token === operationOwner
+        && meta.staged_content_digest === plan.digest
+        && meta.cleanup_claimed_by === cleanupToken
+        && timeMillis(meta.cleanup_lease_until) > now
+        && runtime.active_source_id !== ref.id
+        && op.status === 'pending'
+        && op.request_hash === requestHash
+        && op.owner_token === operationOwner
+        && !plain(op.result);
+    }
     const owned = await db.runTransaction(async (tx) => {
-      const [snap, runtimeSnap] = await Promise.all([
-        tx.get(ref), tx.get(runtimeRef(sid))
+      const [snap, runtimeSnap, operationSnap] = await Promise.all([
+        tx.get(ref), tx.get(runtimeRef(sid)), tx.get(opRef)
       ]);
-      if (!snap.exists) return false;
+      if (!snap.exists || !operationSnap.exists) return false;
       const meta = snap.data() || {};
       const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
+      const op = operationSnap.data() || {};
+      const now = timeMillis(clock());
+      const claimLease = timeMillis(meta.cleanup_lease_until);
       if (meta.complete === true
           || meta.staged_by_request !== requestId
           || meta.staged_request_hash !== requestHash
           || meta.staged_owner_token !== operationOwner
           || meta.staged_content_digest !== plan.digest
-          || (nonEmpty(meta.cleanup_claimed_by) && meta.cleanup_claimed_by !== operationOwner)
-          || runtime.active_source_id === ref.id) return false;
-      tx.set(ref, { cleanup_claimed_by: operationOwner }, { merge: true });
+          || (nonEmpty(meta.cleanup_claimed_by)
+            && Number.isFinite(claimLease) && claimLease > now)
+          || runtime.active_source_id === ref.id
+          || op.status !== 'pending'
+          || op.request_hash !== requestHash
+          || op.owner_token !== operationOwner
+          || plain(op.result)) return false;
+      tx.set(ref, {
+        cleanup_claimed_by: cleanupToken,
+        cleanup_claimed_at: FV.serverTimestamp(),
+        cleanup_lease_until: new Date(now + OUTBOX_LEASE_MS)
+      }, { merge: true });
       return true;
     });
     if (!owned) return;
 
-    const docs = [].concat(
-      plan.people.map((item) => ref.collection('people').doc(item.id)),
-      plan.availability.map((item) => ref.collection('availability').doc(item.id)),
-      plan.locked.map((item) => ref.collection('locked').doc(item.id)),
-      plan.events.map((item) => ref.collection('events').doc(item.id))
+    const deletes = [].concat(
+      plan.people.map((item) => ({ ref: ref.collection('people').doc(item.id), data: item })),
+      plan.availability.map((item) => ({
+        ref: ref.collection('availability').doc(item.id), data: item
+      })),
+      plan.locked.map((item) => ({ ref: ref.collection('locked').doc(item.id), data: item })),
+      plan.events.map((item) => ({ ref: ref.collection('events').doc(item.id), data: item }))
     );
-    for (let at = 0; at < docs.length; at += MAX_BATCH_WRITES) {
-      const batch = db.batch();
-      docs.slice(at, at + MAX_BATCH_WRITES).forEach((doc) => batch.delete(doc));
-      await batch.commit();
+    // Reuse the write-side byte budget.  Count-only chunks can exceed
+    // Firestore's 10 MiB transaction limit when a few source rows are large.
+    for (const chunk of sourceWriteChunks(deletes)) {
+      await db.runTransaction(async (tx) => {
+        const refs = [ref, runtimeRef(sid), opRef].concat(chunk.map((item) => item.ref));
+        const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+        const now = timeMillis(clock());
+        if (!ownsCleanup(snaps[0], snaps[1], snaps[2], now)) return;
+        snaps.slice(3).forEach((snap) => {
+          if (snap.exists) tx.delete(snap.ref);
+        });
+        tx.set(ref, {
+          cleanup_lease_until: new Date(now + OUTBOX_LEASE_MS)
+        }, { merge: true });
+      });
     }
     await db.runTransaction(async (tx) => {
-      const [snap, runtimeSnap] = await Promise.all([
-        tx.get(ref), tx.get(runtimeRef(sid))
+      const [snap, runtimeSnap, operationSnap] = await Promise.all([
+        tx.get(ref), tx.get(runtimeRef(sid)), tx.get(opRef)
       ]);
-      if (!snap.exists) return;
-      const meta = snap.data() || {};
-      const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : {};
-      if (meta.complete === true
-          || meta.staged_by_request !== requestId
-          || meta.staged_request_hash !== requestHash
-          || meta.staged_owner_token !== operationOwner
-          || meta.staged_content_digest !== plan.digest
-          || meta.cleanup_claimed_by !== operationOwner
-          || runtime.active_source_id === ref.id) return;
+      const children = [];
+      for (const group of SOURCE_CHILD_GROUPS) {
+        children.push(await tx.get(ref.collection(group).limit(1)));
+      }
+      if (!ownsCleanup(snap, runtimeSnap, operationSnap, timeMillis(clock()))) return;
+      if (children.some((snapshot) => !snapshot.empty)) return;
       tx.delete(ref);
     });
+  }
+
+  /* Scheduled crash recovery for staged sources.  Firestore TTL is
+   * intentionally not enabled on the parent: TTL would remove the only
+   * discoverable anchor while leaving PII-bearing subcollections behind. */
+  function sourceSweepCandidate(doc) {
+    const parts = String(doc && doc.ref && doc.ref.path || '').split('/');
+    if (parts.length !== 4 || parts[0] !== 'stations'
+        || parts[2] !== 'schedule_sources' || !ID_RE.test(parts[1])
+        || !ID_RE.test(parts[3])) return null;
+    const meta = doc.data() || {};
+    const requestId = String(meta.staged_by_request || '').trim();
+    if (!ID_RE.test(requestId)) return null;
+    return {
+      sid: parts[1], sourceId: parts[3], requestId,
+      ref: doc.ref, runtimeRef: runtimeRef(parts[1]),
+      operationRef: sourceOperationRef(parts[1], requestId)
+    };
+  }
+
+  function liveSourceOperation(opSnap, now) {
+    if (!opSnap || !opSnap.exists) return false;
+    const op = opSnap.data() || {};
+    const leaseUntil = timeMillis(op.lease_until);
+    return op.status === 'pending' && Number.isFinite(leaseUntil) && leaseUntil > now;
+  }
+
+  function sourceSweepBlock(meta, runtime, opSnap, candidate, token, now, requireOwner) {
+    const expiresAt = timeMillis(meta && meta.expires_at);
+    if (!meta || meta.complete === true) return 'complete';
+    if (!Number.isFinite(expiresAt) || expiresAt > now) return 'not-expired';
+    if (meta.staged_by_request !== candidate.requestId) return 'staging-changed';
+    if (runtime && runtime.active_source_id === candidate.sourceId) return 'active';
+    if (liveSourceOperation(opSnap, now)) return 'live-operation';
+    const claimedBy = String(meta.cleanup_claimed_by || '');
+    const claimLease = timeMillis(meta.cleanup_lease_until);
+    if (requireOwner) {
+      if (claimedBy !== token || !Number.isFinite(claimLease) || claimLease <= now) {
+        return 'claim-lost';
+      }
+    } else if (claimedBy && Number.isFinite(claimLease) && claimLease > now) {
+      return 'claimed';
+    }
+    return null;
+  }
+
+  async function claimExpiredSource(doc, token) {
+    const candidate = sourceSweepCandidate(doc);
+    if (!candidate) return { claimed: false, reason: 'candidate-invalid' };
+    const result = await db.runTransaction(async (tx) => {
+      const [sourceSnap, runtimeSnap, operationSnap] = await Promise.all([
+        tx.get(candidate.ref), tx.get(candidate.runtimeRef), tx.get(candidate.operationRef)
+      ]);
+      if (!sourceSnap.exists) return { claimed: false, reason: 'missing' };
+      const now = timeMillis(clock());
+      const reason = sourceSweepBlock(sourceSnap.data() || {},
+        runtimeSnap.exists ? (runtimeSnap.data() || {}) : {}, operationSnap,
+        candidate, token, now, false);
+      if (reason) return { claimed: false, reason };
+      tx.set(candidate.ref, {
+        cleanup_claimed_by: token,
+        cleanup_claimed_at: FV.serverTimestamp(),
+        cleanup_lease_until: new Date(now + OUTBOX_LEASE_MS)
+      }, { merge: true });
+      return { claimed: true };
+    });
+    return Object.assign({}, result, { candidate });
+  }
+
+  async function deleteExpiredSourceChunk(candidate, token, group, limit) {
+    const query = candidate.ref.collection(group)
+      .orderBy(FieldPath.documentId()).limit(limit);
+    const queued = await query.get();
+    if (queued.empty) return { owned: true, deleted: 0 };
+    let bytes = 0;
+    const selected = [];
+    for (const doc of queued.docs) {
+      const documentBytes = Buffer.byteLength(String(doc.ref.path || ''), 'utf8')
+        + Buffer.byteLength(stable(doc.data() || {}), 'utf8') + 2048;
+      if (documentBytes > MAX_SOURCE_TRANSACTION_BYTES) {
+        throw new ScheduleRuntimeError('source-sweep-child-too-large',
+          'רשומת מקור גדולה מכדי להימחק בבטחה.', 'resource-exhausted');
+      }
+      if (selected.length && bytes + documentBytes > MAX_SOURCE_TRANSACTION_BYTES) break;
+      selected.push(doc);
+      bytes += documentBytes;
+    }
+    return db.runTransaction(async (tx) => {
+      const refs = [candidate.ref, candidate.runtimeRef, candidate.operationRef]
+        .concat(selected.map((doc) => doc.ref));
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      if (!snaps[0].exists) return { owned: false, deleted: 0, reason: 'missing' };
+      const now = timeMillis(clock());
+      const reason = sourceSweepBlock(snaps[0].data() || {},
+        snaps[1].exists ? (snaps[1].data() || {}) : {}, snaps[2],
+        candidate, token, now, true);
+      if (reason) return { owned: false, deleted: 0, reason };
+      let deleted = 0;
+      snaps.slice(3).forEach((snap) => {
+        if (!snap.exists) return;
+        tx.delete(snap.ref);
+        deleted += 1;
+      });
+      tx.set(candidate.ref, {
+        cleanup_lease_until: new Date(now + OUTBOX_LEASE_MS)
+      }, { merge: true });
+      return { owned: true, deleted };
+    });
+  }
+
+  async function deleteExpiredSourceParent(candidate, token) {
+    return db.runTransaction(async (tx) => {
+      const base = await Promise.all([
+        tx.get(candidate.ref), tx.get(candidate.runtimeRef), tx.get(candidate.operationRef)
+      ]);
+      if (!base[0].exists) return { deleted: false, reason: 'missing' };
+      const children = [];
+      for (const group of SOURCE_CHILD_GROUPS) {
+        children.push(await tx.get(candidate.ref.collection(group).limit(1)));
+      }
+      const now = timeMillis(clock());
+      const reason = sourceSweepBlock(base[0].data() || {},
+        base[1].exists ? (base[1].data() || {}) : {}, base[2],
+        candidate, token, now, true);
+      if (reason) return { deleted: false, reason };
+      if (children.some((snapshot) => !snapshot.empty)) {
+        return { deleted: false, reason: 'children-remain' };
+      }
+      tx.delete(candidate.ref);
+      return { deleted: true };
+    });
+  }
+
+  async function releaseSourceSweepClaim(candidate, token) {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(candidate.ref);
+      if (!snap.exists) return;
+      const meta = snap.data() || {};
+      if (meta.cleanup_claimed_by !== token) return;
+      tx.set(candidate.ref, {
+        cleanup_claimed_by: FV.delete(),
+        cleanup_claimed_at: FV.delete(),
+        cleanup_lease_until: FV.delete()
+      }, { merge: true });
+    });
+  }
+
+  async function sweepExpiredSources() {
+    const startedAt = timeMillis(clock());
+    if (!Number.isFinite(startedAt)) {
+      throw new ScheduleRuntimeError('source-sweep-clock-invalid',
+        'שעון ניקוי מקורות הסידור אינו תקין.');
+    }
+    const snapshot = await db.collectionGroup('schedule_sources')
+      .where('expires_at', '<=', new Date(startedAt))
+      .orderBy('expires_at', 'asc').limit(sourceSweepCandidateLimit).get();
+    const result = {
+      scanned: snapshot.size, claimed: 0, deleted_children: 0,
+      deleted_sources: 0, pending: 0, skipped: 0, failures: 0
+    };
+    let remainingChildren = sourceSweepChildLimit;
+    for (const doc of snapshot.docs) {
+      if (remainingChildren <= 0) {
+        result.pending += 1;
+        continue;
+      }
+      const token = 'sweep_' + randomId();
+      let claim = null;
+      try {
+        claim = await claimExpiredSource(doc, token);
+        if (!claim.claimed) {
+          result.skipped += 1;
+          continue;
+        }
+        result.claimed += 1;
+        await afterSourceSweepClaim({ kind: 'source-sweep', ref: claim.candidate.ref });
+        let owned = true;
+        for (const group of SOURCE_CHILD_GROUPS) {
+          while (owned && remainingChildren > 0) {
+            const chunk = await deleteExpiredSourceChunk(claim.candidate, token, group,
+              Math.min(sourceSweepChunkSize, remainingChildren));
+            owned = chunk.owned;
+            if (!owned || chunk.deleted === 0) break;
+            remainingChildren -= chunk.deleted;
+            result.deleted_children += chunk.deleted;
+            await afterSourceSweepChunk({
+              kind: 'source-sweep', ref: claim.candidate.ref,
+              deleted: chunk.deleted, deleted_total: result.deleted_children
+            });
+          }
+          if (!owned || remainingChildren <= 0) break;
+        }
+        if (!owned) {
+          result.skipped += 1;
+          await releaseSourceSweepClaim(claim.candidate, token);
+          continue;
+        }
+        const parent = await deleteExpiredSourceParent(claim.candidate, token);
+        if (parent.deleted) {
+          result.deleted_sources += 1;
+        } else {
+          result.pending += 1;
+          await releaseSourceSweepClaim(claim.candidate, token);
+        }
+      } catch (ignore) {
+        // Never report the document path, request id or source content.  The
+        // scheduled error is a counter-only operational signal; the retained
+        // parent and lease make the work safely retryable.
+        result.failures += 1;
+        reportRuntimeError('schedule-source-sweep-failed');
+      }
+    }
+    if (result.failures) {
+      const error = new ScheduleRuntimeError('source-sweep-partial-failure',
+        'ניקוי מקורות סידור שפגו לא הושלם.');
+      error.result = Object.freeze(result);
+      throw error;
+    }
+    return Object.freeze(result);
   }
 
   async function releaseSourceOperationClaim(opRef, requestHash, operationOwner) {
@@ -2437,6 +2717,17 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError(modeAuthority.CODE.FORBIDDEN,
         'שינוי מצב מנוע הסידור מותר לפיקוד התחנה בלבד. '
         + 'מינוי אחראי/ת סידור אינו כולל את ההרשאה הזאת.', 'permission-denied');
+    }
+
+    /* ⭐ 42G.0 היא גרסת containment. גם פיקוד ומנהל-על אינם יכולים
+     * להפעיל `new` דרך המתג הכללי: מסלול כזה עוקף מועמד מוכן ואת
+     * ה-preflight. ההפעלה תיפתח רק בגרסת cutover נפרדת. הבדיקה
+     * קודמת ל-replay ולקריאות המוכנות כדי שגם בקשה ישנה לא תוכל
+     * להחזיר הצלחת הפעלה לאחר שהמסלול נסגר. */
+    if (data.target === MODE.NEW) {
+      throw new ScheduleRuntimeError('mode-cutover-disabled',
+        'הפעלת מנוע הסידור החדש מושבתת בגרסה זו. אפשר להכין ולבדוק במצב shadow בלבד.',
+        'failed-precondition');
     }
 
     /* ⭐ טביעת האצבע נגזרת מה**בקשה**, לא מהתוצאה.
@@ -2959,7 +3250,7 @@ function createScheduleRuntime(deps) {
         .map((person) => person.id),
       from, to,
       legacy_days: cutoverDaysFromLegacy(legacy.days),
-      next_days: cutoverDaysFromRows(snapshot.plan.days || snapshot.rows),
+      next_days: cutoverDaysFromRows(snapshot.plan.rows),
       candidate_publication_id: candidateId,
       policy_digest: policy.digest,
       source_digest: source.digest,
@@ -3114,6 +3405,136 @@ function createScheduleRuntime(deps) {
    * ההפעלה של פרסום מוכן קורית רק ב-`promoteToNew`, יחד עם המצב,
    * בטרנזקציה אחת.
    * ================================================================== */
+  function preparedReplayInvalid() {
+    throw new ScheduleRuntimeError('publication-prepared-replay-invalid',
+      'הפרסום המוכן אינו תואם לבקשה או שאינו שלם. יש לרענן ולהכין מחדש.',
+      'aborted');
+  }
+
+  /**
+   * A lost response after a shadow publication commits must be retryable
+   * without creating another publication.  Prepared data is deliberately
+   * stricter than an active-publication replay: nothing is released and no
+   * write or audit is repeated.  A read-only transaction binds the response
+   * to one live snapshot of authority, runtime configuration, predecessor,
+   * draft/publication signatures and the complete blocked outbox manifest.
+   */
+  async function replayPreparedPublication(ctx, input) {
+    const value = plain(input) ? input : {};
+    const notifications = Array.isArray(value.notifications) ? value.notifications : [];
+    const expectedOutbox = new Map();
+    notifications.forEach((notification) => {
+      const id = 'n_' + hash(notification.dedupe_key).slice(0, 40);
+      if (expectedOutbox.has(id)) preparedReplayInvalid();
+      expectedOutbox.set(id, notification);
+    });
+
+    // Validate the immutable child snapshot, not merely the parent's promise
+    // that it is complete.  The final transaction below rechecks the parent
+    // digest/count metadata so a concurrent metadata swap cannot bless this
+    // read.  Snapshot children are server-only once status is `prepared`.
+    try {
+      await readSnapshot(value.pubRef, value.existingData);
+    } catch (error) {
+      preparedReplayInvalid();
+    }
+
+    // Preserve the named live-authority boundary and then prove it again in
+    // the final transaction, after the race hook used by emulator tests.
+    await requireLiveManagerNow(ctx);
+    await beforeSnapshotFinalize({ kind: 'prepared-replay', ref: value.pubRef, ctx });
+
+    return db.runTransaction(async (tx) => {
+      const policyRef = stationRef(ctx.sid).collection('schedule_policies')
+        .doc(value.draftMeta.policy_id);
+      const sourceRef = stationRef(ctx.sid).collection('schedule_sources')
+        .doc(value.draftMeta.source_id);
+      const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), value.draftRef, value.pubRef,
+        policyRef, sourceRef, liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      const outboxSnap = await tx.get(value.pubRef.collection('schedule_outbox'));
+      const liveRuntime = snaps[0].exists ? (snaps[0].data() || {}) : {};
+      const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
+      const liveDraft = snaps[2].exists ? (snaps[2].data() || {}) : {};
+      const livePub = snaps[3].exists ? (snaps[3].data() || {}) : {};
+      const livePolicy = snaps[4].exists ? (snaps[4].data() || {}) : {};
+      const liveSource = snaps[5].exists ? (snaps[5].data() || {}) : {};
+      requireLiveManager(snaps[6], snaps[7], ctx);
+
+      const actualPrevious = nonEmpty(liveActive.publication_id)
+        ? liveActive.publication_id : null;
+      const publicationPrevious = nonEmpty(livePub.previous_publication_id)
+        ? livePub.previous_publication_id : null;
+      const countsValid = integer(livePub.row_count) && livePub.row_count >= 0
+        && integer(livePub.event_count) && livePub.event_count >= 0
+        && integer(livePub.person_count) && livePub.person_count >= 0;
+      const effectiveFields = [
+        'source_snapshot', 'source_version', 'contract_station_id',
+        'source_revision', 'source_digest', 'source_complete',
+        'policy_version', 'policy_digest'
+      ];
+      const effectiveContractValid = effectiveFields.every((field) =>
+        liveDraft[field] === value.draftMeta[field]
+        && livePub[field] === liveDraft[field]);
+      if (liveRuntime.mode !== MODE.SHADOW
+          || liveRuntime.active_source_id !== value.draftMeta.source_id
+          || liveRuntime.active_policy_id !== value.draftMeta.policy_id
+          || actualPrevious !== value.expectedPrevious
+          || Number(liveActive.revision || 0) !== value.revision - 1
+          || (value.expectedPrevious !== null
+            && liveActive.content_digest !== value.expectedPreviousDigest)
+          || liveDraft.station_id !== ctx.sid || liveDraft.status !== 'complete'
+          || liveDraft.content_digest !== value.expectedContentDigest
+          || liveDraft.source_id !== value.draftMeta.source_id
+          || liveDraft.policy_id !== value.draftMeta.policy_id
+          || livePub.station_id !== ctx.sid || livePub.status !== 'prepared'
+          || livePub.snapshot_complete !== true || !countsValid
+          || livePub.request_id !== value.requestId
+          || livePub.request_fingerprint !== value.requestFingerprint
+          || livePub.source_draft_id !== value.draftId
+          || livePub.published_by !== ctx.uid
+          || Number(livePub.revision) !== value.revision
+          || publicationPrevious !== value.expectedPrevious
+          || livePub.content_digest !== value.expectedContentDigest
+          || livePub.content_hash !== value.contentHash
+          || livePub.source_id !== value.draftMeta.source_id
+          || livePub.policy_id !== value.draftMeta.policy_id
+          || !effectiveContractValid || livePub.contract_station_id !== ctx.sid
+          || liveDraft.base_source_digest !== value.draftMeta.base_source_digest
+          || liveDraft.base_policy_digest !== value.draftMeta.base_policy_digest
+          || livePolicy.complete !== true || liveSource.complete !== true
+          || livePolicy.content_digest !== value.draftMeta.base_policy_digest
+          || liveSource.content_digest !== value.draftMeta.base_source_digest) {
+        preparedReplayInvalid();
+      }
+
+      if (outboxSnap.size !== expectedOutbox.size) preparedReplayInvalid();
+      for (const doc of outboxSnap.docs) {
+        const expected = expectedOutbox.get(doc.id);
+        const row = doc.data() || {};
+        if (!expected || row.station_id !== ctx.sid || row.publication_id !== value.pubId
+            || Number(row.revision) !== value.revision || row.person !== expected.person
+            || row.dedupe_key !== expected.dedupe_key || row.changed_by !== ctx.uid
+            || row.attempt !== 0 || row.status !== 'blocked'
+            || outboxExpired(row, Date.parse(clock()))
+            || stable(row.push) !== stable(expected.push)
+            || stable(row.detail) !== stable(expected.detail)) {
+          preparedReplayInvalid();
+        }
+      }
+
+      return {
+        duplicate: true,
+        prepared: true,
+        publication_id: value.pubId,
+        revision: value.revision,
+        notified_people: 0,
+        blocked_notifications: expectedOutbox.size,
+        summary: value.summary
+      };
+    });
+  }
+
   async function publish(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -3173,6 +3594,7 @@ function createScheduleRuntime(deps) {
     const expectedPrevious = before ? before.pointer.publication_id : null;
     const requestFingerprint = digest({
       station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
+      intent: preparing ? 'prepare' : 'activate',
       draft_id: draftId, revision,
       previous_publication_id: expectedPrevious,
       content_hash: planned.publication.content_hash
@@ -3181,24 +3603,53 @@ function createScheduleRuntime(deps) {
     if (existing.exists) {
       const existingData = existing.data() || {};
       const active = await activeRef(ctx.sid).get();
-      if (active.exists && (active.data() || {}).publication_id === pubId) {
-        if (existingData.request_id !== requestId || existingData.source_draft_id !== draftId
-            || existingData.published_by !== ctx.uid) {
-          throw new ScheduleRuntimeError('publication-conflict',
-            'מזהה הפרסום הפעיל אינו תואם לבקשה.', 'already-exists');
+      const activeData = active.exists ? (active.data() || {}) : {};
+      const pointsToExisting = activeData.publication_id === pubId;
+      /* Active replay must reconstruct the fingerprint of the original
+       * activation.  The current active publication is no longer its own
+       * predecessor and must not be used to derive that original request. */
+      const fingerprintForExisting = pointsToExisting ? digest({
+        station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
+        intent: 'activate', draft_id: draftId,
+        revision: Number(existingData.revision),
+        previous_publication_id: nonEmpty(existingData.previous_publication_id)
+          ? existingData.previous_publication_id : null,
+        content_hash: planned.publication.content_hash
+      }) : requestFingerprint;
+      if (existingData.request_fingerprint !== fingerprintForExisting) {
+        throw new ScheduleRuntimeError('publication-conflict',
+          'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
+      }
+      if (pointsToExisting) {
+        if (preparing || config.mode !== MODE.NEW || existingData.status !== 'active'
+            || existingData.station_id !== ctx.sid || existingData.snapshot_complete !== true
+            || existingData.request_id !== requestId || existingData.source_draft_id !== draftId
+            || existingData.published_by !== ctx.uid
+            || existingData.content_digest !== expectedContentDigest
+            || existingData.content_hash !== planned.publication.content_hash
+            || Number(existingData.revision) !== Number(activeData.revision)
+            || existingData.content_digest !== activeData.content_digest) {
+          preparedReplayInvalid();
         }
         await requireLiveManagerNow(ctx);
         await releaseOutbox(pubRef);
-        return { duplicate: true, publication_id: pubId, revision: (active.data() || {}).revision };
+        return { duplicate: true, publication_id: pubId, revision: activeData.revision };
       }
-      if (existingData.request_fingerprint !== requestFingerprint) {
-        throw new ScheduleRuntimeError('publication-conflict',
-          'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
+      if (existingData.status === 'prepared') {
+        return replayPreparedPublication(ctx, {
+          pubId, pubRef, draftId, draftRef, draftMeta, requestId,
+          requestFingerprint, expectedContentDigest, expectedPrevious,
+          expectedPreviousDigest: before ? before.pointer.content_digest : null,
+          revision, contentHash: planned.publication.content_hash,
+          notifications: planned.notifications, existingData,
+          summary: next.plan.summary
+        });
       }
       if (existingData.status === 'cancelled') {
         throw new ScheduleRuntimeError('publication-cancelled',
           'הפרסום בוטל ולכן יש להתחיל פעולה חדשה.', 'aborted');
       }
+      if (existingData.status !== 'staging') preparedReplayInvalid();
     } else await pubRef.create({
       station_id: ctx.sid, status: 'staging', request_id: requestId,
       request_fingerprint: requestFingerprint,
@@ -5229,6 +5680,7 @@ function createScheduleRuntime(deps) {
     savePolicy,
     previewSource,
     saveSource,
+    sweepExpiredSources,
     getModeOptions,
     setRuntimeMode,
     previewCutover,

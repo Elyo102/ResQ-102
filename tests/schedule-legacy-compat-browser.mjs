@@ -39,6 +39,14 @@ async function contextWithPlan(plan) {
       body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
   await context.addInitScript(value => {
+    // These scenarios exercise schedule compatibility, not callout audio.
+    // Model a cold page before any user gesture so a synthetic active callout
+    // cannot consume the deliberately delayed compatibility window by opening
+    // the host audio device in headless Chromium.
+    Object.defineProperty(navigator, 'userActivation', {
+      configurable: true,
+      value: Object.freeze({ hasBeenActive:false, isActive:false })
+    });
     window.__SMOKE_ROLE = 'super';
     window.__CALLABLE_PLAN = value;
   }, plan);
@@ -105,6 +113,7 @@ try {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/swaps.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
+    await page.waitForFunction(() => window.__CALLABLE_INFLIGHT === 1);
     const dates = await page.evaluate(() => {
       const key = date => date.getFullYear() + '-' +
         String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -120,6 +129,8 @@ try {
     });
     await page.locator('#myDate').fill(dates.mine);
     await page.locator('#hisDate').fill(dates.his);
+    assert.equal(await page.evaluate(() => window.__CALLABLE_INFLIGHT), 1,
+      'the compatibility response is still pending while fail-closed labels are checked');
     assert.match(await page.locator('#myCrewLine').textContent(), /בסיס הסידור אינו זמין/);
     assert.match(await page.locator('#hisCrewLine').textContent(), /בסיס הסידור אינו זמין/);
     await page.waitForFunction(() => !document.querySelector('#btnSend')?.disabled);

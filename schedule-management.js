@@ -32,6 +32,10 @@ const $ = (id) => document.getElementById(id);
 const state = {
   user: null, claims: {}, status: null, setup: null, draft: null,
   draftPreview: null, previewStart: null,
+  // מזהה פרסום הוא חלק מחוזה ה-idempotency עם השרת. כל ניסיון
+  // חוזר על אותה טיוטה חתומה ובאותה כוונה (הכנה/פרסום) חייב להשתמש
+  // באותו מזהה, גם אם תשובת השרת אבדה אחרי שהכתיבה כבר הושלמה.
+  publishRequestId: null, publishRequestKey: null,
   // חוקי התחנה, כפי שהמסך אוסף אותם
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
@@ -92,6 +96,22 @@ function requestId(prefix) {
     ? globalThis.crypto.randomUUID().replace(/-/g, '')
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
   return prefix + '_' + id;
+}
+
+function resetPublishRequest() {
+  state.publishRequestId = null;
+  state.publishRequestKey = null;
+}
+
+function requestIdForPublication(draftId, contentDigest, intent) {
+  const key = JSON.stringify([
+    String(draftId || ''), String(contentDigest || ''), String(intent || '')
+  ]);
+  if (!state.publishRequestId || state.publishRequestKey !== key) {
+    state.publishRequestId = requestId('publish');
+    state.publishRequestKey = key;
+  }
+  return state.publishRequestId;
 }
 
 function node(tag, className, text) {
@@ -609,12 +629,15 @@ function renderModeCard() {
     ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
       + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
     : (view.current === 'shadow'
-      ? 'מצב בדיקה. אפשר להכין טיוטות ולראות מה המנוע מייצר; פרסום אינו אפשרי, ואיש אינו מקבל הודעה.'
+      ? 'מצב בדיקה. אפשר להכין טיוטה ופרסום מוכן לבדיקה בלבד; הסידור הקיים נשאר פעיל ואיש אינו מקבל הודעה.'
       : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
 
   const box = $('modeTargets');
   clear(box);
-  (view.targets || []).forEach((target) => {
+  // 42G.0 is a contained shadow-only release. Even if a stale server response
+  // still advertises `new`, the browser must not render a generic activation
+  // path. A later cutover release will have a dedicated, reviewed flow.
+  (view.targets || []).filter((target) => target && target.to !== 'new').forEach((target) => {
     const button = node('button', 'pill',
       'העבר ל' + (target.label || target.to));
     button.type = 'button';
@@ -678,6 +701,13 @@ async function loadModeOptions() {
 async function applyModeChange() {
   if (state.modeBusy || !state.modeTarget || !state.modeView) return;
   const target = state.modeTarget;
+  if (target === 'new') {
+    state.modeTarget = null;
+    message('modeMessage',
+      'הפעלת המנוע החדש אינה זמינה בגרסה הזאת. אפשר לעבוד במצב בדיקה בלבד.', 'err');
+    renderModeCard();
+    return;
+  }
   const from = state.modeView.current;
   const text = target === 'off'
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
@@ -1429,6 +1459,7 @@ async function savePolicy() {
     // טיוטה שנבנתה על החוקים הקודמים אינה תואמת עוד את מה שנשמר.
     if (state.draft) {
       state.draft = null; state.draftPreview = null;
+      resetPublishRequest();
       $('draftPreviewCard').classList.add('hide');
       message('runMessage', 'חוקי התחנה השתנו, ולכן הטיוטה הקודמת נמחקה מהמסך. '
         + 'יש להריץ את המנוע מחדש.', 'warn');
@@ -1531,7 +1562,7 @@ function updatePublishAvailability() {
     && canRunSchedule() && gaps === 0;
   $('publish').disabled = state.busy || !ready;
   $('publish').textContent = state.status && state.status.mode === 'shadow'
-    ? 'הכן את הסידור לקראת מעבר' : 'פרסום הסידור';
+    ? 'הכן את הסידור' : 'פרסום הסידור';
   $('draftBadge').hidden = !state.draft;
 }
 
@@ -1594,6 +1625,7 @@ async function loadDraftPreview(start, resetApproval) {
 async function runPlanner() {
   if (state.busy) return;
   state.busy = true; $('runPlanner').disabled = true; state.draft = null; state.draftPreview = null;
+  resetPublishRequest();
   $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
   $('draftPreviewCard').classList.add('hide');
   message('runMessage', 'המנוע בונה טיוטה ובודק את כל החוקים…', 'info');
@@ -1613,29 +1645,54 @@ async function runPlanner() {
 }
 
 async function publishDraft() {
-  if (!state.status || state.status.mode !== 'new' || state.busy ||
+  if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
+  const preparing = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
-  if (!confirm('לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.')) return;
+  const confirmation = preparing
+    ? 'להכין את הטיוטה לבדיקה? הסידור הקיים יישאר פעיל ולא תישלח הודעה לאיש.'
+    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
+  if (!confirm(confirmation)) return;
   state.busy = true; $('publish').disabled = true;
-  message('publishMessage', 'מפרסם את הסידור בפעולה אחת…', 'info');
+  message('publishMessage', preparing
+    ? 'מכין את הסידור לבדיקה בלבד…' : 'מפרסם את הסידור בפעולה אחת…', 'info');
   try {
+    const draftId = state.draft.draft_id;
+    const expectedContentDigest = state.draftPreview.expected_content_digest;
+    const intent = preparing ? 'prepare' : 'publish';
     const result = (await call.publish({
-      draft_id: state.draft.draft_id,
-      expected_content_digest: state.draftPreview.expected_content_digest,
-      request_id: requestId('publish')
+      draft_id: draftId,
+      expected_content_digest: expectedContentDigest,
+      request_id: requestIdForPublication(draftId, expectedContentDigest, intent)
     })).data;
-    message('publishMessage', 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.', 'ok');
+    if (preparing && (result.prepared !== true || result.notified_people !== 0)) {
+      throw new Error('השרת לא אישר שהסידור הוכן בלבד וללא הודעות. יש לרענן לפני ניסיון נוסף.');
+    }
+    const successText = preparing
+      ? 'הסידור הוכן לבדיקה בלבד. הוא לא הופעל, הסידור הקיים נשאר פעיל ולא נשלחו הודעות.'
+      : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.';
+    message('publishMessage', successText, 'ok');
+    resetPublishRequest();
     state.draft = null;
     state.draftPreview = null;
+    state.previewStart = null;
     $('reviewDraft').checked = false;
     $('reviewDraft').disabled = true;
     $('draftPreviewCard').classList.add('hide');
-    state.status = (await call.status({})).data;
-    setMode(state.status); setRollbackAvailability();
+    clear($('draftSummary'));
+    $('draftSummary').classList.add('hide');
     invalidateRange();
-    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    try {
+      state.status = (await call.status({})).data;
+      setMode(state.status); setRollbackAvailability();
+      await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    } catch (_) {
+      // The write already succeeded. Never invite a second write by presenting
+      // a refresh failure as a failed prepare/publish operation.
+      message('publishMessage', successText
+        + ' מצב המסך לא התרענן; יש לרענן את הדף לפני פעולה נוספת.', 'warn');
+    }
   } catch (error) { message('publishMessage', errorText(error), 'err'); }
   finally { state.busy = false; setRollbackAvailability(); updatePublishAvailability(); }
 }
