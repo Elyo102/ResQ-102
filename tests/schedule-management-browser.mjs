@@ -426,6 +426,8 @@ try {
   const MUTATING = ['saveSchedulePolicy', 'previewSchedulePolicy', 'saveScheduleSource',
     'previewScheduleSource', 'runSchedulePlanner', 'publishSchedule', 'rollbackSchedule',
     'setScheduleRuntimeMode', 'manageScheduleGuard', 'assignGuard',
+    // ⭐ שתי אלה מזיזות את כל התחנה לסידור אחר.
+    'previewScheduleCutover', 'promoteScheduleToNew',
     'getScheduleManagerSetup', 'getScheduleDraftPreview', 'setScheduleManagerAccess'];
 
   await test('a member with no appointment fires no managing call even with hidden and disabled stripped', async () => {

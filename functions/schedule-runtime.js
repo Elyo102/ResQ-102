@@ -2417,12 +2417,80 @@ function createScheduleRuntime(deps) {
     }
     const readiness = await modeReadiness(ctx, config);
     const view = modeAuthority.options({ current: config.mode, actor, readiness });
+    /* ⭐ המועמד המוכן נחשף לפיקוד.
+     *
+     * את הפרסום מכין אחראי/ת הסידור; את המעבר מאשר הפיקוד. בלי
+     * המצביע הזה, מפקד שאינו אחראי סידור לא היה יכול **לגלות**
+     * שיש מועמד — הוא היה תלוי במצב מקומי במסך של מישהו אחר.
+     *
+     * מה שנמסר: מזהה, מהדורה, טווח וחתימה. אין כאן שמות ואין
+     * שיבוצים — מי שרוצה לראות מה בפנים פותח את הדוח. */
+    const candidate = await preparedCandidate(ctx);
     return Object.assign({}, view, {
       readiness: {
         policy: readiness.policy, source: readiness.source,
         people: readiness.people, problems: readiness.problems
-      }
+      },
+      candidate
     });
+  }
+
+  /* ⭐⭐ מועמד אחד, או שום מועמד — ולא „הראשון מבין חמישה".
+   *
+   * הגרסה הקודמת עשתה `limit(5)` **לפני** המיון, ואז מיינה לפי
+   * `revision`. שני כשלים בשורה אחת:
+   *
+   *   · `limit` לפני מיון — עם יותר מחמש הכנות, החמש שחוזרות הן
+   *     שרירותיות, ו„הגבוה ביותר" נבחר מתוך קבוצה מקרית.
+   *   · בהכנה ב-shadow המצביע הפעיל אינו זז, ולכן **כל ההכנות
+   *     נושאות את אותה `revision`**. המיון הוא בין שווים, והתוצאה
+   *     תלויה בסדר שהמסד החזיר.
+   *
+   * ⭐ והמסך הזה הוא מה שהמפקד רואה לפני שהוא מאשר מעבר. „מועמד
+   * שרירותי" כאן פירושו שהוא מאשר משהו אחר ממה שהוצג לו.
+   *
+   * לכן: קבוצה חסומה, ואם יש יותר ממועמד כשיר אחד — **לא מחזירים
+   * אף אחד**, ומדווחים כמה יש ואילו. המסך אומר „בטלו את הישנים",
+   * והמעבר ממתין. פחות נוח, ועדיף על אישור עיוור. */
+  async function preparedCandidate(ctx) {
+    const CAP = 20;
+    const snap = await stationRef(ctx.sid).collection('schedule_publications')
+      .where('status', '==', 'prepared').limit(CAP + 1).get();
+    if (snap.empty) return null;
+    if (snap.size > CAP) {
+      return { ambiguous: true, prepared_count: snap.size, reason: 'prepared-overflow' };
+    }
+    const docs = snap.docs
+      .map((doc) => Object.assign({ id: doc.id }, doc.data() || {}))
+      .filter((item) => item.station_id === ctx.sid && item.snapshot_complete === true)
+      // מיון קנוני ויציב, ולא לפי revision — כולן שוות ב-shadow.
+      .sort((a, b) => compareCanonical(a.id, b.id));
+    if (!docs.length) return null;
+    if (docs.length > 1) {
+      return {
+        ambiguous: true, prepared_count: docs.length, reason: 'prepared-ambiguous',
+        // מזהים בלבד — כדי שהמסך יראה *מה* לבטל, בלי לבחור במקום המפקד.
+        publication_ids: docs.map((item) => item.id)
+      };
+    }
+    const best = docs[0];
+    const preflight = await stationRef(ctx.sid).collection('schedule_preflight')
+      .doc(best.id).get();
+    const report = preflight.exists ? (preflight.data() || {}) : null;
+    return {
+      publication_id: best.id,
+      revision: Number(best.revision || 0),
+      from: best.from || null, to: best.to || null,
+      content_hash: best.content_hash || null,
+      prepared_count: docs.length,
+      preflight: report ? {
+        signature: report.signature || null,
+        blocked: report.blocked === true,
+        by_reason: report.by_reason || null,
+        generated_at: report.generated_at || null,
+        expires_at: report.expires_at || null
+      } : null
+    };
   }
 
   async function setRuntimeMode(req) {
@@ -2502,6 +2570,27 @@ function createScheduleRuntime(deps) {
         readiness
       });
     } catch (error) { modeError(error); }
+
+    /* ⭐ הכניסה למצב `new` אינה עוברת דרך כאן.
+     *
+     * `setRuntimeMode` מזיז מצב ותו לא. אם הוא היה מרשה shadow→new,
+     * כל לקוח היה יכול להדליק את המנוע **בלי** פרסום מוכן ובלי
+     * preflight — כלומר בדיוק חלון הלוח הריק שכל 42G.11 נבנה כדי
+     * לסגור, פתוח מחדש בקריאה אחת.
+     *
+     * הבדיקה נמצאת **אחרי** אימות המעבר בכוונה: `off → new` אינו
+     * מעבר חוקי בכלל, ולומר עליו „תשתמש במעבר המסודר" היה שולח את
+     * מי שמתקן למקום הלא נכון. קודם „זה לא מעבר חוקי", ורק אחר כך
+     * „וזה מעבר חוקי שנעשה אחרת".
+     *
+     * המסלול היחיד למצב `new` הוא `promoteToNew`, שמפעיל פרסום
+     * מוכן ומזיז את המצב באותה טרנזקציה. */
+    if (plan.to === MODE.NEW) {
+      throw new ScheduleRuntimeError('cutover-required',
+        'מעבר למנוע החדש נעשה דרך אישור המעבר בלבד: מכינים סידור, '
+        + 'בודקים אותו מול הסידור הקיים, ורק אז מעבירים. '
+        + 'החלפת מצב ישירה תשאיר את התחנה בלי לוח.', 'failed-precondition');
+    }
 
     if (plan.kind === 'unchanged') {
       return { duplicate: false, changed: false, mode: before.mode, from: before.mode,
@@ -2924,9 +3013,34 @@ function createScheduleRuntime(deps) {
     return { ref, meta };
   }
 
+  /* ⭐ טביעת האצבע של הסידור הישן שהושווה מולו.
+   *
+   * לא מונה גרסה — **תוכן**. סידור legacy שפורסם מחדש עם אותו תוכן
+   * בדיוק אינו הופך את הדוח לישן; סידור שהשתנה — כן. מונה היה עונה
+   * הפוך בשני המקרים. */
+  async function legacyComparisonDigest(ctx, config, from, to) {
+    const legacy = await legacyFallbackWindow(ctx, config, from, to);
+    const days = cutoverDaysFromLegacy(legacy.days);
+    return { legacy, days, digest: String(hash(stable(days))) };
+  }
+
   async function previewCutover(req) {
     const ctx = await context(req);
-    requireManager(ctx);
+    /* ⭐ שער הפיקוד, ולא שער המנהל — אותו שער בדיוק כמו ב-`promoteToNew`.
+     *
+     * `requireManager` כאן שבר את הפרדת הסמכויות מקצה לקצה: המפקד
+     * הוא שמאשר את המעבר, אבל המסך קורא קודם ל-preview — ולכן
+     * **המפקד נחסם בשלב הראשון** ולא יכול היה להגיע לאישור כלל.
+     * שני שערים שונים על שני צדדים של אותה פעולה אינם הפרדת
+     * סמכויות, הם באג.
+     *
+     * ואין כאן הרחבה בכיוון השני: `schedule_manager` אינו מקבל
+     * סמכות cutover. הוא מכין את המועמד; הפיקוד בודק ומאשר. */
+    const previewActor = modeActor(ctx);
+    if (!modeAuthority.mayChangeMode(previewActor)) {
+      throw new ScheduleRuntimeError(modeAuthority.CODE.FORBIDDEN,
+        'בדיקת המעבר למנוע החדש שמורה לפיקוד התחנה.', 'permission-denied');
+    }
     const config = await configuration(ctx.sid);
     requireMode(config, [MODE.SHADOW]);
     const data = plain(req.data) ? req.data : {};
@@ -2948,19 +3062,46 @@ function createScheduleRuntime(deps) {
     /* ⭐ התמונה נקראת **במלואה** (dates=null) כדי שחתימת התוכן תיבדק.
      * קריאת חלון מדלגת על האימות הזה, ודוח שמבוסס על תמונה שלא
      * אומתה אינו שווה את החתימה שנשים עליו. */
+    /* ⭐ מועמד שנבנה על מקור או מדיניות אחרים מאלה שפעילים עכשיו
+     * אינו בר-בדיקה: הדוח היה מתאר השוואה מול תצורה שהמועמד כלל
+     * לא נבנה עליה. עוצרים כאן, ולא מייצרים דוח חתום שמטעה. */
+    if (candidate.meta.source_id !== config.active_source_id
+        || candidate.meta.policy_id !== config.active_policy_id) {
+      throw new ScheduleRuntimeError('cutover-candidate-config',
+        'הפרסום המוכן נבנה על מקור או חוקי תחנה אחרים מאלה הפעילים. '
+        + 'יש לבנות טיוטה חדשה.', 'failed-precondition');
+    }
+
     const snapshot = await readSnapshot(candidate.ref, candidate.meta, null);
-    const legacy = await legacyFallbackWindow(ctx, config, from, to);
+    const legacy = await legacyComparisonDigest(ctx, config, from, to);
     const source = await loadSource(ctx, config.active_source_id);
     const policy = await loadPolicy(ctx, config.active_policy_id);
+    const predecessor = await activeRef(ctx.sid).get();
+    const predecessorId = predecessor.exists
+      ? ((predecessor.data() || {}).publication_id || null) : null;
 
     const report = cutover.preflight({
       station_id: ctx.sid,
       allowed_uids: source.peopleRaw.filter((person) => person.active === true)
         .map((person) => person.id),
       from, to,
-      legacy_days: cutoverDaysFromLegacy(legacy.days),
-      next_days: cutoverDaysFromRows(snapshot.plan.days || snapshot.rows),
+      legacy_days: legacy.days,
+      /* ⭐ שני העוגנים שקושרים את הדוח לעולם שבו הוא נבדק — ולא רק
+       * לזמן. TTL אומר „הדוח צעיר"; אלה אומרים „הדוח מתאר את מה
+       * שקיים". */
+      legacy_revision: legacy.digest,
+      predecessor_publication_id: predecessorId,
+      /* ⭐ `readSnapshot` מחזיר את השורות ב-`plan.rows`. הגרסה
+       * הקודמת קראה `plan.days || snapshot.rows` — שני נתיבים
+       * שאינם קיימים — ולכן `next_days` היה **תמיד ריק**,
+       * ה-preflight ראה שכל יום התרוקן וחסם כל מעבר מתחנה מאוישת.
+       *
+       * אין כאן fallback בכוונה: fallback מסתיר חוזה שבור במקום
+       * להפיל אותו, וזה בדיוק מה שקרה כאן. */
+      next_days: cutoverDaysFromRows(snapshot.plan.rows),
       candidate_publication_id: candidateId,
+      candidate_source_id: candidate.meta.source_id || null,
+      candidate_policy_id: candidate.meta.policy_id || null,
       policy_digest: policy.digest,
       source_digest: source.digest,
       content_hash: candidate.meta.content_hash || null
@@ -2970,7 +3111,24 @@ function createScheduleRuntime(deps) {
      * וקודים בלבד — אין בו שם ואין uid. */
     await stationRef(ctx.sid).collection('schedule_preflight')
       .doc(candidateId).set(Object.assign({}, report, {
-        actor_uid: ctx.uid, stored_at: FV.serverTimestamp()
+        actor_uid: ctx.uid, stored_at: FV.serverTimestamp(),
+        /* ⭐⭐ שדה TTL **נפרד**, ו-`expires_at` החתום נשאר כפי שנחתם.
+         *
+         * הגרסה הקודמת עשתה `expires_at: new Date(report.expires_at)`
+         * — כלומר דרסה שדה שנמצא **בתוך הגוף החתום** באובייקט תאריך.
+         * Firestore מחזיר אותו כ-`Timestamp`, `stable()` רואה ערך
+         * אחר מזה שנחתם, והחתימה אינה תואמת לעצמה. התוצאה:
+         * **כל מעבר נחסם**, תמיד, על דוח תקין לחלוטין.
+         *
+         * זה נמצא רק בהרצת אמולטור אמיתית. בזיכרון `Date` נשאר
+         * `Date`, ולכן שום בדיקה טהורה לא יכלה לראות את זה — וזו
+         * בדיוק הסיבה שהאמולטור אינו „עוד שכבה", אלא השכבה שבודקת
+         * את הגבול הזה.
+         *
+         * הכלל שנשאר: **שדה חתום אינו משמש גם כשדה תשתית.** TTL
+         * מקבל `ttl_expires_at` משלו, שאינו בגוף החתום ולכן אינו
+         * יכול לשבור אותו. `firestore.indexes.json` מצביע עליו. */
+        ttl_expires_at: new Date(report.expires_at)
       }));
     return report;
   }
@@ -2982,6 +3140,25 @@ function createScheduleRuntime(deps) {
     const candidateId = requireId(data.candidate_publication_id,
       'publication-id', 'מזהה הפרסום המוכן');
     const expectedMode = String(data.expected_mode || '');
+
+    /* ⭐⭐ החתימה שהוצגה למפקד, והיא **חובה**.
+     *
+     * בלעדיה המסך היה מציג דוח אחד, ומאשר את מה שהשרת קורא מהדיסק
+     * ברגע האישור. בין שתי הנקודות האלה יכול היה לרוץ preview נוסף
+     * ולדרוס את הדוח — והמפקד היה מאשר, בלחיצה אחת, מסמך שלא ראה
+     * מעולם.
+     *
+     * הזמן והעוגנים אומרים „הדוח לא התיישן". זה אומר משהו אחר
+     * לגמרי: **זה אותו דוח.** */
+    const expectedSignature = String(data.expected_preflight_signature || '');
+    /* אישור השינויים, אם יש. הצורה שלו היא **חתימת הדוח** ולא
+     * דגל: אישור לדוח אחד אינו אישור לדוח אחר. */
+    const acceptChanges = nonEmpty(data.accept_changes)
+      ? String(data.accept_changes) : null;
+    if (!nonEmpty(expectedSignature)) {
+      throw new ScheduleRuntimeError('cutover-signature-required',
+        'יש למסור את חתימת דוח הבדיקה שהוצגה במסך.', 'invalid-argument');
+    }
 
     /* ⭐ שער הפיקוד, ולא שער המנהל. הזזת המצב שייכת לפיקוד — בדיוק
      * כמו ב-`setRuntimeMode`, ומאותה סיבה. `requireManager` אינו
@@ -3012,6 +3189,22 @@ function createScheduleRuntime(deps) {
     const preflightRef = stationRef(ctx.sid).collection('schedule_preflight').doc(candidateId);
 
     await beforeSnapshotFinalize({ kind: 'cutover', ref: pubRef, ctx });
+    /* ⭐ טביעת האצבע של הסידור הישן, נמדדת מחדש **עכשיו** ומושווית
+     * בתוך העסקה לזו שנחתמה בבדיקה.
+     *
+     * ואני אומר במפורש מה זה כן ומה זה לא: הקריאה הזאת היא **לפני**
+     * העסקה, כי היא סורקת חלון תאריכים ואי אפשר לעשות זאת בתוך
+     * טרנזקציה של Firestore. כלומר החלון צומצם מ**שעתיים** —
+     * תוקף ה-preflight — ל**שברירי שנייה**, אבל לא נסגר.
+     *
+     * העוגן השני, `predecessor_publication_id`, כן נבדק אטומית:
+     * המצביע הפעיל נקרא בתוך העסקה עצמה. */
+    const preConfig = await configuration(ctx.sid);
+    const legacyNow = preConfig.mode === MODE.SHADOW
+      ? await legacyComparisonDigest(ctx, preConfig,
+          String(candidate.meta.from || ''), String(candidate.meta.to || ''))
+      : null;
+
     let result = null;
     await db.runTransaction(async (tx) => {
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), pubRef, preflightRef,
@@ -3021,6 +3214,14 @@ function createScheduleRuntime(deps) {
       const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
       const livePub = snaps[2].exists ? (snaps[2].data() || {}) : {};
       const livePreflight = snaps[3].exists ? (snaps[3].data() || {}) : null;
+
+      /* ⭐ ההשוואה **בתוך** העסקה, ועל הדוח החי כפי שהוא ברגע
+       * ה-commit. מחוץ לעסקה זה היה עוד TOCTOU. */
+      if (!livePreflight || String(livePreflight.signature || '') !== expectedSignature) {
+        throw new ScheduleRuntimeError('cutover-signature-mismatch',
+          'דוח הבדיקה השתנה מאז שהוצג במסך. יש לבדוק מחדש ולאשר את הדוח החדש.',
+          'aborted');
+      }
 
       /* ⭐ הזהות נקראת מחדש **כאן**. מי שהוסר מהתחנה בין טעינת המסך
        * לבין הלחיצה אינו מעביר תחנה למנוע חדש. */
@@ -3047,6 +3248,17 @@ function createScheduleRuntime(deps) {
           expected_candidate_id: candidateId,
           active_publication_id: nonEmpty(liveActive.publication_id)
             ? liveActive.publication_id : null,
+          /* התצורה שהמועמד **נבנה עליה**, מהפרסום עצמו — ולא זו
+           * שפעילה עכשיו. הדוח נקשר אליה, ושתיהן נבדקות. */
+          candidate_source_id: livePub.source_id || null,
+          candidate_policy_id: livePub.policy_id || null,
+          /* שני העוגנים. `predecessor` נקרא **בתוך** העסקה הזאת
+           * (`liveActive`), ולכן נבדק אטומית מול מה שנחתם. */
+          accept_changes: acceptChanges,
+          legacy_revision: legacyNow ? legacyNow.digest : null,
+          predecessor_publication_id: nonEmpty(liveActive.publication_id)
+            ? liveActive.publication_id : null,
+          now: clock(),
           preflight: livePreflight,
           policy_digest: livePolicy.exists ? (livePolicy.data() || {}).content_digest : null,
           source_digest: liveSource.exists ? (liveSource.data() || {}).content_digest : null,

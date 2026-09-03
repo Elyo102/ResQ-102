@@ -94,6 +94,22 @@ const D = Object.freeze({
     .test(stripComments(body)),
   noClientStation: (body) => !/data\.(station_id|stationId)/.test(stripComments(body)),
   commandGate: (body) => stripComments(body).indexOf('mayChangeMode') !== -1,
+  /* ⭐ „נקרא מחדש בתוך הטרנזקציה, מהמסמך החי" — ולא „נקרא פעם אחת
+   * מהטוקן". שני הסימנים יחד, כי כל אחד לבדו יכול להופיע במקרה. */
+  /* ⭐ שונה עם הבסיס: הבדיקה החיה מרוכזת ב-`requireLiveModeAuthority`,
+   * והדרישה כאן היא שהיא נקראת **בתוך** העסקה על המסמך החי. */
+  liveRoleRecheck: (body) => {
+    const code = stripComments(body);
+    const tx = code.indexOf('db.runTransaction(');
+    const call = code.indexOf("requireLiveModeAuthority(liveUserSnap, ctx, 'mode-actor-inactive')");
+    return tx !== -1 && call > tx;
+  },
+  liveHelperChecksRole: (helper) => {
+    const code = stripComments(helper);
+    return /if \(!modeAuthority\.mayChangeMode\(liveActor\)\)/.test(code)
+      && /role: String\(user\.role/.test(code)
+      && code.indexOf('scheduleAccess.activeMember(user, ctx.sid)') !== -1;
+  },
   commandNotManager: (body) => stripComments(body).indexOf('requireManager') === -1,
   selfIdentity: (body) => body.indexOf('await context(req)') !== -1,
   noClientIdentity: (body) => !/data\.(uid|person|subject|recipient|employee)/.test(body),
@@ -189,7 +205,18 @@ const CALLABLES = Object.freeze([
   { name: 'getScheduleManagerSetup', method: 'getManagerSetup', gate: GATE.MANAGER },
   { name: 'manageScheduleGuard', method: 'manageGuard', gate: GATE.MANAGER },
   { name: 'getScheduleGuardManagerBoard', method: 'getGuardManagerBoard', gate: GATE.MANAGER },
-  { name: 'previewScheduleCutover', method: 'previewCutover', gate: GATE.MANAGER },
+  /* ⭐ הטענה הזאת **שונתה במפורש**, ולא כי הפריעה.
+   *
+   * היא הצהירה ש-`previewCutover` הוא שער מנהל, וזה שבר את הפרדת
+   * הסמכויות מקצה לקצה: המפקד הוא שמאשר את המעבר, אבל המסך קורא
+   * קודם ל-preview — ולכן **המפקד נחסם בשלב הראשון** ולא יכול היה
+   * להגיע לאישור בכלל. Codex מצא את זה בהרצה מקצה לקצה, לא
+   * בקריאת קוד.
+   *
+   * שני שערים שונים על שני צדדים של אותה פעולה אינם הפרדת
+   * סמכויות. הבדיקה והאישור הם אותה פעולה, ולכן אותו שער — ו-3.C!
+   * למטה אוכף שהמינוי התפעולי אינו פותח אותו. */
+  { name: 'previewScheduleCutover', method: 'previewCutover', gate: GATE.COMMAND },
   // ⭐ המעבר עצמו שייך לפיקוד, לא לאחראי הסידור — כמו החלפת מצב.
   { name: 'promoteScheduleToNew', method: 'promoteToNew', gate: GATE.COMMAND },
   { name: 'setScheduleRuntimeMode', method: 'setRuntimeMode', gate: GATE.COMMAND },
@@ -410,9 +437,45 @@ mutateIn('8.2 savePolicy מקבל תחנה מהלקוח', 'savePolicy',
   'requireManager(ctx);', 'requireManager(ctx);\n    ctx.sid = req.data.station_id;',
   (src) => D.noClientStation(methodBody('savePolicy', src)));
 
-mutateIn('8.3 setRuntimeMode בלי mayChangeMode', 'setRuntimeMode',
-  'modeAuthority.mayChangeMode(actor)', 'true',
+/* ⭐ המוטציה הזאת **שרדה** אחרי seq357(ד), ובצדק — היא הצביעה על
+ * כך שהגלאי גס מדי, לא על כך שהקוד נחלש. `setRuntimeMode` נושא
+ * עכשיו **שני** שערים: אחד לפני הקריאות היקרות, ואחד על התפקיד
+ * החי בתוך הטרנזקציה. הסרת הראשון לבדה כבר אינה פותחת את השער,
+ * ולכן `commandGate` המשיך למצוא אחד.
+ *
+ * במקום להחליש את המוטציה — שתיים, אחת לכל שער. */
+mutateIn('8.3 setRuntimeMode בלי אף mayChangeMode', 'setRuntimeMode',
+  /mayChangeMode/g, 'alwaysTrue',
   (src) => D.commandGate(methodBody('setRuntimeMode', src)));
+
+/* ⭐⭐ והשער השני, שהוא החשוב יותר: התפקיד **החי** בתוך העסקה.
+ *
+ * בלעדיו, מפקד שהורד מפיקוד — ונשאר חבר פעיל בתחנה — עדיין מזיז
+ * את מצב מנוע הסידור, כי הבדיקה הראשונה רצה על ה-claims של הטוקן.
+ * טוקן חי עד שעה: זה חלון של שעה שבו הרשאה שנשללה עדיין עובדת. */
+mutateIn('8.3b setRuntimeMode בודק חברות חיה אך לא תפקיד חי', 'setRuntimeMode',
+  "requireLiveModeAuthority(liveUserSnap, ctx, 'mode-actor-inactive');",
+  "if (!scheduleAccess.activeMember(liveUserSnap.data(), ctx.sid)) {\n"
+  + "        throw new ScheduleRuntimeError('mode-actor-inactive', '', 'permission-denied');\n      }",
+  (src) => D.liveRoleRecheck(methodBody('setRuntimeMode', src)));
+
+/* ⭐ והבודק עצמו. אם `requireLiveModeAuthority` מפסיק לבדוק סמכות —
+ * או קורא את התפקיד מהטוקן במקום מהמסמך — כל מי שקורא לו נפתח בבת
+ * אחת: setRuntimeMode ו-promoteToNew. לכן הוא נבדק כיחידה. */
+function helperBody(src) {
+  const text = src === undefined ? RUNTIME : src;
+  const start = text.indexOf('function requireLiveModeAuthority(');
+  if (start === -1) return null;
+  return text.slice(start, text.indexOf('\n  }\n', start));
+}
+ok('8.3c requireLiveModeAuthority בודק חברות קנונית וסמכות על תפקיד חי',
+  !!helperBody() && D.liveHelperChecksRole(helperBody()));
+mutate('8.3d requireLiveModeAuthority בלי mayChangeMode', RUNTIME,
+  'if (!modeAuthority.mayChangeMode(liveActor))', 'if (false)',
+  (src) => D.liveHelperChecksRole(helperBody(src)));
+mutate('8.3e requireLiveModeAuthority קורא תפקיד מהטוקן', RUNTIME,
+  'role: String(user.role', 'role: String(ctx.role',
+  (src) => D.liveHelperChecksRole(helperBody(src)));
 
 // ⭐ המוטציה החשובה ביותר בקובץ: המינוי התפעולי פותח את שער המצב.
 // זו בדיוק ההכרעה שאלדד מסר ב-seq316, והיא חייבת להישבר כאן.

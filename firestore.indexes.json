@@ -350,6 +350,12 @@
       "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_preflight",
+      "fieldPath": "ttl_expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

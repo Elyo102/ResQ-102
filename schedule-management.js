@@ -15,6 +15,11 @@ const call = Object.freeze({
   setup: httpsCallable(functions, 'getScheduleManagerSetup'),
   modeOptions: httpsCallable(functions, 'getScheduleModeOptions'),
   modeSet: httpsCallable(functions, 'setScheduleRuntimeMode'),
+  /* ⭐ שתי אלה היו מיוצאות בשרת ולא נוצרו כאן, ולכן כל מחזור החיים
+   * של המעבר — הכנה, בדיקה מול הסידור הקיים, ומעבר אטומי — פשוט לא
+   * היה על המסלול של המסך. המסך המשיך להזיז mode ישירות. */
+  cutoverPreview: httpsCallable(functions, 'previewScheduleCutover'),
+  cutoverPromote: httpsCallable(functions, 'promoteScheduleToNew'),
   sourcePreview: httpsCallable(functions, 'previewScheduleSource'),
   sourceSave: httpsCallable(functions, 'saveScheduleSource'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
@@ -35,7 +40,7 @@ const state = {
   // חוקי התחנה, כפי שהמסך אוסף אותם
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
-  modeView: null, modeTarget: null, modeBusy: false,
+  modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false,
@@ -92,6 +97,27 @@ function requestId(prefix) {
     ? globalThis.crypto.randomUUID().replace(/-/g, '')
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
   return prefix + '_' + id;
+}
+
+/* ⭐ מזהה בקשה **יציב**, לפעולה שחייבת להיות ניתנת לניסיון חוזר.
+ *
+ * `requestId()` מגריל מזהה חדש בכל לחיצה. לפרסום זה שגוי: תשובה
+ * שאבדה ברשת אחרי שהשרת כבר כתב — והלחיצה הבאה היא בקשה **חדשה**
+ * על אותה טיוטה: `publication-conflict` או כתיבה כפולה, ואין למשתמש
+ * דרך לנסות שוב. כאן המזהה נגזר ממה שמזהה את הפעולה עצמה —
+ * הטיוטה, חתימת התוכן שאושר, והכוונה (הכנה/פרסום) — ולכן ניסיון
+ * חוזר על אותה טיוטה נושא את אותו מזהה, והשרת מזהה אותו כחזרה.
+ * טיוטה אחרת, או תוכן אחר, או כוונה אחרת — מזהה אחר. */
+async function stableRequestId(prefix, parts) {
+  const text = parts.map((part) => String(part == null ? '' : part)).join('|');
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (subtle && typeof TextEncoder === 'function') {
+    const bytes = new Uint8Array(await subtle.digest('SHA-256', new TextEncoder().encode(text)));
+    return prefix + '_' + Array.from(bytes.slice(0, 20))
+      .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  // בלי subtle (הקשר לא מאובטח): אותה גזירה, בלי hash, בתוך חוזה המזהה.
+  return (prefix + '_' + text.replace(/[^A-Za-z0-9_-]/g, '_')).slice(0, 120);
 }
 
 function node(tag, className, text) {
@@ -593,6 +619,16 @@ function renderSourceSummary() {
 
 const MODE_LABEL = { off: 'כבוי', shadow: 'בדיקה', new: 'פעיל' };
 
+/* ⭐ קודי הסיבה של ה-preflight, בעברית. הדוח מחזיר קודים ולא טקסט
+ * — כדי שלא יהיה בו מקום למידע אישי — ולכן התרגום חי כאן, במסך. */
+const REASON_TEXT = Object.freeze({
+  'preflight-missing': 'יש מי שמשובץ היום ולא משובץ בסידור החדש',
+  'preflight-foreign': 'יש שיבוץ למי שאינו במקור כוח האדם',
+  'preflight-duplicate': 'אותו אדם מופיע פעמיים באותו יום',
+  'preflight-empty-day': 'יש יום מאויש שנעשה ריק',
+  'preflight-out-of-range': 'יש שיבוץ מחוץ לטווח שנבדק'
+});
+
 function renderModeCard() {
   const view = state.modeView;
   const card = $('modeCard');
@@ -647,18 +683,50 @@ function renderModeCard() {
     }
   }
 
+  /* ⭐ מועמד מוכן — הפיקוד חייב לדעת שהוא קיים. בלי השורה הזאת,
+   * מפקד שאינו אחראי סידור לא היה יכול לגלות שיש סידור שמחכה
+   * לאישורו; הוא היה תלוי במצב מקומי במסך של מישהו אחר. */
+  const candidate = view && view.candidate;
+  if (candidate) {
+    const line = 'יש סידור מוכן למעבר: מהדורה ' + candidate.revision
+      + ' · ' + (candidate.from || '') + ' עד ' + (candidate.to || '')
+      + (candidate.preflight && candidate.preflight.blocked
+        ? ' · הבדיקה האחרונה מצאה פערים' : '');
+    box.appendChild(node('div', 'sub', line));
+  }
+
   const form = $('modeForm');
   form.hidden = !state.modeTarget;
   if (state.modeTarget) {
-    $('modeConfirmHint').textContent =
-      'כדי לאשר, הקלד/י בדיוק: ' + state.modeTarget
-      + ' — ההקלדה נשמרת ביומן יחד עם מי ביקש/ה, מתי ומאיזה מצב.';
-    $('modeApply').textContent = 'העבר את המנוע ל' + (MODE_LABEL[state.modeTarget] || state.modeTarget);
+    const toNew = state.modeTarget === 'new';
+    $('modeConfirmHint').textContent = toNew
+      ? 'מעבר לסידור המוכן נבדק מול הסידור הקיים לפני האישור. '
+        + 'אם מישהו שמשובץ היום ייעלם — המעבר ייחסם.'
+      : 'כדי לאשר, הקלד/י בדיוק: ' + state.modeTarget
+        + ' — ההקלדה נשמרת ביומן יחד עם מי ביקש/ה, מתי ומאיזה מצב.';
+    // שדות האישור וההקלדה אינם רלוונטיים למעבר, שנשען על הבדיקה.
+    $('modeConfirm').hidden = toNew;
+    $('modeReason').hidden = toNew;
+    if (!toNew) {
+      $('modeApply').textContent =
+        'העבר את המנוע ל' + (MODE_LABEL[state.modeTarget] || state.modeTarget);
+    }
   }
   updateModeApply();
 }
 
 function updateModeApply() {
+  /* ⭐ מעבר ל-`new` אינו החלפת מצב ולכן אינו דורש הקלדת אישור וסיבה
+   * — הוא דורש **פרסום מוכן**. בלי מועמד אין מה לאשר, והכפתור
+   * אומר את זה במקום להיות פעיל ולהיכשל בשרת. */
+  if (state.modeTarget === 'new') {
+    const candidate = state.modeView && state.modeView.candidate;
+    $('modeApply').disabled = state.modeBusy || !candidate;
+    $('modeApply').textContent = candidate
+      ? 'בדוק ואשר מעבר לסידור המוכן'
+      : 'אין סידור מוכן — אחראי/ת סידור צריך/ה להכין אחד';
+    return;
+  }
   const ready = !!state.modeTarget
     && $('modeConfirm').value.trim() === state.modeTarget
     && !!$('modeReason').value;
@@ -675,10 +743,107 @@ async function loadModeOptions() {
   renderModeCard();
 }
 
+/* ==================================================================
+ * ⭐ המעבר למנוע החדש אינו החלפת מצב
+ *
+ * `setScheduleRuntimeMode` מזיז מצב ותו לא, והשרת דוחה דרכו כל
+ * מעבר ל-`new` בקוד `cutover-required`. המסלול היחיד הוא:
+ *
+ *   אחראי/ת סידור  → מריץ מנוע ו**מכין** פרסום ב-shadow
+ *   פיקוד          → בודק את הפרסום מול הסידור הקיים, ומאשר
+ *
+ * שתי הסמכויות נפרדות בכוונה: מי שבונה את הסידור אינו מי שמחליט
+ * שכל התחנה עוברת אליו.
+ * ================================================================== */
+async function promoteToNew() {
+  const candidate = state.modeView && state.modeView.candidate;
+  if (state.modeBusy || !candidate) return;
+  state.modeBusy = true;
+  updateModeApply();
+  try {
+    message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
+    const report = (await call.cutoverPreview({
+      candidate_publication_id: candidate.publication_id
+    })).data;
+    if (report.blocked) {
+      const why = Object.keys(report.by_reason || {})
+        .filter((key) => report.by_reason[key] > 0)
+        .map((key) => REASON_TEXT[key] || key)
+        .join(' · ');
+      message('modeMessage',
+        'המעבר נחסם: ' + (why || 'נמצאו פערים') + '. '
+        + 'יש לתקן ולבנות טיוטה חדשה לפני המעבר.', 'err');
+      return;
+    }
+    /* ⭐ שינויי שיבוץ אינם חוסמים — אבל המפקד רואה **כמה**, ועל
+     * פני כמה ימים, ומאשר אותם בנפרד. האישור נשלח כחתימת הדוח
+     * הזה בדיוק, ולכן אינו חל על דוח אחר. */
+    const changes = report.changes || { count: 0, days: [] };
+    const changed = Number(changes.count || 0);
+    let accept = null;
+    if (changed > 0) {
+      const days = (changes.days || []).length;
+      if (!confirm('הסידור החדש משנה ' + changed + ' שיבוצים לעומת הסידור הקיים'
+        + (days ? ', על פני ' + days + ' ימים' : '') + '.\n\n'
+        + 'אלה אינם חוסרים — אין יום שנשאר ריק ואין מי שאינו ברשימת הסגל. '
+        + 'זה סידור אחר.\n\nלהמשיך?')) return;
+      accept = report.signature;
+    }
+    if (!confirm('להעביר את התחנה לסידור המוכן? '
+      + 'מרגע האישור כל התחנה רואה את הסידור החדש, וההודעות שהמתינו נשלחות.')) return;
+
+    /* ⭐ אותו `request_id` נשמר לניסיון חוזר. אם הרשת נופלת אחרי
+     * שה-commit הצליח, ניסיון שני עם אותו מזהה מדווח `duplicate`
+     * במקום לנסות מעבר שני. */
+    if (!state.cutoverRequestId) state.cutoverRequestId = requestId('cutover');
+    const result = (await call.cutoverPromote({
+      request_id: state.cutoverRequestId,
+      candidate_publication_id: candidate.publication_id,
+      /* ⭐ החתימה של הדוח ש**הוצג בשורה שלמעלה**, ולא זו שהשרת
+       * ימצא על הדיסק ברגע האישור. בין שתי הנקודות האלה יכול לרוץ
+       * preview נוסף ולדרוס את הדוח — והמפקד היה מאשר מסמך שלא
+       * ראה. השרת משווה אותה בתוך העסקה. */
+      expected_preflight_signature: report.signature,
+      accept_changes: accept,
+      expected_mode: state.modeView.current
+    })).data;
+    state.cutoverRequestId = null;
+    message('modeMessage',
+      'התחנה עברה לסידור החדש (מהדורה ' + result.revision + ').'
+      + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : ''), 'ok');
+    await refreshAfterModeChange();
+  } catch (error) {
+    /* ⭐ ה-commit עשוי היה להצליח ושחרור ההודעות להיכשל. לכן רענון
+     * מהשרת ולא הנחה שכלום לא קרה. */
+    message('modeMessage', 'המעבר נכשל. (' + (error.code || error.message) + ') '
+      + 'המצב נטען מחדש מהשרת.', 'err');
+    try { await refreshAfterModeChange(); } catch (_) { /* הודעה כבר הוצגה */ }
+  } finally {
+    state.modeBusy = false;
+    updateModeApply();
+  }
+}
+
+async function refreshAfterModeChange() {
+  state.status = (await call.status({})).data;
+  setMode(state.status);
+  invalidateRange();
+  showScheduleViews();
+  await loadModeOptions();
+  await loadSetup();
+  if (state.tab === 'station') await loadStationRange();
+  if (state.tab === 'mine') await loadMineRange();
+  setRollbackAvailability();
+  updatePublishAvailability();
+  updateRunAvailability();
+}
+
 async function applyModeChange() {
   if (state.modeBusy || !state.modeTarget || !state.modeView) return;
   const target = state.modeTarget;
   const from = state.modeView.current;
+  // ⭐ מעבר ל-new אינו עובר כאן. השרת דוחה אותו, והמסך לא מתיימר.
+  if (target === 'new') { await promoteToNew(); return; }
   const text = target === 'off'
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
     : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
@@ -705,16 +870,7 @@ async function applyModeChange() {
     $('modeConfirm').value = '';
     $('modeReason').value = '';
     // המצב השתנה — כל מה שנגזר ממנו נטען מחדש מהשרת.
-    state.status = (await call.status({})).data;
-    setMode(state.status);
-    invalidateRange();
-    showScheduleViews();
-    await loadModeOptions();
-    await loadSetup();
-    if (state.tab === 'station') await loadStationRange();
-    if (state.tab === 'mine') await loadMineRange();
-    setRollbackAvailability();
-    updatePublishAvailability();
+    await refreshAfterModeChange();
   } catch (error) {
     message('modeMessage', errorText(error), 'err');
   } finally {
@@ -1613,20 +1769,38 @@ async function runPlanner() {
 }
 
 async function publishDraft() {
-  if (!state.status || state.status.mode !== 'new' || state.busy ||
+  /* ⭐ ב-shadow הפעולה הזאת היא **הכנה**, ולכן היא מותרת שם.
+   * הגרסה הקודמת חזרה מיד אם המצב אינו `new` — כלומר כפתור ההכנה
+   * שהופעל ב-shadow היה no-op שקט: נלחץ, לא קרה דבר, ואיש לא קיבל
+   * הודעת שגיאה. */
+  if (!canRunSchedule() || state.busy ||
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
+  const preparing = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
-  if (!confirm('לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.')) return;
+  if (!confirm(preparing
+    ? 'להכין את הסידור לקראת מעבר? הוא ייכתב במלואו, אף אחד לא יקבל '
+      + 'הודעה, והסידור הקיים נשאר על המסך עד שהפיקוד יאשר את המעבר.'
+    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.')) return;
   state.busy = true; $('publish').disabled = true;
-  message('publishMessage', 'מפרסם את הסידור בפעולה אחת…', 'info');
+  message('publishMessage', preparing
+    ? 'מכין את הסידור…' : 'מפרסם את הסידור בפעולה אחת…', 'info');
   try {
     const result = (await call.publish({
       draft_id: state.draft.draft_id,
       expected_content_digest: state.draftPreview.expected_content_digest,
-      request_id: requestId('publish')
+      // ⭐ יציב לפי טיוטה + חתימה + כוונה — ניסיון חוזר הוא אותה בקשה.
+      request_id: await stableRequestId('publish', [
+        state.draft.draft_id,
+        state.draftPreview.expected_content_digest,
+        preparing ? 'prepare' : 'publish'
+      ])
     })).data;
-    message('publishMessage', 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.', 'ok');
+    message('publishMessage', result.prepared
+      ? 'הסידור מוכן (' + result.publication_id + '). '
+        + result.blocked_notifications + ' הודעות ממתינות ולא נשלחו. '
+        + 'המעבר עצמו נעשה באישור הפיקוד.'
+      : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.', 'ok');
     state.draft = null;
     state.draftPreview = null;
     $('reviewDraft').checked = false;
