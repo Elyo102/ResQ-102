@@ -54,16 +54,33 @@ function createFakeFirestore(seed) {
     const exists = store.has(ref.path);
     return { exists, ref, id: ref.id, data: () => (exists ? clone(store.get(ref.path)) : undefined) };
   }
-  function collectionRef(path) {
+  function collectionRef(path, filters = [], ordering = null, maximum = null) {
     return {
       path,
       doc(id) { return docRef(path + '/' + String(id)); },
+      where(field, op, value) { return collectionRef(path, filters.concat({ field, op, value }), ordering, maximum); },
+      orderBy(field, direction) { return collectionRef(path, filters, { field, direction }, maximum); },
+      limit(value) { return collectionRef(path, filters, ordering, value); },
       async get() {
         const depth = path.split('/').length + 1;
-        const docs = [];
+        let docs = [];
         for (const [key] of store) {
           if (key.startsWith(path + '/') && key.split('/').length === depth) docs.push(snapshot(docRef(key)));
         }
+        for (const filter of filters) {
+          docs = docs.filter((doc) => {
+            const value = doc.data()[filter.field];
+            if (filter.op === '>=') return value >= filter.value;
+            if (filter.op === '==') return value === filter.value;
+            throw new Error('unsupported fake query');
+          });
+        }
+        if (ordering) {
+          docs = docs.filter((doc) => doc.data()[ordering.field] !== undefined);
+          docs.sort((a, b) => String(a.data()[ordering.field]).localeCompare(String(b.data()[ordering.field]))
+            * (ordering.direction === 'desc' ? -1 : 1));
+        }
+        if (maximum !== null) docs = docs.slice(0, maximum);
         return { docs, size: docs.length };
       }
     };

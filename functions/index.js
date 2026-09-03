@@ -29,6 +29,8 @@ const scheduleService = require('./schedule-service');
 const scheduleRuntimeModule = require('./schedule-runtime');
 const scheduleAccessAdminModule = require('./schedule-access-admin');
 const stationTransferModule = require('./station-transfer');
+const incidentLogModule = require('./incident-log');
+const feedbackModule = require('./feedback');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -114,6 +116,18 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+const opsDependencies = {
+  db, FieldValue: FV, HttpsError,
+  hash: (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest('hex'),
+  clock: () => new Date().toISOString()
+};
+const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
+const feedback = feedbackModule.createFeedback(opsDependencies);
+// New, station-member-only submissions. Both modules re-authorize the live
+// station profile inside their write transaction, including idempotent replay.
+exports.reportIncident = onCall({ enforceAppCheck: true }, async (req) => incidentLog.report(req));
+exports.submitFeedback = onCall({ enforceAppCheck: true }, async (req) => feedback.submit(req));
+
 const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator({
   db: db,
   auth: admin.auth(),

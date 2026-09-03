@@ -1,9 +1,9 @@
 /* ======================================================================
  * חוות דעת — הלוגיקה של המסך, בלי DOM ובלי Firebase, כדי שתיבדק לבד.
  *
- * מה שנשלח לשרת: request_id יציב (נגזר מהתוכן — לחיצה כפולה אחרי
- * רשת שנפלה היא אותה בקשה), המסך שממנו הגיע המשתמש, גרסה, קטגוריה,
- * דירוג, טקסט, ו„מותר לפנות אליי". השרת מוסיף את הזהות מהטוקן.
+ * מזהה אקראי נשמר בזיכרון עם גוף הבקשה עד לתשובת הצלחה תקינה.
+ * ניסיון חוזר אינו תלוי ביום; שינוי ההסכמה יוצר כוונה חדשה.
+ * השרת מאמת את כל התוכן ומוסיף זהות מתוך החברות החיה בתחנה.
  * ====================================================================== */
 
 export const CATEGORIES = Object.freeze([
@@ -37,40 +37,84 @@ export function validateLocal(input) {
   return errors;
 }
 
-async function sha256Hex(text) {
-  const subtle = globalThis.crypto && globalThis.crypto.subtle;
-  if (subtle && typeof TextEncoder === 'function') {
-    const bytes = new Uint8Array(await subtle.digest('SHA-256', new TextEncoder().encode(text)));
-    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  // הקשר לא מאובטח: גזירה יציבה בלי hash, בתוך חוזה המזהה.
-  return text.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 100);
+function feedbackError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
 }
 
-/* ⭐ מזהה בקשה יציב: אותו טקסט + קטגוריה + דירוג + מסך + יום → אותו
- * מזהה. השרת מזהה חזרה ומחזיר duplicate בלי לכתוב שוב. */
-export async function buildSubmission(input, context) {
+function normalizedIntent(input, context) {
+  if (validateLocal(input).length) throw feedbackError('feedback-invalid-input');
   const ctx = context || {};
-  const text = String(input.text || '').trim();
+  const text = String(input.text || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
+  if (text.length < TEXT_MIN) throw feedbackError('feedback-invalid-input');
   const rating = input.rating === null || input.rating === undefined || input.rating === ''
     ? null : Number(input.rating);
   const screen = ctx.screen || 'feedback.html';
-  const day = String(ctx.day || new Date().toISOString().slice(0, 10));
-  const seed = ['feedback', screen, input.category, rating === null ? '' : rating, text, day].join('|');
-  const requestId = 'fb_' + (await sha256Hex(seed)).slice(0, 40);
-  const out = {
-    request_id: requestId,
-    screen,
-    version: String(ctx.version || '0').slice(0, 24),
-    category: input.category,
-    text,
+  const version = ctx.version || '0';
+  if (typeof screen !== 'string' || !/^[a-z0-9-]{1,48}\.html$/.test(screen)
+      || typeof version !== 'string' || !/^[A-Za-z0-9.\-]{1,24}$/.test(version)
+      || (input.allow_contact !== undefined && typeof input.allow_contact !== 'boolean')) {
+    throw feedbackError('feedback-invalid-input');
+  }
+  return {
+    screen, version, category: input.category, rating, text,
     allow_contact: input.allow_contact === true
   };
-  if (rating !== null) out.rating = rating;
-  return out;
+}
+
+export async function buildSubmission(input, context) {
+  const intent = normalizedIntent(input, context);
+  const crypto = globalThis.crypto;
+  if (!crypto || typeof crypto.getRandomValues !== 'function') {
+    throw feedbackError('feedback-secure-random-required');
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  const id = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Object.freeze(Object.assign({ request_id: 'fb_' + id }, intent));
+}
+
+export function validSubmissionResult(result) {
+  return !!result && typeof result === 'object' && !Array.isArray(result)
+    && typeof result.id === 'string' && /^f_[a-f0-9]{40}$/.test(result.id)
+    && typeof result.duplicate === 'boolean';
+}
+
+export function createFeedbackSubmissionSession() {
+  // No persistent browser storage of free-text feedback. Do not evict an
+  // unresolved request: eviction could turn its retry into a duplicate write.
+  const pending = new Map();
+  return Object.freeze({
+    async prepare(input, context) {
+      const key = JSON.stringify(normalizedIntent(input, context));
+      if (pending.has(key)) return pending.get(key);
+      if (pending.size >= 20) throw feedbackError('feedback-pending-limit');
+      const promise = buildSubmission(input, context);
+      pending.set(key, promise);
+      try {
+        return await promise;
+      } catch (error) {
+        if (pending.get(key) === promise) pending.delete(key);
+        throw error;
+      }
+    },
+    complete(payload, result) {
+      if (!validSubmissionResult(result)) throw feedbackError('feedback-response-invalid');
+      const key = JSON.stringify(normalizedIntent(payload, payload));
+      pending.delete(key);
+      return result;
+    }
+  });
 }
 
 export function errorText(error) {
-  const message = String((error && error.message) || 'השליחה נכשלה.');
-  return message.replace(/^Firebase:\s*/i, '').replace(/^\w+\/[^:]+:\s*/i, '');
+  const code = error && error.code;
+  if (code === 'feedback-response-invalid') return 'לא התקבל אישור שמירה תקין. הטקסט נשמר כאן; אפשר לנסות שוב בבטחה.';
+  if (code === 'feedback-secure-random-required') return 'לא ניתן ליצור מזהה בקשה בטוח בדפדפן הזה. הטקסט לא נשלח.';
+  if (code === 'feedback-pending-limit') return 'יש יותר מדי בקשות שטרם אושרו. נסה שוב אחת מהן לפני שליחת נוסח חדש.';
+  if (code === 'functions/permission-denied' || code === 'functions/unauthenticated') return 'אין הרשאה לשליחה כרגע. בדוק את החיבור ואת השיוך לתחנה.';
+  if (code === 'functions/resource-exhausted') return 'הגעת למכסת השליחות. הטקסט נשמר כאן.';
+  if (code === 'functions/already-exists') return 'הבקשה אינה תואמת לניסיון הקודם. הטקסט נשמר כאן.';
+  return 'השליחה לא אושרה. הטקסט נשמר כאן; אפשר לנסות שוב בבטחה.';
 }

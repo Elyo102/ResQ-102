@@ -1,169 +1,172 @@
-#!/usr/bin/env node
-/* ======================================================================
- * ops-backup — גיבוי מקומי של מה ש**אינו** ב-Firestore:
- *   1. הריפו כולו, כל הענפים והתגיות — `git bundle` (קובץ אחד, ניתן
- *      לשחזור ב-`git clone <bundle>`), מאומת ב-`git bundle verify`.
- *   2. תיקיות העבודה שאינן בקומיט — `_דיונים`, `_מסירה-*`, `_מסירות`,
- *      `_ניטור` — כ-zip.
- *   3. מניפסט `.md` עם SHA-256 של כל קובץ, ומחיקת גיבויים ישנים מעבר
- *      ל-`--keep` (ברירת מחדל 14).
- *
- * ⭐ מה שכן ב-Firestore (אנשים, סידורים, נוכחות) **אינו** כאן. לזה יש
- * גיבוי מנוהל של Firebase — ראה README-ניטור-וגיבוי.md. הסקריפט הזה
- * אינו נוגע בענן ואינו צריך הרשאות.
- *
- * ⭐ `_ניטור/feedback.md` מכיל מידע אישי. ה-zip נשאר על הדיסק של
- * אלדד בלבד (`_גיבוי/` ב-.gitignore); הוא לא נכנס לגיט ולא לאירוח
- * (`*.zip`, `*.bundle` ב-hosting.ignore).
- *
- * שימוש:  node ops-backup.mjs [--out _גיבוי] [--keep 14] [--dry-run]
- * ====================================================================== */
-
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import fs from 'node:fs';
-import crypto from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes, createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-
-export const DOC_DIRS = Object.freeze(['_דיונים', '_מסירות', '_ניטור']);
-export const DOC_DIR_PREFIXES = Object.freeze(['_מסירה-']);
-
+const SET = /^resq-\d{8}T\d{9}Z-[a-f0-9]{16}$/;
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const relative = (root, target) => {
+  const rel = path.relative(root, target);
+  if (!rel || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) throw new Error('Path must remain inside root');
+  return rel;
+};
+function noLinks(root, target) {
+  let current = root;
+  for (const part of relative(root, target).split(path.sep)) {
+    current = path.join(current, part);
+    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) throw new Error('Links are not accepted');
+  }
+}
 export function parseArgs(argv) {
-  const out = { out: '_גיבוי', keep: 14, dryRun: false };
-  const list = Array.isArray(argv) ? argv.slice() : [];
-  while (list.length) {
-    const key = list.shift();
-    const next = () => { const v = list.shift(); if (v === undefined) throw new Error('חסר ערך אחרי ' + key); return v; };
-    switch (key) {
-      case '--out': out.out = next(); break;
-      case '--keep': out.keep = Number(next()); break;
-      case '--dry-run': out.dryRun = true; break;
-      default: throw new Error('פרמטר לא מוכר: ' + key);
+  const args = { out: '_גיבוי', keep: 14, dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--dry-run') args.dryRun = true;
+    else if (argv[i] === '--out' && argv[i + 1]) args.out = argv[++i];
+    else if (argv[i] === '--keep' && argv[i + 1]) args.keep = Number(argv[++i]);
+    else throw new Error('Unknown or incomplete argument: ' + argv[i]);
+  }
+  if (!Number.isInteger(args.keep) || args.keep < 1 || args.keep > 365) throw new Error('keep must be 1..365');
+  return args;
+}
+function inventory(root) {
+  const result = [];
+  function visit(full) {
+    noLinks(root, full);
+    const stat = fs.lstatSync(full);
+    if (stat.isDirectory()) for (const name of fs.readdirSync(full).sort()) visit(path.join(full, name));
+    else if (stat.isFile()) {
+      const name = relative(root, full).split(path.sep).join('/');
+      if (/[\r\n\0]/.test(name)) throw new Error('Unsupported filename');
+      const bytes = fs.readFileSync(full);
+      result.push({ path: name, bytes: bytes.length, sha256: hash(bytes) });
+    } else throw new Error('Special files are not accepted');
+  }
+  for (const name of fs.readdirSync(root).sort()) {
+    if (['_דיונים', '_מסירות', '_ניטור'].includes(name) || name.startsWith('_מסירה-')) visit(path.join(root, name));
+  }
+  return result;
+}
+const durable = (file, text) => {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try { fs.writeFileSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+};
+export function renderManifest(manifest) {
+  return `# Private local backup\n\nID: ${manifest.id}\nCommit: ${manifest.head}\nCreated: ${manifest.created_at}\n\nContains private documents and Git history, potentially including secrets. Do not publish.\n`;
+}
+function completedSet(root, out, name) {
+  try {
+    if (!SET.test(name)) return null;
+    const dir = path.join(out, name);
+    noLinks(root, dir);
+    if (!fs.lstatSync(dir).isDirectory()) return null;
+    for (const entry of fs.readdirSync(dir)) {
+      const stat = fs.lstatSync(path.join(dir, entry));
+      if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    }
+    const m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+    if (m.schema !== 'resq-local-backup-v2' || m.state !== 'complete' || m.id !== name || !Array.isArray(m.files)) return null;
+    const names = m.files.map(f => f.name);
+    if (new Set(names).size !== names.length || !names.includes('repository.bundle') || !names.includes('inventory.json')) return null;
+    if (names.some(n => !['repository.bundle', 'inventory.json', 'documents.zip'].includes(n))) return null;
+    if (JSON.stringify(fs.readdirSync(dir).sort()) !== JSON.stringify([...names, 'manifest.json', 'manifest.md'].sort())) return null;
+    if (!Number.isFinite(Date.parse(m.created_at))) return null;
+    for (const f of m.files) {
+      const bytes = fs.readFileSync(path.join(dir, f.name));
+      if (f.bytes !== bytes.length || f.sha256 !== hash(bytes)) return null;
+    }
+    return { dir, manifest: m };
+  } catch { return null; }
+}
+function archive(root, stage, entries, verifyOnly = false) {
+  if (!entries.length) return;
+  const zip = path.join(stage, 'documents.zip');
+  const opts = { cwd: root, timeout: 120000, maxBuffer: 128 * 1024 * 1024, windowsHide: true };
+  if (process.platform === 'win32') {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path.join(HERE, 'ops-backup-archive.ps1'), '-RootPath', root, '-InventoryPath', path.join(stage, 'inventory.json'), '-ZipPath', zip, ...(verifyOnly ? ['-VerifyOnly'] : [])], opts);
+  } else {
+    if (!verifyOnly) execFileSync('zip', ['-q', zip, '-@'], { ...opts, input: entries.map(e => e.path).join('\n') + '\n' });
+    execFileSync('unzip', ['-t', zip], opts);
+    const names = execFileSync('unzip', ['-Z1', zip], opts).toString().trim().split('\n').sort();
+    if (JSON.stringify(names) !== JSON.stringify(entries.map(e => e.path).sort())) throw new Error('ZIP inventory mismatch');
+    for (const e of entries) {
+      const bytes = execFileSync('unzip', ['-p', zip, e.path], opts);
+      if (bytes.length !== e.bytes || hash(bytes) !== e.sha256) throw new Error('ZIP content mismatch');
     }
   }
-  if (!Number.isInteger(out.keep) || out.keep < 1 || out.keep > 365) throw new Error('--keep חייב להיות 1..365');
-  return out;
 }
-
-export function stamp(date) {
-  const d = date instanceof Date ? date : new Date();
-  const p = (n) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
-    + '_' + p(d.getHours()) + p(d.getMinutes());
+export function runBackup(args, options = {}) {
+  if (!Number.isInteger(args.keep) || args.keep < 1 || args.keep > 365) throw new Error('keep must be 1..365');
+  const root = fs.realpathSync(options.root || HERE);
+  const out = path.resolve(root, args.out);
+  noLinks(root, out);
+  const first = relative(root, out).split(path.sep)[0];
+  if (first !== '_גיבוי') throw new Error('Unsafe backup destination: use private _גיבוי subtree');
+  const git = (...command) => execFileSync('git', command, { cwd: root, encoding: 'utf8', timeout: 120000, windowsHide: true });
+  const normalizedRefs = text => text.trim().split(/\r?\n/).sort().join('\n');
+  const clean = () => { if (git('status', '--porcelain', '--untracked-files=all').trim()) throw new Error('Working tree must be clean'); };
+  clean();
+  const head = git('rev-parse', 'HEAD').trim();
+  const refs = normalizedRefs(git('show-ref', '--head'));
+  const entries = inventory(root);
+  if (args.dryRun) return { dryRun: true, destination: out, documents: entries.length, head };
+  fs.mkdirSync(out, { recursive: true, mode: 0o700 });
+  noLinks(root, out);
+  const lock = path.join(out, '.resq-backup.lock');
+  const fd = fs.openSync(lock, 'wx', 0o600);
+  try {
+    const created = new Date().toISOString();
+    const id = `resq-${created.replace(/[-:.]/g, '')}-${randomBytes(8).toString('hex')}`;
+    const stage = path.join(out, '.stage-' + id);
+    const destination = path.join(out, id);
+    fs.mkdirSync(stage, { mode: 0o700 });
+    git('bundle', 'create', path.join(stage, 'repository.bundle'), '--all');
+    git('bundle', 'verify', path.join(stage, 'repository.bundle'));
+    options.checkpoint?.('bundle', stage);
+    durable(path.join(stage, 'inventory.json'), JSON.stringify(entries, null, 2));
+    archive(root, stage, entries);
+    options.checkpoint?.('archive', stage);
+    clean();
+    if (git('rev-parse', 'HEAD').trim() !== head || JSON.stringify(inventory(root)) !== JSON.stringify(entries)) throw new Error('Source changed during backup');
+    git('bundle', 'verify', path.join(stage, 'repository.bundle'));
+    archive(root, stage, entries, true);
+    if (normalizedRefs(git('bundle', 'list-heads', path.join(stage, 'repository.bundle'))) !== refs || normalizedRefs(git('show-ref', '--head')) !== refs) throw new Error('Backup refs changed or do not match captured source');
+    const verification = path.join(stage, '.verify');
+    git('clone', '--bare', path.join(stage, 'repository.bundle'), verification);
+    git('--git-dir=' + verification, 'fsck', '--full', '--strict');
+    relative(stage, verification);
+    noLinks(root, verification);
+    fs.rmSync(verification, { recursive: true });
+    const names = ['repository.bundle', 'inventory.json', ...(entries.length ? ['documents.zip'] : [])];
+    const manifest = { schema: 'resq-local-backup-v2', state: 'complete', id, head, created_at: created, files: names.map(name => {
+      const dataFd = fs.openSync(path.join(stage, name), 'r+');
+      try { fs.fsyncSync(dataFd); } finally { fs.closeSync(dataFd); }
+      const bytes = fs.readFileSync(path.join(stage, name));
+      return { name, bytes: bytes.length, sha256: hash(bytes) };
+    }) };
+    durable(path.join(stage, 'manifest.md'), renderManifest(manifest));
+    durable(path.join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    options.checkpoint?.('manifest', stage);
+    fs.renameSync(stage, destination);
+    if (!completedSet(root, out, id)) throw new Error('Completed backup failed verification');
+    options.checkpoint?.('published', destination);
+    const older = fs.readdirSync(out).filter(n => n !== id).map(n => completedSet(root, out, n)).filter(Boolean).sort((a, b) => b.manifest.created_at.localeCompare(a.manifest.created_at));
+    const pruned = [];
+    for (const candidate of older.slice(args.keep - 1)) {
+      const verified = completedSet(root, out, candidate.manifest.id);
+      if (!verified) continue;
+      for (const name of [...verified.manifest.files.map(f => f.name), 'manifest.md', 'manifest.json']) {
+        noLinks(root, path.join(verified.dir, name));
+        fs.unlinkSync(path.join(verified.dir, name));
+      }
+      fs.rmdirSync(verified.dir);
+      pruned.push(candidate.manifest.id);
+    }
+    return { id, destination, pruned };
+  } finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }
-
-export function docDirsIn(root) {
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  return entries.filter((e) => e.isDirectory()
-    && (DOC_DIRS.indexOf(e.name) !== -1 || DOC_DIR_PREFIXES.some((p) => e.name.startsWith(p))))
-    .map((e) => e.name).sort();
-}
-
-function sha256File(file) {
-  const h = crypto.createHash('sha256');
-  h.update(fs.readFileSync(file));
-  return h.digest('hex');
-}
-
-/* מה מוחקים: קבצי גיבוי מעבר ל-`keep` הצעירים ביותר, לפי שם (החותמת
- * בשם היא כרונולוגית). מניפסטים נמחקים יחד עם הקובץ שלהם. */
-export function pruneList(names, keep) {
-  const groups = {};
-  names.forEach((name) => {
-    const m = name.match(/^resq-(\d{4}-\d{2}-\d{2}_\d{4})\./);
-    if (!m) return;
-    (groups[m[1]] = groups[m[1]] || []).push(name);
-  });
-  const stamps = Object.keys(groups).sort();
-  const drop = stamps.slice(0, Math.max(0, stamps.length - keep));
-  return drop.flatMap((s) => groups[s]).sort();
-}
-
-export function renderManifest(info) {
-  const lines = [];
-  lines.push('# גיבוי מקומי · ' + info.stamp);
-  lines.push('');
-  lines.push('נוצר: ' + info.now + ' · ריפו: `' + info.head + '` (' + info.branch + ')');
-  lines.push('');
-  lines.push('| קובץ | בייטים | SHA-256 |');
-  lines.push('|---|---|---|');
-  info.files.forEach((f) => lines.push('| `' + f.name + '` | ' + f.bytes + ' | `' + f.sha256 + '` |'));
-  lines.push('');
-  lines.push('## מה בפנים');
-  lines.push('');
-  lines.push('- `.bundle` — כל הענפים והתגיות. שחזור: `git clone resq-' + info.stamp + '.bundle ResQ-102-restored`');
-  lines.push('- `.zip` — תיקיות: ' + info.docDirs.map((d) => '`' + d + '`').join(', ') + ' (⚠ `_ניטור/feedback.md` מכיל מידע אישי)');
-  lines.push('');
-  lines.push('## מה **לא** בפנים');
-  lines.push('');
-  lines.push('- נתוני Firestore (אנשים, סידורים, נוכחות). לזה: גיבוי מנוהל של Firebase — `gcloud firestore backups list`.');
-  lines.push('- סודות. אין כאן ואסור שיהיו.');
-  lines.push('');
-  lines.push('נמחקו (מעבר ל-' + info.keep + '): ' + (info.pruned.length ? info.pruned.map((n) => '`' + n + '`').join(', ') : '—'));
-  lines.push('');
-  return lines.join('\n');
-}
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
-function zipDirs(root, dirs, target) {
-  if (process.platform === 'win32') {
-    const paths = dirs.map((d) => path.join(root, d));
-    const ps = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Compress-Archive -LiteralPath ' + paths.map((p) => "'" + p.replace(/'/g, "''") + "'").join(',')
-      + " -DestinationPath '" + target.replace(/'/g, "''") + "' -CompressionLevel Optimal -Force"],
-    { encoding: 'utf8' });
-    if (ps.status !== 0) throw new Error('Compress-Archive נכשל: ' + (ps.stderr || ps.stdout));
-    return;
-  }
-  const r = spawnSync('zip', ['-r', '-q', target].concat(dirs), { cwd: root, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error('zip נכשל: ' + (r.stderr || r.stdout));
-}
-
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const root = HERE;
-  const outDir = path.isAbsolute(args.out) ? args.out : path.join(root, args.out);
-  const now = new Date();
-  const s = stamp(now);
-  const head = git(['rev-parse', '--short', 'HEAD'], root);
-  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], root);
-  const dirs = docDirsIn(root);
-  const bundle = path.join(outDir, 'resq-' + s + '.bundle');
-  const zip = path.join(outDir, 'resq-' + s + '.zip');
-  const manifest = path.join(outDir, 'resq-' + s + '.md');
-
-  if (args.dryRun) {
-    console.log('[dry-run] bundle → ' + bundle);
-    console.log('[dry-run] zip    → ' + zip + ' (' + dirs.join(', ') + ')');
-    return;
-  }
-  fs.mkdirSync(outDir, { recursive: true });
-  git(['bundle', 'create', bundle, '--all'], root);
-  git(['bundle', 'verify', bundle], root);
-  zipDirs(root, dirs, zip);
-
-  const files = [bundle, zip].map((file) => ({
-    name: path.basename(file), bytes: fs.statSync(file).size, sha256: sha256File(file)
-  }));
-  const existing = fs.readdirSync(outDir).filter((n) => n.startsWith('resq-'));
-  const pruned = pruneList(existing.filter((n) => !n.startsWith('resq-' + s + '.')), args.keep - 1);
-  pruned.forEach((n) => fs.unlinkSync(path.join(outDir, n)));
-  fs.writeFileSync(manifest, renderManifest({
-    stamp: s, now: now.toISOString(), head, branch, files, docDirs: dirs, keep: args.keep, pruned
-  }), 'utf8');
-  files.forEach((f) => console.log(f.sha256 + '  ' + f.name + '  ' + f.bytes));
-  console.log('מניפסט: ' + path.relative(root, manifest) + (pruned.length ? ' · נמחקו ' + pruned.length : ''));
-}
-
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
-  main().catch((error) => {
-    console.error('ops-backup נכשל: ' + (error && error.message ? error.message : error));
-    process.exit(1);
-  });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try { console.log(JSON.stringify(runBackup(parseArgs(process.argv.slice(2))))); }
+  catch (error) { console.error('Backup failed:', error.message); process.exitCode = 1; }
 }

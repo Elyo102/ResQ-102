@@ -111,7 +111,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div class="card">
       <h2>מה עובד, ומה צריך להשתנות</h2>
       <div class="note">
-        מה שתכתוב כאן נשמר עם השם שלך, כדי שנוכל לחזור אליך אם צריך.
+        מה שתכתוב כאן נשמר עם החשבון ומספר העובד שלך. נפנה אליך רק אם תאשר זאת למטה.
         ככל שיצטברו יותר חוות דעת, נדע מה עובד טוב ומה לשנות.
         <span id="fromNote"></span>
       </div>
@@ -139,12 +139,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
+import { firebaseConfig } from './firebase-config.js?v=42g0';
 import { renderNav, renderStuckNav } from './nav.js?v=42g0';
 import { initPWA } from './pwa.js?v=42g0';
 import { APP_VERSION } from './version.js?v=42g0';
 import { MEMBER_ROLES } from './roles.js?v=42g0';
-import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, buildSubmission, errorText }
+import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, createFeedbackSubmissionSession, errorText }
   from './feedback.js?v=42g0';
 import { installIncidentReporter } from './incident-client.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -158,7 +158,6 @@ import { initAppCheck } from './appcheck.js?v=42g0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
 
 // דיווח תקלות של המסך הזה עצמו — ואותו עוטף גם את השליחה.
@@ -168,7 +167,10 @@ const submitFeedback = incidents.wrapCallable('submitFeedback', httpsCallable(fn
 renderStuckNav('');
 initPWA({ offer: false });
 
-const state = { category: '', rating: null, busy: false, screen: sourceScreen(location.search) };
+const state = {
+  category: '', rating: null, busy: false, authorized: false, uid: '', ownerKey: '',
+  authEpoch: 0, screen: sourceScreen(location.search), session: createFeedbackSubmissionSession()
+};
 
 function message(text, kind) {
   const el = $('msg');
@@ -177,7 +179,15 @@ function message(text, kind) {
 }
 function updateSend() {
   const errors = validateLocal({ category: state.category, rating: state.rating, text: $('text').value });
-  $('send').disabled = state.busy || errors.length > 0;
+  $('send').disabled = !state.authorized || state.busy || errors.length > 0;
+  document.querySelectorAll('#work textarea, #work input, #work .chip, #work .star')
+    .forEach(el => { el.disabled = !state.authorized || state.busy; });
+}
+function clearEditor() {
+  $('text').value = ''; $('count').textContent = '0 / ' + TEXT_MAX;
+  state.category = ''; state.rating = null;
+  document.querySelectorAll('.chip,.star').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  $('catHint').textContent = '';
 }
 
 CATEGORIES.forEach((c) => {
@@ -213,47 +223,64 @@ if (state.screen !== 'feedback.html') {
 
 $('work').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (state.busy || !state.authorized || !auth.currentUser || auth.currentUser.uid !== state.uid) return;
   const errors = validateLocal({ category: state.category, rating: state.rating, text: $('text').value });
   if (errors.length) { message(errors[0], 'err'); return; }
   state.busy = true; updateSend();
+  const epoch = state.authEpoch;
+  const session = state.session;
   message('שולח…', '');
   try {
-    const body = await buildSubmission(
+    const body = await session.prepare(
       { category: state.category, rating: state.rating, text: $('text').value, allow_contact: $('contact').checked },
       { screen: state.screen, version: APP_VERSION }
     );
-    const result = (await submitFeedback(body)).data || {};
+    if (epoch !== state.authEpoch) return;
+    const response = await submitFeedback(body);
+    if (epoch !== state.authEpoch) return;
+    const result = session.complete(body, response && response.data);
     message(result.duplicate
       ? 'חוות הדעת הזאת כבר התקבלה. תודה.'
       : 'תודה! חוות הדעת נשמרה ותיקרא.', 'ok');
-    $('text').value = ''; $('count').textContent = '0 / ' + TEXT_MAX;
-    state.category = ''; state.rating = null;
-    document.querySelectorAll('.chip,.star').forEach((x) => x.setAttribute('aria-pressed', 'false'));
-    $('catHint').textContent = '';
+    clearEditor();
   } catch (error) {
-    message(errorText(error), 'err');
+    if (epoch === state.authEpoch) message(errorText(error), 'err');
   } finally {
-    state.busy = false; updateSend();
-    $('msg').focus();
+    if (epoch === state.authEpoch) {
+      state.busy = false; updateSend();
+      $('msg').focus();
+    }
   }
 });
 
 onAuthStateChanged(auth, async (user) => {
+  const epoch = ++state.authEpoch;
+  state.authorized = false; state.busy = false; state.uid = '';
+  $('work').classList.add('hide'); $('denyCard').classList.add('hide');
+  updateSend();
   if (!user) { location.replace('./login.html?next=feedback.html'); return; }
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
-  const isSuper = c.super === true || String(user.email || '').toLowerCase() === SUPER_ADMIN;
-  const isMember = isSuper || MEMBER_ROLES.indexOf(c.role) !== -1;
-  const sid = c.stationId || (isSuper ? STATION_ID : '');
+  if (epoch !== state.authEpoch) return;
+  const isMember = MEMBER_ROLES.indexOf(c.role) !== -1;
+  const sid = typeof c.stationId === 'string' && /^[A-Za-z0-9_-]{2,120}$/.test(c.stationId)
+    ? c.stationId : '';
   if (!isMember || !sid) {
     $('denyCard').classList.remove('hide');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
     renderStuckNav(user.email || '');
     return;
   }
+  const ownerKey = user.uid + '|' + sid;
+  if (state.ownerKey && state.ownerKey !== ownerKey) {
+    state.session = createFeedbackSubmissionSession();
+    clearEditor(); message('', '');
+  }
+  state.ownerKey = ownerKey; state.uid = user.uid; state.authorized = true;
   renderNav(c, 'feedback.html', user.email || '');
   $('whoSub').textContent = 'גרסה ' + APP_VERSION;
   $('work').classList.remove('hide');
+  updateSend();
 });
 </script>
 </body>

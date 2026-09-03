@@ -1,271 +1,147 @@
 'use strict';
-
+const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 const { createFakeFirestore } = require('./fixtures/fake-firestore');
-const incidentLog = require('./incident-log');
-
-const { createIncidentLog, scrub, normalizeForFingerprint, DAY_CAP } = incidentLog;
-
-class TestHttpsError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
-}
-const hash = (v) => crypto.createHash('sha256').update(String(v), 'utf8').digest('hex');
-
-function fixture(seed) {
-  const db = createFakeFirestore(seed);
-  const service = createIncidentLog({
-    db, FieldValue: db.FieldValue, HttpsError: TestHttpsError, hash,
-    clock: () => '2026-09-03T10:00:00.000Z'
-  });
+const { createIncidentLog, DAY_CAP, safeIncident, LIMITS } = require('./incident-log');
+const catalog = require('./ops-telemetry-contract');
+class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
+const hash = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
+const member = { stationId: 'alpha_1', role: 'firefighter', is_active: true, employee_number: '9001' };
+const req = (data = {}, extra = {}) => ({ auth: { uid: 'user.with.dot', token: { ...member, ...extra } },
+  data: { kind: 'client-error', screen: 'swaps.html', version: '42G.0', code: 'TypeError', callable: 'unknown', ...data } });
+function fixture(seed = {}) {
+  const db = createFakeFirestore({ 'stations/alpha_1/users/user.with.dot': member, ...seed });
+  const service = createIncidentLog({ db, FieldValue: db.FieldValue, HttpsError, hash, clock: () => '2026-09-03T10:00:00.000Z' });
   return { db, service };
 }
-function req(uid, token, data) {
-  return { auth: { uid, token }, data: data === undefined ? {} : data };
-}
-const FF = { stationId: 'alpha_1', role: 'firefighter', emp: '9001' };
-function good(over) {
-  return Object.assign({
-    kind: 'client-error', screen: 'swaps.html', version: '42G.0',
-    code: 'TypeError', message: 'Cannot read properties of undefined (reading x)',
-    frame: 'swaps.js:120'
-  }, over || {});
-}
-async function caught(fn) {
-  try { await fn(); return null; } catch (error) { return error; }
-}
+const bad = (code) => (error) => error.code === code;
 
-let passed = 0;
-async function test(name, fn) { await fn(); passed += 1; console.log('✓ ' + name); }
-
-(async () => {
-  // --- גבולות ---
-  await test('unauthenticated is refused before anything is read', async () => {
-    const { db, service } = fixture();
-    const error = await caught(() => service.report({ auth: null, data: good() }));
-    assert.equal(error.code, 'unauthenticated');
-    assert.deepEqual(db.keys(), []);
-  });
-
-  await test('a client-sent stationId is an error, not a hint', async () => {
-    const { db, service } = fixture();
-    const error = await caught(() => service.report(req('u1', FF, good({ stationId: 'beta_2' }))));
-    assert.equal(error.code, 'invalid-argument');
-    assert.deepEqual(db.keys(), []);
-  });
-
-  await test('a token without a station is refused', async () => {
-    const { service } = fixture();
-    const error = await caught(() => service.report(req('u1', { role: 'firefighter' }, good())));
-    assert.equal(error.code, 'failed-precondition');
-  });
-
-  await test('unknown fields are refused — including any identity field', async () => {
-    const { service } = fixture();
-    for (const extra of [{ uid: 'x' }, { full_name: 'x' }, { email: 'a@b.co' }, { note: 'x' }]) {
-      const error = await caught(() => service.report(req('u1', FF, good(extra))));
-      assert.equal(error.code, 'invalid-argument', JSON.stringify(extra));
+test('caller must authenticate with a canonical station and member role; no super/email bypass', async () => {
+  const { db, service } = fixture();
+  await assert.rejects(service.report({ data: req().data }), bad('unauthenticated'));
+  for (const extra of [{ stationId: '' }, { stationId: '../alpha' }, { role: '' },
+    { role: '', super: true, email: 'fire102.shits@gmail.com' }]) {
+    await assert.rejects(service.report(req({}, extra)));
+  }
+  assert.equal(db.writes.length, 0);
+});
+test('valid dotted UID produces finite incident with no identity', async () => {
+  const { db, service } = fixture();
+  const out = await service.report(req());
+  assert.equal(out.accepted, true);
+  assert.equal(out.count, 1);
+  const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
+  for (const text of ['user.with.dot', '9001', 'employee_number', 'sample_message', 'last_message', 'last_frame']) {
+    assert.equal(JSON.stringify(doc).includes(text), false);
+  }
+  assert.equal(doc.code, 'TypeError');
+  assert.equal(doc.schema_version, 2);
+  assert.equal(doc.expires_at, '2026-12-02T10:00:00.000Z');
+});
+test('no live card, inactivity, contradictory stations and changed live role all deny writes', async () => {
+  for (const profile of [null, { ...member, active: false }, { ...member, is_active: false },
+    { ...member, stationId: 'beta_2' }, { ...member, station: 'beta_2' }, { role: 'firefighter' },
+    { ...member, role: 'commander' }]) {
+    const { db, service } = fixture({ 'stations/alpha_1/users/user.with.dot': profile });
+    await assert.rejects(service.report(req()), bad('permission-denied'));
+    assert.equal(db.writes.length, 0);
+  }
+});
+test('raw message/frame/note, client identity and station aliases are rejected, not scrubbed', async () => {
+  const { db, service } = fixture();
+  for (const key of ['message', 'frame', 'note', 'uid', 'employee_number', 'stationId', 'station_id', 'extra']) {
+    await assert.rejects(service.report(req({ [key]: 'דנה user.with.dot 050-1234567 מחלה' })), bad('invalid-argument'));
+  }
+  assert.equal(db.writes.length, 0);
+});
+test('every metadata field maps arbitrary PII to finite unknown; kinds reject unknown', async () => {
+  const { db, service } = fixture();
+  for (const field of ['screen', 'version', 'code', 'callable']) {
+    for (const value of ['דנה', 'user.with.dot', 'person@example.com', '0501234567', 'private.html',
+      '<script>alert(1)</script>', { private: 'דנה' }]) {
+      const out = await service.report(req({ [field]: value }));
+      const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
+      assert.equal(JSON.stringify(doc).includes(typeof value === 'string' ? value : 'דנה'), false);
     }
-  });
-
-  await test('kind, screen, version, code and callable are validated by shape', async () => {
-    const { service } = fixture();
-    const bad = [
-      { kind: 'other' }, { screen: '../x.html' }, { screen: 'x' }, { version: 'v 1' },
-      { code: 'a b' }, { callable: 'has-dash' }, { message: 5 }, { frame: {} },
-      { kind: 'callable-failed', callable: '' }
-    ];
-    for (const patch of bad) {
-      const error = await caught(() => service.report(req('u1', FF, good(patch))));
-      assert.equal(error && error.code, 'invalid-argument', JSON.stringify(patch));
-    }
-  });
-
-  await test('an empty report (no message, no code) is refused', async () => {
-    const { service } = fixture();
-    const error = await caught(() => service.report(req('u1', FF, good({ message: '', code: '' }))));
-    assert.equal(error.code, 'invalid-argument');
-  });
-
-  // --- הרשומה ---
-  await test('the first report creates an open incident with no identity in it', async () => {
-    const { db, service } = fixture();
-    const out = await service.report(req('u1', FF, good()));
-    assert.equal(out.accepted, true);
-    assert.equal(out.first, true);
-    assert.equal(out.count, 1);
-    const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
-    assert.ok(doc);
-    assert.equal(doc.status, 'open');
-    assert.equal(doc.count, 1);
-    assert.deepEqual(doc.screens, ['swaps.html']);
-    assert.deepEqual(doc.versions, ['42G.0']);
-    assert.deepEqual(doc.roles, ['firefighter']);
-    assert.equal(doc.sample_message, good().message);
-    const text = JSON.stringify(doc);
-    for (const secret of ['u1', '9001', 'uid', 'emp', 'email', 'full_name']) {
-      assert.equal(new RegExp('"' + secret + '"').test(text), false, 'הרשומה נושאת ' + secret);
-    }
-  });
-
-  await test('the same failure twice is one incident with count 2, not two documents', async () => {
-    const { db, service } = fixture();
-    const a = await service.report(req('u1', FF, good()));
-    const b = await service.report(req('u2', FF, good({ message: 'Cannot read properties of undefined (reading x)  ' })));
-    assert.equal(a.fingerprint, b.fingerprint);
-    assert.equal(b.count, 2);
-    assert.equal(b.first, false);
-    const docs = db.keys().filter((k) => k.indexOf('/incidents/') > -1);
-    assert.equal(docs.length, 1);
-  });
-
-  await test('numbers and whitespace do not split a fingerprint; the code and screen do', async () => {
-    const { service } = fixture();
-    const a = await service.report(req('u1', FF, good({ message: 'row 12 failed' })));
-    const b = await service.report(req('u1', FF, good({ message: 'row 999 failed' })));
-    const c = await service.report(req('u1', FF, good({ message: 'row 12 failed', screen: 'board.html' })));
-    const d = await service.report(req('u1', FF, good({ message: 'row 12 failed', code: 'RangeError' })));
-    assert.equal(a.fingerprint, b.fingerprint);
-    assert.notEqual(a.fingerprint, c.fingerprint);
-    assert.notEqual(a.fingerprint, d.fingerprint);
-  });
-
-  await test('a second version and screen accumulate on the same incident', async () => {
-    const { db, service } = fixture();
-    const a = await service.report(req('u1', FF, good()));
-    await service.report(req('u1', FF, good({ version: '42G.1' })));
-    const doc = db.read('stations/alpha_1/incidents/' + a.fingerprint);
-    assert.deepEqual(doc.versions, ['42G.0', '42G.1']);
-    assert.equal(doc.first_version, '42G.0');
-    assert.equal(doc.last_version, '42G.1');
-  });
-
-  await test('two stations never share an incident document', async () => {
-    const { db, service } = fixture();
-    await service.report(req('u1', FF, good()));
-    await service.report(req('u9', Object.assign({}, FF, { stationId: 'beta_2' }), good()));
-    const keys = db.keys().filter((k) => k.indexOf('/incidents/') > -1);
-    assert.equal(keys.length, 2);
-    assert.ok(keys.some((k) => k.startsWith('stations/alpha_1/')));
-    assert.ok(keys.some((k) => k.startsWith('stations/beta_2/')));
-  });
-
-  // --- ניקוי ---
-  await test('emails, phones, uids, hex ids and query strings are scrubbed from the sample', async () => {
-    const { db, service } = fixture();
-    const message = 'user dana@example.com 050-1234567 uid AbCdEfGhIjKlMnOpQrStUvWxYz12 doc 0123456789abcdef0123456789 at ?token=abc';
-    const out = await service.report(req('u1', FF, good({ message, frame: 'x.js?v=42g0:10' })));
-    const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
-    assert.equal(doc.scrubbed, true);
-    for (const leak of ['dana@example.com', '1234567', 'AbCdEfGhIjKlMnOpQrStUvWxYz12', '0123456789abcdef', 'token=abc', 'v=42g0']) {
-      assert.equal(doc.sample_message.indexOf(leak), -1, 'דלף: ' + leak);
-      assert.equal(doc.sample_frame.indexOf(leak), -1, 'דלף במיקום: ' + leak);
-    }
-    assert.ok(doc.sample_message.indexOf('[email]') > -1);
-  });
-
-  await test('scrub is a pure function with the documented replacements', () => {
-    const out = scrub('a@b.co and 0501234567');
-    assert.equal(out.scrubbed, true);
-    assert.equal(out.text, '[email] and [phone]');
-    assert.equal(scrub('plain text').scrubbed, false);
-    assert.equal(normalizeForFingerprint('  Row 12   Failed '), 'row # failed');
-  });
-
-  await test('message and frame are cut at the documented limits', async () => {
-    const { db, service } = fixture();
-    const out = await service.report(req('u1', FF, good({ message: 'x'.repeat(2000), frame: 'y'.repeat(900) })));
-    const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
-    assert.equal(doc.sample_message.length, 300);
-    assert.equal(doc.sample_frame.length, 200);
-  });
-
-  // --- תקרה יומית ---
-  await test('the daily cap returns accepted:false and writes nothing more', async () => {
-    const { db, service } = fixture({
-      'stations/alpha_1/incident_days/2026-09-03': { day: '2026-09-03', count: DAY_CAP }
-    });
-    const out = await service.report(req('u1', FF, good()));
-    assert.equal(out.accepted, false);
-    assert.equal(out.reason, 'day-cap');
-    assert.equal(db.keys().filter((k) => k.indexOf('/incidents/') > -1).length, 0);
-    assert.equal(db.read('stations/alpha_1/incident_days/2026-09-03').count, DAY_CAP);
-  });
-
-  await test('the day counter carries a TTL and counts every accepted report', async () => {
-    const { db, service } = fixture();
-    await service.report(req('u1', FF, good()));
-    await service.report(req('u1', FF, good({ code: 'Other' })));
-    const day = db.read('stations/alpha_1/incident_days/2026-09-03');
-    assert.equal(day.count, 2);
-    assert.ok(day.expires_at);
-  });
-
-  // --- טיפול ---
-  await test('a resolved incident that returns in a newer version reopens and remembers the old fix', async () => {
-    const { db, service } = fixture();
-    const a = await service.report(req('u1', FF, good()));
-    await service.setStatus({ sid: 'alpha_1', fingerprint: a.fingerprint, status: 'resolved', by: 'codex', note: 'fixed in 42G.1' });
-    let doc = db.read('stations/alpha_1/incidents/' + a.fingerprint);
-    assert.equal(doc.status, 'resolved');
-    assert.equal(doc.resolved_by, 'codex');
-    // אותה גרסה — נשאר פתור (משתמש שלא עדכן).
-    await service.report(req('u1', FF, good()));
-    doc = db.read('stations/alpha_1/incidents/' + a.fingerprint);
-    assert.equal(doc.status, 'resolved');
-    // גרסה חדשה — נפתח מחדש.
-    await service.report(req('u1', FF, good({ version: '42G.1' })));
-    doc = db.read('stations/alpha_1/incidents/' + a.fingerprint);
-    assert.equal(doc.status, 'open');
-    assert.equal(doc.reopened_from.resolved_by, 'codex');
-    assert.equal(doc.reopened_from.version, '42G.0');
-  });
-
-  await test('setStatus takes a label, never an identity, and refuses unknown incidents', async () => {
-    const { service } = fixture();
-    const a = await service.report(req('u1', FF, good()));
-    for (const by of ['', 'U1', 'a@b.co', 'x'.repeat(41)]) {
-      const error = await caught(() => service.setStatus({ sid: 'alpha_1', fingerprint: a.fingerprint, status: 'resolved', by }));
-      assert.ok(error instanceof TypeError, by);
-    }
-    const missing = await caught(() => service.setStatus({ sid: 'alpha_1', fingerprint: 'f'.repeat(40), status: 'resolved', by: 'claude' }));
-    assert.equal(missing.message, 'incident-not-found');
-  });
-
-  await test('list returns newest first and filters by status', async () => {
-    const { db, service } = fixture();
-    const a = await service.report(req('u1', FF, good()));
-    db.setClock('2026-09-04T10:00:00.000Z');
-    const later = createIncidentLog({
-      db, FieldValue: db.FieldValue, HttpsError: TestHttpsError, hash,
-      clock: () => '2026-09-04T10:00:00.000Z'
-    });
-    const b = await later.report(req('u1', FF, good({ code: 'Newer' })));
-    await later.setStatus({ sid: 'alpha_1', fingerprint: a.fingerprint, status: 'ignored', by: 'eldad' });
-    const all = await later.list({ sid: 'alpha_1' });
-    assert.deepEqual(all.map((r) => r.id), [b.fingerprint, a.fingerprint]);
-    const open = await later.list({ sid: 'alpha_1', status: 'open' });
-    assert.deepEqual(open.map((r) => r.id), [b.fingerprint]);
-  });
-
-  // --- מוטציות: הבדיקות תופסות קוד שבור ---
-  await test('mutation: a module that keeps the reporter uid is caught', async () => {
-    const { db, service } = fixture();
-    const out = await service.report(req('u1', FF, good()));
-    const doc = db.read('stations/alpha_1/incidents/' + out.fingerprint);
-    const mutant = Object.assign({}, doc, { reporter_uid: 'u1' });
-    assert.equal(/"u1"/.test(JSON.stringify(mutant)), true, 'הגלאי לא היה תופס uid');
-  });
-
-  await test('mutation: a fingerprint that ignores the screen would merge two screens', () => {
-    const merged = hash('incident|alpha_1|client-error|' + 'TypeError' + '|' + normalizeForFingerprint('x'));
-    const real = hash('incident|alpha_1|client-error|swaps.html|TypeError|' + normalizeForFingerprint('x'));
-    assert.notEqual(merged, real);
-  });
-
-  console.log('\n' + passed + ' incident-log checks passed.');
-  console.log('  לא נבדק כאן: Firestore אמיתי, TTL בפועל, וכללי הגישה — אלה דורשים אמולטור ופריסה.');
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  }
+  await assert.rejects(service.report(req({ kind: 'דנה' })), bad('invalid-argument'));
+});
+test('fingerprint includes screen and callable but not free text or reporter identity', () => {
+  const { service } = fixture();
+  const a = service.planIncident('alpha_1', 'firefighter', req().data);
+  const b = service.planIncident('alpha_1', 'commander', req().data);
+  assert.equal(a.fingerprint, b.fingerprint);
+  assert.notEqual(a.fingerprint, service.planIncident('alpha_1', 'firefighter', req({ screen: 'forms.html' }).data).fingerprint);
+  assert.notEqual(a.fingerprint, service.planIncident('alpha_1', 'firefighter', req({ callable: 'submitFeedback' }).data).fingerprint);
+});
+test('aggregation increments transactionally and has bounded finite arrays', async () => {
+  const { db, service } = fixture();
+  const first = await service.report(req());
+  const ref = 'stations/alpha_1/incidents/' + first.fingerprint;
+  db.write(ref, { ...db.read(ref), screens: [...catalog.SCREENS, 'דנה'],
+    versions: ['private', ...catalog.VERSIONS], roles: ['private', 'firefighter'], secret: 'דנה' });
+  const next = await service.report(req());
+  const doc = db.read(ref);
+  assert.equal(next.count, 2);
+  assert.equal(next.first, false);
+  assert.ok(doc.screens.length <= LIMITS.screensPerIncident);
+  assert.ok(doc.versions.every((v) => catalog.VERSIONS.includes(v)));
+  assert.equal(JSON.stringify(doc).includes('דנה'), false);
+  assert.equal('secret' in doc, false);
+});
+test('day cap and corrupt quota are fail closed with no partial write', async () => {
+  for (const quota of [DAY_CAP, -1, '2', null]) {
+    const { db, service } = fixture({ 'stations/alpha_1/incident_days/2026-09-03': { count: quota } });
+    if (quota === DAY_CAP) assert.equal((await service.report(req())).reason, 'day-cap');
+    else await assert.rejects(service.report(req()), bad('failed-precondition'));
+    assert.equal(db.writes.length, 0);
+  }
+});
+test('even cap response validates live membership first', async () => {
+  const { service } = fixture({ 'stations/alpha_1/incident_days/2026-09-03': { count: DAY_CAP },
+    'stations/alpha_1/users/user.with.dot': { ...member, active: false } });
+  await assert.rejects(service.report(req()), bad('permission-denied'));
+});
+test('identity is read inside the transaction, not only before it', async () => {
+  const { db, service } = fixture();
+  const transaction = db.runTransaction.bind(db);
+  db.runTransaction = (fn) => {
+    db.write('stations/alpha_1/users/user.with.dot', { ...member, active: false });
+    return transaction(fn);
+  };
+  await assert.rejects(service.report(req()), bad('permission-denied'));
+  assert.equal(db.writes.length, 0);
+});
+test('status accepts finite note code/handler, not arbitrary note or personal label', async () => {
+  const { db, service } = fixture();
+  const out = await service.report(req());
+  const options = { sid: 'alpha_1', fingerprint: out.fingerprint, status: 'resolved', by: 'operator', note_code: 'fixed' };
+  for (const patch of [{ note: 'דנה מחלה' }, { by: 'eldad' }, { note_code: 'דנה' }, { status: 'private' }]) {
+    await assert.rejects(service.setStatus({ ...options, ...patch }), TypeError);
+  }
+  const before = db.read('stations/alpha_1/incidents/' + out.fingerprint).expires_at;
+  await service.setStatus(options);
+  assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).note_code, 'fixed');
+  assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).expires_at, before);
+  assert.equal((await service.report(req())).count, 2);
+  assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).status, 'resolved');
+  await service.report(req({ version: 'unknown' }));
+  assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).status, 'open');
+});
+test('safe projection excludes legacy raw fields and arbitrary nested metadata', () => {
+  const out = safeIncident('f'.repeat(40), { code: 'דנה', note: 'דנה', sample_message: 'דנה',
+    resolved_by: 'דנה', screens: ['דנה'], roles: ['דנה'], reopened_from: { private: 'דנה' } });
+  assert.equal(JSON.stringify(out).includes('דנה'), false);
+});
+test('list uses bounded newest page and projects all stored fields safely', async () => {
+  const { db, service } = fixture();
+  const a = await service.report(req());
+  await service.report(req({ code: 'ReferenceError' }));
+  const ref = 'stations/alpha_1/incidents/' + a.fingerprint;
+  db.write(ref, { ...db.read(ref), message: 'דנה', note: 'דנה', reporter_uid: 'private' });
+  const rows = await service.list({ sid: 'alpha_1', limit: 1 });
+  assert.equal(rows.length, 1);
+  assert.equal(JSON.stringify(rows).includes('דנה'), false);
+  for (const limit of [0, -1, 501, Infinity, '5']) await assert.rejects(service.list({ sid: 'alpha_1', limit }), TypeError);
 });

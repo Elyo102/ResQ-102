@@ -4,23 +4,21 @@
  * המתוזמנות מ-Firestore לתיקיית `_ניטור\` בתיקיית הפרויקט, כקובצי
  * Markdown שקלוד ו-Codex קוראים ומטפלים לפיהם.
  *
- * רץ במחשב של אלדד (משימה מתוזמנת), לא בענן. דורש הרשאות Admin:
+ * כלי מקומי; אינו מתקין משימה מתוזמנת. דורש פרויקט מפורש והרשאות Admin:
  *   GOOGLE_APPLICATION_CREDENTIALS=<service-account.json>   או
  *   gcloud auth application-default login
  *
  * שימוש:
  *   node ops-export.mjs --project station-102 --station eilat_102
- *   node ops-export.mjs ... --resolve <fingerprint> --by codex --note "תוקן ב-42G.1"
- *   node ops-export.mjs ... --ignore <fingerprint> --by eldad
+ *   node ops-export.mjs ... --resolve <fingerprint> --by codex --note-code fixed
+ *   node ops-export.mjs ... --ignore <fingerprint> --by operator
  *   node ops-export.mjs ... --reopen <fingerprint> --by claude
  *   node ops-export.mjs ... --mark-read --by claude        (כל חוות הדעת שיוצאו מסומנות כנקראו)
  *
- * ⭐ פלט: `.md` בלבד. `firebase.json` מתעלם מ-`*.md` באירוח, ולכן גם
- * אם `_ניטור\` תשב בתוך תיקיית הפרסום — היא לא תעלה לאתר. (ובכל
- * זאת: יש להוסיף `_ניטור/**` ל-hosting.ignore — ראה README-ניטור.md.)
- *
- * ⭐ `feedback.md` מכיל מידע אישי (uid, מספר עובד, טקסט חופשי). הוא
- * ב-`.gitignore`. `incidents.md` אינו מכיל מידע אישי לפי תכנון היומן.
+ * כל תיקיית _ניטור פרטית ומוחרגת מ-Git ומ-Hosting, לא רק feedback.md.
+ * --dry-run אינו טוען SDK, אינו קורא רשת ואינו כותב דבר.
+ * פעולות --resolve/--ignore/--reopen/--mark-read משנות נתונים ודורשות
+ * אישור פעולה מול הפרויקט שנבחר. אין כאן אישור או הרצה אוטומטית.
  * ====================================================================== */
 
 import { createRequire } from 'node:module';
@@ -29,6 +27,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import telemetryContract from './functions/ops-telemetry-contract.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,7 +40,7 @@ export const DEFAULTS = Object.freeze({
 });
 
 export function parseArgs(argv) {
-  const out = Object.assign({ by: '', note: '', resolve: '', ignore: '', reopen: '', markRead: false, dryRun: false }, DEFAULTS);
+  const out = Object.assign({ by: '', note: 'none', resolve: '', ignore: '', reopen: '', markRead: false, dryRun: false }, DEFAULTS);
   const list = Array.isArray(argv) ? argv.slice() : [];
   while (list.length) {
     const key = list.shift();
@@ -52,7 +51,7 @@ export function parseArgs(argv) {
       case '--out': out.out = next(); break;
       case '--days': out.days = Number(next()); break;
       case '--by': out.by = next(); break;
-      case '--note': out.note = next(); break;
+      case '--note-code': out.note = next(); break;
       case '--resolve': out.resolve = next(); break;
       case '--ignore': out.ignore = next(); break;
       case '--reopen': out.reopen = next(); break;
@@ -61,16 +60,34 @@ export function parseArgs(argv) {
       default: throw new Error('פרמטר לא מוכר: ' + key);
     }
   }
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(out.project || '')) throw new Error('Explicit valid --project is required');
   if (!/^[a-z0-9_-]{2,80}$/.test(String(out.station))) throw new Error('--station אינו תקין');
   if (!Number.isFinite(out.days) || out.days < 1 || out.days > 365) throw new Error('--days חייב להיות 1..365');
   const actions = [out.resolve, out.ignore, out.reopen].filter(Boolean).length + (out.markRead ? 1 : 0);
-  if (actions && !/^[a-z]{2,40}$/.test(out.by)) throw new Error('פעולת טיפול דורשת --by <תווית באותיות קטנות>, לא זהות');
+  if (actions > 1) throw new Error('Only one status action per invocation');
+  if (actions && !['operator', 'codex', 'claude'].includes(out.by)) throw new Error('Action requires --by operator/codex/claude');
+  for (const fp of [out.resolve, out.ignore, out.reopen].filter(Boolean)) if (!/^[a-f0-9]{40}$/.test(fp)) throw new Error('Invalid fingerprint');
+  if (!telemetryContract.NOTE_CODES.includes(out.note)) throw new Error('Invalid note code');
+  privateOutput(out.out);
   return out;
+}
+
+function privateOutput(value) {
+  const base = path.join(HERE, '_ניטור');
+  const full = path.resolve(HERE, value);
+  const rel = path.relative(base, full);
+  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) throw new Error('Output must remain in private _ניטור directory');
+  let cursor = HERE;
+  for (const part of path.relative(HERE, full).split(path.sep)) {
+    cursor = path.join(cursor, part);
+    if (fs.existsSync(cursor) && fs.lstatSync(cursor).isSymbolicLink()) throw new Error('Output links are not accepted');
+  }
+  return full;
 }
 
 /* --- עיצוב -------------------------------------------------------- */
 function esc(value) {
-  return String(value == null ? '' : value).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/[\\`*_{}\[\]()!|#]/g, c => '\\' + c).replace(/[\r\n]/g, ' ');
 }
 function short(fingerprint) {
   return String(fingerprint || '').slice(0, 12);
@@ -95,8 +112,8 @@ export function renderIncidents(rows, meta) {
   lines.push('');
   lines.push('עודכן: ' + now + ' · פתוחות: **' + open.length + '** · טופלו/הוזנחו: ' + other.length + ' · חלון: ' + meta.days + ' ימים');
   lines.push('');
-  lines.push('> אין כאן מידע אישי לפי תכנון: הרשומה אינה נושאת uid, שם או דוא"ל, וההודעות עברו ניקוי דפוסים.');
-  lines.push('> טיפול: `node ops-export.mjs --resolve <fingerprint> --by codex --note "..."` · `--ignore` · `--reopen`.');
+  lines.push('> פלט פרטי. הספירות מתייחסות לעמוד מוגבל של עד 500 רשומות, לא לכל המאגר. טקסט שגיאה ישן אינו מיוצא.');
+  lines.push('> טיפול דורש --project מפורש, --station ו--by. הערות הן קוד סגור בלבד (--note-code).');
   lines.push('');
   lines.push('## פתוחות');
   lines.push('');
@@ -113,7 +130,7 @@ export function renderIncidents(rows, meta) {
         + ' | ' + esc((r.screens || []).join(', '))
         + ' | ' + esc((r.versions || []).join(', '))
         + ' | `' + esc(r.code || '—') + '`'
-        + ' | ' + esc(r.sample_message || '') + (r.sample_frame ? ' — `' + esc(r.sample_frame) + '`' : '') + ' |');
+        + ' | — |');
     });
   }
   lines.push('');
@@ -126,7 +143,7 @@ export function renderIncidents(rows, meta) {
     lines.push('|---|---|---|---|---|---|---|');
     other.forEach((r) => {
       lines.push('| `' + short(r.fingerprint) + '` | ' + esc(r.status) + ' | ' + esc(r.resolved_by || '') + ' | ' + day(r.resolved_at)
-        + ' | ' + Number(r.count || 0) + ' | `' + esc(r.code || '—') + '` | ' + esc(r.note || '') + ' |');
+        + ' | ' + Number(r.count || 0) + ' | `' + esc(r.code || '—') + '` | ' + esc(r.note_code || '') + ' |');
     });
   }
   lines.push('');
@@ -137,11 +154,10 @@ export function renderIncidents(rows, meta) {
     fingerprint: r.fingerprint, status: r.status, count: r.count, kind: r.kind, code: r.code,
     callable: r.callable || '', screens: r.screens || [], versions: r.versions || [], roles: r.roles || [],
     first_seen: r.first_seen_iso, last_seen: r.last_seen_iso, first_version: r.first_version,
-    last_version: r.last_version, sample_message: r.sample_message, sample_frame: r.sample_frame,
-    last_message: r.last_message, last_frame: r.last_frame, scrubbed: r.scrubbed === true,
-    resolved_by: r.resolved_by || null, resolved_at: r.resolved_at || null, note: r.note || null,
+    last_version: r.last_version,
+    resolved_by: r.resolved_by || null, resolved_at: r.resolved_at || null, note_code: r.note_code || null,
     reopened_from: r.reopened_from || null
-  })), null, 1));
+  })), null, 1).replace(/[<>&`]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')));
   lines.push('```');
   lines.push('');
   return lines.join('\n');
@@ -151,7 +167,7 @@ export function renderFeedback(rows, meta) {
   const lines = [];
   lines.push('# חוות דעת · ' + meta.station);
   lines.push('');
-  lines.push('עודכן: ' + meta.now + ' · סה"כ: **' + rows.length + '** · חדשות: ' + rows.filter((r) => r.status === 'new').length);
+  lines.push('עודכן: ' + esc(meta.now) + ' · בעמוד המוגבל (עד 500): **' + rows.length + '** · חדשות: ' + rows.filter((r) => r.status === 'new').length);
   lines.push('');
   lines.push('> ⚠ קובץ זה מכיל **מידע אישי** (uid, מספר עובד, טקסט חופשי). הוא ב-`.gitignore` ואינו נכנס לקומיט. אין להעתיק ממנו שמות או מזהים לקוד, לבדיקות או לחדר.');
   lines.push('');
@@ -161,11 +177,11 @@ export function renderFeedback(rows, meta) {
   const avg = rated.length ? (rated.reduce((s, r) => s + r.rating, 0) / rated.length).toFixed(2) : '—';
   lines.push('## סיכום');
   lines.push('');
-  lines.push('- לפי סוג: ' + Object.keys(byCat).sort().map((k) => k + ' ' + byCat[k]).join(' · '));
+  lines.push('- לפי סוג: ' + Object.keys(byCat).sort().map((k) => esc(k) + ' ' + byCat[k]).join(' · '));
   lines.push('- דירוג ממוצע: ' + avg + ' (' + rated.length + ' דירוגים)');
   const byScreen = {};
   rows.forEach((r) => { byScreen[r.screen] = (byScreen[r.screen] || 0) + 1; });
-  lines.push('- לפי מסך: ' + Object.keys(byScreen).sort((a, b) => byScreen[b] - byScreen[a]).map((k) => k + ' ' + byScreen[k]).join(' · '));
+  lines.push('- לפי מסך: ' + Object.keys(byScreen).sort((a, b) => byScreen[b] - byScreen[a]).map((k) => esc(k) + ' ' + byScreen[k]).join(' · '));
   lines.push('');
   lines.push('## רשומות');
   lines.push('');
@@ -175,7 +191,7 @@ export function renderFeedback(rows, meta) {
     lines.push('');
     lines.push('- מזהה: `' + esc(r.id) + '` · תפקיד: ' + esc(r.role || '') + ' · מספר עובד: ' + esc(r.employee_number || '') + ' · uid: `' + esc(r.uid) + '` · גרסה: ' + esc(r.version) + ' · מותר לפנות: ' + (r.allow_contact ? 'כן' : 'לא') + (r.read_by ? ' · נקרא ע"י ' + esc(r.read_by) + ' ' + day(r.read_at) : ''));
     lines.push('');
-    lines.push('> ' + String(r.text || '').replace(/\r?\n/g, '\n> '));
+    lines.push('> ' + esc(r.text || ''));
     lines.push('');
   });
   return lines.join('\n');
@@ -198,9 +214,9 @@ export function renderHealth(info, meta) {
   lines.push('| nightlyScan (`scans/{month}`) | ' + (scan ? esc(scan.month) + ' (' + day(scan.ran_at_iso) + ')' : '—') + ' | '
     + (scan ? (staleDays(scan.ran_at_iso, meta.now) > 2 ? '⚠ לא רצה ' + staleDays(scan.ran_at_iso, meta.now) + ' ימים' : 'תקין') : '⚠ אין רשומה') + ' |');
   lines.push('');
-  lines.push('## תקלות וחוות דעת');
+  lines.push('## תקלות וחוות דעת — ספירות בעמוד מוגבל, לא סך המאגר');
   lines.push('');
-  lines.push('- תקלות פתוחות: **' + info.openIncidents + '** · חדשות ב-7 ימים: ' + info.incidents7d + ' · אירועים ב-7 ימים (סכום מונים): ' + info.incidentEvents7d);
+  lines.push('- תקלות פתוחות: **' + info.openIncidents + '** · חדשות ב-7 ימים: ' + info.incidents7d + ' · מונה מצטבר של תקלות שנראו ב-7 ימים, בעמוד המוגבל: ' + info.incidentEvents7d);
   lines.push('- חוות דעת ב-7 ימים: ' + info.feedback7d + ' · שלא נקראו: ' + info.feedbackUnread);
   lines.push('');
   lines.push('## גיבוי מנוהל של Firestore');
@@ -241,13 +257,17 @@ function writeIfChanged(file, content) {
 /* --- ריצה ---------------------------------------------------------- */
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.dryRun) {
+    console.log(JSON.stringify({ dryRun: true, project: args.project, station: args.station, output: args.out, maximumRowsPerCollection: 500, network: 'not contacted', writes: 'none' }));
+    return;
+  }
   const require = createRequire(path.join(HERE, 'functions', 'package.json'));
   const admin = require('firebase-admin');
-  const { createIncidentLog } = require('./functions/incident-log.js');
-  const { createFeedback } = require('./functions/feedback.js');
+  const { createIncidentLog } = require('./incident-log.js');
+  const { createFeedback } = require('./feedback.js');
 
   if (!admin.apps.length) {
-    admin.initializeApp(args.project ? { projectId: args.project } : undefined);
+    admin.initializeApp({ projectId: args.project });
   }
   const db = admin.firestore();
   const FV = admin.firestore.FieldValue;
@@ -263,7 +283,7 @@ async function main() {
   for (const [status, fp] of [['resolved', args.resolve], ['ignored', args.ignore], ['open', args.reopen]]) {
     if (!fp) continue;
     if (args.dryRun) { console.log('[dry-run] ' + status + ' ' + fp); continue; }
-    const out = await incidents.setStatus({ sid, fingerprint: fp, status, by: args.by, note: args.note });
+    const out = await incidents.setStatus({ sid, fingerprint: fp, status, by: args.by, note_code: args.note });
     console.log('incident ' + short(fp) + ' → ' + out.status + ' (' + args.by + ')');
   }
 
@@ -286,10 +306,10 @@ async function main() {
     incidentEvents7d: allIncidents.filter((r) => String(r.last_seen_iso || '') >= week).reduce((s, r) => s + Number(r.count || 0), 0),
     feedback7d: feedbackRows.filter((r) => String(r.created_at_iso || '') >= week).length,
     feedbackUnread: feedbackRows.filter((r) => r.status === 'new').length,
-    backupsListing: gcloudBackups()
+    backupsListing: gcloudBackups(args.project)
   };
 
-  const outDir = path.isAbsolute(args.out) ? args.out : path.join(HERE, args.out);
+  const outDir = privateOutput(args.out);
   if (!args.dryRun) fs.mkdirSync(outDir, { recursive: true });
   const meta = { station: sid, now: nowIso, days: args.days };
   const files = [
@@ -299,7 +319,7 @@ async function main() {
   ];
   for (const [name, content] of files) {
     if (args.dryRun) { console.log('[dry-run] ' + name + ' (' + content.length + ' תווים)'); continue; }
-    const changed = writeIfChanged(path.join(outDir, name), content);
+    const changed = writeIfChanged(privateOutput(path.join(outDir, name)), content);
     console.log((changed ? 'נכתב  ' : 'ללא שינוי ') + path.join(args.out, name));
   }
 
@@ -312,7 +332,7 @@ async function main() {
 }
 
 async function latestDoc(collection, key) {
-  const snap = await collection.get();
+  const snap = await collection.orderBy(key, 'desc').limit(1).get();
   let best = null;
   snap.docs.forEach((d) => {
     const data = d.data() || {};
@@ -328,10 +348,10 @@ function toIso(value) {
   return String(value);
 }
 
-function gcloudBackups() {
+function gcloudBackups(project) {
   try {
     const bin = process.platform === 'win32' ? 'gcloud.cmd' : 'gcloud';
-    return execFileSync(bin, ['firestore', 'backups', 'list', '--format=table(name, database, state)'],
+    return execFileSync(bin, ['firestore', 'backups', 'list', '--project', project, '--format=table(name, database, state)'],
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] });
   } catch (ignore) {
     return null;
@@ -341,7 +361,7 @@ function gcloudBackups() {
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch((error) => {
-    console.error('ops-export נכשל: ' + (error && error.message ? error.message : error));
+    console.error('ops-export failed; check explicit target, arguments, permissions and private output path. Raw error details suppressed.');
     process.exit(1);
   });
 }

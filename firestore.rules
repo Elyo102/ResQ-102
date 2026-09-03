@@ -403,6 +403,21 @@ service cloud.firestore {
     // ---------- התחנה ----------
 
     match /stations/{sid} {
+      // Ops submissions are authenticated and written by the server only.
+      // Admin SDK export is separate; no client, including super, reads these.
+      match /incidents/{fingerprint} {
+        allow read, write: if false;
+      }
+      match /incident_days/{day} {
+        allow read, write: if false;
+      }
+      match /feedback/{feedbackId} {
+        allow read, write: if false;
+      }
+      match /feedback_quota/{quotaId} {
+        allow read, write: if false;
+      }
+
       // השדה נקרא districtId בכל המערכת; הגרסה הקודמת חיפשה
       // district ולכן נכשלה תמיד. שים לב שמסמך התחנה עצמו אינו
       // נוצר היום — כל עוד כך, מפקד מחוז עדיין ייחסם, כי resource

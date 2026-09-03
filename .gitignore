@@ -72,8 +72,7 @@ tests/.visual/
 tests/debug.log
 debug.log
 
-# ניטור וגיבוי מקומיים (3.9.2026). incidents.md ו-health.md נטולי מידע אישי
-# ויכולים להיכנס לקומיט; feedback.md נושא uid ומספר עובד — לא. _גיבוי/ מכיל
-# bundle של הריפו ו-zip של מסמכים, כולל feedback.md — נשאר על הדיסק בלבד.
-_ניטור/feedback.md
+# All local monitoring exports and backup sets are private, including future
+# JSON/log formats. Git history and documents may contain sensitive data.
+_ניטור/
 _גיבוי/
