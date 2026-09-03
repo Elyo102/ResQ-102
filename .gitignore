@@ -71,3 +71,9 @@ ui-debug.log
 tests/.visual/
 tests/debug.log
 debug.log
+
+# ניטור וגיבוי מקומיים (3.9.2026). incidents.md ו-health.md נטולי מידע אישי
+# ויכולים להיכנס לקומיט; feedback.md נושא uid ומספר עובד — לא. _גיבוי/ מכיל
+# bundle של הריפו ו-zip של מסמכים, כולל feedback.md — נשאר על הדיסק בלבד.
+_ניטור/feedback.md
+_גיבוי/

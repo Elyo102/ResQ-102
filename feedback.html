@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — חוות דעת</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42g0">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:720px; margin:0 auto }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:14px; padding:18px; margin-bottom:14px }
+  .hide{ display:none !important }
+
+  label,.field-label{ display:block; font-size:12.5px; color:var(--muted);
+                      font-weight:650; margin:12px 0 4px }
+  textarea{ width:100%; padding:10px; background:var(--input); min-height:120px;
+            color:var(--txt); border:1px solid var(--line); border-radius:10px;
+            font-size:15px; font-family:inherit; resize:vertical }
+  :where(textarea,.btn,.chip,.star):focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+
+  .chips{ display:flex; flex-wrap:wrap; gap:8px }
+  .chip{ border:1px solid var(--line); background:var(--chip); color:var(--txt);
+         border-radius:20px; min-height:44px; padding:8px 16px; font-size:14px;
+         font-weight:600; font-family:inherit; cursor:pointer }
+  .chip[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+
+  .stars{ display:flex; gap:6px; direction:ltr; justify-content:flex-end }
+  .star{ width:44px; height:44px; border:1px solid var(--line); background:var(--chip);
+         border-radius:10px; font-size:18px; font-weight:700; color:var(--muted);
+         cursor:pointer; font-family:inherit }
+  .star[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+
+  .row{ display:flex; align-items:center; gap:10px; margin-top:14px; font-size:14px }
+  .row input[type="checkbox"]{ width:22px; height:22px; margin:0 }
+  .count{ font-size:11.5px; color:var(--muted); text-align:start; margin-top:4px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .msg{ margin-top:12px; font-size:13.5px; line-height:1.6; min-height:1.4em }
+  .msg.ok{ color:var(--good-bd) }
+  .msg.err{ color:var(--bad) }
+  #errBar{ display:none; background:var(--bad-bg); border:1px solid var(--bad-bd); color:var(--bad);
+           border-radius:10px; padding:12px 14px; margin-bottom:14px; position:relative }
+  #errBar .xx{ position:absolute; inset-inline-start:8px; top:6px; border:0; background:transparent;
+               color:inherit; font-size:20px; cursor:pointer }
+  #errBar code{ display:block; margin-top:6px; font-size:11px; white-space:pre-wrap; direction:ltr; text-align:left }
+</style>
+</head>
+<body>
+
+<div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<main class="wrap">
+  <h1>חוות דעת</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard" role="status">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אי אפשר לשלוח חוות דעת.</div>
+  </div>
+
+  <form id="work" class="hide" novalidate>
+    <div class="card">
+      <h2>מה עובד, ומה צריך להשתנות</h2>
+      <div class="note">
+        מה שתכתוב כאן נשמר עם השם שלך, כדי שנוכל לחזור אליך אם צריך.
+        ככל שיצטברו יותר חוות דעת, נדע מה עובד טוב ומה לשנות.
+        <span id="fromNote"></span>
+      </div>
+
+      <span class="field-label" id="catLabel">על מה מדובר?</span>
+      <div class="chips" role="group" aria-labelledby="catLabel" id="cats"></div>
+      <div class="note" id="catHint"></div>
+
+      <span class="field-label" id="rateLabel">כמה זה נוח לשימוש? (לא חובה)</span>
+      <div class="stars" role="group" aria-labelledby="rateLabel" id="stars"></div>
+
+      <label for="text">מה קרה, או מה היה עוזר לך?</label>
+      <textarea id="text" maxlength="1000" placeholder="לדוגמה: ניסיתי לאשר החלפה בטלפון והכפתור לא הגיב…"></textarea>
+      <div class="count" id="count">0 / 1000</div>
+
+      <label class="row" for="contact">
+        <input type="checkbox" id="contact" checked>
+        <span>מותר לפנות אליי בשאלות על מה שכתבתי</span>
+      </label>
+
+      <button type="submit" class="btn go" id="send" disabled>שלח חוות דעת</button>
+      <div class="msg" id="msg" role="status" aria-live="polite" tabindex="-1"></div>
+    </div>
+  </form>
+</main>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
+import { renderNav, renderStuckNav } from './nav.js?v=42g0';
+import { initPWA } from './pwa.js?v=42g0';
+import { APP_VERSION } from './version.js?v=42g0';
+import { MEMBER_ROLES } from './roles.js?v=42g0';
+import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, buildSubmission, errorText }
+  from './feedback.js?v=42g0';
+import { installIncidentReporter } from './incident-client.js?v=42g0';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+const app  = initializeApp(firebaseConfig);
+import { initAppCheck } from './appcheck.js?v=42g0';
+await initAppCheck(app);
+const auth = getAuth(app);
+const fns  = getFunctions(app, 'europe-west1');
+const SUPER_ADMIN = 'fire102.shits@gmail.com';
+const $ = id => document.getElementById(id);
+
+// דיווח תקלות של המסך הזה עצמו — ואותו עוטף גם את השליחה.
+const incidents = installIncidentReporter({ fns, httpsCallable, version: APP_VERSION });
+const submitFeedback = incidents.wrapCallable('submitFeedback', httpsCallable(fns, 'submitFeedback'));
+
+renderStuckNav('');
+initPWA({ offer: false });
+
+const state = { category: '', rating: null, busy: false, screen: sourceScreen(location.search) };
+
+function message(text, kind) {
+  const el = $('msg');
+  el.textContent = text;
+  el.className = 'msg ' + (kind || '');
+}
+function updateSend() {
+  const errors = validateLocal({ category: state.category, rating: state.rating, text: $('text').value });
+  $('send').disabled = state.busy || errors.length > 0;
+}
+
+CATEGORIES.forEach((c) => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'chip'; b.textContent = c.label;
+  b.setAttribute('aria-pressed', 'false'); b.dataset.id = c.id;
+  b.onclick = () => {
+    state.category = c.id;
+    document.querySelectorAll('.chip').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.id === c.id)));
+    $('catHint').textContent = c.hint;
+    updateSend();
+  };
+  $('cats').appendChild(b);
+});
+[1, 2, 3, 4, 5].forEach((n) => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'star'; b.textContent = String(n);
+  b.setAttribute('aria-pressed', 'false'); b.setAttribute('aria-label', 'דירוג ' + n + ' מתוך 5');
+  b.onclick = () => {
+    state.rating = state.rating === n ? null : n;
+    document.querySelectorAll('.star').forEach((x, i) => x.setAttribute('aria-pressed', String(state.rating !== null && i < state.rating)));
+    updateSend();
+  };
+  $('stars').appendChild(b);
+});
+$('text').addEventListener('input', () => {
+  $('count').textContent = $('text').value.length + ' / ' + TEXT_MAX;
+  updateSend();
+});
+if (state.screen !== 'feedback.html') {
+  $('fromNote').textContent = ' חוות הדעת תסומן כשייכת למסך „' + state.screen + '".';
+}
+
+$('work').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errors = validateLocal({ category: state.category, rating: state.rating, text: $('text').value });
+  if (errors.length) { message(errors[0], 'err'); return; }
+  state.busy = true; updateSend();
+  message('שולח…', '');
+  try {
+    const body = await buildSubmission(
+      { category: state.category, rating: state.rating, text: $('text').value, allow_contact: $('contact').checked },
+      { screen: state.screen, version: APP_VERSION }
+    );
+    const result = (await submitFeedback(body)).data || {};
+    message(result.duplicate
+      ? 'חוות הדעת הזאת כבר התקבלה. תודה.'
+      : 'תודה! חוות הדעת נשמרה ותיקרא.', 'ok');
+    $('text').value = ''; $('count').textContent = '0 / ' + TEXT_MAX;
+    state.category = ''; state.rating = null;
+    document.querySelectorAll('.chip,.star').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+    $('catHint').textContent = '';
+  } catch (error) {
+    message(errorText(error), 'err');
+  } finally {
+    state.busy = false; updateSend();
+    $('msg').focus();
+  }
+});
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { location.replace('./login.html?next=feedback.html'); return; }
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  const isSuper = c.super === true || String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isMember = isSuper || MEMBER_ROLES.indexOf(c.role) !== -1;
+  const sid = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !sid) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+  renderNav(c, 'feedback.html', user.email || '');
+  $('whoSub').textContent = 'גרסה ' + APP_VERSION;
+  $('work').classList.remove('hide');
+});
+</script>
+</body>
+</html>

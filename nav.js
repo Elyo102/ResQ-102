@@ -22,6 +22,7 @@ const ITEMS = [
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },
   { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd', group: 'station' },
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1', group: 'mine' },
+  { href: 'feedback.html', label: 'חוות דעת',    who: 'member', dot: '#f06292', group: 'mine' },
   { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c', group: 'station' },
   { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5', group: 'station' },
   { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63', group: 'station' },
