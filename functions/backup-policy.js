@@ -319,6 +319,13 @@ const DATA_POLICIES = Object.freeze([
     'restricted_identity', 'audit_retention_policy_required',
     'Who turned the schedule engine on or off, when, and why.',
     { humanReadable:'forbidden' }),
+  // ⭐ דוח ה-preflight של המעבר לחי. ספירות, digests וקודי סיבה —
+  // אין בו שם ואין uid, וזה בכוונה: הוא נשמר, מוצג ונכנס ליומן.
+  policy('stations/{sid}/schedule_preflight/{publicationId}', 'station',
+    'derived', 'none', 'managed_export', 'restore',
+    'restricted_identity', 'ttl_policy_required',
+    'Signed cutover preflight: counts, digests and reason codes only.',
+    { humanReadable:'forbidden' }),
   policy('stations/{sid}/schedule_source_operations/{requestId}', 'station',
     'temporary', 'none', 'exclude', 'do_not_restore', 'secret',
     'ttl_policy_required',

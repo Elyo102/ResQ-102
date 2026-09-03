@@ -969,5 +969,59 @@ check('every view without an active snapshot falls back to legacy', () => {
   }
 });
 
-assert.equal(passed, 82);
-console.log('\n82 schedule runtime source checks passed.');
+/* ⭐ P0-2 · חוזה המעבר. אלה הטענות שמונעות מהמעבר לחזור להיות
+ * „החלף מצב ותקווה". */
+check('preparing in shadow never activates, notifies or moves the pointer', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function publish(req)');
+  assert.ok(at > -1);
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('const preparing = config.mode === MODE.SHADOW;') > -1,
+    'הכוונה אינה נגזרת מהמצב');
+  assert.ok(/requireMode\(config, \[MODE\.NEW, MODE\.SHADOW\]\)/.test(body),
+    'publish אינו מותר ב-shadow, ולכן חלון הלוח הריק נשאר פתוח');
+  assert.ok(body.indexOf("tx.update(pubRef, { status: 'prepared'") > -1,
+    'הכנה אינה מסמנת prepared');
+  // ⭐ הליבה: ההודעות משתחררות רק כשהפרסום באמת פעיל.
+  assert.ok(body.indexOf('if (!preparing) await releaseOutbox(pubRef);') > -1,
+    'הכנה משחררת הודעות על סידור שאיש אינו רואה');
+});
+
+check('the cutover is one transaction, decided on live values', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function promoteToNew(req)');
+  assert.ok(at > -1, 'promoteToNew לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('cutover.decidePromotion(') > -1,
+    'ההכרעה אינה נעשית במודול הטהור');
+  // ההכרעה חייבת להיות בתוך הטרנזקציה, לא לפניה.
+  const tx = body.indexOf('db.runTransaction');
+  assert.ok(tx > -1 && body.indexOf('cutover.decidePromotion(') > tx,
+    'ההכרעה מתקבלת מחוץ לטרנזקציה — הערכים יכולים להשתנות אחריה');
+  for (const write of ["tx.update(pubRef, { status: 'active'", 'tx.set(activeRef(ctx.sid)',
+    'tx.set(runtimeRef(ctx.sid), { mode: MODE.NEW }']) {
+    assert.ok(body.indexOf(write) > -1, 'המעבר אינו כותב ' + write);
+    assert.ok(body.indexOf(write) > tx, write + ' נכתב מחוץ לטרנזקציה');
+  }
+  // ⭐ ההודעות אחרי ה-commit, לעולם לא בתוכו.
+  const release = body.indexOf('await releaseOutbox(pubRef);');
+  assert.ok(release > body.lastIndexOf('});'),
+    'ה-outbox משתחרר בתוך הטרנזקציה');
+  // ושער הפיקוד, לא שער המנהל.
+  assert.ok(body.indexOf('mayChangeMode') > -1, 'המעבר אינו עובר בשער הפיקוד');
+  assert.ok(body.replace(/\/\*[\s\S]*?\*\//g, ' ').indexOf('requireManager') === -1,
+    'מינוי אחראי סידור פותח את שער המעבר');
+});
+
+check('a prepared publication keeps its notifications while it waits', () => {
+  const src = read('functions/schedule-runtime.js');
+  // ⭐ בלי שני אלה, תור ההודעות של הפרסום המוכן נמחק בזמן ההמתנה
+  // ב-shadow, והמעבר היה קורה בלי שאיש יקבל הודעה.
+  assert.ok(/runtime\.mode === MODE\.SHADOW && status === 'blocked'/.test(src),
+    'שורת המתנה ב-shadow מבוטלת');
+  assert.ok(/publication\.status === 'prepared'/.test(src),
+    'פרסום מוכן אינו מוכר למתזמן ההודעות');
+});
+
+assert.equal(passed, 85);
+console.log('\n85 schedule runtime source checks passed.');

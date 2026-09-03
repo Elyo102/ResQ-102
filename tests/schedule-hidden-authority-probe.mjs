@@ -75,11 +75,26 @@ try {
  * ממשיכה „לעבור" אחרי שהקוד השתנה והעותק שבסעיף 8 התיישן.
  * ================================================================== */
 
+/* ⭐ שערים נבדקים על **קוד**, לא על הערות.
+ *
+ * `promoteToNew` נושא הערה שמסבירה במפורש ש-`requireManager` אינו
+ * נקרא בו — והבדיקה נפלה על ההערה הזאת. זה נראה כמו מטרד, אבל
+ * הכיוון ההפוך חמור: פונקציה בלי שער בכלל, שיש בה הערה על
+ * `requireManager`, הייתה **עוברת** את 3.M. גלאי שהערה יכולה לספק
+ * אותו אינו גלאי.
+ */
+function stripComments(text) {
+  return String(text)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
+
 const D = Object.freeze({
-  mgrGate: (body) => /requireManager\(ctx\)|requireLiveManagerNow\(ctx\)/.test(body),
-  noClientStation: (body) => !/data\.(station_id|stationId)/.test(body),
-  commandGate: (body) => body.indexOf('mayChangeMode') !== -1,
-  commandNotManager: (body) => body.indexOf('requireManager') === -1,
+  mgrGate: (body) => /requireManager\(ctx\)|requireLiveManagerNow\(ctx\)/
+    .test(stripComments(body)),
+  noClientStation: (body) => !/data\.(station_id|stationId)/.test(stripComments(body)),
+  commandGate: (body) => stripComments(body).indexOf('mayChangeMode') !== -1,
+  commandNotManager: (body) => stripComments(body).indexOf('requireManager') === -1,
   selfIdentity: (body) => body.indexOf('await context(req)') !== -1,
   noClientIdentity: (body) => !/data\.(uid|person|subject|recipient|employee)/.test(body),
   noUidFromBody: (runtime) => !/req\.data\.uid|data\.uid\b/.test(runtime),
@@ -162,6 +177,9 @@ const CALLABLES = Object.freeze([
   { name: 'getScheduleManagerSetup', method: 'getManagerSetup', gate: GATE.MANAGER },
   { name: 'manageScheduleGuard', method: 'manageGuard', gate: GATE.MANAGER },
   { name: 'getScheduleGuardManagerBoard', method: 'getGuardManagerBoard', gate: GATE.MANAGER },
+  { name: 'previewScheduleCutover', method: 'previewCutover', gate: GATE.MANAGER },
+  // ⭐ המעבר עצמו שייך לפיקוד, לא לאחראי הסידור — כמו החלפת מצב.
+  { name: 'promoteScheduleToNew', method: 'promoteToNew', gate: GATE.COMMAND },
   { name: 'setScheduleRuntimeMode', method: 'setRuntimeMode', gate: GATE.COMMAND },
   { name: 'getScheduleModeOptions', method: 'getModeOptions', gate: GATE.COMMAND },
   { name: 'setScheduleManagerAccess', method: null, gate: GATE.HR },
@@ -304,7 +322,7 @@ const scheduleCollections = ['schedule_state', 'schedule_access', 'schedule_poli
   'schedule_sources', 'schedule_drafts', 'schedule_publications', 'schedule_responses',
   'schedule_audit', 'schedule_policy_operations', 'schedule_policy_audit',
   'schedule_mode_operations', 'schedule_mode_audit',
-  'schedule_source_operations', 'schedule_source_audit'];
+  'schedule_source_operations', 'schedule_source_audit', 'schedule_preflight'];
 scheduleCollections.forEach((name) => {
   ok('6.1 ' + name + ' מוגדר בכללים', RULES.indexOf('match /' + name + '/') > -1);
   ok('6.2 ' + name + ' סגור לדפדפן', D.ruleClosed(RULES, name));
@@ -467,6 +485,16 @@ mutate('8.16d השער מפסיק לשאול את השרת',
   UI, 'function managerAction(fn) {\n  return function (event) {\n    if (!canManageSchedule()) return;',
   'function managerAction(fn) {\n  return function (event) {',
   (src) => D.gateAsksServer(src));
+
+// ⭐ הגלאי חייב להתעלם מהערות — בשני הכיוונים. מוטציה שמחליפה
+// קריאה אמיתית בהערה בעלת אותו טקסט היא בדיוק התרחיש שבו שער
+// נעלם ובדיקה ממשיכה לדווח „מוגן".
+// (`publish` אינו מתאים למוטציה הזאת: יש בו **שני** שערים אמיתיים,
+// והשני — `requireLiveManagerNow` בנתיב הכפילות — מספק את הגלאי
+// בצדק גם אחרי שהראשון בוטל.)
+mutateIn('8.16e שער המנהל מוחלף בהערה בלבד', 'savePolicy',
+  'requireManager(ctx);', '// requireManager(ctx);',
+  (src) => D.mgrGate(methodBody('savePolicy', src)));
 
 mutate('8.17 schedule_access נפתח לדפדפן',
   RULES, 'match /schedule_access/{uid} {\n        allow read, write: if false;',

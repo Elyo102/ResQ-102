@@ -5109,6 +5109,15 @@ exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req)
 exports.getScheduleModeOptions = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getModeOptions', req));
 
+// ⭐ P0-2. שתי הפעולות שסוגרות את חלון הלוח הריק: בדיקה מול מה
+// שהתחנה רואה היום, ואז מעבר אטומי שמפעיל פרסום מוכן ומזיז את המצב
+// יחד. שער הפיקוד, לא שער אחראי הסידור.
+exports.previewScheduleCutover = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('previewCutover', req));
+
+exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('promoteToNew', req));
+
 exports.setScheduleRuntimeMode = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 300,

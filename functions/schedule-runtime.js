@@ -9,6 +9,7 @@ const guardBoardProjection = require('./guard-board-projection');
 const legacyCompatibility = require('./schedule-legacy-compat');
 const policyAuthorModule = require('./schedule-policy-author');
 const modeAuthorityModule = require('./schedule-mode-authority');
+const cutoverModule = require('./schedule-cutover');
 const sourceAuthorModule = require('./schedule-source-author');
 
 /**
@@ -199,6 +200,7 @@ function createScheduleRuntime(deps) {
   // ⭐ טהור ובלי תלויות. מי רשאי להזיז מצב, ולאן מותר להזיז —
   // החלטה שאפשר לבדוק בלי Firestore ובלי דפדפן.
   const modeAuthority = modeAuthorityModule.createModeAuthority();
+  const cutover = cutoverModule.createCutover({ hash, clock });
   const sourceAuthor = sourceAuthorModule.createSourceAuthor({ clock, hash });
 
   function stationRef(sid) {
@@ -2375,7 +2377,13 @@ function createScheduleRuntime(deps) {
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
-      if (runtime.mode !== MODE.NEW) {
+      /* ⭐ P0-2. הודעה שממתינה לפרסום מוכן חיה דווקא ב-shadow — זה
+       * כל הרעיון: להכין הכול לפני המעבר. הגרסה הקודמת ביטלה כאן כל
+       * הודעה שאינה ב-`new`, כלומר הייתה מוחקת את תור ההודעות של
+       * הפרסום המוכן בזמן שהוא ממתין, והמעבר היה קורה בלי שאיש
+       * יקבל הודעה. שורה `blocked` ב-shadow היא המתנה תקינה. */
+      if (runtime.mode !== MODE.NEW
+          && !(runtime.mode === MODE.SHADOW && status === 'blocked')) {
         cancelOutbox(tx, ref, 'runtime-not-new');
         return;
       }
@@ -2383,9 +2391,11 @@ function createScheduleRuntime(deps) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
-      if (publication.status === 'staging' || publication.status === 'complete') {
+      if (publication.status === 'staging' || publication.status === 'complete'
+          || publication.status === 'prepared') {
         // blocked is the intentional pre-activation state.  A scheduler must
         // never cancel it just because the pointer has not committed yet.
+        // `prepared` is that same state held deliberately across the cutover.
         if (status !== 'blocked') cancelOutbox(tx, ref, 'publication-not-active');
         return;
       }
@@ -2415,11 +2425,259 @@ function createScheduleRuntime(deps) {
     return { queued, deliver };
   }
 
+  /* ==================================================================
+   *  P0-2 · המעבר לחי · preflight ו-cutover אטומי
+   *
+   *  ⭐ שתי הפונקציות האלה קיימות כדי שהמעבר למנוע החדש לא יהיה
+   *  „החלף מצב ותקווה". `previewCutover` משווה את הפרסום המוכן מול
+   *  מה שהתחנה רואה **היום**, ו-`promoteToNew` מבצע את ההחלפה
+   *  בטרנזקציה אחת.
+   *
+   *  ההכרעה עצמה חיה במודול טהור (`schedule-cutover.js`) ונקראת
+   *  **בתוך** הטרנזקציה, על הערכים החיים. כך אין פער בין מה שנבדק
+   *  לבין מה שנכתב.
+   * ================================================================== */
+
+  /* מוציא `{date, uids[]}` מתוך שורות תמונת פרסום. */
+  function cutoverDaysFromRows(rows) {
+    const byDate = new Map();
+    (rows || []).forEach((row) => {
+      if (!row || !nonEmpty(row.date)) return;
+      const list = byDate.get(row.date) || [];
+      (row.slots || []).forEach((slot) => {
+        if (slot && nonEmpty(slot.person)) list.push(slot.person);
+      });
+      byDate.set(row.date, list);
+    });
+    return Array.from(byDate.keys()).sort(compareCanonical)
+      .map((date) => ({ date, uids: byDate.get(date) }));
+  }
+
+  /* ואותו דבר מתוך חלון ה-legacy. */
+  function cutoverDaysFromLegacy(days) {
+    return (days || []).filter((day) => day && nonEmpty(day.date))
+      .map((day) => ({
+        date: day.date,
+        uids: (day.assignments || []).map((item) => item && item.uid)
+          .filter((uid) => nonEmpty(uid))
+      }))
+      .sort((a, b) => compareCanonical(a.date, b.date));
+  }
+
+  async function preparedPublication(ctx, publicationId) {
+    const ref = stationRef(ctx.sid).collection('schedule_publications').doc(publicationId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new ScheduleRuntimeError('cutover-candidate-missing',
+        'הפרסום המוכן לא נמצא.', 'failed-precondition');
+    }
+    const meta = snap.data() || {};
+    if (meta.station_id !== ctx.sid) {
+      throw new ScheduleRuntimeError('cutover-candidate-missing',
+        'הפרסום המוכן שייך לתחנה אחרת.', 'failed-precondition');
+    }
+    return { ref, meta };
+  }
+
+  async function previewCutover(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const config = await configuration(ctx.sid);
+    requireMode(config, [MODE.SHADOW]);
+    const data = plain(req.data) ? req.data : {};
+    const candidateId = requireId(data.candidate_publication_id,
+      'publication-id', 'מזהה הפרסום המוכן');
+
+    const candidate = await preparedPublication(ctx, candidateId);
+    if (candidate.meta.status !== 'prepared' || candidate.meta.snapshot_complete !== true) {
+      throw new ScheduleRuntimeError('cutover-candidate-not-prepared',
+        'הפרסום אינו במצב „מוכן" ולכן אין מה לבדוק מולו.', 'failed-precondition');
+    }
+    const from = String(candidate.meta.from || '');
+    const to = String(candidate.meta.to || '');
+    if (!nonEmpty(from) || !nonEmpty(to)) {
+      throw new ScheduleRuntimeError('cutover-candidate-range',
+        'לפרסום המוכן אין טווח תאריכים.', 'failed-precondition');
+    }
+
+    /* ⭐ התמונה נקראת **במלואה** (dates=null) כדי שחתימת התוכן תיבדק.
+     * קריאת חלון מדלגת על האימות הזה, ודוח שמבוסס על תמונה שלא
+     * אומתה אינו שווה את החתימה שנשים עליו. */
+    const snapshot = await readSnapshot(candidate.ref, candidate.meta, null);
+    const legacy = await legacyFallbackWindow(ctx, config, from, to);
+    const source = await loadSource(ctx, config.active_source_id);
+    const policy = await loadPolicy(ctx, config.active_policy_id);
+
+    const report = cutover.preflight({
+      station_id: ctx.sid,
+      allowed_uids: source.peopleRaw.filter((person) => person.active === true)
+        .map((person) => person.id),
+      from, to,
+      legacy_days: cutoverDaysFromLegacy(legacy.days),
+      next_days: cutoverDaysFromRows(snapshot.plan.days || snapshot.rows),
+      candidate_publication_id: candidateId,
+      policy_digest: policy.digest,
+      source_digest: source.digest,
+      content_hash: candidate.meta.content_hash || null
+    });
+
+    /* הדוח נשמר כדי שהמעבר יוכל לאמת שהוא אותו דוח. הוא ספירות
+     * וקודים בלבד — אין בו שם ואין uid. */
+    await stationRef(ctx.sid).collection('schedule_preflight')
+      .doc(candidateId).set(Object.assign({}, report, {
+        actor_uid: ctx.uid, stored_at: FV.serverTimestamp()
+      }));
+    return report;
+  }
+
+  async function promoteToNew(req) {
+    const ctx = await context(req);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const candidateId = requireId(data.candidate_publication_id,
+      'publication-id', 'מזהה הפרסום המוכן');
+    const expectedMode = String(data.expected_mode || '');
+
+    /* ⭐ שער הפיקוד, ולא שער המנהל. הזזת המצב שייכת לפיקוד — בדיוק
+     * כמו ב-`setRuntimeMode`, ומאותה סיבה. `requireManager` אינו
+     * נקרא כאן. */
+    const actor = modeActor(ctx);
+    if (!modeAuthority.mayChangeMode(actor)) {
+      throw new ScheduleRuntimeError(modeAuthority.CODE.FORBIDDEN,
+        'הזזת מצב מנוע הסידור שמורה לפיקוד התחנה.', 'permission-denied');
+    }
+
+    const opRef = modeOperationRef(ctx.sid, requestId);
+    const existingOp = await opRef.get();
+    const fingerprint = digest({
+      station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
+      candidate: candidateId, expected_mode: expectedMode
+    });
+    if (existingOp.exists) {
+      const op = existingOp.data() || {};
+      if (op.fingerprint !== fingerprint) {
+        throw new ScheduleRuntimeError('cutover-request-reused',
+          'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
+      }
+      return Object.assign({ duplicate: true }, op.result || {});
+    }
+
+    const candidate = await preparedPublication(ctx, candidateId);
+    const pubRef = candidate.ref;
+    const preflightRef = stationRef(ctx.sid).collection('schedule_preflight').doc(candidateId);
+
+    let result = null;
+    await db.runTransaction(async (tx) => {
+      const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), pubRef, preflightRef,
+        liveUserRef(ctx.sid, ctx.uid)];
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      const liveRuntime = snaps[0].exists ? (snaps[0].data() || {}) : {};
+      const liveActive = snaps[1].exists ? (snaps[1].data() || {}) : {};
+      const livePub = snaps[2].exists ? (snaps[2].data() || {}) : {};
+      const livePreflight = snaps[3].exists ? (snaps[3].data() || {}) : null;
+
+      /* ⭐ הזהות נקראת מחדש **כאן**. מי שהוסר מהתחנה בין טעינת המסך
+       * לבין הלחיצה אינו מעביר תחנה למנוע חדש. */
+      const liveUser = snaps[4].exists ? (snaps[4].data() || {}) : {};
+      if (liveUser.station_id !== ctx.sid || liveUser.active === false) {
+        throw new ScheduleRuntimeError('cutover-actor-inactive',
+          'המשתמש אינו פעיל בתחנה הזאת.', 'permission-denied');
+      }
+
+      const liveMode = MODES.indexOf(liveRuntime.mode) !== -1 ? liveRuntime.mode : MODE.OFF;
+      const livePolicy = await tx.get(stationRef(ctx.sid).collection('schedule_policies')
+        .doc(String(liveRuntime.active_policy_id || '_none')));
+      const liveSource = await tx.get(stationRef(ctx.sid).collection('schedule_sources')
+        .doc(String(liveRuntime.active_source_id || '_none')));
+
+      /* ההכרעה עצמה — המודול הטהור, על הערכים החיים. */
+      let decision;
+      try {
+        decision = cutover.decidePromotion({
+          from_mode: liveMode,
+          to_mode: MODE.NEW,
+          expected_mode: expectedMode,
+          candidate: {
+            publication_id: candidateId,
+            status: livePub.status,
+            snapshot_complete: livePub.snapshot_complete
+          },
+          expected_candidate_id: candidateId,
+          active_publication_id: nonEmpty(liveActive.publication_id)
+            ? liveActive.publication_id : null,
+          preflight: livePreflight,
+          policy_digest: livePolicy.exists ? (livePolicy.data() || {}).content_digest : null,
+          source_digest: liveSource.exists ? (liveSource.data() || {}).content_digest : null,
+          content_hash: livePub.content_hash || null
+        });
+      } catch (error) {
+        if (error && error.name === 'CutoverError') {
+          const http = error.code === cutoverModule.CODE.PREFLIGHT_FAILED
+            ? 'failed-precondition' : 'aborted';
+          const wrapped = new ScheduleRuntimeError(error.code, error.message, http);
+          if (error.detail) wrapped.detail = error.detail;
+          throw wrapped;
+        }
+        throw error;
+      }
+
+      const revision = Number(livePub.revision || 0);
+      /* ⭐ הכול יחד: הפרסום נעשה פעיל, המצביע זז, והמצב נעשה `new`.
+       * טרנזקציה אחת — ולכן אין רגע שבו המצב `new` והמצביע ריק. */
+      tx.update(pubRef, { status: 'active', activated_at: FV.serverTimestamp() });
+      tx.set(activeRef(ctx.sid), {
+        publication_id: candidateId, revision,
+        previous_publication_id: nonEmpty(liveActive.publication_id)
+          ? liveActive.publication_id : null,
+        content_digest: livePub.content_digest || null,
+        activated_at: FV.serverTimestamp(), activated_by: ctx.uid
+      });
+      tx.set(runtimeRef(ctx.sid), { mode: MODE.NEW }, { merge: true });
+      tx.set(modeAuditRef(ctx.sid, requestId), {
+        station_id: ctx.sid, request_id: requestId,
+        action: 'cutover', from: decision.from, to: decision.to,
+        publication_id: candidateId, revision,
+        preflight_signature: decision.preflight_signature,
+        actor_uid: ctx.uid, at: FV.serverTimestamp()
+      });
+      result = {
+        mode: MODE.NEW, publication_id: candidateId, revision,
+        preflight_signature: decision.preflight_signature
+      };
+      tx.set(opRef, {
+        station_id: ctx.sid, actor_uid: ctx.uid, fingerprint,
+        created_at: clock(), expires_at: modeOperationExpiry(), result
+      });
+    });
+
+    /* ⭐ ההודעות משתחררות **רק אחרי** ש-commit הצליח. שחרור שנכשל
+     * כאן אינו מאבד דבר: השורות נשארות `blocked`, הפרסום כבר פעיל,
+     * ו-`resumeOutbox` משחרר אותן בריצה הבאה בלי כפילות. */
+    await releaseOutbox(pubRef);
+    return Object.assign({ duplicate: false }, result);
+  }
+
+  /* ==================================================================
+   * ⭐ P0-2 · פרסום ב-shadow הוא **הכנה**, לא הפעלה
+   *
+   * `publish` דרש `mode === new`, ולכן אי אפשר היה להכין סידור לפני
+   * המעבר — והמעבר עצמו הכריח חלון שבו המצב כבר `new` ואין פרסום.
+   * זה בדיוק חלון הלוח הריק.
+   *
+   * הכוונה נגזרת מהמצב ואינה מתקבלת מהלקוח:
+   *   `new`    → פרסום. מופעל מיד ומודיע.
+   *   `shadow` → הכנה. נכתב במלואו, נחתם, ה-outbox נשאר `blocked`,
+   *              המצביע **אינו** זז ואיש אינו מקבל הודעה.
+   *
+   * ההפעלה של פרסום מוכן קורית רק ב-`promoteToNew`, יחד עם המצב,
+   * בטרנזקציה אחת.
+   * ================================================================== */
   async function publish(req) {
     const ctx = await context(req);
     requireManager(ctx);
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW]);
+    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    const preparing = config.mode === MODE.SHADOW;
     const data = plain(req.data) ? req.data : {};
     const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
@@ -2544,13 +2802,20 @@ function createScheduleRuntime(deps) {
       const livePolicy = snaps[4].exists ? (snaps[4].data() || {}) : {};
       const liveSource = snaps[5].exists ? (snaps[5].data() || {}) : {};
       requireLiveManager(snaps[6], snaps[7], ctx);
-      if (liveConfig.mode !== MODE.NEW || liveConfig.active_source_id !== draftMeta.source_id
+      /* ⭐ המצב נבדק מול מה שתוכנן, ולא מול „אחד משניים". תחנה
+       * שעברה ל-new באמצע הכנה תקבל פרסום מוכן שנכתב עבור shadow —
+       * ולהפך. שניהם שגויים, ושניהם נחסמים כאן. */
+      if (liveConfig.mode !== config.mode || liveConfig.active_source_id !== draftMeta.source_id
           || liveConfig.active_policy_id !== draftMeta.policy_id) {
         throw new ScheduleRuntimeError('publish-config-changed', 'הגדרות הסידור השתנו בזמן הפרסום.', 'aborted');
       }
       const actualPrevious = nonEmpty(liveActive.publication_id) ? liveActive.publication_id : null;
       if (actualPrevious !== expectedPrevious || Number(liveActive.revision || 0) !== revision - 1) {
         throw new ScheduleRuntimeError('publish-race', 'פורסם סידור אחר במקביל. יש לרענן.', 'aborted');
+      }
+      if (liveConfig.mode !== config.mode) {
+        throw new ScheduleRuntimeError('publish-config-changed',
+          'מצב המנוע השתנה בזמן הפרסום.', 'aborted');
       }
       if (liveDraft.status !== 'complete' || livePub.status !== 'staging'
           || livePub.snapshot_complete !== true
@@ -2564,6 +2829,17 @@ function createScheduleRuntime(deps) {
           || liveSource.content_digest !== draftMeta.base_source_digest) {
         throw new ScheduleRuntimeError('publish-source-changed',
           'המדיניות או מקור הנתונים השתנו בזמן הפרסום.', 'aborted');
+      }
+      if (preparing) {
+        /* ⭐ מוכן, ולא פעיל. המצביע אינו זז, ה-outbox נשאר `blocked`,
+         * ואיש אינו מקבל הודעה. כל אלה קורים יחד ב-`promoteToNew`. */
+        tx.update(pubRef, { status: 'prepared', prepared_at: FV.serverTimestamp() });
+        tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
+          action: 'prepare', publication_id: pubId, revision,
+          previous_publication_id: expectedPrevious, by: ctx.uid,
+          at: FV.serverTimestamp()
+        });
+        return;
       }
       tx.update(pubRef, { status: 'active', activated_at: FV.serverTimestamp() });
       tx.set(activeRef(ctx.sid), {
@@ -2581,12 +2857,16 @@ function createScheduleRuntime(deps) {
       if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
       throw error;
     }
-    await releaseOutbox(pubRef);
+    /* ⭐ ה-outbox משתחרר רק כשהפרסום באמת פעיל. הכנה שמודיעה היא
+     * הודעה על סידור שאיש עדיין אינו רואה. */
+    if (!preparing) await releaseOutbox(pubRef);
     return {
       duplicate: false,
+      prepared: preparing,
       publication_id: pubId,
       revision,
-      notified_people: planned.notifications.length,
+      notified_people: preparing ? 0 : planned.notifications.length,
+      blocked_notifications: preparing ? planned.notifications.length : 0,
       summary: next.plan.summary
     };
   }
@@ -4509,6 +4789,8 @@ function createScheduleRuntime(deps) {
     saveSource,
     getModeOptions,
     setRuntimeMode,
+    previewCutover,
+    promoteToNew,
     runPlanner,
     getDraftPreview,
     publish,

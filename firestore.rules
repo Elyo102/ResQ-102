@@ -1483,6 +1483,11 @@ service cloud.firestore {
       match /schedule_mode_audit/{entryId} {
         allow read, write: if false;
       }
+      // ⭐ דוח ה-preflight נחתם ונבדק שוב ברגע המעבר. דפדפן שיכול
+      // לכתוב אותו יכול להכריז שאיש לא ייעלם מהלוח.
+      match /schedule_preflight/{publicationId} {
+        allow read, write: if false;
+      }
       // יבוא מקור כוח האדם. רשומת מניעת הכפילות והיומן נושאים uid
       // ומצביעים על מי ייבא — שניהם חסומים לדפדפן גם לקריאה.
       match /schedule_source_operations/{requestId} {
