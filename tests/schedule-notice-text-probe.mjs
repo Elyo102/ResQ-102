@@ -24,7 +24,7 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readSource } from './source-text.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -46,7 +46,7 @@ function eq(name, actual, expected) {
 
 let RUNTIME_SRC, publication;
 try {
-  RUNTIME_SRC = readFileSync(resolve(FN, 'schedule-runtime.js'), 'utf8');
+  RUNTIME_SRC = readSource(resolve(FN, 'schedule-runtime.js'));
   publication = require_(resolve(FN, 'schedule-publication.js'));
 } catch (e) {
   console.error('NOT RUN — לא ניתן לטעון: ' + e.message);

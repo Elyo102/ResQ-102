@@ -35,13 +35,13 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readSource } from './source-text.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const read = (file) => readFileSync(resolve(ROOT, file), 'utf8').replace(/\r\n/g, '\n');
+const read = (file) => readSource(resolve(ROOT, file));
 
 let pass = 0;
 const fails = [];

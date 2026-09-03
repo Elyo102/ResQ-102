@@ -31,7 +31,7 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readSource } from './source-text.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -61,8 +61,8 @@ function caught(fn) {
 
 let mod, AUTHOR_SRC, RUNTIME_SRC;
 try {
-  AUTHOR_SRC = readFileSync(resolve(FN, 'schedule-source-author.js'), 'utf8');
-  RUNTIME_SRC = readFileSync(resolve(FN, 'schedule-runtime.js'), 'utf8');
+  AUTHOR_SRC = readSource(resolve(FN, 'schedule-source-author.js'));
+  RUNTIME_SRC = readSource(resolve(FN, 'schedule-runtime.js'));
   mod = require_(resolve(FN, 'schedule-source-author.js'));
 } catch (e) {
   console.error('NOT RUN — לא ניתן לטעון את המודול: ' + e.message);

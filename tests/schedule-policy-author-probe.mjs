@@ -20,7 +20,7 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readSource } from './source-text.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -52,8 +52,8 @@ function throwsCode(name, fn, code) {
 
 let author, engineMod, AUTHOR_SRC, ENGINE_SRC;
 try {
-  AUTHOR_SRC = readFileSync(AUTHOR_PATH, 'utf8');
-  ENGINE_SRC = readFileSync(ENGINE_PATH, 'utf8');
+  AUTHOR_SRC = readSource(AUTHOR_PATH);
+  ENGINE_SRC = readSource(ENGINE_PATH);
   author = require_(AUTHOR_PATH);
   engineMod = require_(ENGINE_PATH);
 } catch (e) {
@@ -69,7 +69,7 @@ function extractFn(src, signature) {
 }
 
 const runtimeSrc = (() => {
-  try { return readFileSync(resolve(FN, 'schedule-runtime.js'), 'utf8'); }
+  try { return readSource(resolve(FN, 'schedule-runtime.js')); }
   catch (_) { return null; }
 })();
 

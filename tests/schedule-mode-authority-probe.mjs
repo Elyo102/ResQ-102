@@ -24,7 +24,7 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readSource } from './source-text.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -57,9 +57,9 @@ async function rejectsCode(name, fn, code) {
 
 let mod, MOD_SRC, RUNTIME_SRC, INDEX_SRC, runtimeMod, calendarMod, publicationMod, serviceMod;
 try {
-  MOD_SRC = readFileSync(resolve(FN, 'schedule-mode-authority.js'), 'utf8');
-  RUNTIME_SRC = readFileSync(resolve(FN, 'schedule-runtime.js'), 'utf8');
-  INDEX_SRC = readFileSync(resolve(FN, 'index.js'), 'utf8');
+  MOD_SRC = readSource(resolve(FN, 'schedule-mode-authority.js'));
+  RUNTIME_SRC = readSource(resolve(FN, 'schedule-runtime.js'));
+  INDEX_SRC = readSource(resolve(FN, 'index.js'));
   mod = require_(resolve(FN, 'schedule-mode-authority.js'));
   runtimeMod = require_(resolve(FN, 'schedule-runtime.js'));
   calendarMod = require_(resolve(FN, 'schedule-calendar-engine.js'));
