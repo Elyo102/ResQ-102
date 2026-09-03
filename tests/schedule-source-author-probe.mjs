@@ -149,6 +149,40 @@ function extractFn(src, signature) {
   return end === -1 ? null : src.slice(at, end + 2);
 }
 
+/* ⭐ הבסיס נבנה מהתוצר של התוכנית עצמה, ולא מליטרלים ריקים.
+ * הגרסה הקודמת של הבדיקה הזאת כתבה כאן `availability: {}` —
+ * ולכן היא הסכימה עם הבאג של P0-1 במקום לחשוף אותו. מוטציה
+ * שהחזירה את `basis` לריק שרדה אותה בשקט. */
+function basisOf(plan) {
+  const byId = (list) => {
+    const out = {};
+    list.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .forEach((doc) => { out[doc.id] = doc.data.days || {}; });
+    return out;
+  };
+  return {
+    station_id: plan.meta.station_id,
+    version: plan.meta.version,
+    revision: plan.meta.revision,
+    carry: plan.meta.carry,
+    counts: {
+      people: plan.meta.person_count,
+      availability: plan.meta.availability_count,
+      locked: plan.meta.locked_count,
+      events: plan.meta.event_count
+    },
+    people: plan.people.slice()
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((doc) => Object.assign({ id: doc.id }, doc.data)),
+    availability: byId(plan.availability),
+    locked: byId(plan.locked),
+    events: plan.events.slice()
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((doc) => Object.assign({ id: doc.id }, doc.data))
+  };
+}
+
+
 const stableText = extractFn(RUNTIME_SRC, 'function stable(value) {');
 const plainText = extractFn(RUNTIME_SRC, 'function plain(value) {');
 ok('2.1 stable() של הרנטיים אותר', !!stableText);
@@ -165,24 +199,8 @@ if (runtimeStable && good) {
   const peopleRaw = good.people.slice()
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((doc) => Object.assign({ id: doc.id }, doc.data));
-  const basis = {
-    station_id: good.meta.station_id,
-    version: good.meta.version,
-    revision: good.meta.revision,
-    carry: good.meta.carry,
-    counts: {
-      people: good.meta.person_count,
-      availability: good.meta.availability_count,
-      locked: good.meta.locked_count,
-      events: good.meta.event_count
-    },
-    people: peopleRaw,
-    availability: {},
-    locked: {},
-    events: []
-  };
   eq('2.3 content_digest תואם לחישוב של הרנטיים',
-    good.meta.content_digest, hash(runtimeStable(basis)));
+    good.meta.content_digest, hash(runtimeStable(basisOf(good))));
 
   // המראה זהה בטקסט, ולא רק בתוצאה על הדוגמה הזאת.
   const mirror = extractFn(AUTHOR_SRC, 'function stable(value) {');
@@ -335,7 +353,8 @@ ok('6.8 אין מספר עובד ביומן',
 // ⭐ גם מספר שורה אינו ביומן: שורה מזהה אדם בגיליון.
 ok('6.9 אין מספרי שורה ביומן', auditText.indexOf('"row"') === -1);
 eq('6.10 היומן מחזיק ספירות וקודים בלבד', Object.keys(plan().audit).sort(),
-  ['accepted_rows', 'actor', 'at', 'content_digest', 'rejected_by_code',
+  ['accepted_rows', 'actor', 'at', 'carry_dropped_availability',
+    'carry_dropped_locked', 'content_digest', 'rejected_by_code',
     'rejected_rows', 'station_id', 'total_rows']);
 eq('6.11 והשומר נשמר כ-uid בלבד', plan().audit.actor, 'uid-mgr');
 
@@ -359,9 +378,20 @@ eq('6.15 מפתחות מסמך אדם סגורים',
  * 7 · מהדורות ו„לא השתנה"
  * ================================================================== */
 
+// ⭐ `readActiveSource` מצרף תמיד את `carried`. מקור פעיל בלי השדה
+// הזה הוא בדיוק המצב שבו התוכן נמחק בשקט, ולכן הוא נחסם — ונבדק
+// בסעיף 13.
+function carriedOf(meta, extra) {
+  return Object.assign({}, meta, {
+    carried: Object.assign({
+      carry: {}, availability: {}, locked: {}, events: []
+    }, extra || {})
+  });
+}
+
 try {
   const first = plan();
-  const prev = Object.assign({ id: first.source_id }, first.meta);
+  const prev = carriedOf(Object.assign({ id: first.source_id }, first.meta));
   const same = plan({ previous: prev });
   eq('7.1 יבוא זהה מדווח כ-unchanged', same.kind, 'unchanged');
   eq('7.2 ואינו מייצר מסמך', same.meta, null);
@@ -553,6 +583,170 @@ survives('9.11 מקור ריק מתקבל',
     const list = rows().map((row) => { const copy = Object.assign({}, row); delete copy.employee_number; return copy; });
     try { P(api, { rows: list, accept_rejected: 4 }); return false; } catch (_) { return true; }
   });
+
+/* ==================================================================
+ * 13 · ⭐ P0-1 · יבוא סגל אינו מוחק את מה שלא ייבאו
+ *
+ * זה הבאג החמור ביותר שנמצא בחבילה, והוא נמצא בביקורת של Codex ולא
+ * באף בדיקה שכתבתי. `planSource` כתב `carry: {}`, `availability: {}`,
+ * `locked: {}` ו-`events: []` — ארבעה ליטרלים ריקים — ולכן **כל
+ * שמירה של רשימת סגל מחקה את זמינות התחנה, את הנעילות ואת האירועים.**
+ *
+ * הבדיקות שלי עברו כי הן בדקו מה שנכתב. אף אחת מהן לא שאלה מה נמחק.
+ * ================================================================== */
+
+const CARRY = Object.freeze({
+  carry: { last_cycle: 'c7', offset: 3 },
+  availability: {
+    'uid-a': { '2026-09-01': 'yes', '2026-09-02': 'no' },
+    'uid-b': { '2026-09-03': 'yes' }
+  },
+  locked: { 'uid-a': { '2026-09-10': 'course' } },
+  events: [
+    { id: 'ev_1', title: 'תרגיל', date: '2026-09-05' },
+    { id: 'ev_2', title: 'קורס', date: '2026-09-12' }
+  ]
+});
+
+// המקור הפעיל מכיל אנשים ותוכן. הייבוא החדש מביא את אותם אנשים.
+function activeWith(extra) {
+  const first = plan();
+  return carriedOf(Object.assign({ id: first.source_id }, first.meta), extra);
+}
+
+try {
+  const uids = plan().people.map((item) => item.id);
+  // התוכן שעובר ממופה ל-uid-ים שקיימים בפועל ברשימה.
+  const carried = {
+    carry: CARRY.carry,
+    availability: { [uids[0]]: CARRY.availability['uid-a'],
+      [uids[1]]: CARRY.availability['uid-b'] },
+    locked: { [uids[0]]: CARRY.locked['uid-a'] },
+    events: CARRY.events
+  };
+  const changed = rows();
+  changed[0].sub_station = 'timna';
+  const next = plan({ rows: changed, previous: activeWith(carried) });
+
+  // --- הליבה: שום דבר לא נמחק ---
+  eq('13.1 carry עובר כפי שהוא', next.meta.carry, CARRY.carry);
+  eq('13.2 זמינות עוברת', next.availability.length, 2);
+  eq('13.3 נעילות עוברות', next.locked.length, 1);
+  eq('13.4 אירועים עוברים', next.events.length, 2);
+
+  // ⭐ בית-בית, ולא „בערך". הרנטיים מחשב מחדש חתימה על התוכן הזה;
+  // שינוי של תו אחד היה מפיל את `loadSource` על digest-mismatch.
+  eq('13.5 הזמינות זהה בתוכן',
+    next.availability.find((x) => x.id === uids[0]).data.days,
+    CARRY.availability['uid-a']);
+  eq('13.6 הנעילה זהה בתוכן',
+    next.locked[0].data.days, CARRY.locked['uid-a']);
+  eq('13.7 האירוע זהה בתוכן', next.events[0].data, CARRY.events[0]);
+
+  // הספירות החתומות משקפות את מה שבאמת עובר.
+  eq('13.8 הספירה סופרת זמינות', next.counts.availability, 2);
+  eq('13.9 הספירה סופרת נעילות', next.counts.locked, 1);
+  eq('13.10 הספירה סופרת אירועים', next.counts.events, 2);
+
+  // ⭐ והמבחן שהיה תופס את הבאג המקורי: אלה אינם אפס.
+  ok('13.11 הספירות אינן אפס — זה בדיוק מה שהבאג עשה',
+    next.counts.availability > 0 && next.counts.locked > 0
+    && next.counts.events > 0);
+
+  /* ⭐ 13.11b היא הטענה החזקה בסעיף הזה, והיא נוספה אחרי שמוטציה
+   * שרדה: החזרתי את `basis` בכותב לליטרלים ריקים, וכל 13.1–13.11
+   * המשיכו לעבור — כי הם בודקים את מסמכי התת-אוסף, ו-`basis` מזין
+   * רק את החתימה.
+   *
+   * במציאות זה היה מסמך שנכתב עם תוכן וחתימה של ריק: הכתיבה
+   * מצליחה, ואז `loadSource` נופל על `source-digest-mismatch` —
+   * מקור שנשמר ואי אפשר להריץ. לכן החתימה מחושבת כאן מחדש עם
+   * `stable()` של הרנטיים, מעל התוכן שבאמת עובר. */
+  if (runtimeStable) {
+    eq('13.11b החתימה מכסה את התוכן שעבר',
+      next.digest, hash(runtimeStable(basisOf(next))));
+  } else {
+    ok('13.11b החתימה מכסה את התוכן שעבר', false, 'stable() של הרנטיים לא נטען');
+  }
+} catch (e) {
+  ok('13.x העברת תוכן', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* --- מי שיצא מהרשימה — יוצא, אבל לא בשקט --- */
+
+try {
+  const carried = {
+    carry: {},
+    availability: { 'uid-gone': { '2026-09-01': 'yes' } },
+    locked: { 'uid-also-gone': { '2026-09-02': 'x' } },
+    events: []
+  };
+  let blocked = null;
+  try { plan({ previous: activeWith(carried) }); }
+  catch (e) { blocked = e; }
+  ok('13.12 רשומה של אדם שאינו ברשימה אינה נושרת בשקט',
+    !!blocked && blocked.code === CODE.CARRY_ORPHANED,
+    blocked ? blocked.code : 'לא נחסם');
+
+  // ⭐ שורות שונות בכוונה: יבוא זהה חוזר במסלול `unchanged`, שאינו
+  // כותב דבר ולכן גם אינו מפיל איש. מה שנבדק כאן הוא המסלול שכן כותב.
+  const moved = rows();
+  moved[0].sub_station = 'timna';
+
+  // אישור מספרי מדויק — בדיוק כמו שורה שנדחתה.
+  const acked = plan({ rows: moved, previous: activeWith(carried),
+    accept_carry_dropped: 2 });
+  eq('13.13 אישור מדויק מאפשר להמשיך', acked.carried_dropped,
+    { availability: 1, locked: 1 });
+  eq('13.14 והן באמת לא נכנסו', acked.counts.availability + acked.counts.locked, 0);
+
+  let wrong = null;
+  try { plan({ rows: moved, previous: activeWith(carried), accept_carry_dropped: 1 }); }
+  catch (e) { wrong = e; }
+  ok('13.15 מספר שאינו מדויק נחסם',
+    !!wrong && wrong.code === CODE.CARRY_ACK_MISMATCH, wrong ? wrong.code : 'לא נחסם');
+
+  // ⭐ וגם: היוצאים נספרים ביומן, כמספר ובלי מי.
+  ok('13.16 היומן סופר את היוצאים בלי לנקוב בשם',
+    acked.audit.carry_dropped_availability === 1
+    && acked.audit.carry_dropped_locked === 1
+    && JSON.stringify(acked.audit).indexOf('uid-gone') === -1);
+} catch (e) {
+  ok('13.y יוצאים', false, (e && e.code) + ' · ' + e.message);
+}
+
+/* --- מקור פעיל שאיננו יודעים לקרוא אינו „ריק" --- */
+
+try {
+  const first = plan();
+  let noCarried = null;
+  try { plan({ previous: Object.assign({ id: first.source_id }, first.meta) }); }
+  catch (e) { noCarried = e; }
+  // ⭐ זו הנקודה: „לא צורף תוכן" חייב להיות כשל ולא ברירת מחדל ריקה,
+  // כי ברירת מחדל ריקה *היא* המחיקה.
+  ok('13.17 מקור פעיל בלי תוכן שעובר נחסם',
+    !!noCarried && noCarried.code === CODE.CARRY_SHAPE,
+    noCarried ? noCarried.code : 'לא נחסם');
+
+  for (const broken of [
+    { carry: null, availability: {}, locked: {}, events: [] },
+    { carry: {}, availability: [], locked: {}, events: [] },
+    { carry: {}, availability: {}, locked: {}, events: {} },
+    { carry: {}, availability: {}, locked: {}, events: [{ title: 'בלי מזהה' }] }
+  ]) {
+    let bad = null;
+    try { plan({ previous: activeWith(broken) }); } catch (e) { bad = e; }
+    ok('13.18 צורה פגומה נחסמת', !!bad && bad.code === CODE.CARRY_SHAPE,
+      bad ? bad.code : 'לא נחסם');
+  }
+
+  // מקור ראשון בתחנה — אין ממה להעביר, וזה תקין.
+  const fresh = plan({ previous: null });
+  eq('13.19 מקור ראשון מתחיל ריק כדין', fresh.counts.availability, 0);
+  eq('13.20 ובלי אירועים', fresh.counts.events, 0);
+} catch (e) {
+  ok('13.z צורה', false, (e && e.code) + ' · ' + e.message);
+}
 
 /* ==================================================================
  * סיכום

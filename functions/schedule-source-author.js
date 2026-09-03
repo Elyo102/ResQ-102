@@ -94,7 +94,12 @@ const CODE = Object.freeze({
   TOO_MANY: 'source-author-too-many-rows',
   REJECTED: 'source-author-rejected-rows',
   ACCEPT_MISMATCH: 'source-author-accept-mismatch',
-  EMPTY_RESULT: 'source-author-empty-result'
+  EMPTY_RESULT: 'source-author-empty-result',
+  // ⭐ שלושת אלה נוספו אחרי ממצא P0-1 של Codex: יבוא סגל אִפֵּס
+  // זמינות, נעילות ואירועים בלי לומר מילה.
+  CARRY_SHAPE: 'source-author-carry-shape',
+  CARRY_ORPHANED: 'source-author-carry-orphaned',
+  CARRY_ACK_MISMATCH: 'source-author-carry-accept-mismatch'
 });
 
 class SourceAuthorError extends Error {
@@ -352,13 +357,68 @@ function createSourceAuthor(deps) {
 
     accepted.sort((a, b) => compareCanonical(a.uid, b.uid));
 
+    /* ==================================================================
+     * העברת זמינות · נעילות · אירועים · carry
+     *
+     * ⭐ P0-1. הגרסה הקודמת של הפונקציה הזאת כתבה כאן `carry: {}`,
+     * `availability: {}`, `locked: {}` ו-`events: []` — ארבעה ליטרלים
+     * ריקים. המשמעות בפועל: **כל יבוא של רשימת סגל מחק את זמינות
+     * התחנה, את הנעילות ואת האירועים.** רכזת שהוסיפה אדם אחד לגיליון
+     * ולחצה „שמור" איבדה את כל מה שהוזן קודם, בלי אזהרה ובלי שורה
+     * ביומן. הבדיקות שלי עברו כי הן בדקו מה שנכתב — לא מה שנמחק.
+     *
+     * יבוא סגל הוא יבוא **סגל**. הוא אינו נוגע בשלושת האחרים, והם
+     * עוברים מהמקור הפעיל כפי שהם — בית-בית, באותם מזהי מסמך ובאותו
+     * תוכן, כדי שהחתימה שהרנטיים מחשב מחדש תתאים.
+     * ================================================================== */
+
+    const people = accepted.map((item) => item.person);
+    const known = new Set(people.map((person) => person.id));
+    const carried = carriedFrom(input.previous);
+
+    /* אדם שיצא מהרשימה — הזמינות והנעילות שלו כבר אינן שייכות למקור.
+     * ⭐ אבל להשמיט אותן בשקט זה בדיוק הבאג שאני מתקן. הן נספרות,
+     * מדווחות, ודורשות אישור מספרי מדויק בדיוק כמו שורה שנדחתה. */
+    const availability = {};
+    const locked = {};
+    const orphaned = { availability: 0, locked: 0 };
+    for (const uid of Object.keys(carried.availability).sort(compareCanonical)) {
+      if (known.has(uid)) availability[uid] = carried.availability[uid];
+      else orphaned.availability += 1;
+    }
+    for (const uid of Object.keys(carried.locked).sort(compareCanonical)) {
+      if (known.has(uid)) locked[uid] = carried.locked[uid];
+      else orphaned.locked += 1;
+    }
+    /* אירועים אינם מפתוחים לפי אדם — הם של התחנה — ולכן עוברים כולם. */
+    const events = carried.events;
+
+    const orphanTotal = orphaned.availability + orphaned.locked;
+    if (orphanTotal) {
+      if (input.accept_carry_dropped === undefined || input.accept_carry_dropped === null) {
+        fail(CODE.CARRY_ORPHANED,
+          orphanTotal + ' רשומות של זמינות או נעילה שייכות לאנשים שאינם '
+          + 'ברשימה החדשה, ולכן ייצאו מהמקור. יש לאשר את המספר הזה במפורש.',
+          { orphaned });
+      }
+      if (input.accept_carry_dropped !== orphanTotal) {
+        fail(CODE.CARRY_ACK_MISMATCH,
+          'אושרו ' + input.accept_carry_dropped + ' רשומות שיוצאות, ובפועל יש '
+          + orphanTotal + '. הרשימה השתנתה מאז שנבדקה.', { orphaned });
+      }
+    }
+
     /* --- הבסיס שהרנטיים חותם עליו --- *
      * `schedule-runtime.js` (`loadSource`) בונה בדיוק את השדות
      * האלה ומחשב עליהם `digest(basis)`. הצורה אינה שלנו. */
-    const people = accepted.map((item) => item.person);
     const counts = {
-      people: people.length, availability: 0, locked: 0, events: 0
+      people: people.length,
+      availability: Object.keys(availability).length,
+      locked: Object.keys(locked).length,
+      events: events.length
     };
+    /* ⭐ `content_key` נגזר מהסגל בלבד, ובכוונה: הוא עונה על השאלה
+     * „האם רשימת הסגל השתנתה". התוכן שעבר אינו חלק ממנה. */
     const contentKey = String(hash(stable({ station_id: stationId, people })));
 
     const prev = isPlainObject(input.previous) ? input.previous : null;
@@ -384,12 +444,12 @@ function createSourceAuthor(deps) {
       station_id: stationId,
       version,
       revision,
-      carry: {},
+      carry: carried.carry,
       counts,
       people,
-      availability: {},
-      locked: {},
-      events: []
+      availability,
+      locked,
+      events
     };
     const digest = String(hash(stable(basis)));
 
@@ -401,7 +461,7 @@ function createSourceAuthor(deps) {
       complete: true,
       version,
       revision,
-      carry: {},
+      carry: carried.carry,
       person_count: counts.people,
       availability_count: counts.availability,
       locked_count: counts.locked,
@@ -426,12 +486,25 @@ function createSourceAuthor(deps) {
       people: Object.freeze(people.map((person) => Object.freeze({
         id: person.id, data: person
       }))),
+      /* ⭐ שלושת אלה חייבים להיכתב יחד עם `people`. מקור שנכתב בלי
+       * תת-האוסף שלהם ייקרא כריק — והחתימה תיפול, כי `loadSource`
+       * סופר את המסמכים בפועל מול הספירה שבמסמך. */
+      availability: Object.freeze(Object.keys(availability).map((uid) => Object.freeze({
+        id: uid, data: { days: availability[uid] }
+      }))),
+      locked: Object.freeze(Object.keys(locked).map((uid) => Object.freeze({
+        id: uid, data: { days: locked[uid] }
+      }))),
+      events: Object.freeze(events.map((event) => Object.freeze({
+        id: event.id, data: event
+      }))),
+      carried_dropped: Object.freeze(Object.assign({}, orphaned)),
       counts, report,
-      audit: auditOf(stationId, input.actor_uid, report, digest)
+      audit: auditOf(stationId, input.actor_uid, report, digest, orphaned)
     });
   }
 
-  function auditOf(stationId, actor, report, digest) {
+  function auditOf(stationId, actor, report, digest, orphaned) {
     return {
       at: new Date(clock()).toISOString(),
       station_id: stationId,
@@ -442,7 +515,44 @@ function createSourceAuthor(deps) {
       total_rows: report.total,
       accepted_rows: report.accepted,
       rejected_rows: report.rejected,
-      rejected_by_code: report.by_code
+      rejected_by_code: report.by_code,
+      // ספירות בלבד — מי יצא מהמקור הוא אדם, ואין לו מקום ביומן.
+      carry_dropped_availability: orphaned ? orphaned.availability : 0,
+      carry_dropped_locked: orphaned ? orphaned.locked : 0
+    };
+  }
+
+  /* קורא את מה שעובר מהמקור הפעיל, בצורה ש-`loadSource` מייצר.
+   * ⭐ צורה שאינה מוכרת אינה „ריק" — היא כשל. מקור פעיל שאיננו
+   * יודעים לקרוא הוא בדיוק המצב שבו מחיקה שקטה קורית. */
+  function carriedFrom(previous) {
+    if (!isPlainObject(previous)) {
+      return { carry: {}, availability: {}, locked: {}, events: [] };
+    }
+    const carried = isPlainObject(previous.carried) ? previous.carried : null;
+    if (!carried) {
+      fail(CODE.CARRY_SHAPE,
+        'למקור הפעיל לא צורף התוכן שעובר. יבוא במצב הזה היה מוחק '
+        + 'זמינות, נעילות ואירועים.');
+    }
+    for (const field of ['carry', 'availability', 'locked']) {
+      if (!isPlainObject(carried[field])) {
+        fail(CODE.CARRY_SHAPE, 'התוכן שעובר פגום: ' + field + ' אינו אובייקט.');
+      }
+    }
+    if (!Array.isArray(carried.events)) {
+      fail(CODE.CARRY_SHAPE, 'התוכן שעובר פגום: events אינו מערך.');
+    }
+    for (const event of carried.events) {
+      if (!isPlainObject(event) || !isNonEmptyString(event.id)) {
+        fail(CODE.CARRY_SHAPE, 'התוכן שעובר פגום: לאירוע אין מזהה.');
+      }
+    }
+    return {
+      carry: carried.carry,
+      availability: carried.availability,
+      locked: carried.locked,
+      events: carried.events
     };
   }
 

@@ -489,13 +489,27 @@ async function checkSource() {
   }
 }
 
+/* ⭐ P0-1. יבוא סגל אינו נוגע בזמינות, בנעילות ובאירועים — הם עוברים
+ * מהמקור הפעיל. מה שכן יוצא הוא רשומות של אנשים שאינם ברשימה החדשה,
+ * והמספר הזה חייב להיאמר לרכזת **לפני** השמירה ולא להתגלות אחריה. */
+function droppedCount(plan) {
+  const dropped = plan && plan.carried_dropped;
+  if (!dropped) return 0;
+  return (dropped.availability || 0) + (dropped.locked || 0);
+}
+
 async function saveSource() {
   if (state.sourceBusy || !state.sourcePlan || state.sourcePlan.blocked) return;
   const rows = sourceRowsForServer();
   const rejected = state.sourcePlan.report ? state.sourcePlan.report.rejected : 0;
   if (rejected > 0 && !$('sourceAccept').checked) return;
+  const dropped = droppedCount(state.sourcePlan);
   if (!confirm('לשמור את המקור? ' + state.sourcePlan.counts.people
     + ' אנשים ייכנסו, ו-' + rejected + ' שורות לא. '
+    + (dropped
+      ? '⚠ ' + dropped + ' רשומות של זמינות או נעילה שייכות לאנשים שאינם '
+        + 'ברשימה החדשה, והן ייצאו מהמקור. '
+      : 'זמינות, נעילות ואירועים נשמרים כפי שהם. ')
     + 'שמירת מקור אינה משנה סידור שפורסם ואינה שולחת הודעה.')) return;
   state.sourceBusy = true;
   updateSourceButtons();
@@ -506,7 +520,8 @@ async function saveSource() {
       rows,
       activate: true,
       expected_source_id: state.sourcePlan.active_source_id,
-      accept_rejected: rejected > 0 ? rejected : undefined
+      accept_rejected: rejected > 0 ? rejected : undefined,
+      accept_carry_dropped: dropped > 0 ? dropped : undefined
     })).data;
     message('sourceMessage', result.written
       ? 'המקור נשמר כמהדורה ' + result.revision + ' עם ' + result.counts.people + ' אנשים.'

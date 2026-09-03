@@ -903,5 +903,40 @@ check('schedule source files carry no raw control bytes', () => {
   }
 });
 
-assert.equal(passed, 77);
-console.log('\n77 schedule runtime source checks passed.');
+/* ⭐ P0-1. שלוש טענות שנועדו למנוע חזרה של המחיקה השקטה: המקור
+ * הפעיל נקרא עם התוכן שעובר, וכל ארבעת התת-אוספים נכתבים. מקור
+ * שנכתב עם `people` בלבד נראה תקין ונקרא כריק. */
+check('the active source is read with the content that carries over', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function readActiveSource(');
+  assert.ok(at > -1, 'readActiveSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  }', at));
+  for (const group of ['availability', 'locked', 'events']) {
+    assert.ok(body.indexOf("collection('" + group + "')") > -1,
+      'readActiveSource אינו קורא את ' + group);
+  }
+  assert.ok(body.indexOf('carried:') > -1, 'readActiveSource אינו מחזיר carried');
+});
+
+check('saveSource writes all four sub-collections, not people alone', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  assert.ok(at > -1, 'saveSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(body.indexOf("collection('" + group + "').doc(") > -1,
+      'saveSource אינו כותב את ' + group);
+  }
+});
+
+check('the author never hard-codes an empty carry basis again', () => {
+  const src = read('functions/schedule-source-author.js');
+  // הצורה שהייתה הבאג: ארבעה ליטרלים ריקים בתוך הבסיס החתום.
+  assert.ok(!/carry: \{\},\s*counts,\s*people,\s*availability: \{\}/.test(src),
+    'הבסיס החתום חזר לליטרלים ריקים — זו בדיוק המחיקה של P0-1');
+  assert.ok(src.indexOf('function carriedFrom(') > -1,
+    'carriedFrom נעלם; אין מי שיקרא את התוכן שעובר');
+});
+
+assert.equal(passed, 80);
+console.log('\n80 schedule runtime source checks passed.');

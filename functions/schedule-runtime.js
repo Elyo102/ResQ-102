@@ -1520,7 +1520,8 @@ function createScheduleRuntime(deps) {
         policy,
         previous,
         actor_uid: ctx.uid,
-        accept_rejected: data.accept_rejected
+        accept_rejected: data.accept_rejected,
+        accept_carry_dropped: data.accept_carry_dropped
       });
     } catch (error) {
       if (error && error.name === 'SourceAuthorError') {
@@ -1533,11 +1534,32 @@ function createScheduleRuntime(deps) {
     }
   }
 
+  /* ⭐ P0-1. הגרסה הקודמת החזירה את מסמך המטא בלבד, ולכן הכותב לא
+   * ראה מעולם את הזמינות, הנעילות והאירועים — וכתב במקומם ריק. יבוא
+   * סגל מחק אותם. כאן נקראים גם שלושת תת-האוספים, בדיוק בצורה
+   * ש-`loadSource` בונה, כדי שהתוכן יעבור בית-בית ושהחתימה תתאים. */
   async function readActiveSource(sid, activeId) {
     if (!nonEmpty(activeId)) return null;
-    const snap = await sourceRef(sid, activeId).get();
+    const ref = sourceRef(sid, activeId);
+    const snap = await ref.get();
     if (!snap.exists) return null;
-    return Object.assign({ id: activeId }, snap.data() || {});
+    const meta = snap.data() || {};
+    const groups = await Promise.all([
+      readSorted(ref.collection('availability')),
+      readSorted(ref.collection('locked')),
+      readSorted(ref.collection('events'))
+    ]);
+    const availability = {};
+    groups[0].forEach((doc) => { availability[doc.id] = (doc.data() || {}).days || {}; });
+    const locked = {};
+    groups[1].forEach((doc) => { locked[doc.id] = (doc.data() || {}).days || {}; });
+    const events = groups[2].map((doc) => Object.assign({ id: doc.id }, doc.data() || {}));
+    return Object.assign({ id: activeId }, meta, {
+      carried: {
+        carry: plain(meta.carry) ? meta.carry : {},
+        availability, locked, events
+      }
+    });
   }
 
   // ⭐ הדוח יוצא לדפדפן; היומן לא. שניהם נגזרים מאותו מקור, וההבדל
@@ -1553,6 +1575,9 @@ function createScheduleRuntime(deps) {
       content_key: plan.content_key,
       counts: plan.counts,
       report: plan.report,
+      // ⭐ מה שיוצא מהמקור חוזר למסך. רכזת חייבת לראות מספר לפני
+      // שהיא מאשרת, ולא לגלות אחרי השמירה.
+      carried_dropped: plan.carried_dropped || { availability: 0, locked: 0 },
       mode: config.mode,
       active_source_id: config.active_source_id || null
     };
@@ -1603,7 +1628,9 @@ function createScheduleRuntime(deps) {
       if (op.request_hash !== hash(stable({
         station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
         rows: data.rows, expected, activate: data.activate,
-        accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected
+        accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
+        accept_carry_dropped: data.accept_carry_dropped === undefined
+          ? null : data.accept_carry_dropped
       }))) {
         throw new ScheduleRuntimeError('source-request-reused',
           'מזהה הפעולה כבר שימש לבקשה אחרת.', 'already-exists');
@@ -1624,7 +1651,9 @@ function createScheduleRuntime(deps) {
     const requestHash = hash(stable({
       station_id: ctx.sid, actor_uid: ctx.uid, request_id: requestId,
       rows: data.rows, expected, activate: data.activate,
-      accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected
+      accept_rejected: data.accept_rejected === undefined ? null : data.accept_rejected,
+      accept_carry_dropped: data.accept_carry_dropped === undefined
+        ? null : data.accept_carry_dropped
     }));
 
     if (plan.kind === 'unchanged') {
@@ -1643,9 +1672,24 @@ function createScheduleRuntime(deps) {
     await ref.set(Object.assign({}, plan.meta, {
       complete: false, content_digest: null, staged_at: FV.serverTimestamp()
     }));
-    await commitWrites(plan.people.map((person) => ({
-      ref: ref.collection('people').doc(person.id), data: person.data
-    })));
+    /* ⭐ ארבעת התת-אוספים נכתבים יחד. מקור שנכתב עם `people` בלבד
+     * נראה תקין במסמך המטא ונקרא כריק — וזה בדיוק המחיקה השקטה של
+     * P0-1. `loadSource` סופר את המסמכים בפועל מול הספירה החתומה,
+     * ולכן השמטה כאן נופלת על `source-count-mismatch` ולא מתגנבת. */
+    await commitWrites([].concat(
+      plan.people.map((person) => ({
+        ref: ref.collection('people').doc(person.id), data: person.data
+      })),
+      plan.availability.map((item) => ({
+        ref: ref.collection('availability').doc(item.id), data: item.data
+      })),
+      plan.locked.map((item) => ({
+        ref: ref.collection('locked').doc(item.id), data: item.data
+      })),
+      plan.events.map((item) => ({
+        ref: ref.collection('events').doc(item.id), data: item.data
+      }))
+    ));
 
     /* שלב ב' — הסגירה. טרנזקציה קצרה שבודקת שוב את המינוי החי,
      * שהמצביע לא זז, ורק אז מסמנת שלם ומצביעה. */
