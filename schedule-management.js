@@ -649,10 +649,10 @@ function renderModeCard() {
 
   const box = $('modeTargets');
   clear(box);
-  // 42G.0 is a contained shadow-only release. Even if a stale server response
-  // still advertises `new`, the browser must not render a generic activation
-  // path. A later cutover release will have a dedicated, reviewed flow.
-  (view.targets || []).filter((target) => target && target.to !== 'new').forEach((target) => {
+  /* ⭐ המתג ל-`new` מוצג — ומוביל למסלול המעבר (preflight חתום +
+   * אישור), לא להחלפת מצב. הכרעת אלדד (3.9.2026): המעבר נשלח בנוי
+   * ואינרטי, „שכל מה שיישאר לי זה להרים את המתג". */
+  (view.targets || []).forEach((target) => {
     const button = node('button', 'pill',
       'העבר ל' + (target.label || target.to));
     button.type = 'button';
@@ -843,13 +843,6 @@ async function refreshAfterModeChange() {
 async function applyModeChange() {
   if (state.modeBusy || !state.modeTarget || !state.modeView) return;
   const target = state.modeTarget;
-  if (target === 'new') {
-    state.modeTarget = null;
-    message('modeMessage',
-      'הפעלת המנוע החדש אינה זמינה בגרסה הזאת. אפשר לעבוד במצב בדיקה בלבד.', 'err');
-    renderModeCard();
-    return;
-  }
   const from = state.modeView.current;
   // ⭐ מעבר ל-new אינו עובר כאן. השרת דוחה אותו, והמסך לא מתיימר.
   if (target === 'new') { await promoteToNew(); return; }

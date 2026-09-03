@@ -1140,18 +1140,24 @@ check('preparing in shadow never activates, notifies or moves the pointer', () =
     'הכנה משחררת הודעות על סידור שאיש אינו רואה');
 });
 
-check('42G.0 has no public path that activates new mode', () => {
-  assert.equal(index.includes('exports.promoteScheduleToNew = onCall'), false,
-    'promoteScheduleToNew is still publicly exported');
-  assert.equal(modeAuthority.includes('from: MODE.SHADOW, to: MODE.NEW'), false,
-    'the generic mode transition still permits shadow to new');
+check('the only road into new mode is the signed cutover, and it ships', () => {
+  /* ⭐ שונה עם הכרעת אלדד (3.9.2026): המעבר נשלח בנוי ואינרטי.
+   * הבדיקה הקודמת דרשה שלא יהיה callable ושלא יהיה מעבר; עכשיו היא
+   * דורשת שיהיו — ושהמתג הכללי יישאר חסום, לפני ה-replay. */
+  assert.equal(index.includes("exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }"), true,
+    'promoteScheduleToNew אינו מיוצא, או מיוצא בלי App Check');
+  assert.equal(modeAuthority.includes("from: MODE.SHADOW, to: MODE.NEW, kind: 'promote'"), true,
+    'המעבר shadow→new אינו ברשימת המעברים');
   const at = runtime.indexOf('async function setRuntimeMode(req)');
   const end = runtime.indexOf('\n  async function runPlanner(req)', at);
   const body = runtime.slice(at, end);
-  assert.ok(body.includes("if (data.target === MODE.NEW)"),
-    'setRuntimeMode does not explicitly reject new');
-  assert.ok(body.includes("'mode-cutover-disabled'"),
-    'the containment rejection has no stable error code');
+  const guard = body.indexOf("if (data.target === MODE.NEW)");
+  const replay = body.indexOf('const opRef = modeOperationRef(');
+  assert.ok(guard > -1, 'setRuntimeMode אינו דוחה new במפורש');
+  assert.ok(replay > guard, 'הדחייה אחרי ה-replay — בקשה ישנה יכולה להחזיר הצלחת הפעלה');
+  assert.ok(body.slice(guard, guard + 400).includes("'cutover-required'"),
+    'הדחייה ללא קוד יציב אחד');
+  assert.ok(!body.includes("'mode-cutover-disabled'"), 'נשאר קוד שני לאותה דחייה');
 });
 
 check('cutover preview reads the verified publication rows', () => {
@@ -1341,11 +1347,11 @@ check('the cutover is the only road into new mode', () => {
   const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
   assert.ok(body.indexOf("'cutover-required'") > -1,
     'setRuntimeMode עדיין מרשה כניסה ישירה ל-new');
-  // ואחרי אימות המעבר, כדי ש-off→new יישאר „מעבר לא חוקי".
+  // ⭐ ולפני ה-replay (Codex, 93e74be): בקשה ישנה אינה מחזירה הצלחה.
   const forbid = body.indexOf("'cutover-required'");
-  const planned = body.indexOf('modeAuthority.planModeChange');
-  assert.ok(planned > -1 && forbid > planned,
-    'הסירוב קודם לאימות המעבר — off→new היה מקבל את ההסבר הלא נכון');
+  const replay = body.indexOf('const opRef = modeOperationRef(');
+  assert.ok(replay > -1 && forbid > -1 && forbid < replay,
+    'הסירוב אחרי ה-replay — ניסיון חוזר ישן יכול להחזיר הצלחת הפעלה');
 });
 
 check('the screen actually calls the cutover it was given', () => {

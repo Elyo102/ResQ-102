@@ -23,9 +23,17 @@
  *  למה יש מסלול מעברים ולא סתם „קבע מצב"
  *  --------------------------------------------------------------
  *
- *  גרסת 42G.0 היא גרסת containment: אפשר לעבור בין `off` ל-`shadow`
- *  כדי להכין ולבדוק, אך אי אפשר להפעיל `new` דרך מתג המצב. המעבר
- *  לחי ייפתח רק בגרסת cutover נפרדת, אחרי שמועמד חתום עבר preflight.
+ *  `off → new` **אסור**. זה לא קפדנות: מצב `shadow` הוא המקום
+ *  היחיד שבו אפשר לראות מה המנוע החדש היה מייצר בלי שאיש יקבל
+ *  הודעה ובלי שסידור פעיל ישתנה. קפיצה ישירה ל-`new` פירושה
+ *  שהפעם הראשונה שמישהו רואה את התוצאה של המנוע היא הפעם
+ *  הראשונה שהיא גם הסידור שלו.
+ *
+ *  ⭐ `shadow → new` **קיים** — אבל לא דרך מתג המצב. `setRuntimeMode`
+ *  דוחה אותו ב-`cutover-required`; המסלול היחיד הוא `promoteToNew`,
+ *  שמפעיל פרסום מוכן, מאמת דוח preflight חתום, ומזיז את המצב באותה
+ *  עסקה. המעבר נשלח בשחרור הזה **בנוי ואינרטי** — הכרעת אלדד
+ *  (3.9.2026): „אתם תבנו את הכול, שכל מה שיישאר לי זה להרים את המתג".
  *
  *  --------------------------------------------------------------
  *  כיבוי תמיד מותר
@@ -55,6 +63,7 @@ const AUTHORITY_ROLES = Object.freeze(['commander', 'deputy']);
 // מעבר שאינו כאן — אסור. הרשימה סגורה, לא מסננת.
 const TRANSITIONS = Object.freeze([
   Object.freeze({ from: MODE.OFF, to: MODE.SHADOW, kind: 'enable_shadow' }),
+  Object.freeze({ from: MODE.SHADOW, to: MODE.NEW, kind: 'promote' }),
   Object.freeze({ from: MODE.NEW, to: MODE.SHADOW, kind: 'demote' }),
   Object.freeze({ from: MODE.SHADOW, to: MODE.OFF, kind: 'disable' }),
   Object.freeze({ from: MODE.NEW, to: MODE.OFF, kind: 'disable' })
@@ -167,8 +176,9 @@ function createModeAuthority() {
 
     const transition = transitionFor(current, target);
     if (!transition) {
-      const hint = target === MODE.NEW
-        ? ' הפעלת המנוע החדש מושבתת בגרסה זו; אפשר להכין ולבדוק במצב בדיקה בלבד.'
+      const hint = current === MODE.OFF && target === MODE.NEW
+        ? ' אי אפשר לעבור מכבוי ישירות לפעיל: מצב הבדיקה הוא המקום היחיד שבו '
+          + 'אפשר לראות מה המנוע היה מייצר בלי שאיש יקבל הודעה.'
         : '';
       fail(CODE.TRANSITION_FORBIDDEN,
         'מעבר מ„' + (MODE_LABEL[current] || current) + '" ל„'

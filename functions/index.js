@@ -5116,11 +5116,19 @@ exports.setScheduleManagerAccess = onCall({ enforceAppCheck: true }, async (req)
 exports.getScheduleModeOptions = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getModeOptions', req));
 
-// ⭐ 42G.0 נשארת ב-off/shadow: אפשר להפיק דוח preflight על פרסום
-// מוכן, אך אין callable ציבורי שמקדם אותו ל-new. מסלול הקידום ייפתח
-// רק בגרסת cutover נפרדת אחרי השלמת חוזה ההפעלה.
+// ⭐ P0-2. שתי הפעולות שסוגרות את חלון הלוח הריק: בדיקה מול מה
+// שהתחנה רואה היום, ואז מעבר אטומי שמפעיל פרסום מוכן ומזיז את המצב
+// יחד. שער הפיקוד, לא שער אחראי הסידור.
+//
+// המעבר נשלח בשחרור הזה בנוי ואינרטי (הכרעת אלדד, 3.9.2026). ארבעה
+// מנעולים במקום „לא ללחוץ": שער פיקוד חי גם ב-preview · דוח חתום עם
+// תפוגה · `expected_preflight_signature` מושווה בעסקה · `accept_changes`
+// = חתימת הדוח. `setRuntimeMode(target:'new')` נשאר חסום (`cutover-required`).
 exports.previewScheduleCutover = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('previewCutover', req));
+
+exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('promoteToNew', req));
 
 exports.setScheduleRuntimeMode = onCall({
   enforceAppCheck: true,

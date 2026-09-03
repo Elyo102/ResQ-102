@@ -273,8 +273,8 @@ eq('2.1 אין callable של סידור שאינו ברשימה', coverageMissin
 const absent = CALLABLES.filter((item) =>
   INDEX.indexOf('exports.' + item.name + ' = onCall') === -1);
 eq('2.2 כל מה שברשימה קיים במקור', absent.map((x) => x.name), []);
-ok('2.2a ב-42G.0 אין callable ציבורי לקידום המנוע',
-  INDEX.indexOf('exports.promoteScheduleToNew = onCall') === -1);
+ok('2.2a המעבר ל-new הוא callable מפורש עם App Check — ולא מתג',
+  INDEX.indexOf("exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }") !== -1);
 
 // ⭐ App Check על כולם. בלי זה כל אחד ברשת יכול לנסות.
 CALLABLES.forEach((item) => {
