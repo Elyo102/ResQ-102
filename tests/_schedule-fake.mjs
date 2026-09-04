@@ -228,7 +228,7 @@ export async function publishImportedSchedule(db, rt, options) {
   const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
   const cfg = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', { mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
-  const published = await rt.publish(req({ request_id: opts.publish_id || 'seed-publish', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));
+  const published = await rt.publish(req({ request_id: opts.publish_id || 'seed-publish', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest }));
   const pointer = db._get(ST + '/schedule_state/active');
   return { imported, preview, published, pointer };
 }

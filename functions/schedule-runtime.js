@@ -15,6 +15,7 @@ const sourceAuthorModule = require('./schedule-source-author');
 const sheetImport = require('./schedule-sheet-import');
 const scheduleEdit = require('./schedule-edit');
 const qualifications = require('./schedule-qualifications');
+const scheduleGaps = require('./schedule-gaps');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -3499,7 +3500,10 @@ function createScheduleRuntime(deps) {
     const editDigest = digest({
       station_id: ctx.sid, base, edits, source: source.digest, policy: policy.digest
     });
-    return { ctx, config, data, base, active, policy, source, people, edits, applied, effective, plan, planned, editDigest };
+    // 42H.2 ג׳ · הפערים שייווצרו מהעריכה — לדוח ולשער הפרסום.
+    const gapCtx = await gapContext(ctx, config);
+    const gapReport = gapReportFor(gapCtx, policy.value, plan);
+    return { ctx, config, data, base, active, policy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport };
   }
 
   function scheduleEditReport(basis) {
@@ -3525,7 +3529,8 @@ function createScheduleRuntime(deps) {
       notifications: basis.planned.notifications.length,
       below_minimum: belowMinimum,
       next_revision: basis.base.revision + 1,
-      edit_digest: basis.editDigest
+      edit_digest: basis.editDigest,
+      gaps: gapSummaryFor(basis.gapReport)
     };
   }
 
@@ -3569,7 +3574,7 @@ function createScheduleRuntime(deps) {
       }
       const published = await publish({
         auth: req.auth,
-        data: { draft_id: draftId, request_id: requestId, expected_content_digest: before.content_digest }
+        data: { draft_id: draftId, request_id: requestId, expected_content_digest: before.content_digest, gap_acknowledgement: data.gap_acknowledgement }
       });
       return {
         duplicate: published.duplicate === true, draft_id: draftId,
@@ -3637,7 +3642,7 @@ function createScheduleRuntime(deps) {
     // ⭐ אותו publish: revision חדש, CAS על המצביע ועל בסיס העריכה, יומן, outbox.
     const published = await publish({
       auth: req.auth,
-      data: { draft_id: draftId, request_id: requestId, expected_content_digest: contentDigest }
+      data: { draft_id: draftId, request_id: requestId, expected_content_digest: contentDigest, gap_acknowledgement: data.gap_acknowledgement }
     });
     return {
       duplicate: published.duplicate === true,
@@ -3726,11 +3731,13 @@ function createScheduleRuntime(deps) {
     const legacy = await legacyQualificationHints(ctx);
     const known = new Set(people.map((person) => person.id));
     const meta = await qualificationsMetaRef(ctx.sid).get();
+    const gapPolicy = await loadGapPolicy(ctx);
     await requireLiveManagerNow(ctx);
     return {
       catalog,
       holders: qualifications.holdersByKey(Array.from(holdings.values())),
       holdings_revision: meta.exists ? Number((meta.data() || {}).holdings_revision || 0) : 0,
+      gap_policy: gapPolicy,
       people: people.map((person) => {
         const held = holdings.get(person.id) || { qualifications: [], revision: 0 };
         return {
@@ -3926,6 +3933,146 @@ function createScheduleRuntime(deps) {
     return { duplicate, uid, qualifications: result.qualifications || [], revision: Number(result.revision || 0) };
   }
 
+  /* ================================================================
+   * 42H.2 · חבילה ג׳ — בקרת פערים
+   *
+   * לכל יום: סה״כ מול מינימום כולל לתחנה (schedule_state/gap_policy),
+   * כל תחנת קצה מול קו המדיניות, כל כשירות פעילה מול המינימום שלה בקטלוג.
+   * מועמדים בלבד — לעולם לא שיבוץ אוטומטי. פער בכשירות קריטית חוסם
+   * פרסום; פער אחר דורש אישור חתום (digest של רשימת הפערים המדויקת)
+   * מאחראי הסידור, שנשמר בפרסום וביומן.
+   * ================================================================ */
+  const MAX_GAP_DETAIL = 60;
+
+  function gapPolicyRef(sid) { return stationRef(sid).collection('schedule_state').doc('gap_policy'); }
+
+  async function loadGapPolicy(ctx) {
+    const snap = await gapPolicyRef(ctx.sid).get();
+    const value = snap.exists ? (snap.data() || {}) : {};
+    return {
+      station_minimum: Number.isInteger(value.station_minimum) && value.station_minimum > 0 ? value.station_minimum : 0,
+      revision: Number.isInteger(value.revision) ? value.revision : 0
+    };
+  }
+
+  async function gapContext(ctx, config) {
+    const [catalog, holdings, gapPolicy] = await Promise.all([loadQualificationCatalog(ctx), loadPersonQualifications(ctx), loadGapPolicy(ctx)]);
+    let people = [];
+    if (nonEmpty(config.active_source_id)) {
+      const source = await loadSource(ctx, config.active_source_id);
+      people = source.peopleRaw.filter((person) => person.active === true);
+    }
+    return { catalog, holdings, people, station_minimum: gapPolicy.station_minimum, gap_policy_revision: gapPolicy.revision };
+  }
+
+  function gapReportFor(gapCtx, policyValue, plan) {
+    try {
+      return scheduleGaps.analyzeGaps({
+        plan, policy: policyValue, catalog: gapCtx.catalog, holdings: gapCtx.holdings,
+        people: gapCtx.people, station_minimum: gapCtx.station_minimum, hash
+      });
+    } catch (error) {
+      if (error && error.name === 'ScheduleGapError') throw new ScheduleRuntimeError(error.code, error.message, 'failed-precondition');
+      throw error;
+    }
+  }
+
+  function gapSummaryFor(report) {
+    return {
+      summary: report.summary,
+      blocking: report.blocking.slice(0, MAX_GAP_DETAIL),
+      acknowledgeable: report.acknowledgeable.slice(0, MAX_GAP_DETAIL),
+      truncated: report.blocking.length > MAX_GAP_DETAIL || report.acknowledgeable.length > MAX_GAP_DETAIL,
+      digest: report.digest
+    };
+  }
+
+  /* השער בפרסום: קריטי — עוצר; אחר — רק עם אישור חתום על הרשימה המדויקת. */
+  function requireGapClearance(report, acknowledgement) {
+    if (report.blocking.length) {
+      const error = new ScheduleRuntimeError('gaps-critical',
+        'יש פער בכשירות קריטית (' + report.blocking.length + '). אי אפשר לפרסם עד שהפער ייסגר.', 'failed-precondition');
+      error.detail = gapSummaryFor(report);
+      throw error;
+    }
+    if (!scheduleGaps.acknowledgementValid(report, acknowledgement)) {
+      const error = new ScheduleRuntimeError('gaps-acknowledgement-required',
+        'יש ' + report.acknowledgeable.length + ' פערים שדורשים אישור מפורש של אחראי הסידור לפני הפרסום.', 'failed-precondition');
+      error.detail = gapSummaryFor(report);
+      throw error;
+    }
+  }
+
+  async function getGapReport(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const config = await configuration(ctx.sid);
+    const data = plain(req.data) ? req.data : {};
+    let plan;
+    let target;
+    if (nonEmpty(data.draft_id)) {
+      const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
+      const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
+      const snap = await ref.get();
+      const meta = snap.exists ? (snap.data() || {}) : {};
+      if (!snap.exists || meta.status !== 'complete' || meta.station_id !== ctx.sid) {
+        throw new ScheduleRuntimeError('draft-not-ready', 'הטיוטה אינה קיימת או טרם הושלמה.');
+      }
+      plan = (await readSnapshot(ref, meta)).plan;
+      target = { kind: 'draft', draft_id: draftId, from: meta.from, to: meta.to };
+    } else {
+      requireMode(config, [MODE.NEW]);
+      const active = await activeSnapshot(ctx);
+      if (!active) throw new ScheduleRuntimeError('edit-no-active', 'אין סידור פעיל.', 'failed-precondition');
+      plan = active.plan;
+      target = { kind: 'publication', publication_id: active.pointer.publication_id, revision: active.pointer.revision, from: plan.from, to: plan.to };
+    }
+    const policy = nonEmpty(config.active_policy_id) ? await loadPolicy(ctx, config.active_policy_id) : null;
+    const gapCtx = await gapContext(ctx, config);
+    const report = gapReportFor(gapCtx, policy ? policy.value : { sub_stations: {} }, plan);
+    await requireLiveManagerNow(ctx);
+    return Object.assign({ target, station_minimum: gapCtx.station_minimum, gap_policy_revision: gapCtx.gap_policy_revision, days: report.days }, gapSummaryFor(report));
+  }
+
+  async function saveGapPolicy(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const minimum = data.station_minimum;
+    if (!Number.isInteger(minimum) || minimum < 0 || minimum > 500) {
+      throw new ScheduleRuntimeError('gap-policy-minimum', 'מינימום כולל לתחנה: מספר שלם 0–500.', 'invalid-argument');
+    }
+    const expectedRevision = Number.isInteger(data.expected_revision) ? data.expected_revision : 0;
+    const fingerprint = digest({ station_id: ctx.sid, uid: ctx.uid, requestId, minimum, expectedRevision, intent: 'gap-policy' });
+    const auditRef = qualificationAuditRef(ctx.sid, requestId);
+    let duplicate = false;
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), gapPolicyRef(ctx.sid), auditRef];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[3].exists) {
+        if ((snaps[3].data() || {}).fingerprint !== fingerprint) {
+          throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לשינוי אחר.', 'already-exists');
+        }
+        duplicate = true;
+        return;
+      }
+      const live = snaps[2].exists ? (snaps[2].data() || {}) : {};
+      const liveRevision = Number.isInteger(live.revision) ? live.revision : 0;
+      if (liveRevision !== expectedRevision) {
+        throw new ScheduleRuntimeError('gap-policy-revision-stale', 'מינימום התחנה השתנה בינתיים. יש לרענן.', 'aborted');
+      }
+      tx.set(gapPolicyRef(ctx.sid), { station_id: ctx.sid, station_minimum: minimum, revision: liveRevision + 1, updated_by: ctx.uid, updated_at: FV.serverTimestamp() });
+      tx.create(auditRef, {
+        action: 'gap-policy', request_id: requestId, fingerprint,
+        before: { station_minimum: Number.isInteger(live.station_minimum) ? live.station_minimum : 0 },
+        after: { station_minimum: minimum }, by: ctx.uid, at: FV.serverTimestamp()
+      });
+    });
+    return { duplicate, station_minimum: minimum, revision: duplicate ? expectedRevision : expectedRevision + 1 };
+  }
+
   async function getDraftPreview(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -3966,7 +4113,8 @@ function createScheduleRuntime(deps) {
       if (date > meta.to) break;
       dates.push(date);
     }
-    const snapshot = sliceVerifiedSnapshot(await readSnapshot(ref, meta), dates);
+    const fullSnapshot = await readSnapshot(ref, meta);
+    const snapshot = sliceVerifiedSnapshot(fullSnapshot, dates);
     const service = serviceFor(ctx);
     // אותו עיטור כמו בלוח המפורסם — היעדרויות, צוות לאדם וצוות ליום —
     // כדי שהתצוגה המקדימה תיראה בדיוק כמו מה שיפורסם.
@@ -3982,9 +4130,13 @@ function createScheduleRuntime(deps) {
     /* ⭐ v2-review §1: המינוי/החברות עלולים להתבטל **בזמן** קריאת התמונה
      * (שורות, היעדרויות, סגל). אימות חי אחרון אחרי כל הקריאות ולפני
      * ההחזרה — סירוב אינו מחזיר שמות ולא היעדרויות. אותם תפקידים, בלי הרחבה. */
+    // 42H.2 ג׳ · בקרת פערים על הטיוטה כולה (לא רק על השבוע המוצג).
+    const gapCtx = await gapContext(ctx, config);
+    const gapReport = gapReportFor(gapCtx, { sub_stations: plain(livePolicy.sub_stations) ? livePolicy.sub_stations : {} }, fullSnapshot.plan);
     await requireLiveManagerNow(ctx);
     return {
       draft_id: draftId,
+      gaps: gapSummaryFor(gapReport),
       expected_content_digest: meta.content_digest,
       imported: meta.imported === true,
       from: meta.from,
@@ -4871,9 +5023,22 @@ function createScheduleRuntime(deps) {
           'הפרסום בוטל ולכן יש להתחיל פעולה חדשה.', 'aborted');
       }
       if (existingData.status !== 'staging') preparedReplayInvalid();
-    } else await pubRef.create({
+    }
+    /* ⭐ 42H.2 ג׳ · בקרת פערים — לפרסום חדש בלבד (ניסיון חוזר של פרסום שהושלם
+     * אינו נבדק שוב: הוא כבר עבר את השער). קריטי עוצר; אחר — עם אישור חתום. */
+    let gapReport = null;
+    if (!existing.exists) {
+      const gapCtx = await gapContext(ctx, config);
+      gapReport = gapReportFor(gapCtx, currentPolicy.value, next.plan);
+      requireGapClearance(gapReport, String(data.gap_acknowledgement || ''));
+    }
+    if (!existing.exists) await pubRef.create({
       station_id: ctx.sid, status: 'staging', request_id: requestId,
       request_fingerprint: requestFingerprint,
+      gap_report: {
+        summary: gapReport.summary, digest: gapReport.digest,
+        acknowledged: gapReport.acknowledgeable.length > 0, acknowledged_by: gapReport.acknowledgeable.length > 0 ? ctx.uid : null
+      },
       revision, source_id: draftMeta.source_id, policy_id: draftMeta.policy_id,
       source_draft_id: draftId,
       previous_publication_id: before ? before.pointer.publication_id : null,
@@ -4964,7 +5129,9 @@ function createScheduleRuntime(deps) {
         tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
           action: 'prepare', publication_id: pubId, revision,
           previous_publication_id: expectedPrevious, by: ctx.uid,
-          at: FV.serverTimestamp()
+          at: FV.serverTimestamp(),
+          gaps_acknowledged: gapReport && gapReport.acknowledgeable.length ? gapReport.digest : null,
+          gaps_other: gapReport ? gapReport.acknowledgeable.length : 0
         });
         return;
       }
@@ -4978,6 +5145,9 @@ function createScheduleRuntime(deps) {
         action: 'publish', publication_id: pubId, revision,
         previous_publication_id: expectedPrevious, by: ctx.uid,
         at: FV.serverTimestamp()
+      }, {
+        gaps_acknowledged: gapReport && gapReport.acknowledgeable.length ? gapReport.digest : null,
+        gaps_other: gapReport ? gapReport.acknowledgeable.length : 0
       }, liveDraft.edited === true ? {
         edited_from: liveDraft.edit_base, edit_digest: liveDraft.edit_digest || null,
         edit_people: plain(liveDraft.edit_summary) && Array.isArray(liveDraft.edit_summary.people) ? liveDraft.edit_summary.people : [],
@@ -7483,6 +7653,8 @@ function createScheduleRuntime(deps) {
     saveQualification,
     deleteQualification,
     setPersonQualifications,
+    getGapReport,
+    saveGapPolicy,
     getDraftPreview,
     publish,
     rollback,

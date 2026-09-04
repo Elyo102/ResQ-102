@@ -1,7 +1,7 @@
 'use strict';
 
 /* ====================================================================
- *  schedule-edit.integration.test · 42H.2 חבילה א׳ — עריכת סידור שפורסם
+ *  schedule-gaps.integration.test · 42H.2 חבילה ג׳ — בקרת פערים
  *
  *  מסלול העריכה מול Firestore **אמיתי** (אמולטור): גיליון → ייבוא → פרסום
  *  ב-new → previewScheduleEdit (דוח, בלי כתיבה) → applyScheduleEdit
@@ -16,7 +16,7 @@
  *
  *  הרצה:
  *    firebase emulators:exec --only firestore --project demo-resq \
- *      "cd functions && node schedule-edit.integration.test.js"
+ *      "cd functions && node schedule-gaps.integration.test.js"
  *
  *  אין שמות אמיתיים כאן — כל השמות מומצאים (כלל של אלדד).
  * ==================================================================== */
@@ -37,7 +37,7 @@ const { createPublication } = require('./schedule-publication');
 const { createScheduleService } = require('./schedule-service');
 const { createScheduleRuntime } = require('./schedule-runtime');
 
-const SID = 'schedule_edit_it';
+const SID = 'schedule_gaps_it';
 const MGR = 'sheet_manager';
 const CLOCK = () => '2026-08-25T06:00:00.000Z';
 const hash = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
@@ -232,108 +232,68 @@ async function test(name, fn) {
   await seed();
   const api = runtime();
   const aliases = { 'רועי': 'u1', 'אבטחה': null };
-  const expectedOf = (pointer) => ({ publication_id: pointer.publication_id, revision: pointer.revision, content_digest: pointer.content_digest });
-  let pointer = null;
+  let imported = null;
+  let preview = null;
 
-  await test('seed: import the sheet, switch to new (test-only direct write), publish revision 1', async () => {
+  await test('seed: import the sheet; the draft preview reports the below-line days as acknowledgeable gaps', async () => {
     const ready = await api.previewScheduleImport(req(MGR, { month: '2026-09', paste: SHEET, aliases }));
     assert.equal(ready.blocked, false, JSON.stringify(ready.blocked_by));
-    const imported = await api.importScheduleSheet(req(MGR, { request_id: 'edit_seed_import', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
-    const preview = await api.getDraftPreview(req(MGR, { draft_id: imported.draft_id, start: '2026-09-01' }));
-    const cfg = (await runtimeDoc().get()).data() || {};
-    /* ⭐ המעבר ל-new הוא של אלדד בלבד (promoteToNew). כתיבה ישירה — רק כדי לבדוק. */
-    await runtimeDoc().set({ mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
-    const published = await api.publish(req(MGR, { request_id: 'edit_seed_publish', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest }));
-    assert.ok(published.publication_id);
-    pointer = (await station().collection('schedule_state').doc('active').get()).data();
-    assert.equal(pointer.revision, 1);
+    imported = await api.importScheduleSheet(req(MGR, { request_id: 'gap_seed_import', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+    preview = await api.getDraftPreview(req(MGR, { draft_id: imported.draft_id, start: '2026-09-01' }));
+    assert.ok(preview.gaps && preview.gaps.summary.other_gaps >= 1, JSON.stringify(preview.gaps && preview.gaps.summary));
+    assert.equal(preview.gaps.blocking.length, 0);
+    assert.equal(typeof preview.gaps.digest, 'string');
   });
 
-  await test('edit gates: viewer refused; wrong base is stale; report writes nothing', async () => {
-    const edits = [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }];
-    const denied = await caught(() => api.previewScheduleEdit(req('viewer', { expected: expectedOf(pointer), edits })));
-    assert.equal(denied && denied.code, 'manager-required');
-    const stale = await caught(() => api.previewScheduleEdit(req(MGR, { expected: Object.assign(expectedOf(pointer), { revision: 5 }), edits })));
-    assert.equal(stale && stale.code, 'edit-base-stale');
-    const draftsBefore = (await station().collection('schedule_drafts').get()).size;
-    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(pointer), edits }));
-    assert.equal(report.counts.changes, 1);
-    assert.equal((await station().collection('schedule_drafts').get()).size, draftsBefore);
+  await test('publish without the acknowledgement is refused; with a wrong digest refused; with the exact digest it prepares (shadow)', async () => {
+    const missing = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest })));
+    assert.equal(missing && missing.code, 'gaps-acknowledgement-required', missing && missing.message);
+    assert.ok(missing.detail && missing.detail.digest === preview.gaps.digest);
+    const wrong = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: 'nope' })));
+    assert.equal(wrong && wrong.code, 'gaps-acknowledgement-required');
+    assert.equal((await station().collection('schedule_publications').get()).size, 0, 'nothing written for a refused publish');
+    const prepared = await api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps.digest }));
+    assert.equal(prepared.prepared, true);
+    const pub = (await station().collection('schedule_publications').doc(prepared.publication_id).get()).data();
+    assert.deepEqual([pub.gap_report.acknowledged, pub.gap_report.digest, pub.gap_report.acknowledged_by], [true, preview.gaps.digest, MGR]);
+    const audit = (await station().collection('schedule_audit').get()).docs.map((d) => d.data()).find((a) => a.action === 'prepare');
+    assert.equal(audit.gaps_acknowledged, preview.gaps.digest);
   });
 
-  let applied = null;
-  let editDigest = null;
-  const edits = [
-    { kind: 'assign', uid: 'u1', dates: ['2026-09-01', '2026-09-02'], sub_station: 'shahmon' },
-    { kind: 'absence', uid: 'u2', dates: ['2026-09-03'], absence: { kind: 'leave', location: 'abroad' } },
-    { kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }
-  ];
-  await test('apply: derived draft → new revision with CAS, audit, one outbox entry per changed person', async () => {
-    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(pointer), edits }));
-    editDigest = report.edit_digest;
-    const stale = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits })));
-    assert.equal(stale && stale.code, 'edit-report-stale');
-    applied = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest }));
-    assert.deepEqual([applied.duplicate, applied.revision], [false, 2]);
-    const active = (await station().collection('schedule_state').doc('active').get()).data();
-    assert.deepEqual([active.publication_id, active.revision, active.previous_publication_id], [applied.publication_id, 2, pointer.publication_id]);
-    const pub = (await station().collection('schedule_publications').doc(applied.publication_id).get()).data();
-    assert.deepEqual([pub.edited, pub.edit_base.revision, pub.status], [true, 1, 'active']);
-    const oldPub = (await station().collection('schedule_publications').doc(pointer.publication_id).get()).data();
-    assert.equal(oldPub.content_digest, pointer.content_digest, 'the previous snapshot must stay untouched');
-    const outbox = await station().collection('schedule_publications').doc(applied.publication_id).collection('schedule_outbox').get();
-    const perPerson = {};
-    outbox.docs.forEach((doc) => { const p = doc.data().person; perPerson[p] = (perPerson[p] || 0) + 1; });
-    assert.ok(perPerson.u1 === 1 && perPerson.u3 === 1 && Object.values(perPerson).every((n) => n === 1), JSON.stringify(perPerson));
-    const audit = (await station().collection('schedule_audit').get()).docs.map((doc) => doc.data());
-    const editAudit = audit.find((a) => a.action === 'edit-draft');
-    const publishAudit = audit.find((a) => a.action === 'publish' && a.revision === 2);
-    assert.ok(editAudit && editAudit.change_count === 4 && editAudit.changes.every((c) => !c.name));
-    assert.ok(publishAudit && publishAudit.edited_from && publishAudit.edited_from.publication_id === pointer.publication_id);
-    assert.equal(JSON.stringify(audit).indexOf('רועי'), -1, 'audit must not carry names');
+  await test('a critical qualification minimum with no holder blocks a new draft publish; a candidate is offered, never assigned', async () => {
+    await api.saveQualification(req(MGR, { request_id: 'gap_lead', key: 'shift_lead', minimum: 1 }));
+    await api.setPersonQualifications(req(MGR, { request_id: 'gap_hold', person: 'u4', qualifications: ['shift_lead'] }));
+    const ready = await api.previewScheduleImport(req(MGR, { month: '2026-09', paste: SHEET, aliases }));
+    const second = await api.importScheduleSheet(req(MGR, { request_id: 'gap_import2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+    const preview2 = await api.getDraftPreview(req(MGR, { draft_id: second.draft_id, start: '2026-09-01' }));
+    assert.ok(preview2.gaps.blocking.length >= 1 && preview2.gaps.blocking.every((g) => g.key === 'shift_lead'), JSON.stringify(preview2.gaps.blocking));
+    const blocked = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub2', draft_id: second.draft_id, expected_content_digest: preview2.expected_content_digest, gap_acknowledgement: preview2.gaps.digest || '' })));
+    assert.equal(blocked && blocked.code, 'gaps-critical', blocked && blocked.message);
+    const report = await api.getGapReport(req(MGR, { draft_id: second.draft_id }));
+    const dayGap = report.days.find((d) => d.has_critical_gap);
+    assert.ok(dayGap, 'a day with a critical gap');
+    const lead = dayGap.qualifications.find((q) => q.key === 'shift_lead');
+    // u4 מחזיק ראש משמרת; ביום שבו הוא פנוי הוא מועמד — והטיוטה לא השתנתה.
+    const dayWithCandidate = report.days.find((d) => d.qualifications.find((q) => q.key === 'shift_lead').candidates.some((c) => c.uid === 'u4'));
+    assert.ok(dayWithCandidate, 'u4 offered as a candidate somewhere');
+    assert.ok(lead.gap >= 1);
+    const stillDraft = (await station().collection('schedule_drafts').doc(second.draft_id).get()).data();
+    assert.equal(stillDraft.content_digest, preview2.expected_content_digest, 'the draft was not touched by the gap report');
   });
 
-  await test('the board shows the edit; a retry returns the same receipt; the old base is refused', async () => {
-    const range = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
-    assert.equal(range.revision, 2);
-    const d1 = range.days[0];
-    assert.equal(d1.sub_stations.find((s) => s.sub_station === 'shahmon').people.some((p) => p.uid === 'u1'), true);
-    assert.equal(d1.sub_stations.find((s) => s.sub_station === 'eilat').people.some((p) => p.uid === 'u1'), false);
-    assert.equal(d1.sub_stations.some((s) => s.people.some((p) => p.uid === 'u3')), false);
-    assert.deepEqual(range.days[2].absences.filter((a) => a.uid === 'u2').map((a) => a.kind + ':' + a.location), ['leave:abroad']);
-    const again = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest }));
-    assert.deepEqual([again.duplicate, again.publication_id], [true, applied.publication_id]);
-    assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, 2);
-    const conflict = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits: edits.slice(0, 1), expected_edit_digest: 'x' })));
-    assert.equal(conflict && conflict.code, 'request-conflict');
-    const stale = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-02'] }] })));
-    assert.equal(stale && stale.code, 'edit-base-stale');
-  });
-
-  await test('a competing publication between report and apply is refused inside the transaction', async () => {
-    const current = (await station().collection('schedule_state').doc('active').get()).data();
-    const mine = [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-02'] }];
-    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
-    // עריכה מתחרה שמתפרסמת קודם
-    const other = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'course' } }] }));
-    await api.applyScheduleEdit(req(MGR, { request_id: 'edit_other', expected: expectedOf(current), edits: [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'course' } }], expected_edit_digest: other.edit_digest }));
-    const draftsBefore = (await station().collection('schedule_drafts').get()).size;
-    const error = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_2', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest })));
-    assert.equal(error && error.code, 'edit-base-stale', error && error.message);
-    assert.equal((await station().collection('schedule_drafts').get()).size, draftsBefore, 'no draft for a refused edit');
-    assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, 3);
-  });
-
-  await test('the existing rollback returns to the pre-edit publication', async () => {
-    const current = (await station().collection('schedule_state').doc('active').get()).data();
-    const rolled = await api.rollback(req(MGR, { request_id: 'edit_rb', target_publication_id: pointer.publication_id, expected_active_publication_id: current.publication_id, reason_code: 'wrong_assignment' }));
-    assert.ok(rolled && rolled.publication_id);
-    const back = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-01' }));
-    assert.equal(back.days[0].sub_stations.find((s) => s.sub_station === 'eilat').people.some((p) => p.uid === 'u1'), true);
+  await test('station minimum: saved with CAS and audit; a retry is a duplicate', async () => {
+    const saved = await api.saveGapPolicy(req(MGR, { request_id: 'gp1', station_minimum: 9 }));
+    assert.deepEqual([saved.station_minimum, saved.revision, saved.duplicate], [9, 1, false]);
+    const again = await api.saveGapPolicy(req(MGR, { request_id: 'gp1', station_minimum: 9 }));
+    assert.equal(again.duplicate, true);
+    const stale = await caught(() => api.saveGapPolicy(req(MGR, { request_id: 'gp2', station_minimum: 3, expected_revision: 0 })));
+    assert.equal(stale && stale.code, 'gap-policy-revision-stale');
+    const view = await api.getQualificationCatalog(req(MGR, {}));
+    assert.deepEqual(view.gap_policy, { station_minimum: 9, revision: 1 });
   });
 
   await runtimeDoc().set({ mode: 'off' }, { merge: true });
-  console.log('\n' + passed + ' schedule-edit Firestore integration checks passed.');
+  console.log('\n' + passed + ' schedule-gaps Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

@@ -5222,6 +5222,11 @@ exports.deleteQualification = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('deleteQualification', req));
 exports.setPersonQualifications = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('setPersonQualifications', req));
+// 42H.2 · בקרת פערים — דוח לפי יום/תחנה/כשירות עם מועמדים בלבד; מינימום כולל לתחנה.
+exports.getScheduleGapReport = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('getGapReport', req));
+exports.saveScheduleGapPolicy = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('saveGapPolicy', req));
 
 exports.publishSchedule = onCall({
   enforceAppCheck: true,

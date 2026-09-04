@@ -34,6 +34,8 @@ const call = Object.freeze({
   qualSave: httpsCallable(functions, 'saveQualification'),
   qualDelete: httpsCallable(functions, 'deleteQualification'),
   qualPerson: httpsCallable(functions, 'setPersonQualifications'),
+  gapReport: httpsCallable(functions, 'getScheduleGapReport'),
+  gapPolicy: httpsCallable(functions, 'saveScheduleGapPolicy'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -2196,8 +2198,11 @@ function updatePublishAvailability() {
   const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
   /* ⭐ P0-2. ב-`shadow` פרסום הוא **הכנה**, ולכן הוא מותר שם — זה
    * כל מה שסוגר את חלון הלוח הריק. ב-`off` הוא חסום כמו קודם. */
+  const gapReport = state.draftPreview && state.draftPreview.gaps;
+  const critical = !!gapReport && (gapReport.blocking || []).length > 0;
+  const needsAck = !!gapReport && !critical && (gapReport.acknowledgeable || []).length > 0;
   const ready = !!state.draft && !!state.draftPreview && $('reviewDraft').checked
-    && canRunSchedule() && gaps === 0;
+    && canRunSchedule() && gaps === 0 && !critical && (!needsAck || $('draftGapAck').checked);
   $('publish').disabled = state.busy || !ready;
   $('publish').textContent = state.status && state.status.mode === 'shadow'
     ? 'הכן את הסידור' : 'פרסום הסידור';
@@ -2252,6 +2257,11 @@ async function loadDraftPreview(start, resetApproval) {
     state.draftPreview = preview;
     state.previewStart = preview.week_start;
     renderDraftPreview(preview);
+    // 42H.2 ג׳ · פערים על הטיוטה כולה: קריטי נועל את הפרסום; אחר — אישור חתום.
+    clear($('draftGapsDays'));
+    if (resetApproval !== false) $('draftGapAck').checked = false;
+    const blocked = renderGapSummary(preview.gaps, { box: 'draftGaps', list: 'draftGapsList', ackWrap: 'draftGapAckWrap', ackText: 'draftGapAckText' });
+    $('draftGapsTitle').textContent = blocked ? 'בקרת פערים — פער קריטי חוסם פרסום' : 'בקרת פערים';
     $('reviewDraft').disabled = false;
     message('previewMessage', 'הטיוטה מוצגת לבדיקה. היא עדיין לא פורסמה.', 'ok');
   } catch (error) {
@@ -2288,6 +2298,10 @@ async function publishDraft() {
   const preparing = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
+  const gapReport = state.draftPreview.gaps;
+  if (gapReport && (gapReport.blocking || []).length) { message('publishMessage', 'אי אפשר לפרסם: פער בכשירות קריטית.', 'err'); return; }
+  const acknowledgement = gapAcknowledgement(gapReport, 'draftGapAck');
+  if (acknowledgement === '') { message('publishMessage', 'יש פערים שדורשים אישור מפורש לפני הפרסום.', 'err'); return; }
   const confirmation = preparing
     ? 'להכין את הטיוטה לבדיקה? הסידור הקיים יישאר פעיל ולא תישלח הודעה לאיש.'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
@@ -2299,11 +2313,13 @@ async function publishDraft() {
     const draftId = state.draft.draft_id;
     const expectedContentDigest = state.draftPreview.expected_content_digest;
     const intent = preparing ? 'prepare' : 'publish';
-    const result = (await call.publish({
+    const publishPayload = {
       draft_id: draftId,
       expected_content_digest: expectedContentDigest,
       request_id: requestIdForPublication(draftId, expectedContentDigest, intent)
-    })).data;
+    };
+    if (acknowledgement) publishPayload.gap_acknowledgement = acknowledgement;
+    const result = (await call.publish(publishPayload)).data;
     if (preparing && (result.prepared !== true || result.notified_people !== 0)) {
       throw new Error('השרת לא אישר שהסידור הוכן בלבד וללא הודעות. יש לרענן לפני ניסיון נוסף.');
     }
@@ -2383,6 +2399,117 @@ async function loadSetup() {
     renderSourceSummary();
   } catch (error) { message('policyMessage', errorText(error), 'err'); }
 }
+
+/* ==================================================================
+ *  42H.2 · חבילה ג׳ — בקרת פערים (תצוגה משותפת)
+ * ------------------------------------------------------------------
+ *  פער קריטי — הכפתור נעול והסיבה כתובה. פער אחר — רשימה + תיבת אישור
+ *  שמצרפת לבקשה את חתימת הרשימה המדויקת (gap_acknowledgement). המסך
+ *  מציג מועמדים; הוא לעולם אינו משבץ.
+ * ================================================================== */
+const GAP_KIND_HE = { qualification: 'כשירות', station: 'מינימום תחנה', sub_station: 'קו תחנת קצה' };
+
+function gapText(gap) {
+  const what = gap.kind === 'station' ? 'סה״כ בתחנה' : (gap.kind === 'sub_station' ? (gap.label || gap.key) : (gap.label || gap.key));
+  return dateLabel(gap.date) + ' · ' + GAP_KIND_HE[gap.kind] + ': ' + what + ' — ' + gap.present + ' מתוך ' + gap.minimum + ' (חסרים ' + gap.gap + ')';
+}
+
+/** מצייר סיכום פערים לתוך קופסה: רשימת חוסמים/אחרים + תיבת אישור. מחזיר האם חוסם. */
+function renderGapSummary(gaps, ids) {
+  const box = $(ids.box);
+  if (!gaps) { box.hidden = true; return false; }
+  const blocking = gaps.blocking || [];
+  const other = gaps.acknowledgeable || [];
+  box.hidden = !blocking.length && !other.length;
+  box.classList.toggle('critical', blocking.length > 0);
+  const list = $(ids.list); clear(list);
+  blocking.forEach((gap) => list.appendChild(node('div', 'gap critical', 'חוסם · ' + gapText(gap))));
+  other.forEach((gap) => list.appendChild(node('div', 'gap other', gapText(gap))));
+  if (gaps.truncated) list.appendChild(node('div', 'gap other', 'מוצגים רק הפערים הראשונים; הרשימה המלאה בפירוט לפי יום.'));
+  const ackWrap = $(ids.ackWrap);
+  ackWrap.hidden = blocking.length > 0 || !other.length;
+  if (!ackWrap.hidden) {
+    $(ids.ackText).textContent = 'ראיתי ' + other.length + ' פערים (מינימום תחנה / קו תחנת קצה / כשירות לא-קריטית) ואני מאשר/ת לפרסם למרות זאת. האישור נרשם ביומן על שמי.';
+  }
+  return blocking.length > 0;
+}
+
+function gapAcknowledgement(gaps, ackId) {
+  if (!gaps || !(gaps.acknowledgeable || []).length) return undefined;
+  return $(ackId).checked ? gaps.digest : '';
+}
+
+function renderGapDays(days, box) {
+  clear(box);
+  (days || []).forEach((day) => {
+    const wrap = node('div', 'gapday');
+    wrap.appendChild(node('b', 'date', dateLabel(day.date) + ' · ' + day.total + ' משובצים' + (day.station_minimum ? ' מתוך מינימום ' + day.station_minimum : '')));
+    if (day.station_gap > 0) {
+      wrap.appendChild(node('div', 'gap other', 'סה״כ בתחנה: חסרים ' + day.station_gap + ' · מועמדים: ' + ((day.station_candidates || []).map((c) => c.name).join(', ') || 'אין פנויים')));
+    }
+    (day.sub_stations || []).forEach((sub) => {
+      if (sub.gap > 0) wrap.appendChild(node('div', 'gap other', sub.label + ': ' + sub.people + ' מתוך ' + sub.minimum + ' (חסרים ' + sub.gap + ')'));
+    });
+    (day.qualifications || []).forEach((q) => {
+      if (q.gap <= 0) return;
+      const line = node('div', 'gap ' + (q.critical ? 'critical' : 'other'));
+      line.appendChild(node('span', '', (q.critical ? 'קריטי · ' : '') + q.label + ': ' + q.present + ' מתוך ' + q.minimum));
+      line.appendChild(node('span', 'cands', 'מועמדים: ' + ((q.candidates || []).map((c) => c.name).join(', ') || 'אין פנויים עם הכשירות')));
+      wrap.appendChild(line);
+    });
+    if (!day.has_gap) wrap.appendChild(node('div', 'ok', 'אין פערים'));
+    box.appendChild(wrap);
+  });
+}
+
+async function loadDraftGapDays() {
+  if (!state.draft || state.busy) return;
+  $('draftGapsDetail').disabled = true;
+  try {
+    const report = (await call.gapReport({ draft_id: state.draft.draft_id })).data;
+    renderGapDays(report.days, $('draftGapsDays'));
+  } catch (error) { message('previewMessage', errorText(error), 'err'); }
+  finally { $('draftGapsDetail').disabled = false; }
+}
+
+async function loadActiveGaps() {
+  if (state.busy || !canManageSchedule()) return;
+  $('gapLoad').disabled = true;
+  message('gapMessage', 'בודק את הסידור הפעיל…', 'info');
+  try {
+    const report = (await call.gapReport({})).data;
+    const box = $('gapSummary'); clear(box); box.classList.remove('hide');
+    [['ימים', report.summary.days], ['ימים עם פער', report.summary.days_with_gaps], ['פערים קריטיים', report.summary.critical_gaps],
+      ['פערים אחרים', report.summary.other_gaps], ['מינימום תחנה', report.summary.station_minimum || '—']].forEach(([label, value]) => {
+      const metric = node('div', 'metric'); metric.append(node('b', '', value), node('span', '', label)); box.appendChild(metric);
+    });
+    renderGapDays(report.days, $('gapDays'));
+    message('gapMessage', report.summary.critical_gaps
+      ? 'יש פערים בכשירויות קריטיות. עריכה שמשאירה אותם לא תתפרסם — שבצו מהמועמדים דרך „עריכת הסידור הפעיל".'
+      : (report.summary.other_gaps ? 'יש פערים שאינם קריטיים. הם מוצגים; פרסום עם פערים כאלה דורש אישור מפורש.' : 'אין פערים בסידור הפעיל.'),
+      report.summary.critical_gaps ? 'err' : (report.summary.other_gaps ? 'warn' : 'ok'));
+  } catch (error) { message('gapMessage', errorText(error), 'err'); }
+  finally { $('gapLoad').disabled = false; }
+}
+
+async function saveStationMinimum() {
+  if (state.busy) return;
+  const minimum = Number($('gapStationMinimum').value || 0);
+  const policy = (state.quals && state.quals.gap_policy) || { revision: 0 };
+  state.busy = true;
+  try {
+    const result = (await call.gapPolicy({ request_id: requestId('gappolicy'), station_minimum: minimum, expected_revision: policy.revision || 0 })).data;
+    message('gapPolicyMessage', 'מינימום כולל לתחנה: ' + result.station_minimum + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) { message('gapPolicyMessage', errorText(error), 'err'); if (errorCode(error) === 'gap-policy-revision-stale') await loadQualifications(true); }
+  finally { state.busy = false; }
+}
+
+$('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
+$('draftGapAck').addEventListener('change', updatePublishAvailability);
+$('gapLoad').addEventListener('click', managerAction(loadActiveGaps));
+$('gapStationMinimumSave').addEventListener('click', managerAction(saveStationMinimum));
+$('editGapAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !(state.editReport.counts.changes && !editGapsBlock()); });
 
 /* ==================================================================
  *  42H.2 · חבילה א׳ — עריכת הסידור הפעיל
@@ -2605,6 +2732,13 @@ function renderEditReport(report) {
   const warnings = $('editWarnings'); clear(warnings);
   (report.warnings || []).forEach((warning) => warnings.appendChild(node('div', 'change warn', warning.name + ' · ' + dateLabel(warning.date) + ' · ' + (EDIT_WARN_HE[warning.code] || warning.code))));
   (report.below_minimum || []).forEach((row) => warnings.appendChild(node('div', 'change weak', row.label + ' · ' + dateLabel(row.date) + ' · ' + row.people + ' מתוך קו ' + row.minimum)));
+  $('editGapAck').checked = false;
+  renderGapSummary(report.gaps, { box: 'editGaps', list: 'editGapsList', ackWrap: 'editGapAckWrap', ackText: 'editGapAckText' });
+}
+
+function editGapsBlock() {
+  const gaps = state.editReport && state.editReport.gaps;
+  return !!gaps && (gaps.blocking || []).length > 0;
 }
 
 async function checkEdit() {
@@ -2616,8 +2750,9 @@ async function checkEdit() {
     state.editReport = report;
     renderEditReport(report);
     if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
+    else if (editGapsBlock()) message('editMessage', 'השינוי משאיר פער בכשירות קריטית — אי אפשר לפרסם אותו. שבצו מהמועמדים או בטלו את ההסרה.', 'err');
     else message('editMessage', report.counts.changes + ' שינויים ל-' + report.counts.people + ' עובדים. ' + report.notifications + ' עובדים יקבלו הודעה אחת. אפשר לבצע.', 'ok');
-    $('editApply').disabled = !!state.editPending ? false : !report.counts.changes;
+    $('editApply').disabled = !!state.editPending ? false : !(report.counts.changes && !editGapsBlock());
     if (state.editPending) message('editMessage', pendingEditText(), 'warn');
   } catch (error) {
     state.editReport = null; $('editReport').hidden = true;
@@ -2639,14 +2774,17 @@ async function refreshStatusAfterEdit() {
 async function applyEdit() {
   if (state.busy) return;
   const pending = state.editPending;
-  if (!pending && (!state.editReport || !state.editReport.counts.changes)) return;
+  if (!pending && (!state.editReport || !state.editReport.counts.changes || editGapsBlock())) return;
   let payload;
   if (pending) payload = pending.payload;
   else {
+    const acknowledgement = gapAcknowledgement(state.editReport.gaps, 'editGapAck');
+    if (acknowledgement === '') { message('editMessage', 'יש פערים שדורשים אישור מפורש לפני הביצוע.', 'err'); return; }
     const digestValue = state.editReport.edit_digest;
     state.editRequestIds = state.editRequestIds || {};
     if (!state.editRequestIds[digestValue]) state.editRequestIds[digestValue] = requestId('edit');
     payload = Object.assign({ request_id: state.editRequestIds[digestValue], expected_edit_digest: digestValue }, editPayload());
+    if (acknowledgement) payload.gap_acknowledgement = acknowledgement;
   }
   state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
   message('editMessage', pending ? 'שולח שוב את אותה בקשה…' : 'מבצע ומפרסם גרסה חדשה…', 'info');
@@ -2680,6 +2818,7 @@ function updateEditAvailability() {
   if (!card) return;
   const may = canEditSchedule();
   card.hidden = !canManageSchedule() || !state.status || state.status.mode !== 'new';
+  $('gapCard').hidden = card.hidden || !may;
   if (!card.hidden && !may) message('editMessage', 'אין סידור פעיל לעריכה.', 'info');
   if (may && state.status.active && state.status.active.from && !$('editDate').value) $('editDate').value = localDate() >= state.status.active.from && localDate() <= state.status.active.to ? localDate() : state.status.active.from;
   renderEditControls(); renderEditDates(); renderEditList();
@@ -2707,6 +2846,7 @@ async function loadQualifications(quiet) {
   try {
     state.quals = (await call.qualCatalog({})).data;
     if (!quiet) message('qualMessage', '', 'info');
+    $('gapStationMinimum').value = String((state.quals.gap_policy && state.quals.gap_policy.station_minimum) || 0);
     renderQualCatalog();
     renderQualPeople();
   } catch (error) {

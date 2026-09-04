@@ -208,6 +208,8 @@ const CALLABLES = Object.freeze([
   { name: 'saveQualification', method: 'saveQualification', gate: GATE.MANAGER },
   { name: 'deleteQualification', method: 'deleteQualification', gate: GATE.MANAGER },
   { name: 'setPersonQualifications', method: 'setPersonQualifications', gate: GATE.MANAGER },
+  { name: 'getScheduleGapReport', method: 'getGapReport', gate: GATE.MANAGER },
+  { name: 'saveScheduleGapPolicy', method: 'saveGapPolicy', gate: GATE.MANAGER },
   { name: 'publishSchedule', method: 'publish', gate: GATE.MANAGER },
   { name: 'rollbackSchedule', method: 'rollback', gate: GATE.MANAGER },
   { name: 'getScheduleDraftPreview', method: 'getDraftPreview', gate: GATE.MANAGER },

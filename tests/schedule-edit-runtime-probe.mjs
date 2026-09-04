@@ -68,10 +68,10 @@ function auditOf(db) {
   ok('2.7 קו אדום מדווח, לא חוסם', belowBefore >= 1, JSON.stringify(report.below_minimum));
 
   await rejectsCode('2.8 ביצוע בלי חתימת הדוח → edit-report-stale', () => rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits })), 'edit-report-stale');
-  await rejectsCode('2.9 ביצוע עם עריכות אחרות מהדוח → edit-report-stale', () => rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits: edits.slice(0, 1), expected_edit_digest: report.edit_digest })), 'edit-report-stale');
+  await rejectsCode('2.9 ביצוע עם עריכות אחרות מהדוח → edit-report-stale', () => rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits: edits.slice(0, 1), expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'edit-report-stale');
   eq('2.10 לא נוצרה טיוטה מהניסיונות שנדחו', drafts(), draftsBefore);
 
-  const applied = await rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest }));
+  const applied = await rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest }));
   eq('2.11 פורסם revision 2, לא כפילות', [applied.duplicate, applied.revision, typeof applied.publication_id], [false, 2, 'string']);
   const active = db._get(ST + '/schedule_state/active');
   eq('2.12 המצביע זז לפרסום החדש', [active.publication_id, active.revision, active.previous_publication_id], [applied.publication_id, 2, pointer.publication_id]);
@@ -103,7 +103,7 @@ function auditOf(db) {
   eq('2.25 revision בלוח', after.revision, 2);
 
   // ניסיון חוזר — אותה בקשה: אותה קבלה, אין revision 3.
-  const again = await rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest }));
+  const again = await rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest }));
   eq('2.26 ניסיון חוזר → duplicate, אותו פרסום, revision נשאר 2', [again.duplicate, again.publication_id, db._get(ST + '/schedule_state/active').revision], [true, applied.publication_id, 2]);
   await rejectsCode('2.27 אותו request_id עם עריכה אחרת → request-conflict', () => rt.applyScheduleEdit(req({ request_id: 'e2', expected: expectedOf(pointer), edits: edits.slice(0, 1), expected_edit_digest: 'x' })), 'request-conflict');
 
@@ -126,8 +126,8 @@ function auditOf(db) {
   const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
   // עריכה מתחרה שהתפרסמה בינתיים
   const other = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }] }));
-  await rt.applyScheduleEdit(req({ request_id: 'e-other', expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }], expected_edit_digest: other.edit_digest }));
-  await rejectsCode('3.1 הבסיס הוחלף בין הדוח לביצוע → edit-base-stale, בלי טיוטה', () => rt.applyScheduleEdit(req({ request_id: 'e3', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest })), 'edit-base-stale');
+  await rt.applyScheduleEdit(req({ request_id: 'e-other', expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }], expected_edit_digest: other.edit_digest, gap_acknowledgement: other.gaps.digest }));
+  await rejectsCode('3.1 הבסיס הוחלף בין הדוח לביצוע → edit-base-stale, בלי טיוטה', () => rt.applyScheduleEdit(req({ request_id: 'e3', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'edit-base-stale');
   eq('3.2 revision נשאר 2', db._get(ST + '/schedule_state/active').revision, 2);
 
   const pointer2 = db._get(ST + '/schedule_state/active');
@@ -141,14 +141,14 @@ function auditOf(db) {
     if (!bumped) { bumped = true; db._put(ST + '/schedule_state/active', Object.assign({}, db._get(ST + '/schedule_state/active'), { revision: 9 })); }
     return originalTx.call(db, fn);
   };
-  await rejectsCode('3.3 המצביע זז לפני עסקת הטיוטה → edit-base-stale', () => rt.applyScheduleEdit(req({ request_id: 'e4', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest })), 'edit-base-stale');
+  await rejectsCode('3.3 המצביע זז לפני עסקת הטיוטה → edit-base-stale', () => rt.applyScheduleEdit(req({ request_id: 'e4', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'edit-base-stale');
   db.runTransaction = originalTx;
   db._put(ST + '/schedule_state/active', pointer2);
   eq('3.4 לא נוצרה טיוטה', draftCount(), draftsBefore3);
 
   // מינוי שבוטל רגע לפני העסקה
   db.runTransaction = async (fn) => { db._del(ST + '/schedule_access/' + MGR); return originalTx.call(db, fn); };
-  await rejectsCode('3.5 מינוי שבוטל → manager-revoked', () => rt.applyScheduleEdit(req({ request_id: 'e5', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest })), 'manager-revoked');
+  await rejectsCode('3.5 מינוי שבוטל → manager-revoked', () => rt.applyScheduleEdit(req({ request_id: 'e5', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'manager-revoked');
   db.runTransaction = originalTx;
   db._put(ST + '/schedule_access/' + MGR, { schema_version: 1, station_id: SID, uid: MGR, roles: ['schedule_manager'], active: true, revision: 1 });
   eq('3.6 revision עדיין 2', db._get(ST + '/schedule_state/active').revision, 2);
@@ -156,7 +156,7 @@ function auditOf(db) {
   // עריכה שאינה משנה דבר
   const noop = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer2), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }] }));
   eq('3.7 דוח ריק', [noop.counts.changes, noop.notifications], [0, 0]);
-  await rejectsCode('3.8 ביצוע עריכה ריקה → edit-no-changes', () => rt.applyScheduleEdit(req({ request_id: 'e6', expected: expectedOf(pointer2), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }], expected_edit_digest: noop.edit_digest })), 'edit-no-changes');
+  await rejectsCode('3.8 ביצוע עריכה ריקה → edit-no-changes', () => rt.applyScheduleEdit(req({ request_id: 'e6', expected: expectedOf(pointer2), edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }], expected_edit_digest: noop.edit_digest, gap_acknowledgement: noop.gaps.digest })), 'edit-no-changes');
 
   // תפקיד + מיקום היעדרות + שבוע שלם
   const week = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer2), edits: [
@@ -168,12 +168,50 @@ function auditOf(db) {
   const done = await rt.applyScheduleEdit(req({ request_id: 'e7', expected: expectedOf(pointer2), edits: [
     { kind: 'assign', uid: 'u4', dates: ['2026-09-01', '2026-09-02', '2026-09-03'], sub_station: 'timna', role: 'ff' },
     { kind: 'absence', uid: 'u5', dates: ['2026-09-01', '2026-09-02'], absence: { kind: 'sick' } }
-  ], expected_edit_digest: week.edit_digest }));
+  ], expected_edit_digest: week.edit_digest, gap_acknowledgement: week.gaps.digest }));
   eq('3.11 revision 3', done.revision, 3);
   const view = await rt.getStation(req({ date: '2026-09-02' }, 'u4'));
   const me = view.day.sub_stations.find((s) => s.sub_station === 'timna').people.find((p) => p.uid === 'u4');
   eq('3.12 הלוח: u4 בתמנע עם התפקיד, מסומן is_me', [!!me, me && me.is_me, me && me.role_label], [true, true, 'ff']);
   eq('3.13 היעדרות u5 מוצגת', view.day.absences.some((a) => a.uid === 'u5' && a.kind === 'sick'), true);
+}
+
+/* 4 · 42H.2 ג׳ — שער הפערים בעריכה: פער קריטי חוסם; פער אחר דורש אישור חתום. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const { pointer } = await publishImportedSchedule(db, rt);
+  // מינימום 1 לראש משמרת (קריטית) — איש אינו מחזיק → פער קריטי בכל יום.
+  await rt.saveQualification(req({ request_id: 'g-lead', key: 'shift_lead', minimum: 1 }));
+  const edits = [{ kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }];
+  const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  ok('4.1 הדוח מציג פערים קריטיים', report.gaps.summary.critical_gaps >= 3 && report.gaps.blocking.every((g) => g.key === 'shift_lead'), JSON.stringify(report.gaps.summary));
+  await rejectsCode('4.2 עריכה עם פער קריטי → gaps-critical, בלי גרסה חדשה', () => rt.applyScheduleEdit(req({ request_id: 'g1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-critical');
+  eq('4.3 revision נשאר 1', db._get(ST + '/schedule_state/active').revision, 1);
+  // u1 מקבל ראש משמרת → נסגר הפער ביום שהוא עובד; נשארים פערים בימים אחרים → עדיין חוסם.
+  await rt.setPersonQualifications(req({ request_id: 'g-hold', person: 'u1', qualifications: ['shift_lead'] }));
+  const report2 = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  ok('4.4 המועמד לפער מוצע, לא משובץ', report2.gaps.blocking.length < report.gaps.blocking.length, JSON.stringify(report2.gaps.summary));
+  const gapView = await rt.getGapReport(req({}));
+  const dayWithGap = gapView.days.find((d) => d.has_critical_gap);
+  ok('4.5 getGapReport על הפרסום הפעיל: מועמד לראש משמרת ביום עם פער', dayWithGap && dayWithGap.qualifications.find((q) => q.key === 'shift_lead').candidates.some((c) => c.uid === 'u1'), JSON.stringify(dayWithGap && dayWithGap.qualifications));
+  // מבטלים את המינימום הקריטי; קובעים מינימום כולל לתחנה 20 → פער אחר בכל יום.
+  await rt.saveQualification(req({ request_id: 'g-lead0', key: 'shift_lead', minimum: 0, expected_revision: 1 }));
+  const policy = await rt.saveGapPolicy(req({ request_id: 'gp1', station_minimum: 20 }));
+  eq('4.6 מינימום כולל נשמר', [policy.station_minimum, policy.revision], [20, 1]);
+  await rejectsCode('4.7 revision ישן של מינימום התחנה', () => rt.saveGapPolicy(req({ request_id: 'gp2', station_minimum: 5, expected_revision: 0 })), 'gap-policy-revision-stale');
+  const report3 = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  ok('4.8 פערי תחנה (אחרים) עם חתימה', report3.gaps.blocking.length === 0 && report3.gaps.acknowledgeable.some((g) => g.kind === 'station') && typeof report3.gaps.digest === 'string', JSON.stringify(report3.gaps.summary));
+  await rejectsCode('4.9 בלי אישור → gaps-acknowledgement-required', () => rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest })), 'gaps-acknowledgement-required');
+  await rejectsCode('4.10 אישור על רשימה אחרת → סירוב', () => rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
+  eq('4.11 לא נוצרה גרסה', db._get(ST + '/schedule_state/active').revision, 1);
+  const done = await rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest, gap_acknowledgement: report3.gaps.digest }));
+  eq('4.12 עם אישור חתום — פורסם', done.revision, 2);
+  const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
+  ok('4.13 האישור נשמר בפרסום וביומן', pub.gap_report.acknowledged === true && pub.gap_report.digest === report3.gaps.digest && auditOf(db).some((a) => a.action === 'publish' && a.revision === 2 && a.gaps_acknowledged === report3.gaps.digest), JSON.stringify(pub.gap_report));
+  // rollback אינו נחסם על ידי פערים.
+  const rolled = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON }));
+  ok('4.14 rollback אינו נחסם על ידי פערים', rolled && rolled.publication_id, JSON.stringify(rolled));
 }
 
 finish('schedule-edit runtime probe checks passed');

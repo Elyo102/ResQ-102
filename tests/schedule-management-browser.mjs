@@ -1850,10 +1850,138 @@ try {
     assert.equal(calls.some((entry) => entry.name === 'getQualificationCatalog'), false);
   });
   await qualMemberCtx.close();
+
+  /* ⭐ 42H.2 חבילה ג׳ · בקרת פערים במסך: טיוטה עם פערים „אחרים" — הפרסום נעול
+   * עד אישור מפורש, והאישור (חתימת הרשימה) נשלח לשרת; פער קריטי נועל את
+   * הפרסום בלי אפשרות אישור; דוח לפי יום עם מועמדים בלבד. */
+  const gapsOther = {
+    summary:{ days:31, days_with_gaps:2, critical_gaps:0, other_gaps:2, station_minimum:6 },
+    blocking:[],
+    acknowledgeable:[
+      { kind:'station', date: today, minimum:6, present:4, gap:2 },
+      { kind:'qualification', date: shiftDay(today, 1), key:'driver', label:'נהגים', minimum:2, present:1, gap:1 }
+    ], truncated:false, digest:'gapdigest_other'
+  };
+  const gapsCritical = {
+    summary:{ days:31, days_with_gaps:1, critical_gaps:1, other_gaps:0, station_minimum:0 },
+    blocking:[{ kind:'qualification', date: today, key:'shift_lead', label:'ראש משמרת', minimum:1, present:0, gap:1 }],
+    acknowledgeable:[], truncated:false, digest:null
+  };
+  const previewWithGaps = Object.assign(JSON.parse(JSON.stringify(draftPreview)), { gaps: gapsOther });
+  const gapDays = { target:{ kind:'draft', draft_id:'draft_1' }, station_minimum:6, gap_policy_revision:1, summary: gapsOther.summary,
+    blocking:[], acknowledgeable: gapsOther.acknowledgeable, truncated:false, digest:'gapdigest_other',
+    days:[{ date: today, total:4, station_minimum:6, station_gap:2, station_candidates:[{ uid:'crew_1', name:'טל חודרה' }],
+      sub_stations:[{ sub_station:'main', label:'אילת', people:4, minimum:2, gap:0, coverage:'ready' }],
+      qualifications:[{ key:'shift_lead', label:'ראש משמרת', critical:true, minimum:0, present:0, gap:0, candidates:[] },
+        { key:'driver', label:'נהגים', critical:false, minimum:2, present:1, gap:1, candidates:[{ uid:'crew_1', name:'טל חודרה' }] }],
+      has_gap:true, has_critical_gap:false }] };
+  const gapCtx = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(gapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30), summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:previewWithGaps }],
+    getScheduleGapReport:[{ data:gapDays }],
+    publishSchedule:[{ data:{ publication_id:'p_new', revision:5, notified_people:2 } }]
+  });
+  const gapPage = await gapCtx.newPage();
+  gapPage.on('dialog', (dialog) => dialog.accept());
+  await gapPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await gapPage.locator('#appMain:not(.hide)').waitFor();
+  await test('gap control: other gaps lock publishing until an explicit acknowledgement, which travels as the exact digest', async () => {
+    await gapPage.locator('#runPlanner').click();
+    await gapPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await gapPage.locator('#draftGaps').isVisible(), true);
+    assert.equal(await gapPage.locator('#draftGapsList .gap.other').count(), 2);
+    assert.equal(await gapPage.locator('#draftGapsList .gap.critical').count(), 0);
+    assert.equal(await gapPage.locator('#draftGapAckWrap').isVisible(), true);
+    await gapPage.locator('#reviewDraft').check();
+    assert.equal(await gapPage.locator('#publish').isEnabled(), false, 'no publish before the acknowledgement');
+    // פירוט לפי יום — מועמדים בלבד.
+    await gapPage.locator('#draftGapsDetail').click();
+    await gapPage.locator('#draftGapsDays .gapday').waitFor();
+    assert.match(await gapPage.locator('#draftGapsDays').textContent(), /מועמדים: טל חודרה/);
+    const detail = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'getScheduleGapReport');
+    assert.deepEqual(detail.payload, { draft_id:'draft_1' });
+    await gapPage.locator('#draftGapAck').check();
+    assert.equal(await gapPage.locator('#publish').isEnabled(), true);
+    await gapPage.locator('#publish').click();
+    await gapPage.locator('#publishMessage .ok').waitFor();
+    const published = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'publishSchedule');
+    assert.equal(published.payload.gap_acknowledgement, 'gapdigest_other');
+    assert.equal(published.payload.expected_content_digest, 'digest_preview_1');
+  });
+  await gapCtx.close();
+
+  const previewCritical = Object.assign(JSON.parse(JSON.stringify(draftPreview)), { gaps: gapsCritical });
+  const gapCriticalCtx = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(gapCriticalCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30), summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:previewCritical }]
+  });
+  const gapCriticalPage = await gapCriticalCtx.newPage();
+  gapCriticalPage.on('dialog', (dialog) => dialog.accept());
+  await gapCriticalPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await gapCriticalPage.locator('#appMain:not(.hide)').waitFor();
+  await test('gap control: a critical gap locks publishing with no acknowledgement offered', async () => {
+    await gapCriticalPage.locator('#runPlanner').click();
+    await gapCriticalPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await gapCriticalPage.locator('#draftGapsList .gap.critical').count(), 1);
+    assert.match(await gapCriticalPage.locator('#draftGapsTitle').textContent(), /חוסם/);
+    assert.equal(await gapCriticalPage.locator('#draftGapAckWrap').isVisible(), false);
+    await gapCriticalPage.locator('#reviewDraft').check();
+    assert.equal(await gapCriticalPage.locator('#publish').isEnabled(), false);
+    const calls = await gapCriticalPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.some((entry) => entry.name === 'publishSchedule'), false);
+  });
+  await gapCriticalCtx.close();
+
+  /* עריכה עם פערים: הדוח מציג אותם; אישור נשלח עם הביצוע. */
+  const editReportGaps = Object.assign(JSON.parse(JSON.stringify(editReport)), { gaps: gapsOther });
+  const editGapCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(editGapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }, { data:statusEdited }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReportGaps }],
+    applyScheduleEdit:[{ data:{ duplicate:false, draft_id:'d_edit', publication_id:'p_edit_5', revision:5, notified_people:1, report:editReportGaps } }]
+  });
+  const editGapPage = await editGapCtx.newPage();
+  await editGapPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await editGapPage.locator('#appMain:not(.hide)').waitFor();
+  await test('edit card: gaps after the change need the acknowledgement; the apply carries the digest', async () => {
+    await editGapPage.fill('#editSearch', 'טל');
+    await editGapPage.locator('#editSearchResults button').first().click();
+    await editGapPage.fill('#editDate', today);
+    await editGapPage.locator('#editDate').dispatchEvent('change');
+    await editGapPage.selectOption('#editAction', 'unassign');
+    await editGapPage.locator('#editAdd').click();
+    await editGapPage.locator('#editCheck').click();
+    await editGapPage.locator('#editMessage .ok').waitFor();
+    assert.equal(await editGapPage.locator('#editGaps').isVisible(), true);
+    assert.equal(await editGapPage.locator('#editGapsList .gap.other').count(), 2);
+    await editGapPage.locator('#editApply').click();
+    await editGapPage.locator('#editMessage .err').waitFor();
+    assert.match(await editGapPage.locator('#editMessage').textContent(), /אישור מפורש/);
+    assert.equal((await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).some((entry) => entry.name === 'applyScheduleEdit'), false);
+    await editGapPage.locator('#editGapAck').check();
+    await editGapPage.locator('#editApply').click();
+    await editGapPage.locator('#editMessage .ok').waitFor();
+    const applied = (await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'applyScheduleEdit');
+    assert.equal(applied.payload.gap_acknowledgement, 'gapdigest_other');
+  });
+  await editGapCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 49);
-console.log('\n49 schedule management browser checks passed.');
+assert.equal(passed, 52);
+console.log('\n52 schedule management browser checks passed.');
