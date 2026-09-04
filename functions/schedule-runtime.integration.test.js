@@ -2887,8 +2887,70 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 77);
-  console.log('\n77 schedule runtime Firestore integration checks passed.');
+  await test('421 §1: two ranges of one stable legacy source share an identity and merge in the client module; a moved anchor between them is refused', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const modeBefore = ((await runtimeRef.get()).data() || {}).mode;
+    const rotationA = station().collection('rotations').doc('A');
+    const rotationBefore = (await rotationA.get()).data() || {};
+    const client = await import('../effective-workdays.js?v=42g0');
+    try {
+      await runtimeRef.update({ mode: 'shadow' });
+      // מסך האבטחות: היסטוריה (365 אחורה) + עתיד (365 קדימה), שתי קריאות.
+      const history = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2025-09-02', to: '2026-09-01', uids: ['viewer', 'driver2'] }));
+      const upcoming = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-02', to: '2027-09-02', uids: ['viewer', 'driver2'] }));
+      assert.notEqual(history.provenance.legacy_digest, upcoming.provenance.legacy_digest, 'the range content signature is per range');
+      assert.equal(history.provenance.legacy_basis_digest, upcoming.provenance.legacy_basis_digest, 'the source identity is shared');
+      const merged = client.mergeEffectiveWorkdays([client.parseEffectiveWorkdays({ data: history }), client.parseEffectiveWorkdays({ data: upcoming })]);
+      assert.equal(client.worksOn(merged, 'viewer', '2026-09-01'), true);
+      assert.equal(client.worksOn(merged, 'viewer', '2026-09-04'), true);
+      assert.equal(client.worksOn(merged, 'viewer', '2026-09-02'), false);
+      assert.deepEqual(client.unknownDaysBetween(merged, '2026-08-30', '2026-09-05'), []);
+      // העוגן זז בין שתי הקריאות — זהות אחרת, והלקוח מסרב לחבר.
+      await rotationA.update({ anchor_date: '2026-09-02' });
+      await assert.rejects(api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-02', to: '2027-09-02', uids: ['viewer'] })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'effective-schedule-invalid', 'a conflicting anchor is a broken configuration');
+      await rotationA.set(Object.assign({}, rotationBefore, { anchor_date: '2026-09-04' }));
+      for (const crew of ['B', 'C']) await station().collection('rotations').doc(crew).update({ anchor_date: '2026-09-04' });
+      const moved = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-02', to: '2027-09-02', uids: ['viewer'] }));
+      assert.notEqual(moved.provenance.legacy_basis_digest, history.provenance.legacy_basis_digest);
+      assert.throws(() => client.mergeEffectiveWorkdays([client.parseEffectiveWorkdays({ data: history }), client.parseEffectiveWorkdays({ data: moved })]),
+        (error) => error && error.code === 'workdays-merge-source');
+    } finally {
+      await rotationA.set(rotationBefore);
+      for (const crew of ['B', 'C']) await station().collection('rotations').doc(crew).update({ anchor_date: String(rotationBefore.anchor_date || '2026-09-01') });
+      await runtimeRef.update({ mode: modeBefore });
+    }
+  });
+
+  await test('421 §2: a viewer deactivated or transferred during the final source verification gets no answer — identity is checked last', async () => {
+    const viewerRef = station().collection('users').doc('viewer');
+    const before = (await viewerRef.get()).data() || {};
+    const input = { from: '2026-09-01', to: '2026-09-03', uids: ['viewer'] };
+    try {
+      const deactivating = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays-verify') await viewerRef.update({ is_active: false });
+        }
+      });
+      await assert.rejects(deactivating.getEffectiveWorkdays(req('viewer', 'firefighter', input)),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'workdays-viewer-changed');
+      await viewerRef.set(before);
+      const transferring = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays-verify') await viewerRef.update({ station: 'elsewhere_1' });
+        }
+      });
+      await assert.rejects(transferring.getEffectiveWorkdays(req('viewer', 'firefighter', input)),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'workdays-viewer-changed');
+    } finally {
+      await viewerRef.set(before);
+    }
+    const ok = await api.getEffectiveWorkdays(req('viewer', 'firefighter', input));
+    assert.ok(Array.isArray(ok.by_uid.viewer));
+  });
+
+  assert.equal(passed, 79);
+  console.log('\n79 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

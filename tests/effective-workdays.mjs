@@ -72,6 +72,26 @@ test('מיזוג שני חלונות: איחוד; מקור שונה או חפי�
   const m2 = W.mergeEffectiveWorkdays([a, e]);
   assert.equal(W.worksOn(m2, 'me', '2026-01-05'), 'unknown', 'לא-ידוע בחלון אחד גובר — לא ממציאים ימים');
   throwsCode(() => W.mergeEffectiveWorkdays([]), 'workdays-merge-empty');
+  // 421: legacy_digest הוא חתימת תוכן **הטווח** — שונה בין היסטוריה לעתיד גם
+  // כשהמקור יציב. זהות המקור (legacy_basis_digest) היא מה שחייב להיות זהה.
+  const hist = W.parseEffectiveWorkdays(answer({ from: '2025-09-01', to: '2026-08-31', coverage: null, by_uid: { me: ['2026-08-30'] },
+    provenance: { mode: 'shadow', source: 'legacy', legacy_basis_digest: 'B1', legacy_digest: 'R-hist' } }));
+  const next = W.parseEffectiveWorkdays(answer({ from: '2026-09-01', to: '2027-08-31', coverage: null, by_uid: { me: ['2026-09-02'] },
+    provenance: { mode: 'shadow', source: 'legacy', legacy_basis_digest: 'B1', legacy_digest: 'R-next' } }));
+  const both = W.mergeEffectiveWorkdays([hist, next]);
+  assert.equal(W.worksOn(both, 'me', '2026-08-30'), true);
+  assert.equal(W.worksOn(both, 'me', '2026-09-02'), true);
+  assert.equal(W.worksOn(both, 'me', '2026-09-01'), false);
+  const otherBasis = W.parseEffectiveWorkdays(answer({ from: '2026-09-01', to: '2027-08-31', coverage: null, by_uid: {},
+    provenance: { mode: 'shadow', source: 'legacy', legacy_basis_digest: 'B2', legacy_digest: 'R-next' } }));
+  throwsCode(() => W.mergeEffectiveWorkdays([hist, otherBasis]), 'workdays-merge-source');
+  const pubA = W.parseEffectiveWorkdays(answer({ from: '2026-09-01', to: '2026-09-30', by_uid: {}, mode: 'new', source: 'publication',
+    provenance: { mode: 'new', source: 'v2', publication_id: 'p1', revision: 1, content_digest: 'c1' } }));
+  const pubB = W.parseEffectiveWorkdays(answer({ from: '2026-10-01', to: '2026-10-31', coverage: { from: '2026-10-01', to: '2026-10-31' }, by_uid: {}, mode: 'new', source: 'publication',
+    provenance: { mode: 'new', source: 'v2', publication_id: 'p2', revision: 1, content_digest: 'c2' } }));
+  throwsCode(() => W.mergeEffectiveWorkdays([pubA, pubB]), 'workdays-merge-source');
+  assert.equal(W.workdaysSourceIdentity(hist), W.workdaysSourceIdentity(next));
+  assert.notEqual(W.workdaysSourceIdentity(hist), W.workdaysSourceIdentity(otherBasis));
 });
 
 test('החלפה: gain/lose, החלפות מאושרות, ויום צמוד לא-ידוע', () => {

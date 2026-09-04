@@ -1815,10 +1815,14 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   // 417 §1 · 419: זהות חיה **והמקור** נבדקים שוב בסוף getEffectiveWorkdays —
   // אחרי שעות המשמרת, שנקראות בתוך effectiveWorkDaysFor ומכוסות ב-verify.
   assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1);
-  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays'") < fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);'));
-  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') < fn.indexOf('await pending.verify();'),
-    'the source confirmation must be the last thing before the answer');
-  assert.ok(fn.indexOf('await pending.verify();') < fn.indexOf('return workdaysResponse(pending.result);'));
+  // 421 §2: אימות המקור (verify — קורא בעצמו עד 397 ימים) לפני בדיקת הזהות,
+  // והזהות החיה היא **הקריאה האחרונה** לפני התשובה.
+  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays'") < fn.indexOf('await pending.verify();'));
+  assert.ok(fn.indexOf('await pending.verify();') < fn.indexOf('const finalReads = await Promise.all([configuration(ctx.sid), liveUserRef(ctx.sid, ctx.uid).get()]);'),
+    'the live identity must be read after the bulk verification, not before it');
+  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') < fn.indexOf('return workdaysResponse(pending.result);'));
+  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') > fn.indexOf('await pending.verify();'));
+  assert.equal((core.match(/kind: 'workdays-verify'/g) || []).length, 2, 'both verify closures must expose the verify seam');
   assert.equal(fn.indexOf('stationShiftHours('), -1, 'shift hours must not be a second read outside the verified source');
   assert.ok(core.indexOf("shift_hours: await stationShiftHours(ctx, basis.rotationDocs)") > -1, 'legacy shift hours must come from the pinned basis');
   assert.ok(core.indexOf('const shiftHours = await stationShiftHours(ctx);') > -1 && core.indexOf('digest(await stationShiftHours(ctx)) !== digest(shiftHours)') > -1,
@@ -1829,11 +1833,20 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   assert.ok(core.indexOf('const scoped = { legacyBasis: basis };') > -1);
   assert.ok(core.indexOf('await requireSameLegacyBasis(ctx, basis, range);') > -1);
   assert.ok(core.indexOf('legacy_digest: basis.legacyDigest') > -1);
+  // 421 §1: זהות מקור בלתי תלויה בטווח לצד חתימת תוכן הטווח; הלקוח מחבר לפי הזהות.
+  assert.equal((core.match(/legacy_basis_digest: basis\.legacyBasisDigest, legacy_digest: basis\.legacyDigest/g) || []).length, 2);
+  const clientModule = read('effective-workdays.js');
+  assert.ok(clientModule.indexOf('export function workdaysSourceIdentity(p)') > -1);
+  assert.ok(clientModule.indexOf("if (key === 'legacy_digest') return;") > -1, 'the range content signature must not block a merge');
+  assert.ok(clientModule.indexOf('const sig = workdaysSourceIdentity;') > -1);
+  assert.equal(clientModule.indexOf('JSON.stringify([p.mode, p.source, p.fallback, p.provenance])'), -1, 'the old whole-provenance signature is gone');
+  assert.ok(integration.includes('421 §1: two ranges of one stable legacy source') && integration.includes('421 §2: a viewer deactivated or transferred during the final source verification'));
   const basisAt = src.indexOf('async function legacyWorkdaysBasis(ctx, range)');
   const basisFn = src.slice(basisAt, src.indexOf('async function requireSameLegacyBasis', basisAt));
   for (const needle of ["root.collection('roster')", "root.collection('rotations')", "root.collection('shift_overrides').doc(date)",
     ".where('from_date', 'in', chunk)", ".where('to_date', 'in', chunk)", 'overrides: pairs(overrideDocs)', 'swaps: pairs(swapDocs)',
-    'range: { from: range.from, to: range.to }']) {
+    'range: { from: range.from, to: range.to }', 'const legacyBasisDigest = digest({ roster: rosterPairs, rotations: rotationPairs });',
+    'basis: legacyBasisDigest']) {
     assert.ok(basisFn.indexOf(needle) > -1, 'the legacy basis must pin and sign: ' + needle);
   }
   assert.ok(core.indexOf("await activeSnapshotStillCurrent(ctx, config, active);") > core.indexOf('verify: async function'),

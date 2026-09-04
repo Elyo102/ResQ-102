@@ -5328,16 +5328,23 @@ function createScheduleRuntime(deps) {
     const rotationDocs = reads[1].docs.slice().sort((a, b) => compareCanonical(a.id, b.id));
     const pairs = (map) => Array.from(map.values()).sort((a, b) => compareCanonical(a.id, b.id))
       .map((doc) => [doc.id, doc.data() || {}]);
+    /* שתי חתימות (421): `legacyBasisDigest` — זהות המקור, בלתי תלויה בטווח
+     * (סגל + מחזורים): שני טווחים שונים מאותו מקור יציב חולקים אותה, ולכן
+     * המסך רשאי לחבר אותם (היסטוריה + עתיד באבטחות). `legacyDigest` —
+     * תוכן הטווח כולו (כולל חריגים והחלפות של הטווח) — היא זו שנבדקת שוב
+     * בסוף הקריאה ומבדילה שני חלקים של אותו טווח. */
+    const rosterPairs = rosterDocs.map((doc) => [doc.id, doc.data() || {}]);
+    const rotationPairs = rotationDocs.map((doc) => [doc.id, doc.data() || {}]);
+    const legacyBasisDigest = digest({ roster: rosterPairs, rotations: rotationPairs });
     const legacyDigest = digest({
       range: { from: range.from, to: range.to },
-      roster: rosterDocs.map((doc) => [doc.id, doc.data() || {}]),
-      rotations: rotationDocs.map((doc) => [doc.id, doc.data() || {}]),
+      basis: legacyBasisDigest,
       overrides: pairs(overrideDocs),
       swaps: pairs(swapDocs)
     });
     return {
       range: { from: range.from, to: range.to },
-      rosterDocs, rotationDocs, overrideDocs, swapDocs, legacyDigest,
+      rosterDocs, rotationDocs, overrideDocs, swapDocs, legacyDigest, legacyBasisDigest,
       rosterIds: rosterDocs.map((doc) => doc.id)
     };
   }
@@ -5430,6 +5437,7 @@ function createScheduleRuntime(deps) {
               throw new ScheduleRuntimeError('legacy-schedule-changed',
                 'הסידור הקיים השתנה בזמן הקריאה. יש לרענן.', 'aborted');
             }
+            await beforeEffectiveViewRecheck({ kind: 'workdays-verify', ctx, mode: config.mode });
           }
         };
       }
@@ -5458,7 +5466,7 @@ function createScheduleRuntime(deps) {
       } catch (error) { workdaysError(error); }
       provenance = Object.assign({ mode: config.mode, source: 'legacy' },
         config.mode === MODE.NEW ? { fallback: 'legacy' } : {},
-        { legacy_digest: basis.legacyDigest, legacy_rotations: 0 });
+        { legacy_basis_digest: basis.legacyBasisDigest, legacy_digest: basis.legacyDigest, legacy_rotations: 0 });
     } else {
       const produced = [];
       for (const w of windows) {
@@ -5480,7 +5488,7 @@ function createScheduleRuntime(deps) {
         });
       } catch (error) { workdaysError(error); }
       const head = produced.length ? produced[0].provenance : { mode: config.mode, source: 'legacy' };
-      provenance = Object.assign({}, head, { legacy_digest: basis.legacyDigest });
+      provenance = Object.assign({}, head, { legacy_basis_digest: basis.legacyBasisDigest, legacy_digest: basis.legacyDigest });
     }
     // שעות המשמרת מאותו בסיס נעוץ — לא קריאה נוספת שאינה מכוסה בחתימה.
     const result = Object.assign({
@@ -5494,6 +5502,8 @@ function createScheduleRuntime(deps) {
         await requireModeUnchanged(ctx, config);
         if (config.mode === MODE.NEW) await requireNoActivePublication(ctx);
         await requireSameLegacyBasis(ctx, basis, range);
+        // תפר בדיקה בלבד: „בזמן/אחרי קריאות האימות" — הזהות נבדקת אחריו.
+        await beforeEffectiveViewRecheck({ kind: 'workdays-verify', ctx, mode: config.mode });
       }
     };
   }
@@ -5529,17 +5539,17 @@ function createScheduleRuntime(deps) {
     const pending = await effectiveWorkDaysFor(ctx, config, {
       from: String(data.from || ''), to: String(data.to || ''), uids: data.uids
     });
-    // ⭐ 417 §1 · 419: הזהות החיה **וגם המקור** נבדקים שוב בסוף — אחרי כל
-    // הקריאות, כולל שעות המשמרת. מי שהושבת או הועבר תחנה באמצע לא מקבל
-    // את התשובה; בסיס/מצביע שהשתנו אחרי השעות — גם לא.
+    // ⭐ 417 §1 · 419 · 421: המקור מאושר אחרי כל הקריאות (כולל שעות המשמרת),
+    // והזהות החיה נבדקת **אחרונה** — אחרי אימות המקור, שקורא בעצמו עד 397
+    // ימים. מי שהושבת או הועבר תחנה בזמן האימות הזה לא מקבל את התשובה.
     await beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode });
+    await pending.verify();
     const finalReads = await Promise.all([configuration(ctx.sid), liveUserRef(ctx.sid, ctx.uid).get()]);
     if (finalReads[0].mode !== config.mode) {
       throw new ScheduleRuntimeError('schedule-mode-changed',
         'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
     }
     requireLiveWorkdaysViewer(finalReads[1], ctx);
-    await pending.verify();
     return workdaysResponse(pending.result);
   }
 

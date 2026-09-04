@@ -115,13 +115,31 @@ export function parseEffectiveWorkdays(result) {
   });
 }
 
+/* זהות המקור של תשובה — מה שחייב להיות זהה כדי ששני חלונות יתחברו:
+ * מצב, מקור, fallback, וזהות ה-provenance (פרסום/גרסה/חתימת תוכן ב-new;
+ * חתימת סגל+מחזורים ב-legacy). **לא** `legacy_digest`: זו חתימת תוכן
+ * הטווח (כולל חריגים והחלפות של אותו טווח), ולכן היא שונה בין שני טווחים
+ * גם כשהמקור יציב לחלוטין (421). ערבוב מצבי מנוע, פרסומים או בסיסי
+ * legacy שונים — עדיין סירוב. */
+export function workdaysSourceIdentity(p) {
+  const prov = plain(p.provenance) ? p.provenance : null;
+  const identity = {};
+  if (prov) {
+    Object.keys(prov).sort().forEach((key) => {
+      if (key === 'legacy_digest') return;
+      identity[key] = prov[key];
+    });
+  }
+  return JSON.stringify([p.mode, p.source, p.fallback, prov ? identity : null]);
+}
+
 /* שני חלונות (למשל היסטוריה ועתיד) מאותו מקור — מתאחדים. מקור שונה,
  * מצב שונה, או חפיפה בתאריכים — סירוב: תשובה מעורבבת גרועה מאין תשובה. */
 export function mergeEffectiveWorkdays(parts) {
   const list = (parts || []).filter(Boolean);
   if (!list.length) fail('workdays-merge-empty');
   const head = list[0];
-  const sig = (p) => JSON.stringify([p.mode, p.source, p.fallback, p.provenance]);
+  const sig = workdaysSourceIdentity;
   const byUid = new Map();
   const unknownDates = new Set();
   const unknownUids = Object.create(null);   // UID בשם __proto__ אינו קובע prototype

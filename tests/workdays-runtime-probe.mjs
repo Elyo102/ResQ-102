@@ -18,6 +18,9 @@
  *   3. החלפה מאושרת שנכנסת בין החלונות: סירוב; יציבה — מוחלת.
  *   4. שינוי בסיס (עוגן / חריג) **אחרי** שעות המשמרת — בשתי הכניסות.
  *   5. שעות המשמרת מגיעות מאותו בסיס נעוץ (אין קריאה נוספת ב-legacy).
+ *   6. (421) שני טווחים אמיתיים מאותו מקור מתחברים במודול הלקוח; מקור
+ *      אחר או פרסום — סירוב.
+ *   7. (421) השבתה/העברה מתוך קריאות האימות הסופי עצמן — הזהות אחרונה.
  *
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
@@ -26,6 +29,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import * as CLIENT from '../effective-workdays.js?v=42g0';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FN = resolve(HERE, '..', 'functions');
@@ -116,7 +120,11 @@ function createFakeDb() {
   return {
     collection: (name) => query(name, [], null),
     doc: (path) => docRef(path),
-    async getAll(...refs) { return Promise.all(refs.map((r) => r.get())); },
+    async getAll(...refs) {
+      this._getAllCalls = (this._getAllCalls || 0) + 1;
+      if (typeof this._onGetAll === 'function') await this._onGetAll(this._getAllCalls);
+      return Promise.all(refs.map((r) => r.get()));
+    },
     async runTransaction() { throw new Error('אין עסקאות במסלול הזה'); },
     _put(path, value) { docs.set(path, clone(value)); },
     _del(path) { docs.delete(path); },
@@ -312,6 +320,77 @@ function req(uid, data) {
   eq('5.1 אותו טווח, אותו בסיס — אותה חתימה', a.provenance.legacy_digest, b.provenance.legacy_digest);
   const c = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-10-01', uids: ['viewer'] });
   ok('5.2 טווח אחר — חתימה אחרת (החתימה תחומה לטווח)', c.provenance.legacy_digest !== a.provenance.legacy_digest);
+}
+
+/* ==================================================================
+ * 6 · 421#1 · שני טווחים אמיתיים מה-runtime מתחברים במודול הלקוח
+ *      (מסך האבטחות: היסטוריה + עתיד); שינוי מקור/פרסום — סירוב.
+ * ================================================================== */
+{
+  const db = createFakeDb();
+  seed(db);
+  const api = buildRuntime(db);
+  const ask = (from, to) => api.getEffectiveWorkdays(req('viewer', { from, to, uids: ['viewer', 'driver2'] }));
+  const history = await ask('2025-09-02', '2026-09-01');
+  const upcoming = await ask('2026-09-02', '2027-09-02');
+  ok('6.1 שני הטווחים נושאים חתימות תוכן שונות (הטווח בתוך החתימה)', history.provenance.legacy_digest !== upcoming.provenance.legacy_digest);
+  eq('6.2 ואותה זהות מקור', history.provenance.legacy_basis_digest, upcoming.provenance.legacy_basis_digest);
+  const merged = CLIENT.mergeEffectiveWorkdays([CLIENT.parseEffectiveWorkdays({ data: history }), CLIENT.parseEffectiveWorkdays({ data: upcoming })]);
+  eq('6.3 המסך מחבר: 1.9 (היסטוריה) ו-4.9 (עתיד) — שניהם ידועים', [CLIENT.worksOn(merged, 'viewer', '2026-09-01'), CLIENT.worksOn(merged, 'viewer', '2026-09-04'), CLIENT.worksOn(merged, 'viewer', '2026-09-02')], [true, true, false]);
+  eq('6.4 אין ימים לא ידועים בתפר', CLIENT.unknownDaysBetween(merged, '2026-08-30', '2026-09-05'), []);
+  // המקור השתנה בין שתי הקריאות (העוגן זז) — הלקוח מסרב לחבר.
+  db._put(ST + '/rotations/A', { anchor_date: '2026-09-02', cycle_days: 3, position_in_cycle: 0, crew: 'A', is_active: true });
+  db._put(ST + '/rotations/B', { anchor_date: '2026-09-02', cycle_days: 3, position_in_cycle: 1, crew: 'B', is_active: true });
+  db._put(ST + '/rotations/C', { anchor_date: '2026-09-02', cycle_days: 3, position_in_cycle: 2, crew: 'C', is_active: true });
+  const moved = await ask('2026-09-02', '2027-09-02');
+  ok('6.5 בסיס אחר — זהות אחרת', moved.provenance.legacy_basis_digest !== history.provenance.legacy_basis_digest);
+  try { CLIENT.mergeEffectiveWorkdays([CLIENT.parseEffectiveWorkdays({ data: history }), CLIENT.parseEffectiveWorkdays({ data: moved })]); ok('6.6 חיבור טווחים ממקורות שונים — סירוב', false, 'לא נזרקה שגיאה'); }
+  catch (e) { eq('6.6 חיבור טווחים ממקורות שונים — סירוב', e.code, 'workdays-merge-source'); }
+  // חריג בטווח אחד בלבד: אותה זהות מקור (החריג הוא תוכן טווח) — מתחבר, והחריג מוחל.
+  seed(db);
+  db._put(ST + '/shift_overrides/2026-09-04', { kind: 'swap', crew: 'B', extra_crews: [] });
+  const withOverride = await ask('2026-09-02', '2027-09-02');
+  const merged2 = CLIENT.mergeEffectiveWorkdays([CLIENT.parseEffectiveWorkdays({ data: history }), CLIENT.parseEffectiveWorkdays({ data: withOverride })]);
+  eq('6.7 חריג בטווח העתיד — מתחבר ומוחל (viewer לא ב-4.9, driver2 כן)', [CLIENT.worksOn(merged2, 'viewer', '2026-09-04'), CLIENT.worksOn(merged2, 'driver2', '2026-09-04')], [false, true]);
+  // new עם פרסום מול legacy — סירוב (מצב/מקור שונים).
+  const fake = { data: Object.assign({}, upcoming, { mode: 'new', source: 'publication', provenance: { mode: 'new', source: 'v2', publication_id: 'p1', revision: 1, content_digest: 'c' } }) };
+  try { CLIENT.mergeEffectiveWorkdays([CLIENT.parseEffectiveWorkdays({ data: history }), CLIENT.parseEffectiveWorkdays(fake)]); ok('6.8 legacy + פרסום — סירוב', false, 'לא נזרקה שגיאה'); }
+  catch (e) { eq('6.8 legacy + פרסום — סירוב', e.code, 'workdays-merge-source'); }
+}
+
+/* ==================================================================
+ * 7 · 421#2 · השבתה/העברה **מתוך קריאות האימות הסופי** — בלי תפר
+ *      (המסד עצמו משבית את המשתמש ב-getAll השני), והזהות נבדקת אחרונה.
+ * ================================================================== */
+{
+  const db = createFakeDb();
+  seed(db);
+  const api = buildRuntime(db);
+  const input = { from: '2026-09-01', to: '2026-09-06', uids: ['viewer'] };
+  let seen = 0;
+  db._onGetAll = async (n) => {
+    seen = n;
+    // getAll #1 — הבסיס הנעוץ; getAll #2 — האימות הסופי (verify). בדיוק אז — השבתה.
+    if (n === 2) db._put(ST + '/users/viewer', { station_id: SID, station: SID, is_active: false, active: false, role: 'firefighter' });
+  };
+  await rejectsCode('7.1 השבתה במהלך ה-getAll של האימות → workdays-viewer-changed', () => api.getEffectiveWorkdays(req('viewer', input)), 'workdays-viewer-changed');
+  eq('7.2 האימות אכן קרא (getAll שני)', seen >= 2, true);
+  seed(db);
+  db._getAllCalls = 0;
+  db._onGetAll = async (n) => {
+    if (n === 2) db._put(ST + '/users/viewer', { station_id: 'elsewhere_1', station: 'elsewhere_1', is_active: true, active: true, role: 'firefighter' });
+  };
+  await rejectsCode('7.3 העברת תחנה במהלך האימות → workdays-viewer-changed', () => api.getEffectiveWorkdays(req('viewer', input)), 'workdays-viewer-changed');
+  seed(db);
+  db._getAllCalls = 0;
+  db._onGetAll = async (n) => {
+    if (n === 2) db._put(ST + '/schedule_state/runtime', { mode: 'off' });
+  };
+  await rejectsCode('7.4 מצב שהשתנה במהלך האימות → schedule-mode-changed', () => api.getEffectiveWorkdays(req('viewer', input)), 'schedule-mode-changed');
+  seed(db);
+  db._onGetAll = null;
+  const ok7 = await api.getEffectiveWorkdays(req('viewer', input));
+  eq('7.5 בלי הפרעה — תשובה', ok7.by_uid.viewer, ['2026-09-01', '2026-09-04']);
 }
 
 if (fails.length) {
