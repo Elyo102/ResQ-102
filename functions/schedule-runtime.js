@@ -13,6 +13,7 @@ const modeAuthorityModule = require('./schedule-mode-authority');
 const cutoverModule = require('./schedule-cutover');
 const sourceAuthorModule = require('./schedule-source-author');
 const sheetImport = require('./schedule-sheet-import');
+const scheduleEdit = require('./schedule-edit');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -3400,6 +3401,244 @@ function createScheduleRuntime(deps) {
     return { duplicate: false, draft_id: draftId, summary, from: plan.from, to: plan.to, report };
   }
 
+  /* ================================================================
+   * 42H.2 · חבילה א׳ — עריכת סידור שכבר פורסם
+   *
+   * אף snapshot קיים אינו משתנה. העריכה מייצרת **טיוטה נגזרת** מהפרסום
+   * הפעיל (rows + absences עם השינויים), דרך אותם stageSnapshot/finalizeDraft,
+   * ואז מתפרסמת דרך **אותו** publish: revision חדש, CAS על המצביע
+   * (publication_id + revision + content_digest — גם בסיס העריכה נבדק
+   * בעסקת הפרסום), יומן ביקורת, rollback הקיים, ו-outbox עם פוש מסכם אחד
+   * לכל אדם שהשתנה (planPublication מאחד את כל השינויים של אדם להודעה
+   * אחת). רק בעל מינוי חי schedule_manager, רק במצב new (יש פרסום פעיל).
+   * ================================================================ */
+  const MAX_EDIT_REPORT_CHANGES = 400;
+
+  function requestedEditBase(data) {
+    const base = plain(data.expected) ? data.expected : {};
+    const id = String(base.publication_id || '');
+    if (!ID_RE.test(id) || !integer(base.revision) || base.revision < 1 || !nonEmpty(base.content_digest)) {
+      throw new ScheduleRuntimeError('edit-base-required',
+        'יש לציין את הפרסום הפעיל (מזהה, גרסה וחתימה) שעליו העריכה.', 'invalid-argument');
+    }
+    return { publication_id: id, revision: Number(base.revision), content_digest: String(base.content_digest) };
+  }
+
+  function scheduleEditError(error) {
+    if (error && error.name === 'ScheduleEditError') {
+      throw new ScheduleRuntimeError(error.code, error.message, 'invalid-argument');
+    }
+    throw error;
+  }
+
+  function editBaseMatches(pointer, base) {
+    return !!pointer && !!base && pointer.publication_id === base.publication_id
+      && Number(pointer.revision) === Number(base.revision)
+      && pointer.content_digest === base.content_digest;
+  }
+
+  async function scheduleEditBasis(ctx, req) {
+    const config = await configuration(ctx.sid);
+    requireMode(config, [MODE.NEW]);
+    const data = plain(req.data) ? req.data : {};
+    const base = requestedEditBase(data);
+    // ⭐ קריאה מלאה של הפרסום הפעיל — החתימה מאומתת — ואז CAS מול מה שהמסך ראה.
+    const active = await activeSnapshot(ctx);
+    if (!active) {
+      throw new ScheduleRuntimeError('edit-no-active', 'אין סידור פעיל לעריכה.', 'failed-precondition');
+    }
+    if (!editBaseMatches(active.pointer, base)) {
+      throw new ScheduleRuntimeError('edit-base-stale',
+        'הסידור הפעיל השתנה מאז שנטען למסך. יש לרענן ולערוך שוב.', 'failed-precondition');
+    }
+    const policy = await loadPolicy(ctx, config.active_policy_id);
+    const source = await loadSource(ctx, config.active_source_id);
+    const people = source.peopleRaw.filter((person) => person.active === true);
+    let edits;
+    let applied;
+    try {
+      edits = scheduleEdit.normalizeEdits(data.edits, { from: active.plan.from, to: active.plan.to });
+      applied = scheduleEdit.applyEdits({ plan: active.plan, edits, people, policy: policy.value, station_id: ctx.sid });
+    } catch (error) { scheduleEditError(error); }
+    const effective = effectiveSource(ctx, source, policy, []);
+    const plan = Object.assign({}, applied.plan, {
+      kind: 'schedule-plan', station_id: ctx.sid, contract_station_id: ctx.sid,
+      source_snapshot: effective.snapshot, source_version: effective.version,
+      source_revision: effective.revision, source_digest: effective.digest,
+      policy_version: policy.value.version, policy_digest: policy.digest, source_complete: true,
+      generated_at: clock(), edited: true
+    });
+    // תכנון הפרסום „על יבש" — כמה אנשים יקבלו הודעה, בלי לכתוב דבר.
+    const publication = createPublication({ clock, hash, rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] } });
+    let planned;
+    try {
+      planned = serviceFor(ctx, null, publication).publish({
+        actor: actor(ctx),
+        request: {
+          next: plan, previous: active.plan, next_events: effective.events, previous_events: active.events,
+          publication_id: 'preview', publication_revision: base.revision + 1,
+          source_draft_id: 'preview', previous_publication_id: base.publication_id
+        }
+      });
+    } catch (error) {
+      throw new ScheduleRuntimeError('edit-not-publishable',
+        'התוצאה אינה ניתנת לפרסום: ' + String(error && error.message || error), 'failed-precondition');
+    }
+    /* ⭐ חתימת העריכה: הבסיס, העריכות הקנוניות, המקור והמדיניות החיים.
+     * הביצוע מקבל את החתימה שהמסך ראה — או סירוב. */
+    const editDigest = digest({
+      station_id: ctx.sid, base, edits, source: source.digest, policy: policy.digest
+    });
+    return { ctx, config, data, base, active, policy, source, people, edits, applied, effective, plan, planned, editDigest };
+  }
+
+  function scheduleEditReport(basis) {
+    const names = new Map();
+    basis.active.roster.forEach((person) => names.set(person.id, String(person.name || person.id)));
+    basis.source.peopleRaw.forEach((person) => names.set(person.id, String(person.full_name || person.name || person.id)));
+    const perPerson = new Map();
+    basis.applied.changes.forEach((change) => {
+      perPerson.set(change.uid, (perPerson.get(change.uid) || 0) + 1);
+    });
+    const belowMinimum = basis.plan.rows.filter((row) => row.below_minimum === true)
+      .map((row) => ({ date: row.date, sub_station: row.sub_station, label: row.label, people: row.slots.length, minimum: row.minimum }));
+    return {
+      base: basis.base,
+      from: basis.plan.from, to: basis.plan.to,
+      counts: basis.applied.counts,
+      changes: basis.applied.changes.slice(0, MAX_EDIT_REPORT_CHANGES).map((change) => Object.assign({}, change, {
+        name: names.get(change.uid) || change.uid
+      })),
+      changes_truncated: basis.applied.changes.length > MAX_EDIT_REPORT_CHANGES,
+      people_changed: basis.applied.people_changed.map((uid) => ({ uid, name: names.get(uid) || uid, changes: perPerson.get(uid) || 0 })),
+      warnings: basis.applied.warnings.map((warning) => Object.assign({}, warning, { name: names.get(warning.uid) || warning.uid })),
+      notifications: basis.planned.notifications.length,
+      below_minimum: belowMinimum,
+      next_revision: basis.base.revision + 1,
+      edit_digest: basis.editDigest
+    };
+  }
+
+  async function previewScheduleEdit(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const basis = await scheduleEditBasis(ctx, req);
+    const report = scheduleEditReport(basis);
+    // הדוח נושא שמות — אימות חי אחרון אחרי כל הקריאות, לפני ההחזרה.
+    await requireLiveManagerNow(ctx);
+    return report;
+  }
+
+  async function applyScheduleEdit(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const base = requestedEditBase(data);
+    const expectedDigest = String(data.expected_edit_digest || '');
+    const draftId = 'd_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
+    const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
+    const fingerprintOf = (edits) => digest({ station_id: ctx.sid, uid: ctx.uid, requestId, base, edits, expected: expectedDigest });
+    /* ⭐ ניסיון חוזר קודם לכל בדיקת בסיס: אחרי שהעריכה פורסמה המצביע כבר זז,
+     * ובכל זאת אותה בקשה חייבת לקבל את אותה קבלה — לא „הבסיס השתנה". */
+    const existing = await ref.get();
+    if (existing.exists) {
+      const before = existing.data() || {};
+      let edits;
+      try {
+        edits = scheduleEdit.normalizeEdits(data.edits, { from: before.from, to: before.to });
+      } catch (error) { scheduleEditError(error); }
+      if (before.request_fingerprint !== fingerprintOf(edits)) {
+        throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לעריכה אחרת.', 'already-exists');
+      }
+      if (before.status === 'cancelled') {
+        throw new ScheduleRuntimeError('draft-cancelled', 'הטיוטה בוטלה ולכן יש להתחיל פעולה חדשה.', 'aborted');
+      }
+      if (before.status !== 'complete') {
+        throw new ScheduleRuntimeError('draft-staging', 'העריכה עדיין נבנית. נסה שוב בעוד רגע.', 'aborted');
+      }
+      const published = await publish({
+        auth: req.auth,
+        data: { draft_id: draftId, request_id: requestId, expected_content_digest: before.content_digest }
+      });
+      return {
+        duplicate: published.duplicate === true, draft_id: draftId,
+        publication_id: published.publication_id, revision: published.revision,
+        notified_people: published.notified_people || 0,
+        report: plain(before.edit_report) ? before.edit_report : null
+      };
+    }
+    const basis = await scheduleEditBasis(ctx, req);
+    const { edits, plan, effective, policy, source } = basis;
+    const fingerprint = fingerprintOf(edits);
+    if (!expectedDigest || expectedDigest !== basis.editDigest) {
+      throw new ScheduleRuntimeError('edit-report-stale',
+        'הדוח שאושר אינו תואם לעריכה, לסידור הפעיל, למקור או למדיניות הנוכחיים. יש ללחוץ שוב על „בדוק".', 'failed-precondition');
+    }
+    if (!basis.applied.changes.length) {
+      throw new ScheduleRuntimeError('edit-no-changes', 'העריכה אינה משנה דבר בסידור הפעיל.', 'failed-precondition');
+    }
+    const report = scheduleEditReport(basis);
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref, activeRef(ctx.sid)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[2].exists) {
+        throw new ScheduleRuntimeError('draft-race', 'טיוטה עם אותו מזהה נוצרה במקביל. רענן ונסה שוב.', 'aborted');
+      }
+      // CAS חי על הבסיס גם ברגע יצירת הטיוטה — לא רק בפרסום.
+      if (!editBaseMatches(snaps[3].exists ? (snaps[3].data() || {}) : null, base)) {
+        throw new ScheduleRuntimeError('edit-base-stale',
+          'הסידור הפעיל השתנה מאז שנטען למסך. יש לרענן ולערוך שוב.', 'aborted');
+      }
+      tx.create(ref, {
+        station_id: ctx.sid, status: 'staging', request_id: requestId,
+        request_fingerprint: fingerprint, source_id: source.id, policy_id: policy.id,
+        base_source_digest: source.digest, base_policy_digest: policy.digest,
+        created_by: ctx.uid, created_by_name: ctx.name, created_at: FV.serverTimestamp(),
+        source_snapshot: plan.source_snapshot, source_version: plan.source_version,
+        contract_station_id: plan.contract_station_id, source_revision: plan.source_revision,
+        source_digest: plan.source_digest, source_complete: true,
+        policy_version: plan.policy_version, policy_digest: plan.policy_digest,
+        generated_at: plan.generated_at, from: plan.from, to: plan.to,
+        summary: plan.summary, months: 1, imported: plan.imported === true,
+        edited: true, edit_base: base, edit_digest: basis.editDigest,
+        edit_summary: {
+          edits: edits.length, changes: basis.applied.changes.length,
+          people: basis.applied.people_changed, warnings: basis.applied.warnings.length
+        },
+        edit_report: report
+      });
+      /* ⭐ יומן ביקורת של העריכה — מזהים בלבד, בלי שמות: מי ערך, על איזה
+       * בסיס, ומה השתנה לכל אדם ויום (לפני/אחרי). הפרסום עצמו נרשם
+       * ב-publish (action: publish + edited_from). */
+      tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
+        action: 'edit-draft', draft_id: draftId, request_id: requestId,
+        base_publication_id: base.publication_id, base_revision: base.revision,
+        edit_digest: basis.editDigest, by: ctx.uid, at: FV.serverTimestamp(),
+        changes: basis.applied.changes.slice(0, MAX_EDIT_REPORT_CHANGES).map((change) => ({
+          uid: change.uid, date: change.date, before: change.before, after: change.after
+        })),
+        change_count: basis.applied.changes.length
+      });
+    });
+    const contentDigest = await stageSnapshot(ref, {}, plan, effective.events, effective.roster);
+    await finalizeDraft(ctx, ref, contentDigest);
+    // ⭐ אותו publish: revision חדש, CAS על המצביע ועל בסיס העריכה, יומן, outbox.
+    const published = await publish({
+      auth: req.auth,
+      data: { draft_id: draftId, request_id: requestId, expected_content_digest: contentDigest }
+    });
+    return {
+      duplicate: published.duplicate === true,
+      draft_id: draftId,
+      publication_id: published.publication_id,
+      revision: published.revision,
+      notified_people: published.notified_people || 0,
+      report
+    };
+  }
+
   async function getDraftPreview(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -4359,6 +4598,7 @@ function createScheduleRuntime(deps) {
       policy_digest: next.plan.policy_digest, generated_at: next.plan.generated_at,
       from: next.plan.from, to: next.plan.to, summary: next.plan.summary,
       imported: next.plan.imported === true,
+      edited: draftMeta.edited === true, edit_base: draftMeta.edited === true ? draftMeta.edit_base : null,
       content_hash: planned.publication.content_hash,
       published_by: ctx.uid, published_by_name: ctx.name
     });
@@ -4402,6 +4642,13 @@ function createScheduleRuntime(deps) {
       if (actualPrevious !== expectedPrevious || Number(liveActive.revision || 0) !== revision - 1) {
         throw new ScheduleRuntimeError('publish-race', 'פורסם סידור אחר במקביל. יש לרענן.', 'aborted');
       }
+      /* ⭐ 42H.2 · טיוטה נגזרת מעריכה: הפרסום שנערך חייב להיות **עדיין** הפעיל —
+       * publication_id + revision + content_digest — אחרת העריכה נעשתה על לוח
+       * שכבר הוחלף (פרסום אחר, עריכה אחרת או rollback באמצע). */
+      if (liveDraft.edited === true && !editBaseMatches(liveActive, liveDraft.edit_base)) {
+        throw new ScheduleRuntimeError('edit-base-stale',
+          'הסידור הפעיל השתנה מאז שנערך. יש לרענן ולערוך שוב.', 'aborted');
+      }
       if (liveConfig.mode !== config.mode) {
         throw new ScheduleRuntimeError('publish-config-changed',
           'מצב המנוע השתנה בזמן הפרסום.', 'aborted');
@@ -4440,11 +4687,15 @@ function createScheduleRuntime(deps) {
         content_digest: livePub.content_digest, activated_at: FV.serverTimestamp(),
         activated_by: ctx.uid
       });
-      tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
+      tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), Object.assign({
         action: 'publish', publication_id: pubId, revision,
         previous_publication_id: expectedPrevious, by: ctx.uid,
         at: FV.serverTimestamp()
-      });
+      }, liveDraft.edited === true ? {
+        edited_from: liveDraft.edit_base, edit_digest: liveDraft.edit_digest || null,
+        edit_people: plain(liveDraft.edit_summary) && Array.isArray(liveDraft.edit_summary.people) ? liveDraft.edit_summary.people : [],
+        edit_changes: plain(liveDraft.edit_summary) ? Number(liveDraft.edit_summary.changes || 0) : 0
+      } : {}));
       });
     } catch (error) {
       if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
@@ -6939,6 +7190,8 @@ function createScheduleRuntime(deps) {
     runPlanner,
     previewScheduleImport,
     importScheduleSheet,
+    previewScheduleEdit,
+    applyScheduleEdit,
     getDraftPreview,
     publish,
     rollback,

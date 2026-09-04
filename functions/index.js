@@ -5208,6 +5208,11 @@ exports.previewScheduleImport = onCall({ enforceAppCheck: true, memory: '512MiB'
   invokeSchedule('previewScheduleImport', req));
 exports.importScheduleSheet = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
   invokeSchedule('importScheduleSheet', req));
+// 42H.2 · עריכת סידור שפורסם — אחראי סידור חי בלבד; revision חדש דרך publish.
+exports.previewScheduleEdit = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('previewScheduleEdit', req));
+exports.applyScheduleEdit = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
+  invokeSchedule('applyScheduleEdit', req));
 
 exports.publishSchedule = onCall({
   enforceAppCheck: true,

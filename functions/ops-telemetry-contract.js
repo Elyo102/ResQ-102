@@ -23,7 +23,7 @@ const CODES = Object.freeze([
 // Explicit public onCall names only; never accept a free-form action label.
 const CALLABLES = Object.freeze([
   'unknown',
-  'approveRegistration', 'assignGuard', 'backupToSheetNow',
+  'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
   'closeCallout', 'createStationTransfer', 'decideStationTransfer',
@@ -35,7 +35,7 @@ const CALLABLES = Object.freeze([
   'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
   'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listStationTransfers',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
-  'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleImport', 'previewSchedulePolicy',
+  'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleEdit', 'previewScheduleImport', 'previewSchedulePolicy',
   'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
   'rejectRegistration', 'replyToBulletinMessage', 'reportIncident',
   'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
