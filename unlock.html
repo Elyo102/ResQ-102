@@ -57,7 +57,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 import { firebaseConfig } from './firebase-config.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFunctions, httpsCallable }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+  from './monitored-functions.js?v=42g0';
 
 const app = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.

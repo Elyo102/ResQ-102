@@ -20,7 +20,33 @@ export const TELEMETRY_CODES = Object.freeze([
     'failed-precondition', 'aborted', 'out-of-range', 'unimplemented', 'internal',
     'unavailable', 'data-loss', 'unauthenticated'].map(code => 'functions/' + code)
 ]);
-export const TELEMETRY_CALLABLES = Object.freeze(['unknown', 'submitFeedback', 'reportIncident']);
+// Explicit public onCall names only; never accept a free-form action label.
+export const TELEMETRY_CALLABLES = Object.freeze([
+  'unknown',
+  'approveRegistration', 'assignGuard', 'backupToSheetNow',
+  'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
+  'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
+  'closeCallout', 'createStationTransfer', 'decideStationTransfer',
+  'getAttendanceShadowStatus', 'getGuardLoadStatistics', 'getJoinCode',
+  'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
+  'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
+  'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
+  'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
+  'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
+  'hideBulletinReply', 'joinWithCode', 'listStationTransfers',
+  'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
+  'postBulletinMessage', 'previewScheduleCutover', 'previewSchedulePolicy',
+  'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
+  'rejectRegistration', 'replyToBulletinMessage', 'reportIncident',
+  'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
+  'rollbackSchedule', 'runAttendanceShadowNow', 'runReportNow',
+  'runSchedulePlanner', 'saveSchedulePolicy', 'saveScheduleSource',
+  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
+  'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode',
+  'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
+  'setUserRole', 'submitFeedback', 'unlockAccount',
+  'whoAmI'
+]);
 
 function allowed(value, values, fallback = 'unknown') {
   return typeof value === 'string' && values.includes(value) ? value : fallback;
@@ -54,18 +80,20 @@ export function createIncidentReporter(options) {
   let sent = 0;
   let installed = false;
 
-  async function send(kind, error, context) {
+  async function send(kind, error, context, owner) {
     // Even a hostile Error getter must not create another rejection or
     // replace the application's original exception.
     try {
       if (!callable) return false;
+      const permit = typeof o.authorize === 'function' ? await o.authorize(owner) : true;
+      if (!permit) return false;
       const body = buildReport(kind, error, Object.assign({ version: o.version }, context || {}));
       if (body.code === 'functions/unauthenticated') return false;
       const key = JSON.stringify(body);
       if (seen.has(key) || sent >= maxPerLoad) return false;
       seen.add(key);
       sent += 1;
-      await callable(body);
+      await callable(body, permit);
       return true;
     } catch (ignore) {
       return false;
@@ -97,6 +125,7 @@ export function createIncidentReporter(options) {
 
   return Object.freeze({
     install, wrapCallable,
+    callableFailure: (name, error, owner) => send('callable-failed', error, { callable: name }, owner),
     report: (error, context) => send('manual', error, context || {}),
     stats: () => ({ sent, seen: seen.size, maxPerLoad })
   });

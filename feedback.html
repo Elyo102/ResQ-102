@@ -146,12 +146,11 @@ import { APP_VERSION } from './version.js?v=42g0';
 import { MEMBER_ROLES } from './roles.js?v=42g0';
 import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, createFeedbackSubmissionSession, errorText }
   from './feedback.js?v=42g0';
-import { installIncidentReporter } from './incident-client.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+  from './monitored-functions.js?v=42g0';
 
 const app  = initializeApp(firebaseConfig);
 import { initAppCheck } from './appcheck.js?v=42g0';
@@ -161,8 +160,7 @@ const fns  = getFunctions(app, 'europe-west1');
 const $ = id => document.getElementById(id);
 
 // דיווח תקלות של המסך הזה עצמו — ואותו עוטף גם את השליחה.
-const incidents = installIncidentReporter({ fns, httpsCallable, version: APP_VERSION });
-const submitFeedback = incidents.wrapCallable('submitFeedback', httpsCallable(fns, 'submitFeedback'));
+const submitFeedback = httpsCallable(fns, 'submitFeedback');
 
 renderStuckNav('');
 initPWA({ offer: false });
