@@ -19,7 +19,7 @@
  * המודול הזה אינו נוגע ב-DOM ולא ב-Firebase, כדי שייבדק לבד.
  * ====================================================================== */
 
-import { swapEffect } from './rotation.js?v=42g1';
+import { swapEffect } from './rotation.js?v=42h0';
 
 export const WORKDAYS_MODES = Object.freeze(['off', 'shadow', 'new']);
 export const WORKDAYS_SOURCES = Object.freeze(['legacy', 'publication']);

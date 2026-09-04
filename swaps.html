@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42g1">
+<link rel="stylesheet" href="./theme.css?v=42h0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -384,13 +384,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g1';
-import { renderNav, renderStuckNav } from './nav.js?v=42g1';
-import { initPWA } from './pwa.js?v=42g1';
-import { watchCallouts } from './callout.js?v=42g1';
-import { CREW_HE, CREW_SHORT } from './rotation.js?v=42g1';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h0';
+import { renderNav, renderStuckNav } from './nav.js?v=42h0';
+import { initPWA } from './pwa.js?v=42h0';
+import { watchCallouts } from './callout.js?v=42h0';
+import { CREW_HE, CREW_SHORT } from './rotation.js?v=42h0';
 import { parseEffectiveWorkdays, worksOn, swapRestCheckEffective, restWhyEffective,
-         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42g1';
+         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -398,16 +398,16 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42g1';
+  from './monitored-functions.js?v=42h0';
 import { MEMBER_ROLES, STAFF_ROLES, mayWriteLog, roleHe }
-  from './roles.js?v=42g1';
+  from './roles.js?v=42h0';
 import { MAX_TEXT, validateMessage, messageDoc, groupByDay, timeOf,
          lastRead, markRead, unreadCount, newestKey, visible }
-  from './shiftlog.js?v=42g1';
+  from './shiftlog.js?v=42h0';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42g1';
+import { initAppCheck } from './appcheck.js?v=42h0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

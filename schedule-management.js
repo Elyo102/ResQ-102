@@ -1,10 +1,10 @@
-import { firebaseConfig } from './firebase-config.js?v=42g1';
-import { renderNav, renderStuckNav } from './nav.js?v=42g1';
-import { initPWA } from './pwa.js?v=42g1';
-import { initAppCheck } from './appcheck.js?v=42g1';
+import { firebaseConfig } from './firebase-config.js?v=42h0';
+import { renderNav, renderStuckNav } from './nav.js?v=42h0';
+import { initPWA } from './pwa.js?v=42h0';
+import { initAppCheck } from './appcheck.js?v=42h0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42g1';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h0';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -25,6 +25,8 @@ const call = Object.freeze({
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
   policySave: httpsCallable(functions, 'saveSchedulePolicy'),
   run: httpsCallable(functions, 'runSchedulePlanner'),
+  importPreview: httpsCallable(functions, 'previewScheduleImport'),
+  importSheet: httpsCallable(functions, 'importScheduleSheet'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -983,6 +985,7 @@ function subClass(index) { return SUB_CLASS[index % SUB_CLASS.length]; }
 
 const ABSENCE_ROWS = [['sick', 'מחלה'], ['reserve', 'מילואים'], ['course', 'קורסים'], ['leave', 'חופש']];
 const ABSENCE_LOCATIONS = new Map([['abroad', 'חו״ל'], ['north', 'צפון'], ['eilat', 'אילת']]);
+const CREW_HE = { A: 'א׳', B: 'ב׳', C: 'ג׳' };
 
 function absenceDataReady(day) {
   return day.absences_status === 'ready' && Array.isArray(day.absences)
@@ -995,36 +998,49 @@ function absenceKind(item) {
   return ABSENCE_ROWS.some(([kind]) => kind === item.kind) ? item.kind : 'unknown';
 }
 
+/* שורות ההיעדרות בתחתית הלוח — כמו בתחתית הגיליון. חודש שלא הודבק
+ * (הסידור הקיים) אינו יודע היעדרויות: התאים ריקים והערה אחת מתחת
+ * ללוח אומרת זאת — לא הודעה בכל תא. */
 function appendAbsenceRows(board, days) {
   const rows = ABSENCE_ROWS.slice();
   if (days.some((day) => absenceDataReady(day)
       && day.absences.some((item) => absenceKind(item) === 'unknown'))) {
     rows.push(['unknown', 'סיבה לא ידועה']);
   }
-  rows.forEach(([kind, label]) => {
-    const stub = node('div', 'stub absence-stub');
+  rows.forEach(([kind, label], rowIndex) => {
+    const stub = node('div', 'stub absence absence-stub');
     stub.appendChild(node('b', '', label));
     board.appendChild(stub);
     days.forEach((day, index) => {
-      const cell = node('div', 'cell absence-cell' + (index % 7 === 0 ? ' snap' : ''));
+      const ready = absenceDataReady(day);
+      // „אין נתון" (חודש שלא הודבק) אינו „אף אחד" (רשימה ריקה מאומתת):
+      // הראשון תא מקווקו בלי סימן, השני מקף. ההסבר — פעם אחת מתחת ללוח.
+      const cell = node('div', 'cell absence-cell' + (rowIndex === 0 ? ' first' : '')
+        + (ready ? '' : ' unknown') + (index % 7 === 0 ? ' snap' : ''));
       cell.dataset.absenceKind = kind;
       cell.dataset.date = day.date;
-      if (!absenceDataReady(day)) {
-        cell.appendChild(node('span', 'absence-empty', 'מידע היעדרויות אינו זמין'));
-      } else {
-        const people = day.absences.filter((item) => absenceKind(item) === kind);
-        people.forEach((item) => {
-          const row = node('div', 'nm absence-name', item.display);
-          if (kind === 'leave' && ABSENCE_LOCATIONS.has(item.location)) {
-            row.appendChild(node('span', 'absence-location', ABSENCE_LOCATIONS.get(item.location)));
-          }
-          cell.appendChild(row);
-        });
-        if (!people.length) cell.appendChild(node('span', 'absence-empty', '—'));
-      }
+      if (!ready) cell.title = 'אין נתון: החודש הזה לא הודבק מהגיליון';
+      const people = ready ? day.absences.filter((item) => absenceKind(item) === kind) : [];
+      people.forEach((item) => {
+        const row = node('div', 'nm absence-name' + (item.is_me ? ' me' : ''), item.display);
+        if (kind === 'leave' && ABSENCE_LOCATIONS.has(item.location)) {
+          row.appendChild(node('span', 'absence-location', ABSENCE_LOCATIONS.get(item.location)));
+        }
+        cell.appendChild(row);
+      });
+      if (ready && !people.length) cell.appendChild(node('span', 'absence-empty', '—'));
       board.appendChild(cell);
     });
   });
+}
+
+function absenceNote(days) {
+  if (!days || !days.length) return '';
+  const ready = days.filter((day) => absenceDataReady(day)).length;
+  if (ready === days.length) return '';
+  return ready === 0
+    ? ' שורות ההיעדרות מתמלאות מהסידור שמודבק מהגיליון; החודש הזה עדיין לא הודבק.'
+    : ' חלק מהימים בטווח לא הודבקו מהגיליון, ולכן שורות ההיעדרות שלהם ריקות.';
 }
 
 /**
@@ -1089,18 +1105,31 @@ function subOrder(days) {
       if (!labels.has(id)) labels.set(id, state.policy.sub_stations[id].label || id);
     });
   }
+  // הקו של כל תחנה: מהמדיניות כשהיא טעונה (אחראי סידור), אחרת מהשורות
+  // עצמן — השרת מצרף לכל בלוק את הקו שנחתם בפרסום. קו 0 = אין קו.
+  const minimums = new Map();
+  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
+    if (!minimums.has(sub.sub_station) && Number.isInteger(sub.minimum)) minimums.set(sub.sub_station, sub.minimum);
+  }));
+  const lineOf = (id) => {
+    const value = state.policy && state.policy.sub_stations[id]
+      ? state.policy.sub_stations[id].minimum
+      : (minimums.has(id) ? minimums.get(id) : null);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  };
   return seen.map((id) => ({
     id,
     label: labels.get(id) || id,
-    minimum: state.policy && state.policy.sub_stations[id]
-      ? state.policy.sub_stations[id].minimum : null
+    minimum: lineOf(id)
   }));
 }
 
 function cellContent(cell, block, sub) {
   const people = (block && block.people) || [];
-  const minimum = block && block.minimum !== undefined && block.minimum !== null
+  const declared = block && block.minimum !== undefined && block.minimum !== null
     ? block.minimum : sub.minimum;
+  // קו 0 (או חסר) = „אין קו": אין קו אדום ואין „מתחת לקו".
+  const minimum = Number.isInteger(declared) && declared > 0 ? declared : null;
 
   people.forEach((person, index) => {
     // ⭐ הקו האדום מצויר במקום קו המינימום של תחנת הקצה. הוא אינו
@@ -1153,24 +1182,32 @@ function renderBoard(target, days, options) {
   board.style.setProperty('--n', String(days.length));
   board.appendChild(node('div', 'corner'));
 
+  // צוות היום (משמרת = יממה) מגיע מהשרת: `day.crew`. הוא צובע את העמודה
+  // כולה ומופיע כאות בכותרת — כמו בגיליון. בלי צוות ידוע — עמודה ניטרלית.
+  const dayCrew = (day) => (['A', 'B', 'C'].includes(day.crew) ? day.crew : null);
   days.forEach((day, index) => {
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
       + (index % 7 === 0 ? ' snap' : ''));
     head.appendChild(node('div', 'dw', DOW[new Date(day.date + 'T00:00:00.000Z').getUTCDay()]));
     head.appendChild(node('div', 'dd',
       Number(day.date.slice(8, 10)) + '/' + Number(day.date.slice(5, 7))));
+    const crew = dayCrew(day);
+    const chip = node('span', 'crew' + (crew ? ' crew-' + crew : ''), crew ? 'משמרת ' + CREW_HE[crew] : '—');
+    chip.title = crew ? 'המשמרת שעובדת ביממה הזאת' : 'המשמרת של היום אינה ידועה';
+    head.appendChild(chip);
     board.appendChild(head);
   });
 
   subs.forEach((sub, subIndex) => {
-    const stub = node('div', 'stub');
+    const stub = node('div', 'stub ' + subClass(subIndex));
     stub.appendChild(node('b', '', sub.label));
     stub.appendChild(node('small', '',
       sub.minimum === null || sub.minimum === undefined ? 'אין קו' : 'קו ' + sub.minimum));
     board.appendChild(stub);
 
     days.forEach((day, index) => {
-      const cell = node('div', 'cell ' + subClass(subIndex) + (index % 7 === 0 ? ' snap' : ''));
+      const crew = dayCrew(day);
+      const cell = node('div', 'cell ' + (crew ? 'col-' + crew : subClass(subIndex)) + (index % 7 === 0 ? ' snap' : ''));
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
       cellContent(cell, block, sub);
       // אירועים ואבטחות שייכים ליום כולו ולא לתחנת קצה. הם נתלים
@@ -1194,7 +1231,7 @@ function renderBoard(target, days, options) {
     });
   });
 
-  if (opts.showAbsences === true) appendAbsenceRows(board, days);
+  if (opts.showAbsences !== false) appendAbsenceRows(board, days);
   target.appendChild(board);
   fitColumns(board);
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
@@ -1285,9 +1322,9 @@ async function loadStationRange(ym) {
     renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
     $('stationNote').textContent = (view.source === 'legacy'
-      ? 'הלוח מוצג מהסידור הקיים, כי מנוע הסידור החדש עדיין אינו פעיל.'
-      : 'הלוח מוצג מהסידור שפורסם · גרסה ' + (view.revision || '—') + '.')
-      + guardsNotice(view.days);
+      ? 'הלוח מוצג מהסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון.'
+      : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
+      + absenceNote(view.days) + guardsNotice(view.days);
   } catch (error) {
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
@@ -1441,7 +1478,7 @@ async function loadMineRange(ym) {
     }
     const days = state.mineOnly ? daysWithMe(view.days) : view.days;
     const only = mySubStation();
-    renderBoard(box, days, { id: 'mineBoard', onlySub: only || undefined,
+    renderBoard(box, days, { id: 'mineBoard', onlySub: only || undefined, showAbsences: false,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
     $('mineNote').textContent = (only
@@ -1811,9 +1848,223 @@ function overrides() {
   });
 }
 
+/* ==================================================================
+ * הדבקת הסידור מהגיליון (הכרעת אלדד 4.9 — „אפשרות ב׳")
+ *
+ * הגיליון הוא מסד הנתונים. אחראי הסידור מדביק אותו כמות שהוא; השרת
+ * מפרק לפי התוויות, מדווח מה זוהה ומה לא, ואחרי התאמת שמות מייבא
+ * **כטיוטה** — אותה תצוגה מקדימה ואותו כפתור פרסום. המנוע אינו מריץ
+ * כללים על הגיליון. שם שלא זוהה מוצג פעם אחת; ההתאמה נשמרת בשרת.
+ * ================================================================== */
+/* ההתאמות נצברות במסך בין בדיקה לבדיקה: אחרי שהשרת אישר שם, השורה
+ * שלו נעלמת מהדוח — אבל ההתאמה חייבת להישלח גם בייבוא. השרת שומר
+ * אותן לחודשים הבאים; המסך מנקה אותן כשמדביקים גיליון אחר. */
+function importAliases() {
+  const out = Object.assign({}, state.importAliases || {});
+  document.querySelectorAll('#importUnresolved select[data-name]').forEach((select) => {
+    const value = select.value;
+    if (value === '') return;
+    out[select.dataset.name] = value === '__ignore__' ? null : value;
+  });
+  state.importAliases = out;
+  return out;
+}
+
+function importInput() {
+  const month = $('importMonth').value;
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לייבוא.');
+  const paste = $('importPaste').value;
+  if (!paste.trim()) throw new Error('צריך להדביק את הגיליון.');
+  return { month, paste, aliases: importAliases(), accept: {
+    missing_stations: $('importAcceptMissing').checked === true,
+    ignored_blocks: $('importAcceptIgnored').checked === true
+  } };
+}
+
+/* כל שינוי בקלט — חודש, הדבקה, התאמה, אישור — מבטל את הדוח: הייבוא
+ * מותר רק על הדוח שהשרת חתם לקלט הזה בדיוק (`expected_report_digest`). */
+function invalidateImportReport() {
+  state.importReport = null;
+  $('importRun').disabled = !state.importPending;
+  if (state.importPending) { message('importMessage', pendingImportText(), 'warn'); return; }
+  if (!$('importReport').hidden) message('importMessage', 'הקלט השתנה — יש ללחוץ שוב על „בדוק את ההדבקה" לפני הייבוא.', 'info');
+}
+
+/* ⭐ final-review §2 · ניסיון ממתין: תשובת ייבוא שאבדה אחרי שהשרת אולי כבר
+ * יצר את הטיוטה. ה-payload המלא ומזהה הבקשה נשמרים; „ייבא" הבא שולח
+ * **בדיוק** אותם — לפני כל דוח או בקשה חדשים — והשרת מחזיר את הקבלה
+ * המקורית (גם אם בינתיים השתנה כינוי שאינו קשור). הניסיון נמחק רק אחרי
+ * תשובה מאומתת: הצלחה, או סירוב מפורש של השרת (schedule_code). */
+function pendingImportText() {
+  return 'התשובה על הייבוא לא הגיעה. לחץ שוב על „ייבא כטיוטה" — אותה בקשה בדיוק תישלח שוב, ולא תיווצר טיוטה שנייה.';
+}
+
+function renderImportReport(report) {
+  const wrap = $('importReport');
+  wrap.hidden = false;
+  const counts = $('importCounts'); clear(counts);
+  const c = report.counts || {};
+  [['ימים', c.days || 0], ['שיבוצים', c.assignments || 0], ['היעדרויות', c.absences || 0],
+    ['ימים מתחת לקו', c.below_minimum || 0], ['שמות לא מזוהים', c.unresolved || 0], ['כפילויות', c.duplicates || 0]]
+    .forEach(([label, value]) => {
+      const metric = node('div', 'metric');
+      metric.append(node('b', '', value), node('span', '', label));
+      counts.appendChild(metric);
+    });
+  const blocks = $('importBlocks'); clear(blocks);
+  (report.blocks || []).forEach((block) => {
+    const label = block.label || '(בלי תווית)';
+    const text = block.kind === 'station' ? label + ' · ' + block.names + ' שיבוצים'
+      : block.kind === 'absence' ? label + ' · ' + block.names
+      : label + ' · שורות ' + block.rows[0] + '–' + block.rows[1] + ' לא יובאו';
+    const tag = node('span', 'blocktag ' + block.kind, text);
+    tag.title = 'שורות ' + block.rows[0] + '–' + block.rows[1] + ' בגיליון';
+    blocks.appendChild(tag);
+  });
+  const unresolvedWrap = $('importUnresolvedWrap');
+  const list = $('importUnresolved'); clear(list);
+  const unresolved = report.unresolved || [];
+  unresolvedWrap.hidden = !unresolved.length;
+  unresolved.forEach((item) => {
+    const row = node('div', 'row');
+    const who = node('div');
+    who.appendChild(node('b', '', item.name));
+    who.appendChild(node('small', '', item.count + ' פעמים · ' + item.dates.slice(0, 3).map(dateLabel).join(', ')
+      + (item.dates.length > 3 ? '…' : '')));
+    row.appendChild(who);
+    const select = node('select');
+    select.dataset.name = item.name;
+    const choose = node('option', '', '— בחר —'); choose.value = ''; select.appendChild(choose);
+    const candidates = (item.candidates || []).length ? item.candidates : (report.people || []);
+    candidates.forEach((person) => {
+      const option = node('option', '', person.name); option.value = person.uid; select.appendChild(option);
+    });
+    if ((item.candidates || []).length) {
+      const rest = node('optgroup'); rest.label = 'כל הסגל';
+      (report.people || []).forEach((person) => {
+        if (item.candidates.some((cand) => cand.uid === person.uid)) return;
+        const option = node('option', '', person.name); option.value = person.uid; rest.appendChild(option);
+      });
+      select.appendChild(rest);
+    }
+    const ignore = node('option', '', 'זה לא שם (למשל „אבטחה")'); ignore.value = '__ignore__'; select.appendChild(ignore);
+    row.appendChild(select);
+    row.appendChild(node('span', 'atright', (item.candidates || []).length ? 'דו-משמעי' : 'לא נמצא'));
+    list.appendChild(row);
+  });
+  const dups = $('importDuplicates'); clear(dups);
+  (report.duplicates || []).forEach((item) => {
+    dups.appendChild(node('div', 'change weak',
+      item.name + ' מופיע ב-' + dateLabel(item.date) + ' בשתי תחנות: ' + item.blocks.join(' + ') + ' — יש לתקן בגיליון.'));
+  });
+  (report.warnings || []).forEach((warning) => {
+    if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
+    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
+  });
+  // חסר אינו ריק: תחנה בלי בלוק, ובלוק עם שמות שלא יובא — דורשים אישור מפורש.
+  const missing = report.missing_stations || [];
+  const ignoredNames = (report.counts || {}).ignored_names || 0;
+  $('importAcceptMissingWrap').hidden = !missing.length;
+  $('importAcceptMissingText').textContent = missing.length
+    ? 'ראיתי שאין בהדבקה בלוק ל-' + missing.map((m) => m.label).join(', ') + ' — התחנות האלה לא יופיעו בסידור של החודש הזה, ואני מאשר/ת.' : '';
+  $('importAcceptIgnoredWrap').hidden = !ignoredNames;
+  $('importAcceptIgnoredText').textContent = ignoredNames
+    ? 'ראיתי ש-' + ignoredNames + ' שמות באזור שלא זוהה (שורות ' + (report.ignored || []).map((b) => b.rows[0] + '–' + b.rows[1]).join(', ') + ') לא ייכנסו לסידור, ואני מאשר/ת.' : '';
+}
+
+function importBlockedText(report) {
+  const why = report.blocked_by || [];
+  if (why.indexOf('no-assignments') !== -1) return 'לא נמצא אף שיבוץ. האם החודש נכון והתוויות בעמודה הימנית?';
+  if (why.indexOf('oversized-cells') !== -1) return 'יש תא עם יותר מדי שמות — יש לפצל אותו בגיליון ולהדביק שוב.';
+  if (why.indexOf('duplicates') !== -1) return 'יש כפילויות — אדם שמופיע בשתי תחנות באותו יום. יש לתקן בגיליון ולהדביק שוב.';
+  if (why.indexOf('unresolved') !== -1) return 'יש שמות שלא זוהו. התאם אותם למטה ולחץ שוב על „בדוק את ההדבקה".';
+  if (why.indexOf('missing-stations') !== -1 || why.indexOf('ignored-blocks') !== -1) return 'יש תחנות חסרות או שמות שלא ייכנסו. סמן שראית, ולחץ שוב על „בדוק את ההדבקה".';
+  return 'הייבוא חסום.';
+}
+
+async function checkImport() {
+  if (state.busy) return;
+  let input;
+  try { input = importInput(); } catch (error) { message('importMessage', error.message, 'err'); return; }
+  state.busy = true; $('importCheck').disabled = true; $('importRun').disabled = true;
+  message('importMessage', 'קורא את ההדבקה…', 'info');
+  try {
+    const report = (await call.importPreview(input)).data;
+    state.importReport = report;
+    renderImportReport(report);
+    if (report.blocked) {
+      message('importMessage', importBlockedText(report), 'warn');
+    } else {
+      message('importMessage', 'ההדבקה תקינה: ' + report.counts.assignments + ' שיבוצים ו-' + report.counts.absences
+        + ' היעדרויות ל-' + report.counts.days + ' ימים (' + dateLabel(report.from) + ' — ' + dateLabel(report.to) + '). אפשר לייבא.', 'ok');
+    }
+    $('importRun').disabled = !state.importPending && (report.blocked === true || !canRunSchedule());
+    if (state.importPending) message('importMessage', pendingImportText(), 'warn');
+  } catch (error) {
+    state.importReport = null;
+    $('importReport').hidden = true;
+    message('importMessage', errorText(error), 'err');
+    $('importRun').disabled = !state.importPending;
+  } finally { state.busy = false; $('importCheck').disabled = false; }
+}
+
+async function importSheet() {
+  if (state.busy) return;
+  const pending = state.importPending;
+  if (!pending && (!state.importReport || state.importReport.blocked)) return;
+  let payload;
+  if (pending) {
+    payload = pending.payload;   // אותה בקשה בדיוק — לא נקרא הקלט מחדש
+  } else {
+    let input;
+    try { input = importInput(); } catch (error) { message('importMessage', error.message, 'err'); return; }
+    // מזהה הניסיון נקשר לחתימת הדוח: ניסיון חוזר אחרי תשובה שאבדה משתמש
+    // באותו מזהה, והשרת מחזיר את אותה טיוטה במקום ליצור שנייה.
+    const reportDigest = state.importReport.report_digest;
+    state.importRequestIds = state.importRequestIds || {};
+    if (!state.importRequestIds[reportDigest]) state.importRequestIds[reportDigest] = requestId('import');
+    payload = Object.assign({ request_id: state.importRequestIds[reportDigest], expected_report_digest: reportDigest }, input);
+  }
+  state.busy = true; $('importRun').disabled = true; $('importCheck').disabled = true;
+  state.draft = null; state.draftPreview = null;
+  resetPublishRequest();
+  $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
+  $('draftPreviewCard').classList.add('hide');
+  message('importMessage', pending ? 'שולח שוב את אותה בקשת ייבוא…' : 'מייבא את הגיליון כטיוטה…', 'info');
+  state.importPending = { payload };
+  try {
+    const result = (await call.importSheet(payload)).data;
+    state.importPending = null;
+    state.draft = result;
+    renderSummary(result.summary || {});
+    message('importMessage', 'הגיליון יובא כטיוטה (' + dateLabel(result.from) + ' — ' + dateLabel(result.to)
+      + '). היא עדיין לא פורסמה ולא נשלחה שום הודעה — בדוק אותה למטה ואשר.', 'ok');
+    message('runMessage', 'הטיוטה שלמטה יובאה מהגיליון.', 'info');
+    await loadDraftPreview(result.from, true);
+    $('draftPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (error) {
+    if (errorCode(error)) {
+      // סירוב מפורש של השרת — הבקשה נענתה; אין מה לשלוח שוב.
+      state.importPending = null;
+      message('importMessage', errorText(error), 'err');
+    } else {
+      // כשל תקשורת עמום — ייתכן שהטיוטה כבר נוצרה. הניסיון נשאר לשליחה חוזרת.
+      message('importMessage', pendingImportText() + ' (' + errorText(error) + ')', 'warn');
+    }
+  } finally {
+    state.busy = false; $('importCheck').disabled = false;
+    $('importRun').disabled = !state.importPending;
+    updatePublishAvailability();
+  }
+}
+
 function renderSummary(summary) {
   const box = $('draftSummary'); clear(box); box.classList.remove('hide');
-  const values = [
+  const imported = summary.imported_below_minimum !== undefined;
+  const values = imported ? [
+    ['שובצו', summary.filled || 0], ['היעדרויות', summary.imported_absences || 0],
+    ['ימים מתחת לקו', summary.imported_below_minimum || 0], ['יובא מהגיליון', 'כמות שהוא']
+  ] : [
     ['שובצו', summary.filled || 0], ['חוסרים חוסמים', summary.blocking_gaps || 0],
     ['ימים מתחת למינימום', summary.days_below_minimum || 0], ['שינויים שנדחו', summary.rejected_manual || 0]
   ];
@@ -1854,7 +2105,7 @@ function renderDraftPreview(preview) {
   const card = $('draftPreviewCard');
   const box = $('draftPreview');
   card.classList.remove('hide');
-  renderBoard(box, preview.days || [], { id: 'draftBoard',
+  renderBoard(box, preview.days || [], { id: 'draftBoard', showAbsences: true,
     empty: 'אין שיבוצים בשבוע הזה.' });
   const first = (preview.days || [])[0];
   const last = (preview.days || [])[(preview.days || []).length - 1];
@@ -2032,6 +2283,7 @@ async function boot(user) {
 
     setRollbackAvailability();
     $('startMonth').value = monthStart();
+    if (!$('importMonth').value) $('importMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
     await Promise.all([loadSetup(), loadModeOptions()]);
@@ -2096,6 +2348,13 @@ function commandAction(fn) {
 }
 
 $('runPlanner').addEventListener('click', runAction(runPlanner));
+$('importCheck').addEventListener('click', managerAction(checkImport));
+$('importPaste').addEventListener('input', () => { state.importAliases = {}; invalidateImportReport(); });
+$('importMonth').addEventListener('change', invalidateImportReport);
+$('importAcceptMissing').addEventListener('change', invalidateImportReport);
+$('importAcceptIgnored').addEventListener('change', invalidateImportReport);
+$('importUnresolved').addEventListener('change', invalidateImportReport);
+$('importRun').addEventListener('click', runAction(importSheet));
 $('publish').addEventListener('click', runAction(publishDraft));
 $('rollback').addEventListener('click', runAction(rollbackSchedule));
 $('savePolicy').addEventListener('click', managerAction(savePolicy));

@@ -5202,6 +5202,13 @@ exports.runSchedulePlanner = onCall({
 exports.getScheduleDraftPreview = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getDraftPreview', req));
 
+// ייבוא הגיליון הקיים כטיוטה (הכרעת אלדד 4.9.2026): תצוגה מקדימה בלי
+// כתיבה, וייבוא שיוצר טיוטה דרך אותו מסלול פרסום. אחראי סידור בלבד.
+exports.previewScheduleImport = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('previewScheduleImport', req));
+exports.importScheduleSheet = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
+  invokeSchedule('importScheduleSheet', req));
+
 exports.publishSchedule = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 540,

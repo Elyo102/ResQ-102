@@ -12,6 +12,7 @@ const policyAuthorModule = require('./schedule-policy-author');
 const modeAuthorityModule = require('./schedule-mode-authority');
 const cutoverModule = require('./schedule-cutover');
 const sourceAuthorModule = require('./schedule-source-author');
+const sheetImport = require('./schedule-sheet-import');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -1287,15 +1288,14 @@ function createScheduleRuntime(deps) {
       });
     });
     const orderedPeople = Array.from(peopleById.keys()).sort().map((id) => peopleById.get(id));
-    const contentDigest = digest({
-      contract: {
-        station_id: plan.station_id, source_snapshot: plan.source_snapshot,
-        source_version: plan.source_version, source_revision: plan.source_revision,
-        source_digest: plan.source_digest, policy_version: plan.policy_version,
-        policy_digest: plan.policy_digest, source_complete: plan.source_complete
-      }, rows, events: orderedEvents, people: orderedPeople
-    });
+    /* היעדרויות (הכרעת אלדד 4.9): חלק מהתמונה החתומה. נכנסות לחתימה רק
+     * כשקיימות, כדי שפרסומים שנחתמו לפני כן יישארו תקפים כפי שהם. */
+    const absences = normalizeSnapshotAbsences(plan.absences);
+    const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences);
     const ops = [];
+    absenceDocuments(absences).forEach((doc) => {
+      ops.push({ ref: ref.collection('absences').doc(doc.id), data: doc.data, kind: 'set' });
+    });
     rows.forEach((row) => {
       ops.push({
         ref: ref.collection('rows').doc('r_' + digest(row.date + '|' + row.sub_station).slice(0, 40)),
@@ -1320,10 +1320,62 @@ function createScheduleRuntime(deps) {
     // its completion atomically.  Never make staged data usable by itself.
     await ref.set(Object.assign({}, meta, {
       snapshot_complete: true, row_count: rows.length, event_count: orderedEvents.length,
-      person_count: peopleById.size,
+      person_count: peopleById.size, absence_count: absences.length,
       content_digest: contentDigest, snapshot_completed_at: FV.serverTimestamp()
     }), { merge: true });
     return contentDigest;
+  }
+
+  const ABSENCE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave', 'unknown']);
+  const ABSENCE_LOCATIONS = Object.freeze(['abroad', 'north', 'eilat']);
+
+  function normalizeSnapshotAbsences(raw) {
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw)) throw new ScheduleRuntimeError('snapshot-absences', 'רשימת ההיעדרויות אינה תקינה.');
+    const seen = new Set();
+    const out = raw.map((item) => {
+      if (!plain(item) || !DATE_RE.test(String(item.date || '')) || !nonEmpty(item.uid)
+          || ABSENCE_KINDS.indexOf(item.kind) === -1) {
+        throw new ScheduleRuntimeError('snapshot-absences', 'רשומת היעדרות אינה תקינה.');
+      }
+      const entry = { date: item.date, uid: String(item.uid), kind: item.kind };
+      if (item.location !== undefined && item.location !== null) {
+        if (item.kind !== 'leave' || ABSENCE_LOCATIONS.indexOf(item.location) === -1) {
+          throw new ScheduleRuntimeError('snapshot-absences', 'מיקום היעדרות מותר רק לחופש: חו"ל / צפון / אילת.');
+        }
+        entry.location = item.location;
+      }
+      const key = entry.date + '|' + entry.uid + '|' + entry.kind + '|' + (entry.location || '');
+      if (seen.has(key)) throw new ScheduleRuntimeError('snapshot-absences', 'היעדרות כפולה.');
+      seen.add(key);
+      return entry;
+    });
+    return out.sort((a, b) => compareCanonical(a.date + '|' + a.uid + '|' + a.kind, b.date + '|' + b.uid + '|' + b.kind));
+  }
+
+  function absenceDocuments(absences) {
+    const byDate = new Map();
+    absences.forEach((entry) => {
+      if (!byDate.has(entry.date)) byDate.set(entry.date, []);
+      byDate.get(entry.date).push(entry);
+    });
+    return Array.from(byDate.keys()).sort().map((date) => ({
+      id: 'a_' + digest(date).slice(0, 40),
+      data: { date, entries: byDate.get(date) }
+    }));
+  }
+
+  function snapshotDigest(plan, rows, events, people, absences) {
+    const basis = {
+      contract: {
+        station_id: plan.station_id, source_snapshot: plan.source_snapshot,
+        source_version: plan.source_version, source_revision: plan.source_revision,
+        source_digest: plan.source_digest, policy_version: plan.policy_version,
+        policy_digest: plan.policy_digest, source_complete: plan.source_complete
+      }, rows, events, people
+    };
+    if (absences.length) basis.absences = absences;
+    return digest(basis);
   }
 
   async function finalizeDraft(ctx, ref, expectedDigest) {
@@ -1362,7 +1414,13 @@ function createScheduleRuntime(deps) {
       rowsQuery = rowsQuery.where('date', 'in', dates);
       eventsQuery = eventsQuery.where('date', 'in', dates);
     }
-    const pair = await Promise.all([rowsQuery.get(), eventsQuery.get()]);
+    let absenceQuery = ref.collection('absences');
+    if (Array.isArray(dates) && dates.length) absenceQuery = absenceQuery.where('date', 'in', dates);
+    const pair = await Promise.all([rowsQuery.get(), eventsQuery.get(), absenceQuery.get()]);
+    const absences = normalizeSnapshotAbsences(pair[2].docs.reduce((acc, doc) => {
+      const value = doc.data() || {};
+      return acc.concat(Array.isArray(value.entries) ? value.entries : []);
+    }, []));
     const rows = pair[0].docs.map((doc) => (doc.data() || {}).row)
       .sort((a, b) => compareCanonical(a.date + '|' + a.sub_station, b.date + '|' + b.sub_station));
     const events = pair[1].docs.map((doc) => doc.data() || {})
@@ -1386,6 +1444,10 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('snapshot-people-mismatch',
         'מילון השמות של תמונת הסידור אינו שלם.');
     }
+    if (!dates && absences.length !== Number(meta.absence_count || 0)) {
+      throw new ScheduleRuntimeError('snapshot-count-mismatch',
+        'רשימת ההיעדרויות של תמונת הסידור אינה שלמה.');
+    }
     const plan = {
       kind: 'schedule-plan', station_id: meta.station_id,
       source_snapshot: meta.source_snapshot, source_version: meta.source_version,
@@ -1394,18 +1456,12 @@ function createScheduleRuntime(deps) {
       policy_version: meta.policy_version, policy_digest: meta.policy_digest,
       source_complete: meta.source_complete === true,
       generated_at: meta.generated_at || null, from: meta.from, to: meta.to,
-      rows, summary: meta.summary || { blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0 }
+      rows, absences, summary: meta.summary || { blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0 },
+      imported: meta.imported === true
     };
     if (!dates) {
       const orderedPeople = roster.slice().sort((a, b) => compareCanonical(a.id, b.id));
-      const actualDigest = digest({
-        contract: {
-          station_id: plan.station_id, source_snapshot: plan.source_snapshot,
-          source_version: plan.source_version, source_revision: plan.source_revision,
-          source_digest: plan.source_digest, policy_version: plan.policy_version,
-          policy_digest: plan.policy_digest, source_complete: plan.source_complete
-        }, rows, events, people: orderedPeople
-      });
+      const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences);
       if (!nonEmpty(meta.content_digest) || meta.content_digest !== actualDigest) {
         throw new ScheduleRuntimeError('snapshot-digest-mismatch',
           'תמונת הסידור השתנתה או אינה שלמה ולכן נעצרה.');
@@ -1425,8 +1481,10 @@ function createScheduleRuntime(deps) {
     const people = new Set();
     rows.forEach((row) => (row.slots || []).forEach((slot) => people.add(slot.person)));
     events.forEach((event) => (event.people || []).forEach((id) => people.add(id)));
+    const absences = (snapshot.plan.absences || []).filter((entry) => wanted.has(entry.date));
+    absences.forEach((entry) => people.add(entry.uid));
     return {
-      plan: Object.assign({}, snapshot.plan, { rows }),
+      plan: Object.assign({}, snapshot.plan, { rows, absences }),
       events,
       roster: snapshot.roster.filter((person) => people.has(person.id))
     };
@@ -3030,6 +3088,277 @@ function createScheduleRuntime(deps) {
     return { duplicate: false, draft_id: draftId, summary: plan.summary, from: plan.from, to: plan.to };
   }
 
+  /* ==================================================================
+   * ייבוא הגיליון הקיים כטיוטה (הכרעת אלדד 4.9.2026 — „אפשרות ב׳")
+   *
+   * הגיליון הישן הוא מסד הנתונים. אחראי הסידור מדביק אותו; ההדבקה
+   * מפורקת (`schedule-sheet-import`, טהור) לשורות תוכנית ולהיעדרויות,
+   * ונכנסת **כטיוטה** דרך אותם `stageSnapshot`/`finalizeDraft` של
+   * המנוע — ומשם אותה תצוגה מקדימה ואותו פרסום. המנוע אינו מריץ
+   * כללים על הגיליון: מי שבגיליון עובד, עובד. הקו האדום מוצג ואינו
+   * חוסם (`summary.days_below_minimum` נשאר 0 בכוונה; הספירה
+   * האינפורמטיבית ב-`summary.imported_below_minimum`).
+   * ================================================================== */
+  const MAX_SHEET_PASTE_BYTES = 2 * 1024 * 1024;
+  const MAX_SHEET_ALIASES = 500;
+
+  function sheetAliasesRef(sid) {
+    return stationRef(sid).collection('schedule_state').doc('sheet_aliases');
+  }
+
+  async function loadSheetAliases(ctx) {
+    const snap = await sheetAliasesRef(ctx.sid).get();
+    const value = snap.exists ? (snap.data() || {}) : {};
+    return plain(value.aliases) ? value.aliases : {};
+  }
+
+  function requestedSheetMonth(data) {
+    const month = String(data.month || '');
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new ScheduleRuntimeError('import-month-invalid', 'חודש הייבוא חייב להיות YYYY-MM.', 'invalid-argument');
+    }
+    isoDayOffset(month + '-01', 0);
+    return month;
+  }
+
+  function requestedSheetPaste(data) {
+    const paste = typeof data.paste === 'string' ? data.paste : '';
+    if (!paste.trim()) {
+      throw new ScheduleRuntimeError('import-paste-required', 'חסרה הדבקה של הגיליון.', 'invalid-argument');
+    }
+    if (Buffer.byteLength(paste, 'utf8') > MAX_SHEET_PASTE_BYTES) {
+      throw new ScheduleRuntimeError('import-paste-too-large', 'ההדבקה גדולה מדי.', 'resource-exhausted');
+    }
+    return paste;
+  }
+
+  // כינויים שנמסרו מהמסך: שם → uid. רק מזהים שקיימים במקור נשמרים; שם
+  // ריק או מזהה זר — נדחים בשקט (המסך מציג את מה שהתקבל).
+  function requestedSheetAliases(data, people) {
+    const raw = plain(data.aliases) ? data.aliases : {};
+    const known = new Set(people.map((person) => person.id));
+    const out = {};
+    let count = 0;
+    Object.keys(raw).forEach((name) => {
+      const key = sheetImport.normText(name);
+      const uid = raw[name];
+      // null = „זה לא שם" (תא כמו „אבטחה"); מחרוזת = מזהה שקיים במקור.
+      if (!key || !(uid === null || (typeof uid === 'string' && known.has(uid)))) return;
+      count += 1;
+      if (count > MAX_SHEET_ALIASES) {
+        throw new ScheduleRuntimeError('import-aliases-too-many', 'יותר מדי כינויים.', 'resource-exhausted');
+      }
+      out[key] = uid;
+    });
+    return out;
+  }
+
+  function sheetImportError(error) {
+    if (error && error.name === 'SheetImportError') {
+      throw new ScheduleRuntimeError('import-' + error.code, error.message, 'invalid-argument');
+    }
+    throw error;
+  }
+
+  async function sheetImportBasis(ctx, req) {
+    const config = await configuration(ctx.sid);
+    requireMode(config, [MODE.SHADOW, MODE.NEW]);
+    const data = plain(req.data) ? req.data : {};
+    const month = requestedSheetMonth(data);
+    const paste = requestedSheetPaste(data);
+    const policy = await loadPolicy(ctx, config.active_policy_id);
+    const source = await loadSource(ctx, config.active_source_id);
+    const people = source.peopleRaw.filter((person) => person.active === true);
+    const stored = await loadSheetAliases(ctx);
+    const given = requestedSheetAliases(data, people);
+    const aliases = Object.assign({}, stored, given);
+    const accept = {
+      missing_stations: plain(data.accept) && data.accept.missing_stations === true,
+      ignored_blocks: plain(data.accept) && data.accept.ignored_blocks === true
+    };
+    let parsed;
+    let resolved;
+    try {
+      parsed = sheetImport.parseSheet(paste, { month, policy: policy.value });
+      resolved = sheetImport.resolveSheet(parsed, {
+        people, aliases, policy: policy.value, station_id: ctx.sid
+      });
+    } catch (error) { sheetImportError(error); }
+    /* ⭐ חתימת הדוח: ההדבקה, החודש, **כל** המיפוי בפועל (שמור + חדש),
+     * המקור, המדיניות והאישורים. הייבוא מקבל את החתימה שהמסך ראה —
+     * דוח שאינו של הקלט הזה בדיוק נדחה, ולא מיובא משהו אחר ממה שאושר. */
+    const reportDigest = digest({
+      sheet: digest({ paste, month }), aliases, accept,
+      source: source.digest, policy: policy.digest, resolved: digest(resolved)
+    });
+    return { ctx, config, data, month, paste, policy, source, people, aliases: given, effectiveAliases: aliases,
+      accept, parsed, resolved, reportDigest };
+  }
+
+  function sheetImportReport(basis) {
+    const names = new Map(basis.source.peopleRaw.map((person) => [person.id, String(person.full_name || person.name || person.id)]));
+    return {
+      month: basis.month,
+      dates: basis.parsed.dates,
+      from: basis.parsed.dates[0], to: basis.parsed.dates[basis.parsed.dates.length - 1],
+      counts: basis.resolved.counts,
+      blocks: basis.parsed.blocks.map((block) => ({
+        label: block.label, kind: block.kind, sub_station: block.sub_station,
+        absence: block.absence, rows: block.rows, names: block.names
+      })),
+      unresolved: basis.resolved.unresolved.map((item) => ({
+        name: item.name, count: item.count, dates: item.dates,
+        candidates: item.candidates.map((uid) => ({ uid, name: names.get(uid) || uid }))
+      })),
+      duplicates: basis.resolved.duplicates.map((item) => ({
+        uid: item.uid, name: names.get(item.uid) || item.uid, date: item.date, blocks: item.blocks
+      })),
+      ignored: basis.resolved.ignored,
+      missing_stations: basis.resolved.missing_stations,
+      warnings: basis.parsed.warnings,
+      accept: basis.accept,
+      report_digest: basis.reportDigest,
+      // רשימת האנשים הפעילים — כדי שהמסך יציע התאמה לשם שלא זוהה.
+      people: basis.people.map((person) => ({ uid: person.id, name: names.get(person.id) || person.id }))
+        .sort((a, b) => compareCanonical(a.name, b.name)),
+      blocked_by: sheetImportBlockers(basis)
+    };
+  }
+
+  /* מה עוצר ייבוא, בשם: שם לא מזוהה, כפילות, תא גדול מדי, אין שיבוצים —
+   * מתקנים בגיליון או מתאימים; תחנה חסרה / בלוק שלא יובא — אחראי הסידור
+   * חייב לאשר במפורש (`accept`) שראה ושזה בכוונה. חסר אינו ריק. */
+  function sheetImportBlockers(basis) {
+    const counts = basis.resolved.counts;
+    const out = [];
+    if (counts.assignments === 0) out.push('no-assignments');
+    if (counts.unresolved > 0) out.push('unresolved');
+    if (counts.duplicates > 0) out.push('duplicates');
+    if (counts.oversized_cells > 0) out.push('oversized-cells');
+    if (counts.missing_stations > 0 && !basis.accept.missing_stations) out.push('missing-stations');
+    if (counts.ignored_names > 0 && !basis.accept.ignored_blocks) out.push('ignored-blocks');
+    return out;
+  }
+
+  async function previewScheduleImport(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const basis = await sheetImportBasis(ctx, req);
+    const report = sheetImportReport(basis);
+    // הדוח נושא שמות — אימות חי של חברות ומינוי אחרי כל הקריאות, לפני ההחזרה.
+    await requireLiveManagerNow(ctx);
+    return Object.assign(report, { blocked: report.blocked_by.length > 0 });
+  }
+
+  async function importScheduleSheet(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const basis = await sheetImportBasis(ctx, req);
+    const { data, policy, source, resolved } = basis;
+    const report = Object.assign(sheetImportReport(basis), { blocked: false });
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const expectedReport = String(data.expected_report_digest || '');
+    const sheetDigest = digest({ paste: basis.paste, month: basis.month });
+    /* ⭐ שתי חתימות, שני תפקידים (v2-review §2):
+     * · **כוונת הבקשה** — מה שהמסך שלח: הדבקה, חודש, הכינויים שנמסרו, האישורים
+     *   והדוח שאושר. יציבה: אינה תלויה במיפוי החי, במקור או במדיניות. היא
+     *   מזהה „אותה בקשה" לניסיון חוזר — תשובה שאבדה מקבלת את הקבלה והדוח
+     *   המקוריים גם אם בינתיים נוסף כינוי שאינו בגיליון.
+     * · **התלויות** (חתימת הדוח מול המיפוי/המקור/המדיניות החיים) — נבדקות
+     *   רק לפני **יצירה** חדשה. שינוי אמיתי בקלט = כוונה אחרת = request-conflict. */
+    const fingerprint = digest({
+      ctx: ctx.sid, uid: ctx.uid, requestId, sheet: sheetDigest,
+      aliases: basis.aliases, accept: basis.accept, report: expectedReport
+    });
+    const draftId = 'd_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
+    const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
+    const existing = await ref.get();
+    if (existing.exists) {
+      const before = existing.data() || {};
+      if (before.request_fingerprint !== fingerprint) {
+        throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לקלט אחר.', 'already-exists');
+      }
+      if (before.status === 'cancelled') {
+        throw new ScheduleRuntimeError('draft-cancelled', 'הטיוטה בוטלה ולכן יש להתחיל פעולה חדשה.', 'aborted');
+      }
+      if (before.status !== 'complete') {
+        throw new ScheduleRuntimeError('draft-staging', 'הטיוטה עדיין נבנית. נסה שוב בעוד רגע.', 'aborted');
+      }
+      // הקבלה נושאת שמות — אימות חי אחרון אחרי הקריאה, לפני ההחזרה.
+      await requireLiveManagerNow(ctx);
+      // ניסיון חוזר מחזיר את הדוח **המקורי** שנשמר עם הטיוטה — לא פענוח חדש.
+      return { duplicate: true, draft_id: draftId, summary: before.summary, from: before.from, to: before.to,
+        report: plain(before.import_report) ? before.import_report : report };
+    }
+    /* ⭐ יצירה חדשה בלבד: הייבוא נקשר לדוח שהמסך הציג — אותה חתימה מול
+     * המיפוי, המקור והמדיניות **החיים** — או סירוב. כך שינוי חודש/כינוי/אישור
+     * אחרי „בדוק" אינו מייבא בשקט משהו אחר. */
+    if (!expectedReport || expectedReport !== basis.reportDigest) {
+      throw new ScheduleRuntimeError('import-report-stale',
+        'הדוח שאושר אינו תואם להדבקה, לחודש או להתאמות הנוכחיות. יש ללחוץ שוב על „בדוק את ההדבקה".', 'failed-precondition');
+    }
+    const blockers = sheetImportBlockers(basis);
+    if (blockers.length) {
+      report.blocked = true; report.blocked_by = blockers;
+      throw new ScheduleRuntimeError('import-blocked',
+        blockers.indexOf('no-assignments') !== -1 ? 'לא נמצא אף שיבוץ בהדבקה.'
+          : blockers.indexOf('missing-stations') !== -1 || blockers.indexOf('ignored-blocks') !== -1
+            ? 'יש תחנות חסרות או בלוקים שלא יובאו; יש לאשר אותם במפורש לפני הייבוא.'
+            : 'יש שמות שלא זוהו, כפילויות או תאים גדולים מדי. יש להתאים או לתקן בגיליון לפני הייבוא.', 'failed-precondition');
+    }
+    const effective = effectiveSource(ctx, source, policy, []);
+    const rows = resolved.rows;
+    const summary = {
+      filled: rows.reduce((n, row) => n + row.slots.length, 0),
+      blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0, open_rows: 0,
+      imported_below_minimum: resolved.counts.below_minimum,
+      imported_absences: resolved.absences.length
+    };
+    const plan = {
+      kind: 'schedule-plan', station_id: ctx.sid,
+      source_snapshot: effective.snapshot, source_version: effective.version,
+      contract_station_id: ctx.sid, source_revision: effective.revision, source_digest: effective.digest,
+      policy_version: policy.value.version, policy_digest: policy.digest, source_complete: true,
+      generated_at: clock(), from: report.from, to: report.to,
+      rows, absences: resolved.absences, summary, imported: true
+    };
+    await db.runTransaction(async (tx) => {
+      const aliasRef = sheetAliasesRef(ctx.sid);
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref, aliasRef];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[2].exists) {
+        throw new ScheduleRuntimeError('draft-race', 'טיוטה עם אותו מזהה נוצרה במקביל. רענן ונסה שוב.', 'aborted');
+      }
+      /* ⭐ הכינויים נשמרים **באותה עסקה** שמאמתת את המינוי החי ויוצרת את
+       * הטיוטה: מינוי שבוטל באמצע אינו משאיר כינויים שהשתנו; עדכון מקביל
+       * של הכינויים נקרא כאן ומתמזג, לא נדרס. */
+      if (Object.keys(basis.aliases).length) {
+        const live = snaps[3].exists ? (snaps[3].data() || {}) : {};
+        tx.set(aliasRef, {
+          station_id: ctx.sid, aliases: Object.assign({}, plain(live.aliases) ? live.aliases : {}, basis.aliases),
+          updated_at: FV.serverTimestamp(), updated_by: ctx.uid
+        });
+      }
+      tx.create(ref, {
+        station_id: ctx.sid, status: 'staging', request_id: requestId,
+        request_fingerprint: fingerprint, source_id: source.id, policy_id: policy.id,
+        base_source_digest: source.digest, base_policy_digest: policy.digest,
+        created_by: ctx.uid, created_by_name: ctx.name, created_at: FV.serverTimestamp(),
+        source_snapshot: plan.source_snapshot, source_version: plan.source_version,
+        contract_station_id: plan.contract_station_id, source_revision: plan.source_revision,
+        source_digest: plan.source_digest, source_complete: true,
+        policy_version: plan.policy_version, policy_digest: plan.policy_digest,
+        generated_at: plan.generated_at, from: plan.from, to: plan.to,
+        summary, months: 1, imported: true, sheet_digest: sheetDigest, import_month: basis.month,
+        report_digest: basis.reportDigest, import_report: report
+      });
+    });
+    const contentDigest = await stageSnapshot(ref, {}, plan, effective.events, effective.roster);
+    await finalizeDraft(ctx, ref, contentDigest);
+    return { duplicate: false, draft_id: draftId, summary, from: plan.from, to: plan.to, report };
+  }
+
   async function getDraftPreview(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -3072,13 +3401,24 @@ function createScheduleRuntime(deps) {
     }
     const snapshot = sliceVerifiedSnapshot(await readSnapshot(ref, meta), dates);
     const service = serviceFor(ctx);
-    const days = dates.map((date) => service.buildStationSchedule({
+    // אותו עיטור כמו בלוח המפורסם — היעדרויות, צוות לאדם וצוות ליום —
+    // כדי שהתצוגה המקדימה תיראה בדיוק כמו מה שיפורסם.
+    const extras = {
+      absences: snapshot.plan.absences || [], roster: snapshot.roster, viewer: ctx.uid,
+      rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, dates[0], dates[dates.length - 1])
+    };
+    const days = dates.map((date) => decoratePublishedDay(service.buildStationSchedule({
       actor: actor(ctx), plan: snapshot.plan, events: snapshot.events,
       roster: snapshot.roster, date
-    }).day);
+    }).day, extras));
+    /* ⭐ v2-review §1: המינוי/החברות עלולים להתבטל **בזמן** קריאת התמונה
+     * (שורות, היעדרויות, סגל). אימות חי אחרון אחרי כל הקריאות ולפני
+     * ההחזרה — סירוב אינו מחזיר שמות ולא היעדרויות. אותם תפקידים, בלי הרחבה. */
+    await requireLiveManagerNow(ctx);
     return {
       draft_id: draftId,
       expected_content_digest: meta.content_digest,
+      imported: meta.imported === true,
       from: meta.from,
       to: meta.to,
       week_start: start,
@@ -3976,6 +4316,7 @@ function createScheduleRuntime(deps) {
       source_complete: true, policy_version: next.plan.policy_version,
       policy_digest: next.plan.policy_digest, generated_at: next.plan.generated_at,
       from: next.plan.from, to: next.plan.to, summary: next.plan.summary,
+      imported: next.plan.imported === true,
       content_hash: planned.publication.content_hash,
       published_by: ctx.uid, published_by_name: ctx.name
     });
@@ -4910,6 +5251,20 @@ function createScheduleRuntime(deps) {
     }
   }
 
+  /* ⭐ final-review §1: חברות הקורא בתחנה עלולה להסתיים **בזמן** קריאת הלוח
+   * (השבתה, העברת תחנה). אימות חי אחרון של **חבר תחנה צופה** — לא שער
+   * אחראי סידור, בלי הרחבת תפקידים — אחרי כל הקריאות ולפני ההחזרה. */
+  async function requireLiveBoardViewer(ctx) {
+    const userSnap = await liveUserRef(ctx.sid, ctx.uid).get();
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    const role = String(user && user.role || '');
+    if (!scheduleAccess.activeMember(user, ctx.sid)
+        || (!ctx.super && (MEMBER_ROLES.indexOf(role) === -1 || role !== ctx.role))) {
+      throw new ScheduleRuntimeError('board-viewer-changed',
+        'השיוך החי לתחנה השתנה בזמן הקריאה.', 'permission-denied');
+    }
+  }
+
   async function checkedActiveSnapshot(ctx, config, dates) {
     const active = await activeSnapshot(ctx, dates);
     await beforeEffectiveViewRecheck({ kind: 'v2', ctx, mode: config.mode });
@@ -4983,12 +5338,19 @@ function createScheduleRuntime(deps) {
         uid: assignment.uid,
         person: assignment.display,
         role_label: assignment.crew ? 'צוות ' + assignment.crew : null,
+        crew: assignment.crew || null,
         hours: null,
         is_me: assignment.uid === viewer
       });
     });
+    const crews = Array.from(grouped.keys()).filter((crew) => crew !== 'station');
     return {
       date: day.date,
+      // המשמרת של היום (משמרת = יממה): צוות אחד ביום — צבע העמודה במסך.
+      crew: crews.length === 1 ? crews[0] : null,
+      // הסידור הקיים אינו יודע היעדרויות — לא ממציאים.
+      absences: [],
+      absences_status: 'unavailable',
       sub_stations: Array.from(grouped.keys()).sort().map((crew) => ({
         sub_station: 'legacy_' + crew,
         label: crew === 'station' ? 'תחנה' : 'משמרת ' + crew,
@@ -5009,6 +5371,63 @@ function createScheduleRuntime(deps) {
         includes_me: (event.people || []).some((person) => person.uid === viewer)
       }))
     };
+  }
+
+  /* ⭐ עיטור יום של פרסום (v2) לשבלונה של הגיליון: היעדרויות מהתמונה
+   * החתומה, צוות לאדם מהסגל הקיים (צבע השם), וצוות ליום מהמחזור הקיים
+   * (צבע העמודה). לפרסום מיובא מהגיליון אין צוות משלו — הצוות הוא
+   * נתון של הסגל, לא של השיבוץ; אין — null, לא ניחוש. */
+  const ABSENCE_ORDER = Object.freeze({ sick: 0, reserve: 1, course: 2, leave: 3, unknown: 4 });
+
+  async function rosterCrews(ctx) {
+    try {
+      const snap = await stationRef(ctx.sid).collection('roster').limit(MAX_LEGACY_ROSTER + 1).get();
+      if (snap.size > MAX_LEGACY_ROSTER) return new Map();
+      const out = new Map();
+      snap.docs.forEach((doc) => {
+        const crew = (doc.data() || {}).crew;
+        if (typeof crew === 'string' && crew.trim()) out.set(doc.id, crew.trim());
+      });
+      return out;
+    } catch (error) {
+      return new Map();
+    }
+  }
+
+  async function legacyDayCrews(ctx, from, to) {
+    try {
+      const window = await effectiveStationWindow(ctx, from, to, { legacyOnly: true });
+      const out = new Map();
+      (window.days || []).forEach((day) => {
+        const crews = new Set();
+        (day.assignments || []).forEach((assignment) => { if (assignment.crew) crews.add(assignment.crew); });
+        out.set(day.date, crews.size === 1 ? Array.from(crews)[0] : null);
+      });
+      return out;
+    } catch (error) {
+      // בלי מחזור קיים אין צבע עמודה — זה מידע חסר, לא שגיאה של הפרסום.
+      return new Map();
+    }
+  }
+
+  function decoratePublishedDay(day, extras) {
+    const names = new Map((extras.roster || []).map((person) => [person.id, String(person.name || person.id)]));
+    const absences = (extras.absences || []).filter((entry) => entry.date === day.date)
+      .map((entry) => Object.assign({
+        uid: entry.uid, display: names.get(entry.uid) || entry.uid, kind: entry.kind,
+        is_me: entry.uid === extras.viewer
+      }, entry.location ? { location: entry.location } : {}))
+      .sort((a, b) => (ABSENCE_ORDER[a.kind] - ABSENCE_ORDER[b.kind]) || compareCanonical(a.uid, b.uid));
+    return Object.assign({}, day, {
+      crew: extras.dayCrews.has(day.date) ? extras.dayCrews.get(day.date) : null,
+      absences,
+      absences_status: 'ready',
+      sub_stations: (day.sub_stations || []).map((block) => Object.assign({}, block, {
+        people: (block.people || []).map((person) => Object.assign({}, person, {
+          crew: extras.rosterCrew.get(person.uid) || null
+        }))
+      }))
+    });
   }
 
   function legacyStationView(ctx, window, date) {
@@ -5579,6 +5998,7 @@ function createScheduleRuntime(deps) {
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
       const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      await requireLiveBoardViewer(ctx);
       return {
         mode: window.provenance.mode, active: true, source: 'legacy',
         provenance: window.provenance, from: range.from, to: range.to,
@@ -5593,6 +6013,7 @@ function createScheduleRuntime(deps) {
     if (!active) {
       const window = await legacyFallbackWindow(ctx, config, range.from, range.to);
       const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      await requireLiveBoardViewer(ctx);
       return {
         mode: config.mode, active: true, source: 'legacy', fallback: 'legacy',
         provenance: window.provenance, from: range.from, to: range.to,
@@ -5601,14 +6022,21 @@ function createScheduleRuntime(deps) {
       };
     }
     const sidecar = await readLiveGuardProjection(ctx, range.dates);
+    const service = serviceFor(ctx);
+    // כל הקריאות הנוספות (סגל לצבע השם, מחזור לצבע היום) **לפני** הבדיקות
+    // המסכמות — כדי שלא תוחזר תמונה שהתיישנה בזמן העיטור.
+    const extras = {
+      absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
+      rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, range.from, range.to)
+    };
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
     await activeSnapshotStillCurrent(ctx, config, active);
-    const service = serviceFor(ctx);
-    const days = range.dates.map((date) => stationViewWithGuards(service.buildStationSchedule({
+    await requireLiveBoardViewer(ctx);
+    const days = range.dates.map((date) => decoratePublishedDay(stationViewWithGuards(service.buildStationSchedule({
       actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
-    }), sidecar, date, ctx.uid).day);
+    }), sidecar, date, ctx.uid).day, extras));
     return {
-      mode: config.mode, active: true, source: 'v2',
+      mode: config.mode, active: true, source: 'v2', imported: active.plan.imported === true,
       publication_id: active.pointer.publication_id, revision: active.pointer.revision,
       from: range.from, to: range.to, days
     };
@@ -5625,22 +6053,33 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('schedule-mode-changed',
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
+      await requireLiveBoardViewer(ctx);
       return legacyStationView(ctx, window, date);
     }
     const active = await checkedActiveSnapshot(ctx, config, dates);
     if (!active) {
       const window = await legacyFallbackWindow(ctx, config, dates[0], dates[2]);
+      await requireLiveBoardViewer(ctx);
       return Object.assign(legacyStationView(ctx, window, date),
         { mode: config.mode, fallback: 'legacy' });
     }
     const sidecar = await readLiveGuardProjection(ctx, dates);
+    const extras = {
+      absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
+      rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, dates[0], dates[2])
+    };
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
     await activeSnapshotStillCurrent(ctx, config, active);
+    await requireLiveBoardViewer(ctx);
     const view = stationViewWithGuards(serviceFor(ctx).buildStationSchedule({
       actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
     }), sidecar, date, ctx.uid);
-    return Object.assign({ mode: config.mode, active: true,
-      publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view);
+    return Object.assign({ mode: config.mode, active: true, imported: active.plan.imported === true,
+      publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view, {
+      previous_day: decoratePublishedDay(view.previous_day, extras),
+      day: decoratePublishedDay(view.day, extras),
+      next_day: decoratePublishedDay(view.next_day, extras)
+    });
   }
 
   // The four legacy guard readers deliberately bypass the monthly-engine mode:
@@ -6453,6 +6892,8 @@ function createScheduleRuntime(deps) {
     previewCutover,
     promoteToNew,
     runPlanner,
+    previewScheduleImport,
+    importScheduleSheet,
     getDraftPreview,
     publish,
     rollback,

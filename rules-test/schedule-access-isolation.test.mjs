@@ -68,6 +68,10 @@ await env.withSecurityRulesDisabled(async (context) => {
   await setDoc(doc(db, `stations/${SID}/schedule_publications/publication_1/events/event_1`), { date: '2026-09-01' });
   await setDoc(doc(db, `stations/${SID}/schedule_publications/publication_1/people/manager_1`), { id: 'manager_1' });
   await setDoc(doc(db, `stations/${SID}/schedule_publications/publication_1/schedule_outbox/outbox_1`), { person: 'manager_1' });
+  // 42H · הדבקת הגיליון: מיפוי הכינויים והיעדרויות בטיוטה ובפרסום — שרת בלבד.
+  await setDoc(doc(db, `stations/${SID}/schedule_state/sheet_aliases`), { station_id: SID, aliases: { 'כינוי': 'manager_1' } });
+  await setDoc(doc(db, `stations/${SID}/schedule_drafts/draft_1/absences/a_1`), { date: '2026-09-01', entries: [{ uid: 'manager_1', kind: 'sick' }] });
+  await setDoc(doc(db, `stations/${SID}/schedule_publications/publication_1/absences/a_1`), { date: '2026-09-01', entries: [{ uid: 'manager_1', kind: 'sick' }] });
   await setDoc(doc(db, `stations/${SID}/schedule_responses/response_1`), { person: 'manager_1' });
   await setDoc(doc(db, `stations/${SID}/schedule_audit/audit_1`), { action: 'seed' });
 });
@@ -82,6 +86,9 @@ const protectedPaths = [
   ['publication event', `stations/${SID}/schedule_publications/publication_1/events/event_1`],
   ['publication person', `stations/${SID}/schedule_publications/publication_1/people/manager_1`],
   ['publication outbox', `stations/${SID}/schedule_publications/publication_1/schedule_outbox/outbox_1`],
+  ['sheet aliases', `stations/${SID}/schedule_state/sheet_aliases`],
+  ['draft absences', `stations/${SID}/schedule_drafts/draft_1/absences/a_1`],
+  ['publication absences', `stations/${SID}/schedule_publications/publication_1/absences/a_1`],
   ['response', `stations/${SID}/schedule_responses/response_1`],
   ['audit', `stations/${SID}/schedule_audit/audit_1`]
 ];
@@ -104,6 +111,10 @@ for (const [name, actor] of [
 ]) {
   await blocked(name + ' cannot list appointment records',
     getDocs(collection(actor, `stations/${SID}/schedule_access`)));
+  await blocked(name + ' cannot list draft absences',
+    getDocs(collection(actor, `stations/${SID}/schedule_drafts/draft_1/absences`)));
+  await blocked(name + ' cannot list publication absences',
+    getDocs(collection(actor, `stations/${SID}/schedule_publications/publication_1/absences`)));
   await blocked(name + ' cannot create an appointment directly',
     setDoc(doc(actor, `stations/${SID}/schedule_access/new_manager`), { active: true }));
   await blocked(name + ' cannot update an appointment directly',

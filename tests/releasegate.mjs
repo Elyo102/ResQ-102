@@ -309,6 +309,7 @@ const expectedEmulatorLines = [
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node invitations.integration.test.js"',
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-runtime.integration.test.js"',
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-authoring.integration.test.js"',
+  'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-sheet-import.integration.test.js"',
 ];
 const expectedInstallLines = [
   'npm ci --prefix functions',
@@ -449,7 +450,7 @@ for (const target of ['firestore:rules', 'firestore:indexes', 'functions', 'host
 }
 
 /* כל פקודות האמולטור של CI חייבות להופיע במלואן. לולאה ריקה אינה PASS. */
-ok('6.3 יש בדיוק שמונה פקודות אמולטור מלאות', releaseDoc.exactEmulators,
+ok('6.3 יש בדיוק תשע פקודות אמולטור מלאות', releaseDoc.exactEmulators,
   'נמצאו: ' + JSON.stringify(releaseDoc.emulators));
 for (const l of releaseDoc.emulators) {
   ok('6.3 שורת אמולטור במסמך אינה נוגעת בייצור',
