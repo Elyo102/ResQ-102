@@ -188,6 +188,19 @@
       color:var(--muted,#5a6573);background:var(--panel,#f3f6fa)}
     /* ---------------- הדבקת הסידור מהגיליון ---------------- */
     .importcard{border-color:var(--sched-blue)}
+    /* 42H.2 · עריכת הסידור הפעיל */
+    .editcard{border-color:var(--sched-blue)}
+    .editsearch{position:relative}
+    .editsearch .results{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .editsearch .results button{font-size:12px;border:1px solid var(--line,#dfe5ec);background:var(--panel,#f7f9fc);border-radius:9px;padding:6px 10px;cursor:pointer;color:inherit}
+    .editsearch .results button[aria-pressed="true"]{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .editperson{font-weight:700;font-size:13px;margin-top:6px;min-height:18px}
+    .editlist .row{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border:1px solid var(--line,#dfe5ec);border-radius:9px;margin-top:6px;background:var(--panel,#f7f9fc)}
+    .editlist .row b{flex:1}
+    .editlist .row button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .editchange{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;padding:6px 10px;border-radius:9px;background:var(--panel,#f7f9fc);margin-top:6px}
+    .editchange .arrow{color:var(--muted,#748091)}
+    .editdates{font-size:12px;color:var(--muted,#748091);margin-top:6px}
     .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
     .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
     .unres{display:grid;gap:7px;margin-top:10px}
@@ -475,6 +488,55 @@
         <div id="rollbackMessage" aria-live="polite"></div>
       </article>
     </div>
+
+    <!-- 42H.2 · חבילה א׳ — עריכת הסידור הפעיל (רק במצב פעיל, רק אחראי סידור) -->
+    <article class="card editcard" id="editCard" hidden>
+      <h2>עריכת הסידור הפעיל</h2>
+      <div class="sub">איתור עובד, בחירת יום / שבוע / חודש, ושינוי תחנה, תפקיד או היעדרות.
+        כל ביצוע יוצר <b>גרסה חדשה</b> של הסידור (הקודמת נשמרת ואפשר לחזור אליה), נרשם ביומן,
+        ושולח לכל עובד שהשתנה הודעה מסכמת אחת.</div>
+      <div class="fields">
+        <div class="editsearch" style="grid-column:1/-1">
+          <label for="editSearch">חיפוש עובד</label>
+          <input id="editSearch" type="search" placeholder="שם, חלק משם או מספר עובד" autocomplete="off">
+          <div class="results" id="editSearchResults"></div>
+          <div class="editperson" id="editPerson"></div>
+        </div>
+        <div><label for="editRange">טווח</label>
+          <select id="editRange"><option value="day">יום</option><option value="week">שבוע</option><option value="month">חודש</option></select></div>
+        <div><label for="editDate">תאריך</label><input id="editDate" type="date"></div>
+        <div><label for="editAction">פעולה</label>
+          <select id="editAction">
+            <option value="assign">שיבוץ לתחנה</option>
+            <option value="unassign">הסרה מהסידור</option>
+            <option value="role">שינוי תפקיד</option>
+            <option value="absence">היעדרות</option>
+          </select></div>
+        <div id="editStationWrap"><label for="editStation">תחנה</label><select id="editStation"></select></div>
+        <div id="editRoleWrap"><label for="editRole">תפקיד</label><select id="editRole"><option value="">ללא תפקיד</option></select></div>
+        <div id="editAbsenceWrap" hidden><label for="editAbsence">סוג היעדרות</label>
+          <select id="editAbsence">
+            <option value="sick">מחלה</option><option value="reserve">מילואים</option>
+            <option value="course">קורס</option><option value="leave">חופש</option><option value="">ביטול היעדרות</option>
+          </select></div>
+        <div id="editLocationWrap" hidden><label for="editLocation">מיקום החופש</label>
+          <select id="editLocation"><option value="">לא צוין</option><option value="abroad">חו"ל</option><option value="north">צפון</option><option value="eilat">אילת</option></select></div>
+      </div>
+      <div class="editdates" id="editDates"></div>
+      <div class="btns"><button class="btn" id="editAdd" type="button">+ הוסף לרשימת השינויים</button></div>
+      <div class="editlist" id="editList"></div>
+      <div class="btns">
+        <button class="btn" id="editCheck" type="button" disabled>בדוק את השינויים</button>
+        <button class="btn primary" id="editApply" type="button" disabled>בצע ופרסם גרסה חדשה</button>
+      </div>
+      <div id="editReport" hidden>
+        <div class="summary" id="editCounts"></div>
+        <div id="editPeople"></div>
+        <div id="editChanges"></div>
+        <div id="editWarnings"></div>
+      </div>
+      <div id="editMessage" aria-live="polite"></div>
+    </article>
 
     <article class="card hide" id="draftPreviewCard">
       <h2>תצוגה מקדימה של הטיוטה</h2>

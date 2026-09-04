@@ -28,6 +28,8 @@ const call = Object.freeze({
   run: httpsCallable(functions, 'runSchedulePlanner'),
   importPreview: httpsCallable(functions, 'previewScheduleImport'),
   importSheet: httpsCallable(functions, 'importScheduleSheet'),
+  editPreview: httpsCallable(functions, 'previewScheduleEdit'),
+  editApply: httpsCallable(functions, 'applyScheduleEdit'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -2313,7 +2315,7 @@ async function publishDraft() {
     invalidateRange();
     try {
       state.status = (await call.status({})).data;
-      setMode(state.status); setRollbackAvailability();
+      setMode(state.status); setRollbackAvailability(); updateEditAvailability();
       await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
@@ -2352,7 +2354,7 @@ async function rollbackSchedule() {
     })).data;
     message('rollbackMessage', 'החזרה הושלמה כגרסה ' + result.revision + '.', 'ok');
     state.status = (await call.status({})).data;
-    setMode(state.status); setRollbackAvailability();
+    setMode(state.status); setRollbackAvailability(); updateEditAvailability();
     invalidateRange();
     await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
   } catch (error) {
@@ -2373,6 +2375,317 @@ async function loadSetup() {
     renderSourceSummary();
   } catch (error) { message('policyMessage', errorText(error), 'err'); }
 }
+
+/* ==================================================================
+ *  42H.2 · חבילה א׳ — עריכת הסידור הפעיל
+ * ------------------------------------------------------------------
+ *  המסך אוסף שינויים (אדם × טווח × פעולה) לרשימה, מבקש דוח מהשרת
+ *  („בדוק"), ורק אז „בצע ופרסם": השרת יוצר גרסה חדשה עם CAS על הפרסום
+ *  שהמסך ראה (publication_id + revision + חתימה). כל שינוי ברשימה מבטל
+ *  את הדוח. תשובה שאבדה — אותה בקשה נשלחת שוב (כמו בייבוא).
+ * ================================================================== */
+const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות' };
+const EDIT_ABSENCE_HE = { sick: 'מחלה', reserve: 'מילואים', course: 'קורס', leave: 'חופש' };
+const EDIT_WARN_HE = {
+  'assigned-while-absent': 'משובץ ביום שבו רשומה לו היעדרות',
+  'absent-while-assigned': 'נרשמה היעדרות ביום שבו הוא משובץ',
+  'not-assigned': 'לא היה משובץ ביום הזה — אין מה להסיר'
+};
+
+function editBase() {
+  const active = state.status && state.status.active;
+  if (!active || !active.publication_id || !active.content_digest || !active.revision) return null;
+  return { publication_id: active.publication_id, revision: active.revision, content_digest: active.content_digest };
+}
+
+function canEditSchedule() {
+  return canManageSchedule() && state.status.mode === 'new' && !!editBase();
+}
+
+function editStations() {
+  const policy = state.setup && state.setup.policy;
+  return policy && Array.isArray(policy.sub_stations) ? policy.sub_stations : [];
+}
+
+function editRolesFor(subId) {
+  const station = editStations().find((s) => s.id === subId);
+  return station && Array.isArray(station.requirements) ? station.requirements : [];
+}
+
+function editStationLabel(id) {
+  const station = editStations().find((s) => s.id === id);
+  return station ? station.label : (id || '');
+}
+
+/** התאריכים של הטווח שנבחר — יום, השבוע (ראשון–שבת) או החודש, חתוך לטווח הפרסום. */
+function editDatesFor(range, iso) {
+  const active = state.status && state.status.active;
+  if (!iso) return [];
+  let from = iso;
+  let to = iso;
+  if (range === 'week') {
+    const day = new Date(iso + 'T00:00:00.000Z').getUTCDay();   // 0 = ראשון
+    from = shiftDate(iso, -day);
+    to = shiftDate(from, 6);
+  } else if (range === 'month') {
+    const bounds = monthBounds(iso.slice(0, 7));
+    from = bounds.from; to = bounds.to;
+  }
+  if (active && active.from && from < active.from) from = active.from;
+  if (active && active.to && to > active.to) to = active.to;
+  const out = [];
+  for (let d = from; d <= to && out.length < 62; d = shiftDate(d, 1)) out.push(d);
+  return out;
+}
+
+function renderEditDates() {
+  const dates = editDatesFor($('editRange').value, $('editDate').value);
+  const box = $('editDates');
+  if (!$('editDate').value) { box.textContent = ''; return; }
+  const active = state.status && state.status.active;
+  box.textContent = dates.length
+    ? dates.length + ' ימים: ' + dateLabel(dates[0]) + (dates.length > 1 ? ' — ' + dateLabel(dates[dates.length - 1]) : '')
+    : 'התאריך מחוץ לטווח הסידור הפעיל' + (active && active.from ? ' (' + dateLabel(active.from) + ' — ' + dateLabel(active.to) + ')' : '') + '.';
+}
+
+function renderEditControls() {
+  const action = $('editAction').value;
+  $('editStationWrap').hidden = action !== 'assign';
+  $('editRoleWrap').hidden = action !== 'assign' && action !== 'role';
+  $('editAbsenceWrap').hidden = action !== 'absence';
+  $('editLocationWrap').hidden = action !== 'absence' || $('editAbsence').value !== 'leave';
+  const stationSelect = $('editStation');
+  if (!stationSelect.options.length) {
+    editStations().forEach((station) => {
+      const option = node('option', '', station.label); option.value = station.id; stationSelect.appendChild(option);
+    });
+  }
+  const roleSelect = $('editRole');
+  const subId = action === 'assign' ? stationSelect.value : (state.editPersonSub || stationSelect.value);
+  const current = roleSelect.value;
+  clear(roleSelect);
+  const none = node('option', '', 'ללא תפקיד'); none.value = ''; roleSelect.appendChild(none);
+  const seen = new Set();
+  (action === 'role' ? editStations().flatMap((s) => s.requirements || []) : editRolesFor(subId)).forEach((requirement) => {
+    if (!requirement || seen.has(requirement.role)) return;
+    seen.add(requirement.role);
+    const option = node('option', '', requirement.label || requirement.role); option.value = requirement.role; roleSelect.appendChild(option);
+  });
+  roleSelect.value = seen.has(current) ? current : '';
+}
+
+function renderEditSearch() {
+  const box = $('editSearchResults'); clear(box);
+  const people = (state.setup && state.setup.people) || [];
+  const query = $('editSearch').value.trim();
+  if (!query) return;
+  const q = query.toLowerCase();
+  const hits = people.filter((p) => String(p.name || '').toLowerCase().indexOf(q) !== -1
+    || String(p.id).toLowerCase() === q).slice(0, 12);
+  if (!hits.length) { box.appendChild(node('span', 'sub', 'לא נמצא עובד פעיל בשם הזה.')); return; }
+  hits.forEach((person) => {
+    const button = node('button', '', person.name + (person.sub_station ? ' · ' + editStationLabel(person.sub_station) : ''));
+    button.type = 'button'; button.dataset.uid = person.id;
+    button.setAttribute('aria-pressed', state.editPerson && state.editPerson.id === person.id ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      state.editPerson = person; state.editPersonSub = person.sub_station || null;
+      $('editPerson').textContent = 'נבחר: ' + person.name;
+      if (person.sub_station && $('editStation').querySelector('option[value="' + person.sub_station + '"]')) $('editStation').value = person.sub_station;
+      renderEditSearch(); renderEditControls();
+    });
+    box.appendChild(button);
+  });
+}
+
+function editItemText(item) {
+  const name = item.name;
+  const when = item.dates.length === 1 ? dateLabel(item.dates[0]) : item.dates.length + ' ימים (' + dateLabel(item.dates[0]) + ' — ' + dateLabel(item.dates[item.dates.length - 1]) + ')';
+  if (item.kind === 'assign') return name + ' · שיבוץ ל' + editStationLabel(item.sub_station) + (item.role ? ' כ' + (item.role_label || item.role) : '') + ' · ' + when;
+  if (item.kind === 'unassign') return name + ' · הסרה מהסידור · ' + when;
+  if (item.kind === 'role') return name + ' · תפקיד: ' + (item.role ? (item.role_label || item.role) : 'ללא') + ' · ' + when;
+  if (item.absence === null) return name + ' · ביטול היעדרות · ' + when;
+  return name + ' · ' + EDIT_ABSENCE_HE[item.absence.kind] + (item.absence.location ? ' (' + ABSENCE_LOCATIONS.get(item.absence.location) + ')' : '') + ' · ' + when;
+}
+
+function renderEditList() {
+  const box = $('editList'); clear(box);
+  (state.editList || []).forEach((item, index) => {
+    const row = node('div', 'row');
+    row.appendChild(node('b', '', editItemText(item)));
+    const remove = node('button', '', 'הסר'); remove.type = 'button';
+    remove.addEventListener('click', () => { state.editList.splice(index, 1); invalidateEditReport(); renderEditList(); });
+    row.appendChild(remove);
+    box.appendChild(row);
+  });
+  $('editCheck').disabled = !(state.editList && state.editList.length) || !canEditSchedule() || !!state.editPending;
+}
+
+function editPayload() {
+  return {
+    expected: editBase(),
+    edits: (state.editList || []).map((item) => {
+      const out = { kind: item.kind, uid: item.uid, dates: item.dates.slice() };
+      if (item.kind === 'assign') { out.sub_station = item.sub_station; out.role = item.role || null; }
+      if (item.kind === 'role') out.role = item.role || null;
+      if (item.kind === 'absence') out.absence = item.absence;
+      return out;
+    })
+  };
+}
+
+function invalidateEditReport() {
+  state.editReport = null;
+  $('editReport').hidden = true;
+  $('editApply').disabled = !state.editPending;
+  if (state.editPending) message('editMessage', pendingEditText(), 'warn');
+  else if ($('editMessage').textContent) message('editMessage', 'הרשימה השתנתה — יש ללחוץ שוב על „בדוק את השינויים".', 'info');
+}
+
+function pendingEditText() {
+  return 'התשובה על הביצוע לא הגיעה. לחץ שוב על „בצע ופרסם" — אותה בקשה בדיוק תישלח שוב, ולא תיווצר גרסה נוספת.';
+}
+
+function addEditItem() {
+  if (!canEditSchedule()) return;
+  const person = state.editPerson;
+  if (!person) { message('editMessage', 'יש לבחור עובד מהחיפוש.', 'err'); return; }
+  const dates = editDatesFor($('editRange').value, $('editDate').value);
+  if (!dates.length) { message('editMessage', 'יש לבחור תאריך בתוך טווח הסידור הפעיל.', 'err'); return; }
+  const action = $('editAction').value;
+  const item = { kind: action, uid: person.id, name: person.name, dates };
+  if (action === 'assign') {
+    item.sub_station = $('editStation').value;
+    if (!item.sub_station) { message('editMessage', 'יש לבחור תחנה.', 'err'); return; }
+    item.role = $('editRole').value || null;
+  } else if (action === 'role') {
+    item.role = $('editRole').value || null;
+  } else if (action === 'absence') {
+    const kind = $('editAbsence').value;
+    item.absence = kind ? Object.assign({ kind }, kind === 'leave' && $('editLocation').value ? { location: $('editLocation').value } : {}) : null;
+  }
+  if (item.role) {
+    const requirement = editStations().flatMap((s) => s.requirements || []).find((r) => r.role === item.role);
+    item.role_label = requirement ? (requirement.label || requirement.role) : item.role;
+  }
+  state.editList = state.editList || [];
+  state.editList.push(item);
+  message('editMessage', '', 'info');
+  invalidateEditReport();
+  renderEditList();
+}
+
+function renderEditReport(report) {
+  const wrap = $('editReport'); wrap.hidden = false;
+  const counts = $('editCounts'); clear(counts); counts.classList.remove('hide');
+  [['שינויים', report.counts.changes], ['עובדים שישתנו', report.counts.people], ['ימים', report.counts.dates],
+    ['הודעות שיישלחו', report.notifications], ['ימים מתחת לקו אחרי השינוי', (report.below_minimum || []).length], ['גרסה חדשה', report.next_revision]]
+    .forEach(([label, value]) => {
+      const metric = node('div', 'metric'); metric.append(node('b', '', value), node('span', '', label)); counts.appendChild(metric);
+    });
+  const people = $('editPeople'); clear(people);
+  (report.people_changed || []).forEach((person) => people.appendChild(node('span', 'blocktag station', person.name + ' · ' + person.changes)));
+  const changes = $('editChanges'); clear(changes);
+  const describe = (state) => (state.sub_station ? editStationLabel(state.sub_station) + (state.role ? ' · ' + state.role : '') : 'לא משובץ')
+    + (state.absence ? ' · ' + EDIT_ABSENCE_HE[state.absence.kind] + (state.absence.location ? ' (' + ABSENCE_LOCATIONS.get(state.absence.location) + ')' : '') : '');
+  (report.changes || []).forEach((change) => {
+    const row = node('div', 'editchange');
+    row.appendChild(node('b', '', change.name + ' · ' + dateLabel(change.date)));
+    row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
+    changes.appendChild(row);
+  });
+  if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
+  const warnings = $('editWarnings'); clear(warnings);
+  (report.warnings || []).forEach((warning) => warnings.appendChild(node('div', 'change warn', warning.name + ' · ' + dateLabel(warning.date) + ' · ' + (EDIT_WARN_HE[warning.code] || warning.code))));
+  (report.below_minimum || []).forEach((row) => warnings.appendChild(node('div', 'change weak', row.label + ' · ' + dateLabel(row.date) + ' · ' + row.people + ' מתוך קו ' + row.minimum)));
+}
+
+async function checkEdit() {
+  if (state.busy || !canEditSchedule() || !(state.editList && state.editList.length)) return;
+  state.busy = true; $('editCheck').disabled = true; $('editApply').disabled = true;
+  message('editMessage', 'בודק את השינויים מול הסידור הפעיל…', 'info');
+  try {
+    const report = (await call.editPreview(editPayload())).data;
+    state.editReport = report;
+    renderEditReport(report);
+    if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
+    else message('editMessage', report.counts.changes + ' שינויים ל-' + report.counts.people + ' עובדים. ' + report.notifications + ' עובדים יקבלו הודעה אחת. אפשר לבצע.', 'ok');
+    $('editApply').disabled = !!state.editPending ? false : !report.counts.changes;
+    if (state.editPending) message('editMessage', pendingEditText(), 'warn');
+  } catch (error) {
+    state.editReport = null; $('editReport').hidden = true;
+    message('editMessage', errorText(error), 'err');
+    $('editApply').disabled = !state.editPending;
+    if (errorCode(error) === 'edit-base-stale') await refreshStatusAfterEdit();
+  } finally { state.busy = false; $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length); }
+}
+
+async function refreshStatusAfterEdit() {
+  try {
+    state.status = (await call.status({})).data;
+    setMode(state.status);
+    setRollbackAvailability();
+    updateEditAvailability();
+  } catch (_) { /* המסך יראה את השגיאה הבאה */ }
+}
+
+async function applyEdit() {
+  if (state.busy) return;
+  const pending = state.editPending;
+  if (!pending && (!state.editReport || !state.editReport.counts.changes)) return;
+  let payload;
+  if (pending) payload = pending.payload;
+  else {
+    const digestValue = state.editReport.edit_digest;
+    state.editRequestIds = state.editRequestIds || {};
+    if (!state.editRequestIds[digestValue]) state.editRequestIds[digestValue] = requestId('edit');
+    payload = Object.assign({ request_id: state.editRequestIds[digestValue], expected_edit_digest: digestValue }, editPayload());
+  }
+  state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
+  message('editMessage', pending ? 'שולח שוב את אותה בקשה…' : 'מבצע ומפרסם גרסה חדשה…', 'info');
+  state.editPending = { payload };
+  try {
+    const result = (await call.editApply(payload)).data;
+    state.editPending = null;
+    state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
+    message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
+      + (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת. אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
+    await refreshStatusAfterEdit();
+    invalidateRange();
+    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+  } catch (error) {
+    if (errorCode(error)) {
+      state.editPending = null;
+      message('editMessage', errorText(error), 'err');
+      if (errorCode(error) === 'edit-base-stale') { state.editReport = null; $('editReport').hidden = true; await refreshStatusAfterEdit(); }
+    } else {
+      message('editMessage', pendingEditText() + ' (' + errorText(error) + ')', 'warn');
+    }
+  } finally {
+    state.busy = false;
+    $('editApply').disabled = !state.editPending;
+    $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length) || !!state.editPending;
+  }
+}
+
+function updateEditAvailability() {
+  const card = $('editCard');
+  if (!card) return;
+  const may = canEditSchedule();
+  card.hidden = !canManageSchedule() || !state.status || state.status.mode !== 'new';
+  if (!card.hidden && !may) message('editMessage', 'אין סידור פעיל לעריכה.', 'info');
+  if (may && state.status.active && state.status.active.from && !$('editDate').value) $('editDate').value = localDate() >= state.status.active.from && localDate() <= state.status.active.to ? localDate() : state.status.active.from;
+  renderEditControls(); renderEditDates(); renderEditList();
+}
+
+$('editSearch').addEventListener('input', renderEditSearch);
+$('editRange').addEventListener('change', renderEditDates);
+$('editDate').addEventListener('change', renderEditDates);
+$('editAction').addEventListener('change', renderEditControls);
+$('editStation').addEventListener('change', renderEditControls);
+$('editAbsence').addEventListener('change', renderEditControls);
+$('editAdd').addEventListener('click', managerAction(addEditItem));
+$('editCheck').addEventListener('click', managerAction(checkEdit));
+$('editApply').addEventListener('click', managerAction(applyEdit));
 
 async function boot(user) {
   state.user = user;
@@ -2396,6 +2709,7 @@ async function boot(user) {
     state.month = monthStart();
     showScheduleViews();
     await Promise.all([loadSetup(), loadModeOptions()]);
+    updateEditAvailability();
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
     state.status = null;

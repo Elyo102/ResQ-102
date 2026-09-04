@@ -1528,6 +1528,15 @@ function createScheduleRuntime(deps) {
     if (activeView && ctx.manager) {
       activeView.previous_publication_id = activeData.previous_publication_id || null;
       activeView.can_rollback = nonEmpty(activeData.previous_publication_id);
+      // 42H.2 · בסיס העריכה: החתימה והטווח של הפרסום הפעיל (לאחראי סידור בלבד).
+      activeView.content_digest = nonEmpty(activeData.content_digest) ? activeData.content_digest : null;
+      if (nonEmpty(activeView.publication_id)) {
+        const pubMeta = await stationRef(ctx.sid).collection('schedule_publications').doc(activeView.publication_id).get();
+        const pubData = pubMeta.exists ? (pubMeta.data() || {}) : {};
+        activeView.from = nonEmpty(pubData.from) ? pubData.from : null;
+        activeView.to = nonEmpty(pubData.to) ? pubData.to : null;
+        activeView.edited = pubData.edited === true;
+      }
       if (nonEmpty(activeView.publication_id)) {
         const delivery = await stationRef(ctx.sid).collection('schedule_publications')
           .doc(activeView.publication_id).collection('schedule_outbox')
