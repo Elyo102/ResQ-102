@@ -49,7 +49,7 @@ test('feedback stores live identity and intentionally preserves personal text', 
   assert.equal(saved.text, text);
   assert.equal(saved.allow_contact, true);
   assert.match(saved.intent_hash, /^[a-f0-9]{64}$/);
-  assert.equal(saved.expires_at, undefined);
+  assert.equal(saved.expires_at, '2026-10-03T10:00:00.000Z');
 });
 test('same intent and id replay returns exact id without an extra quota or write', async () => {
   const { db, service } = fixture();
@@ -109,9 +109,30 @@ test('replay across midnight does not spend quota for the new day', async () => 
   let now = '2026-09-03T23:59:59.000Z';
   const { db, service } = fixture({}, () => now);
   const a = await service.submit(req());
+  const expiry = db.read('stations/alpha_1/feedback/' + a.id).expires_at;
   now = '2026-09-04T00:00:01.000Z';
   assert.deepEqual(await service.submit(req()), { id: a.id, duplicate: true });
   assert.equal(db.read('stations/alpha_1/feedback_quota/user.with.dot_2026-09-04'), null);
+  await service.markRead({ sid: 'alpha_1', ids: [a.id], by: 'operator' });
+  assert.equal(db.read('stations/alpha_1/feedback/' + a.id).expires_at, expiry);
+});
+
+test('manual removal deletes exactly one feedback without refunding quota', async () => {
+  const { db, service } = fixture();
+  const a = await service.submit(req());
+  const b = await service.submit(req({ request_id: 'fb_delete_other_0001' }));
+  const options = { sid: 'alpha_1', id: a.id, by: 'operator' };
+  const before = db.writes.length;
+  for (const patch of [{ by: 'codex' }, { sid: '../alpha' }, { id: '../feedback' }, { all: true }]) {
+    await assert.rejects(service.remove({ ...options, ...patch }), TypeError);
+  }
+  await assert.rejects(service.remove({ ...options, sid: 'beta_2' }), /feedback-not-found/);
+  assert.equal(db.writes.length, before);
+  assert.deepEqual(await service.remove(options), { deleted: true, id: a.id });
+  assert.equal(db.read('stations/alpha_1/feedback/' + a.id), null);
+  assert.ok(db.read('stations/alpha_1/feedback/' + b.id));
+  assert.equal(db.read('stations/alpha_1/feedback_quota/user.with.dot_2026-09-03').count, 2);
+  await assert.rejects(service.remove(options), /feedback-not-found/);
 });
 test('quota and corrupt quota fail closed; exact replay still works at cap', async () => {
   const { db, service } = fixture();

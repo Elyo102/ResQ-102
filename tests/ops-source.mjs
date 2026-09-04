@@ -255,12 +255,18 @@ await check('ops collections have explicit deny rules and private backup classif
     if (collection.startsWith('feedback')) assert.notEqual(policy.humanReadable, 'allowed');
   }
 });
-await check('TTL definitions do not expire durable feedback', () => {
+await check('retention expires feedback and quota counters, never incidents automatically', () => {
   const indexes = JSON.parse(read('firestore.indexes.json'));
   const ttl = new Set(indexes.fieldOverrides.filter((item) => item.ttl === true && item.fieldPath === 'expires_at')
     .map((item) => item.collectionGroup));
-  for (const name of ['incidents', 'incident_days', 'feedback_quota']) assert.ok(ttl.has(name));
-  assert.equal(ttl.has('feedback'), false);
+  for (const name of ['feedback', 'incident_days', 'feedback_quota']) assert.ok(ttl.has(name));
+  assert.equal(ttl.has('incidents'), false);
+  const incidentExpiry = indexes.fieldOverrides.filter((item) => item.collectionGroup === 'incidents' && item.fieldPath === 'expires_at');
+  assert.equal(incidentExpiry.length, 1);
+  assert.equal(incidentExpiry[0].ttl, false, 'disable any previously enabled incident TTL explicitly');
+  assert.equal(require('../functions/feedback.js').FEEDBACK_TTL_MS, 30 * 86400000);
+  assert.equal(require('../functions/feedback.js').QUOTA_TTL_MS, 3 * 86400000);
+  assert.equal(require('../functions/incident-log.js').DAY_TTL_MS, 3 * 86400000);
 });
 await check('both callable exports explicitly enforce App Check', () => {
   const source = withoutComments(read('functions/index.js'));
@@ -298,9 +304,97 @@ await check('export status actions accept an actual incident fingerprint and onl
   await incidents.setStatus({ sid, fingerprint: result.fingerprint, status: 'resolved', by: defaults.by,
     note_code: defaults.note });
 });
+const deleteBase = ['--project', 'demo-resq', '--station', sid, '--by', 'operator'];
+const deletionId = 'f_' + 'a'.repeat(40), deletionFingerprint = 'b'.repeat(40);
+const feedbackDeleteArgs = [...deleteBase, '--delete-feedback', deletionId, '--confirm-delete', deletionId];
+const incidentDeleteArgs = [...deleteBase, '--delete-incident', deletionFingerprint, '--confirm-delete', deletionFingerprint,
+  '--expected-count', '2', '--expected-last-seen', now, '--expected-resolved-at', now];
+await check('manual deletion requires an explicit single target, operator and exact confirmation', () => {
+  assert.equal(exporter.parseArgs(feedbackDeleteArgs).deleteFeedback, deletionId);
+  assert.equal(exporter.parseArgs(incidentDeleteArgs).expectedCount, 2);
+  for (const args of [feedbackDeleteArgs, incidentDeleteArgs]) {
+    for (const key of ['--project', '--station', '--by', '--confirm-delete']) {
+      const missing = args.slice(), index = missing.indexOf(key); missing.splice(index, 2);
+      assert.throws(() => exporter.parseArgs(missing), key);
+    }
+    for (const extra of [['--resolve', deletionFingerprint], ['--mark-read'], ['--station', 'beta_2'], ['--dry-run', '--dry-run']]) {
+      assert.throws(() => exporter.parseArgs([...args, ...extra]), extra[0]);
+    }
+    for (const [key, value] of [['--by', 'codex'], ['--confirm-delete', 'wrong']]) {
+      const changed = args.slice(); changed[changed.indexOf(key) + 1] = value;
+      assert.throws(() => exporter.parseArgs(changed));
+    }
+  }
+  for (const id of ['', '*', '../outside', 'f_' + 'a'.repeat(39), deletionId + ',other']) {
+    assert.throws(() => exporter.parseArgs([...deleteBase, '--delete-feedback', id, '--confirm-delete', id]));
+  }
+  assert.throws(() => exporter.parseArgs([...feedbackDeleteArgs, '--delete-incident', deletionFingerprint]));
+  assert.throws(() => exporter.parseArgs([...deleteBase, '--confirm-delete', deletionId]));
+});
+await check('incident deletion requires a complete canonical reviewed snapshot', () => {
+  for (const key of ['--expected-count', '--expected-last-seen', '--expected-resolved-at']) {
+    const args = incidentDeleteArgs.slice(); args.splice(args.indexOf(key), 2);
+    assert.throws(() => exporter.parseArgs(args), key);
+  }
+  for (const value of ['0', '-1', '1.5', 'NaN', '1e2', '9007199254740992']) {
+    const args = incidentDeleteArgs.slice(); args[args.indexOf('--expected-count') + 1] = value;
+    assert.throws(() => exporter.parseArgs(args));
+  }
+  for (const value of ['2026-02-30T00:00:00.000Z', '2026-09-03', 'private text']) {
+    const args = incidentDeleteArgs.slice(); args[args.indexOf('--expected-last-seen') + 1] = value;
+    assert.throws(() => exporter.parseArgs(args));
+  }
+  assert.throws(() => exporter.parseArgs([...feedbackDeleteArgs, '--expected-count', '2']));
+});
+await check('deletion dispatcher passes only exact identities and CAS fields, and never claims malformed success', async () => {
+  const calls = [];
+  const services = {
+    feedback: { remove: async (args) => { calls.push(['feedback', args]); return { deleted: true, id: args.id }; } },
+    incidents: { removeResolved: async (args) => { calls.push(['incidents', args]); return { deleted: true, fingerprint: args.fingerprint }; } }
+  };
+  assert.deepEqual(await exporter.performDeletion(exporter.parseArgs(feedbackDeleteArgs), services),
+    { collection: 'feedback', id: deletionId, deleted: true });
+  assert.deepEqual(calls[0], ['feedback', { sid, id: deletionId, by: 'operator' }]);
+  assert.deepEqual(await exporter.performDeletion(exporter.parseArgs(incidentDeleteArgs), services),
+    { collection: 'incidents', id: deletionFingerprint, deleted: true });
+  assert.deepEqual(calls[1], ['incidents', { sid, fingerprint: deletionFingerprint, by: 'operator',
+    expected_count: 2, expected_last_seen_iso: now, expected_resolved_at: now }]);
+  for (const value of [null, {}, { deleted: false, id: deletionId }, { deleted: true, id: 'different' }]) {
+    await assert.rejects(exporter.performDeletion(exporter.parseArgs(feedbackDeleteArgs),
+      { feedback: { remove: async () => value } }));
+  }
+  const failure = new Error('stale snapshot');
+  await assert.rejects(exporter.performDeletion(exporter.parseArgs(incidentDeleteArgs),
+    { incidents: { removeResolved: async () => { throw failure; } } }), (error) => error === failure);
+});
+await check('actual delete command invokes only one mocked admin method and never exports more private copies', () => {
+  const modulePath = path.join(root, 'ops-export.mjs');
+  for (const [args, method, id] of [[feedbackDeleteArgs, 'feedback', deletionId], [incidentDeleteArgs, 'incidents', deletionFingerprint]]) {
+    const probe = [
+      "import Module from 'node:module';",
+      "const calls = []; const refuse = () => { throw new Error('unexpected non-delete operation'); };",
+      "const sdk = { apps: [], initializeApp: ({projectId}) => { if(projectId !== 'demo-resq') refuse(); }, firestore: Object.assign(() => ({}), { FieldValue: {} }) };",
+      "const load = Module._load; Module._load = function(name,...rest) {",
+      "if (name === 'firebase-admin') return sdk;",
+      "if (name === './feedback.js') return { createFeedback: () => ({ list: refuse, markRead: refuse, remove: async o => { calls.push(['feedback',o]); return {deleted:true,id:o.id}; } }) };",
+      "if (name === './incident-log.js') return { createIncidentLog: () => ({ list: refuse, setStatus: refuse, removeResolved: async o => { calls.push(['incidents',o]); return {deleted:true,fingerprint:o.fingerprint}; } }) };",
+      "if (/firebase|google-auth|gaxios/.test(name)) refuse(); return load.call(this,name,...rest); };",
+      'process.argv = [process.execPath, ' + JSON.stringify(modulePath) + ', ...' + JSON.stringify(args) + '];',
+      "process.once('beforeExit', () => console.log(JSON.stringify({calls})));",
+      'await import(' + JSON.stringify(pathToFileURL(modulePath).href) + ');'
+    ].join('\n');
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', probe],
+      { cwd: root, encoding: 'utf8', timeout: 10000, windowsHide: true });
+    const lines = output.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.equal(lines.length, 2); assert.equal(lines[0].deleted, true); assert.equal(lines[0].id, id);
+    assert.equal(lines[0].project, 'demo-resq'); assert.equal(lines[0].station, sid);
+    assert.equal(lines[1].calls.length, 1); assert.equal(lines[1].calls[0][0], method);
+  }
+});
 await check('export dry-run executes without SDK loading, network, subprocesses or filesystem writes', () => {
   const modulePath = path.join(root, 'ops-export.mjs');
-  const probe = [
+  for (const args of [['--project', 'demo-resq'], feedbackDeleteArgs, incidentDeleteArgs]) {
+    const probe = [
     "import fs from 'node:fs';",
     "import cp from 'node:child_process';",
     "import http from 'node:http'; import https from 'node:https'; import net from 'node:net';",
@@ -314,7 +408,7 @@ await check('export dry-run executes without SDK loading, network, subprocesses 
     "net.Socket.prototype.connect = refuse; globalThis.fetch = refuse;",
     "const load = Module._load; Module._load = function(name,...rest) { if (/firebase|google-auth|gaxios/.test(name)) refuse(); return load.call(this,name,...rest); };",
     'syncBuiltinESMExports();',
-    'process.argv = [process.execPath, ' + JSON.stringify(modulePath) + ", '--project', 'demo-resq', '--dry-run'];",
+    'process.argv = [process.execPath, ' + JSON.stringify(modulePath) + ', ...' + JSON.stringify([...args, '--dry-run']) + '];',
     'await import(' + JSON.stringify(pathToFileURL(modulePath).href) + ');'
   ].join('\n');
   const output = execFileSync(process.execPath, ['--input-type=module', '-e', probe],
@@ -323,6 +417,8 @@ await check('export dry-run executes without SDK loading, network, subprocesses 
   assert.equal(result.dryRun, true);
   assert.equal(result.network, 'not contacted');
   assert.equal(result.writes, 'none');
+  assert.equal(result.documentId, args.includes('--delete-feedback') ? deletionId : args.includes('--delete-incident') ? deletionFingerprint : null);
+  }
 });
 await check('incident export never revives legacy raw messages, traces, identity or free notes', () => {
   const raw = 'PRIVATE_LEGACY_MARKER';

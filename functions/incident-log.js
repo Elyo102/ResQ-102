@@ -7,7 +7,7 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const access = require('./schedule-access');
 const { KINDS, STATUSES, finite } = contract;
 const LIMITS = Object.freeze({ screensPerIncident: 12, versionsPerIncident: 12, rolesPerIncident: 12, list: 500 });
-const INCIDENT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+// Incident records are retained until explicit manual deletion after treatment.
 const DAY_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const DAY_CAP = 500;
 const FINGERPRINT_RE = /^[a-f0-9]{40}$/;
@@ -97,8 +97,7 @@ function createIncidentLog(deps) {
         roles: boundedValues(old.roles, actor.role, MEMBER_ROLES, LIMITS.rolesPerIncident),
         resolved_at: reopen ? null : old.resolved_at,
         resolved_by: reopen ? null : old.resolved_by,
-        note_code: reopen ? 'none' : old.note_code,
-        expires_at: new Date(now + INCIDENT_TTL_MS)
+        note_code: reopen ? 'none' : old.note_code
       };
       tx.set(dayRef, { day, count: dayCount + 1, expires_at: new Date(now + DAY_TTL_MS) });
       // Replace with the allowlisted record; merging would retain old raw text.
@@ -140,16 +139,39 @@ function createIncidentLog(deps) {
         resolved_by: o.status === 'open' ? null : o.by,
         note_code: o.note_code || 'none' };
       delete patch.id;
-      // Preserve the existing expiry rather than extend retention on handling.
-      const last = current.last_seen_iso;
-      if (!last) throw new Error('incident-timestamp-invalid');
-      patch.expires_at = new Date(Date.parse(last) + INCIDENT_TTL_MS);
+      // Full replacement also removes an expiry left by an older writer.
+      // Resolved and ignored records are retained too: treatment is not deletion.
       tx.set(ref, patch);
       return { fingerprint: o.fingerprint, status: patch.status,
         resolved_at: patch.resolved_at, resolved_by: patch.resolved_by, note_code: patch.note_code };
     });
   }
-  return Object.freeze({ report, list, setStatus, planIncident });
+  async function removeResolved(options) {
+    const o = plain(options) ? options : {};
+    if (Object.keys(o).some((key) => !['sid', 'fingerprint', 'by', 'expected_count',
+      'expected_last_seen_iso', 'expected_resolved_at'].includes(key))
+        || !access.validId(o.sid) || typeof o.fingerprint !== 'string'
+        || !FINGERPRINT_RE.test(o.fingerprint) || o.by !== 'operator'
+        || !Number.isSafeInteger(o.expected_count) || o.expected_count < 1
+        || !iso(o.expected_last_seen_iso) || !iso(o.expected_resolved_at)) {
+      throw new TypeError('invalid incident deletion');
+    }
+    return db.runTransaction(async (tx) => {
+      const ref = incidentRef(o.sid, o.fingerprint);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('incident-not-found');
+      const data = snap.data() || {};
+      if (data.station_id !== o.sid || data.fingerprint !== o.fingerprint) {
+        throw new Error('incident-identity-mismatch');
+      }
+      if (data.status !== 'resolved') throw new Error('incident-not-resolved');
+      if (data.count !== o.expected_count || data.last_seen_iso !== o.expected_last_seen_iso
+          || data.resolved_at !== o.expected_resolved_at) throw new Error('incident-changed');
+      tx.delete(ref);
+      return { deleted: true, fingerprint: o.fingerprint };
+    });
+  }
+  return Object.freeze({ report, list, setStatus, removeResolved, planIncident });
 }
 
-module.exports = Object.freeze({ createIncidentLog, safeIncident, KINDS, STATUSES, LIMITS, DAY_CAP, INCIDENT_TTL_MS, DAY_TTL_MS });
+module.exports = Object.freeze({ createIncidentLog, safeIncident, KINDS, STATUSES, LIMITS, DAY_CAP, DAY_TTL_MS });

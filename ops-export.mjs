@@ -14,6 +14,9 @@
  *   node ops-export.mjs ... --ignore <fingerprint> --by operator
  *   node ops-export.mjs ... --reopen <fingerprint> --by claude
  *   node ops-export.mjs ... --mark-read --by claude        (כל חוות הדעת שיוצאו מסומנות כנקראו)
+ *   node ops-export.mjs ... --delete-feedback <id> --confirm-delete <id> --by operator
+ *   node ops-export.mjs ... --delete-incident <fingerprint> --confirm-delete <fingerprint>
+ *     --by operator --expected-count <count> --expected-last-seen <ISO> --expected-resolved-at <ISO>
  *
  * כל תיקיית _ניטור פרטית ומוחרגת מ-Git ומ-Hosting, לא רק feedback.md.
  * --dry-run אינו טוען SDK, אינו קורא רשת ואינו כותב דבר.
@@ -40,10 +43,15 @@ export const DEFAULTS = Object.freeze({
 });
 
 export function parseArgs(argv) {
-  const out = Object.assign({ by: '', note: 'none', resolve: '', ignore: '', reopen: '', markRead: false, dryRun: false }, DEFAULTS);
+  const out = Object.assign({ by: '', note: 'none', resolve: '', ignore: '', reopen: '', markRead: false,
+    dryRun: false, deleteFeedback: '', deleteIncident: '', confirmDelete: '',
+    expectedCount: undefined, expectedLastSeen: '', expectedResolvedAt: '' }, DEFAULTS);
   const list = Array.isArray(argv) ? argv.slice() : [];
+  const seen = new Set();
   while (list.length) {
     const key = list.shift();
+    if (seen.has(key)) throw new Error('Duplicate argument: ' + key);
+    seen.add(key);
     const next = () => { const v = list.shift(); if (v === undefined) throw new Error('חסר ערך אחרי ' + key); return v; };
     switch (key) {
       case '--project': out.project = next(); break;
@@ -56,6 +64,16 @@ export function parseArgs(argv) {
       case '--ignore': out.ignore = next(); break;
       case '--reopen': out.reopen = next(); break;
       case '--mark-read': out.markRead = true; break;
+      case '--delete-feedback': out.deleteFeedback = next(); break;
+      case '--delete-incident': out.deleteIncident = next(); break;
+      case '--confirm-delete': out.confirmDelete = next(); break;
+      case '--expected-count': {
+        const value = next();
+        if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('Invalid expected count');
+        out.expectedCount = Number(value); break;
+      }
+      case '--expected-last-seen': out.expectedLastSeen = next(); break;
+      case '--expected-resolved-at': out.expectedResolvedAt = next(); break;
       case '--dry-run': out.dryRun = true; break;
       default: throw new Error('פרמטר לא מוכר: ' + key);
     }
@@ -63,13 +81,55 @@ export function parseArgs(argv) {
   if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(out.project || '')) throw new Error('Explicit valid --project is required');
   if (!/^[a-z0-9_-]{2,80}$/.test(String(out.station))) throw new Error('--station אינו תקין');
   if (!Number.isFinite(out.days) || out.days < 1 || out.days > 365) throw new Error('--days חייב להיות 1..365');
-  const actions = [out.resolve, out.ignore, out.reopen].filter(Boolean).length + (out.markRead ? 1 : 0);
+  const actions = ['--resolve', '--ignore', '--reopen', '--mark-read', '--delete-feedback', '--delete-incident']
+    .filter((key) => seen.has(key)).length;
   if (actions > 1) throw new Error('Only one status action per invocation');
   if (actions && !['operator', 'codex', 'claude'].includes(out.by)) throw new Error('Action requires --by operator/codex/claude');
-  for (const fp of [out.resolve, out.ignore, out.reopen].filter(Boolean)) if (!/^[a-f0-9]{40}$/.test(fp)) throw new Error('Invalid fingerprint');
+  for (const action of ['resolve', 'ignore', 'reopen']) if (seen.has('--' + action) && !/^[a-f0-9]{40}$/.test(out[action])) throw new Error('Invalid fingerprint');
   if (!telemetryContract.NOTE_CODES.includes(out.note)) throw new Error('Invalid note code');
+  if (seen.has('--delete-feedback') && !/^f_[a-f0-9]{40}$/.test(out.deleteFeedback)) throw new Error('Invalid feedback ID');
+  if (seen.has('--delete-incident') && !/^[a-f0-9]{40}$/.test(out.deleteIncident)) throw new Error('Invalid incident fingerprint');
+  const deleting = out.deleteFeedback || out.deleteIncident;
+  const incidentExpectation = ['--expected-count', '--expected-last-seen', '--expected-resolved-at'];
+  if (deleting) {
+    if (!seen.has('--station')) throw new Error('Deletion requires explicit --station');
+    if (out.by !== 'operator') throw new Error('Deletion requires --by operator');
+    if (out.confirmDelete !== deleting) throw new Error('--confirm-delete must exactly match the document ID');
+    if (out.note !== 'none') throw new Error('Deletion does not change a treatment note');
+    if (out.deleteFeedback && !/^f_[a-f0-9]{40}$/.test(out.deleteFeedback)) throw new Error('Invalid feedback ID');
+    if (out.deleteIncident) {
+      if (!/^[a-f0-9]{40}$/.test(out.deleteIncident)) throw new Error('Invalid incident fingerprint');
+      if (incidentExpectation.some((key) => !seen.has(key))) throw new Error('Incident deletion requires the reviewed count and timestamps');
+      for (const value of [out.expectedLastSeen, out.expectedResolvedAt]) {
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+            || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error('Invalid expected timestamp');
+      }
+    } else if (incidentExpectation.some((key) => seen.has(key))) {
+      throw new Error('Incident expectations require --delete-incident');
+    }
+  } else if (seen.has('--confirm-delete') || incidentExpectation.some((key) => seen.has(key))) {
+    throw new Error('Deletion confirmation and expectations require a deletion action');
+  }
   privateOutput(out.out);
   return out;
+}
+
+// Admin-only, one exact document. Never resolve and delete in the same command,
+// and never export another copy of private content after deleting it.
+export async function performDeletion(args, services) {
+  if (args.deleteFeedback) {
+    const result = await services.feedback.remove({ sid: args.station, id: args.deleteFeedback, by: args.by });
+    if (!result || result.deleted !== true || result.id !== args.deleteFeedback) throw new Error('Invalid feedback deletion result');
+    return { collection: 'feedback', id: result.id, deleted: true };
+  }
+  if (args.deleteIncident) {
+    const result = await services.incidents.removeResolved({ sid: args.station, fingerprint: args.deleteIncident,
+      by: args.by, expected_count: args.expectedCount, expected_last_seen_iso: args.expectedLastSeen,
+      expected_resolved_at: args.expectedResolvedAt });
+    if (!result || result.deleted !== true || result.fingerprint !== args.deleteIncident) throw new Error('Invalid incident deletion result');
+    return { collection: 'incidents', id: result.fingerprint, deleted: true };
+  }
+  throw new Error('No deletion selected');
 }
 
 function privateOutput(value) {
@@ -258,7 +318,10 @@ function writeIfChanged(file, content) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.dryRun) {
-    console.log(JSON.stringify({ dryRun: true, project: args.project, station: args.station, output: args.out, maximumRowsPerCollection: 500, network: 'not contacted', writes: 'none' }));
+    console.log(JSON.stringify({ dryRun: true, project: args.project, station: args.station, output: args.out,
+      action: args.deleteFeedback ? 'delete-feedback' : args.deleteIncident ? 'delete-incident' : 'export',
+      documentId: args.deleteFeedback || args.deleteIncident || null,
+      maximumRowsPerCollection: 500, network: 'not contacted', writes: 'none' }));
     return;
   }
   const require = createRequire(path.join(HERE, 'functions', 'package.json'));
@@ -278,6 +341,13 @@ async function main() {
   const incidents = createIncidentLog({ db, FieldValue: FV, HttpsError: ToolError, hash, clock: () => new Date().toISOString() });
   const feedback = createFeedback({ db, FieldValue: FV, HttpsError: ToolError, hash, clock: () => new Date().toISOString() });
   const sid = args.station;
+
+  if (args.deleteFeedback || args.deleteIncident) {
+    const result = await performDeletion(args, { incidents, feedback });
+    console.log(JSON.stringify({ project: args.project, station: sid, ...result,
+      recovery: 'Code rollback cannot restore this document; existing exports/backups are unchanged.' }));
+    return;
+  }
 
   // פעולות טיפול קודם, כדי שהייצוא ישקף אותן.
   for (const [status, fp] of [['resolved', args.resolve], ['ignored', args.ignore], ['open', args.reopen]]) {

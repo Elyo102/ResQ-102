@@ -109,6 +109,7 @@ function createFakeFirestore(seed) {
           return snapshot(ref);
         },
         set: (ref, value, options) => { wrote = true; writes.push({ ref, value, options }); },
+        delete: (ref) => { wrote = true; writes.push({ ref, remove: true }); },
         create: (ref, value) => {
           wrote = true;
           if (store.has(ref.path)) throw new Error('already-exists');
@@ -116,7 +117,10 @@ function createFakeFirestore(seed) {
         }
       };
       const result = await work(tx);
-      writes.forEach((w) => applySet(w.ref.path, w.value, w.options));
+      writes.forEach((w) => {
+        if (w.remove) { store.delete(w.ref.path); log.push({ path: w.ref.path, deleted: true }); }
+        else applySet(w.ref.path, w.value, w.options);
+      });
       return result;
     },
     read(path) { return store.has(path) ? clone(store.get(path)) : null; },

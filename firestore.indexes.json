@@ -364,6 +364,12 @@
     {
       "collectionGroup": "incidents",
       "fieldPath": "expires_at",
+      "ttl": false,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "feedback",
+      "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
     },

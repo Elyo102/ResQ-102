@@ -49,15 +49,15 @@ const DATA_POLICIES = Object.freeze([
   // Server-only operational reporting. This policy classifies data; it does
   // not enable a managed backup, export, scheduler or paid retention service.
   policy('stations/{sid}/incidents/{fingerprint}', 'station', 'monitor_state',
-    'activity', 'exclude', 'do_not_restore', 'operational', 'ttl_90_days',
-    'Finite technical categories only; old records still require safe projection.',
+    'activity', 'exclude', 'do_not_restore', 'operational', 'manual_after_resolution',
+    'Finite technical categories; no automatic expiry, manual deletion only after treatment.',
     { humanReadable:'redacted' }),
   policy('stations/{sid}/incident_days/{day}', 'station', 'temporary',
     'none', 'exclude', 'do_not_restore', 'operational', 'ttl_3_days',
     'Station reporting quota, not durable business data.', { humanReadable:'redacted' }),
   policy('stations/{sid}/feedback/{feedbackId}', 'station', 'source_of_truth',
     'activity', 'managed_export', 'restore', 'restricted_identity',
-    'retention_policy_required', 'User feedback intentionally retains author identity and free text.',
+    'ttl_30_days_or_manual', 'Private feedback expires after 30 days or explicit manual deletion; exports require separate retention.',
     { humanReadable:'forbidden' }),
   policy('stations/{sid}/feedback_quota/{quotaId}', 'station', 'temporary',
     'none', 'exclude', 'do_not_restore', 'restricted_identity', 'ttl_3_days',

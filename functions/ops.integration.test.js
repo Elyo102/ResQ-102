@@ -18,7 +18,7 @@ const admin = require('firebase-admin');
 // Resolve through local dependencies or the runner's NODE_PATH; no installation
 // and no silent skip when the rules SDK is missing.
 const { initializeTestEnvironment, assertFails } = require('@firebase/rules-unit-testing');
-const { doc, getDoc, setDoc, collection, getDocs } = require('firebase/firestore');
+const { doc, getDoc, setDoc, deleteDoc, collection, getDocs } = require('firebase/firestore');
 const { createFeedback } = require('./feedback');
 const { createIncidentLog } = require('./incident-log');
 const app = admin.initializeApp({ projectId }, 'ops-it-' + process.pid);
@@ -167,11 +167,69 @@ function revokeAtRetry() {
         const client = env.authenticatedContext(uid, claims).firestore();
         await assertFails(getDoc(doc(client, 'stations', sid, name, 'rules_probe')));
         await assertFails(setDoc(doc(client, 'stations', sid, name, 'rules_probe'), { test: false }));
+        await assertFails(deleteDoc(doc(client, 'stations', sid, name, 'rules_probe')));
         await assertFails(getDocs(collection(client, 'stations', sid, name)));
       }
       const anonymous = env.unauthenticatedContext().firestore();
       await assertFails(getDoc(doc(anonymous, 'stations', sid, name, 'rules_probe')));
     }
+  });
+  await test('feedback retention is 30 days from creation, not replay or marking read', async () => {
+    await resetQuota();
+    const input = feedbackData('ops_retention_0001');
+    const first = await feedback.submit(request(input));
+    const ref = root.collection('feedback').doc(first.id);
+    const expiry = Date.parse(clock()) + 30 * 24 * 60 * 60 * 1000;
+    assert.equal((await ref.get()).data().expires_at.toMillis(), expiry);
+    const later = createFeedback({ ...deps(), clock: () => '2026-09-10T10:00:00.000Z' });
+    assert.equal((await later.submit(request(input))).duplicate, true);
+    await later.markRead({ sid, ids: [first.id], by: 'operator' });
+    assert.equal((await ref.get()).data().expires_at.toMillis(), expiry);
+    const countBefore = (await root.collection('feedback_quota').doc(uid + '_2026-09-03').get()).data().count;
+    await feedback.remove({ sid, id: first.id, by: 'operator' });
+    assert.equal((await ref.get()).exists, false);
+    assert.equal((await root.collection('feedback_quota').doc(uid + '_2026-09-03').get()).data().count, countBefore);
+  });
+  await test('incidents never retain expiry, and manual deletion rejects open or changed reports', async () => {
+    const out = await incidents.report(request(reportData));
+    const ref = root.collection('incidents').doc(out.fingerprint);
+    await ref.update({ expires_at: admin.firestore.Timestamp.fromMillis(0) });
+    await incidents.report(request(reportData));
+    assert.equal(Object.hasOwn((await ref.get()).data(), 'expires_at'), false);
+    const current = (await ref.get()).data();
+    const options = { sid, fingerprint: out.fingerprint, by: 'operator', expected_count: current.count,
+      expected_last_seen_iso: current.last_seen_iso, expected_resolved_at: clock() };
+    await assert.rejects(incidents.removeResolved(options), /incident-not-resolved/);
+    await ref.update({ expires_at: admin.firestore.Timestamp.fromMillis(0) });
+    await incidents.setStatus({ sid, fingerprint: out.fingerprint, status: 'resolved', by: 'operator' });
+    assert.equal(Object.hasOwn((await ref.get()).data(), 'expires_at'), false);
+    await incidents.report(request(reportData));
+    await assert.rejects(incidents.removeResolved(options), /incident-changed/);
+    await incidents.removeResolved({ ...options, expected_count: current.count + 1 });
+    assert.equal((await ref.get()).exists, false);
+  });
+  await test('manual incident deletion rechecks a recurrence on Firestore transaction retry', async () => {
+    const out = await incidents.report(request(reportData));
+    await incidents.setStatus({ sid, fingerprint: out.fingerprint, status: 'resolved', by: 'operator' });
+    const ref = root.collection('incidents').doc(out.fingerprint);
+    const reviewed = (await ref.get()).data();
+    let attempts = 0, recurrence;
+    const database = { collection: db.collection.bind(db), runTransaction: (work) => db.runTransaction(async (tx) => {
+      attempts++;
+      if (recurrence) await recurrence;
+      const result = await work(tx);
+      if (attempts === 1) {
+        recurrence = ref.update({ count: reviewed.count + 1 });
+        recurrence.catch(() => {});
+        const error = new Error('Injected recurrence retry boundary'); error.code = 10; throw error;
+      }
+      return result;
+    }, { maxAttempts: 5 }) };
+    await assert.rejects(createIncidentLog(deps(database)).removeResolved({ sid, fingerprint: out.fingerprint,
+      by: 'operator', expected_count: reviewed.count, expected_last_seen_iso: reviewed.last_seen_iso,
+      expected_resolved_at: reviewed.resolved_at }), /incident-changed/);
+    assert.ok(attempts >= 2);
+    assert.equal((await ref.get()).data().count, reviewed.count + 1);
   });
   console.log(passed + ' ops emulator scenarios passed. No production resources used.');
 })().catch((error) => {

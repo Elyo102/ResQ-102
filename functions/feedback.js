@@ -31,6 +31,8 @@ const LIMITS = Object.freeze({
 });
 
 const QUOTA_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+// Eldad's retention decision, 4 September 2026: 30 days from creation.
+const FEEDBACK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const SCREEN_RE = /^[a-z0-9-]{1,48}\.html$/;
 const VERSION_RE = /^[A-Za-z0-9.\-]{1,24}$/;
@@ -191,6 +193,7 @@ function createFeedback(deps) {
         status: 'new',
         created_at: FieldValue.serverTimestamp(),
         created_at_iso: nowIso,
+        expires_at: new Date(now + FEEDBACK_TTL_MS),
         read_at: null,
         read_by: null
       });
@@ -243,7 +246,27 @@ function createFeedback(deps) {
     return { marked };
   }
 
-  return Object.freeze({ submit, list, markRead, planFeedback });
+  // Admin SDK tooling only, never exposed as a callable or client write.
+  async function remove(options) {
+    const o = plain(options) ? options : {};
+    if (Object.keys(o).some((key) => !['sid', 'id', 'by'].includes(key))
+        || !access.validId(o.sid) || typeof o.id !== 'string'
+        || !/^f_[a-f0-9]{40}$/.test(o.id) || o.by !== 'operator') {
+      throw new TypeError('invalid feedback deletion');
+    }
+    return db.runTransaction(async (tx) => {
+      const ref = feedbackRef(o.sid, o.id);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('feedback-not-found');
+      const data = snap.data() || {};
+      if (data.station_id !== o.sid || data.id !== o.id) throw new Error('feedback-identity-mismatch');
+      tx.delete(ref);
+      // Do not refund daily quota or remove other users' feedback.
+      return { deleted: true, id: o.id };
+    });
+  }
+
+  return Object.freeze({ submit, list, markRead, remove, planFeedback });
 }
 
-module.exports = Object.freeze({ createFeedback, CATEGORIES, RATINGS, LIMITS, QUOTA_TTL_MS });
+module.exports = Object.freeze({ createFeedback, CATEGORIES, RATINGS, LIMITS, QUOTA_TTL_MS, FEEDBACK_TTL_MS });

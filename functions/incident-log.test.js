@@ -37,7 +37,7 @@ test('valid dotted UID produces finite incident with no identity', async () => {
   }
   assert.equal(doc.code, 'TypeError');
   assert.equal(doc.schema_version, 2);
-  assert.equal(doc.expires_at, '2026-12-02T10:00:00.000Z');
+  assert.equal(Object.hasOwn(doc, 'expires_at'), false);
 });
 test('no live card, inactivity, contradictory stations and changed live role all deny writes', async () => {
   for (const profile of [null, { ...member, active: false }, { ...member, is_active: false },
@@ -120,14 +120,55 @@ test('status accepts finite note code/handler, not arbitrary note or personal la
   for (const patch of [{ note: 'דנה מחלה' }, { by: 'eldad' }, { note_code: 'דנה' }, { status: 'private' }]) {
     await assert.rejects(service.setStatus({ ...options, ...patch }), TypeError);
   }
-  const before = db.read('stations/alpha_1/incidents/' + out.fingerprint).expires_at;
+  const ref = 'stations/alpha_1/incidents/' + out.fingerprint;
+  db.write(ref, { ...db.read(ref), expires_at: '2020-01-01T00:00:00.000Z' });
   await service.setStatus(options);
   assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).note_code, 'fixed');
-  assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).expires_at, before);
+  assert.equal(Object.hasOwn(db.read(ref), 'expires_at'), false);
   assert.equal((await service.report(req())).count, 2);
   assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).status, 'resolved');
   await service.report(req({ version: 'unknown' }));
   assert.equal(db.read('stations/alpha_1/incidents/' + out.fingerprint).status, 'open');
+  assert.equal(Object.hasOwn(db.read(ref), 'expires_at'), false);
+});
+
+test('manual deletion requires resolved state and the exact reviewed version', async () => {
+  const { db, service } = fixture();
+  const out = await service.report(req());
+  const other = await service.report(req({ code: 'ReferenceError' }));
+  const path = 'stations/alpha_1/incidents/' + out.fingerprint;
+  const options = { sid: 'alpha_1', fingerprint: out.fingerprint, by: 'operator', expected_count: 1,
+    expected_last_seen_iso: '2026-09-03T10:00:00.000Z', expected_resolved_at: '2026-09-03T10:00:00.000Z' };
+  await assert.rejects(service.removeResolved(options), /incident-not-resolved/);
+  await service.setStatus({ sid: 'alpha_1', fingerprint: out.fingerprint, status: 'ignored', by: 'operator' });
+  await assert.rejects(service.removeResolved(options), /incident-not-resolved/);
+  await service.setStatus({ sid: 'alpha_1', fingerprint: out.fingerprint, status: 'resolved', by: 'operator' });
+  for (const patch of [{ expected_count: 2 }, { expected_last_seen_iso: '2026-09-02T10:00:00.000Z' },
+    { expected_resolved_at: '2026-09-02T10:00:00.000Z' }]) {
+    await assert.rejects(service.removeResolved({ ...options, ...patch }), /incident-changed/);
+  }
+  for (const patch of [{ by: 'claude' }, { sid: '../alpha' }, { fingerprint: {} }, { expected_count: '1' },
+    { expected_last_seen_iso: 'bad' }, { extra: true }]) {
+    await assert.rejects(service.removeResolved({ ...options, ...patch }), TypeError);
+  }
+  await service.report(req()); // Same-version recurrence increments count even if still marked resolved.
+  await assert.rejects(service.removeResolved(options), /incident-changed/);
+  assert.ok(db.read(path));
+  assert.deepEqual(await service.removeResolved({ ...options, expected_count: 2 }),
+    { deleted: true, fingerprint: out.fingerprint });
+  assert.equal(db.read(path), null);
+  assert.ok(db.read('stations/alpha_1/incidents/' + other.fingerprint));
+  assert.equal(db.read('stations/alpha_1/incident_days/2026-09-03').count, 3);
+  await assert.rejects(service.removeResolved(options), /incident-not-found/);
+});
+
+test('a new report strips a legacy expiry rather than extending it', async () => {
+  const { db, service } = fixture();
+  const out = await service.report(req());
+  const path = 'stations/alpha_1/incidents/' + out.fingerprint;
+  db.write(path, { ...db.read(path), expires_at: '2020-01-01T00:00:00.000Z' });
+  await service.report(req());
+  assert.equal(Object.hasOwn(db.read(path), 'expires_at'), false);
 });
 test('safe projection excludes legacy raw fields and arbitrary nested metadata', () => {
   const out = safeIncident('f'.repeat(40), { code: 'דנה', note: 'דנה', sample_message: 'דנה',
