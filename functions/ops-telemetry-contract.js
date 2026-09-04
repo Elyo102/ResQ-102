@@ -20,7 +20,33 @@ const CODES = Object.freeze([
     'aborted', 'out-of-range', 'unimplemented', 'internal', 'unavailable',
     'data-loss', 'unauthenticated'].map((code) => 'functions/' + code)
 ]);
-const CALLABLES = Object.freeze(['unknown', 'submitFeedback', 'reportIncident']);
+// Explicit public onCall names only; never accept a free-form action label.
+const CALLABLES = Object.freeze([
+  'unknown',
+  'approveRegistration', 'assignGuard', 'backupToSheetNow',
+  'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
+  'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
+  'closeCallout', 'createStationTransfer', 'decideStationTransfer',
+  'getAttendanceShadowStatus', 'getGuardLoadStatistics', 'getJoinCode',
+  'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
+  'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
+  'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
+  'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
+  'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
+  'hideBulletinReply', 'joinWithCode', 'listStationTransfers',
+  'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
+  'postBulletinMessage', 'previewScheduleCutover', 'previewSchedulePolicy',
+  'previewScheduleSource', 'publishSchedule', 'reindexDirectory',
+  'rejectRegistration', 'replyToBulletinMessage', 'reportIncident',
+  'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
+  'rollbackSchedule', 'runAttendanceShadowNow', 'runReportNow',
+  'runSchedulePlanner', 'saveSchedulePolicy', 'saveScheduleSource',
+  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
+  'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode',
+  'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
+  'setUserRole', 'submitFeedback', 'unlockAccount',
+  'whoAmI'
+]);
 const INPUT_FIELDS = Object.freeze(['kind', 'screen', 'version', 'code', 'callable']);
 const STATUSES = Object.freeze(['open', 'resolved', 'ignored']);
 const OPERATOR_LABELS = Object.freeze(['operator', 'codex', 'claude']);

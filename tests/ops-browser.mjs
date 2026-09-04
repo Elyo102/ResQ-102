@@ -26,15 +26,13 @@ async function fixture(plan = [], role = 'firefighter', width = 390) {
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.pathname.includes('/firebasejs/')) {
+      if (url.pathname.endsWith('/firebase-app-check.js')) return route.fulfill({ status: 200,
+        contentType: 'text/javascript', body: 'export class ReCaptchaEnterpriseProvider {} export function initializeAppCheck(){ return {}; }' });
       const file = path.join(stub, path.basename(url.pathname));
       return route.fulfill({ status: 200, contentType: 'text/javascript',
         body: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
     }
     if (url.origin !== origin) return route.abort('blockedbyclient');
-    // App Check itself is verified by server/source gates, never bypassed in
-    // production. Its browser SDK alone is a local fixture in this test.
-    if (url.pathname === '/appcheck.js') return route.fulfill({ status: 200,
-      contentType: 'text/javascript', body: 'export async function initAppCheck() {}' });
     const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
     const file = path.resolve(root, relative);
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {

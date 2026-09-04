@@ -11,6 +11,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => readSource(path.join(root, name));
 const require = createRequire(import.meta.url);
 const withoutComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, '');
+// Export declarations in index.js are standalone lines. Do not use the
+// generic block-comment regex here: a regex/string containing slash-star
+// is not a comment and must not swallow subsequent real export lines.
+const exportDeclarations = (source) => [...source.replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, ' ')
+  .matchAll(/^exports\.([A-Za-z0-9_]+)\s*=\s*(on\w+)\(/gm)]
+  .map((match) => [match[1], match[2]]);
 const loadClient = (name) => import('data:text/javascript;base64,' + Buffer.from(read(name)).toString('base64'));
 const contract = require('../functions/ops-telemetry-contract.js');
 const { createFakeFirestore } = require('../functions/fixtures/fake-firestore.js');
@@ -69,6 +75,13 @@ await check('actual browser payload has five finite fields and no raw error data
   for (const field of ['screen', 'version', 'code', 'callable']) assert.equal(actual[field], 'unknown', field);
 });
 await check('client technical vocabularies agree with server vocabularies', () => {
+  for (const key of ['KINDS', 'SCREENS', 'VERSIONS', 'CODES', 'CALLABLES']) {
+    const actual = client['TELEMETRY_' + key], expected = contract[key];
+    assert.ok(Array.isArray(actual), key + ' browser vocabulary missing');
+    assert.equal(new Set(actual).size, actual.length, key + ' browser duplicates');
+    assert.equal(new Set(expected).size, expected.length, key + ' server duplicates');
+    assert.deepEqual([...actual].sort(), [...expected].sort(), key + ' two-way vocabulary drift');
+  }
   for (const [field, values] of [['kind', contract.KINDS], ['screen', contract.SCREENS],
     ['version', contract.VERSIONS], ['code', contract.CODES], ['callable', contract.CALLABLES]]) {
     for (const value of values) {
@@ -78,6 +91,20 @@ await check('client technical vocabularies agree with server vocabularies', () =
       assert.equal(actual[field], value, field + ' vocabulary drift');
     }
   }
+});
+await check('finite callable vocabulary contains only the actual public onCall exports', () => {
+  const declarations = exportDeclarations(read('functions/index.js'));
+  const publicCalls = declarations.filter(([, kind]) => kind === 'onCall').map(([name]) => name);
+  assert.ok(publicCalls.length > 50, 'public callable discovery unexpectedly empty');
+  assert.equal(new Set(publicCalls).size, publicCalls.length, 'duplicate public callable export');
+  assert.deepEqual([...contract.CALLABLES].sort(), ['unknown', ...publicCalls].sort());
+  for (const [name, kind] of declarations) {
+    if (kind !== 'onCall') assert.equal(contract.CALLABLES.includes(name), false, name + ' is not callable');
+  }
+  const fixture = ["const literal = '/* not a comment';", 'exports.first = onCall(fn);',
+    "const ending = '*/';", '// exports.fakeLine = onCall(fn);', '/*',
+    'exports.fakeBlock = onCall(fn);', '*/', 'exports.second = onSchedule(fn);'].join('\n');
+  assert.deepEqual(exportDeclarations(fixture), [['first', 'onCall'], ['second', 'onSchedule']]);
 });
 await check('incident storage has neither caller identity nor raw telemetry fields', async () => {
   const { db, incidents } = fixture();
@@ -213,7 +240,9 @@ await check('feedback page stays member-only without fixed-email authority', () 
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
   assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
-  assert.ok(page.includes('installIncidentReporter'));
+  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42g0['"]/);
+  assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,
+    'feedback must share the page reporter, not install an independent quota/listener');
   assert.match(read('nav.js'), /href:\s*'feedback\.html',\s*label:\s*'חוות דעת',\s*who:\s*'member'/);
 });
 await check('ops collections have explicit deny rules and private backup classification', () => {

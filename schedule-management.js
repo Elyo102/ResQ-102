@@ -4,7 +4,7 @@ import { initPWA } from './pwa.js?v=42g0';
 import { initAppCheck } from './appcheck.js?v=42g0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42g0';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
