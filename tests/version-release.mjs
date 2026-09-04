@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42G.0';
 const EXPECTED_DATE = '3.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 182; // +9: feedback.html (מסך חדש, 3.9.2026)
+const EXPECTED_VERSIONED_REFERENCES = 199; // +17 global monitoring: 13 local callable imports, 1 bootstrap import, 3 bootstrap dependencies.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
