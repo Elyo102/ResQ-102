@@ -55,7 +55,7 @@ try {
   // every action that calculates or writes remains disabled.
   {
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[{ reject:true }]
+      getEffectiveWorkdays:[{ reject:true }]
     });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
@@ -79,10 +79,10 @@ try {
     await page.waitForFunction(() =>
       document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
       document.querySelector('#tHours')?.textContent !== '—');
-    const compatibilityCalls = await page.evaluate(() =>
+    const workdaysCalls = await page.evaluate(() =>
       (window.__CALLABLE_CALLS || []).filter(call =>
-        call && call.name === 'getLegacyScheduleCompatibilityContext').length);
-    assert.equal(compatibilityCalls, 2);
+        call && call.name === 'getEffectiveWorkdays').length);
+    assert.equal(workdaysCalls, 2);
     assert.doesNotMatch(await page.locator('#msg').textContent(), /האדם או החודש השתנו/);
     await context.close();
     console.log('✓ attendance fails closed without stale KPIs and month navigation retries safely');
@@ -92,7 +92,7 @@ try {
   // labels honest. Raw legacy collections are never used as a fallback.
   {
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[{ reject:true }]
+      getEffectiveWorkdays:[{ reject:true }]
     });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/swaps.html`, { waitUntil:'load' });
@@ -108,20 +108,22 @@ try {
     console.log('✓ swaps keeps submission and schedule-derived labels fail-closed after rejection');
   }
 
-  // Defense in depth for statistics: the client must keep its own allowlist
-  // instead of assigning the server response object directly.
+  // Defense in depth: every screen parses the workdays answer through the
+  // shared allowlist instead of assigning the server response object directly.
   {
-    const source = fs.readFileSync(path.join(root, 'stats.html'), 'utf8');
-    assert.match(source, /function legacyCompatibilityData\(result\)/);
-    assert.match(source, /COMPATIBILITY_ROTATION_FIELDS\.forEach/);
-    assert.match(source, /extra_crews:\s*row\.extra_crews\.slice\(\)/);
-    assert.doesNotMatch(source, /rotations\s*=\s*(?:result|data)\.rotations/);
-    assert.doesNotMatch(source, /overrides\s*=\s*(?:result|data)\.overrides/);
-    console.log('✓ statistics keeps a client-side schedule allowlist');
+    for (const file of ['stats.html', 'guards.html', 'swaps.html', 'attendance.html']) {
+      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      assert.match(source, /parseEffectiveWorkdays[\(\)]/, file);
+      assert.doesNotMatch(source, /effective\s*=\s*(?:result|res|out)\.data\b/, file);
+    }
+    const module = fs.readFileSync(path.join(root, 'effective-workdays.js'), 'utf8');
+    assert.match(module, /fail\('workdays-by-uid'\)/);
+    assert.match(module, /const SHIFT_HOUR_FIELDS = Object\.freeze/);
+    console.log('✓ every screen keeps the client-side workdays allowlist');
   }
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n3/3 legacy compatibility failure checks passed.');
+console.log('\n3/3 effective-schedule failure checks passed.');

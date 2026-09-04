@@ -27,7 +27,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
   'closeCallout', 'createStationTransfer', 'decideStationTransfer',
-  'getAttendanceShadowStatus', 'getGuardLoadStatistics', 'getJoinCode',
+  'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics', 'getJoinCode',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
   'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
   'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',

@@ -388,8 +388,9 @@ import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
 import { renderNav, renderStuckNav } from './nav.js?v=42g0';
 import { initPWA } from './pwa.js?v=42g0';
 import { watchCallouts } from './callout.js?v=42g0';
-import { CREW_HE, CREW_SHORT, crewOnDate, isCrewWorking,
-         swapRestCheck, restWhy } from './rotation.js?v=42g0';
+import { CREW_HE, CREW_SHORT } from './rotation.js?v=42g0';
+import { parseEffectiveWorkdays, worksOn, swapRestCheckEffective, restWhyEffective,
+         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -411,7 +412,7 @@ await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
-const legacyScheduleCall = httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
+const workdaysCall = httpsCallable(fns, 'getEffectiveWorkdays');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
@@ -473,7 +474,7 @@ function canonicalSwapDate(value){
 
 let SID = '', ME = null, IS_STAFF = false, MY_SHIFT = '', UNLOCKED = false;
 let CAN_LOG = false, MY_ROLE = '', logMsgs = [], logStop = null, logSeen = '';
-let people = [], quals = [], held = {}, swaps = [], rotations = [], overrides = {};
+let people = [], quals = [], held = {}, swaps = [], effective = null;
 let peer = null;
 let scheduleReady = false;
 let scheduleLoadError = 'בסיס הסידור עדיין נטען.';
@@ -703,7 +704,6 @@ async function sendLog(){
 // ---------- טעינה ----------
 
 async function loadAll(){
-  const scheduleLoad = loadLegacyScheduleCompatibility();
   try {
     const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
     people = [];
@@ -734,25 +734,29 @@ async function loadAll(){
     });
   } catch (ignore) {}
 
-  await scheduleLoad;
   await loadSwaps();
+  // אחרי הסגל וההחלפות: המזהים שנשאלים עליהם הם אני, כל מי שבסגל,
+  // וכל מי שמופיע בהחלפה (גם מי שכבר לא בסגל — האישור עדיין נבדק).
+  await loadEffectiveWorkdays();
 }
 
-async function loadLegacyScheduleCompatibility(){
+// ⭐ „מי עובד" — מהשרת, מהסידור האפקטיבי. חלון של 31 יום אחורה ו-365
+// קדימה (397 כולל הקצוות — התקרה). תשובה פגומה → המסך נעול, לא
+// „אף אחד לא עובד".
+async function loadEffectiveWorkdays(){
   scheduleReady = false;
   scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. לא ניתן לחשב או לשלוח החלפה בבטחה.';
   $('btnSend').disabled = true;
   try {
     swapDateWindow = swapDateWindow || swapCompatibilityWindow();
-    const result = await legacyScheduleCall(swapDateWindow.schedule);
-    const value = result && result.data;
-    if (!value || (value.mode !== 'off' && value.mode !== 'shadow') ||
-        !Array.isArray(value.rotations) || !value.overrides ||
-        typeof value.overrides !== 'object' || Array.isArray(value.overrides)) {
-      throw new Error('legacy-schedule-contract');
-    }
-    rotations = value.rotations;
-    overrides = value.overrides;
+    const uids = new Set([ME.uid]);
+    people.forEach(p => uids.add(p.uid));
+    swaps.forEach(sw => { if (sw.from_uid) uids.add(sw.from_uid); if (sw.to_uid) uids.add(sw.to_uid); });
+    const list = Array.from(uids).filter(Boolean);
+    if (list.length > WORKDAYS_MAX_UIDS) throw new Error('workdays-too-many-uids');
+    effective = parseEffectiveWorkdays(await workdaysCall({
+      from: swapDateWindow.schedule.from, to: swapDateWindow.schedule.to, uids: list
+    }));
     scheduleReady = true;
     scheduleLoadError = '';
     $('btnSend').disabled = false;
@@ -765,8 +769,7 @@ async function loadLegacyScheduleCompatibility(){
     crewLine('hisDate', 'hisCrewLine');
     return true;
   } catch (error) {
-    rotations = [];
-    overrides = {};
+    effective = null;
     msg(scheduleLoadError, 'err', 'newMsg');
     return false;
   }
@@ -823,6 +826,7 @@ $('btnPick').onclick = () => {
         $('peerNote').innerHTML = 'נבחר: <b style="color:var(--txt)">' +
           esc(p.full_name) + '</b>' +
           (p.crew ? ' · משמרת ' + esc(CREW_HE[p.crew] || p.crew) : '');
+        crewLine('hisDate', 'hisCrewLine');   // השורה מתארת את הצד השני — מתעדכנת עם הבחירה
         closeOv();
       };
       box.appendChild(it);
@@ -951,11 +955,16 @@ function crewLine(inputId, outId){
     box.textContent = 'בסיס הסידור אינו זמין — לא ניתן לזהות משמרת.';
     return;
   }
-  const d = new Date(v + 'T00:00:00');
-  const c = crewOnDate(rotations, d, overrides);
-  box.innerHTML = c
-    ? 'עובדת ביום זה: <b>משמרת ' + esc(CREW_HE[c] || c) + '</b>'
-    : 'לא ידוע איזו משמרת עובדת ביום זה.';
+  // השורה מתארת את מי שהיום שייך לו: „היום שלי" — אני; „היום שלו" — הצד השני.
+  const who = inputId === 'myDate' ? { uid: ME.uid, name: 'אתה' }
+    : (peer ? { uid: peer.uid, name: peer.full_name } : null);
+  if (!who) { box.textContent = 'בחר עם מי מחליפים כדי לבדוק את היום הזה.'; return; }
+  const w = worksOn(effective, who.uid, v);
+  box.innerHTML = w === true
+    ? '<b>' + esc(who.name) + '</b> עובד ביום זה לפי ' + esc(workdaysSourceLabel(effective)) + '.'
+    : w === false
+      ? '<b>' + esc(who.name) + '</b> לא עובד ביום זה לפי ' + esc(workdaysSourceLabel(effective)) + '.'
+      : 'היום הזה מחוץ לסידור הידוע — לא ניתן להחליף אותו.';
 }
 
 $('btnSend').onclick = async () => {
@@ -971,30 +980,35 @@ $('btnSend').onclick = async () => {
   if (!swapDateAllowed(his)) { msg('צריך לבחור את היום שלו בטווח המותר.', 'err'); return; }
   if (!peer) { msg('צריך לבחור עם מי מחליפים.', 'err'); return; }
   if (my === his) { msg('שני התאריכים זהים. בהחלפה יום מול יום צריך שני ימים.', 'err'); return; }
-  if (!ME.crew || !peer.crew) {
+  if (effective.mode !== 'new' && (!ME.crew || !peer.crew)) {
     msg('אחד מכם בלי שיוך משמרת. פנה לרכז כוח אדם.', 'err'); return;
+  }
+
+  // ⭐ שני התאריכים חייבים להיות בתוך הסידור הידוע (אותו כיסוי).
+  // יום לא ידוע אינו „פנוי" — אי אפשר להחליף אותו.
+  const wMe = worksOn(effective, ME.uid, my);
+  const wHim = worksOn(effective, peer.uid, his);
+  if (wMe === 'unknown' || wHim === 'unknown') {
+    msg('אחד התאריכים מחוץ לסידור הידוע (' + workdaysSourceLabel(effective) +
+        '). אפשר להחליף רק ימים שהסידור מכסה.', 'err');
+    return;
   }
 
   // אזהרה ולא חסימה: הסידור יכול להשתנות, ולפעמים מחליפים
   // יום שהמערכת עוד לא יודעת עליו.
   const warn = [];
-  const d1 = new Date(my.split('-')[0], Number(my.split('-')[1]) - 1, my.split('-')[2]);
-  const d2 = new Date(his.split('-')[0], Number(his.split('-')[1]) - 1, his.split('-')[2]);
-  if (!isCrewWorking(rotations, ME.crew, d1, overrides)) {
-    warn.push('לפי הסידור אתה לא עובד ב-' + dmy(my));
-  }
-  if (!isCrewWorking(rotations, peer.crew, d2, overrides)) {
-    warn.push('לפי הסידור ' + peer.full_name + ' לא עובד ב-' + dmy(his));
-  }
+  if (wMe === false) warn.push('לפי הסידור אתה לא עובד ב-' + dmy(my));
+  if (wHim === false) warn.push('לפי הסידור ' + peer.full_name + ' לא עובד ב-' + dmy(his));
 
   // 48 שעות רצוף. משמרת היא 24 שעות, ולכן החלפה שמצמידה שתי
   // משמרות אסורה — לא אזהרה, חסימה. זו לא העדפה תפעולית אלא
   // בטיחות: כבאי שלא ישן שני לילות אינו כשיר לצאת לאירוע.
-  const rest = swapRestCheck(rotations, overrides, swaps,
-    { uid: ME.uid,   crew: ME.crew,   name: ME.full_name,   gain: his, lose: my },
-    { uid: peer.uid, crew: peer.crew, name: peer.full_name, gain: my,  lose: his });
+  // יום צמוד לא ידוע — גם חסימה: אי אפשר להוכיח מנוחה.
+  const rest = swapRestCheckEffective(effective, swaps,
+    { uid: ME.uid,   name: ME.full_name,   gain: his, lose: my },
+    { uid: peer.uid, name: peer.full_name, gain: my,  lose: his });
   if (rest.length) {
-    msg(rest.map(restWhy).join(' ') + ' צריך יום מנוחה מלא בין משמרות.',
+    msg(rest.map(restWhyEffective).join(' ') + ' צריך יום מנוחה מלא בין משמרות.',
         'err');
     return;
   }
@@ -1029,9 +1043,12 @@ async function sendOpen(my){
   const want = $('wantCrew').value;
   if (!ME.crew) { msg('אין לך שיוך משמרת. פנה לרכז כוח אדם.', 'err'); return; }
 
-  const d1 = fromKey(my);
-  const warn = isCrewWorking(rotations, ME.crew, d1, overrides)
-    ? [] : ['לפי הסידור אתה לא עובד ב-' + dmy(my)];
+  const wMe = worksOn(effective, ME.uid, my);
+  if (wMe === 'unknown') {
+    msg('התאריך מחוץ לסידור הידוע (' + workdaysSourceLabel(effective) + '). אפשר לפתוח בקשה רק על יום שהסידור מכסה.', 'err');
+    return;
+  }
+  const warn = wMe === true ? [] : ['לפי הסידור אתה לא עובד ב-' + dmy(my)];
 
   const b = $('btnSend'); b.disabled = true;
   try {
@@ -1054,11 +1071,6 @@ async function sendOpen(my){
     msg('הפרסום נכשל. (' + (e.code || e.message) + ')', 'err');
   }
   b.disabled = false;
-}
-
-function fromKey(k){
-  const p = String(k).split('-');
-  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
 }
 
 // מי יכול לקחת בקשה פתוחה: כל מי שאינו המבקש, ואם המבקש ציין
@@ -1143,13 +1155,15 @@ function takeOpen(s){
       msg('זה אותו יום. בהחלפה יום מול יום צריך שני ימים.', 'err', 'tkMsg');
       return;
     }
-    const rest2 = swapRestCheck(rotations, overrides, swaps,
-      { uid: ME.uid, crew: ME.crew, name: ME.full_name,
-        gain: s.from_date, lose: d },
-      { uid: s.from_uid, crew: s.from_crew, name: s.from_name,
-        gain: d, lose: s.from_date });
+    if (worksOn(effective, ME.uid, d) === 'unknown' || worksOn(effective, s.from_uid, s.from_date) === 'unknown') {
+      msg('אחד התאריכים מחוץ לסידור הידוע. אפשר להחליף רק ימים שהסידור מכסה.', 'err', 'tkMsg');
+      return;
+    }
+    const rest2 = swapRestCheckEffective(effective, swaps,
+      { uid: ME.uid, name: ME.full_name, gain: s.from_date, lose: d },
+      { uid: s.from_uid, name: s.from_name, gain: d, lose: s.from_date });
     if (rest2.length) {
-      msg(rest2.map(restWhy).join(' ') + ' בחר יום אחר.', 'err', 'tkMsg');
+      msg(rest2.map(restWhyEffective).join(' ') + ' בחר יום אחר.', 'err', 'tkMsg');
       return;
     }
 
@@ -1432,14 +1446,12 @@ function reviewDialog(s){
     // יכול להשתנות בין הבקשה לאישור — חריגה שנוספה, החלפה
     // אחרת שאושרה. המפקד הוא השער האחרון.
     (function () {
-      const v = swapRestCheck(rotations, overrides, swaps,
-        { uid: s.from_uid, crew: s.from_crew, name: s.from_name,
-          gain: s.to_date,   lose: s.from_date },
-        { uid: s.to_uid,   crew: s.to_crew,   name: s.to_name,
-          gain: s.from_date, lose: s.to_date });
+      const v = swapRestCheckEffective(effective, swaps,
+        { uid: s.from_uid, name: s.from_name, gain: s.to_date,   lose: s.from_date },
+        { uid: s.to_uid,   name: s.to_name,   gain: s.from_date, lose: s.to_date });
       if (!v.length) return '';
       return '<div class="gap" style="border-color:var(--bar-line);background:var(--bad-bg)">' +
-        '<b>48 שעות רצוף</b><br>' + v.map(restWhy).map(esc).join('<br>') +
+        '<b>48 שעות רצוף</b><br>' + v.map(restWhyEffective).map(esc).join('<br>') +
         '<br>כבאי חייב יום מנוחה מלא בין משמרות. מומלץ לדחות ' +
         'ולבקש תאריך אחר.</div>';
     })() +

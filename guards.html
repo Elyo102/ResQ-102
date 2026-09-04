@@ -75,6 +75,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         padding:2px 10px; white-space:nowrap }
   .tag.off{ background:var(--warn-bg); color:var(--warn) }
   .tag.shift{ background:var(--crewC-bg); color:var(--crewC) }
+  .tag.unknown{ background:var(--line); color:var(--muted) }
 
   /* ---------- לוח עומס ---------- */
   .bal{ display:grid; grid-template-columns:auto 1fr auto; gap:7px 11px;
@@ -290,6 +291,8 @@ import { MEMBER_ROLES } from './roles.js?v=42g0';
 import { initPWA } from './pwa.js?v=42g0';
 import { watchCallouts } from './callout.js?v=42g0';
 import { CREW_HE } from './rotation.js?v=42g0';
+import { parseEffectiveWorkdays, mergeEffectiveWorkdays, workdaysSourceLabel,
+         WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42g0';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
@@ -315,7 +318,7 @@ const guardCall = Object.freeze({
   manage: httpsCallable(fns, 'manageScheduleGuard'),
   board: httpsCallable(fns, 'getScheduleGuardBoard'),
   managerBoard: httpsCallable(fns, 'getScheduleGuardManagerBoard'),
-  compatibility: httpsCallable(fns, 'getLegacyScheduleCompatibilityContext')
+  workdays: httpsCallable(fns, 'getEffectiveWorkdays')
 });
 
 const $ = id => document.getElementById(id);
@@ -336,85 +339,34 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
 let people = [], guards = [], memberGuards = [], managerGuards = [], quals = [], held = {};
-let rotations = [], overrides = {}, swaps = [], busy = {}, scheduleCompatibilityMode = '';
+let effective = null, swaps = [], busy = {}, scheduleCompatibilityMode = '';
 let loadMap = {}, ctx = {};
 let scheduleClassificationAvailable = false;
 let guardLoadGeneration = 0;
 let guardHistoryRange = null;
 
-const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const COMPATIBILITY_ROTATION_FIELDS = [
-  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
-  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
-  'commander_shift_hours', 'special_end', 'special_shift_hours'
-];
-
-function legacyCompatibilityData(result){
-  const data = result && result.data;
-  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
-      !Array.isArray(data.rotations) || !data.overrides ||
-      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
-    throw new Error('legacy-schedule-compatibility-shape');
+// ⭐ מי עובד — מהשרת, מהסידור האפקטיבי (legacy כולל החלפות מאושרות,
+// או הפרסום הפעיל). שני חלונות של 365 יום (היסטוריה ועתיד) לכל מזהה
+// שעל המסך; המיזוג מסרב למקורות שונים או לחפיפה. יום מחוץ לסידור
+// הידוע הוא 'unknown' — לא „יום חופש".
+async function loadEffectiveWorkdays(ranges, uids){
+  const list = Array.from(new Set(uids.filter(Boolean)));
+  if (list.length > WORKDAYS_MAX_UIDS) {
+    throw new Error('workdays-too-many-uids');
   }
-  const safeRotations = data.rotations.map(function (row) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) {
-      throw new Error('legacy-schedule-rotation-shape');
-    }
-    const safe = {};
-    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
-      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
-    });
-    return safe;
-  });
-  const safeOverrides = {};
-  Object.keys(data.overrides).forEach(function (date) {
-    const row = data.overrides[date];
-    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
-        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
-      throw new Error('legacy-schedule-override-shape');
-    }
-    safeOverrides[date] = {
-      date: date,
-      kind: typeof row.kind === 'string' ? row.kind : '',
-      crew: typeof row.crew === 'string' ? row.crew : '',
-      extra_crews: row.extra_crews.slice()
-    };
-  });
-  return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
-}
-
-function mergeLegacyCompatibility(parts){
-  if (!Array.isArray(parts) || parts.length !== 2) {
-    throw new Error('legacy-schedule-compatibility-parts');
-  }
-  const history = parts[0];
-  const upcoming = parts[1];
-  if (!history || !upcoming || history.mode !== upcoming.mode ||
-      JSON.stringify(history.rotations) !== JSON.stringify(upcoming.rotations)) {
-    throw new Error('legacy-schedule-compatibility-mismatch');
-  }
-  const merged = {};
-  [history.overrides, upcoming.overrides].forEach(function (rows) {
-    Object.keys(rows).forEach(function (date) {
-      // The requested windows do not overlap. Seeing the same day twice means
-      // one response escaped its range, so combining it would publish an
-      // incoherent annual classification.
-      if (Object.prototype.hasOwnProperty.call(merged, date)) {
-        throw new Error('legacy-schedule-override-overlap');
-      }
-      merged[date] = rows[date];
-    });
-  });
-  return { mode:history.mode, rotations:history.rotations, overrides:merged };
+  const parts = await Promise.all([ranges.history, ranges.upcoming].map(function (range) {
+    return guardCall.workdays({ from: range.from, to: range.to, uids: list })
+      .then(parseEffectiveWorkdays);
+  }));
+  return mergeEffectiveWorkdays(parts);
 }
 
 function showLegacyCompatibilityFailure(){
   scheduleCompatibilityMode = '';
   scheduleClassificationAvailable = false;
-  rotations = [];
-  overrides = {};
+  effective = null;
   loadMap = {};
-  ctx = { rotations:[], overrides:{}, swaps, guards };
+  ctx = { effective:null, swaps, guards };
   msg('האבטחות זמינות, אך סיווג יום משמרת/חופש וחלוקת העומס אינם זמינים כרגע. אפשר לצפות, להירשם ולנהל שיבוצים ידנית.', 'err', 'openMsg');
 }
 
@@ -544,7 +496,7 @@ function guardOpenSlots(g){
 
 function personalLoad(range){
   if (!scheduleClassificationAvailable) return null;
-  const result = { off:0, shift:0, hours:0 };
+  const result = { off:0, shift:0, unknown:0, hours:0 };
   guards.filter(guardIsMine).forEach(function (g) {
     if (g.status === 'cancelled') return;
     const date = String(g.date || '');
@@ -553,8 +505,10 @@ function personalLoad(range){
     if (duty === 'off') {
       result.off += 1;
       result.hours += guardHours(g) || 0;
-    } else {
+    } else if (duty === 'shift') {
       result.shift += 1;
+    } else {
+      result.unknown += 1;      // מחוץ לסידור הידוע — לא מזכה ולא נטל
     }
   });
   result.hours = Math.round(result.hours * 100) / 100;
@@ -566,7 +520,7 @@ function syncGuardView(){
     .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')) ||
       String(a.start || '').localeCompare(String(b.start || '')) ||
       String(a.id || '').localeCompare(String(b.id || '')));
-  ctx = { rotations, overrides, swaps, guards };
+  ctx = { effective, swaps, guards };
   // Only the manager board contains other people's assignment identifiers.
   // A member's own load is computed separately from their two boolean flags.
   loadMap = CAN_MANAGE && scheduleClassificationAvailable
@@ -728,14 +682,6 @@ async function loadAll(){
   const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
   const jobs = [];
   const ranges = guardBoardRanges();
-  const compatibilityRequest = Promise.all([
-    guardCall.compatibility(ranges.history),
-    guardCall.compatibility(ranges.upcoming)
-  ]).then(function (results) {
-    return { data: mergeLegacyCompatibility(results.map(legacyCompatibilityData)), error: null };
-  }).catch(function (error) {
-    return { data: null, error: error };
-  });
   // מסמכי הסגל והכשירויות משמשים רק להצעת שיבוץ ולעריכה. הרשאת
   // הצפייה הרגילה באבטחות אינה סיבה להוריד אותם לטלפון; מצב האבטחה
   // הרגיל מגיע כולו מ-getScheduleGuardBoard.
@@ -813,7 +759,11 @@ async function loadAll(){
              where('date', '>=', busyFrom)));
 
   await flush();
-  const compatibility = await compatibilityRequest;
+  // אחרי הסגל: המזהים שנשאלים עליהם הם אני + כל מי שבסגל (למנהל).
+  const compatibility = await loadEffectiveWorkdays(ranges,
+    [snapshot.uid].concat(next.people.map(p => p.uid)))
+    .then(function (data) { return { data: data, error: null }; })
+    .catch(function (error) { return { data: null, error: error }; });
   let boards = { memberGuards:[], managerGuards:[] };
   let boardFailure = null;
   try {
@@ -834,13 +784,11 @@ async function loadAll(){
   if (compatibility.error || !compatibility.data) {
     scheduleCompatibilityMode = '';
     scheduleClassificationAvailable = false;
-    rotations = [];
-    overrides = {};
+    effective = null;
   } else {
     scheduleCompatibilityMode = compatibility.data.mode;
     scheduleClassificationAvailable = true;
-    rotations = compatibility.data.rotations;
-    overrides = compatibility.data.overrides;
+    effective = compatibility.data;
   }
   people = next.people;
   quals = next.quals;
@@ -1139,7 +1087,7 @@ function guardCard(g){
       esc(g.start || '') + '–' + esc(g.end || '') +
       (hrs ? ' · ' + hrs + ' ש׳' : '') + '</span>' +
     (duty
-      ? '<span class="tag ' + (duty === 'off' ? 'off' : 'shift') + '">' +
+      ? '<span class="tag ' + duty + '">' +
           esc(DUTY_HE[duty]) + '</span>'
       : '<span class="tag">סיווג משמרת לא זמין</span>');
   el.appendChild(head);
@@ -1291,12 +1239,14 @@ function renderMine(){
   list.sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')));
 
   const mine = scheduleClassificationAvailable
-    ? (CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, hours:0 })
+    ? (CAN_MANAGE ? (loadMap[ME.uid] || { off:0, shift:0, unknown:0, hours:0 })
       : personalLoad(guardHistoryRange))
     : null;
   $('mineNote').textContent = mine
     ? 'ב-12 החודשים האחרונים: ' + mine.off + ' אבטחות ביום חופש (' + mine.hours +
-      ' שעות) · ' + mine.shift + ' בתוך המשמרת.'
+      ' שעות) · ' + mine.shift + ' בתוך המשמרת.' +
+      (mine.unknown ? ' · ' + mine.unknown + ' מחוץ לסידור הידוע (לא סווגו).' : '') +
+      ' לפי ' + workdaysSourceLabel(effective) + '.'
     : 'האבטחות שלך מוצגות, אך סיווג יום משמרת/חופש אינו זמין כרגע.';
 
   if (!list.length) {
@@ -1388,7 +1338,7 @@ function renderLog(){
       '<td>' + esc(r.name) + '</td>' +
       '<td>' + esc(CREW_HE[r.crew] || r.crew || '') + '</td>' +
       '<td class="d">' + (r.hours == null ? '' : r.hours) + '</td>' +
-      '<td><span class="tag ' + (r.duty === 'off' ? 'off' : 'shift') + '">' +
+      '<td><span class="tag ' + r.duty + '">' +
         esc(DUTY_HE[r.duty]) + '</span></td>';
     tb.appendChild(tr);
   });
@@ -1539,7 +1489,7 @@ function openAssign(g){
     // ובתוך המשמרת זו פשוט משימה.
     if (r.duty) {
       const dt = document.createElement('span');
-      dt.className = 'tag ' + (r.duty === 'off' ? 'off' : 'shift');
+      dt.className = 'tag ' + r.duty;
       dt.textContent = DUTY_HE[r.duty];
       el.appendChild(dt);
     }

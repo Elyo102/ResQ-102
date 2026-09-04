@@ -56,24 +56,11 @@ function repeatedBoard(rows, count = 100) {
   return Array.from({ length:count }, () => ({ data:{ guards:rows } }));
 }
 
-function compatibilityStep() {
-  return { data:{
-    mode:'shadow',
-    rotations:[
-      { crew:'A', position_in_cycle:0, cycle_days:3, anchor_date:'2026-01-01',
-        is_active:true, shift_start:'07:00', shift_end:'07:00', shift_hours:24 },
-      { crew:'B', position_in_cycle:1, cycle_days:3, anchor_date:'2026-01-01', is_active:true },
-      { crew:'C', position_in_cycle:2, cycle_days:3, anchor_date:'2026-01-01', is_active:true }
-    ],
-    overrides:{}
-  } };
-}
-
 function defaultGuardPlans() {
   return {
     getScheduleGuardBoard: repeatedBoard(MEMBER_GUARDS),
-    getScheduleGuardManagerBoard: repeatedBoard(managerGuards()),
-    getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()]
+    getScheduleGuardManagerBoard: repeatedBoard(managerGuards())
+    // getEffectiveWorkdays: ברירת המחדל של הבדל מחשבת מאותו סבב (A/B/C, עוגן 1.1.2026)
   };
 }
 
@@ -185,8 +172,9 @@ await test('a commander without a live schedule-manager appointment sees guards 
   const doubleFailure = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(doubleFailure, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:{ manager:false, mode:'new' } }],
-    getLegacyScheduleCompatibilityContext:[
-      { reject:true, code:'functions/failed-precondition', message:'runtime-mode-new' }
+    getEffectiveWorkdays:[
+      { reject:true, code:'functions/unavailable', message:'workdays-unavailable' },
+      { reject:true, code:'functions/unavailable', message:'workdays-unavailable' }
     ],
     getScheduleGuardBoard:[
       { reject:true, code:'functions/unavailable', message:'offline' },
@@ -198,7 +186,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
   await doubleFailurePage.locator('#work:not(.hide)').waitFor();
   await doubleFailurePage.waitForFunction(() =>
     document.querySelector('#openMsg').textContent.includes('לוח האבטחות'));
-  await test('a board failure takes precedence over mode:new classification failure', async () => {
+  await test('a board failure takes precedence over a classification failure', async () => {
     assert.equal(await doubleFailurePage.locator('#openList .g').count(), 0);
     assert.match(await doubleFailurePage.locator('#openNote').textContent(), /לא ניתן לקבוע/);
     const notice = await doubleFailurePage.locator('#openMsg').textContent();
@@ -211,18 +199,19 @@ await test('a commander without a live schedule-manager appointment sees guards 
   const newMode = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(newMode, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'new' } }],
-    getLegacyScheduleCompatibilityContext:[
-      { reject:true, code:'functions/failed-precondition', message:'runtime-mode-new' }
+    getEffectiveWorkdays:[
+      { reject:true, code:'functions/unavailable', message:'workdays-unavailable' },
+      { reject:true, code:'functions/unavailable', message:'workdays-unavailable' }
     ]
   });
   const newModePage = await newMode.newPage();
   await open(newModePage);
-  await test('mode:new keeps guard boards and manual management live while schedule classification fails closed', async () => {
+  await test('a classification failure keeps guard boards and manual management live and invents no duty kind', async () => {
     const card = newModePage.locator('#openList .g', { hasText:'הופעה בפארק' });
     assert.equal(await card.count(), 1, 'the independent guard board remains visible');
     assert.match(await newModePage.locator('#openMsg').textContent(), /סיווג.+אינם זמינים/);
-    assert.equal(await card.locator('.tag.off, .tag.shift').count(), 0,
-      'the screen must not invent a duty classification from empty legacy data');
+    assert.equal(await card.locator('.tag.off, .tag.shift, .tag.unknown').count(), 0,
+      'the screen must not invent a duty classification when the answer failed');
     assert.equal(await card.locator('.acts button').count(), 4,
       'create/assign/edit/reschedule/cancel management remains available');
 

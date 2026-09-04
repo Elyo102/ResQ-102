@@ -361,9 +361,11 @@ import { renderNav, renderStuckNav } from './nav.js?v=42g0';
 import { MEMBER_ROLES } from './roles.js?v=42g0';
 import { initPWA } from './pwa.js?v=42g0';
 import { watchCallouts } from './callout.js?v=42g0';
-import { crewOnDate, isCrewWorking, personWorks, swapEffect, overrideOn,
+import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
   from './rotation.js?v=42g0';
+import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
+         workdaysSourceLabel } from './effective-workdays.js?v=42g0';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
@@ -388,6 +390,7 @@ const fns  = getFunctions(app, 'europe-west1');
 const callMyGuardAttendance = httpsCallable(fns, 'getMyGuardAttendance');
 const callLegacyScheduleCompatibilityContext =
   httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
+const callEffectiveWorkdays = httpsCallable(fns, 'getEffectiveWorkdays');
 
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
@@ -436,6 +439,7 @@ function stamp(body) {
 }
 let viewYear, viewMonth;
 let rotations = [], overrides = {}, sites = [], scheduleCompatibilityMode = '';
+let effective = null;   // תשובת getEffectiveWorkdays לחודש המוצג — „האם אני עובד" מגיע רק ממנה
 let myGuards = [];   // אבטחות אישיות של החשבון המחובר בלבד
 let records = {};          // 'YYYY-MM-DD' -> record
 let report  = null;        // מסמך הדוח החודשי
@@ -563,6 +567,7 @@ function legacyCompatibilityData(result){
 
 function showLegacyCompatibilityFailure(){
   scheduleCompatibilityMode = '';
+  effective = null;
   rotations = [];
   overrides = {};
   swaps = [];
@@ -687,13 +692,28 @@ async function loadStatic(){
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
   // המקורות שאינם בסיס לחישוב עדיין מבודדים בכשל; הקשר הסידור
   // עצמו נכשל בקול ועוצר את החישוב במקום לפרסם תוצאה מטעה.
+  // ⭐ „האם אני עובד" — מהשרת, מהסידור האפקטיבי (legacy כולל החלפות
+  // מאושרות, או הפרסום הפעיל). זה המקור היחיד להצעת ימים ולמילוי
+  // אוטומטי. המחזור והחריגים נטענים בנפרד ורק ב-off/shadow, לתצוגה
+  // (אות המשמרת, סוג החריגה) ולשעות המשמרת; במצב new השעות מגיעות
+  // מתצורת התחנה בתוך תשובת ימי העבודה.
   const loadLegacyCompatibility = async function () {
     try {
+      const range = guardMonthRange(snapshot.year, snapshot.month);
+      next.effective = parseEffectiveWorkdays(await callEffectiveWorkdays({
+        from: range.from, to: range.to, uids: [snapshot.uid]
+      }));
+      if (next.effective.mode === 'new') {
+        next.compatibility = { mode: 'new', rotations: [], overrides: {} };
+        return;
+      }
       // התחנה נגזרת מהזהות החיה בשרת; הדפדפן שולח רק
       // את הטווח המזערי שנדרש לחודש המוצג.
-      const result = await callLegacyScheduleCompatibilityContext(
-        guardMonthRange(snapshot.year, snapshot.month));
+      const result = await callLegacyScheduleCompatibilityContext(range);
       next.compatibility = legacyCompatibilityData(result);
+      if (next.compatibility.mode !== next.effective.mode) {
+        throw new Error('schedule-mode-changed');
+      }
     } catch (error) {
       compatibilityFailure = error;
     }
@@ -767,13 +787,19 @@ async function loadStatic(){
     viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
 
-  if (compatibilityFailure || !next.compatibility) {
+  if (compatibilityFailure || !next.compatibility || !next.effective) {
     showLegacyCompatibilityFailure();
     return false;
   }
 
   scheduleCompatibilityMode = next.compatibility.mode;
-  rotations = next.compatibility.rotations;
+  effective = next.effective;
+  // במצב new אין מחזור בדפדפן: שעות המשמרת מגיעות כתצורת תחנה
+  // (hours_source: legacy-rotation-config) ונעטפות בצורת רשומת מחזור
+  // כדי ש-shiftTimes() ימשיך לעבוד. אין צוותים ואין חריגים להצגה.
+  rotations = effective.mode === 'new'
+    ? (shiftRotationShim(effective) ? [shiftRotationShim(effective)] : [])
+    : next.compatibility.rotations;
   overrides = next.compatibility.overrides;
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
@@ -901,12 +927,12 @@ function locked(){
 
 function suggestedDays(){
   const out = [];
-  if (!SUBJ.crew) return out;
+  if (!effective) return out;
   const last = daysInMonth(viewYear, viewMonth);
   for (let d = 1; d <= last; d++) {
-    const date = new Date(viewYear, viewMonth, d);
-    if (!personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid)) continue;
     const key = dateKey(viewYear, viewMonth, d);
+    // רק יום שידוע שעובדים בו. לא-ידוע אינו מוצע — ואינו „חופש".
+    if (worksOn(effective, SUBJ.uid, key) !== true) continue;
     if (records[key]) continue;
     out.push(key);
   }
@@ -923,10 +949,14 @@ function baseTimes(){
 // להסכים, אחרת אבטחה תיראה "יום חופש" באחד ו"בתוך המשמרת"
 // בשני.
 function workingOn(key){
-  const p = String(key).split('-').map(Number);
-  if (p.length !== 3) return false;
-  const date = new Date(p[0], p[1] - 1, p[2]);
-  return personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid) === true;
+  return worksOn(effective, SUBJ.uid, key) === true;
+}
+
+// ימים בחודש המוצג שהסידור לא יודע עליהם (מחוץ לכיסוי הפרסום).
+function unknownDaysThisMonth(){
+  if (!effective) return [];
+  const last = daysInMonth(viewYear, viewMonth);
+  return unknownDaysBetween(effective, dateKey(viewYear, viewMonth, 1), dateKey(viewYear, viewMonth, last));
 }
 
 function myGuardOn(key){
@@ -934,7 +964,12 @@ function myGuardOn(key){
 }
 
 function render(){
-  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear;
+  const unknownDays = unknownDaysThisMonth();
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear +
+    (effective ? ' · לפי ' + workdaysSourceLabel(effective) : '') +
+    (unknownDays.length
+      ? ' · ' + unknownDays.length + ' ימים מחוץ לסידור הידוע — לא מולאו ולא הוצעו'
+      : '');
 
   const list = Object.keys(records).sort();
   const saved = list.map(k => records[k]);
@@ -1222,13 +1257,11 @@ $('btnSync').onclick = async () => {
     let n = 0;
 
     for (let d = 1; d <= last; d++) {
-      const date = new Date(viewYear, viewMonth, d);
       const key  = dateKey(viewYear, viewMonth, d);
-      const working = SUBJ.crew &&
-        personWorks(rotations, SUBJ.crew, date, overrides, swaps, SUBJ.uid);
+      const working = worksOn(effective, SUBJ.uid, key);   // true · false · 'unknown'
       const rec = records[key];
 
-      if (working && !rec) {
+      if (working === true && !rec) {
         const add = newRecord(key, { day_type: 'regular', start: bt.start,
                                      end: bt.end, sub_station: mySite });
         const fx2 = siteHoursOf(mySite);
@@ -1245,7 +1278,7 @@ $('btnSync').onclick = async () => {
       // יום שדיווחת עליו והסידור אומר שלא עבדת. לא נמחק
       // אוטומטית — יכול להיות נע״ת, ישיבה או החלפה אמיתית.
       // רק מסומן, וההחלטה שלך.
-      if (!working && rec && rec.day_type === 'regular') extra.push(d);
+      if (working === false && rec && rec.day_type === 'regular') extra.push(d);
     }
 
     if (n) await batch.commit();

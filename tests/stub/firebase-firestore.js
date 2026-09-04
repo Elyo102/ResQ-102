@@ -506,7 +506,7 @@ const OPEN_SWAP = ['sw9', { from_uid:'u2', from_name:'טל חודרה', from_cre
   want_crew:'', note:'חתונה של אח שלי', status:'open',
   created_key:'2026-08-23T06:00:00.000Z' }];
 
-const SWAPS = [
+export const STUB_SWAPS = [
   ['s1', { from_uid:'u2', from_emp:'17', from_name:'טל חודרה', from_crew:'A',
            from_date:'2026-08-14',
            to_uid:'stub-uid', to_emp:'', to_name:'אלדד יונה', to_crew:'C',
@@ -635,7 +635,7 @@ function getDoc0(ref){
   return Promise.resolve(docSnap(PROFILE));
 }
 
-SWAPS.push(OPEN_SWAP);
+STUB_SWAPS.push(OPEN_SWAP);
 
 FAULTS.push.apply(FAULTS, TASKS_EXTRA);
 
@@ -792,7 +792,7 @@ export function getDocs(q){
   if (/\/sub_stations$/.test(p))    return delayed(listSnap(SITES));
   if (/\/attendance$/.test(p))      return delayed(listSnap(ATTENDANCE));
   if (/\/monthly_reports$/.test(p)) return delayed(listSnap(REPORTS));
-  if (/\/swaps$/.test(p))           return delayed(listSnap(SWAPS));
+  if (/\/swaps$/.test(p))           return delayed(listSnap(STUB_SWAPS));
   if (/\/callouts$/.test(p))        return delayed(listSnap(CALLOUTS));
   if (/\/guards$/.test(p)) {
     // בדיקות קונפליקט אופטימי יכולות להציג גרסה חדשה בקריאה הבאה

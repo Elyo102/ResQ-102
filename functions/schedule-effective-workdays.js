@@ -54,6 +54,17 @@ function isoOf(ord) {
   return new Date(ord * DAY_MS).toISOString().slice(0, 10);
 }
 
+/* מפתחות UID במפות: null-prototype בפנים, ו-own-properties בפלט —
+ * "__proto__" כ-uid היה קובע את ה-prototype של המפה במקום להיכתב כשדה
+ * (אותה משפחה כמו 0a52c2a/ae17ea3). UID אינו נפסל; המפה נזהרת. */
+function plainCopy(map) {
+  const out = {};
+  Object.keys(map).forEach((key) => {
+    Object.defineProperty(out, key, { value: map[key], enumerable: true, writable: true, configurable: true });
+  });
+  return out;
+}
+
 /* טווח כולל: `to - from + 1 ≤ 397`. */
 function normalizeRange(from, to) {
   const a = ordinal(from);
@@ -140,17 +151,17 @@ function assemble(input) {
   });
 
   const rosterSet = Array.isArray(input.roster) ? new Set(input.roster.map(String)) : null;
-  const unknownUids = {};
+  const unknownUids = Object.create(null);
   invalid.forEach((raw) => { unknownUids[raw] = 'invalid'; });
   const asked = new Set(uids);
   if (rosterSet) {
     uids.forEach((uid) => { if (!rosterSet.has(uid)) unknownUids[uid] = 'not-in-roster'; });
   }
 
-  const byUid = {};
+  const byUid = Object.create(null);
   uids.forEach((uid) => { if (!unknownUids[uid]) byUid[uid] = []; });
   const unknownDates = [];
-  const working = {};
+  const working = Object.create(null);
   range.dates.forEach((date) => {
     if (!byDate.has(date)) { unknownDates.push(date); return; }
     const list = byDate.get(date);
@@ -175,12 +186,12 @@ function assemble(input) {
     range: Object.freeze({ from: range.from, to: range.to }),
     coverage,
     unknown_dates: Object.freeze(unknownDates),
-    unknown_uids: Object.freeze(unknownUids),
-    by_uid: Object.freeze(Object.keys(byUid).reduce((acc, uid) => {
+    unknown_uids: Object.freeze(plainCopy(unknownUids)),
+    by_uid: Object.freeze(plainCopy(Object.keys(byUid).reduce((acc, uid) => {
       acc[uid] = Object.freeze(byUid[uid]);
       return acc;
-    }, {})),
-    working: Object.freeze(working)
+    }, Object.create(null)))),
+    working: Object.freeze(plainCopy(working))
   });
 }
 

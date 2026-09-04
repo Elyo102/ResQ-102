@@ -154,7 +154,7 @@ export function loadStats(people, guards, swaps, ctx, since) {
   const out = {};
   (people || []).forEach(function (p) {
     out[p.uid] = { uid: p.uid, name: p.name || '', crew: p.crew || '',
-                   gOff: 0, gShift: 0, gHours: 0,
+                   gOff: 0, gShift: 0, gUnknown: 0, gHours: 0,
                    swapIn: 0, swapOut: 0, last: '' };
   });
 
@@ -166,8 +166,10 @@ export function loadStats(people, guards, swaps, ctx, since) {
     assignedOf(g).forEach(function (uid) {
       const r = out[uid];
       if (!r) return;
-      if (dutyKind(ctx, uid, r.crew, key) === 'off') { r.gOff++; r.gHours += hrs; }
-      else r.gShift++;
+      const kind = dutyKind(ctx, uid, r.crew, key);
+      if (kind === 'off') { r.gOff++; r.gHours += hrs; }
+      else if (kind === 'shift') r.gShift++;
+      else r.gUnknown++;     // מחוץ לסידור הידוע — לא נטל ולא „נבלע"; לא נכנס לציון
       if (key > r.last) r.last = key;
     });
   });

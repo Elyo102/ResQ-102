@@ -95,4 +95,20 @@ test('a full year against a one-month publication is 30 answered days and 335 un
   assert.equal(out.by_uid.a.length, 30);
 });
 
+test('a uid named __proto__ or constructor is an own key in by_uid and unknown_uids — never inheritance', () => {
+  const out = W.assemble({
+    source: 'publication', range: { from: '2026-09-01', to: '2026-09-01' }, coverage: { from: '2026-09-01', to: '2026-09-01' },
+    windows: [{ from: '2026-09-01', to: '2026-09-01', days: [day('2026-09-01', ['__proto__', 'toString'])] }],
+    uids: ['__proto__', 'toString', 'constructor'], roster: ['__proto__', 'toString']
+  });
+  assert.equal(Object.hasOwn(out.by_uid, '__proto__'), true);
+  assert.deepEqual(out.by_uid.__proto__, ['2026-09-01']);
+  assert.deepEqual(out.by_uid.toString, ['2026-09-01']);
+  assert.equal(Object.hasOwn(out.unknown_uids, 'constructor'), true);
+  assert.equal(out.unknown_uids.constructor, 'not-in-roster');
+  assert.equal(Object.getPrototypeOf(out.by_uid), Object.prototype, 'הפלט הוא אובייקט רגיל');
+  assert.equal(JSON.parse(JSON.stringify(out.by_uid)).__proto__.length, 1, 'roundtrip JSON שומר את המפתח');
+  assert.equal(({}).toString === Object.prototype.toString, true);
+});
+
 console.log('\n' + passed + ' effective-workdays checks passed.');

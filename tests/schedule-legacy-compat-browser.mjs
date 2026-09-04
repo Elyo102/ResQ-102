@@ -63,19 +63,6 @@ function shiftedDay(days) {
   return dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12));
 }
 
-function compatibilityStep() {
-  return { data:{
-    mode:'shadow',
-    rotations:[
-      { crew:'A', position_in_cycle:0, cycle_days:3, anchor_date:'2026-01-01', is_active:true,
-        shift_start:'07:00', shift_end:'07:00', shift_hours:24 },
-      { crew:'B', position_in_cycle:1, cycle_days:3, anchor_date:'2026-01-01', is_active:true },
-      { crew:'C', position_in_cycle:2, cycle_days:3, anchor_date:'2026-01-01', is_active:true }
-    ],
-    overrides:{}
-  } };
-}
-
 try {
   // A malformed server response must stop workload calculation. It must never
   // be reinterpreted as a valid empty guard board.
@@ -97,23 +84,15 @@ try {
   // setupMode is intentionally earlier than the network result. Select both
   // dates during the delay and prove that success refreshes both stale labels.
   {
-    const compatibility = {
-      mode:'shadow',
-      rotations:[
-        { crew:'A', position_in_cycle:0, cycle_days:3, anchor_date:'2026-01-01', is_active:true,
-          shift_start:'07:00', shift_end:'07:00', shift_hours:24 },
-        { crew:'B', position_in_cycle:1, cycle_days:3, anchor_date:'2026-01-01', is_active:true },
-        { crew:'C', position_in_cycle:2, cycle_days:3, anchor_date:'2026-01-01', is_active:true }
-      ],
-      overrides:{}
-    };
+    // תשובת ימי-עבודה מושהית: הבדל מחשב אותה מהסבב (A/B/C), רק באיחור.
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[{ delay:900, data:compatibility }]
+      getEffectiveWorkdays:[{ delay:900 }]
     });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/swaps.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
-    await page.waitForFunction(() => window.__CALLABLE_INFLIGHT === 1);
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(call =>
+      call && call.name === 'getEffectiveWorkdays'));
     const dates = await page.evaluate(() => {
       const key = date => date.getFullYear() + '-' +
         String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -129,21 +108,24 @@ try {
     });
     await page.locator('#myDate').fill(dates.mine);
     await page.locator('#hisDate').fill(dates.his);
-    assert.equal(await page.evaluate(() => window.__CALLABLE_INFLIGHT), 1,
-      'the compatibility response is still pending while fail-closed labels are checked');
+    assert.equal(await page.evaluate(() => document.querySelector('#btnSend').disabled), true,
+      'sending is locked while the workdays answer is still pending');
     assert.match(await page.locator('#myCrewLine').textContent(), /בסיס הסידור אינו זמין/);
-    assert.match(await page.locator('#hisCrewLine').textContent(), /בסיס הסידור אינו זמין/);
     await page.waitForFunction(() => !document.querySelector('#btnSend')?.disabled);
-    assert.match(await page.locator('#myCrewLine').textContent(), /עובדת ביום זה/);
-    assert.match(await page.locator('#hisCrewLine').textContent(), /עובדת ביום זה/);
+    // ⭐ השורה שלי מתארת אותי (stub-uid, משמרת ג׳): עובד או לא — לפי הסידור, לא „משמרת X".
+    assert.match(await page.locator('#myCrewLine').textContent(), /(עובד|לא עובד) ביום זה לפי הסידור הקיים/);
+    assert.match(await page.locator('#hisCrewLine').textContent(), /בחר עם מי מחליפים/);
     const calls = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
-      .filter(call => call && call.name === 'getLegacyScheduleCompatibilityContext')
+      .filter(call => call && call.name === 'getEffectiveWorkdays')
       .map(call => call.payload));
-    assert.deepEqual(calls, [dates.expected]);
+    assert.equal(calls.length, 1);
+    assert.deepEqual({ from:calls[0].from, to:calls[0].to }, dates.expected);
+    assert.ok(Array.isArray(calls[0].uids) && calls[0].uids.includes('stub-uid') && calls[0].uids.includes('u2'),
+      'the request names me and the roster');
     assert.equal(Object.hasOwn(calls[0], 'sid'), false);
     assert.equal(Object.hasOwn(calls[0], 'station'), false);
     await context.close();
-    console.log('✓ delayed compatibility success refreshes both selected swap dates');
+    console.log('✓ delayed workdays success unlocks sending and describes my selected day');
   }
 
   // Statistics reuses one annual compatibility snapshot for all shorter
@@ -156,7 +138,7 @@ try {
     await page.goto(`http://127.0.0.1:${port}/stats.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
     await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(call =>
-      call && call.name === 'getLegacyScheduleCompatibilityContext'));
+      call && call.name === 'getEffectiveWorkdays'));
     const value = await page.evaluate(() => {
       const key = date => date.getFullYear() + '-' +
         String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -164,10 +146,11 @@ try {
       const today = new Date();
       const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 365, 12);
       const call = (window.__CALLABLE_CALLS || []).find(item =>
-        item && item.name === 'getLegacyScheduleCompatibilityContext');
+        item && item.name === 'getEffectiveWorkdays');
       return { payload:call && call.payload, expected:{ from:key(from), to:key(today) } };
     });
-    assert.deepEqual(value.payload, value.expected);
+    assert.deepEqual({ from:value.payload.from, to:value.payload.to }, value.expected);
+    assert.ok(value.payload.uids.length >= 4, 'the whole roster is asked about');
     assert.equal(Object.hasOwn(value.payload, 'sid'), false);
     await context.close();
     console.log('✓ statistics requests exactly 366 inclusive days without a station selector');
@@ -176,14 +159,12 @@ try {
   // Guard viewing uses two independently bounded annual windows. A single
   // 731-day compatibility request would exceed the server cap.
   {
-    const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()]
-    });
+    const context = await contextWithPlan({});
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/guards.html`, { waitUntil:'load' });
     await page.locator('#work').waitFor({ state:'visible' });
     await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).filter(call =>
-      call && call.name === 'getLegacyScheduleCompatibilityContext').length === 2);
+      call && call.name === 'getEffectiveWorkdays').length === 2);
     const value = await page.evaluate(() => {
       const key = date => date.getFullYear() + '-' +
         String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -192,7 +173,7 @@ try {
       const shift = days => new Date(today.getFullYear(), today.getMonth(),
         today.getDate() + days, 12);
       const compatibility = (window.__CALLABLE_CALLS || []).filter(item =>
-        item && item.name === 'getLegacyScheduleCompatibilityContext').map(item => item.payload);
+        item && item.name === 'getEffectiveWorkdays').map(item => ({ from:item.payload.from, to:item.payload.to }));
       const boards = (window.__CALLABLE_CALLS || []).filter(item =>
         item && item.name === 'getScheduleGuardBoard').map(item => item.payload);
       return { compatibility, boards, expected:{
@@ -223,7 +204,6 @@ try {
       date:shiftedDay(120) };
     const context = await contextWithPlan({
       getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'shadow' } }],
-      getLegacyScheduleCompatibilityContext:[compatibilityStep(), compatibilityStep()],
       getScheduleGuardBoard:[{ data:{ guards:[] } }, { data:{ guards:[] } }],
       getScheduleGuardManagerBoard:[
         { data:{ guards:[future] } }, { data:{ guards:[historic] } }
@@ -253,8 +233,8 @@ try {
   // but the workload claim and automatic ranking must fail closed.
   {
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[
-        compatibilityStep(),
+      getEffectiveWorkdays:[
+        {},
         { reject:true, code:'functions/unavailable', message:'future half failed' }
       ],
       getScheduleGuardBoard:[
@@ -280,4 +260,4 @@ try {
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n6/6 legacy compatibility browser checks passed.');
+console.log('\n6/6 effective-schedule browser checks passed (swaps, stats, guards).');

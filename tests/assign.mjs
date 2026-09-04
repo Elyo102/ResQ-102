@@ -182,7 +182,8 @@ const dataPaths = [
   ['crew: SUBJ.crew',                     'משמרת ברשומה'],
   ["'shifts', snapshot.crew)",            'לוח המשמרת'],
   ['swapEffect(swaps, SUBJ.uid, key)',    'החלפות'],
-  ['personWorks(rotations, SUBJ.crew',    'האם עובד ביום הזה']
+  ['worksOn(effective, SUBJ.uid, key)',   'האם עובד ביום הזה'],
+  ['uids: [snapshot.uid]',                 'ימי העבודה נשאלים על הנושא בלבד']
 ];
 dataPaths.forEach(function (pair) {
   ok(pair[1] + ' עובר דרך SUBJ', att.indexOf(pair[0]) !== -1);

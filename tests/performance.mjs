@@ -65,7 +65,7 @@ const result = await page.evaluate(() => ({
   })),
   dataPaths: (window.__DATA_PATHS || []).slice(),
   compatibilityCalls: (window.__CALLABLE_CALLS || [])
-    .filter(call => call && call.name === 'getLegacyScheduleCompatibilityContext')
+    .filter(call => call && call.name === 'getEffectiveWorkdays')
     .map(call => call.payload),
   guardCalls: (window.__CALLABLE_CALLS || [])
     .filter(call => call && call.name === 'getMyGuardAttendance')
@@ -128,7 +128,8 @@ const initialRange = await page.evaluate(() => {
   };
 });
 check(result.compatibilityCalls.length === 1 &&
-      JSON.stringify(result.compatibilityCalls[0]) === JSON.stringify(initialRange) &&
+      JSON.stringify({ from:result.compatibilityCalls[0].from, to:result.compatibilityCalls[0].to }) === JSON.stringify(initialRange) &&
+      JSON.stringify(result.compatibilityCalls[0].uids) === JSON.stringify(['stub-uid']) &&
       !Object.hasOwn(result.compatibilityCalls[0], 'sid') &&
       !Object.hasOwn(result.compatibilityCalls[0], 'station'),
       'attendance loads exactly the displayed month through one station-free callable');
@@ -142,7 +143,7 @@ await page.waitForTimeout(lagMs + 120);
 const monthStart = await page.locator('#moLabel').textContent();
 const compatibilityBeforeMonthRace = await page.evaluate(() =>
   (window.__CALLABLE_CALLS || []).filter(call =>
-    call && call.name === 'getLegacyScheduleCompatibilityContext').length);
+    call && call.name === 'getEffectiveWorkdays').length);
 await page.evaluate(() => {
   window.__SMOKE_LAG_PLAN = [
     700,700,700,700,
@@ -162,7 +163,7 @@ check(await page.locator('#work').getAttribute('aria-busy') === 'false',
       'month loading releases the busy state');
 const compatibilityMonthRace = await page.evaluate(before =>
   (window.__CALLABLE_CALLS || []).filter(call =>
-    call && call.name === 'getLegacyScheduleCompatibilityContext')
+    call && call.name === 'getEffectiveWorkdays')
     .slice(before).map(call => call.payload), compatibilityBeforeMonthRace);
 check(compatibilityMonthRace.length === 2 && compatibilityMonthRace.every(payload =>
   payload && /^\d{4}-\d{2}-01$/.test(payload.from) &&
