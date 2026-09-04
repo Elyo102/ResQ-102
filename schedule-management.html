@@ -149,17 +149,58 @@
     .cell{padding:5px 6px 7px;border-inline-start:1px solid var(--card,#fff);
       border-top:2px solid var(--card,#fff);min-width:0}
     .cell.snap{scroll-snap-align:start}
+    /* השבלונה של הגיליון (הכרעת אלדד 4.9): השורה = תחנת קצה (הפס
+       הצבעוני בתווית), העמודה = היום, וצבע העמודה = המשמרת שעובדת
+       באותה יממה — א׳ אדום, ב׳ ירוק, ג׳ כחול. האות נשארת בכותרת
+       היום בכל מצב, כי אדום/ירוק אינם נבדלים לכולם. */
     .cell.s1{background:var(--s1)}.cell.s2{background:var(--s2)}
     .cell.s3{background:var(--s3)}.cell.s4{background:var(--s4)}
+    .cell.col-A{background:var(--crewA-bg,#fbe6e4)}
+    .cell.col-B{background:var(--crewB-bg,#e2f2e9)}
+    .cell.col-C{background:var(--crewC-bg,#e4ecfd)}
+    .stub.s1{box-shadow:inset -4px 0 0 var(--s1t)}.stub.s2{box-shadow:inset -4px 0 0 var(--s2t)}
+    .stub.s3{box-shadow:inset -4px 0 0 var(--s3t)}.stub.s4{box-shadow:inset -4px 0 0 var(--s4t)}
+    .hcell .crew{display:inline-block;margin-top:3px;font-size:10px;font-weight:800;line-height:1.5;
+      padding:0 6px;border-radius:6px;border:1px solid transparent;color:var(--muted,#748091);
+      background:var(--panel,#f3f6fa)}
+    .hcell .crew.crew-A{color:var(--crewA,#b3261e);background:var(--crewA-bg,#fbe6e4);border-color:var(--crewA,#b3261e)}
+    .hcell .crew.crew-B{color:var(--crewB,#1f6b45);background:var(--crewB-bg,#e2f2e9);border-color:var(--crewB,#1f6b45)}
+    .hcell .crew.crew-C{color:var(--crewC,#1d4ed8);background:var(--crewC-bg,#e4ecfd);border-color:var(--crewC,#1d4ed8)}
     .nm{font-size:12px;font-weight:500;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .cell .nm{color:var(--txt,#1c2532)}
     .cell .nm.crew-A{color:var(--crewA,#b3261e)}
     .cell .nm.crew-B{color:var(--crewB,#1f6b45)}
     .cell .nm.crew-C{color:var(--crewC,#1d4ed8)}
-    .absence-cell{background:var(--card,#fff)}
-    .absence-empty{font-size:10px;color:var(--muted,#748091);overflow-wrap:anywhere}
-    .absence-location{display:inline-block;margin-inline-start:4px;padding:0 4px;
-      border:1px solid var(--line,#dfe5ec);border-radius:4px;font-size:10px}
+    /* שורות ההיעדרות — מחלה · מילואים · קורסים · חופש — מתחת לתחנות,
+       כמו בתחתית הגיליון. חופש נושא תג מיקום: חו"ל / צפון / אילת. */
+    .stub.absence{border-top:1px solid var(--line,#dfe5ec)}
+    .stub.absence b{color:var(--muted,#5a6573)}
+    .absence-cell{background:var(--card,#fff);border-top:1px solid var(--line-soft,#eef2f7)}
+    .absence-cell.first{border-top:1px solid var(--line,#dfe5ec)}
+    .absence-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
+    .absence-empty{font-size:11px;color:var(--muted,#748091);opacity:.6}
+    .absence-name{font-weight:600}
+    .absence-location{display:inline-block;margin-inline-start:4px;padding:0 5px;
+      border:1px solid var(--line,#dfe5ec);border-radius:5px;font-size:10px;font-weight:700;
+      color:var(--muted,#5a6573);background:var(--panel,#f3f6fa)}
+    /* ---------------- הדבקת הסידור מהגיליון ---------------- */
+    .importcard{border-color:var(--sched-blue)}
+    .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
+    .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
+    .unres{display:grid;gap:7px;margin-top:10px}
+    .unres .row{display:grid;grid-template-columns:minmax(120px,1fr) 2fr auto;gap:8px;align-items:center;
+      padding:8px 10px;border-radius:10px;background:var(--panel,#f7f9fc)}
+    .unres .row b{font-size:13px}
+    .unres .row small{display:block;font-size:11px;color:var(--muted,#748091);font-weight:500}
+    .unres select{width:100%;min-height:40px;border:1px solid var(--line,#dfe5ec);border-radius:8px;
+      background:var(--card,#fff);color:var(--txt,#1c2532);padding:6px 8px}
+    .blocklist{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+    .blocktag{font-size:11px;font-weight:700;border-radius:7px;padding:5px 9px;border:1px solid var(--line,#dfe5ec);
+      background:var(--card,#fff);color:var(--muted,#5a6573)}
+    .blocktag.station{border-color:var(--sched-blue);color:var(--sched-blue)}
+    .blocktag.absence{border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
+    .blocktag.ignored{opacity:.6;text-decoration:line-through}
+    @media (max-width:640px){.importrow{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
     .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
@@ -342,6 +383,33 @@
         </tr></thead><tbody id="sourceReport"></tbody></table>
       </div>
       <div id="sourceMessage" aria-live="polite"></div>
+    </article>
+
+    <article class="card importcard" id="importCard">
+      <h2>הדבקת הסידור מהגיליון</h2>
+      <div class="sub">הגיליון הקיים הוא מסד הנתונים. בגיליון: Ctrl+A ← העתק, וכאן: הדבק. המערכת
+        קוראת את התוויות שבעמודה הימנית — אילת, שחמון, תמנע, יטבתה, מחלה, מילואים, קורסים, חופש —
+        ומייבאת את החודש כמות שהוא, בלי שהמנוע ישנה בו דבר. הקו האדום מוצג ואינו חוסם.
+        שם שלא זוהה מוצג להתאמה פעם אחת, והמערכת זוכרת.</div>
+      <div class="importrow">
+        <div><label for="importMonth">חודש לייבוא</label><input id="importMonth" type="month"></div>
+        <div><label for="importPaste">הדבקה מהגיליון</label>
+          <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea></div>
+      </div>
+      <div class="btns">
+        <button class="btn primary" id="importCheck" type="button">בדוק את ההדבקה</button>
+        <button class="btn dark" id="importRun" type="button" disabled>ייבא כטיוטה</button>
+      </div>
+      <div id="importReport" hidden>
+        <div class="importcounts" id="importCounts"></div>
+        <div class="blocklist" id="importBlocks"></div>
+        <div id="importUnresolvedWrap" hidden>
+          <label style="margin-top:12px">שמות שלא זוהו — למי הכוונה?</label>
+          <div class="unres" id="importUnresolved"></div>
+        </div>
+        <div id="importDuplicates" class="changes"></div>
+      </div>
+      <div id="importMessage" aria-live="polite"></div>
     </article>
 
     <div class="manage-grid">

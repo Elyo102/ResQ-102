@@ -326,7 +326,8 @@ try {
     assert.equal(await managerPage.locator('#draftSummary .metric').count(), 4);
     await managerPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await managerPage.locator('#draftBoard .hcell').count(), 7);
-    assert.equal(await managerPage.locator('#draftBoard .absence-cell').count(), 0);
+    // 4.9: שורות ההיעדרות מוצגות גם בתצוגה המקדימה — אותה שבלונה כמו הלוח.
+    assert.equal(await managerPage.locator('#draftBoard .absence-cell').count(), 7 * 4);
     assert.match(await managerPage.locator('#draftPreview').textContent(), /טל חודרה/);
     assert.equal(await managerPage.locator('#publish').isEnabled(), false);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
@@ -578,8 +579,12 @@ try {
     const cell = (index) => absencePage.locator('#stationBoard [data-absence-kind="sick"][data-date="'
       + absenceRange.days[index].date + '"]');
     assert.equal(await cell(1).textContent(), '—');
-    assert.match(await cell(2).textContent(), /מידע היעדרויות אינו זמין/);
-    assert.match(await cell(3).textContent(), /מידע היעדרויות אינו זמין/);
+    // 4.9: „אין נתון" הוא תא מקווקו בלי מקף (לא „אף אחד"), עם הסבר אחד מתחת ללוח.
+    assert.equal(await cell(2).textContent(), '');
+    assert.ok(await cell(2).evaluate((el) => el.classList.contains('unknown')));
+    assert.ok(await cell(3).evaluate((el) => el.classList.contains('unknown')));
+    assert.ok(!(await cell(1).evaluate((el) => el.classList.contains('unknown'))));
+    assert.match(await absencePage.locator('#stationNote').textContent(), /חלק מהימים בטווח לא הודבקו/);
   });
   await test('explicit crew colors are stable across station rows and unknown crews are neutral', async () => {
     const colors = await absencePage.evaluate(() => {
@@ -831,7 +836,7 @@ try {
     assert.match(await offPage.locator('#stationContent').textContent(), /משמרת א/);
     // ⭐ הרצועה עובדת גם לפני שהמנוע הופעל. אחרת המסך היה ריק
     // בדיוק במצב שהתחנה נמצאת בו היום.
-    assert.match(await offPage.locator('#stationNote').textContent(), /מנוע הסידור החדש עדיין אינו פעיל/);
+    assert.match(await offPage.locator('#stationNote').textContent(), /הסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון/);
     const calls = await offPage.evaluate(() => window.__CALLABLE_CALLS || []);
     // הפאנל האישי נטען רק בלשונית „הסידור שלי", ולכן אינו נקרא כאן.
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0);
@@ -1403,10 +1408,119 @@ try {
     assert.equal(calls.some((entry) => entry.name === 'getStationScheduleRange'), false);
   });
   await statusError.close();
+
+  /* ==================================================================
+   * הדבקת הסידור מהגיליון (הכרעת אלדד 4.9): דוח → התאמת שמות → ייבוא
+   * כטיוטה → תצוגה מקדימה בשבלונה של הגיליון (עמודה בצבע המשמרת,
+   * אות המשמרת בכותרת, שורות היעדרות עם תג מיקום).
+   * ================================================================== */
+  const importReportBlocked = {
+    month: today.slice(0, 7), dates:[today, shiftDay(today, 1), shiftDay(today, 2)], from: today, to: shiftDay(today, 2),
+    counts:{ days:3, stations:1, assignments:5, absences:2, unresolved:2, duplicates:0, skipped:0, below_minimum:1 },
+    blocks:[{ label:'אילת', kind:'station', sub_station:'main', absence:null, rows:[3, 9], names:5 },
+      { label:'', kind:'ignored', sub_station:null, absence:null, rows:[10, 12], names:3, after:'אילת' },
+      { label:'מחלה', kind:'absence', sub_station:null, absence:{ kind:'sick', location:null }, rows:[13, 13], names:1 },
+      { label:'באילת', kind:'absence', sub_station:null, absence:{ kind:'leave', location:'eilat' }, rows:[14, 14], names:1 }],
+    unresolved:[{ name:'רועי', count:2, dates:[today, shiftDay(today, 1)], candidates:[{ uid:'stub-uid', name:'אלדד יונה' }, { uid:'crew_1', name:'טל חודרה' }] },
+      { name:'אבטחה', count:1, dates:[today], candidates:[] }],
+    duplicates:[], ignored:[{ label:'', rows:[10, 12], names:3 }], warnings:[],
+    people:[{ uid:'stub-uid', name:'אלדד יונה' }, { uid:'crew_1', name:'טל חודרה' }],
+    blocked:true
+  };
+  const importReportReady = JSON.parse(JSON.stringify(importReportBlocked));
+  importReportReady.unresolved = []; importReportReady.counts.unresolved = 0; importReportReady.counts.skipped = 1;
+  importReportReady.blocked = false;
+  const importedDraft = {
+    draft_id:'draft_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
+    summary:{ filled:5, blocking_gaps:0, days_below_minimum:0, rejected_manual:0, open_rows:0, imported_below_minimum:1, imported_absences:2 },
+    report: importReportReady
+  };
+  const importedPreview = {
+    draft_id:'draft_import_1', expected_content_digest:'digest_import_1', imported:true,
+    from: today, to: shiftDay(today, 2), week_start: today,
+    days:[today, shiftDay(today, 1), shiftDay(today, 2)].map((date, index) => Object.assign(day(date, '', index === 0), {
+      crew:['A', 'B', 'C'][index],
+      absences_status:'ready',
+      absences: index === 0 ? [{ uid:'crew_1', display:'טל חודרה', kind:'sick', is_me:false }]
+        : index === 2 ? [{ uid:'stub-uid', display:'אלדד יונה', kind:'leave', location:'eilat', is_me:true }] : []
+    }))
+  };
+  importedPreview.days.forEach((item) => item.sub_stations[0].people.forEach((person, i) => { person.crew = ['A', 'B'][i]; }));
+  const sheetImporter = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(sheetImporter, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportReady }],
+    importScheduleSheet:[{ data:importedDraft }],
+    getScheduleDraftPreview:[{ data:importedPreview }]
+  });
+  const sheetPage = await sheetImporter.newPage();
+  await sheetPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await sheetPage.locator('#appMain:not(.hide)').waitFor();
+  await test('the sheet paste is checked before anything is written; unresolved names are offered a match', async () => {
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .msg').waitFor();
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /צריך להדביק|יש לבחור חודש/);
+    await sheetPage.fill('#importMonth', today.slice(0, 7));
+    await sheetPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .warn').waitFor();
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /שמות שלא זוהו/);
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
+    assert.equal(await sheetPage.locator('#importCounts .metric').count(), 6);
+    assert.deepEqual(await sheetPage.locator('#importBlocks .blocktag').allTextContents(),
+      ['אילת · 5 שיבוצים', '(בלי תווית) · שורות 10–12 לא יובאו', 'מחלה · 1', 'באילת · 1']);
+    assert.equal(await sheetPage.locator('#importUnresolved .row').count(), 2);
+    // „רועי" דו-משמעי: שני המועמדים ראשונים, ואז כל הסגל; „אבטחה" — כל הסגל ו„זה לא שם".
+    assert.deepEqual(await sheetPage.locator('#importUnresolved select[data-name="רועי"] option').allTextContents(),
+      ['— בחר —', 'אלדד יונה', 'טל חודרה', 'זה לא שם (למשל „אבטחה")']);
+    const calls = await sheetPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.filter((entry) => entry.name === 'previewScheduleImport');
+    assert.equal(preview.length, 1);
+    assert.equal(Object.hasOwn(preview[0].payload, 'stationId'), false);
+    assert.deepEqual(preview[0].payload.aliases, {});
+    assert.equal(calls.some((entry) => entry.name === 'importScheduleSheet'), false, 'nothing is imported before the manager confirms');
+  });
+  await test('matched names travel as aliases (null = not a name); the import becomes a draft with the sheet template', async () => {
+    await sheetPage.selectOption('#importUnresolved select[data-name="רועי"]', 'stub-uid');
+    await sheetPage.selectOption('#importUnresolved select[data-name="אבטחה"]', '__ignore__');
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .ok').waitFor();
+    const calls = await sheetPage.evaluate(() => window.__CALLABLE_CALLS);
+    const second = calls.filter((entry) => entry.name === 'previewScheduleImport')[1];
+    assert.deepEqual(second.payload.aliases, { 'רועי':'stub-uid', 'אבטחה':null });
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), true);
+    await sheetPage.locator('#importRun').click();
+    await sheetPage.locator('#previewMessage .ok').waitFor();
+    const imported = calls.concat(await sheetPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'importScheduleSheet');
+    assert.ok(imported && imported.payload.request_id && imported.payload.month === today.slice(0, 7));
+    assert.deepEqual(imported.payload.aliases, { 'רועי':'stub-uid', 'אבטחה':null });
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /יובא כטיוטה/);
+    assert.deepEqual(await sheetPage.locator('#draftSummary .metric span').allTextContents(),
+      ['שובצו', 'היעדרויות', 'ימים מתחת לקו', 'יובא מהגיליון']);
+    // השבלונה: אות המשמרת בכותרת, העמודה בצבע המשמרת, שם בצבע הצוות, שורות היעדרות.
+    assert.deepEqual(await sheetPage.locator('#draftBoard .hcell .crew').allTextContents(), ['משמרת א׳', 'משמרת ב׳', 'משמרת ג׳']);
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-A').count(), 1);
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-B').count(), 1);
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-C').count(), 1);
+    const tints = await sheetPage.evaluate(() => ['col-A', 'col-B', 'col-C'].map((cls) =>
+      getComputedStyle(document.querySelector('#draftBoard .cell.' + cls)).backgroundColor));
+    assert.equal(new Set(tints).size, 3, 'three distinct column colours');
+    assert.equal(await sheetPage.locator('#draftBoard .nm.crew-A').count(), 3);
+    assert.deepEqual(await sheetPage.locator('#draftBoard .absence-stub b').allTextContents(), ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await sheetPage.locator('#draftBoard .absence-name').allTextContents(), ['טל חודרה', 'אלדד יונהאילת']);
+    assert.deepEqual(await sheetPage.locator('#draftBoard .absence-location').allTextContents(), ['אילת']);
+    assert.equal(await sheetPage.locator('#draftBoard .absence-cell.unknown').count(), 0);
+    assert.equal(await sheetPage.locator('#publish').isEnabled(), false, 'publishing still needs the review checkbox');
+  });
+  await sheetImporter.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 39);
-console.log('\n39 schedule management browser checks passed.');
+assert.equal(passed, 41);
+console.log('\n41 schedule management browser checks passed.');
