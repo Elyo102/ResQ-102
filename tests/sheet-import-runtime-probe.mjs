@@ -115,6 +115,7 @@ function createFakeDb() {
       return out;
     },
     _put(path, value) { docs.set(path, clone(value)); },
+    _del(path) { docs.delete(path); },
     _get(path) { return docs.has(path) ? clone(docs.get(path)) : null; },
     _paths(prefix) { return Array.from(docs.keys()).filter((k) => k.indexOf(prefix) === 0).sort(); }
   };
@@ -238,25 +239,60 @@ const SHEET = [
   eq('2.7 חסום עד התאמה', report.blocked, true);
   ok('2.8 האזור החופשי (משורת השעה) מסומן כמדולג', report.blocks.some((b) => b.kind === 'ignored' && b.rows[0] === 14));
   eq('2.9 preview אינו כותב טיוטה', db._paths(ST + '/schedule_drafts').length, before);
-  await rejectsCode('2.10 ייבוא כשיש שמות לא מזוהים — נחסם', () => rt.importScheduleSheet(req({ request_id: 'i1', month: '2026-09', paste: SHEET })), 'import-blocked');
+  eq('2.7b בשם: מה חוסם', report.blocked_by, ['unresolved']);
+  ok('2.7c חתימת דוח', typeof report.report_digest === 'string' && report.report_digest.length === 64);
+  await rejectsCode('2.10 ייבוא כשיש שמות לא מזוהים — נחסם', () => rt.importScheduleSheet(req({ request_id: 'i1', month: '2026-09', paste: SHEET, expected_report_digest: report.report_digest })), 'import-blocked');
+  await rejectsCode('2.11 ייבוא בלי חתימת הדוח שהוצג — נדחה', () => rt.importScheduleSheet(req({ request_id: 'i1', month: '2026-09', paste: SHEET })), 'import-report-stale');
 
   // 3 · התאמת כינויים → ייבוא → טיוטה.
   const aliases = { 'רועי': 'u1', 'אבטחה': null };   // null = „זה לא שם" — אחראי הסידור מסמן תא שאינו אדם
   const ready = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases }));
   eq('3.1 אחרי התאמה — אין לא מזוהים', ready.counts.unresolved, 0);
   eq('3.2 ולא חסום', ready.blocked, false);
-  const imported = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases }));
+  // 421-review §5/§7: הדוח שאושר קשור לקלט המדויק — כינוי שהשתנה אחרי „בדוק" נדחה.
+  await rejectsCode('3.2b שינוי כינוי אחרי הדוח → import-report-stale', () => rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases: { 'רועי': 'u6', 'אבטחה': null }, expected_report_digest: ready.report_digest })), 'import-report-stale');
+  await rejectsCode('3.2c הדבקה שהשתנתה עם אותו דוח → import-report-stale', () => rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET + '\n', aliases, expected_report_digest: ready.report_digest })), 'import-report-stale');
+  eq('3.2d לא נוצרה טיוטה מהניסיונות שנדחו', db._paths(ST + '/schedule_drafts').length, before);
+  const imported = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
   eq('3.3 טיוטה נוצרה', [imported.duplicate, typeof imported.draft_id, imported.from, imported.to], [false, 'string', '2026-09-01', '2026-09-03']);
   eq('3.4 סיכום: קו לא חוסם, ימים מתחת לקו נספרים בנפרד', [imported.summary.days_below_minimum, imported.summary.imported_below_minimum, imported.summary.imported_absences], [0, 2, 5]);
   const draft = db._get(ST + '/schedule_drafts/' + imported.draft_id);
   eq('3.5 הטיוטה מסומנת כמיובאת ושלמה', [draft.status, draft.imported, draft.import_month, draft.absence_count], ['complete', true, '2026-09', 5]);
   eq('3.6 הכינויים נשמרו — כולל „לא שם"', db._get(ST + '/schedule_state/sheet_aliases').aliases, { 'רועי': 'u1', 'אבטחה': null });
   eq('3.6b תא שסומן „לא שם" נספר כמדולג', ready.counts.skipped, 1);
-  const again = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases }));
-  eq('3.7 אותו request_id — כפילות, לא טיוטה שנייה', again.duplicate, true);
-  await rejectsCode('3.8 אותו request_id עם הדבקה אחרת — סירוב', () => rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET + '\n', aliases })), 'request-conflict');
+  // ניסיון חוזר (תשובה שאבדה): אותו request_id ואותו דוח → הדוח **המקורי** מהטיוטה, לא פענוח חדש.
+  const again = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+  eq('3.7 אותו request_id — כפילות, לא טיוטה שנייה', [again.duplicate, again.report.report_digest === ready.report_digest, again.report.counts.assignments], [true, true, ready.counts.assignments]);
   const memo = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }));
   eq('3.9 כינוי שנשמר משמש בהדבקה הבאה בלי למסור שוב', memo.counts.unresolved, 0);
+  // אותו request_id עם קלט אחר (הדוח של הקלט האחר) → סירוב.
+  const other = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET + '\n' }));
+  await rejectsCode('3.8 אותו request_id עם הדבקה אחרת — סירוב', () => rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET + '\n', expected_report_digest: other.report_digest })), 'request-conflict');
+
+  // 421-review §6: המינוי בוטל בין הבדיקות המקדימות לעסקה — הייבוא נדחה
+  // **והכינויים לא השתנו** (נשמרים באותה עסקה שמאמתת את המינוי).
+  {
+    const aliasesBefore = db._get(ST + '/schedule_state/sheet_aliases').aliases;
+    const fresh = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases: { 'סיור': null } }));
+    const originalTx = db.runTransaction;
+    db.runTransaction = async (fn) => {
+      db._del(ST + '/schedule_access/' + MGR);   // ביטול מינוי רגע לפני העסקה
+      return originalTx.call(db, fn);
+    };
+    await rejectsCode('3.11 מינוי שבוטל לפני העסקה → manager-revoked', () => rt.importScheduleSheet(req({ request_id: 'i3', month: '2026-09', paste: SHEET, aliases: { 'סיור': null }, expected_report_digest: fresh.report_digest })), 'manager-revoked');
+    db.runTransaction = originalTx;
+    eq('3.12 הכינויים לא השתנו', db._get(ST + '/schedule_state/sheet_aliases').aliases, aliasesBefore);
+    eq('3.13 לא נוצרה טיוטה', db._paths(ST + '/schedule_drafts').filter((k) => k.split('/').length === 4).length, 1);
+    db._put(ST + '/schedule_access/' + MGR, { schema_version: 1, station_id: SID, uid: MGR, roles: ['schedule_manager'], active: true, revision: 1 });
+    // עדכון מקביל של הכינויים בין הקריאה לעסקה — מתמזג, לא נדרס.
+    db.runTransaction = async (fn) => {
+      db._put(ST + '/schedule_state/sheet_aliases', { station_id: SID, aliases: Object.assign({}, db._get(ST + '/schedule_state/sheet_aliases').aliases, { 'מקביל': 'u2' }) });
+      return originalTx.call(db, fn);
+    };
+    const merged = await rt.importScheduleSheet(req({ request_id: 'i3', month: '2026-09', paste: SHEET, aliases: { 'סיור': null }, expected_report_digest: fresh.report_digest }));
+    db.runTransaction = originalTx;
+    eq('3.14 כינוי שנכתב במקביל נשמר לצד החדש', [merged.duplicate, db._get(ST + '/schedule_state/sheet_aliases').aliases['מקביל'], db._get(ST + '/schedule_state/sheet_aliases').aliases['סיור']], [false, 'u2', null]);
+  }
 
   // 4 · תצוגה מקדימה של הטיוטה — השבלונה.
   const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
@@ -266,7 +302,7 @@ const SHEET = [
   eq('4.3 אילת 1.9: 7 אנשים, קו 7, לא מתחת', [d1.sub_stations[0].people.length, d1.sub_stations[0].minimum, d1.sub_stations[0].below_minimum], [7, 7, false]);
   const d2 = preview.days[1];
   eq('4.4 אילת 2.9: 3 אנשים מתחת לקו', [d2.sub_stations[0].people.length, d2.sub_stations[0].below_minimum], [3, true]);
-  eq('4.5 צוות לאדם מהסגל הישן (סדר לפי uid: u1,u2,u4,u5,u7,u8,u9)', d1.sub_stations[0].people.map((p) => p.crew), ['A', 'A', 'C', 'A', 'B', 'C', 'A']);
+  eq('4.5 צוות לאדם מהסגל הישן, בסדר הגיליון (רועי, דניאל, ליאור, גיא, אורי, נועם, עמית)', d1.sub_stations[0].people.map((p) => p.uid + ':' + p.crew), ['u1:A', 'u2:A', 'u9:A', 'u5:A', 'u8:C', 'u7:B', 'u4:C']);
   eq('4.6 צוות היום מהמחזור (1.9=A, 2.9=B, 3.9=C)', preview.days.map((d) => d.crew), ['A', 'B', 'C']);
   eq('4.7 היעדרויות 1.9: מחלה + „רועי"→u1 בצפון', d1.absences.map((a) => [a.uid, a.kind, a.location || null]), [['u6', 'sick', null], ['u1', 'leave', 'north']]);
   eq('4.8 היעדרויות 3.9: באילת', preview.days[2].absences.map((a) => [a.uid, a.kind, a.location, a.display]), [['u1', 'leave', 'eilat', 'רועי כהן']]);
@@ -302,11 +338,16 @@ const SHEET = [
   const { rt } = await seed(db);
   const sheet = [row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']),
     row(['אילת', 'רועי כהן', 'רועי כהן', 'רועי כהן']), row(['שחמון', '', '', ''])].join('\n');
-  const imported = await rt.importScheduleSheet(req({ request_id: 'i9', month: '2026-09', paste: sheet }));
+  const first = await rt.previewScheduleImport(req({ month: '2026-09', paste: sheet }));
+  eq('6.0 תחנות חסרות בהדבקה — חוסמות עד אישור מפורש (חסר ≠ ריק)', [first.blocked, first.blocked_by, first.missing_stations.map((m) => m.sub_station)], [true, ['missing-stations'], ['timna', 'yotvata']]);
+  await rejectsCode('6.0b ייבוא בלי אישור — נחסם', () => rt.importScheduleSheet(req({ request_id: 'i9', month: '2026-09', paste: sheet, expected_report_digest: first.report_digest })), 'import-blocked');
+  const accepted = await rt.previewScheduleImport(req({ month: '2026-09', paste: sheet, accept: { missing_stations: true } }));
+  eq('6.0c אחרי אישור — לא חסום, וחתימה אחרת', [accepted.blocked, accepted.report_digest !== first.report_digest], [false, true]);
+  const imported = await rt.importScheduleSheet(req({ request_id: 'i9', month: '2026-09', paste: sheet, accept: { missing_stations: true }, expected_report_digest: accepted.report_digest }));
   const draft = db._get(ST + '/schedule_drafts/' + imported.draft_id);
   eq('6.1 בלי היעדרויות — absence_count 0', draft.absence_count, 0);
   const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
-  eq('6.2 שורות ריקות לתחנות בלי שיבוץ — קיימות', preview.days[0].sub_stations.map((s) => s.people.length), [1, 0, 0, 0]);
+  eq('6.2 שחמון (בלוק קיים, תא ריק) = „אף אחד"; תמנע/יטבתה (חסרות) — אין שורה', preview.days[0].sub_stations.map((s) => s.sub_station + ':' + s.people.length), ['eilat:1', 'shahmon:0']);
   eq('6.3 absences ריק אך ready', [preview.days[0].absences, preview.days[0].absences_status], [[], 'ready']);
 }
 

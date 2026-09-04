@@ -101,7 +101,7 @@ test('פענוח: שיבוצים לכל תחנה ותאריך (גם ריקים),
   const at = (sub, date) => r.rows.find((x) => x.sub_station === sub && x.date === date);
   assert.deepEqual(at('eilat', '2026-09-01').slots.map((s) => s.person), ['u1', 'u2']);
   assert.deepEqual(at('eilat', '2026-09-02').slots.map((s) => s.person), ['u2'], '„רועי" לבד דו-משמעי — לא נכנס');
-  assert.deepEqual(at('eilat', '2026-09-03').slots.map((s) => s.person), ['u1', 'u2', 'u3'], 'יוסי בשורה 5 שייך לבלוק אילת (תא ממוזג)');
+  assert.deepEqual(at('eilat', '2026-09-03').slots.map((s) => s.person), ['u2', 'u1', 'u3'], 'סדר הגיליון נשמר (דניאל לפני רועי); יוסי בשורה 5 שייך לבלוק אילת (תא ממוזג)');
   assert.deepEqual(at('shahmon', '2026-09-03').slots, []);
   assert.deepEqual(at('yotvata', '2026-09-01').slots.map((s) => s.person), ['u5'], 'schedule_name');
   assert.equal(at('eilat', '2026-09-01').below_minimum, true, '2 < קו 7');
@@ -136,6 +136,32 @@ test('היעדרויות: סוג ומיקום, כינויים, ומה שלא ז�
     { date: '2026-09-03', uid: 'u5', kind: 'course' }
   ]);
   assert.equal(r.counts.absences, 9);
+});
+
+test('סדר הגיליון נשמר בשיבוצים — לא מיון לפי מזהה (419-review §3)', () => {
+  const sheet = [row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']),
+    row(['אילת', 'יוסי מזרחי', '', '']), row(['', 'רועי כהן', '', '']), row(['', 'דניאל לוי', '', ''])].join('\n');
+  const r = S.resolveSheet(S.parseSheet(sheet, { month: '2026-09', policy: POLICY }), { people: PEOPLE, policy: POLICY, station_id: 's' });
+  assert.deepEqual(r.rows.find((x) => x.sub_station === 'eilat' && x.date === '2026-09-01').slots.map((s) => s.person), ['u3', 'u1', 'u2']);
+});
+
+test('תחנה בלי בלוק בהדבקה — חסרה ומדווחת, לא „ריקה"; תא ענק — מדווח ולא נחתך', () => {
+  const sheet = [row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']),
+    row(['אילת', 'רועי כהן', '', 'רועי כהן'])].join('\n');
+  const r = S.resolveSheet(S.parseSheet(sheet, { month: '2026-09', policy: POLICY }), { people: PEOPLE, policy: POLICY, station_id: 's' });
+  assert.deepEqual(r.missing_stations.map((m) => m.sub_station), ['shahmon', 'timna', 'yotvata']);
+  assert.equal(r.counts.missing_stations, 3);
+  assert.deepEqual(r.rows.map((x) => x.sub_station), ['eilat', 'eilat', 'eilat'], 'אין שורות לתחנות חסרות');
+  assert.deepEqual(r.rows.find((x) => x.date === '2026-09-02').slots, [], 'אילת ב-2.9 — תא ריק בבלוק קיים = „אף אחד" מאומת');
+  const many = Array.from({ length: 41 }, (_, i) => 'שם' + i).join(', ');
+  const big = [row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']), row(['אילת', many, 'רועי כהן', ''])].join('\n');
+  const p = S.parseSheet(big, { month: '2026-09', policy: POLICY });
+  assert.ok(p.warnings.some((w) => w.code === 'cell-too-many-names' && w.row === 3 && w.date === '2026-09-01'));
+  const rb = S.resolveSheet(p, { people: PEOPLE, policy: POLICY, station_id: 's' });
+  assert.equal(rb.counts.oversized_cells, 1);
+  assert.deepEqual(rb.rows.find((x) => x.date === '2026-09-01').slots, [], 'התא הגדול לא יובא בכלל — לא 40 מתוך 41');
+  assert.equal(S.namesInCell(many), null);
+  assert.equal(S.namesInCell(Array.from({ length: 40 }, (_, i) => 'ש' + i).join(',')).length, 40);
 });
 
 test('כפילות: אותו אדם בשתי תחנות באותו יום — מדווח, לא נבחר בשקט', () => {

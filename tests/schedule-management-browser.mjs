@@ -1423,13 +1423,17 @@ try {
       { label:'באילת', kind:'absence', sub_station:null, absence:{ kind:'leave', location:'eilat' }, rows:[14, 14], names:1 }],
     unresolved:[{ name:'רועי', count:2, dates:[today, shiftDay(today, 1)], candidates:[{ uid:'stub-uid', name:'אלדד יונה' }, { uid:'crew_1', name:'טל חודרה' }] },
       { name:'אבטחה', count:1, dates:[today], candidates:[] }],
-    duplicates:[], ignored:[{ label:'', rows:[10, 12], names:3 }], warnings:[],
+    duplicates:[], ignored:[{ label:'', rows:[10, 12], names:3 }], missing_stations:[], warnings:[],
     people:[{ uid:'stub-uid', name:'אלדד יונה' }, { uid:'crew_1', name:'טל חודרה' }],
-    blocked:true
+    report_digest:'rd_blocked', blocked_by:['unresolved', 'ignored-blocks'], blocked:true
   };
-  const importReportReady = JSON.parse(JSON.stringify(importReportBlocked));
-  importReportReady.unresolved = []; importReportReady.counts.unresolved = 0; importReportReady.counts.skipped = 1;
-  importReportReady.blocked = false;
+  importReportBlocked.counts.ignored_names = 3;
+  const importReportAccept = JSON.parse(JSON.stringify(importReportBlocked));
+  importReportAccept.unresolved = []; importReportAccept.counts.unresolved = 0; importReportAccept.counts.skipped = 1;
+  importReportAccept.report_digest = 'rd_accept'; importReportAccept.blocked_by = ['ignored-blocks'];
+  const importReportReady = JSON.parse(JSON.stringify(importReportAccept));
+  importReportReady.report_digest = 'rd_ready'; importReportReady.blocked_by = []; importReportReady.blocked = false;
+  importReportReady.accept = { missing_stations:false, ignored_blocks:true };
   const importedDraft = {
     draft_id:'draft_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
     summary:{ filled:5, blocking_gaps:0, days_below_minimum:0, rejected_manual:0, open_rows:0, imported_below_minimum:1, imported_absences:2 },
@@ -1452,7 +1456,7 @@ try {
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:mine }],
     getStationScheduleRange:[{ data:stationRange }],
-    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportReady }],
+    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportAccept }, { data:importReportReady }],
     importScheduleSheet:[{ data:importedDraft }],
     getScheduleDraftPreview:[{ data:importedPreview }]
   });
@@ -1484,19 +1488,34 @@ try {
     assert.deepEqual(preview[0].payload.aliases, {});
     assert.equal(calls.some((entry) => entry.name === 'importScheduleSheet'), false, 'nothing is imported before the manager confirms');
   });
-  await test('matched names travel as aliases (null = not a name); the import becomes a draft with the sheet template', async () => {
+  await test('matched names travel as aliases (null = not a name); an ignored block needs an explicit tick; any change invalidates the report', async () => {
     await sheetPage.selectOption('#importUnresolved select[data-name="רועי"]', 'stub-uid');
     await sheetPage.selectOption('#importUnresolved select[data-name="אבטחה"]', '__ignore__');
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
     await sheetPage.locator('#importCheck').click();
-    await sheetPage.locator('#importMessage .ok').waitFor();
+    await sheetPage.locator('#importMessage .warn').waitFor();
     const calls = await sheetPage.evaluate(() => window.__CALLABLE_CALLS);
     const second = calls.filter((entry) => entry.name === 'previewScheduleImport')[1];
     assert.deepEqual(second.payload.aliases, { 'רועי':'stub-uid', 'אבטחה':null });
+    assert.deepEqual(second.payload.accept, { missing_stations:false, ignored_blocks:false });
+    // 3 שמות באזור שלא זוהה — חסר אינו ריק: הייבוא חסום עד שמסמנים שראו.
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /תחנות חסרות או שמות שלא ייכנסו/);
+    assert.equal(await sheetPage.locator('#importAcceptIgnoredWrap').isVisible(), true);
+    assert.match(await sheetPage.locator('#importAcceptIgnoredText').textContent(), /3 שמות/);
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
+    await sheetPage.locator('#importAcceptIgnored').check();
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /הקלט השתנה/);
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .ok').waitFor();
+    const third = (await sheetPage.evaluate(() => window.__CALLABLE_CALLS)).filter((entry) => entry.name === 'previewScheduleImport')[2];
+    assert.deepEqual(third.payload.accept, { missing_stations:false, ignored_blocks:true });
     assert.equal(await sheetPage.locator('#importRun').isEnabled(), true);
     await sheetPage.locator('#importRun').click();
     await sheetPage.locator('#previewMessage .ok').waitFor();
-    const imported = calls.concat(await sheetPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'importScheduleSheet');
+    const imported = (await sheetPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'importScheduleSheet');
     assert.ok(imported && imported.payload.request_id && imported.payload.month === today.slice(0, 7));
+    assert.equal(imported.payload.expected_report_digest, 'rd_ready', 'the import is bound to the report the manager saw');
+    assert.deepEqual(imported.payload.accept, { missing_stations:false, ignored_blocks:true });
     assert.deepEqual(imported.payload.aliases, { 'רועי':'stub-uid', 'אבטחה':null });
     assert.match(await sheetPage.locator('#importMessage').textContent(), /יובא כטיוטה/);
     assert.deepEqual(await sheetPage.locator('#draftSummary .metric span').allTextContents(),

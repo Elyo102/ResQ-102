@@ -23,7 +23,7 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_RE = /^\d{4}-\d{2}$/;
 const MAX_CELLS = 40000;
-const MAX_NAMES_PER_CELL = 12;
+const MAX_NAMES_PER_CELL = 40;   // תא עם יותר מזה — מדווח ומדולג כולו, לא נחתך בשקט
 const MAX_ROWS = 400;
 
 class SheetImportError extends Error {
@@ -117,13 +117,14 @@ function parseDateCell(raw, month) {
 /* ---------------- תאים ---------------- */
 
 // שמות בתא: „אלבז + הרוש", „סרוסי , בכור", „איוון,יונה". לא מפצלים על רווח
-// (שם פרטי + משפחה). תא שהוא שעה/מספר/סימן — מדולג.
+// (שם פרטי + משפחה). תא שהוא שעה/מספר/סימן — מדולג. תא עם יותר
+// מ-MAX_NAMES_PER_CELL שמות אינו נחתך: הוא מוחזר כ-`null`, והקורא מדווח.
 function namesInCell(raw) {
   const t = normText(raw);
   if (!t) return [];
   if (/^\d[\d:./ -]*$/.test(t)) return [];               // שעות, תאריכים
-  return t.split(/\s*[,+;/]\s*|\s+ו-\s*/).map((x) => normText(x)).filter(Boolean)
-    .slice(0, MAX_NAMES_PER_CELL);
+  const names = t.split(/\s*[,+;/]\s*|\s+ו-\s*/).map((x) => normText(x)).filter(Boolean);
+  return names.length > MAX_NAMES_PER_CELL ? null : names;
 }
 
 /* ---------------- הדבקה → מבנה ---------------- */
@@ -257,6 +258,12 @@ function parseSheet(text, options) {
     for (let r = block.first; r <= block.last; r += 1) {
       columns.forEach((col) => {
         const list = namesInCell(grid[r] ? grid[r][col.index] : '');
+        if (list === null) {
+          // יותר מדי שמות בתא אחד — לא חותכים; מדווחים, והתא כולו לא מיובא.
+          warnings.push({ code: 'cell-too-many-names', row: r + 1, date: col.date, label: block.label || '',
+            detail: 'בתא בשורה ' + (r + 1) + ' ליום ' + col.date + ' יש יותר מ-' + MAX_NAMES_PER_CELL + ' שמות; התא לא יובא' });
+          return;
+        }
         if (!list.length) return;
         if (!cells[col.date]) cells[col.date] = [];
         list.forEach((name) => { cells[col.date].push(name); names += 1; });
@@ -394,13 +401,22 @@ function resolveSheet(parsed, options) {
   });
   duplicates.sort((a, b) => (a.date + a.uid < b.date + b.uid ? -1 : 1));
 
+  // תחנה שאין לה בלוק בהדבקה בכלל — **חסרה**, לא „ריקה": לא נוצרות לה
+  // שורות (שורה ריקה היא „אף אחד" מאומת), והיא מדווחת ב-`missing_stations`
+  // כדי שאחראי הסידור יאשר במפורש שזה מה שהתכוון.
+  const present = new Set(parsed.blocks.filter((b) => b.kind === 'station')
+    .map((b) => b.sub_station || stationForLabel(b.label, policy)).filter(Boolean));
+  const missingStations = subKeys.filter((sub) => !present.has(sub))
+    .map((sub) => ({ sub_station: sub, label: (policy.sub_stations[sub] || {}).label || sub }));
+
   const rows = [];
   parsed.dates.forEach((date) => {
     subKeys.forEach((sub) => {
+      if (!present.has(sub)) return;
       const spec = policy.sub_stations[sub] || {};
       const minimum = Number.isInteger(spec.minimum) ? spec.minimum : 0;
-      const slots = (slotsBy.get(sub + '|' + date) || []).slice()
-        .sort((a, b) => (a.person < b.person ? -1 : a.person > b.person ? 1 : 0));
+      // סדר הגיליון נשמר: מי שכתוב ראשון — ראשון (ולא מיון לפי מזהה).
+      const slots = (slotsBy.get(sub + '|' + date) || []).slice();
       rows.push({
         date, station_id: stationId, sub_station: sub, label: spec.label || sub,
         rotation_group: null, minimum, slots, gaps: [], rejected_manual: [],
@@ -445,6 +461,8 @@ function resolveSheet(parsed, options) {
     unresolved: Object.freeze(unresolvedList),
     duplicates: Object.freeze(duplicates),
     ignored: Object.freeze(ignored),
+    missing_stations: Object.freeze(missingStations),
+    warnings: Object.freeze((parsed.warnings || []).filter((w) => w.code === 'cell-too-many-names')),
     counts: Object.freeze({
       days: parsed.dates.length,
       stations: subKeys.length,
@@ -452,6 +470,9 @@ function resolveSheet(parsed, options) {
       absences: absences.length,
       unresolved: unresolvedList.reduce((n, u) => n + u.count, 0),
       duplicates: duplicates.length,
+      missing_stations: missingStations.length,
+      ignored_names: ignored.reduce((n, b) => n + b.names, 0),
+      oversized_cells: (parsed.warnings || []).filter((w) => w.code === 'cell-too-many-names').length,
       skipped,
       below_minimum: rows.filter((r) => r.below_minimum).length
     })

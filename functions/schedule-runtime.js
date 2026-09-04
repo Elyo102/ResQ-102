@@ -3172,6 +3172,10 @@ function createScheduleRuntime(deps) {
     const stored = await loadSheetAliases(ctx);
     const given = requestedSheetAliases(data, people);
     const aliases = Object.assign({}, stored, given);
+    const accept = {
+      missing_stations: plain(data.accept) && data.accept.missing_stations === true,
+      ignored_blocks: plain(data.accept) && data.accept.ignored_blocks === true
+    };
     let parsed;
     let resolved;
     try {
@@ -3180,7 +3184,15 @@ function createScheduleRuntime(deps) {
         people, aliases, policy: policy.value, station_id: ctx.sid
       });
     } catch (error) { sheetImportError(error); }
-    return { ctx, config, data, month, paste, policy, source, people, aliases: given, parsed, resolved };
+    /* ⭐ חתימת הדוח: ההדבקה, החודש, **כל** המיפוי בפועל (שמור + חדש),
+     * המקור, המדיניות והאישורים. הייבוא מקבל את החתימה שהמסך ראה —
+     * דוח שאינו של הקלט הזה בדיוק נדחה, ולא מיובא משהו אחר ממה שאושר. */
+    const reportDigest = digest({
+      sheet: digest({ paste, month }), aliases, accept,
+      source: source.digest, policy: policy.digest, resolved: digest(resolved)
+    });
+    return { ctx, config, data, month, paste, policy, source, people, aliases: given, effectiveAliases: aliases,
+      accept, parsed, resolved, reportDigest };
   }
 
   function sheetImportReport(basis) {
@@ -3202,20 +3214,38 @@ function createScheduleRuntime(deps) {
         uid: item.uid, name: names.get(item.uid) || item.uid, date: item.date, blocks: item.blocks
       })),
       ignored: basis.resolved.ignored,
+      missing_stations: basis.resolved.missing_stations,
       warnings: basis.parsed.warnings,
+      accept: basis.accept,
+      report_digest: basis.reportDigest,
       // רשימת האנשים הפעילים — כדי שהמסך יציע התאמה לשם שלא זוהה.
       people: basis.people.map((person) => ({ uid: person.id, name: names.get(person.id) || person.id }))
         .sort((a, b) => compareCanonical(a.name, b.name)),
-      blocked: basis.resolved.counts.unresolved > 0 || basis.resolved.counts.duplicates > 0
-        || basis.resolved.counts.assignments === 0
+      blocked_by: sheetImportBlockers(basis)
     };
+  }
+
+  /* מה עוצר ייבוא, בשם: שם לא מזוהה, כפילות, תא גדול מדי, אין שיבוצים —
+   * מתקנים בגיליון או מתאימים; תחנה חסרה / בלוק שלא יובא — אחראי הסידור
+   * חייב לאשר במפורש (`accept`) שראה ושזה בכוונה. חסר אינו ריק. */
+  function sheetImportBlockers(basis) {
+    const counts = basis.resolved.counts;
+    const out = [];
+    if (counts.assignments === 0) out.push('no-assignments');
+    if (counts.unresolved > 0) out.push('unresolved');
+    if (counts.duplicates > 0) out.push('duplicates');
+    if (counts.oversized_cells > 0) out.push('oversized-cells');
+    if (counts.missing_stations > 0 && !basis.accept.missing_stations) out.push('missing-stations');
+    if (counts.ignored_names > 0 && !basis.accept.ignored_blocks) out.push('ignored-blocks');
+    return out;
   }
 
   async function previewScheduleImport(req) {
     const ctx = await context(req);
     requireManager(ctx);
     const basis = await sheetImportBasis(ctx, req);
-    return sheetImportReport(basis);
+    const report = sheetImportReport(basis);
+    return Object.assign(report, { blocked: report.blocked_by.length > 0 });
   }
 
   async function importScheduleSheet(req) {
@@ -3223,17 +3253,28 @@ function createScheduleRuntime(deps) {
     requireManager(ctx);
     const basis = await sheetImportBasis(ctx, req);
     const { data, policy, source, resolved } = basis;
-    const report = sheetImportReport(basis);
+    const report = Object.assign(sheetImportReport(basis), { blocked: false });
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
-    if (report.blocked) {
+    /* ⭐ הייבוא נקשר לדוח שהמסך הציג: אותה חתימה — או סירוב. כך שינוי
+     * חודש/כינוי/אישור אחרי „בדוק" אינו מייבא בשקט משהו אחר. */
+    const expectedReport = String(data.expected_report_digest || '');
+    if (!expectedReport || expectedReport !== basis.reportDigest) {
+      throw new ScheduleRuntimeError('import-report-stale',
+        'הדוח שאושר אינו תואם להדבקה, לחודש או להתאמות הנוכחיות. יש ללחוץ שוב על „בדוק את ההדבקה".', 'failed-precondition');
+    }
+    const blockers = sheetImportBlockers(basis);
+    if (blockers.length) {
+      report.blocked = true; report.blocked_by = blockers;
       throw new ScheduleRuntimeError('import-blocked',
-        resolved.counts.assignments === 0 ? 'לא נמצא אף שיבוץ בהדבקה.'
-          : 'יש שמות שלא זוהו או כפילויות. יש להתאים או לתקן בגיליון לפני הייבוא.', 'failed-precondition');
+        blockers.indexOf('no-assignments') !== -1 ? 'לא נמצא אף שיבוץ בהדבקה.'
+          : blockers.indexOf('missing-stations') !== -1 || blockers.indexOf('ignored-blocks') !== -1
+            ? 'יש תחנות חסרות או בלוקים שלא יובאו; יש לאשר אותם במפורש לפני הייבוא.'
+            : 'יש שמות שלא זוהו, כפילויות או תאים גדולים מדי. יש להתאים או לתקן בגיליון לפני הייבוא.', 'failed-precondition');
     }
     const effective = effectiveSource(ctx, source, policy, []);
-    const sheetDigest = digest({ paste: basis.paste, month: basis.month, aliases: basis.aliases });
-    const fingerprint = digest({ ctx: ctx.sid, uid: ctx.uid, requestId, month: basis.month,
-      sheet: sheetDigest, source: effective.digest, policy: policy.digest });
+    const sheetDigest = digest({ paste: basis.paste, month: basis.month });
+    // טביעת האצבע כוללת את המיפוי **בפועל** (שמור + חדש) דרך חתימת הדוח.
+    const fingerprint = digest({ ctx: ctx.sid, uid: ctx.uid, requestId, report: basis.reportDigest, source: effective.digest });
     const draftId = 'd_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
     const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
     const existing = await ref.get();
@@ -3248,7 +3289,9 @@ function createScheduleRuntime(deps) {
       if (before.status !== 'complete') {
         throw new ScheduleRuntimeError('draft-staging', 'הטיוטה עדיין נבנית. נסה שוב בעוד רגע.', 'aborted');
       }
-      return { duplicate: true, draft_id: draftId, summary: before.summary, from: before.from, to: before.to, report };
+      // ניסיון חוזר מחזיר את הדוח **המקורי** שנשמר עם הטיוטה — לא פענוח חדש.
+      return { duplicate: true, draft_id: draftId, summary: before.summary, from: before.from, to: before.to,
+        report: plain(before.import_report) ? before.import_report : report };
     }
     const rows = resolved.rows;
     const summary = {
@@ -3265,20 +3308,23 @@ function createScheduleRuntime(deps) {
       generated_at: clock(), from: report.from, to: report.to,
       rows, absences: resolved.absences, summary, imported: true
     };
-    // שמירת הכינויים שאושרו — רק אחרי שהפענוח עבר, ולפני הטיוטה.
-    if (Object.keys(basis.aliases).length) {
-      const stored = await loadSheetAliases(ctx);
-      await sheetAliasesRef(ctx.sid).set({
-        station_id: ctx.sid, aliases: Object.assign({}, stored, basis.aliases),
-        updated_at: FV.serverTimestamp(), updated_by: ctx.uid
-      });
-    }
     await db.runTransaction(async (tx) => {
-      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref];
+      const aliasRef = sheetAliasesRef(ctx.sid);
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref, aliasRef];
       const snaps = await Promise.all(refs.map((item) => tx.get(item)));
       requireLiveManager(snaps[0], snaps[1], ctx);
       if (snaps[2].exists) {
         throw new ScheduleRuntimeError('draft-race', 'טיוטה עם אותו מזהה נוצרה במקביל. רענן ונסה שוב.', 'aborted');
+      }
+      /* ⭐ הכינויים נשמרים **באותה עסקה** שמאמתת את המינוי החי ויוצרת את
+       * הטיוטה: מינוי שבוטל באמצע אינו משאיר כינויים שהשתנו; עדכון מקביל
+       * של הכינויים נקרא כאן ומתמזג, לא נדרס. */
+      if (Object.keys(basis.aliases).length) {
+        const live = snaps[3].exists ? (snaps[3].data() || {}) : {};
+        tx.set(aliasRef, {
+          station_id: ctx.sid, aliases: Object.assign({}, plain(live.aliases) ? live.aliases : {}, basis.aliases),
+          updated_at: FV.serverTimestamp(), updated_by: ctx.uid
+        });
       }
       tx.create(ref, {
         station_id: ctx.sid, status: 'staging', request_id: requestId,
@@ -3290,7 +3336,8 @@ function createScheduleRuntime(deps) {
         source_digest: plan.source_digest, source_complete: true,
         policy_version: plan.policy_version, policy_digest: plan.policy_digest,
         generated_at: plan.generated_at, from: plan.from, to: plan.to,
-        summary, months: 1, imported: true, sheet_digest: sheetDigest, import_month: basis.month
+        summary, months: 1, imported: true, sheet_digest: sheetDigest, import_month: basis.month,
+        report_digest: basis.reportDigest, import_report: report
       });
     });
     const contentDigest = await stageSnapshot(ref, {}, plan, effective.events, effective.roster);

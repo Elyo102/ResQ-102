@@ -1875,7 +1875,18 @@ function importInput() {
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לייבוא.');
   const paste = $('importPaste').value;
   if (!paste.trim()) throw new Error('צריך להדביק את הגיליון.');
-  return { month, paste, aliases: importAliases() };
+  return { month, paste, aliases: importAliases(), accept: {
+    missing_stations: $('importAcceptMissing').checked === true,
+    ignored_blocks: $('importAcceptIgnored').checked === true
+  } };
+}
+
+/* כל שינוי בקלט — חודש, הדבקה, התאמה, אישור — מבטל את הדוח: הייבוא
+ * מותר רק על הדוח שהשרת חתם לקלט הזה בדיוק (`expected_report_digest`). */
+function invalidateImportReport() {
+  state.importReport = null;
+  $('importRun').disabled = true;
+  if (!$('importReport').hidden) message('importMessage', 'הקלט השתנה — יש ללחוץ שוב על „בדוק את ההדבקה" לפני הייבוא.', 'info');
 }
 
 function renderImportReport(report) {
@@ -1938,8 +1949,27 @@ function renderImportReport(report) {
   });
   (report.warnings || []).forEach((warning) => {
     if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
-    dups.appendChild(node('div', 'change warn', warning.detail || warning.code));
+    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
   });
+  // חסר אינו ריק: תחנה בלי בלוק, ובלוק עם שמות שלא יובא — דורשים אישור מפורש.
+  const missing = report.missing_stations || [];
+  const ignoredNames = (report.counts || {}).ignored_names || 0;
+  $('importAcceptMissingWrap').hidden = !missing.length;
+  $('importAcceptMissingText').textContent = missing.length
+    ? 'ראיתי שאין בהדבקה בלוק ל-' + missing.map((m) => m.label).join(', ') + ' — התחנות האלה לא יופיעו בסידור של החודש הזה, ואני מאשר/ת.' : '';
+  $('importAcceptIgnoredWrap').hidden = !ignoredNames;
+  $('importAcceptIgnoredText').textContent = ignoredNames
+    ? 'ראיתי ש-' + ignoredNames + ' שמות באזור שלא זוהה (שורות ' + (report.ignored || []).map((b) => b.rows[0] + '–' + b.rows[1]).join(', ') + ') לא ייכנסו לסידור, ואני מאשר/ת.' : '';
+}
+
+function importBlockedText(report) {
+  const why = report.blocked_by || [];
+  if (why.indexOf('no-assignments') !== -1) return 'לא נמצא אף שיבוץ. האם החודש נכון והתוויות בעמודה הימנית?';
+  if (why.indexOf('oversized-cells') !== -1) return 'יש תא עם יותר מדי שמות — יש לפצל אותו בגיליון ולהדביק שוב.';
+  if (why.indexOf('duplicates') !== -1) return 'יש כפילויות — אדם שמופיע בשתי תחנות באותו יום. יש לתקן בגיליון ולהדביק שוב.';
+  if (why.indexOf('unresolved') !== -1) return 'יש שמות שלא זוהו. התאם אותם למטה ולחץ שוב על „בדוק את ההדבקה".';
+  if (why.indexOf('missing-stations') !== -1 || why.indexOf('ignored-blocks') !== -1) return 'יש תחנות חסרות או שמות שלא ייכנסו. סמן שראית, ולחץ שוב על „בדוק את ההדבקה".';
+  return 'הייבוא חסום.';
 }
 
 async function checkImport() {
@@ -1953,10 +1983,7 @@ async function checkImport() {
     state.importReport = report;
     renderImportReport(report);
     if (report.blocked) {
-      const why = (report.counts || {}).assignments === 0 ? 'לא נמצא אף שיבוץ. האם החודש נכון והתוויות בעמודה הימנית?'
-        : (report.counts || {}).duplicates > 0 ? 'יש כפילויות — אדם שמופיע בשתי תחנות באותו יום. יש לתקן בגיליון ולהדביק שוב.'
-        : 'יש שמות שלא זוהו. התאם אותם למטה ולחץ שוב על „בדוק את ההדבקה".';
-      message('importMessage', why, 'warn');
+      message('importMessage', importBlockedText(report), 'warn');
     } else {
       message('importMessage', 'ההדבקה תקינה: ' + report.counts.assignments + ' שיבוצים ו-' + report.counts.absences
         + ' היעדרויות ל-' + report.counts.days + ' ימים (' + dateLabel(report.from) + ' — ' + dateLabel(report.to) + '). אפשר לייבא.', 'ok');
@@ -1980,7 +2007,14 @@ async function importSheet() {
   $('draftPreviewCard').classList.add('hide');
   message('importMessage', 'מייבא את הגיליון כטיוטה…', 'info');
   try {
-    const result = (await call.importSheet(Object.assign({ request_id: requestId('import') }, input))).data;
+    // מזהה הניסיון נקשר לחתימת הדוח: ניסיון חוזר אחרי תשובה שאבדה משתמש
+    // באותו מזהה, והשרת מחזיר את אותה טיוטה במקום ליצור שנייה.
+    const reportDigest = state.importReport.report_digest;
+    state.importRequestIds = state.importRequestIds || {};
+    if (!state.importRequestIds[reportDigest]) state.importRequestIds[reportDigest] = requestId('import');
+    const result = (await call.importSheet(Object.assign({
+      request_id: state.importRequestIds[reportDigest], expected_report_digest: reportDigest
+    }, input))).data;
     state.draft = result;
     renderSummary(result.summary || {});
     message('importMessage', 'הגיליון יובא כטיוטה (' + dateLabel(result.from) + ' — ' + dateLabel(result.to)
@@ -2283,7 +2317,11 @@ function commandAction(fn) {
 
 $('runPlanner').addEventListener('click', runAction(runPlanner));
 $('importCheck').addEventListener('click', managerAction(checkImport));
-$('importPaste').addEventListener('input', () => { state.importAliases = {}; state.importReport = null; $('importRun').disabled = true; });
+$('importPaste').addEventListener('input', () => { state.importAliases = {}; invalidateImportReport(); });
+$('importMonth').addEventListener('change', invalidateImportReport);
+$('importAcceptMissing').addEventListener('change', invalidateImportReport);
+$('importAcceptIgnored').addEventListener('change', invalidateImportReport);
+$('importUnresolved').addEventListener('change', invalidateImportReport);
 $('importRun').addEventListener('click', runAction(importSheet));
 $('publish').addEventListener('click', runAction(publishDraft));
 $('rollback').addEventListener('click', runAction(rollbackSchedule));
