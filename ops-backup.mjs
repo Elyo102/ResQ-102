@@ -106,10 +106,12 @@ export function runBackup(args, options = {}) {
   const git = (...command) => execFileSync('git', command, { cwd: root, encoding: 'utf8', timeout: 120000, windowsHide: true });
   const normalizedRefs = text => text.trim().split(/\r?\n/).sort().join('\n');
   const clean = () => { if (git('status', '--porcelain', '--untracked-files=all').trim()) throw new Error('Working tree must be clean'); };
+  // קישורים נבדקים לפני ניקיון העץ: ב-Linux קישור סימבולי נראה לגיט
+  // כקובץ לא-מעוקב, והסירוב היה יוצא בהודעה הלא נכונה.
+  const entries = inventory(root);
   clean();
   const head = git('rev-parse', 'HEAD').trim();
   const refs = normalizedRefs(git('show-ref', '--head'));
-  const entries = inventory(root);
   if (args.dryRun) return { dryRun: true, destination: out, documents: entries.length, head };
   fs.mkdirSync(out, { recursive: true, mode: 0o700 });
   noLinks(root, out);

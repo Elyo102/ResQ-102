@@ -640,5 +640,105 @@ t('יותר מדי ימים — סירוב', () => {
   throwsCode(() => run(mk(), { days: many }), 'days-too-many');
 });
 
+/* ================= מפתחות שמורים — זיהום Object.prototype ================= */
+
+const PROTO_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+/* ⭐ UID אינו נפסל (Codex 410): משתמש קיים עם UID "constructor" חייב
+ * להמשיך לעבוד. הבטיחות היא במפות — null-prototype, own(), ופלט שנבנה
+ * כ-own-properties — לא ברשימה שחורה. */
+t('UID שמור או מורש (__proto__, constructor, toString…) — משובץ, נספר, עובר roundtrip, ולא מזהם', () => {
+  const ids = PROTO_KEYS.concat(['toString', 'valueOf', 'hasOwnProperty']);
+  const e = mk();
+  const list = ids.map((id) => person(id, 'eilat', ['shift_lead', 'team_cmd', 'driver', 'firefighter']));
+  const first = run(e, { roster: list, days: ['2026-09-01', '2026-09-03'] });
+  assert.ok(first.rows.every((r) => r.sub_station !== 'eilat' || r.slots.length > 0));
+  const assigned = first.rows.flatMap((r) => r.slots.map((x) => x.person));
+  assert.ok(assigned.some((id) => ids.includes(id)), 'אף UID כזה לא שובץ');
+  for (const id of assigned) {
+    assert.ok(Object.prototype.hasOwnProperty.call(first.carry.load, id), id + ' חסר ב-carry.load כשדה own');
+    assert.ok(Object.prototype.hasOwnProperty.call(first.carry.byRole, id), id + ' חסר ב-carry.byRole כשדה own');
+  }
+  assert.strictEqual(Object.getPrototypeOf(first.carry.load), Object.prototype, 'הפלט חייב להיות אובייקט רגיל');
+  assert.strictEqual(Object.getPrototypeOf(first.carry.byRole.__proto__ || {}), Object.prototype);
+  // roundtrip דרך JSON (כמו מסד הנתונים) ובחזרה למנוע, באותו תהליך.
+  const carry = JSON.parse(JSON.stringify(first.carry));
+  assert.ok(Object.prototype.hasOwnProperty.call(carry.load, assigned[0]));
+  const second = run(e, { roster: list, days: ['2026-09-05', '2026-09-07'], carry });
+  for (const id of assigned) {
+    assert.ok(second.carry.load[id] >= first.carry.load[id], id + ' איבד עומס ב-roundtrip');
+  }
+  // אין זיהום, ואין שינוי בפונקציות שכבר היו על Object.prototype.
+  assert.strictEqual(({}).shift_lead, undefined);
+  assert.strictEqual(typeof Object.prototype.toString, 'function');
+  assert.strictEqual(typeof Object.prototype.hasOwnProperty, 'function');
+  assert.strictEqual(Object.getOwnPropertyDescriptor(Object.prototype, 'toString').writable, true);
+  assert.strictEqual(Object.getOwnPropertyDescriptor(Object.prototype, 'toString').enumerable, false);
+});
+
+t('תחנת קצה בשם שמור במדיניות — סירוב', () => {
+  for (const key of PROTO_KEYS) {
+    const raw = JSON.parse('{"' + key + '":{"label":"x","minimum":1,"requirements":[{"role":"driver","label":"נהג","count":1,"required":true}]}}');
+    throwsCode(() => mk({ sub_stations: raw }), 'sub-station-key-reserved');
+  }
+});
+
+t('תפקיד בשם שמור בדרישות — סירוב', () => {
+  const p = policy();
+  p.sub_stations.timna.requirements.push({ role: '__proto__', label: 'x', count: 1, required: true });
+  throwsCode(() => createCalendarEngine({ clock: CLOCK, policy: p }), 'requirement-role');
+});
+
+t('שיוך אדם לתחנת קצה שמורה — סירוב מסודר, לא TypeError', () => {
+  for (const key of PROTO_KEYS) {
+    const list = roster(); list[0] = person('L1', key, ['shift_lead', 'firefighter']);
+    throwsCode(() => run(mk(), { roster: list }), 'person-sub-station-unknown');
+  }
+});
+
+t('שיבוץ ידני / זמינות / מצב המשך עם מפתח שמור — נדחים ולא מזהמים', () => {
+  const lockedProto = JSON.parse('{"__proto__":{"2026-09-01":[]}}');
+  throwsCode(() => run(mk(), { locked: lockedProto }), 'locked-sub-station-unknown');
+  const carryProto = { load: JSON.parse('{"__proto__": 3}'), lastDay: {}, byRole: {} };
+  throwsCode(() => run(mk(), { carry: carryProto }), 'carry-load-invalid');
+  const carryRole = { load: {}, lastDay: {}, byRole: JSON.parse('{"__proto__":{"driver":1}}') };
+  throwsCode(() => run(mk(), { carry: carryRole }), 'carry-role-load-invalid');
+  // זמינות עם מפתח שמור אינה נכשלת — היא פשוט לא חלה על איש, ולא נקראת דרך ירושה.
+  const availProto = JSON.parse('{"__proto__":{"2026-09-01":true}}');
+  const out = run(mk(), { availability: availProto });
+  assert.ok(out.rows.some((r) => r.slots.length > 0));
+  assert.strictEqual(({})['2026-09-01'], undefined);
+  assert.strictEqual(({}).driver, undefined);
+});
+
+t('מזהי אנשים חוקיים עם נקודות, נקודתיים ואורך חריג — מתקבלים כמו קודם (אין חרם חדש על UID)', () => {
+  const list = roster();
+  list[0] = person('a.b:c-d_e', 'eilat', ['shift_lead', 'firefighter']);
+  list[1] = person('x'.repeat(129), 'eilat', ['shift_lead', 'firefighter']);
+  const out = run(mk(), { roster: list });
+  assert.ok(Object.keys(out.carry.load).length > 0);
+  assert.strictEqual(Object.getPrototypeOf(out.carry.load), Object.prototype, 'המצב שיוצא חייב להיות אובייקט רגיל');
+  assert.strictEqual(Object.getPrototypeOf(out.carry.byRole), Object.prototype);
+});
+
+t('תפקיד או תחנת קצה בשם שיש ל-Object.prototype (toString, valueOf, hasOwnProperty) — עובד כמפתח רגיל, לא כירושה', () => {
+  for (const name of ['toString', 'valueOf', 'hasOwnProperty']) {
+    const p = policy();
+    p.sub_stations[name] = { label: 'x', minimum: 1, requirements: [{ role: name, label: 'x', count: 1, required: true }] };
+    const list = roster().concat([person('Z1', name, [name]), person('Z2', name, [name])]);
+    const out = run(mk(p), { roster: list });
+    const row = out.rows.find((r) => r.sub_station === name);
+    assert.ok(row && row.complete, name + ' לא שובץ');
+    assert.strictEqual(out.carry.byRole.Z1 ? out.carry.byRole.Z1[name] : out.carry.byRole.Z2[name], 1);
+  }
+});
+
+t('בסוף כל הבדיקות — Object.prototype ללא מפתחות זרים', () => {
+  const foreign = Object.getOwnPropertyNames(Object.prototype)
+    .filter((k) => ['firefighter', 'driver', 'shift_lead', 'team_cmd', '2026-09-01', 'eilat', 'timna'].includes(k));
+  assert.deepStrictEqual(foreign, []);
+  assert.strictEqual(Object.keys({}).length, 0);
+});
+
 console.log((fails.length ? '✗' : '✓') + ' schedule-calendar-engine: ' + pass + '/' + (pass + fails.length));
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

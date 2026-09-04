@@ -44,6 +44,22 @@ const ID_RE = /^[A-Za-z0-9_-]{2,120}$/;
 // business identifiers with their own (shorter) contract; reusing ID_RE here
 // incorrectly rejected the valid one-character keys accepted by the policy.
 const SUB_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/* מפתחות שאסור שיגיעו ממשתמש למפה רגילה: "__proto__" עובר את SUB_KEY_RE
+ * (קו תחתון מותר), ו-`policy.sub_stations["__proto__"]` אמיתי (truthy)
+ * דרך ירושה — ואז effectiveSource היה כותב locked[sub][date] ישירות
+ * ל-Object.prototype של התהליך החם. כל בדיקת קיום במפה כאן היא
+ * own-property, לא truthiness. */
+const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
+function isReservedKey(value) {
+  return RESERVED_KEYS.indexOf(value) !== -1;
+}
+function hasOwn(target, key) {
+  return !!target && Object.prototype.hasOwnProperty.call(target, key);
+}
+function safeSubKey(value) {
+  return typeof value === 'string' && SUB_KEY_RE.test(value) && !isReservedKey(value);
+}
 const AUTH_UID_RE = guardManagement.AUTH_UID_RE;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BATCH_WRITES = 350;
@@ -929,11 +945,11 @@ function createScheduleRuntime(deps) {
     const policySubs = policyValue && plain(policyValue.sub_stations)
       ? policyValue.sub_stations : null;
     for (const sub of Object.keys(locked).sort(compareCanonical)) {
-      if (!SUB_KEY_RE.test(sub)) {
+      if (!safeSubKey(sub)) {
         throw new ScheduleRuntimeError('source-locked-sub-station-invalid',
           'מקור הסידור כולל מזהה תחנת קצה לא תקין בנעילות.');
       }
-      if (policySubs && !plain(policySubs[sub])) {
+      if (policySubs && (!hasOwn(policySubs, sub) || !plain(policySubs[sub]))) {
         throw new ScheduleRuntimeError('source-locked-sub-station-unknown',
           'מקור הסידור כולל נעילה לתחנת קצה שאינה קיימת במדיניות.');
       }
@@ -987,6 +1003,9 @@ function createScheduleRuntime(deps) {
     const raw = snap.data() || {};
     if (raw.station_id !== ctx.sid || raw.complete !== true || !nonEmpty(raw.version)) {
       throw new ScheduleRuntimeError('policy-incomplete', 'מדיניות הסידור אינה מלאה או שייכת לתחנה אחרת.');
+    }
+    if (!plain(raw.sub_stations) || Object.keys(raw.sub_stations).some((key) => !safeSubKey(key))) {
+      throw new ScheduleRuntimeError('policy-incomplete', 'מדיניות הסידור כוללת מזהה תחנת קצה לא חוקי.');
     }
     const basis = {
       station_id: raw.station_id,
@@ -1110,9 +1129,14 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('override-invalid',
           'שינוי ידני חייב לכלול תאריך, תחנת קצה ואדם.', 'invalid-argument');
       }
-      if (!policy.sub_stations[entry.sub_station]) {
+      if (!safeSubKey(entry.sub_station) || !hasOwn(policy.sub_stations, entry.sub_station)
+          || !plain(policy.sub_stations[entry.sub_station])) {
         throw new ScheduleRuntimeError('override-sub-station',
           'תחנת הקצה בשינוי הידני אינה קיימת.', 'invalid-argument');
+      }
+      if (entry.role && isReservedKey(entry.role)) {
+        throw new ScheduleRuntimeError('override-invalid',
+          'שינוי ידני חייב לכלול תאריך, תחנת קצה ואדם.', 'invalid-argument');
       }
       return {
         date: entry.date,
@@ -1127,9 +1151,10 @@ function createScheduleRuntime(deps) {
     const locked = JSON.parse(JSON.stringify(source.locked));
     validateLockedSource(locked, source.peopleRaw, policy.value);
     overrides.forEach((entry) => {
-      locked[entry.sub_station] = locked[entry.sub_station] || {};
-      locked[entry.sub_station][entry.date] = locked[entry.sub_station][entry.date] || [];
-      locked[entry.sub_station][entry.date].push({ person: entry.person, role: entry.role });
+      if (!hasOwn(locked, entry.sub_station) || !plain(locked[entry.sub_station])) locked[entry.sub_station] = {};
+      const days = locked[entry.sub_station];
+      if (!hasOwn(days, entry.date) || !Array.isArray(days[entry.date])) days[entry.date] = [];
+      days[entry.date].push({ person: entry.person, role: entry.role });
     });
     const effectiveDigest = digest({ source_digest: source.digest, overrides });
     const revision = source.revision + '-' + effectiveDigest.slice(0, 12);
