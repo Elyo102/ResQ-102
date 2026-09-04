@@ -4601,26 +4601,43 @@ function createScheduleRuntime(deps) {
      * החלונות של אותה קריאה, ובסופה נבדק שהבסיס לא השתנה. בלי זה שני
      * חלונות יכלו להיות מוקרנים משני עוגנים שונים — תשובה מעורבת. */
     const pinned = pinnedBasis && Array.isArray(pinnedBasis.rosterDocs) && Array.isArray(pinnedBasis.rotationDocs)
+      && pinnedBasis.overrideDocs instanceof Map && pinnedBasis.swapDocs instanceof Map
       ? pinnedBasis : null;
     const dates = range && Array.isArray(range.dates) ? range.dates.slice() : [];
     if (!dates.length || dates.some((value) => !DATE_RE.test(value))) {
       throw new ScheduleRuntimeError('legacy-range-invalid',
         'טווח הסידור הקיים אינו תקין.', 'invalid-argument');
     }
+    /* ⭐ 419: חלון של בסיס נעוץ חייב להיות בתוך הטווח שהבסיס נקרא עבורו —
+     * אחרת חריג/החלפה של יום מחוץ לבסיס היו „נעדרים" בשקט. */
+    if (pinned && (dates[0] < pinned.range.from || dates[dates.length - 1] > pinned.range.to)) {
+      throw new ScheduleRuntimeError('legacy-range-invalid',
+        'חלון הסידור חורג מהבסיס שנקרא.', 'invalid-argument');
+    }
     const root = stationRef(ctx.sid);
     try {
       const chunks = dateChunks(dates);
       const overrideRefs = dates.map((date) => root.collection('shift_overrides').doc(date));
+      // מהבסיס הנעוץ — אותה צורה בדיוק כמו תוצאת השאילתה התחומה (לכל
+      // chunk: ההחלפות שתאריך היציאה/הכניסה שלהן בו), כדי שאותן תקרות יחולו.
+      const pinnedSwapsBy = (field) => chunks.map((chunk) => {
+        const wanted = new Set(chunk);
+        const docs = Array.from(pinned.swapDocs.values()).filter((doc) => wanted.has((doc.data() || {})[field]));
+        return { size: docs.length, docs };
+      });
       const reads = await Promise.all([
         pinned ? { size: pinned.rosterDocs.length, docs: pinned.rosterDocs }
           : reader.get(root.collection('roster').limit(MAX_LEGACY_ROSTER + 1)),
         pinned ? { size: pinned.rotationDocs.length, docs: pinned.rotationDocs }
           : reader.get(root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1)),
-        reader.getAll(overrideRefs),
-        Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
-          .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
-        Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
-          .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
+        pinned ? dates.map((date) => pinned.overrideDocs.get(date) || null)
+          : reader.getAll(overrideRefs),
+        pinned ? pinnedSwapsBy('from_date')
+          : Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
+            .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
+        pinned ? pinnedSwapsBy('to_date')
+          : Promise.all(chunks.map((chunk) => reader.get(root.collection('swaps')
+            .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1)))),
         Promise.all(chunks.map((chunk) => reader.get(root.collection('guards')
           .where('date', 'in', chunk).limit(MAX_LEGACY_GUARDS_PER_QUERY + 1))))
       ]);
@@ -5215,13 +5232,17 @@ function createScheduleRuntime(deps) {
     'commander_shift_hours', 'special_end', 'special_shift_hours'
   ]);
 
-  async function stationShiftHours(ctx) {
-    const snap = await stationRef(ctx.sid).collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get();
-    if (snap.size > MAX_LEGACY_ROTATIONS) {
-      throw new ScheduleRuntimeError('legacy-rotations-too-large',
-        'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+  async function stationShiftHours(ctx, pinnedRotationDocs) {
+    let docs = pinnedRotationDocs;
+    if (!Array.isArray(docs)) {
+      const snap = await stationRef(ctx.sid).collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get();
+      if (snap.size > MAX_LEGACY_ROTATIONS) {
+        throw new ScheduleRuntimeError('legacy-rotations-too-large',
+          'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      docs = snap.docs;
     }
-    const rows = snap.docs.map((doc) => ({ id: doc.id, value: doc.data() || {} }))
+    const rows = docs.map((doc) => ({ id: doc.id, value: doc.data() || {} }))
       .sort((a, b) => compareCanonical(a.id, b.id));
     const active = rows.filter((row) => row.value.is_active !== false)[0] || rows[0] || null;
     if (!active) return null;
@@ -5255,14 +5276,27 @@ function createScheduleRuntime(deps) {
     return out;
   }
 
-  /* הבסיס של ה-legacy לקריאה אחת: סגל + מחזורים, קריאה אחת, חתימה אחת.
-   * החתימה נכנסת ל-provenance (כך שני חלקים של 500 מזהים אינם יכולים
-   * להיענות משני בסיסים שונים בלי שמישהו ישים לב), ונבדקת שוב בסוף. */
-  async function legacyWorkdaysBasis(ctx) {
+  /* הבסיס של ה-legacy לקריאה אחת: **כל** קלטי „מי עובד" לטווח — סגל,
+   * מחזורים, חריגים (לפי מזהה יום) והחלפות (לפי יום יציאה/כניסה) —
+   * בקריאה תחומה אחת, חתימה אחת. החתימה נכנסת ל-provenance (כך שני
+   * חלקים של 500 מזהים אינם יכולים להיענות משני בסיסים שונים בלי
+   * שמישהו ישים לב), ונבדקת שוב **בסוף הקריאה**, אחרי שעות המשמרת.
+   *
+   * 419: עד כאן נחתמו רק סגל+מחזורים; חריגים והחלפות נקראו מחדש לכל
+   * חלון, ולכן שני חלונות יכלו לראות שני מצבים של החריגים — תשובה
+   * שאין מצב יחיד שבו היא נכונה. עכשיו כל חלון מוקרן מאותו בסיס. */
+  async function legacyWorkdaysBasis(ctx, range) {
     const root = stationRef(ctx.sid);
+    const dates = range.dates;
+    const chunks = dateChunks(dates);
     const reads = await Promise.all([
       root.collection('roster').limit(MAX_LEGACY_ROSTER + 1).get(),
-      root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get()
+      root.collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get(),
+      dates.length ? db.getAll.apply(db, dates.map((date) => root.collection('shift_overrides').doc(date))) : [],
+      Promise.all(chunks.map((chunk) => root.collection('swaps')
+        .where('from_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get())),
+      Promise.all(chunks.map((chunk) => root.collection('swaps')
+        .where('to_date', 'in', chunk).limit(MAX_LEGACY_SWAPS_PER_QUERY + 1).get()))
     ]);
     if (reads[0].size > MAX_LEGACY_ROSTER) {
       throw new ScheduleRuntimeError('legacy-roster-too-large',
@@ -5272,17 +5306,44 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('legacy-rotations-too-large',
         'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
     }
+    const overrideDocs = new Map();
+    reads[2].filter((doc) => doc && doc.exists).forEach((doc) => overrideDocs.set(doc.id, doc));
+    if (overrideDocs.size > MAX_LEGACY_OVERRIDES) {
+      throw new ScheduleRuntimeError('legacy-overrides-too-large',
+        'חריגי הסידור בטווח גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+    }
+    const swapDocs = new Map();
+    reads[3].concat(reads[4]).forEach((snap) => {
+      if (snap.size > MAX_LEGACY_SWAPS_PER_QUERY) {
+        throw new ScheduleRuntimeError('legacy-swaps-too-large',
+          'החלפות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+      }
+      snap.docs.forEach((doc) => swapDocs.set(doc.id, doc));
+    });
+    if (swapDocs.size > MAX_LEGACY_SWAPS) {
+      throw new ScheduleRuntimeError('legacy-swaps-too-large',
+        'החלפות הסידור בטווח גדולות מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+    }
     const rosterDocs = reads[0].docs.slice().sort((a, b) => compareCanonical(a.id, b.id));
     const rotationDocs = reads[1].docs.slice().sort((a, b) => compareCanonical(a.id, b.id));
+    const pairs = (map) => Array.from(map.values()).sort((a, b) => compareCanonical(a.id, b.id))
+      .map((doc) => [doc.id, doc.data() || {}]);
     const legacyDigest = digest({
+      range: { from: range.from, to: range.to },
       roster: rosterDocs.map((doc) => [doc.id, doc.data() || {}]),
-      rotations: rotationDocs.map((doc) => [doc.id, doc.data() || {}])
+      rotations: rotationDocs.map((doc) => [doc.id, doc.data() || {}]),
+      overrides: pairs(overrideDocs),
+      swaps: pairs(swapDocs)
     });
-    return { rosterDocs, rotationDocs, legacyDigest, rosterIds: rosterDocs.map((doc) => doc.id) };
+    return {
+      range: { from: range.from, to: range.to },
+      rosterDocs, rotationDocs, overrideDocs, swapDocs, legacyDigest,
+      rosterIds: rosterDocs.map((doc) => doc.id)
+    };
   }
 
-  async function requireSameLegacyBasis(ctx, basis) {
-    const now = await legacyWorkdaysBasis(ctx);
+  async function requireSameLegacyBasis(ctx, basis, range) {
+    const now = await legacyWorkdaysBasis(ctx, range);
     if (now.legacyDigest !== basis.legacyDigest) {
       throw new ScheduleRuntimeError('legacy-schedule-changed',
         'הסידור הקיים השתנה בזמן הקריאה. יש לרענן.', 'aborted');
@@ -5306,6 +5367,28 @@ function createScheduleRuntime(deps) {
     throw error;
   }
 
+  async function requireModeUnchanged(ctx, config) {
+    const after = await configuration(ctx.sid);
+    if (after.mode !== config.mode) {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+  }
+
+  async function requireNoActivePublication(ctx) {
+    const pointer = await activeRef(ctx.sid).get();
+    const value = pointer.exists ? (pointer.data() || {}) : {};
+    if (nonEmpty(value.publication_id)) {
+      throw new ScheduleRuntimeError('schedule-mode-changed',
+        'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+  }
+
+  /* מחזיר { result, verify }: `result` הוא התשובה (כולל שעות המשמרת),
+   * ו-`verify()` הוא אישור העקביות של **המקור** — תמונה/מצביע ב-new,
+   * בסיס legacy חתום ב-off/shadow/fallback — שהקורא מריץ **בסוף
+   * הקריאה**, אחרי כל קריאה אחרת. (419: עד כאן הבסיס נבדק לפני שעות
+   * המשמרת, והסיום בדק רק mode וזהות.) */
   async function effectiveWorkDaysFor(ctx, config, input) {
     const value = plain(input) ? input : {};
     let range;
@@ -5322,8 +5405,6 @@ function createScheduleRuntime(deps) {
         let windows;
         try { windows = effectiveWorkdays.windowsFor(range, coverage); } catch (error) { workdaysError(error); }
         const produced = await effectiveWindows(ctx, config, windows, active);
-        // אותה תמונה מתחילת הקריאה ועד סופה — אחרת התשובה מעורבבת.
-        await activeSnapshotStillCurrent(ctx, config, active);
         let assembled;
         try {
           assembled = effectiveWorkdays.assemble({
@@ -5332,50 +5413,92 @@ function createScheduleRuntime(deps) {
             roster: (active.roster || []).map((person) => person.id)
           });
         } catch (error) { workdaysError(error); }
-        return Object.assign({ mode: config.mode, fallback: null, provenance: {
+        // שעות המשמרת ב-new עדיין מגיעות מרשומת המחזור הקיימת (הכרעה
+        // פתוחה, 385). הן נקראות כאן ונבדקות שוב ב-verify — לא מקור שני
+        // שנקרא אחרי האישור.
+        const shiftHours = await stationShiftHours(ctx);
+        const result = Object.assign({ mode: config.mode, fallback: null, shift_hours: shiftHours, provenance: {
           mode: config.mode, source: 'v2', publication_id: active.ref.id,
           revision: Number(active.pointer.revision), content_digest: active.meta.content_digest
         } }, assembled);
+        return {
+          result,
+          verify: async function () {
+            // אותה תמונה מתחילת הקריאה ועד סופה — אחרת התשובה מעורבבת.
+            await activeSnapshotStillCurrent(ctx, config, active);
+            if (digest(await stationShiftHours(ctx)) !== digest(shiftHours)) {
+              throw new ScheduleRuntimeError('legacy-schedule-changed',
+                'הסידור הקיים השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+            }
+          }
+        };
       }
       // אין פרסום פעיל ב-new — אותו fallback מפורש כמו בשאר הקוראים.
     }
 
     const coverage = { from: range.from, to: range.to };
     const windows = effectiveWorkdays.windowsFor(range, coverage);
-    // בסיס אחד לכל החלונות (417 §2): סגל + מחזורים נקראים פעם אחת,
-    // מוזרמים לכל חלון, ונבדקים שוב בסוף.
-    const basis = await legacyWorkdaysBasis(ctx);
+    // בסיס אחד לכל החלונות (417 §2 · 419): סגל, מחזורים, חריגים והחלפות
+    // של הטווח נקראים פעם אחת, מוזרמים לכל חלון, ונבדקים שוב בסוף.
+    const basis = await legacyWorkdaysBasis(ctx, range);
     const scoped = { legacyBasis: basis };
-    const produced = [];
-    for (const w of windows) {
-      const window = config.mode === MODE.NEW
-        ? await legacyFallbackWindow(ctx, config, w.from, w.to, scoped)
-        : await checkedLegacyWindow(ctx, config, w.from, w.to, scoped);
-      if (window.source !== 'legacy') {
-        throw new ScheduleRuntimeError('schedule-mode-changed',
-          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
-      }
-      produced.push({ from: w.from, to: w.to, days: window.days, provenance: window.provenance });
-    }
-    await beforeEffectiveViewRecheck({ kind: 'workdays-legacy', ctx, mode: config.mode });
-    await requireSameLegacyBasis(ctx, basis);
     let assembled;
-    try {
-      assembled = effectiveWorkdays.assemble({
-        source: 'legacy', range: { from: range.from, to: range.to }, coverage,
-        windows: produced, uids,
-        // מי שאינו בסגל הקיים — „לא ידוע", לא „בחופש" (417 §3).
-        roster: basis.rosterIds
-      });
-    } catch (error) { workdaysError(error); }
-    const head = produced.length ? produced[0].provenance : { mode: config.mode, source: 'legacy' };
-    return Object.assign({
+    let provenance;
+    if (!basis.rotationDocs.length) {
+      /* ⭐ 419 · תחנה בלי אף רשומת מחזור: אין סידור קיים לדעת ממנו —
+       * ולכן **כל** הטווח „לא ידוע". לא מקרינים מחזור ריק (המתאם מסרב
+       * ל-rotations-missing, ובצדק), לא ממציאים סבב, ואף יום אינו „חופש".
+       * זה חל רק כשאין רשומות בכלל; מחזורים שקיימים אך פסולים/כבויים
+       * נשארים סירוב של המתאם — תצורה שבורה חייבת להיראות, לא להיעלם. */
+      if (config.mode === MODE.NEW) await requireNoActivePublication(ctx);
+      try {
+        assembled = effectiveWorkdays.assembleUnknown({
+          source: 'legacy', range: { from: range.from, to: range.to }, uids, roster: basis.rosterIds
+        });
+      } catch (error) { workdaysError(error); }
+      provenance = Object.assign({ mode: config.mode, source: 'legacy' },
+        config.mode === MODE.NEW ? { fallback: 'legacy' } : {},
+        { legacy_digest: basis.legacyDigest, legacy_rotations: 0 });
+    } else {
+      const produced = [];
+      for (const w of windows) {
+        const window = config.mode === MODE.NEW
+          ? await legacyFallbackWindow(ctx, config, w.from, w.to, scoped)
+          : await checkedLegacyWindow(ctx, config, w.from, w.to, scoped);
+        if (window.source !== 'legacy') {
+          throw new ScheduleRuntimeError('schedule-mode-changed',
+            'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+        }
+        produced.push({ from: w.from, to: w.to, days: window.days, provenance: window.provenance });
+      }
+      try {
+        assembled = effectiveWorkdays.assemble({
+          source: 'legacy', range: { from: range.from, to: range.to }, coverage,
+          windows: produced, uids,
+          // מי שאינו בסגל הקיים — „לא ידוע", לא „בחופש" (417 §3).
+          roster: basis.rosterIds
+        });
+      } catch (error) { workdaysError(error); }
+      const head = produced.length ? produced[0].provenance : { mode: config.mode, source: 'legacy' };
+      provenance = Object.assign({}, head, { legacy_digest: basis.legacyDigest });
+    }
+    // שעות המשמרת מאותו בסיס נעוץ — לא קריאה נוספת שאינה מכוסה בחתימה.
+    const result = Object.assign({
       mode: config.mode, fallback: config.mode === MODE.NEW ? 'legacy' : null,
-      provenance: Object.assign({}, head, { legacy_digest: basis.legacyDigest })
+      shift_hours: await stationShiftHours(ctx, basis.rotationDocs),
+      provenance
     }, assembled);
+    return {
+      result,
+      verify: async function () {
+        await requireModeUnchanged(ctx, config);
+        if (config.mode === MODE.NEW) await requireNoActivePublication(ctx);
+        await requireSameLegacyBasis(ctx, basis, range);
+      }
+    };
   }
 
-  function workdaysResponse(result, shiftHours) {
+  function workdaysResponse(result) {
     return {
       mode: result.mode,
       source: result.source,
@@ -5386,7 +5509,7 @@ function createScheduleRuntime(deps) {
       unknown_dates: result.unknown_dates,
       unknown_uids: result.unknown_uids,
       by_uid: result.by_uid,
-      shift_hours: shiftHours,
+      shift_hours: result.shift_hours,
       provenance: result.provenance,
       generated_at: clock()
     };
@@ -5403,12 +5526,12 @@ function createScheduleRuntime(deps) {
     if (!Array.isArray(data.uids)) {
       throw new ScheduleRuntimeError('workdays-uids-shape', 'חובה למסור רשימת מזהים (גם ריקה).', 'invalid-argument');
     }
-    const result = await effectiveWorkDaysFor(ctx, config, {
+    const pending = await effectiveWorkDaysFor(ctx, config, {
       from: String(data.from || ''), to: String(data.to || ''), uids: data.uids
     });
-    const shiftHours = await stationShiftHours(ctx);
-    // ⭐ 417 §1: הזהות החיה נבדקת שוב **בסוף** — אחרי כל הקריאות, כולל שעות
-    // המשמרת. מי שהושבת או הועבר תחנה באמצע לא מקבל את התשובה.
+    // ⭐ 417 §1 · 419: הזהות החיה **וגם המקור** נבדקים שוב בסוף — אחרי כל
+    // הקריאות, כולל שעות המשמרת. מי שהושבת או הועבר תחנה באמצע לא מקבל
+    // את התשובה; בסיס/מצביע שהשתנו אחרי השעות — גם לא.
     await beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode });
     const finalReads = await Promise.all([configuration(ctx.sid), liveUserRef(ctx.sid, ctx.uid).get()]);
     if (finalReads[0].mode !== config.mode) {
@@ -5416,7 +5539,8 @@ function createScheduleRuntime(deps) {
         'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
     }
     requireLiveWorkdaysViewer(finalReads[1], ctx);
-    return workdaysResponse(result, shiftHours);
+    await pending.verify();
+    return workdaysResponse(pending.result);
   }
 
   async function effectiveWorkDaysForStation(sid, input) {
@@ -5426,8 +5550,11 @@ function createScheduleRuntime(deps) {
     }
     const ctx = { sid: station, uid: null, role: 'system', system: true };
     const config = await configuration(station);
-    const result = await effectiveWorkDaysFor(ctx, config, input);
-    return workdaysResponse(result, await stationShiftHours(ctx));
+    const pending = await effectiveWorkDaysFor(ctx, config, input);
+    // אותו סיום כמו ב-callable: המקור מאושר אחרי הקריאה האחרונה.
+    await beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode });
+    await pending.verify();
+    return workdaysResponse(pending.result);
   }
 
   async function getStationRange(req) {

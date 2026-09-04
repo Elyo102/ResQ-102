@@ -1812,22 +1812,55 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   const pure = read('functions/schedule-effective-reader.js');
   assert.ok(pure.indexOf("if (raw.system === true) {") > -1 && pure.indexOf("fail('context-system-uid')") > -1);
   assert.ok(pure.indexOf("if (resolved.ctx.system === true || !resolved.ctx.uid) fail('context-uid');") > -1, 'getMy must refuse a system context');
-  // 417 §1: זהות חיה נבדקת שוב בסוף getEffectiveWorkdays, אחרי שעות המשמרת.
-  assert.ok(fn.indexOf('const shiftHours = await stationShiftHours(ctx);') < fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);'),
-    'the live recheck must come after every read');
+  // 417 §1 · 419: זהות חיה **והמקור** נבדקים שוב בסוף getEffectiveWorkdays —
+  // אחרי שעות המשמרת, שנקראות בתוך effectiveWorkDaysFor ומכוסות ב-verify.
   assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1);
-  // 417 §2: בסיס legacy אחד לכל החלונות, חתימה ב-provenance, ובדיקה חוזרת.
-  assert.ok(core.indexOf('const basis = await legacyWorkdaysBasis(ctx);') > -1);
+  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays'") < fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);'));
+  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') < fn.indexOf('await pending.verify();'),
+    'the source confirmation must be the last thing before the answer');
+  assert.ok(fn.indexOf('await pending.verify();') < fn.indexOf('return workdaysResponse(pending.result);'));
+  assert.equal(fn.indexOf('stationShiftHours('), -1, 'shift hours must not be a second read outside the verified source');
+  assert.ok(core.indexOf("shift_hours: await stationShiftHours(ctx, basis.rotationDocs)") > -1, 'legacy shift hours must come from the pinned basis');
+  assert.ok(core.indexOf('const shiftHours = await stationShiftHours(ctx);') > -1 && core.indexOf('digest(await stationShiftHours(ctx)) !== digest(shiftHours)') > -1,
+    'in new, the shift-hours read must be rechecked in verify');
+  // 417 §2 · 419: בסיס legacy אחד לכל החלונות — סגל, מחזורים, חריגים, החלפות —
+  // חתימה ב-provenance, ובדיקה חוזרת בסוף (verify), אחרי השעות.
+  assert.ok(core.indexOf('const basis = await legacyWorkdaysBasis(ctx, range);') > -1);
   assert.ok(core.indexOf('const scoped = { legacyBasis: basis };') > -1);
-  assert.ok(core.indexOf('await requireSameLegacyBasis(ctx, basis);') > -1);
+  assert.ok(core.indexOf('await requireSameLegacyBasis(ctx, basis, range);') > -1);
   assert.ok(core.indexOf('legacy_digest: basis.legacyDigest') > -1);
+  const basisAt = src.indexOf('async function legacyWorkdaysBasis(ctx, range)');
+  const basisFn = src.slice(basisAt, src.indexOf('async function requireSameLegacyBasis', basisAt));
+  for (const needle of ["root.collection('roster')", "root.collection('rotations')", "root.collection('shift_overrides').doc(date)",
+    ".where('from_date', 'in', chunk)", ".where('to_date', 'in', chunk)", 'overrides: pairs(overrideDocs)', 'swaps: pairs(swapDocs)',
+    'range: { from: range.from, to: range.to }']) {
+    assert.ok(basisFn.indexOf(needle) > -1, 'the legacy basis must pin and sign: ' + needle);
+  }
+  assert.ok(core.indexOf("await activeSnapshotStillCurrent(ctx, config, active);") > core.indexOf('verify: async function'),
+    'in new, the snapshot recheck belongs to verify (the end of the call)');
+  const verifyLegacy = core.slice(core.lastIndexOf('verify: async function'));
+  assert.ok(verifyLegacy.indexOf('await requireModeUnchanged(ctx, config);') > -1);
+  assert.ok(verifyLegacy.indexOf('if (config.mode === MODE.NEW) await requireNoActivePublication(ctx);') > -1, 'a publication arriving after the hours is not rechecked');
+  // 419: תחנה בלי אף מחזור — לא ידוע במפורש, בלי להקרין סבב ריק; כבויים נשארים סירוב.
+  assert.ok(core.indexOf('if (!basis.rotationDocs.length) {') > -1);
+  assert.ok(core.indexOf('effectiveWorkdays.assembleUnknown({') > -1);
+  assert.ok(core.indexOf('legacy_rotations: 0') > -1);
+  const serverFn = server;
+  assert.ok(serverFn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1
+    && serverFn.indexOf('await pending.verify();') > -1, 'the server entry must confirm the source at the end too');
+  assert.ok(integration.includes('419: overrides and swaps that change between windows are refused')
+    && integration.includes('419: the source is confirmed at the very end')
+    && integration.includes('419: a station with no rotation record at all'), 'no emulator scenarios for 419');
   // 417 §3: הסגל הקיים הוא גבול הידיעה — לא roster:null.
   assert.ok(core.indexOf('roster: basis.rosterIds') > -1 && core.indexOf('roster: null') === -1);
   const legacyInput = src.slice(src.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'), src.indexOf('function legacyRosterProjection') > 0 ? src.length : src.length);
   assert.ok(legacyInput.indexOf("pinned ? { size: pinned.rosterDocs.length, docs: pinned.rosterDocs }") > -1, 'windows must share the pinned roster');
+  assert.ok(legacyInput.indexOf("pinned ? dates.map((date) => pinned.overrideDocs.get(date) || null)") > -1, 'windows must share the pinned overrides');
+  assert.ok(legacyInput.indexOf("pinned ? pinnedSwapsBy('from_date')") > -1 && legacyInput.indexOf("pinned ? pinnedSwapsBy('to_date')") > -1, 'windows must share the pinned swaps');
+  assert.ok(legacyInput.indexOf("dates[0] < pinned.range.from || dates[dates.length - 1] > pinned.range.to") > -1, 'a window outside the pinned range must be refused');
   assert.ok(index.indexOf("exports.getEffectiveWorkdays = onCall({ enforceAppCheck: true }") > -1);
   assert.equal(index.indexOf('effectiveWorkDaysForStation = onCall'), -1, 'the server entry must never be exported as a callable');
-  const shift = src.slice(src.indexOf('async function stationShiftHours(ctx)'), src.indexOf('async function effectiveWindows'));
+  const shift = src.slice(src.indexOf('async function stationShiftHours(ctx, pinnedRotationDocs)'), src.indexOf('async function effectiveWindows'));
   assert.ok(shift.indexOf("hours_source: 'legacy-rotation-config'") > -1, 'shift hours must name their source');
   assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
 });

@@ -124,4 +124,22 @@ test('a uid named __proto__ or constructor is an own key in by_uid and unknown_u
   assert.equal(({}).toString === Object.prototype.toString, true);
 });
 
+test('419: a source with no schedule at all answers unknown for every day — never a day off, never a crew', () => {
+  const out = W.assembleUnknown({
+    source: 'legacy', range: { from: '2026-09-01', to: '2026-09-03' },
+    uids: ['a', 'stranger', 'bad/uid'], roster: ['a']
+  });
+  assert.equal(out.coverage, null);
+  assert.deepEqual(out.unknown_dates, ['2026-09-01', '2026-09-02', '2026-09-03']);
+  assert.deepEqual(out.by_uid, { a: [] });
+  assert.deepEqual(out.unknown_uids, { stranger: 'not-in-roster', 'bad/uid': 'invalid' });
+  assert.deepEqual(out.working, {});
+  // תחנה בלי סגל בכלל: כל מי שנשאל עליו — לא בסגל.
+  const empty = W.assembleUnknown({ source: 'legacy', range: { from: '2026-09-01', to: '2026-09-01' }, uids: ['a'], roster: [] });
+  assert.deepEqual(empty.unknown_uids, { a: 'not-in-roster' });
+  assert.deepEqual(empty.by_uid, {});
+  assert.throws(() => W.assembleUnknown({ source: 'legacy', range: { from: '2026-01-01', to: '2027-02-02' }, uids: [], roster: [] }), { code: 'range-too-long' });
+  assert.throws(() => W.assembleUnknown({ source: 'legacy', range: { from: '2026-01-01', to: '2026-01-02' }, uids: [7], roster: [] }), { code: 'uids-type' });
+});
+
 console.log('\n' + passed + ' effective-workdays checks passed.');

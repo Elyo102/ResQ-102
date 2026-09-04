@@ -201,6 +201,36 @@ function assemble(input) {
   });
 }
 
+/* תשובה שכולה „לא ידוע": למקור אין שום סידור לטווח (למשל תחנה שאין
+ * לה אף רשומת מחזור). אין כאן חלונות, אין כיסוי, ואין יום אחד שבו
+ * מישהו „בחופש" — כל יום בטווח נכנס ל-unknown_dates. מי שנשאל עליו
+ * ואינו בסגל של המקור → not-in-roster; מי שבסגל מקבל רשימה ריקה,
+ * שאינה אומרת דבר כי כל הימים לא ידועים. (419) */
+function assembleUnknown(input) {
+  if (!plain(input)) fail('input-shape', 'קלט חסר');
+  if (input.source !== 'legacy' && input.source !== 'publication') fail('source', 'מקור לא מוכר');
+  const range = normalizeRange(String(input.range && input.range.from || ''),
+    String(input.range && input.range.to || ''));
+  const { uids, invalid } = normalizeUids(input.uids);
+  const rosterSet = Array.isArray(input.roster) ? new Set(input.roster.map(String)) : null;
+  const unknownUids = Object.create(null);
+  invalid.forEach((raw) => { unknownUids[raw] = 'invalid'; });
+  if (rosterSet) {
+    uids.forEach((uid) => { if (!rosterSet.has(uid)) unknownUids[uid] = 'not-in-roster'; });
+  }
+  const byUid = Object.create(null);
+  uids.forEach((uid) => { if (!unknownUids[uid]) byUid[uid] = Object.freeze([]); });
+  return Object.freeze({
+    source: input.source,
+    range: Object.freeze({ from: range.from, to: range.to }),
+    coverage: null,
+    unknown_dates: Object.freeze(range.dates.slice()),
+    unknown_uids: Object.freeze(plainCopy(unknownUids)),
+    by_uid: Object.freeze(plainCopy(byUid)),
+    working: Object.freeze({})
+  });
+}
+
 module.exports = Object.freeze({
   EffectiveWorkdaysError,
   MAX_RANGE_DAYS,
@@ -209,5 +239,6 @@ module.exports = Object.freeze({
   normalizeRange,
   normalizeUids,
   windowsFor,
-  assemble
+  assemble,
+  assembleUnknown
 });

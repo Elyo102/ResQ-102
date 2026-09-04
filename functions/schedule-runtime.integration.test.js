@@ -2640,13 +2640,46 @@ async function test(name, fn) {
       assert.ok(published.by_uid.viewer.includes('2026-09-01'));
       await assert.rejects(api.effectiveWorkDaysForStation('', { from: '2026-09-01', to: '2026-09-02', uids: [] }),
         (error) => error instanceof ScheduleRuntimeError && error.code === 'station-required');
-      // תחנה שאין לה כלום: אין ריצה, אין סגל — legacy ריק, לא שגיאה ולא זליגה מתחנה אחרת.
-      const empty = await api.effectiveWorkDaysForStation('other_station', { from: '2026-09-01', to: '2026-09-02', uids: ['viewer'] });
-      assert.equal(empty.source, 'legacy');
-      assert.deepEqual(empty.unknown_uids, { viewer: 'not-in-roster' }, 'no roster there → unknown, never a crew from this station');
-      assert.equal(Object.hasOwn(empty.by_uid, 'viewer'), false);
     } finally {
       await runtimeRef.update({ mode: modeBefore });
+    }
+  });
+
+  await test('419: a station with no rotation record at all answers unknown for every day — no invented cycle, no day off, no leak from another station', async () => {
+    // אין ריצה, אין סגל, אין מחזור. עד 419 זה נפל על rotations-missing של
+    // המתאם (סבב ריק הוקרן). עכשיו: כל הטווח לא ידוע, במפורש.
+    const empty = await api.effectiveWorkDaysForStation('other_station', { from: '2026-09-01', to: '2026-09-02', uids: ['viewer'] });
+    assert.equal(empty.mode, 'off', 'a station without a runtime document is off');
+    assert.equal(empty.source, 'legacy');
+    assert.equal(empty.fallback, null);
+    assert.equal(empty.coverage, null);
+    assert.deepEqual(empty.unknown_dates, ['2026-09-01', '2026-09-02']);
+    assert.deepEqual(empty.unknown_uids, { viewer: 'not-in-roster' }, 'no roster there → unknown, never a crew from this station');
+    assert.deepEqual(empty.by_uid, {});
+    assert.equal(empty.provenance.legacy_rotations, 0);
+    assert.equal(typeof empty.provenance.legacy_digest, 'string');
+    assert.equal(empty.shift_hours, null);
+    // סגל בלי מחזור: האדם „בסגל", אבל אף יום אינו ידוע — רשימה ריקה
+    // שאינה אומרת „חופש", כי כל הימים ב-unknown_dates.
+    const ghostRef = db.collection('stations').doc('other_station').collection('roster').doc('ghost');
+    await ghostRef.set({ crew: 'A', is_active: true });
+    try {
+      const rostered = await api.effectiveWorkDaysForStation('other_station', { from: '2026-09-01', to: '2026-09-02', uids: ['ghost', 'viewer'] });
+      assert.deepEqual(rostered.by_uid, { ghost: [] });
+      assert.deepEqual(rostered.unknown_dates, ['2026-09-01', '2026-09-02']);
+      assert.deepEqual(rostered.unknown_uids, { viewer: 'not-in-roster' });
+    } finally {
+      await ghostRef.delete();
+    }
+    // מחזורים שקיימים אך כולם כבויים — תצורה שבורה, לא „לא ידוע": הסירוב
+    // של המתאם נשאר גלוי.
+    const rotationRef = db.collection('stations').doc('other_station').collection('rotations').doc('A');
+    await rotationRef.set({ anchor_date: '2026-09-01', cycle_days: 3, position_in_cycle: 0, crew: 'A', is_active: false });
+    try {
+      await assert.rejects(api.effectiveWorkDaysForStation('other_station', { from: '2026-09-01', to: '2026-09-02', uids: ['viewer'] }),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'effective-schedule-invalid');
+    } finally {
+      await rotationRef.delete();
     }
   });
 
@@ -2708,8 +2741,154 @@ async function test(name, fn) {
     }
   });
 
-  assert.equal(passed, 74);
-  console.log('\n74 schedule runtime Firestore integration checks passed.');
+  await test('419: overrides and swaps that change between windows are refused — one pinned basis, not one per window', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const modeBefore = ((await runtimeRef.get()).data() || {}).mode;
+    const sep1 = station().collection('shift_overrides').doc('2026-09-01');
+    const dec3 = station().collection('shift_overrides').doc('2026-12-03');
+    const swapRef = station().collection('swaps').doc('swap_419');
+    const sep1Before = await sep1.get();
+    assert.equal(sep1Before.exists, false, 'the scenario starts without an override on 1.9');
+    try {
+      await runtimeRef.update({ mode: 'shadow' });
+      // 94 ימים = שני חלונות (93 + 1). viewer בצוות A: עובד ב-1.9 וב-3.12
+      // (93 ימים אחרי העוגן, מחזור 3). אחרי החלון הראשון, שני החריגים
+      // נכתבים יחד: 1.9 → צוות B, 3.12 → צוות B. אין מצב לפני/אחרי שבו
+      // viewer עובד בשני הימים; תשובה כזו היא תשובה מעורבבת.
+      let windows = 0;
+      const shifting = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'legacy') {
+            windows += 1;
+            if (windows === 1) {
+              await sep1.set({ kind: 'swap', crew: 'B', extra_crews: [] });
+              await dec3.set({ kind: 'swap', crew: 'B', extra_crews: [] });
+            }
+          }
+        }
+      });
+      await assert.rejects(shifting.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-03', uids: ['viewer'] }),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-schedule-changed');
+      // אותם חריגים, יציבים: שני החלונות רואים אותם — viewer לא עובד באף אחד
+      // משני הימים, והחתימה כוללת אותם.
+      const steady = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-03', uids: ['viewer', 'driver2'] });
+      assert.equal(steady.by_uid.viewer.includes('2026-09-01'), false);
+      assert.equal(steady.by_uid.viewer.includes('2026-12-03'), false);
+      assert.equal(steady.by_uid.driver2.includes('2026-09-01'), true, 'crew B took 1.9 by override');
+      assert.equal(steady.by_uid.driver2.includes('2026-12-03'), true);
+      assert.deepEqual(steady.unknown_dates, []);
+      const withOverrides = steady.provenance.legacy_digest;
+      await sep1.delete();
+      await dec3.delete();
+      const without = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-03', uids: ['viewer'] });
+      assert.notEqual(without.provenance.legacy_digest, withOverrides, 'the digest covers the overrides');
+      assert.equal(without.by_uid.viewer.includes('2026-09-01'), true);
+      // החלפה מאושרת שנכנסת בין החלונות — אותו דין.
+      let windows2 = 0;
+      const swapping = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'legacy') {
+            windows2 += 1;
+            if (windows2 === 1) {
+              await swapRef.set({ status: 'approved', from_uid: 'viewer', from_crew: 'A', from_date: '2026-12-03', to_uid: 'fighter2', to_crew: 'C', to_date: '2026-12-02' });
+            }
+          }
+        }
+      });
+      await assert.rejects(swapping.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-03', uids: ['viewer'] }),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-schedule-changed');
+      const swapped = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-03', uids: ['viewer', 'fighter2'] });
+      assert.equal(swapped.by_uid.viewer.includes('2026-12-03'), false, 'the approved swap is applied from the pinned basis');
+      assert.equal(swapped.by_uid.viewer.includes('2026-12-02'), true);
+      assert.equal(swapped.by_uid.fighter2.includes('2026-12-03'), true);
+      assert.equal(swapped.by_uid.fighter2.includes('2026-12-02'), false);
+      assert.notEqual(swapped.provenance.legacy_digest, without.provenance.legacy_digest, 'the digest covers the swaps');
+    } finally {
+      await sep1.delete();
+      await dec3.delete();
+      await swapRef.delete();
+      await runtimeRef.update({ mode: modeBefore });
+    }
+  });
+
+  await test('419: the source is confirmed at the very end — after shift hours — on both entries, in legacy and in new', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const modeBefore = ((await runtimeRef.get()).data() || {}).mode;
+    const rotationA = station().collection('rotations').doc('A');
+    const rotationBefore = (await rotationA.get()).data() || {};
+    const pointerRef = activePointer();
+    const pointerBefore = (await pointerRef.get()).data() || {};
+    const input = { from: '2026-09-01', to: '2026-09-06', uids: ['viewer'] };
+    const rejects = (promise, code) => assert.rejects(promise,
+      (error) => error instanceof ScheduleRuntimeError && error.code === code);
+    try {
+      await runtimeRef.update({ mode: 'shadow' });
+      // legacy: העוגן זז אחרי שעות המשמרת (hook 'workdays' הוא הנקודה
+      // האחרונה לפני האישור). עד 419 הבסיס נבדק לפני השעות — והתשובה
+      // הישנה נמסרה.
+      const anchorLate = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await rotationA.update({ anchor_date: '2026-09-02' });
+        }
+      });
+      await rejects(anchorLate.getEffectiveWorkdays(req('viewer', 'firefighter', input)), 'legacy-schedule-changed');
+      await rotationA.set(rotationBefore);
+      await rejects(anchorLate.effectiveWorkDaysForStation(SID, input), 'legacy-schedule-changed');
+      await rotationA.set(rotationBefore);
+      // חריג שנכתב אחרי השעות — אותו דין.
+      const overrideLate = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') {
+            await station().collection('shift_overrides').doc('2026-09-04').set({ kind: 'swap', crew: 'B', extra_crews: [] });
+          }
+        }
+      });
+      try {
+        await rejects(overrideLate.effectiveWorkDaysForStation(SID, input), 'legacy-schedule-changed');
+      } finally {
+        await station().collection('shift_overrides').doc('2026-09-04').delete();
+      }
+      // new עם פרסום: המצביע מתחלף אחרי השעות → לא התשובה הישנה.
+      await runtimeRef.update({ mode: 'new' });
+      const pointerLate = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await pointerRef.delete();
+        }
+      });
+      await rejects(pointerLate.getEffectiveWorkdays(req('viewer', 'firefighter', input)), 'schedule-active-changed');
+      await pointerRef.set(pointerBefore);
+      await rejects(pointerLate.effectiveWorkDaysForStation(SID, input), 'schedule-active-changed');
+      await pointerRef.set(pointerBefore);
+      // new עם פרסום: שעות המשמרת (רשומת המחזור) משתנות אחרי שנקראו.
+      const hoursLate = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await rotationA.update({ shift_hours: 12 });
+        }
+      });
+      await rejects(hoursLate.getEffectiveWorkdays(req('viewer', 'firefighter', input)), 'legacy-schedule-changed');
+      await rotationA.set(rotationBefore);
+      // new בלי פרסום (fallback): פרסום שנכנס אחרי השעות → לא legacy.
+      await pointerRef.delete();
+      const publishLate = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await pointerRef.set(pointerBefore);
+        }
+      });
+      await rejects(publishLate.getEffectiveWorkdays(req('viewer', 'firefighter', input)), 'schedule-mode-changed');
+      await pointerRef.set(pointerBefore);
+      // בלי הפרעה — התשובה חוזרת, מאותו בסיס, עם שעות.
+      const ok = await api.getEffectiveWorkdays(req('viewer', 'firefighter', input));
+      assert.equal(ok.source, 'publication');
+      assert.ok(ok.by_uid.viewer.includes('2026-09-01'));
+    } finally {
+      await rotationA.set(rotationBefore);
+      await pointerRef.set(pointerBefore);
+      await runtimeRef.update({ mode: modeBefore });
+    }
+  });
+
+  assert.equal(passed, 77);
+  console.log('\n77 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);
