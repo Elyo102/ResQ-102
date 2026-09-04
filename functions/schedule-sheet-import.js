@@ -25,6 +25,12 @@ const MONTH_RE = /^\d{4}-\d{2}$/;
 const MAX_CELLS = 40000;
 const MAX_NAMES_PER_CELL = 40;   // תא עם יותר מזה — מדווח ומדולג כולו, לא נחתך בשקט
 const MAX_ROWS = 400;
+const MAX_CELL_CHARS = 2000;
+const CANONICAL_STATIONS = Object.freeze(['eilat', 'shahmon', 'timna', 'yotvata']);
+const CANONICAL_STATION_LABELS = Object.freeze({
+  eilat: 'אילת', shahmon: 'שחמון', timna: 'תמנע', yotvata: 'יטבתה'
+});
+const CANONICAL_STATION_MINIMUMS = Object.freeze({ eilat: 7, shahmon: 0, timna: 0, yotvata: 0 });
 
 class SheetImportError extends Error {
   constructor(code, message) {
@@ -120,10 +126,13 @@ function parseDateCell(raw, month) {
 // (שם פרטי + משפחה). תא שהוא שעה/מספר/סימן — מדולג. תא עם יותר
 // מ-MAX_NAMES_PER_CELL שמות אינו נחתך: הוא מוחזר כ-`null`, והקורא מדווח.
 function namesInCell(raw) {
-  const t = normText(raw);
-  if (!t) return [];
-  if (/^\d[\d:./ -]*$/.test(t)) return [];               // שעות, תאריכים
-  const names = t.split(/\s*[,+;/]\s*|\s+ו-\s*/).map((x) => normText(x)).filter(Boolean);
+  const lines = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n').split('\n');
+  const names = [];
+  lines.forEach((line) => {
+    const t = normText(line);
+    if (!t || /^\d[\d:./ -]*$/.test(t)) return;          // שעות, תאריכים
+    names.push(...t.split(/\s*[,+;/]\s*|\s+ו-\s*/).map((x) => normText(x)).filter(Boolean));
+  });
   return names.length > MAX_NAMES_PER_CELL ? null : names;
 }
 
@@ -136,17 +145,35 @@ function namesInCell(raw) {
  * kind: 'station' (תווית שאינה היעדרות; ההתאמה למדיניות נעשית ב-resolveSheet),
  *       'absence' (מחלה/מילואים/קורס/חופש+מיקום), 'ignored' (בלי תווית / לא זוהתה).
  */
-function parseSheet(text, options) {
+function normalizeGrid(input) {
+  if (!Array.isArray(input)) {
+    const source = String(input == null ? '' : input).replace(/\r\n?/g, '\n');
+    if (!source.trim()) fail('paste-empty', 'ההדבקה ריקה');
+    return source.split('\n').map((line) => line.split('\t'));
+  }
+  if (!input.length) fail('paste-empty', 'הקובץ ריק');
+  return input.map((row) => {
+    if (!Array.isArray(row)) fail('matrix-row-invalid', 'מבנה הקובץ אינו טבלה תקינה');
+    return row.map((cell) => {
+      if (cell === null || cell === undefined) return '';
+      if (!['string', 'number', 'boolean'].includes(typeof cell)) {
+        fail('matrix-cell-invalid', 'תא בקובץ אינו ערך טקסטואלי');
+      }
+      const value = String(cell).replace(/\r\n?/g, '\n');
+      if (value.length > MAX_CELL_CHARS) fail('matrix-cell-too-large', 'תא בקובץ ארוך מדי');
+      return value;
+    });
+  });
+}
+
+function parseSheet(input, options) {
   const opts = plain(options) ? options : {};
   const month = String(opts.month || '');
   if (!MONTH_RE.test(month)) fail('month-invalid', 'חודש הייבוא חייב להיות YYYY-MM');
-  const source = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
-  if (!source.trim()) fail('paste-empty', 'ההדבקה ריקה');
-  const lines = source.split('\n');
-  if (lines.length > MAX_ROWS) fail('paste-too-many-rows', 'יותר מ-' + MAX_ROWS + ' שורות בהדבקה');
-  const grid = lines.map((line) => line.split('\t'));
+  const grid = normalizeGrid(input);
+  if (grid.length > MAX_ROWS) fail('paste-too-many-rows', 'יותר מ-' + MAX_ROWS + ' שורות בקלט');
   const cellCount = grid.reduce((n, row) => n + row.length, 0);
-  if (cellCount > MAX_CELLS) fail('paste-too-large', 'ההדבקה גדולה מדי (' + cellCount + ' תאים)');
+  if (cellCount > MAX_CELLS) fail('paste-too-large', 'הקלט גדול מדי (' + cellCount + ' תאים)');
 
   // שורת התאריכים: השורה הראשונה שבה ≥3 תאים הם תאריכים של החודש המבוקש.
   let dateRow = -1;
@@ -294,11 +321,18 @@ function parseSheet(text, options) {
 
 function personIndex(people, aliases) {
   const byKey = new Map();   // key → Set(uid)
+  const suggestions = new Map();
   const add = (key, uid) => {
     const k = normKey(key);
     if (!k) return;
     if (!byKey.has(k)) byKey.set(k, new Set());
     byKey.get(k).add(uid);
+  };
+  const suggest = (key, uid) => {
+    const k = normKey(key);
+    if (!k) return;
+    if (!suggestions.has(k)) suggestions.set(k, new Set());
+    suggestions.get(k).add(uid);
   };
   const byId = new Map();
   (Array.isArray(people) ? people : []).forEach((person) => {
@@ -307,11 +341,11 @@ function personIndex(people, aliases) {
     add(person.full_name, person.id);
     add(person.name, person.id);
     add(person.schedule_name, person.id);
-    // הגיליון כותב לרוב שם פרטי או משפחה בלבד („רמי", „חמיאס"). מילה
-    // ראשונה/אחרונה של השם המלא היא מועמדת; אם היא יחידה — מזוהה, אם
-    // לא — דו-משמעית ומדווחת עם המועמדים.
+    // שם פרטי/משפחה בלבד הם הצעה, לעולם לא התאמה אוטומטית. אחראי
+    // הסידור מאשר פעם אחת והכינוי נשמר; כך אדם אינו משובץ בשקט רק
+    // מפני שבאותו חודש הוא היחיד עם אותו שם פרטי.
     const parts = normText(person.full_name || person.name).split(' ').filter(Boolean);
-    if (parts.length > 1) { add(parts[0], person.id); add(parts[parts.length - 1], person.id); }
+    if (parts.length > 1) { suggest(parts[0], person.id); suggest(parts[parts.length - 1], person.id); }
     (Array.isArray(person.aliases) ? person.aliases : []).forEach((a) => add(a, person.id));
   });
   const ignored = new Set();
@@ -327,15 +361,69 @@ function personIndex(people, aliases) {
       }
     });
   }
-  return { byKey, byId, ignored };
+  return { byKey, byId, ignored, suggestions };
 }
 
 function resolveName(index, name) {
   if (index.ignored.has(normKey(name))) return { uid: null, candidates: [], ignored: true };
   const set = index.byKey.get(normKey(name));
-  if (!set || !set.size) return { uid: null, candidates: [] };
+  if (!set || !set.size) {
+    const suggested = index.suggestions.get(normKey(name));
+    return { uid: null, candidates: suggested ? Array.from(suggested).sort() : [] };
+  }
   if (set.size === 1) return { uid: Array.from(set)[0], candidates: [] };
   return { uid: null, candidates: Array.from(set).sort() };
+}
+
+/*
+ * Existing stations may still use historical identifiers (for example
+ * `main` or crew-derived keys).  Import never guesses how those identifiers
+ * map to the four operational stations.  A manager must submit an explicit
+ * one-to-one mapping; `null` explicitly means that the canonical station has
+ * no historical predecessor.  The returned policy is import-only: it does
+ * not rewrite the live policy or roster behind the user's back.
+ */
+function projectCanonicalPolicy(policy, rawMapping) {
+  if (!plain(policy) || !plain(policy.sub_stations)) {
+    fail('policy-required', 'חסרה מדיניות עם תחנות קצה');
+  }
+  const existing = Object.keys(policy.sub_stations);
+  const hasCanonical = CANONICAL_STATIONS.every((id) =>
+    Object.prototype.hasOwnProperty.call(policy.sub_stations, id));
+  const mapping = {};
+  if (hasCanonical && (rawMapping === undefined || rawMapping === null)) {
+    CANONICAL_STATIONS.forEach((id) => { mapping[id] = id; });
+  } else {
+    if (!plain(rawMapping) || Object.keys(rawMapping).length !== CANONICAL_STATIONS.length
+        || CANONICAL_STATIONS.some((id) => !Object.prototype.hasOwnProperty.call(rawMapping, id))) {
+      fail('station-mapping-required', 'יש למפות במפורש את התחנות הישנות לאילת, שחמון, תמנע ויטבתה');
+    }
+    const used = new Set();
+    CANONICAL_STATIONS.forEach((id) => {
+      const value = rawMapping[id];
+      if (value === null) { mapping[id] = null; return; }
+      if (typeof value !== 'string'
+          || !Object.prototype.hasOwnProperty.call(policy.sub_stations, value)) {
+        fail('station-mapping-invalid', 'מיפוי התחנות אינו תואם לחוקי התחנה הפעילים');
+      }
+      if (used.has(value)) fail('station-mapping-duplicate', 'אי אפשר למפות תחנה ישנה אחת לשתי תחנות חדשות');
+      used.add(value);
+      mapping[id] = value;
+    });
+  }
+  const subs = {};
+  CANONICAL_STATIONS.forEach((id) => {
+    const oldId = mapping[id];
+    const old = oldId && plain(policy.sub_stations[oldId]) ? policy.sub_stations[oldId] : {};
+    subs[id] = Object.assign({}, old, {
+      label: CANONICAL_STATION_LABELS[id],
+      minimum: Number.isInteger(old.minimum) ? old.minimum : CANONICAL_STATION_MINIMUMS[id]
+    });
+  });
+  return Object.freeze({
+    policy: Object.freeze(Object.assign({}, policy, { sub_stations: Object.freeze(subs) })),
+    mapping: Object.freeze(mapping)
+  });
 }
 
 /**
@@ -368,8 +456,13 @@ function resolveSheet(parsed, options) {
     u.count += 1; u.dates.add(date);
   };
 
-  // שיבוצים: לכל תחנת קצה במדיניות, לכל תאריך — שורה (גם ריקה).
-  const subKeys = Object.keys(policy.sub_stations).sort();
+  // שיבוצים: ארבע תחנות הקצה הקנוניות ובאותו סדר בכל יום. תחנה שלא
+  // הופיעה בקלט מקבלת coverage=missing — לא תא ריק שנראה מאומת.
+  const subKeys = CANONICAL_STATIONS.slice();
+  if (Object.keys(policy.sub_stations).length !== subKeys.length
+      || subKeys.some((key) => !Object.prototype.hasOwnProperty.call(policy.sub_stations, key))) {
+    fail('station-contract', 'חוקי התחנה חייבים לכלול את אילת, שחמון, תמנע ויטבתה');
+  }
   const perDate = new Map();     // date → Map(uid → [labels])
   const slotsBy = new Map();     // sub|date → [{person}]
   parsed.blocks.forEach((block) => {
@@ -401,9 +494,9 @@ function resolveSheet(parsed, options) {
   });
   duplicates.sort((a, b) => (a.date + a.uid < b.date + b.uid ? -1 : 1));
 
-  // תחנה שאין לה בלוק בהדבקה בכלל — **חסרה**, לא „ריקה": לא נוצרות לה
-  // שורות (שורה ריקה היא „אף אחד" מאומת), והיא מדווחת ב-`missing_stations`
-  // כדי שאחראי הסידור יאשר במפורש שזה מה שהתכוון.
+  // תחנה שאין לה בלוק בהדבקה בכלל — **חסרה**, לא „ריקה". היא עדיין
+  // נחתמת בשורה עם coverage=missing כדי שהלוח הקבוע יוכל להציג
+  // „לא הוזן", והיא מדווחת לאישור מפורש.
   const present = new Set(parsed.blocks.filter((b) => b.kind === 'station')
     .map((b) => b.sub_station || stationForLabel(b.label, policy)).filter(Boolean));
   const missingStations = subKeys.filter((sub) => !present.has(sub))
@@ -412,7 +505,6 @@ function resolveSheet(parsed, options) {
   const rows = [];
   parsed.dates.forEach((date) => {
     subKeys.forEach((sub) => {
-      if (!present.has(sub)) return;
       const spec = policy.sub_stations[sub] || {};
       const minimum = Number.isInteger(spec.minimum) ? spec.minimum : 0;
       // סדר הגיליון נשמר: מי שכתוב ראשון — ראשון (ולא מיון לפי מזהה).
@@ -420,8 +512,9 @@ function resolveSheet(parsed, options) {
       rows.push({
         date, station_id: stationId, sub_station: sub, label: spec.label || sub,
         rotation_group: null, minimum, slots, gaps: [], rejected_manual: [],
+        coverage: present.has(sub) ? 'ready' : 'missing',
         // הקו האדום מוצג; אינו חוסם — הגיליון הוא הכרעת אדם.
-        below_minimum: slots.length < minimum,
+        below_minimum: present.has(sub) && slots.length < minimum,
         complete: true
       });
     });
@@ -447,6 +540,11 @@ function resolveSheet(parsed, options) {
     });
   });
   absences.sort((a, b) => ((a.date + a.uid + a.kind) < (b.date + b.uid + b.kind) ? -1 : 1));
+  const absenceCoverage = {};
+  ABSENCE_KINDS.forEach((kind) => {
+    absenceCoverage[kind] = parsed.blocks.some((block) => block.kind === 'absence'
+      && block.absence && block.absence.kind === kind) ? 'ready' : 'missing';
+  });
 
   const unresolvedList = Array.from(unresolved.values()).map((u) => ({
     name: u.name, count: u.count, dates: Array.from(u.dates).sort(), candidates: u.candidates
@@ -462,6 +560,7 @@ function resolveSheet(parsed, options) {
     duplicates: Object.freeze(duplicates),
     ignored: Object.freeze(ignored),
     missing_stations: Object.freeze(missingStations),
+    absence_coverage: Object.freeze(absenceCoverage),
     warnings: Object.freeze((parsed.warnings || []).filter((w) => w.code === 'cell-too-many-names')),
     counts: Object.freeze({
       days: parsed.dates.length,
@@ -484,6 +583,13 @@ module.exports = Object.freeze({
   ABSENCE_KINDS,
   LOCATIONS,
   MAX_CELLS,
+  MAX_ROWS,
+  MAX_CELL_CHARS,
+  CANONICAL_STATIONS,
+  CANONICAL_STATION_LABELS,
+  CANONICAL_STATION_MINIMUMS,
+  projectCanonicalPolicy,
+  normalizeGrid,
   normText,
   absenceLabel,
   stationForLabel,

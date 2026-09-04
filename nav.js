@@ -48,7 +48,7 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h0';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h1';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true || claims.role === 'super_admin';

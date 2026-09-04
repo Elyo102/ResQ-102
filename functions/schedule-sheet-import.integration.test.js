@@ -147,6 +147,7 @@ const SHEET = [
   row(['בצפון', 'רועי', '', '']),
   row(['באילת', '', '', 'רועי כהן'])
 ].join('\n');
+const MATRIX = SHEET.split('\n').map((line) => line.split('\t'));
 
 async function seed() {
   await station().set({ name: 'Sheet Import Integration Station' });
@@ -243,6 +244,17 @@ async function test(name, fn) {
     assert.equal((await station().collection('schedule_drafts').get()).size, 0);
   });
 
+  await test('a browser-parsed file matrix uses the same preview path and raw bytes are never required', async () => {
+    const before = await station().collection('schedule_drafts').get();
+    const report = await api.previewScheduleImport(req(MGR, { month: '2026-09', matrix: MATRIX }));
+    assert.deepEqual(report.dates, ['2026-09-01', '2026-09-02', '2026-09-03']);
+    assert.equal(report.counts.stations, 4);
+    const both = await caught(() => api.previewScheduleImport(req(MGR, { month: '2026-09', paste: SHEET, matrix: MATRIX })));
+    assert.equal(both && both.code, 'import-input-required');
+    const after = await station().collection('schedule_drafts').get();
+    assert.equal(after.size, before.size);
+  });
+
   await test('preview reports the ambiguous name and the non-name, blocked, without writing', async () => {
     const report = await api.previewScheduleImport(req(MGR, { month: '2026-09', paste: SHEET }));
     assert.deepEqual(report.dates, ['2026-09-01', '2026-09-02', '2026-09-03']);
@@ -274,6 +286,8 @@ async function test(name, fn) {
     assert.equal(meta.import_month, '2026-09');
     assert.equal(meta.report_digest, ready.report_digest);
     assert.equal(meta.absence_count, 5);
+    assert.deepEqual(meta.absence_coverage,
+      { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
     const absenceDocs = await draftRef.collection('absences').get();
     const entries = absenceDocs.docs.reduce((n, doc) => n + ((doc.data() || {}).entries || []).length, 0);
     assert.equal(entries, 5, 'ההיעדרויות בתת-האוסף אינן תואמות ל-absence_count');
@@ -291,6 +305,8 @@ async function test(name, fn) {
     assert.deepEqual(preview.days.map((d) => d.crew), ['A', 'B', 'C']);
     assert.deepEqual(day.absences.map((a) => [a.uid, a.kind, a.location || null]), [['u6', 'sick', null], ['u1', 'leave', 'north']]);
     assert.equal(day.absences_status, 'ready');
+    assert.deepEqual(day.absence_coverage,
+      { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
     assert.equal(preview.days.reduce((n, d) => n + d.absences.length, 0), 5);
   });
 
@@ -386,6 +402,8 @@ async function test(name, fn) {
     const pub = (await station().collection('schedule_publications').doc(published.publication_id).get()).data() || {};
     assert.equal(pub.imported, true);
     assert.equal(pub.absence_count, 5);
+    assert.deepEqual(pub.absence_coverage,
+      { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
     const absenceDocs = await station().collection('schedule_publications').doc(published.publication_id).collection('absences').get();
     assert.equal(absenceDocs.docs.reduce((n, doc) => n + ((doc.data() || {}).entries || []).length, 0), 5);
     const range = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
@@ -394,6 +412,8 @@ async function test(name, fn) {
     assert.deepEqual(range.days.map((d) => d.crew), ['A', 'B', 'C']);
     assert.deepEqual(range.days.map((d) => d.absences.map((a) => a.uid + ':' + a.kind)),
       [['u6:sick', 'u1:leave'], ['u6:sick', 'u9:course'], ['u1:leave']]);
+    assert.deepEqual(range.days[0].absence_coverage,
+      { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
     assert.equal(range.days[0].sub_stations.length, 4);
     const single = await api.getStation(req('u2', { date: '2026-09-02' }));
     assert.deepEqual([single.day.crew, single.day.absences.length, single.day.absences_status], ['B', 2, 'ready']);
@@ -449,6 +469,17 @@ async function test(name, fn) {
     assert.equal(range.days.reduce((n, d) => n + d.absences.length, 0), 5);
     const single = await api.getStation(req('viewer', { date: '2026-09-02' }));
     assert.deepEqual([single.day.crew, single.day.absences.length], ['B', 2]);
+  });
+
+  await test('absence coverage is signed: metadata tampering breaks the publication and restoring it restores the view', async () => {
+    const ref = station().collection('schedule_publications').doc(activeId);
+    const meta = (await ref.get()).data() || {};
+    await ref.set({ absence_coverage: { sick: 'ready', reserve: 'ready', course: 'ready', leave: 'ready' } }, { merge: true });
+    const error = await caught(() => api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+    assert.equal(error && error.code, 'snapshot-digest-mismatch', error && error.message);
+    await ref.set({ absence_coverage: meta.absence_coverage }, { merge: true });
+    const restored = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    assert.equal(restored.days[0].absence_coverage.reserve, 'missing');
   });
 
   await test('a tampered absences document breaks the signed publication', async () => {

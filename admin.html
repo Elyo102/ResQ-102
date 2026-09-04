@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h0">
+<link rel="stylesheet" href="./theme.css?v=42h1">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -327,7 +327,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h0';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h1';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -336,18 +336,18 @@ import { getFirestore, doc, getDoc, collection,
          getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h0';
-import { CREW_HE } from './rotation.js?v=42h0';
+  from './monitored-functions.js?v=42h1';
+import { CREW_HE } from './rotation.js?v=42h1';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=42h0';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h0';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h0';
-import { initPWA } from './pwa.js?v=42h0';
-import { watchCallouts } from './callout.js?v=42h0';
+  from './stations.js?v=42h1';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h1';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h1';
+import { initPWA } from './pwa.js?v=42h1';
+import { watchCallouts } from './callout.js?v=42h1';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h0';
+import { initAppCheck } from './appcheck.js?v=42h1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.0';
+const EXPECTED_VERSION = '42H.1';
 const EXPECTED_DATE = '4.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 204; // +5 effective workdays: 4 screen imports + guards.js; effective-workdays.js → rotation.js (+1) replaces the guards.js → rotation.js import (−1).
+const EXPECTED_VERSIONED_REFERENCES = 205; // +1 schedule-file-import.js on the schedule management screen.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

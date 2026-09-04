@@ -110,14 +110,17 @@ check('drafts and publications are complete snapshots with people', () => {
     assert.ok(runtime.includes(token), token);
   }
 });
-check('snapshot integrity includes the people projection (and absences when present) and is rechecked on full reads', () => {
+check('snapshot integrity includes people, absences and finite absence coverage and is rechecked on full reads', () => {
   // 4.9: החתימה מחושבת במקום אחד — stageSnapshot ו-readSnapshot משתמשים בו.
-  assert.ok(runtime.includes('const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences);'));
-  assert.ok(runtime.includes('const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences);'));
-  const at = runtime.indexOf('function snapshotDigest(plan, rows, events, people, absences)');
+  assert.ok(runtime.includes('const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences, absenceCoverage);'));
+  assert.ok(runtime.includes('const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences, absenceCoverage);'));
+  const at = runtime.indexOf('function snapshotDigest(plan, rows, events, people, absences, absenceCoverage)');
   const fn = runtime.slice(at, runtime.indexOf('\n  }\n', at));
   assert.ok(fn.includes('}, rows, events, people'), 'the people projection must stay inside the digest');
   assert.ok(fn.includes('if (absences.length) basis.absences = absences;'), 'absences enter the digest only when present — older publications keep their digest');
+  assert.ok(fn.includes('if (absenceCoverage) basis.absence_coverage = absenceCoverage;'), 'coverage is signed only when present — older publications remain valid');
+  assert.ok(runtime.includes("const ABSENCE_COVERAGE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave'])"));
+  assert.ok(runtime.includes('if (absenceCoverage) snapshotMeta.absence_coverage = absenceCoverage;'));
   assert.ok(runtime.includes("'snapshot-digest-mismatch'"));
   assert.ok(runtime.includes("absences.length !== Number(meta.absence_count || 0)"), 'absence count is verified on full reads');
 });
