@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=38">
+<link rel="stylesheet" href="./theme.css?v=42g0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -210,12 +210,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
-import { renderNav, renderStuckNav } from './nav.js?v=38';
-import { MEMBER_ROLES } from './roles.js?v=38';
-import { initPWA } from './pwa.js?v=38';
-import { watchCallouts } from './callout.js?v=38';
-import { redlineState, visibleCrews } from './readiness.js?v=38';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
+import { renderNav, renderStuckNav } from './nav.js?v=42g0';
+import { MEMBER_ROLES } from './roles.js?v=42g0';
+import { initPWA } from './pwa.js?v=42g0';
+import { watchCallouts } from './callout.js?v=42g0';
+import { redlineState, visibleCrews } from './readiness.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -225,7 +225,7 @@ import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=41a1';
+import { initAppCheck } from './appcheck.js?v=42g0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

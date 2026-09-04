@@ -403,6 +403,21 @@ service cloud.firestore {
     // ---------- התחנה ----------
 
     match /stations/{sid} {
+      // Ops submissions are authenticated and written by the server only.
+      // Admin SDK export is separate; no client, including super, reads these.
+      match /incidents/{fingerprint} {
+        allow read, write: if false;
+      }
+      match /incident_days/{day} {
+        allow read, write: if false;
+      }
+      match /feedback/{feedbackId} {
+        allow read, write: if false;
+      }
+      match /feedback_quota/{quotaId} {
+        allow read, write: if false;
+      }
+
       // השדה נקרא districtId בכל המערכת; הגרסה הקודמת חיפשה
       // district ולכן נכשלה תמיד. שים לב שמסמך התחנה עצמו אינו
       // נוצר היום — כל עוד כך, מפקד מחוז עדיין ייחסם, כי resource
@@ -1462,6 +1477,38 @@ service cloud.firestore {
         allow read, write: if false;
       }
       match /schedule_policies/{policyId} {
+        allow read, write: if false;
+      }
+      // כתיבת חוקי תחנה נעשית רק דרך פונקציית שרת. רשומת הפעולה
+      // היא המנגנון שמונע כתיבה כפולה, והיומן הוא מה שמאפשר לדעת
+      // מי שינה תקן ומתי. שניהם חסומים לדפדפן לגמרי — גם לקריאה,
+      // כי הם נושאים uid של מי שפעל.
+      match /schedule_policy_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_policy_audit/{entryId} {
+        allow read, write: if false;
+      }
+      // שינוי מצב מנוע הסידור. גם הרשומה שמונעת כתיבה כפולה וגם
+      // היומן נושאים uid של מי שהזיז את המנוע, ולכן שניהם חסומים
+      // לדפדפן גם לקריאה.
+      match /schedule_mode_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_mode_audit/{entryId} {
+        allow read, write: if false;
+      }
+      // ⭐ דוח ה-preflight נחתם ונבדק שוב ברגע המעבר. דפדפן שיכול
+      // לכתוב אותו יכול להכריז שאיש לא ייעלם מהלוח.
+      match /schedule_preflight/{publicationId} {
+        allow read, write: if false;
+      }
+      // יבוא מקור כוח האדם. רשומת מניעת הכפילות והיומן נושאים uid
+      // ומצביעים על מי ייבא — שניהם חסומים לדפדפן גם לקריאה.
+      match /schedule_source_operations/{requestId} {
+        allow read, write: if false;
+      }
+      match /schedule_source_audit/{entryId} {
         allow read, write: if false;
       }
       match /schedule_sources/{sourceId} {

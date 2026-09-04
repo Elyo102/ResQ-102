@@ -27,6 +27,10 @@ const CHANGE = Object.freeze({
   ASSIGNMENT_REMOVED: 'assignment_removed',
   ASSIGNMENT_CANCELLED: 'assignment_cancelled',
   ASSIGNMENT_RESTORED: 'assignment_restored',
+  /* ⭐ „הזיזו אותי ליום אחר" הוא **שינוי אחד**, לא ביטול ותוספת.
+   * הפירוק לשניים נכון טכנית ושקרי תפעולית: מי שקורא אותו מבין
+   * שהורידו אותו ממשמרת, ורק בשורה הבאה מגלה שהוא עדיין עובד. */
+  ASSIGNMENT_MOVED: 'assignment_moved',
   SUB_STATION_CHANGED: 'sub_station_changed',
   STATION_CHANGED: 'station_changed',
   ROLE_CHANGED: 'role_changed',
@@ -47,7 +51,19 @@ const ALL_CHANGES = Object.freeze(Object.keys(CHANGE).map((k) => CHANGE[k]));
  */
 // מסך הנעילה מקבל רק סוג שינוי ותאריך. שמות, תפקידים, תחנות וכותרות
 // אירוע נטענים בתוך האפליקציה לאחר אימות המשתמש.
-const PUSH_FIELDS = Object.freeze(['kind', 'date']);
+/**
+ * רשימת ההיתר של מטען הפוש.
+ *
+ * ⭐ `sub_station` ו-`sub_station_label` הם **המקום שאליו האדם עצמו
+ * שובץ**. זה מידע עליו, לא על אף אחד אחר, והוא בדיוק מה שהופך
+ * התראה לשימושית: „שובצת מחדש" בלי לאיזה יום ולאיזו תחנה מחייב
+ * לפתוח את האפליקציה כדי לדעת אם זה נוגע למחר בבוקר.
+ *
+ * מה שנשאר מחוץ לרשימה נשאר מחוץ: שמות של אנשים אחרים, סיבות
+ * היעדרות, וכל שדה שאינו כאן.
+ */
+const PUSH_FIELDS = Object.freeze(['kind', 'date', 'from_date',
+  'sub_station', 'sub_station_label', 'from_sub_station', 'from_sub_station_label']);
 
 /** מפתחות שאסור שיופיעו בפלט בשום צורה. */
 const FORBIDDEN_KEYS = Object.freeze([
@@ -260,7 +276,31 @@ function createPublication(deps) {
       if (a.rotation_group !== b.rotation_group) out.push({ kind: CHANGE.ROTATION_CHANGED, date, from: a, to: b });
       if (!sameCrew(a.crew, b.crew)) out.push({ kind: CHANGE.CREW_CHANGED, date, from: a, to: b });
     }
-    return out;
+    return pairMoves(out);
+  }
+
+  /**
+   * ⭐ הצמדת הסרה להוספה: העברה ליום אחר.
+   *
+   * הזוג מוצמד **רק כשהוא חד-משמעי** — הסרה אחת בדיוק והוספה אחת
+   * בדיוק. עם שתי הסרות ושתי הוספות אין דרך לדעת איזה יום הפך
+   * לאיזה, וניחוש כאן פירושו להגיד לאדם שהוא עובר ליום שאיש לא
+   * העביר אותו אליו. במקרה כזה הפריטים נשארים נפרדים, וכל אחד
+   * מהם מנוסח כשינוי ולא כביטול.
+   */
+  function pairMoves(items) {
+    const removed = items.filter((item) => item.kind === CHANGE.ASSIGNMENT_REMOVED);
+    const added = items.filter((item) => item.kind === CHANGE.ASSIGNMENT_ADDED);
+    if (removed.length !== 1 || added.length !== 1) return items;
+    const move = {
+      kind: CHANGE.ASSIGNMENT_MOVED,
+      date: added[0].date,
+      from_date: removed[0].date,
+      from: removed[0].from,
+      to: added[0].to
+    };
+    const rest = items.filter((item) => item !== removed[0] && item !== added[0]);
+    return [move].concat(rest).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
   }
 
   function diffOnePersonEvents(prev, next) {
@@ -335,14 +375,102 @@ function createPublication(deps) {
   /* ---------------- מטען פוש · רשימת היתר ---------------- */
 
   function pickPushFields(change) {
+    // המקום שאליו שובץ עכשיו. בהסרה אין `to`, ואז המקום שממנו
+    // הוסר — כדי שיהיה ברור על איזה שיבוץ מדובר.
+    // לאן שובץ עכשיו. בהסרה אין יעד, ואז המקום שממנו הוסר.
+    const place = change.to || change.from || null;
+    // ⭐ ומאיפה הוזז. „הוזזת לתמנע" בלי לומר מאיפה מחייב לפתוח את
+    // האפליקציה כדי להבין אם זה בכלל שינוי מבחינתך.
+    const origin = change.to && change.from ? change.from : null;
     const flat = {
       kind: change.kind,
-      date: change.date
+      date: change.date,
+      from_date: isNonEmptyString(change.from_date) && change.from_date !== change.date
+        ? change.from_date : null,
+      sub_station: place && isNonEmptyString(place.sub_station) ? place.sub_station : null,
+      sub_station_label: place && isNonEmptyString(place.sub_station_label)
+        ? place.sub_station_label : null,
+      from_sub_station: origin && isNonEmptyString(origin.sub_station)
+        && origin.sub_station !== (place && place.sub_station) ? origin.sub_station : null,
+      from_sub_station_label: origin && isNonEmptyString(origin.sub_station_label)
+        && origin.sub_station !== (place && place.sub_station) ? origin.sub_station_label : null
     };
     const out = {};
-    // רשימת היתר ממצה: רק מה שברשימה יוצא, ובאותו סדר.
-    for (const key of PUSH_FIELDS) out[key] = flat[key] === undefined ? null : flat[key];
+    /* רשימת היתר ממצה: רק מה שברשימה יוצא, ובאותו סדר.
+     *
+     * ⭐ שדה ריק אינו נכתב כלל. הרשימה נשארת ממצה — היא קובעת מה
+     * **מותר**, לא מה חייב — ומטען הפוש חסום ב-3500 בתים. שדה
+     * שערכו null בכל פריט מבזבז מקום שנחוץ לשינויים עצמם, ותקציב
+     * שנגמר פירושו פרסום שנכשל. */
+    for (const key of PUSH_FIELDS) {
+      if (flat[key] !== undefined && flat[key] !== null) out[key] = flat[key];
+    }
     return out;
+  }
+
+  /**
+   * `2026-09-04` → `4/9`.
+   *
+   * ידנית ולא דרך `Intl`: פורמט שתלוי ב-ICU של המכונה הופך את אותו
+   * מטען לשונה בין סביבות, וזה מטען שנחתם ונשמר.
+   */
+  function shortDate(iso) {
+    if (!isNonEmptyString(iso) || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+    return String(Number(iso.slice(8, 10))) + '/' + String(Number(iso.slice(5, 7)));
+  }
+
+  /* ⭐ מה ההתראה אומרת בפועל.
+   *
+   * „שינוי אחד בסידור שלך" הוא נכון וחסר תועלת: מי שמקבל אותו
+   * חייב לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למשמרת של מחר
+   * בבוקר. תאריך ותחנת קצה הם המידע שבגללו ההתראה נשלחה. */
+  const CHANGE_TEXT = Object.freeze({
+    assignment_added: 'שובצת',
+    // ⭐ לא „בוטל שיבוץ". שיבוץ אינו מבוטל — הוא משתנה, והעובדה
+    // התפעולית היא שביום הזה אינך משובץ.
+    assignment_removed: 'אינך משובץ',
+    assignment_cancelled: 'אינך משובץ',
+    assignment_restored: 'חזרת לשיבוץ',
+    assignment_moved: 'הוזזת',
+    sub_station_changed: 'הוזזת',
+    station_changed: 'הוזזת לתחנה אחרת',
+    role_changed: 'שונה התפקיד',
+    hours_changed: 'שונו השעות',
+    shift_changed: 'שונתה המשמרת',
+    rotation_changed: 'שונה הסבב',
+    crew_changed: 'השתנה הצוות',
+    event_assigned: 'שובצת לאירוע',
+    event_changed: 'אירוע עודכן',
+    event_cancelled: 'אירוע ירד'
+  });
+
+  function itemText(item) {
+    const parts = [CHANGE_TEXT[item.kind] || 'עודכן שיבוץ'];
+    const when = shortDate(item.date);
+    const fromWhen = shortDate(item.from_date);
+    // מעבר ליום אחר נאמר כמעבר, ולא כשני תאריכים זה לצד זה.
+    if (fromWhen && when) parts.push('מ-' + fromWhen + ' ל-' + when);
+    else if (when) parts.push(when);
+
+    // תחנת הקצה נאמרת רק כשהיא ידועה. אירוע אינו יושב בתחנת קצה,
+    // ואין להמציא לו אחת.
+    const where = item.sub_station_label || item.sub_station;
+    const fromWhere = item.from_sub_station_label || item.from_sub_station;
+    if (isNonEmptyString(where) && isNonEmptyString(fromWhere)) {
+      parts.push('מ' + fromWhere + ' ל' + where);
+    } else if (isNonEmptyString(where)) parts.push(where);
+    return parts.join(' · ');
+  }
+
+  function pushBody(items, changeCount, firstPublication) {
+    if (!items.length) {
+      return firstPublication ? 'הסידור שלך פורסם' : 'הסידור שלך עודכן';
+    }
+    if (items.length === 1 && changeCount === 1) return itemText(items[0]);
+    // שניים-שלושה נאמרים במלואם; מעבר לזה, הראשונים ומספר.
+    const shown = items.slice(0, 3).map(itemText);
+    const rest = changeCount - Math.min(3, items.length);
+    return shown.join(' | ') + (rest > 0 ? ' | ועוד ' + rest : '');
   }
 
   /**
@@ -350,10 +478,8 @@ function createPublication(deps) {
    * מי שרוצה לדעת מי איתו פותח את האפליקציה.
    */
   function buildPush(person, changes, publicationId, firstPublication) {
-    const items = changes.slice(0, LIMITS.MAX_PUSH_ITEMS).map(pickPushFields);
-    const body = firstPublication
-      ? (items.length === 1 ? 'שיבוץ אחד פורסם עבורך' : items.length + ' שיבוצים ואירועים פורסמו עבורך')
-      : (items.length === 1 ? 'שינוי אחד בסידור שלך' : items.length + ' שינויים בסידור שלך');
+    let items = changes.slice(0, LIMITS.MAX_PUSH_ITEMS).map(pickPushFields);
+    let body = pushBody(items, changes.length, firstPublication);
     const push = {
       title: firstPublication ? 'ResQ · הסידור פורסם' : 'ResQ · הסידור שלך',
       body,
@@ -363,6 +489,19 @@ function createPublication(deps) {
       route: 'my-schedule',
       publication_id: publicationId
     };
+    /* ⭐ מטען גדול מדי מצטמצם, ואינו מפיל פרסום.
+     *
+     * עד כאן חריגה מהתקרה זרקה שגיאה, כלומר **הפרסום כולו נכשל**
+     * מפני שלאדם אחד היו הרבה שינויים. זו תגובה לא פרופורציונלית:
+     * הסידור תקין, והבעיה היחידה היא שההודעה ארוכה. ההודעה
+     * מתקצרת, וכמה הושמטו נאמר. */
+    while (items.length > 1 && utf8Bytes(stable(push)) > LIMITS.MAX_PUSH_BYTES) {
+      items = items.slice(0, items.length - 1);
+      body = pushBody(items, changes.length, firstPublication);
+      push.items = items;
+      push.body = body;
+      push.truncated_changes = Math.max(0, changes.length - items.length);
+    }
     if (utf8Bytes(stable(push)) > LIMITS.MAX_PUSH_BYTES) {
       throw new PublicationError('push-too-large', 'מטען ההתראה גדול מהמותר');
     }

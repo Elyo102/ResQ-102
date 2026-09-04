@@ -38,6 +38,8 @@ token.json
 
 # --- node ---
 node_modules/
+# also a symlink named node_modules (a link is a file to git, and the slash form misses it)
+node_modules
 npm-debug.log*
 package-lock.json
 !functions/package-lock.json
@@ -71,3 +73,12 @@ ui-debug.log
 tests/.visual/
 tests/debug.log
 debug.log
+
+# All local monitoring exports and backup sets are private, including future
+# JSON/log formats. Git history and documents may contain sensitive data.
+_ניטור/
+_גיבוי/
+# Private working documents: backed up by ops-backup.mjs, never pushed.
+_דיונים/
+_מסירות/
+_מסירה-*/

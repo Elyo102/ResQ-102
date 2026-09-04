@@ -91,8 +91,9 @@ const MUTATIONS = [
     "if (ctx.unavailable) return REASON.NOT_AVAILABLE;",
     "if (ctx.unavailable) return JSON.stringify(ctx.unavailable);", ['engine', 'source']],
   ['רשימת ההיתר של הפוש שנפרצת', 'publication',
-    "for (const key of PUSH_FIELDS) out[key] = flat[key] === undefined ? null : flat[key];",
-    "Object.assign(out, flat); out.crew = (change.to || change.from || {}).crew || [];", ['publication', 'source']],
+    "    for (const key of PUSH_FIELDS) {\n      if (flat[key] !== undefined && flat[key] !== null) out[key] = flat[key];\n    }",
+    "    Object.assign(out, flat); out.crew = (change.to || change.from || {}).crew || [];",
+    ['publication', 'source']],
   ['בדיקת הדליפה שמנוטרלת', 'publication',
     "assertNoLeak(push, 'push');", "", ['publication', 'source']],
 

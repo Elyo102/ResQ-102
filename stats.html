@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=38">
+<link rel="stylesheet" href="./theme.css?v=42g0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -199,32 +199,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=38';
-import { renderNav, renderStuckNav } from './nav.js?v=38';
-import { initPWA } from './pwa.js?v=38';
-import { watchCallouts } from './callout.js?v=38';
-import { CREW_HE } from './rotation.js?v=38';
-import { mergeFleet } from './faults.js?v=38';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
+import { renderNav, renderStuckNav } from './nav.js?v=42g0';
+import { initPWA } from './pwa.js?v=42g0';
+import { watchCallouts } from './callout.js?v=42g0';
+import { CREW_HE } from './rotation.js?v=42g0';
+import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42g0';
+import { mergeFleet } from './faults.js?v=42g0';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=38';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+  from './monitored-functions.js?v=42g0';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=41a1';
+import { initAppCheck } from './appcheck.js?v=42g0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const guardStatsCall = httpsCallable(fns, 'getGuardLoadStatistics');
 const scheduleStatusCall = httpsCallable(fns, 'getScheduleRuntimeStatus');
-const legacyScheduleCall = httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
+const workdaysCall = httpsCallable(fns, 'getEffectiveWorkdays');
 const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
@@ -239,7 +240,7 @@ function esc(s){
 
 let SID = '', ME = null, WIN = '365';
 let fleet = [], faults = [], guards = [], swaps = [], people = [];
-let rotations = [], overrides = {}, ctx = {};
+let effective = null, ctx = {};
 let guardLoadError = '';
 let scheduleLoadError = '';
 let guardLoadGeneration = 0;
@@ -307,50 +308,6 @@ function guardStatisticsRange(windowId){
   return { from:from, to:today };
 }
 
-const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const COMPATIBILITY_ROTATION_FIELDS = [
-  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
-  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
-  'commander_shift_hours', 'special_end', 'special_shift_hours'
-];
-
-// Keep the client boundary closed even though the server already projects an
-// allowlist. A future server refactor must not make raw schedule fields visible
-// or usable by this management screen by accident.
-function legacyCompatibilityData(result){
-  const data = result && result.data;
-  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
-      !Array.isArray(data.rotations) || !data.overrides ||
-      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
-    throw new Error('legacy-schedule-compatibility-shape');
-  }
-  const safeRotations = data.rotations.map(function (row) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) {
-      throw new Error('legacy-schedule-rotation-shape');
-    }
-    const safe = {};
-    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
-      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
-    });
-    return safe;
-  });
-  const safeOverrides = {};
-  Object.keys(data.overrides).forEach(function (date) {
-    const row = data.overrides[date];
-    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
-        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
-      throw new Error('legacy-schedule-override-shape');
-    }
-    safeOverrides[date] = {
-      date: date,
-      kind: typeof row.kind === 'string' ? row.kind : '',
-      crew: typeof row.crew === 'string' ? row.crew : '',
-      extra_crews: row.extra_crews.slice()
-    };
-  });
-  return { mode:data.mode, rotations:safeRotations, overrides:safeOverrides };
-}
-
 async function loadGuardStatistics(windowId){
   const selectedWindow = windowId || WIN;
   const generation = ++guardLoadGeneration;
@@ -375,20 +332,19 @@ async function loadGuardStatistics(windowId){
   return true;
 }
 
-async function loadLegacyScheduleCompatibility(){
+// ⭐ מי עובד — מהשרת, מהסידור האפקטיבי, לכל מי שבסגל, לשנה אחת.
+// המסך מחליף חלונות קצרים בלי קריאה נוספת. תשובה פגומה → אין
+// סיווג, לא „כולם ביום חופש".
+async function loadEffectiveWorkdays(uids){
   scheduleLoadError = '';
   try {
-    // The workload screen can switch among shorter windows without another
-    // network read, so it requests the single bounded annual context once.
-    const value = legacyCompatibilityData(
-      await legacyScheduleCall(guardStatisticsRange('365'))
-    );
-    rotations = value.rotations;
-    overrides = value.overrides;
+    const list = Array.from(new Set(uids.filter(Boolean)));
+    if (list.length > WORKDAYS_MAX_UIDS) throw new Error('workdays-too-many-uids');
+    const range = guardStatisticsRange('365');
+    effective = parseEffectiveWorkdays(await workdaysCall({ from: range.from, to: range.to, uids: list }));
     return true;
   } catch (error) {
-    rotations = [];
-    overrides = {};
+    effective = null;
     scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. נתוני העומס לא יחושבו עד לרענון.';
     return false;
   }
@@ -415,7 +371,6 @@ async function loadAll(){
   };
   const flush = () => Promise.all(jobs);
   const guardStats = loadGuardStatistics(WIN);
-  const legacySchedule = loadLegacyScheduleCompatibility();
 
   people = [];
   await grab('roster', s => s.forEach(d => {
@@ -445,11 +400,11 @@ async function loadAll(){
   }));
 
   await flush();
-  await Promise.all([guardStats, legacySchedule]);
+  // אחרי הסגל: השאלה „מי עובד" נשאלת על כל מי שבסגל, בקריאה אחת.
+  await Promise.all([guardStats, loadEffectiveWorkdays(people.map(p => p.uid))]);
 
   fleet = mergeFleet(boardVehicles, anchors);
-  ctx = { rotations, overrides,
-          swaps: swaps.filter(s => s.status === 'approved'), guards };
+  ctx = { effective, swaps: swaps.filter(s => s.status === 'approved'), guards };
 
   render();
 }
@@ -467,7 +422,7 @@ function buildWindows(){
       WIN = w.id;
       buildWindows();
       if (!await loadGuardStatistics(w.id)) return;
-      ctx = { rotations, overrides, swaps:swaps.filter(s => s.status === 'approved'), guards };
+      ctx = { effective, swaps:swaps.filter(s => s.status === 'approved'), guards };
       render();
     };
     bar.appendChild(b);
@@ -569,7 +524,8 @@ function renderLoad(since){
     const n = document.createElement('div');
     n.className = 'n';
     n.innerHTML = '<b>' + r.score + '</b> · ' + r.gOff + '/' +
-                  r.gShift + '/' + r.swapIn;
+                  r.gShift + '/' + r.swapIn +
+                  (r.gUnknown ? ' <span class="note">(+' + r.gUnknown + ' לא סווגו)</span>' : '');
 
     box.appendChild(nm); box.appendChild(tr); box.appendChild(n);
   });

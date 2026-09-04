@@ -37,15 +37,6 @@ function noRawScheduleRead(source) {
     /getDocs\s*\(\s*collection\([^)]*['"](?:rotations|shift_overrides)['"]/);
 }
 
-test('statistics reads the allowlisted compatibility callable, never raw schedule documents', () => {
-  assert.match(stats, /httpsCallable\(fns,\s*'getLegacyScheduleCompatibilityContext'\)/);
-  assert.match(stats, /legacyScheduleCall\(guardStatisticsRange\('365'\)\)/);
-  assert.match(stats, /guardDayOffset\(today,\s*-365\)/);
-  assert.doesNotMatch(stats,
-    /legacyScheduleCall\s*\([^)]*(?:station|sid|SID)/);
-  noRawScheduleRead(stats);
-});
-
 test('statistics stops load calculations when schedule or guard context is unavailable', () => {
   const body = functionBody(stats, 'renderLoad');
   assert.ok(body.indexOf('scheduleLoadError || guardLoadError') >= 0);
@@ -71,16 +62,6 @@ test('statistics rejects a missing or non-array guard board instead of publishin
   assert.ok(body.indexOf('nextError =') < body.indexOf('guards = nextGuards'));
 });
 
-test('swaps reads the allowlisted compatibility callable with no station argument', () => {
-  assert.match(swaps, /httpsCallable\(fns,\s*'getLegacyScheduleCompatibilityContext'\)/);
-  assert.match(swaps, /legacyScheduleCall\(swapDateWindow\.schedule\)/);
-  assert.match(swaps, /SWAP_COMPATIBILITY_PAST_DAYS\s*=\s*31/);
-  assert.match(swaps, /SWAP_COMPATIBILITY_FUTURE_DAYS\s*=\s*365/);
-  assert.doesNotMatch(swaps,
-    /legacyScheduleCall\s*\([^)]*(?:station|sid|SID)/);
-  noRawScheduleRead(swaps);
-});
-
 test('swap inputs leave one schedule day on each side for the rest rule', () => {
   const windowBody = functionBody(swaps, 'swapCompatibilityWindow');
   assert.match(windowBody,
@@ -97,25 +78,6 @@ test('swap inputs leave one schedule day on each side for the rest rule', () => 
   assert.match(swaps, /if \(!swapDateAllowed\(my\)\)/);
   assert.match(swaps, /if \(!swapDateAllowed\(his\)\)/);
   assert.match(swaps, /if \(!swapDateAllowed\(d\)\)/);
-});
-
-test('every swap path that derives duty or rest fails closed without schedule context', () => {
-  assert.match(swaps, /btnSend'\)\.onclick[\s\S]{0,180}requireSchedule\('newMsg'\)/);
-  const take = functionBody(swaps, 'takeOpen');
-  assert.ok(take.indexOf("requireSchedule('openMsg')") < take.indexOf('swapRestCheck('));
-  const review = functionBody(swaps, 'reviewDialog');
-  assert.ok(review.indexOf("requireSchedule('apprMsg')") < review.indexOf('swapRestCheck('));
-  const crew = functionBody(swaps, 'crewLine');
-  assert.ok(crew.indexOf('!scheduleReady') < crew.indexOf('crewOnDate('));
-});
-
-test('a successful compatibility load refreshes both date labels selected while loading', () => {
-  const body = functionBody(swaps, 'loadLegacyScheduleCompatibility');
-  const ready = body.indexOf('scheduleReady = true');
-  const mine = body.indexOf("crewLine('myDate', 'myCrewLine')");
-  const his = body.indexOf("crewLine('hisDate', 'hisCrewLine')");
-  assert.ok(ready >= 0 && mine > ready && his > ready);
-  assert.ok(mine < body.indexOf('return true;') && his < body.indexOf('return true;'));
 });
 
 test('the diagnostic page neither probes, seeds nor exports raw schedule collections', () => {
@@ -142,5 +104,5 @@ test('the browser stub supplies only the projected compatibility shape', () => {
   assert.doesNotMatch(projection, /note:|email|medical|by_uid|created_at|updated_at/);
 });
 
-assert.equal(passed, 10);
-console.log('\n10 legacy compatibility page checks passed.');
+assert.equal(passed, 6);
+console.log('\n6 legacy compatibility page checks passed (screen consumption moved to schedule-effective-consumers.mjs).');

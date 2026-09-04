@@ -246,14 +246,99 @@ t('שלושה שינויים לאדם — התראה אחת', () => {
   const mine = r.notifications.filter((n) => n.person === 'דן');
   assert.strictEqual(mine.length, 1, 'נשלחו ' + mine.length + ' התראות במקום אחת');
   assert.ok(mine[0].change_count >= 2);
-  assert.ok(mine[0].push.body.indexOf('שינויים') > -1);
+  // ⭐ התראה אחת, אבל היא נוקבת בכל תאריך. „2 שינויים בסידור שלך"
+  // מחייב לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למחר.
+  assert.ok(mine[0].push.body.indexOf('1/9') > -1, mine[0].push.body);
+  assert.ok(mine[0].push.body.indexOf('2/9') > -1, mine[0].push.body);
+  assert.ok(mine[0].push.body.indexOf('אילת') > -1, mine[0].push.body);
+});
+
+t('העברה ליום אחר היא שינוי אחד, לא ביטול ותוספת', () => {
+  // ⭐ „הזיזו אותי ליום אחר" — הפירוק לשניים נכון טכנית ושקרי
+  // תפעולית: מי שקורא „אינך משובץ" מבין שהורידו אותו ממשמרת, ורק
+  // בשורה הבאה מגלה שהוא עדיין עובד.
+  const next = plan([row('2026-09-03', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
+  const prev = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
+  const r = mk().planPublication(publicationInput({ next, previous: prev, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  assert.strictEqual(mine.change_count, 1, 'פורק לשני שינויים');
+  assert.strictEqual(mine.push.items[0].kind, 'assignment_moved');
+  assert.strictEqual(mine.push.items[0].from_date, '2026-09-01');
+  assert.strictEqual(mine.push.items[0].date, '2026-09-03');
+  assert.strictEqual(mine.push.body, 'הוזזת · מ-1/9 ל-3/9 · אילת', mine.push.body);
+});
+
+t('שתי הסרות ושתי הוספות אינן מוצמדות — אין דרך לדעת מה הפך למה', () => {
+  // ⭐ הצמדה כאן הייתה אומרת לאדם שהוא עובר ליום שאיש לא העביר
+  // אותו אליו. עדיף לומר ארבעה דברים נכונים משניים מומצאים.
+  const prev = plan([
+    row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-02', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])
+  ]);
+  const next = plan([
+    row('2026-09-05', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-06', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])
+  ]);
+  const r = mk().planPublication(publicationInput({ next, previous: prev, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  assert.strictEqual(mine.push.items.some((x) => x.kind === 'assignment_moved'), false);
+  assert.strictEqual(mine.change_count, 4);
+});
+
+t('אדם מקבל התראה אחת בלבד לכל הפרסום', () => {
+  // כל השינויים של אדם נאספים להתראה אחת — גם כשהם על ימים
+  // שונים ועל תחנות שונות.
+  const prev = plan([
+    row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-02', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-03', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])
+  ]);
+  const next = plan([
+    row('2026-09-01', 'timna', 'תמנע', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-02', 'timna', 'תמנע', [slot('דן', 'driver', 'נהג')]),
+    row('2026-09-03', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות')])
+  ]);
+  const r = mk().planPublication(publicationInput({ next, previous: prev, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן');
+  assert.strictEqual(mine.length, 1, 'נשלחו ' + mine.length + ' התראות');
+  assert.ok(mine[0].change_count >= 3);
+});
+
+t('שינוי בתחנת קצה אומר לאיזה תאריך ולאיזו תחנה', () => {
+  const next = plan([row('2026-09-01', 'timna', 'תמנע', [slot('דן', 'driver', 'נהג')])]);
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  // ⭐ „הוזזת" ולא „שובצת מחדש", ועם המקום שממנו — בלי זה צריך
+  // לפתוח את האפליקציה כדי להבין אם זה בכלל שינוי מבחינתך.
+  assert.ok(mine.push.body.indexOf('הוזזת · 1/9 · מאילת לתמנע') === 0, mine.push.body);
+  // והמטען עצמו נושא את השדות, לא רק את הטקסט.
+  const item = mine.push.items.find((x) => x.kind === 'sub_station_changed');
+  assert.ok(item);
+  assert.strictEqual(item.date, '2026-09-01');
+  assert.strictEqual(item.sub_station, 'timna');
+  assert.strictEqual(item.sub_station_label, 'תמנע');
+});
+
+t('ההתראה אינה נושאת שם של אף אדם אחר', () => {
+  // רון יוצא ואבי נכנס: הרכב הצוות של דן השתנה, ולכן הוא מקבל התראה.
+  const next = plan([row('2026-09-01', 'eilat', 'אילת',
+    [slot('דן', 'driver', 'נהג'), slot('אבי', 'team_cmd', 'מפקד צוות')])]);
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
+  const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  const text = JSON.stringify(mine.push);
+  // ⭐ הרכב הצוות השתנה, והשם של מי שנוסף אינו במטען. מי שרוצה
+  // לדעת מי איתו פותח את האפליקציה.
+  assert.ok(text.indexOf('רון') === -1, text);
+  assert.ok(text.indexOf('אבי') === -1, text);
+  assert.ok(text.indexOf('רמי') === -1, text);
 });
 
 t('שינוי אחד — נוסח יחיד', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
-  assert.strictEqual(mine.push.body, 'שינוי אחד בסידור שלך');
+  // תאריך ותחנת קצה, ולא ספירה.
+  assert.strictEqual(mine.push.body, 'שונה התפקיד · 1/9 · אילת', mine.push.body);
 });
 
 t('לחיצה פותחת את הסידור שלי', () => {
@@ -276,9 +361,14 @@ t('בלי מי שמפרסם — סירוב', () =>
 t('מטען הפוש מכיל אך ורק את שדות רשימת ההיתר', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
+  // ⭐ הרשימה קובעת מה **מותר**, לא מה חייב: שדה ריק אינו נכתב,
+  // כדי לא לבזבז את תקציב הבתים של ההתראה. מה שנשאר נאכף — שום
+  // מפתח שאינו ברשימה אינו יכול להופיע.
   r.notifications.forEach((n) => n.push.items.forEach((item) => {
-    assert.deepStrictEqual(Object.keys(item).sort(), PUSH_FIELDS.slice().sort(),
-      'מטען עם שדות אחרים: ' + Object.keys(item).join(','));
+    const extra = Object.keys(item).filter((key) => PUSH_FIELDS.indexOf(key) === -1);
+    assert.deepStrictEqual(extra, [], 'מטען עם שדות אחרים: ' + extra.join(','));
+    assert.ok(item.kind, 'פריט בלי סוג');
+    assert.ok(item.date, 'פריט בלי תאריך');
   }));
 });
 
@@ -308,7 +398,8 @@ t('כותרת אירוע חופשית אינה יוצאת למסך הנעילה'
     actor: 'רמי'
   }));
   assert.strictEqual(JSON.stringify(r.notifications[0].push).indexOf(title), -1);
-  assert.deepStrictEqual(Object.keys(r.notifications[0].push.items[0]).sort(), PUSH_FIELDS.slice().sort());
+  const keys = Object.keys(r.notifications[0].push.items[0]);
+  assert.deepStrictEqual(keys.filter((key) => PUSH_FIELDS.indexOf(key) === -1), []);
 });
 
 t('התראה גדולה נחתכת לגודל בטוח ומדווחת כמה שינויים הושמטו', () => {

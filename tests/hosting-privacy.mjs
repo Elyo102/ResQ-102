@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
+const releaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 let failed = 0;
 
 function check(ok, label) {
@@ -31,7 +33,7 @@ for (const id of ['knob', 'master', 'mState', 'ready',
 }
 check(firebaseConfig.hosting.ignore.includes('roster-import.js'),
       'Firebase Hosting excludes roster-import.js as defense in depth');
-check(worker.includes("const CACHE = 'resq-v42f2-release1'"),
+check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the service-worker cache is rotated away from the exposed copy');
 
 const server = http.createServer((req, res) => {

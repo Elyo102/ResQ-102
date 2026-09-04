@@ -55,7 +55,7 @@ try {
   // every action that calculates or writes remains disabled.
   {
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[{ reject:true }]
+      getEffectiveWorkdays:[{ reject:true }]
     });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
@@ -79,10 +79,10 @@ try {
     await page.waitForFunction(() =>
       document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
       document.querySelector('#tHours')?.textContent !== '—');
-    const compatibilityCalls = await page.evaluate(() =>
+    const workdaysCalls = await page.evaluate(() =>
       (window.__CALLABLE_CALLS || []).filter(call =>
-        call && call.name === 'getLegacyScheduleCompatibilityContext').length);
-    assert.equal(compatibilityCalls, 2);
+        call && call.name === 'getEffectiveWorkdays').length);
+    assert.equal(workdaysCalls, 2);
     assert.doesNotMatch(await page.locator('#msg').textContent(), /האדם או החודש השתנו/);
     await context.close();
     console.log('✓ attendance fails closed without stale KPIs and month navigation retries safely');
@@ -92,7 +92,7 @@ try {
   // labels honest. Raw legacy collections are never used as a fallback.
   {
     const context = await contextWithPlan({
-      getLegacyScheduleCompatibilityContext:[{ reject:true }]
+      getEffectiveWorkdays:[{ reject:true }]
     });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/swaps.html`, { waitUntil:'load' });
@@ -108,20 +108,71 @@ try {
     console.log('✓ swaps keeps submission and schedule-derived labels fail-closed after rejection');
   }
 
-  // Defense in depth for statistics: the client must keep its own allowlist
-  // instead of assigning the server response object directly.
+  // 417 §4: a month the schedule does not cover is 'unknown' on every day —
+  // nothing is suggested or auto-filled, a guard on such a day is NOT
+  // pre-filled as an off-duty guard, and the month label says so. The same
+  // holds when the subject is missing from the roster answer.
+  for (const variant of ['unknown-dates', 'missing-uid']) {
+    const context = await contextWithPlan({
+      getMyGuardAttendance:[{ data:{ guards:[
+        { id:'g-unk', date:null, title:'אבטחה בחודש לא ידוע', start:'18:00', end:'22:00', status:'staffed' }
+      ] } }]
+    });
+    await context.addInitScript(({ mode }) => {
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth();
+      const key = d => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      const last = new Date(y, m + 1, 0).getDate();
+      const dates = [];
+      for (let d = 1; d <= last; d += 1) dates.push(key(d));
+      if (mode === 'unknown-dates') window.__STUB_UNKNOWN_DATES = dates;
+      else window.__STUB_CREW_OF = { 'stub-uid': undefined, u1:'C', u2:'A', u3:'A', u4:'B', u5:'B' };
+      // the guard is TODAY — #btnManual opens today's edit dialog
+      window.__ATTENDANCE_TEST_GUARD_DATE = key(now.getDate());
+      const plan = window.__CALLABLE_PLAN && window.__CALLABLE_PLAN.getMyGuardAttendance;
+      if (plan && plan[0]) plan[0].data.guards[0].date = key(now.getDate());
+    }, { mode: variant });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.locator('#work').waitFor({ state:'visible' });
+    await page.addStyleTag({ content:'#coWrap{display:none!important}' });
+    await page.waitForFunction(() =>
+      document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
+      document.querySelector('#tHours')?.textContent !== '—');
+    assert.equal(await page.locator('#tSug').textContent(), '0', variant + ': nothing is suggested on unknown days');
+    assert.equal(await page.locator('#rows tr.sug').count(), 0, variant + ': no auto-filled row');
+    assert.equal(await page.locator('#btnFill').isVisible(), false, variant + ': the fill button has nothing to fill');
+    if (variant === 'unknown-dates') {
+      assert.match(await page.locator('#moLabel').textContent(), /ימים מחוץ לסידור הידוע/, 'the month label names the unknown days');
+    }
+    // Open today's edit dialog (there is a guard today): the default must stay
+    // 'regular' — unknown ≠ day off — not 'guard'.
+    const guardDate = await page.evaluate(() => window.__ATTENDANCE_TEST_GUARD_DATE);
+    assert.equal(await page.evaluate((key) => typeof key === 'string' && key.length === 10, guardDate), true);
+    await page.evaluate(() => document.querySelector('#btnManual').click());
+    await page.locator('#dType').waitFor();
+    assert.equal(await page.locator('#dType').inputValue(), 'regular',
+      variant + ': an unknown day must not default to an off-duty guard');
+    await context.close();
+    console.log('✓ attendance treats ' + variant + ' as unknown — no fill, no suggestion, no guard default');
+  }
+
+  // Defense in depth: every screen parses the workdays answer through the
+  // shared allowlist instead of assigning the server response object directly.
   {
-    const source = fs.readFileSync(path.join(root, 'stats.html'), 'utf8');
-    assert.match(source, /function legacyCompatibilityData\(result\)/);
-    assert.match(source, /COMPATIBILITY_ROTATION_FIELDS\.forEach/);
-    assert.match(source, /extra_crews:\s*row\.extra_crews\.slice\(\)/);
-    assert.doesNotMatch(source, /rotations\s*=\s*(?:result|data)\.rotations/);
-    assert.doesNotMatch(source, /overrides\s*=\s*(?:result|data)\.overrides/);
-    console.log('✓ statistics keeps a client-side schedule allowlist');
+    for (const file of ['stats.html', 'guards.html', 'swaps.html', 'attendance.html']) {
+      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      assert.match(source, /parseEffectiveWorkdays[\(\)]/, file);
+      assert.doesNotMatch(source, /effective\s*=\s*(?:result|res|out)\.data\b/, file);
+    }
+    const module = fs.readFileSync(path.join(root, 'effective-workdays.js'), 'utf8');
+    assert.match(module, /fail\('workdays-by-uid'\)/);
+    assert.match(module, /const SHIFT_HOUR_FIELDS = Object\.freeze/);
+    console.log('✓ every screen keeps the client-side workdays allowlist');
   }
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n3/3 legacy compatibility failure checks passed.');
+console.log('\n5/5 effective-schedule failure checks passed.');

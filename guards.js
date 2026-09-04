@@ -21,7 +21,7 @@
 //
 // טעות זו היא הטעות המתבקשת כאן, ולכן היא כתובה במפורש.
 
-import { personWorks, fromKey } from './rotation.js?v=37';
+import { worksOn } from './effective-workdays.js?v=42g0';
 
 // ------------------------------------------------------------------
 //  מצבים
@@ -126,25 +126,27 @@ export function openSlots(g) {
 // התשובה נגזרת מהסבב ומההחלפות המאושרות — אותה פונקציה בדיוק
 // שמצייר בה מסך הסידור, כדי ששני המסכים לא יסתרו זה את זה.
 
+// true · false · 'unknown'. התשובה מגיעה מהשרת (הסידור האפקטיבי —
+// legacy עם החלפות מאושרות, או הפרסום) דרך ctx.effective; הצוות
+// (crew) נשמר בחתימה לתאימות הקוראים, אבל אינו קובע עוד דבר.
 export function onDutyAt(ctx, uid, crew, dateKey) {
   const c = ctx || {};
-  if (!crew) return false;
-  // rotation.js עובד עם אובייקט Date, ואבטחה נשמרת עם מחרוזת
-  // תאריך. ההמרה כאן ולא שם — הסבב הוא המודול הוותיק, ואין
-  // סיבה לשנות את החתימה שלו בשביל קורא חדש.
   const key = String(dateKey || '');
-  if (key.length !== 10) return false;
-  return personWorks(c.rotations, crew, fromKey(key),
-                     c.overrides, c.swaps, uid) === true;
+  if (key.length !== 10 || !uid) return 'unknown';
+  return worksOn(c.effective, uid, key);
 }
 
-// 'shift'  האבטחה בתוך המשמרת — נבלעת ב-24 השעות
-// 'off'    יום חופש — הכבאי בא מהבית
+// 'shift'    האבטחה בתוך המשמרת — נבלעת ב-24 השעות
+// 'off'      יום חופש — הכבאי בא מהבית
+// 'unknown'  היום מחוץ לסידור הידוע — לא נספר לא כך ולא כך
 export function dutyKind(ctx, uid, crew, dateKey) {
-  return onDutyAt(ctx, uid, crew, dateKey) ? 'shift' : 'off';
+  const v = onDutyAt(ctx, uid, crew, dateKey);
+  if (v === true) return 'shift';
+  if (v === false) return 'off';
+  return 'unknown';
 }
 
-export const DUTY_HE = { shift: 'בתוך המשמרת', off: 'ביום חופש' };
+export const DUTY_HE = { shift: 'בתוך המשמרת', off: 'ביום חופש', unknown: 'מחוץ לסידור הידוע' };
 
 // ------------------------------------------------------------------
 //  חלוקת עומס
@@ -154,7 +156,7 @@ export const DUTY_HE = { shift: 'בתוך המשמרת', off: 'ביום חופש
 //
 // people   [{uid, name, crew, emp}]
 // guards   רשימת אבטחות
-// ctx      {rotations, overrides, swaps} — לקביעת במשמרת/חופש
+// ctx      {effective, swaps, guards} — effective = תשובת getEffectiveWorkdays
 // sinceKey מאיזה תאריך לספור. ריק = הכל
 // untilKey עד איזה תאריך לספור. ריק = הכל
 //
@@ -164,7 +166,7 @@ export function loadByPerson(people, guards, ctx, sinceKey, untilKey) {
   const out = {};
   (people || []).forEach(function (p) {
     out[p.uid] = { uid: p.uid, name: p.name || '', crew: p.crew || '',
-                   emp: p.emp || '', off: 0, shift: 0, total: 0,
+                   emp: p.emp || '', off: 0, shift: 0, unknown: 0, total: 0,
                    hours: 0, last: '' };
   });
 
@@ -180,7 +182,8 @@ export function loadByPerson(people, guards, ctx, sinceKey, untilKey) {
       if (!rec) return;                       // מי שכבר לא בסגל
       const kind = dutyKind(ctx, uid, rec.crew, key);
       if (kind === 'off') { rec.off++; rec.hours += hrs; }
-      else rec.shift++;
+      else if (kind === 'shift') rec.shift++;
+      else rec.unknown++;        // לא-ידוע אינו „יום חופש" — לא מזכה שעות ולא נטל
       rec.total++;
       if (key > rec.last) rec.last = key;
     });

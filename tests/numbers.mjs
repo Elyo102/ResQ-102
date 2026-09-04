@@ -224,14 +224,37 @@ is('חפיפה מעבר לחצות', G.overlaps({start:'20:00',end:'01:00'},{sta
 is('לילה־אחרי מול בוקר אינם חופפים',
    G.overlaps({start:'20:00',end:'01:00'},{start:'00:00',end:'02:00'}), false);
 
-// סבב: משמרת C עובדת ב-1.8.2026 ולא ב-2.8.2026 (אותו סבב שבמבחן למעלה)
-const gctx = { rotations: rot, overrides: null, swaps: [], guards: [] };
+// „האם במשמרת" מגיע מהשרת (getEffectiveWorkdays) — כאן הוא נבנה מאותו
+// סבב: משמרת C עובדת ב-1.8.2026 ולא ב-2.8.2026 (אותו סבב שבמבחן למעלה).
+// u3 אינו בתשובה → לא ידוע, לא „חופש".
+const EW = await import(__u('effective-workdays.js'));
+const byUidFromRot = (people) => {
+  const byUid = {};
+  people.forEach(p => {
+    const list = [];
+    for (let day = 1; day <= 31; day++) {
+      const k = '2026-08-' + String(day).padStart(2, '0');
+      if (p.crew && R.isCrewWorking(rot, p.crew, R.fromKey(k))) list.push(k);
+    }
+    byUid[p.uid] = list;
+  });
+  return byUid;
+};
+const effective = EW.parseEffectiveWorkdays({ data: {
+  mode: 'shadow', source: 'legacy', fallback: null, from: '2026-08-01', to: '2026-08-31',
+  coverage: { from: '2026-08-01', to: '2026-08-31' }, unknown_dates: [], unknown_uids: {},
+  by_uid: byUidFromRot([{ uid: 'u1', crew: 'C' }, { uid: 'u2', crew: 'C' }]),
+  shift_hours: null, provenance: { mode: 'shadow', source: 'legacy' }
+} });
+const gctx = { effective, swaps: [], guards: [] };
 is('אבטחה ביום משמרת = בתוך המשמרת',
    G.dutyKind(gctx, 'u1', 'C', '2026-08-01'), 'shift');
 is('אבטחה ביום שאינו משמרת = יום חופש',
    G.dutyKind(gctx, 'u1', 'C', '2026-08-02'), 'off');
-is('בלי משמרת אין ידיעה — נחשב חופש',
-   G.dutyKind(gctx, 'u1', '', '2026-08-01'), 'off');
+is('מי שאינו בתשובת הסידור — לא ידוע, לא חופש',
+   G.dutyKind(gctx, 'u3', 'C', '2026-08-01'), 'unknown');
+is('יום מחוץ לחלון — לא ידוע',
+   G.dutyKind(gctx, 'u1', 'C', '2026-09-01'), 'unknown');
 
 // ספירת עומס: שתי אבטחות לאותו אדם, אחת במשמרת ואחת בחופש.
 const PPL = [{uid:'u1',name:'אלדד',crew:'C'},
@@ -253,6 +276,10 @@ is('u1 — שעות רק מהחופש',   LM.u1.hours, 4);
 is('u2 — רק במשמרת',        [LM.u2.off, LM.u2.shift], [0, 1]);
 is('אבטחה מבוטלת לא נספרת', LM.u2.total, 1);
 is('u3 — לא יצא בכלל',      LM.u3.total, 0);
+// אבטחה ביום לא-ידוע: נספרת בסך, לא בחופש ולא במשמרת, ולא מזכה שעות.
+const LMU = G.loadByPerson(PPL, GG.concat([{id:'u', date:'2026-08-03', start:'08:00', end:'12:00',
+  slots:1, assigned:['u3'], status:'staffed'}]), gctx, '');
+is('u3 — אבטחה ביום לא ידוע: unknown=1, off=0, שעות=0', [LMU.u3.unknown, LMU.u3.off, LMU.u3.hours, LMU.u3.total], [1, 0, 0, 1]);
 is('חלון תאריכים חותך',     G.loadByPerson(PPL, GG, gctx, '2026-08-02').u1.total, 1);
 is('חלון תאריכים אינו סופר עתיד',
   G.loadByPerson(PPL, GG, gctx, '', '2026-08-01').u1.total, 1);

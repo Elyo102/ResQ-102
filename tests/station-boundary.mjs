@@ -1,6 +1,11 @@
 // 42A — prove that schedule reads stay inside the station selected by the
 // production call site. The implementation is extracted from index.js so the
 // test cannot drift into a second, copied implementation.
+//
+// 42G.29: the loader is loadEffectiveSchedule → the runtime's
+// effectiveWorkDaysForStation(sid, …). The boundary is the same — an
+// explicit station on every call, no implicit read — and it is now the
+// runtime that owns the Firestore paths, so the fake here is the runtime.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -23,55 +28,50 @@ function grabFunction(name) {
   }
   throw new Error('unbalanced production function: ' + name);
 }
-
-function emptySnapshot() {
-  return { forEach() {} };
+function grabConstant(name) {
+  const match = source.match(new RegExp('const ' + name + ' = ([^;]+);'));
+  assert.ok(match, 'production constant exists: ' + name);
+  return 'const ' + name + ' = ' + match[1] + ';';
 }
 
-function loadScheduleFromProduction(paths, failingPath) {
-  const fakeDb = {
-    collection(path) {
-      paths.push(path);
-      return { async get() {
-        if (path === failingPath) throw new Error('simulated read failure');
-        return emptySnapshot();
-      } };
+function loaderFromProduction(stations, failingStation) {
+  const fakeRuntime = {
+    async effectiveWorkDaysForStation(sid, input) {
+      stations.push({ sid, from: input.from, to: input.to, uids: input.uids.length });
+      if (sid === failingStation) throw new Error('simulated runtime failure');
+      return {
+        mode: 'off', source: 'legacy', fallback: null, from: input.from, to: input.to,
+        coverage: { from: input.from, to: input.to }, unknown_dates: [], unknown_uids: {},
+        by_uid: Object.fromEntries(input.uids.map(u => [u, []])), provenance: { mode: 'off', source: 'legacy' }
+      };
     }
   };
-  return new Function('db', grabFunction('loadSchedule') + '\nreturn loadSchedule;')(fakeDb);
+  return new Function('scheduleRuntime',
+    grabConstant('WORKDAYS_MAX_UIDS') + '\n' + grabFunction('loadEffectiveSchedule') + '\nreturn loadEffectiveSchedule;')(fakeRuntime);
 }
 
-const paths = [];
-const loadSchedule = loadScheduleFromProduction(paths);
+const stations = [];
+const loadEffectiveSchedule = loaderFromProduction(stations);
 
-await assert.rejects(() => loadSchedule(), /explicit station id/);
-await assert.rejects(() => loadSchedule(''), /explicit station id/);
-await assert.rejects(() => loadSchedule('   '), /explicit station id/);
-assert.deepEqual(paths, [], 'invalid station ids fail before any Firestore read');
+await assert.rejects(() => loadEffectiveSchedule(), /explicit station id/);
+await assert.rejects(() => loadEffectiveSchedule(''), /explicit station id/);
+await assert.rejects(() => loadEffectiveSchedule('   '), /explicit station id/);
+assert.deepEqual(stations, [], 'invalid station ids fail before any runtime read');
 
-await loadSchedule('eilat_102');
-await loadSchedule('beer_sheva_101');
-assert.deepEqual(paths, [
-  'stations/eilat_102/rotations',
-  'stations/eilat_102/shift_overrides',
-  'stations/beer_sheva_101/rotations',
-  'stations/beer_sheva_101/shift_overrides'
-], 'each schedule read remains inside its explicit station');
+await loadEffectiveSchedule('eilat_102', '2026-09-01', '2026-09-30', ['a']);
+await loadEffectiveSchedule('beer_sheva_101', '2026-09-01', '2026-09-30', ['b']);
+assert.deepEqual(stations.map(s => s.sid), ['eilat_102', 'beer_sheva_101'],
+  'each schedule read remains inside its explicit station');
+assert.ok(stations.every(s => s.from === '2026-09-01' && s.to === '2026-09-30'),
+  'the range travels with the station');
 
-const failedRotationPaths = [];
-const rotationFailure = loadScheduleFromProduction(
-  failedRotationPaths, 'stations/eilat_102/rotations');
-await assert.rejects(() => rotationFailure('eilat_102'), /schedule rotations read failed/,
-  'rotation read failures fail closed instead of returning an empty schedule');
-
-const failedOverridePaths = [];
-const overrideFailure = loadScheduleFromProduction(
-  failedOverridePaths, 'stations/eilat_102/shift_overrides');
-await assert.rejects(() => overrideFailure('eilat_102'), /schedule overrides read failed/,
-  'override read failures fail closed instead of returning an incomplete schedule');
+const failed = [];
+const failing = loaderFromProduction(failed, 'eilat_102');
+await assert.rejects(() => failing('eilat_102', '2026-09-01', '2026-09-30', ['a']), /simulated runtime failure/,
+  'a runtime failure fails closed instead of returning an empty schedule');
 
 const scanMonth = grabFunction('scanMonth');
-assert.match(scanMonth, /loadSchedule\(STATION_ID\)/,
+assert.match(scanMonth, /loadEffectiveSchedule\(STATION_ID, mk \+ '-01'/,
   'single-station monthly scan keeps its explicit pilot station');
 
 const swapStart = source.indexOf('exports.onSwapChange = onDocumentWritten(');
@@ -80,9 +80,9 @@ const swapEnd = source.indexOf('\nexports.', swapStart + 1);
 const swapSource = source.slice(swapStart, swapEnd === -1 ? source.length : swapEnd);
 assert.match(swapSource, /const sid = event\.params\.sid;/,
   'swap trigger derives the station from the event path');
-assert.match(swapSource, /loadSchedule\(sid\)/,
+assert.match(swapSource, /loadEffectiveSchedule\(sid, range\.from, range\.to,/,
   'swap trigger passes the event station to the schedule loader');
-assert.doesNotMatch(swapSource, /loadSchedule\(\s*\)/,
+assert.doesNotMatch(swapSource, /loadEffectiveSchedule\(\s*\)/,
   'swap trigger never performs an implicit schedule read');
 assert.match(swapSource, /status:\s*'cmd_to'/,
   'a failed rest check returns the swap to the last approval stage');
@@ -91,9 +91,10 @@ assert.match(swapSource, /rest_check_pending:\s*true/,
 assert.match(swapSource, /האישור לא נכנס לתוקף/,
   'users are told that the approval did not take effect');
 
-const calls = Array.from(source.matchAll(/\bloadSchedule\s*\(([^)]*)\)/g),
+const calls = Array.from(source.matchAll(/\bloadEffectiveSchedule\s*\(([^,)]*)/g),
   match => match[1].trim());
 assert.deepEqual(calls, ['sid', 'STATION_ID', 'sid'],
   'all production definitions and call sites remain explicit and reviewed');
+assert.doesNotMatch(source, /\bloadSchedule\s*\(/, 'the old direct-read loader is gone');
 
 console.log('Station boundary checks passed: 16');

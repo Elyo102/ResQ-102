@@ -302,6 +302,34 @@
       "indexes": []
     },
     {
+      "collectionGroup": "schedule_policy_operations",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_mode_operations",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_source_operations",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_sources",
+      "fieldPath": "expires_at",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
       "collectionGroup": "guard_notification_jobs",
       "fieldPath": "status",
       "indexes": [
@@ -325,6 +353,36 @@
     {
       "collectionGroup": "guards",
       "fieldPath": "assignment_epochs",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule_preflight",
+      "fieldPath": "ttl_expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "incidents",
+      "fieldPath": "expires_at",
+      "ttl": false,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "feedback",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "incident_days",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "feedback_quota",
+      "fieldPath": "expires_at",
+      "ttl": true,
       "indexes": []
     }
   ]

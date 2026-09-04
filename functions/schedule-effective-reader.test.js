@@ -367,8 +367,20 @@ async function main() {
     assert.doesNotMatch(source, /require\s*\([^)]*(firebase|firestore)|https?:\/\/|fetch\s*\(|Date\.now|\.set\s*\(|\.update\s*\(|\.create\s*\(|\.delete\s*\(/i);
   });
 
-  assert.equal(passed, 16);
-  console.log('\n16 schedule effective reader unit checks passed.');
+  await test('a system context (no uid) serves the station window but never the personal window', async () => {
+    const h = harness({ context: { station_id: SID, system: true, active: true } });
+    const station = await h.reader.getStation(request());
+    assert.equal(station.kind, 'schedule-effective-station-window');
+    assert.ok(station.days.length > 0);
+    await rejects(() => h.reader.getMy(request()), 'context-uid');
+    const withUid = harness({ context: { station_id: SID, system: true, uid: UID, active: true } });
+    await rejects(() => withUid.reader.getStation(request()), 'context-system-uid');
+    const nothing = harness({ context: { station_id: SID, active: true } });
+    await rejects(() => nothing.reader.getStation(request()), 'context-uid');
+  });
+
+  assert.equal(passed, 17);
+  console.log('\n17 schedule effective reader unit checks passed.');
 }
 
 main().catch((error) => {

@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=40">
-<link rel="stylesheet" href="./bulletin.css?v=40">
+<link rel="stylesheet" href="./theme.css?v=42g0">
+<link rel="stylesheet" href="./bulletin.css?v=42g0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -458,15 +458,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=40';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=40';
-import { renderNav, clearNav } from './nav.js?v=40';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=40';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42f2';
-import { APP_VERSION, APP_DATE } from './version.js?v=42f2';
-import { watchCallouts } from './callout.js?v=40';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=40';
+         subStationsForStation } from './stations.js?v=42g0';
+import { renderNav, clearNav } from './nav.js?v=42g0';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42g0';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42g0';
+import { APP_VERSION, APP_DATE } from './version.js?v=42g0';
+import { watchCallouts } from './callout.js?v=42g0';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42g0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -477,11 +477,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+  from './monitored-functions.js?v=42g0';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=41a1';
+import { initAppCheck } from './appcheck.js?v=42g0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

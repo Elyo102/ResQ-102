@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
+const publication = read('functions/schedule-publication.js');
 const service = read('functions/schedule-service.js');
 const access = read('functions/schedule-access.js');
 const accessAdmin = read('functions/schedule-access-admin.js');
@@ -14,6 +15,8 @@ const legacyCompat = read('functions/schedule-legacy-compat.js');
 const index = read('functions/index.js');
 const rules = read('firestore.rules');
 const backup = read('functions/backup-policy.js');
+const author = read('functions/schedule-policy-author.js');
+const modeAuthority = read('functions/schedule-mode-authority.js');
 const ui = read('schedule-management.js');
 const html = read('schedule-management.html');
 const legacySchedule = read('schedule.html');
@@ -25,6 +28,12 @@ const manifest = JSON.parse(read('manifest.json'));
 
 let passed = 0;
 function check(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
+/* קוד בלי הערות — כדי שטענה על קוד לא תסופק על ידי הערה. */
+function stripComments(text) {
+  return String(text)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
 
 check('missing runtime configuration is fail-closed off', () => {
   assert.ok(runtime.includes("const mode = MODES.indexOf(data.mode) !== -1 ? data.mode : MODE.OFF"));
@@ -117,7 +126,8 @@ check('publishing requires the exact digest returned by draft preview', () => {
   assert.ok(runtime.includes("'draft-preview-required'"));
   assert.ok(runtime.includes('liveDraft.content_digest !== expectedContentDigest'));
   assert.ok(ui.includes("httpsCallable(functions, 'getScheduleDraftPreview')"));
-  assert.ok(ui.includes('expected_content_digest: state.draftPreview.expected_content_digest'));
+  assert.ok(ui.includes('const expectedContentDigest = state.draftPreview.expected_content_digest'));
+  assert.ok(ui.includes('expected_content_digest: expectedContentDigest'));
   assert.ok(html.includes('תצוגה מקדימה של הטיוטה'));
   assert.ok(html.includes('id="reviewDraft"'));
 });
@@ -139,8 +149,53 @@ check('notifications are blocked until activation commits', () => {
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
-  assert.ok(runtime.includes('existingData.request_fingerprint !== requestFingerprint'));
+  assert.ok(runtime.includes('existingData.request_fingerprint !== fingerprintForExisting'));
   assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
+});
+check('prepared replay is bound to intent and starts only after the fingerprint matches', () => {
+  const publishStart = runtime.indexOf('async function publish(req)');
+  const publishEnd = runtime.indexOf('\n  async function rollback(req)', publishStart);
+  const body = runtime.slice(publishStart, publishEnd);
+  const fingerprint = body.indexOf("intent: preparing ? 'prepare' : 'activate'");
+  const mismatch = body.indexOf('existingData.request_fingerprint !== fingerprintForExisting');
+  const activeReplay = body.indexOf('if (pointsToExisting)');
+  const replay = body.indexOf("existingData.status === 'prepared'");
+  assert.ok(fingerprint > -1 && mismatch > fingerprint && activeReplay > mismatch
+    && replay > activeReplay,
+  'publication replay is not ordered behind its intent-bound fingerprint check');
+  assert.ok(body.slice(activeReplay, replay).includes('if (preparing || config.mode !== MODE.NEW'),
+    'active replay can release an outbox from shadow');
+  assert.ok(body.includes('return replayPreparedPublication(ctx'));
+});
+check('prepared replay verifies snapshot, live authority, runtime and predecessor without writes', () => {
+  const start = runtime.indexOf('async function replayPreparedPublication(ctx, input)');
+  const end = runtime.indexOf('\n  async function publish(req)', start);
+  const body = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(body.includes('await readSnapshot(value.pubRef, value.existingData)'));
+  assert.ok(body.includes('await requireLiveManagerNow(ctx)'));
+  assert.ok(body.includes("kind: 'prepared-replay'"));
+  assert.ok(body.includes('return db.runTransaction(async (tx) => {'));
+  assert.ok(body.includes('requireLiveManager(snaps[6], snaps[7], ctx)'));
+  assert.ok(body.includes('liveRuntime.mode !== MODE.SHADOW'));
+  assert.ok(body.includes('actualPrevious !== value.expectedPrevious'));
+  assert.ok(body.includes("livePub.status !== 'prepared'"));
+  assert.equal(/\btx\.(?:set|create|update|delete)\s*\(/.test(body), false,
+    'prepared replay performs a transaction write');
+});
+check('prepared replay requires the exact unexpired blocked outbox and returns its full contract', () => {
+  const start = runtime.indexOf('async function replayPreparedPublication(ctx, input)');
+  const end = runtime.indexOf('\n  async function publish(req)', start);
+  const body = runtime.slice(start, end);
+  assert.ok(body.includes("tx.get(value.pubRef.collection('schedule_outbox'))"));
+  assert.ok(body.includes('outboxSnap.size !== expectedOutbox.size'));
+  assert.ok(body.includes("row.status !== 'blocked'"));
+  assert.ok(body.includes('outboxExpired(row, Date.parse(clock()))'));
+  for (const field of ['duplicate: true', 'prepared: true', 'publication_id: value.pubId',
+    'revision: value.revision', 'notified_people: 0',
+    'blocked_notifications: expectedOutbox.size', 'summary: value.summary']) {
+    assert.ok(body.includes(field), field);
+  }
 });
 check('outbox delivery rechecks the active publication', () => {
   assert.ok(runtime.includes('publicationMatches(value, pointer, publication)'));
@@ -337,7 +392,132 @@ check('station schedule is the default view and denied management falls back to 
 });
 check('personal schedule reads only the requested day', () => {
   assert.ok(runtime.includes('const active = await checkedActiveSnapshot(ctx, config, [date])'));
-  assert.ok(ui.includes("call.mine({ date: state.mineDate || localDate() })"));
+  // הפאנל האישי נשאר יומי גם אחרי שהלוח הפך חודשי: האישור נשלח
+  // עם publication_id ו-item_id של יום, ואין קריאה שמחזירה את כל
+  // מה שממתין לתשובה לאורך חודש.
+  assert.ok(ui.includes("call.mine({ date: localDate() })"));
+});
+
+/* ------------------------------------------------------------------ *
+ * חוקי התחנה · נתיב הכתיבה שהיה חסר
+ * ------------------------------------------------------------------ */
+
+check('the station policy has a server write path and the browser never picks the station', () => {
+  assert.ok(runtime.includes('async function savePolicy(req)'));
+  assert.ok(runtime.includes('async function previewPolicy(req)'));
+  assert.ok(index.includes("exports.saveSchedulePolicy = onCall({ enforceAppCheck: true }"));
+  assert.ok(index.includes("exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }"));
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
+  const save = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  // התחנה והזהות מגיעות מ-context, ולעולם לא מגוף הבקשה.
+  assert.ok(save.includes('const ctx = await context(req)'));
+  assert.ok(save.includes('requireManager(ctx)'));
+  assert.equal(/data\.(station_id|stationId)/.test(save), false);
+});
+
+check('saving a policy never turns the engine on by itself', () => {
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
+  const save = runtime.slice(start, end);
+  // המצביע למדיניות הפעילה מתעדכן; `mode` אינו נכתב כאן בשום מקרה.
+  // ⭐ הכתיבה היחידה למסמך הרנטיים היא המצביע. אין כאן כתיבת mode
+  // בשום צורה — הפעלת מנוע נשארת פעולה אנושית נפרדת.
+  assert.equal(save.split('tx.set(runtimeRef').length, 2);
+  assert.ok(save.includes("tx.set(runtimeRef(ctx.sid), { active_policy_id: plan.policy_id }, { merge: true })"));
+  // הפעלה היא הצהרה מפורשת ולא ברירת מחדל.
+  assert.ok(save.includes("typeof data.activate !== 'boolean'"));
+  assert.ok(save.includes("'policy-activate-required'"));
+});
+
+check('a concurrent policy edit is refused instead of silently overwritten', () => {
+  const start = runtime.indexOf('async function savePolicy(req)');
+  const end = runtime.indexOf('function modeOperationRef(sid, requestId)', start);
+  const save = runtime.slice(start, end);
+  assert.ok(save.includes("if (expected !== activeId)"));
+  assert.ok(save.includes("'policy-conflict'"));
+  assert.ok(save.includes("'policy-request-reused'"));
+  // הקלה בתקן דורשת אמירה מפורשת של אדם.
+  assert.ok(save.includes("data.confirm_weakening !== true"));
+  assert.ok(save.includes("'policy-weakening-unconfirmed'"));
+  assert.ok(ui.includes('expected_policy_id: state.policy.active_policy_id'));
+});
+
+check('the policy author invents no business value and mirrors the runtime digest', () => {
+  assert.ok(author.includes('אין ברירות מחדל עסקיות'));
+  // ⭐ מראה מכוונת של stable() ברנטיים. אם אחד הצדדים ישתנה,
+  // `loadPolicy` יסרב למסמך שנכתב — והתקלה תתגלה מאוחר, אצל מישהו
+  // אחר. הבדיקה הזאת נועלת את שני הצדדים זה לזה.
+  const mirror = author.slice(author.indexOf('function stable(value) {'));
+  const source = runtime.slice(runtime.indexOf('function stable(value) {'));
+  const cut = (text) => text.slice(0, text.indexOf('\n}\n') + 2);
+  assert.equal(cut(mirror).split('isPlainObject').join('plain'), cut(source));
+  assert.ok(author.includes("fail(code, what + ' — ערך חסר. אין ברירת מחדל.')"));
+  assert.ok(author.includes('complete: true'));
+  assert.equal(/require\(['"]firebase/.test(author), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * ההתראה אומרת מתי ואיפה
+ * ------------------------------------------------------------------ */
+
+check('a guard notice names the date, the hours and the place', () => {
+  // „יש עדכון לאבטחה בסידור שלך" הוא נכון וחסר תועלת: הוא מחייב
+  // לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למחר.
+  assert.ok(runtime.includes('function guardPlaceText(value)'));
+  assert.ok(runtime.includes('function shortDate(iso)'));
+  const start = runtime.indexOf('function guardOutboxText(value)');
+  const end = runtime.indexOf('function guardOutboxDelivery(value)', start);
+  const text = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(text.includes('shortDate(value.date)'), 'התאריך אינו בהתראה');
+  assert.ok(text.includes('guardPlaceText(value)'), 'המקום אינו בהתראה');
+  // ⭐ המקום נלקח ממסמך האבטחה החי שכבר נקרא, ולא מעותק ישן בתור.
+  assert.ok(runtime.includes('lease_token: leaseToken, place: live.place'));
+  // והוא מנוקה לפני שהוא מגיע למסך נעול.
+  const clean = runtime.slice(runtime.indexOf('function guardPlaceText(value)'),
+    runtime.indexOf('function guardOutboxText(value)'));
+  assert.ok(clean.includes('replace(CONTROL_RE'), 'תווי בקרה אינם מוסרים');
+  assert.ok(clean.includes('.slice(0, 40)'), 'האורך אינו נחתך');
+});
+
+check('a schedule change notice names the date and the sub-station', () => {
+  assert.ok(publication.includes('function pushBody(items, changeCount, firstPublication)'));
+  assert.ok(publication.includes("sub_station_changed: 'הוזזת'"));
+  // ⭐ העברה ליום אחר היא שינוי אחד, לא ביטול ותוספת.
+  assert.ok(publication.includes('function pairMoves(items)'));
+  assert.ok(publication.includes("ASSIGNMENT_MOVED: 'assignment_moved'"));
+  // ואין „ביטול שיבוץ": שיבוץ משתנה, הוא אינו מבוטל.
+  assert.equal(publication.includes("'בוטל שיבוץ'"), false);
+  // רשימת ההיתר מונה רק שדות על האדם עצמו — לאן, מאיפה, ומתי.
+  assert.ok(publication.includes("const PUSH_FIELDS = Object.freeze(['kind', 'date', 'from_date',"));
+  // ⭐ מטען גדול מדי מצטמצם ואינו מפיל פרסום שלם.
+  assert.ok(publication.includes('while (items.length > 1 && utf8Bytes(stable(push))'));
+  // ⭐ ועדיין: שום שם של אדם אחר אינו נכנס למטען.
+  const build = publication.slice(publication.indexOf('function buildPush'),
+    publication.indexOf('function utf8Bytes'));
+  // `person` הוא שם הפרמטר — הנמען עצמו. מה שאסור הוא ש**ערך**
+  // שמזהה אדם ייכנס למטען.
+  assert.equal(/crew|full_name|\.person\b|names/.test(build), false, build.slice(0, 400));
+});
+
+check('the month strip reads the whole verified snapshot and is bounded', () => {
+  assert.ok(runtime.includes('async function getStationRange(req)'));
+  assert.ok(runtime.includes('const MAX_STATION_RANGE_DAYS = 31'));
+  assert.ok(index.includes("exports.getStationScheduleRange = onCall({ enforceAppCheck: true }"));
+  const start = runtime.indexOf('async function getStationRange(req)');
+  const end = runtime.indexOf('async function getStation(req)', start);
+  const range = runtime.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  // ⭐ dates=null במכוון: קריאת חלון מדלגת על אימות חתימת התמונה.
+  assert.ok(range.includes('await checkedActiveSnapshot(ctx, config, null)'));
+  assert.ok(range.includes('await activeSnapshotStillCurrent(ctx, config, active)'));
+  assert.ok(range.includes('checkedLegacyWindow(ctx, config, range.from, range.to)'));
+  assert.equal(/data\.(station_id|stationId)/.test(range), false);
+  // שתי הלשוניות חולקות קריאה אחת לחודש.
+  assert.ok(ui.includes('function fetchRange(ym)'));
+  assert.ok(ui.includes('function invalidateRange()'));
 });
 check('management visibility is driven by server status', () => {
   assert.ok(ui.includes("$('manageTab').hidden = !canManageSchedule()"));
@@ -346,7 +526,7 @@ check('management visibility is driven by server status', () => {
 });
 check('off and shadow schedule views use only the server-side compatibility reader', () => {
   assert.ok(runtime.includes("const effectiveReaderModule = require('./schedule-effective-reader')"));
-  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range)'));
+  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'));
   assert.ok(runtime.includes("if (config.mode !== MODE.NEW)"));
   assert.ok(ui.includes("['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1"));
   assert.ok(integration.includes('off and shadow safely expose the current station and personal legacy schedules'));
@@ -363,19 +543,23 @@ check('legacy compatibility reads are bounded by source-specific caps and date w
   assert.ok(integration.includes('legacy guard reads reject one record above the bounded per-date cap'));
 });
 check('legacy overrides use canonical document ids, never an untrusted payload date query', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range)');
-  const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)');
+  const end = runtime.indexOf('function effectiveReaderFor(ctx, scoped)', start);
   const legacy = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   assert.ok(legacy.includes("const overrideRefs = dates.map((date) => root.collection('shift_overrides').doc(date))"));
-  assert.ok(legacy.includes('db.getAll.apply(db, overrideRefs)'));
+  // הקריאה עוברת דרך reader: מחוץ לעסקה זה db.getAll, בתוכה tx.getAll.
+  assert.ok(legacy.includes('reader.getAll(overrideRefs)'));
+  const readers = runtime.slice(runtime.indexOf('function dbReader()'), start);
+  assert.ok(readers.includes('db.getAll.apply(db, refs)') && readers.includes('tx.getAll.apply(tx, refs)'),
+    'שני ה-readers אינם מגדירים getAll');
   assert.ok(legacy.includes('overrideDocs.set(doc.id, doc)'));
   assert.ok(legacy.includes('compareCanonical(left.id, right.id)'));
   const beforeGuardQuery = legacy.slice(0, legacy.indexOf("root.collection('guards')"));
   assert.equal(beforeGuardQuery.includes(".where('date', 'in', chunk)"), false);
 });
 check('legacy guard events use a bounded trusted-station bridge before the final mode recheck', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range)');
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)');
   const end = runtime.indexOf('async function checkedLegacyWindow', start);
   const body = runtime.slice(start, end);
   const guardRead = body.indexOf("root.collection('guards')");
@@ -463,7 +647,7 @@ check('legacy compatibility accepts only an exact bounded client date range and 
 });
 check('legacy compatibility is bounded and rechecks mode and live membership after reads', () => {
   const start = runtime.indexOf('async function getLegacyCompatibility(req)');
-  const end = runtime.indexOf('function effectiveReaderFor(ctx)', start);
+  const end = runtime.indexOf('function effectiveReaderFor(ctx, scoped)', start);
   const body = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
   assert.ok(body.indexOf('const ctx = await context(req);')
@@ -504,7 +688,7 @@ check('new schedule keeps guards live, private, and outside signed events and re
   const mine = runtime.slice(myStart, stationStart);
   const station = runtime.slice(stationStart, respondStart);
   const guardCardStart = ui.indexOf('function guardCard(item)');
-  const guardCardEnd = ui.indexOf('function renderMine()', guardCardStart);
+  const guardCardEnd = ui.indexOf('function renderMineToday()', guardCardStart);
   const guardCard = ui.slice(guardCardStart, guardCardEnd);
   assert.ok(runtime.includes('async function readLiveGuardProjection(ctx, dates)'));
   assert.ok(runtime.includes('function stationViewWithGuards(view, sidecar, date, viewer)'));
@@ -725,7 +909,9 @@ check('the UI exposes both personal and station views', () => {
   assert.ok(html.includes('הסידור שלי'));
   assert.ok(html.includes('סידור התחנה'));
   assert.ok(ui.includes("getMyScheduleV2"));
-  assert.ok(ui.includes("getStationScheduleV2"));
+  // סידור התחנה נקרא כרצועת חודש, ולא יום-יום. `getStationScheduleV2`
+  // נשאר בשרת לצרכנים אחרים, אך המסך הזה אינו קורא לו עוד.
+  assert.ok(ui.includes("getStationScheduleRange"));
 });
 check('dynamic schedule data is inserted as text, not HTML', () => {
   assert.equal(/\.innerHTML\s*=/.test(ui), false);
@@ -753,5 +939,944 @@ check('queries and transient schedule delivery have indexes and TTL', () => {
     && item.fieldPath === 'expires_at' && item.ttl === true));
 });
 
-assert.equal(passed, 69);
-console.log('\n69 schedule runtime source checks passed.');
+// ⭐ נוסף אחרי תקלה אמיתית: `CONTROL_RE` נכתב עם תו NUL אמיתי במקום
+// עם רצף הבריחה. הקוד עבד, כל הבדיקות עברו — אבל גיט סיווג את
+// הקובץ כבינארי, ולכן הוא לא הציג diff בשום ביקורת קוד. קובץ
+// שאי אפשר לסקור הוא קובץ שאי אפשר למזג בבטחה.
+check('schedule source files carry no raw control bytes', () => {
+  const files = ['functions/schedule-runtime.js', 'functions/schedule-policy-author.js',
+    'functions/schedule-mode-authority.js', 'functions/schedule-source-author.js',
+    'functions/schedule-publication.js', 'schedule-management.js'];
+  for (const name of files) {
+    const bytes = fs.readFileSync(path.join(root, name));
+    for (const byte of bytes) {
+      // מותרים: \t (9), \n (10), \r (13). כל שאר תווי הבקרה אסורים.
+      if (byte < 0x20 && byte !== 9 && byte !== 10 && byte !== 13) {
+        assert.fail(name + ' מכיל תו בקרה גולמי 0x' + byte.toString(16)
+          + ' — יש לכתוב אותו כרצף בריחה');
+      }
+      if (byte === 0x7f) assert.fail(name + ' מכיל DEL גולמי');
+    }
+  }
+});
+
+/* ⭐ P0-1. שלוש טענות שנועדו למנוע חזרה של המחיקה השקטה: המקור
+ * הפעיל נקרא עם התוכן שעובר, וכל ארבעת התת-אוספים נכתבים. מקור
+ * שנכתב עם `people` בלבד נראה תקין ונקרא כריק. */
+check('the active source is read through the verified loader, not a lookalike', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function readActiveSource(');
+  assert.ok(at > -1, 'readActiveSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  }', at));
+  assert.ok(/await loadSource\(/.test(body),
+    'readActiveSource אינו עובר דרך loadSource');
+  assert.ok(!/collection\('(people|availability|locked|events)'\)/.test(body),
+    'readActiveSource משכפל את קריאת תת-האוספים במקום להשתמש ב-loader המאומת');
+  assert.ok(body.indexOf('carried:') > -1, 'readActiveSource אינו מחזיר carried');
+  assert.ok(body.indexOf('content_key') > -1,
+    'content_key אינו מועבר לזיהוי יבוא שלא השתנה');
+
+  const loadAt = src.indexOf('async function loadSource(');
+  assert.ok(loadAt > -1, 'loadSource לא נמצא');
+  const loadBody = src.slice(loadAt, loadAt + 5000);
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(loadBody.indexOf("collection('" + group + "')") > -1,
+      'loadSource אינו קורא את ' + group);
+  }
+  assert.ok(loadBody.indexOf('source-count-mismatch') > -1,
+    'loadSource אינו משווה ספירות למסמכים בפועל');
+  assert.ok(loadBody.indexOf('source-digest-mismatch') > -1,
+    'loadSource אינו מאמת מחדש את החתימה');
+});
+
+check('source content keys are recomputed from the verified people projection', () => {
+  const src = read('functions/schedule-runtime.js');
+  const loadAt = src.indexOf('async function loadSource(');
+  assert.ok(loadAt > -1, 'loadSource לא נמצא');
+  const loadBody = src.slice(loadAt, loadAt + 6000);
+  assert.ok(/const actualContentKey = String\(hash\(stable\(\{\s*station_id: meta\.station_id,\s*people: peopleRaw\s*\}\)\)\)/s.test(loadBody),
+    'content_key אינו מחושב מחדש מהתחנה ומהסגל המאומת');
+  assert.ok(loadBody.indexOf('meta.content_key !== actualContentKey') > -1,
+    'content_key השמור אינו מושווה לערך המחושב');
+  assert.ok(loadBody.indexOf("'source-content-key-mismatch'") > -1,
+    'אי-התאמת content_key אינה נכשלת סגור');
+  assert.ok(loadBody.indexOf('contentKey: actualContentKey') > -1,
+    'ה-loader עדיין מחזיר content_key לא מאומת מהמטא-דאטה');
+  assert.equal(loadBody.indexOf('contentKey: meta.content_key'), -1,
+    'ה-loader סומך ישירות על content_key לא חתום');
+});
+
+check('source staging is request-specific and closing verifies ownership', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  /* מוחק מקור מדורג', at));
+  assert.ok(/source-stage\|/.test(body),
+    'מזהה staging אינו קשור לבקשה');
+  assert.ok(!/sourceRef\(ctx\.sid, plan\.source_id\)/.test(body),
+    'המקור המדורג עדיין משתמש במזהה התוכן המשותף');
+  for (const guard of ['staged_by_request', 'staged_request_hash', 'staged_owner_token',
+    'staged_content_digest']) {
+    assert.ok(body.indexOf(guard) > -1, 'חסרה הגנת staging: ' + guard);
+  }
+  assert.ok(body.indexOf('requirePendingSourceOperation(') > -1,
+    'הסגירה אינה מאמתת בעלות על operation');
+  assert.ok(body.indexOf('requireOwnedStagedSource(') > -1,
+    'הסגירה אינה מאמתת בעלות על staging');
+  for (const guard of ['source-staging-lost', 'source-staging-changed']) {
+    assert.ok(src.indexOf(guard) > -1, 'חסר קוד כשל סגור: ' + guard);
+  }
+});
+
+check('every source child chunk is fenced by the current operation and staging owners', () => {
+  const src = read('functions/schedule-runtime.js');
+  const helperAt = src.indexOf('async function commitOwnedSourceWrites(');
+  const helperEnd = src.indexOf('\n  // ⭐ הדוח', helperAt);
+  assert.ok(helperAt > -1 && helperEnd > helperAt,
+    'כותב ה-chunks המגודר לא נמצא');
+  const helper = src.slice(helperAt, helperEnd);
+  assert.ok(helper.indexOf('db.runTransaction') > -1,
+    'כתיבת source child chunks אינה טרנזקציונית');
+  assert.ok(helper.indexOf('tx.get(control.opRef)') > -1,
+    'כל chunk אינו קורא מחדש את operation');
+  assert.ok(helper.indexOf('tx.get(control.ref)') > -1,
+    'כל chunk אינו קורא מחדש את staging');
+  assert.ok(helper.indexOf('requirePendingSourceOperation(') > -1,
+    'כל chunk אינו מאמת את owner token של operation');
+  assert.ok(helper.indexOf('requireOwnedStagedSource(') > -1,
+    'כל chunk אינו מאמת את owner token של staging');
+  assert.ok(helper.indexOf('lease_until: new Date(') > -1,
+    'כותב פעיל אינו מחדש lease בכל chunk');
+  assert.ok(src.indexOf('MAX_SOURCE_TRANSACTION_BYTES = 7 * 1024 * 1024') > -1,
+    'החלוקה אינה שומרת מרווח ממגבלת 10MiB של Firestore');
+
+  const saveAt = src.indexOf('async function saveSource(');
+  const cleanupAt = src.indexOf('async function cleanupStagedSource(', saveAt);
+  const saveBody = src.slice(saveAt, cleanupAt);
+  assert.ok(saveBody.indexOf('commitOwnedSourceWrites(') > -1,
+    'saveSource אינו משתמש בכותב המגודר');
+  assert.equal(saveBody.indexOf('await commitWrites([].concat('), -1,
+    'saveSource עדיין כותב children בבאצ׳ לא מגודר');
+});
+
+check('staged cleanup claims ownership and deletes the parent last', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function cleanupStagedSource(');
+  assert.ok(at > -1, 'cleanupStagedSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  function policyOperationRef(', at));
+  const claim = body.indexOf('cleanup_claimed_by: cleanupToken');
+  const children = body.indexOf("collection('people').doc(");
+  const parent = body.lastIndexOf('tx.delete(ref)');
+  assert.ok(claim > -1 && children > claim, 'הניקוי מוחק ילדים לפני תפיסת בעלות');
+  assert.ok(parent > children, 'הניקוי מוחק את האב לפני הילדים');
+  assert.ok(body.indexOf('sourceWriteChunks(deletes)') > -1,
+    'הניקוי המיידי אינו שומר על מגבלת נפח הטרנזקציה');
+  assert.ok(body.indexOf('ownsCleanup(') > -1
+    && body.indexOf('cleanup_lease_until') > -1,
+  'מחיקת children אינה מגודרת ב-token וב-lease');
+});
+
+check('saveSource writes all four sub-collections, not people alone', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  assert.ok(at > -1, 'saveSource לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(body.indexOf("collection('" + group + "').doc(") > -1,
+      'saveSource אינו כותב את ' + group);
+  }
+});
+
+check('the author never hard-codes an empty carry basis again', () => {
+  const src = read('functions/schedule-source-author.js');
+  // הצורה שהייתה הבאג: ארבעה ליטרלים ריקים בתוך הבסיס החתום.
+  assert.ok(!/carry: \{\},\s*counts,\s*people,\s*availability: \{\}/.test(src),
+    'הבסיס החתום חזר לליטרלים ריקים — זו בדיוק המחיקה של P0-1');
+  assert.ok(src.indexOf('function carriedFrom(') > -1,
+    'carriedFrom נעלם; אין מי שיקרא את התוכן שעובר');
+});
+
+/* ⭐ P0-2 · שלוש תצוגות החזירו לוח ריק כשהמצב `new` ואין פרסום פעיל.
+ * על המסך זה אינו „אין מידע" אלא כבאי שרואה שאין לו משמרות. */
+check('no schedule view can answer with an empty board', () => {
+  const src = read('functions/schedule-runtime.js');
+  const code = src.split('\n')
+    .filter((line) => line.trim().indexOf('*') !== 0 && line.indexOf('//') !== 0)
+    .join('\n');
+  // הצורה שהייתה הבאג. היא לא חוזרת בלי שהבדיקה תיפול.
+  assert.ok(!/active: false, days: \[\]/.test(code),
+    'תצוגה מחזירה לוח ריק — זה בדיוק חלון ה-cutover הריק');
+  assert.ok(!/if \(!active\) return \{ mode: config\.mode, active: false \}/.test(code),
+    'תצוגת יום מחזירה active:false בלי נפילה ל-legacy');
+  assert.ok(src.indexOf('async function legacyFallbackWindow(') > -1,
+    'אין נפילה מסודרת ל-legacy');
+});
+
+check('every view without an active snapshot falls back to legacy', () => {
+  const src = read('functions/schedule-runtime.js');
+  for (const fn of ['async function getMy(', 'async function getStation(',
+    'async function getStationRange(']) {
+    const at = src.indexOf(fn);
+    assert.ok(at > -1, fn + ' לא נמצא');
+    const body = src.slice(at, at + 4000);
+    const guard = body.indexOf('if (!active)');
+    assert.ok(guard > -1, fn + ' אינו בודק היעדר תמונה פעילה');
+    // ⭐ בתוך אותו בלוק חייבת להיות נפילה ל-legacy, ולא החזרת ריק.
+    assert.ok(body.slice(guard, guard + 400).indexOf('legacyFallbackWindow') > -1,
+      fn + ' אינו נופל ל-legacy כשאין תמונה פעילה');
+  }
+});
+
+/* ⭐ P0-2 · חוזה המעבר. אלה הטענות שמונעות מהמעבר לחזור להיות
+ * „החלף מצב ותקווה". */
+check('preparing in shadow never activates, notifies or moves the pointer', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function publish(req)');
+  assert.ok(at > -1);
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('const preparing = config.mode === MODE.SHADOW;') > -1,
+    'הכוונה אינה נגזרת מהמצב');
+  assert.ok(/requireMode\(config, \[MODE\.NEW, MODE\.SHADOW\]\)/.test(body),
+    'publish אינו מותר ב-shadow, ולכן חלון הלוח הריק נשאר פתוח');
+  assert.ok(/tx\.update\(pubRef, \{\s*status: 'prepared'/.test(body),
+    'הכנה אינה מסמנת prepared');
+  // ⭐ B (seq379) · המניפסט של התור נכתב באותה עסקה עם הסימון.
+  assert.ok(/status: 'prepared',[\s\S]{0,200}outbox_manifest: outboxManifestFor\(planned\.notifications\)/.test(body),
+    'הכנה אינה כותבת מניפסט תור באותה עסקה');
+  // ⭐ הליבה: ההודעות משתחררות רק כשהפרסום באמת פעיל.
+  assert.ok(body.indexOf('if (!preparing) await releaseOutbox(pubRef);') > -1,
+    'הכנה משחררת הודעות על סידור שאיש אינו רואה');
+});
+
+check('the only road into new mode is the signed cutover, and it ships', () => {
+  /* ⭐ שונה עם הכרעת אלדד (3.9.2026): המעבר נשלח בנוי ואינרטי.
+   * הבדיקה הקודמת דרשה שלא יהיה callable ושלא יהיה מעבר; עכשיו היא
+   * דורשת שיהיו — ושהמתג הכללי יישאר חסום, לפני ה-replay. */
+  assert.equal(index.includes("exports.promoteScheduleToNew = onCall({ enforceAppCheck: true }"), true,
+    'promoteScheduleToNew אינו מיוצא, או מיוצא בלי App Check');
+  assert.equal(modeAuthority.includes("from: MODE.SHADOW, to: MODE.NEW, kind: 'promote'"), true,
+    'המעבר shadow→new אינו ברשימת המעברים');
+  const at = runtime.indexOf('async function setRuntimeMode(req)');
+  const end = runtime.indexOf('\n  async function runPlanner(req)', at);
+  const body = runtime.slice(at, end);
+  const guard = body.indexOf("if (data.target === MODE.NEW)");
+  const replay = body.indexOf('const opRef = modeOperationRef(');
+  assert.ok(guard > -1, 'setRuntimeMode אינו דוחה new במפורש');
+  assert.ok(replay > guard, 'הדחייה אחרי ה-replay — בקשה ישנה יכולה להחזיר הצלחת הפעלה');
+  assert.ok(body.slice(guard, guard + 400).includes("'cutover-required'"),
+    'הדחייה ללא קוד יציב אחד');
+  assert.ok(!body.includes("'mode-cutover-disabled'"), 'נשאר קוד שני לאותה דחייה');
+});
+
+check('cutover preview reads the verified publication rows', () => {
+  const at = runtime.indexOf('async function previewCutover(req)');
+  const end = runtime.indexOf('\n  async function promoteToNew(req)', at);
+  const body = runtime.slice(at, end);
+  assert.ok(body.includes('next_days: cutoverDaysFromRows(snapshot.plan.rows)'),
+    'preflight is not built from snapshot.plan.rows');
+  assert.equal(body.includes('snapshot.plan.days || snapshot.rows'), false,
+    'the empty-candidate fallback that made preflight false-green returned');
+});
+
+check('the cutover is one transaction, decided on live values', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function promoteToNew(req)');
+  assert.ok(at > -1, 'promoteToNew לא נמצא');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('cutover.decidePromotion(') > -1,
+    'ההכרעה אינה נעשית במודול הטהור');
+  // ההכרעה חייבת להיות בתוך הטרנזקציה, לא לפניה.
+  const tx = body.indexOf('db.runTransaction');
+  assert.ok(tx > -1 && body.indexOf('cutover.decidePromotion(') > tx,
+    'ההכרעה מתקבלת מחוץ לטרנזקציה — הערכים יכולים להשתנות אחריה');
+  for (const write of ["tx.update(pubRef, { status: 'active'", 'tx.set(activeRef(ctx.sid)',
+    'tx.set(runtimeRef(ctx.sid), { mode: MODE.NEW }']) {
+    assert.ok(body.indexOf(write) > -1, 'המעבר אינו כותב ' + write);
+    assert.ok(body.indexOf(write) > tx, write + ' נכתב מחוץ לטרנזקציה');
+  }
+  // ⭐ ההודעות אחרי ה-commit, לעולם לא בתוכו.
+  const release = body.indexOf('await releaseOutbox(pubRef);');
+  assert.ok(release > body.lastIndexOf('});'),
+    'ה-outbox משתחרר בתוך הטרנזקציה');
+  // ושער הפיקוד, לא שער המנהל.
+  assert.ok(body.indexOf('mayChangeMode') > -1, 'המעבר אינו עובר בשער הפיקוד');
+  assert.ok(body.replace(/\/\*[\s\S]*?\*\//g, ' ').indexOf('requireManager') === -1,
+    'מינוי אחראי סידור פותח את שער המעבר');
+});
+
+check('a prepared publication keeps its notifications while it waits', () => {
+  const src = read('functions/schedule-runtime.js');
+  // ⭐ בלי שני אלה, תור ההודעות של הפרסום המוכן נמחק בזמן ההמתנה
+  // ב-shadow, והמעבר היה קורה בלי שאיש יקבל הודעה.
+  assert.ok(/runtime\.mode === MODE\.SHADOW && status === 'blocked'/.test(src),
+    'שורת המתנה ב-shadow מבוטלת');
+  assert.ok(/publication\.status === 'prepared'/.test(src),
+    'פרסום מוכן אינו מוכר למתזמן ההודעות');
+});
+
+/* ⭐ P1-7 · מקור מדורג שננטש מחזיק שמות מלאים. */
+check('an abandoned staged source is cleaned explicitly without a parent-only TTL', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  async function cleanupStagedSource', at));
+  assert.ok(body.indexOf('expires_at: sourceOperationExpiry()') > -1,
+    'המסמך המדורג נכתב בלי תאריך תפוגה');
+  assert.ok(/cleanupStagedSource\(ctx\.sid, ref, staged, requestId, requestHash,\s*operationOwner\)/
+    .test(body),
+    'אין ניקוי מפורש כשהסגירה נכשלת');
+  assert.ok(body.indexOf('expires_at: FV.delete()') > -1,
+    'תאריך התפוגה אינו מנוקה בסגירה — מקור שלם ימחק מעצמו');
+  // ⭐ TTL של Firestore אינו יורד לתת-אוספים, ולכן הניקוי חייב
+  // למחוק אותם בעצמו.
+  const cleanup = src.slice(src.indexOf('async function cleanupStagedSource'));
+  for (const group of ['people', 'availability', 'locked', 'events']) {
+    assert.ok(cleanup.indexOf("collection('" + group + "')") > -1,
+      'הניקוי אינו מוחק את ' + group);
+  }
+  const indexes = JSON.parse(read('firestore.indexes.json'));
+  assert.equal(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_sources' && item.fieldPath === 'expires_at'
+    && item.ttl === true), false,
+  'TTL על האב schedule_sources מוחק עוגן איתור ומשאיר ילדים יתומים');
+  assert.ok(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_sources' && item.fieldPath === 'expires_at'
+    && item.ttl !== true && Array.isArray(item.indexes)
+    && item.indexes.some((index) => index.order === 'ASCENDING'
+      && index.queryScope === 'COLLECTION_GROUP')),
+  'חסר אינדקס collection-group למנקה המקורות המדורגים');
+  assert.ok(src.indexOf("collectionGroup('schedule_sources')") > -1
+    && src.indexOf(".where('expires_at', '<=', new Date(startedAt))") > -1
+    && src.indexOf('.limit(sourceSweepCandidateLimit)') > -1,
+  'המנקה אינו מאתר מועמדים שפגו בשאילתה מוגבלת');
+  assert.ok(src.indexOf('bytes + documentBytes > MAX_SOURCE_TRANSACTION_BYTES') > -1,
+    'מנקה הילדים מוגבל לפי כמות בלבד ולא לפי נפח Firestore');
+  const indexSource = read('functions/index.js');
+  assert.ok(indexSource.indexOf('exports.sweepExpiredScheduleSources = onSchedule({') > -1
+    && indexSource.indexOf('scheduleRuntime.sweepExpiredSources()') > -1,
+  'מנקה המקורות אינו מחובר לריצה שרתית מתוזמנת');
+  for (const group of [
+    'schedule_policy_operations', 'schedule_mode_operations', 'schedule_source_operations'
+  ]) {
+    assert.ok(indexes.fieldOverrides.some((item) =>
+      item.collectionGroup === group && item.fieldPath === 'expires_at'
+      && item.ttl === true), 'חסר TTL ליומן פעולות זמני: ' + group);
+  }
+});
+
+check('the closing transaction re-reads the operation and the live policy', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const tx = src.indexOf('await db.runTransaction', at);
+  const body = src.slice(tx, src.indexOf('\n    } catch (error) {', tx));
+  assert.ok(body.indexOf('tx.get(opRef)') > -1,
+    'מזהה הפעולה אינו נבדק שוב בתוך הטרנזקציה');
+  assert.ok(body.indexOf("'source-policy-changed'") > -1,
+    'חוקי התחנה אינם נבדקים שוב בתוך הטרנזקציה');
+});
+
+check('unchanged source saves claim idempotency inside a live CAS transaction', () => {
+  const src = read('functions/schedule-runtime.js');
+  const saveAt = src.indexOf('async function saveSource(');
+  const branchAt = src.indexOf("if (plan.kind === 'unchanged')", saveAt);
+  const branchEnd = src.indexOf('const sourceId =', branchAt);
+  assert.ok(saveAt > -1 && branchAt > saveAt && branchEnd > branchAt,
+    'ענף unchanged של saveSource לא נמצא');
+  const body = src.slice(branchAt, branchEnd);
+  assert.ok(body.indexOf('db.runTransaction') > -1,
+    'unchanged כותב מחוץ לטרנזקציה');
+  assert.ok(body.indexOf('tx.get(opRef)') > -1,
+    'unchanged אינו קורא את operation בתוך הטרנזקציה');
+  assert.ok(body.indexOf('requireLiveManager(') > -1,
+    'unchanged אינו קורא מחדש הרשאה חיה');
+  assert.ok(body.indexOf("'source-conflict'") > -1,
+    'unchanged אינו מבצע CAS על המצביע הפעיל');
+  assert.ok(body.indexOf("'source-policy-changed'") > -1,
+    'unchanged אינו מאמת מחדש את המדיניות הפעילה');
+  assert.ok(body.indexOf("'source-request-reused'") > -1,
+    'unchanged אינו דוחה שימוש חוזר ב-request_id עם hash אחר');
+  assert.ok(body.indexOf('tx.set(opRef') > -1,
+    'unchanged אינו רושם את הפעולה באותה טרנזקציה');
+  assert.equal(body.indexOf('opRef.set('), -1,
+    'unchanged עדיין מבצע כתיבה עיוורת מחוץ לטרנזקציה');
+});
+
+/* ⭐ P1-2 · הרשאה נקראת חיה ברגע הכתיבה, לא מהטוקן בתחילת הבקשה. */
+check('savePolicy and setRuntimeMode re-read live identity inside the transaction', () => {
+  const src = read('functions/schedule-runtime.js');
+  const policyAt = src.indexOf('async function savePolicy(');
+  const policyTx = src.indexOf('db.runTransaction', policyAt);
+  const policyBody = src.slice(policyTx, policyTx + 2500);
+  assert.ok(policyBody.indexOf('requireLiveManager(') > -1,
+    'savePolicy אינו קורא את המינוי החי בתוך הטרנזקציה');
+  assert.ok(policyBody.indexOf('tx.get(liveUserRef(') > -1,
+    'savePolicy אינו קורא את המשתמש החי בתוך הטרנזקציה');
+
+  const modeAt = src.indexOf('async function setRuntimeMode(');
+  const modeTx = src.indexOf('db.runTransaction', modeAt);
+  const modeBody = src.slice(modeTx, modeTx + 2500);
+  assert.ok(modeBody.indexOf('tx.get(liveUserRef(') > -1,
+    'setRuntimeMode אינו קורא את המשתמש החי בתוך הטרנזקציה');
+  assert.ok(modeBody.indexOf("'mode-actor-inactive'") > -1,
+    'setRuntimeMode אינו חוסם משתמש שאינו פעיל');
+});
+
+check('expected_mode is mandatory, not merely honoured when present', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function setRuntimeMode(');
+  const body = src.slice(at, at + 4000);
+  assert.ok(body.indexOf("'mode-expected-required'") > -1,
+    'אפשר להשמיט expected_mode ולקבל דריסה עיוורת');
+  // ⭐ והצורה שהייתה הבאג: בדיקה רק אם השדה נמסר.
+  assert.ok(!/if \(nonEmpty\(data\.expected_mode\) && data\.expected_mode !== before\.mode\)/
+    .test(body), 'expected_mode נבדק רק כשהוא נמסר');
+});
+
+/* ⭐ החוזה בין `readSnapshot` לבין ה-preflight. הוא נשבר פעם אחת
+ * בשקט: קריאה מנתיב שאינו קיים החזירה ריק, ו-`||` הסתיר את זה. */
+check('the cutover preflight reads the snapshot rows from the real path', () => {
+  const src = read('functions/schedule-runtime.js');
+  assert.ok(src.indexOf('next_days: cutoverDaysFromRows(snapshot.plan.rows)') > -1,
+    'ה-preflight אינו קורא את plan.rows');
+  // הצורה שהייתה הבאג — ושני הנתיבים שבה אינם קיימים.
+  assert.ok(!/snapshot\.plan\.days/.test(src),
+    'חזרה קריאה מ-plan.days, שאינו קיים');
+  // ו-`readSnapshot` באמת מחזיר `rows` בתוך `plan`.
+  const at = src.indexOf('const plan = {');
+  const planLiteral = src.slice(at, src.indexOf('};', at));
+  assert.ok(/\brows,/.test(planLiteral),
+    'readSnapshot אינו מחזיר rows בתוך plan — החוזה השתנה');
+});
+
+/* ⭐ החיבור שנשבר בשקט: המעבר האטומי נבנה, יוצא ב-index.js — ולא
+ * היה על המסלול של המסך בכלל. */
+check('the cutover is the only road into new mode', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const at = runtime.indexOf('async function setRuntimeMode(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf("'cutover-required'") > -1,
+    'setRuntimeMode עדיין מרשה כניסה ישירה ל-new');
+  // ⭐ ולפני ה-replay (Codex, 93e74be): בקשה ישנה אינה מחזירה הצלחה.
+  const forbid = body.indexOf("'cutover-required'");
+  const replay = body.indexOf('const opRef = modeOperationRef(');
+  assert.ok(replay > -1 && forbid > -1 && forbid < replay,
+    'הסירוב אחרי ה-replay — ניסיון חוזר ישן יכול להחזיר הצלחת הפעלה');
+});
+
+check('the screen actually calls the cutover it was given', () => {
+  const ui = read('schedule-management.js');
+  for (const name of ['previewScheduleCutover', 'promoteScheduleToNew']) {
+    assert.ok(ui.indexOf("httpsCallable(functions, '" + name + "')") > -1,
+      'המסך אינו יוצר callable עבור ' + name);
+  }
+  // ומעבר ל-new עובר דרכו, ולא דרך החלפת מצב.
+  assert.ok(/if \(target === 'new'\) \{ await promoteToNew\(\); return; \}/.test(ui),
+    'המסך עדיין שולח מעבר ל-new דרך setScheduleRuntimeMode');
+  assert.ok(ui.indexOf('call.cutoverPreview(') > -1
+    && ui.indexOf('call.cutoverPromote(') > -1,
+    'זרימת prepare→preflight→promote אינה במסך');
+  // ⭐ ההכנה ב-shadow אינה no-op שקט.
+  const pub = ui.slice(ui.indexOf('async function publishDraft('));
+  assert.ok(!/state\.status\.mode !== 'new'/.test(pub.slice(0, 400)),
+    'publishDraft עדיין חוזר מיד כשהמצב אינו new — כפתור ההכנה שקט');
+  assert.ok(pub.indexOf('const preparing = state.status.mode === ') > -1,
+    'publishDraft אינו מבחין בין הכנה לפרסום');
+  // ומזהה הבקשה נשמר לניסיון חוזר.
+  assert.ok(ui.indexOf('state.cutoverRequestId') > -1,
+    'אין request_id שנשמר לניסיון חוזר אחרי כשל רשת');
+});
+
+check('command can discover a prepared candidate without the manager', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  assert.ok(runtime.indexOf('async function preparedCandidate(') > -1,
+    'אין מצביע שרתי למועמד המוכן');
+  const at = runtime.indexOf('async function getModeOptions(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  assert.ok(body.indexOf('preparedCandidate(ctx)') > -1,
+    'getModeOptions אינו חושף את המועמד');
+  // ⭐ ובלי שמות: מזהה, מהדורה, טווח וחתימה בלבד.
+  const fn = runtime.slice(runtime.indexOf('async function preparedCandidate('));
+  const decl = fn.slice(0, fn.indexOf('\n  }'));
+  assert.ok(!/person|full_name|roster|uid:/.test(decl),
+    'המצביע למועמד נושא מידע אישי');
+});
+
+check('the preflight report expires, and its expiry is signed', () => {
+  const cutover = read('functions/schedule-cutover.js');
+  assert.ok(cutover.indexOf('PREFLIGHT_TTL_MS') > -1, 'אין תוקף לדוח');
+  // הזמן בתוך הגוף החתום — אחרת אפשר להאריך תוקף בלי לשבור חתימה.
+  const body = cutover.slice(cutover.indexOf('const body = {'),
+    cutover.indexOf('const signature = String(hash(stable(body)));'));
+  assert.ok(body.indexOf('generated_at:') > -1 && body.indexOf('expires_at:') > -1,
+    'הזמן והתפוגה אינם בגוף החתום');
+  assert.ok(cutover.indexOf("fail(CODE.PREFLIGHT_EXPIRED") > -1,
+    'דוח שפג אינו נחסם');
+  // והדוח קשור לתצורה שהמועמד נבנה עליה.
+  assert.ok(cutover.indexOf('candidate_source_id') > -1
+    && cutover.indexOf('CODE.CANDIDATE_CONFIG') > -1,
+    'הדוח אינו קשור לתצורת המועמד');
+
+  /* ⭐⭐ שתי הטענות האלה **הסכימו עם באג**, וזו הפעם השלישית בסדרה
+   * הזאת. שתיהן דרשו בדיוק את הצורה שהייתה שבורה:
+   * `expires_at: new Date(report.expires_at)` דרס שדה שנמצא בתוך
+   * הגוף החתום; Firestore החזיר אותו כ-`Timestamp`; `stable()` ראה
+   * ערך אחר מזה שנחתם — והחתימה לא תאמה לעצמה. **כל מעבר נחסם.**
+   *
+   * שום בדיקה טהורה לא יכלה לראות את זה, כי בזיכרון `Date` נשאר
+   * `Date`. Codex מצא את זה באמולטור.
+   *
+   * החוזה עכשיו: שדה חתום אינו משמש גם כשדה תשתית. */
+  const runtime = read('functions/schedule-runtime.js');
+  /* ⭐ מהקוד, לא מהקובץ. ההערה שמעל התיקון **מצטטת** את הצורה
+   * השבורה כדי להסביר אותה — וטענה שקוראת את הקובץ הגולמי הייתה
+   * נופלת על ההסבר של התיקון עצמו. */
+  const runtimeCode = runtime.split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return t.indexOf('*') !== 0 && t.indexOf('//') !== 0 && t.indexOf('/*') !== 0;
+    }).join('\n');
+  const preflightWrite = runtimeCode.slice(
+    runtimeCode.indexOf("collection('schedule_preflight')"),
+    runtimeCode.indexOf('async function promoteToNew('));
+  assert.ok(!/[^_]expires_at: new Date\(report\.expires_at\)/.test(preflightWrite),
+    'ה-expires_at החתום נדרס ב-Date — החתימה לא תשרוד את הדיסק');
+  assert.ok(/ttl_expires_at: new Date\(report\.expires_at\)/.test(preflightWrite),
+    'אין שדה TTL נפרד; TTL ושדה חתום אינם יכולים להיות אותו שדה');
+
+  const indexes = JSON.parse(read('firestore.indexes.json'));
+  assert.ok(indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_preflight' && item.fieldPath === 'ttl_expires_at'
+    && item.ttl === true), 'אין TTL על schedule_preflight');
+  assert.ok(!indexes.fieldOverrides.some((item) =>
+    item.collectionGroup === 'schedule_preflight' && item.fieldPath === 'expires_at'),
+    'ה-TTL עדיין מצביע על השדה החתום');
+
+  /* והזמן נחתם בצורה שעוברת הלוך ושוב דרך האחסון בלי לשנות ייצוג. */
+  assert.ok(cutover.indexOf('function canonicalTime(') > -1,
+    'אין נרמול זמן קנוני');
+  assert.ok(/generated_at: canonicalTime\(/.test(cutover)
+    && /expires_at: canonicalTime\(/.test(cutover),
+    'הזמן נחתם בצורה שאינה קנונית');
+  assert.ok(/typeof value\.toDate === 'function'/.test(cutover),
+    'timeOf אינו יודע לקרוא Timestamp — וזה מה שחוזר מהדיסק');
+
+  /* ⭐ ושני העוגנים ש-TTL לבדו אינו סוגר: מי שהיה legacy, ומי היה
+   * הפרסום הפעיל. דוח יכול להיות טרי ובכל זאת לתאר עולם שזז. */
+  for (const anchor of ['legacy_revision', 'predecessor_publication_id']) {
+    assert.ok(body.indexOf(anchor + ':') > -1,
+      'העוגן ' + anchor + ' אינו בגוף החתום');
+  }
+  assert.ok(cutover.indexOf('const anchors = [') > -1,
+    'העוגנים אינם נבדקים בהכרעה');
+});
+
+check('the promotion re-reads identity the canonical way, role included', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const at = runtime.indexOf('async function promoteToNew(');
+  const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+  /* ⭐ הבודק היחיד. הגרסה הקודמת שכפלה את הבדיקה בתוך promoteToNew;
+   * הבסיס עכשיו מרכז אותה ב-`requireLiveModeAuthority`, והדרישה
+   * כאן היא שהמעבר קורא לה **בתוך** העסקה ועל המסמך החי. */
+  const txAt = body.indexOf('await db.runTransaction(');
+  const call = body.indexOf("requireLiveModeAuthority(snaps[4], ctx, 'cutover-actor-inactive')");
+  assert.ok(txAt > -1 && call > txAt, 'הזהות אינה נקראת חיה בתוך העסקה');
+  assert.ok(!/liveUser\.station_id !== ctx\.sid/.test(body),
+    'חזרה בדיקת station_id בלבד');
+  // ⭐ והבודק עצמו: חברות קנונית, ותפקיד חי — לא מהטוקן.
+  const helperAt = runtime.indexOf('function requireLiveModeAuthority(');
+  const helper = runtime.slice(helperAt, runtime.indexOf('\n  }\n', helperAt));
+  assert.ok(helper.indexOf('scheduleAccess.activeMember(user, ctx.sid)') > -1,
+    'בדיקת החברות אינה קנונית');
+  assert.ok(/role: String\(user\.role/.test(helper)
+    && helper.indexOf('modeAuthority.mayChangeMode(liveActor)') > -1,
+    'התפקיד אינו נקרא חי');
+  assert.ok(helper.indexOf('super: ctx.super === true') > -1,
+    'סמכות-על נלקחת מפרופיל ניתן לכתיבה ולא מה-claim');
+});
+
+/* ⭐ הטענה שונתה במפורש יחד עם הקוד. היא דרשה שהשומרים יופיעו
+ * בגוף `readActiveSource` — וזה בדיוק מה שהנציח את המראה השנייה:
+ * שומרים שנראים כמו של `loadSource` ואינם. עכשיו היא דורשת את
+ * הדבר החזק יותר — שהשומרים חיים ב-`loadSource`, ושהמסלול היחיד
+ * למקור הפעיל עובר דרכו. */
+check('the active source is validated before anything carries from it', () => {
+  const runtime = read('functions/schedule-runtime.js');
+  const loadAt = runtime.indexOf('async function loadSource(');
+  const loadBody = runtime.slice(loadAt, loadAt + 4000);
+  for (const guard of ['meta.complete !== true', "'source-count-required'",
+    "'source-count-mismatch'", "'source-digest-mismatch'"]) {
+    assert.ok(loadBody.indexOf(guard) > -1,
+      'loadSource אינו נופל סגור על ' + guard);
+  }
+  const at = runtime.indexOf('async function readActiveSource(');
+  const body = runtime.slice(at, runtime.indexOf('\n  // ⭐ הדוח יוצא לדפדפן', at));
+  assert.ok(/loadSource\(\{ sid \}, activeId\)/.test(body),
+    'המקור הפעיל אינו נקרא דרך הבודק המאומת');
+  /* ⭐ שונה במפורש עם הבסיס: מצביע פעיל למסמך חסר **חוסם**, ואינו
+   * הופך ל-null. שום כשל אינו נבלע — אין `catch` בגוף הזה בכלל. */
+  assert.ok(!/catch\s*\(/.test(body),
+    'שגיאות אימות נבלעות ומוחזר null — זו שוב מחיקה שקטה');
+});
+
+/* ==================================================================
+ * seq357 · ארבעה שערים שהיו קיימים־למראית־עין
+ * ================================================================== */
+
+/* (א) הכתיבות המדורגות היו **מחוץ** ל-try, ולכן batch שנפל לא הגיע
+ * לניקוי כלל והשאיר תת-אוסף `people` עם שמות מלאים. TTL על מסמך
+ * האב אינו יורד לתת-אוספים. */
+check('every staged write is inside the crash-safe path', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function saveSource(');
+  const body = src.slice(at, src.indexOf('\n  /* מוחק מקור מדורג', at));
+
+  const tryAt = body.indexOf('\n    try {');
+  const stageAt = body.indexOf('tx.set(ref, Object.assign({}, plan.meta');
+  const childrenAt = body.indexOf('await commitOwnedSourceWrites([].concat(');
+  const cleanupAt = body.indexOf('cleanupStagedSource(');
+
+  assert.ok(tryAt > -1, 'אין try בכלל');
+  assert.ok(stageAt > tryAt, 'כתיבת המדורג מחוץ ל-try — כשל שלה לא ינוקה');
+  assert.ok(childrenAt > tryAt, 'כתיבת הילדים מחוץ ל-try — PII יישאר על הדיסק');
+  assert.ok(cleanupAt > childrenAt, 'הניקוי אינו אחרי הכתיבות');
+  // ⭐ והניקוי רץ רק על מדורג שהבקשה הזאת באמת תפסה.
+  assert.ok(/if \(stageOwned\) \{\s*await cleanupStagedSource\(/.test(body),
+    'הניקוי רץ גם על מדורג שלא נתפס — ומוחק של מישהו אחר');
+});
+
+/* (ב) `limit` לפני `sort`, ובהכנת shadow כל הפרסומים נושאים אותה
+ * `revision` — כלומר „המועמד הגבוה" נבחר מתוך קבוצה מקרית, מבין
+ * שווים. וזה המסך שהמפקד מאשר לפיו. */
+check('a prepared candidate is single and deterministic, or none at all', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function preparedCandidate(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+
+  assert.ok(!/\.limit\(5\)/.test(body), 'חזר limit(5) שרירותי');
+  assert.ok(/limit\(CAP \+ 1\)/.test(body),
+    'אין גילוי גלישה — קבוצה חסומה בלי +1 אינה יודעת שהיא חסרה');
+  assert.ok(!/Number\(b\.revision \|\| 0\) - Number\(a\.revision \|\| 0\)/.test(body),
+    'המיון עדיין לפי revision — ב-shadow כולן שוות');
+  assert.ok(body.indexOf('ambiguous: true') > -1,
+    'ריבוי מועמדים אינו מדווח; המסך יציג אחד שרירותי');
+  assert.ok(body.indexOf("reason: 'prepared-ambiguous'") > -1
+    && body.indexOf("reason: 'prepared-overflow'") > -1,
+    'שני מצבי הריבוי אינם מובחנים');
+});
+
+/* (ג) המפקד אישר דוח שהוצג לו. בלי החתימה הזאת, preview נוסף בין
+ * ההצגה לאישור היה גורם לו לאשר מסמך שלא ראה. */
+check('the commander approves the exact report he was shown', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function promoteToNew(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+
+  assert.ok(body.indexOf('cutover-signature-required') > -1,
+    'החתימה אינה חובה — לקוח שישמיט אותה מדלג על הבדיקה');
+  assert.ok(body.indexOf('cutover-signature-mismatch') > -1,
+    'החתימה אינה מושווית');
+  // ⭐ ובתוך העסקה. מחוצה לה זה עוד TOCTOU.
+  const txAt = body.indexOf('db.runTransaction');
+  assert.ok(body.indexOf('cutover-signature-mismatch') > txAt,
+    'ההשוואה מחוץ לטרנזקציה');
+  assert.ok(/livePreflight\.signature \|\| ''\) !== expectedSignature/.test(body),
+    'ההשוואה אינה מול הדוח החי שנקרא בעסקה');
+
+  // והלקוח שולח את החתימה של הדוח שהוא **הציג**, לא מ-state ישן.
+  const ui = read('schedule-management.js');
+  assert.ok(/expected_preflight_signature: report\.signature/.test(ui),
+    'המסך אינו שולח את חתימת הדוח שהציג');
+});
+
+/* (ד) `setRuntimeMode` קרא חברות חיה אך לא סמכות חיה. טוקן חי עד
+ * שעה — חלון של שעה שבו הרשאה שנשללה עדיין מזיזה את מצב המנוע. */
+check('mode change re-reads authority live, not only membership', () => {
+  const src = read('functions/schedule-runtime.js');
+  const at = src.indexOf('async function setRuntimeMode(');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  const txAt = body.indexOf('db.runTransaction');
+  assert.ok(txAt > -1, 'אין טרנזקציה');
+
+  const inTx = body.slice(txAt);
+  /* הבודק המרכזי של הבסיס, בתוך העסקה ועל המסמך החי — לא על הטוקן.
+   * מה שהוא בודק (חברות קנונית + תפקיד חי) מוכח בבדיקת ה-promote. */
+  assert.ok(/tx\.get\(liveUserRef\(ctx\.sid, ctx\.uid\)\)/.test(inTx),
+    'החברות אינה נקראת חיה');
+  assert.ok(inTx.indexOf("requireLiveModeAuthority(liveUserSnap, ctx, 'mode-actor-inactive')") > -1,
+    'הסמכות אינה נבדקת מחדש על התפקיד החי בתוך הטרנזקציה');
+  assert.ok(!/mayChangeMode\(modeActor\(ctx\)\)[\s\S]*db\.runTransaction[\s\S]*$/.test(body)
+    || inTx.indexOf('requireLiveModeAuthority(') > -1,
+    'הסמכות נבדקת פעם אחת בלבד, על הטוקן');
+});
+
+/* ==================================================================
+ * ⭐ ההיפוך של MISSING · מה נשאר חוסם
+ *
+ * הפיכת „אדם שינוי משמרת" ללא-חוסם היא ההחלשה היחידה בסדרה הזאת,
+ * והיא הכרעת מוצר מאושרת. הבדיקות כאן קיימות כדי שהיא **תישאר
+ * ההחלשה היחידה** — כלומר שאף שער אחר לא נסחף איתה.
+ * ================================================================== */
+
+check('the inversion did not take any other gate with it', () => {
+  const cut = read('functions/schedule-cutover.js');
+
+  // ארבעת החוסמים, מפורשים ברשימה אחת.
+  const at = cut.indexOf('const BLOCKING = Object.freeze([');
+  assert.ok(at > -1, 'אין רשימת חוסמים מפורשת');
+  const list = cut.slice(at, cut.indexOf(']);', at));
+  for (const reason of ['FOREIGN', 'DUPLICATE', 'EMPTY_DAY', 'OUT_OF_RANGE']) {
+    assert.ok(list.indexOf('REASON.' + reason) > -1,
+      reason + ' יצא מרשימת החוסמים — זו החלשה שלא אושרה');
+  }
+  assert.ok(list.indexOf('REASON.MISSING') === -1,
+    'MISSING חזר לרשימת החוסמים; המעבר ייחסם תמיד');
+
+  /* ⭐ וכל סיבה ב-REASON חייבת להיות באחת משתי הרשימות. סיבה חדשה
+   * שתיפול בין הכיסאות תהיה „לא חוסמת" בשקט. */
+  const reasonBlock = cut.slice(cut.indexOf('const REASON = Object.freeze({'),
+    cut.indexOf('});', cut.indexOf('const REASON = Object.freeze({')));
+  const names = (reasonBlock.match(/^\s{2}([A-Z_]+):/gm) || [])
+    .map((line) => line.trim().replace(':', ''));
+  assert.ok(names.length >= 5, 'לא זוהו הסיבות');
+  const advisory = cut.slice(cut.indexOf('const ADVISORY = Object.freeze(['),
+    cut.indexOf(']);', cut.indexOf('const ADVISORY = Object.freeze([')));
+  for (const name of names) {
+    assert.ok(list.indexOf('REASON.' + name) > -1 || advisory.indexOf('REASON.' + name) > -1,
+      'הסיבה ' + name + ' אינה חוסמת ואינה מדווחת — היא נעלמת בשקט');
+  }
+});
+
+/* התנאי שאסור היה לגעת בו: חוסר כוח אדם הוא שער נפרד של המדיניות
+ * והמנוע, ולא חלק מהשוואת ה-preflight. */
+check('a staffing shortfall is still its own separate blocker', () => {
+  const ui = read('schedule-management.js');
+  assert.ok(/blocking_gaps \|\| 0\);\s*\n\s*if \(gaps > 0\)/.test(ui),
+    'שער החוסרים בפרסום נעלם');
+  assert.ok(ui.indexOf('אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים') > -1,
+    'הודעת החוסרים נעלמה — השער אולי נשאר, אבל המשתמש לא יידע למה');
+  /* והוא חי בשכבה אחרת לגמרי מה-preflight — נבדק על **הקוד**, כי
+   * ההערה במודול מסבירה בדיוק למה `blocking_gaps` אינו שם. זו
+   * הפעם השלישית בסדרה הזאת שהערה מספקת גלאי; המסקנה קבועה: כל
+   * טענה על קוד נקראת מהמקור חסר-ההערות. */
+  const cutCode = read('functions/schedule-cutover.js').split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return t.indexOf('*') !== 0 && t.indexOf('//') !== 0 && t.indexOf('/*') !== 0;
+    }).join('\n');
+  assert.ok(cutCode.indexOf('blocking_gaps') === -1,
+    'שער החוסרים נבלע לתוך ה-preflight; שני שערים נפרדים הפכו לאחד');
+});
+
+/* האישור נקשר לחתימת הדוח, לא לדגל. */
+check('acknowledging changes is bound to the exact report', () => {
+  const cut = read('functions/schedule-cutover.js');
+  assert.ok(cut.indexOf('CHANGES_UNACKNOWLEDGED') > -1, 'אין קוד לאישור חסר');
+  assert.ok(/input\.accept_changes !== report\.signature/.test(cut),
+    'האישור אינו קשור לחתימה — אישור לדוח אחד יחול על אחר');
+  assert.ok(!/accept_changes === true/.test(cut),
+    'האישור חזר להיות דגל בוליאני');
+  const ui = read('schedule-management.js');
+  assert.ok(/accept = report\.signature/.test(ui),
+    'המסך אינו שולח את חתימת הדוח שהציג כאישור');
+  assert.ok(ui.indexOf('משנה ') > -1 && ui.indexOf('שיבוצים') > -1,
+    'המפקד אינו רואה כמה שיבוצים משתנים');
+});
+
+/* ⭐ seq379 A/B/C · שלושת החורים שנסגרו בעסקת המעבר. כל טענה כאן נבדקת
+ * על קוד בלי הערות, כדי שהערה לא תספק אותה. */
+check('the promotion transaction owns legacy, outbox and the operation record', () => {
+  const src = stripComments(read('functions/schedule-runtime.js'));
+  const at = src.indexOf('async function promoteToNew(req)');
+  const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
+  const txAt = body.indexOf('await db.runTransaction(');
+  assert.ok(txAt > -1, 'אין עסקה');
+  const before = body.slice(0, txAt);
+  const inTx = body.slice(txAt);
+
+  // A · ה-legacy נקרא בתוך העסקה, ולא לפניה.
+  assert.ok(!/legacyComparisonDigest\(ctx/.test(before), 'ה-legacy עדיין נקרא לפני העסקה');
+  assert.ok(inTx.indexOf('await legacyComparisonDigestInTx(tx, ctx, from, to)') > -1,
+    'ה-legacy אינו נקרא בתוך העסקה');
+  const txAtDef = src.indexOf('async function legacyComparisonDigestInTx(tx, ctx, from, to)');
+  const txDef = src.slice(txAtDef, src.indexOf('\n  }\n', txAtDef));
+  assert.ok(txDef.indexOf('effectiveReaderFor(ctx, { tx })') > -1,
+    'הקריאה בתוך העסקה אינה עוברת דרך המתאם עם tx');
+  const readers = src.slice(src.indexOf('function txReader(tx)'), src.indexOf('async function legacyProjectionInput('));
+  assert.ok(readers.indexOf('tx.get(target)') > -1 && readers.indexOf('tx.getAll.apply(tx, refs)') > -1,
+    'txReader אינו קורא דרך העסקה');
+  // וכל ששת מסלולי הקריאה של legacyProjectionInput עוברים דרך reader.
+  const lpAt = src.indexOf('async function legacyProjectionInput(');
+  const lp = src.slice(lpAt, src.indexOf('\n  }\n', lpAt));
+  assert.equal((lp.match(/reader\.get\(/g) || []).length, 5, 'לא כל הקריאות עוברות דרך reader.get');
+  assert.ok(lp.indexOf('reader.getAll(overrideRefs)') > -1, 'ה-overrides אינם נקראים דרך reader');
+  assert.ok(!/\.get\(\)/.test(lp), 'נשארה קריאה ישירה שעוקפת את ה-reader');
+
+  // B · התור נקרא בעסקה ומאומת מול המניפסט.
+  assert.ok(inTx.indexOf("await tx.get(pubRef.collection('schedule_outbox'))") > -1,
+    'התור אינו נקרא בתוך העסקה');
+  assert.ok(inTx.indexOf('requireBlockedOutbox(outboxSnap, {') > -1, 'התור אינו מאומת');
+  assert.ok(inTx.indexOf('manifest: livePub.outbox_manifest') > -1, 'האימות אינו מול המניפסט');
+  const validator = src.slice(src.indexOf('function requireBlockedOutbox(snap, expect, fail)'),
+    src.indexOf('function preparedReplayInvalid()'));
+  for (const why of ['outbox-manifest-missing', 'outbox-manifest-mismatch', 'outbox-row-invalid', 'outbox-expired']) {
+    assert.ok(validator.indexOf("fail('" + why + "')") > -1, 'האימות חסר ' + why);
+  }
+  assert.ok(validator.indexOf("row.status !== 'blocked'") > -1 && validator.indexOf('outboxExpired(row, expect.now)') > -1,
+    'האימות אינו בודק חסימה ותפוגה');
+  // ואותו validator משמש גם את ה-replay של הכנה.
+  const replayAt = src.indexOf('async function replayPreparedPublication(');
+  const replay = src.slice(replayAt, src.indexOf('\n  async function publish(req)', replayAt));
+  assert.ok(replay.indexOf('requireBlockedOutbox(outboxSnap, {') > -1, 'ה-replay אינו משתמש באותו validator');
+
+  // C · רשומת הפעולה נקראת בעסקה, לפני בדיקות המעבר; הטביעה קושרת את מלוא הכוונה.
+  const fp = body.slice(body.indexOf('const fingerprint = digest({'), body.indexOf('});', body.indexOf('const fingerprint = digest({')));
+  assert.ok(fp.indexOf('expected_preflight_signature: expectedSignature') > -1
+    && fp.indexOf('accept_changes: acceptChanges') > -1,
+    'טביעת האצבע אינה כוללת חתימה ואישור');
+  const refsAt = inTx.indexOf('liveUserRef(ctx.sid, ctx.uid), opRef]');
+  const replayAtTx = inTx.indexOf('const replayed = replayOf(snaps[5])');
+  const decideAt = inTx.indexOf('cutover.decidePromotion({');
+  assert.ok(refsAt > -1 && replayAtTx > refsAt && decideAt > replayAtTx,
+    'רשומת הפעולה אינה נקראת בעסקה לפני ההכרעה');
+  assert.ok(inTx.indexOf('tx.create(opRef, {') > -1, 'רשומת הפעולה נכתבת ב-set — שני promoters יכולים לדרוס');
+});
+
+check('reserved map keys: overrides, locked source and stored policy are own-property checked, never inherited', () => {
+  const src = runtime;
+  assert.ok(src.indexOf("const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype'])") > -1,
+    'אין רשימת מפתחות שמורים');
+  const overridesAt = src.indexOf('function normalizeOverrides(value, policy)');
+  const overrides = src.slice(overridesAt, src.indexOf('function effectiveSource(', overridesAt));
+  assert.ok(overrides.indexOf('!safeSubKey(entry.sub_station) || !hasOwn(policy.sub_stations, entry.sub_station)') > -1,
+    'שינוי ידני בודק תחנת קצה דרך truthiness — "__proto__" עובר');
+  assert.equal(overrides.indexOf('isReservedKey(entry.person)'), -1, 'UID אינו נפסל — משתמש קיים חייב להמשיך לעבוד (410)');
+  assert.ok(overrides.indexOf('isReservedKey(entry.role)') > -1, 'תפקיד בשינוי ידני יכול להיות מפתח שמור');
+  assert.equal(overrides.indexOf('policy.sub_stations[entry.sub_station]) {'), -1, 'נשארה בדיקת truthiness');
+  const effAt = src.indexOf('function effectiveSource(ctx, source, policy, overrides)');
+  const eff = src.slice(effAt, src.indexOf('const effectiveDigest', effAt));
+  assert.ok(eff.indexOf("hasOwn(locked, entry.sub_station)") > -1 && eff.indexOf("hasOwn(days, entry.date)") > -1,
+    'effectiveSource בונה locked[sub][date] דרך || — כותב ל-Object.prototype');
+  assert.equal(eff.indexOf('locked[entry.sub_station] || {}'), -1, 'נשאר || {} על מפתח חיצוני');
+  const lockedAt = src.indexOf('function validateLockedSource(locked, peopleRaw, policyValue)');
+  const lockedFn = src.slice(lockedAt, src.indexOf('async function loadPolicy(', lockedAt));
+  assert.ok(lockedFn.indexOf('!safeSubKey(sub)') > -1 && lockedFn.indexOf('!hasOwn(policySubs, sub)') > -1,
+    'נעילות במקור אינן נבדקות כ-own-property');
+  const policyAt = src.indexOf('async function loadPolicy(ctx, id)');
+  const policyFn = src.slice(policyAt, src.indexOf('async function loadSource(', policyAt));
+  assert.ok(policyFn.indexOf('Object.keys(raw.sub_stations).some((key) => !safeSubKey(key))') > -1,
+    'מדיניות שמורה עם מפתח שמור נטענת');
+  // המודולים הטהורים שמקבלים את אותם מפתחות דוחים אותם בעצמם.
+  const engine = read('functions/schedule-calendar-engine.js');
+  assert.ok(engine.indexOf("'sub-station-key-reserved'") > -1, 'מנוע היומן חסר sub-station-key-reserved');
+  assert.equal(engine.indexOf("'roster-id-reserved'"), -1, 'מנוע היומן פוסל UID — אסור (410)');
+  assert.ok(engine.indexOf('Object.defineProperty(out, key, { value: map[key]') > -1, 'פלט המנוע נבנה ב-Object.assign — "__proto__" היה setter');
+  assert.ok(author.indexOf('function validSubKey(v)') > -1 && author.indexOf('!isReservedKey(v)') > -1,
+    'policy-author מקבל מפתח שמור');
+});
+
+check('400(3): new-without-active falls back to legacy explicitly, rechecks mode AND pointer, and labels the provenance', () => {
+  const src = runtime;
+  const at = src.indexOf('async function legacyFallbackWindow(ctx, config, from, to, scoped)');
+  const fn = src.slice(at, src.indexOf('\n  async function getMy(req)', at));
+  assert.ok(fn.indexOf("effectiveStationWindow(ctx, from, to, Object.assign({}, scoped || {}, { legacyOnly: true }))") > -1,
+    'the fallback still goes through the reader\'s hard boundary and would throw active-publication-missing');
+  assert.ok(fn.indexOf('nonEmpty(pointerNow.publication_id)') > -1, 'a publication arriving mid-read is not rechecked');
+  assert.ok(fn.indexOf("after.mode !== config.mode || window.source !== 'legacy'") > -1);
+  assert.ok(fn.indexOf("{ mode: config.mode, fallback: 'legacy' }") > -1, 'provenance does not say it is a fallback');
+  const readerAt = src.indexOf('function effectiveReaderFor(ctx, scoped)');
+  const reader = src.slice(readerAt, src.indexOf('async function effectiveStationWindow', readerAt));
+  assert.ok(reader.indexOf('if (legacyOnly) return { mode: MODE.SHADOW };') > -1);
+  assert.ok(reader.indexOf('const active = pinned || await activeSnapshot(ctx);') > -1, 'windows of one call must share one verified snapshot');
+  assert.ok(integration.includes("new without an active publication falls back to the full legacy schedule"), 'no emulator scenario for the fallback');
+});
+
+check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed envelope, and the server entry has no auth', () => {
+  const src = runtime;
+  const at = src.indexOf('async function getEffectiveWorkdays(req)');
+  const fn = src.slice(at, src.indexOf('\n  async function effectiveWorkDaysForStation', at));
+  assert.ok(fn.indexOf('const ctx = await context(req);') > -1, 'live membership gate missing');
+  assert.ok(fn.indexOf("['from', 'to', 'uids'].indexOf(key) === -1") > -1, 'envelope is not closed');
+  assert.ok(fn.indexOf("throw new ScheduleRuntimeError('workdays-uids-shape'") > -1);
+  assert.equal(fn.indexOf('display'), -1, 'the callable must not return names');
+  assert.equal(fn.indexOf('working'), -1, 'the callable must not return per-date people lists');
+  const core = src.slice(src.indexOf('async function effectiveWorkDaysFor(ctx, config, input)'), at);
+  assert.ok(core.indexOf('const active = await checkedActiveSnapshot(ctx, config, null);') > -1);
+  assert.ok(core.indexOf('await activeSnapshotStillCurrent(ctx, config, active);') > -1, 'the snapshot is not rechecked at the end');
+  assert.ok(core.indexOf("? await legacyFallbackWindow(ctx, config, w.from, w.to, scoped)") > -1, 'new-without-active must use the explicit fallback');
+  const serverAt = src.indexOf('async function effectiveWorkDaysForStation(sid, input)');
+  const server = src.slice(serverAt, src.indexOf('\n  async function getStationRange', serverAt));
+  assert.ok(server.indexOf("const ctx = { sid: station, uid: null, role: 'system', system: true };") > -1);
+  assert.equal(server.indexOf('context(req)'), -1);
+  // 417: הקשר שרת מפורש למתאם הטהור — לא משתמש מומצא.
+  const readerAt2 = src.indexOf('function effectiveReaderFor(ctx, scoped)');
+  const reader2 = src.slice(readerAt2, src.indexOf('async function effectiveStationWindow', readerAt2));
+  assert.ok(reader2.indexOf("? { station_id: ctx.sid, system: true, active: true }") > -1, 'system context is not explicit');
+  const pure = read('functions/schedule-effective-reader.js');
+  assert.ok(pure.indexOf("if (raw.system === true) {") > -1 && pure.indexOf("fail('context-system-uid')") > -1);
+  assert.ok(pure.indexOf("if (resolved.ctx.system === true || !resolved.ctx.uid) fail('context-uid');") > -1, 'getMy must refuse a system context');
+  // 417 §1 · 419: זהות חיה **והמקור** נבדקים שוב בסוף getEffectiveWorkdays —
+  // אחרי שעות המשמרת, שנקראות בתוך effectiveWorkDaysFor ומכוסות ב-verify.
+  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1);
+  // 421 §2: אימות המקור (verify — קורא בעצמו עד 397 ימים) לפני בדיקת הזהות,
+  // והזהות החיה היא **הקריאה האחרונה** לפני התשובה.
+  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays'") < fn.indexOf('await pending.verify();'));
+  assert.ok(fn.indexOf('await pending.verify();') < fn.indexOf('const finalReads = await Promise.all([configuration(ctx.sid), liveUserRef(ctx.sid, ctx.uid).get()]);'),
+    'the live identity must be read after the bulk verification, not before it');
+  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') < fn.indexOf('return workdaysResponse(pending.result);'));
+  assert.ok(fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);') > fn.indexOf('await pending.verify();'));
+  assert.equal((core.match(/kind: 'workdays-verify'/g) || []).length, 2, 'both verify closures must expose the verify seam');
+  assert.equal(fn.indexOf('stationShiftHours('), -1, 'shift hours must not be a second read outside the verified source');
+  assert.ok(core.indexOf("shift_hours: await stationShiftHours(ctx, basis.rotationDocs)") > -1, 'legacy shift hours must come from the pinned basis');
+  assert.ok(core.indexOf('const shiftHours = await stationShiftHours(ctx);') > -1 && core.indexOf('digest(await stationShiftHours(ctx)) !== digest(shiftHours)') > -1,
+    'in new, the shift-hours read must be rechecked in verify');
+  // 417 §2 · 419: בסיס legacy אחד לכל החלונות — סגל, מחזורים, חריגים, החלפות —
+  // חתימה ב-provenance, ובדיקה חוזרת בסוף (verify), אחרי השעות.
+  assert.ok(core.indexOf('const basis = await legacyWorkdaysBasis(ctx, range);') > -1);
+  assert.ok(core.indexOf('const scoped = { legacyBasis: basis };') > -1);
+  assert.ok(core.indexOf('await requireSameLegacyBasis(ctx, basis, range);') > -1);
+  assert.ok(core.indexOf('legacy_digest: basis.legacyDigest') > -1);
+  // 421 §1: זהות מקור בלתי תלויה בטווח לצד חתימת תוכן הטווח; הלקוח מחבר לפי הזהות.
+  assert.equal((core.match(/legacy_basis_digest: basis\.legacyBasisDigest, legacy_digest: basis\.legacyDigest/g) || []).length, 2);
+  const clientModule = read('effective-workdays.js');
+  assert.ok(clientModule.indexOf('export function workdaysSourceIdentity(p)') > -1);
+  assert.ok(clientModule.indexOf("if (key === 'legacy_digest') return;") > -1, 'the range content signature must not block a merge');
+  assert.ok(clientModule.indexOf('const sig = workdaysSourceIdentity;') > -1);
+  assert.equal(clientModule.indexOf('JSON.stringify([p.mode, p.source, p.fallback, p.provenance])'), -1, 'the old whole-provenance signature is gone');
+  assert.ok(integration.includes('421 §1: two ranges of one stable legacy source') && integration.includes('421 §2: a viewer deactivated or transferred during the final source verification'));
+  const basisAt = src.indexOf('async function legacyWorkdaysBasis(ctx, range)');
+  const basisFn = src.slice(basisAt, src.indexOf('async function requireSameLegacyBasis', basisAt));
+  for (const needle of ["root.collection('roster')", "root.collection('rotations')", "root.collection('shift_overrides').doc(date)",
+    ".where('from_date', 'in', chunk)", ".where('to_date', 'in', chunk)", 'overrides: pairs(overrideDocs)', 'swaps: pairs(swapDocs)',
+    'range: { from: range.from, to: range.to }', 'const legacyBasisDigest = digest({ roster: rosterPairs, rotations: rotationPairs });',
+    'basis: legacyBasisDigest']) {
+    assert.ok(basisFn.indexOf(needle) > -1, 'the legacy basis must pin and sign: ' + needle);
+  }
+  assert.ok(core.indexOf("await activeSnapshotStillCurrent(ctx, config, active);") > core.indexOf('verify: async function'),
+    'in new, the snapshot recheck belongs to verify (the end of the call)');
+  const verifyLegacy = core.slice(core.lastIndexOf('verify: async function'));
+  assert.ok(verifyLegacy.indexOf('await requireModeUnchanged(ctx, config);') > -1);
+  assert.ok(verifyLegacy.indexOf('if (config.mode === MODE.NEW) await requireNoActivePublication(ctx);') > -1, 'a publication arriving after the hours is not rechecked');
+  // 419: תחנה בלי אף מחזור — לא ידוע במפורש, בלי להקרין סבב ריק; כבויים נשארים סירוב.
+  assert.ok(core.indexOf('if (!basis.rotationDocs.length) {') > -1);
+  assert.ok(core.indexOf('effectiveWorkdays.assembleUnknown({') > -1);
+  assert.ok(core.indexOf('legacy_rotations: 0') > -1);
+  const serverFn = server;
+  assert.ok(serverFn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1
+    && serverFn.indexOf('await pending.verify();') > -1, 'the server entry must confirm the source at the end too');
+  assert.ok(integration.includes('419: overrides and swaps that change between windows are refused')
+    && integration.includes('419: the source is confirmed at the very end')
+    && integration.includes('419: a station with no rotation record at all'), 'no emulator scenarios for 419');
+  // 417 §3: הסגל הקיים הוא גבול הידיעה — לא roster:null.
+  assert.ok(core.indexOf('roster: basis.rosterIds') > -1 && core.indexOf('roster: null') === -1);
+  const legacyInput = src.slice(src.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'), src.indexOf('function legacyRosterProjection') > 0 ? src.length : src.length);
+  assert.ok(legacyInput.indexOf("pinned ? { size: pinned.rosterDocs.length, docs: pinned.rosterDocs }") > -1, 'windows must share the pinned roster');
+  assert.ok(legacyInput.indexOf("pinned ? dates.map((date) => pinned.overrideDocs.get(date) || null)") > -1, 'windows must share the pinned overrides');
+  assert.ok(legacyInput.indexOf("pinned ? pinnedSwapsBy('from_date')") > -1 && legacyInput.indexOf("pinned ? pinnedSwapsBy('to_date')") > -1, 'windows must share the pinned swaps');
+  assert.ok(legacyInput.indexOf("dates[0] < pinned.range.from || dates[dates.length - 1] > pinned.range.to") > -1, 'a window outside the pinned range must be refused');
+  assert.ok(index.indexOf("exports.getEffectiveWorkdays = onCall({ enforceAppCheck: true }") > -1);
+  assert.equal(index.indexOf('effectiveWorkDaysForStation = onCall'), -1, 'the server entry must never be exported as a callable');
+  const shift = src.slice(src.indexOf('async function stationShiftHours(ctx, pinnedRotationDocs)'), src.indexOf('async function effectiveWindows'));
+  assert.ok(shift.indexOf("hours_source: 'legacy-rotation-config'") > -1, 'shift hours must name their source');
+  assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
+});
+
+assert.equal(passed, 117);
+console.log('\n117 schedule runtime source checks passed.');

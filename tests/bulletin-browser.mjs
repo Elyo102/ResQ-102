@@ -674,7 +674,8 @@ try {
     window.__CALLABLE_CALLS = [];
   });
   await page.locator('#bulletinSubmit').click();
-  await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).length === 1 &&
+  await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'postBulletinMessage').length === 1 &&
     (window.__CALLABLE_INFLIGHT || 0) === 0);
   check(await page.locator('#bulletinText').inputValue() === 'הטיוטה חייבת להישאר',
         'כשל בפרסום משאיר את הטיוטה על המסך');
@@ -682,7 +683,23 @@ try {
     localStorage.getItem(localStorage.key(i))).some(value =>
       String(value).includes('הטיוטה חייבת להישאר'))),
     'כשל בפרסום משאיר את הטיוטה גם באחסון המקומי');
-  const failedRequestId = await page.evaluate(() => window.__CALLABLE_CALLS[0].payload.requestId);
+  const failedRequestId = await page.evaluate(() => window.__CALLABLE_CALLS
+    .find(call => call.name === 'postBulletinMessage').payload.requestId);
+  await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'reportIncident').length === 1 &&
+    (window.__CALLABLE_INFLIGHT || 0) === 0);
+  const failureReports = await page.evaluate(() => window.__CALLABLE_CALLS
+    .filter(call => call.name !== 'postBulletinMessage'));
+  check(failureReports.length === 1 && failureReports[0].name === 'reportIncident',
+        'כשל בפרסום מוסיף דיווח תקלה אחד בלבד, לא פרסום נוסף');
+  const failureReport = failureReports[0]?.payload;
+  check(JSON.stringify(Object.keys(failureReport || {}).sort()) ===
+        JSON.stringify(['callable', 'code', 'kind', 'screen', 'version']) &&
+        failureReport.kind === 'callable-failed' &&
+        failureReport.callable === 'postBulletinMessage' &&
+        failureReport.code === 'functions/unavailable' &&
+        failureReport.screen === 'login.html' && failureReport.version === '42G.0',
+        'הניטור שולח רק חמש קטגוריות טכניות, ללא תוכן ההודעה או מזהה הבקשה');
   await page.locator('#boardTabs [data-board-id="shahmon"]').click();
   await page.getByText('תקלה במזגן בחדר התדריכים', { exact:true })
     .waitFor({ state:'visible', timeout:5000 });
@@ -694,11 +711,15 @@ try {
   check(await page.locator('#bulletinText').inputValue() === 'הטיוטה חייבת להישאר',
         'חזרה לראשית משחזרת את הטיוטה של אותו לוח בלבד');
   await page.locator('#bulletinSubmit').click();
-  await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).length === 2 &&
+  await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'postBulletinMessage').length === 2 &&
     (window.__CALLABLE_INFLIGHT || 0) === 0);
-  const retried = await page.evaluate(() => window.__CALLABLE_CALLS);
+  const retryCalls = await page.evaluate(() => window.__CALLABLE_CALLS);
+  const retried = retryCalls.filter(call => call.name === 'postBulletinMessage');
   check(retried[1].payload.requestId === failedRequestId,
         'retry משתמש באותו requestId ולכן השרת יכול למנוע כפילות');
+  check(retryCalls.length === 3 && retryCalls.filter(call => call.name === 'reportIncident').length === 1,
+        'retry מוצלח אינו מוסיף דיווח תקלה או פעולה מיותרת');
   await page.waitForFunction(() => document.getElementById('bulletinText')?.value === '');
   check(true, 'אחרי retry מוצלח הטיוטה מתנקה');
   check(errors.length === 0, 'המסלול המלא לא יצר שגיאת קוד', errors.join(' · '));
