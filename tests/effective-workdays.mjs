@@ -6,7 +6,7 @@
 // ורווח בין חלונות = לא-ידוע; (4) בדיקת המנוחה: gain/lose, החלפות
 // מאושרות, ויום צמוד לא-ידוע מדווח כ-unknown ולא כחוקי.
 import assert from 'node:assert/strict';
-import * as W from '../effective-workdays.js?v=42g0';
+import * as W from '../effective-workdays.js?v=42g1';
 
 let passed = 0;
 function test(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }

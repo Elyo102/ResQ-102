@@ -326,6 +326,7 @@ try {
     assert.equal(await managerPage.locator('#draftSummary .metric').count(), 4);
     await managerPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await managerPage.locator('#draftBoard .hcell').count(), 7);
+    assert.equal(await managerPage.locator('#draftBoard .absence-cell').count(), 0);
     assert.match(await managerPage.locator('#draftPreview').textContent(), /טל חודרה/);
     assert.equal(await managerPage.locator('#publish').isEnabled(), false);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
@@ -532,6 +533,105 @@ try {
     assert.equal(allCalls.some((entry) => entry.name === 'promoteScheduleToNew'), false);
   });
   await refreshFailureManager.close();
+
+  const absenceRange = JSON.parse(JSON.stringify(stationRange));
+  absenceRange.days.forEach((item) => {
+    item.absences_status = 'ready'; item.absences = [];
+    item.sub_stations[0].people[0].crew = 'B';
+    item.sub_stations[0].people[1].crew = 'A';
+    item.sub_stations.push({ sub_station:'north', label:'שחמון', minimum:null,
+      people:[{ uid:'crew_2', person:'צוות ב בתחנה אחרת', crew:'B' },
+        { uid:'crew_3', person:'צוות ג', crew:'C' },
+        { uid:'crew_unknown', person:'צוות לא ידוע', crew:'constructor' }] });
+  });
+  const absenceDay = absenceRange.days[0];
+  absenceDay.absences = [
+    { uid:'a', display:'נעדר מחלה', kind:'sick', location:'eilat' },
+    { uid:'b', display:'נעדר מילואים', kind:'reserve' },
+    { uid:'c', display:'נעדר קורס', kind:'course', location:'north' },
+    { uid:'d', display:'נעדר חופש', kind:'leave', location:'abroad' },
+    { uid:'e', display:'<img src=x onerror=alert(1)>', kind:'unknown' },
+    { uid:'f', display:'סוג עתידי', kind:'constructor', location:'eilat' },
+    { uid:'g', display:'מיקום פגום', kind:'leave', location:'<script>bad</script>' }
+  ];
+  delete absenceRange.days[2].absences;
+  absenceRange.days[3].absences = [null];
+  const absenceCtx = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(absenceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:absenceRange }]
+  });
+  const absencePage = await absenceCtx.newPage();
+  await absencePage.goto(base, { waitUntil:'load' });
+  await absencePage.locator('#stationBoard .absence-cell').first().waitFor();
+  await test('station absence rows use closed labels and leave-only locations with safe text', async () => {
+    assert.deepEqual(await absencePage.locator('#stationBoard .absence-stub b').allTextContents(),
+      ['מחלה', 'מילואים', 'קורסים', 'חופש', 'סיבה לא ידועה']);
+    assert.equal(await absencePage.locator('#stationBoard .absence-name').count(), 7);
+    assert.deepEqual(await absencePage.locator('#stationBoard .absence-location').allTextContents(), ['חו״ל']);
+    assert.equal(await absencePage.locator('#stationBoard .absence-cell img, #stationBoard .absence-cell script').count(), 0);
+    assert.match(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').first().textContent(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').first().textContent(), /סוג עתידי/);
+  });
+  await test('unknown absence data is distinct from a verified empty list', async () => {
+    const cell = (index) => absencePage.locator('#stationBoard [data-absence-kind="sick"][data-date="'
+      + absenceRange.days[index].date + '"]');
+    assert.equal(await cell(1).textContent(), '—');
+    assert.match(await cell(2).textContent(), /מידע היעדרויות אינו זמין/);
+    assert.match(await cell(3).textContent(), /מידע היעדרויות אינו זמין/);
+  });
+  await test('explicit crew colors are stable across station rows and unknown crews are neutral', async () => {
+    const colors = await absencePage.evaluate(() => {
+      const color = (selector) => getComputedStyle(document.querySelector(selector)).color;
+      const first = document.querySelector('#stationBoard .s1 .crew-B');
+      const second = document.querySelector('#stationBoard .s2 .crew-B');
+      return { first:getComputedStyle(first).color, second:getComputedStyle(second).color,
+        a:color('#stationBoard .crew-A'), c:color('#stationBoard .crew-C'),
+        neutral:color('#stationBoard .s2 .nm:not([class*="crew-"])') };
+    });
+    assert.equal(colors.first, colors.second);
+    assert.equal(new Set([colors.first, colors.a, colors.c, colors.neutral]).size, 4);
+    assert.equal(await absencePage.locator('#stationBoard .crew-constructor').count(), 0);
+  });
+  await test('absence rows stay inside the monthly board at 360 and 390 pixels', async () => {
+    for (const width of [360, 390]) {
+      await absencePage.setViewportSize({ width, height:844 });
+      assert.equal(await absencePage.locator('#stationBoard .hcell').count(), absenceRange.days.length);
+      assert.equal(await absencePage.locator('#stationBoard .absence-cell').count(), absenceRange.days.length * 5);
+      assert.equal(await absencePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+  });
+  await test('personal board does not inherit station absence rows or issue extra range reads', async () => {
+    await absencePage.locator('#mineTab').click();
+    await absencePage.locator('#mineBoard .hcell').first().waitFor();
+    assert.equal(await absencePage.locator('#mineBoard .absence-cell').count(), 0);
+    const calls = await absencePage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
+  });
+  await absenceCtx.close();
+
+  await test('absence-only station days render without policy or sub-station rows', async () => {
+    const absenceOnly = JSON.parse(JSON.stringify(absenceRange));
+    absenceOnly.days.forEach((item) => { item.sub_stations = []; });
+    const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+    try {
+      await prepare(context, 'firefighter', {
+        getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+        getMyScheduleV2:[{ data:mine }],
+        getStationScheduleRange:[{ data:absenceOnly }]
+      });
+      const page = await context.newPage();
+      await page.goto(base, { waitUntil:'load' });
+      await page.locator('#stationBoard .absence-name').first().waitFor();
+      assert.equal(await page.locator('#stationBoard .hcell').count(), absenceOnly.days.length);
+      assert.equal(await page.locator('#stationBoard .absence-name').count(), 7);
+      assert.equal(await page.locator('#stationBoard .stub:not(.absence-stub)').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    } finally {
+      await context.close();
+    }
+  });
 
   const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(phone, 'firefighter', {
@@ -1308,5 +1408,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 33);
-console.log('\n33 schedule management browser checks passed.');
+assert.equal(passed, 39);
+console.log('\n39 schedule management browser checks passed.');

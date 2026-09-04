@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42G.0';
-const EXPECTED_DATE = '3.9.2026';
+const EXPECTED_VERSION = '42G.1';
+const EXPECTED_DATE = '4.9.2026';
 const EXPECTED_VERSIONED_REFERENCES = 204; // +5 effective workdays: 4 screen imports + guards.js; effective-workdays.js → rotation.js (+1) replaces the guards.js → rotation.js import (−1).
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
@@ -111,9 +111,9 @@ if (baseline.errors.length) {
 }
 
 const key = releaseKey(EXPECTED_VERSION);
-mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.1'));
-mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '4.9.2026'));
-mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.1'));
+mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
+mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
+mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
 mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
   'resq-v' + key + '-release1', 'resq-vstale-release1'));
 mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42g0">
+  <link rel="stylesheet" href="./theme.css?v=42g1">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -152,8 +152,14 @@
     .cell.s1{background:var(--s1)}.cell.s2{background:var(--s2)}
     .cell.s3{background:var(--s3)}.cell.s4{background:var(--s4)}
     .nm{font-size:12px;font-weight:500;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .cell.s1 .nm{color:var(--s1t)}.cell.s2 .nm{color:var(--s2t)}
-    .cell.s3 .nm{color:var(--s3t)}.cell.s4 .nm{color:var(--s4t)}
+    .cell .nm{color:var(--txt,#1c2532)}
+    .cell .nm.crew-A{color:var(--crewA,#b3261e)}
+    .cell .nm.crew-B{color:var(--crewB,#1f6b45)}
+    .cell .nm.crew-C{color:var(--crewC,#1d4ed8)}
+    .absence-cell{background:var(--card,#fff)}
+    .absence-empty{font-size:10px;color:var(--muted,#748091);overflow-wrap:anywhere}
+    .absence-location{display:inline-block;margin-inline-start:4px;padding:0 4px;
+      border:1px solid var(--line,#dfe5ec);border-radius:4px;font-size:10px}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
     .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
@@ -411,6 +417,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42g0"></script>
+<script type="module" src="./schedule-management.js?v=42g1"></script>
 </body>
 </html>
