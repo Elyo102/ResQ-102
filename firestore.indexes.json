@@ -360,6 +360,24 @@
       "fieldPath": "ttl_expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "incidents",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "incident_days",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "feedback_quota",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }
