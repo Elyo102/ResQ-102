@@ -3245,6 +3245,8 @@ function createScheduleRuntime(deps) {
     requireManager(ctx);
     const basis = await sheetImportBasis(ctx, req);
     const report = sheetImportReport(basis);
+    // הדוח נושא שמות — אימות חי של חברות ומינוי אחרי כל הקריאות, לפני ההחזרה.
+    await requireLiveManagerNow(ctx);
     return Object.assign(report, { blocked: report.blocked_by.length > 0 });
   }
 
@@ -3255,26 +3257,19 @@ function createScheduleRuntime(deps) {
     const { data, policy, source, resolved } = basis;
     const report = Object.assign(sheetImportReport(basis), { blocked: false });
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
-    /* ⭐ הייבוא נקשר לדוח שהמסך הציג: אותה חתימה — או סירוב. כך שינוי
-     * חודש/כינוי/אישור אחרי „בדוק" אינו מייבא בשקט משהו אחר. */
     const expectedReport = String(data.expected_report_digest || '');
-    if (!expectedReport || expectedReport !== basis.reportDigest) {
-      throw new ScheduleRuntimeError('import-report-stale',
-        'הדוח שאושר אינו תואם להדבקה, לחודש או להתאמות הנוכחיות. יש ללחוץ שוב על „בדוק את ההדבקה".', 'failed-precondition');
-    }
-    const blockers = sheetImportBlockers(basis);
-    if (blockers.length) {
-      report.blocked = true; report.blocked_by = blockers;
-      throw new ScheduleRuntimeError('import-blocked',
-        blockers.indexOf('no-assignments') !== -1 ? 'לא נמצא אף שיבוץ בהדבקה.'
-          : blockers.indexOf('missing-stations') !== -1 || blockers.indexOf('ignored-blocks') !== -1
-            ? 'יש תחנות חסרות או בלוקים שלא יובאו; יש לאשר אותם במפורש לפני הייבוא.'
-            : 'יש שמות שלא זוהו, כפילויות או תאים גדולים מדי. יש להתאים או לתקן בגיליון לפני הייבוא.', 'failed-precondition');
-    }
-    const effective = effectiveSource(ctx, source, policy, []);
     const sheetDigest = digest({ paste: basis.paste, month: basis.month });
-    // טביעת האצבע כוללת את המיפוי **בפועל** (שמור + חדש) דרך חתימת הדוח.
-    const fingerprint = digest({ ctx: ctx.sid, uid: ctx.uid, requestId, report: basis.reportDigest, source: effective.digest });
+    /* ⭐ שתי חתימות, שני תפקידים (v2-review §2):
+     * · **כוונת הבקשה** — מה שהמסך שלח: הדבקה, חודש, הכינויים שנמסרו, האישורים
+     *   והדוח שאושר. יציבה: אינה תלויה במיפוי החי, במקור או במדיניות. היא
+     *   מזהה „אותה בקשה" לניסיון חוזר — תשובה שאבדה מקבלת את הקבלה והדוח
+     *   המקוריים גם אם בינתיים נוסף כינוי שאינו בגיליון.
+     * · **התלויות** (חתימת הדוח מול המיפוי/המקור/המדיניות החיים) — נבדקות
+     *   רק לפני **יצירה** חדשה. שינוי אמיתי בקלט = כוונה אחרת = request-conflict. */
+    const fingerprint = digest({
+      ctx: ctx.sid, uid: ctx.uid, requestId, sheet: sheetDigest,
+      aliases: basis.aliases, accept: basis.accept, report: expectedReport
+    });
     const draftId = 'd_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
     const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
     const existing = await ref.get();
@@ -3289,10 +3284,29 @@ function createScheduleRuntime(deps) {
       if (before.status !== 'complete') {
         throw new ScheduleRuntimeError('draft-staging', 'הטיוטה עדיין נבנית. נסה שוב בעוד רגע.', 'aborted');
       }
+      // הקבלה נושאת שמות — אימות חי אחרון אחרי הקריאה, לפני ההחזרה.
+      await requireLiveManagerNow(ctx);
       // ניסיון חוזר מחזיר את הדוח **המקורי** שנשמר עם הטיוטה — לא פענוח חדש.
       return { duplicate: true, draft_id: draftId, summary: before.summary, from: before.from, to: before.to,
         report: plain(before.import_report) ? before.import_report : report };
     }
+    /* ⭐ יצירה חדשה בלבד: הייבוא נקשר לדוח שהמסך הציג — אותה חתימה מול
+     * המיפוי, המקור והמדיניות **החיים** — או סירוב. כך שינוי חודש/כינוי/אישור
+     * אחרי „בדוק" אינו מייבא בשקט משהו אחר. */
+    if (!expectedReport || expectedReport !== basis.reportDigest) {
+      throw new ScheduleRuntimeError('import-report-stale',
+        'הדוח שאושר אינו תואם להדבקה, לחודש או להתאמות הנוכחיות. יש ללחוץ שוב על „בדוק את ההדבקה".', 'failed-precondition');
+    }
+    const blockers = sheetImportBlockers(basis);
+    if (blockers.length) {
+      report.blocked = true; report.blocked_by = blockers;
+      throw new ScheduleRuntimeError('import-blocked',
+        blockers.indexOf('no-assignments') !== -1 ? 'לא נמצא אף שיבוץ בהדבקה.'
+          : blockers.indexOf('missing-stations') !== -1 || blockers.indexOf('ignored-blocks') !== -1
+            ? 'יש תחנות חסרות או בלוקים שלא יובאו; יש לאשר אותם במפורש לפני הייבוא.'
+            : 'יש שמות שלא זוהו, כפילויות או תאים גדולים מדי. יש להתאים או לתקן בגיליון לפני הייבוא.', 'failed-precondition');
+    }
+    const effective = effectiveSource(ctx, source, policy, []);
     const rows = resolved.rows;
     const summary = {
       filled: rows.reduce((n, row) => n + row.slots.length, 0),
@@ -3397,6 +3411,10 @@ function createScheduleRuntime(deps) {
       actor: actor(ctx), plan: snapshot.plan, events: snapshot.events,
       roster: snapshot.roster, date
     }).day, extras));
+    /* ⭐ v2-review §1: המינוי/החברות עלולים להתבטל **בזמן** קריאת התמונה
+     * (שורות, היעדרויות, סגל). אימות חי אחרון אחרי כל הקריאות ולפני
+     * ההחזרה — סירוב אינו מחזיר שמות ולא היעדרויות. אותם תפקידים, בלי הרחבה. */
+    await requireLiveManagerNow(ctx);
     return {
       draft_id: draftId,
       expected_content_digest: meta.content_digest,

@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42g1">
+<link rel="stylesheet" href="./theme.css?v=42h0">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -139,21 +139,21 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42g1';
-import { renderNav, renderStuckNav } from './nav.js?v=42g1';
-import { initPWA } from './pwa.js?v=42g1';
-import { APP_VERSION } from './version.js?v=42g1';
-import { MEMBER_ROLES } from './roles.js?v=42g1';
+import { firebaseConfig } from './firebase-config.js?v=42h0';
+import { renderNav, renderStuckNav } from './nav.js?v=42h0';
+import { initPWA } from './pwa.js?v=42h0';
+import { APP_VERSION } from './version.js?v=42h0';
+import { MEMBER_ROLES } from './roles.js?v=42h0';
 import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, createFeedbackSubmissionSession, errorText }
-  from './feedback.js?v=42g1';
+  from './feedback.js?v=42h0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42g1';
+  from './monitored-functions.js?v=42h0';
 
 const app  = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42g1';
+import { initAppCheck } from './appcheck.js?v=42h0';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');

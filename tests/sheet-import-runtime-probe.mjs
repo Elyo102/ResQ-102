@@ -263,6 +263,14 @@ const SHEET = [
   // ניסיון חוזר (תשובה שאבדה): אותו request_id ואותו דוח → הדוח **המקורי** מהטיוטה, לא פענוח חדש.
   const again = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
   eq('3.7 אותו request_id — כפילות, לא טיוטה שנייה', [again.duplicate, again.report.report_digest === ready.report_digest, again.report.counts.assignments], [true, true, ready.counts.assignments]);
+  // v2-review §2: כינוי **שאינו בשימוש בגיליון** נוסף למיפוי השמור אחרי הייבוא —
+  // ניסיון חוזר של אותה בקשה שהושלמה עדיין מחזיר את הקבלה והדוח המקוריים.
+  db._put(ST + '/schedule_state/sheet_aliases', { station_id: SID, aliases: Object.assign({}, db._get(ST + '/schedule_state/sheet_aliases').aliases, { 'unused-alias': 'u2' }) });
+  const replay = await rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+  eq('3.7b ניסיון חוזר אחרי שינוי כינוי לא קשור — אותה קבלה, אותו דוח', [replay.duplicate, replay.draft_id, replay.report.report_digest], [true, imported.draft_id, ready.report_digest]);
+  eq('3.7c ולא נוצרה טיוטה שנייה', db._paths(ST + '/schedule_drafts').filter((k) => k.split('/').length === 4).length, 1);
+  // שינוי אמיתי בקלט עם אותו מזהה נשאר סירוב (נבדק גם ב-3.8), ושינוי בכינוי שנשלח — גם.
+  await rejectsCode('3.7d אותו מזהה, כינוי שנשלח שונה → request-conflict', () => rt.importScheduleSheet(req({ request_id: 'i2', month: '2026-09', paste: SHEET, aliases: { 'רועי': 'u6', 'אבטחה': null }, expected_report_digest: ready.report_digest })), 'request-conflict');
   const memo = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }));
   eq('3.9 כינוי שנשמר משמש בהדבקה הבאה בלי למסור שוב', memo.counts.unresolved, 0);
   // אותו request_id עם קלט אחר (הדוח של הקלט האחר) → סירוב.
@@ -330,6 +338,65 @@ const SHEET = [
   // הפרסום נקרא שוב עם החתימה — היעדרויות בתוכה.
   db._put(ST + '/schedule_publications/' + published.publication_id + '/absences/' + db._paths(ST + '/schedule_publications/' + published.publication_id + '/absences/')[0].split('/').pop(), { date: '2026-09-01', entries: [] });
   await rejectsCode('5.9 היעדרות שנמחקה מהתמונה החתומה — הפרסום נעצר (digest)', () => rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2')), 'snapshot-count-mismatch');
+}
+
+/* 7 · v2-review §1: המינוי בוטל והמשתמש הושבת **בזמן** קריאת ההיעדרויות של
+ * הטיוטה — התשובה חייבת להיות סירוב, בלי שמות ובלי היעדרויות. אותו דבר
+ * לניסיון חוזר של ייבוא ולדוח ההדבקה (שניהם מחזירים שמות). */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const aliases = { 'רועי': 'u1', 'אבטחה': null };
+  const ready = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases }));
+  const imported = await rt.importScheduleSheet(req({ request_id: 'i7', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+  let fired = 0;
+  const revoke = () => {
+    fired += 1;
+    db._del(ST + '/schedule_access/' + MGR);
+    db._put(ST + '/users/' + MGR, { station_id: SID, station: SID, is_active: false, active: false, role: 'firefighter' });
+  };
+  const restore = () => {
+    db._put(ST + '/schedule_access/' + MGR, { schema_version: 1, station_id: SID, uid: MGR, roles: ['schedule_manager'], active: true, revision: 1 });
+    db._put(ST + '/users/' + MGR, { station_id: SID, station: SID, is_active: true, active: true, role: 'firefighter', full_name: 'מ' });
+  };
+  // הביטול נורה בסיום הקריאה הראשונה של הנתיב הנתון (אחרי שהקריאה כבר החזירה נתונים).
+  function armOnRead(pathSuffix) {
+    const original = db.collection;
+    let armed = true;
+    const wrap = (obj) => new Proxy(obj, { get(target, key) {
+      const value = target[key];
+      if (typeof value !== 'function') return value;
+      if (key === 'get') return async (...args) => {
+        const result = await value.apply(target, args);
+        if (armed && String(target.path || '').endsWith(pathSuffix)) { armed = false; revoke(); }
+        return result;
+      };
+      if (['collection', 'doc', 'where', 'limit', 'orderBy'].includes(key)) return (...args) => wrap(value.apply(target, args));
+      return value.bind(target);
+    } });
+    db.collection = (...args) => wrap(original.apply(db, args));
+    return () => { db.collection = original; };
+  }
+  let disarm = armOnRead('/schedule_drafts/' + imported.draft_id + '/absences');
+  await rejectsCode('7.1 ביטול מינוי בזמן קריאת ההיעדרויות → סירוב, לא טיוטה עם שמות', () => rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' })), 'manager-revoked');
+  disarm();
+  eq('7.1b ההוק אכן נורה באמצע הקריאה', fired, 1);
+  restore();
+  const okPreview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
+  eq('7.1c אחרי שחזור המינוי — הטיוטה נקראת', okPreview.days.reduce((n, d) => n + d.absences.length, 0), 5);
+  // ניסיון חוזר של ייבוא שהושלם: המינוי בוטל בזמן קריאת הטיוטה הקיימת → סירוב, לא הדוח.
+  disarm = armOnRead('/schedule_drafts/' + imported.draft_id);
+  await rejectsCode('7.2 ניסיון חוזר בזמן ביטול מינוי → סירוב', () => rt.importScheduleSheet(req({ request_id: 'i7', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest })), 'manager-revoked');
+  disarm();
+  eq('7.2b ההוק נורה', fired, 2);
+  restore();
+  // דוח ההדבקה: המינוי בוטל בזמן קריאת המיפוי השמור → סירוב, בלי רשימת אנשים.
+  disarm = armOnRead('/schedule_state/sheet_aliases');
+  await rejectsCode('7.3 דוח הדבקה בזמן ביטול מינוי → סירוב', () => rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET })), 'manager-revoked');
+  disarm();
+  eq('7.3b ההוק נורה', fired, 3);
+  restore();
+  eq('7.4 אחרי שחזור — הדוח חוזר', (await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }))).counts.unresolved, 0);
 }
 
 /* 6 · פרסום קודם (בלי היעדרויות) נשאר תקף — החתימה אינה משתנה לו. */
