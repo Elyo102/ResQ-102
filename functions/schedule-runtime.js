@@ -7,6 +7,7 @@ const guardEvents = require('./guard-events');
 const guardManagement = require('./schedule-guard-management');
 const guardBoardProjection = require('./guard-board-projection');
 const legacyCompatibility = require('./schedule-legacy-compat');
+const effectiveWorkdays = require('./schedule-effective-workdays');
 const policyAuthorModule = require('./schedule-policy-author');
 const modeAuthorityModule = require('./schedule-mode-authority');
 const cutoverModule = require('./schedule-cutover');
@@ -4760,11 +4761,24 @@ function createScheduleRuntime(deps) {
 
   function effectiveReaderFor(ctx, scoped) {
     const inTx = scoped && scoped.tx ? scoped.tx : null;
+    /* ⭐ `snapshot`: תמונת פרסום אחת שכבר נקראה ואומתה, שכל החלונות של
+     * קריאה אחת מוקרנים ממנה — ולא קריאה חדשה לכל חלון. זהות התמונה
+     * נבדקת שוב בסוף ב-`activeSnapshotStillCurrent`.
+     *
+     * ⭐ `legacyOnly` (400(3)): המתאם הטהור הוא גבול קשיח — במצב `new`
+     * הוא דורש פרסום פעיל ונופל על `active-publication-missing`. לכן
+     * ה-fallback המפורש ל-legacy (המקרה „new בלי פרסום פעיל" שההערה
+     * ליד legacyFallbackWindow מבטיחה) לא יכול לעבור דרכו כמות שהוא:
+     * כאן המתאם מקבל mode של legacy, והקורא שביקש את זה אחראי לבדוק
+     * שוב, אחרי הקריאה, שאין פרסום פעיל ושהמצב לא השתנה. */
+    const pinned = scoped && scoped.snapshot ? scoped.snapshot : null;
+    const legacyOnly = !!(scoped && scoped.legacyOnly);
     return effectiveReaderModule.createScheduleEffectiveReader({
       resolveLiveContext: async function () {
         return { station_id: ctx.sid, uid: ctx.uid, active: true };
       },
       readRuntime: async function () {
+        if (legacyOnly) return { mode: MODE.SHADOW };
         if (inTx) {
           const snap = await inTx.get(runtimeRef(ctx.sid));
           const data = snap.exists ? (snap.data() || {}) : {};
@@ -4792,7 +4806,7 @@ function createScheduleRuntime(deps) {
         }
         // activeSnapshot always reads and hashes the entire immutable snapshot
         // before this adapter exposes a range to the pure reader.
-        const active = await activeSnapshot(ctx);
+        const active = pinned || await activeSnapshot(ctx);
         if (!active) return null;
         return {
           pointer: {
@@ -4822,9 +4836,9 @@ function createScheduleRuntime(deps) {
     });
   }
 
-  async function effectiveStationWindow(ctx, from, to) {
+  async function effectiveStationWindow(ctx, from, to, scoped) {
     try {
-      return await effectiveReaderFor(ctx).getStation({ data: { from, to } });
+      return await effectiveReaderFor(ctx, scoped).getStation({ data: { from, to } });
     } catch (error) {
       if (error instanceof ScheduleRuntimeError) throw error;
       throw new ScheduleRuntimeError('effective-schedule-invalid',
@@ -5041,12 +5055,25 @@ function createScheduleRuntime(deps) {
    * הכלל: legacy מלא או new מלא. לעולם לא ביניים.
    * ================================================================== */
   async function legacyFallbackWindow(ctx, config, from, to) {
-    const window = await checkedLegacyWindow(ctx, config, from, to);
-    if (window.source !== 'legacy') {
+    /* 400(3): עד כאן הפונקציה קראה דרך checkedLegacyWindow, שבמצב `new`
+     * מגיע למתאם הטהור ונופל על `active-publication-missing` — כלומר
+     * ה-fallback שההערה למעלה מבטיחה מעולם לא עבד: הקורא קיבל שגיאה
+     * במקום legacy מלא. עכשיו: legacy נקרא במפורש (`legacyOnly`), ואחרי
+     * הקריאה נבדק שוב (א) שהמצב לא השתנה, (ב) שעדיין אין פרסום פעיל —
+     * אחרת פרסום שנכנס באמצע היה מוסתר מאחורי תשובת legacy. */
+    if (config.mode !== MODE.NEW) return checkedLegacyWindow(ctx, config, from, to);
+    const window = await effectiveStationWindow(ctx, from, to, { legacyOnly: true });
+    await beforeEffectiveViewRecheck({ kind: 'legacy', ctx, mode: config.mode });
+    const after = await configuration(ctx.sid);
+    const pointer = await activeRef(ctx.sid).get();
+    const pointerNow = pointer.exists ? (pointer.data() || {}) : {};
+    if (after.mode !== config.mode || window.source !== 'legacy' || nonEmpty(pointerNow.publication_id)) {
       throw new ScheduleRuntimeError('schedule-mode-changed',
         'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
     }
-    return window;
+    return Object.freeze(Object.assign({}, window, {
+      provenance: Object.freeze(Object.assign({}, window.provenance, { mode: config.mode, fallback: 'legacy' }))
+    }));
   }
 
   async function getMy(req) {
@@ -5144,6 +5171,188 @@ function createScheduleRuntime(deps) {
       cursor = isoDayOffset(cursor, 1);
     }
     return Object.freeze({ from, to, dates: Object.freeze(dates) });
+  }
+
+
+  /* ==================================================================
+   * ⭐ „מי עובד בתאריך?" — לשרת וללקוח (seq377/385 D · 400)
+   *
+   * `effectiveWorkDaysFor(ctx, config, {uids, from, to})` — פנימי: טווח
+   * של עד 397 יום כולל הקצוות, מוקרא בחלונות של ≤93 יום דרך המתאם
+   * הקיים — מתמונת פרסום **אחת** במצב new, או ממחזור ה-legacy
+   * ב-off/shadow — ומורכב במודול הטהור `schedule-effective-workdays`:
+   * `by_uid`, `unknown_dates`, `unknown_uids`. יום מחוץ לכיסוי הפרסום
+   * הוא „לא ידוע", לא „לא עובד". אדם שאינו בסגל הפרסום — „לא ידוע",
+   * לא „בחופש". new בלי פרסום פעיל → ה-fallback המפורש ל-legacy.
+   *
+   * `getEffectiveWorkdays(req)` — callable לחבר תחנה: `{from, to, uids}`
+   * בלבד. מחזיר תאריכים לכל uid מבוקש (עד 500), בלי שמות ובלי צוותים —
+   * פחות ממה ש-getLegacyScheduleCompatibilityContext חשף עד היום
+   * (מחזור מלא + חריגים לכל התחנה). `shift_hours`: תצורת שעות המשמרת
+   * של התחנה מתוך רשומת המחזור הפעילה — **תצורה, לא סידור** — כדי
+   * שמסך הנוכחות ימשיך למלא שעות גם במצב new, עד שתתקבל הכרעה על שעות
+   * במנוע החדש (פתוח מ-seq385). המקור מסומן במפורש.
+   *
+   * `effectiveWorkDaysForStation(sid, input)` — לשרת בלבד (סריקת לילה,
+   * דוח חודשי, בדיקת מנוחה בהחלפה): אין req, אין auth; התחנה נמסרת
+   * מהקוד הקורא ומאומתת. אינו מיוצא כ-callable.
+   * ================================================================== */
+  const ROTATION_HOUR_FIELDS = Object.freeze([
+    'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+    'commander_shift_hours', 'special_end', 'special_shift_hours'
+  ]);
+
+  async function stationShiftHours(ctx) {
+    const snap = await stationRef(ctx.sid).collection('rotations').limit(MAX_LEGACY_ROTATIONS + 1).get();
+    if (snap.size > MAX_LEGACY_ROTATIONS) {
+      throw new ScheduleRuntimeError('legacy-rotations-too-large',
+        'מחזורי הסידור הקיימים גדולים מהתקרה הבטוחה לתצוגה.', 'resource-exhausted');
+    }
+    const rows = snap.docs.map((doc) => ({ id: doc.id, value: doc.data() || {} }))
+      .sort((a, b) => compareCanonical(a.id, b.id));
+    const active = rows.filter((row) => row.value.is_active !== false)[0] || rows[0] || null;
+    if (!active) return null;
+    const out = {};
+    ROTATION_HOUR_FIELDS.forEach((field) => {
+      const value = active.value[field];
+      if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) out[field] = value;
+    });
+    return Object.keys(out).length ? Object.freeze(Object.assign(out, { hours_source: 'legacy-rotation-config' })) : null;
+  }
+
+  async function effectiveWindows(ctx, config, windows, pinned) {
+    const reader = effectiveReaderFor(ctx, pinned ? { snapshot: pinned } : undefined);
+    const out = [];
+    for (const w of windows) {
+      let window;
+      try {
+        window = await reader.getStation({ data: { from: w.from, to: w.to } });
+      } catch (error) {
+        if (error instanceof ScheduleRuntimeError) throw error;
+        throw new ScheduleRuntimeError('effective-schedule-invalid',
+          'לא ניתן לאמת את הסידור להצגה ולכן הוא לא מוצג.', 'failed-precondition');
+      }
+      if ((config.mode === MODE.NEW && window.source !== 'v2')
+          || (config.mode !== MODE.NEW && window.source !== 'legacy')) {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      out.push({ from: w.from, to: w.to, days: window.days, provenance: window.provenance });
+    }
+    return out;
+  }
+
+  function workdaysError(error) {
+    if (error && error.name === 'EffectiveWorkdaysError') {
+      throw new ScheduleRuntimeError('workdays-' + error.code, error.message, 'invalid-argument');
+    }
+    throw error;
+  }
+
+  async function effectiveWorkDaysFor(ctx, config, input) {
+    const value = plain(input) ? input : {};
+    let range;
+    try {
+      range = effectiveWorkdays.normalizeRange(String(value.from || ''), String(value.to || ''));
+      effectiveWorkdays.normalizeUids(Array.isArray(value.uids) ? value.uids : []);
+    } catch (error) { workdaysError(error); }
+    const uids = Array.isArray(value.uids) ? value.uids : [];
+
+    if (config.mode === MODE.NEW) {
+      const active = await checkedActiveSnapshot(ctx, config, null);
+      if (active) {
+        const coverage = { from: String(active.plan.from || ''), to: String(active.plan.to || '') };
+        let windows;
+        try { windows = effectiveWorkdays.windowsFor(range, coverage); } catch (error) { workdaysError(error); }
+        const produced = await effectiveWindows(ctx, config, windows, active);
+        // אותה תמונה מתחילת הקריאה ועד סופה — אחרת התשובה מעורבבת.
+        await activeSnapshotStillCurrent(ctx, config, active);
+        let assembled;
+        try {
+          assembled = effectiveWorkdays.assemble({
+            source: 'publication', range: { from: range.from, to: range.to }, coverage,
+            windows: produced, uids,
+            roster: (active.roster || []).map((person) => person.id)
+          });
+        } catch (error) { workdaysError(error); }
+        return Object.assign({ mode: config.mode, fallback: null, provenance: {
+          mode: config.mode, source: 'v2', publication_id: active.ref.id,
+          revision: Number(active.pointer.revision), content_digest: active.meta.content_digest
+        } }, assembled);
+      }
+      // אין פרסום פעיל ב-new — אותו fallback מפורש כמו בשאר הקוראים.
+    }
+
+    const coverage = { from: range.from, to: range.to };
+    const windows = effectiveWorkdays.windowsFor(range, coverage);
+    const produced = [];
+    for (const w of windows) {
+      const window = config.mode === MODE.NEW
+        ? await legacyFallbackWindow(ctx, config, w.from, w.to)
+        : await checkedLegacyWindow(ctx, config, w.from, w.to);
+      if (window.source !== 'legacy') {
+        throw new ScheduleRuntimeError('schedule-mode-changed',
+          'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+      }
+      produced.push({ from: w.from, to: w.to, days: window.days, provenance: window.provenance });
+    }
+    let assembled;
+    try {
+      assembled = effectiveWorkdays.assemble({
+        source: 'legacy', range: { from: range.from, to: range.to }, coverage,
+        windows: produced, uids, roster: null
+      });
+    } catch (error) { workdaysError(error); }
+    return Object.assign({
+      mode: config.mode, fallback: config.mode === MODE.NEW ? 'legacy' : null,
+      provenance: produced.length ? produced[0].provenance : { mode: config.mode, source: 'legacy' }
+    }, assembled);
+  }
+
+  function workdaysResponse(result, shiftHours) {
+    return {
+      mode: result.mode,
+      source: result.source,
+      fallback: result.fallback,
+      from: result.range.from,
+      to: result.range.to,
+      coverage: result.coverage,
+      unknown_dates: result.unknown_dates,
+      unknown_uids: result.unknown_uids,
+      by_uid: result.by_uid,
+      shift_hours: shiftHours,
+      provenance: result.provenance,
+      generated_at: clock()
+    };
+  }
+
+  async function getEffectiveWorkdays(req) {
+    const ctx = await context(req);
+    const config = await configuration(ctx.sid);
+    const data = req && req.data === undefined ? {} : (req && req.data);
+    if (!plain(data) || Object.keys(data).some((key) => ['from', 'to', 'uids'].indexOf(key) === -1)) {
+      throw new ScheduleRuntimeError('workdays-input',
+        'ימי העבודה מתקבלים לפי התחלה, סיום ורשימת מזהים בלבד.', 'invalid-argument');
+    }
+    if (!Array.isArray(data.uids)) {
+      throw new ScheduleRuntimeError('workdays-uids-shape', 'חובה למסור רשימת מזהים (גם ריקה).', 'invalid-argument');
+    }
+    const result = await effectiveWorkDaysFor(ctx, config, {
+      from: String(data.from || ''), to: String(data.to || ''), uids: data.uids
+    });
+    const shiftHours = await stationShiftHours(ctx);
+    return workdaysResponse(result, shiftHours);
+  }
+
+  async function effectiveWorkDaysForStation(sid, input) {
+    const station = String(sid || '').trim();
+    if (!ID_RE.test(station)) {
+      throw new ScheduleRuntimeError('station-required', 'חסר מזהה תחנה תקין.', 'failed-precondition');
+    }
+    const ctx = { sid: station, uid: null, role: 'system', system: true };
+    const config = await configuration(station);
+    const result = await effectiveWorkDaysFor(ctx, config, input);
+    return workdaysResponse(result, await stationShiftHours(ctx));
   }
 
   async function getStationRange(req) {
@@ -6036,6 +6245,8 @@ function createScheduleRuntime(deps) {
     publish,
     rollback,
     getMy,
+    getEffectiveWorkdays,
+    effectiveWorkDaysForStation,
     getStation,
     getStationRange,
     getLegacyCompatibility,

@@ -235,7 +235,8 @@ const CALLABLES = Object.freeze([
   // ⭐ שם תאימות לדפדפן שנשמר במטמון לפני הפקדים החדשים. הוא נראה
   // תמים אבל הוא מפעיל manageGuard — כלומר הוא שער מנהל לכל דבר.
   { name: 'assignGuard', method: 'manageGuard', gate: GATE.MANAGER },
-  { name: 'getLegacyScheduleCompatibilityContext', method: 'getLegacyCompatibility', gate: GATE.VIEW }
+  { name: 'getLegacyScheduleCompatibilityContext', method: 'getLegacyCompatibility', gate: GATE.VIEW },
+  { name: 'getEffectiveWorkdays', method: 'getEffectiveWorkdays', gate: GATE.VIEW }
 ]);
 
 function methodBody(name, src) {
