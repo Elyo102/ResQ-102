@@ -115,3 +115,8 @@ jobs:
       # מול Firestore אמיתי. עד לכאן הם נבדקו מול double בלבד.
       - name: כתיבת חוקי תחנה, מקור ומעבר לחי מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-authoring.integration.test.js"
+
+      - name: Monitoring and feedback transactions and deny rules
+        env:
+          NODE_PATH: ${{ github.workspace }}/rules-test/node_modules
+        run: firebase emulators:exec --only firestore --project demo-resq "node functions/ops.integration.test.js"

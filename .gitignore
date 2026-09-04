@@ -71,3 +71,8 @@ ui-debug.log
 tests/.visual/
 tests/debug.log
 debug.log
+
+# All local monitoring exports and backup sets are private, including future
+# JSON/log formats. Git history and documents may contain sensitive data.
+_ניטור/
+_גיבוי/
