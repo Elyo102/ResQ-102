@@ -64,9 +64,13 @@ function isPlainObject(v) {
 }
 
 /* מפתחות שמסוכן להשתמש בהם כשם במפה רגילה: "__proto__" כמזהה אדם היה
- * כותב את העומס שלו ל-Object.prototype של התהליך החם. כל מזהה שמגיע
- * מבחוץ (אדם, תחנת קצה, תפקיד, קבוצת מחזוריות) נבדק כאן, וכל קריאה
- * ממפה עוברת דרך own() — לא דרך ירושה. */
+ * כותב את העומס שלו ל-Object.prototype של התהליך החם.
+ *
+ * שני חוזים שונים:
+ *  · תחנת קצה / תפקיד — מפתחות שהמדיניות מגדירה. שם שמור נדחה.
+ *  · מזהה אדם (UID) — אינו נפסל: משתמש קיים עם UID כלשהו חייב להמשיך
+ *    לעבוד. הבטיחות באה מהמפות עצמן: כל מפה שמפתחה UID היא
+ *    null-prototype, כל קריאה דרך own(), והפלט נבנה כ-own-properties. */
 const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 function isReservedKey(v) {
   return RESERVED_KEYS.indexOf(v) !== -1;
@@ -77,7 +81,10 @@ function isSafeKey(v) {
 /* המפות הפנימיות הן null-prototype; החוצה יוצאים אובייקטים רגילים
  * (מסד הנתונים ו-JSON) — המפתחות כבר אומתו, אז אין כאן מפתח שמור. */
 function plainMap(map) {
-  return Object.assign({}, map);
+  // לא Object.assign: מפתח "__proto__" היה מופעל כ-setter במקום להיכתב כשדה.
+  const out = {};
+  for (const key of Object.keys(map)) Object.defineProperty(out, key, { value: map[key], enumerable: true, writable: true, configurable: true });
+  return out;
 }
 function own(obj, key) {
   return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
@@ -308,9 +315,6 @@ function normalizeRoster(roster, policy, input) {
   for (const p of roster) {
     if (!isPlainObject(p) || !isNonEmptyString(p.id)) {
       throw new CalendarError('roster-shape', 'לכל אדם בסגל חייב להיות מזהה');
-    }
-    if (!isSafeKey(p.id)) {
-      throw new CalendarError('roster-id-reserved', 'מזהה אדם אינו חוקי כמפתח');
     }
     if (byId.has(p.id)) {
       throw new CalendarError('roster-duplicate', 'המזהה ' + p.id + ' מופיע פעמיים');
@@ -811,10 +815,10 @@ function createCalendarEngine(deps) {
       carry: {
         load: plainMap(state.load),
         lastDay: plainMap(state.lastDay),
-        byRole: Object.keys(state.byRole).reduce((acc, id) => {
+        byRole: plainMap(Object.keys(state.byRole).reduce((acc, id) => {
           acc[id] = plainMap(state.byRole[id]);
           return acc;
-        }, {})
+        }, Object.create(null)))
       }
     });
   }

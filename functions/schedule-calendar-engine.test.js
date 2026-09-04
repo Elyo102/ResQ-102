@@ -644,13 +644,36 @@ t('יותר מדי ימים — סירוב', () => {
 
 const PROTO_KEYS = ['__proto__', 'constructor', 'prototype'];
 
-t('מזהה אדם שמור — סירוב, ו-Object.prototype נשאר נקי', () => {
-  for (const id of PROTO_KEYS) {
-    const list = roster(); list[0] = person(id, 'eilat', ['shift_lead', 'firefighter']);
-    throwsCode(() => run(mk(), { roster: list }), 'roster-id-reserved');
+/* ⭐ UID אינו נפסל (Codex 410): משתמש קיים עם UID "constructor" חייב
+ * להמשיך לעבוד. הבטיחות היא במפות — null-prototype, own(), ופלט שנבנה
+ * כ-own-properties — לא ברשימה שחורה. */
+t('UID שמור או מורש (__proto__, constructor, toString…) — משובץ, נספר, עובר roundtrip, ולא מזהם', () => {
+  const ids = PROTO_KEYS.concat(['toString', 'valueOf', 'hasOwnProperty']);
+  const e = mk();
+  const list = ids.map((id) => person(id, 'eilat', ['shift_lead', 'team_cmd', 'driver', 'firefighter']));
+  const first = run(e, { roster: list, days: ['2026-09-01', '2026-09-03'] });
+  assert.ok(first.rows.every((r) => r.sub_station !== 'eilat' || r.slots.length > 0));
+  const assigned = first.rows.flatMap((r) => r.slots.map((x) => x.person));
+  assert.ok(assigned.some((id) => ids.includes(id)), 'אף UID כזה לא שובץ');
+  for (const id of assigned) {
+    assert.ok(Object.prototype.hasOwnProperty.call(first.carry.load, id), id + ' חסר ב-carry.load כשדה own');
+    assert.ok(Object.prototype.hasOwnProperty.call(first.carry.byRole, id), id + ' חסר ב-carry.byRole כשדה own');
   }
+  assert.strictEqual(Object.getPrototypeOf(first.carry.load), Object.prototype, 'הפלט חייב להיות אובייקט רגיל');
+  assert.strictEqual(Object.getPrototypeOf(first.carry.byRole.__proto__ || {}), Object.prototype);
+  // roundtrip דרך JSON (כמו מסד הנתונים) ובחזרה למנוע, באותו תהליך.
+  const carry = JSON.parse(JSON.stringify(first.carry));
+  assert.ok(Object.prototype.hasOwnProperty.call(carry.load, assigned[0]));
+  const second = run(e, { roster: list, days: ['2026-09-05', '2026-09-07'], carry });
+  for (const id of assigned) {
+    assert.ok(second.carry.load[id] >= first.carry.load[id], id + ' איבד עומס ב-roundtrip');
+  }
+  // אין זיהום, ואין שינוי בפונקציות שכבר היו על Object.prototype.
   assert.strictEqual(({}).shift_lead, undefined);
-  assert.strictEqual(({}).firefighter, undefined);
+  assert.strictEqual(typeof Object.prototype.toString, 'function');
+  assert.strictEqual(typeof Object.prototype.hasOwnProperty, 'function');
+  assert.strictEqual(Object.getOwnPropertyDescriptor(Object.prototype, 'toString').writable, true);
+  assert.strictEqual(Object.getOwnPropertyDescriptor(Object.prototype, 'toString').enumerable, false);
 });
 
 t('תחנת קצה בשם שמור במדיניות — סירוב', () => {
@@ -688,15 +711,14 @@ t('שיבוץ ידני / זמינות / מצב המשך עם מפתח שמור �
   assert.strictEqual(({}).driver, undefined);
 });
 
-t('מזהי אנשים חוקיים עם נקודות, נקודתיים ואורך 128 — מתקבלים', () => {
+t('מזהי אנשים חוקיים עם נקודות, נקודתיים ואורך חריג — מתקבלים כמו קודם (אין חרם חדש על UID)', () => {
   const list = roster();
   list[0] = person('a.b:c-d_e', 'eilat', ['shift_lead', 'firefighter']);
-  list[1] = person('x'.repeat(128), 'eilat', ['shift_lead', 'firefighter']);
+  list[1] = person('x'.repeat(129), 'eilat', ['shift_lead', 'firefighter']);
   const out = run(mk(), { roster: list });
   assert.ok(Object.keys(out.carry.load).length > 0);
   assert.strictEqual(Object.getPrototypeOf(out.carry.load), Object.prototype, 'המצב שיוצא חייב להיות אובייקט רגיל');
   assert.strictEqual(Object.getPrototypeOf(out.carry.byRole), Object.prototype);
-  throwsCode(() => run(mk(), { roster: [person('y'.repeat(129), 'eilat', ['shift_lead'])].concat(roster().slice(1)) }), 'roster-id-reserved');
 });
 
 t('תפקיד או תחנת קצה בשם שיש ל-Object.prototype (toString, valueOf, hasOwnProperty) — עובד כמפתח רגיל, לא כירושה', () => {

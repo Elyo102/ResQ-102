@@ -1134,7 +1134,7 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('override-sub-station',
           'תחנת הקצה בשינוי הידני אינה קיימת.', 'invalid-argument');
       }
-      if (isReservedKey(entry.person) || (entry.role && isReservedKey(entry.role))) {
+      if (entry.role && isReservedKey(entry.role)) {
         throw new ScheduleRuntimeError('override-invalid',
           'שינוי ידני חייב לכלול תאריך, תחנת קצה ואדם.', 'invalid-argument');
       }

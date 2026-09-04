@@ -1747,7 +1747,8 @@ check('reserved map keys: overrides, locked source and stored policy are own-pro
   const overrides = src.slice(overridesAt, src.indexOf('function effectiveSource(', overridesAt));
   assert.ok(overrides.indexOf('!safeSubKey(entry.sub_station) || !hasOwn(policy.sub_stations, entry.sub_station)') > -1,
     'שינוי ידני בודק תחנת קצה דרך truthiness — "__proto__" עובר');
-  assert.ok(overrides.indexOf('isReservedKey(entry.person)') > -1, 'אדם בשינוי ידני יכול להיות מפתח שמור');
+  assert.equal(overrides.indexOf('isReservedKey(entry.person)'), -1, 'UID אינו נפסל — משתמש קיים חייב להמשיך לעבוד (410)');
+  assert.ok(overrides.indexOf('isReservedKey(entry.role)') > -1, 'תפקיד בשינוי ידני יכול להיות מפתח שמור');
   assert.equal(overrides.indexOf('policy.sub_stations[entry.sub_station]) {'), -1, 'נשארה בדיקת truthiness');
   const effAt = src.indexOf('function effectiveSource(ctx, source, policy, overrides)');
   const eff = src.slice(effAt, src.indexOf('const effectiveDigest', effAt));
@@ -1764,9 +1765,9 @@ check('reserved map keys: overrides, locked source and stored policy are own-pro
     'מדיניות שמורה עם מפתח שמור נטענת');
   // המודולים הטהורים שמקבלים את אותם מפתחות דוחים אותם בעצמם.
   const engine = read('functions/schedule-calendar-engine.js');
-  for (const code of ['roster-id-reserved', 'sub-station-key-reserved']) {
-    assert.ok(engine.indexOf("'" + code + "'") > -1, 'מנוע היומן חסר ' + code);
-  }
+  assert.ok(engine.indexOf("'sub-station-key-reserved'") > -1, 'מנוע היומן חסר sub-station-key-reserved');
+  assert.equal(engine.indexOf("'roster-id-reserved'"), -1, 'מנוע היומן פוסל UID — אסור (410)');
+  assert.ok(engine.indexOf('Object.defineProperty(out, key, { value: map[key]') > -1, 'פלט המנוע נבנה ב-Object.assign — "__proto__" היה setter');
   assert.ok(author.indexOf('function validSubKey(v)') > -1 && author.indexOf('!isReservedKey(v)') > -1,
     'policy-author מקבל מפתח שמור');
 });
