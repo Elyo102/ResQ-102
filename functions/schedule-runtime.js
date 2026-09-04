@@ -1291,7 +1291,8 @@ function createScheduleRuntime(deps) {
     /* היעדרויות (הכרעת אלדד 4.9): חלק מהתמונה החתומה. נכנסות לחתימה רק
      * כשקיימות, כדי שפרסומים שנחתמו לפני כן יישארו תקפים כפי שהם. */
     const absences = normalizeSnapshotAbsences(plan.absences);
-    const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences);
+    const absenceCoverage = normalizeSnapshotAbsenceCoverage(plan.absence_coverage);
+    const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences, absenceCoverage);
     const ops = [];
     absenceDocuments(absences).forEach((doc) => {
       ops.push({ ref: ref.collection('absences').doc(doc.id), data: doc.data, kind: 'set' });
@@ -1318,15 +1319,18 @@ function createScheduleRuntime(deps) {
     // Child documents may take several batches.  The snapshot remains staging
     // until a final transaction rechecks the live appointment and publishes
     // its completion atomically.  Never make staged data usable by itself.
-    await ref.set(Object.assign({}, meta, {
+    const snapshotMeta = Object.assign({}, meta, {
       snapshot_complete: true, row_count: rows.length, event_count: orderedEvents.length,
       person_count: peopleById.size, absence_count: absences.length,
       content_digest: contentDigest, snapshot_completed_at: FV.serverTimestamp()
-    }), { merge: true });
+    });
+    if (absenceCoverage) snapshotMeta.absence_coverage = absenceCoverage;
+    await ref.set(snapshotMeta, { merge: true });
     return contentDigest;
   }
 
   const ABSENCE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave', 'unknown']);
+  const ABSENCE_COVERAGE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave']);
   const ABSENCE_LOCATIONS = Object.freeze(['abroad', 'north', 'eilat']);
 
   function normalizeSnapshotAbsences(raw) {
@@ -1365,7 +1369,25 @@ function createScheduleRuntime(deps) {
     }));
   }
 
-  function snapshotDigest(plan, rows, events, people, absences) {
+  function normalizeSnapshotAbsenceCoverage(raw) {
+    if (raw === undefined || raw === null) return null;
+    if (!plain(raw)) throw new ScheduleRuntimeError('snapshot-absence-coverage', 'מצב כיסוי ההיעדרויות אינו תקין.');
+    const keys = Object.keys(raw).sort();
+    if (keys.length !== ABSENCE_COVERAGE_KINDS.length
+        || ABSENCE_COVERAGE_KINDS.some((kind) => keys.indexOf(kind) === -1)) {
+      throw new ScheduleRuntimeError('snapshot-absence-coverage', 'מצב כיסוי ההיעדרויות אינו תקין.');
+    }
+    const out = {};
+    ABSENCE_COVERAGE_KINDS.forEach((kind) => {
+      if (raw[kind] !== 'ready' && raw[kind] !== 'missing') {
+        throw new ScheduleRuntimeError('snapshot-absence-coverage', 'מצב כיסוי ההיעדרויות אינו תקין.');
+      }
+      out[kind] = raw[kind];
+    });
+    return out;
+  }
+
+  function snapshotDigest(plan, rows, events, people, absences, absenceCoverage) {
     const basis = {
       contract: {
         station_id: plan.station_id, source_snapshot: plan.source_snapshot,
@@ -1375,6 +1397,7 @@ function createScheduleRuntime(deps) {
       }, rows, events, people
     };
     if (absences.length) basis.absences = absences;
+    if (absenceCoverage) basis.absence_coverage = absenceCoverage;
     return digest(basis);
   }
 
@@ -1459,9 +1482,11 @@ function createScheduleRuntime(deps) {
       rows, absences, summary: meta.summary || { blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0 },
       imported: meta.imported === true
     };
+    const absenceCoverage = normalizeSnapshotAbsenceCoverage(meta.absence_coverage);
+    if (absenceCoverage) plan.absence_coverage = absenceCoverage;
     if (!dates) {
       const orderedPeople = roster.slice().sort((a, b) => compareCanonical(a.id, b.id));
-      const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences);
+      const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences, absenceCoverage);
       if (!nonEmpty(meta.content_digest) || meta.content_digest !== actualDigest) {
         throw new ScheduleRuntimeError('snapshot-digest-mismatch',
           'תמונת הסידור השתנתה או אינה שלמה ולכן נעצרה.');
@@ -3101,6 +3126,7 @@ function createScheduleRuntime(deps) {
    * ================================================================== */
   const MAX_SHEET_PASTE_BYTES = 2 * 1024 * 1024;
   const MAX_SHEET_ALIASES = 500;
+  const MAX_SHEET_REPORT_PEOPLE = 1000;
 
   function sheetAliasesRef(sid) {
     return stationRef(sid).collection('schedule_state').doc('sheet_aliases');
@@ -3121,15 +3147,22 @@ function createScheduleRuntime(deps) {
     return month;
   }
 
-  function requestedSheetPaste(data) {
-    const paste = typeof data.paste === 'string' ? data.paste : '';
-    if (!paste.trim()) {
-      throw new ScheduleRuntimeError('import-paste-required', 'חסרה הדבקה של הגיליון.', 'invalid-argument');
+  function requestedSheetInput(data) {
+    const hasPaste = typeof data.paste === 'string' && data.paste.trim();
+    const hasMatrix = Array.isArray(data.matrix);
+    if (!hasPaste && !hasMatrix && typeof data.paste === 'string') {
+      throw new ScheduleRuntimeError('import-paste-required', 'ההדבקה ריקה.', 'invalid-argument');
     }
-    if (Buffer.byteLength(paste, 'utf8') > MAX_SHEET_PASTE_BYTES) {
-      throw new ScheduleRuntimeError('import-paste-too-large', 'ההדבקה גדולה מדי.', 'resource-exhausted');
+    if (!!hasPaste === hasMatrix) {
+      throw new ScheduleRuntimeError('import-input-required',
+        'יש למסור הדבקה או טבלת קובץ אחת בלבד.', 'invalid-argument');
     }
-    return paste;
+    const input = hasMatrix ? data.matrix : data.paste;
+    const bytes = Buffer.byteLength(JSON.stringify(input), 'utf8');
+    if (bytes > MAX_SHEET_PASTE_BYTES) {
+      throw new ScheduleRuntimeError('import-paste-too-large', 'הקלט גדול מדי.', 'resource-exhausted');
+    }
+    return { kind: hasMatrix ? 'matrix' : 'paste', input, digest: digest({ kind: hasMatrix ? 'matrix' : 'paste', input }) };
   }
 
   // כינויים שנמסרו מהמסך: שם → uid. רק מזהים שקיימים במקור נשמרים; שם
@@ -3165,10 +3198,14 @@ function createScheduleRuntime(deps) {
     requireMode(config, [MODE.SHADOW, MODE.NEW]);
     const data = plain(req.data) ? req.data : {};
     const month = requestedSheetMonth(data);
-    const paste = requestedSheetPaste(data);
+    const sheet = requestedSheetInput(data);
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const source = await loadSource(ctx, config.active_source_id);
     const people = source.peopleRaw.filter((person) => person.active === true);
+    if (people.length > MAX_SHEET_REPORT_PEOPLE) {
+      throw new ScheduleRuntimeError('import-roster-too-large',
+        'מקור כוח האדם גדול מדי לדוח התאמת שמות במסך.', 'resource-exhausted');
+    }
     const stored = await loadSheetAliases(ctx);
     const given = requestedSheetAliases(data, people);
     const aliases = Object.assign({}, stored, given);
@@ -3176,23 +3213,25 @@ function createScheduleRuntime(deps) {
       missing_stations: plain(data.accept) && data.accept.missing_stations === true,
       ignored_blocks: plain(data.accept) && data.accept.ignored_blocks === true
     };
+    let projected;
     let parsed;
     let resolved;
     try {
-      parsed = sheetImport.parseSheet(paste, { month, policy: policy.value });
+      projected = sheetImport.projectCanonicalPolicy(policy.value, data.station_map);
+      parsed = sheetImport.parseSheet(sheet.input, { month, policy: projected.policy });
       resolved = sheetImport.resolveSheet(parsed, {
-        people, aliases, policy: policy.value, station_id: ctx.sid
+        people, aliases, policy: projected.policy, station_id: ctx.sid
       });
     } catch (error) { sheetImportError(error); }
     /* ⭐ חתימת הדוח: ההדבקה, החודש, **כל** המיפוי בפועל (שמור + חדש),
      * המקור, המדיניות והאישורים. הייבוא מקבל את החתימה שהמסך ראה —
      * דוח שאינו של הקלט הזה בדיוק נדחה, ולא מיובא משהו אחר ממה שאושר. */
     const reportDigest = digest({
-      sheet: digest({ paste, month }), aliases, accept,
+      sheet: digest({ input: sheet.digest, month }), aliases, accept, station_map: projected.mapping,
       source: source.digest, policy: policy.digest, resolved: digest(resolved)
     });
-    return { ctx, config, data, month, paste, policy, source, people, aliases: given, effectiveAliases: aliases,
-      accept, parsed, resolved, reportDigest };
+    return { ctx, config, data, month, sheet, policy, source, people, aliases: given, effectiveAliases: aliases,
+      accept, parsed, resolved, stationMapping: projected.mapping, reportDigest };
   }
 
   function sheetImportReport(basis) {
@@ -3217,6 +3256,7 @@ function createScheduleRuntime(deps) {
       missing_stations: basis.resolved.missing_stations,
       warnings: basis.parsed.warnings,
       accept: basis.accept,
+      station_map: basis.stationMapping,
       report_digest: basis.reportDigest,
       // רשימת האנשים הפעילים — כדי שהמסך יציע התאמה לשם שלא זוהה.
       people: basis.people.map((person) => ({ uid: person.id, name: names.get(person.id) || person.id }))
@@ -3258,7 +3298,7 @@ function createScheduleRuntime(deps) {
     const report = Object.assign(sheetImportReport(basis), { blocked: false });
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const expectedReport = String(data.expected_report_digest || '');
-    const sheetDigest = digest({ paste: basis.paste, month: basis.month });
+    const sheetDigest = digest({ input: basis.sheet.digest, month: basis.month });
     /* ⭐ שתי חתימות, שני תפקידים (v2-review §2):
      * · **כוונת הבקשה** — מה שהמסך שלח: הדבקה, חודש, הכינויים שנמסרו, האישורים
      *   והדוח שאושר. יציבה: אינה תלויה במיפוי החי, במקור או במדיניות. היא
@@ -3320,7 +3360,8 @@ function createScheduleRuntime(deps) {
       contract_station_id: ctx.sid, source_revision: effective.revision, source_digest: effective.digest,
       policy_version: policy.value.version, policy_digest: policy.digest, source_complete: true,
       generated_at: clock(), from: report.from, to: report.to,
-      rows, absences: resolved.absences, summary, imported: true
+      rows, absences: resolved.absences, absence_coverage: resolved.absence_coverage,
+      summary, imported: true
     };
     await db.runTransaction(async (tx) => {
       const aliasRef = sheetAliasesRef(ctx.sid);
@@ -3404,7 +3445,8 @@ function createScheduleRuntime(deps) {
     // אותו עיטור כמו בלוח המפורסם — היעדרויות, צוות לאדם וצוות ליום —
     // כדי שהתצוגה המקדימה תיראה בדיוק כמו מה שיפורסם.
     const extras = {
-      absences: snapshot.plan.absences || [], roster: snapshot.roster, viewer: ctx.uid,
+      absences: snapshot.plan.absences || [], absenceCoverage: snapshot.plan.absence_coverage || null,
+      roster: snapshot.roster, viewer: ctx.uid,
       rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, dates[0], dates[dates.length - 1])
     };
     const days = dates.map((date) => decoratePublishedDay(service.buildStationSchedule({
@@ -5422,6 +5464,7 @@ function createScheduleRuntime(deps) {
       crew: extras.dayCrews.has(day.date) ? extras.dayCrews.get(day.date) : null,
       absences,
       absences_status: 'ready',
+      absence_coverage: plain(extras.absenceCoverage) ? extras.absenceCoverage : null,
       sub_stations: (day.sub_stations || []).map((block) => Object.assign({}, block, {
         people: (block.people || []).map((person) => Object.assign({}, person, {
           crew: extras.rosterCrew.get(person.uid) || null
@@ -6026,7 +6069,8 @@ function createScheduleRuntime(deps) {
     // כל הקריאות הנוספות (סגל לצבע השם, מחזור לצבע היום) **לפני** הבדיקות
     // המסכמות — כדי שלא תוחזר תמונה שהתיישנה בזמן העיטור.
     const extras = {
-      absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
+      absences: active.plan.absences || [], absenceCoverage: active.plan.absence_coverage || null,
+      roster: active.roster, viewer: ctx.uid,
       rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, range.from, range.to)
     };
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
@@ -6065,7 +6109,8 @@ function createScheduleRuntime(deps) {
     }
     const sidecar = await readLiveGuardProjection(ctx, dates);
     const extras = {
-      absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
+      absences: active.plan.absences || [], absenceCoverage: active.plan.absence_coverage || null,
+      roster: active.roster, viewer: ctx.uid,
       rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, dates[0], dates[2])
     };
     await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });

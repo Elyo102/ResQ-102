@@ -59,7 +59,7 @@ function day(date, label, me) {
   return {
     date,
     sub_stations:[{
-      sub_station:'main', label:'אילת', minimum:2, below_minimum:false,
+      sub_station:'eilat', label:'תווית שרת שגויה', minimum:2, coverage:'ready', below_minimum:false,
       people:[
         { uid:'stub-uid', person:'אלדד יונה', role_label:'לוחם', hours:'07:00-07:00', is_me:me },
         { uid:'crew_1', person:'טל חודרה', role_label:'נהג', hours:'07:00-07:00', is_me:false }
@@ -538,9 +538,10 @@ try {
   const absenceRange = JSON.parse(JSON.stringify(stationRange));
   absenceRange.days.forEach((item) => {
     item.absences_status = 'ready'; item.absences = [];
+    item.absence_coverage = { sick:'ready', reserve:'ready', course:'ready', leave:'ready' };
     item.sub_stations[0].people[0].crew = 'B';
     item.sub_stations[0].people[1].crew = 'A';
-    item.sub_stations.push({ sub_station:'north', label:'שחמון', minimum:null,
+    item.sub_stations.push({ sub_station:'shahmon', label:'שחמון', minimum:null, coverage:'ready',
       people:[{ uid:'crew_2', person:'צוות ב בתחנה אחרת', crew:'B' },
         { uid:'crew_3', person:'צוות ג', crew:'C' },
         { uid:'crew_unknown', person:'צוות לא ידוע', crew:'constructor' }] });
@@ -568,12 +569,12 @@ try {
   await absencePage.locator('#stationBoard .absence-cell').first().waitFor();
   await test('station absence rows use closed labels and leave-only locations with safe text', async () => {
     assert.deepEqual(await absencePage.locator('#stationBoard .absence-stub b').allTextContents(),
-      ['מחלה', 'מילואים', 'קורסים', 'חופש', 'סיבה לא ידועה']);
-    assert.equal(await absencePage.locator('#stationBoard .absence-name').count(), 7);
+      ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.equal(await absencePage.locator('#stationBoard .absence-name').count(), 5);
     assert.deepEqual(await absencePage.locator('#stationBoard .absence-location').allTextContents(), ['חו״ל']);
     assert.equal(await absencePage.locator('#stationBoard .absence-cell img, #stationBoard .absence-cell script').count(), 0);
-    assert.match(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').first().textContent(), /<img src=x onerror=alert\(1\)>/);
-    assert.match(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').first().textContent(), /סוג עתידי/);
+    assert.equal(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').count(), 0,
+      'התבנית נשארת עם ארבע שורות ההערות שנקבעו');
   });
   await test('unknown absence data is distinct from a verified empty list', async () => {
     const cell = (index) => absencePage.locator('#stationBoard [data-absence-kind="sick"][data-date="'
@@ -603,7 +604,7 @@ try {
     for (const width of [360, 390]) {
       await absencePage.setViewportSize({ width, height:844 });
       assert.equal(await absencePage.locator('#stationBoard .hcell').count(), absenceRange.days.length);
-      assert.equal(await absencePage.locator('#stationBoard .absence-cell').count(), absenceRange.days.length * 5);
+      assert.equal(await absencePage.locator('#stationBoard .absence-cell').count(), absenceRange.days.length * 4);
       assert.equal(await absencePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     }
   });
@@ -616,7 +617,7 @@ try {
   });
   await absenceCtx.close();
 
-  await test('absence-only station days render without policy or sub-station rows', async () => {
+  await test('the four-station template remains visible when assignment data is missing', async () => {
     const absenceOnly = JSON.parse(JSON.stringify(absenceRange));
     absenceOnly.days.forEach((item) => { item.sub_stations = []; });
     const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
@@ -630,8 +631,11 @@ try {
       await page.goto(base, { waitUntil:'load' });
       await page.locator('#stationBoard .absence-name').first().waitFor();
       assert.equal(await page.locator('#stationBoard .hcell').count(), absenceOnly.days.length);
-      assert.equal(await page.locator('#stationBoard .absence-name').count(), 7);
-      assert.equal(await page.locator('#stationBoard .stub:not(.absence-stub)').count(), 0);
+      assert.equal(await page.locator('#stationBoard .absence-name').count(), 5);
+      assert.deepEqual(await page.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+        ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+      assert.equal(await page.locator('#stationBoard .cell:not(.absence-cell).unknown').count(), absenceOnly.days.length * 4);
+      assert.match(await page.locator('#stationBoard .cell:not(.absence-cell).unknown').first().textContent(), /לא הוזן/);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     } finally {
       await context.close();
@@ -826,14 +830,17 @@ try {
   const offPage = await off.newPage();
   await offPage.goto(base, { waitUntil:'load' });
   await offPage.locator('#appMain:not(.hide)').waitFor();
-  await test('off mode safely shows the legacy station schedule as the default', async () => {
+  await test('off mode keeps the fixed station template without inventing station assignments', async () => {
     assert.match(offPage.url(), /schedule-management\.html/);
     assert.equal(await offPage.locator('#availabilityView').isVisible(), false);
     assert.equal(await offPage.locator('#scheduleTabs').isVisible(), true);
     assert.equal(await offPage.locator('#manageTab').isVisible(), false);
     assert.equal(await offPage.locator('#stationView').isVisible(), true);
     await offPage.locator('#stationBoard .hcell').first().waitFor();
-    assert.match(await offPage.locator('#stationContent').textContent(), /משמרת א/);
+    assert.deepEqual(await offPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.doesNotMatch(await offPage.locator('#stationContent').textContent(), /משמרת [אבג]/);
+    assert.match(await offPage.locator('#stationContent').textContent(), /לא הוזן/);
     // ⭐ הרצועה עובדת גם לפני שהמנוע הופעל. אחרת המסך היה ריק
     // בדיוק במצב שהתחנה נמצאת בו היום.
     assert.match(await offPage.locator('#stationNote').textContent(), /הסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון/);
@@ -941,7 +948,9 @@ try {
 
     await shadowManagerPage.locator('[data-tab="station"]').click();
     assert.match(await shadowManagerPage.locator('#stationNote').textContent(), /הסידור הקיים/);
-    assert.match(await shadowManagerPage.locator('#stationContent').textContent(), /אלדד יונה/);
+    assert.deepEqual(await shadowManagerPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.match(await shadowManagerPage.locator('#stationContent').textContent(), /לא הוזן/);
   });
   await shadowManager.close();
 
@@ -1449,6 +1458,9 @@ try {
         : index === 2 ? [{ uid:'stub-uid', display:'אלדד יונה', kind:'leave', location:'eilat', is_me:true }] : []
     }))
   };
+  importedPreview.days.forEach((item) => {
+    item.absence_coverage = { sick:'ready', reserve:'ready', course:'ready', leave:'ready' };
+  });
   importedPreview.days.forEach((item) => item.sub_stations[0].people.forEach((person, i) => { person.crew = ['A', 'B'][i]; }));
   const sheetImporter = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
   await prepare(sheetImporter, 'firefighter', {
@@ -1456,7 +1468,7 @@ try {
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:mine }],
     getStationScheduleRange:[{ data:stationRange }],
-    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportAccept }, { data:importReportReady }],
+    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportAccept }, { data:importReportReady }, { data:importReportReady }],
     importScheduleSheet:[{ data:importedDraft }],
     getScheduleDraftPreview:[{ data:importedPreview }]
   });
@@ -1464,10 +1476,16 @@ try {
   await sheetPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await sheetPage.locator('#appMain:not(.hide)').waitFor();
   await test('the sheet paste is checked before anything is written; unresolved names are offered a match', async () => {
+    assert.equal(await sheetPage.locator('#importStationMap').isVisible(), true, 'מדיניות ישנה מקבלת מסלול מיפוי גלוי');
+    await sheetPage.selectOption('#importStationMapGrid select[data-station-id="eilat"]', 'main');
+    for (const id of ['shahmon', 'timna', 'yotvata']) {
+      await sheetPage.selectOption('#importStationMapGrid select[data-station-id="' + id + '"]', '__none__');
+    }
+    await sheetPage.locator('#importStationMapConfirm').check();
     assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
     await sheetPage.locator('#importCheck').click();
     await sheetPage.locator('#importMessage .msg').waitFor();
-    assert.match(await sheetPage.locator('#importMessage').textContent(), /צריך להדביק|יש לבחור חודש/);
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /צריך לבחור קובץ|צריך להדביק|יש לבחור חודש/);
     await sheetPage.fill('#importMonth', today.slice(0, 7));
     await sheetPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
     await sheetPage.locator('#importCheck').click();
@@ -1485,6 +1503,7 @@ try {
     const preview = calls.filter((entry) => entry.name === 'previewScheduleImport');
     assert.equal(preview.length, 1);
     assert.equal(Object.hasOwn(preview[0].payload, 'stationId'), false);
+    assert.deepEqual(preview[0].payload.station_map, { eilat:'main', shahmon:null, timna:null, yotvata:null });
     assert.deepEqual(preview[0].payload.aliases, {});
     assert.equal(calls.some((entry) => entry.name === 'importScheduleSheet'), false, 'nothing is imported before the manager confirms');
   });
@@ -1522,9 +1541,21 @@ try {
       ['שובצו', 'היעדרויות', 'ימים מתחת לקו', 'יובא מהגיליון']);
     // השבלונה: אות המשמרת בכותרת, העמודה בצבע המשמרת, שם בצבע הצוות, שורות היעדרות.
     assert.deepEqual(await sheetPage.locator('#draftBoard .hcell .crew').allTextContents(), ['משמרת א׳', 'משמרת ב׳', 'משמרת ג׳']);
-    assert.equal(await sheetPage.locator('#draftBoard .cell.col-A').count(), 1);
-    assert.equal(await sheetPage.locator('#draftBoard .cell.col-B').count(), 1);
-    assert.equal(await sheetPage.locator('#draftBoard .cell.col-C').count(), 1);
+    assert.deepEqual(await sheetPage.locator('#draftBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.equal(await sheetPage.locator('#draftBoard').getAttribute('role'), 'grid');
+    assert.equal(await sheetPage.locator('#draftBoard [role="row"]').count(), 9);
+    assert.equal(await sheetPage.locator('#draftBoard [role="columnheader"]').count(), 4);
+    assert.equal(await sheetPage.locator('#draftBoard [role="rowheader"]').count(), 8);
+    assert.equal(await sheetPage.locator('#draftBoard [role="columnheader"]').evaluateAll((cells) =>
+      cells.every((cell) => cell.parentElement && cell.parentElement.getAttribute('role') === 'row')), true,
+    'every column header is owned by a grid row');
+    assert.equal(await sheetPage.locator('#draftBoard [role="rowheader"], #draftBoard [role="gridcell"]').evaluateAll((cells) =>
+      cells.every((cell) => cell.parentElement && cell.parentElement.getAttribute('role') === 'row')), true,
+    'every row header and grid cell is owned by a grid row');
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-A').count(), 4);
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-B').count(), 4);
+    assert.equal(await sheetPage.locator('#draftBoard .cell.col-C').count(), 4);
     const tints = await sheetPage.evaluate(() => ['col-A', 'col-B', 'col-C'].map((cls) =>
       getComputedStyle(document.querySelector('#draftBoard .cell.' + cls)).backgroundColor));
     assert.equal(new Set(tints).size, 3, 'three distinct column colours');
@@ -1534,6 +1565,28 @@ try {
     assert.deepEqual(await sheetPage.locator('#draftBoard .absence-location').allTextContents(), ['אילת']);
     assert.equal(await sheetPage.locator('#draftBoard .absence-cell.unknown').count(), 0);
     assert.equal(await sheetPage.locator('#publish').isEnabled(), false, 'publishing still needs the review checkbox');
+  });
+  await test('a local CSV file is parsed in the browser and only its matrix reaches the callable', async () => {
+    const csv = '\ufeff,1/9,2/9,3/9\r\nאילת,א,ב,ג\r\n';
+    await sheetPage.locator('#importFile').focus();
+    const focusOutline = await sheetPage.locator('label[for="importFile"]').evaluate((el) => {
+      const style = getComputedStyle(el);
+      return [style.outlineStyle, style.outlineWidth];
+    });
+    assert.notEqual(focusOutline[0], 'none', 'בחירת הקובץ מקבלת סימון מקלדת גלוי');
+    assert.notEqual(focusOutline[1], '0px');
+    await sheetPage.locator('#importFile').setInputFiles({
+      name:'schedule.csv', mimeType:'text/csv', buffer:Buffer.from(csv, 'utf8')
+    });
+    await sheetPage.locator('#importFileStatus').filter({ hasText:'schedule.csv' }).waitFor();
+    assert.equal(await sheetPage.inputValue('#importPaste'), '');
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .ok').waitFor();
+    const previews = (await sheetPage.evaluate(() => window.__CALLABLE_CALLS))
+      .filter((entry) => entry.name === 'previewScheduleImport');
+    const filePreview = previews[3];
+    assert.deepEqual(filePreview.payload.matrix, [['', '1/9', '2/9', '3/9'], ['אילת', 'א', 'ב', 'ג']]);
+    assert.equal(Object.hasOwn(filePreview.payload, 'paste'), false);
   });
   await sheetImporter.close();
 
@@ -1561,6 +1614,11 @@ try {
   await lostImportPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await lostImportPage.locator('#appMain:not(.hide)').waitFor();
   await test('a lost import response keeps the exact request; after an unrelated alias change the retry resends it and gets the same draft', async () => {
+    await lostImportPage.selectOption('#importStationMapGrid select[data-station-id="eilat"]', 'main');
+    for (const id of ['shahmon', 'timna', 'yotvata']) {
+      await lostImportPage.selectOption('#importStationMapGrid select[data-station-id="' + id + '"]', '__none__');
+    }
+    await lostImportPage.locator('#importStationMapConfirm').check();
     await lostImportPage.fill('#importMonth', today.slice(0, 7));
     await lostImportPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
     await lostImportPage.locator('#importCheck').click();
@@ -1585,7 +1643,7 @@ try {
     assert.equal(imports[1].payload.expected_report_digest, 'rd_ready', 'the retry must not adopt the newer report');
     assert.equal(calls.filter((entry) => entry.name === 'previewScheduleImport').length, 2);
     assert.equal(await lostImportPage.locator('#importRun').isEnabled(), false, 'the pending attempt is cleared after a verified answer');
-    assert.equal(await lostImportPage.locator('#draftBoard .cell.col-A').count(), 1);
+    assert.equal(await lostImportPage.locator('#draftBoard .cell.col-A').count(), 4);
   });
   await lostImport.close();
 } finally {
@@ -1593,5 +1651,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 42);
-console.log('\n42 schedule management browser checks passed.');
+assert.equal(passed, 43);
+console.log('\n43 schedule management browser checks passed.');

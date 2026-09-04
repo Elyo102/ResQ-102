@@ -1,10 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h0';
-import { renderNav, renderStuckNav } from './nav.js?v=42h0';
-import { initPWA } from './pwa.js?v=42h0';
-import { initAppCheck } from './appcheck.js?v=42h0';
+import { firebaseConfig } from './firebase-config.js?v=42h1';
+import { renderNav, renderStuckNav } from './nav.js?v=42h1';
+import { initPWA } from './pwa.js?v=42h1';
+import { initAppCheck } from './appcheck.js?v=42h1';
+import { readScheduleFile } from './schedule-file-import.js?v=42h1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h0';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h1';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -51,6 +52,7 @@ const state = {
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false,
+  importMatrix: null, importFileName: null, importStationMap: null,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
   tab: null, busy: false
@@ -65,6 +67,12 @@ const DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', '
 // ארבעה צבעים, במחזור. תחנה חמישית תקבל שוב את הראשון — וזה
 // מוצהר, ולא תקלה שמישהו יגלה כשתיפתח תחנת קצה נוספת.
 const SUB_CLASS = ['s1', 's2', 's3', 's4'];
+const FIXED_STATIONS = Object.freeze([
+  Object.freeze({ id:'eilat', label:'אילת', minimum:7 }),
+  Object.freeze({ id:'shahmon', label:'שחמון', minimum:null }),
+  Object.freeze({ id:'timna', label:'תמנע', minimum:null }),
+  Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null })
+]);
 
 function localDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -987,8 +995,9 @@ const ABSENCE_ROWS = [['sick', 'מחלה'], ['reserve', 'מילואים'], ['cou
 const ABSENCE_LOCATIONS = new Map([['abroad', 'חו״ל'], ['north', 'צפון'], ['eilat', 'אילת']]);
 const CREW_HE = { A: 'א׳', B: 'ב׳', C: 'ג׳' };
 
-function absenceDataReady(day) {
+function absenceDataReady(day, kind) {
   return day.absences_status === 'ready' && Array.isArray(day.absences)
+    && day.absence_coverage && day.absence_coverage[kind] === 'ready'
     && day.absences.every((item) => item && typeof item === 'object'
       && typeof item.uid === 'string' && item.uid.length > 0
       && typeof item.display === 'string' && item.display.trim().length > 0);
@@ -1003,20 +1012,20 @@ function absenceKind(item) {
  * ללוח אומרת זאת — לא הודעה בכל תא. */
 function appendAbsenceRows(board, days) {
   const rows = ABSENCE_ROWS.slice();
-  if (days.some((day) => absenceDataReady(day)
-      && day.absences.some((item) => absenceKind(item) === 'unknown'))) {
-    rows.push(['unknown', 'סיבה לא ידועה']);
-  }
   rows.forEach(([kind, label], rowIndex) => {
+    const ariaRow = node('div', 'board-row');
+    ariaRow.setAttribute('role', 'row');
     const stub = node('div', 'stub absence absence-stub');
+    stub.setAttribute('role', 'rowheader');
     stub.appendChild(node('b', '', label));
-    board.appendChild(stub);
+    ariaRow.appendChild(stub);
     days.forEach((day, index) => {
-      const ready = absenceDataReady(day);
+      const ready = absenceDataReady(day, kind);
       // „אין נתון" (חודש שלא הודבק) אינו „אף אחד" (רשימה ריקה מאומתת):
       // הראשון תא מקווקו בלי סימן, השני מקף. ההסבר — פעם אחת מתחת ללוח.
       const cell = node('div', 'cell absence-cell' + (rowIndex === 0 ? ' first' : '')
         + (ready ? '' : ' unknown') + (index % 7 === 0 ? ' snap' : ''));
+      cell.setAttribute('role', 'gridcell');
       cell.dataset.absenceKind = kind;
       cell.dataset.date = day.date;
       if (!ready) cell.title = 'אין נתון: החודש הזה לא הודבק מהגיליון';
@@ -1029,14 +1038,15 @@ function appendAbsenceRows(board, days) {
         cell.appendChild(row);
       });
       if (ready && !people.length) cell.appendChild(node('span', 'absence-empty', '—'));
-      board.appendChild(cell);
+      ariaRow.appendChild(cell);
     });
+    board.appendChild(ariaRow);
   });
 }
 
 function absenceNote(days) {
   if (!days || !days.length) return '';
-  const ready = days.filter((day) => absenceDataReady(day)).length;
+  const ready = days.filter((day) => ABSENCE_ROWS.every(([kind]) => absenceDataReady(day, kind))).length;
   if (ready === days.length) return '';
   return ready === 0
     ? ' שורות ההיעדרות מתמלאות מהסידור שמודבק מהגיליון; החודש הזה עדיין לא הודבק.'
@@ -1088,14 +1098,6 @@ function isWeekend(iso) {
 // סדר תחנות הקצה נקבע ממדיניות התחנה כשהיא קיימת, כדי שהצבע של
 // „תמנע" לא יתחלף בין יום ליום רק מפני שביום אחד לא היה שם איש.
 function subOrder(days) {
-  const fromPolicy = state.policy
-    ? Object.keys(state.policy.sub_stations)
-    : [];
-  const seen = [];
-  fromPolicy.forEach((id) => seen.push(id));
-  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (seen.indexOf(sub.sub_station) === -1) seen.push(sub.sub_station);
-  }));
   const labels = new Map();
   (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
     if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
@@ -1117,20 +1119,40 @@ function subOrder(days) {
       : (minimums.has(id) ? minimums.get(id) : null);
     return Number.isInteger(value) && value > 0 ? value : null;
   };
-  return seen.map((id) => ({
-    id,
-    label: labels.get(id) || id,
-    minimum: lineOf(id)
+  return FIXED_STATIONS.map((station) => ({
+    id: station.id,
+    label: station.label,
+    minimum: lineOf(station.id) === null ? station.minimum : lineOf(station.id)
   }));
+}
+
+// „הסידור שלי" נשאר שימושי גם כשהמנוע כבוי: במצב legacy אין מיפוי
+// אמין ממשמרת א/ב/ג לתחנת קצה, ולכן מציגים שם את שורת המשמרת האישית
+// כפי שהשרת החזיר. בלוח התחנתי לעולם לא משתמשים ברשימה הזאת.
+function legacySubOrder(days) {
+  const seen = [];
+  const labels = new Map();
+  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
+    if (!sub || !sub.sub_station) return;
+    if (!seen.includes(sub.sub_station)) seen.push(sub.sub_station);
+    if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
+  }));
+  return seen.map((id) => ({ id, label: labels.get(id) || id, minimum: null }));
 }
 
 function cellContent(cell, block, sub) {
   const people = (block && block.people) || [];
+  const missing = !block || block.coverage === 'missing';
   const declared = block && block.minimum !== undefined && block.minimum !== null
     ? block.minimum : sub.minimum;
   // קו 0 (או חסר) = „אין קו": אין קו אדום ואין „מתחת לקו".
   const minimum = Number.isInteger(declared) && declared > 0 ? declared : null;
 
+  if (missing) {
+    cell.classList.add('unknown');
+    cell.title = 'לא הוזן סידור לתחנה ביום הזה';
+    cell.appendChild(node('span', 'absence-empty', 'לא הוזן'));
+  }
   people.forEach((person, index) => {
     // ⭐ הקו האדום מצויר במקום קו המינימום של תחנת הקצה. הוא אינו
     // ידית: הוא ההחלטה ששמורה ב-`schedule_policies`, ומשנים אותה
@@ -1179,8 +1201,15 @@ function renderBoard(target, days, options) {
 
   const board = node('div', 'board');
   board.id = opts.id || 'board';
+  board.setAttribute('role', 'grid');
+  board.setAttribute('aria-label', opts.ariaLabel || 'סידור תחנתי');
   board.style.setProperty('--n', String(days.length));
-  board.appendChild(node('div', 'corner'));
+  const headerRow = node('div', 'board-row');
+  headerRow.setAttribute('role', 'row');
+  const corner = node('div', 'corner');
+  corner.setAttribute('role', 'columnheader');
+  corner.setAttribute('aria-label', 'תחנת קצה');
+  headerRow.appendChild(corner);
 
   // צוות היום (משמרת = יממה) מגיע מהשרת: `day.crew`. הוא צובע את העמודה
   // כולה ומופיע כאות בכותרת — כמו בגיליון. בלי צוות ידוע — עמודה ניטרלית.
@@ -1188,6 +1217,7 @@ function renderBoard(target, days, options) {
   days.forEach((day, index) => {
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
       + (index % 7 === 0 ? ' snap' : ''));
+    head.setAttribute('role', 'columnheader');
     head.appendChild(node('div', 'dw', DOW[new Date(day.date + 'T00:00:00.000Z').getUTCDay()]));
     head.appendChild(node('div', 'dd',
       Number(day.date.slice(8, 10)) + '/' + Number(day.date.slice(5, 7))));
@@ -1195,19 +1225,24 @@ function renderBoard(target, days, options) {
     const chip = node('span', 'crew' + (crew ? ' crew-' + crew : ''), crew ? 'משמרת ' + CREW_HE[crew] : '—');
     chip.title = crew ? 'המשמרת שעובדת ביממה הזאת' : 'המשמרת של היום אינה ידועה';
     head.appendChild(chip);
-    board.appendChild(head);
+    headerRow.appendChild(head);
   });
+  board.appendChild(headerRow);
 
   subs.forEach((sub, subIndex) => {
+    const ariaRow = node('div', 'board-row');
+    ariaRow.setAttribute('role', 'row');
     const stub = node('div', 'stub ' + subClass(subIndex));
+    stub.setAttribute('role', 'rowheader');
     stub.appendChild(node('b', '', sub.label));
     stub.appendChild(node('small', '',
       sub.minimum === null || sub.minimum === undefined ? 'אין קו' : 'קו ' + sub.minimum));
-    board.appendChild(stub);
+    ariaRow.appendChild(stub);
 
     days.forEach((day, index) => {
       const crew = dayCrew(day);
       const cell = node('div', 'cell ' + (crew ? 'col-' + crew : subClass(subIndex)) + (index % 7 === 0 ? ' snap' : ''));
+      cell.setAttribute('role', 'gridcell');
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
       cellContent(cell, block, sub);
       // אירועים ואבטחות שייכים ליום כולו ולא לתחנת קצה. הם נתלים
@@ -1227,8 +1262,9 @@ function renderBoard(target, days, options) {
             + ' · ' + (names.length ? names.join(' · ') : 'טרם אוישה')));
         });
       }
-      board.appendChild(cell);
+      ariaRow.appendChild(cell);
     });
+    board.appendChild(ariaRow);
   });
 
   if (opts.showAbsences !== false) appendAbsenceRows(board, days);
@@ -1478,7 +1514,9 @@ async function loadMineRange(ym) {
     }
     const days = state.mineOnly ? daysWithMe(view.days) : view.days;
     const only = mySubStation();
-    renderBoard(box, days, { id: 'mineBoard', onlySub: only || undefined, showAbsences: false,
+    renderBoard(box, days, { id: 'mineBoard',
+      subs: view.source === 'legacy' ? legacySubOrder(days) : undefined,
+      onlySub: view.source === 'legacy' ? undefined : (only || undefined), showAbsences: false,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
     $('mineNote').textContent = (only
@@ -1870,15 +1908,85 @@ function importAliases() {
   return out;
 }
 
+function canonicalPolicyReady() {
+  return !!(state.policy && FIXED_STATIONS.every((station) =>
+    Object.prototype.hasOwnProperty.call(state.policy.sub_stations || {}, station.id)));
+}
+
+function renderImportStationMap() {
+  const wrap = $('importStationMap');
+  const grid = $('importStationMapGrid');
+  clear(grid);
+  if (!state.policy || canonicalPolicyReady()) {
+    wrap.hidden = true;
+    state.importStationMap = null;
+    $('importStationMapConfirm').checked = false;
+    return;
+  }
+  wrap.hidden = false;
+  const existing = Object.keys(state.policy.sub_stations || {}).sort();
+  const current = state.importStationMap || {};
+  FIXED_STATIONS.forEach((station) => {
+    const label = node('label', '', station.label);
+    const select = node('select');
+    select.dataset.stationId = station.id;
+    const choose = node('option', '', '— בחר/י —'); choose.value = ''; select.appendChild(choose);
+    existing.forEach((id) => {
+      const old = state.policy.sub_stations[id] || {};
+      const option = node('option', '', (old.label || id) + ' (' + id + ')');
+      option.value = id;
+      select.appendChild(option);
+    });
+    const none = node('option', '', 'אין תחנה ישנה'); none.value = '__none__'; select.appendChild(none);
+    if (Object.prototype.hasOwnProperty.call(current, station.id)) {
+      select.value = current[station.id] === null ? '__none__' : current[station.id];
+    } else {
+      const exact = existing.find((id) => String((state.policy.sub_stations[id] || {}).label || '').trim() === station.label);
+      if (exact) { select.value = exact; current[station.id] = exact; }
+    }
+    select.addEventListener('change', () => {
+      const next = Object.assign({}, state.importStationMap || {});
+      if (select.value === '') delete next[station.id];
+      else next[station.id] = select.value === '__none__' ? null : select.value;
+      state.importStationMap = next;
+      $('importStationMapConfirm').checked = false;
+      invalidateImportReport();
+    });
+    label.appendChild(select);
+    grid.appendChild(label);
+  });
+  state.importStationMap = current;
+}
+
+function importStationMap() {
+  if (canonicalPolicyReady()) return null;
+  if (!state.policy) throw new Error('חסרים חוקי תחנה פעילים.');
+  const mapping = state.importStationMap || {};
+  if (FIXED_STATIONS.some((station) => !Object.prototype.hasOwnProperty.call(mapping, station.id))) {
+    throw new Error('יש לבחור מיפוי לכל ארבע התחנות.');
+  }
+  const chosen = FIXED_STATIONS.map((station) => mapping[station.id]).filter((value) => value !== null);
+  if (new Set(chosen).size !== chosen.length) throw new Error('אי אפשר למפות תחנה ישנה אחת לשתי תחנות חדשות.');
+  if (!$('importStationMapConfirm').checked) throw new Error('יש לאשר שבדקת את מיפוי התחנות.');
+  return mapping;
+}
+
 function importInput() {
   const month = $('importMonth').value;
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לייבוא.');
-  const paste = $('importPaste').value;
-  if (!paste.trim()) throw new Error('צריך להדביק את הגיליון.');
-  return { month, paste, aliases: importAliases(), accept: {
+  const input = { month, aliases: importAliases(), accept: {
     missing_stations: $('importAcceptMissing').checked === true,
     ignored_blocks: $('importAcceptIgnored').checked === true
   } };
+  const stationMap = importStationMap();
+  if (stationMap) input.station_map = stationMap;
+  if (Array.isArray(state.importMatrix)) input.matrix = state.importMatrix;
+  else {
+    const paste = $('importPaste').value;
+    if (!paste.trim()) throw new Error('צריך לבחור קובץ או להדביק את הגיליון.');
+    input.paste = paste;
+  }
+  return input;
 }
 
 /* כל שינוי בקלט — חודש, הדבקה, התאמה, אישור — מבטל את הדוח: הייבוא
@@ -2261,6 +2369,7 @@ async function loadSetup() {
     state.policy = policyFromSetup(state.setup);
     state.policyDirty = false;
     renderPolicy();
+    renderImportStationMap();
     renderSourceSummary();
   } catch (error) { message('policyMessage', errorText(error), 'err'); }
 }
@@ -2349,10 +2458,43 @@ function commandAction(fn) {
 
 $('runPlanner').addEventListener('click', runAction(runPlanner));
 $('importCheck').addEventListener('click', managerAction(checkImport));
-$('importPaste').addEventListener('input', () => { state.importAliases = {}; invalidateImportReport(); });
+$('importPaste').addEventListener('input', () => {
+  state.importAliases = {};
+  state.importMatrix = null;
+  state.importFileName = null;
+  $('importFile').value = '';
+  $('importFileStatus').textContent = 'מצב הדבקה ידנית.';
+  invalidateImportReport();
+});
+$('importFile').addEventListener('change', async () => {
+  const file = $('importFile').files && $('importFile').files[0];
+  state.importAliases = {};
+  state.importMatrix = null;
+  state.importFileName = null;
+  if (!file) {
+    $('importFileStatus').textContent = 'לא נבחר קובץ. Excel ו-Google Sheets: הורד/י כ-CSV.';
+    invalidateImportReport();
+    return;
+  }
+  $('importFileStatus').textContent = 'קורא את הקובץ…';
+  try {
+    const result = await readScheduleFile(file);
+    state.importMatrix = result.matrix;
+    state.importFileName = result.name;
+    $('importPaste').value = '';
+    $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
+    message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק את הקובץ" כדי לראות מה ייובא.', 'info');
+  } catch (error) {
+    $('importFile').value = '';
+    $('importFileStatus').textContent = 'הקובץ לא נקרא.';
+    message('importMessage', errorText(error), 'err');
+  }
+  invalidateImportReport();
+});
 $('importMonth').addEventListener('change', invalidateImportReport);
 $('importAcceptMissing').addEventListener('change', invalidateImportReport);
 $('importAcceptIgnored').addEventListener('change', invalidateImportReport);
+$('importStationMapConfirm').addEventListener('change', invalidateImportReport);
 $('importUnresolved').addEventListener('change', invalidateImportReport);
 $('importRun').addEventListener('click', runAction(importSheet));
 $('publish').addEventListener('click', runAction(publishDraft));

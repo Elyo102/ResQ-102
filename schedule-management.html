@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h0">
+  <link rel="stylesheet" href="./theme.css?v=42h1">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -133,6 +133,9 @@
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
       scroll-padding-inline-start:var(--stub);
       border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+    /* ARIA grid hierarchy without an extra visual box: every logical row owns
+       its headers/cells, while the children remain the CSS-grid items. */
+    .board>[role="row"]{display:contents}
     .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:6px 3px 7px;
       text-align:center;border-bottom:1px solid var(--line,#dfe5ec)}
     .hcell.snap{scroll-snap-align:start}
@@ -200,7 +203,15 @@
     .blocktag.station{border-color:var(--sched-blue);color:var(--sched-blue)}
     .blocktag.absence{border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
     .blocktag.ignored{opacity:.6;text-decoration:line-through}
-    @media (max-width:640px){.importrow{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
+    .filepick{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:10px}
+    .filepick input[type="file"]{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+    .filepick input[type="file"]:focus + label{outline:3px solid var(--sched-blue);outline-offset:3px}
+    .filestatus{font-size:12px;color:var(--muted,#748091)}
+    .stationmap{margin-top:12px;padding:10px;border:1px solid var(--warn,#e0a23c);border-radius:10px;background:var(--warn-bg,#fff7df)}
+    .stationmap-grid{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:8px;margin-top:8px}
+    .stationmap-grid label{font-size:12px;font-weight:800}
+    .stationmap-grid select{width:100%;min-height:40px;margin-top:4px}
+    @media (max-width:640px){.importrow,.stationmap-grid{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
     .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
@@ -386,18 +397,33 @@
     </article>
 
     <article class="card importcard" id="importCard">
-      <h2>הדבקת הסידור מהגיליון</h2>
-      <div class="sub">הגיליון הקיים הוא מסד הנתונים. בגיליון: Ctrl+A ← העתק, וכאן: הדבק. המערכת
+      <h2>קליטת סידור עבודה</h2>
+      <div class="sub">אפשר לבחור קובץ CSV/TSV שהורד מ-Excel או מ-Google Sheets, או להדביק את הגיליון. הקובץ נקרא בדפדפן בלבד;
+        הקובץ הגולמי אינו נשמר ואינו נשלח. המערכת
         קוראת את התוויות שבעמודה הימנית — אילת, שחמון, תמנע, יטבתה, מחלה, מילואים, קורסים, חופש —
         ומייבאת את החודש כמות שהוא, בלי שהמנוע ישנה בו דבר. הקו האדום מוצג ואינו חוסם.
         שם שלא זוהה מוצג להתאמה פעם אחת, והמערכת זוכרת.</div>
+      <div class="filepick">
+        <input id="importFile" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values">
+        <label class="btn" for="importFile" style="margin:0">בחר קובץ סידור</label>
+        <span class="filestatus" id="importFileStatus">לא נבחר קובץ. Excel ו-Google Sheets: הורד/י כ-CSV.</span>
+      </div>
+      <div class="stationmap" id="importStationMap" hidden>
+        <b>מיפוי חד-משמעי לארבע התחנות</b>
+        <div class="sub">המערכת לא מנחשת שמות ישנים. לכל תחנה בחר/י מאיזו תחנה קיימת לקחת את קו המינימום, או „אין תחנה ישנה”. הבחירה אינה משנה את המקור הקיים.</div>
+        <div class="stationmap-grid" id="importStationMapGrid"></div>
+        <label class="req-flag" style="margin-top:8px">
+          <input id="importStationMapConfirm" type="checkbox">
+          <span>בדקתי את ארבעת המיפויים. „אין תחנה ישנה” הוא בחירה מפורשת.</span>
+        </label>
+      </div>
       <div class="importrow">
         <div><label for="importMonth">חודש לייבוא</label><input id="importMonth" type="month"></div>
         <div><label for="importPaste">הדבקה מהגיליון</label>
           <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea></div>
       </div>
       <div class="btns">
-        <button class="btn primary" id="importCheck" type="button">בדוק את ההדבקה</button>
+        <button class="btn primary" id="importCheck" type="button">בדוק את הקובץ או ההדבקה</button>
         <button class="btn dark" id="importRun" type="button" disabled>ייבא כטיוטה</button>
       </div>
       <div id="importReport" hidden>
@@ -491,6 +517,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h0"></script>
+<script type="module" src="./schedule-management.js?v=42h1"></script>
 </body>
 </html>

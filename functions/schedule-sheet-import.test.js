@@ -90,6 +90,7 @@ test('בלוקים: תחנה נגמרת בשורת השעה הראשונה; מה
   assert.ok(p.warnings.some((w) => w.code === 'block-ignored' && w.rows[0] === 10));
   assert.deepEqual(S.namesInCell('דני + גיא'), ['דני', 'גיא']);
   assert.deepEqual(S.namesInCell('יוסי מזרחי, גיא'), ['יוסי מזרחי', 'גיא']);
+  assert.deepEqual(S.namesInCell('רועי כהן\nדניאל לוי'), ['רועי כהן', 'דניאל לוי'], 'שמות בשורות נפרדות בתוך תא נשארים נפרדים');
   assert.deepEqual(S.namesInCell('17:45-08:00'), []);
   assert.deepEqual(S.namesInCell('אבטחה 06:00-17:00'), ['אבטחה 06:00-17:00']);
 });
@@ -151,7 +152,13 @@ test('תחנה בלי בלוק בהדבקה — חסרה ומדווחת, לא �
   const r = S.resolveSheet(S.parseSheet(sheet, { month: '2026-09', policy: POLICY }), { people: PEOPLE, policy: POLICY, station_id: 's' });
   assert.deepEqual(r.missing_stations.map((m) => m.sub_station), ['shahmon', 'timna', 'yotvata']);
   assert.equal(r.counts.missing_stations, 3);
-  assert.deepEqual(r.rows.map((x) => x.sub_station), ['eilat', 'eilat', 'eilat'], 'אין שורות לתחנות חסרות');
+  assert.deepEqual(r.rows.map((x) => x.sub_station), [
+    'eilat', 'shahmon', 'timna', 'yotvata',
+    'eilat', 'shahmon', 'timna', 'yotvata',
+    'eilat', 'shahmon', 'timna', 'yotvata'
+  ], 'ארבע תחנות קבועות בכל יום ובסדר');
+  assert.equal(r.rows.find((x) => x.sub_station === 'shahmon').coverage, 'missing');
+  assert.equal(r.rows.find((x) => x.sub_station === 'eilat').coverage, 'ready');
   assert.deepEqual(r.rows.find((x) => x.date === '2026-09-02').slots, [], 'אילת ב-2.9 — תא ריק בבלוק קיים = „אף אחד" מאומת');
   const many = Array.from({ length: 41 }, (_, i) => 'שם' + i).join(', ');
   const big = [row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']), row(['אילת', many, 'רועי כהן', ''])].join('\n');
@@ -199,6 +206,30 @@ test('תוויות בתחתית הבלוק (הדבקה שבה הערך בשור�
   assert.deepEqual(at('eilat', '2026-09-01'), ['u1', 'u2']);
   assert.deepEqual(at('shahmon', '2026-09-01'), ['u3']);
   assert.deepEqual(r.absences, [{ date: '2026-09-01', uid: 'u4', kind: 'sick' }]);
+});
+
+test('מיפוי מפורש מתחנות ישנות לארבע התחנות הקבועות — בלי ניחוש ובלי שכתוב מחדש', () => {
+  const legacy = { version: 3, sub_stations: {
+    main: { label: 'ראשית', minimum: 9, requirements: [{ role: 'driver', count: 2 }] },
+    north: { label: 'צפון', minimum: 4 }, south: { label: 'דרום', minimum: 3 }
+  } };
+  assert.throws(() => S.projectCanonicalPolicy(legacy), { code: 'station-mapping-required' });
+  assert.throws(() => S.projectCanonicalPolicy(legacy, {
+    eilat: 'main', shahmon: 'main', timna: 'north', yotvata: null
+  }), { code: 'station-mapping-duplicate' });
+  assert.throws(() => S.projectCanonicalPolicy(legacy, {
+    eilat: 'missing', shahmon: 'main', timna: 'north', yotvata: null
+  }), { code: 'station-mapping-invalid' });
+  const projected = S.projectCanonicalPolicy(legacy, {
+    eilat: 'main', shahmon: 'north', timna: 'south', yotvata: null
+  });
+  assert.deepEqual(Object.keys(projected.policy.sub_stations), ['eilat', 'shahmon', 'timna', 'yotvata']);
+  assert.deepEqual(Object.values(projected.policy.sub_stations).map((sub) => sub.label), ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+  assert.deepEqual(Object.values(projected.policy.sub_stations).map((sub) => sub.minimum), [9, 4, 3, 0]);
+  assert.deepEqual(legacy.sub_stations.main, {
+    label: 'ראשית', minimum: 9, requirements: [{ role: 'driver', count: 2 }]
+  }, 'המדיניות החיה לא השתנתה');
+  assert.equal(S.projectCanonicalPolicy(POLICY).mapping.eilat, 'eilat');
 });
 
 test('גבולות: הדבקה ענקית ותאריך כפול נדחים; בלי מדיניות אין פענוח', () => {

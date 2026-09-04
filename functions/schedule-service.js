@@ -266,6 +266,7 @@ function createScheduleService(deps) {
         sub_station: row.sub_station,
         label: row.label,
         minimum: row.minimum === undefined ? null : row.minimum,
+        coverage: row.coverage === 'missing' ? 'missing' : 'ready',
         below_minimum: row.below_minimum === true,
         people: row.slots.map((s) => ({
           uid: s.person,

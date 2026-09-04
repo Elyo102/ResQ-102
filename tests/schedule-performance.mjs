@@ -124,7 +124,9 @@ try {
   assert.equal(await page.locator('#stationView').isVisible(), true);
   assert.equal(await page.locator('#mineTab').isVisible(), true);
   assert.equal(await page.locator('#manageTab').isVisible(), false);
-  assert.match(await page.locator('#stationContent').textContent(), /משמרת א/);
+  assert.deepEqual(await page.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+    ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+  assert.match(await page.locator('#stationContent').textContent(), /לא הוזן/);
   await page.locator('[data-tab="mine"]').click();
   assert.equal(await page.locator('#mineView').isVisible(), true);
   await page.locator('#mineBoard .hcell').first().waitFor({ state:'visible', timeout:5000 });

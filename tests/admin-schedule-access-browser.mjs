@@ -311,7 +311,9 @@ try {
     // הלשונית זמינה — אבל היא אינה הלשונית שאליה הכתובת מובילה.
     assert.equal(await legacySchedulePage.locator('#manageTab').isVisible(), true);
     assert.equal(await legacySchedulePage.locator('#manageView').isVisible(), false);
-    assert.match(await legacySchedulePage.locator('#stationContent').textContent(), /משמרת א/);
+    assert.deepEqual(await legacySchedulePage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.match(await legacySchedulePage.locator('#stationContent').textContent(), /לא הוזן/);
 
     await legacySchedulePage.locator('[data-tab="mine"]').click();
     assert.equal(await legacySchedulePage.locator('#mineView').isVisible(), true);

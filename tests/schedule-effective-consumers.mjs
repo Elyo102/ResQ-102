@@ -46,7 +46,7 @@ const noRawScheduleRead = (s) => assert.doesNotMatch(s, /collection\([^)]*['"](?
 for (const [name, page] of [['attendance', attendance], ['guards', guards], ['stats', stats], ['swaps', swaps]]) {
   test(name + ': asks the server who works (getEffectiveWorkdays), versioned shared module, no raw schedule reads', () => {
     assert.match(page, /httpsCallable\(fns,\s*'getEffectiveWorkdays'\)/);
-    assert.match(page, /from '\.\/effective-workdays\.js\?v=42h0'/);
+    assert.match(page, /from '\.\/effective-workdays\.js\?v=42h1'/);
     noRawScheduleRead(page);
     assert.doesNotMatch(page, /\bpersonWorks\s*\(|\bisCrewWorking\s*\(/, 'work-day decisions must not be computed in the browser');
     assert.doesNotMatch(page, /getEffectiveWorkdays[^;]*(?:station|sid|SID)\s*:/, 'no station selector from the client');
@@ -87,7 +87,7 @@ test('guards: two 365-day windows for me + everyone on the roster, merged; unkno
 });
 
 test('guards.js: onDutyAt returns worksOn (true/false/unknown); load counts unknown separately', () => {
-  assert.match(guardsJs, /import \{ worksOn \} from '\.\/effective-workdays\.js\?v=42h0';/);
+  assert.match(guardsJs, /import \{ worksOn \} from '\.\/effective-workdays\.js\?v=42h1';/);
   assert.match(body(guardsJs, 'onDutyAt'), /return worksOn\(c\.effective, uid, key\);/);
   const kind = body(guardsJs, 'dutyKind');
   assert.match(kind, /if \(v === true\) return 'shift';/);
