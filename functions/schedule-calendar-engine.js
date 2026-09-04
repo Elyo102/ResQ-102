@@ -63,6 +63,29 @@ function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/* מפתחות שמסוכן להשתמש בהם כשם במפה רגילה: "__proto__" כמזהה אדם היה
+ * כותב את העומס שלו ל-Object.prototype של התהליך החם. כל מזהה שמגיע
+ * מבחוץ (אדם, תחנת קצה, תפקיד, קבוצת מחזוריות) נבדק כאן, וכל קריאה
+ * ממפה עוברת דרך own() — לא דרך ירושה. */
+const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
+function isReservedKey(v) {
+  return RESERVED_KEYS.indexOf(v) !== -1;
+}
+function isSafeKey(v) {
+  return isNonEmptyString(v) && v.length <= 128 && !/[\u0000-\u001F\u007F]/.test(v) && !isReservedKey(v);
+}
+/* המפות הפנימיות הן null-prototype; החוצה יוצאים אובייקטים רגילים
+ * (מסד הנתונים ו-JSON) — המפתחות כבר אומתו, אז אין כאן מפתח שמור. */
+function plainMap(map) {
+  return Object.assign({}, map);
+}
+function own(obj, key) {
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
+function ownOr(obj, key, fallback) {
+  return own(obj, key) ? obj[key] : fallback;
+}
+
 function isInt(v) {
   return typeof v === 'number' && Number.isInteger(v);
 }
@@ -133,8 +156,11 @@ function normalizePolicy(raw) {
     throw new CalendarError('too-many-sub-stations', 'יותר מדי תחנות קצה');
   }
 
-  const outSubs = {};
+  const outSubs = Object.create(null);
   for (const key of subKeys) {
+    if (!isSafeKey(key)) {
+      throw new CalendarError('sub-station-key-reserved', 'מפתח תחנת קצה אינו חוקי: ' + key);
+    }
     const s = subs[key];
     if (!isPlainObject(s)) throw new CalendarError('sub-station-shape', 'תחנת קצה ' + key + ' אינה תקינה');
     if (!isNonEmptyString(s.label)) {
@@ -154,8 +180,8 @@ function normalizePolicy(raw) {
     const seen = new Set();
     const reqs = rows.map((row, i) => {
       if (!isPlainObject(row)) throw new CalendarError('requirement-shape', 'דרישה ' + i + ' בתחנת קצה ' + key);
-      if (!isNonEmptyString(row.role)) {
-        throw new CalendarError('requirement-role', 'דרישה ' + i + ' בתחנת קצה ' + key + ' בלי תפקיד');
+      if (!isSafeKey(row.role)) {
+        throw new CalendarError('requirement-role', 'דרישה ' + i + ' בתחנת קצה ' + key + ' בלי תפקיד חוקי');
       }
       if (seen.has(row.role)) {
         throw new CalendarError('requirement-duplicate', 'התפקיד ' + row.role + ' כפול בתחנת קצה ' + key);
@@ -283,6 +309,9 @@ function normalizeRoster(roster, policy, input) {
     if (!isPlainObject(p) || !isNonEmptyString(p.id)) {
       throw new CalendarError('roster-shape', 'לכל אדם בסגל חייב להיות מזהה');
     }
+    if (!isSafeKey(p.id)) {
+      throw new CalendarError('roster-id-reserved', 'מזהה אדם אינו חוקי כמפתח');
+    }
     if (byId.has(p.id)) {
       throw new CalendarError('roster-duplicate', 'המזהה ' + p.id + ' מופיע פעמיים');
     }
@@ -295,7 +324,7 @@ function normalizeRoster(roster, policy, input) {
     if (!isNonEmptyString(p.sub_station)) {
       throw new CalendarError('person-sub-station', 'לאדם ' + p.id + ' חסרה תחנת שיוך');
     }
-    if (!policy.sub_stations[p.sub_station]) {
+    if (!own(policy.sub_stations, p.sub_station)) {
       throw new CalendarError('person-sub-station-unknown', 'תחנת השיוך של ' + p.id + ' אינה מוכרת');
     }
     if (typeof p.active !== 'boolean') {
@@ -383,7 +412,7 @@ function createCalendarEngine(deps) {
     if (person.roles.indexOf(role) === -1) return REASON.NO_QUALIFIED;
     if (ctx.unavailable) return REASON.NOT_AVAILABLE;
     if (ctx.taken.has(person.id)) return REASON.ALREADY_ASSIGNED;
-    const last = ctx.state.lastDay[person.id];
+    const last = ownOr(ctx.state.lastDay, person.id, undefined);
     if (last !== undefined && ctx.day > last && ctx.day - last <= policy.min_gap_days) {
       return REASON.REST;
     }
@@ -396,8 +425,8 @@ function createCalendarEngine(deps) {
 
   function rankKey(person, role, ctx) {
     const inGroup = policy.rotation && person.group && ctx.group && person.group === ctx.group ? 0 : 1;
-    const load = ctx.state.load[person.id] || 0;
-    const roleLoad = (ctx.state.byRole[person.id] || {})[role] || 0;
+    const load = ownOr(ctx.state.load, person.id, 0);
+    const roleLoad = ownOr(ownOr(ctx.state.byRole, person.id, null), role, 0) || 0;
     const versatility = person.roles.length;
     return [inGroup, load, roleLoad, versatility, person.id];
   }
@@ -411,8 +440,8 @@ function createCalendarEngine(deps) {
   }
 
   function isUnavailable(availability, id, date) {
-    const forPerson = availability[id];
-    return !!(forPerson && forPerson[date]);
+    const forPerson = ownOr(availability, id, null);
+    return !!(forPerson && own(forPerson, date) && forPerson[date]);
   }
 
   /* ---------------- יום אחד ---------------- */
@@ -425,7 +454,7 @@ function createCalendarEngine(deps) {
 
     for (const sub of policy.sub_keys) {
       const spec = policy.sub_stations[sub];
-      const need = {};
+      const need = Object.create(null);
       spec.requirements.forEach((r) => { need[r.role] = r.count; });
 
       const slots = [];
@@ -435,7 +464,7 @@ function createCalendarEngine(deps) {
        * רשומה ידנית היא מזהה, או { person, role } כשאחראי הסידור
        * גורר אדם למשבצת תפקיד מסוימת. תפקיד שנקבע במפורש **נבדק**:
        * „ידני" אינו „פטור מכשירות".                                  */
-      const lockedHere = (ctx.locked[sub] && ctx.locked[sub][date]) || [];
+      const lockedHere = (own(ctx.locked, sub) && ctx.locked[sub] && own(ctx.locked[sub], date) && ctx.locked[sub][date]) || [];
       const rejected = [];
       for (const raw of lockedHere) {
         const entry = isPlainObject(raw) ? raw : { person: raw, role: null };
@@ -470,9 +499,9 @@ function createCalendarEngine(deps) {
           continue;
         }
         taken.add(id);
-        ctx.state.load[id] = (ctx.state.load[id] || 0) + 1;
+        ctx.state.load[id] = ownOr(ctx.state.load, id, 0) + 1;
         ctx.state.lastDay[id] = day;
-        ctx.state.byRole[id] = ctx.state.byRole[id] || {};
+        if (!own(ctx.state.byRole, id)) ctx.state.byRole[id] = Object.create(null);
         let assignedRole = null;
         if (wantedRole !== null) {
           assignedRole = wantedRole;
@@ -482,7 +511,7 @@ function createCalendarEngine(deps) {
           need[assignedRole] -= 1;
         }
         if (assignedRole) {
-          ctx.state.byRole[id][assignedRole] = (ctx.state.byRole[id][assignedRole] || 0) + 1;
+          ctx.state.byRole[id][assignedRole] = ownOr(ctx.state.byRole[id], assignedRole, 0) + 1;
         }
         slots.push({
           person: id,
@@ -500,8 +529,8 @@ function createCalendarEngine(deps) {
        * את התפקיד היחיד שאדם אחר מסוגל לבצע.                         */
       const order = spec.requirements.slice().sort((a, b) => {
         if (a.required !== b.required) return a.required ? -1 : 1;
-        const sa = ctx.supply[sub][a.role] || 0;
-        const sb = ctx.supply[sub][b.role] || 0;
+        const sa = ownOr(ctx.supply[sub], a.role, 0);
+        const sb = ownOr(ctx.supply[sub], b.role, 0);
         if (sa !== sb) return sa - sb;
         return a.role < b.role ? -1 : 1;
       });
@@ -513,9 +542,9 @@ function createCalendarEngine(deps) {
         }
       }
 
-      const candidateCache = {};
+      const candidateCache = Object.create(null);
       const candidates = demands.map((demand) => {
-        if (candidateCache[demand.role]) {
+        if (own(candidateCache, demand.role)) {
           ctx.edgeCount += candidateCache[demand.role].length;
           if (ctx.edgeCount > LIMITS.MAX_CANDIDATE_EDGES) {
             throw new CalendarError('candidate-edges-too-many', 'יותר מדי אפשרויות שיבוץ בהרצה אחת');
@@ -523,7 +552,7 @@ function createCalendarEngine(deps) {
           return candidateCache[demand.role];
         }
         const eligible = [];
-        const pool = ctx.pools[sub][demand.role] || [];
+        const pool = ownOr(ctx.pools[sub], demand.role, []);
         for (const person of pool) {
           const code = blockCode(person, demand.role, {
             sub, day, group, taken, state: ctx.state,
@@ -578,8 +607,8 @@ function createCalendarEngine(deps) {
         const row = demands[i];
         const best = demandPerson.get(i);
         if (!best) {
-          const counts = {};
-          const pool = ctx.pools[sub][row.role] || [];
+          const counts = Object.create(null);
+          const pool = ownOr(ctx.pools[sub], row.role, []);
           for (const person of pool) {
             const code = blockCode(person, row.role, {
               sub, day, group, taken: new Set([...taken, ...personDemand.keys()]), state: ctx.state,
@@ -598,10 +627,10 @@ function createCalendarEngine(deps) {
           continue;
         }
         taken.add(best.id);
-        ctx.state.load[best.id] = (ctx.state.load[best.id] || 0) + 1;
+        ctx.state.load[best.id] = ownOr(ctx.state.load, best.id, 0) + 1;
         ctx.state.lastDay[best.id] = day;
-        ctx.state.byRole[best.id] = ctx.state.byRole[best.id] || {};
-        ctx.state.byRole[best.id][row.role] = (ctx.state.byRole[best.id][row.role] || 0) + 1;
+        if (!own(ctx.state.byRole, best.id)) ctx.state.byRole[best.id] = Object.create(null);
+        ctx.state.byRole[best.id][row.role] = ownOr(ctx.state.byRole[best.id], row.role, 0) + 1;
         const slot = { person: best.id, role: row.role, label: row.label, source: 'auto' };
         if (policy.max_shifts_per_month !== null
             && ctx.state.load[best.id] > policy.max_shifts_per_month) {
@@ -636,11 +665,11 @@ function createCalendarEngine(deps) {
   /* ---------------- תקופה ---------------- */
 
   function buildIndexes(byId) {
-    const pools = {};
-    const supply = {};
+    const pools = Object.create(null);
+    const supply = Object.create(null);
     for (const sub of policy.sub_keys) {
-      pools[sub] = {};
-      supply[sub] = {};
+      pools[sub] = Object.create(null);
+      supply[sub] = Object.create(null);
       for (const row of policy.sub_stations[sub].requirements) {
         pools[sub][row.role] = [];
         supply[sub][row.role] = 0;
@@ -650,7 +679,7 @@ function createCalendarEngine(deps) {
       const sub = person.sub_station;
       if (!pools[sub]) continue;
       for (const role of person.roles) {
-        if (!pools[sub][role]) continue;
+        if (!own(pools[sub], role)) continue;
         if (person.active !== true) continue;
         pools[sub][role].push(person);
         supply[sub][role] += 1;
@@ -688,16 +717,21 @@ function createCalendarEngine(deps) {
     const availability = inp.availability;
     const locked = inp.locked;
     for (const sub of Object.keys(locked)) {
-      if (!policy.sub_stations[sub]) {
+      if (!own(policy.sub_stations, sub)) {
         throw new CalendarError('locked-sub-station-unknown', 'שיבוץ ידני לתחנת קצה לא מוכרת: ' + sub);
       }
     }
 
     const carry = inp.carry;
     const state = {
-      load: isPlainObject(carry.load) ? Object.assign({}, carry.load) : {},
-      lastDay: isPlainObject(carry.lastDay) ? Object.assign({}, carry.lastDay) : {},
-      byRole: isPlainObject(carry.byRole) ? JSON.parse(JSON.stringify(carry.byRole)) : {}
+      load: isPlainObject(carry.load) ? Object.assign(Object.create(null), carry.load) : Object.create(null),
+      lastDay: isPlainObject(carry.lastDay) ? Object.assign(Object.create(null), carry.lastDay) : Object.create(null),
+      byRole: isPlainObject(carry.byRole)
+        ? Object.keys(carry.byRole).reduce((acc, id) => {
+          acc[id] = isPlainObject(carry.byRole[id]) ? Object.assign(Object.create(null), carry.byRole[id]) : carry.byRole[id];
+          return acc;
+        }, Object.create(null))
+        : Object.create(null)
     };
     const firstDay = days[0].day;
     for (const id of Object.keys(state.lastDay)) {
@@ -725,7 +759,7 @@ function createCalendarEngine(deps) {
     const { pools, supply } = buildIndexes(byId);
     const candidateUpperBound = days.length * policy.sub_keys.reduce((sum, sub) => sum
       + policy.sub_stations[sub].requirements.reduce((n, row) => n
-        + row.count * (pools[sub][row.role] || []).length, 0), 0);
+        + row.count * ownOr(pools[sub], row.role, []).length, 0), 0);
     if (candidateUpperBound > LIMITS.MAX_CANDIDATE_EDGES) {
       throw new CalendarError('candidate-edges-too-many', 'יותר מדי אפשרויות שיבוץ בהרצה אחת');
     }
@@ -771,10 +805,17 @@ function createCalendarEngine(deps) {
         days_below_minimum: belowMin,
         rejected_manual: rejectedManual,
         open_rows: rows.filter((r) => !r.complete).length,
-        load: state.load,
+        load: plainMap(state.load),
         fairness: { min, max, spread: max - min }
       },
-      carry: { load: state.load, lastDay: state.lastDay, byRole: state.byRole }
+      carry: {
+        load: plainMap(state.load),
+        lastDay: plainMap(state.lastDay),
+        byRole: Object.keys(state.byRole).reduce((acc, id) => {
+          acc[id] = plainMap(state.byRole[id]);
+          return acc;
+        }, {})
+      }
     });
   }
 

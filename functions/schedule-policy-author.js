@@ -62,6 +62,21 @@ const LIMITS = Object.freeze({
 
 const ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 
+/* "__proto__" עובר את שני ה-regex למטה (קו תחתון מותר), ו-`subs[k] = …`
+ * היה קובע את ה-prototype של המפה במקום ערך; "constructor"/"prototype"
+ * חוזרים דרך ירושה מכל אובייקט רגיל. מפתח כזה נדחה כאן, וכל מפה
+ * שנבנית ממפתחות חיצוניים היא null-prototype. */
+const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
+function isReservedKey(v) {
+  return RESERVED_KEYS.indexOf(v) !== -1;
+}
+function validId(v) {
+  return isNonEmptyString(v) && ID_RE.test(v) && !isReservedKey(v);
+}
+function validSubKey(v) {
+  return isNonEmptyString(v) && SUB_KEY_RE.test(v) && !isReservedKey(v);
+}
+
 /**
  * מזהה תחנת קצה הוא **מפתח במפה ב-Firestore**, ולא ערך.
  *
@@ -193,7 +208,7 @@ function cleanLabel(value, code, what) {
 /* ------------------------- בניית המסמך ------------------------- */
 
 function normalizeSubStation(key, raw) {
-  if (!SUB_KEY_RE.test(key)) {
+  if (!validSubKey(key)) {
     fail(CODE.SUB_ID, 'מזהה תחנת קצה לא תקין: ' + key
       + ' — מותרים אותיות לועזיות, ספרות, מקף וקו תחתון בלבד.');
   }
@@ -218,7 +233,7 @@ function normalizeSubStation(key, raw) {
   const seen = new Set();
   const requirements = rows.map((row, i) => {
     if (!isPlainObject(row)) fail(CODE.SHAPE, 'דרישה ' + i + ' בתחנת הקצה ' + label);
-    if (!isNonEmptyString(row.role) || !ID_RE.test(row.role)) {
+    if (!validId(row.role)) {
       fail(CODE.ROLE_INVALID, 'דרישה ' + i + ' בתחנת הקצה ' + label + ' — תפקיד לא תקין.');
     }
     if (seen.has(row.role)) {
@@ -250,7 +265,7 @@ function normalizeRotation(raw) {
   if (!isPlainObject(raw)) fail(CODE.ROTATION_INVALID, 'מחזוריות אינה תקינה.');
   const groups = raw.groups;
   if (!Array.isArray(groups) || groups.length === 0
-      || groups.some((g) => !isNonEmptyString(g) || !ID_RE.test(g))) {
+      || groups.some((g) => !validId(g))) {
     fail(CODE.ROTATION_INVALID, 'למחזוריות חסרות קבוצות תקינות.');
   }
   if (new Set(groups).size !== groups.length) {
@@ -291,7 +306,8 @@ function diffPolicies(prev, next) {
   }
 
   for (const k of nk) {
-    const a = (prev.sub_stations || {})[k];
+    const a = prev.sub_stations && Object.prototype.hasOwnProperty.call(prev.sub_stations, k)
+      ? prev.sub_stations[k] : undefined;
     const b = next.sub_stations[k];
     if (!a) continue;
     if (a.label !== b.label) {
@@ -370,7 +386,7 @@ function createPolicyAuthor(deps) {
   function planPolicy(input) {
     if (!isPlainObject(input)) fail(CODE.SHAPE, 'קלט לא תקין');
     const stationId = input.station_id;
-    if (!isNonEmptyString(stationId) || !ID_RE.test(stationId)) {
+    if (!validId(stationId)) {
       fail(CODE.STATION, 'חסרה תחנה, או שהמזהה אינו תקין.');
     }
     const draft = input.draft;
@@ -385,7 +401,7 @@ function createPolicyAuthor(deps) {
     if (keys.length > LIMITS.MAX_SUB_STATIONS) {
       fail(CODE.TOO_MANY, 'יותר מדי תחנות קצה.');
     }
-    const subs = {};
+    const subs = Object.create(null);
     for (const k of keys) subs[k] = normalizeSubStation(k, rawSubs[k]);
 
     /* --- מנוחה · חובה מפורשת --- */

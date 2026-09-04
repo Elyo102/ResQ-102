@@ -1739,5 +1739,37 @@ check('the promotion transaction owns legacy, outbox and the operation record', 
   assert.ok(inTx.indexOf('tx.create(opRef, {') > -1, 'רשומת הפעולה נכתבת ב-set — שני promoters יכולים לדרוס');
 });
 
-assert.equal(passed, 114);
-console.log('\n114 schedule runtime source checks passed.');
+check('reserved map keys: overrides, locked source and stored policy are own-property checked, never inherited', () => {
+  const src = runtime;
+  assert.ok(src.indexOf("const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype'])") > -1,
+    'אין רשימת מפתחות שמורים');
+  const overridesAt = src.indexOf('function normalizeOverrides(value, policy)');
+  const overrides = src.slice(overridesAt, src.indexOf('function effectiveSource(', overridesAt));
+  assert.ok(overrides.indexOf('!safeSubKey(entry.sub_station) || !hasOwn(policy.sub_stations, entry.sub_station)') > -1,
+    'שינוי ידני בודק תחנת קצה דרך truthiness — "__proto__" עובר');
+  assert.ok(overrides.indexOf('isReservedKey(entry.person)') > -1, 'אדם בשינוי ידני יכול להיות מפתח שמור');
+  assert.equal(overrides.indexOf('policy.sub_stations[entry.sub_station]) {'), -1, 'נשארה בדיקת truthiness');
+  const effAt = src.indexOf('function effectiveSource(ctx, source, policy, overrides)');
+  const eff = src.slice(effAt, src.indexOf('const effectiveDigest', effAt));
+  assert.ok(eff.indexOf("hasOwn(locked, entry.sub_station)") > -1 && eff.indexOf("hasOwn(days, entry.date)") > -1,
+    'effectiveSource בונה locked[sub][date] דרך || — כותב ל-Object.prototype');
+  assert.equal(eff.indexOf('locked[entry.sub_station] || {}'), -1, 'נשאר || {} על מפתח חיצוני');
+  const lockedAt = src.indexOf('function validateLockedSource(locked, peopleRaw, policyValue)');
+  const lockedFn = src.slice(lockedAt, src.indexOf('async function loadPolicy(', lockedAt));
+  assert.ok(lockedFn.indexOf('!safeSubKey(sub)') > -1 && lockedFn.indexOf('!hasOwn(policySubs, sub)') > -1,
+    'נעילות במקור אינן נבדקות כ-own-property');
+  const policyAt = src.indexOf('async function loadPolicy(ctx, id)');
+  const policyFn = src.slice(policyAt, src.indexOf('async function loadSource(', policyAt));
+  assert.ok(policyFn.indexOf('Object.keys(raw.sub_stations).some((key) => !safeSubKey(key))') > -1,
+    'מדיניות שמורה עם מפתח שמור נטענת');
+  // המודולים הטהורים שמקבלים את אותם מפתחות דוחים אותם בעצמם.
+  const engine = read('functions/schedule-calendar-engine.js');
+  for (const code of ['roster-id-reserved', 'sub-station-key-reserved']) {
+    assert.ok(engine.indexOf("'" + code + "'") > -1, 'מנוע היומן חסר ' + code);
+  }
+  assert.ok(author.indexOf('function validSubKey(v)') > -1 && author.indexOf('!isReservedKey(v)') > -1,
+    'policy-author מקבל מפתח שמור');
+});
+
+assert.equal(passed, 115);
+console.log('\n115 schedule runtime source checks passed.');

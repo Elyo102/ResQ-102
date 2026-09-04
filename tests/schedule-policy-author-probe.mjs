@@ -187,6 +187,31 @@ throwsCode('2.9 תחנת קצה בלי דרישות', () => {
 throwsCode('2.10 אין תחנה',
   () => A.planPolicy({ draft: draft() }), CODE.STATION);
 
+/* ⭐ מפתחות שמורים: "__proto__" עובר את regex המפתחות (קו תחתון מותר),
+ * ו-`subs[k] = …` היה קובע prototype במקום ערך. "constructor"/"prototype"
+ * חוזרים דרך ירושה מכל אובייקט רגיל. שלושתם נדחים — בתחנת קצה,
+ * בתפקיד, בקבוצת מחזוריות ובמזהה התחנה. */
+for (const key of ['__proto__', 'constructor', 'prototype']) {
+  throwsCode('2.11 תחנת קצה בשם שמור: ' + key, () => {
+    const d = draft();
+    d.sub_stations = JSON.parse('{"' + key + '":' + JSON.stringify(d.sub_stations.timna) + '}');
+    return planRaw(d);
+  }, CODE.SUB_ID);
+  throwsCode('2.12 תפקיד בשם שמור: ' + key, () => {
+    const d = draft();
+    d.sub_stations.timna.requirements = [{ role: key, label: 'x', count: 1, required: true }];
+    return planRaw(d);
+  }, CODE.ROLE_INVALID);
+  throwsCode('2.13 קבוצת מחזוריות בשם שמור: ' + key,
+    () => plan({ rotation: { groups: ['a', key], anchor: '2026-01-01', days_per_group: 1, strict: true } }),
+    CODE.ROTATION_INVALID);
+  throwsCode('2.14 מזהה תחנה שמור: ' + key,
+    () => A.planPolicy({ station_id: key, draft: draft(), actor_uid: 'uid-abc' }), CODE.STATION);
+}
+ok('2.15 Object.prototype נשאר נקי אחרי הניסיונות',
+  Object.getOwnPropertyNames(Object.prototype).indexOf('label') === -1
+  && Object.getOwnPropertyNames(Object.prototype).indexOf('requirements') === -1);
+
 // ⭐ null אינו „חסר" עבור rotation ו-cap — הוא הצהרה מפורשת.
 try {
   const r = plan({ rotation: null, max_shifts_per_month: null });

@@ -640,5 +640,83 @@ t('יותר מדי ימים — סירוב', () => {
   throwsCode(() => run(mk(), { days: many }), 'days-too-many');
 });
 
+/* ================= מפתחות שמורים — זיהום Object.prototype ================= */
+
+const PROTO_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+t('מזהה אדם שמור — סירוב, ו-Object.prototype נשאר נקי', () => {
+  for (const id of PROTO_KEYS) {
+    const list = roster(); list[0] = person(id, 'eilat', ['shift_lead', 'firefighter']);
+    throwsCode(() => run(mk(), { roster: list }), 'roster-id-reserved');
+  }
+  assert.strictEqual(({}).shift_lead, undefined);
+  assert.strictEqual(({}).firefighter, undefined);
+});
+
+t('תחנת קצה בשם שמור במדיניות — סירוב', () => {
+  for (const key of PROTO_KEYS) {
+    const raw = JSON.parse('{"' + key + '":{"label":"x","minimum":1,"requirements":[{"role":"driver","label":"נהג","count":1,"required":true}]}}');
+    throwsCode(() => mk({ sub_stations: raw }), 'sub-station-key-reserved');
+  }
+});
+
+t('תפקיד בשם שמור בדרישות — סירוב', () => {
+  const p = policy();
+  p.sub_stations.timna.requirements.push({ role: '__proto__', label: 'x', count: 1, required: true });
+  throwsCode(() => createCalendarEngine({ clock: CLOCK, policy: p }), 'requirement-role');
+});
+
+t('שיוך אדם לתחנת קצה שמורה — סירוב מסודר, לא TypeError', () => {
+  for (const key of PROTO_KEYS) {
+    const list = roster(); list[0] = person('L1', key, ['shift_lead', 'firefighter']);
+    throwsCode(() => run(mk(), { roster: list }), 'person-sub-station-unknown');
+  }
+});
+
+t('שיבוץ ידני / זמינות / מצב המשך עם מפתח שמור — נדחים ולא מזהמים', () => {
+  const lockedProto = JSON.parse('{"__proto__":{"2026-09-01":[]}}');
+  throwsCode(() => run(mk(), { locked: lockedProto }), 'locked-sub-station-unknown');
+  const carryProto = { load: JSON.parse('{"__proto__": 3}'), lastDay: {}, byRole: {} };
+  throwsCode(() => run(mk(), { carry: carryProto }), 'carry-load-invalid');
+  const carryRole = { load: {}, lastDay: {}, byRole: JSON.parse('{"__proto__":{"driver":1}}') };
+  throwsCode(() => run(mk(), { carry: carryRole }), 'carry-role-load-invalid');
+  // זמינות עם מפתח שמור אינה נכשלת — היא פשוט לא חלה על איש, ולא נקראת דרך ירושה.
+  const availProto = JSON.parse('{"__proto__":{"2026-09-01":true}}');
+  const out = run(mk(), { availability: availProto });
+  assert.ok(out.rows.some((r) => r.slots.length > 0));
+  assert.strictEqual(({})['2026-09-01'], undefined);
+  assert.strictEqual(({}).driver, undefined);
+});
+
+t('מזהי אנשים חוקיים עם נקודות, נקודתיים ואורך 128 — מתקבלים', () => {
+  const list = roster();
+  list[0] = person('a.b:c-d_e', 'eilat', ['shift_lead', 'firefighter']);
+  list[1] = person('x'.repeat(128), 'eilat', ['shift_lead', 'firefighter']);
+  const out = run(mk(), { roster: list });
+  assert.ok(Object.keys(out.carry.load).length > 0);
+  assert.strictEqual(Object.getPrototypeOf(out.carry.load), Object.prototype, 'המצב שיוצא חייב להיות אובייקט רגיל');
+  assert.strictEqual(Object.getPrototypeOf(out.carry.byRole), Object.prototype);
+  throwsCode(() => run(mk(), { roster: [person('y'.repeat(129), 'eilat', ['shift_lead'])].concat(roster().slice(1)) }), 'roster-id-reserved');
+});
+
+t('תפקיד או תחנת קצה בשם שיש ל-Object.prototype (toString, valueOf, hasOwnProperty) — עובד כמפתח רגיל, לא כירושה', () => {
+  for (const name of ['toString', 'valueOf', 'hasOwnProperty']) {
+    const p = policy();
+    p.sub_stations[name] = { label: 'x', minimum: 1, requirements: [{ role: name, label: 'x', count: 1, required: true }] };
+    const list = roster().concat([person('Z1', name, [name]), person('Z2', name, [name])]);
+    const out = run(mk(p), { roster: list });
+    const row = out.rows.find((r) => r.sub_station === name);
+    assert.ok(row && row.complete, name + ' לא שובץ');
+    assert.strictEqual(out.carry.byRole.Z1 ? out.carry.byRole.Z1[name] : out.carry.byRole.Z2[name], 1);
+  }
+});
+
+t('בסוף כל הבדיקות — Object.prototype ללא מפתחות זרים', () => {
+  const foreign = Object.getOwnPropertyNames(Object.prototype)
+    .filter((k) => ['firefighter', 'driver', 'shift_lead', 'team_cmd', '2026-09-01', 'eilat', 'timna'].includes(k));
+  assert.deepStrictEqual(foreign, []);
+  assert.strictEqual(Object.keys({}).length, 0);
+});
+
 console.log((fails.length ? '✗' : '✓') + ' schedule-calendar-engine: ' + pass + '/' + (pass + fails.length));
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }
