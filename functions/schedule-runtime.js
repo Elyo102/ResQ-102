@@ -5251,6 +5251,20 @@ function createScheduleRuntime(deps) {
     }
   }
 
+  /* ⭐ final-review §1: חברות הקורא בתחנה עלולה להסתיים **בזמן** קריאת הלוח
+   * (השבתה, העברת תחנה). אימות חי אחרון של **חבר תחנה צופה** — לא שער
+   * אחראי סידור, בלי הרחבת תפקידים — אחרי כל הקריאות ולפני ההחזרה. */
+  async function requireLiveBoardViewer(ctx) {
+    const userSnap = await liveUserRef(ctx.sid, ctx.uid).get();
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    const role = String(user && user.role || '');
+    if (!scheduleAccess.activeMember(user, ctx.sid)
+        || (!ctx.super && (MEMBER_ROLES.indexOf(role) === -1 || role !== ctx.role))) {
+      throw new ScheduleRuntimeError('board-viewer-changed',
+        'השיוך החי לתחנה השתנה בזמן הקריאה.', 'permission-denied');
+    }
+  }
+
   async function checkedActiveSnapshot(ctx, config, dates) {
     const active = await activeSnapshot(ctx, dates);
     await beforeEffectiveViewRecheck({ kind: 'v2', ctx, mode: config.mode });
@@ -5984,6 +5998,7 @@ function createScheduleRuntime(deps) {
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
       const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      await requireLiveBoardViewer(ctx);
       return {
         mode: window.provenance.mode, active: true, source: 'legacy',
         provenance: window.provenance, from: range.from, to: range.to,
@@ -5998,6 +6013,7 @@ function createScheduleRuntime(deps) {
     if (!active) {
       const window = await legacyFallbackWindow(ctx, config, range.from, range.to);
       const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      await requireLiveBoardViewer(ctx);
       return {
         mode: config.mode, active: true, source: 'legacy', fallback: 'legacy',
         provenance: window.provenance, from: range.from, to: range.to,
@@ -6006,13 +6022,16 @@ function createScheduleRuntime(deps) {
       };
     }
     const sidecar = await readLiveGuardProjection(ctx, range.dates);
-    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
-    await activeSnapshotStillCurrent(ctx, config, active);
     const service = serviceFor(ctx);
+    // כל הקריאות הנוספות (סגל לצבע השם, מחזור לצבע היום) **לפני** הבדיקות
+    // המסכמות — כדי שלא תוחזר תמונה שהתיישנה בזמן העיטור.
     const extras = {
       absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
       rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, range.from, range.to)
     };
+    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    await requireLiveBoardViewer(ctx);
     const days = range.dates.map((date) => decoratePublishedDay(stationViewWithGuards(service.buildStationSchedule({
       actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
     }), sidecar, date, ctx.uid).day, extras));
@@ -6034,24 +6053,27 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('schedule-mode-changed',
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
+      await requireLiveBoardViewer(ctx);
       return legacyStationView(ctx, window, date);
     }
     const active = await checkedActiveSnapshot(ctx, config, dates);
     if (!active) {
       const window = await legacyFallbackWindow(ctx, config, dates[0], dates[2]);
+      await requireLiveBoardViewer(ctx);
       return Object.assign(legacyStationView(ctx, window, date),
         { mode: config.mode, fallback: 'legacy' });
     }
     const sidecar = await readLiveGuardProjection(ctx, dates);
-    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
-    await activeSnapshotStillCurrent(ctx, config, active);
-    const view = stationViewWithGuards(serviceFor(ctx).buildStationSchedule({
-      actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
-    }), sidecar, date, ctx.uid);
     const extras = {
       absences: active.plan.absences || [], roster: active.roster, viewer: ctx.uid,
       rosterCrew: await rosterCrews(ctx), dayCrews: await legacyDayCrews(ctx, dates[0], dates[2])
     };
+    await beforeLiveGuardViewRecheck({ kind: 'v2-guards', ctx, mode: config.mode });
+    await activeSnapshotStillCurrent(ctx, config, active);
+    await requireLiveBoardViewer(ctx);
+    const view = stationViewWithGuards(serviceFor(ctx).buildStationSchedule({
+      actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
+    }), sidecar, date, ctx.uid);
     return Object.assign({ mode: config.mode, active: true, imported: active.plan.imported === true,
       publication_id: active.pointer.publication_id, revision: active.pointer.revision }, view, {
       previous_day: decoratePublishedDay(view.previous_day, extras),

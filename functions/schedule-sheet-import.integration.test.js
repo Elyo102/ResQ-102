@@ -6,7 +6,8 @@
  *  מסלול ההדבקה מול Firestore **אמיתי** (אמולטור): דוח → ייבוא כטיוטה →
  *  תצוגה מקדימה → פרסום → קריאת הלוח עם היעדרויות; שני השחזורים של
  *  הביקורת (ביטול מינוי בזמן קריאת ההיעדרויות; ניסיון חוזר אחרי שינוי
- *  כינוי שאינו קשור); ושערי ההרשאה של שני ה-callables.
+ *  כינוי שאינו קשור; final-review: השבתת קורא בזמן קריאת הלוח); ושערי
+ *  ההרשאה של שני ה-callables.
  *
  *  ⚠ הקובץ **לא הורץ** על ידי מי שכתב אותו — אין אמולטור בסביבה שלו
  *  (הורדת ה-jar חסומה ב-proxy). נבדק ב-`node --check` ונכתב מול אותן
@@ -398,6 +399,56 @@ async function test(name, fn) {
     assert.deepEqual([single.day.crew, single.day.absences.length, single.day.absences_status], ['B', 2, 'ready']);
     const mine = await api.getStationRange(req('u1', { from: '2026-09-03', to: '2026-09-03' }));
     assert.equal((mine.days[0].absences[0] || {}).is_me, true);
+  });
+
+  /* final-review §1: חבר תחנה רגיל (לא אחראי סידור) שהושבת או הועבר **בזמן**
+   * קריאת הלוח המפורסם — סירוב בלי שמות ובלי היעדרויות, בנפרד לכל כניסה. */
+  const activeId = ((await station().collection('schedule_state').doc('active').get()).data() || {}).publication_id;
+  const viewerActive = () => station().collection('users').doc('viewer').set({ station: SID, role: 'firefighter', full_name: 'צופה בדיקה', active: true });
+
+  await test('final-review §1: getStationRange refuses a viewer disabled while the absences are being read', async () => {
+    let fired = false;
+    const barrier = firestoreWithCollectionReadBarrier('/schedule_publications/' + activeId + '/absences', async () => {
+      fired = true;
+      await station().collection('users').doc('viewer').set({ station: SID, role: 'firefighter', full_name: 'צופה בדיקה', active: false });
+    });
+    const error = await caught(() => runtime({ db: barrier }).getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+    assert.equal(fired, true, 'המחסום לא נורה — נתיב ההיעדרויות של הפרסום לא נקרא');
+    assert.equal(error && error.code, 'board-viewer-changed', error && error.message);
+    assert.equal(error && error.days, undefined);
+    await viewerActive();
+  });
+
+  await test('final-review §1: getStation refuses a viewer disabled while the absences are being read', async () => {
+    let fired = false;
+    const barrier = firestoreWithCollectionReadBarrier('/schedule_publications/' + activeId + '/absences', async () => {
+      fired = true;
+      await station().collection('users').doc('viewer').set({ station: SID, role: 'firefighter', full_name: 'צופה בדיקה', active: false });
+    });
+    const error = await caught(() => runtime({ db: barrier }).getStation(req('viewer', { date: '2026-09-02' })));
+    assert.equal(fired, true);
+    assert.equal(error && error.code, 'board-viewer-changed', error && error.message);
+    assert.equal(error && error.day, undefined);
+    await viewerActive();
+  });
+
+  await test('final-review §1: a viewer moved to another station during the crew decoration is refused', async () => {
+    let fired = false;
+    const barrier = firestoreWithCollectionReadBarrier('/' + SID + '/roster', async () => {
+      fired = true;
+      await station().collection('users').doc('viewer').set({ station: 'other_station', role: 'firefighter', full_name: 'צופה בדיקה', active: true });
+    });
+    const error = await caught(() => runtime({ db: barrier }).getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+    assert.equal(fired, true, 'המחסום לא נורה — הסגל לא נקרא בעיטור');
+    assert.equal(error && error.code, 'board-viewer-changed', error && error.message);
+    await viewerActive();
+  });
+
+  await test('final-review §1: an active member still reads both entries, with absences', async () => {
+    const range = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    assert.equal(range.days.reduce((n, d) => n + d.absences.length, 0), 5);
+    const single = await api.getStation(req('viewer', { date: '2026-09-02' }));
+    assert.deepEqual([single.day.crew, single.day.absences.length], ['B', 2]);
   });
 
   await test('a tampered absences document breaks the signed publication', async () => {

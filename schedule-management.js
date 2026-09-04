@@ -1885,8 +1885,18 @@ function importInput() {
  * מותר רק על הדוח שהשרת חתם לקלט הזה בדיוק (`expected_report_digest`). */
 function invalidateImportReport() {
   state.importReport = null;
-  $('importRun').disabled = true;
+  $('importRun').disabled = !state.importPending;
+  if (state.importPending) { message('importMessage', pendingImportText(), 'warn'); return; }
   if (!$('importReport').hidden) message('importMessage', 'הקלט השתנה — יש ללחוץ שוב על „בדוק את ההדבקה" לפני הייבוא.', 'info');
+}
+
+/* ⭐ final-review §2 · ניסיון ממתין: תשובת ייבוא שאבדה אחרי שהשרת אולי כבר
+ * יצר את הטיוטה. ה-payload המלא ומזהה הבקשה נשמרים; „ייבא" הבא שולח
+ * **בדיוק** אותם — לפני כל דוח או בקשה חדשים — והשרת מחזיר את הקבלה
+ * המקורית (גם אם בינתיים השתנה כינוי שאינו קשור). הניסיון נמחק רק אחרי
+ * תשובה מאומתת: הצלחה, או סירוב מפורש של השרת (schedule_code). */
+function pendingImportText() {
+  return 'התשובה על הייבוא לא הגיעה. לחץ שוב על „ייבא כטיוטה" — אותה בקשה בדיוק תישלח שוב, ולא תיווצר טיוטה שנייה.';
 }
 
 function renderImportReport(report) {
@@ -1988,33 +1998,43 @@ async function checkImport() {
       message('importMessage', 'ההדבקה תקינה: ' + report.counts.assignments + ' שיבוצים ו-' + report.counts.absences
         + ' היעדרויות ל-' + report.counts.days + ' ימים (' + dateLabel(report.from) + ' — ' + dateLabel(report.to) + '). אפשר לייבא.', 'ok');
     }
-    $('importRun').disabled = report.blocked === true || !canRunSchedule();
+    $('importRun').disabled = !state.importPending && (report.blocked === true || !canRunSchedule());
+    if (state.importPending) message('importMessage', pendingImportText(), 'warn');
   } catch (error) {
     state.importReport = null;
     $('importReport').hidden = true;
     message('importMessage', errorText(error), 'err');
+    $('importRun').disabled = !state.importPending;
   } finally { state.busy = false; $('importCheck').disabled = false; }
 }
 
 async function importSheet() {
-  if (state.busy || !state.importReport || state.importReport.blocked) return;
-  let input;
-  try { input = importInput(); } catch (error) { message('importMessage', error.message, 'err'); return; }
-  state.busy = true; $('importRun').disabled = true; $('importCheck').disabled = true;
-  state.draft = null; state.draftPreview = null;
-  resetPublishRequest();
-  $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
-  $('draftPreviewCard').classList.add('hide');
-  message('importMessage', 'מייבא את הגיליון כטיוטה…', 'info');
-  try {
+  if (state.busy) return;
+  const pending = state.importPending;
+  if (!pending && (!state.importReport || state.importReport.blocked)) return;
+  let payload;
+  if (pending) {
+    payload = pending.payload;   // אותה בקשה בדיוק — לא נקרא הקלט מחדש
+  } else {
+    let input;
+    try { input = importInput(); } catch (error) { message('importMessage', error.message, 'err'); return; }
     // מזהה הניסיון נקשר לחתימת הדוח: ניסיון חוזר אחרי תשובה שאבדה משתמש
     // באותו מזהה, והשרת מחזיר את אותה טיוטה במקום ליצור שנייה.
     const reportDigest = state.importReport.report_digest;
     state.importRequestIds = state.importRequestIds || {};
     if (!state.importRequestIds[reportDigest]) state.importRequestIds[reportDigest] = requestId('import');
-    const result = (await call.importSheet(Object.assign({
-      request_id: state.importRequestIds[reportDigest], expected_report_digest: reportDigest
-    }, input))).data;
+    payload = Object.assign({ request_id: state.importRequestIds[reportDigest], expected_report_digest: reportDigest }, input);
+  }
+  state.busy = true; $('importRun').disabled = true; $('importCheck').disabled = true;
+  state.draft = null; state.draftPreview = null;
+  resetPublishRequest();
+  $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
+  $('draftPreviewCard').classList.add('hide');
+  message('importMessage', pending ? 'שולח שוב את אותה בקשת ייבוא…' : 'מייבא את הגיליון כטיוטה…', 'info');
+  state.importPending = { payload };
+  try {
+    const result = (await call.importSheet(payload)).data;
+    state.importPending = null;
     state.draft = result;
     renderSummary(result.summary || {});
     message('importMessage', 'הגיליון יובא כטיוטה (' + dateLabel(result.from) + ' — ' + dateLabel(result.to)
@@ -2022,8 +2042,20 @@ async function importSheet() {
     message('runMessage', 'הטיוטה שלמטה יובאה מהגיליון.', 'info');
     await loadDraftPreview(result.from, true);
     $('draftPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (error) { message('importMessage', errorText(error), 'err'); }
-  finally { state.busy = false; $('importCheck').disabled = false; updatePublishAvailability(); }
+  } catch (error) {
+    if (errorCode(error)) {
+      // סירוב מפורש של השרת — הבקשה נענתה; אין מה לשלוח שוב.
+      state.importPending = null;
+      message('importMessage', errorText(error), 'err');
+    } else {
+      // כשל תקשורת עמום — ייתכן שהטיוטה כבר נוצרה. הניסיון נשאר לשליחה חוזרת.
+      message('importMessage', pendingImportText() + ' (' + errorText(error) + ')', 'warn');
+    }
+  } finally {
+    state.busy = false; $('importCheck').disabled = false;
+    $('importRun').disabled = !state.importPending;
+    updatePublishAvailability();
+  }
 }
 
 function renderSummary(summary) {

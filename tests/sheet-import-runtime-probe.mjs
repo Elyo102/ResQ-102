@@ -399,6 +399,65 @@ const SHEET = [
   eq('7.4 אחרי שחזור — הדוח חוזר', (await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }))).counts.unresolved, 0);
 }
 
+/* 8 · final-review §1: הקורא (חבר תחנה רגיל, לא אחראי סידור) הושבת **בזמן**
+ * קריאת ההיעדרויות של הפרסום — getStationRange/getStation מסרבים בלי שמות;
+ * חבר פעיל ממשיך לקרוא. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const aliases = { 'רועי': 'u1', 'אבטחה': null };
+  const ready = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases }));
+  const imported = await rt.importScheduleSheet(req({ request_id: 'i8', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
+  const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
+  const cfg = db._get(ST + '/schedule_state/runtime');
+  db._put(ST + '/schedule_state/runtime', { mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
+  const published = await rt.publish(req({ request_id: 'pub8', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));
+  const absPath = ST + '/schedule_publications/' + published.publication_id + '/absences';
+  let fired = 0;
+  const disableViewer = () => { fired += 1; db._put(ST + '/users/u2', { station_id: SID, station: SID, is_active: false, active: false, role: 'firefighter', full_name: 'דניאל לוי' }); };
+  const restoreViewer = () => db._put(ST + '/users/u2', { station_id: SID, station: SID, is_active: true, active: true, role: 'firefighter', full_name: 'דניאל לוי' });
+  function armOnRead(pathSuffix, action) {
+    const original = db.collection;
+    let armed = true;
+    const wrap = (obj) => new Proxy(obj, { get(target, key) {
+      const value = target[key];
+      if (typeof value !== 'function') return value;
+      if (key === 'get') return async (...args) => {
+        const result = await value.apply(target, args);
+        if (armed && String(target.path || '').endsWith(pathSuffix)) { armed = false; action(); }
+        return result;
+      };
+      if (['collection', 'doc', 'where', 'limit', 'orderBy'].includes(key)) return (...args) => wrap(value.apply(target, args));
+      return value.bind(target);
+    } });
+    db.collection = (...args) => wrap(original.apply(db, args));
+    return () => { db.collection = original; };
+  }
+  let disarm = armOnRead(absPath, disableViewer);
+  await rejectsCode('8.1 getStationRange: הקורא הושבת בזמן קריאת ההיעדרויות → סירוב', () => rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2')), 'board-viewer-changed');
+  disarm();
+  eq('8.1b ההוק נורה', fired, 1);
+  restoreViewer();
+  disarm = armOnRead(absPath, disableViewer);
+  await rejectsCode('8.2 getStation: אותו מרוץ → סירוב', () => rt.getStation(req({ date: '2026-09-02' }, 'u2')), 'board-viewer-changed');
+  disarm();
+  eq('8.2b ההוק נורה', fired, 2);
+  restoreViewer();
+  // העברה לתחנה אחרת בזמן העיטור (קריאת הסגל) — גם סירוב.
+  disarm = armOnRead(ST + '/roster', () => { fired += 1; db._put(ST + '/users/u2', { station_id: 'other', station: 'other', is_active: true, active: true, role: 'firefighter' }); });
+  await rejectsCode('8.3 getStationRange: הקורא הועבר תחנה בזמן קריאת הסגל → סירוב', () => rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2')), 'board-viewer-changed');
+  disarm();
+  restoreViewer();
+  const fine = await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2'));
+  eq('8.4 חבר פעיל — הלוח נקרא, עם היעדרויות', [fine.source, fine.days.reduce((n, d) => n + d.absences.length, 0)], ['v2', 5]);
+  const one = await rt.getStation(req({ date: '2026-09-02' }, 'u2'));
+  eq('8.5 getStation לחבר פעיל', [one.day.crew, one.day.absences.length], ['B', 2]);
+  // המצביע זז בזמן העיטור — עדיין נתפס אחרי הקריאה האחרונה.
+  disarm = armOnRead(ST + '/roster', () => db._put(ST + '/schedule_state/active', Object.assign({}, db._get(ST + '/schedule_state/active'), { revision: 99 })));
+  await rejectsCode('8.6 המצביע השתנה בזמן קריאת הסגל → schedule-active-changed', () => rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2')), 'schedule-active-changed');
+  disarm();
+}
+
 /* 6 · פרסום קודם (בלי היעדרויות) נשאר תקף — החתימה אינה משתנה לו. */
 {
   const db = createFakeDb();

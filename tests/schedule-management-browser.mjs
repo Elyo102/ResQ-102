@@ -1536,10 +1536,62 @@ try {
     assert.equal(await sheetPage.locator('#publish').isEnabled(), false, 'publishing still needs the review checkbox');
   });
   await sheetImporter.close();
+
+  /* ⭐ final-review §2 · תשובת ייבוא שאבדה אחרי שהשרת כבר יצר את הטיוטה:
+   * הניסיון הממתין נשמר (payload מלא + מזהה), ואחרי שכינוי שאינו קשור השתנה
+   * (הדוח החדש נושא חתימה אחרת) — הלחיצה הבאה שולחת **בדיוק** את אותה בקשה
+   * ומקבלת את אותה טיוטה. לא נוצר מזהה חדש ולא נשלח דוח חדש בייבוא. */
+  const readyAgain = JSON.parse(JSON.stringify(importReportReady));
+  readyAgain.report_digest = 'rd_ready_after_unrelated_alias';
+  const replayedDraft = Object.assign(JSON.parse(JSON.stringify(importedDraft)), { duplicate:true });
+  const lostImport = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(lostImport, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    previewScheduleImport:[{ data:importReportReady }, { data:readyAgain }],
+    importScheduleSheet:[
+      { reject:true, code:'functions/internal', message:'stub: response lost' },   // השרת יצר, התשובה אבדה
+      { data:replayedDraft }
+    ],
+    getScheduleDraftPreview:[{ data:importedPreview }]
+  });
+  const lostImportPage = await lostImport.newPage();
+  await lostImportPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await lostImportPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a lost import response keeps the exact request; after an unrelated alias change the retry resends it and gets the same draft', async () => {
+    await lostImportPage.fill('#importMonth', today.slice(0, 7));
+    await lostImportPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
+    await lostImportPage.locator('#importCheck').click();
+    await lostImportPage.locator('#importMessage .ok').waitFor();
+    await lostImportPage.locator('#importRun').click();
+    await lostImportPage.locator('#importMessage .warn').waitFor();
+    assert.match(await lostImportPage.locator('#importMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
+    assert.equal(await lostImportPage.locator('#importRun').isEnabled(), true, 'the retry is offered');
+    assert.equal(await lostImportPage.locator('#draftPreviewCard').isVisible(), false);
+    // בינתיים השתנה כינוי שאינו קשור: „בדוק" מחזיר דוח עם חתימה אחרת — הניסיון הממתין קודם.
+    await lostImportPage.locator('#importCheck').click();
+    await lostImportPage.locator('#importMessage .warn').waitFor();
+    assert.match(await lostImportPage.locator('#importMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
+    assert.equal(await lostImportPage.locator('#importRun').isEnabled(), true);
+    await lostImportPage.locator('#importRun').click();
+    await lostImportPage.locator('#previewMessage .ok').waitFor();
+    assert.match(await lostImportPage.locator('#importMessage').textContent(), /יובא כטיוטה/);
+    const calls = await lostImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const imports = calls.filter((entry) => entry.name === 'importScheduleSheet');
+    assert.equal(imports.length, 2);
+    assert.deepEqual(imports[1].payload, imports[0].payload, 'the retry is not the same request');
+    assert.equal(imports[1].payload.expected_report_digest, 'rd_ready', 'the retry must not adopt the newer report');
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleImport').length, 2);
+    assert.equal(await lostImportPage.locator('#importRun').isEnabled(), false, 'the pending attempt is cleared after a verified answer');
+    assert.equal(await lostImportPage.locator('#draftBoard .cell.col-A').count(), 1);
+  });
+  await lostImport.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 41);
-console.log('\n41 schedule management browser checks passed.');
+assert.equal(passed, 42);
+console.log('\n42 schedule management browser checks passed.');
