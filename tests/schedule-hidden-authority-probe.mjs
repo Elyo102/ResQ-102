@@ -199,6 +199,9 @@ const CALLABLES = Object.freeze([
   { name: 'saveScheduleSource', method: 'saveSource', gate: GATE.MANAGER },
   { name: 'previewScheduleSource', method: 'previewSource', gate: GATE.MANAGER },
   { name: 'runSchedulePlanner', method: 'runPlanner', gate: GATE.MANAGER },
+  // ייבוא הגיליון הקיים כטיוטה (4.9) — אותו שער כמו המנוע: אחראי סידור.
+  { name: 'previewScheduleImport', method: 'previewScheduleImport', gate: GATE.MANAGER },
+  { name: 'importScheduleSheet', method: 'importScheduleSheet', gate: GATE.MANAGER },
   { name: 'publishSchedule', method: 'publish', gate: GATE.MANAGER },
   { name: 'rollbackSchedule', method: 'rollback', gate: GATE.MANAGER },
   { name: 'getScheduleDraftPreview', method: 'getDraftPreview', gate: GATE.MANAGER },

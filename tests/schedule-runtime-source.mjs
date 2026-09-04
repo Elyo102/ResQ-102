@@ -110,10 +110,16 @@ check('drafts and publications are complete snapshots with people', () => {
     assert.ok(runtime.includes(token), token);
   }
 });
-check('snapshot integrity includes the people projection and is rechecked on full reads', () => {
-  assert.ok(runtime.includes('events: orderedEvents, people: orderedPeople'));
-  assert.ok(runtime.includes('}, rows, events, people: orderedPeople'));
+check('snapshot integrity includes the people projection (and absences when present) and is rechecked on full reads', () => {
+  // 4.9: החתימה מחושבת במקום אחד — stageSnapshot ו-readSnapshot משתמשים בו.
+  assert.ok(runtime.includes('const contentDigest = snapshotDigest(plan, rows, orderedEvents, orderedPeople, absences);'));
+  assert.ok(runtime.includes('const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences);'));
+  const at = runtime.indexOf('function snapshotDigest(plan, rows, events, people, absences)');
+  const fn = runtime.slice(at, runtime.indexOf('\n  }\n', at));
+  assert.ok(fn.includes('}, rows, events, people'), 'the people projection must stay inside the digest');
+  assert.ok(fn.includes('if (absences.length) basis.absences = absences;'), 'absences enter the digest only when present — older publications keep their digest');
   assert.ok(runtime.includes("'snapshot-digest-mismatch'"));
+  assert.ok(runtime.includes("absences.length !== Number(meta.absence_count || 0)"), 'absence count is verified on full reads');
 });
 check('publish blocks policy or source changes made after draft creation', () => {
   assert.ok(runtime.includes('base_source_digest: source.digest'));
