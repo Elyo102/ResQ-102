@@ -14,6 +14,7 @@ const cutoverModule = require('./schedule-cutover');
 const sourceAuthorModule = require('./schedule-source-author');
 const sheetImport = require('./schedule-sheet-import');
 const scheduleEdit = require('./schedule-edit');
+const qualifications = require('./schedule-qualifications');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -3648,6 +3649,283 @@ function createScheduleRuntime(deps) {
     };
   }
 
+  /* ================================================================
+   * 42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים
+   *
+   * כשירות ≠ תפקיד הרשאה. הקטלוג לכל תחנה: תשע מובנות בסדר קבוע (שלוש
+   * ראשונות קריטיות) + מותאמות. לאדם כמה כשירויות. הכול בשרת: רק בעל
+   * מינוי חי של אחראי סידור; כל שינוי עם CAS על revision, יומן לפני/אחרי,
+   * ומחיקה רק לכשירות מותאמת שאיש אינו מחזיק — נבדק בעסקה מול מונה
+   * המחזיקים, כך שהוספה מקבילה מפילה את המחיקה ולא להפך.
+   * ================================================================ */
+  const MAX_QUALIFICATION_PEOPLE = 1500;
+
+  function qualificationCatalogRef(sid) { return stationRef(sid).collection('schedule_qualifications'); }
+  function personQualificationsRef(sid, uid) { return stationRef(sid).collection('schedule_person_qualifications').doc(uid); }
+  function qualificationsMetaRef(sid) { return stationRef(sid).collection('schedule_state').doc('qualifications'); }
+  function qualificationAuditRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_qualification_audit').doc('qa_' + hash(sid + '|' + requestId).slice(0, 40));
+  }
+
+  function qualificationError(error) {
+    if (error && error.name === 'QualificationError') {
+      const out = new ScheduleRuntimeError(error.code, error.message, 'failed-precondition');
+      if (error.detail !== undefined) out.detail = error.detail;
+      throw out;
+    }
+    throw error;
+  }
+
+  async function loadQualificationCatalog(ctx) {
+    const snap = await qualificationCatalogRef(ctx.sid).limit(qualifications.MAX_CUSTOM + qualifications.CANONICAL.length + 1).get();
+    return qualifications.mergeCatalog(snap.docs.map((doc) => Object.assign({}, doc.data() || {}, { key: doc.id })));
+  }
+
+  async function loadPersonQualifications(ctx) {
+    const snap = await stationRef(ctx.sid).collection('schedule_person_qualifications').limit(MAX_QUALIFICATION_PEOPLE + 1).get();
+    if (snap.size > MAX_QUALIFICATION_PEOPLE) {
+      throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
+    }
+    const out = new Map();
+    snap.docs.forEach((doc) => {
+      const value = doc.data() || {};
+      out.set(doc.id, { qualifications: Array.isArray(value.qualifications) ? value.qualifications.slice() : [], revision: Number.isInteger(value.revision) ? value.revision : 0 });
+    });
+    return out;
+  }
+
+  /* הכשירויות של המערכת הישנה (quals/member_quals) — רמז לאחראי הסידור
+   * בזמן ההעברה. קריאה בלבד; לא מיובא אוטומטית ולא מנוחש. */
+  async function legacyQualificationHints(ctx) {
+    const out = new Map();
+    try {
+      const pair = await Promise.all([
+        stationRef(ctx.sid).collection('quals').limit(100).get(),
+        stationRef(ctx.sid).collection('member_quals').limit(MAX_QUALIFICATION_PEOPLE).get()
+      ]);
+      const names = new Map(pair[0].docs.map((doc) => [doc.id, String((doc.data() || {}).name || doc.id).slice(0, 40)]));
+      pair[1].docs.forEach((doc) => {
+        const list = (doc.data() || {}).quals;
+        if (Array.isArray(list) && list.length) out.set(doc.id, list.map((id) => names.get(String(id)) || String(id)).slice(0, 20));
+      });
+    } catch (_) { /* המערכת הישנה אינה חובה */ }
+    return out;
+  }
+
+  async function getQualificationCatalog(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const config = await configuration(ctx.sid);
+    const catalog = await loadQualificationCatalog(ctx);
+    const holdings = await loadPersonQualifications(ctx);
+    let people = [];
+    if (nonEmpty(config.active_source_id)) {
+      const source = await loadSource(ctx, config.active_source_id);
+      people = source.peopleRaw.filter((person) => person.active === true);
+    }
+    const legacy = await legacyQualificationHints(ctx);
+    const known = new Set(people.map((person) => person.id));
+    const meta = await qualificationsMetaRef(ctx.sid).get();
+    await requireLiveManagerNow(ctx);
+    return {
+      catalog,
+      holders: qualifications.holdersByKey(Array.from(holdings.values())),
+      holdings_revision: meta.exists ? Number((meta.data() || {}).holdings_revision || 0) : 0,
+      people: people.map((person) => {
+        const held = holdings.get(person.id) || { qualifications: [], revision: 0 };
+        return {
+          uid: person.id, name: String(person.full_name || person.name || person.id).slice(0, 120),
+          sub_station: person.sub_station || null, roles: Array.isArray(person.roles) ? person.roles.slice() : [],
+          qualifications: held.qualifications, revision: held.revision, legacy: legacy.get(person.id) || []
+        };
+      }).sort((a, b) => compareCanonical(a.name, b.name)),
+      // מחזיקים שאינם במקור הפעיל (עזבו / טרם הוזנו) — גלוי, לא נבלע.
+      unknown_holders: Array.from(holdings.keys()).filter((uid) => !known.has(uid)).sort()
+    };
+  }
+
+  async function saveQualification(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const expectedRevision = Number.isInteger(data.expected_revision) ? data.expected_revision : 0;
+    const catalog = await loadQualificationCatalog(ctx);
+    const current = catalog.find((entry) => entry.key === String(data.key || '')) || null;
+    const isStored = !!current && (current.revision > 0);
+    let next;
+    try { next = qualifications.normalizeSave(data, current, catalog); } catch (error) { qualificationError(error); }
+    const fingerprint = digest({ station_id: ctx.sid, uid: ctx.uid, requestId, next, expectedRevision });
+    const docRef = qualificationCatalogRef(ctx.sid).doc(next.key);
+    const auditRef = qualificationAuditRef(ctx.sid, requestId);
+    let duplicate = false;
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), docRef, auditRef];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[3].exists) {
+        if ((snaps[3].data() || {}).fingerprint !== fingerprint) {
+          throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לשינוי אחר.', 'already-exists');
+        }
+        duplicate = true;
+        return;
+      }
+      const live = snaps[2].exists ? (snaps[2].data() || {}) : null;
+      const liveRevision = live && Number.isInteger(live.revision) ? live.revision : 0;
+      if (liveRevision !== expectedRevision) {
+        throw new ScheduleRuntimeError('qualification-revision-stale', 'הכשירות השתנתה בינתיים. יש לרענן.', 'aborted');
+      }
+      tx.set(docRef, Object.assign({}, next, {
+        station_id: ctx.sid, revision: liveRevision + 1,
+        updated_by: ctx.uid, updated_at: FV.serverTimestamp()
+      }, live ? {} : { created_by: ctx.uid, created_at: FV.serverTimestamp() }));
+      tx.create(auditRef, {
+        action: current && (current.builtin || isStored || live) ? 'update' : 'create', key: next.key, request_id: requestId, fingerprint,
+        before: current && (current.builtin || isStored || live) ? { label: current.label, active: current.active, minimum: current.minimum, critical: current.critical, order: current.order } : null,
+        after: { label: next.label, active: next.active, minimum: next.minimum, critical: next.critical, order: next.order },
+        by: ctx.uid, at: FV.serverTimestamp()
+      });
+    });
+    return { duplicate, key: next.key, revision: duplicate ? expectedRevision : expectedRevision + 1 };
+  }
+
+  async function deleteQualification(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const key = String(data.key || '');
+    if (!qualifications.KEY_RE.test(key)) {
+      throw new ScheduleRuntimeError('qualification-key', 'מפתח הכשירות אינו תקין.', 'invalid-argument');
+    }
+    const expectedRevision = Number.isInteger(data.expected_revision) ? data.expected_revision : 0;
+    const fingerprint = digest({ station_id: ctx.sid, uid: ctx.uid, requestId, key, expectedRevision, intent: 'delete' });
+    const auditRef = qualificationAuditRef(ctx.sid, requestId);
+    // ניסיון חוזר של מחיקה שהושלמה — הכשירות כבר אינה קיימת; הקבלה מהיומן.
+    const priorAudit = await auditRef.get();
+    if (priorAudit.exists) {
+      if ((priorAudit.data() || {}).fingerprint !== fingerprint) {
+        throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לשינוי אחר.', 'already-exists');
+      }
+      await requireLiveManagerNow(ctx);
+      return { duplicate: true, key };
+    }
+    const catalog = await loadQualificationCatalog(ctx);
+    const entry = catalog.find((item) => item.key === key) || null;
+    const holdings = await loadPersonQualifications(ctx);
+    const holders = Array.from(holdings.entries()).filter(([, held]) => held.qualifications.indexOf(key) !== -1).map(([uid]) => uid);
+    const blocker = qualifications.deleteBlocker(entry, holders);
+    if (blocker) {
+      const error = new ScheduleRuntimeError(blocker.code, blocker.message, 'failed-precondition');
+      if (blocker.holders !== undefined) error.detail = { holders: blocker.holders };
+      throw error;
+    }
+    const metaBefore = await qualificationsMetaRef(ctx.sid).get();
+    const holdingsRevision = metaBefore.exists ? Number((metaBefore.data() || {}).holdings_revision || 0) : 0;
+    const docRef = qualificationCatalogRef(ctx.sid).doc(key);
+    let duplicate = false;
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), docRef, auditRef, qualificationsMetaRef(ctx.sid)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[3].exists) {
+        if ((snaps[3].data() || {}).fingerprint !== fingerprint) {
+          throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לשינוי אחר.', 'already-exists');
+        }
+        duplicate = true;
+        return;
+      }
+      if (!snaps[2].exists) {
+        throw new ScheduleRuntimeError('qualification-not-found', 'הכשירות אינה קיימת.', 'not-found');
+      }
+      if (Number((snaps[2].data() || {}).revision || 0) !== expectedRevision) {
+        throw new ScheduleRuntimeError('qualification-revision-stale', 'הכשירות השתנתה בינתיים. יש לרענן.', 'aborted');
+      }
+      /* ⭐ מונה המחזיקים: כל שינוי בכשירויות של אדם מעלה אותו. אם הוא זז מאז
+       * שנספרו המחזיקים — ייתכן שמישהו קיבל את הכשירות בינתיים; לא מוחקים. */
+      const liveMeta = snaps[4].exists ? Number((snaps[4].data() || {}).holdings_revision || 0) : 0;
+      if (liveMeta !== holdingsRevision) {
+        throw new ScheduleRuntimeError('qualification-holders-changed', 'רשימת המחזיקים השתנתה בזמן המחיקה. יש לרענן ולנסות שוב.', 'aborted');
+      }
+      tx.delete(docRef);
+      tx.create(auditRef, {
+        action: 'delete', key, request_id: requestId, fingerprint,
+        before: { label: entry.label, active: entry.active, minimum: entry.minimum, critical: entry.critical, order: entry.order },
+        after: null, by: ctx.uid, at: FV.serverTimestamp()
+      });
+    });
+    return { duplicate, key };
+  }
+
+  async function setPersonQualifications(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    // האדם שעליו נרשמות הכשירויות (לא זהות הקורא — זו מגיעה מ-context בלבד).
+    const uid = String(data.person || '');
+    if (!AUTH_UID_RE.test(uid)) {
+      throw new ScheduleRuntimeError('person-uid', 'מזהה האדם אינו תקין.', 'invalid-argument');
+    }
+    const expectedRevision = Number.isInteger(data.expected_revision) ? data.expected_revision : 0;
+    const catalog = await loadQualificationCatalog(ctx);
+    let next;
+    try { next = qualifications.normalizeHoldings(data.qualifications, catalog); } catch (error) { qualificationError(error); }
+    const fingerprint = digest({ station_id: ctx.sid, uid: ctx.uid, requestId, person: uid, next, expectedRevision });
+    const personRef = personQualificationsRef(ctx.sid, uid);
+    const auditRef = qualificationAuditRef(ctx.sid, requestId);
+    const catalogRefs = next.map((key) => qualificationCatalogRef(ctx.sid).doc(key));
+    let duplicate = false;
+    let result = null;
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), liveUserRef(ctx.sid, uid), personRef, auditRef, qualificationsMetaRef(ctx.sid)].concat(catalogRefs);
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      if (snaps[4].exists) {
+        if ((snaps[4].data() || {}).fingerprint !== fingerprint) {
+          throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לשינוי אחר.', 'already-exists');
+        }
+        duplicate = true;
+        result = (snaps[3].data() || {});
+        return;
+      }
+      // האדם חייב להיות חבר תחנה חי — כשירות נרשמת לאדם קיים, לא למזהה.
+      const person = snaps[2].exists ? (snaps[2].data() || {}) : null;
+      if (!scheduleAccess.activeMember(person, ctx.sid)) {
+        throw new ScheduleRuntimeError('person-not-member', 'האדם אינו חבר פעיל בתחנה.', 'failed-precondition');
+      }
+      const live = snaps[3].exists ? (snaps[3].data() || {}) : null;
+      const liveRevision = live && Number.isInteger(live.revision) ? live.revision : 0;
+      if (liveRevision !== expectedRevision) {
+        throw new ScheduleRuntimeError('holdings-revision-stale', 'הכשירויות של האדם השתנו בינתיים. יש לרענן.', 'aborted');
+      }
+      // כל כשירות שמוקצית חייבת להתקיים ולהיות פעילה **עכשיו** (כשירות מותאמת — מסמך; מובנית — אם יש מסמך, לא מושבת).
+      next.forEach((key, index) => {
+        const snap = snaps[6 + index];
+        const builtin = qualifications.CANONICAL_KEYS.indexOf(key) !== -1;
+        if (!snap.exists && !builtin) {
+          throw new ScheduleRuntimeError('holdings-unknown', 'הכשירות ' + key + ' נמחקה בינתיים.', 'aborted');
+        }
+        if (snap.exists && (snap.data() || {}).active === false) {
+          throw new ScheduleRuntimeError('holdings-inactive', 'הכשירות ' + key + ' הושבתה בינתיים.', 'aborted');
+        }
+      });
+      const before = live && Array.isArray(live.qualifications) ? live.qualifications.slice() : [];
+      const liveMeta = snaps[5].exists ? Number((snaps[5].data() || {}).holdings_revision || 0) : 0;
+      tx.set(personRef, {
+        station_id: ctx.sid, uid, qualifications: next, revision: liveRevision + 1,
+        updated_by: ctx.uid, updated_at: FV.serverTimestamp()
+      });
+      tx.set(qualificationsMetaRef(ctx.sid), { station_id: ctx.sid, holdings_revision: liveMeta + 1, updated_at: FV.serverTimestamp() }, { merge: true });
+      tx.create(auditRef, Object.assign({
+        action: 'holdings', person: uid, request_id: requestId, fingerprint,
+        before, after: next, by: ctx.uid, at: FV.serverTimestamp()
+      }, qualifications.diffHoldings(before, next)));
+      result = { qualifications: next, revision: liveRevision + 1 };
+    });
+    return { duplicate, uid, qualifications: result.qualifications || [], revision: Number(result.revision || 0) };
+  }
+
   async function getDraftPreview(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -7201,6 +7479,10 @@ function createScheduleRuntime(deps) {
     importScheduleSheet,
     previewScheduleEdit,
     applyScheduleEdit,
+    getQualificationCatalog,
+    saveQualification,
+    deleteQualification,
+    setPersonQualifications,
     getDraftPreview,
     publish,
     rollback,

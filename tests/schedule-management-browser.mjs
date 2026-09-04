@@ -1757,10 +1757,103 @@ try {
     assert.equal(calls.some((entry) => entry.name === 'previewScheduleEdit' || entry.name === 'applyScheduleEdit'), false);
   });
   await noEditCtx.close();
+
+  /* ⭐ 42H.2 חבילה ב׳ · לשונית „כשירויות": קטלוג מובנה בסדר קבוע, שלוש
+   * קריטיות, הוספת מותאמת, כשירויות לאדם (כמה), מחיקה חסומה כשבשימוש. */
+  const qualCatalog = {
+    catalog: [
+      { key:'shift_lead', label:'ראש משמרת', order:10, critical:true, builtin:true, active:true, minimum:1, revision:0 },
+      { key:'deputy', label:'סגן', order:20, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'officer', label:'קצין', order:30, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'crew_commander', label:'מפקדי צוותים', order:40, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'driver', label:'נהגים', order:50, critical:false, builtin:true, active:true, minimum:2, revision:1 },
+      { key:'hazmat', label:'חומ״ס', order:60, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'monitoring', label:'ניטור', order:70, critical:false, builtin:true, active:false, minimum:0, revision:1 },
+      { key:'ylm', label:'יל״מ', order:80, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'firefighter', label:'לוחמים', order:90, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'diver', label:'צוללן', order:150, critical:false, builtin:false, active:true, minimum:0, revision:1 }
+    ],
+    holders:{ driver:1, diver:1 }, holdings_revision:2,
+    people:[
+      { uid:'stub-uid', name:'אלדד יונה', sub_station:'main', roles:['firefighter'], qualifications:[], revision:0, legacy:['נהג ישן'] },
+      { uid:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'], qualifications:['driver','diver'], revision:2, legacy:[] }
+    ],
+    unknown_holders:[]
+  };
+  const qualCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(qualCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    getQualificationCatalog:[{ data:qualCatalog }, { data:qualCatalog }, { data:qualCatalog }],
+    saveQualification:[{ data:{ duplicate:false, key:'pilot', revision:1 } }],
+    setPersonQualifications:[{ data:{ duplicate:false, uid:'stub-uid', qualifications:['shift_lead', 'firefighter'], revision:1 } }]
+  });
+  const qualPage = await qualCtx.newPage();
+  qualPage.on('dialog', (dialog) => dialog.accept());
+  await qualPage.goto(base + '?tab=quals', { waitUntil:'load' });
+  await qualPage.locator('#appMain:not(.hide)').waitFor();
+  await test('qualifications tab: the fixed catalog, critical marks, holders, disabled delete for a used custom entry', async () => {
+    assert.equal(await qualPage.locator('#qualsTab').isVisible(), true);
+    await qualPage.locator('#qualRows tr').first().waitFor();
+    assert.equal(await qualPage.locator('#qualRows tr').count(), 10);
+    assert.deepEqual(await qualPage.locator('#qualRows tr td:nth-child(2) input').evaluateAll((inputs) => inputs.map((i) => i.value)),
+      ['ראש משמרת', 'סגן', 'קצין', 'מפקדי צוותים', 'נהגים', 'חומ״ס', 'ניטור', 'יל״מ', 'לוחמים', 'צוללן']);
+    assert.equal(await qualPage.locator('#qualRows td.critical').count(), 3);
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="monitoring"]').getAttribute('class'), 'off');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="driver"] td:nth-child(5)').textContent(), '1');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="diver"] button[data-action="delete"]').isEnabled(), false, 'a used custom entry cannot be deleted from the screen');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="driver"] button[data-action="delete"]').count(), 0, 'built-ins have no delete');
+  });
+  await test('qualifications tab: add a custom entry and save several qualifications for a person', async () => {
+    await qualPage.fill('#qualNewKey', 'pilot');
+    await qualPage.fill('#qualNewLabel', 'טייס');
+    await qualPage.fill('#qualNewMinimum', '1');
+    await qualPage.locator('#qualAdd').click();
+    await qualPage.locator('#qualMessage .ok').waitFor();
+    let calls = await qualPage.evaluate(() => window.__CALLABLE_CALLS);
+    const saved = calls.find((entry) => entry.name === 'saveQualification');
+    assert.deepEqual([saved.payload.key, saved.payload.label, saved.payload.minimum, saved.payload.active, saved.payload.expected_revision], ['pilot', 'טייס', 1, true, 0]);
+    assert.ok(saved.payload.request_id);
+    await qualPage.fill('#qualSearch', 'אלדד');
+    assert.equal(await qualPage.locator('#qualPeople .person').count(), 1);
+    assert.match(await qualPage.locator('#qualPeople .person .legacy').textContent(), /נהג ישן/);
+    // הכשירות המושבתת (ניטור) אינה מוצעת; 9 פעילות.
+    assert.equal(await qualPage.locator('#qualPeople .person .held label').count(), 9);
+    await qualPage.locator('#qualPeople .person .held input[value="shift_lead"]').check();
+    await qualPage.locator('#qualPeople .person .held input[value="firefighter"]').check();
+    await qualPage.locator('#qualPeople .person button').click();
+    await qualPage.locator('#qualPeopleMessage .ok').waitFor();
+    calls = await qualPage.evaluate(() => window.__CALLABLE_CALLS);
+    const person = calls.find((entry) => entry.name === 'setPersonQualifications');
+    assert.deepEqual([person.payload.person, person.payload.qualifications, person.payload.expected_revision], ['stub-uid', ['shift_lead', 'firefighter'], 0]);
+    assert.equal(Object.hasOwn(person.payload, 'uid'), false, 'the target is `person`, never `uid`');
+    assert.equal(calls.filter((entry) => entry.name === 'getQualificationCatalog').length, 3, 'the catalog is reloaded from the server after each write');
+  });
+  await qualCtx.close();
+
+  /* כבאי רגיל — אין לשונית כשירויות ואין קריאה לקטלוג. */
+  const qualMemberCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(qualMemberCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const qualMemberPage = await qualMemberCtx.newPage();
+  await qualMemberPage.goto(base + '?tab=quals', { waitUntil:'load' });
+  await qualMemberPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a firefighter without the appointment neither sees the qualifications tab nor calls the catalog', async () => {
+    assert.equal(await qualMemberPage.locator('#qualsTab').isVisible(), false);
+    assert.equal(await qualMemberPage.locator('#qualsView').isVisible(), false);
+    const calls = await qualMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getQualificationCatalog'), false);
+  });
+  await qualMemberCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 46);
-console.log('\n46 schedule management browser checks passed.');
+assert.equal(passed, 49);
+console.log('\n49 schedule management browser checks passed.');

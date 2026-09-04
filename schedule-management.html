@@ -42,8 +42,23 @@
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}
     .head h1{font-size:26px;margin:0}
     .head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
     .tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
+    /* 42H.2 · כשירויות */
+    .qualtable{width:100%;border-collapse:collapse;font-size:12px}
+    .qualtable th,.qualtable td{padding:6px 8px;border-bottom:1px solid var(--line,#dfe5ec);text-align:right;vertical-align:middle}
+    .qualtable th{font-size:11px;color:var(--muted,#748091);font-weight:700}
+    .qualtable input[type="text"]{min-height:30px;font-size:12px;width:100%}
+    .qualtable input[type="number"]{min-height:30px;font-size:12px;width:64px}
+    .qualtable .critical{color:var(--bad,#dc2626);font-weight:800;font-size:11px}
+    .qualtable .off{opacity:.55}
+    .qualtable button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .qualpeople .person{display:grid;grid-template-columns:minmax(140px,1fr) 3fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line,#dfe5ec);border-radius:10px;margin-top:6px}
+    .qualpeople .person .held{display:flex;flex-wrap:wrap;gap:6px}
+    .qualpeople .person .held label{font-size:11px;border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:3px 7px;display:flex;gap:4px;align-items:center}
+    .qualpeople .person .held label.on{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .qualpeople .legacy{font-size:11px;color:var(--muted,#748091)}
+    .qualpeople .person button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:5px 9px;cursor:pointer;color:inherit}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -355,6 +370,7 @@
     <button type="button" data-tab="manage" id="manageTab">ניהול</button>
     <button type="button" data-tab="mine" id="mineTab">הסידור שלי</button>
     <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
+    <button type="button" data-tab="quals" id="qualsTab" hidden>כשירויות</button>
   </nav>
 
   <section id="manageView" hidden>
@@ -555,6 +571,33 @@
         בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו
       </label>
       <div id="previewMessage" aria-live="polite"></div>
+    </article>
+  </section>
+
+  <!-- 42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים (אחראי סידור בלבד; הכול בשרת) -->
+  <section id="qualsView" hidden>
+    <article class="card">
+      <h2>קטלוג הכשירויות</h2>
+      <div class="sub">כשירות היא יכולת מבצעית — לא תפקיד הרשאה. תשע הכשירויות המובנות בסדר קבוע; שלוש הראשונות
+        <b>קריטיות</b>: פער בהן חוסם פרסום. אפשר לשנות תווית, להשבית, לקבוע מינימום ליום, ולהוסיף כשירויות מותאמות.
+        מחיקה — רק לכשירות מותאמת שאיש אינו מחזיק בה.</div>
+      <div style="overflow-x:auto"><table class="qualtable" id="qualTable"><thead><tr>
+        <th>#</th><th>כשירות</th><th>קריטית</th><th>מינימום ליום</th><th>מחזיקים</th><th>פעילה</th><th></th>
+      </tr></thead><tbody id="qualRows"></tbody></table></div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="qualNewKey">מפתח (לטינית)</label><input id="qualNewKey" type="text" placeholder="למשל diver" autocomplete="off"></div>
+        <div><label for="qualNewLabel">תווית</label><input id="qualNewLabel" type="text" placeholder="למשל צוללן" autocomplete="off"></div>
+        <div><label for="qualNewMinimum">מינימום ליום</label><input id="qualNewMinimum" type="number" min="0" max="200" value="0"></div>
+        <div style="display:flex;align-items:end"><button class="btn" id="qualAdd" type="button">+ הוסף כשירות מותאמת</button></div>
+      </div>
+      <div id="qualMessage" aria-live="polite"></div>
+    </article>
+    <article class="card">
+      <h2>כשירויות לאדם</h2>
+      <div class="sub">לכל אדם כמה כשירויות שרוצים. הרשימה נשמרת בשרת עם יומן; „מהמערכת הישנה" הוא רמז בלבד ואינו מיובא אוטומטית.</div>
+      <div class="fields"><div style="grid-column:1/-1"><label for="qualSearch">חיפוש עובד</label><input id="qualSearch" type="search" placeholder="שם או חלק משם" autocomplete="off"></div></div>
+      <div class="qualpeople" id="qualPeople"></div>
+      <div id="qualPeopleMessage" aria-live="polite"></div>
     </article>
   </section>
 

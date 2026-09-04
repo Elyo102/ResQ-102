@@ -5213,6 +5213,15 @@ exports.previewScheduleEdit = onCall({ enforceAppCheck: true, memory: '512MiB' }
   invokeSchedule('previewScheduleEdit', req));
 exports.applyScheduleEdit = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
   invokeSchedule('applyScheduleEdit', req));
+// 42H.2 · קטלוג כשירויות ומחזיקים — אחראי סידור חי בלבד; CAS על revision, יומן.
+exports.getQualificationCatalog = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getQualificationCatalog', req));
+exports.saveQualification = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('saveQualification', req));
+exports.deleteQualification = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('deleteQualification', req));
+exports.setPersonQualifications = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('setPersonQualifications', req));
 
 exports.publishSchedule = onCall({
   enforceAppCheck: true,

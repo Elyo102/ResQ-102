@@ -30,6 +30,10 @@ const call = Object.freeze({
   importSheet: httpsCallable(functions, 'importScheduleSheet'),
   editPreview: httpsCallable(functions, 'previewScheduleEdit'),
   editApply: httpsCallable(functions, 'applyScheduleEdit'),
+  qualCatalog: httpsCallable(functions, 'getQualificationCatalog'),
+  qualSave: httpsCallable(functions, 'saveQualification'),
+  qualDelete: httpsCallable(functions, 'deleteQualification'),
+  qualPerson: httpsCallable(functions, 'setPersonQualifications'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -241,6 +245,7 @@ function showScheduleViews() {
   $('mineTab').hidden = false;
   $('stationTab').hidden = false;
   $('manageTab').hidden = !canManageSchedule();
+  $('qualsTab').hidden = !canManageSchedule();
   updateRunAvailability();
   $('scheduleTabs').classList.remove('manage-only');
   $('scheduleTabs').classList.toggle('views-only', !canManageSchedule());
@@ -251,7 +256,8 @@ function chooseTab(name, replaceUrl = true) {
   // תמונת התחנה לפני שהוא עובר לסידור האישי. כתובת ניהול אינה דרך
   // לעקוף את המינוי החי של אחראי/ת הסידור.
   if (name === 'manage' && !canManageSchedule()) name = 'station';
-  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station';
+  if (name === 'quals' && !canManageSchedule()) name = 'station';   // 42H.2 · אותו שער ללשונית הכשירויות
+  if (['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station';
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.classList.toggle('on', button.dataset.tab === name);
@@ -260,6 +266,7 @@ function chooseTab(name, replaceUrl = true) {
   $('manageView').hidden = name !== 'manage';
   $('mineView').hidden = name !== 'mine';
   $('stationView').hidden = name !== 'station';
+  $('qualsView').hidden = name !== 'quals';
   if (replaceUrl) {
     const url = new URL(location.href);
     url.searchParams.set('tab', name);
@@ -267,6 +274,7 @@ function chooseTab(name, replaceUrl = true) {
   }
   if (name === 'mine') loadMineRange();
   if (name === 'station') loadStationRange();
+  if (name === 'quals') loadQualifications();
 }
 
 /* ==================================================================
@@ -2686,6 +2694,165 @@ $('editAbsence').addEventListener('change', renderEditControls);
 $('editAdd').addEventListener('click', managerAction(addEditItem));
 $('editCheck').addEventListener('click', managerAction(checkEdit));
 $('editApply').addEventListener('click', managerAction(applyEdit));
+
+/* ==================================================================
+ *  42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים
+ * ------------------------------------------------------------------
+ *  כל פעולה נשלחת לשרת עם request_id ו-revision צפוי; המסך מציג את
+ *  מה שהשרת החזיר ולא ממציא. מחיקה מוצעת רק לכשירות מותאמת בלי מחזיקים.
+ * ================================================================== */
+async function loadQualifications(quiet) {
+  if (!canManageSchedule()) return;
+  if (!quiet) message('qualMessage', 'טוען…', 'info');
+  try {
+    state.quals = (await call.qualCatalog({})).data;
+    if (!quiet) message('qualMessage', '', 'info');
+    renderQualCatalog();
+    renderQualPeople();
+  } catch (error) {
+    state.quals = null;
+    message('qualMessage', errorText(error), 'err');
+  }
+}
+
+function renderQualCatalog() {
+  const view = state.quals;
+  const body = $('qualRows'); clear(body);
+  if (!view) return;
+  view.catalog.forEach((entry, index) => {
+    const tr = node('tr', entry.active ? '' : 'off');
+    tr.dataset.key = entry.key;
+    tr.appendChild(node('td', '', String(index + 1)));
+    const labelCell = node('td', '');
+    const labelInput = node('input', ''); labelInput.type = 'text'; labelInput.value = entry.label; labelInput.dataset.field = 'label';
+    labelInput.setAttribute('aria-label', 'תווית ' + entry.key);
+    labelCell.appendChild(labelInput);
+    labelCell.appendChild(node('div', 'sub', entry.key + (entry.builtin ? ' · מובנית' : ' · מותאמת')));
+    tr.appendChild(labelCell);
+    tr.appendChild(node('td', entry.critical ? 'critical' : '', entry.critical ? 'קריטית' : '—'));
+    const minCell = node('td', '');
+    const minInput = node('input', ''); minInput.type = 'number'; minInput.min = '0'; minInput.max = '200'; minInput.value = String(entry.minimum || 0); minInput.dataset.field = 'minimum';
+    minInput.setAttribute('aria-label', 'מינימום ' + entry.key);
+    minCell.appendChild(minInput);
+    tr.appendChild(minCell);
+    tr.appendChild(node('td', '', String((view.holders || {})[entry.key] || 0)));
+    const activeCell = node('td', '');
+    const activeInput = node('input', ''); activeInput.type = 'checkbox'; activeInput.checked = entry.active !== false; activeInput.dataset.field = 'active';
+    activeInput.setAttribute('aria-label', 'פעילה ' + entry.key);
+    activeCell.appendChild(activeInput);
+    tr.appendChild(activeCell);
+    const actions = node('td', '');
+    const save = node('button', '', 'שמור'); save.type = 'button'; save.dataset.action = 'save';
+    save.addEventListener('click', managerAction(() => saveQualificationRow(entry, tr)));
+    actions.appendChild(save);
+    const holders = (view.holders || {})[entry.key] || 0;
+    if (!entry.builtin) {
+      const del = node('button', '', holders ? 'בשימוש (' + holders + ')' : 'מחק'); del.type = 'button'; del.dataset.action = 'delete';
+      del.disabled = holders > 0;
+      del.title = holders ? 'יש להסיר את הכשירות מכל המחזיקים לפני מחיקה' : '';
+      del.addEventListener('click', managerAction(() => deleteQualificationRow(entry)));
+      actions.appendChild(del);
+    }
+    tr.appendChild(actions);
+    body.appendChild(tr);
+  });
+}
+
+async function saveQualificationRow(entry, tr) {
+  if (state.busy) return;
+  const label = tr.querySelector('input[data-field="label"]').value;
+  const minimum = Number(tr.querySelector('input[data-field="minimum"]').value);
+  const active = tr.querySelector('input[data-field="active"]').checked;
+  const payload = { request_id: requestId('qual'), key: entry.key, label, minimum, active, expected_revision: entry.revision || 0 };
+  if (entry.critical && !active) {
+    if (!confirm('„' + entry.label + '" היא כשירות קריטית. השבתה מבטלת את בקרת הפער שלה. להמשיך?')) return;
+    payload.confirm_critical = true;
+  }
+  state.busy = true;
+  try {
+    const result = (await call.qualSave(payload)).data;
+    message('qualMessage', 'נשמר: ' + label + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) { message('qualMessage', errorText(error), 'err'); if (errorCode(error) === 'qualification-revision-stale') await loadQualifications(true); }
+  finally { state.busy = false; }
+}
+
+async function deleteQualificationRow(entry) {
+  if (state.busy) return;
+  if (!confirm('למחוק את הכשירות „' + entry.label + '"? הפעולה נרשמת ביומן.')) return;
+  state.busy = true;
+  try {
+    await call.qualDelete({ request_id: requestId('qualdel'), key: entry.key, expected_revision: entry.revision || 0 });
+    message('qualMessage', 'נמחקה: ' + entry.label + '.', 'ok');
+    await loadQualifications(true);
+  } catch (error) { message('qualMessage', errorText(error), 'err'); await loadQualifications(true); }
+  finally { state.busy = false; }
+}
+
+async function addQualification() {
+  if (state.busy) return;
+  const key = $('qualNewKey').value.trim();
+  const label = $('qualNewLabel').value.trim();
+  const minimum = Number($('qualNewMinimum').value || 0);
+  if (!key || !label) { message('qualMessage', 'יש למלא מפתח ותווית.', 'err'); return; }
+  state.busy = true;
+  try {
+    const result = (await call.qualSave({ request_id: requestId('qualnew'), key, label, minimum, active: true, expected_revision: 0 })).data;
+    message('qualMessage', 'נוספה: ' + label + ' (' + result.key + ').', 'ok');
+    $('qualNewKey').value = ''; $('qualNewLabel').value = ''; $('qualNewMinimum').value = '0';
+    await loadQualifications(true);
+  } catch (error) { message('qualMessage', errorText(error), 'err'); }
+  finally { state.busy = false; }
+}
+
+function renderQualPeople() {
+  const view = state.quals;
+  const box = $('qualPeople'); clear(box);
+  if (!view) return;
+  const q = $('qualSearch').value.trim().toLowerCase();
+  const people = (view.people || []).filter((person) => !q || String(person.name).toLowerCase().indexOf(q) !== -1).slice(0, 60);
+  if (!people.length) { box.appendChild(node('div', 'sub', view.people && view.people.length ? 'לא נמצא עובד בשם הזה.' : 'אין מקור כוח אדם פעיל — אין אנשים להצגה.')); return; }
+  const active = view.catalog.filter((entry) => entry.active !== false);
+  people.forEach((person) => {
+    const row = node('div', 'person'); row.dataset.uid = person.uid;
+    const who = node('div', '');
+    who.appendChild(node('b', '', person.name));
+    if (person.legacy && person.legacy.length) who.appendChild(node('div', 'legacy', 'מהמערכת הישנה: ' + person.legacy.join(', ')));
+    row.appendChild(who);
+    const held = node('div', 'held');
+    const chosen = new Set(person.qualifications || []);
+    active.forEach((entry) => {
+      const label = node('label', chosen.has(entry.key) ? 'on' : '');
+      const input = node('input', ''); input.type = 'checkbox'; input.value = entry.key; input.checked = chosen.has(entry.key);
+      input.addEventListener('change', () => label.classList.toggle('on', input.checked));
+      label.appendChild(input); label.appendChild(node('span', '', entry.label));
+      held.appendChild(label);
+    });
+    row.appendChild(held);
+    const save = node('button', '', 'שמור'); save.type = 'button';
+    save.addEventListener('click', managerAction(() => savePersonQualifications(person, row)));
+    row.appendChild(save);
+    box.appendChild(row);
+  });
+  if ((view.unknown_holders || []).length) {
+    box.appendChild(node('div', 'change warn', (view.unknown_holders.length) + ' מחזיקי כשירויות אינם במקור כוח האדם הפעיל (עזבו או טרם הוזנו).'));
+  }
+}
+
+async function savePersonQualifications(person, row) {
+  if (state.busy) return;
+  const keys = Array.from(row.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+  state.busy = true;
+  try {
+    const result = (await call.qualPerson({ request_id: requestId('qualperson'), person: person.uid, qualifications: keys, expected_revision: person.revision || 0 })).data;
+    message('qualPeopleMessage', person.name + ': ' + (result.qualifications.length ? result.qualifications.length + ' כשירויות' : 'בלי כשירויות') + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) { message('qualPeopleMessage', errorText(error), 'err'); if (errorCode(error) === 'holdings-revision-stale') await loadQualifications(true); }
+  finally { state.busy = false; }
+}
+
+$('qualAdd').addEventListener('click', managerAction(addQualification));
+$('qualSearch').addEventListener('input', renderQualPeople);
 
 async function boot(user) {
   state.user = user;

@@ -396,7 +396,9 @@ check('an unavailable runtime fails closed without reopening the legacy schedule
 });
 check('station schedule is the default view and denied management falls back to it', () => {
   assert.ok(ui.includes("if (name === 'manage' && !canManageSchedule()) name = 'station'"));
-  assert.ok(ui.includes("['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station'"));
+  // 42H.2 · גם לשונית הכשירויות נופלת ל„סידור התחנה" בלי מינוי חי.
+  assert.ok(ui.includes("if (name === 'quals' && !canManageSchedule()) name = 'station'"));
+  assert.ok(ui.includes("['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station'"));
   assert.ok(ui.includes("|| 'station'"));
 });
 check('personal schedule reads only the requested day', () => {
