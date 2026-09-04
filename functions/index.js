@@ -2664,63 +2664,65 @@ async function hrConfig() {
   };
 }
 
-// ---------- איזו משמרת עובדת בתאריך ----------
+// ---------- מי עובד בתאריך — מהסידור האפקטיבי ----------
 //
-// אותה נוסחה בדיוק שב-rotation.js, כולל עדיפות החריגות.
-// היא מוכפלת כאן כי הדפדפן והשרת אינם חולקים קוד, וזו כפילות
-// מודעת: כל שינוי בכלל הזה חייב להיעשות בשני המקומות.
-const CREWS = ['A', 'B', 'C'];
+// עד כאן ישבה כאן העתקה של נוסחת המחזור מ-rotation.js, שקראה את
+// `rotations` ו-`shift_overrides` ישירות, בלי גבול, ובלי החלפות.
+// שלוש הבעיות: (א) במצב `new` היא המשיכה לחשב לפי הסידור הישן
+// בזמן שהמסכים מציגים פרסום — נוכחות ושעות לפי סידור אחד ותצוגה
+// לפי אחר; (ב) החלפות מאושרות לא נספרו, ולכן „הסידור אומר שעבד
+// ואין דיווח" נורה על מי שהחליף; (ג) אין קשר למצב הריצה.
+//
+// עכשיו יש מקור אחד: `effectiveWorkDaysForStation` של הרנטיים —
+// legacy (כולל החלפות מאושרות) ב-off/shadow, הפרסום הפעיל ב-new,
+// ו-fallback מפורש ל-legacy כשאין פרסום. התשובה לכל (uid, יום) היא
+// `true` · `false` · `'unknown'` — ולא-ידוע לעולם אינו „לא עבד":
+// טענה תלוית-יום לא נוצרת עליו. הסכומים ממשיכים להיספר.
 
-function daysBetweenKeys(a, b) {
-  const pa = a.split('-').map(Number), pb = b.split('-').map(Number);
-  return Math.round(
-    (Date.UTC(pb[0], pb[1] - 1, pb[2]) - Date.UTC(pa[0], pa[1] - 1, pa[2])) / 86400000
-  );
+const WORKDAYS_MAX_UIDS = 500;
+
+function keyOffset(key, n) {
+  const p = String(key).split('-').map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + n));
+  return d.toISOString().slice(0, 10);
 }
 
-function crewOnKey(rotations, overrides, dateKey) {
-  const ov = overrides[dateKey];
-  if (ov && ov.crew && CREWS.indexOf(ov.crew) !== -1) return ov.crew;
-
-  const active = (rotations || []).filter(r => r.is_active !== false);
-  if (!active.length) return null;
-
-  const base   = active[0];
-  const cycle  = Number(base.cycle_days) || CREWS.length;
-  const anchor = String(base.anchor_date || '');
-  if (!anchor) return null;
-
-  const diff = daysBetweenKeys(anchor, dateKey);
-  const idx  = ((diff % cycle) + cycle) % cycle;
-  const hit  = active.find(r => Number(r.position_in_cycle) === idx);
-  return hit ? hit.crew : null;
-}
-
-function isWorking(rotations, overrides, crew, dateKey) {
-  if (crewOnKey(rotations, overrides, dateKey) === crew) return true;
-  const ov = overrides[dateKey];
-  return !!(ov && Array.isArray(ov.extra_crews) && ov.extra_crews.indexOf(crew) !== -1);
-}
-
-async function loadSchedule(sid) {
+async function loadEffectiveSchedule(sid, from, to, uids) {
   if (typeof sid !== 'string' || !sid.trim() || sid !== sid.trim()) {
-    throw new Error('loadSchedule requires an explicit station id');
+    throw new Error('loadEffectiveSchedule requires an explicit station id');
   }
-  const rotations = [];
-  const overrides = {};
-  try {
-    const rs = await db.collection('stations/' + sid + '/rotations').get();
-    rs.forEach(d => rotations.push(d.data() || {}));
-  } catch (e) {
-    throw new Error('schedule rotations read failed');
+  const wanted = Array.from(new Set((uids || []).filter(u => typeof u === 'string' && u)));
+  const byUid = Object.create(null);
+  let head = null;
+  for (let i = 0; i < Math.max(1, wanted.length); i += WORKDAYS_MAX_UIDS) {
+    const chunk = wanted.slice(i, i + WORKDAYS_MAX_UIDS);
+    const out = await scheduleRuntime.effectiveWorkDaysForStation(sid, { from, to, uids: chunk });
+    if (!head) head = out;
+    else if (out.source !== head.source || out.mode !== head.mode
+             || JSON.stringify(out.provenance) !== JSON.stringify(head.provenance)) {
+      throw new Error('effective schedule changed between reads');
+    }
+    Object.keys(out.by_uid).forEach(function (uid) {
+      byUid[uid] = new Set(out.by_uid[uid]);
+    });
+    if (!wanted.length) break;
   }
-  try {
-    const os = await db.collection('stations/' + sid + '/shift_overrides').get();
-    os.forEach(d => { overrides[d.id] = d.data() || {}; });
-  } catch (e) {
-    throw new Error('schedule overrides read failed');
-  }
-  return { rotations, overrides };
+  const unknownDates = new Set(head.unknown_dates);
+  return {
+    mode: head.mode,
+    source: head.source,
+    fallback: head.fallback,
+    from, to,
+    unknown_dates: head.unknown_dates,
+    unknown_uids: head.unknown_uids,
+    // true · false · 'unknown'
+    works(uid, key) {
+      if (key < from || key > to) return 'unknown';
+      if (unknownDates.has(key)) return 'unknown';
+      if (!Object.prototype.hasOwnProperty.call(byUid, uid)) return 'unknown';
+      return byUid[uid].has(key);
+    }
+  };
 }
 
 // ---------- סריקת חודש של אדם אחד ----------
@@ -2746,18 +2748,20 @@ function scanPerson(person, recs, sched, mk, limit, cutoff) {
   for (let d = 1; d <= last; d++) {
     const key = mk + '-' + pad2(d);
     if (key > stop) break;
-    const working = person.crew &&
-      isWorking(sched.rotations, sched.overrides, person.crew, key);
+    // true · false · 'unknown'. יום לא ידוע (מחוץ לכיסוי הפרסום, או אדם
+    // שאינו בסגל הפרסום) אינו מקבל טענה תלוית-יום — לא „חסר דיווח"
+    // ולא „לא מתוכנן". שאר הבדיקות והסכום ממשיכים כרגיל.
+    const working = person.uid ? sched.works(person.uid, key) : 'unknown';
     const rec = byDate[key];
 
     // הסידור אומר שעבד ואין דיווח.
-    if (working && !rec) {
+    if (working === true && !rec) {
       findings.push({ kind: 'missing', date: key,
                       text: 'הסידור אומר שעבד ואין דיווח' });
     }
     // דווח כיום רגיל והסידור אומר שלא עבד. לא בהכרח טעות —
     // נע״ת, ישיבה או החלפה נראים כך — ולכן זו הערה ולא שגיאה.
-    if (!working && rec && rec.day_type === 'regular') {
+    if (working === false && rec && rec.day_type === 'regular') {
       findings.push({ kind: 'unscheduled', date: key,
                       text: 'דווח יום רגיל והסידור אומר שלא עבד' });
     }
@@ -2793,7 +2797,6 @@ function scanPerson(person, recs, sched, mk, limit, cutoff) {
 // הנוכחי נסרק עד היום בלבד, אחרת כל משמרת עתידית נספרת
 // כדיווח חסר.
 async function scanMonth(mk, cutoff) {
-  const sched = await loadSchedule(STATION_ID);
   const cfg = await hrConfig();
 
   const people = [];
@@ -2806,6 +2809,15 @@ async function scanMonth(mk, cutoff) {
 
   const att = await db.collection('stations/' + STATION_ID + '/attendance')
     .where('month', '==', mk).get();
+
+  // הסידור האפקטיבי לחודש, לכל מי שבסגל או שדיווח — קריאה אחת (או
+  // כמה חלקים של 500 מזהים), אותו מקור לכל האנשים.
+  const mp = mk.split('-').map(Number);
+  const monthLast = new Date(Date.UTC(mp[0], mp[1], 0)).getUTCDate();
+  const reportedUids = new Set();
+  att.forEach(d => { const u = (d.data() || {}).uid; if (u) reportedUids.add(String(u)); });
+  const sched = await loadEffectiveSchedule(STATION_ID, mk + '-01', mk + '-' + pad2(monthLast),
+    people.map(p => p.uid).concat(Array.from(reportedUids)));
 
   const byEmp = {};
   att.forEach(d => {
@@ -2834,14 +2846,14 @@ async function scanMonth(mk, cutoff) {
   const reported = {};
   results.forEach(r => { reported[r.person.uid] = true; });
   people.forEach(function (p) {
-    if (reported[p.uid] || !p.crew) return;
+    if (reported[p.uid]) return;
     const pk = mk.split('-').map(Number);
     const last = new Date(Date.UTC(pk[0], pk[1], 0)).getUTCDate();
     let due = 0;
     for (let d = 1; d <= last; d++) {
       const key = mk + '-' + pad2(d);
       if (cutoff && key > cutoff) break;   // אותו חתך כמו ב-scanPerson
-      if (isWorking(sched.rotations, sched.overrides, p.crew, key)) due++;
+      if (sched.works(p.uid, key) === true) due++;   // לא-ידוע אינו נספר כמשמרת
     }
     if (due) {
       results.push({
@@ -2855,7 +2867,8 @@ async function scanMonth(mk, cutoff) {
 
   results.sort((a, b) =>
     String(a.person.full_name).localeCompare(String(b.person.full_name), 'he'));
-  return { results, cfg, mk };
+  return { results, cfg, mk, schedule: { mode: sched.mode, source: sched.source,
+    fallback: sched.fallback, unknown_dates: sched.unknown_dates.length } };
 }
 
 // ---------- ריצת הלילה ----------
@@ -3437,42 +3450,51 @@ function keyPlus(key, n) {
 }
 
 // האם האדם עובד בתאריך, **אחרי** שההחלפה תיכנס לתוקף.
-function worksAfterSwap(sched, approved, uid, crew, key, gainKey, loseKey) {
-  if (!key) return false;
+// true · false · 'unknown' — יום מחוץ לכיסוי הסידור האפקטיבי אינו
+// „פנוי": אי אפשר להוכיח מנוחה, ולכן הוא מדווח כלא-ידוע.
+function worksAfterSwap(sched, approved, uid, key, gainKey, loseKey) {
+  if (!key) return 'unknown';
   if (loseKey && key === loseKey) return false;
   if (gainKey && key === gainKey) return true;
 
-  // החלפות מאושרות אחרות שכבר הזיזו לו ימים.
+  // החלפות מאושרות אחרות שכבר הזיזו לו ימים. ב-legacy הן כבר חלות
+  // בהקרנה, וההנחה כאן זהה לה; בפרסום (new) הן אינן חלק מהפרסום.
   for (const sw of approved) {
     if (sw.from_uid === uid && sw.from_date === key) return false;
     if (sw.to_uid   === uid && sw.to_date   === key) return false;
     if (sw.from_uid === uid && sw.to_date   === key) return true;
     if (sw.to_uid   === uid && sw.from_date === key) return true;
   }
-  if (!crew) return false;
-  return isWorking(sched.rotations, sched.overrides, crew, key);
+  return sched.works(uid, key);
 }
 
-// הימים שנפגעים בשני הצדדים. ריק = ההחלפה חוקית.
+// הימים שנפגעים בשני הצדדים. ריק = ההחלפה חוקית. `unknown: true` =
+// אי אפשר לאמת — גם זה אינו „חוקי".
 function restBreaks(sched, approved, sw) {
   const out = [];
   const sides = [
-    { uid: sw.from_uid, name: sw.from_name || 'המבקש',
-      crew: sw.from_crew, gain: sw.to_date,   lose: sw.from_date },
-    { uid: sw.to_uid,   name: sw.to_name   || 'המחליף',
-      crew: sw.to_crew,   gain: sw.from_date, lose: sw.to_date }
+    { uid: sw.from_uid, name: sw.from_name || 'המבקש', gain: sw.to_date, lose: sw.from_date },
+    { uid: sw.to_uid,   name: sw.to_name   || 'המחליף', gain: sw.from_date, lose: sw.to_date }
   ];
 
   for (const p of sides) {
     if (!p.uid || !p.gain) continue;
     for (const n of [-1, 1]) {
       const k = keyPlus(p.gain, n);
-      if (worksAfterSwap(sched, approved, p.uid, p.crew, k, p.gain, p.lose)) {
-        out.push({ who: p.name, gain: p.gain, clash: k });
-      }
+      const works = worksAfterSwap(sched, approved, p.uid, k, p.gain, p.lose);
+      if (works === true) out.push({ who: p.name, gain: p.gain, clash: k });
+      else if (works === 'unknown') out.push({ who: p.name, gain: p.gain, clash: k, unknown: true });
     }
   }
   return out;
+}
+
+// טווח הקריאה לבדיקת מנוחה: שני התאריכים ויום מכל צד.
+function swapScheduleRange(sw) {
+  const keys = [sw.from_date, sw.to_date].filter(k => /^\d{4}-\d{2}-\d{2}$/.test(String(k || '')));
+  if (!keys.length) return null;
+  keys.sort();
+  return { from: keyOffset(keys[0], -1), to: keyOffset(keys[keys.length - 1], 1) };
 }
 
 // ---------------------------------------------------------------------
@@ -3567,7 +3589,10 @@ exports.onSwapChange = onDocumentWritten(
     // שיהיו חוקיות אחרי שהצד השני יבחר תאריך אחר.
     if (now === 'approved' && was !== 'approved') {
       try {
-        const sched = await loadSchedule(sid);
+        const range = swapScheduleRange(after);
+        if (!range) throw new Error('swap without dates');
+        const sched = await loadEffectiveSchedule(sid, range.from, range.to,
+          [after.from_uid, after.to_uid]);
         const apSnap = await db.collection('stations/' + sid + '/swaps')
           .where('status', '==', 'approved').get();
         const approved = [];
@@ -3579,8 +3604,9 @@ exports.onSwapChange = onDocumentWritten(
         const breaks = restBreaks(sched, approved, after);
         if (breaks.length) {
           const why = breaks.map(function (b) {
-            return b.who + ' יעבוד ב-' + dmyS(b.gain) +
-                   ' וגם ב-' + dmyS(b.clash);
+            return b.unknown
+              ? b.who + ': ' + dmyS(b.clash) + ' מחוץ לסידור המפורסם — לא ניתן לאמת מנוחה'
+              : b.who + ' יעבוד ב-' + dmyS(b.gain) + ' וגם ב-' + dmyS(b.clash);
           }).join('; ');
 
           await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
@@ -5205,6 +5231,13 @@ exports.getStationScheduleRange = onCall({ enforceAppCheck: true }, async (req) 
 // direct client reads remain closed in Firestore rules.
 exports.getLegacyScheduleCompatibilityContext = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getLegacyCompatibility', req));
+
+// „מי עובד בתאריך?" מהסידור האפקטיבי — legacy ב-off/shadow, הפרסום
+// הפעיל ב-new (עם fallback מפורש ל-legacy כשאין פרסום). הדפדפן שולח טווח
+// ורשימת מזהים בלבד ומקבל תאריכים לכל מזהה; לא שמות, לא צוותים, לא
+// מחזור. זה הנתיב של מסכי הנוכחות, האבטחות, הנתונים וההחלפות.
+exports.getEffectiveWorkdays = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getEffectiveWorkdays', req));
 
 // Raw guard documents contain notes, places, sign-up records and audit data.
 // These read-only callables are the only browser boundary for the legacy guard
