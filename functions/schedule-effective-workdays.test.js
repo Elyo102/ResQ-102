@@ -62,15 +62,19 @@ test('legacy covers the whole range and answers every day', () => {
   assert.deepEqual(out.unknown_uids, {});
 });
 
-test('invalid uids are reported, not silently dropped; duplicates collapse', () => {
+test('invalid uids are reported, not silently dropped; duplicates collapse; non-strings are refused', () => {
   const out = W.assemble({
     source: 'legacy', range: { from: '2026-09-01', to: '2026-09-01' }, coverage: null,
     windows: [{ from: '2026-09-01', to: '2026-09-01', days: [day('2026-09-01', ['a'])] }],
-    uids: ['a', 'a', 'bad/uid', 7], roster: null
+    uids: ['a', 'a', 'bad/uid', 'bad/uid'], roster: null
   });
-  assert.deepEqual(out.unknown_uids, { 'bad/uid': 'invalid', 7: 'invalid' });
+  assert.deepEqual(out.unknown_uids, { 'bad/uid': 'invalid' });
   assert.deepEqual(Object.keys(out.by_uid), ['a']);
   assert.throws(() => W.normalizeUids(new Array(501).fill('a')), { code: 'uids-too-many' });
+  // 417 §5: המספר 7 היה הופך ל-'7' ב-invalid ומעלים את המחרוזת '7' שלצדו.
+  assert.throws(() => W.normalizeUids([7, '7']), { code: 'uids-type' });
+  assert.throws(() => W.normalizeUids([null]), { code: 'uids-type' });
+  assert.deepEqual(W.normalizeUids(['7']), { uids: ['7'], invalid: [] });
 });
 
 test('a window that does not match the expected chunking, or a duplicated day, fails closed', () => {
@@ -82,6 +86,15 @@ test('a window that does not match the expected chunking, or a duplicated day, f
   assert.throws(() => W.assemble(Object.assign({}, base, {
     windows: [{ from: '2026-09-01', to: '2026-09-02', days: [{ date: '2026-09-01', assignments: [{ uid: 'a' }, { uid: 'a' }] }] }]
   })), { code: 'assignment-duplicate' });
+  // 417 §5: יום מחוץ לחלון שלו (או מחוץ לכיסוי) — סירוב, לא קליטה שקטה.
+  assert.throws(() => W.assemble(Object.assign({}, base, {
+    windows: [{ from: '2026-09-01', to: '2026-09-02', days: [day('2026-09-01', ['a']), day('2026-09-03', ['a'])] }]
+  })), { code: 'window-day-outside' });
+  assert.throws(() => W.assemble({
+    source: 'publication', range: { from: '2026-09-01', to: '2026-09-05' }, coverage: { from: '2026-09-01', to: '2026-09-02' },
+    windows: [{ from: '2026-09-01', to: '2026-09-02', days: [day('2026-09-01', ['a']), day('2026-09-04', ['a'])] }],
+    uids: ['a'], roster: ['a']
+  }), { code: 'window-day-outside' });
 });
 
 test('a full year against a one-month publication is 30 answered days and 335 unknown', () => {

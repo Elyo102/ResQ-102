@@ -76,15 +76,18 @@ function normalizeRange(from, to) {
   return Object.freeze({ from, to, dates });
 }
 
+/* מזהים: מחרוזות בלבד. ערך שאינו מחרוזת נדחה במפורש (417 §5) — עד כאן
+ * המספר 7 הפך ל-'7' ב-invalid והעלים את המחרוזת '7' התקינה שלצדו.
+ * מחרוזת שאינה בתבנית — מדווחת כ-`invalid`, לא נזרקת. */
 function normalizeUids(uids) {
   if (!Array.isArray(uids)) fail('uids-shape', 'uids חייב להיות מערך');
   if (uids.length > MAX_UIDS) fail('uids-too-many', 'יותר מ-' + MAX_UIDS + ' מזהים');
+  if (uids.some((raw) => typeof raw !== 'string')) fail('uids-type', 'כל מזהה חייב להיות מחרוזת');
   const out = [];
   const invalid = [];
   const seen = new Set();
-  uids.forEach((raw) => {
-    const uid = typeof raw === 'string' ? raw : '';
-    if (!UID_RE.test(uid)) { invalid.push(String(raw)); return; }
+  uids.forEach((uid) => {
+    if (!UID_RE.test(uid)) { if (invalid.indexOf(uid) === -1) invalid.push(uid); return; }
     if (seen.has(uid)) return;
     seen.add(uid);
     out.push(uid);
@@ -145,6 +148,9 @@ function assemble(input) {
       if (!plain(day) || !DATE_RE.test(String(day.date || '')) || !Array.isArray(day.assignments)) {
         fail('window-day', 'יום בחלון אינו תקין');
       }
+      // יום מחוץ לחלון שלו (ולכן מחוץ לכיסוי) — המתאם הקיים מסנן, וכאן
+      // נסגר בכל זאת: תשובה שמכילה יום שלא ביקשו היא תשובה זרה.
+      if (day.date < w.from || day.date > w.to) fail('window-day-outside', 'יום מחוץ לחלון שלו');
       if (byDate.has(day.date)) fail('window-day-duplicate', 'יום מופיע בשני חלונות');
       byDate.set(day.date, day.assignments);
     });

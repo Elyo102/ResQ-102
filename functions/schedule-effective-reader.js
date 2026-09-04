@@ -140,12 +140,27 @@ function normalizeRange(req) {
   return deepFreeze({ from, to, fromOrdinal, toOrdinal, dates });
 }
 
+/* שני הקשרים, שניהם מפורשים:
+ *  · אדם חי: `{station_id, uid, active:true}` — הצורה היחידה ל-getMy.
+ *  · שרת: `{station_id, system:true, active:true}` בלי uid — לסריקות
+ *    ולחישובים שאין מאחוריהם משתמש. אין „משתמש מומצא": uid הוא null,
+ *    ו-getMy מסרב לו במפורש. getStation (חלון תחנה לא-מסונן) מותר. */
 function normalizeContext(raw) {
   if (!plain(raw)) fail('context-invalid');
   if (raw.active !== true) fail('context-inactive');
+  if (raw.system === true) {
+    if (raw.uid !== undefined && raw.uid !== null) fail('context-system-uid');
+    return deepFreeze({
+      station_id: id(raw.station_id, 'context-station'),
+      uid: null,
+      system: true,
+      active: true
+    });
+  }
   return deepFreeze({
     station_id: id(raw.station_id, 'context-station'),
     uid: uid(raw.uid, 'context-uid'),
+    system: false,
     active: true
   });
 }
@@ -374,6 +389,7 @@ function createScheduleEffectiveReader(deps) {
     getMy: async function getMy(req) {
       const range = normalizeRange(req);
       const resolved = await resolve(req, range);
+      if (resolved.ctx.system === true || !resolved.ctx.uid) fail('context-uid');
       return response('schedule-effective-my-window', resolved, range, resolved.ctx.uid);
     },
     getStation: async function getStation(req) {

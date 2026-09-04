@@ -2603,6 +2603,7 @@ async function test(name, fn) {
       assert.deepEqual(workdays.unknown_dates, []);
       assert.deepEqual(workdays.by_uid.viewer, ['2026-09-01', '2026-09-04']);
       assert.deepEqual(workdays.by_uid.driver2, ['2026-09-02', '2026-09-05']);
+      assert.equal(typeof workdays.provenance.legacy_digest, 'string');
 
       // מרוץ: פרסום נכנס בזמן קריאת ה-fallback → אסור להחזיר legacy.
       const racing = runtime(null, {
@@ -2628,7 +2629,10 @@ async function test(name, fn) {
       assert.equal(legacy.source, 'legacy');
       assert.deepEqual(legacy.by_uid.viewer, ['2026-09-01', '2026-09-04']);
       assert.deepEqual(legacy.by_uid.fighter2, ['2026-09-03', '2026-09-06']);
-      assert.deepEqual(legacy.by_uid.nobody, [], 'legacy has no roster boundary: an unknown uid simply never works');
+      // 417 §3: מי שאינו בסגל הקיים — לא ידוע, לא „בחופש".
+      assert.deepEqual(legacy.unknown_uids, { nobody: 'not-in-roster' });
+      assert.equal(Object.hasOwn(legacy.by_uid, 'nobody'), false);
+      assert.equal(typeof legacy.provenance.legacy_digest, 'string');
       await runtimeRef.update({ mode: 'new' });
       const published = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-09-06', uids: ['viewer', 'nobody'] });
       assert.equal(published.source, 'publication');
@@ -2639,14 +2643,73 @@ async function test(name, fn) {
       // תחנה שאין לה כלום: אין ריצה, אין סגל — legacy ריק, לא שגיאה ולא זליגה מתחנה אחרת.
       const empty = await api.effectiveWorkDaysForStation('other_station', { from: '2026-09-01', to: '2026-09-02', uids: ['viewer'] });
       assert.equal(empty.source, 'legacy');
-      assert.deepEqual(empty.by_uid.viewer, []);
+      assert.deepEqual(empty.unknown_uids, { viewer: 'not-in-roster' }, 'no roster there → unknown, never a crew from this station');
+      assert.equal(Object.hasOwn(empty.by_uid, 'viewer'), false);
     } finally {
       await runtimeRef.update({ mode: modeBefore });
     }
   });
 
-  assert.equal(passed, 72);
-  console.log('\n72 schedule runtime Firestore integration checks passed.');
+  await test('417 §1: a viewer deactivated or transferred after the reads gets no workdays answer', async () => {
+    const viewerRef = station().collection('users').doc('viewer');
+    const before = (await viewerRef.get()).data() || {};
+    try {
+      const deactivating = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await viewerRef.update({ is_active: false });
+        }
+      });
+      await assert.rejects(deactivating.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-01', to: '2026-09-03', uids: ['viewer'] })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'workdays-viewer-changed');
+      await viewerRef.set(before);
+      const transferring = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'workdays') await viewerRef.update({ station: 'elsewhere_1' });
+        }
+      });
+      await assert.rejects(transferring.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-01', to: '2026-09-03', uids: ['viewer'] })),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'workdays-viewer-changed');
+    } finally {
+      await viewerRef.set(before);
+    }
+    const ok = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-01', to: '2026-09-03', uids: ['viewer'] }));
+    assert.ok(Array.isArray(ok.by_uid.viewer));
+  });
+
+  await test('417 §2: a legacy basis that changes between windows is refused, never mixed', async () => {
+    const runtimeRef = station().collection('schedule_state').doc('runtime');
+    const modeBefore = ((await runtimeRef.get()).data() || {}).mode;
+    const rotationA = station().collection('rotations').doc('A');
+    const rotationBefore = (await rotationA.get()).data() || {};
+    try {
+      await runtimeRef.update({ mode: 'shadow' });
+      let windows = 0;
+      const shifting = runtime(null, {
+        beforeEffectiveViewRecheck: async (info) => {
+          if (info && info.kind === 'legacy') {
+            windows += 1;
+            // אחרי החלון הראשון של קריאה בת שני חלונות — העוגן זז.
+            if (windows === 1) await rotationA.update({ anchor_date: '2026-09-02' });
+          }
+        }
+      });
+      await assert.rejects(shifting.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-31', uids: ['viewer'] }),
+        (error) => error instanceof ScheduleRuntimeError && error.code === 'legacy-schedule-changed');
+      await rotationA.set(rotationBefore);
+      // אותה קריאה בלי הזזה: שני החלונות מאותו בסיס, וחתימה אחת ב-provenance.
+      const steady = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-12-31', uids: ['viewer'] });
+      assert.equal(steady.source, 'legacy');
+      assert.equal(typeof steady.provenance.legacy_digest, 'string');
+      assert.ok(steady.by_uid.viewer.length > 30);
+      assert.equal(steady.by_uid.viewer[0], '2026-09-01');
+    } finally {
+      await rotationA.set(rotationBefore);
+      await runtimeRef.update({ mode: modeBefore });
+    }
+  });
+
+  assert.equal(passed, 74);
+  console.log('\n74 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

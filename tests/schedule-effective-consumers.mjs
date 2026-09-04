@@ -61,7 +61,9 @@ test('attendance: effective answer is the only source of work days; legacy conte
     'the legacy context is skipped in new');
   assert.ok(load.indexOf("throw new Error('schedule-mode-changed')") > -1, 'mode disagreement between the two answers fails closed');
   assert.match(body(attendance, 'suggestedDays'), /worksOn\(effective, SUBJ\.uid, key\) !== true\) continue;/);
-  assert.match(body(attendance, 'workingOn'), /worksOn\(effective, SUBJ\.uid, key\) === true/);
+  assert.match(body(attendance, 'workingOn'), /return worksOn\(effective, SUBJ\.uid, key\);/, 'workingOn must stay tri-state (417 §4)');
+  assert.match(attendance, /const dflt = \(g && workingOn\(key\) === false\)/, 'a guard default on an unknown day would call it a day off');
+  assert.doesNotMatch(attendance, /!workingOn\(/);
   assert.match(attendance, /const working = worksOn\(effective, SUBJ\.uid, key\);/);
   assert.match(attendance, /if \(working === true && !rec\)/);
   assert.match(attendance, /if \(working === false && rec && rec\.day_type === 'regular'\) extra\.push\(d\);/);

@@ -526,7 +526,7 @@ check('management visibility is driven by server status', () => {
 });
 check('off and shadow schedule views use only the server-side compatibility reader', () => {
   assert.ok(runtime.includes("const effectiveReaderModule = require('./schedule-effective-reader')"));
-  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range, readerArg)'));
+  assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'));
   assert.ok(runtime.includes("if (config.mode !== MODE.NEW)"));
   assert.ok(ui.includes("['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1"));
   assert.ok(integration.includes('off and shadow safely expose the current station and personal legacy schedules'));
@@ -543,7 +543,7 @@ check('legacy compatibility reads are bounded by source-specific caps and date w
   assert.ok(integration.includes('legacy guard reads reject one record above the bounded per-date cap'));
 });
 check('legacy overrides use canonical document ids, never an untrusted payload date query', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg)');
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)');
   const end = runtime.indexOf('function effectiveReaderFor(ctx, scoped)', start);
   const legacy = runtime.slice(start, end);
   assert.ok(start > -1 && end > start);
@@ -559,7 +559,7 @@ check('legacy overrides use canonical document ids, never an untrusted payload d
   assert.equal(beforeGuardQuery.includes(".where('date', 'in', chunk)"), false);
 });
 check('legacy guard events use a bounded trusted-station bridge before the final mode recheck', () => {
-  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg)');
+  const start = runtime.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)');
   const end = runtime.indexOf('async function checkedLegacyWindow', start);
   const body = runtime.slice(start, end);
   const guardRead = body.indexOf("root.collection('guards')");
@@ -1774,9 +1774,9 @@ check('reserved map keys: overrides, locked source and stored policy are own-pro
 
 check('400(3): new-without-active falls back to legacy explicitly, rechecks mode AND pointer, and labels the provenance', () => {
   const src = runtime;
-  const at = src.indexOf('async function legacyFallbackWindow(ctx, config, from, to)');
+  const at = src.indexOf('async function legacyFallbackWindow(ctx, config, from, to, scoped)');
   const fn = src.slice(at, src.indexOf('\n  async function getMy(req)', at));
-  assert.ok(fn.indexOf("effectiveStationWindow(ctx, from, to, { legacyOnly: true })") > -1,
+  assert.ok(fn.indexOf("effectiveStationWindow(ctx, from, to, Object.assign({}, scoped || {}, { legacyOnly: true }))") > -1,
     'the fallback still goes through the reader\'s hard boundary and would throw active-publication-missing');
   assert.ok(fn.indexOf('nonEmpty(pointerNow.publication_id)') > -1, 'a publication arriving mid-read is not rechecked');
   assert.ok(fn.indexOf("after.mode !== config.mode || window.source !== 'legacy'") > -1);
@@ -1800,11 +1800,31 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   const core = src.slice(src.indexOf('async function effectiveWorkDaysFor(ctx, config, input)'), at);
   assert.ok(core.indexOf('const active = await checkedActiveSnapshot(ctx, config, null);') > -1);
   assert.ok(core.indexOf('await activeSnapshotStillCurrent(ctx, config, active);') > -1, 'the snapshot is not rechecked at the end');
-  assert.ok(core.indexOf("? await legacyFallbackWindow(ctx, config, w.from, w.to)") > -1, 'new-without-active must use the explicit fallback');
+  assert.ok(core.indexOf("? await legacyFallbackWindow(ctx, config, w.from, w.to, scoped)") > -1, 'new-without-active must use the explicit fallback');
   const serverAt = src.indexOf('async function effectiveWorkDaysForStation(sid, input)');
   const server = src.slice(serverAt, src.indexOf('\n  async function getStationRange', serverAt));
   assert.ok(server.indexOf("const ctx = { sid: station, uid: null, role: 'system', system: true };") > -1);
   assert.equal(server.indexOf('context(req)'), -1);
+  // 417: הקשר שרת מפורש למתאם הטהור — לא משתמש מומצא.
+  const readerAt2 = src.indexOf('function effectiveReaderFor(ctx, scoped)');
+  const reader2 = src.slice(readerAt2, src.indexOf('async function effectiveStationWindow', readerAt2));
+  assert.ok(reader2.indexOf("? { station_id: ctx.sid, system: true, active: true }") > -1, 'system context is not explicit');
+  const pure = read('functions/schedule-effective-reader.js');
+  assert.ok(pure.indexOf("if (raw.system === true) {") > -1 && pure.indexOf("fail('context-system-uid')") > -1);
+  assert.ok(pure.indexOf("if (resolved.ctx.system === true || !resolved.ctx.uid) fail('context-uid');") > -1, 'getMy must refuse a system context');
+  // 417 §1: זהות חיה נבדקת שוב בסוף getEffectiveWorkdays, אחרי שעות המשמרת.
+  assert.ok(fn.indexOf('const shiftHours = await stationShiftHours(ctx);') < fn.indexOf('requireLiveWorkdaysViewer(finalReads[1], ctx);'),
+    'the live recheck must come after every read');
+  assert.ok(fn.indexOf("beforeEffectiveViewRecheck({ kind: 'workdays', ctx, mode: config.mode })") > -1);
+  // 417 §2: בסיס legacy אחד לכל החלונות, חתימה ב-provenance, ובדיקה חוזרת.
+  assert.ok(core.indexOf('const basis = await legacyWorkdaysBasis(ctx);') > -1);
+  assert.ok(core.indexOf('const scoped = { legacyBasis: basis };') > -1);
+  assert.ok(core.indexOf('await requireSameLegacyBasis(ctx, basis);') > -1);
+  assert.ok(core.indexOf('legacy_digest: basis.legacyDigest') > -1);
+  // 417 §3: הסגל הקיים הוא גבול הידיעה — לא roster:null.
+  assert.ok(core.indexOf('roster: basis.rosterIds') > -1 && core.indexOf('roster: null') === -1);
+  const legacyInput = src.slice(src.indexOf('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'), src.indexOf('function legacyRosterProjection') > 0 ? src.length : src.length);
+  assert.ok(legacyInput.indexOf("pinned ? { size: pinned.rosterDocs.length, docs: pinned.rosterDocs }") > -1, 'windows must share the pinned roster');
   assert.ok(index.indexOf("exports.getEffectiveWorkdays = onCall({ enforceAppCheck: true }") > -1);
   assert.equal(index.indexOf('effectiveWorkDaysForStation = onCall'), -1, 'the server entry must never be exported as a callable');
   const shift = src.slice(src.indexOf('async function stationShiftHours(ctx)'), src.indexOf('async function effectiveWindows'));

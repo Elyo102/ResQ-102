@@ -108,6 +108,55 @@ try {
     console.log('✓ swaps keeps submission and schedule-derived labels fail-closed after rejection');
   }
 
+  // 417 §4: a month the schedule does not cover is 'unknown' on every day —
+  // nothing is suggested or auto-filled, a guard on such a day is NOT
+  // pre-filled as an off-duty guard, and the month label says so. The same
+  // holds when the subject is missing from the roster answer.
+  for (const variant of ['unknown-dates', 'missing-uid']) {
+    const context = await contextWithPlan({
+      getMyGuardAttendance:[{ data:{ guards:[
+        { id:'g-unk', date:null, title:'אבטחה בחודש לא ידוע', start:'18:00', end:'22:00', status:'staffed' }
+      ] } }]
+    });
+    await context.addInitScript(({ mode }) => {
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth();
+      const key = d => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      const last = new Date(y, m + 1, 0).getDate();
+      const dates = [];
+      for (let d = 1; d <= last; d += 1) dates.push(key(d));
+      if (mode === 'unknown-dates') window.__STUB_UNKNOWN_DATES = dates;
+      else window.__STUB_CREW_OF = { 'stub-uid': undefined, u1:'C', u2:'A', u3:'A', u4:'B', u5:'B' };
+      // the guard is TODAY — #btnManual opens today's edit dialog
+      window.__ATTENDANCE_TEST_GUARD_DATE = key(now.getDate());
+      const plan = window.__CALLABLE_PLAN && window.__CALLABLE_PLAN.getMyGuardAttendance;
+      if (plan && plan[0]) plan[0].data.guards[0].date = key(now.getDate());
+    }, { mode: variant });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.locator('#work').waitFor({ state:'visible' });
+    await page.addStyleTag({ content:'#coWrap{display:none!important}' });
+    await page.waitForFunction(() =>
+      document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
+      document.querySelector('#tHours')?.textContent !== '—');
+    assert.equal(await page.locator('#tSug').textContent(), '0', variant + ': nothing is suggested on unknown days');
+    assert.equal(await page.locator('#rows tr.sug').count(), 0, variant + ': no auto-filled row');
+    assert.equal(await page.locator('#btnFill').isVisible(), false, variant + ': the fill button has nothing to fill');
+    if (variant === 'unknown-dates') {
+      assert.match(await page.locator('#moLabel').textContent(), /ימים מחוץ לסידור הידוע/, 'the month label names the unknown days');
+    }
+    // Open today's edit dialog (there is a guard today): the default must stay
+    // 'regular' — unknown ≠ day off — not 'guard'.
+    const guardDate = await page.evaluate(() => window.__ATTENDANCE_TEST_GUARD_DATE);
+    assert.equal(await page.evaluate((key) => typeof key === 'string' && key.length === 10, guardDate), true);
+    await page.evaluate(() => document.querySelector('#btnManual').click());
+    await page.locator('#dType').waitFor();
+    assert.equal(await page.locator('#dType').inputValue(), 'regular',
+      variant + ': an unknown day must not default to an off-duty guard');
+    await context.close();
+    console.log('✓ attendance treats ' + variant + ' as unknown — no fill, no suggestion, no guard default');
+  }
+
   // Defense in depth: every screen parses the workdays answer through the
   // shared allowlist instead of assigning the server response object directly.
   {
@@ -126,4 +175,4 @@ try {
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n3/3 effective-schedule failure checks passed.');
+console.log('\n5/5 effective-schedule failure checks passed.');
