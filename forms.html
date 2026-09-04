@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42g0">
+<link rel="stylesheet" href="./theme.css?v=42g1">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -302,20 +302,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g0';
-import { renderNav, renderStuckNav } from './nav.js?v=42g0';
-import { MEMBER_ROLES } from './roles.js?v=42g0';
-import { initPWA } from './pwa.js?v=42g0';
-import { watchCallouts } from './callout.js?v=42g0';
-import { CREW_HE } from './rotation.js?v=42g0';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42g1';
+import { renderNav, renderStuckNav } from './nav.js?v=42g1';
+import { MEMBER_ROLES } from './roles.js?v=42g1';
+import { initPWA } from './pwa.js?v=42g1';
+import { watchCallouts } from './callout.js?v=42g1';
+import { CREW_HE } from './rotation.js?v=42g1';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
          subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
-         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42g0';
+         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42g1';
 import { loadSignature, saveSignature, attachPad, readImageFile }
-  from './signature.js?v=42g0';
+  from './signature.js?v=42g1';
 import { canSign, signState, signatureRecord, stepLabel, STEP }
-  from './signflow.js?v=42g0';
-import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42g0';
+  from './signflow.js?v=42g1';
+import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42g1';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -325,7 +325,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42g0';
+import { initAppCheck } from './appcheck.js?v=42g1';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

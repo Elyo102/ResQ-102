@@ -1,10 +1,10 @@
-import { firebaseConfig } from './firebase-config.js?v=42g0';
-import { renderNav, renderStuckNav } from './nav.js?v=42g0';
-import { initPWA } from './pwa.js?v=42g0';
-import { initAppCheck } from './appcheck.js?v=42g0';
+import { firebaseConfig } from './firebase-config.js?v=42g1';
+import { renderNav, renderStuckNav } from './nav.js?v=42g1';
+import { initPWA } from './pwa.js?v=42g1';
+import { initAppCheck } from './appcheck.js?v=42g1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42g0';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42g1';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -981,6 +981,52 @@ async function applyModeChange() {
 
 function subClass(index) { return SUB_CLASS[index % SUB_CLASS.length]; }
 
+const ABSENCE_ROWS = [['sick', 'מחלה'], ['reserve', 'מילואים'], ['course', 'קורסים'], ['leave', 'חופש']];
+const ABSENCE_LOCATIONS = new Map([['abroad', 'חו״ל'], ['north', 'צפון'], ['eilat', 'אילת']]);
+
+function absenceDataReady(day) {
+  return day.absences_status === 'ready' && Array.isArray(day.absences)
+    && day.absences.every((item) => item && typeof item === 'object'
+      && typeof item.uid === 'string' && item.uid.length > 0
+      && typeof item.display === 'string' && item.display.trim().length > 0);
+}
+
+function absenceKind(item) {
+  return ABSENCE_ROWS.some(([kind]) => kind === item.kind) ? item.kind : 'unknown';
+}
+
+function appendAbsenceRows(board, days) {
+  const rows = ABSENCE_ROWS.slice();
+  if (days.some((day) => absenceDataReady(day)
+      && day.absences.some((item) => absenceKind(item) === 'unknown'))) {
+    rows.push(['unknown', 'סיבה לא ידועה']);
+  }
+  rows.forEach(([kind, label]) => {
+    const stub = node('div', 'stub absence-stub');
+    stub.appendChild(node('b', '', label));
+    board.appendChild(stub);
+    days.forEach((day, index) => {
+      const cell = node('div', 'cell absence-cell' + (index % 7 === 0 ? ' snap' : ''));
+      cell.dataset.absenceKind = kind;
+      cell.dataset.date = day.date;
+      if (!absenceDataReady(day)) {
+        cell.appendChild(node('span', 'absence-empty', 'מידע היעדרויות אינו זמין'));
+      } else {
+        const people = day.absences.filter((item) => absenceKind(item) === kind);
+        people.forEach((item) => {
+          const row = node('div', 'nm absence-name', item.display);
+          if (kind === 'leave' && ABSENCE_LOCATIONS.has(item.location)) {
+            row.appendChild(node('span', 'absence-location', ABSENCE_LOCATIONS.get(item.location)));
+          }
+          cell.appendChild(row);
+        });
+        if (!people.length) cell.appendChild(node('span', 'absence-empty', '—'));
+      }
+      board.appendChild(cell);
+    });
+  });
+}
+
 /**
  * ⭐ קריאה אחת לחודש, לשתי הלשוניות.
  *
@@ -1069,6 +1115,10 @@ function cellContent(cell, block, sub) {
       + (index === 0 ? ' lead' : '')
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
+    if (['A', 'B', 'C'].includes(person.crew)) {
+      row.classList.add('crew-' + person.crew);
+      row.title = 'משמרת ' + ({ A: 'א', B: 'ב', C: 'ג' })[person.crew];
+    }
     row.textContent = person.person || person.uid || '—';
     cell.appendChild(row);
   });
@@ -1093,7 +1143,7 @@ function renderBoard(target, days, options) {
   }
   const subs = (opts.subs || subOrder(days)).filter((sub) =>
     !opts.onlySub || sub.id === opts.onlySub);
-  if (!subs.length) {
+  if (!subs.length && opts.showAbsences !== true) {
     target.appendChild(node('div', 'empty', 'אין תחנות קצה להצגה.'));
     return;
   }
@@ -1144,6 +1194,7 @@ function renderBoard(target, days, options) {
     });
   });
 
+  if (opts.showAbsences === true) appendAbsenceRows(board, days);
   target.appendChild(board);
   fitColumns(board);
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
@@ -1231,7 +1282,7 @@ async function loadStationRange(ym) {
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
       return;
     }
-    renderBoard(box, view.days, { id: 'stationBoard' });
+    renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
     $('stationNote').textContent = (view.source === 'legacy'
       ? 'הלוח מוצג מהסידור הקיים, כי מנוע הסידור החדש עדיין אינו פעיל.'

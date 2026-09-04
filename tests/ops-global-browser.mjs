@@ -100,7 +100,7 @@ async function errorEvent(page, name = 'TypeError') {
 }
 async function probe(page, mode = 'pending') {
   return page.evaluate(async mode => {
-    const sdk = await import('./monitored-functions.js?v=42g0');
+    const sdk = await import('./monitored-functions.js?v=42g1');
     window.__SDK_PROBE = true; window.__SDK_MODE = mode;
     window.__SDK_ERROR = new TypeError('private business text');
     const fn = sdk.httpsCallable({}, 'whoAmI');
@@ -118,13 +118,14 @@ try {
         await errorEvent(f.page); await settle(f.page);
         const calls = await reports(f.page);
         assert.equal(calls.length, 1);
-        assert.deepEqual(calls[0].payload, { kind:'client-error', screen:file, version:'42G.0', code:'TypeError', callable:'unknown' });
+        // The deployed finite telemetry catalog predates this Hosting-only patch.
+        assert.deepEqual(calls[0].payload, { kind:'client-error', screen:file, version:'unknown', code:'TypeError', callable:'unknown' });
         assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         // These pages already have one local error-banner listener per kind.
         const expectedListeners = { error:2, unhandledrejection:2, 'resq:callable-start':1 };
         assert.deepEqual(await f.page.evaluate(() => window.__MONITOR_LISTENERS), expectedListeners);
         await f.page.evaluate(async () => {
-          const { startMonitoring } = await import('./monitoring-bootstrap.js?v=42g0');
+          const { startMonitoring } = await import('./monitoring-bootstrap.js?v=42g1');
           startMonitoring({}); startMonitoring({});
         });
         assert.deepEqual(await f.page.evaluate(() => window.__MONITOR_LISTENERS), expectedListeners);
@@ -136,7 +137,7 @@ try {
     const f = await fixture();
     try {
       const result = await f.page.evaluate(async () => {
-        const sdk = await import('./monitored-functions.js?v=42g0');
+        const sdk = await import('./monitored-functions.js?v=42g1');
         const receiver = {}, factoryThis = {}, fns = {}, options = { timeout:12345 }, payload = {}, extra = {};
         window.__SDK_PROBE = true; window.__SDK_MODE = 'resolve'; window.__SDK_VALUE = { data:{ marker:'same' } };
         const fn = sdk.httpsCallable.call(factoryThis, fns, 'whoAmI', options);
@@ -246,8 +247,8 @@ try {
       await f.page.evaluate(() => { window.__CALLABLE_PLAN = { reportIncident: Array.from({ length:20 }, () => ({ reject:true, code:'functions/unavailable' })) }; });
       await errorEvent(f.page); await reportCount(f.page, 1);
       await f.page.evaluate(async () => {
-        const sdk = await import('./monitored-functions.js?v=42g0');
-        const { TELEMETRY_CALLABLES } = await import('./incident-client.js?v=42g0');
+        const sdk = await import('./monitored-functions.js?v=42g1');
+        const { TELEMETRY_CALLABLES } = await import('./incident-client.js?v=42g1');
         window.__SDK_PROBE = true; window.__SDK_MODE = 'reject'; window.__SDK_ERROR = new Error('private');
         await Promise.all(TELEMETRY_CALLABLES.filter(n => !['unknown','reportIncident'].includes(n)).slice(0,15).map(name => sdk.httpsCallable({}, name)({}).catch(() => {})));
       });
@@ -295,7 +296,7 @@ try {
     assert.equal(consumers.length, 14);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
-      assert.ok(source.includes("from './monitored-functions.js?v=42g0'"), file);
+      assert.ok(source.includes("from './monitored-functions.js?v=42g1'"), file);
       assert.ok(!source.includes('/firebase-functions.js'), file + ' bypasses the facade');
     }
     const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');

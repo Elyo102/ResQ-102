@@ -240,7 +240,7 @@ await check('feedback page stays member-only without fixed-email authority', () 
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
   assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
-  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42g0['"]/);
+  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42g1['"]/);
   assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,
     'feedback must share the page reporter, not install an independent quota/listener');
   assert.match(read('nav.js'), /href:\s*'feedback\.html',\s*label:\s*'חוות דעת',\s*who:\s*'member'/);
