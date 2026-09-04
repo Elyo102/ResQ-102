@@ -5123,9 +5123,10 @@ async function invokeSchedule(method, req) {
     return await scheduleRuntime[method](req);
   } catch (error) {
     if (error instanceof scheduleRuntimeModule.ScheduleRuntimeError) {
-      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, {
+      // 42H.2 · `detail` — פירוט מובנה בלי שמות (למשל רשימת פערים / מספר מחזיקים).
+      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, Object.assign({
         schedule_code: error.code
-      });
+      }, error.detail !== undefined ? { detail: error.detail } : {}));
     }
     throw error;
   }

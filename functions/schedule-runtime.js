@@ -3501,7 +3501,7 @@ function createScheduleRuntime(deps) {
       station_id: ctx.sid, base, edits, source: source.digest, policy: policy.digest
     });
     // 42H.2 ג׳ · הפערים שייווצרו מהעריכה — לדוח ולשער הפרסום.
-    const gapCtx = await gapContext(ctx, config);
+    const gapCtx = await gapContext(ctx, config, people);
     const gapReport = gapReportFor(gapCtx, policy.value, plan);
     return { ctx, config, data, base, active, policy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport };
   }
@@ -3955,10 +3955,10 @@ function createScheduleRuntime(deps) {
     };
   }
 
-  async function gapContext(ctx, config) {
+  async function gapContext(ctx, config, knownPeople) {
     const [catalog, holdings, gapPolicy] = await Promise.all([loadQualificationCatalog(ctx), loadPersonQualifications(ctx), loadGapPolicy(ctx)]);
-    let people = [];
-    if (nonEmpty(config.active_source_id)) {
+    let people = Array.isArray(knownPeople) ? knownPeople : [];
+    if (!Array.isArray(knownPeople) && nonEmpty(config.active_source_id)) {
       const source = await loadSource(ctx, config.active_source_id);
       people = source.peopleRaw.filter((person) => person.active === true);
     }
@@ -4019,7 +4019,7 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('draft-not-ready', 'הטיוטה אינה קיימת או טרם הושלמה.');
       }
       plan = (await readSnapshot(ref, meta)).plan;
-      target = { kind: 'draft', draft_id: draftId, from: meta.from, to: meta.to };
+      target = { kind: 'draft', draft_id: draftId, from: meta.from, to: meta.to, policy_id: meta.policy_id || null };
     } else {
       requireMode(config, [MODE.NEW]);
       const active = await activeSnapshot(ctx);
@@ -4027,7 +4027,8 @@ function createScheduleRuntime(deps) {
       plan = active.plan;
       target = { kind: 'publication', publication_id: active.pointer.publication_id, revision: active.pointer.revision, from: plan.from, to: plan.to };
     }
-    const policy = nonEmpty(config.active_policy_id) ? await loadPolicy(ctx, config.active_policy_id) : null;
+    const policyId = target.kind === 'draft' && nonEmpty(target.policy_id) ? target.policy_id : config.active_policy_id;
+    const policy = nonEmpty(policyId) ? await loadPolicy(ctx, policyId) : null;
     const gapCtx = await gapContext(ctx, config);
     const report = gapReportFor(gapCtx, policy ? policy.value : { sub_stations: {} }, plan);
     await requireLiveManagerNow(ctx);
@@ -5028,7 +5029,7 @@ function createScheduleRuntime(deps) {
      * אינו נבדק שוב: הוא כבר עבר את השער). קריטי עוצר; אחר — עם אישור חתום. */
     let gapReport = null;
     if (!existing.exists) {
-      const gapCtx = await gapContext(ctx, config);
+      const gapCtx = await gapContext(ctx, config, currentSource.peopleRaw.filter((person) => person.active === true));
       gapReport = gapReportFor(gapCtx, currentPolicy.value, next.plan);
       requireGapClearance(gapReport, String(data.gap_acknowledgement || ''));
     }

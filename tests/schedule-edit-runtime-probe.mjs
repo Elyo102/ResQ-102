@@ -146,6 +146,19 @@ function auditOf(db) {
   db._put(ST + '/schedule_state/active', pointer2);
   eq('3.4 לא נוצרה טיוטה', draftCount(), draftsBefore3);
 
+  // החתימה של המצביע משתנה **בין עסקת הטיוטה לעסקת הפרסום** (אותו publication_id
+  // ו-revision, כך שבדיקת publish-race עוברת) — רק שער בסיס העריכה בעסקת הפרסום תופס.
+  let txCount = 0;
+  db.runTransaction = async (fn) => {
+    txCount += 1;
+    if (txCount === 3) db._put(ST + '/schedule_state/active', Object.assign({}, db._get(ST + '/schedule_state/active'), { content_digest: 'tampered' }));
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('3.4b חתימת הבסיס השתנתה לפני עסקת הפרסום → edit-base-stale', () => rt.applyScheduleEdit(req({ request_id: 'e4b', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'edit-base-stale');
+  db.runTransaction = originalTx;
+  db._put(ST + '/schedule_state/active', pointer2);
+  ok('3.4c הטיוטה נוצרה אבל הפרסום לא הופעל (המצביע לא זז)', db._get(ST + '/schedule_state/active').revision === 2 && !db._paths(ST + '/schedule_publications/').some((k) => (db._get(k) || {}).status === 'active' && (db._get(k) || {}).revision === 3));
+
   // מינוי שבוטל רגע לפני העסקה
   db.runTransaction = async (fn) => { db._del(ST + '/schedule_access/' + MGR); return originalTx.call(db, fn); };
   await rejectsCode('3.5 מינוי שבוטל → manager-revoked', () => rt.applyScheduleEdit(req({ request_id: 'e5', expected: expectedOf(pointer2), edits, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'manager-revoked');
