@@ -1772,5 +1772,45 @@ check('reserved map keys: overrides, locked source and stored policy are own-pro
     'policy-author מקבל מפתח שמור');
 });
 
-assert.equal(passed, 115);
-console.log('\n115 schedule runtime source checks passed.');
+check('400(3): new-without-active falls back to legacy explicitly, rechecks mode AND pointer, and labels the provenance', () => {
+  const src = runtime;
+  const at = src.indexOf('async function legacyFallbackWindow(ctx, config, from, to)');
+  const fn = src.slice(at, src.indexOf('\n  async function getMy(req)', at));
+  assert.ok(fn.indexOf("effectiveStationWindow(ctx, from, to, { legacyOnly: true })") > -1,
+    'the fallback still goes through the reader\'s hard boundary and would throw active-publication-missing');
+  assert.ok(fn.indexOf('nonEmpty(pointerNow.publication_id)') > -1, 'a publication arriving mid-read is not rechecked');
+  assert.ok(fn.indexOf("after.mode !== config.mode || window.source !== 'legacy'") > -1);
+  assert.ok(fn.indexOf("{ mode: config.mode, fallback: 'legacy' }") > -1, 'provenance does not say it is a fallback');
+  const readerAt = src.indexOf('function effectiveReaderFor(ctx, scoped)');
+  const reader = src.slice(readerAt, src.indexOf('async function effectiveStationWindow', readerAt));
+  assert.ok(reader.indexOf('if (legacyOnly) return { mode: MODE.SHADOW };') > -1);
+  assert.ok(reader.indexOf('const active = pinned || await activeSnapshot(ctx);') > -1, 'windows of one call must share one verified snapshot');
+  assert.ok(integration.includes("new without an active publication falls back to the full legacy schedule"), 'no emulator scenario for the fallback');
+});
+
+check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed envelope, and the server entry has no auth', () => {
+  const src = runtime;
+  const at = src.indexOf('async function getEffectiveWorkdays(req)');
+  const fn = src.slice(at, src.indexOf('\n  async function effectiveWorkDaysForStation', at));
+  assert.ok(fn.indexOf('const ctx = await context(req);') > -1, 'live membership gate missing');
+  assert.ok(fn.indexOf("['from', 'to', 'uids'].indexOf(key) === -1") > -1, 'envelope is not closed');
+  assert.ok(fn.indexOf("throw new ScheduleRuntimeError('workdays-uids-shape'") > -1);
+  assert.equal(fn.indexOf('display'), -1, 'the callable must not return names');
+  assert.equal(fn.indexOf('working'), -1, 'the callable must not return per-date people lists');
+  const core = src.slice(src.indexOf('async function effectiveWorkDaysFor(ctx, config, input)'), at);
+  assert.ok(core.indexOf('const active = await checkedActiveSnapshot(ctx, config, null);') > -1);
+  assert.ok(core.indexOf('await activeSnapshotStillCurrent(ctx, config, active);') > -1, 'the snapshot is not rechecked at the end');
+  assert.ok(core.indexOf("? await legacyFallbackWindow(ctx, config, w.from, w.to)") > -1, 'new-without-active must use the explicit fallback');
+  const serverAt = src.indexOf('async function effectiveWorkDaysForStation(sid, input)');
+  const server = src.slice(serverAt, src.indexOf('\n  async function getStationRange', serverAt));
+  assert.ok(server.indexOf("const ctx = { sid: station, uid: null, role: 'system', system: true };") > -1);
+  assert.equal(server.indexOf('context(req)'), -1);
+  assert.ok(index.indexOf("exports.getEffectiveWorkdays = onCall({ enforceAppCheck: true }") > -1);
+  assert.equal(index.indexOf('effectiveWorkDaysForStation = onCall'), -1, 'the server entry must never be exported as a callable');
+  const shift = src.slice(src.indexOf('async function stationShiftHours(ctx)'), src.indexOf('async function effectiveWindows'));
+  assert.ok(shift.indexOf("hours_source: 'legacy-rotation-config'") > -1, 'shift hours must name their source');
+  assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
+});
+
+assert.equal(passed, 117);
+console.log('\n117 schedule runtime source checks passed.');
