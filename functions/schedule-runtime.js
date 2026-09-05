@@ -269,6 +269,21 @@ function createScheduleRuntime(deps) {
     return stationRef(sid).collection('schedule_state').doc('active');
   }
 
+  // A month imported from the station's existing workbook can be selected as
+  // the station-board presentation while the planner remains off/shadow.  The
+  // pointer is month-scoped so preparing October cannot replace September.
+  // It is presentation-only: personal schedules, attendance, statistics and
+  // notifications continue to use the effective legacy/new contract.
+  function displayRef(sid, month) {
+    return stationRef(sid).collection('schedule_state')
+      .doc('display_' + month.replace('-', '_'));
+  }
+
+  function displayAuditRef(sid, requestId) {
+    return stationRef(sid).collection('schedule_audit')
+      .doc('display_' + hash('schedule-display|' + sid + '|' + requestId).slice(0, 48));
+  }
+
   function scheduleAccessRef(sid, uid) {
     return stationRef(sid).collection('schedule_access').doc(uid);
   }
@@ -3209,7 +3224,10 @@ function createScheduleRuntime(deps) {
 
   async function sheetImportBasis(ctx, req) {
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.SHADOW, MODE.NEW]);
+    // Importing is authoring, not activation.  It is deliberately available
+    // while the engine is off so a station can load and inspect its existing
+    // workbook without changing the effective schedule or sending a push.
+    requireMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
     const data = plain(req.data) ? req.data : {};
     const month = requestedSheetMonth(data);
     const sheet = requestedSheetInput(data);
@@ -3341,7 +3359,8 @@ function createScheduleRuntime(deps) {
       // הקבלה נושאת שמות — אימות חי אחרון אחרי הקריאה, לפני ההחזרה.
       await requireLiveManagerNow(ctx);
       // ניסיון חוזר מחזיר את הדוח **המקורי** שנשמר עם הטיוטה — לא פענוח חדש.
-      return { duplicate: true, draft_id: draftId, summary: before.summary, from: before.from, to: before.to,
+      return { duplicate: true, draft_id: draftId, content_digest: before.content_digest,
+        summary: before.summary, from: before.from, to: before.to,
         report: plain(before.import_report) ? before.import_report : report };
     }
     /* ⭐ יצירה חדשה בלבד: הייבוא נקשר לדוח שהמסך הציג — אותה חתימה מול
@@ -3411,14 +3430,17 @@ function createScheduleRuntime(deps) {
     });
     const contentDigest = await stageSnapshot(ref, {}, plan, effective.events, effective.roster);
     await finalizeDraft(ctx, ref, contentDigest);
-    return { duplicate: false, draft_id: draftId, summary, from: plan.from, to: plan.to, report };
+    return { duplicate: false, draft_id: draftId, content_digest: contentDigest,
+      summary, from: plan.from, to: plan.to, report };
   }
 
   async function getDraftPreview(req) {
     const ctx = await context(req);
     requireManager(ctx);
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.SHADOW, MODE.NEW]);
+    // A completed imported draft may be inspected in off mode.  Publishing
+    // and running the planner remain blocked there by their own server gates.
+    requireMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
     const data = plain(req.data) ? req.data : {};
     const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
     const start = String(data.start || '');
@@ -3482,6 +3504,216 @@ function createScheduleRuntime(deps) {
     };
   }
 
+  /* ==================================================================
+   *  תצוגת גיליון מיובא כשהמנוע כבוי
+   * ------------------------------------------------------------------
+   *  זהו מצביע תצוגה בלבד. הוא אינו מזיז את runtime.mode, אינו יוצר
+   *  publication/outbox ואינו משנה את הקלט לנוכחות, סטטיסטיקה או
+   *  החלפות. אחראי/ת הסידור בוחר/ת טיוטת ייבוא חתומה לחודש מסוים;
+   *  קורא הלוח מאמת את כל התמונה ואת המצביע מחדש לפני החזרת שמות.
+   * ================================================================== */
+
+  function requestedDisplayAction(data) {
+    const action = String(data.action || '');
+    if (action !== 'show' && action !== 'clear') {
+      throw new ScheduleRuntimeError('display-action-invalid',
+        'פעולת התצוגה חייבת להיות show או clear.', 'invalid-argument');
+    }
+    return action;
+  }
+
+  function requestedDisplayGeneration(data) {
+    const value = data.expected_generation;
+    if (!integer(value) || value < 0) {
+      throw new ScheduleRuntimeError('display-generation-invalid',
+        'גרסת תצוגת החודש אינה תקינה.', 'invalid-argument');
+    }
+    return value;
+  }
+
+  function displayStateFromSnapshot(ref, month, snap) {
+    if (!snap || !snap.exists) {
+      return Object.freeze({ ref, month, exists: false, enabled: false, generation: 0,
+        signature: digest({ exists: false, month }) });
+    }
+    const value = snap.data() || {};
+    if (value.month !== month || !integer(value.generation) || value.generation < 1
+        || (value.enabled !== true && value.enabled !== false)) {
+      throw new ScheduleRuntimeError('display-pointer-invalid',
+        'מצביע תצוגת החודש אינו תקין ולכן הלוח נעצר.');
+    }
+    const state = {
+      ref, month, exists: true, enabled: value.enabled,
+      generation: value.generation,
+      draft_id: nonEmpty(value.draft_id) ? value.draft_id : null,
+      content_digest: nonEmpty(value.content_digest) ? value.content_digest : null,
+      from: nonEmpty(value.from) ? value.from : null,
+      to: nonEmpty(value.to) ? value.to : null
+    };
+    state.signature = digest({
+      exists: true, month, enabled: state.enabled, generation: state.generation,
+      draft_id: state.draft_id, content_digest: state.content_digest,
+      from: state.from, to: state.to
+    });
+    return Object.freeze(state);
+  }
+
+  async function readDisplayState(ctx, month) {
+    const ref = displayRef(ctx.sid, month);
+    return displayStateFromSnapshot(ref, month, await ref.get());
+  }
+
+  async function requireSameDisplayState(state) {
+    const current = displayStateFromSnapshot(state.ref, state.month, await state.ref.get());
+    if (current.signature !== state.signature) {
+      throw new ScheduleRuntimeError('schedule-display-changed',
+        'הסידור שמוצג לחודש השתנה בזמן הקריאה. יש לרענן.', 'aborted');
+    }
+  }
+
+  function displayStatusResult(state) {
+    return {
+      month: state.month, enabled: state.enabled, generation: state.generation,
+      draft_id: state.enabled ? state.draft_id : null,
+      content_digest: state.enabled ? state.content_digest : null,
+      from: state.enabled ? state.from : null,
+      to: state.enabled ? state.to : null
+    };
+  }
+
+  async function getScheduleDisplayStatus(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    if (Object.keys(data).some((key) => key !== 'month')) {
+      throw new ScheduleRuntimeError('display-status-input',
+        'בדיקת תצוגה מקבלת חודש בלבד.', 'invalid-argument');
+    }
+    const month = requestedSheetMonth(data);
+    const state = await readDisplayState(ctx, month);
+    await requireLiveManagerNow(ctx);
+    return displayStatusResult(state);
+  }
+
+  async function setScheduleDisplay(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const data = plain(req.data) ? req.data : {};
+    const action = requestedDisplayAction(data);
+    const month = requestedSheetMonth(data);
+    const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
+    const expectedGeneration = requestedDisplayGeneration(data);
+    const draftId = action === 'show'
+      ? requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה') : null;
+    const expectedDigest = action === 'show' ? String(data.expected_content_digest || '') : null;
+    if (action === 'show' && !nonEmpty(expectedDigest)) {
+      throw new ScheduleRuntimeError('display-digest-required',
+        'חסרה חתימת הטיוטה שאושרה.', 'invalid-argument');
+    }
+    const fingerprint = digest({
+      station_id: ctx.sid, uid: ctx.uid, request_id: requestId, action, month,
+      expected_generation: expectedGeneration, draft_id: draftId,
+      expected_content_digest: expectedDigest
+    });
+    const pointerRef = displayRef(ctx.sid, month);
+    const operationRef = displayAuditRef(ctx.sid, requestId);
+
+    let prepared = null;
+    if (action === 'show') {
+      const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
+      const snap = await ref.get();
+      const meta = snap.exists ? (snap.data() || {}) : {};
+      if (!snap.exists || meta.status !== 'complete' || meta.snapshot_complete !== true
+          || meta.station_id !== ctx.sid || meta.imported !== true
+          || meta.import_month !== month || meta.content_digest !== expectedDigest
+          || String(meta.from || '').slice(0, 7) !== month
+          || String(meta.to || '').slice(0, 7) !== month) {
+        throw new ScheduleRuntimeError('display-draft-invalid',
+          'אפשר להציג רק טיוטת ייבוא חתומה ושלמה של החודש שנבחר.');
+      }
+      // Full read: the pointer is never allowed to bless only the metadata of
+      // a damaged/missing child snapshot.
+      await readSnapshot(ref, meta);
+      prepared = { ref, meta };
+    }
+
+    let result;
+    await db.runTransaction(async (tx) => {
+      const refs = [
+        liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid),
+        runtimeRef(ctx.sid), pointerRef, operationRef
+      ];
+      if (prepared) {
+        refs.push(prepared.ref);
+        refs.push(stationRef(ctx.sid).collection('schedule_policies').doc(prepared.meta.policy_id));
+        refs.push(stationRef(ctx.sid).collection('schedule_sources').doc(prepared.meta.source_id));
+      }
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveManager(snaps[0], snaps[1], ctx);
+      const runtime = snaps[2].exists ? (snaps[2].data() || {}) : {};
+      const mode = MODES.indexOf(runtime.mode) !== -1 ? runtime.mode : MODE.OFF;
+      if (mode !== MODE.OFF && mode !== MODE.SHADOW) {
+        throw new ScheduleRuntimeError('display-mode-blocked',
+          'תצוגת גיליון נפרדת מותרת רק כשהמנוע כבוי או במצב צל.');
+      }
+      const current = displayStateFromSnapshot(pointerRef, month, snaps[3]);
+      const operation = snaps[4].exists ? (snaps[4].data() || {}) : null;
+      if (operation) {
+        if (operation.request_fingerprint !== fingerprint || !plain(operation.result)) {
+          throw new ScheduleRuntimeError('request-conflict',
+            'אותו מזהה פעולה כבר שימש לבקשה אחרת.', 'already-exists');
+        }
+        result = Object.assign({}, operation.result, { duplicate: true });
+        return;
+      }
+      if (current.generation !== expectedGeneration) {
+        throw new ScheduleRuntimeError('display-generation-conflict',
+          'תצוגת החודש השתנתה בלשונית אחרת. יש לרענן ולנסות שוב.', 'aborted');
+      }
+      if (prepared) {
+        const liveDraft = snaps[5].exists ? (snaps[5].data() || {}) : {};
+        const livePolicy = snaps[6].exists ? (snaps[6].data() || {}) : {};
+        const liveSource = snaps[7].exists ? (snaps[7].data() || {}) : {};
+        if (liveDraft.status !== 'complete' || liveDraft.snapshot_complete !== true
+            || liveDraft.station_id !== ctx.sid || liveDraft.imported !== true
+            || liveDraft.import_month !== month || liveDraft.content_digest !== expectedDigest
+            || runtime.active_policy_id !== liveDraft.policy_id
+            || runtime.active_source_id !== liveDraft.source_id
+            || livePolicy.complete !== true || liveSource.complete !== true
+            || livePolicy.content_digest !== liveDraft.base_policy_digest
+            || liveSource.content_digest !== liveDraft.base_source_digest) {
+          throw new ScheduleRuntimeError('display-draft-stale',
+            'הטיוטה, חוקי התחנה או מקור כוח האדם השתנו. יש לייבא מחדש.', 'aborted');
+        }
+      }
+      const generation = current.generation + 1;
+      const pointer = action === 'show' ? {
+        station_id: ctx.sid, month, enabled: true, generation,
+        draft_id: draftId, content_digest: expectedDigest,
+        from: prepared.meta.from, to: prepared.meta.to,
+        selected_by: ctx.uid, selected_at: FV.serverTimestamp()
+      } : {
+        station_id: ctx.sid, month, enabled: false, generation,
+        cleared_by: ctx.uid, cleared_at: FV.serverTimestamp()
+      };
+      result = {
+        ok: true, duplicate: false, action, mode, month,
+        enabled: action === 'show', generation,
+        draft_id: action === 'show' ? draftId : null,
+        content_digest: action === 'show' ? expectedDigest : null,
+        from: action === 'show' ? prepared.meta.from : null,
+        to: action === 'show' ? prepared.meta.to : null
+      };
+      tx.set(pointerRef, pointer);
+      tx.create(operationRef, {
+        kind: 'schedule-display', station_id: ctx.sid, actor_uid: ctx.uid,
+        action, month, request_id: requestId, request_fingerprint: fingerprint,
+        result, created_at: FV.serverTimestamp()
+      });
+    });
+    return result;
+  }
+
   async function activeSnapshot(ctx, dates) {
     const pointer = await activeRef(ctx.sid).get();
     if (!pointer.exists || !nonEmpty((pointer.data() || {}).publication_id)) return null;
@@ -3508,6 +3740,35 @@ function createScheduleRuntime(deps) {
     }
     const value = sliceVerifiedSnapshot(await readSnapshot(ref, meta), dates);
     return { pointer: p, ref, meta, plan: value.plan, events: value.events, roster: value.roster };
+  }
+
+  async function displaySnapshotForRange(ctx, config, range, state) {
+    if (!state.enabled) return null;
+    if ((config.mode !== MODE.OFF && config.mode !== MODE.SHADOW)
+        || range.from.slice(0, 7) !== state.month || range.to.slice(0, 7) !== state.month
+        || !nonEmpty(state.draft_id) || !nonEmpty(state.content_digest)
+        || !DATE_RE.test(String(state.from || '')) || !DATE_RE.test(String(state.to || ''))
+        || range.from < state.from || range.to > state.to) {
+      throw new ScheduleRuntimeError('display-pointer-invalid',
+        'מצביע תצוגת החודש אינו מתאים לטווח שהתבקש ולכן הלוח נעצר.');
+    }
+    const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(state.draft_id);
+    const snap = await ref.get();
+    const meta = snap.exists ? (snap.data() || {}) : {};
+    if (!snap.exists || meta.status !== 'complete' || meta.snapshot_complete !== true
+        || meta.station_id !== ctx.sid || meta.imported !== true
+        || meta.import_month !== state.month || meta.content_digest !== state.content_digest
+        || meta.from !== state.from || meta.to !== state.to) {
+      throw new ScheduleRuntimeError('display-draft-invalid',
+        'הסידור שנבחר להצגה חסר, השתנה או אינו טיוטת ייבוא של החודש.');
+    }
+    // Full immutable snapshot verification comes before slicing the requested
+    // month.  A valid-looking pointer never masks a missing row/person/absence.
+    const value = sliceVerifiedSnapshot(await readSnapshot(ref, meta), range.dates);
+    return {
+      state, ref, meta,
+      plan: value.plan, events: value.events, roster: value.roster
+    };
   }
 
   async function publishedSnapshot(ctx, publicationId) {
@@ -6049,12 +6310,45 @@ function createScheduleRuntime(deps) {
     const range = requestedStationRange(req);
 
     if (config.mode !== MODE.NEW) {
+      const displayState = range.from.slice(0, 7) === range.to.slice(0, 7)
+        ? await readDisplayState(ctx, range.from.slice(0, 7)) : null;
+      const displayed = displayState
+        ? await displaySnapshotForRange(ctx, config, range, displayState) : null;
+      if (displayed) {
+        const sidecar = await readLiveGuardProjection(ctx, range.dates);
+        const service = serviceFor(ctx);
+        const extras = {
+          absences: displayed.plan.absences || [],
+          absenceCoverage: displayed.plan.absence_coverage || null,
+          roster: displayed.roster, viewer: ctx.uid,
+          rosterCrew: await rosterCrews(ctx),
+          dayCrews: await legacyDayCrews(ctx, range.from, range.to)
+        };
+        await beforeLiveGuardViewRecheck({ kind: 'imported-display', ctx, mode: config.mode });
+        await requireModeUnchanged(ctx, config);
+        await requireSameDisplayState(displayState);
+        await requireLiveBoardViewer(ctx);
+        const days = range.dates.map((date) => decoratePublishedDay(
+          stationViewWithGuards(service.buildStationSchedule({
+            actor: actor(ctx), plan: displayed.plan, events: displayed.events,
+            roster: displayed.roster, date
+          }), sidecar, date, ctx.uid).day, extras));
+        return {
+          mode: config.mode, active: true, source: 'imported-display', imported: true,
+          display_only: true, draft_id: displayState.draft_id,
+          display_generation: displayState.generation,
+          from: range.from, to: range.to, days
+        };
+      }
       const window = await checkedLegacyWindow(ctx, config, range.from, range.to);
       if (window.source !== 'legacy') {
         throw new ScheduleRuntimeError('schedule-mode-changed',
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
       const byDate = new Map((window.days || []).map((day) => [day.date, day]));
+      // A display pointer selected while the legacy read was running must not
+      // be hidden by one stale response.  Abort and let the client refresh.
+      if (displayState) await requireSameDisplayState(displayState);
       await requireLiveBoardViewer(ctx);
       return {
         mode: window.provenance.mode, active: true, source: 'legacy',
@@ -6954,6 +7248,8 @@ function createScheduleRuntime(deps) {
     previewScheduleImport,
     importScheduleSheet,
     getDraftPreview,
+    getScheduleDisplayStatus,
+    setScheduleDisplay,
     publish,
     rollback,
     getMy,

@@ -28,6 +28,8 @@ const call = Object.freeze({
   run: httpsCallable(functions, 'runSchedulePlanner'),
   importPreview: httpsCallable(functions, 'previewScheduleImport'),
   importSheet: httpsCallable(functions, 'importScheduleSheet'),
+  displayStatus: httpsCallable(functions, 'getScheduleDisplayStatus'),
+  displaySet: httpsCallable(functions, 'setScheduleDisplay'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -52,7 +54,8 @@ const state = {
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false,
-  importMatrix: null, importFileName: null, importStationMap: null,
+  importMatrix: null, importFileName: null, importSelectedFile: null, importedDraft: null,
+  importStationMap: null, importDisplay: null, displayRequestIds: {},
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
   tab: null, busy: false
@@ -1359,7 +1362,9 @@ async function loadStationRange(ym) {
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
     $('stationNote').textContent = (view.source === 'legacy'
       ? 'הלוח מוצג מהסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון.'
-      : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
+      : view.source === 'imported-display'
+        ? 'הלוח מוצג מקובץ הסידור שיובא. המנוע נשאר ' + view.mode + ' וחישובי המערכת לא הוחלפו.'
+        : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
       + absenceNote(view.days) + guardsNotice(view.days);
   } catch (error) {
     clear(box);
@@ -2106,7 +2111,7 @@ async function checkImport() {
       message('importMessage', 'ההדבקה תקינה: ' + report.counts.assignments + ' שיבוצים ו-' + report.counts.absences
         + ' היעדרויות ל-' + report.counts.days + ' ימים (' + dateLabel(report.from) + ' — ' + dateLabel(report.to) + '). אפשר לייבא.', 'ok');
     }
-    $('importRun').disabled = !state.importPending && (report.blocked === true || !canRunSchedule());
+    $('importRun').disabled = !state.importPending && (report.blocked === true || !canManageSchedule());
     if (state.importPending) message('importMessage', pendingImportText(), 'warn');
   } catch (error) {
     state.importReport = null;
@@ -2144,9 +2149,10 @@ async function importSheet() {
     const result = (await call.importSheet(payload)).data;
     state.importPending = null;
     state.draft = result;
+    state.importedDraft = result;
     renderSummary(result.summary || {});
     message('importMessage', 'הגיליון יובא כטיוטה (' + dateLabel(result.from) + ' — ' + dateLabel(result.to)
-      + '). היא עדיין לא פורסמה ולא נשלחה שום הודעה — בדוק אותה למטה ואשר.', 'ok');
+      + '). לא הופעל מנוע ולא נשלחה הודעה. בדוק אותה למטה ואז לחץ „הצג בלוח”.', 'ok');
     message('runMessage', 'הטיוטה שלמטה יובאה מהגיליון.', 'info');
     await loadDraftPreview(result.from, true);
     $('draftPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2162,7 +2168,110 @@ async function importSheet() {
   } finally {
     state.busy = false; $('importCheck').disabled = false;
     $('importRun').disabled = !state.importPending;
+    updateImportDisplayAvailability();
     updatePublishAvailability();
+  }
+}
+
+function displayRequestId(action, month, generation, draftId, contentDigest) {
+  const key = JSON.stringify([action, month, generation, draftId || '', contentDigest || '']);
+  if (!state.displayRequestIds[key]) state.displayRequestIds[key] = requestId('display');
+  return state.displayRequestIds[key];
+}
+
+function renderImportDisplayStatus() {
+  const status = state.importDisplay;
+  const active = status && status.enabled === true;
+  $('importClear').hidden = !active;
+  $('importDisplayStatus').textContent = active
+    ? 'הסידור המיובא מוצג כעת בלוח של ' + status.month + '. המנוע לא הופעל ולא נשלחו התראות.'
+    : 'אין סידור מיובא שנבחר להצגה בחודש הזה. הייבוא אינו מפעיל את המנוע ואינו שולח התראות.';
+  updateImportDisplayAvailability();
+}
+
+function updateImportDisplayAvailability() {
+  const draft = state.importedDraft;
+  const month = $('importMonth').value;
+  const mayDisplay = canManageSchedule() && state.status
+    && ['off', 'shadow'].indexOf(state.status.mode) !== -1;
+  $('importShow').disabled = state.busy || !mayDisplay || !draft
+    || String(draft.from || '').slice(0, 7) !== month || !draft.content_digest;
+  $('importClear').disabled = state.busy || !mayDisplay
+    || !state.importDisplay || state.importDisplay.enabled !== true;
+}
+
+async function loadImportDisplayStatus(month) {
+  if (!canManageSchedule() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
+  try {
+    state.importDisplay = (await call.displayStatus({ month })).data;
+    renderImportDisplayStatus();
+  } catch (error) {
+    state.importDisplay = null;
+    $('importClear').hidden = true;
+    $('importDisplayStatus').textContent = 'לא ניתן לבדוק איזה סידור מיובא מוצג: ' + errorText(error);
+    updateImportDisplayAvailability();
+  }
+}
+
+async function showImportedSchedule() {
+  if (state.busy || $('importShow').disabled || !state.importedDraft) return;
+  const draft = state.importedDraft;
+  const month = $('importMonth').value;
+  if (!state.importDisplay || state.importDisplay.month !== month) {
+    await loadImportDisplayStatus(month);
+  }
+  if (!state.importDisplay) return;
+  const generation = Number(state.importDisplay.generation || 0);
+  state.busy = true;
+  updateImportDisplayAvailability();
+  message('importMessage', 'מחבר את הסידור המיובא ללוח החודש…', 'info');
+  try {
+    const result = (await call.displaySet({
+      action: 'show', month,
+      request_id: displayRequestId('show', month, generation, draft.draft_id, draft.content_digest),
+      expected_generation: generation,
+      draft_id: draft.draft_id,
+      expected_content_digest: draft.content_digest
+    })).data;
+    state.importDisplay = result;
+    renderImportDisplayStatus();
+    message('importMessage', 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר '
+      + state.status.mode + ' ולא נשלחה שום התראה.', 'ok');
+    invalidateRange();
+    await loadStationRange(month);
+  } catch (error) {
+    message('importMessage', errorText(error), 'err');
+    await loadImportDisplayStatus(month);
+  } finally {
+    state.busy = false;
+    updateImportDisplayAvailability();
+  }
+}
+
+async function clearImportedSchedule() {
+  if (state.busy || $('importClear').disabled || !state.importDisplay) return;
+  const month = $('importMonth').value;
+  const generation = Number(state.importDisplay.generation || 0);
+  state.busy = true;
+  updateImportDisplayAvailability();
+  message('importMessage', 'מסיר את הסידור המיובא מתצוגת הלוח…', 'info');
+  try {
+    const result = (await call.displaySet({
+      action: 'clear', month,
+      request_id: displayRequestId('clear', month, generation, null, null),
+      expected_generation: generation
+    })).data;
+    state.importDisplay = result;
+    renderImportDisplayStatus();
+    message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
+    invalidateRange();
+    await loadStationRange(month);
+  } catch (error) {
+    message('importMessage', errorText(error), 'err');
+    await loadImportDisplayStatus(month);
+  } finally {
+    state.busy = false;
+    updateImportDisplayAvailability();
   }
 }
 
@@ -2395,7 +2504,8 @@ async function boot(user) {
     if (!$('importMonth').value) $('importMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
-    await Promise.all([loadSetup(), loadModeOptions()]);
+    await Promise.all([loadSetup(), loadModeOptions(), loadImportDisplayStatus($('importMonth').value)]);
+    updateImportDisplayAvailability();
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
     state.status = null;
@@ -2462,7 +2572,9 @@ $('importPaste').addEventListener('input', () => {
   state.importAliases = {};
   state.importMatrix = null;
   state.importFileName = null;
+  state.importedDraft = null;
   $('importFile').value = '';
+  state.importSelectedFile = null;
   $('importFileStatus').textContent = 'מצב הדבקה ידנית.';
   invalidateImportReport();
 });
@@ -2471,32 +2583,58 @@ $('importFile').addEventListener('change', async () => {
   state.importAliases = {};
   state.importMatrix = null;
   state.importFileName = null;
+  state.importedDraft = null;
+  state.importSelectedFile = file || null;
   if (!file) {
-    $('importFileStatus').textContent = 'לא נבחר קובץ. Excel ו-Google Sheets: הורד/י כ-CSV.';
+    $('importFileStatus').textContent = 'לא נבחר קובץ.';
     invalidateImportReport();
     return;
   }
   $('importFileStatus').textContent = 'קורא את הקובץ…';
   try {
-    const result = await readScheduleFile(file);
+    const month = $('importMonth').value;
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לפני בחירת הקובץ.');
+    const result = await readScheduleFile(file, { month });
     state.importMatrix = result.matrix;
     state.importFileName = result.name;
     $('importPaste').value = '';
     $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
-    message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק את הקובץ" כדי לראות מה ייובא.', 'info');
+    message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק תצוגה מקדימה" כדי לראות מה ייובא.', 'info');
   } catch (error) {
     $('importFile').value = '';
+    state.importSelectedFile = null;
     $('importFileStatus').textContent = 'הקובץ לא נקרא.';
     message('importMessage', errorText(error), 'err');
   }
   invalidateImportReport();
 });
-$('importMonth').addEventListener('change', invalidateImportReport);
+$('importMonth').addEventListener('change', async () => {
+  invalidateImportReport();
+  state.importedDraft = null;
+  updateImportDisplayAvailability();
+  const file = state.importSelectedFile;
+  if (file) {
+    $('importFileStatus').textContent = 'החודש השתנה — קורא שוב את קובץ ה-Excel…';
+    try {
+      const result = await readScheduleFile(file, { month:$('importMonth').value });
+      state.importMatrix = result.matrix;
+      state.importFileName = result.name;
+      $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
+    } catch (error) {
+      state.importMatrix = null;
+      $('importFileStatus').textContent = 'הקובץ לא נקרא לחודש שנבחר.';
+      message('importMessage', errorText(error), 'err');
+    }
+  }
+  await loadImportDisplayStatus($('importMonth').value);
+});
 $('importAcceptMissing').addEventListener('change', invalidateImportReport);
 $('importAcceptIgnored').addEventListener('change', invalidateImportReport);
 $('importStationMapConfirm').addEventListener('change', invalidateImportReport);
 $('importUnresolved').addEventListener('change', invalidateImportReport);
-$('importRun').addEventListener('click', runAction(importSheet));
+$('importRun').addEventListener('click', managerAction(importSheet));
+$('importShow').addEventListener('click', managerAction(showImportedSchedule));
+$('importClear').addEventListener('click', managerAction(clearImportedSchedule));
 $('publish').addEventListener('click', runAction(publishDraft));
 $('rollback').addEventListener('click', runAction(rollbackSchedule));
 $('savePolicy').addEventListener('click', managerAction(savePolicy));

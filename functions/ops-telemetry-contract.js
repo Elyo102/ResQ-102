@@ -30,6 +30,7 @@ const CALLABLES = Object.freeze([
   'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics', 'getJoinCode',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
   'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
+  'getScheduleDisplayStatus',
   'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
   'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
   'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
@@ -43,7 +44,7 @@ const CALLABLES = Object.freeze([
   'runSchedulePlanner', 'saveSchedulePolicy', 'saveScheduleSource',
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode',
-  'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
+  'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'whoAmI'
 ]);

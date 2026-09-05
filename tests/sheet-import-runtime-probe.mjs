@@ -397,10 +397,60 @@ const SHEET = [
   eq('4.7 היעדרויות 1.9: מחלה + „רועי"→u1 בצפון', d1.absences.map((a) => [a.uid, a.kind, a.location || null]), [['u6', 'sick', null], ['u1', 'leave', 'north']]);
   eq('4.8 היעדרויות 3.9: באילת', preview.days[2].absences.map((a) => [a.uid, a.kind, a.location, a.display]), [['u1', 'leave', 'eilat', 'רועי כהן']]);
   eq('4.9 סטטוס', d1.absences_status, 'ready');
-  eq('4.10 שיבוץ מיובא אינו „אוטומטי" — אין role', d1.sub_stations[0].people[0].role_label, null);
+  eq('4.10 שיבוץ מיובא אינו „אוטומטי” — אין role', d1.sub_stations[0].people[0].role_label, null);
 
-  // 5 · פרסום — אותו מסלול. ב-shadow פרסום הוא „מוכן" בלבד (המצביע זז רק
-  // ב-promoteToNew); כאן עוברים ל-new לפני הפרסום כדי לבדוק את הלוח החי.
+  // 4.11 · הצגת הייבוא בלוח כשהמנוע כבוי. זוהי בחירת תצוגה בלבד:
+  // אין פרסום, אין outbox, והקוראים התפעוליים נשארים על legacy.
+  const cfgBeforeDisplay = db._get(ST + '/schedule_state/runtime');
+  db._put(ST + '/schedule_state/runtime', Object.assign({}, cfgBeforeDisplay, { mode: 'off' }));
+  const emptyDisplay = await rt.getScheduleDisplayStatus(req({ month: '2026-09' }));
+  eq('4.11 לפני בחירה אין תצוגת ייבוא', [emptyDisplay.enabled, emptyDisplay.generation], [false, 0]);
+  await rejectsCode('4.12 חבר שאינו אחראי אינו יכול לבחור תצוגה', () => rt.setScheduleDisplay(req({
+    action: 'show', month: '2026-09', request_id: 'disp_denied', expected_generation: 0,
+    draft_id: imported.draft_id, expected_content_digest: imported.content_digest
+  }, 'u1')), 'manager-required');
+  const showInput = {
+    action: 'show', month: '2026-09', request_id: 'disp_show', expected_generation: 0,
+    draft_id: imported.draft_id, expected_content_digest: imported.content_digest
+  };
+  const shown = await rt.setScheduleDisplay(req(showInput));
+  eq('4.13 הטיוטה נבחרה לתצוגה בלי שינוי מצב',
+    [shown.enabled, shown.generation, db._get(ST + '/schedule_state/runtime').mode],
+    [true, 1, 'off']);
+  eq('4.14 אין פרסום ואין הודעות', [
+    db._paths(ST + '/schedule_publications').length,
+    db._paths(ST + '/schedule_outbox').length
+  ], [0, 0]);
+  const offBoard = await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2'));
+  eq('4.15 במצב off הלוח מציג את ארבע התחנות מהקובץ',
+    [offBoard.mode, offBoard.source, offBoard.display_only,
+      offBoard.days[0].sub_stations.map((s) => s.sub_station)],
+    ['off', 'imported-display', true, ['eilat', 'shahmon', 'timna', 'yotvata']]);
+  eq('4.16 סדר השמות באילת נשמר בדיוק מסדר הגיליון',
+    offBoard.days[0].sub_stations[0].people.map((p) => p.uid),
+    ['u1', 'u2', 'u9', 'u5', 'u8', 'u7', 'u4']);
+  eq('4.17 קו 7 והיעדרויות נשמרו בתצוגת off', [
+    offBoard.days[0].sub_stations[0].minimum,
+    offBoard.days[0].absences.map((a) => a.uid + ':' + a.kind)
+  ], [7, ['u6:sick', 'u1:leave']]);
+  const duplicateShow = await rt.setScheduleDisplay(req(showInput));
+  eq('4.18 ניסיון חוזר אינו מעלה דור ואינו יוצר פעולה שנייה',
+    [duplicateShow.duplicate, duplicateShow.generation,
+      db._paths(ST + '/schedule_audit/display_').length], [true, 1, 1]);
+  await rejectsCode('4.19 CAS ישן נדחה', () => rt.setScheduleDisplay(req(Object.assign({}, showInput, {
+    request_id: 'disp_stale', expected_generation: 0
+  }))), 'display-generation-conflict');
+  const cleared = await rt.setScheduleDisplay(req({
+    action: 'clear', month: '2026-09', request_id: 'disp_clear', expected_generation: 1
+  }));
+  eq('4.20 הסרה מחזירה את לוח legacy ואינה מוחקת את הטיוטה',
+    [cleared.enabled, cleared.generation,
+      (await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2'))).source,
+      !!db._get(ST + '/schedule_drafts/' + imported.draft_id)],
+    [false, 2, 'legacy', true]);
+
+  // 5 · פרסום — אותו מסלול. כאן עוברים ל-new לפני הפרסום כדי לבדוק את
+  // הלוח החי; מצביע תצוגת off אינו חלק מהמעבר ואינו משפיע עליו.
   const cfg = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', { mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
   const published = await rt.publish(req({ request_id: 'pub1', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));

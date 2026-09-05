@@ -5209,6 +5209,14 @@ exports.previewScheduleImport = onCall({ enforceAppCheck: true, memory: '512MiB'
 exports.importScheduleSheet = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
   invokeSchedule('importScheduleSheet', req));
 
+// בחירת טיוטת ייבוא להצגה בלוח כשהמנוע off/shadow. הפעולה אינה
+// מפעילה את המנוע, אינה מפרסמת ואינה יוצרת הודעות; היא מחליפה רק
+// מצביע תצוגה חודשי, תחת מינוי אחראי/ת סידור חי.
+exports.getScheduleDisplayStatus = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getScheduleDisplayStatus', req));
+exports.setScheduleDisplay = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('setScheduleDisplay', req));
+
 exports.publishSchedule = onCall({
   enforceAppCheck: true,
   timeoutSeconds: 540,

@@ -398,15 +398,15 @@
 
     <article class="card importcard" id="importCard">
       <h2>קליטת סידור עבודה</h2>
-      <div class="sub">אפשר לבחור קובץ CSV/TSV שהורד מ-Excel או מ-Google Sheets, או להדביק את הגיליון. הקובץ נקרא בדפדפן בלבד;
+      <div class="sub">אפשר לבחור קובץ Excel‏ (XLSX), CSV/TSV שהורד מ-Google Sheets, או להדביק את הגיליון. הקובץ נקרא בדפדפן בלבד;
         הקובץ הגולמי אינו נשמר ואינו נשלח. המערכת
         קוראת את התוויות שבעמודה הימנית — אילת, שחמון, תמנע, יטבתה, מחלה, מילואים, קורסים, חופש —
         ומייבאת את החודש כמות שהוא, בלי שהמנוע ישנה בו דבר. הקו האדום מוצג ואינו חוסם.
         שם שלא זוהה מוצג להתאמה פעם אחת, והמערכת זוכרת.</div>
       <div class="filepick">
-        <input id="importFile" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values">
-        <label class="btn" for="importFile" style="margin:0">בחר קובץ סידור</label>
-        <span class="filestatus" id="importFileStatus">לא נבחר קובץ. Excel ו-Google Sheets: הורד/י כ-CSV.</span>
+        <input id="importFile" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values">
+        <label class="btn primary" for="importFile" style="margin:0">1. בחר קובץ Excel / CSV</label>
+        <span class="filestatus" id="importFileStatus">לא נבחר קובץ.</span>
       </div>
       <div class="stationmap" id="importStationMap" hidden>
         <b>מיפוי חד-משמעי לארבע התחנות</b>
@@ -423,9 +423,12 @@
           <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea></div>
       </div>
       <div class="btns">
-        <button class="btn primary" id="importCheck" type="button">בדוק את הקובץ או ההדבקה</button>
-        <button class="btn dark" id="importRun" type="button" disabled>ייבא כטיוטה</button>
+        <button class="btn" id="importCheck" type="button">2. בדוק תצוגה מקדימה</button>
+        <button class="btn dark" id="importRun" type="button" disabled>3. ייבא את הסידור</button>
+        <button class="btn primary" id="importShow" type="button" disabled>4. הצג בלוח — המנוע נשאר כבוי</button>
+        <button class="btn" id="importClear" type="button" hidden>הסר את הסידור המיובא מהלוח</button>
       </div>
+      <div class="sub" id="importDisplayStatus">הייבוא אינו מפעיל את המנוע ואינו שולח התראות.</div>
       <div id="importReport" hidden>
         <div class="importcounts" id="importCounts"></div>
         <div class="blocklist" id="importBlocks"></div>
