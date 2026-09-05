@@ -10,7 +10,7 @@
  *  יציאה: 0 עבר · 1 נכשל · 2 לא רץ.
  * ==================================================================== */
 
-import { createFakeDb, seed, req, ST, SID, MGR, makeChecks, publishImportedSchedule } from './_schedule-fake.mjs';
+import { createFakeDb, seed, req, ST, SID, MGR, SHEET, buildRuntime, makeChecks, publishImportedSchedule } from './_schedule-fake.mjs';
 
 const { ok, eq, rejectsCode, finish } = makeChecks();
 const ROLLBACK_REASON = 'wrong_assignment';
@@ -60,7 +60,8 @@ function auditOf(db) {
   const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
   eq('2.1 דוח: 4 שינויים ל-3 אנשים', [report.counts.changes, report.counts.people, report.people_changed.map((p) => p.uid)], [4, 3, ['u1', 'u2', 'u3']]);
   ok('2.2 שמות בדוח', report.changes.every((c) => typeof c.name === 'string' && c.name.length > 1));
-  eq('2.3 הודעות מתוכננות — לפחות למי ששובץ/הוסר (היעדרות אינה נדחפת)', report.notifications >= 2, true);
+  // ⭐ ביקורת Codex §2: גם היעדרות היא שינוי בסידור של האדם — u2 מקבל הודעה.
+  ok('2.3 הודעות מתוכננות — לפחות לשלושת האנשים שנערכו (כולל היעדרות בלבד, u2) ולצוותים שהשתנו', report.notifications >= 3, String(report.notifications));
   eq('2.4 גרסה צפויה', report.next_revision, 2);
   ok('2.5 חתימת עריכה', typeof report.edit_digest === 'string' && report.edit_digest.length === 64);
   eq('2.6 הדוח אינו כותב', [drafts(), db._get(ST + '/schedule_state/active').revision], [draftsBefore, 1]);
@@ -92,6 +93,11 @@ function auditOf(db) {
   const outbox = outboxOf(db, applied.publication_id);
   const perPerson = outbox.reduce((m, n) => { m[n.person] = (m[n.person] || 0) + 1; return m; }, {});
   ok('2.19 outbox: הודעה אחת בדיוק לכל אדם שהשתנה', Object.values(perPerson).every((n) => n === 1) && perPerson.u1 === 1 && perPerson.u3 === 1, JSON.stringify(perPerson));
+  const u2Push = outbox.find((n) => n.person === 'u2');
+  ok('2.19b היעדרות בלבד (u2): הודעה אחת, בלי סוג ובלי מיקום', !!u2Push && perPerson.u2 === 1
+    && u2Push.detail.some((d) => d.kind === 'absence_added' && d.date === '2026-09-03')
+    && /היעדרות/.test(u2Push.push.body)
+    && !/leave|abroad|חו"ל|חופש/.test(JSON.stringify(u2Push)), JSON.stringify(u2Push));
   ok('2.20 u1 קיבל הודעה מסכמת אחת שמכילה את כל השינויים שלו (העברה ב-1.9 + הוספה ב-2.9)', outbox.filter((n) => n.person === 'u1').length === 1 && outbox.find((n) => n.person === 'u1').detail.some((d) => d.date === '2026-09-01') && outbox.find((n) => n.person === 'u1').detail.some((d) => d.date === '2026-09-02'), JSON.stringify(outbox.find((n) => n.person === 'u1')));
   ok('2.21 ההודעות שוחררו (לא blocked)', outbox.every((n) => n.status !== 'blocked'), JSON.stringify(outbox.map((n) => n.status)));
 
@@ -225,6 +231,193 @@ function auditOf(db) {
   // rollback אינו נחסם על ידי פערים.
   const rolled = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON }));
   ok('4.14 rollback אינו נחסם על ידי פערים', rolled && rolled.publication_id, JSON.stringify(rolled));
+}
+
+/* 5 · ביקורת Codex על 0e9a8dc (seq453) — כל סעיף עם בדיקה שנופלת על הקוד הישן. */
+
+/* 5.1 §1 · TOCTOU: הנתונים משתנים בין השער המוקדם לעסקת הפרסום. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const { pointer } = await publishImportedSchedule(db, rt);
+  await rt.saveGapPolicy(req({ request_id: 'gp-t', station_minimum: 20 }));
+  const edits = [{ kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }];
+  const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  ok('5.1.0 יש פערי תחנה עם חתימה', report.gaps.acknowledgeable.length > 0 && typeof report.gaps.digest === 'string');
+  const originalTx = db.runTransaction;
+  let txCount = 0;
+  // העסקה השלישית בביצוע היא עסקת הפרסום; רגע לפניה מינימום התחנה משתנה → רשימת פערים אחרת.
+  db.runTransaction = async (fn) => {
+    txCount += 1;
+    if (txCount === 3) db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 25, revision: 2 });
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('5.1.1 מדיניות הפער השתנתה לפני עסקת הפרסום → האישור אינו תקף (gaps-acknowledgement-required)', () => rt.applyScheduleEdit(req({ request_id: 't1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
+  db.runTransaction = originalTx;
+  eq('5.1.2 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, 1);
+  db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 20, revision: 2 });
+
+  // פער קריטי שנוצר בין השער המוקדם לעסקה: u1 מחזיק ראש משמרת; המינימום 1 מתקיים
+  // רק בימים שהוא עובד, ולכן קודם מורידים אותו לימים שבהם הוא לא משובץ.
+  await rt.saveQualification(req({ request_id: 'q-lead', key: 'shift_lead', minimum: 1 }));
+  await rt.setPersonQualifications(req({ request_id: 'q-u1', person: 'u1', qualifications: ['shift_lead'] }));
+  await rt.setPersonQualifications(req({ request_id: 'q-u3', person: 'u3', qualifications: ['shift_lead'] }));
+  await rt.setPersonQualifications(req({ request_id: 'q-u4', person: 'u4', qualifications: ['shift_lead'] }));
+  const edits2 = [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'timna', role: 'ff' }];
+  const base2 = db._get(ST + '/schedule_state/active');   // נקרא מחדש — כדי שכשל ב-5.1.1 לא יפיל את ההמשך
+  const report2 = await rt.previewScheduleEdit(req({ expected: expectedOf(base2), edits: edits2 }));
+  eq('5.1.3 אין פער קריטי כשהמחזיקים משובצים', report2.gaps.blocking.length, 0);
+  txCount = 0;
+  db.runTransaction = async (fn) => {
+    txCount += 1;
+    if (txCount === 3) ['u1', 'u3', 'u4'].forEach((uid) => db._put(ST + '/schedule_person_qualifications/' + uid, { station_id: SID, uid, qualifications: [], revision: 2 }));
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('5.1.4 המחזיקים הוסרו לפני עסקת הפרסום → gaps-critical בתוך העסקה', () => rt.applyScheduleEdit(req({ request_id: 't2', expected: expectedOf(base2), edits: edits2, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'gaps-critical');
+  db.runTransaction = originalTx;
+  eq('5.1.5 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, base2.revision);
+}
+
+/* 5.2 §1 · ניסיון חוזר של פרסום שנשאר ב-staging אינו מדלג על השער. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const { pointer } = await publishImportedSchedule(db, rt);
+  await rt.saveGapPolicy(req({ request_id: 'gp-r', station_minimum: 20 }));
+  const edits = [{ kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }];
+  const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  const originalTx = db.runTransaction;
+  let txCount = 0;
+  // „קריסה" אחרי יצירת רשומת הפרסום (staging) ולפני עסקת הפרסום.
+  db.runTransaction = async (fn) => {
+    txCount += 1;
+    if (txCount === 3) throw new Error('simulated crash before publish transaction');
+    return originalTx.call(db, fn);
+  };
+  let crashed = null;
+  try { await rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })); } catch (e) { crashed = e; }
+  db.runTransaction = originalTx;
+  const staging = db._paths(ST + '/schedule_publications/').map((k) => db._get(k)).find((p) => p && p.status === 'staging');
+  ok('5.2.1 נשארה רשומת פרסום ב-staging', !!crashed && !!staging, String(crashed && crashed.message));
+  // בינתיים מדיניות הפער השתנתה — האישור הישן אינו על הרשימה הנוכחית.
+  db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 25, revision: 2 });
+  await rejectsCode('5.2.2 ניסיון חוזר עם אישור ישן → gaps-acknowledgement-required (לא מדלג על השער)', () => rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
+  eq('5.2.3 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, 1);
+  // עם האישור על הרשימה **הנוכחית** — הניסיון החוזר משלים את הפרסום.
+  const fresh = await rt.getGapReport(req({ draft_id: staging.source_draft_id }));
+  const done = await rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: fresh.digest }));
+  eq('5.2.4 ניסיון חוזר עם אישור עדכני → revision 2', done.revision, 2);
+  const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
+  ok('5.2.5 הפרסום נושא את דוח הפערים שנבדק בעסקה', pub.gap_report && pub.gap_report.checked_in_transaction === true && pub.gap_report.digest === fresh.digest, JSON.stringify(pub.gap_report));
+}
+
+/* 5.3 §2 · עריכת היעדרות בלבד → הודעה לאדם, בלי הסיבה; תוכן שונה = חתימה שונה. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const { pointer } = await publishImportedSchedule(db, rt);
+  const edits = [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'sick' } }];
+  const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
+  eq('5.3.1 דוח: אדם אחד, הודעה אחת', [report.counts.people, report.notifications], [1, 1]);
+  const done = await rt.applyScheduleEdit(req({ request_id: 'a1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest }));
+  eq('5.3.2 פורסם revision 2', done.revision, 2);
+  const outbox = outboxOf(db, done.publication_id);
+  eq('5.3.3 outbox: הודעה אחת בדיוק, ל-u4', outbox.map((n) => n.person), ['u4']);
+  ok('5.3.4 ההודעה אומרת היעדרות ותאריך — לא מחלה', outbox.length === 1 && /נרשמה היעדרות/.test(outbox[0].push.body) && /1\/9/.test(outbox[0].push.body) && !/sick|מחלה/.test(JSON.stringify(outbox[0])), JSON.stringify(outbox.map((n) => n.push)));
+  const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
+  const prev = db._get(ST + '/schedule_publications/' + pointer.publication_id);
+  ok('5.3.5 content_hash של הפרסום שונה מהקודם (היעדרויות בחתימה)', pub.content_hash !== prev.content_hash);
+  // ביטול ההיעדרות → הודעה „הוסרה היעדרות".
+  const p2 = db._get(ST + '/schedule_state/active');
+  const edits2 = [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: null }];
+  const report2 = await rt.previewScheduleEdit(req({ expected: expectedOf(p2), edits: edits2 }));
+  const done2 = await rt.applyScheduleEdit(req({ request_id: 'a2', expected: expectedOf(p2), edits: edits2, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest }));
+  const outbox2 = outboxOf(db, done2.publication_id);
+  ok('5.3.6 ביטול היעדרות → הודעה אחת „הוסרה היעדרות"', outbox2.length === 1 && outbox2[0].person === 'u4' && /הוסרה היעדרות/.test(outbox2[0].push.body), JSON.stringify(outbox2.map((n) => n.push.body)));
+}
+
+/* 5.4 §3 · העריכה מוצמדת למדיניות הפרסום; פרסום מיובא נערך מול התחנות הקנוניות בלבד. */
+{
+  const db = createFakeDb();
+  const { rt, policyId } = await seed(db);
+  // מדיניות עם מפתח היסטורי `main` במקום `eilat` — הייבוא דורש station_map.
+  const legacy = await rt.savePolicy(req({
+    request_id: 'p-legacy', activate: true, expected_policy_id: policyId, confirm_weakening: true,
+    draft: {
+      sub_stations: {
+        main: { label: 'תחנה ראשית', minimum: 7, requirements: [{ role: 'ff', count: 7, required: true }] },
+        shahmon: { label: 'שחמון', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+        timna: { label: 'תמנע', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+        yotvata: { label: 'יטבתה', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] }
+      },
+      rest: { min_gap_days: 1 }, rotation: null, max_shifts_per_month: null
+    }
+  }));
+  const cfg = db._get(ST + '/schedule_state/runtime');
+  db._put(ST + '/schedule_state/runtime', Object.assign({}, cfg, { active_policy_id: legacy.policy_id }));
+  const aliases = { 'רועי': 'u1', 'אבטחה': null, 'גיא': 'u5' };
+  const stationMap = { eilat: 'main', shahmon: 'shahmon', timna: 'timna', yotvata: 'yotvata' };
+  const ready = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases, station_map: stationMap }));
+  ok('5.4.0 הייבוא עם מיפוי תחנות אינו חסום', !ready.blocked, JSON.stringify(ready.blocked_by));
+  const imported = await rt.importScheduleSheet(req({ request_id: 'imp-legacy', month: '2026-09', paste: SHEET, aliases, station_map: stationMap, expected_report_digest: ready.report_digest }));
+  const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
+  db._put(ST + '/schedule_state/runtime', Object.assign({}, db._get(ST + '/schedule_state/runtime'), { mode: 'new' }));
+  await rt.publish(req({ request_id: 'pub-legacy', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest }));
+  const pointer = db._get(ST + '/schedule_state/active');
+  const pub = db._get(ST + '/schedule_publications/' + pointer.publication_id);
+  eq('5.4.1 הפרסום נושא את מיפוי התחנות', pub.station_map, stationMap);
+  await rejectsCode('5.4.2 שיבוץ ל-`main` (מפתח היסטורי שאינו בתוכנית הקנונית) → edit-sub-station-unknown', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'main', role: 'ff' }] })), 'edit-sub-station-unknown');
+  await rejectsCode('5.4.3 שיבוץ ל-`constructor` → edit-sub-station-unknown', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'constructor', role: 'ff' }] })), 'edit-sub-station-unknown');
+  let okReport = null;
+  try { okReport = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'eilat', role: 'ff' }] })); } catch (e) { okReport = { error: e.code }; }
+  eq('5.4.4 שיבוץ ל-`eilat` (קנוני) עובר, עם מיפוי בדוח', [okReport.error || null, okReport.counts && okReport.counts.changes, okReport.station_map], [null, 1, stationMap]);
+  if (!okReport.error) {
+  const applied = await rt.applyScheduleEdit(req({ request_id: 'e-legacy', expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'eilat', role: 'ff' }], expected_edit_digest: okReport.edit_digest, gap_acknowledgement: okReport.gaps.digest }));
+  const board = await rt.getStationRange(req({ from: '2026-09-02', to: '2026-09-02' }, 'u2'));
+  const subs = board.days[0].sub_stations.map((s) => s.sub_station).sort();
+  eq('5.4.5 הלוח: ארבע תחנות קנוניות, בלי תחנה חמישית', [subs, board.revision], [['eilat', 'shahmon', 'timna', 'yotvata'], 2]);
+  ok('5.4.6 u9 באילת ב-2.9', board.days[0].sub_stations.find((s) => s.sub_station === 'eilat').people.some((p) => p.uid === 'u9'));
+  const pub2 = db._get(ST + '/schedule_publications/' + applied.publication_id);
+  eq('5.4.7 הפרסום הערוך נושא את אותו מיפוי', pub2.station_map, stationMap);
+  }
+
+  // המדיניות משתנה אחרי הפרסום → אין עריכה של הפרסום הישן.
+  const p2 = db._get(ST + '/schedule_state/active');
+  const changed = await rt.savePolicy(req({ request_id: 'p-changed', activate: true, expected_policy_id: legacy.policy_id, confirm_weakening: true, draft: {
+    sub_stations: {
+      main: { label: 'תחנה ראשית', minimum: 5, requirements: [{ role: 'ff', count: 5, required: true }] },
+      shahmon: { label: 'שחמון', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+      timna: { label: 'תמנע', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+      yotvata: { label: 'יטבתה', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] }
+    }, rest: { min_gap_days: 1 }, rotation: null, max_shifts_per_month: null } }));
+  db._put(ST + '/schedule_state/runtime', Object.assign({}, db._get(ST + '/schedule_state/runtime'), { active_policy_id: changed.policy_id }));
+  await rejectsCode('5.4.8 המדיניות השתנתה מאז הפרסום → edit-policy-changed', () => rt.previewScheduleEdit(req({ expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] })), 'edit-policy-changed');
+  ok('5.4.9 (לא נוגע) המדיניות המקורית עדיין קיימת', typeof policyId === 'string');
+}
+
+/* 5.5 §5+§6 · תקרת אזהרות ודוח; תפקיד רק מהמדיניות. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  const { pointer } = await publishImportedSchedule(db, rt);
+  await rejectsCode('5.5.1 תפקיד שאינו במדיניות (assign) → edit-role-unknown', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'timna', role: 'boss' }] })), 'edit-role-unknown');
+  await rejectsCode('5.5.2 תפקיד שאינו במדיניות (role) → edit-role-unknown', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'role', uid: 'u1', dates: ['2026-09-01'], role: '<script>' }] })), 'edit-role-unknown');
+  // 200 עריכות × 3 תאריכים של „הסרה" למי שאינו משובץ → 600 אזהרות; בדוח נשארות 200.
+  const dates = ['2026-09-01', '2026-09-02', '2026-09-03'];
+  const many = [];
+  for (let i = 0; i < 200; i += 1) many.push({ kind: 'unassign', uid: 'u' + (1 + (i % 9)), dates });
+  const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: many }));
+  ok('5.5.3 אזהרות חסומות ב-200 והשאר נספרות', report.warnings.length === 200 && report.warnings_total > 200 && report.warnings_truncated === report.warnings_total - 200, JSON.stringify([report.warnings.length, report.warnings_total, report.warnings_truncated]));
+  ok('5.5.4 גודל הדוח מדווח ומתחת לתקרה', Number.isInteger(report.report_bytes) && report.report_bytes < 256 * 1024, String(report.report_bytes));
+  // אותו runtime עם תקרה נמוכה (seam לבדיקה בלבד): הדוח נדחה בדוח ובביצוע, בלי טיוטה.
+  const tight = buildRuntime(db, { editReportByteLimit: 2000 });
+  const drafts = () => db._paths(ST + '/schedule_drafts').filter((k) => k.split('/').length === 4).length;
+  const draftsBefore = drafts();
+  await rejectsCode('5.5.5 דוח מעל התקרה → edit-too-large (preview)', () => tight.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: many })), 'edit-too-large');
+  await rejectsCode('5.5.6 ביצוע מעל התקרה → edit-too-large, בלי טיוטה', () => tight.applyScheduleEdit(req({ request_id: 'big', expected: expectedOf(pointer), edits: many, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'edit-too-large');
+  eq('5.5.7 לא נוצרה טיוטה', drafts(), draftsBefore);
+  const small = await tight.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] }));
+  ok('5.5.8 עריכה קטנה עוברת גם עם התקרה הנמוכה', small.report_bytes <= 2000, String(small.report_bytes));
 }
 
 finish('schedule-edit runtime probe checks passed');

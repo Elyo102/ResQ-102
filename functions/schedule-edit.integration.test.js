@@ -59,6 +59,7 @@ function runtimeDoc() { return station().collection('schedule_state').doc('runti
 function runtime(hooks) {
   return createScheduleRuntime({
     db: (hooks && hooks.db) || db,
+    beforeSnapshotFinalize: hooks && hooks.beforeSnapshotFinalize,
     FieldValue: admin.firestore.FieldValue,
     FieldPath: admin.firestore.FieldPath,
     clock: CLOCK,
@@ -263,6 +264,7 @@ async function test(name, fn) {
 
   let applied = null;
   let editDigest = null;
+  let gapDigest = null;
   const edits = [
     { kind: 'assign', uid: 'u1', dates: ['2026-09-01', '2026-09-02'], sub_station: 'shahmon' },
     { kind: 'absence', uid: 'u2', dates: ['2026-09-03'], absence: { kind: 'leave', location: 'abroad' } },
@@ -271,9 +273,10 @@ async function test(name, fn) {
   await test('apply: derived draft → new revision with CAS, audit, one outbox entry per changed person', async () => {
     const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(pointer), edits }));
     editDigest = report.edit_digest;
+    gapDigest = report.gaps.digest;
     const stale = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits })));
     assert.equal(stale && stale.code, 'edit-report-stale');
-    applied = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest }));
+    applied = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest, gap_acknowledgement: report.gaps.digest }));
     assert.deepEqual([applied.duplicate, applied.revision], [false, 2]);
     const active = (await station().collection('schedule_state').doc('active').get()).data();
     assert.deepEqual([active.publication_id, active.revision, active.previous_publication_id], [applied.publication_id, 2, pointer.publication_id]);
@@ -284,7 +287,10 @@ async function test(name, fn) {
     const outbox = await station().collection('schedule_publications').doc(applied.publication_id).collection('schedule_outbox').get();
     const perPerson = {};
     outbox.docs.forEach((doc) => { const p = doc.data().person; perPerson[p] = (perPerson[p] || 0) + 1; });
-    assert.ok(perPerson.u1 === 1 && perPerson.u3 === 1 && Object.values(perPerson).every((n) => n === 1), JSON.stringify(perPerson));
+    /* ⭐ ביקורת Codex §2: גם u2 (היעדרות בלבד) מקבל הודעה — אחת, בלי הסוג ובלי המיקום. */
+    assert.ok(perPerson.u1 === 1 && perPerson.u2 === 1 && perPerson.u3 === 1 && Object.values(perPerson).every((n) => n === 1), JSON.stringify(perPerson));
+    const u2Push = outbox.docs.map((doc) => doc.data()).find((n) => n.person === 'u2');
+    assert.ok(/היעדרות/.test(u2Push.push.body) && !/leave|abroad|חופש/.test(JSON.stringify(u2Push)), JSON.stringify(u2Push.push));
     const audit = (await station().collection('schedule_audit').get()).docs.map((doc) => doc.data());
     const editAudit = audit.find((a) => a.action === 'edit-draft');
     const publishAudit = audit.find((a) => a.action === 'publish' && a.revision === 2);
@@ -301,7 +307,7 @@ async function test(name, fn) {
     assert.equal(d1.sub_stations.find((s) => s.sub_station === 'eilat').people.some((p) => p.uid === 'u1'), false);
     assert.equal(d1.sub_stations.some((s) => s.people.some((p) => p.uid === 'u3')), false);
     assert.deepEqual(range.days[2].absences.filter((a) => a.uid === 'u2').map((a) => a.kind + ':' + a.location), ['leave:abroad']);
-    const again = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest }));
+    const again = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits, expected_edit_digest: editDigest, gap_acknowledgement: gapDigest }));
     assert.deepEqual([again.duplicate, again.publication_id], [true, applied.publication_id]);
     assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, 2);
     const conflict = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_1', expected: expectedOf(pointer), edits: edits.slice(0, 1), expected_edit_digest: 'x' })));
@@ -316,12 +322,78 @@ async function test(name, fn) {
     const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
     // עריכה מתחרה שמתפרסמת קודם
     const other = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'course' } }] }));
-    await api.applyScheduleEdit(req(MGR, { request_id: 'edit_other', expected: expectedOf(current), edits: [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'course' } }], expected_edit_digest: other.edit_digest }));
+    await api.applyScheduleEdit(req(MGR, { request_id: 'edit_other', expected: expectedOf(current), edits: [{ kind: 'absence', uid: 'u4', dates: ['2026-09-01'], absence: { kind: 'course' } }], expected_edit_digest: other.edit_digest, gap_acknowledgement: other.gaps.digest }));
     const draftsBefore = (await station().collection('schedule_drafts').get()).size;
-    const error = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_2', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest })));
+    const error = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_2', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })));
     assert.equal(error && error.code, 'edit-base-stale', error && error.message);
     assert.equal((await station().collection('schedule_drafts').get()).size, draftsBefore, 'no draft for a refused edit');
     assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, 3);
+  });
+
+  await test('§1 the gap gate is decided inside the publish transaction: a gap-policy change after the early check refuses the publication', async () => {
+    const current = (await station().collection('schedule_state').doc('active').get()).data();
+    await api.saveGapPolicy(req(MGR, { request_id: 'edit_gp1', station_minimum: 20 }));
+    const mine = [{ kind: 'unassign', uid: 'u8', dates: ['2026-09-02'] }];
+    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
+    assert.ok(report.gaps.acknowledgeable.length > 0 && report.gaps.digest);
+    // ה-seam רץ אחרי הבדיקה המוקדמת ולפני עסקת הפרסום — בדיוק החלון של TOCTOU.
+    const racing = runtime({
+      beforeSnapshotFinalize: async (event) => {
+        if (event.kind === 'publication') {
+          await station().collection('schedule_state').doc('gap_policy').set({ station_id: SID, station_minimum: 25, revision: 2 });
+        }
+      }
+    });
+    const refused = await caught(() => racing.applyScheduleEdit(req(MGR, { request_id: 'edit_toctou', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })));
+    assert.equal(refused && refused.code, 'gaps-acknowledgement-required', refused && refused.message);
+    assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, current.revision, 'the pointer must not move');
+    // ניסיון חוזר של אותה בקשה (הפרסום נשאר ב-staging) עם אישור על הרשימה הנוכחית — משלים.
+    const fresh = await api.getGapReport(req(MGR, {}));
+    const stagingReport = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
+    const done = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_toctou', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: stagingReport.gaps.digest }));
+    assert.equal(done.revision, current.revision + 1);
+    const pub = (await station().collection('schedule_publications').doc(done.publication_id).get()).data();
+    assert.equal(pub.gap_report && pub.gap_report.checked_in_transaction, true);
+    assert.ok(fresh && fresh.summary);
+    await station().collection('schedule_state').doc('gap_policy').delete();
+  });
+
+  await test('§2 an absence-only edit notifies the person once, naming the date and never the reason', async () => {
+    const current = (await station().collection('schedule_state').doc('active').get()).data();
+    const mine = [{ kind: 'absence', uid: 'u5', dates: ['2026-09-02'], absence: { kind: 'sick' } }];
+    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
+    assert.deepEqual([report.counts.people, report.notifications], [1, 1]);
+    const done = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_abs', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest }));
+    const outbox = await station().collection('schedule_publications').doc(done.publication_id).collection('schedule_outbox').get();
+    const notes = outbox.docs.map((doc) => doc.data());
+    assert.deepEqual(notes.map((n) => n.person), ['u5']);
+    assert.ok(/נרשמה היעדרות/.test(notes[0].push.body) && /2\/9/.test(notes[0].push.body) && !/sick|מחלה/.test(JSON.stringify(notes[0])), JSON.stringify(notes[0].push));
+  });
+
+  await test('§3/§6 edits are refused for a foreign sub-station key, an unknown role, and after the policy changed', async () => {
+    const current = (await station().collection('schedule_state').doc('active').get()).data();
+    const foreign = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'main', role: 'ff' }] })));
+    assert.equal(foreign && foreign.code, 'edit-sub-station-unknown');
+    const role = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'timna', role: 'boss' }] })));
+    assert.equal(role && role.code, 'edit-role-unknown');
+    const cfg = (await runtimeDoc().get()).data() || {};
+    const changed = await api.savePolicy(req(MGR, {
+      request_id: 'edit_policy_2', activate: true, expected_policy_id: cfg.active_policy_id, confirm_weakening: true,
+      draft: {
+        sub_stations: {
+          eilat: { label: 'אילת', minimum: 5, requirements: [{ role: 'ff', count: 5, required: true }] },
+          shahmon: { label: 'שחמון', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+          timna: { label: 'תמנע', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
+          yotvata: { label: 'יטבתה', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] }
+        },
+        rest: { min_gap_days: 1 }, rotation: null, max_shifts_per_month: null
+      }
+    }));
+    assert.ok(changed.policy_id && changed.policy_id !== cfg.active_policy_id);
+    const pinned = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] })));
+    assert.equal(pinned && pinned.code, 'edit-policy-changed');
+    // מחזירים את המדיניות המקורית כדי שה-rollback שלמטה ירוץ על אותו בסיס.
+    await runtimeDoc().set({ active_policy_id: cfg.active_policy_id }, { merge: true });
   });
 
   await test('the existing rollback returns to the pre-edit publication', async () => {

@@ -17,7 +17,8 @@ const TARGETS = {
   runtime: resolve(FN, 'schedule-runtime.js'),
   edit: resolve(FN, 'schedule-edit.js'),
   quals: resolve(FN, 'schedule-qualifications.js'),
-  gaps: resolve(FN, 'schedule-gaps.js')
+  gaps: resolve(FN, 'schedule-gaps.js'),
+  publication: resolve(FN, 'schedule-publication.js')
 };
 const SUITES = {
   editUnit: [process.execPath, [resolve(FN, 'schedule-edit.test.js')]],
@@ -25,6 +26,8 @@ const SUITES = {
   qualsUnit: [process.execPath, [resolve(FN, 'schedule-qualifications.test.js')]],
   qualsProbe: [process.execPath, [resolve(HERE, 'schedule-qualifications-runtime-probe.mjs')]],
   gapsUnit: [process.execPath, [resolve(FN, 'schedule-gaps.test.js')]],
+  publicationUnit: [process.execPath, [resolve(FN, 'schedule-publication.test.js')]],
+  runtimeSource: [process.execPath, [resolve(HERE, 'schedule-runtime-source.mjs')]],
   authority: [process.execPath, [resolve(HERE, 'schedule-hidden-authority-probe.mjs')]]
 };
 
@@ -79,7 +82,37 @@ const MUTATIONS = [
   ['פערים: מועמד שאינו פנוי (משובץ באותו יום) מוצע', 'gaps',
     "    const free = Array.from(people.keys()).filter((uid) => !assigned.has(uid) && !absent.has(uid))", "    const free = Array.from(people.keys()).filter((uid) => !absent.has(uid))", ['gapsUnit']],
   ['פערים: כשירות קריטית נספרת כפער אחר', 'gaps',
-    "      (q.critical ? blocking : acknowledgeable).push(entry);", "      acknowledgeable.push(entry);", ['gapsUnit', 'editProbe']]
+    "      (q.critical ? blocking : acknowledgeable).push(entry);", "      acknowledgeable.push(entry);", ['gapsUnit', 'editProbe']],
+  // --- ביקורת Codex על 0e9a8dc (seq453) ---
+  ['§1 TOCTOU: השער בעסקת הפרסום מבוטל (נשאר רק המוקדם)', 'runtime',
+    "      gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);\n      requireGapClearance(gapReport, gapAcknowledgement);",
+    "      gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);", ['editProbe']],
+  // Firestore בזיכרון אינו מבחין בין tx.get לקריאה רגילה — כאן הפין במקור הוא הבדיקה.
+  ['§1 TOCTOU: השער בעסקה קורא מחוץ לעסקה (לא tx.get)', 'runtime',
+    "        gapContext(ctx, config, gapPeople, txRead)", "        gapContext(ctx, config, gapPeople)", ['runtimeSource']],
+  ['§2 היעדרויות מחוץ להשוואה (אין הודעה על היעדרות בלבד)', 'publication',
+    "        .concat(diffOnePersonAbsences(prevAbsences.get(person), nextAbsences.get(person)));", ";", ['publicationUnit', 'editProbe']],
+  ['§2 היעדרויות מחוץ לחתימת התוכן', 'publication',
+    "      absences: canonicalAbsences(next),", "", ['publicationUnit', 'editProbe']],
+  ['§3 העריכה אינה מוצמדת למדיניות הפרסום', 'runtime',
+    "    if (active.plan.policy_digest !== policy.digest) {", "    if (false) {", ['editProbe']],
+  ['§3 עריכה מול המדיניות הגולמית במקום ההטלה הקנונית', 'runtime',
+    "    if (active.plan.imported !== true) return { value: policy.value, station_map: null };",
+    "    return { value: policy.value, station_map: null };", ['editProbe']],
+  ['§3 תחנת קצה נבדקת עם in במקום own-property', 'edit',
+    "    if (edit.kind === 'assign' && !subStationSpec(policy, edit.sub_station)) {",
+    "    if (edit.kind === 'assign' && !(edit.sub_station in policy.sub_stations)) {", ['editUnit']],
+  ['§4 UID מסונן לפי אלפאנומרי בלבד', 'edit',
+    "    if (!UID_RE.test(uid)) fail('edit-uid'", "    if (!ID_RE.test(uid)) fail('edit-uid'", ['editUnit']],
+  ['§5 תקרת האזהרות מבוטלת', 'edit',
+    "    if (warnings.length < MAX_WARNINGS) warnings.push(entry);", "    warnings.push(entry);", ['editUnit', 'editProbe']],
+  ['§5 גודל הדוח אינו נבדק', 'runtime',
+    "    report.report_bytes = requireEditReportSize(report);\n    await db.runTransaction(async (tx) => {",
+    "    await db.runTransaction(async (tx) => {", ['editProbe']],
+  ['§6 תפקיד חופשי מתקבל (assign)', 'edit',
+    "    if (edit.kind === 'assign') requireKnownRole(policy, edit.sub_station, edit.role, index);", "", ['editUnit', 'editProbe']],
+  ['§6 תפקיד חופשי מתקבל (role)', 'edit',
+    "        requireKnownRole(policy, hit.row.sub_station, edit.role, index);", "", ['editUnit', 'editProbe']]
 ];
 
 function runSuite(key) {

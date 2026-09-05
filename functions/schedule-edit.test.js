@@ -165,4 +165,45 @@ test('searchPeople: prefix on any name part first, then contains; no query = fir
   assert.deepEqual(edit.searchPeople(list, 'zzz'), []);
 });
 
+/* ---- ביקורת Codex על 0e9a8dc (seq453) ---- */
+
+test('§4 uid is a Firebase UID as-is: e-mail style ids pass, separators and control characters fail', () => {
+  const range = { from: '2026-09-01', to: '2026-09-03' };
+  const ok = edit.normalizeEdits([{ kind: 'unassign', uid: 'user+shift@example.com', dates: ['2026-09-01'] }], range);
+  assert.equal(ok[0].uid, 'user+shift@example.com');
+  assert.equal(edit.normalizeEdits([{ kind: 'unassign', uid: 'שם-בעברית', dates: ['2026-09-01'] }], range)[0].uid, 'שם-בעברית');
+  ['a/b', '', ' ', 'a b', 'x\ty', 'x'.repeat(129), 42, null].forEach((uid) => {
+    throwsCode(() => edit.normalizeEdits([{ kind: 'unassign', uid, dates: ['2026-09-01'] }], range), 'edit-uid');
+  });
+});
+
+test('§6 role must be one the policy defines for that sub-station (assign and role edits)', () => {
+  throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'assign', uid: 'u1', dates: ['2026-09-01'], sub_station: 'shahmon', role: 'driver' }] }), 'edit-role-unknown');
+  throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'role', uid: 'u1', dates: ['2026-09-01'], role: 'boss' }] }), 'edit-role-unknown');
+  const out = edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'assign', uid: 'u1', dates: ['2026-09-01'], sub_station: 'eilat', role: 'driver' }] });
+  assert.equal(out.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'eilat').slots.find((s) => s.person === 'u1').label, 'נהג');
+  assert.deepEqual(edit.allowedRoles(policy, 'eilat'), ['ff', 'driver']);
+  assert.deepEqual(edit.allowedRoles(policy, 'nowhere'), []);
+});
+
+test('§3 sub-station must be an own property of the effective policy (no prototype keys, no foreign keys)', () => {
+  ['constructor', '__proto__', 'main', 'toString'].forEach((sub) => {
+    throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'assign', uid: 'u1', dates: ['2026-09-01'], sub_station: sub }] }), 'edit-sub-station-unknown');
+  });
+});
+
+test('§5 warnings are capped at MAX_WARNINGS and the rest is counted', () => {
+  const dates = [];
+  for (let d = 1; d <= 30; d += 1) dates.push('2026-09-' + String(d).padStart(2, '0'));
+  const plan = Object.assign(basePlan(), { to: '2026-09-30' });
+  const edits = [];
+  for (let i = 0; i < edit.MAX_EDITS; i += 1) edits.push({ kind: 'unassign', uid: 'u2', dates });
+  const out = edit.applyEdits({ plan, people, policy, edits });
+  assert.equal(out.warnings.length, edit.MAX_WARNINGS);
+  assert.equal(out.warnings_total, edit.MAX_EDITS * 30 - 1);   // u2 היה משובץ ב-1.9 פעם אחת
+  assert.equal(out.warnings_truncated, out.warnings_total - edit.MAX_WARNINGS);
+  assert.equal(out.counts.warnings, out.warnings_total);
+  assert.ok(JSON.stringify(out.warnings).length < 20000, 'warnings payload must stay small');
+});
+
 console.log('\n' + passed + ' schedule-edit unit checks passed.');

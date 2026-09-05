@@ -20,10 +20,18 @@
  * ==================================================================== */
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/* מפתחות תחנה ומדיניות — מזהים פנימיים שהשרת יוצר. */
 const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+/* ⭐ מזהה אדם = Firebase UID כפי שהוא. UID של ספק חיצוני יכול להיות
+ * כתובת דוא״ל (`user+shift@example.com`) — אין לסנן לפי אלפאנומרי.
+ * נאסר רק מה שאינו יכול להיות מזהה מסמך: ריק, רווח, `/`, תווי בקרה. */
+const UID_RE = /^[^\s/\u0000-\u001f\u007f]{1,128}$/;
 const MAX_EDITS = 200;
 const MAX_DATES_PER_EDIT = 62;
 const MAX_ROLE_CHARS = 40;
+/* ⭐ תקרה קשיחה לאזהרות: 200 עריכות × 62 תאריכים = 12,400 אזהרות אפשריות,
+ * ורשומת הטיוטה חייבת להישאר הרחק ממגבלת 1 MiB של Firestore. */
+const MAX_WARNINGS = 200;
 const KINDS = Object.freeze(['assign', 'unassign', 'role', 'absence']);
 const ABSENCE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave']);
 const LOCATIONS = Object.freeze(['abroad', 'north', 'eilat']);
@@ -103,8 +111,8 @@ function normalizeEdits(raw, range) {
     const index = i + 1;
     if (!plain(item)) fail('edit-shape', 'עריכה ' + index + ' אינה אובייקט.');
     if (KINDS.indexOf(item.kind) === -1) fail('edit-kind', 'עריכה ' + index + ': סוג עריכה לא מוכר.');
-    const uid = String(item.uid || '');
-    if (!ID_RE.test(uid)) fail('edit-uid', 'עריכה ' + index + ': מזהה אדם לא תקין.');
+    const uid = typeof item.uid === 'string' ? item.uid : '';
+    if (!UID_RE.test(uid)) fail('edit-uid', 'עריכה ' + index + ': מזהה אדם לא תקין.');
     const out = { kind: item.kind, uid, dates: normalizeDates(item.dates, range.from, range.to, index) };
     if (item.kind === 'assign') {
       const sub = String(item.sub_station || '');
@@ -123,12 +131,33 @@ function normalizeEdits(raw, range) {
 
 /* ---------- החלת העריכות ---------- */
 
+function subStationSpec(policy, sub) {
+  if (!policy || !plain(policy.sub_stations) || !hasOwn(policy.sub_stations, sub)) return null;
+  const spec = policy.sub_stations[sub];
+  return plain(spec) ? spec : null;
+}
+
+/** התפקידים המותרים בתחנת קצה = מה שהמדיניות האפקטיבית מגדירה לה. */
+function allowedRoles(policy, sub) {
+  const spec = subStationSpec(policy, sub);
+  const reqs = spec && Array.isArray(spec.requirements) ? spec.requirements : [];
+  return reqs.filter((r) => plain(r) && nonEmpty(r.role)).map((r) => r.role);
+}
+
 function roleLabelFor(policy, sub, role) {
   if (role === null) return null;
-  const spec = policy && plain(policy.sub_stations) ? policy.sub_stations[sub] : null;
+  const spec = subStationSpec(policy, sub);
   const reqs = spec && Array.isArray(spec.requirements) ? spec.requirements : [];
   const hit = reqs.find((r) => plain(r) && r.role === role);
   return hit && nonEmpty(hit.label) ? hit.label : role;
+}
+
+/* ⭐ תפקיד אינו מחרוזת חופשית: רק תפקיד שהמדיניות מגדירה לתחנת הקצה הזו. */
+function requireKnownRole(policy, sub, role, index) {
+  if (role === null) return;
+  if (allowedRoles(policy, sub).indexOf(role) === -1) {
+    fail('edit-role-unknown', 'עריכה ' + index + ': התפקיד „' + role + '" אינו מוגדר במדיניות לתחנת הקצה ' + sub + '.');
+  }
 }
 
 function findSlot(rows, uid, date) {
@@ -183,6 +212,11 @@ function applyEdits(input) {
   const coverage = plain(plan.absence_coverage) ? clone(plan.absence_coverage) : null;
   const touched = new Map();   // uid|date → before
   const warnings = [];
+  let warningsTotal = 0;
+  const warn = (entry) => {
+    warningsTotal += 1;
+    if (warnings.length < MAX_WARNINGS) warnings.push(entry);
+  };
 
   const remember = (uid, date) => {
     const key = uid + '|' + date;
@@ -192,7 +226,7 @@ function applyEdits(input) {
   function rowFor(date, sub) {
     let row = rows.find((r) => r.date === date && r.sub_station === sub);
     if (row) return row;
-    const spec = policy.sub_stations[sub] || {};
+    const spec = subStationSpec(policy, sub) || {};
     row = {
       date, station_id: stationId, sub_station: sub, label: nonEmpty(spec.label) ? spec.label : sub,
       rotation_group: null, minimum: Number.isInteger(spec.minimum) ? spec.minimum : 0,
@@ -219,9 +253,12 @@ function applyEdits(input) {
     if (!people.has(edit.uid) && !(removal && inPlan)) {
       fail('edit-person-unknown', 'עריכה ' + index + ': האדם אינו במקור כוח האדם הפעיל.');
     }
-    if (edit.kind === 'assign' && !hasOwn(policy.sub_stations, edit.sub_station)) {
+    /* ⭐ תחנת קצה — רק מפתח שהוא own-property של המדיניות **האפקטיבית**
+     * (לא `constructor`, לא `main` היסטורי שאינו בתוכנית הקנונית). */
+    if (edit.kind === 'assign' && !subStationSpec(policy, edit.sub_station)) {
       fail('edit-sub-station-unknown', 'עריכה ' + index + ': תחנת הקצה אינה במדיניות.');
     }
+    if (edit.kind === 'assign') requireKnownRole(policy, edit.sub_station, edit.role, index);
     edit.dates.forEach((date) => {
       remember(edit.uid, date);
       if (edit.kind === 'assign') {
@@ -230,13 +267,14 @@ function applyEdits(input) {
         row.slots.push({ person: edit.uid, role: edit.role, label: roleLabelFor(policy, edit.sub_station, edit.role), source: SLOT_SOURCE });
         if (row.coverage === 'missing') row.coverage = 'ready';   // אדם הזין — הנתון ידוע
         if (absences.some((a) => a.uid === edit.uid && a.date === date)) {
-          warnings.push({ code: 'assigned-while-absent', uid: edit.uid, date });
+          warn({ code: 'assigned-while-absent', uid: edit.uid, date });
         }
       } else if (edit.kind === 'unassign') {
-        if (!removeFromDay(edit.uid, date)) warnings.push({ code: 'not-assigned', uid: edit.uid, date });
+        if (!removeFromDay(edit.uid, date)) warn({ code: 'not-assigned', uid: edit.uid, date });
       } else if (edit.kind === 'role') {
         const hit = findSlot(rows, edit.uid, date);
         if (!hit) fail('edit-role-not-assigned', 'עריכה ' + index + ': אי אפשר לשנות תפקיד למי שאינו משובץ ב-' + date + '.');
+        requireKnownRole(policy, hit.row.sub_station, edit.role, index);
         hit.row.slots[hit.idx].role = edit.role;
         hit.row.slots[hit.idx].label = roleLabelFor(policy, hit.row.sub_station, edit.role);
         hit.row.slots[hit.idx].source = SLOT_SOURCE;
@@ -248,7 +286,7 @@ function applyEdits(input) {
           absences.push(Object.assign({ date, uid: edit.uid, kind: edit.absence.kind },
             edit.absence.location ? { location: edit.absence.location } : {}));
           if (coverage && coverage[edit.absence.kind] === 'missing') coverage[edit.absence.kind] = 'ready';
-          if (findSlot(rows, edit.uid, date)) warnings.push({ code: 'absent-while-assigned', uid: edit.uid, date });
+          if (findSlot(rows, edit.uid, date)) warn({ code: 'absent-while-assigned', uid: edit.uid, date });
         }
       }
     });
@@ -290,11 +328,14 @@ function applyEdits(input) {
     plan: nextPlan,
     changes,
     warnings,
+    warnings_total: warningsTotal,
+    warnings_truncated: warningsTotal - warnings.length,
     counts: {
       edits: edits.length, changes: changes.length, people: people_changed.length,
       dates: Array.from(new Set(changes.map((c) => c.date))).length,
       no_ops: edits.reduce((n, e) => n + e.dates.length, 0) - changes.length,
-      below_minimum: nextPlan.summary.edited_below_minimum
+      below_minimum: nextPlan.summary.edited_below_minimum,
+      warnings: warningsTotal
     },
     people_changed
   };
@@ -329,6 +370,6 @@ function searchPeople(people, query, limit) {
 }
 
 module.exports = Object.freeze({
-  ScheduleEditError, normalizeEdits, applyEdits, searchPeople, roleLabelFor,
-  KINDS, ABSENCE_KINDS, LOCATIONS, MAX_EDITS, MAX_DATES_PER_EDIT, SLOT_SOURCE
+  ScheduleEditError, normalizeEdits, applyEdits, searchPeople, roleLabelFor, allowedRoles,
+  KINDS, ABSENCE_KINDS, LOCATIONS, MAX_EDITS, MAX_DATES_PER_EDIT, MAX_WARNINGS, SLOT_SOURCE, UID_RE
 });

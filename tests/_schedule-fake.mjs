@@ -109,8 +109,8 @@ function stable(value) {
 }
 const digest = (v) => hash(stable(v));
 
-function buildRuntime(db) {
-  return runtimeMod.createScheduleRuntime({
+function buildRuntime(db, extra) {
+  return runtimeMod.createScheduleRuntime(Object.assign({
     db,
     FieldValue: { serverTimestamp: () => ({ __ts: true }) },
     FieldPath: Object.assign(function FieldPath() {}, { documentId: () => '__name__' }),
@@ -121,7 +121,7 @@ function buildRuntime(db) {
     createService: serviceMod.createScheduleService,
     isSuper: () => false,
     sendPush: async () => ({ sent: 1 })
-  });
+  }, extra || {}));
 }
 const MGR = 'uid-mgr';
 function req(data, uid) {
