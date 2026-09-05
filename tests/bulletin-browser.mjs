@@ -698,7 +698,7 @@ try {
         failureReport.kind === 'callable-failed' &&
         failureReport.callable === 'postBulletinMessage' &&
         failureReport.code === 'functions/unavailable' &&
-        failureReport.screen === 'login.html' && failureReport.version === 'unknown',
+        failureReport.screen === 'login.html' && failureReport.version === '42H.2',
         'הניטור שולח רק חמש קטגוריות טכניות, ללא תוכן ההודעה או מזהה הבקשה');
   await page.locator('#boardTabs [data-board-id="shahmon"]').click();
   await page.getByText('תקלה במזגן בחדר התדריכים', { exact:true })

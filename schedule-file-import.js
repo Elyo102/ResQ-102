@@ -8,6 +8,11 @@ const MAX_ZIP_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_ZIP_RATIO = 200;
 const MAX_SHARED_STRINGS = 100000;
 const MAX_WORKSHEET_CELLS = 200000;
+// Keep the browser limit identical to the server parser limit.  A file the
+// browser accepts must not fail later only because its merge metadata crossed
+// a different ceiling on the trusted side.
+const MAX_MERGE_RANGES = 256;
+const MAX_MERGED_CELLS = MAX_WORKSHEET_CELLS;
 
 function fail(code, message) {
   const error = new Error(message);
@@ -247,12 +252,57 @@ function textualDate(value) {
   return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
 }
 
-function columnIndex(ref) {
+function columnIndex(ref, code = 'xlsx-cell-ref') {
   const match = /^([A-Z]{1,4})([1-9]\d{0,5})$/.exec(ref || '');
-  if (!match) fail('xlsx-cell-ref', 'הפניה לתא בקובץ Excel אינה תקינה.');
+  if (!match) fail(code, code === 'xlsx-merge-ref' ? 'טווח מיזוג בקובץ Excel אינו תקין.' : 'הפניה לתא בקובץ Excel אינה תקינה.');
   let column = 0;
   for (const char of match[1]) column = column * 26 + char.charCodeAt(0) - 64;
   return { column: column - 1, row: Number(match[2]) - 1 };
+}
+
+function parseMergeRanges(xml) {
+  const ranges = [];
+  let mergedCells = 0;
+  const pattern = /<(?:[A-Za-z_][\w.-]*:)?mergeCell\b([^>]*?)\/?\s*>/g;
+  let match;
+  while ((match = pattern.exec(xml || ''))) {
+    if (ranges.length >= MAX_MERGE_RANGES) fail('xlsx-merge-large', 'בגיליון Excel יש יותר מדי טווחים ממוזגים.');
+    const ref = attribute(match[1], 'ref');
+    const parts = ref && /^([A-Z]{1,4}[1-9]\d{0,5}):([A-Z]{1,4}[1-9]\d{0,5})$/.exec(ref);
+    if (!parts) fail('xlsx-merge-ref', 'טווח מיזוג בקובץ Excel אינו תקין.');
+    const start = columnIndex(parts[1], 'xlsx-merge-ref');
+    const end = columnIndex(parts[2], 'xlsx-merge-ref');
+    if (start.row > end.row || start.column > end.column) fail('xlsx-merge-ref', 'טווח מיזוג בקובץ Excel כתוב בסדר הפוך.');
+    if (end.row >= 10000 || end.column >= 4096) fail('xlsx-merge-large', 'ממדי טווח מיזוג בקובץ Excel גדולים מדי.');
+    const area = (end.row - start.row + 1) * (end.column - start.column + 1);
+    mergedCells += area;
+    if (!Number.isSafeInteger(area) || mergedCells > MAX_MERGED_CELLS) {
+      fail('xlsx-merge-large', 'טווחי המיזוג בקובץ Excel גדולים מדי.');
+    }
+    ranges.push({
+      startRow:start.row,
+      endRow:end.row,
+      startColumn:start.column,
+      endColumn:end.column
+    });
+  }
+
+  const ordered = ranges.slice().sort((a, b) =>
+    a.startRow - b.startRow || a.startColumn - b.startColumn || a.endRow - b.endRow || a.endColumn - b.endColumn);
+  const active = [];
+  for (const range of ordered) {
+    let keep = 0;
+    for (const candidate of active) {
+      if (candidate.endRow < range.startRow) continue;
+      active[keep] = candidate;
+      keep += 1;
+      const columnsOverlap = candidate.startColumn <= range.endColumn && range.startColumn <= candidate.endColumn;
+      if (columnsOverlap) fail('xlsx-merge-overlap', 'קובץ Excel מכיל טווחי מיזוג חופפים.');
+    }
+    active.length = keep;
+    active.push(range);
+  }
+  return ranges;
 }
 
 function sharedStrings(xml) {
@@ -302,7 +352,7 @@ function parseWorksheet(xml, strings) {
     if (cells.has(key)) fail('xlsx-cell-duplicate', 'אותו תא מופיע פעמיים בקובץ Excel.');
     cells.set(key, { row:pos.row, column:pos.column, value, numeric, formula, error });
   }
-  return cells;
+  return { cells, mergeRanges:parseMergeRanges(xml) };
 }
 
 function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }
@@ -338,7 +388,8 @@ async function readXlsx(bytes, name, month) {
   if (candidates.length !== 1) fail('xlsx-year-sheet', candidates.length ? 'נמצאו כמה גיליונות לשנה שנבחרה.' : 'לא נמצא גיליון לשנה ' + year + '.');
   const selected = candidates[0];
   const strings = sharedStrings(await xmlEntry(zip, 'xl/sharedStrings.xml', false));
-  const cells = parseWorksheet(await xmlEntry(zip, selected.path), strings);
+  const worksheet = parseWorksheet(await xmlEntry(zip, selected.path), strings);
+  const cells = worksheet.cells;
 
   let dateRow = -1;
   let selectedColumns = [];
@@ -373,10 +424,21 @@ async function readXlsx(bytes, name, month) {
   const outputColumns = [];
   for (let column = 0; column < firstDateColumn; column += 1) outputColumns.push(column);
   selectedColumns.forEach((item) => outputColumns.push(item.column));
+  const outputIndexByColumn = new Map(outputColumns.map((column, index) => [column, index]));
+  const labelSpans = worksheet.mergeRanges.filter((range) => {
+    if (range.startColumn !== range.endColumn || range.startColumn >= firstDateColumn || range.startRow <= dateRow) return false;
+    const topLeft = cells.get(range.startRow + ':' + range.startColumn);
+    return topLeft && topLeft.value !== '';
+  }).map((range) => Object.freeze({
+    column:outputIndexByColumn.get(range.startColumn),
+    start_row:range.startRow,
+    end_row:range.endRow
+  })).sort((a, b) => a.start_row - b.start_row || a.column - b.column || a.end_row - b.end_row);
   let lastRow = dateRow;
   cells.forEach((cell) => {
     if (outputColumns.includes(cell.column) && cell.value !== '') lastRow = Math.max(lastRow, cell.row);
   });
+  labelSpans.forEach((span) => { lastRow = Math.max(lastRow, span.end_row); });
   if (lastRow + 1 > MAX_ROWS || (lastRow + 1) * outputColumns.length > MAX_CELLS) {
     fail('xlsx-matrix-large', 'טבלת החודש בקובץ Excel גדולה מדי.');
   }
@@ -395,7 +457,7 @@ async function readXlsx(bytes, name, month) {
     }
     matrix.push(outputRow);
   }
-  return Object.freeze({ name, kind:'xlsx', sheet:selected.name, month, matrix });
+  return Object.freeze({ name, kind:'xlsx', sheet:selected.name, month, matrix, label_spans:Object.freeze(labelSpans) });
 }
 
 export function parseDelimited(text, delimiter) {
@@ -453,5 +515,6 @@ export async function readScheduleFile(file, options) {
 
 export const LIMITS = Object.freeze({
   MAX_FILE_BYTES, MAX_ROWS, MAX_CELLS, MAX_CELL_CHARS,
-  MAX_ZIP_ENTRIES, MAX_ZIP_TOTAL_BYTES, MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO
+  MAX_ZIP_ENTRIES, MAX_ZIP_TOTAL_BYTES, MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO,
+  MAX_MERGE_RANGES, MAX_MERGED_CELLS
 });

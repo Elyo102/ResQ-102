@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h1';
-import { renderNav, renderStuckNav } from './nav.js?v=42h1';
-import { initPWA } from './pwa.js?v=42h1';
-import { initAppCheck } from './appcheck.js?v=42h1';
-import { readScheduleFile } from './schedule-file-import.js?v=42h1';
+import { firebaseConfig } from './firebase-config.js?v=42h2';
+import { renderNav, renderStuckNav } from './nav.js?v=42h2';
+import { initPWA } from './pwa.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h2';
+import { readScheduleFile } from './schedule-file-import.js?v=42h2';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h1';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h2';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -54,8 +54,8 @@ const state = {
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false,
-  importMatrix: null, importFileName: null, importSelectedFile: null, importedDraft: null,
-  importStationMap: null, importDisplay: null, displayRequestIds: {},
+  importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
+  importStationMap: null, importDisplay: null, displayRequestIds: {}, displayStatusSequence: 0,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
   tab: null, busy: false
@@ -1057,30 +1057,34 @@ function absenceNote(days) {
 }
 
 /**
- * ⭐ קריאה אחת לחודש, לשתי הלשוניות.
+ * ⭐ מטמון חתום אחד לכל חודש ולכל סוג תצוגה.
  *
- * „סידור התחנה" ו„הסידור שלי" מציגים את אותו חודש בדיוק — האישי
- * הוא אותו לוח מסונן לתחנת הקצה של האדם. קריאה נפרדת לכל לשונית
- * הייתה קוראת פעמיים את אותה תמונה חתומה, והקריאה הזאת אינה
- * זולה: היא קוראת את התמונה **בשלמותה** כדי לאמת את חתימתה.
+ * „סידור התחנה" רשאי להציג טיוטה מיובאת שנבחרה להצגה, בעוד
+ * „הסידור שלי" נשאר תמיד על הסידור התפעולי. לכן מעבר בין שתי
+ * הלשוניות דורש לכל היותר קריאה אחת לכל סוג ואסור למחזר ביניהן
+ * תשובה, גם כשהחודש זהה.
  *
  * המטמון מוחלף בכל החלפת חודש, ומתאפס בפרסום ובחזרה לאחור.
  */
 function invalidateRange() { state.range = null; state.rangeMonth = null; state.rangePending = null; }
 
-function fetchRange(ym) {
-  if (state.rangeMonth === ym && state.range) return Promise.resolve(state.range);
-  if (state.rangeMonth === ym && state.rangePending) return state.rangePending;
+function fetchRange(ym, displayImported) {
+  const display = displayImported === true;
+  const rangeKey = ym + '|' + (display ? 'imported' : 'operational');
+  if (state.rangeMonth === rangeKey && state.range) return Promise.resolve(state.range);
+  if (state.rangeMonth === rangeKey && state.rangePending) return state.rangePending;
   const bounds = monthBounds(ym);
-  state.rangeMonth = ym;
+  state.rangeMonth = rangeKey;
   state.range = null;
-  state.rangePending = call.range({ from: bounds.from, to: bounds.to }).then((result) => {
-    if (state.rangeMonth !== ym) return result.data;
+  state.rangePending = call.range({
+    from: bounds.from, to: bounds.to, display_imported: display
+  }).then((result) => {
+    if (state.rangeMonth !== rangeKey) return result.data;
     state.range = result.data;
     state.rangePending = null;
     return result.data;
   }, (error) => {
-    if (state.rangeMonth === ym) { state.rangeMonth = null; state.rangePending = null; }
+    if (state.rangeMonth === rangeKey) { state.rangeMonth = null; state.rangePending = null; }
     throw error;
   });
   return state.rangePending;
@@ -1110,22 +1114,21 @@ function subOrder(days) {
       if (!labels.has(id)) labels.set(id, state.policy.sub_stations[id].label || id);
     });
   }
-  // הקו של כל תחנה: מהמדיניות כשהיא טעונה (אחראי סידור), אחרת מהשורות
-  // עצמן — השרת מצרף לכל בלוק את הקו שנחתם בפרסום. קו 0 = אין קו.
+  // הקו של כל תחנה מגיע רק מהשורות שהשרת החזיר. הוא נחתם יחד עם
+  // הטיוטה/הפרסום, ולכן אסור לערבב כאן מדיניות חיה שאולי השתנתה מאז.
+  // קו 0 = אין קו.
   const minimums = new Map();
   (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
     if (!minimums.has(sub.sub_station) && Number.isInteger(sub.minimum)) minimums.set(sub.sub_station, sub.minimum);
   }));
   const lineOf = (id) => {
-    const value = state.policy && state.policy.sub_stations[id]
-      ? state.policy.sub_stations[id].minimum
-      : (minimums.has(id) ? minimums.get(id) : null);
+    const value = minimums.has(id) ? minimums.get(id) : null;
     return Number.isInteger(value) && value > 0 ? value : null;
   };
   return FIXED_STATIONS.map((station) => ({
     id: station.id,
     label: station.label,
-    minimum: lineOf(station.id) === null ? station.minimum : lineOf(station.id)
+    minimum: lineOf(station.id)
   }));
 }
 
@@ -1143,11 +1146,13 @@ function legacySubOrder(days) {
   return seen.map((id) => ({ id, label: labels.get(id) || id, minimum: null }));
 }
 
-function cellContent(cell, block, sub) {
+function cellContent(cell, block) {
   const people = (block && block.people) || [];
   const missing = !block || block.coverage === 'missing';
+  // `block.minimum` הוא המינימום החתום של היום המוצג. `sub.minimum`
+  // הוא לכל היותר כותרת נגזרת ואינו מקור חלופי להחלטה עסקית.
   const declared = block && block.minimum !== undefined && block.minimum !== null
-    ? block.minimum : sub.minimum;
+    ? block.minimum : null;
   // קו 0 (או חסר) = „אין קו": אין קו אדום ואין „מתחת לקו".
   const minimum = Number.isInteger(declared) && declared > 0 ? declared : null;
 
@@ -1177,7 +1182,14 @@ function cellContent(cell, block, sub) {
     cell.appendChild(row);
   });
 
-  if (minimum !== null && minimum !== undefined && people.length <= minimum) {
+  // הקו נשאר פיזית אחרי המקום ה-N גם כשחסרים שמות. משבצות בלתי נראות
+  // שומרות את מיקומו, בלי להציג אדם מומצא או לספור אותו כשיבוץ.
+  if (!missing && minimum !== null && minimum !== undefined && people.length <= minimum) {
+    for (let index = people.length; index < minimum; index += 1) {
+      const slot = node('div', 'nm line-slot', '\u00a0');
+      slot.setAttribute('aria-hidden', 'true');
+      cell.appendChild(slot);
+    }
     const bar = node('div', 'rulebar');
     bar.appendChild(node('span', 'ruleline'));
     cell.appendChild(bar);
@@ -1214,8 +1226,9 @@ function renderBoard(target, days, options) {
   corner.setAttribute('aria-label', 'תחנת קצה');
   headerRow.appendChild(corner);
 
-  // צוות היום (משמרת = יממה) מגיע מהשרת: `day.crew`. הוא צובע את העמודה
-  // כולה ומופיע כאות בכותרת — כמו בגיליון. בלי צוות ידוע — עמודה ניטרלית.
+  // צוות היום (משמרת = יממה) מגיע מהשרת: `day.crew`. זהו גם חיבור ה-UI
+  // היחיד למטא-נתון A/B/C שייחתם בעתיד מה-XLSX; אין להסיק צוות כאן
+  // מהסבב הישן או מהצבע. בלי צוות חתום וידוע — עמודה ניטרלית.
   const dayCrew = (day) => (['A', 'B', 'C'].includes(day.crew) ? day.crew : null);
   days.forEach((day, index) => {
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
@@ -1247,7 +1260,7 @@ function renderBoard(target, days, options) {
       const cell = node('div', 'cell ' + (crew ? 'col-' + crew : subClass(subIndex)) + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
-      cellContent(cell, block, sub);
+      cellContent(cell, block);
       // אירועים ואבטחות שייכים ליום כולו ולא לתחנת קצה. הם נתלים
       // על השורה הראשונה בלבד, כדי שלא יופיעו ארבע פעמים.
       if (subIndex === 0) {
@@ -1352,7 +1365,7 @@ async function loadStationRange(ym) {
   clear(box); box.appendChild(node('div', 'loader'));
   $('stationNote').textContent = '';
   try {
-    const view = await fetchRange(state.month);
+    const view = await fetchRange(state.month, true);
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
@@ -1511,7 +1524,7 @@ async function loadMineRange(ym) {
   clear(box); box.appendChild(node('div', 'loader'));
   $('mineNote').textContent = '';
   try {
-    const view = await fetchRange(state.month);
+    const view = await fetchRange(state.month, false);
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
@@ -1985,8 +1998,15 @@ function importInput() {
   } };
   const stationMap = importStationMap();
   if (stationMap) input.station_map = stationMap;
-  if (Array.isArray(state.importMatrix)) input.matrix = state.importMatrix;
-  else {
+  if (Array.isArray(state.importMatrix)) {
+    input.matrix = state.importMatrix;
+    // טווחי התוויות קיימים רק ב-XLSX ונחתמים יחד עם המטריצה. ב-CSV/TSV
+    // אין מטא-נתון כזה, ולכן אסור לשלוח שדה שנראה סמכותי אך הומצא בלקוח.
+    if (state.importSelectedFile && /\.xlsx$/i.test(String(state.importSelectedFile.name || ''))
+        && Array.isArray(state.importLabelSpans)) {
+      input.label_spans = state.importLabelSpans;
+    }
+  } else {
     const paste = $('importPaste').value;
     if (!paste.trim()) throw new Error('צריך לבחור קובץ או להדביק את הגיליון.');
     input.paste = paste;
@@ -2018,7 +2038,8 @@ function renderImportReport(report) {
   const counts = $('importCounts'); clear(counts);
   const c = report.counts || {};
   [['ימים', c.days || 0], ['שיבוצים', c.assignments || 0], ['היעדרויות', c.absences || 0],
-    ['ימים מתחת לקו', c.below_minimum || 0], ['שמות לא מזוהים', c.unresolved || 0], ['כפילויות', c.duplicates || 0]]
+    ['ימים מתחת לקו', c.below_minimum || 0], ['שמות לא מזוהים', c.unresolved || 0],
+    ['כפילויות', c.duplicates || 0], ['שיבוץ וגם היעדרות', c.assignment_absence_conflicts || 0]]
     .forEach(([label, value]) => {
       const metric = node('div', 'metric');
       metric.append(node('b', '', value), node('span', '', label));
@@ -2070,6 +2091,19 @@ function renderImportReport(report) {
     dups.appendChild(node('div', 'change weak',
       item.name + ' מופיע ב-' + dateLabel(item.date) + ' בשתי תחנות: ' + item.blocks.join(' + ') + ' — יש לתקן בגיליון.'));
   });
+  (report.assignment_absence_conflicts || []).forEach((item) => {
+    const stations = (Array.isArray(item.stations) ? item.stations : []).map((id) => {
+      const station = state.policy && state.policy.sub_stations && state.policy.sub_stations[id];
+      return station && station.label ? station.label : id;
+    }).join(', ');
+    const absences = (Array.isArray(item.absences) ? item.absences : []).map((absence) => {
+      const kind = ABSENCE_ROWS.find(([id]) => id === absence.kind);
+      const location = ABSENCE_LOCATIONS.get(absence.location);
+      return (kind ? kind[1] : absence.kind) + (location ? ' · ' + location : '');
+    }).join(', ');
+    dups.appendChild(node('div', 'change weak', item.name + ' מופיע ב-' + dateLabel(item.date)
+      + ' גם בשיבוץ (' + stations + ') וגם בהיעדרות (' + absences + ') — יש לבחור אחד מהם בגיליון.'));
+  });
   (report.warnings || []).forEach((warning) => {
     if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
     dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
@@ -2089,6 +2123,7 @@ function importBlockedText(report) {
   const why = report.blocked_by || [];
   if (why.indexOf('no-assignments') !== -1) return 'לא נמצא אף שיבוץ. האם החודש נכון והתוויות בעמודה הימנית?';
   if (why.indexOf('oversized-cells') !== -1) return 'יש תא עם יותר מדי שמות — יש לפצל אותו בגיליון ולהדביק שוב.';
+  if (why.indexOf('assignment-absence-conflicts') !== -1) return 'יש אדם שמופיע באותו יום גם בשיבוץ וגם בהיעדרות. הפרטים מופיעים בדוח — יש לתקן בגיליון ולבדוק שוב.';
   if (why.indexOf('duplicates') !== -1) return 'יש כפילויות — אדם שמופיע בשתי תחנות באותו יום. יש לתקן בגיליון ולהדביק שוב.';
   if (why.indexOf('unresolved') !== -1) return 'יש שמות שלא זוהו. התאם אותם למטה ולחץ שוב על „בדוק את ההדבקה".';
   if (why.indexOf('missing-stations') !== -1 || why.indexOf('ignored-blocks') !== -1) return 'יש תחנות חסרות או שמות שלא ייכנסו. סמן שראית, ולחץ שוב על „בדוק את ההדבקה".';
@@ -2180,7 +2215,9 @@ function displayRequestId(action, month, generation, draftId, contentDigest) {
 }
 
 function renderImportDisplayStatus() {
-  const status = state.importDisplay;
+  const month = $('importMonth').value;
+  const status = state.importDisplay && state.importDisplay.month === month
+    ? state.importDisplay : null;
   const active = status && status.enabled === true;
   $('importClear').hidden = !active;
   $('importDisplayStatus').textContent = active
@@ -2189,23 +2226,39 @@ function renderImportDisplayStatus() {
   updateImportDisplayAvailability();
 }
 
+function importedDraftCoversMonth(draft, month) {
+  if (!draft || !draft.draft_id || !draft.content_digest
+      || !/^\d{4}-\d{2}$/.test(String(month || ''))) return false;
+  const bounds = monthBounds(month);
+  return draft.from === bounds.from && draft.to === bounds.to;
+}
+
 function updateImportDisplayAvailability() {
   const draft = state.importedDraft;
   const month = $('importMonth').value;
   const mayDisplay = canManageSchedule() && state.status
     && ['off', 'shadow'].indexOf(state.status.mode) !== -1;
-  $('importShow').disabled = state.busy || !mayDisplay || !draft
-    || String(draft.from || '').slice(0, 7) !== month || !draft.content_digest;
+  $('importShow').disabled = state.busy || !mayDisplay
+    || !importedDraftCoversMonth(draft, month);
   $('importClear').disabled = state.busy || !mayDisplay
-    || !state.importDisplay || state.importDisplay.enabled !== true;
+    || !state.importDisplay || state.importDisplay.enabled !== true
+    || state.importDisplay.month !== month;
 }
 
 async function loadImportDisplayStatus(month) {
   if (!canManageSchedule() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
+  if ($('importMonth').value !== month) return;
+  const sequence = ++state.displayStatusSequence;
+  state.importDisplay = null;
+  renderImportDisplayStatus();
   try {
-    state.importDisplay = (await call.displayStatus({ month })).data;
+    const status = (await call.displayStatus({ month })).data;
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+        || !status || status.month !== month) return;
+    state.importDisplay = status;
     renderImportDisplayStatus();
   } catch (error) {
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     state.importDisplay = null;
     $('importClear').hidden = true;
     $('importDisplayStatus').textContent = 'לא ניתן לבדוק איזה סידור מיובא מוצג: ' + errorText(error);
@@ -2220,8 +2273,11 @@ async function showImportedSchedule() {
   if (!state.importDisplay || state.importDisplay.month !== month) {
     await loadImportDisplayStatus(month);
   }
-  if (!state.importDisplay) return;
+  if (!state.importDisplay || state.importDisplay.month !== month
+      || $('importMonth').value !== month || state.importedDraft !== draft
+      || !importedDraftCoversMonth(draft, month)) return;
   const generation = Number(state.importDisplay.generation || 0);
+  const sequence = ++state.displayStatusSequence;
   state.busy = true;
   updateImportDisplayAvailability();
   message('importMessage', 'מחבר את הסידור המיובא ללוח החודש…', 'info');
@@ -2233,6 +2289,8 @@ async function showImportedSchedule() {
       draft_id: draft.draft_id,
       expected_content_digest: draft.content_digest
     })).data;
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+        || !result || result.month !== month) return;
     state.importDisplay = result;
     renderImportDisplayStatus();
     message('importMessage', 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר '
@@ -2240,6 +2298,7 @@ async function showImportedSchedule() {
     invalidateRange();
     await loadStationRange(month);
   } catch (error) {
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
     await loadImportDisplayStatus(month);
   } finally {
@@ -2251,7 +2310,10 @@ async function showImportedSchedule() {
 async function clearImportedSchedule() {
   if (state.busy || $('importClear').disabled || !state.importDisplay) return;
   const month = $('importMonth').value;
-  const generation = Number(state.importDisplay.generation || 0);
+  const status = state.importDisplay;
+  if (status.month !== month || status.enabled !== true) return;
+  const generation = Number(status.generation || 0);
+  const sequence = ++state.displayStatusSequence;
   state.busy = true;
   updateImportDisplayAvailability();
   message('importMessage', 'מסיר את הסידור המיובא מתצוגת הלוח…', 'info');
@@ -2261,12 +2323,15 @@ async function clearImportedSchedule() {
       request_id: displayRequestId('clear', month, generation, null, null),
       expected_generation: generation
     })).data;
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+        || !result || result.month !== month) return;
     state.importDisplay = result;
     renderImportDisplayStatus();
     message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
     invalidateRange();
     await loadStationRange(month);
   } catch (error) {
+    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
     await loadImportDisplayStatus(month);
   } finally {
@@ -2571,6 +2636,7 @@ $('importCheck').addEventListener('click', managerAction(checkImport));
 $('importPaste').addEventListener('input', () => {
   state.importAliases = {};
   state.importMatrix = null;
+  state.importLabelSpans = null;
   state.importFileName = null;
   state.importedDraft = null;
   $('importFile').value = '';
@@ -2581,6 +2647,7 @@ $('importPaste').addEventListener('input', () => {
 async function loadImportFile(file) {
   state.importAliases = {};
   state.importMatrix = null;
+  state.importLabelSpans = null;
   state.importFileName = null;
   state.importedDraft = null;
   state.importSelectedFile = file || null;
@@ -2595,6 +2662,8 @@ async function loadImportFile(file) {
     if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לפני בחירת הקובץ.');
     const result = await readScheduleFile(file, { month });
     state.importMatrix = result.matrix;
+    state.importLabelSpans = result.kind === 'xlsx' && Array.isArray(result.label_spans)
+      ? result.label_spans : null;
     state.importFileName = result.name;
     $('importPaste').value = '';
     $('importFileStatus').textContent = result.name
@@ -2605,6 +2674,7 @@ async function loadImportFile(file) {
   } catch (error) {
     $('importFile').value = '';
     state.importSelectedFile = null;
+    state.importLabelSpans = null;
     $('importFileStatus').textContent = 'הקובץ לא נקרא.';
     message('importMessage', errorText(error), 'err');
   }
@@ -2615,6 +2685,11 @@ $('importFile').addEventListener('change', async () => {
   await loadImportFile(file);
 });
 $('importMonth').addEventListener('change', async () => {
+  const month = $('importMonth').value;
+  // תשובת סטטוס/ניקוי של החודש הקודם אינה רשאית לחזור ולצייר אותו.
+  ++state.displayStatusSequence;
+  state.importDisplay = null;
+  renderImportDisplayStatus();
   invalidateImportReport();
   state.importedDraft = null;
   updateImportDisplayAvailability();
@@ -2622,17 +2697,22 @@ $('importMonth').addEventListener('change', async () => {
   if (file) {
     $('importFileStatus').textContent = 'החודש השתנה — קורא שוב את קובץ ה-Excel…';
     try {
-      const result = await readScheduleFile(file, { month:$('importMonth').value });
+      const result = await readScheduleFile(file, { month });
+      if ($('importMonth').value !== month || state.importSelectedFile !== file) return;
       state.importMatrix = result.matrix;
+      state.importLabelSpans = result.kind === 'xlsx' && Array.isArray(result.label_spans)
+        ? result.label_spans : null;
       state.importFileName = result.name;
       $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
     } catch (error) {
+      if ($('importMonth').value !== month || state.importSelectedFile !== file) return;
       state.importMatrix = null;
+      state.importLabelSpans = null;
       $('importFileStatus').textContent = 'הקובץ לא נקרא לחודש שנבחר.';
       message('importMessage', errorText(error), 'err');
     }
   }
-  await loadImportDisplayStatus($('importMonth').value);
+  if ($('importMonth').value === month) await loadImportDisplayStatus(month);
 });
 $('importAcceptMissing').addEventListener('change', invalidateImportReport);
 $('importAcceptIgnored').addEventListener('change', invalidateImportReport);

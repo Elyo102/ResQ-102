@@ -132,7 +132,8 @@ function firestoreWithCollectionReadBarrier(pathSuffix, afterRead) {
 const PEOPLE = [
   ['u1', 'רועי כהן', 'eilat', 'A'], ['u2', 'דניאל לוי', 'eilat', 'A'], ['u3', 'יוסי מזרחי', 'shahmon', 'B'],
   ['u4', 'עמית פרץ', 'timna', 'C'], ['u5', 'גיא ברק', 'yotvata', 'A'], ['u6', 'רועי אברהם', 'eilat', 'B'],
-  ['u7', 'נועם דהן', 'eilat', 'B'], ['u8', 'אורי שלום', 'eilat', 'C'], ['u9', 'ליאור נחום', 'eilat', 'A']
+  ['u7', 'נועם דהן', 'eilat', 'B'], ['u8', 'אורי שלום', 'eilat', 'C'], ['u9', 'ליאור נחום', 'eilat', 'A'],
+  ['ux', 'רועי ישראלי', 'eilat', 'C']
 ];
 const row = (cells) => cells.join('\t');
 const SHEET = [
@@ -148,6 +149,31 @@ const SHEET = [
   row(['באילת', '', '', 'רועי כהן'])
 ].join('\n');
 const MATRIX = SHEET.split('\n').map((line) => line.split('\t'));
+const SPAN_MATRIX = (() => {
+  const matrix = MATRIX.map((cells) => cells.slice());
+  matrix.splice(6, 0,
+    ['', 'אבטחה', '', ''],
+    ['', '17:45-08:00', '', '']);
+  return matrix;
+})();
+const FULL_MONTH_SHEET = (() => {
+  const lines = SHEET.split('\n').map((line) => line.split('\t'));
+  for (let day = 4; day <= 30; day += 1) {
+    lines[0].push(day + '/9/26');
+    lines[1].push('');
+    for (let rowIndex = 2; rowIndex < lines.length; rowIndex += 1) lines[rowIndex].push('');
+  }
+  return lines.map((line) => line.join('\t')).join('\n');
+})();
+const CONFLICT_SHEET = [
+  row(['', '1/9', '2/9', '3/9']),
+  row(['', 'ג', 'ד', 'ה']),
+  row(['אילת', 'רועי כהן', '', '']),
+  row(['שחמון', '', 'יוסי מזרחי', '']),
+  row(['תמנע', '', '', 'עמית פרץ']),
+  row(['יטבתה', '', '', '']),
+  row(['מחלה', 'רועי כהן', '', ''])
+].join('\n');
 
 async function seed() {
   await station().set({ name: 'Sheet Import Integration Station' });
@@ -231,7 +257,7 @@ async function test(name, fn) {
   await wipe();
   await seed();
   const api = runtime();
-  const aliases = { 'רועי': 'u1', 'אבטחה': null };
+  const aliases = { 'רועי': 'ux', 'אבטחה': null };
   let ready = null;
   let imported = null;
   let preview = null;
@@ -292,7 +318,7 @@ async function test(name, fn) {
     const entries = absenceDocs.docs.reduce((n, doc) => n + ((doc.data() || {}).entries || []).length, 0);
     assert.equal(entries, 5, 'ההיעדרויות בתת-האוסף אינן תואמות ל-absence_count');
     const stored = (await station().collection('schedule_state').doc('sheet_aliases').get()).data() || {};
-    assert.deepEqual(stored.aliases, { 'רועי': 'u1', 'אבטחה': null });
+    assert.deepEqual(stored.aliases, { 'רועי': 'ux', 'אבטחה': null });
   });
 
   await test('draft preview shows the sheet template: four station rows, crews, absences', async () => {
@@ -303,7 +329,7 @@ async function test(name, fn) {
     assert.deepEqual([day.sub_stations[0].people.length, day.sub_stations[0].minimum, day.sub_stations[0].below_minimum], [7, 7, false]);
     assert.deepEqual(day.sub_stations[0].people.map((p) => p.uid), ['u1', 'u2', 'u9', 'u5', 'u8', 'u7', 'u4'], 'סדר הגיליון נשמר');
     assert.deepEqual(preview.days.map((d) => d.crew), ['A', 'B', 'C']);
-    assert.deepEqual(day.absences.map((a) => [a.uid, a.kind, a.location || null]), [['u6', 'sick', null], ['u1', 'leave', 'north']]);
+    assert.deepEqual(day.absences.map((a) => [a.uid, a.kind, a.location || null]), [['u6', 'sick', null], ['ux', 'leave', 'north']]);
     assert.equal(day.absences_status, 'ready');
     assert.deepEqual(day.absence_coverage,
       { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
@@ -380,14 +406,83 @@ async function test(name, fn) {
     });
   });
 
+  await test('the runtime preserves XLSX label_spans and rejects them on paste input', async () => {
+    const spans = [{ column: 0, start_row: 5, end_row: 5 }];
+    const report = await api.previewScheduleImport(req(MGR, {
+      month: '2026-09', matrix: SPAN_MATRIX, label_spans: spans, aliases
+    }));
+    const yotvata = report.blocks.find((block) => block.sub_station === 'yotvata');
+    const ignored = report.blocks.find((block) => block.kind === 'ignored' && block.rows[0] === 7);
+    assert.deepEqual(yotvata.rows, [6, 6]);
+    assert.deepEqual(ignored && ignored.rows, [7, 8]);
+    assert.equal(report.counts.assignment_absence_conflicts, 0,
+      'ה-fixture התקין מכיל סתירת שיבוץ/היעדרות מקרית');
+    const invalid = await caught(() => api.previewScheduleImport(req(MGR, {
+      month: '2026-09', paste: SHEET, label_spans: spans
+    })));
+    assert.equal(invalid && invalid.code, 'import-label-spans-invalid', invalid && invalid.message);
+  });
+
+  await test('label_spans is part of the signed import intent and cannot change on request replay', async () => {
+    const accept = { ignored_blocks: true };
+    const spans = [{ column: 0, start_row: 5, end_row: 5 }];
+    const report = await api.previewScheduleImport(req(MGR, {
+      month: '2026-09', matrix: SPAN_MATRIX, label_spans: spans, aliases, accept
+    }));
+    const spanImport = await api.importScheduleSheet(req(MGR, {
+      request_id: 'sheet_matrix_spans', month: '2026-09', matrix: SPAN_MATRIX,
+      label_spans: spans, aliases, accept,
+      expected_report_digest: report.report_digest
+    }));
+    assert.equal(spanImport.duplicate, false);
+    const changedSpans = [{ column: 0, start_row: 5, end_row: 6 }];
+    const changedReport = await api.previewScheduleImport(req(MGR, {
+      month: '2026-09', matrix: SPAN_MATRIX, label_spans: changedSpans, aliases, accept
+    }));
+    const conflict = await caught(() => api.importScheduleSheet(req(MGR, {
+      request_id: 'sheet_matrix_spans', month: '2026-09', matrix: SPAN_MATRIX,
+      label_spans: changedSpans, aliases, accept,
+      expected_report_digest: changedReport.report_digest
+    })));
+    assert.equal(conflict && conflict.code, 'request-conflict', conflict && conflict.message);
+  });
+
+  await test('assignment/absence conflict is reported exactly and blocks import without a draft', async () => {
+    const before = (await station().collection('schedule_drafts').get()).size;
+    const report = await api.previewScheduleImport(req(MGR, {
+      month: '2026-09', paste: CONFLICT_SHEET
+    }));
+    assert.deepEqual(report.assignment_absence_conflicts, [{
+      uid: 'u1', name: 'רועי כהן', date: '2026-09-01',
+      stations: ['eilat'], absences: [{ kind: 'sick', location: null }]
+    }]);
+    assert.deepEqual([
+      report.counts.assignment_absence_conflicts, report.blocked, report.blocked_by
+    ], [1, true, ['assignment-absence-conflicts']]);
+    const error = await caught(() => api.importScheduleSheet(req(MGR, {
+      request_id: 'sheet_assignment_absence_conflict', month: '2026-09',
+      paste: CONFLICT_SHEET, expected_report_digest: report.report_digest
+    })));
+    assert.equal(error && error.code, 'import-blocked', error && error.message);
+    assert.equal((await station().collection('schedule_drafts').get()).size, before);
+  });
+
   /* ------------------------------------------------------------------
    * 42H.2 · תצוגת טיוטת ייבוא כשהמנוע כבוי
    *
    * מצביע התצוגה נפרד במכוון מ-runtime/active/publications/outbox.  כל
    * הבדיקות כאן רצות מול עסקאות Firestore אמיתיות, כולל CAS ומרוצים.
    * ------------------------------------------------------------------ */
+  const fullReady = await api.previewScheduleImport(req(MGR, {
+    month: '2026-09', paste: FULL_MONTH_SHEET, aliases
+  }));
+  const displayImported = await api.importScheduleSheet(req(MGR, {
+    request_id: 'sheet_display_full_month', month: '2026-09',
+    paste: FULL_MONTH_SHEET, aliases,
+    expected_report_digest: fullReady.report_digest
+  }));
   const displayRef = station().collection('schedule_state').doc('display_2026_09');
-  const draftRef = station().collection('schedule_drafts').doc(imported.draft_id);
+  const displayDraftRef = station().collection('schedule_drafts').doc(displayImported.draft_id);
   const displayAuditCount = async () => {
     const snap = await station().collection('schedule_audit').get();
     return snap.docs.filter((doc) => (doc.data() || {}).kind === 'schedule-display').length;
@@ -404,8 +499,8 @@ async function test(name, fn) {
   const showInput = (requestId, generation) => ({
     action: 'show', month: '2026-09', request_id: requestId,
     expected_generation: generation,
-    draft_id: imported.draft_id,
-    expected_content_digest: imported.content_digest
+    draft_id: displayImported.draft_id,
+    expected_content_digest: displayImported.content_digest
   });
 
   await runtimeDoc().set({ mode: 'off' }, { merge: true });
@@ -445,7 +540,7 @@ async function test(name, fn) {
 
   await test('show refuses a manager appointment revoked after the draft read and writes nothing', async () => {
     let fired = false;
-    const barrier = firestoreWithCollectionReadBarrier('/schedule_drafts/' + imported.draft_id, async () => {
+    const barrier = firestoreWithCollectionReadBarrier('/schedule_drafts/' + displayImported.draft_id, async () => {
       fired = true;
       await station().collection('schedule_access').doc(MGR).delete();
     });
@@ -467,35 +562,35 @@ async function test(name, fn) {
   });
 
   await test('show refuses a draft whose station metadata does not match the caller station', async () => {
-    await draftRef.update({ station_id: 'different_station' });
+    await displayDraftRef.update({ station_id: 'different_station' });
     try {
       const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_wrong_station', 0))));
       assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
       assert.equal((await displayRef.get()).exists, false);
     } finally {
-      await draftRef.update({ station_id: SID });
+      await displayDraftRef.update({ station_id: SID });
     }
   });
 
   await test('show refuses a non-imported draft even when the snapshot is otherwise signed', async () => {
-    await draftRef.update({ imported: false });
+    await displayDraftRef.update({ imported: false });
     try {
       const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_not_imported', 0))));
       assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
       assert.equal((await displayRef.get()).exists, false);
     } finally {
-      await draftRef.update({ imported: true });
+      await displayDraftRef.update({ imported: true });
     }
   });
 
   await test('show refuses an incomplete imported draft', async () => {
-    await draftRef.update({ snapshot_complete: false });
+    await displayDraftRef.update({ snapshot_complete: false });
     try {
       const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_incomplete', 0))));
       assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
       assert.equal((await displayRef.get()).exists, false);
     } finally {
-      await draftRef.update({ snapshot_complete: true });
+      await displayDraftRef.update({ snapshot_complete: true });
     }
   });
 
@@ -517,7 +612,7 @@ async function test(name, fn) {
     shown = await api.setScheduleDisplay(req(MGR, showInput('display_show_1', 0)));
     assert.deepEqual([
       shown.enabled, shown.generation, shown.mode, shown.draft_id, shown.content_digest
-    ], [true, 1, 'off', imported.draft_id, imported.content_digest]);
+    ], [true, 1, 'off', displayImported.draft_id, displayImported.content_digest]);
     assert.deepEqual((await runtimeDoc().get()).data() || {}, displayRuntimeBefore,
       'בחירת תצוגה שינתה את מסמך מצב המנוע');
     assert.equal((await station().collection('schedule_state').doc('active').get()).exists, false);
@@ -529,13 +624,15 @@ async function test(name, fn) {
     const status = await api.getScheduleDisplayStatus(req(MGR, { month: '2026-09' }));
     assert.deepEqual(status, {
       month: '2026-09', enabled: true, generation: 1,
-      draft_id: imported.draft_id, content_digest: imported.content_digest,
-      from: '2026-09-01', to: '2026-09-03'
+      draft_id: displayImported.draft_id, content_digest: displayImported.content_digest,
+      from: '2026-09-01', to: '2026-09-30'
     });
   });
 
   await test('off-mode station range is the ordered four-station import with line seven and absences', async () => {
-    const board = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    const board = await api.getStationRange(req('viewer', {
+      from: '2026-09-01', to: '2026-09-03', display_imported: true
+    }));
     assert.deepEqual([board.mode, board.source, board.imported, board.display_only, board.display_generation],
       ['off', 'imported-display', true, true, 1]);
     assert.deepEqual(board.days.map((day) => day.crew), ['A', 'B', 'C']);
@@ -553,17 +650,123 @@ async function test(name, fn) {
       board.days[1].sub_stations[0].below_minimum
     ], [7, false, 7, true], 'קו המינימום של אילת אינו 7');
     assert.deepEqual(board.days[0].absences.map((item) => [item.uid, item.kind, item.location || null]),
-      [['u6', 'sick', null], ['u1', 'leave', 'north']]);
+      [['u6', 'sick', null], ['ux', 'leave', 'north']]);
+  });
+
+  await test('standby adds workers without replacing or hiding the primary 24-hour crew', async () => {
+    const overrideRef = station().collection('shift_overrides').doc('2026-09-01');
+    await overrideRef.set({ date: '2026-09-01', kind: 'standby', extra_crews: ['B'] });
+    try {
+      const board = await api.getStationRange(req('viewer', {
+        from: '2026-09-01', to: '2026-09-03', display_imported: true
+      }));
+      assert.deepEqual(board.days.map((day) => day.crew), ['A', 'B', 'C']);
+    } finally {
+      await overrideRef.delete();
+    }
+  });
+
+  await test('an import based on a superseded policy/source is refused before names are returned', async () => {
+    await runtimeDoc().set({ active_policy_id: 'policy_replaced' }, { merge: true });
+    try {
+      const error = await caught(() => api.getStationRange(req('viewer', {
+        from: '2026-09-01', to: '2026-09-03', display_imported: true
+      })));
+      assert.equal(error && error.code, 'display-draft-stale', error && error.message);
+      assert.equal(error && error.days, undefined);
+    } finally {
+      await runtimeDoc().set(displayRuntimeBefore);
+    }
+  });
+
+  await test('a policy/source switch while the import is read aborts the response', async () => {
+    let fired = false;
+    const racing = runtime({
+      beforeLiveGuardViewRecheck: async ({ kind }) => {
+        if (fired || kind !== 'imported-display') return;
+        fired = true;
+        await runtimeDoc().set({ active_source_id: 'source_replaced' }, { merge: true });
+      }
+    });
+    try {
+      const error = await caught(() => racing.getStationRange(req('viewer', {
+        from: '2026-09-01', to: '2026-09-03', display_imported: true
+      })));
+      assert.equal(fired, true);
+      assert.equal(error && error.code, 'display-config-changed', error && error.message);
+      assert.equal(error && error.days, undefined);
+    } finally {
+      await runtimeDoc().set(displayRuntimeBefore);
+    }
+  });
+
+  await test('a rotation changed during imported-board decoration aborts the response', async () => {
+    const rotationRef = station().collection('rotations').doc('rA');
+    const stableRotation = (await rotationRef.get()).data() || {};
+    let fired = false;
+    const racing = runtime({
+      beforeLiveGuardViewRecheck: async ({ kind }) => {
+        if (fired || kind !== 'imported-display') return;
+        fired = true;
+        await rotationRef.set(Object.assign({}, stableRotation, { anchor_date: '2026-09-02' }));
+      }
+    });
+    try {
+      const error = await caught(() => racing.getStationRange(req('viewer', {
+        from: '2026-09-01', to: '2026-09-03', display_imported: true
+      })));
+      assert.equal(fired, true);
+      assert.equal(error && error.code, 'legacy-schedule-changed', error && error.message);
+      assert.equal(error && error.days, undefined);
+    } finally {
+      await rotationRef.set(stableRotation);
+    }
+  });
+
+  await test('an override created during imported-board decoration aborts the response', async () => {
+    const overrideRef = station().collection('shift_overrides').doc('2026-09-02');
+    let fired = false;
+    const racing = runtime({
+      beforeLiveGuardViewRecheck: async ({ kind }) => {
+        if (fired || kind !== 'imported-display') return;
+        fired = true;
+        await overrideRef.set({ date: '2026-09-02', kind: 'swap', crew: 'C' });
+      }
+    });
+    try {
+      const error = await caught(() => racing.getStationRange(req('viewer', {
+        from: '2026-09-01', to: '2026-09-03', display_imported: true
+      })));
+      assert.equal(fired, true);
+      assert.equal(error && error.code, 'legacy-schedule-changed', error && error.message);
+      assert.equal(error && error.days, undefined);
+    } finally {
+      await overrideRef.delete();
+    }
   });
 
   await test('show replay is idempotent and a reused request id with different intent conflicts', async () => {
     const replay = await api.setScheduleDisplay(req(MGR, showInput('display_show_1', 0)));
     assert.deepEqual([replay.duplicate, replay.enabled, replay.generation], [true, true, 1]);
     assert.equal(await displayAuditCount(), displayAuditsBefore + 1);
-    const conflict = await caught(() => api.setScheduleDisplay(req(MGR, {
-      action: 'clear', month: '2026-09', request_id: 'display_show_1', expected_generation: 1
-    })));
-    assert.equal(conflict && conflict.code, 'request-conflict', conflict && conflict.message);
+  });
+
+  await test('a completed show replays after draft cleanup/mode change; changed payload still conflicts first', async () => {
+    const displayDraft = (await displayDraftRef.get()).data() || {};
+    await displayDraftRef.delete();
+    await runtimeDoc().set({ mode: 'new' }, { merge: true });
+    try {
+      const replay = await api.setScheduleDisplay(req(MGR, showInput('display_show_1', 0)));
+      assert.deepEqual([replay.duplicate, replay.enabled, replay.generation], [true, true, 1]);
+      const changed = showInput('display_show_1', 0);
+      changed.expected_content_digest = '0'.repeat(64);
+      const conflict = await caught(() => api.setScheduleDisplay(req(MGR, changed)));
+      assert.equal(conflict && conflict.code, 'request-conflict', conflict && conflict.message);
+      assert.equal(await displayAuditCount(), displayAuditsBefore + 1);
+    } finally {
+      await displayDraftRef.set(displayDraft);
+      await runtimeDoc().set(displayRuntimeBefore);
+    }
   });
 
   await test('a stale generation loses the real Firestore transaction race without a second audit', async () => {
@@ -583,7 +786,7 @@ async function test(name, fn) {
       }
     });
     const error = await caught(() => racing.getStationRange(
-      req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+      req('viewer', { from: '2026-09-01', to: '2026-09-03', display_imported: true })));
     assert.equal(fired, true);
     assert.equal(error && error.code, 'schedule-display-changed', error && error.message);
     assert.equal(error && error.days, undefined);
@@ -601,7 +804,7 @@ async function test(name, fn) {
       }
     });
     const error = await caught(() => racing.getStationRange(
-      req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+      req('viewer', { from: '2026-09-01', to: '2026-09-03', display_imported: true })));
     assert.equal(fired, true);
     assert.equal(error && error.code, 'board-viewer-changed', error && error.message);
     assert.equal(error && error.days, undefined);
@@ -620,9 +823,11 @@ async function test(name, fn) {
     assert.deepEqual([replay.duplicate, replay.enabled, replay.generation], [true, false, 3]);
     const status = await api.getScheduleDisplayStatus(req(MGR, { month: '2026-09' }));
     assert.deepEqual([status.enabled, status.generation, status.draft_id], [false, 3, null]);
-    const board = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    const board = await api.getStationRange(req('viewer', {
+      from: '2026-09-01', to: '2026-09-03', display_imported: true
+    }));
     assert.equal(board.source, 'legacy');
-    assert.equal((await draftRef.get()).exists, true, 'clear must not delete the imported draft');
+    assert.equal((await displayDraftRef.get()).exists, true, 'clear must not delete the imported draft');
     assert.deepEqual((await runtimeDoc().get()).data() || {}, displayRuntimeBefore,
       'clear changed the engine mode/configuration');
     assert.equal((await station().collection('schedule_state').doc('active').get()).exists, false);
@@ -664,7 +869,7 @@ async function test(name, fn) {
     assert.equal(range.imported, true);
     assert.deepEqual(range.days.map((d) => d.crew), ['A', 'B', 'C']);
     assert.deepEqual(range.days.map((d) => d.absences.map((a) => a.uid + ':' + a.kind)),
-      [['u6:sick', 'u1:leave'], ['u6:sick', 'u9:course'], ['u1:leave']]);
+      [['u6:sick', 'ux:leave'], ['u6:sick', 'u9:course'], ['u1:leave']]);
     assert.deepEqual(range.days[0].absence_coverage,
       { sick: 'ready', reserve: 'missing', course: 'ready', leave: 'ready' });
     assert.equal(range.days[0].sub_stations.length, 4);

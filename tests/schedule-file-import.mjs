@@ -78,14 +78,20 @@ function workbookFixture(options = {}) {
     dateCells.push(`<c r="${columnName(day + 1)}1"><v>${excelSerial(year, 9, day)}</v></c>`);
   }
   const formula = options.formula ? '<c r="B4"><f>1+1</f><v>2</v></c>' : '';
-  const worksheet = `<?xml version="1.0" encoding="UTF-8"?>
-    <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
-      <row r="1"><c r="A1" t="inlineStr"><is><t> </t></is></c>${dateCells.join('')}</row>
+  const bodyRows = options.bodyRows || `
       <row r="2"><c r="B2" t="inlineStr"><is><t>ג</t></is></c></row>
       <row r="3"><c r="A3" t="s"><v>0</v></c><c r="B3" t="s"><v>1</v></c></row>
       <row r="4">${formula}</row>
-      <row r="5"><c r="A5" t="s"><v>2</v></c><c r="B5" t="s"><v>3</v></c></row>
-    </sheetData></worksheet>`;
+      <row r="5"><c r="A5" t="s"><v>2</v></c><c r="B5" t="s"><v>3</v></c></row>`;
+  const mergeRefs = options.mergeRefs || [];
+  const mergeCells = mergeRefs.length
+    ? `<mergeCells count="${mergeRefs.length}">${mergeRefs.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>`
+    : '';
+  const worksheet = `<?xml version="1.0" encoding="UTF-8"?>
+    <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t> </t></is></c>${dateCells.join('')}</row>
+      ${bodyRows}
+    </sheetData>${mergeCells}</worksheet>`;
   const parts = [
     ['xl/workbook.xml', `<?xml version="1.0"?><workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${year}" sheetId="1" r:id="rId1"/></sheets></workbook>`],
     ['xl/_rels/workbook.xml.rels', '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
@@ -136,6 +142,40 @@ await test('XLSX שנתי מחזיר רק את החודש שנבחר ובאות�
   assert.deepEqual(result.matrix[0].slice(0, 4), [' ', '2026-09-01', '2026-09-02', '2026-09-03']);
   assert.deepEqual(result.matrix[2].slice(0, 3), ['אילת', 'כבאי ראשון', '']);
   assert.deepEqual(result.matrix[4].slice(0, 3), ['מחלה', 'כבאי שני', '']);
+  assert.deepEqual(result.label_spans, []);
+});
+await test('XLSX שומר את A28:A29 כטווח תווית ואינו בולע אירועים בשורות 30–31', async () => {
+  const bodyRows = `
+    <row r="28"><c r="A28" t="inlineStr"><is><t>יטבתה</t></is></c><c r="B28" t="inlineStr"><is><t>כבאי ראשון</t></is></c></row>
+    <row r="29"><c r="B29" t="inlineStr"><is><t>כבאי שני</t></is></c></row>
+    <row r="30"><c r="B30" t="inlineStr"><is><t>אבטחה 06:00–17:00</t></is></c></row>
+    <row r="31"><c r="B31" t="inlineStr"><is><t>קורס 08:00–16:00</t></is></c></row>`;
+  const result = await readScheduleFile(fakeFile('schedule.xlsx', workbookFixture({
+    bodyRows,
+    mergeRefs:['A28:A29']
+  })), { month:'2026-09' });
+  assert.deepEqual(result.label_spans, [{ column:0, start_row:27, end_row:28 }]);
+  assert.equal(result.matrix[27][0], 'יטבתה');
+  assert.equal(result.matrix[28][0], '');
+  assert.deepEqual(result.matrix.slice(29, 31).map((row) => row[1]), [
+    'אבטחה 06:00–17:00',
+    'קורס 08:00–16:00'
+  ]);
+});
+await test('XLSX דוחה טווחי מיזוג חופפים', async () => {
+  await assert.rejects(() => readScheduleFile(fakeFile('schedule.xlsx', workbookFixture({
+    mergeRefs:['A3:A4', 'A4:A5']
+  })), { month:'2026-09' }), { code:'xlsx-merge-overlap' });
+});
+await test('XLSX דוחה טווח מיזוג מחוץ לגבולות הגיליון הבטוחים', async () => {
+  await assert.rejects(() => readScheduleFile(fakeFile('schedule.xlsx', workbookFixture({
+    mergeRefs:['A1:A10001']
+  })), { month:'2026-09' }), { code:'xlsx-merge-large' });
+});
+await test('XLSX דוחה שטח מיזוג מצטבר גדול מדי', async () => {
+  await assert.rejects(() => readScheduleFile(fakeFile('schedule.xlsx', workbookFixture({
+    mergeRefs:['A1:Z10000']
+  })), { month:'2026-09' }), { code:'xlsx-merge-large' });
 });
 await test('הערות ומטא-דאטה של Excel אינן נקראות ואינן נכנסות למטריצה', async () => {
   const bytes = workbookFixture({ extraEntry:['xl/comments/comment1.xml', '<!DOCTYPE x><not-even-valid>'] });
@@ -164,5 +204,5 @@ await test('מגבלת גודל נאכפת לפני קריאה', async () => {
   await assert.rejects(() => readScheduleFile(file), { code:'file-large' });
 });
 
-assert.equal(passed, 15);
-console.log('\n15 schedule file import checks passed.');
+assert.equal(passed, 19);
+console.log('\n19 schedule file import checks passed.');

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h1">
+<link rel="stylesheet" href="./theme.css?v=42h2">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -254,14 +254,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h1';
-import { renderNav, renderStuckNav } from './nav.js?v=42h1';
-import { MEMBER_ROLES } from './roles.js?v=42h1';
-import { initPWA } from './pwa.js?v=42h1';
-import { watchCallouts } from './callout.js?v=42h1';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
+import { renderNav, renderStuckNav } from './nav.js?v=42h2';
+import { MEMBER_ROLES } from './roles.js?v=42h2';
+import { initPWA } from './pwa.js?v=42h2';
+import { watchCallouts } from './callout.js?v=42h2';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h1';
-import { CREW_HE } from './rotation.js?v=42h1';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h2';
+import { CREW_HE } from './rotation.js?v=42h2';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -269,12 +269,12 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h1';
+  from './monitored-functions.js?v=42h2';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h1';
+import { initAppCheck } from './appcheck.js?v=42h2';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

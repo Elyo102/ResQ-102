@@ -11,7 +11,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -29,7 +29,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'closeCallout', 'createStationTransfer', 'decideStationTransfer',
   'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics', 'getJoinCode',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
-  'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
+  'getScheduleDisplayStatus', 'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
   'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
   'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
   'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
@@ -43,7 +43,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'runSchedulePlanner', 'saveSchedulePolicy', 'saveScheduleSource',
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode',
-  'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
+  'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'whoAmI'
 ]);

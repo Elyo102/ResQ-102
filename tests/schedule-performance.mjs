@@ -131,9 +131,12 @@ try {
   assert.equal(await page.locator('#mineView').isVisible(), true);
   await page.locator('#mineBoard .hcell').first().waitFor({ state:'visible', timeout:5000 });
   assert.match(await page.locator('#mineContent').textContent(), /טל חודרה/);
-  // ⭐ המעבר ללשונית האישית אינו קורא את הטווח שוב.
+  // ⭐ הלשונית האישית קוראת פעם אחת את הטווח התפעולי ואינה
+  // ממחזרת את הטיוטה המיובאת שמותר להציג רק בלוח התחנה.
   const afterMine = await page.evaluate(() => window.__CALLABLE_CALLS || []);
-  assert.equal(afterMine.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
+  const rangeCalls = afterMine.filter((entry) => entry.name === 'getStationScheduleRange');
+  assert.equal(rangeCalls.length, 2);
+  assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false]);
   const firestoreWrites = await page.evaluate(() => window.__FIRESTORE_WRITES || []);
   assert.equal(firestoreWrites.length, 0);
 

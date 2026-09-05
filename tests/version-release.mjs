@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.1';
-const EXPECTED_DATE = '4.9.2026';
+const EXPECTED_VERSION = '42H.2';
+const EXPECTED_DATE = '5.9.2026';
 const EXPECTED_VERSIONED_REFERENCES = 205; // +1 schedule-file-import.js on the schedule management screen.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
@@ -30,6 +30,22 @@ function loadSnapshot() {
 
 function releaseKey(version) {
   return String(version || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function shellEntries(worker) {
+  const match = worker.match(/const\s+SHELL\s*=\s*\[([\s\S]*?)\]\s*;/);
+  if (!match) return null;
+  return new Set([...match[1].matchAll(/['"]\.\/([^'"?]+)['"]/g)].map((item) => item[1]));
+}
+
+function localModuleImports(source) {
+  const found = [];
+  const pattern = /(?:\bimport\s+(?:[^'"();]*?\s+from\s*)?|\bexport\s+[^'";]*?\s+from\s+)(['"])(\.\/[^'"]+)\1/g;
+  for (const match of String(source).matchAll(pattern)) {
+    const target = match[2].split(/[?#]/, 1)[0].slice(2);
+    if (/\.(?:js|css)$/.test(target)) found.push(target);
+  }
+  return found;
 }
 
 function audit(files) {
@@ -57,6 +73,22 @@ function audit(files) {
   const cacheMatches = [...worker.matchAll(/const\s+CACHE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (cacheMatches.length !== 1 || cacheMatches[0]?.[1] !== expectedCache) {
     errors.push('service-worker cache is exactly ' + expectedCache);
+  }
+  const shell = shellEntries(worker);
+  if (!shell) {
+    errors.push('service-worker SHELL is statically auditable');
+  } else {
+    for (const entry of shell) {
+      if (!entry.endsWith('.js')) continue;
+      const source = files.get(entry);
+      if (typeof source !== 'string') {
+        errors.push('service-worker SHELL target exists: ./' + entry);
+        continue;
+      }
+      for (const dependency of localModuleImports(source)) {
+        if (!shell.has(dependency)) errors.push('./' + entry + ': offline dependency missing from SHELL: ./' + dependency);
+      }
+    }
   }
 
   let count = 0;
@@ -127,5 +159,8 @@ mustFail('missing target', replaceExactlyOne(files, 'schedule-management.html',
 mustFail('vehicle business query mutation', replaceExactlyOne(files, 'faults.html',
   "location.href = './vehicle.html?v=' + encodeURIComponent(v.id);",
   "location.href = './vehicle.html?v=" + key + "';"));
+mustFail('offline module closure mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
+  "'./schedule-management.js', './schedule-file-import.js', './board.html'",
+  "'./schedule-management.js', './board.html'"));
 
-console.log('Release version contract: ' + baseline.count + ' references; 9/9 mutations caught.');
+console.log('Release version contract: ' + baseline.count + ' references; 10/10 mutations caught.');

@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
-import * as CLIENT from '../effective-workdays.js?v=42h1';
+import * as CLIENT from '../effective-workdays.js?v=42h2';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FN = resolve(HERE, '..', 'functions');

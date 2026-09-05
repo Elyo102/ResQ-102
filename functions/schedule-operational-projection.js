@@ -291,11 +291,24 @@ function normalizeLegacyOverrides(raw, rotations) {
   return byDate;
 }
 
-function legacyCrewState(rotations, overrides, date) {
+function legacyBaseCrew(rotations, date) {
   const position = ((dateOrdinal(date, 'query-date') - dateOrdinal(rotations.anchor, 'rotation-anchor'))
     % rotations.cycleDays + rotations.cycleDays) % rotations.cycleDays;
   const baseCrew = rotations.positions.get(position);
   if (!baseCrew) fail('rotation-gap', 'למחזור חסר יום מוגדר');
+  return baseCrew;
+}
+
+function legacyPrimaryCrew(rotations, overrides, date) {
+  const baseCrew = legacyBaseCrew(rotations, date);
+  const override = overrides.get(date);
+  // Only a replacement changes the 24-hour crew named in the day header.
+  // Standby adds a crew alongside it; holiday/training annotate the same day.
+  return override && override.kind === OVERRIDE_KIND.SWAP ? override.crew : baseCrew;
+}
+
+function legacyCrewState(rotations, overrides, date) {
+  const baseCrew = legacyBaseCrew(rotations, date);
   const override = overrides.get(date);
   if (!override) return { crews: [baseCrew], source: 'legacy_rotation' };
   if (override.kind === OVERRIDE_KIND.SWAP) return { crews: [override.crew], source: 'legacy_override' };
@@ -477,6 +490,9 @@ function legacyModel(input, stationId) {
   return Object.freeze({
     source: SOURCE.LEGACY,
     station_id: stationId,
+    primaryCrewOn: function primaryCrewOn(date) {
+      return legacyPrimaryCrew(rotations, overrides, date);
+    },
     assignmentsOn: assignmentsOn,
     anomaliesOn: swaps.anomaliesOn,
     isPersonWorking: function isPersonWorking(uid, date) {
@@ -657,6 +673,10 @@ function createOperationalProjection(input) {
       const day = checkedDate(date);
       if (model.isPersonWorking) return model.isPersonWorking(person, day);
       return model.assignmentsOn(day).some(function (assignment) { return assignment.uid === person; });
+    },
+    primaryCrewOn: function primaryCrewOn(date) {
+      const day = checkedDate(date);
+      return model.primaryCrewOn ? model.primaryCrewOn(day) : null;
     },
     stationWindow: function stationWindow(range, to) {
       return freezeWindow(model, dateRange(range, to, model));

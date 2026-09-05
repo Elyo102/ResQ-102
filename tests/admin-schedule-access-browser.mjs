@@ -323,8 +323,11 @@ try {
     const calls = await legacySchedulePage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 1);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    // ⭐ שתי הלשוניות חולקות קריאת טווח אחת לחודש.
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
+    // ⭐ תצוגת הייבוא שייכת ללוח התחנה בלבד. „שלי" קורא את הטווח
+    // התפעולי בנפרד, כדי שטיוטת תצוגה ב-off לא תהפוך לשיבוץ אישי.
+    const rangeCalls = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(rangeCalls.length, 2);
+    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false]);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
     const firestoreWrites = await legacySchedulePage.evaluate(() => window.__FIRESTORE_WRITES || []);
     assert.equal(firestoreWrites.length, 0);

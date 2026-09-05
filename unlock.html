@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h1">
+<link rel="stylesheet" href="./theme.css?v=42h2">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -54,14 +54,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h1';
+import { firebaseConfig } from './firebase-config.js?v=42h2';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h1';
+  from './monitored-functions.js?v=42h2';
 
 const app = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h1';
+import { initAppCheck } from './appcheck.js?v=42h2';
 await initAppCheck(app);
 const fns = getFunctions(app, 'europe-west1');
 

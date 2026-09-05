@@ -94,20 +94,40 @@ test('legacy override preserves exact historical semantics for swap, standby and
   const swapped = legacy();
   swapped.legacy.overrides = [{ date: '2026-09-01', kind: 'swap', crew: 'B' }];
   const swapProjection = createOperationalProjection(swapped);
+  assert.equal(swapProjection.primaryCrewOn('2026-09-01'), 'B');
   assert.equal(swapProjection.isPersonWorking('alpha', '2026-09-01'), false);
   assert.equal(swapProjection.isPersonWorking('bravo', '2026-09-01'), true);
 
   const standby = legacy();
   standby.legacy.overrides = [{ date: '2026-09-01', kind: 'standby', extra_crews: ['B'] }];
   const standbyProjection = createOperationalProjection(standby);
+  assert.equal(standbyProjection.primaryCrewOn('2026-09-01'), 'A');
   assert.equal(standbyProjection.isPersonWorking('alpha', '2026-09-01'), true);
   assert.equal(standbyProjection.isPersonWorking('bravo', '2026-09-01'), true);
 
   const holiday = legacy();
   holiday.legacy.overrides = [{ date: '2026-09-01', kind: 'holiday' }];
   const holidayProjection = createOperationalProjection(holiday);
+  assert.equal(holidayProjection.primaryCrewOn('2026-09-01'), 'A');
   assert.equal(holidayProjection.isPersonWorking('alpha', '2026-09-01'), true);
   assert.equal(holidayProjection.isPersonWorking('bravo', '2026-09-01'), false);
+});
+
+test('primary crew follows the validated rotation even when nobody from that crew is in the roster', () => {
+  const input = legacy();
+  input.roster = [];
+  const projection = createOperationalProjection(input);
+  assert.deepEqual([
+    projection.primaryCrewOn('2026-09-01'),
+    projection.primaryCrewOn('2026-09-02'),
+    projection.primaryCrewOn('2026-09-03')
+  ], ['A', 'B', 'C']);
+});
+
+test('training annotates the day without replacing its primary crew', () => {
+  const input = legacy();
+  input.legacy.overrides = [{ date: '2026-09-02', kind: 'training' }];
+  assert.equal(createOperationalProjection(input).primaryCrewOn('2026-09-02'), 'B');
 });
 
 test('an approved reciprocal legacy swap changes both days and its effective crew', () => {
@@ -357,5 +377,5 @@ test('the projection neither mutates caller input nor imports runtime services',
   assert.doesNotMatch(source, /firebase|firestore|https?:\/\/|fetch\s*\(|Date\.now|setTimeout|setInterval/i);
 });
 
-assert.equal(passed, 15);
-console.log('\n15 operational projection unit checks passed.');
+assert.equal(passed, 17);
+console.log('\n17 operational projection unit checks passed.');
