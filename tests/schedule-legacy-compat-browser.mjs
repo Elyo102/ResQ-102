@@ -203,7 +203,7 @@ try {
     const future = { ...historic, id:'future-guard', title:'אבטחה עתידית',
       date:shiftedDay(120) };
     const context = await contextWithPlan({
-      getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'shadow' } }],
+      getGuardManagementStatus:[{ data:{ guard_manager:true } }],
       getScheduleGuardBoard:[{ data:{ guards:[] } }, { data:{ guards:[] } }],
       getScheduleGuardManagerBoard:[
         { data:{ guards:[future] } }, { data:{ guards:[historic] } }

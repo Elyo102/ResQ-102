@@ -370,22 +370,28 @@ async function seed() {
   });
   await Promise.all([
     station().collection('users').doc('worker_a').set({
-      station: SID, employee_number: '9001', full_name: 'פרופיל אלף', active: true
+      station: SID, employee_number: '9001', full_name: 'פרופיל אלף',
+      role: 'firefighter', active: true
     }),
     station().collection('users').doc('worker_b').set({
-      station: SID, employee_number: '9002', full_name: 'פרופיל בית', active: true
+      station: SID, employee_number: '9002', full_name: 'פרופיל בית',
+      role: 'firefighter', active: true
     }),
     station().collection('users').doc('worker_c').set({
-      station: SID, employee_number: '9003', full_name: 'פרופיל גימל', active: true
+      station: SID, employee_number: '9003', full_name: 'פרופיל גימל',
+      role: 'firefighter', active: true
     }),
     station().collection('users').doc('worker_d').set({
-      station: SID, employee_number: '9004', full_name: 'פרופיל דלת', active: true
+      station: SID, employee_number: '9004', full_name: 'פרופיל דלת',
+      role: 'firefighter', active: true
     }),
     station().collection('users').doc('worker_e').set({
-      station: SID, employee_number: '9005', full_name: 'פרופיל הא', active: true
+      station: SID, employee_number: '9005', full_name: 'פרופיל הא',
+      role: 'firefighter', active: true
     }),
     station().collection('users').doc('worker_f').set({
-      station: SID, employee_number: '9006', full_name: 'פרופיל וו', active: true
+      station: SID, employee_number: '9006', full_name: 'פרופיל וו',
+      role: 'firefighter', active: true
     })
   ]);
   // Shadow reads the verified legacy projection.  Seed the complete A/B/C
