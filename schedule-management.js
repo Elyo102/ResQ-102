@@ -122,6 +122,35 @@ function requestId(prefix) {
   return prefix + '_' + id;
 }
 
+/* ⭐ 42H.2 (ביקורת §7) · מזהה פעולה **לכוונה**, לא ללחיצה. שמירת כשירות,
+ * מחיקה, כשירויות לאדם ומינימום תחנה: אותם שדות בדיוק = אותו request_id,
+ * עד שהשרת ענה (הצלחה או סירוב מפורש). כשל תקשורת עמום משאיר את המזהה,
+ * כך שהלחיצה הבאה היא ניסיון חוזר של אותה פעולה — לא פעולה שנייה. */
+function intentRequestId(scope, intent) {
+  state.intentRequestIds = state.intentRequestIds || {};
+  const key = scope + ':' + JSON.stringify(intent);
+  if (!state.intentRequestIds[key]) state.intentRequestIds[key] = requestId(scope);
+  return state.intentRequestIds[key];
+}
+function releaseIntent(scope, intent) {
+  if (!state.intentRequestIds) return;
+  delete state.intentRequestIds[scope + ':' + JSON.stringify(intent)];
+}
+/* ⭐ קבלה שהגיעה אבל אינה קבלה — בלי המזהים שהשרת מחזיר — היא תשובה
+ * עמומה, לא הצלחה: הבקשה נשארת ממתינה לשליחה חוזרת. */
+function receiptOk(result, fields) {
+  if (!result || typeof result !== 'object') return false;
+  return fields.every((field) => {
+    const value = result[field];
+    return typeof value === 'string' ? value.length > 0 : Number.isInteger(value);
+  });
+}
+function malformedReceipt() {
+  const error = new Error('התשובה מהשרת חסרה. הבקשה תישלח שוב.');
+  error.malformedReceipt = true;
+  return error;
+}
+
 function resetPublishRequest() {
   state.publishRequestId = null;
   state.publishRequestKey = null;
@@ -2154,6 +2183,7 @@ async function importSheet() {
   state.importPending = { payload };
   try {
     const result = (await call.importSheet(payload)).data;
+    if (!receiptOk(result, ['draft_id', 'from', 'to'])) throw malformedReceipt();
     state.importPending = null;
     state.draft = result;
     renderSummary(result.summary || {});
@@ -2496,13 +2526,18 @@ async function saveStationMinimum() {
   if (state.busy) return;
   const minimum = Number($('gapStationMinimum').value || 0);
   const policy = (state.quals && state.quals.gap_policy) || { revision: 0 };
+  const intent = { station_minimum: minimum, expected_revision: policy.revision || 0 };
   state.busy = true;
   try {
-    const result = (await call.gapPolicy({ request_id: requestId('gappolicy'), station_minimum: minimum, expected_revision: policy.revision || 0 })).data;
+    const result = (await call.gapPolicy(Object.assign({ request_id: intentRequestId('gappolicy', intent) }, intent))).data;
+    releaseIntent('gappolicy', intent);
     message('gapPolicyMessage', 'מינימום כולל לתחנה: ' + result.station_minimum + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
-  } catch (error) { message('gapPolicyMessage', errorText(error), 'err'); if (errorCode(error) === 'gap-policy-revision-stale') await loadQualifications(true); }
-  finally { state.busy = false; }
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('gappolicy', intent);
+    message('gapPolicyMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'gap-policy-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
 }
 
 $('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
@@ -2791,6 +2826,8 @@ async function applyEdit() {
   state.editPending = { payload };
   try {
     const result = (await call.editApply(payload)).data;
+    /* ⭐ §7 · תשובה בלי מזהה פרסום וגרסה אינה קבלה — הבקשה נשארת ממתינה. */
+    if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
@@ -2903,7 +2940,8 @@ async function saveQualificationRow(entry, tr) {
   const label = tr.querySelector('input[data-field="label"]').value;
   const minimum = Number(tr.querySelector('input[data-field="minimum"]').value);
   const active = tr.querySelector('input[data-field="active"]').checked;
-  const payload = { request_id: requestId('qual'), key: entry.key, label, minimum, active, expected_revision: entry.revision || 0 };
+  const intent = { key: entry.key, label, minimum, active, expected_revision: entry.revision || 0 };
+  const payload = Object.assign({ request_id: intentRequestId('qual', intent) }, intent);
   if (entry.critical && !active) {
     if (!confirm('„' + entry.label + '" היא כשירות קריטית. השבתה מבטלת את בקרת הפער שלה. להמשיך?')) return;
     payload.confirm_critical = true;
@@ -2911,22 +2949,31 @@ async function saveQualificationRow(entry, tr) {
   state.busy = true;
   try {
     const result = (await call.qualSave(payload)).data;
+    releaseIntent('qual', intent);
     message('qualMessage', 'נשמר: ' + label + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
-  } catch (error) { message('qualMessage', errorText(error), 'err'); if (errorCode(error) === 'qualification-revision-stale') await loadQualifications(true); }
-  finally { state.busy = false; }
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qual', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'qualification-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
 }
 
 async function deleteQualificationRow(entry) {
   if (state.busy) return;
   if (!confirm('למחוק את הכשירות „' + entry.label + '"? הפעולה נרשמת ביומן.')) return;
+  const intent = { key: entry.key, expected_revision: entry.revision || 0 };
   state.busy = true;
   try {
-    await call.qualDelete({ request_id: requestId('qualdel'), key: entry.key, expected_revision: entry.revision || 0 });
+    await call.qualDelete(Object.assign({ request_id: intentRequestId('qualdel', intent) }, intent));
+    releaseIntent('qualdel', intent);
     message('qualMessage', 'נמחקה: ' + entry.label + '.', 'ok');
     await loadQualifications(true);
-  } catch (error) { message('qualMessage', errorText(error), 'err'); await loadQualifications(true); }
-  finally { state.busy = false; }
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualdel', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    await loadQualifications(true);
+  } finally { state.busy = false; }
 }
 
 async function addQualification() {
@@ -2935,14 +2982,18 @@ async function addQualification() {
   const label = $('qualNewLabel').value.trim();
   const minimum = Number($('qualNewMinimum').value || 0);
   if (!key || !label) { message('qualMessage', 'יש למלא מפתח ותווית.', 'err'); return; }
+  const intent = { key, label, minimum, active: true, expected_revision: 0 };
   state.busy = true;
   try {
-    const result = (await call.qualSave({ request_id: requestId('qualnew'), key, label, minimum, active: true, expected_revision: 0 })).data;
+    const result = (await call.qualSave(Object.assign({ request_id: intentRequestId('qualnew', intent) }, intent))).data;
+    releaseIntent('qualnew', intent);
     message('qualMessage', 'נוספה: ' + label + ' (' + result.key + ').', 'ok');
     $('qualNewKey').value = ''; $('qualNewLabel').value = ''; $('qualNewMinimum').value = '0';
     await loadQualifications(true);
-  } catch (error) { message('qualMessage', errorText(error), 'err'); }
-  finally { state.busy = false; }
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualnew', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+  } finally { state.busy = false; }
 }
 
 function renderQualPeople() {
@@ -2982,13 +3033,18 @@ function renderQualPeople() {
 async function savePersonQualifications(person, row) {
   if (state.busy) return;
   const keys = Array.from(row.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+  const intent = { person: person.uid, qualifications: keys, expected_revision: person.revision || 0 };
   state.busy = true;
   try {
-    const result = (await call.qualPerson({ request_id: requestId('qualperson'), person: person.uid, qualifications: keys, expected_revision: person.revision || 0 })).data;
+    const result = (await call.qualPerson(Object.assign({ request_id: intentRequestId('qualperson', intent) }, intent))).data;
+    releaseIntent('qualperson', intent);
     message('qualPeopleMessage', person.name + ': ' + (result.qualifications.length ? result.qualifications.length + ' כשירויות' : 'בלי כשירויות') + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
-  } catch (error) { message('qualPeopleMessage', errorText(error), 'err'); if (errorCode(error) === 'holdings-revision-stale') await loadQualifications(true); }
-  finally { state.busy = false; }
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualperson', intent);
+    message('qualPeopleMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'holdings-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
 }
 
 $('qualAdd').addEventListener('click', managerAction(addQualification));

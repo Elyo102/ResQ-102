@@ -1678,6 +1678,8 @@ try {
     getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
     previewScheduleEdit:[{ data:editReport }],
     applyScheduleEdit:[
+      /* ⭐ ביקורת §7 · תשובה שהגיעה אבל אינה קבלה (בלי publication_id/revision) — עמומה, לא הצלחה. */
+      { data:{ ok:true } },
       { reject:true, code:'functions/unavailable', message:'stub: response lost' },
       { data:{ duplicate:true, draft_id:'d_edit', publication_id:'p_edit_5', revision:5, notified_people:1, report:editReport } }
     ]
@@ -1716,19 +1718,29 @@ try {
     assert.match(await editPage.locator('#editWarnings').textContent(), /היעדרות/);
     assert.equal(await editPage.locator('#editApply').isEnabled(), true);
   });
-  await test('edit card: a lost apply response keeps the exact request; the retry sends it unchanged and the board reloads', async () => {
+  await test('edit card: a malformed or lost apply response keeps the exact request; the retry sends it unchanged and the board reloads', async () => {
     const rangeCallsBefore = (await editPage.evaluate(() => window.__CALLABLE_CALLS)).filter((entry) => entry.name === 'getStationScheduleRange').length;
+    // 1 · תשובה שהגיעה בלי קבלה — הרשימה והדוח נשארים, הבקשה ממתינה.
     await editPage.locator('#editApply').click();
     await editPage.locator('#editMessage .warn').waitFor();
     assert.match(await editPage.locator('#editMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
     assert.equal(await editPage.locator('#editApply').isEnabled(), true);
+    assert.equal(await editPage.locator('#editList .row').count(), 1, 'a malformed receipt must not clear the edit');
+    assert.equal(await editPage.locator('#editReport').isVisible(), true);
+    // 2 · תשובה שאבדה — אותו דבר.
+    await editPage.locator('#editApply').click();
+    await editPage.locator('#editMessage .warn').waitFor();
+    assert.match(await editPage.locator('#editMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
+    assert.equal(await editPage.locator('#editApply').isEnabled(), true);
+    // 3 · קבלה אמיתית.
     await editPage.locator('#editApply').click();
     await editPage.locator('#editMessage .ok').waitFor();
     assert.match(await editPage.locator('#editMessage').textContent(), /פורסמה גרסה 5/);
     const calls = await editPage.evaluate(() => window.__CALLABLE_CALLS);
     const applies = calls.filter((entry) => entry.name === 'applyScheduleEdit');
-    assert.equal(applies.length, 2);
+    assert.equal(applies.length, 3);
     assert.deepEqual(applies[1].payload, applies[0].payload, 'the retry is not the same request');
+    assert.deepEqual(applies[2].payload, applies[0].payload, 'the second retry is not the same request');
     assert.equal(applies[0].payload.expected_edit_digest, 'ed_1');
     assert.ok(applies[0].payload.request_id);
     assert.deepEqual(applies[0].payload.expected, { publication_id:'p_live', revision:4, content_digest:'digest_live_4' });
@@ -1739,6 +1751,80 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, rangeCallsBefore + 1, 'board reloaded exactly once after the edit');
   });
   await editCtx.close();
+
+  const qualCatalogPhone = {
+    catalog: [
+      { key:'shift_lead', label:'ראש משמרת', order:10, critical:true, builtin:true, active:true, minimum:1, revision:0 },
+      { key:'deputy', label:'סגן', order:20, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'officer', label:'קצין', order:30, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'crew_commander', label:'מפקדי צוותים', order:40, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'driver', label:'נהגים', order:50, critical:false, builtin:true, active:true, minimum:2, revision:1 },
+      { key:'hazmat', label:'חומ״ס', order:60, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'monitoring', label:'ניטור', order:70, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'ylm', label:'יל״מ', order:80, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'firefighter', label:'לוחמים', order:90, critical:false, builtin:true, active:true, minimum:0, revision:0 }
+    ],
+    holders:{ driver:1 }, holdings_revision:1,
+    people:[{ uid:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'], qualifications:['driver'], revision:1, legacy:[] }],
+    unknown_holders:[]
+  };
+  /* ⭐ ביקורת §7 · טלפון (390px): כרטיס העריכה, בקרת הפערים והכשירויות
+   * נשארים בתוך המסך — הדף אינו גולל לרוחב, הטבלה גוללת בתוך המכולה שלה. */
+  const phoneManagerCtx = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(phoneManagerCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReport }],
+    getQualificationCatalog:[{ data:qualCatalogPhone }]
+  });
+  const phoneManagerPage = await phoneManagerCtx.newPage();
+  await phoneManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await phoneManagerPage.locator('#appMain:not(.hide)').waitFor();
+  await test('phone: the edit card and its report fit the viewport; the page never scrolls sideways', async () => {
+    assert.equal(await phoneManagerPage.locator('#editCard').isVisible(), true);
+    assert.equal(await phoneManagerPage.locator('#gapCard').isVisible(), true);
+    await phoneManagerPage.fill('#editSearch', 'טל');
+    await phoneManagerPage.locator('#editSearchResults button').first().click();
+    await phoneManagerPage.selectOption('#editRange', 'day');
+    await phoneManagerPage.fill('#editDate', today);
+    await phoneManagerPage.locator('#editDate').dispatchEvent('change');
+    await phoneManagerPage.selectOption('#editAction', 'assign');
+    await phoneManagerPage.selectOption('#editStation', 'main');
+    await phoneManagerPage.locator('#editAdd').click();
+    await phoneManagerPage.locator('#editCheck').click();
+    await phoneManagerPage.locator('#editMessage .ok').waitFor();
+    const fit = await phoneManagerPage.evaluate(() => ({
+      page: document.documentElement.scrollWidth <= window.innerWidth,
+      card: document.getElementById('editCard').scrollWidth <= document.getElementById('editCard').clientWidth + 1,
+      report: document.getElementById('editReport').scrollWidth <= document.getElementById('editReport').clientWidth + 1,
+      gaps: document.getElementById('editGaps').hidden || document.getElementById('editGaps').scrollWidth <= document.getElementById('editGaps').clientWidth + 1
+    }));
+    assert.deepEqual(fit, { page:true, card:true, report:true, gaps:true });
+    assert.equal(await phoneManagerPage.locator('#editApply').isVisible(), true);
+  });
+  await test('phone: the qualifications tab is usable — table scrolls inside its box, person rows stack, no sideways page scroll', async () => {
+    await phoneManagerPage.locator('#qualsTab').click();
+    await phoneManagerPage.locator('#qualRows tr').first().waitFor();
+    await phoneManagerPage.fill('#qualSearch', 'טל');
+    await phoneManagerPage.locator('#qualPeople .person').first().waitFor();
+    const fit = await phoneManagerPage.evaluate(() => {
+      const table = document.getElementById('qualTable');
+      const box = table.parentElement;
+      const person = document.querySelector('#qualPeople .person');
+      return {
+        page: document.documentElement.scrollWidth <= window.innerWidth,
+        tableScrollsInBox: getComputedStyle(box).overflowX === 'auto' && box.scrollWidth >= box.clientWidth,
+        boxFits: box.clientWidth <= window.innerWidth,
+        personFits: person.scrollWidth <= person.clientWidth + 1,
+        personStacked: getComputedStyle(person).gridTemplateColumns.split(' ').length === 1
+      };
+    });
+    assert.deepEqual(fit, { page:true, tableScrollsInBox:true, boxFits:true, personFits:true, personStacked:true });
+    assert.equal(await phoneManagerPage.locator('#qualPeople .person button').isVisible(), true);
+  });
+  await phoneManagerCtx.close();
 
   /* אחראי סידור ב-shadow (אין פרסום פעיל) — כרטיס העריכה אינו מוצג. */
   const noEditCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
@@ -1787,7 +1873,11 @@ try {
     getMyScheduleV2:[{ data:mine }],
     getStationScheduleRange:[{ data:stationRange }],
     getQualificationCatalog:[{ data:qualCatalog }, { data:qualCatalog }, { data:qualCatalog }],
-    saveQualification:[{ data:{ duplicate:false, key:'pilot', revision:1 } }],
+    saveQualification:[
+      /* ⭐ ביקורת §7 · כשל תקשורת עמום; הלחיצה הבאה חייבת לשלוח את אותה בקשה עם אותו request_id. */
+      { reject:true, code:'functions/unavailable', message:'stub: response lost' },
+      { data:{ duplicate:false, key:'pilot', revision:1 } }
+    ],
     setPersonQualifications:[{ data:{ duplicate:false, uid:'stub-uid', qualifications:['shift_lead', 'firefighter'], revision:1 } }]
   });
   const qualPage = await qualCtx.newPage();
@@ -1811,9 +1901,16 @@ try {
     await qualPage.fill('#qualNewLabel', 'טייס');
     await qualPage.fill('#qualNewMinimum', '1');
     await qualPage.locator('#qualAdd').click();
+    await qualPage.locator('#qualMessage .err').waitFor();
+    assert.match(await qualPage.locator('#qualMessage').textContent(), /לחיצה חוזרת תשלח את אותה בקשה בדיוק/);
+    assert.equal(await qualPage.inputValue('#qualNewKey'), 'pilot', 'the form must keep the intent after an ambiguous failure');
+    await qualPage.locator('#qualAdd').click();
     await qualPage.locator('#qualMessage .ok').waitFor();
     let calls = await qualPage.evaluate(() => window.__CALLABLE_CALLS);
-    const saved = calls.find((entry) => entry.name === 'saveQualification');
+    const saves = calls.filter((entry) => entry.name === 'saveQualification');
+    assert.equal(saves.length, 2);
+    assert.deepEqual(saves[1].payload, saves[0].payload, 'the retry must be the same request (same request_id)');
+    const saved = saves[0];
     assert.deepEqual([saved.payload.key, saved.payload.label, saved.payload.minimum, saved.payload.active, saved.payload.expected_revision], ['pilot', 'טייס', 1, true, 0]);
     assert.ok(saved.payload.request_id);
     await qualPage.fill('#qualSearch', 'אלדד');
@@ -1983,5 +2080,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 52);
-console.log('\n52 schedule management browser checks passed.');
+assert.equal(passed, 54);
+console.log('\n54 schedule management browser checks passed.');

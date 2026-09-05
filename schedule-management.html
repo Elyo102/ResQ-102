@@ -330,6 +330,12 @@
       .tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}
       .override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}
       .override .remove{grid-column:1/-1}.card{padding:13px}
+      /* 42H.2 · הפאנלים החדשים בטלפון: שורת אדם בעמודה אחת, טבלת הקטלוג
+       * גוללת בתוך המכולה שלה ולא מרחיבה את הדף. */
+      .qualpeople .person{grid-template-columns:1fr}
+      .qualpeople .person button{justify-self:start}
+      .qualtable{min-width:520px}
+      .editchange{grid-template-columns:1fr}
     }
   </style>
 </head>
