@@ -303,6 +303,61 @@ async function test(name, fn) {
     assert.equal((await station().collection('schedule_qualifications').doc('pilot').get()).exists, true);
   });
 
+  /* ⭐ seq463 · מרוצים אמיתיים (Promise.all על עסקאות Firestore אמיתיות), לא הזרקה לפני העסקה.
+   * ההוכחה: בדיוק שמירה אחת מתחייבת; השנייה נדחית בעסקה; אין מסמך חלקי; ניסיון חוזר
+   * של אותו request_id מחזיר את אותה קבלה בלי כתיבה נוספת. */
+  await test('seq463-a: two concurrent saves with the same label and different keys — exactly one commits, the other is refused inside the transaction', async () => {
+    const before = (await station().collection('schedule_qualifications').get()).size;
+    const results = await Promise.allSettled([
+      api.saveQualification(req(MGR, { request_id: 'race_label_1', key: 'race_a', label: 'תווית מרוץ', order: 300 })),
+      api.saveQualification(req(MGR, { request_id: 'race_label_2', key: 'race_b', label: 'תווית מרוץ', order: 301 }))
+    ]);
+    const ok = results.filter((r) => r.status === 'fulfilled');
+    const failed = results.filter((r) => r.status === 'rejected');
+    assert.equal(ok.length, 1, 'exactly one save must commit: ' + JSON.stringify(results.map((r) => r.status === 'rejected' ? r.reason.code : 'ok')));
+    assert.equal(failed.length, 1);
+    assert.ok(['qualification-label-duplicate', 'qualification-catalog-changed'].indexOf(failed[0].reason.code) !== -1, failed[0].reason.code + ' · ' + failed[0].reason.message);
+    const after = await station().collection('schedule_qualifications').get();
+    assert.equal(after.size, before + 1, 'no partial document for the loser');
+    const holders = after.docs.filter((doc) => (doc.data() || {}).label === 'תווית מרוץ');
+    assert.equal(holders.length, 1);
+    // idempotency: the winner's request_id again → same receipt, no new revision; the loser's request_id again → still refused, still no document.
+    const winnerId = ok[0].value.key === 'race_a' ? 'race_label_1' : 'race_label_2';
+    const winnerKey = ok[0].value.key;
+    const replay = await api.saveQualification(req(MGR, { request_id: winnerId, key: winnerKey, label: 'תווית מרוץ', order: winnerKey === 'race_a' ? 300 : 301 }));
+    assert.deepEqual([replay.duplicate, replay.key, replay.revision], [true, winnerKey, 1]);
+    assert.equal((await station().collection('schedule_qualifications').get()).size, before + 1);
+    const loserKey = winnerKey === 'race_a' ? 'race_b' : 'race_a';
+    const loserReplay = await caught(() => api.saveQualification(req(MGR, { request_id: winnerKey === 'race_a' ? 'race_label_2' : 'race_label_1', key: loserKey, label: 'תווית מרוץ', order: loserKey === 'race_a' ? 300 : 301 })));
+    assert.ok(loserReplay && loserReplay.code === 'qualification-label-duplicate', loserReplay && loserReplay.code);
+    assert.equal((await station().collection('schedule_qualifications').doc(loserKey).get()).exists, false);
+  });
+
+  await test('seq463-b: two concurrent saves at the custom quota edge — exactly one commits, the quota holds, no partial document', async () => {
+    const { MAX_CUSTOM } = require('./schedule-qualifications');
+    const catalogNow = await api.getQualificationCatalog(req(MGR, {}));
+    const customNow = catalogNow.catalog.filter((entry) => !entry.builtin).length;
+    // ממלאים עד MAX_CUSTOM − 1 מותאמות (סדרתית; אלה לא חלק מהמרוץ).
+    for (let i = customNow; i < MAX_CUSTOM - 1; i += 1) {
+      await api.saveQualification(req(MGR, { request_id: 'fill_' + i, key: 'fill_' + i, label: 'מילוי ' + i, order: 400 + i }));
+    }
+    const before = (await station().collection('schedule_qualifications').get()).size;
+    const results = await Promise.allSettled([
+      api.saveQualification(req(MGR, { request_id: 'race_cap_1', key: 'cap_a', label: 'מכסה א', order: 900 })),
+      api.saveQualification(req(MGR, { request_id: 'race_cap_2', key: 'cap_b', label: 'מכסה ב', order: 901 }))
+    ]);
+    const ok = results.filter((r) => r.status === 'fulfilled');
+    const failed = results.filter((r) => r.status === 'rejected');
+    assert.equal(ok.length, 1, 'exactly one save must commit at the quota edge: ' + JSON.stringify(results.map((r) => r.status === 'rejected' ? r.reason.code : 'ok')));
+    assert.ok(['qualification-limit', 'qualification-catalog-changed'].indexOf(failed[0].reason.code) !== -1, failed[0].reason.code + ' · ' + failed[0].reason.message);
+    const after = await api.getQualificationCatalog(req(MGR, {}));
+    assert.equal(after.catalog.filter((entry) => !entry.builtin).length, MAX_CUSTOM, 'the quota is exactly full, never exceeded');
+    assert.equal((await station().collection('schedule_qualifications').get()).size, before + 1, 'no partial document for the loser');
+    // a third save after the race is refused deterministically
+    const over = await caught(() => api.saveQualification(req(MGR, { request_id: 'race_cap_3', key: 'cap_c', label: 'מכסה ג', order: 902 })));
+    assert.equal(over && over.code, 'qualification-limit');
+  });
+
   console.log('\n' + passed + ' schedule-qualifications Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
