@@ -42,8 +42,23 @@
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}
     .head h1{font-size:26px;margin:0}
     .head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
     .tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
+    /* 42H.2 · כשירויות */
+    .qualtable{width:100%;border-collapse:collapse;font-size:12px}
+    .qualtable th,.qualtable td{padding:6px 8px;border-bottom:1px solid var(--line,#dfe5ec);text-align:right;vertical-align:middle}
+    .qualtable th{font-size:11px;color:var(--muted,#748091);font-weight:700}
+    .qualtable input[type="text"]{min-height:30px;font-size:12px;width:100%}
+    .qualtable input[type="number"]{min-height:30px;font-size:12px;width:64px}
+    .qualtable .critical{color:var(--bad,#dc2626);font-weight:800;font-size:11px}
+    .qualtable .off{opacity:.55}
+    .qualtable button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .qualpeople .person{display:grid;grid-template-columns:minmax(140px,1fr) 3fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line,#dfe5ec);border-radius:10px;margin-top:6px}
+    .qualpeople .person .held{display:flex;flex-wrap:wrap;gap:6px}
+    .qualpeople .person .held label{font-size:11px;border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:3px 7px;display:flex;gap:4px;align-items:center}
+    .qualpeople .person .held label.on{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .qualpeople .legacy{font-size:11px;color:var(--muted,#748091)}
+    .qualpeople .person button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:5px 9px;cursor:pointer;color:inherit}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -189,6 +204,30 @@
       color:var(--muted,#5a6573);background:var(--panel,#f3f6fa)}
     /* ---------------- הדבקת הסידור מהגיליון ---------------- */
     .importcard{border-color:var(--sched-blue)}
+    /* 42H.2 · עריכת הסידור הפעיל */
+    .editcard{border-color:var(--sched-blue)}
+    .editsearch{position:relative}
+    .editsearch .results{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .editsearch .results button{font-size:12px;border:1px solid var(--line,#dfe5ec);background:var(--panel,#f7f9fc);border-radius:9px;padding:6px 10px;cursor:pointer;color:inherit}
+    .editsearch .results button[aria-pressed="true"]{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .editperson{font-weight:700;font-size:13px;margin-top:6px;min-height:18px}
+    .editlist .row{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border:1px solid var(--line,#dfe5ec);border-radius:9px;margin-top:6px;background:var(--panel,#f7f9fc)}
+    .editlist .row b{flex:1}
+    .editlist .row button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .editchange{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;padding:6px 10px;border-radius:9px;background:var(--panel,#f7f9fc);margin-top:6px}
+    .editchange .arrow{color:var(--muted,#748091)}
+    .editdates{font-size:12px;color:var(--muted,#748091);margin-top:6px}
+    /* 42H.2 ג׳ · בקרת פערים */
+    .gapbox{margin-top:10px;border:1px solid var(--line,#dfe5ec);border-radius:11px;padding:10px;background:var(--panel,#f7f9fc)}
+    .gapbox.critical{border-color:var(--bad,#dc2626)}
+    .gaphead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+    .gap{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border-radius:9px;margin-top:5px;background:var(--bg,#fff)}
+    .gap.critical{color:var(--bad,#dc2626);font-weight:700;background:var(--bad-bg,#fef2f2)}
+    .gap.other{color:var(--warn,#765500);background:var(--warn-bg,#fff5d7)}
+    .gap .cands{font-weight:400;color:var(--muted,#748091)}
+    .gapday{margin-top:8px;border-top:1px solid var(--line,#dfe5ec);padding-top:6px;font-size:12px}
+    .gapday b.date{display:block;margin-bottom:4px}
+    .gapday .ok{color:var(--muted,#748091)}
     .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
     .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
     .unres{display:grid;gap:7px;margin-top:10px}
@@ -292,6 +331,12 @@
       .tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}
       .override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}
       .override .remove{grid-column:1/-1}.card{padding:13px}
+      /* 42H.2 · הפאנלים החדשים בטלפון: שורת אדם בעמודה אחת, טבלת הקטלוג
+       * גוללת בתוך המכולה שלה ולא מרחיבה את הדף. */
+      .qualpeople .person{grid-template-columns:1fr}
+      .qualpeople .person button{justify-self:start}
+      .qualtable{min-width:520px}
+      .editchange{grid-template-columns:1fr}
     }
   </style>
 </head>
@@ -343,6 +388,7 @@
     <button type="button" data-tab="manage" id="manageTab">ניהול</button>
     <button type="button" data-tab="mine" id="mineTab">הסידור שלי</button>
     <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
+    <button type="button" data-tab="quals" id="qualsTab" hidden>כשירויות</button>
   </nav>
 
   <section id="manageView" hidden>
@@ -480,6 +526,73 @@
       </article>
     </div>
 
+    <!-- 42H.2 · חבילה ג׳ — בקרת פערים על הסידור הפעיל -->
+    <article class="card" id="gapCard" hidden>
+      <h2>בקרת פערים — הסידור הפעיל</h2>
+      <div class="sub">לכל יום: כמה משובצים מול המינימום הכולל לתחנה, כל תחנת קצה מול הקו שלה, וכל כשירות מול המינימום שלה.
+        לכל פער מוצעים <b>מועמדים בלבד</b> — פנויים באותו יום, בלי היעדרות, עם הכשירות. המערכת לעולם אינה משבצת בעצמה.</div>
+      <div class="btns"><button class="btn" id="gapLoad" type="button">בדוק פערים בסידור הפעיל</button></div>
+      <div class="summary hide" id="gapSummary"></div>
+      <div id="gapDays"></div>
+      <div id="gapMessage" aria-live="polite"></div>
+    </article>
+
+    <!-- 42H.2 · חבילה א׳ — עריכת הסידור הפעיל (רק במצב פעיל, רק אחראי סידור) -->
+    <article class="card editcard" id="editCard" hidden>
+      <h2>עריכת הסידור הפעיל</h2>
+      <div class="sub">איתור עובד, בחירת יום / שבוע / חודש, ושינוי תחנה, תפקיד או היעדרות.
+        כל ביצוע יוצר <b>גרסה חדשה</b> של הסידור (הקודמת נשמרת ואפשר לחזור אליה), נרשם ביומן,
+        ושולח לכל עובד שהשתנה הודעה מסכמת אחת.</div>
+      <div class="fields">
+        <div class="editsearch" style="grid-column:1/-1">
+          <label for="editSearch">חיפוש עובד</label>
+          <input id="editSearch" type="search" placeholder="שם, חלק משם או מספר עובד" autocomplete="off">
+          <div class="results" id="editSearchResults"></div>
+          <div class="editperson" id="editPerson"></div>
+        </div>
+        <div><label for="editRange">טווח</label>
+          <select id="editRange"><option value="day">יום</option><option value="week">שבוע</option><option value="month">חודש</option></select></div>
+        <div><label for="editDate">תאריך</label><input id="editDate" type="date"></div>
+        <div><label for="editAction">פעולה</label>
+          <select id="editAction">
+            <option value="assign">שיבוץ לתחנה</option>
+            <option value="unassign">הסרה מהסידור</option>
+            <option value="role">שינוי תפקיד</option>
+            <option value="absence">היעדרות</option>
+          </select></div>
+        <div id="editStationWrap"><label for="editStation">תחנה</label><select id="editStation"></select></div>
+        <div id="editRoleWrap"><label for="editRole">תפקיד</label><select id="editRole"><option value="">ללא תפקיד</option></select></div>
+        <div id="editAbsenceWrap" hidden><label for="editAbsence">סוג היעדרות</label>
+          <select id="editAbsence">
+            <option value="sick">מחלה</option><option value="reserve">מילואים</option>
+            <option value="course">קורס</option><option value="leave">חופש</option><option value="">ביטול היעדרות</option>
+          </select></div>
+        <div id="editLocationWrap" hidden><label for="editLocation">מיקום החופש</label>
+          <select id="editLocation"><option value="">לא צוין</option><option value="abroad">חו"ל</option><option value="north">צפון</option><option value="eilat">אילת</option></select></div>
+      </div>
+      <div class="editdates" id="editDates"></div>
+      <div class="btns"><button class="btn" id="editAdd" type="button">+ הוסף לרשימת השינויים</button></div>
+      <div class="editlist" id="editList"></div>
+      <div class="btns">
+        <button class="btn" id="editCheck" type="button" disabled>בדוק את השינויים</button>
+        <button class="btn primary" id="editApply" type="button" disabled>בצע ופרסם גרסה חדשה</button>
+      </div>
+      <div id="editReport" hidden>
+        <div class="summary" id="editCounts"></div>
+        <div id="editPeople"></div>
+        <div id="editChanges"></div>
+        <div id="editWarnings"></div>
+        <div class="gapbox" id="editGaps" hidden>
+          <div class="gaphead"><b>בקרת פערים אחרי השינוי</b></div>
+          <div id="editGapsList"></div>
+          <label class="req-flag" id="editGapAckWrap" hidden style="margin-top:8px">
+            <input id="editGapAck" type="checkbox"><span id="editGapAckText"></span>
+          </label>
+        </div>
+      </div>
+      <div id="editMessage" aria-live="polite"></div>
+    </article>
+
     <article class="card hide" id="draftPreviewCard">
       <h2>תצוגה מקדימה של הטיוטה</h2>
       <div class="sub">זה הסידור שיפורסם. עברו בין השבועות ובדקו שמות, אירועים וחוסרים לפני אישור.</div>
@@ -492,11 +605,52 @@
         </div>
       </div>
       <div id="draftPreview"><div class="loader"></div></div>
+      <!-- 42H.2 ג׳ · בקרת פערים על הטיוטה כולה -->
+      <div class="gapbox" id="draftGaps" hidden>
+        <div class="gaphead"><b id="draftGapsTitle">בקרת פערים</b><button class="btn" id="draftGapsDetail" type="button">פירוט לפי יום</button></div>
+        <div id="draftGapsList"></div>
+        <div id="draftGapsDays"></div>
+        <label class="req-flag" id="draftGapAckWrap" hidden style="margin-top:8px">
+          <input id="draftGapAck" type="checkbox"><span id="draftGapAckText"></span>
+        </label>
+      </div>
       <label class="req-flag" style="margin-top:12px;font-size:13px">
         <input id="reviewDraft" type="checkbox" disabled>
         בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו
       </label>
       <div id="previewMessage" aria-live="polite"></div>
+    </article>
+  </section>
+
+  <!-- 42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים (אחראי סידור בלבד; הכול בשרת) -->
+  <section id="qualsView" hidden>
+    <article class="card">
+      <h2>קטלוג הכשירויות</h2>
+      <div class="sub">כשירות היא יכולת מבצעית — לא תפקיד הרשאה. תשע הכשירויות המובנות בסדר קבוע; שלוש הראשונות
+        <b>קריטיות</b>: פער בהן חוסם פרסום. אפשר לשנות תווית, להשבית, לקבוע מינימום ליום, ולהוסיף כשירויות מותאמות.
+        מחיקה — רק לכשירות מותאמת שאיש אינו מחזיק בה.</div>
+      <div style="overflow-x:auto"><table class="qualtable" id="qualTable"><thead><tr>
+        <th>#</th><th>כשירות</th><th>קריטית</th><th>מינימום ליום</th><th>מחזיקים</th><th>פעילה</th><th></th>
+      </tr></thead><tbody id="qualRows"></tbody></table></div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="gapStationMinimum">מינימום כולל לתחנה ליום</label><input id="gapStationMinimum" type="number" min="0" max="500" value="0"></div>
+        <div style="display:flex;align-items:end"><button class="btn" id="gapStationMinimumSave" type="button">שמור מינימום תחנה</button></div>
+      </div>
+      <div id="gapPolicyMessage" aria-live="polite"></div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="qualNewKey">מפתח (לטינית)</label><input id="qualNewKey" type="text" placeholder="למשל diver" autocomplete="off"></div>
+        <div><label for="qualNewLabel">תווית</label><input id="qualNewLabel" type="text" placeholder="למשל צוללן" autocomplete="off"></div>
+        <div><label for="qualNewMinimum">מינימום ליום</label><input id="qualNewMinimum" type="number" min="0" max="200" value="0"></div>
+        <div style="display:flex;align-items:end"><button class="btn" id="qualAdd" type="button">+ הוסף כשירות מותאמת</button></div>
+      </div>
+      <div id="qualMessage" aria-live="polite"></div>
+    </article>
+    <article class="card">
+      <h2>כשירויות לאדם</h2>
+      <div class="sub">לכל אדם כמה כשירויות שרוצים. הרשימה נשמרת בשרת עם יומן; „מהמערכת הישנה" הוא רמז בלבד ואינו מיובא אוטומטית.</div>
+      <div class="fields"><div style="grid-column:1/-1"><label for="qualSearch">חיפוש עובד</label><input id="qualSearch" type="search" placeholder="שם או חלק משם" autocomplete="off"></div></div>
+      <div class="qualpeople" id="qualPeople"></div>
+      <div id="qualPeopleMessage" aria-live="polite"></div>
     </article>
   </section>
 

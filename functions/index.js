@@ -5123,9 +5123,10 @@ async function invokeSchedule(method, req) {
     return await scheduleRuntime[method](req);
   } catch (error) {
     if (error instanceof scheduleRuntimeModule.ScheduleRuntimeError) {
-      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, {
+      // 42H.2 · `detail` — פירוט מובנה בלי שמות (למשל רשימת פערים / מספר מחזיקים).
+      throw new HttpsError(error.httpCode || 'failed-precondition', error.message, Object.assign({
         schedule_code: error.code
-      });
+      }, error.detail !== undefined ? { detail: error.detail } : {}));
     }
     throw error;
   }
@@ -5208,6 +5209,25 @@ exports.previewScheduleImport = onCall({ enforceAppCheck: true, memory: '512MiB'
   invokeSchedule('previewScheduleImport', req));
 exports.importScheduleSheet = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
   invokeSchedule('importScheduleSheet', req));
+// 42H.2 · עריכת סידור שפורסם — אחראי סידור חי בלבד; revision חדש דרך publish.
+exports.previewScheduleEdit = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('previewScheduleEdit', req));
+exports.applyScheduleEdit = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
+  invokeSchedule('applyScheduleEdit', req));
+// 42H.2 · קטלוג כשירויות ומחזיקים — אחראי סידור חי בלבד; CAS על revision, יומן.
+exports.getQualificationCatalog = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getQualificationCatalog', req));
+exports.saveQualification = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('saveQualification', req));
+exports.deleteQualification = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('deleteQualification', req));
+exports.setPersonQualifications = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('setPersonQualifications', req));
+// 42H.2 · בקרת פערים — דוח לפי יום/תחנה/כשירות עם מועמדים בלבד; מינימום כולל לתחנה.
+exports.getScheduleGapReport = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('getGapReport', req));
+exports.saveScheduleGapPolicy = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('saveGapPolicy', req));
 
 // בחירת טיוטת ייבוא להצגה בלוח כשהמנוע off/shadow. הפעולה אינה
 // מפעילה את המנוע, אינה מפרסמת ואינה יוצרת הודעות; היא מחליפה רק

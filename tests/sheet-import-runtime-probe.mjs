@@ -700,7 +700,8 @@ const CONFLICT_SHEET = [
   // הלוח החי; מצביע תצוגת off אינו חלק מהמעבר ואינו משפיע עליו.
   const cfg = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', { mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
-  const published = await rt.publish(req({ request_id: 'pub1', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));
+  // 42H.2 ג׳ · ימים מתחת לקו הם פער „אחר" — הפרסום דורש אישור חתום על רשימת הפערים (digest מהתצוגה המקדימה).
+  const published = await rt.publish(req({ request_id: 'pub1', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest }));
   ok('5.1 פורסם', published && published.publication_id, JSON.stringify(published));
   const pub = db._get(ST + '/schedule_publications/' + published.publication_id);
   eq('5.2 הפרסום נושא imported + absence_count', [pub.imported, pub.absence_count], [true, 5]);
@@ -856,7 +857,7 @@ const CONFLICT_SHEET = [
   const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
   const cfg = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', { mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
-  const published = await rt.publish(req({ request_id: 'pub8', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));
+  const published = await rt.publish(req({ request_id: 'pub8', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest }));
   const absPath = ST + '/schedule_publications/' + published.publication_id + '/absences';
   let fired = 0;
   const disableViewer = () => { fired += 1; db._put(ST + '/users/u2', { station_id: SID, station: SID, is_active: false, active: false, role: 'firefighter', full_name: 'דניאל לוי' }); };

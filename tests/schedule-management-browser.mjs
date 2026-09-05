@@ -2038,10 +2038,442 @@ try {
     assert.equal(await lostImportPage.locator('#draftBoard .cell.col-A').count(), 4);
   });
   await lostImport.close();
+
+  /* ⭐ 42H.2 חבילה א׳ · עריכת הסידור הפעיל: חיפוש עובד → טווח שבוע → שיבוץ
+   * לתחנה → „בדוק" (דוח מהשרת עם CAS על הפרסום שהמסך ראה) → „בצע ופרסם"
+   * (request_id יציב + expected_edit_digest) → הלוח נטען מחדש. תשובה שאבדה
+   * → אותה בקשה נשלחת שוב. */
+  const statusEditable = { mode:'new', configured:true, manager:true,
+    active:{ publication_id:'p_live', revision:4, previous_publication_id:null, can_rollback:false,
+      content_digest:'digest_live_4', from: today.slice(0, 8) + '01', to: shiftDay(today, 20), edited:false } };
+  const statusEdited = { mode:'new', configured:true, manager:true,
+    active:{ publication_id:'p_edit_5', revision:5, previous_publication_id:'p_live', can_rollback:true,
+      content_digest:'digest_edit_5', from: today.slice(0, 8) + '01', to: shiftDay(today, 20), edited:true } };
+  const editReport = {
+    base:{ publication_id:'p_live', revision:4, content_digest:'digest_live_4' },
+    from: today.slice(0, 8) + '01', to: shiftDay(today, 20),
+    counts:{ edits:1, changes:2, people:1, dates:2, no_ops:5, below_minimum:0 },
+    changes:[
+      { uid:'crew_1', date: today, name:'טל חודרה', before:{ sub_station:'main', role:'driver', absence:null }, after:{ sub_station:'main', role:'firefighter', absence:null } },
+      { uid:'crew_1', date: shiftDay(today, 1), name:'טל חודרה', before:{ sub_station:null, role:null, absence:null }, after:{ sub_station:'main', role:'firefighter', absence:null } }
+    ],
+    changes_truncated:false,
+    people_changed:[{ uid:'crew_1', name:'טל חודרה', changes:2 }],
+    warnings:[{ code:'assigned-while-absent', uid:'crew_1', date: today, name:'טל חודרה' }],
+    notifications:1, below_minimum:[], next_revision:5, edit_digest:'ed_1'
+  };
+  const editCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(editCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }, { data:statusEdited }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReport }],
+    applyScheduleEdit:[
+      /* ⭐ ביקורת §7 · תשובה שהגיעה אבל אינה קבלה (בלי publication_id/revision) — עמומה, לא הצלחה. */
+      { data:{ ok:true } },
+      { reject:true, code:'functions/unavailable', message:'stub: response lost' },
+      { data:{ duplicate:true, draft_id:'d_edit', publication_id:'p_edit_5', revision:5, notified_people:1, report:editReport } }
+    ]
+  });
+  const editPage = await editCtx.newPage();
+  await editPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await editPage.locator('#appMain:not(.hide)').waitFor();
+  await test('edit card: search a person, pick a week, add an assignment, check — the report is bound to the live publication', async () => {
+    assert.equal(await editPage.locator('#editCard').isVisible(), true);
+    assert.equal(await editPage.locator('#editCheck').isEnabled(), false);
+    await editPage.fill('#editSearch', 'טל');
+    await editPage.locator('#editSearchResults button').first().click();
+    assert.match(await editPage.locator('#editPerson').textContent(), /טל חודרה/);
+    await editPage.selectOption('#editRange', 'week');
+    await editPage.fill('#editDate', today);
+    await editPage.locator('#editDate').dispatchEvent('change');
+    assert.match(await editPage.locator('#editDates').textContent(), /ימים/);
+    await editPage.selectOption('#editAction', 'assign');
+    await editPage.selectOption('#editStation', 'main');
+    await editPage.selectOption('#editRole', 'firefighter');
+    await editPage.locator('#editAdd').click();
+    assert.equal(await editPage.locator('#editList .row').count(), 1);
+    assert.match(await editPage.locator('#editList .row b').textContent(), /טל חודרה · שיבוץ לאילת כלוחם/);
+    assert.equal(await editPage.locator('#editApply').isEnabled(), false, 'no apply before a report');
+    await editPage.locator('#editCheck').click();
+    await editPage.locator('#editMessage .ok').waitFor();
+    const calls = await editPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.find((entry) => entry.name === 'previewScheduleEdit');
+    assert.deepEqual(preview.payload.expected, { publication_id:'p_live', revision:4, content_digest:'digest_live_4' });
+    assert.equal(preview.payload.edits.length, 1);
+    assert.deepEqual([preview.payload.edits[0].kind, preview.payload.edits[0].uid, preview.payload.edits[0].sub_station, preview.payload.edits[0].role], ['assign', 'crew_1', 'main', 'firefighter']);
+    assert.ok(preview.payload.edits[0].dates.length >= 1 && preview.payload.edits[0].dates.length <= 7, 'a week, cut to the publication range');
+    assert.equal(Object.hasOwn(preview.payload, 'stationId'), false);
+    assert.equal(await editPage.locator('#editCounts .metric').count(), 6);
+    assert.equal(await editPage.locator('#editChanges .editchange').count(), 2);
+    assert.match(await editPage.locator('#editWarnings').textContent(), /היעדרות/);
+    assert.equal(await editPage.locator('#editApply').isEnabled(), true);
+  });
+  await test('edit card: a malformed or lost apply response keeps the exact request; the retry sends it unchanged and the board reloads', async () => {
+    const rangeCallsBefore = (await editPage.evaluate(() => window.__CALLABLE_CALLS)).filter((entry) => entry.name === 'getStationScheduleRange').length;
+    // 1 · תשובה שהגיעה בלי קבלה — הרשימה והדוח נשארים, הבקשה ממתינה.
+    await editPage.locator('#editApply').click();
+    await editPage.locator('#editMessage .warn').waitFor();
+    assert.match(await editPage.locator('#editMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
+    assert.equal(await editPage.locator('#editApply').isEnabled(), true);
+    assert.equal(await editPage.locator('#editList .row').count(), 1, 'a malformed receipt must not clear the edit');
+    assert.equal(await editPage.locator('#editReport').isVisible(), true);
+    // 2 · תשובה שאבדה — אותו דבר.
+    await editPage.locator('#editApply').click();
+    await editPage.locator('#editMessage .warn').waitFor();
+    assert.match(await editPage.locator('#editMessage').textContent(), /אותה בקשה בדיוק תישלח שוב/);
+    assert.equal(await editPage.locator('#editApply').isEnabled(), true);
+    // 3 · קבלה אמיתית.
+    await editPage.locator('#editApply').click();
+    await editPage.locator('#editMessage .ok').waitFor();
+    assert.match(await editPage.locator('#editMessage').textContent(), /פורסמה גרסה 5/);
+    const calls = await editPage.evaluate(() => window.__CALLABLE_CALLS);
+    const applies = calls.filter((entry) => entry.name === 'applyScheduleEdit');
+    assert.equal(applies.length, 3);
+    assert.deepEqual(applies[1].payload, applies[0].payload, 'the retry is not the same request');
+    assert.deepEqual(applies[2].payload, applies[0].payload, 'the second retry is not the same request');
+    assert.equal(applies[0].payload.expected_edit_digest, 'ed_1');
+    assert.ok(applies[0].payload.request_id);
+    assert.deepEqual(applies[0].payload.expected, { publication_id:'p_live', revision:4, content_digest:'digest_live_4' });
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleEdit').length, 1, 'no second report was requested');
+    assert.equal(await editPage.locator('#editList .row').count(), 0, 'the list is cleared after a verified answer');
+    assert.equal(await editPage.locator('#editApply').isEnabled(), false);
+    assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 2, 'status refreshed after the edit');
+    // אחרי 2b12d98 הלוח האישי והלוח התחנתי הם שתי קריאות טווח נפרדות (operational / imported-display).
+    const rangeAfter = calls.filter((entry) => entry.name === 'getStationScheduleRange').slice(rangeCallsBefore);
+    assert.equal(rangeAfter.length, 2, 'board reloaded exactly once per view after the edit');
+    assert.deepEqual(rangeAfter.map((entry) => entry.payload.display_imported === true).sort(), [false, true]);
+  });
+  await editCtx.close();
+
+  const qualCatalogPhone = {
+    catalog: [
+      { key:'shift_lead', label:'ראש משמרת', order:10, critical:true, builtin:true, active:true, minimum:1, revision:0 },
+      { key:'deputy', label:'סגן', order:20, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'officer', label:'קצין', order:30, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'crew_commander', label:'מפקדי צוותים', order:40, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'driver', label:'נהגים', order:50, critical:false, builtin:true, active:true, minimum:2, revision:1 },
+      { key:'hazmat', label:'חומ״ס', order:60, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'monitoring', label:'ניטור', order:70, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'ylm', label:'יל״מ', order:80, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'firefighter', label:'לוחמים', order:90, critical:false, builtin:true, active:true, minimum:0, revision:0 }
+    ],
+    holders:{ driver:1 }, holdings_revision:1,
+    people:[{ uid:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'], qualifications:['driver'], revision:1, legacy:[] }],
+    unknown_holders:[]
+  };
+  /* ⭐ ביקורת §7 · טלפון (390px): כרטיס העריכה, בקרת הפערים והכשירויות
+   * נשארים בתוך המסך — הדף אינו גולל לרוחב, הטבלה גוללת בתוך המכולה שלה. */
+  const phoneManagerCtx = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(phoneManagerCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReport }],
+    getQualificationCatalog:[{ data:qualCatalogPhone }]
+  });
+  const phoneManagerPage = await phoneManagerCtx.newPage();
+  await phoneManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await phoneManagerPage.locator('#appMain:not(.hide)').waitFor();
+  await test('phone: the edit card and its report fit the viewport; the page never scrolls sideways', async () => {
+    assert.equal(await phoneManagerPage.locator('#editCard').isVisible(), true);
+    assert.equal(await phoneManagerPage.locator('#gapCard').isVisible(), true);
+    await phoneManagerPage.fill('#editSearch', 'טל');
+    await phoneManagerPage.locator('#editSearchResults button').first().click();
+    await phoneManagerPage.selectOption('#editRange', 'day');
+    await phoneManagerPage.fill('#editDate', today);
+    await phoneManagerPage.locator('#editDate').dispatchEvent('change');
+    await phoneManagerPage.selectOption('#editAction', 'assign');
+    await phoneManagerPage.selectOption('#editStation', 'main');
+    await phoneManagerPage.locator('#editAdd').click();
+    await phoneManagerPage.locator('#editCheck').click();
+    await phoneManagerPage.locator('#editMessage .ok').waitFor();
+    const fit = await phoneManagerPage.evaluate(() => ({
+      page: document.documentElement.scrollWidth <= window.innerWidth,
+      card: document.getElementById('editCard').scrollWidth <= document.getElementById('editCard').clientWidth + 1,
+      report: document.getElementById('editReport').scrollWidth <= document.getElementById('editReport').clientWidth + 1,
+      gaps: document.getElementById('editGaps').hidden || document.getElementById('editGaps').scrollWidth <= document.getElementById('editGaps').clientWidth + 1
+    }));
+    assert.deepEqual(fit, { page:true, card:true, report:true, gaps:true });
+    assert.equal(await phoneManagerPage.locator('#editApply').isVisible(), true);
+  });
+  await test('phone: the qualifications tab is usable — table scrolls inside its box, person rows stack, no sideways page scroll', async () => {
+    await phoneManagerPage.locator('#qualsTab').click();
+    await phoneManagerPage.locator('#qualRows tr').first().waitFor();
+    await phoneManagerPage.fill('#qualSearch', 'טל');
+    await phoneManagerPage.locator('#qualPeople .person').first().waitFor();
+    const fit = await phoneManagerPage.evaluate(() => {
+      const table = document.getElementById('qualTable');
+      const box = table.parentElement;
+      const person = document.querySelector('#qualPeople .person');
+      return {
+        page: document.documentElement.scrollWidth <= window.innerWidth,
+        tableScrollsInBox: getComputedStyle(box).overflowX === 'auto' && box.scrollWidth >= box.clientWidth,
+        boxFits: box.clientWidth <= window.innerWidth,
+        personFits: person.scrollWidth <= person.clientWidth + 1,
+        personStacked: getComputedStyle(person).gridTemplateColumns.split(' ').length === 1
+      };
+    });
+    assert.deepEqual(fit, { page:true, tableScrollsInBox:true, boxFits:true, personFits:true, personStacked:true });
+    assert.equal(await phoneManagerPage.locator('#qualPeople .person button').isVisible(), true);
+  });
+  await phoneManagerCtx.close();
+
+  /* אחראי סידור ב-shadow (אין פרסום פעיל) — כרטיס העריכה אינו מוצג. */
+  const noEditCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(noEditCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusShadowManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }]
+  });
+  const noEditPage = await noEditCtx.newPage();
+  await noEditPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await noEditPage.locator('#appMain:not(.hide)').waitFor();
+  await test('without an active publication the edit card stays hidden', async () => {
+    assert.equal(await noEditPage.locator('#editCard').isVisible(), false);
+    const calls = await noEditPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'previewScheduleEdit' || entry.name === 'applyScheduleEdit'), false);
+  });
+  await noEditCtx.close();
+
+  /* ⭐ 42H.2 חבילה ב׳ · לשונית „כשירויות": קטלוג מובנה בסדר קבוע, שלוש
+   * קריטיות, הוספת מותאמת, כשירויות לאדם (כמה), מחיקה חסומה כשבשימוש. */
+  const qualCatalog = {
+    catalog: [
+      { key:'shift_lead', label:'ראש משמרת', order:10, critical:true, builtin:true, active:true, minimum:1, revision:0 },
+      { key:'deputy', label:'סגן', order:20, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'officer', label:'קצין', order:30, critical:true, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'crew_commander', label:'מפקדי צוותים', order:40, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'driver', label:'נהגים', order:50, critical:false, builtin:true, active:true, minimum:2, revision:1 },
+      { key:'hazmat', label:'חומ״ס', order:60, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'monitoring', label:'ניטור', order:70, critical:false, builtin:true, active:false, minimum:0, revision:1 },
+      { key:'ylm', label:'יל״מ', order:80, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'firefighter', label:'לוחמים', order:90, critical:false, builtin:true, active:true, minimum:0, revision:0 },
+      { key:'diver', label:'צוללן', order:150, critical:false, builtin:false, active:true, minimum:0, revision:1 }
+    ],
+    holders:{ driver:1, diver:1 }, holdings_revision:2,
+    people:[
+      { uid:'stub-uid', name:'אלדד יונה', sub_station:'main', roles:['firefighter'], qualifications:[], revision:0, legacy:['נהג ישן'] },
+      { uid:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'], qualifications:['driver','diver'], revision:2, legacy:[] }
+    ],
+    unknown_holders:[]
+  };
+  const qualCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(qualCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    getQualificationCatalog:[{ data:qualCatalog }, { data:qualCatalog }, { data:qualCatalog }],
+    saveQualification:[
+      /* ⭐ ביקורת §7 · כשל תקשורת עמום; הלחיצה הבאה חייבת לשלוח את אותה בקשה עם אותו request_id. */
+      { reject:true, code:'functions/unavailable', message:'stub: response lost' },
+      { data:{ duplicate:false, key:'pilot', revision:1 } }
+    ],
+    setPersonQualifications:[{ data:{ duplicate:false, uid:'stub-uid', qualifications:['shift_lead', 'firefighter'], revision:1 } }]
+  });
+  const qualPage = await qualCtx.newPage();
+  qualPage.on('dialog', (dialog) => dialog.accept());
+  await qualPage.goto(base + '?tab=quals', { waitUntil:'load' });
+  await qualPage.locator('#appMain:not(.hide)').waitFor();
+  await test('qualifications tab: the fixed catalog, critical marks, holders, disabled delete for a used custom entry', async () => {
+    assert.equal(await qualPage.locator('#qualsTab').isVisible(), true);
+    await qualPage.locator('#qualRows tr').first().waitFor();
+    assert.equal(await qualPage.locator('#qualRows tr').count(), 10);
+    assert.deepEqual(await qualPage.locator('#qualRows tr td:nth-child(2) input').evaluateAll((inputs) => inputs.map((i) => i.value)),
+      ['ראש משמרת', 'סגן', 'קצין', 'מפקדי צוותים', 'נהגים', 'חומ״ס', 'ניטור', 'יל״מ', 'לוחמים', 'צוללן']);
+    assert.equal(await qualPage.locator('#qualRows td.critical').count(), 3);
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="monitoring"]').getAttribute('class'), 'off');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="driver"] td:nth-child(5)').textContent(), '1');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="diver"] button[data-action="delete"]').isEnabled(), false, 'a used custom entry cannot be deleted from the screen');
+    assert.equal(await qualPage.locator('#qualRows tr[data-key="driver"] button[data-action="delete"]').count(), 0, 'built-ins have no delete');
+  });
+  await test('qualifications tab: add a custom entry and save several qualifications for a person', async () => {
+    await qualPage.fill('#qualNewKey', 'pilot');
+    await qualPage.fill('#qualNewLabel', 'טייס');
+    await qualPage.fill('#qualNewMinimum', '1');
+    await qualPage.locator('#qualAdd').click();
+    await qualPage.locator('#qualMessage .err').waitFor();
+    assert.match(await qualPage.locator('#qualMessage').textContent(), /לחיצה חוזרת תשלח את אותה בקשה בדיוק/);
+    assert.equal(await qualPage.inputValue('#qualNewKey'), 'pilot', 'the form must keep the intent after an ambiguous failure');
+    await qualPage.locator('#qualAdd').click();
+    await qualPage.locator('#qualMessage .ok').waitFor();
+    let calls = await qualPage.evaluate(() => window.__CALLABLE_CALLS);
+    const saves = calls.filter((entry) => entry.name === 'saveQualification');
+    assert.equal(saves.length, 2);
+    assert.deepEqual(saves[1].payload, saves[0].payload, 'the retry must be the same request (same request_id)');
+    const saved = saves[0];
+    assert.deepEqual([saved.payload.key, saved.payload.label, saved.payload.minimum, saved.payload.active, saved.payload.expected_revision], ['pilot', 'טייס', 1, true, 0]);
+    assert.ok(saved.payload.request_id);
+    await qualPage.fill('#qualSearch', 'אלדד');
+    assert.equal(await qualPage.locator('#qualPeople .person').count(), 1);
+    assert.match(await qualPage.locator('#qualPeople .person .legacy').textContent(), /נהג ישן/);
+    // הכשירות המושבתת (ניטור) אינה מוצעת; 9 פעילות.
+    assert.equal(await qualPage.locator('#qualPeople .person .held label').count(), 9);
+    await qualPage.locator('#qualPeople .person .held input[value="shift_lead"]').check();
+    await qualPage.locator('#qualPeople .person .held input[value="firefighter"]').check();
+    await qualPage.locator('#qualPeople .person button').click();
+    await qualPage.locator('#qualPeopleMessage .ok').waitFor();
+    calls = await qualPage.evaluate(() => window.__CALLABLE_CALLS);
+    const person = calls.find((entry) => entry.name === 'setPersonQualifications');
+    assert.deepEqual([person.payload.person, person.payload.qualifications, person.payload.expected_revision], ['stub-uid', ['shift_lead', 'firefighter'], 0]);
+    assert.equal(Object.hasOwn(person.payload, 'uid'), false, 'the target is `person`, never `uid`');
+    assert.equal(calls.filter((entry) => entry.name === 'getQualificationCatalog').length, 3, 'the catalog is reloaded from the server after each write');
+  });
+  await qualCtx.close();
+
+  /* כבאי רגיל — אין לשונית כשירויות ואין קריאה לקטלוג. */
+  const qualMemberCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(qualMemberCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const qualMemberPage = await qualMemberCtx.newPage();
+  await qualMemberPage.goto(base + '?tab=quals', { waitUntil:'load' });
+  await qualMemberPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a firefighter without the appointment neither sees the qualifications tab nor calls the catalog', async () => {
+    assert.equal(await qualMemberPage.locator('#qualsTab').isVisible(), false);
+    assert.equal(await qualMemberPage.locator('#qualsView').isVisible(), false);
+    const calls = await qualMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.some((entry) => entry.name === 'getQualificationCatalog'), false);
+  });
+  await qualMemberCtx.close();
+
+  /* ⭐ 42H.2 חבילה ג׳ · בקרת פערים במסך: טיוטה עם פערים „אחרים" — הפרסום נעול
+   * עד אישור מפורש, והאישור (חתימת הרשימה) נשלח לשרת; פער קריטי נועל את
+   * הפרסום בלי אפשרות אישור; דוח לפי יום עם מועמדים בלבד. */
+  const gapsOther = {
+    summary:{ days:31, days_with_gaps:2, critical_gaps:0, other_gaps:2, station_minimum:6 },
+    blocking:[],
+    acknowledgeable:[
+      { kind:'station', date: today, minimum:6, present:4, gap:2 },
+      { kind:'qualification', date: shiftDay(today, 1), key:'driver', label:'נהגים', minimum:2, present:1, gap:1 }
+    ], truncated:false, digest:'gapdigest_other'
+  };
+  const gapsCritical = {
+    summary:{ days:31, days_with_gaps:1, critical_gaps:1, other_gaps:0, station_minimum:0 },
+    blocking:[{ kind:'qualification', date: today, key:'shift_lead', label:'ראש משמרת', minimum:1, present:0, gap:1 }],
+    acknowledgeable:[], truncated:false, digest:null
+  };
+  const previewWithGaps = Object.assign(JSON.parse(JSON.stringify(draftPreview)), { gaps: gapsOther });
+  const gapDays = { target:{ kind:'draft', draft_id:'draft_1' }, station_minimum:6, gap_policy_revision:1, summary: gapsOther.summary,
+    blocking:[], acknowledgeable: gapsOther.acknowledgeable, truncated:false, digest:'gapdigest_other',
+    days:[{ date: today, total:4, station_minimum:6, station_gap:2, station_candidates:[{ uid:'crew_1', name:'טל חודרה' }],
+      sub_stations:[{ sub_station:'main', label:'אילת', people:4, minimum:2, gap:0, coverage:'ready' }],
+      qualifications:[{ key:'shift_lead', label:'ראש משמרת', critical:true, minimum:0, present:0, gap:0, candidates:[] },
+        { key:'driver', label:'נהגים', critical:false, minimum:2, present:1, gap:1, candidates:[{ uid:'crew_1', name:'טל חודרה' }] }],
+      has_gap:true, has_critical_gap:false }] };
+  const gapCtx = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(gapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusAfterPublish }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30), summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:previewWithGaps }],
+    getScheduleGapReport:[{ data:gapDays }],
+    publishSchedule:[{ data:{ publication_id:'p_new', revision:5, notified_people:2 } }]
+  });
+  const gapPage = await gapCtx.newPage();
+  gapPage.on('dialog', (dialog) => dialog.accept());
+  await gapPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await gapPage.locator('#appMain:not(.hide)').waitFor();
+  await test('gap control: other gaps lock publishing until an explicit acknowledgement, which travels as the exact digest', async () => {
+    await gapPage.locator('#runPlanner').click();
+    await gapPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await gapPage.locator('#draftGaps').isVisible(), true);
+    assert.equal(await gapPage.locator('#draftGapsList .gap.other').count(), 2);
+    assert.equal(await gapPage.locator('#draftGapsList .gap.critical').count(), 0);
+    assert.equal(await gapPage.locator('#draftGapAckWrap').isVisible(), true);
+    await gapPage.locator('#reviewDraft').check();
+    assert.equal(await gapPage.locator('#publish').isEnabled(), false, 'no publish before the acknowledgement');
+    // פירוט לפי יום — מועמדים בלבד.
+    await gapPage.locator('#draftGapsDetail').click();
+    await gapPage.locator('#draftGapsDays .gapday').waitFor();
+    assert.match(await gapPage.locator('#draftGapsDays').textContent(), /מועמדים: טל חודרה/);
+    const detail = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'getScheduleGapReport');
+    assert.deepEqual(detail.payload, { draft_id:'draft_1' });
+    await gapPage.locator('#draftGapAck').check();
+    assert.equal(await gapPage.locator('#publish').isEnabled(), true);
+    await gapPage.locator('#publish').click();
+    await gapPage.locator('#publishMessage .ok').waitFor();
+    const published = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'publishSchedule');
+    assert.equal(published.payload.gap_acknowledgement, 'gapdigest_other');
+    assert.equal(published.payload.expected_content_digest, 'digest_preview_1');
+  });
+  await gapCtx.close();
+
+  const previewCritical = Object.assign(JSON.parse(JSON.stringify(draftPreview)), { gaps: gapsCritical });
+  const gapCriticalCtx = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(gapCriticalCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }],
+    runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30), summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+    getScheduleDraftPreview:[{ data:previewCritical }]
+  });
+  const gapCriticalPage = await gapCriticalCtx.newPage();
+  gapCriticalPage.on('dialog', (dialog) => dialog.accept());
+  await gapCriticalPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await gapCriticalPage.locator('#appMain:not(.hide)').waitFor();
+  await test('gap control: a critical gap locks publishing with no acknowledgement offered', async () => {
+    await gapCriticalPage.locator('#runPlanner').click();
+    await gapCriticalPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await gapCriticalPage.locator('#draftGapsList .gap.critical').count(), 1);
+    assert.match(await gapCriticalPage.locator('#draftGapsTitle').textContent(), /חוסם/);
+    assert.equal(await gapCriticalPage.locator('#draftGapAckWrap').isVisible(), false);
+    await gapCriticalPage.locator('#reviewDraft').check();
+    assert.equal(await gapCriticalPage.locator('#publish').isEnabled(), false);
+    const calls = await gapCriticalPage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.equal(calls.some((entry) => entry.name === 'publishSchedule'), false);
+  });
+  await gapCriticalCtx.close();
+
+  /* עריכה עם פערים: הדוח מציג אותם; אישור נשלח עם הביצוע. */
+  const editReportGaps = Object.assign(JSON.parse(JSON.stringify(editReport)), { gaps: gapsOther });
+  const editGapCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(editGapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }, { data:statusEdited }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReportGaps }],
+    applyScheduleEdit:[{ data:{ duplicate:false, draft_id:'d_edit', publication_id:'p_edit_5', revision:5, notified_people:1, report:editReportGaps } }]
+  });
+  const editGapPage = await editGapCtx.newPage();
+  await editGapPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await editGapPage.locator('#appMain:not(.hide)').waitFor();
+  await test('edit card: gaps after the change need the acknowledgement; the apply carries the digest', async () => {
+    await editGapPage.fill('#editSearch', 'טל');
+    await editGapPage.locator('#editSearchResults button').first().click();
+    await editGapPage.fill('#editDate', today);
+    await editGapPage.locator('#editDate').dispatchEvent('change');
+    await editGapPage.selectOption('#editAction', 'unassign');
+    await editGapPage.locator('#editAdd').click();
+    await editGapPage.locator('#editCheck').click();
+    await editGapPage.locator('#editMessage .ok').waitFor();
+    assert.equal(await editGapPage.locator('#editGaps').isVisible(), true);
+    assert.equal(await editGapPage.locator('#editGapsList .gap.other').count(), 2);
+    await editGapPage.locator('#editApply').click();
+    await editGapPage.locator('#editMessage .err').waitFor();
+    assert.match(await editGapPage.locator('#editMessage').textContent(), /אישור מפורש/);
+    assert.equal((await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).some((entry) => entry.name === 'applyScheduleEdit'), false);
+    await editGapPage.locator('#editGapAck').check();
+    await editGapPage.locator('#editApply').click();
+    await editGapPage.locator('#editMessage .ok').waitFor();
+    const applied = (await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'applyScheduleEdit');
+    assert.equal(applied.payload.gap_acknowledgement, 'gapdigest_other');
+  });
+  await editGapCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 52);
-console.log('\n52 schedule management browser checks passed.');
+assert.equal(passed, 63);
+console.log('\n' + passed + ' schedule management browser checks passed.');

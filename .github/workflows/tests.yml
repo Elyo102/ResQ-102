@@ -121,6 +121,19 @@ jobs:
       - name: הדבקת הגיליון כטיוטה מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-sheet-import.integration.test.js"
 
+      # ⭐ 42H.2 — עריכת סידור שפורסם: טיוטה נגזרת → revision חדש עם CAS,
+      # יומן, outbox אחד לאדם, ניסיון חוזר, בסיס ישן נדחה, rollback.
+      - name: עריכת סידור שפורסם מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-edit.integration.test.js"
+
+      # ⭐ 42H.2 — קטלוג כשירויות ומחזיקים: CAS, יומן, מחיקה נחסמת כשבשימוש.
+      - name: קטלוג כשירויות מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-qualifications.integration.test.js"
+
+      # ⭐ 42H.2 — בקרת פערים: קריטי חוסם, אחר עם אישור חתום, מועמדים בלבד.
+      - name: בקרת פערים מול Firestore מקומי
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js"
+
       - name: Monitoring and feedback transactions and deny rules
         env:
           NODE_PATH: ${{ github.workspace }}/rules-test/node_modules

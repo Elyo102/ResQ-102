@@ -72,6 +72,11 @@ await env.withSecurityRulesDisabled(async (context) => {
   await setDoc(doc(db, `stations/${SID}/schedule_state/sheet_aliases`), { station_id: SID, aliases: { 'כינוי': 'manager_1' } });
   await setDoc(doc(db, `stations/${SID}/schedule_drafts/draft_1/absences/a_1`), { date: '2026-09-01', entries: [{ uid: 'manager_1', kind: 'sick' }] });
   await setDoc(doc(db, `stations/${SID}/schedule_publications/publication_1/absences/a_1`), { date: '2026-09-01', entries: [{ uid: 'manager_1', kind: 'sick' }] });
+  // 42H.2 · קטלוג כשירויות ומחזיקים, יומן — שרת בלבד.
+  await setDoc(doc(db, `stations/${SID}/schedule_qualifications/driver`), { station_id: SID, key: 'driver', label: 'נהגים', active: true, revision: 1 });
+  await setDoc(doc(db, `stations/${SID}/schedule_person_qualifications/manager_1`), { station_id: SID, uid: 'manager_1', qualifications: ['driver'], revision: 1 });
+  await setDoc(doc(db, `stations/${SID}/schedule_qualification_audit/qa_1`), { action: 'holdings', person: 'manager_1' });
+  await setDoc(doc(db, `stations/${SID}/schedule_state/qualifications`), { holdings_revision: 1 });
   await setDoc(doc(db, `stations/${SID}/schedule_responses/response_1`), { person: 'manager_1' });
   await setDoc(doc(db, `stations/${SID}/schedule_audit/audit_1`), { action: 'seed' });
 });
@@ -89,6 +94,10 @@ const protectedPaths = [
   ['sheet aliases', `stations/${SID}/schedule_state/sheet_aliases`],
   ['draft absences', `stations/${SID}/schedule_drafts/draft_1/absences/a_1`],
   ['publication absences', `stations/${SID}/schedule_publications/publication_1/absences/a_1`],
+  ['qualification catalog entry', `stations/${SID}/schedule_qualifications/driver`],
+  ['person qualifications', `stations/${SID}/schedule_person_qualifications/manager_1`],
+  ['qualification audit', `stations/${SID}/schedule_qualification_audit/qa_1`],
+  ['qualification holdings counter', `stations/${SID}/schedule_state/qualifications`],
   ['response', `stations/${SID}/schedule_responses/response_1`],
   ['audit', `stations/${SID}/schedule_audit/audit_1`]
 ];
@@ -115,6 +124,10 @@ for (const [name, actor] of [
     getDocs(collection(actor, `stations/${SID}/schedule_drafts/draft_1/absences`)));
   await blocked(name + ' cannot list publication absences',
     getDocs(collection(actor, `stations/${SID}/schedule_publications/publication_1/absences`)));
+  await blocked(name + ' cannot list the qualification catalog directly',
+    getDocs(collection(actor, `stations/${SID}/schedule_qualifications`)));
+  await blocked(name + ' cannot list person qualifications directly',
+    getDocs(collection(actor, `stations/${SID}/schedule_person_qualifications`)));
   await blocked(name + ' cannot create an appointment directly',
     setDoc(doc(actor, `stations/${SID}/schedule_access/new_manager`), { active: true }));
   await blocked(name + ' cannot update an appointment directly',

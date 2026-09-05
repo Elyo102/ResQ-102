@@ -550,5 +550,35 @@ t('התוצאה קפואה', () => {
   assert.ok(Object.isFrozen(r) && Object.isFrozen(r.publication) && Object.isFrozen(r.notifications));
 });
 
+/* ---- 42H.2 · ביקורת Codex §2: היעדרות היא שינוי בסידור של האדם ---- */
+t('היעדרות שנוספה — הודעה לאדם, בלי הסוג ובלי המיקום', () => {
+  const next = Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }, { date: '2026-09-03', uid: 'דן', kind: 'leave', location: 'abroad' }] });
+  const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p2', actor: 'a' }));
+  const people = r.notifications.map((n) => n.person).sort();
+  assert.deepEqual(people, ['גל', 'דן']);
+  const gal = r.notifications.find((n) => n.person === 'גל');
+  assert.equal(gal.detail[0].kind, 'absence_added');
+  assert.ok(/נרשמה היעדרות/.test(gal.push.body), gal.push.body);
+  const text = JSON.stringify(r.notifications);
+  assert.ok(!/sick|leave|abroad/.test(text), 'סוג/מיקום היעדרות דלפו: ' + text);
+});
+t('היעדרות שהוסרה ושהשתנתה — סוגי שינוי נפרדים; זהה — אין הודעה', () => {
+  const prev = Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }, { date: '2026-09-03', uid: 'דן', kind: 'leave' }] });
+  const next = Object.assign({}, P1, { absences: [{ date: '2026-09-03', uid: 'דן', kind: 'course' }] });
+  const r = mk().planPublication(publicationInput({ next, previous: prev, publication_id: 'p3', actor: 'a' }));
+  assert.deepEqual(r.notifications.map((n) => n.person + ':' + n.detail[0].kind).sort(), ['גל:absence_removed', 'דן:absence_changed']);
+  const same = mk().planPublication(publicationInput({ next: prev, previous: prev, publication_id: 'p4', actor: 'a' }));
+  assert.equal(same.notifications.length, 0);
+});
+t('היעדרויות בחתימת התוכן: אותן שורות, היעדרות אחרת = content_hash אחר', () => {
+  const a = mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [] }), previous: null, publication_id: 'p5', actor: 'a' }));
+  const b = mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }] }), previous: null, publication_id: 'p5', actor: 'a' }));
+  assert.notEqual(a.publication.content_hash, b.publication.content_hash);
+});
+t('היעדרות כפולה או פגומה — סירוב', () => {
+  throwsCode(() => mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }, { date: '2026-09-02', uid: 'גל', kind: 'leave' }] }), previous: null, publication_id: 'p6', actor: 'a' })), 'duplicate-absence');
+  throwsCode(() => mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל' }] }), previous: null, publication_id: 'p7', actor: 'a' })), 'plan-absences');
+});
+
 console.log((fails.length ? '✗' : '✓') + ' schedule-publication: ' + pass + '/' + (pass + fails.length));
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

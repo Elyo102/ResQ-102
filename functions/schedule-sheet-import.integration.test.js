@@ -840,7 +840,7 @@ async function test(name, fn) {
 
   await test('publish in shadow prepares only — no active pointer', async () => {
     const prepared = await api.publish(req(MGR, {
-      request_id: 'sheet_pub_shadow', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest
+      request_id: 'sheet_pub_shadow', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest
     }));
     assert.ok(prepared && prepared.publication_id);
     const pointer = await station().collection('schedule_state').doc('active').get();
@@ -854,7 +854,7 @@ async function test(name, fn) {
     const cfg = (await runtimeDoc().get()).data() || {};
     await runtimeDoc().set({ mode: 'new', active_policy_id: cfg.active_policy_id, active_source_id: cfg.active_source_id });
     const published = await api.publish(req(MGR, {
-      request_id: 'sheet_pub_new', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest
+      request_id: 'sheet_pub_new', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest
     }));
     assert.ok(published && published.publication_id);
     const pub = (await station().collection('schedule_publications').doc(published.publication_id).get()).data() || {};

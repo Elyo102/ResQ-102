@@ -396,7 +396,9 @@ check('an unavailable runtime fails closed without reopening the legacy schedule
 });
 check('station schedule is the default view and denied management falls back to it', () => {
   assert.ok(ui.includes("if (name === 'manage' && !canManageSchedule()) name = 'station'"));
-  assert.ok(ui.includes("['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station'"));
+  // 42H.2 · גם לשונית הכשירויות נופלת ל„סידור התחנה" בלי מינוי חי.
+  assert.ok(ui.includes("if (name === 'quals' && !canManageSchedule()) name = 'station'"));
+  assert.ok(ui.includes("['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station'"));
   assert.ok(ui.includes("|| 'station'"));
 });
 check('personal schedule reads only the requested day', () => {
@@ -1892,5 +1894,42 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
 });
 
-assert.equal(passed, 117);
-console.log('\n117 schedule runtime source checks passed.');
+/* ------------------------------------------------------------------ *
+ * 42H.2 · ביקורת Codex על 0e9a8dc (seq453)
+ * ------------------------------------------------------------------ */
+
+check('§1 the publish gap gate is recomputed inside the publish transaction from tx reads', () => {
+  const publishBody = runtime.slice(runtime.indexOf('async function publish(req)'), runtime.indexOf('async function rollback(req)'));
+  assert.ok(publishBody.includes('gapContext(ctx, config, gapPeople, txRead)'), 'the in-transaction gap context must read through tx.get');
+  assert.ok(publishBody.includes('gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);\n      requireGapClearance(gapReport, gapAcknowledgement);'), 'the binding clearance check must run inside the transaction');
+  const txStart = publishBody.indexOf('await db.runTransaction(async (tx) => {');
+  assert.ok(txStart > -1 && publishBody.indexOf('requireGapClearance(gapReport, gapAcknowledgement);') > txStart);
+  // הבדיקה המוקדמת רצה גם לניסיון חוזר של פרסום ב-staging (אינה מותנית ב-!existing.exists).
+  assert.ok(publishBody.includes('const earlyCtx = await gapContext(ctx, config, gapPeople);'));
+  assert.equal(publishBody.includes('if (!existing.exists) {\n      const gapCtx'), false, 'the gate must not be skipped on a staging retry');
+  // הקוראים מקבלים `read` ומשתמשים בו — אחרת tx.get אינו אלא קישוט.
+  assert.ok(runtime.includes('async function loadQualificationCatalog(ctx, read)') && runtime.includes('(read || directRead)(qualificationCatalogRef(ctx.sid)'));
+  assert.ok(runtime.includes('async function loadPersonQualifications(ctx, read)') && runtime.includes("(read || directRead)(stationRef(ctx.sid).collection('schedule_person_qualifications')"));
+  assert.ok(runtime.includes('async function loadGapPolicy(ctx, read)') && runtime.includes('(read || directRead)(gapPolicyRef(ctx.sid))'));
+});
+
+check('§3 edits always run against the active policy (rows rebased when it changed) and the canonical projection of an imported plan', () => {
+  // הכרעת אלדד (5.9): עריכה ידנית תמיד אפשרית — אין סירוב על מדיניות שהשתנתה, יש יישור.
+  assert.equal(runtime.includes("'edit-policy-changed'"), false, 'manual editing must always be possible');
+  assert.ok(runtime.includes('rebase_policy: policyChanged'));
+  assert.ok(runtime.includes('const editPolicy = await editPolicyFor(ctx, policy, active);'));
+  assert.ok(runtime.includes('sheetImport.projectCanonicalPolicy(policy.value, map)'));
+  assert.ok(runtime.includes('station_map: importedStationMapOf(null, draftMeta),'), 'the publication must carry the station map');
+});
+
+check('§4/§5/§6 the pure edit module keeps UID_RE, MAX_WARNINGS and the role check', () => {
+  const edit = read('functions/schedule-edit.js');
+  assert.ok(edit.includes('const UID_RE = /^[^\\s/\\u0000-\\u001f\\u007f]{1,128}$/;'), 'UID must not be filtered to alphanumerics');
+  assert.ok(edit.includes('if (!UID_RE.test(uid))'));
+  assert.ok(edit.includes('const MAX_WARNINGS = 200;') && edit.includes('if (warnings.length < MAX_WARNINGS) warnings.push(entry);'));
+  assert.ok(edit.includes("fail('edit-role-unknown'"));
+  assert.ok(runtime.includes('report.report_bytes = requireEditReportSize(report);'));
+});
+
+assert.equal(passed, 120);
+console.log('\n120 schedule runtime source checks passed.');
