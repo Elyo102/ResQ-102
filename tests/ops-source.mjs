@@ -94,7 +94,7 @@ await check('client technical vocabularies agree with server vocabularies', () =
 });
 await check('current release incidents retain their exact version on client and server', () => {
   const current = read('version.js').match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1];
-  assert.equal(current, '42H.2');
+  assert.equal(current, '42H.3');
   const browserReport = client.buildReport('manual', { code:'Error' }, {
     href:'/feedback.html', version:current, callable:'unknown'
   });
@@ -259,7 +259,7 @@ await check('feedback page stays member-only without fixed-email authority', () 
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
   assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
-  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h2['"]/);
+  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h3['"]/);
   assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,
     'feedback must share the page reporter, not install an independent quota/listener');
   assert.match(read('nav.js'), /href:\s*'feedback\.html',\s*label:\s*'חוות דעת',\s*who:\s*'member'/);

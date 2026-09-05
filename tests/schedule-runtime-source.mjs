@@ -223,6 +223,8 @@ check('schedule outbox cancels recipients who left the station at every retry bo
   const validation = runtime.slice(validateStart, deliverStart);
   const delivery = runtime.slice(deliverStart, resumeStart);
   assert.ok(runtime.includes('function recipientIsActive(snap, sid)'));
+  assert.ok(runtime.includes('function activeOperationalMember(user, sid)'));
+  assert.ok(runtime.includes("MEMBER_ROLES.indexOf(String(user && user.role || '')) !== -1"));
   assert.ok(reconcile.includes('liveUserRef(stationId, person)'));
   assert.ok(validation.includes('liveUserRef(stationId, person)'));
   assert.ok(delivery.includes('liveUserRef(stationId, person)'));
@@ -684,7 +686,7 @@ check('legacy compatibility is bounded and rechecks mode and live membership aft
 check('emulator coverage includes compatibility privacy, identity, mode, ranges and caps', () => {
   for (const token of ['active members receive only allow-listed legacy compatibility fields',
     'foreign, inactive and unapproved identities cannot read compatibility data',
-    'super admin compatibility access still requires live same-station membership',
+    'verified super compatibility access survives missing or legacy station membership',
     'new mode explicitly refuses the legacy compatibility endpoint',
     'a mode switch during compatibility reads fails closed',
     'a station membership change during compatibility reads fails closed',
@@ -726,7 +728,7 @@ check('new schedule keeps guards live, private, and outside signed events and re
   assert.ok(integration.includes('V2 pointer change after the live guard sidecar fails closed'));
   assert.ok(integration.includes('V2 mode change after the live guard sidecar fails closed'));
 });
-check('guard operations are server-only and use the live schedule-manager gateway', () => {
+check('guard operations are server-only and use a separate live guard-management gateway', () => {
   const start = rules.indexOf('match /guards/{gId}');
   const guardRules = rules.slice(start, rules.indexOf('match /callouts/{coId}', start));
   assert.ok(start > -1);
@@ -737,7 +739,8 @@ check('guard operations are server-only and use the live schedule-manager gatewa
   }
   assert.ok(runtime.includes("const guardManagement = require('./schedule-guard-management')"));
   assert.ok(runtime.includes('async function manageGuard(req)'));
-  assert.ok(runtime.includes('requireLiveManager(snaps[0], snaps[1], ctx)'));
+  assert.ok(runtime.includes('requireLiveGuardManager(snaps[0], snaps[1], ctx)'));
+  assert.ok(runtime.includes("const GUARD_STAFF_ROLES = ANALYTICS_ROLES"));
   assert.ok(runtime.includes("collection('guard_operations').doc(requestId)"));
   assert.ok(runtime.includes("'guard-revision-conflict'"));
   assert.ok(runtime.includes('async function signupGuard(req)'));
@@ -786,10 +789,12 @@ check('raw guard documents are closed to every browser and each legacy screen us
   assert.equal(guardedScreens['seed.js'].includes('SEED.guards'), false);
   assert.ok(guardedScreens['guards.html'].includes("'getScheduleGuardBoard'"));
   assert.ok(guardedScreens['guards.html'].includes("'getScheduleGuardManagerBoard'"));
+  assert.ok(guardedScreens['guards.html'].includes("'getGuardManagementStatus'"));
   assert.ok(guardedScreens['attendance.html'].includes("'getMyGuardAttendance'"));
   assert.ok(guardedScreens['stats.html'].includes("'getGuardLoadStatistics'"));
 
   const calls = [
+    ['getGuardManagementStatus', 'getGuardManagementStatus'],
     ['getScheduleGuardBoard', 'getGuardBoard'],
     ['getScheduleGuardManagerBoard', 'getGuardManagerBoard'],
     ['getMyGuardAttendance', 'getMyGuardAttendance'],
@@ -805,9 +810,18 @@ check('raw guard documents are closed to every browser and each legacy screen us
   const managerStart = runtime.indexOf('async function getGuardManagerBoard(req)');
   const managerEnd = runtime.indexOf('async function getMyGuardAttendance(req)', managerStart);
   const manager = runtime.slice(managerStart, managerEnd);
-  assert.ok(manager.includes('requireManager(ctx)'));
-  assert.ok(manager.indexOf('readGuardBoardInput(ctx, range)') < manager.indexOf('await requireLiveManagerNow(ctx)'));
+  assert.ok(manager.includes('requireGuardManager(ctx)'));
+  assert.ok(manager.indexOf('readGuardBoardInput(ctx, range)') < manager.indexOf('await requireLiveGuardManagerNow(ctx)'));
   assert.ok(manager.includes('guardBoardProjection.managerBoard(input)'));
+});
+
+check('a verified super claim receives every schedule capability without a legacy station profile', () => {
+  assert.ok(index.includes("return !!(auth && auth.token && auth.token.super === true)"));
+  assert.ok(runtime.includes('manager: superUser || scheduleAccess.isManagerAccess(access, sid, uid)'));
+  assert.ok(runtime.includes('if (!userSnap.exists && !superUser)'));
+  assert.ok(runtime.includes('function requireLiveManager(userSnap, accessSnap, ctx)'));
+  assert.ok(runtime.includes('if (ctx.super) return;'));
+  assert.ok(runtime.includes('if (ctx.super) return { uid: ctx.uid, role: ctx.role, super: true };'));
 });
 check('guard notification outbox is independent from the monthly publication outbox', () => {
   assert.ok(runtime.includes("collectionGroup('guard_outbox')"));
@@ -892,6 +906,21 @@ check('guard notification outbox is independent from the monthly publication out
     'stations/{sid}/guard_notification_jobs/{jobId}',
     'stations/{sid}/guard_outbox/{outboxId}'
   ]) assert.ok(backup.includes("policy('" + path + "'"), path);
+});
+
+check('guard reminders skip completed work and recheck every recipient against live station membership', () => {
+  const start = index.indexOf('exports.guardReminder =');
+  const end = index.indexOf('// ---------- תקלה משביתה', start);
+  const reminder = index.slice(start, end);
+  assert.ok(start > -1 && end > start);
+  assert.ok(reminder.includes("v.status === 'cancelled' || v.status === 'done'"));
+  assert.ok(reminder.includes("db.doc('stations/' + sid + '/users/' + uid)"));
+  assert.ok(reminder.includes('scheduleAccessModule.activeMember(profile, sid)'));
+  assert.ok(reminder.includes("scheduleRuntimeModule.MEMBER_ROLES.indexOf(String(profile.role || '')) !== -1"));
+  assert.equal(runtime.match(/const MEMBER_ROLES = Object\.freeze\(\[[\s\S]*?\]\);/)?.[0]
+    .includes("'district_commander'"), false);
+  assert.ok(reminder.includes("pushToUsers(sid, liveUids, 'guard_mine'"));
+  assert.equal(reminder.includes("pushToUsers(sid, uids, 'guard_mine'"), false);
 });
 check('effective views recheck runtime mode and active pointers are fully bound before rendering', () => {
   for (const token of ['async function checkedLegacyWindow', 'async function checkedActiveSnapshot',
@@ -1892,5 +1921,5 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
 });
 
-assert.equal(passed, 117);
-console.log('\n117 schedule runtime source checks passed.');
+assert.equal(passed, 119);
+console.log('\n119 schedule runtime source checks passed.');

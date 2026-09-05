@@ -232,6 +232,10 @@ const signupStart = SCHEDULE_RUNTIME.indexOf('async function signupGuard(req) {'
 const modeStart = SCHEDULE_RUNTIME.indexOf('function requireMode(config, allowed) {', signupStart);
 const signupBody = signupStart === -1 || modeStart === -1
   ? '' : SCHEDULE_RUNTIME.slice(signupStart, modeStart);
+const operationalMemberStart = SCHEDULE_RUNTIME.indexOf('function activeOperationalMember(user, sid) {');
+const operationalMemberEnd = SCHEDULE_RUNTIME.indexOf('function recipientIsActive', operationalMemberStart);
+const operationalMemberBody = operationalMemberStart === -1 || operationalMemberEnd === -1
+  ? '' : SCHEDULE_RUNTIME.slice(operationalMemberStart, operationalMemberEnd);
 const signupWrapperStart = SERVER.indexOf('exports.guardSignup =');
 const assignWrapperStart = SERVER.indexOf('exports.assignGuard =', signupWrapperStart);
 const signupWrapper = signupWrapperStart === -1 || assignWrapperStart === -1
@@ -247,9 +251,11 @@ is('guardSignup נכנס קודם לשער זהות חי',
 is('guardSignup קורא מחדש משתמש חי בתוך העסקה',
    /tx\.get\(liveUserRef\(ctx\.sid, ctx\.uid\)\)/.test(signupBody), true);
 is('guardSignup מאמת חברות פעילה בתוך העסקה',
-   /scheduleAccess\.activeMember\(user, ctx\.sid\)/.test(signupBody), true);
+   /activeOperationalMember\(user, ctx\.sid\)/.test(signupBody)
+     && /scheduleAccess\.activeMember\(user, sid\)/.test(operationalMemberBody), true);
 is('guardSignup מאמת תפקיד חי מול MEMBER_ROLES בתוך העסקה',
-   /MEMBER_ROLES\.indexOf\(String\(user && user\.role \|\| ''\)\)/.test(signupBody), true);
+   /activeOperationalMember\(user, ctx\.sid\)/.test(signupBody)
+     && /MEMBER_ROLES\.indexOf\(String\(user && user\.role \|\| ''\)\)/.test(operationalMemberBody), true);
 is('guardSignup חוסם claim תפקיד מיושן בתוך העסקה',
    /String\(user && user\.role \|\| ''\) !== ctx\.role/.test(signupBody), true);
 

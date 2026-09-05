@@ -27,6 +27,7 @@ const scheduleCalendar = require('./schedule-calendar-engine');
 const schedulePublication = require('./schedule-publication');
 const scheduleService = require('./schedule-service');
 const scheduleRuntimeModule = require('./schedule-runtime');
+const scheduleAccessModule = require('./schedule-access');
 const scheduleAccessAdminModule = require('./schedule-access-admin');
 const stationTransferModule = require('./station-transfer');
 const incidentLogModule = require('./incident-log');
@@ -4183,10 +4184,23 @@ exports.guardReminder = onSchedule(
 
     for (const d of snap.docs) {
       const v = d.data() || {};
-      if (v.status === 'cancelled') continue;
+      if (v.status === 'cancelled' || v.status === 'done') continue;
       const uids = Array.isArray(v.assigned) ? v.assigned : [];
       if (!uids.length) continue;
-      await pushToUsers(sid, uids, 'guard_mine',
+      // A transfer or deactivation after assignment must take effect before
+      // the reminder is sent.  Guard capacity is capped at 20, so this live
+      // recipient recheck is bounded and does not create an unbounded scan.
+      const refs = Array.from(new Set(uids)).map((uid) =>
+        db.doc('stations/' + sid + '/users/' + uid));
+      const users = refs.length ? await db.getAll.apply(db, refs) : [];
+      const liveUids = users.filter((user) => {
+        const profile = user.exists ? (user.data() || {}) : null;
+        return profile && scheduleAccessModule.activeMember(profile, sid)
+          && scheduleRuntimeModule.MEMBER_ROLES.indexOf(String(profile.role || '')) !== -1;
+      })
+        .map((user) => user.id);
+      if (!liveUids.length) continue;
+      await pushToUsers(sid, liveUids, 'guard_mine',
         'מחר: ' + (v.title || 'אבטחה'),
         (v.start || '') + '–' + (v.end || '') +
           (v.place ? ' · ' + v.place : ''),
@@ -5134,6 +5148,13 @@ async function invokeSchedule(method, req) {
 exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStatus', req));
 
+// Guard staffing is deliberately independent from the schedule-manager
+// appointment.  The server derives this narrow capability from the live
+// station role, an explicit schedule-manager appointment, or a verified
+// super claim; it never trusts a role supplied by the browser.
+exports.getGuardManagementStatus = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('getGuardManagementStatus', req));
+
 exports.getScheduleManagerSetup = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getManagerSetup', req));
 
@@ -5273,8 +5294,8 @@ exports.respondToSchedule = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('respond', req));
 
 // Guard operations stay live even while the monthly engine is off or in
-// shadow mode.  Authority is nevertheless the same live, explicit
-// schedule-manager appointment used by the engine itself.
+// shadow mode.  They use a narrow live guard-management capability and do
+// not grant policy, planner or schedule-publication authority.
 exports.manageScheduleGuard = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('manageGuard', req));
 

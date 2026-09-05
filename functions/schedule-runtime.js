@@ -125,6 +125,11 @@ const GUARD_MUTABLE_FIELDS = Object.freeze([
 const ANALYTICS_ROLES = Object.freeze([
   'deputy', 'commander', 'station_commander', 'hr_coordinator'
 ]);
+// Guard staffing is an operational station capability, not permission to
+// configure, run or publish the monthly schedule.  Keep the two boundaries
+// separate: the legacy live station roles may manage guards, while a person
+// explicitly appointed as schedule manager keeps that capability as well.
+const GUARD_STAFF_ROLES = ANALYTICS_ROLES;
 const DRAFT_PREVIEW_DAYS = 7;
 const ROLLBACK_REASONS = Object.freeze([
   'configuration_error', 'wrong_roster', 'wrong_assignment', 'operational_safety', 'other'
@@ -299,14 +304,21 @@ function createScheduleRuntime(deps) {
     } catch (ignore) {}
   }
 
+  function activeOperationalMember(user, sid) {
+    return scheduleAccess.activeMember(user, sid)
+      && MEMBER_ROLES.indexOf(String(user && user.role || '')) !== -1;
+  }
+
   function recipientIsActive(snap, sid) {
-    return !!snap && snap.exists && scheduleAccess.activeMember(snap.data() || {}, sid);
+    return !!snap && snap.exists && activeOperationalMember(snap.data() || {}, sid);
   }
 
   function requireLiveManager(userSnap, accessSnap, ctx) {
+    if (ctx.super) return;
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     const access = accessSnap && accessSnap.exists ? (accessSnap.data() || {}) : null;
-    if (!scheduleAccess.activeMember(user, ctx.sid)
+    if (!activeOperationalMember(user, ctx.sid)
+        || String(user && user.role || '') !== ctx.role
         || !scheduleAccess.isManagerAccess(access, ctx.sid, ctx.uid)) {
       throw new ScheduleRuntimeError('manager-revoked',
         'מינוי אחראי/ת הסידור אינו פעיל עוד.', 'permission-denied');
@@ -336,6 +348,7 @@ function createScheduleRuntime(deps) {
         'התחנה נקבעת מהחשבון ואינה מתקבלת מהלקוח.', 'invalid-argument');
     }
     const token = req.auth.token || {};
+    const superUser = isSuper(req.auth);
     const sid = String(token.stationId || '').trim();
     if (!ID_RE.test(sid)) {
       throw new ScheduleRuntimeError('station-required',
@@ -351,40 +364,52 @@ function createScheduleRuntime(deps) {
     ]);
     if (identityReads[0].status === 'rejected') throw identityReads[0].reason;
     const userSnap = identityReads[0].value;
-    if (!userSnap.exists) {
+    if (!userSnap.exists && !superUser) {
       throw new ScheduleRuntimeError('live-user-required',
         'החשבון אינו קיים ברשימת המשתמשים הפעילה של התחנה.', 'permission-denied');
     }
-    const user = userSnap.data() || {};
-    if (!scheduleAccess.activeMember(user, sid)) {
+    const user = userSnap.exists ? (userSnap.data() || {}) : null;
+    if (!superUser && !scheduleAccess.activeMember(user, sid)) {
       throw new ScheduleRuntimeError('live-user-inactive',
         'החשבון אינו פעיל או שאינו משויך לתחנה.', 'permission-denied');
     }
-    const role = String(user.role || '');
-    if (!isSuper(req.auth) && MEMBER_ROLES.indexOf(role) === -1) {
+    // Only a truly missing legacy super profile may fall back to the signed
+    // token role.  An existing profile with an empty/invalid role must not be
+    // repaired from the token or a pending user would become a member.
+    const role = user ? String(user.role || '') : String(token.role || '');
+    if (!superUser && MEMBER_ROLES.indexOf(role) === -1) {
       throw new ScheduleRuntimeError('role-forbidden', 'לתפקיד אין גישה לסידור.', 'permission-denied');
     }
-    if (!isSuper(req.auth) && String(token.role || '') !== role) {
+    if (!superUser && String(token.role || '') !== role) {
       throw new ScheduleRuntimeError('claims-stale',
         'הרשאות החשבון אינן מסונכרנות. יש לצאת ולהיכנס מחדש.', 'permission-denied');
     }
-    // Never use a token claim or the profile itself for this capability:
-    // an access record is read live for every call so a removal takes effect
-    // immediately, without waiting for a token refresh.
-    if (identityReads[1].status === 'rejected') throw identityReads[1].reason;
-    const accessSnap = identityReads[1].value;
-    const access = accessSnap.exists ? (accessSnap.data() || {}) : null;
+    // Ordinary users never gain schedule-management authority from a role
+    // claim or profile alone: their appointment is read live on every call.
+    // A cryptographically verified super claim is the deliberate exception
+    // and grants all schedule capabilities without a separate appointment.
+    if (identityReads[1].status === 'rejected' && !superUser) throw identityReads[1].reason;
+    const accessSnap = identityReads[1].status === 'fulfilled' ? identityReads[1].value : null;
+    const access = accessSnap && accessSnap.exists ? (accessSnap.data() || {}) : null;
     return Object.freeze({
       uid,
       sid,
       role,
-      super: isSuper(req.auth),
-      name: String(user.full_name || user.name || token.name || uid).slice(0, 120),
+      super: superUser,
+      name: String(user && (user.full_name || user.name) || token.name || uid).slice(0, 120),
       // The primary role remains unrelated to schedule editing.  A commander,
       // deputy or HR coordinator is view-only until explicitly appointed.
-      manager: scheduleAccess.isManagerAccess(access, sid, uid),
+      manager: superUser || scheduleAccess.isManagerAccess(access, sid, uid),
       user
     });
+  }
+
+  async function guardContext(req) {
+    const ctx = await context(req);
+    return Object.freeze(Object.assign({}, ctx, {
+      guard_manager: ctx.manager || ctx.super
+        || GUARD_STAFF_ROLES.indexOf(ctx.role) !== -1
+    }));
   }
 
   function actor(ctx) {
@@ -433,19 +458,38 @@ function createScheduleRuntime(deps) {
     }
   }
 
-  function requireAnalytics(ctx) {
-    // A live schedule manager needs the same assignment-load view while
-    // staffing a guard, even when their primary station role is firefighter.
-    // That appointment is deliberately separate from every base role.
-    if (!ctx.manager && !ctx.super && ANALYTICS_ROLES.indexOf(ctx.role) === -1) {
-      throw new ScheduleRuntimeError('guard-statistics-forbidden',
-        'נתוני עומס זמינים רק לתפקידי ניהול מורשים.', 'permission-denied');
+  function requireGuardManager(ctx) {
+    if (!ctx.guard_manager) {
+      throw new ScheduleRuntimeError('guard-manager-required',
+        'ניהול אבטחות מותר לבעלי תפקיד מורשים או למינוי סידור פעיל.',
+        'permission-denied');
+    }
+  }
+
+  function requireLiveGuardManager(userSnap, accessSnap, ctx) {
+    if (ctx.super) return;
+    const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
+    const access = accessSnap && accessSnap.exists ? (accessSnap.data() || {}) : null;
+    if (!user) {
+      throw new ScheduleRuntimeError('guard-manager-revoked',
+        'הרשאת ניהול האבטחות אינה פעילה עוד.', 'permission-denied');
+    }
+    const role = String(user.role || '');
+    const active = activeOperationalMember(user, ctx.sid);
+    const roleUnchanged = ctx.super || role === ctx.role;
+    const allowed = ctx.super
+      || scheduleAccess.isManagerAccess(access, ctx.sid, ctx.uid)
+      || GUARD_STAFF_ROLES.indexOf(role) !== -1;
+    if (!active || !roleUnchanged || !allowed) {
+      throw new ScheduleRuntimeError('guard-manager-revoked',
+        'הרשאת ניהול האבטחות אינה פעילה עוד.', 'permission-denied');
     }
   }
 
   // Guards are deliberately independent from a published monthly plan.  A
   // station can open, postpone, staff, unstaff or cancel one at any time; the
-  // only authority boundary is a *live* schedule-manager appointment.
+  // narrow authority boundary is re-read live from a guard-capable station
+  // role, a schedule-manager appointment, or a verified super claim.
   function guardRef(sid, guardId) {
     return stationRef(sid).collection('guards').doc(guardId);
   }
@@ -598,7 +642,7 @@ function createScheduleRuntime(deps) {
       const uid = String(doc && doc.id || '');
       const profile = doc && typeof doc.data === 'function' ? (doc.data() || {}) : {};
       if (!AUTH_UID_RE.test(uid) || uid === creatorUid
-          || !scheduleAccess.activeMember(profile, sid)) continue;
+          || !activeOperationalMember(profile, sid)) continue;
       unique.add(uid);
     }
     return Object.freeze({
@@ -739,8 +783,8 @@ function createScheduleRuntime(deps) {
   }
 
   async function manageGuard(req) {
-    const ctx = await context(req);
-    requireManager(ctx);
+    const ctx = await guardContext(req);
+    requireGuardManager(ctx);
     let command;
     try {
       command = guardManagement.parseCommand(plain(req.data) ? req.data : {});
@@ -767,7 +811,7 @@ function createScheduleRuntime(deps) {
       const personRefs = uniqueUids.map((uid) => liveUserRef(ctx.sid, uid));
       const refs = [actorUserRef, accessRef, operationRef, targetRef].concat(personRefs);
       const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
-      requireLiveManager(snaps[0], snaps[1], ctx);
+      requireLiveGuardManager(snaps[0], snaps[1], ctx);
 
       const existingOperation = snaps[2].exists ? (snaps[2].data() || {}) : null;
       if (existingOperation) {
@@ -783,7 +827,7 @@ function createScheduleRuntime(deps) {
       const activeUids = [];
       for (let i = 0; i < uniqueUids.length; i += 1) {
         const person = snaps[4 + i];
-        if (person && person.exists && scheduleAccess.activeMember(person.data() || {}, ctx.sid)) {
+        if (person && person.exists && activeOperationalMember(person.data() || {}, ctx.sid)) {
           activeUids.push(uniqueUids[i]);
         }
       }
@@ -894,9 +938,8 @@ function createScheduleRuntime(deps) {
         tx.get(targetRef)
       ]);
       const user = snaps[0].exists ? (snaps[0].data() || {}) : null;
-      if (!scheduleAccess.activeMember(user, ctx.sid)
-          || (!isSuper(req.auth) && MEMBER_ROLES.indexOf(String(user && user.role || '')) === -1)
-          || (!isSuper(req.auth) && String(user && user.role || '') !== ctx.role)) {
+      if (!ctx.super && (!activeOperationalMember(user, ctx.sid)
+          || String(user && user.role || '') !== ctx.role)) {
         throw new ScheduleRuntimeError('live-user-inactive',
           'החשבון אינו פעיל או שאינו משויך לתחנה.', 'permission-denied');
       }
@@ -1455,6 +1498,14 @@ function createScheduleRuntime(deps) {
     });
   }
 
+  async function requireLiveGuardManagerNow(ctx) {
+    await db.runTransaction(async (tx) => {
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
+      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      requireLiveGuardManager(snaps[0], snaps[1], ctx);
+    });
+  }
+
   async function readSnapshot(ref, meta, dates) {
     let rowsQuery = ref.collection('rows');
     let eventsQuery = ref.collection('events');
@@ -1725,7 +1776,7 @@ function createScheduleRuntime(deps) {
     const out = [];
     snap.docs.forEach((doc) => {
       const user = doc.data() || {};
-      if (!scheduleAccess.activeMember(user, ctx.sid)) return;
+      if (!activeOperationalMember(user, ctx.sid)) return;
       const employee = user.employee_number === undefined || user.employee_number === null
         ? '' : String(user.employee_number).trim();
       if (!employee) return;
@@ -2796,6 +2847,10 @@ function createScheduleRuntime(deps) {
   }
 
   function requireLiveModeAuthority(userSnap, ctx, inactiveCode) {
+    // Product ruling: a verified super claim always retains every schedule
+    // capability, including emergency mode changes, even for legacy accounts
+    // that predate the station-users collection.
+    if (ctx.super) return { uid: ctx.uid, role: ctx.role, super: true };
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     if (!scheduleAccess.activeMember(user, ctx.sid)) {
       throw new ScheduleRuntimeError(inactiveCode,
@@ -5092,8 +5147,8 @@ function createScheduleRuntime(deps) {
       const user = doc && typeof doc.data === 'function' ? (doc.data() || {}) : {};
       return {
         uid: doc && doc.id,
-        active: scheduleAccess.activeMember(user, ctx.sid),
-        is_active: scheduleAccess.activeMember(user, ctx.sid)
+        active: activeOperationalMember(user, ctx.sid),
+        is_active: activeOperationalMember(user, ctx.sid)
       };
     });
     // `context` already verified this account against its live user document.
@@ -5440,6 +5495,7 @@ function createScheduleRuntime(deps) {
   }
 
   function requireLiveCompatibilityViewer(userSnap, ctx) {
+    if (ctx.super) return;
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     const role = String(user && user.role || '');
     if (!scheduleAccess.activeMember(user, ctx.sid)
@@ -5636,6 +5692,7 @@ function createScheduleRuntime(deps) {
    * (השבתה, העברת תחנה). אימות חי אחרון של **חבר תחנה צופה** — לא שער
    * אחראי סידור, בלי הרחבת תפקידים — אחרי כל הקריאות ולפני ההחזרה. */
   async function requireLiveBoardViewer(ctx) {
+    if (ctx.super) return;
     const userSnap = await liveUserRef(ctx.sid, ctx.uid).get();
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     const role = String(user && user.role || '');
@@ -5643,6 +5700,24 @@ function createScheduleRuntime(deps) {
         || (!ctx.super && (MEMBER_ROLES.indexOf(role) === -1 || role !== ctx.role))) {
       throw new ScheduleRuntimeError('board-viewer-changed',
         'השיוך החי לתחנה השתנה בזמן הקריאה.', 'permission-denied');
+    }
+  }
+
+  async function getGuardManagementStatus(req) {
+    const ctx = await guardContext(req);
+    if (ctx.guard_manager) await requireLiveGuardManagerNow(ctx);
+    return { guard_manager: ctx.guard_manager === true };
+  }
+
+  async function requireLiveGuardViewer(ctx) {
+    if (ctx.super) return;
+    const userSnap = await liveUserRef(ctx.sid, ctx.uid).get();
+    const user = userSnap.exists ? (userSnap.data() || {}) : null;
+    const role = String(user && user.role || '');
+    if (!scheduleAccess.activeMember(user, ctx.sid)
+        || (!ctx.super && (MEMBER_ROLES.indexOf(role) === -1 || role !== ctx.role))) {
+      throw new ScheduleRuntimeError('guard-viewer-changed',
+        'השיוך החי לתחנה השתנה בזמן קריאת האבטחות.', 'permission-denied');
     }
   }
 
@@ -6266,6 +6341,7 @@ function createScheduleRuntime(deps) {
   }
 
   function requireLiveWorkdaysViewer(userSnap, ctx) {
+    if (ctx.super) return;
     const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : null;
     const role = String(user && user.role || '');
     if (!scheduleAccess.activeMember(user, ctx.sid)
@@ -6648,9 +6724,11 @@ function createScheduleRuntime(deps) {
   // shadowing, or active.  They all use the same station derived from the
   // authenticated, live account and the same bounded server-side input.
   async function getGuardBoard(req) {
-    const ctx = await context(req);
+    const ctx = await guardContext(req);
     const range = requestedGuardBoardRange(req);
     const input = await readGuardBoardInput(ctx, range);
+    await beforeLiveGuardViewRecheck({ kind: 'guard-board', ctx });
+    await requireLiveGuardViewer(ctx);
     return Object.freeze({
       from: range.from,
       to: range.to,
@@ -6659,13 +6737,14 @@ function createScheduleRuntime(deps) {
   }
 
   async function getGuardManagerBoard(req) {
-    const ctx = await context(req);
-    requireManager(ctx);
+    const ctx = await guardContext(req);
+    requireGuardManager(ctx);
     const range = requestedGuardBoardRange(req);
     const input = await readGuardBoardInput(ctx, range);
     // The transaction makes a concurrent appointment revocation win after
     // the raw read and before detailed guard records leave the server.
-    await requireLiveManagerNow(ctx);
+    await beforeLiveGuardViewRecheck({ kind: 'guard-manager-board', ctx });
+    await requireLiveGuardManagerNow(ctx);
     return Object.freeze({
       from: range.from,
       to: range.to,
@@ -6674,12 +6753,14 @@ function createScheduleRuntime(deps) {
   }
 
   async function getMyGuardAttendance(req) {
-    const ctx = await context(req);
+    const ctx = await guardContext(req);
     const range = requestedGuardBoardRange(req);
     const input = await readGuardBoardInput(ctx, range);
     // There is deliberately no subject/uid field.  HR can open another
     // employee's attendance report, but that must never expand into a second
     // person's guard history through this callable.
+    await beforeLiveGuardViewRecheck({ kind: 'guard-attendance', ctx });
+    await requireLiveGuardViewer(ctx);
     return Object.freeze({
       from: range.from,
       to: range.to,
@@ -6688,13 +6769,14 @@ function createScheduleRuntime(deps) {
   }
 
   async function getGuardLoadStatistics(req) {
-    const ctx = await context(req);
-    requireAnalytics(ctx);
+    const ctx = await guardContext(req);
+    requireGuardManager(ctx);
     const range = requestedGuardBoardRange(req);
     const input = await readGuardBoardInput(ctx, range);
     // A firefighter can reach this endpoint only through the live schedule
     // manager appointment.  Recheck that short-lived authority before return.
-    if (ctx.manager) await requireLiveManagerNow(ctx);
+    await beforeLiveGuardViewRecheck({ kind: 'guard-load', ctx });
+    await requireLiveGuardManagerNow(ctx);
     return Object.freeze({
       from: range.from,
       to: range.to,
@@ -7442,6 +7524,7 @@ function createScheduleRuntime(deps) {
 
   return Object.freeze({
     getStatus,
+    getGuardManagementStatus,
     getManagerSetup,
     previewPolicy,
     savePolicy,

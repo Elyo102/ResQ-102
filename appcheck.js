@@ -64,7 +64,7 @@ export function initAppCheck(app) {
 
   // Observability starts only after the existing App Check setup settles.
   // Never await this optional import or change the App Check return value.
-  void ready.then(() => import('./monitoring-bootstrap.js?v=42h2'))
+  void ready.then(() => import('./monitoring-bootstrap.js?v=42h3'))
     .then(m => m.startMonitoring(app)).catch(() => {});
   return ready;
 }

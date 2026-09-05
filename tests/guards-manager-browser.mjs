@@ -93,10 +93,10 @@ function managementCalls(calls) {
 }
 
 const source = fs.readFileSync(path.join(root, 'guards.html'), 'utf8');
-assert.match(source, /getScheduleRuntimeStatus/,
-  'the screen must source manager state from the runtime status callable');
-assert.match(source, /result\.data\.manager\s*===\s*true/,
-  'only an explicit server manager=true may open management controls');
+assert.match(source, /getGuardManagementStatus/,
+  'the screen must source guard management from its narrow server callable');
+assert.match(source, /result\.data\.guard_manager\s*===\s*true/,
+  'only an explicit server guard_manager=true may open management controls');
 assert.match(source, /manageScheduleGuard/,
   'guard management must use the server callable');
 assert.match(source, /getScheduleGuardBoard/,
@@ -130,13 +130,13 @@ async function test(name, fn) {
 const browser = await chromium.launch();
 try {
   const unappointed = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
-  await prepare(unappointed, 'commander', {
-    getScheduleRuntimeStatus:[{ data:{ manager:false } }]
+  await prepare(unappointed, 'firefighter', {
+    getGuardManagementStatus:[{ data:{ guard_manager:false } }]
   });
   const unappointedPage = await unappointed.newPage();
   await open(unappointedPage);
 
-await test('a commander without a live schedule-manager appointment sees guards but no management controls', async () => {
+await test('an ordinary firefighter without an appointment sees guards but no management controls', async () => {
     assert.equal(await unappointedPage.locator('#newCard').isVisible(), false);
     assert.equal(await unappointedPage.getByRole('button', { name:'שבץ' }).count(), 0);
     assert.match(await unappointedPage.locator('#openList').textContent(), /מקום פנוי/,
@@ -155,9 +155,36 @@ await test('a commander without a live schedule-manager appointment sees guards 
   });
   await unappointed.close();
 
+  const commander = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(commander, 'commander', {
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }]
+  });
+  const commanderPage = await commander.newPage();
+  await open(commanderPage);
+  await test('a live commander can staff guards without receiving schedule publishing authority', async () => {
+    assert.equal(await commanderPage.locator('#newCard').isVisible(), true);
+    assert.ok(await commanderPage.getByRole('button', { name:'שבץ' }).count() > 0);
+    const calls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.ok(calls.some(call => call.name === 'getGuardManagementStatus'));
+    assert.equal(calls.some(call => call.name === 'getScheduleRuntimeStatus'), false);
+  });
+  await commander.close();
+
+  const superAdmin = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  await prepare(superAdmin, 'super', {
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }]
+  });
+  const superPage = await superAdmin.newPage();
+  await open(superPage);
+  await test('a verified super always sees guard creation and assignment controls', async () => {
+    assert.equal(await superPage.locator('#newCard').isVisible(), true);
+    assert.ok(await superPage.getByRole('button', { name:'שבץ' }).count() > 0);
+  });
+  await superAdmin.close();
+
   const unavailable = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(unavailable, 'firefighter', {
-    getScheduleRuntimeStatus:[{ reject:true, code:'functions/unavailable', message:'offline' }]
+    getGuardManagementStatus:[{ reject:true, code:'functions/unavailable', message:'offline' }]
   });
   const unavailablePage = await unavailable.newPage();
   await open(unavailablePage);
@@ -171,7 +198,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const doubleFailure = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(doubleFailure, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:false, mode:'new' } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:false } }],
     getEffectiveWorkdays:[
       { reject:true, code:'functions/unavailable', message:'workdays-unavailable' },
       { reject:true, code:'functions/unavailable', message:'workdays-unavailable' }
@@ -198,7 +225,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const newMode = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(newMode, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true, mode:'new' } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
     getEffectiveWorkdays:[
       { reject:true, code:'functions/unavailable', message:'workdays-unavailable' },
       { reject:true, code:'functions/unavailable', message:'workdays-unavailable' }
@@ -231,7 +258,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const manager = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(manager, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
     manageScheduleGuard:[
       { data:{ guard_id:'g_new', revision:1 } },
       { data:{ guard_id:'g2', revision:1 } },
@@ -371,7 +398,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const revokedAssignment = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(revokedAssignment, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
     manageScheduleGuard:[{ reject:true, code:'functions/permission-denied', message:'revoked' }]
   });
   const revokedAssignmentPage = await revokedAssignment.newPage();
@@ -396,7 +423,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const revoked = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(revoked, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
     manageScheduleGuard:[{ reject:true, code:'functions/permission-denied', message:'revoked' }]
   });
   const revokedPage = await revoked.newPage();
@@ -414,7 +441,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const mobile = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(mobile, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true } }]
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }]
   });
   const mobilePage = await mobile.newPage();
   await open(mobilePage);
@@ -438,7 +465,7 @@ await test('a commander without a live schedule-manager appointment sees guards 
 
   const conflict = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(conflict, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:{ manager:true } }],
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
     getScheduleGuardManagerBoard:[
       { data:{ guards:managerGuards(0) } }, { data:{ guards:[] } },
       { data:{ guards:managerGuards(1) } }, { data:{ guards:[] } },
