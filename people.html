@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -136,12 +136,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { DISTRICTS, stationName } from './stations.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { MEMBER_ROLES } from './roles.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { DISTRICTS, stationName } from './stations.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { MEMBER_ROLES } from './roles.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -152,8 +152,6 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;');
-
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const ROLE_HE = {
   firefighter: 'כבאי',
@@ -171,7 +169,7 @@ const DIST_HE = DISTRICTS.reduce(function (acc, d) {
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -198,8 +196,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   const isMember = isSuper ||
     MEMBER_ROLES.indexOf(c.role) !== -1;
 

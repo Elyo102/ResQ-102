@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -161,12 +161,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { STATIONS, stationName } from './stations.js?v=42h2';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h2';
-import { ROLE_HE as ROLES_HE } from './roles.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { STATIONS, stationName } from './stations.js?v=42h3';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h3';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          signOut, onAuthStateChanged }
@@ -174,18 +174,16 @@ import { getAuth, signInWithEmailAndPassword,
 import { getFirestore, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
-
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 // אין מסך כניסה בכל דף. יש אחד, והוא login.html.
 //
@@ -260,8 +258,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   // אותה רשימה בדיוק כמו staff() בכללי האבטחה וכמו nav.js.
   //
   // הגרסה הקודמת פספסה את סגן מפקד המשמרת ואת מפקד התחנה —

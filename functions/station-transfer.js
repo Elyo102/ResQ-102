@@ -177,15 +177,41 @@ function createStationTransferService(deps) {
     };
   }
 
-  async function requireLiveSourceActor(req) {
+  async function requireSuperActor(auth, requestedStationId) {
+    const sid = String(requestedStationId || '').trim();
+    if (!STATION_RE.test(sid)) {
+      throw fail('invalid-argument',
+        'מנהל המערכת חייב לבחור תחנה מפורשת ותקינה לפעולת ההעברה.');
+    }
+    const station = await resolveStation(sid);
+    if (!station || station.active !== true || String(station.id || '') !== sid ||
+        !String(station.districtId || '')) {
+      throw fail('failed-precondition', 'התחנה שנבחרה אינה פעילה או אינה מוגדרת.');
+    }
+    return { auth, kind: 'super', stationId: sid, role: 'super_admin' };
+  }
+
+  function requireMatchingScope(requestedStationId, stationId) {
+    if (requestedStationId === undefined) return;
+    const sid = String(requestedStationId || '').trim();
+    if (!STATION_RE.test(sid)) {
+      throw fail('invalid-argument', 'תחום התחנה לפעולת ההעברה אינו תקין.');
+    }
+    if (sid !== stationId) {
+      throw fail('permission-denied', 'פעולת ההעברה אינה שייכת לתחנה הפעילה שלך.');
+    }
+  }
+
+  async function requireLiveSourceActor(req, requestedStationId) {
     const auth = requireAuth(req);
-    if (isSuper(auth) === true) return { auth, kind: 'super', stationId: '' };
+    if (isSuper(auth) === true) return requireSuperActor(auth, requestedStationId);
     const token = auth.token || {};
     if (String(token.role || '') !== 'hr_coordinator') {
       throw fail('permission-denied',
         'פתיחת העברה מותרת לרכז/ת משאבי אנוש או למנהל המערכת.');
     }
     const sid = stationFromToken(token);
+    requireMatchingScope(requestedStationId, sid);
     const profile = snapshotData(await profileRef(sid, auth.uid).get());
     if (!activeProfile(profile, sid) || !sameRole(profile, token)) {
       throw fail('permission-denied', 'לרכז/ת אין שיוך פעיל לתחנת המקור.');
@@ -193,8 +219,9 @@ function createStationTransferService(deps) {
     return { auth, kind: 'hr', stationId: sid };
   }
 
-  async function requireLiveTargetActor(req) {
+  async function requireLiveTargetActor(req, requestedStationId) {
     const auth = requireAuth(req);
+    if (isSuper(auth) === true) return requireSuperActor(auth, requestedStationId);
     const token = auth.token || {};
     const role = String(token.role || '');
     if (TARGET_APPROVERS.indexOf(role) === -1) {
@@ -202,16 +229,17 @@ function createStationTransferService(deps) {
         'אישור העברה מותר לרכז/ת משאבי אנוש או למפקד/ת תחנת היעד.');
     }
     const sid = stationFromToken(token);
+    requireMatchingScope(requestedStationId, sid);
     const profile = snapshotData(await profileRef(sid, auth.uid).get());
     if (!activeProfile(profile, sid) || !sameRole(profile, token)) {
       throw fail('permission-denied', 'למאשר אין שיוך פעיל לתחנת היעד.');
     }
-    return { auth, stationId: sid, role };
+    return { auth, kind: 'target', stationId: sid, role };
   }
 
   async function search(req) {
-    const data = exactData(req, ['name', 'query']);
-    const actor = await requireLiveSourceActor(req);
+    const data = exactData(req, ['name', 'query', 'station_id']);
+    const actor = await requireLiveSourceActor(req, data.station_id);
     if (Object.prototype.hasOwnProperty.call(data, 'name') &&
         Object.prototype.hasOwnProperty.call(data, 'query')) {
       throw fail('invalid-argument', 'יש למסור שדה שם אחד בלבד.');
@@ -230,7 +258,7 @@ function createStationTransferService(deps) {
       const sid = String(directory.station || '');
       if (!UID_RE.test(doc.id) || !STATION_RE.test(sid) ||
           directory.is_active === false || directory.active === false) continue;
-      if (actor.kind === 'hr' && sid !== actor.stationId) continue;
+      if (sid !== actor.stationId) continue;
       const profile = snapshotData(await profileRef(sid, doc.id).get());
       if (!activeProfile(profile, sid)) continue;
       rows.push(safePersonView(doc.id, profile, sid));
@@ -329,8 +357,9 @@ function createStationTransferService(deps) {
   }
 
   async function create(req) {
-    const data = exactData(req, ['target_uid', 'target_station_id', 'request_id']);
-    const actor = await requireLiveSourceActor(req);
+    const data = exactData(req,
+      ['target_uid', 'target_station_id', 'request_id', 'station_id']);
+    const actor = await requireLiveSourceActor(req, data.station_id);
     const uid = String(data.target_uid || '');
     const targetSid = String(data.target_station_id || '');
     const requestId = String(data.request_id || '');
@@ -354,7 +383,7 @@ function createStationTransferService(deps) {
             current.target_uid !== uid || current.target_station_id !== targetSid) {
           throw fail('already-exists', 'מזהה הבקשה כבר נמצא בשימוש.');
         }
-        if (actor.kind === 'hr' && current.source_station_id !== actor.stationId) {
+        if (current.source_station_id !== actor.stationId) {
           throw fail('permission-denied',
             'אפשר לצפות מחדש רק בבקשה שיצאה מהתחנה הפעילה שלך.');
         }
@@ -396,7 +425,7 @@ function createStationTransferService(deps) {
     if (identity.sid === targetSid) {
       throw fail('failed-precondition', 'תחנת היעד זהה לתחנה הנוכחית.');
     }
-    if (actor.kind === 'hr' && actor.stationId !== identity.sid) {
+    if (actor.stationId !== identity.sid) {
       throw fail('permission-denied', 'אפשר להעביר רק עובד פעיל מתחנת המקור שלך.');
     }
     if (actor.kind === 'hr' && rankOf(identity.claims.role) > 3) {
@@ -527,7 +556,7 @@ function createStationTransferService(deps) {
   }
 
   async function list(req) {
-    const data = exactData(req, ['direction']);
+    const data = exactData(req, ['direction', 'station_id']);
     const direction = String(data.direction || 'incoming');
     if (direction !== 'incoming' && direction !== 'outgoing') {
       throw fail('invalid-argument', 'כיוון הרשימה אינו תקין.');
@@ -535,13 +564,10 @@ function createStationTransferService(deps) {
     let actor;
     let field;
     if (direction === 'incoming') {
-      actor = await requireLiveTargetActor(req);
+      actor = await requireLiveTargetActor(req, data.station_id);
       field = 'target_station_id';
     } else {
-      actor = await requireLiveSourceActor(req);
-      if (actor.kind === 'super') {
-        throw fail('invalid-argument', 'מנהל מערכת צריך לבחור תחנת מקור דרך כרטיס העובד.');
-      }
+      actor = await requireLiveSourceActor(req, data.station_id);
       field = 'source_station_id';
     }
     const snap = await db.collection('station_transfer_requests')
@@ -643,8 +669,8 @@ function createStationTransferService(deps) {
       const activeSnap = rest[5];
       const exactOperation = operationMatchesTransfer(operation, current, opId) &&
         ['processing', 'needs_recovery', 'completed'].indexOf(operation.status) !== -1;
-      if (!activeProfile(liveActor, actor.stationId) ||
-          String((liveActor || {}).role || '') !== actor.role) {
+      if (actor.kind !== 'super' && (!activeProfile(liveActor, actor.stationId) ||
+          String((liveActor || {}).role || '') !== actor.role)) {
         throw fail('permission-denied', 'למאשר אין עוד שיוך פעיל לתחנת היעד.');
       }
       if (current.target_station_id !== actor.stationId) {
@@ -894,8 +920,8 @@ function createStationTransferService(deps) {
   }
 
   async function decide(req) {
-    const data = exactData(req, ['request_id', 'decision', 'reason_code']);
-    const actor = await requireLiveTargetActor(req);
+    const data = exactData(req, ['request_id', 'decision', 'reason_code', 'station_id']);
+    const actor = await requireLiveTargetActor(req, data.station_id);
     const requestId = String(data.request_id || '');
     const decision = String(data.decision || '');
     if (!REQUEST_RE.test(requestId) || (decision !== 'approve' && decision !== 'reject')) {
@@ -942,8 +968,8 @@ function createStationTransferService(deps) {
   }
 
   async function cancel(req) {
-    const data = exactData(req, ['request_id']);
-    const actor = await requireLiveSourceActor(req);
+    const data = exactData(req, ['request_id', 'station_id']);
+    const actor = await requireLiveSourceActor(req, data.station_id);
     const requestId = String(data.request_id || '');
     if (!REQUEST_RE.test(requestId)) throw fail('invalid-argument', 'מזהה הבקשה אינו תקין.');
     return db.runTransaction(async (tx) => {
@@ -951,7 +977,7 @@ function createStationTransferService(deps) {
       const snap = await tx.get(ref);
       const current = snapshotData(snap);
       if (!current) throw fail('not-found', 'בקשת ההעברה אינה קיימת.');
-      if (actor.kind !== 'super' && current.source_station_id !== actor.stationId) {
+      if (current.source_station_id !== actor.stationId) {
         throw fail('permission-denied', 'אפשר לבטל רק בקשה שיצאה מתחנת המקור שלך.');
       }
       if (current.status === 'cancelled') {

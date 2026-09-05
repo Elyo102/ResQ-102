@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.2';
+const EXPECTED_VERSION = '42H.3';
 const EXPECTED_DATE = '5.9.2026';
 const EXPECTED_VERSIONED_REFERENCES = 205; // +1 schedule-file-import.js on the schedule management screen.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;

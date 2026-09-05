@@ -203,6 +203,7 @@ test('revocation clears the capability and advances the revision', () => {
 });
 
 const managerGateBody = bodyOfFunction(sources.runtime, 'requireLiveManager');
+const operationalMemberBody = bodyOfFunction(sources.runtime, 'activeOperationalMember');
 
 test('runtime imports the canonical appointment module', () => {
   assert.match(sources.runtime, /require\(['"]\.\/schedule-access['"]\)/);
@@ -237,7 +238,9 @@ test('a root-level writer collection mutation is detected', () => {
 });
 
 test('the runtime management gate requires both live membership and the appointment', () => {
-  assert.match(managerGateBody, /scheduleAccess\.activeMember\(user,\s*ctx\.sid\)/);
+  assert.match(managerGateBody, /activeOperationalMember\(user,\s*ctx\.sid\)/);
+  assert.match(operationalMemberBody, /scheduleAccess\.activeMember\(user,\s*sid\)/);
+  assert.match(operationalMemberBody, /MEMBER_ROLES\.indexOf/);
   assert.match(managerGateBody, /scheduleAccess\.isManagerAccess\(access,\s*ctx\.sid,\s*ctx\.uid\)/);
 });
 

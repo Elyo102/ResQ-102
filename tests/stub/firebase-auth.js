@@ -5,6 +5,8 @@
 const ROLES = {
   super: { role: 'firefighter', super: true, emp: '1',
            stationId: 'eilat_102', districtId: 'south', shift: 'C' },
+  super_no_emp: { role: 'super_admin', super: true,
+                  stationId: 'eilat_102', districtId: 'south', shift: '' },
   firefighter: { role: 'firefighter', emp: '17',
                  stationId: 'eilat_102', districtId: 'south', shift: 'A' },
   team:        { role: 'team_leader', emp: '18',

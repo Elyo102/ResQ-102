@@ -101,6 +101,7 @@ const TL   = { role: 'team_leader' };
 const DTL  = { role: 'deputy_team_leader' };
 const CMD  = { role: 'commander' };
 const SUP  = { role: 'firefighter', super: true };
+const LEGACY_SUPER_ROLE = { role: 'super_admin' };
 const DIST = { role: 'district_commander' };
 
 is('לוחם אש הוא member',          R.isMember(FF),  true);
@@ -111,12 +112,92 @@ is('🔒 מפקד צוות אינו staff',     R.isStaff(TL),   false);
 is('🔒 סגן מפקד צוות אינו staff', R.isStaff(DTL),  false);
 is('מפקד משמרת הוא staff',        R.isStaff(CMD),  true);
 is('מנהל-על הוא staff גם כלוחם אש', R.isStaff(SUP), true);
+is('🔒 מחרוזת התפקיד super_admin לבדה אינה מנהל-על',
+   R.isSuper(LEGACY_SUPER_ROLE), false);
+is('🔒 super_admin בלי claim אינו עוקף שער member',
+   R.isMember(LEGACY_SUPER_ROLE), false);
+is('🔒 super_admin בלי claim אינו עוקף שער staff',
+   R.isStaff(LEGACY_SUPER_ROLE), false);
 
 is('🔒 לוחם אש אינו כותב בלוג',   R.mayWriteLog(FF),  false);
 is('מפקד צוות כותב בלוג',         R.mayWriteLog(TL),  true);
 is('סגן מפקד צוות כותב בלוג',     R.mayWriteLog(DTL), true);
 is('מפקד משמרת כותב בלוג',        R.mayWriteLog(CMD), true);
 is('🔒 מפקד מחוז אינו כותב בלוג', R.mayWriteLog(DIST), false);
+
+// ============================================================
+head('3א · מנהל-על נקבע רק מ-claim חתום');
+// ============================================================
+//
+// כתובת המייל הקבועה מותרת רק בשני מסלולי התאוששות צרים:
+// bootstrap שמנפיק super:true, והמשך של אותו bootstrap. היא
+// אינה יכולה להיות קיצור דרך להרשאות רגילות בשרת או בכללים.
+
+function exportBody(name) {
+  const start = SERVER.indexOf('exports.' + name + ' =');
+  if (start === -1) return '';
+  const next = SERVER.indexOf('\nexports.', start + 1);
+  return SERVER.slice(start, next === -1 ? SERVER.length : next);
+}
+
+const superAdminMatch = SERVER.match(
+  /function isSuperAdmin\(auth\) \{([\s\S]*?)\n\}/
+);
+const superAdminBody = superAdminMatch ? superAdminMatch[1] : '';
+is('שער מנהל-העל המרכזי נמצא בשרת', !!superAdminMatch, true);
+is('שער מנהל-העל דורש token.super חתום',
+   /auth\s*&&\s*auth\.token\s*&&\s*auth\.token\.super\s*===\s*true/.test(superAdminBody), true);
+is('🔒 שער מנהל-העל אינו מעניק סמכות לפי אימייל',
+   /email|SUPER_ADMIN_EMAIL/.test(superAdminBody), false);
+
+['runReportNow', 'sendBroadcast', 'sendCallout', 'closeCallout']
+  .forEach(function (name) {
+    const body = exportBody(name);
+    is(name + ' משתמש בשער מנהל-העל המרכזי',
+       /isSuperAdmin\(auth\)/.test(body), true);
+    is('🔒 ' + name + ' אינו מחזיר הרשאת אימייל מקומית',
+       body.indexOf('SUPER_ADMIN_EMAIL') !== -1, false);
+  });
+
+const superEmailComparisons = SERVER.match(
+  /(?:[=!]==?\s*SUPER_ADMIN_EMAIL|SUPER_ADMIN_EMAIL\s*[=!]==?)/g
+) || [];
+is('כתובת האתחול מושווית רק בשני מסלולי bootstrap/recovery',
+   superEmailComparisons.length, 2);
+is('bootstrap עדיין מאמת את כתובת הבעלים ומנפיק super:true',
+   exportBody('bootstrapSuperAdmin').indexOf('SUPER_ADMIN_EMAIL') !== -1 &&
+   /\{\s*super:\s*true\s*\}/.test(exportBody('bootstrapSuperAdmin')), true);
+is('שחזור bootstrap נשאר מוגבל לאותו חשבון בעלים',
+   exportBody('resumeIdentityOperation').indexOf('SUPER_ADMIN_EMAIL') !== -1, true);
+
+const ruleSuperMatch = RULES.match(/function isSuper\(\) \{([\s\S]*?)\n    \}/);
+const ruleSuperBody = ruleSuperMatch ? ruleSuperMatch[1] : '';
+is('שער מנהל-העל נמצא בכללי Firestore', !!ruleSuperMatch, true);
+is('כללי Firestore דורשים super:true',
+   /token\.get\('super',\s*false\)\s*==\s*true/.test(ruleSuperBody), true);
+is('🔒 כללי Firestore אינם מעניקים מנהל-על לפי אימייל',
+   /email|fire102\.shits@gmail\.com/.test(ruleSuperBody), false);
+is('claim מנהל-על אינו תלוי ב-signedIn שמחייב כתובת אימייל',
+   /signedIn\(\)/.test(ruleSuperBody), false);
+
+const strictClientFiles = [
+  'access.html', 'alerts.html', 'attendance-shadow.html', 'board.html',
+  'bulletin.js', 'check.html', 'faults.html', 'forms.html', 'import.html',
+  'nav.js', 'people.html', 'quals.html', 'readiness.js', 'roles.js',
+  'stats.html', 'vehicle.html'
+];
+strictClientFiles.forEach(function (file) {
+  const source = readFileSync(__j(__APP, file), 'utf8');
+  is('🔒 ' + file + ' אינו מעניק סמכות לפי אימייל קבוע',
+     /const\s+SUPER_ADMIN(?:_EMAIL)?|(?:user|claims|c)\.email[\s\S]{0,100}fire102\.shits@gmail\.com/.test(source), false);
+  is('🔒 ' + file + ' אינו מעניק סמכות לפי role=super_admin',
+     /role\s*===\s*['"]super_admin['"]/.test(source), false);
+});
+const loginSource = readFileSync(__j(__APP, 'login.html'), 'utf8');
+is('מסך הכניסה אינו מעניק סמכות לפי role=super_admin',
+   /role\s*===\s*['"]super_admin['"]/.test(loginSource), false);
+is('האימייל במסך הכניסה נשאר רק להצגת פעולת bootstrap',
+   (loginSource.match(/SUPER_ADMIN_EMAIL/g) || []).length, 2);
 
 // ============================================================
 head('4 · שמות בעברית');
@@ -232,6 +313,10 @@ const signupStart = SCHEDULE_RUNTIME.indexOf('async function signupGuard(req) {'
 const modeStart = SCHEDULE_RUNTIME.indexOf('function requireMode(config, allowed) {', signupStart);
 const signupBody = signupStart === -1 || modeStart === -1
   ? '' : SCHEDULE_RUNTIME.slice(signupStart, modeStart);
+const operationalMemberStart = SCHEDULE_RUNTIME.indexOf('function activeOperationalMember(user, sid) {');
+const operationalMemberEnd = SCHEDULE_RUNTIME.indexOf('function recipientIsActive', operationalMemberStart);
+const operationalMemberBody = operationalMemberStart === -1 || operationalMemberEnd === -1
+  ? '' : SCHEDULE_RUNTIME.slice(operationalMemberStart, operationalMemberEnd);
 const signupWrapperStart = SERVER.indexOf('exports.guardSignup =');
 const assignWrapperStart = SERVER.indexOf('exports.assignGuard =', signupWrapperStart);
 const signupWrapper = signupWrapperStart === -1 || assignWrapperStart === -1
@@ -247,9 +332,11 @@ is('guardSignup נכנס קודם לשער זהות חי',
 is('guardSignup קורא מחדש משתמש חי בתוך העסקה',
    /tx\.get\(liveUserRef\(ctx\.sid, ctx\.uid\)\)/.test(signupBody), true);
 is('guardSignup מאמת חברות פעילה בתוך העסקה',
-   /scheduleAccess\.activeMember\(user, ctx\.sid\)/.test(signupBody), true);
+   /activeOperationalMember\(user, ctx\.sid\)/.test(signupBody)
+     && /scheduleAccess\.activeMember\(user, sid\)/.test(operationalMemberBody), true);
 is('guardSignup מאמת תפקיד חי מול MEMBER_ROLES בתוך העסקה',
-   /MEMBER_ROLES\.indexOf\(String\(user && user\.role \|\| ''\)\)/.test(signupBody), true);
+   /activeOperationalMember\(user, ctx\.sid\)/.test(signupBody)
+     && /MEMBER_ROLES\.indexOf\(String\(user && user\.role \|\| ''\)\)/.test(operationalMemberBody), true);
 is('guardSignup חוסם claim תפקיד מיושן בתוך העסקה',
    /String\(user && user\.role \|\| ''\) !== ctx\.role/.test(signupBody), true);
 

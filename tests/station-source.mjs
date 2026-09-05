@@ -115,6 +115,8 @@ assert.match(runtimeContext, /liveUserRef\(sid, uid\)\.get\(\)/,
   'runtime must verify the live station member');
 assert.match(runtimeContext, /scheduleAccess\.activeMember\(user, sid\)/,
   'runtime must require an active station member');
+assert.match(runtime, /function activeOperationalMember\(user, sid\)[\s\S]*MEMBER_ROLES\.indexOf/,
+  'operational recipients and assignees must also hold a known member role');
 assert.match(runtimeSignup, /const ctx\s*=\s*await context\(req\);/,
   'guard signup must enter the context gate before work');
 assert.match(runtimeSignup, /guardRef\(ctx\.sid, guardId\)/,

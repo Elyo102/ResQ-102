@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#15171a">
   <title>ResQ · בקרת שעות</title>
-  <link rel="stylesheet" href="./theme.css?v=42h2">
+  <link rel="stylesheet" href="./theme.css?v=42h3">
   <style>
     body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);
          font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}
@@ -151,10 +151,10 @@
 </section>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { initAppCheck } from './appcheck.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -162,14 +162,13 @@ import { getFirestore, doc, getDoc, collection, getDocs, query,
          orderBy, limit, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const fns = getFunctions(app, 'europe-west1');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
 
 let SID = '';
@@ -497,7 +496,7 @@ function paintStatus(data){
       ' · ' + timeText(last.completed_at || last.started_at)
     : 'עדיין לא נשמר צילום צל.';
   paintRun(last);
-  if (CLAIMS.super === true || String(auth.currentUser && auth.currentUser.email || '').toLowerCase() === SUPER_ADMIN) {
+  if (CLAIMS.super === true) {
     $('btnMode').classList.remove('hide');
     $('btnMode').className = on ? 'stop' : 'go';
     $('btnMode').textContent = on ? 'כבה מצב צל' : 'הפעל מצב צל';
@@ -758,7 +757,7 @@ onAuthStateChanged(auth, async user => {
   if (!user) { location.replace('./login.html?next=attendance-shadow.html'); return; }
   let claims = {};
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
-  const superUser = claims.super === true || String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const superUser = claims.super === true;
   const allowed = superUser || claims.role === 'hr_coordinator' ||
                   claims.role === 'station_commander';
   SID = claims.stationId || (superUser ? STATION_ID : '');

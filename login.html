@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
-<link rel="stylesheet" href="./bulletin.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
+<link rel="stylesheet" href="./bulletin.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -458,15 +458,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h2';
-import { renderNav, clearNav } from './nav.js?v=42h2';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h2';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h2';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h2';
+         subStationsForStation } from './stations.js?v=42h3';
+import { renderNav, clearNav } from './nav.js?v=42h3';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h3';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h3';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -477,11 +477,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -596,7 +596,7 @@ function hasServerAssignment(claims){
 
 function hasCompleteServerAssignment(claims){
   claims = claims || {};
-  if (claims.super === true || claims.role === 'super_admin') return true;
+  if (claims.super === true) return true;
   return !!claims.emp && VALID_ROLES.indexOf(String(claims.role || '')) !== -1 &&
          !!claims.stationId;
 }
@@ -934,7 +934,7 @@ async function route(user){
   } catch (ignore) {}
 
   // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
-  if (claims.super === true || claims.role === 'super_admin') {
+  if (claims.super === true) {
     await loadProfile(user, claims);
     return;
   }
@@ -1136,7 +1136,7 @@ async function loadProfile(user, claims){
     if (snap.exists()) u = snap.data();
   } catch (ignore) {}
 
-  const isSuper = claims.super === true || claims.role === 'super_admin';
+  const isSuper = claims.super === true;
 
   $('pName').textContent    = u ? u.full_name : (user.email || '');
   $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';

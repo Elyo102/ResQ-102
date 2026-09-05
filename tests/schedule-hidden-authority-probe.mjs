@@ -92,6 +92,8 @@ function stripComments(text) {
 const D = Object.freeze({
   mgrGate: (body) => /requireManager\(ctx\)|requireLiveManagerNow\(ctx\)/
     .test(stripComments(body)),
+  guardGate: (body) => /requireGuardManager\(ctx\)|requireLiveGuardManagerNow\(ctx\)/
+    .test(stripComments(body)),
   noClientStation: (body) => !/data\.(station_id|stationId)/.test(stripComments(body)),
   commandGate: (body) => stripComments(body).indexOf('mayChangeMode') !== -1,
   /* ⭐ „נקרא מחדש בתוך הטרנזקציה, מהמסמך החי" — ולא „נקרא פעם אחת
@@ -111,7 +113,7 @@ const D = Object.freeze({
       && code.indexOf('scheduleAccess.activeMember(user, ctx.sid)') !== -1;
   },
   commandNotManager: (body) => stripComments(body).indexOf('requireManager') === -1,
-  selfIdentity: (body) => body.indexOf('await context(req)') !== -1,
+  selfIdentity: (body) => /await (?:context|guardContext)\(req\)/.test(body),
   noClientIdentity: (body) => !/data\.(uid|person|subject|recipient|employee)/.test(body),
   noUidFromBody: (runtime) => !/req\.data\.uid|data\.uid\b/.test(runtime),
   capFromServer: (ui) =>
@@ -187,6 +189,7 @@ const D = Object.freeze({
 
 const GATE = Object.freeze({
   MANAGER: 'מינוי אחראי/ת סידור חי',
+  GUARD: 'סמכות ניהול אבטחות חיה',
   COMMAND: 'פיקוד התחנה או מנהל-על',
   HR: 'רכזת כוח אדם או מנהל-על',
   SELF: 'הקורא, על עצמו בלבד',
@@ -208,8 +211,8 @@ const CALLABLES = Object.freeze([
   { name: 'rollbackSchedule', method: 'rollback', gate: GATE.MANAGER },
   { name: 'getScheduleDraftPreview', method: 'getDraftPreview', gate: GATE.MANAGER },
   { name: 'getScheduleManagerSetup', method: 'getManagerSetup', gate: GATE.MANAGER },
-  { name: 'manageScheduleGuard', method: 'manageGuard', gate: GATE.MANAGER },
-  { name: 'getScheduleGuardManagerBoard', method: 'getGuardManagerBoard', gate: GATE.MANAGER },
+  { name: 'manageScheduleGuard', method: 'manageGuard', gate: GATE.GUARD },
+  { name: 'getScheduleGuardManagerBoard', method: 'getGuardManagerBoard', gate: GATE.GUARD },
   /* ⭐ הטענה הזאת **שונתה במפורש**, ולא כי הפריעה.
    *
    * היא הצהירה ש-`previewCutover` הוא שער מנהל, וזה שבר את הפרדת
@@ -235,11 +238,12 @@ const CALLABLES = Object.freeze([
   { name: 'getStationScheduleV2', method: 'getStation', gate: GATE.VIEW },
   { name: 'getStationScheduleRange', method: 'getStationRange', gate: GATE.VIEW },
   { name: 'getScheduleRuntimeStatus', method: 'getStatus', gate: GATE.VIEW },
+  { name: 'getGuardManagementStatus', method: 'getGuardManagementStatus', gate: GATE.VIEW },
   { name: 'getScheduleGuardBoard', method: 'getGuardBoard', gate: GATE.VIEW },
-  { name: 'getGuardLoadStatistics', method: 'getGuardLoadStatistics', gate: GATE.VIEW },
+  { name: 'getGuardLoadStatistics', method: 'getGuardLoadStatistics', gate: GATE.GUARD },
   // ⭐ שם תאימות לדפדפן שנשמר במטמון לפני הפקדים החדשים. הוא נראה
   // תמים אבל הוא מפעיל manageGuard — כלומר הוא שער מנהל לכל דבר.
-  { name: 'assignGuard', method: 'manageGuard', gate: GATE.MANAGER },
+  { name: 'assignGuard', method: 'manageGuard', gate: GATE.GUARD },
   { name: 'getLegacyScheduleCompatibilityContext', method: 'getLegacyCompatibility', gate: GATE.VIEW },
   { name: 'getEffectiveWorkdays', method: 'getEffectiveWorkdays', gate: GATE.VIEW }
 ]);
@@ -297,6 +301,14 @@ CALLABLES.filter((item) => item.gate === GATE.MANAGER && item.method).forEach((i
     !!body && D.mgrGate(body), 'אין requireManager בגוף הפונקציה');
   // התחנה לעולם אינה מגיעה מהלקוח.
   ok('3.S ' + item.method + ' אינו מקבל תחנה מהלקוח',
+    !!body && D.noClientStation(body));
+});
+
+CALLABLES.filter((item) => item.gate === GATE.GUARD && item.method).forEach((item) => {
+  const body = methodBody(item.method);
+  ok('3.G ' + item.method + ' דורש סמכות אבטחות חיה',
+    !!body && D.guardGate(body), 'אין requireGuardManager בגוף הפונקציה');
+  ok('3.GS ' + item.method + ' אינו מקבל תחנה מהלקוח',
     !!body && D.noClientStation(body));
 });
 
@@ -444,6 +456,10 @@ mutateIn('8.1 savePolicy בלי requireManager', 'savePolicy',
 mutateIn('8.2 savePolicy מקבל תחנה מהלקוח', 'savePolicy',
   'requireManager(ctx);', 'requireManager(ctx);\n    ctx.sid = req.data.station_id;',
   (src) => D.noClientStation(methodBody('savePolicy', src)));
+
+mutateIn('8.2g manageGuard בלי שער אבטחות', 'manageGuard',
+  'requireGuardManager(ctx);', '',
+  (src) => D.guardGate(methodBody('manageGuard', src)));
 
 /* ⭐ המוטציה הזאת **שרדה** אחרי seq357(ד), ובצדק — היא הצביעה על
  * כך שהגלאי גס מדי, לא על כך שהקוד נחלש. `setRuntimeMode` נושא

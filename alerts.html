@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -254,14 +254,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { MEMBER_ROLES } from './roles.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { MEMBER_ROLES } from './roles.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h2';
-import { CREW_HE } from './rotation.js?v=42h2';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h3';
+import { CREW_HE } from './rotation.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -269,18 +269,16 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
-
 const $ = id => document.getElementById(id);
 renderStuckNav('');
 initPWA({ offer: false });
@@ -308,8 +306,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  IS_SUPER = c.super === true ||
-             String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  IS_SUPER = c.super === true;
   const isMember = IS_SUPER ||
     MEMBER_ROLES.indexOf(c.role) !== -1;
 

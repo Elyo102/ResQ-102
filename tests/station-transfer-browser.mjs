@@ -9,12 +9,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
 const adminSource = fs.readFileSync(path.join(root, 'admin.html'), 'utf8');
 const requiredHooks = [
-  'transferSearch', 'transferResults', 'transferTarget',
+  'transferScope', 'transferSearch', 'transferResults', 'transferTarget',
   'transferCreate', 'transferIncoming', 'transferOutgoing',
   'transferOutgoingRefresh'
 ];
 const missingHooks = requiredHooks.filter((id) =>
   !new RegExp('id=["\\\']' + id + '["\\\']').test(adminSource));
+assert.match(adminSource, /const isSuper\s*=\s*claims\.super\s*===\s*true\s*;/,
+  'transfer UI must derive super authority from the signed claim');
+assert.equal(/SUPER_ADMIN|user\.email[^\n]*isSuper|isSuper[^\n]*user\.email/.test(adminSource), false,
+  'transfer UI must not grant super authority by email');
 
 // The contract is written before the UI on purpose.  An absent UI is not a
 // passing empty-page test: it is an explicit NOT RUN until the implementation
@@ -182,7 +186,8 @@ try {
   await hrPage.locator('#work:not(.hide)').waitFor();
   const initialLists = await waitForCall(hrPage, 'listStationTransfers', 2);
   assert.deepEqual(initialLists.map((entry) => entry.payload), [
-    { direction:'incoming' }, { direction:'outgoing' }
+    { direction:'incoming', station_id:'eilat_102' },
+    { direction:'outgoing', station_id:'eilat_102' }
   ]);
   await hrPage.locator('#transferTarget option[value="beer_sheva_101"]')
     .waitFor({ state:'attached' });
@@ -193,7 +198,7 @@ try {
     await hrPage.locator('#transferSearch').fill('דנה לוי');
     await hrPage.locator('#transferSearch').press('Enter');
     const searches = await waitForCall(hrPage, 'searchStationTransferCandidates');
-    assert.deepEqual(searches.at(-1).payload, { name:'דנה לוי' });
+    assert.deepEqual(searches.at(-1).payload, { name:'דנה לוי', station_id:'eilat_102' });
     await hrPage.waitForFunction(() =>
       (document.getElementById('transferResults')?.textContent.match(/דנה לוי/g) || []).length === 2);
     const text = await hrPage.locator('#transferResults').textContent();
@@ -211,7 +216,7 @@ try {
     assert.equal(payload.target_station_id, 'beer_sheva_101');
     assert.match(String(payload.request_id || ''), /^transfer-[A-Za-z0-9_-]{16,100}$/);
     assert.deepEqual(Object.keys(payload).sort(), [
-      'request_id', 'target_station_id', 'target_uid'
+      'request_id', 'station_id', 'target_station_id', 'target_uid'
     ]);
     await hrPage.waitForFunction(() => /ממתינ/.test(document.body.textContent || ''));
     await waitForCall(hrPage, 'listStationTransfers', 3);
@@ -229,7 +234,9 @@ try {
       /דנה לוי.*תחנת באר שבע — יעד שרת.*ממתינה/s);
     await cancel.dispatchEvent('click');
     const cancellations = await waitForCall(hrPage, 'cancelStationTransfer');
-    assert.deepEqual(cancellations.at(-1).payload, { request_id:'transfer-out-1' });
+    assert.deepEqual(cancellations.at(-1).payload, {
+      request_id:'transfer-out-1', station_id:'eilat_102'
+    });
     await waitForCall(hrPage, 'listStationTransfers', 4);
     await hrPage.waitForFunction(() =>
       /אין בקשות העברה פעילות/.test(
@@ -292,9 +299,11 @@ try {
     assert.equal(payload.decision, decision);
     if (decision === 'reject') {
       assert.equal(payload.reason_code, 'not_accepted');
-      assert.deepEqual(Object.keys(payload).sort(), ['decision', 'reason_code', 'request_id']);
+      assert.deepEqual(Object.keys(payload).sort(),
+        ['decision', 'reason_code', 'request_id', 'station_id']);
     } else {
-      assert.deepEqual(Object.keys(payload).sort(), ['decision', 'request_id']);
+      assert.deepEqual(Object.keys(payload).sort(),
+        ['decision', 'request_id', 'station_id']);
     }
     await waitForCall(page, 'listStationTransfers', 2);
     await page.waitForFunction((requestId) =>
@@ -353,7 +362,7 @@ try {
       .filter((entry) => entry.name === 'decideStationTransfer'));
     assert.equal(decisions.length, 1, 'double retry sent more than one decision');
     assert.deepEqual(decisions[0].payload, {
-      request_id:'transfer-in-recovery', decision:'approve'
+      request_id:'transfer-in-recovery', decision:'approve', station_id:'eilat_102'
     });
     await page.waitForFunction(() =>
       !document.querySelector(
@@ -393,6 +402,80 @@ try {
       '#transferIncoming [data-transfer-request="transfer-in-recovery"]').count(), 0);
     await context.close();
   });
+
+  await test('verified super sees every transfer action with one explicit station scope',
+    async () => {
+      const context = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+      await prepare(context, 'super', {
+        getScheduleRuntimeStatus:[{ data:{ mode:'new', manager:true } }],
+        getScheduleManagerAccess:[{ data:{ members:[] } }],
+        listUsersWithClaims:[{ data:{ users:[] } }],
+        listStationTransfers:[
+          { data:{ ok:true, direction:'incoming', transfers:[incomingApprove], targets } },
+          { data:{ ok:true, direction:'outgoing', transfers:[outgoingPending], targets } },
+          { data:{ ok:true, direction:'incoming', transfers:[], targets } },
+          { data:{ ok:true, direction:'outgoing', transfers:[], targets } }
+        ],
+        searchStationTransferCandidates:[{ data:{ ok:true, people:candidates, targets } }],
+        decideStationTransfer:[{ data:{
+          ok:true, changed:true, request_id:incomingApprove.request_id, status:'completed'
+        } }],
+        cancelStationTransfer:[{ data:{
+          ok:true, changed:true, request_id:outgoingPending.request_id, status:'cancelled'
+        } }]
+      });
+      const page = await context.newPage();
+      page.on('dialog', (dialog) => dialog.accept());
+      await page.goto(base, { waitUntil:'load' });
+      await page.locator('#work:not(.hide)').waitFor();
+      await waitForCall(page, 'listStationTransfers', 2);
+
+      assert.equal(await page.locator('#transferScopePanel').isVisible(), true);
+      assert.equal(await page.locator('#transferScope').inputValue(), 'eilat_102');
+      await page.locator('#transferScope option[value="beer_sheva_101"]')
+        .waitFor({ state:'attached' });
+      for (const id of ['transferSourcePanel', 'transferOutgoingPanel', 'transferIncoming']) {
+        assert.equal(await page.locator('#' + id).isVisible(), true, id);
+      }
+      const lists = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+        .filter((entry) => entry.name === 'listStationTransfers'));
+      assert.deepEqual(lists.slice(0, 2).map((entry) => entry.payload), [
+        { direction:'incoming', station_id:'eilat_102' },
+        { direction:'outgoing', station_id:'eilat_102' }
+      ]);
+
+      await page.locator('#transferSearch').fill('דנה לוי');
+      await page.locator('#transferSearch').press('Enter');
+      const searches = await waitForCall(page, 'searchStationTransferCandidates');
+      assert.deepEqual(searches.at(-1).payload, {
+        name:'דנה לוי', station_id:'eilat_102'
+      });
+
+      await decisionButton(page, incomingApprove.request_id, 'approve').dispatchEvent('click');
+      const decisions = await waitForCall(page, 'decideStationTransfer');
+      assert.deepEqual(decisions.at(-1).payload, {
+        request_id:incomingApprove.request_id, decision:'approve', station_id:'eilat_102'
+      });
+      await waitForCall(page, 'listStationTransfers', 3);
+
+      const cancel = page.locator(
+        '#transferOutgoing [data-transfer-cancel="' + outgoingPending.request_id + '"]');
+      await cancel.dispatchEvent('click');
+      const cancellations = await waitForCall(page, 'cancelStationTransfer');
+      assert.deepEqual(cancellations.at(-1).payload, {
+        request_id:outgoingPending.request_id, station_id:'eilat_102'
+      });
+      await page.locator('#transferScope').selectOption('beer_sheva_101');
+      await waitForCall(page, 'listStationTransfers', 6);
+      const scopedLists = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+        .filter((entry) => entry.name === 'listStationTransfers').slice(-2)
+        .map((entry) => entry.payload));
+      assert.deepEqual(scopedLists, [
+        { direction:'incoming', station_id:'beer_sheva_101' },
+        { direction:'outgoing', station_id:'beer_sheva_101' }
+      ]);
+      await context.close();
+    });
 
   await test('firefighter and shift commander have no transfer controls or calls', async () => {
     for (const role of ['firefighter', 'commander']) {
@@ -455,5 +538,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 9);
-console.log('\n9 station-transfer browser checks passed.');
+assert.equal(passed, 10);
+console.log('\n10 station-transfer browser checks passed.');

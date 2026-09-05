@@ -11,7 +11,7 @@ const SCREENS = Object.freeze([
   'feedback.html', 'forms.html', 'sign.html', 'schedule.html', 'stats.html',
   'swaps.html', 'people.html', 'login.html', 'quals.html'
 ]);
-const VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2']);
+const VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3']);
 const CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -27,7 +27,8 @@ const CALLABLES = Object.freeze([
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
   'closeCallout', 'createStationTransfer', 'decideStationTransfer',
-  'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics', 'getJoinCode',
+  'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
+  'getGuardManagementStatus', 'getJoinCode',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
   'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
   'getScheduleDisplayStatus',

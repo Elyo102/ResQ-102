@@ -217,8 +217,9 @@ ok('שחרור פעולה מכבד חודש שעדיין בטעינה',
 is('שלוש פעולות החודש משתחררות דרך שומר הטעינה',
    (att.match(/releaseMonthAction\(b\)/g) || []).length, 3);
 
-// אין שריד. ME.emp מותר רק בשלושה מקומות מוצהרים: ההשוואה
-// ב-onOther, הכותרת, וההשוואה באישור חודש.
+// אין שריד בנתיבי הנתונים. ME מותר רק בהקשרי זהות מפורשים:
+// השוואת הנושא, כותרת/חתימה, והחלטה אם למנהל־על יש זהות עובד
+// עצמית שאליה אפשר לחזור. כל הופעה חדשה עדיין מפילה את הבדיקה.
 const meEmpLines = att.split('\n')
   .map(function (l, i) { return { n: i + 1, t: l }; })
   .filter(function (o) {
@@ -234,6 +235,10 @@ const allowed = [
   'viewerUid:ME && ME.uid',        // אותו גבול בתוך פעולת סנכרון
   'ME && ME.uid === snapshot.viewerUid', // אימות דור הטעינה של אותה זהות
   'action.viewerUid === (ME && ME.uid)', // התאמת סנכרון לזהות שפתחה את הפעולה
+  'SUBJ = ME.emp ? Object.assign({}, ME) : null;', // super ללא מספר עובד מתחיל בלי נושא
+  'if (!ME.emp) return;',        // אין כרטיס עצמי לחזור אליו
+  'if (!p && !ME.emp) return false;', // אין החלפה לנושא ריק
+  "'pickBack').classList.toggle('hide', !other || !ME.emp);", // כפתור חזרה רק לזהות קיימת
   'emp !== ME.emp',                // האם צריך לחתום על האישור
   'edited_by:      ME.uid',        // חותמת
   'body.edited_by      = ME.uid',  // חותמת באישור

@@ -395,6 +395,47 @@ for (const role of Object.keys(EXPECT)) {
 
   await ctx.close();
 }
+
+// A verified super account may intentionally have no employee identity. It
+// must still reach administrative attendance and swap capabilities, while the
+// attendance screen waits for an explicit subject instead of constructing an
+// empty employee-document key.
+{
+  const ctx = await b.newContext();
+  await ctx.route('**/firebasejs/**', r => {
+    const n = r.request().url().split('/').pop().split('?')[0];
+    const f = path.join(STUB, n);
+    r.fulfill({status:200, contentType:'text/javascript',
+               body: fs.existsSync(f) ? fs.readFileSync(f,'utf8') : 'export default {};'});
+  });
+  await ctx.addInitScript('window.__SMOKE_ROLE = "super_no_emp";');
+  const pg = await ctx.newPage();
+  pg.setDefaultTimeout(2_000);
+  pg.setDefaultNavigationTimeout(10_000);
+
+  await pg.goto('http://localhost:'+PORT+'/attendance.html', {waitUntil:'load'});
+  await pg.waitForTimeout(700);
+  const attendanceWork = await pg.isVisible('#work').catch(()=>false);
+  const attendancePicker = await pg.isVisible('#pickCard').catch(()=>false);
+  const attendanceDenied = await pg.isVisible('#denyCard').catch(()=>false);
+  const attendancePrompt = await pg.textContent('#pickMsg').catch(()=> '');
+  const attendanceOk = attendanceWork && attendancePicker && !attendanceDenied &&
+    /בחר איש צוות/.test(attendancePrompt || '');
+  console.log((attendanceOk?'✓':'✗') +
+    ' [super-no-emp] נוכחות נפתחת בבחירת אדם מפורשת');
+  if (!attendanceOk) bad++;
+
+  await pg.goto('http://localhost:'+PORT+'/swaps.html', {waitUntil:'load'});
+  await pg.waitForTimeout(900);
+  const swapsWork = await pg.isVisible('#work').catch(()=>false);
+  const swapsDenied = await pg.isVisible('#denyCard').catch(()=>false);
+  const who = await pg.textContent('#whoSub').catch(()=> '');
+  const swapsOk = swapsWork && !swapsDenied && !/מס׳\s*$/.test(who || '');
+  console.log((swapsOk?'✓':'✗') +
+    ' [super-no-emp] החלפות נפתחות לפי UID ללא מספר עובד מומצא');
+  if (!swapsOk) bad++;
+  await ctx.close();
+}
 // מנותק: אחרי שהמצב מתברר, טופס הכניסה חייב להופיע. ההסתרה
 // שמונעת את ההבזק לא רשאית לחסום את מי שבאמת צריך להיכנס.
 {

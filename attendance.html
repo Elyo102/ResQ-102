@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -154,6 +154,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .msg:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
   .hide{ display:none !important }
+  .subject-pending-hide{ display:none !important }
   .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
 
   #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
@@ -355,22 +356,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { subStationAvailable } from './stations.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { MEMBER_ROLES } from './roles.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { subStationAvailable } from './stations.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { MEMBER_ROLES } from './roles.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h2';
+  from './rotation.js?v=42h3';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h2';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h3';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=42h2';
+  from './hours.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -378,11 +379,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -392,7 +393,6 @@ const callLegacyScheduleCompatibilityContext =
   httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
 const callEffectiveWorkdays = httpsCallable(fns, 'getEffectiveWorkdays');
 
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
 const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
@@ -425,6 +425,16 @@ let guardLoadGeneration = 0;
 
 // האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
 function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
+
+// A verified super account is allowed to manage attendance without owning an
+// employee number.  Until a subject is selected, keep only the picker and the
+// independent approvals list visible; no read or write may use an empty key.
+function setSubjectWorkspaceVisible(visible) {
+  Array.from($('work').children).forEach(function (child) {
+    if (child.id === 'pickCard' || child.id === 'apprCard') return;
+    child.classList.toggle('subject-pending-hide', !visible);
+  });
+}
 
 // חותמת התיעוד. נדרשת על ידי כללי האבטחה בכל עריכה של רשומה
 // שאינה שלך, ו-edited_by חייב להיות ה-uid האמיתי — הכלל בודק
@@ -588,13 +598,14 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   const isMember = isSuper ||
     MEMBER_ROLES.indexOf(c.role) !== -1;
 
-  SID = c.stationId || (isSuper ? STATION_ID : '');
-  if (!isMember || !SID || !c.emp) {
+  // Super authority does not invent a tenant.  The signed station claim is
+  // still the operational scope for every attendance read and write.
+  SID = c.stationId || '';
+  if (!isMember || !SID || (!isSuper && !c.emp)) {
     $('denyCard').classList.remove('hide');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
     renderStuckNav(user.email || '');
@@ -605,7 +616,7 @@ onAuthStateChanged(auth, async user => {
   IS_SUPER = isSuper;
   CAN_APPROVE = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
 
-  ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '',
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '',
          role: c.role || '', full_name: '' };
 
   try {
@@ -629,12 +640,13 @@ onAuthStateChanged(auth, async user => {
   // ME.emp ייראה תקין לגמרי כשמסתכלים על עצמך — ויכתוב
   // לרשומה הלא נכונה ברגע שרכזת תפתח מישהו אחר. tests/assign.mjs
   // נופל אם נשאר ME.emp באחד מהם.
-  SUBJ = Object.assign({}, ME);
+  SUBJ = ME.emp ? Object.assign({}, ME) : null;
   const initialSubjectGeneration = ++subjectGeneration;
   CAN_EDIT_OTHERS = isSuper || c.role === 'hr_coordinator';
 
   $('work').classList.remove('hide');
-  $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.emp ? ' · מס׳ ' + ME.emp : '') +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'attendance.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
@@ -642,11 +654,6 @@ onAuthStateChanged(auth, async user => {
   const now = new Date();
   viewYear = now.getFullYear();
   viewMonth = now.getMonth();
-
-  const staticReady = await loadStatic();
-  if (!staticReady || initialSubjectGeneration !== subjectGeneration) return;
-  await loadMonth();
-  if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
 
   // תיקון שעות לאחרים — רכז/ת כוח אדם ומנהל-על בלבד.
   // מפקד משמרת אינו מקבל את זה: אלדד ביקש הפרדה בין
@@ -665,11 +672,24 @@ onAuthStateChanged(auth, async user => {
       $('pickGo').disabled = false;
     };
     $('pickBack').onclick = async () => {
+      if (!ME.emp) return;
       $('pickWho').value = '';
       await switchTo(null);
       msg('', '', 'pickMsg');
     };
   }
+
+  if (!SUBJ) {
+    setSubjectWorkspaceVisible(false);
+    msg('בחר איש צוות כדי לפתוח את דוח הנוכחות שלו.', 'info', 'pickMsg');
+    if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
+    return;
+  }
+
+  const staticReady = await loadStatic();
+  if (!staticReady || initialSubjectGeneration !== subjectGeneration) return;
+  await loadMonth();
+  if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
 });
 
 // ---------- טעינה ----------
@@ -1822,8 +1842,10 @@ async function loadPeople(){
 // החלפת נושא בלי טעינה מחדש הייתה מציגה את הימים של אחד
 // והשעות של אחר.
 async function switchTo(p){
+  if (!p && !ME.emp) return false;
   const previousUid = SUBJ && SUBJ.uid;
   SUBJ = p ? Object.assign({}, p) : Object.assign({}, ME);
+  setSubjectWorkspaceVisible(true);
   if (previousUid !== SUBJ.uid) {
     // שני הערכים האלה נגזרים מה-UID. אם הקריאה החדשה תיכשל,
     // ברירת מחדל ריקה בטוחה יותר מהצגת אתר או אבטחה של אדם אחר.
@@ -1841,7 +1863,7 @@ async function switchTo(p){
       'אתה עורך את ' + (SUBJ.full_name || ('מס׳ ' + SUBJ.emp)) +
       ' — כל שינוי יירשם על שמך.';
   }
-  $('pickBack').classList.toggle('hide', !other);
+  $('pickBack').classList.toggle('hide', !other || !ME.emp);
 
   const staticReady = await loadStatic();
   if (!staticReady || generation !== subjectGeneration) return false;

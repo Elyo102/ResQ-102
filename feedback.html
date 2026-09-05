@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -139,21 +139,21 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { APP_VERSION } from './version.js?v=42h2';
-import { MEMBER_ROLES } from './roles.js?v=42h2';
+import { firebaseConfig } from './firebase-config.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { APP_VERSION } from './version.js?v=42h3';
+import { MEMBER_ROLES } from './roles.js?v=42h3';
 import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, createFeedbackSubmissionSession, errorText }
-  from './feedback.js?v=42h2';
+  from './feedback.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 
 const app  = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
@@ -260,7 +260,9 @@ onAuthStateChanged(auth, async (user) => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
   if (epoch !== state.authEpoch) return;
-  const isMember = MEMBER_ROLES.indexOf(c.role) !== -1;
+  // A verified Firebase super claim has every role capability. A role name
+  // or fixed email never acts as a fallback for that authority.
+  const isMember = c.super === true || MEMBER_ROLES.indexOf(c.role) !== -1;
   const sid = typeof c.stationId === 'string' && /^[A-Za-z0-9_-]{2,120}$/.test(c.stationId)
     ? c.stationId : '';
   if (!isMember || !sid) {

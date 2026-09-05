@@ -330,7 +330,8 @@ async function test(name, fn) {
         await assert.rejects(api.manageGuard(req(uid, role, {
           action: 'cancel', request_id: 'team_leader_no_grant_' + uid,
           guard_id: created.guard_id, expected_revision: 1
-        })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required', uid);
+        })), (error) => error instanceof ScheduleRuntimeError
+          && error.code === 'guard-manager-required', uid);
       }
       const signups = (await guardRef.get()).data().signups || {};
       assert.deepEqual(Object.keys(signups).sort(), ['deputy_team_leader', 'team_leader']);
@@ -342,6 +343,85 @@ async function test(name, fn) {
   await test('live user state is required in addition to token claims', async () => {
     await assert.rejects(api.getStatus(req('ghost', 'firefighter')),
       (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-required');
+  });
+
+  await test('verified super keeps every schedule and guard capability without legacy station documents', async () => {
+    const superApi = runtime(null, {
+      isSuper: (auth) => !!(auth && auth.token && auth.token.super === true)
+    });
+    const auth = req('legacy_super', 'super_admin', {}, { super: true });
+    const status = await superApi.getStatus(auth);
+    assert.equal(status.manager, true);
+    assert.equal((await superApi.getGuardManagementStatus(auth)).guard_manager, true);
+    const created = await superApi.manageGuard(req('legacy_super', 'super_admin', {
+      action: 'create', request_id: 'super_guard_create', details: {
+        title: 'אבטחת מנהל על', kind: 'other', place: '', date: '2026-09-22',
+        start: '08:00', end: '10:00', slots: 1, need_quals: [], notes: ''
+      }
+    }, { super: true }));
+    try {
+      assert.equal(created.status, 'open');
+    } finally {
+      await station().collection('guards').doc(created.guard_id).delete();
+    }
+  });
+
+  await test('live station command and HR roles manage guards without schedule publishing authority', async () => {
+    const stationCommanderRef = station().collection('users').doc('station_commander');
+    await stationCommanderRef.set({
+      station: SID, role: 'station_commander', full_name: 'מפקד תחנה ללא מינוי'
+    });
+    try {
+      for (const [uid, role] of [
+        ['commander', 'commander'], ['deputy', 'deputy'],
+        ['station_commander', 'station_commander'], ['hr', 'hr_coordinator']
+      ]) {
+        assert.equal((await api.getGuardManagementStatus(req(uid, role))).guard_manager, true, uid);
+        assert.equal((await api.getStatus(req(uid, role))).manager, false, uid);
+        await assert.rejects(api.getManagerSetup(req(uid, role)),
+          (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required', uid);
+      }
+    } finally {
+      await stationCommanderRef.delete();
+    }
+  });
+
+  await test('guard manager role removal during a detailed board read fails closed', async () => {
+    const actorRef = station().collection('users').doc('commander');
+    const before = (await actorRef.get()).data() || {};
+    const racing = runtime(null, {
+      beforeLiveGuardViewRecheck: async (info) => {
+        if (info && info.kind === 'guard-manager-board') {
+          await actorRef.update({ role: 'firefighter' });
+        }
+      }
+    });
+    try {
+      await assert.rejects(racing.getGuardManagerBoard(req('commander', 'commander', {
+        from: '2026-09-01', to: '2026-09-30'
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'guard-manager-revoked');
+    } finally {
+      await actorRef.set(before);
+    }
+  });
+
+  await test('station removal during an ordinary guard board read fails closed', async () => {
+    const viewerRef = station().collection('users').doc('viewer');
+    const before = (await viewerRef.get()).data() || {};
+    const racing = runtime(null, {
+      beforeLiveGuardViewRecheck: async (info) => {
+        if (info && info.kind === 'guard-board') await viewerRef.update({ is_active: false });
+      }
+    });
+    try {
+      await assert.rejects(racing.getGuardBoard(req('viewer', 'firefighter', {
+        from: '2026-09-01', to: '2026-09-30'
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'guard-viewer-changed');
+    } finally {
+      await viewerRef.set(before);
+    }
   });
 
   await test('legacy compatibility requires an exact canonical range and rejects station spoofing', async () => {
@@ -435,16 +515,19 @@ async function test(name, fn) {
     }
   });
 
-  await test('super admin compatibility access still requires live same-station membership', async () => {
+  await test('verified super compatibility access survives missing or legacy station membership', async () => {
     const superRef = station().collection('users').doc('super_viewer');
-    await superRef.set({ station: SID, active: true, role: '', full_name: 'מנהל מערכת' });
-    const superRuntime = runtime(null, { isSuper: () => true });
+    const superRuntime = runtime(null, {
+      isSuper: (auth) => !!(auth && auth.token && auth.token.super === true)
+    });
     try {
-      const accepted = await superRuntime.getLegacyCompatibility(req('super_viewer', '', compatibilityRange()));
+      const accepted = await superRuntime.getLegacyCompatibility(
+        req('super_viewer', 'super_admin', compatibilityRange(), { super: true }));
       assert.equal(accepted.mode, 'shadow');
-      await superRef.update({ station: 'other_station' });
-      await assert.rejects(superRuntime.getLegacyCompatibility(req('super_viewer', '', compatibilityRange())),
-        (error) => error instanceof ScheduleRuntimeError && error.code === 'live-user-inactive');
+      await superRef.set({ station: 'other_station', active: false, role: '', full_name: 'מנהל מערכת' });
+      const legacy = await superRuntime.getLegacyCompatibility(
+        req('super_viewer', 'super_admin', compatibilityRange(), { super: true }));
+      assert.equal(legacy.mode, 'shadow');
     } finally {
       await superRef.delete();
     }
@@ -836,12 +919,13 @@ async function test(name, fn) {
     const ids = [];
     await runtimeRef.update({ mode: 'off' });
     try {
-      await assert.rejects(guardApi.manageGuard(req('commander', 'commander', {
+      await assert.rejects(guardApi.manageGuard(req('viewer', 'firefighter', {
         action: 'create', request_id: 'guard_unappointed_01', details: {
           title: 'לא מורשה', kind: 'other', place: '', date: '2026-09-20',
           start: '08:00', end: '12:00', slots: 1, need_quals: [], notes: ''
         }
-      })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'guard-manager-required');
 
       const created = await guardApi.manageGuard(req('manager', 'commander', {
         action: 'create', request_id: 'guard_flexible_01', details: {
@@ -953,6 +1037,7 @@ async function test(name, fn) {
 
   await test('a newly open guard uses a generic durable invitation and stays flexible', async () => {
     const guardCollection = station().collection('guards');
+    const pendingRef = station().collection('users').doc('pending_guard_member');
     const pushes = [];
     const guardApi = runtime(async (...args) => {
       pushes.push(args);
@@ -960,6 +1045,13 @@ async function test(name, fn) {
     });
     const ids = [];
     try {
+      // Active flags alone are not membership.  A pending profile with no
+      // live member role must neither be assignable nor enter the invitation
+      // or reminder audience.
+      await pendingRef.set({
+        station: SID, active: true, is_active: true, role: '',
+        full_name: 'ממתין לאישור'
+      });
       const created = await guardApi.manageGuard(req('manager', 'commander', {
         action: 'create', request_id: 'guard_open_notice_01', details: {
           title: 'שם שאסור לדלוף', kind: 'other', place: 'מקום שאסור לדלוף',
@@ -968,6 +1060,12 @@ async function test(name, fn) {
         }
       }));
       ids.push(created.guard_id);
+      await assert.rejects(guardApi.manageGuard(req('manager', 'commander', {
+        action: 'set_assignees', request_id: 'guard_pending_role_rejected',
+        guard_id: created.guard_id, expected_revision: 1,
+        uids: ['pending_guard_member']
+      })), (error) => error instanceof ScheduleRuntimeError
+        && error.code === 'guard-assignee-inactive');
       // The creation event is deliberately delayed until after an edit.  Its
       // original revision, not the latest one, is the retry/idempotency key.
       await guardApi.manageGuard(req('manager', 'commander', {
@@ -1118,6 +1216,7 @@ async function test(name, fn) {
       }
       const batch = db.batch();
       ids.forEach((id) => batch.delete(guardCollection.doc(id)));
+      batch.delete(pendingRef);
       if (ids.length) await batch.commit();
     }
   });
@@ -2949,8 +3048,8 @@ async function test(name, fn) {
     assert.ok(Array.isArray(ok.by_uid.viewer));
   });
 
-  assert.equal(passed, 79);
-  console.log('\n79 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 83);
+  console.log('\n83 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

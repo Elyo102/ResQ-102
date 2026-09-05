@@ -545,6 +545,110 @@ async function test(name, fn) {
     }), false);
   });
 
+  await test('verified super alone gets a canonical explicit station scope', async function () {
+    const env = makeEnvironment();
+    await rejectsCode('invalid-argument', env.service.search(callable('super_user', {
+      query:'יעל לוי'
+    })));
+    await rejectsCode('failed-precondition', env.service.search(callable('super_user', {
+      query:'יעל לוי', station_id:'archived_404'
+    })));
+    await rejectsCode('permission-denied', env.service.search(callable('source_firefighter', {
+      query:'יעל לוי', station_id:'source_102'
+    }, { role:'super_admin', super:false, email:'fire102.shits@gmail.com' })));
+
+    const source = await env.service.search(callable('super_user', {
+      query:'יעל לוי', station_id:'source_102'
+    }));
+    const foreign = await env.service.search(callable('super_user', {
+      query:'יעל לוי', station_id:'foreign_303'
+    }));
+    assert.deepEqual(source.people.map(function (person) { return person.uid; }),
+      ['unique_subject']);
+    assert.equal(foreign.people.length, 0, 'super station scope leaked a source employee');
+  });
+
+  await test('verified super can create list and cancel only in the selected source scope',
+    async function () {
+      const env = makeEnvironment();
+      const pending = await env.service.create(callable('super_user', createData(env, {
+        request_id:'super-create-cancel-operation-0001', station_id:'source_102'
+      }), { runtime_mode:'off' }));
+      assert.equal(pending.status, 'pending_target');
+
+      const outgoing = await env.service.list(callable('super_user', {
+        direction:'outgoing', station_id:'source_102'
+      }, { runtime_mode:'shadow' }));
+      const incoming = await env.service.list(callable('super_user', {
+        direction:'incoming', station_id:'target_202'
+      }, { runtime_mode:'new' }));
+      assert.deepEqual(outgoing.transfers.map(function (row) { return row.request_id; }),
+        [pending.request_id]);
+      assert.deepEqual(incoming.transfers.map(function (row) { return row.request_id; }),
+        [pending.request_id]);
+      await rejectsCode('permission-denied', env.service.cancel(callable('super_user', {
+        request_id:pending.request_id, station_id:'foreign_303'
+      })));
+      const cancelled = await env.service.cancel(callable('super_user', {
+        request_id:pending.request_id, station_id:'source_102'
+      }));
+      assert.equal(cancelled.status, 'cancelled');
+      assert.equal(env.identityCalls.effects, 0);
+    });
+
+  await test('verified super can approve reject and recover in every runtime mode',
+    async function () {
+      for (const mode of ['off', 'shadow', 'new']) {
+        const approveEnv = makeEnvironment();
+        const approvePending = await openPending(approveEnv, {
+          request_id:'super-approve-' + mode + '-operation-0001'
+        });
+        const approved = await approveEnv.service.decide(callable('super_user', {
+          request_id:approvePending.request_id, decision:'approve', station_id:'target_202'
+        }, { runtime_mode:mode }));
+        assert.equal(approved.status, 'completed', mode);
+
+        const rejectEnv = makeEnvironment();
+        const rejectPending = await openPending(rejectEnv, {
+          request_id:'super-reject-' + mode + '-operation-0001'
+        });
+        const rejected = await rejectEnv.service.decide(callable('super_user', {
+          request_id:rejectPending.request_id, decision:'reject', reason_code:'not_accepted',
+          station_id:'target_202'
+        }, { runtime_mode:mode }));
+        assert.equal(rejected.status, 'rejected', mode);
+      }
+
+      const recoveryEnv = makeEnvironment();
+      const pending = await openPending(recoveryEnv, {
+        request_id:'super-recovery-operation-0001'
+      });
+      const path = 'station_transfer_requests/' + pending.request_id;
+      const request = recoveryEnv.db.read(path);
+      const operation = transferOperationFor(request, 'needs_recovery');
+      recoveryEnv.identityOps.set(request.target_uid, copy(operation));
+      recoveryEnv.db.seed('identity_operations/' + request.target_uid, operation);
+      recoveryEnv.db.seed(path, Object.assign({}, request, {
+        status:'needs_recovery', operation_id:operation.op_id
+      }));
+      recoveryEnv.db.seed('station_transfer_locks/' + request.target_uid, {
+        request_id:request.request_id, target_uid:request.target_uid,
+        status:'needs_recovery', operation_id:operation.op_id
+      });
+      const source = recoveryEnv.db.read('stations/source_102/users/' + request.target_uid);
+      source.is_active = false;
+      recoveryEnv.db.seed('stations/source_102/users/' + request.target_uid, source);
+      await rejectsCode('permission-denied', recoveryEnv.service.decide(callable('super_user', {
+        request_id:request.request_id, decision:'approve', station_id:'foreign_303'
+      })));
+      const recovered = await recoveryEnv.service.decide(callable('super_user', {
+        request_id:request.request_id, decision:'approve', station_id:'target_202'
+      }));
+      assert.equal(recovered.status, 'completed');
+      assert.equal(recoveryEnv.identityCalls.resume.length, 1);
+      assert.equal(recoveryEnv.identityCalls.effects, 1);
+    });
+
   await test('a duplicate full name is ambiguous until an immutable uid is selected', async function () {
     const env = makeEnvironment();
     const search = await env.service.search(callable('source_hr', { query:'נועם כהן' }));
@@ -729,9 +833,9 @@ async function test(name, fn) {
       await rejectsCode('permission-denied', env.service.create(callable('source_hr',
         createData(env, { request_id:requestId }), {
           stationId:'foreign_303', districtId:'north'
-        })));
+      })));
       const replay = await env.service.create(callable('super_user',
-        createData(env, { request_id:requestId })));
+        createData(env, { request_id:requestId, station_id:'source_102' })));
       assert.equal(replay.changed, false);
       assert.equal(replay.request_id, pending.request_id);
       assert.equal(replay.status, 'pending_target');

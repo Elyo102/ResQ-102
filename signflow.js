@@ -124,7 +124,7 @@ export function canSign(kind, docData, me) {
   if (st.complete) return { allowed: false, why: 'המסמך כבר חתום במלואו.' };
 
   const step = st.next;
-  const isSuper = me.role === 'super' || me.super === true;
+  const isSuper = me.super === true;
   const isOwner = isOwnerOf(docData, me);
 
   if (step === STEP.EMPLOYEE) {

@@ -83,10 +83,30 @@ try {
       assert.match(call.payload.request_id, /^fb_[a-f0-9]{40}$/);
       assert.equal(call.payload.allow_contact, false);
       assert.equal(call.payload.screen, 'swaps.html');
-      assert.equal(call.payload.version, '42H.2');
+      assert.equal(call.payload.version, '42H.3');
       assert.equal(await f.page.locator('#text').inputValue(), '');
       assert.equal(await f.page.locator('#send').isDisabled(), true);
       assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+  });
+
+  await test('verified super submits without a member role; email or role text alone stay denied', async () => {
+    const f = await fixture([{ data:ok }], 'pending');
+    try {
+      await f.page.evaluate(() => window.__SMOKE_EMIT_AUTH('pending', 'ops-super', {
+        role:'', super:true, stationId:'eilat_102', email:'ordinary@example.invalid'
+      }));
+      await f.page.locator('#work').waitFor({ state:'visible' });
+      await draft(f.page); await f.page.locator('#send').click(); await submitted(f.page, 1, true);
+      assert.equal((await calls(f.page)).length, 1);
+
+      await f.page.evaluate(() => window.__SMOKE_EMIT_AUTH('pending', 'role-only', {
+        role:'super_admin', super:false, stationId:'eilat_102', email:'fire102.shits@gmail.com'
+      }));
+      await f.page.locator('#denyCard').waitFor({ state:'visible' });
+      assert.equal(await f.page.locator('#send').isDisabled(), true);
+      assert.equal((await calls(f.page)).length, 1);
       assert.deepEqual(f.errors, []);
     } finally { await f.context.close(); }
   });
@@ -207,7 +227,7 @@ try {
     const f = await fixture();
     try {
       const result = await f.page.evaluate(async () => {
-        const m = await import('./incident-client.js?v=42h2');
+        const m = await import('./incident-client.js?v=42h3');
         const err = { code: 'secret-user-id', name: 'TypeError' };
         for (const field of ['message', 'stack', 'frame']) Object.defineProperty(err, field,
           { get() { throw new Error('private field was read'); } });
@@ -240,8 +260,8 @@ try {
       assert.deepEqual(f.errors, []);
     } finally { await f.context.close(); }
   });
-  assert.equal(passed, 10);
-  console.log('\n10 ops browser checks passed (stubbed Firebase; no production/emulator access).');
+  assert.equal(passed, 11);
+  console.log('\n11 ops browser checks passed (stubbed Firebase; no production/emulator access).');
 } finally {
   await browser.close();
 }

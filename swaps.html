@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h2">
+<link rel="stylesheet" href="./theme.css?v=42h3">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -384,13 +384,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
-import { renderNav, renderStuckNav } from './nav.js?v=42h2';
-import { initPWA } from './pwa.js?v=42h2';
-import { watchCallouts } from './callout.js?v=42h2';
-import { CREW_HE, CREW_SHORT } from './rotation.js?v=42h2';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h3';
+import { renderNav, renderStuckNav } from './nav.js?v=42h3';
+import { initPWA } from './pwa.js?v=42h3';
+import { watchCallouts } from './callout.js?v=42h3';
+import { CREW_HE, CREW_SHORT } from './rotation.js?v=42h3';
 import { parseEffectiveWorkdays, worksOn, swapRestCheckEffective, restWhyEffective,
-         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h2';
+         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h3';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -398,22 +398,21 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h2';
+  from './monitored-functions.js?v=42h3';
 import { MEMBER_ROLES, STAFF_ROLES, mayWriteLog, roleHe }
-  from './roles.js?v=42h2';
+  from './roles.js?v=42h3';
 import { MAX_TEXT, validateMessage, messageDoc, groupByDay, timeOf,
          lastRead, markRead, unreadCount, newestKey, visible }
-  from './shiftlog.js?v=42h2';
+  from './shiftlog.js?v=42h3';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h2';
+import { initAppCheck } from './appcheck.js?v=42h3';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const workdaysCall = httpsCallable(fns, 'getEffectiveWorkdays');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 
 const $ = id => document.getElementById(id);
 renderStuckNav('');
@@ -508,12 +507,13 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   const isMember = isSuper || MEMBER_ROLES.indexOf(c.role) !== -1;
 
-  SID = c.stationId || (isSuper ? STATION_ID : '');
-  if (!isMember || !SID || !c.emp) {
+  // Super authority does not invent a tenant.  The signed station claim is
+  // still the operational scope for every swap read and write.
+  SID = c.stationId || '';
+  if (!isMember || !SID || (!isSuper && !c.emp)) {
     $('denyCard').classList.remove('hide');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
     renderStuckNav(user.email || '');
@@ -528,7 +528,7 @@ onAuthStateChanged(auth, async user => {
   // מי שאינו נעול למשמרת אחת. חייב להיות זהה ל-seesShift()
   // בכללי האבטחה, אחרת המסך יציג בקשה שהשרת ידחה.
   UNLOCKED = isSuper || c.role === 'hr_coordinator' || !c.shift;
-  ME = { uid: user.uid, emp: String(c.emp), crew: c.shift || '', full_name: '' };
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '', full_name: '' };
 
   try {
     const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
@@ -536,7 +536,8 @@ onAuthStateChanged(auth, async user => {
   } catch (ignore) {}
 
   $('work').classList.remove('hide');
-  $('whoSub').textContent = (ME.full_name || user.email) + ' · מס׳ ' + ME.emp +
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.emp ? ' · מס׳ ' + ME.emp : '') +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'swaps.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
