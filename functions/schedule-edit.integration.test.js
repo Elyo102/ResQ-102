@@ -370,7 +370,7 @@ async function test(name, fn) {
     assert.ok(/נרשמה היעדרות/.test(notes[0].push.body) && /2\/9/.test(notes[0].push.body) && !/sick|מחלה/.test(JSON.stringify(notes[0])), JSON.stringify(notes[0].push));
   });
 
-  await test('§3/§6 edits are refused for a foreign sub-station key, an unknown role, and after the policy changed', async () => {
+  await test('§3/§6 edits are refused for a foreign sub-station key and an unknown role; after a policy change the rows are rebased, not refused', async () => {
     const current = (await station().collection('schedule_state').doc('active').get()).data();
     const foreign = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'main', role: 'ff' }] })));
     assert.equal(foreign && foreign.code, 'edit-sub-station-unknown');
@@ -390,8 +390,10 @@ async function test(name, fn) {
       }
     }));
     assert.ok(changed.policy_id && changed.policy_id !== cfg.active_policy_id);
-    const pinned = await caught(() => api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] })));
-    assert.equal(pinned && pinned.code, 'edit-policy-changed');
+    /* הכרעת אלדד (5.9): עריכה ידנית תמיד אפשרית — השורות מיושרות למדיניות הפעילה. */
+    const rebased = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] }));
+    assert.ok(rebased.policy_changed && rebased.policy_changed.rows_rebased > 0, JSON.stringify(rebased.policy_changed));
+    assert.ok(rebased.below_minimum.every((row) => row.sub_station !== 'eilat' || row.minimum === 5));
     // מחזירים את המדיניות המקורית כדי שה-rollback שלמטה ירוץ על אותו בסיס.
     await runtimeDoc().set({ active_policy_id: cfg.active_policy_id }, { merge: true });
   });

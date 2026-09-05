@@ -1908,8 +1908,10 @@ check('§1 the publish gap gate is recomputed inside the publish transaction fro
   assert.ok(runtime.includes('async function loadGapPolicy(ctx, read)') && runtime.includes('(read || directRead)(gapPolicyRef(ctx.sid))'));
 });
 
-check('§3 edits are pinned to the publication policy and to the canonical projection of an imported plan', () => {
-  assert.ok(runtime.includes("throw new ScheduleRuntimeError('edit-policy-changed'"));
+check('§3 edits always run against the active policy (rows rebased when it changed) and the canonical projection of an imported plan', () => {
+  // הכרעת אלדד (5.9): עריכה ידנית תמיד אפשרית — אין סירוב על מדיניות שהשתנתה, יש יישור.
+  assert.equal(runtime.includes("'edit-policy-changed'"), false, 'manual editing must always be possible');
+  assert.ok(runtime.includes('rebase_policy: policyChanged'));
   assert.ok(runtime.includes('const editPolicy = await editPolicyFor(ctx, policy, active);'));
   assert.ok(runtime.includes('sheetImport.projectCanonicalPolicy(policy.value, map)'));
   assert.ok(runtime.includes('station_map: importedStationMapOf(null, draftMeta),'), 'the publication must carry the station map');

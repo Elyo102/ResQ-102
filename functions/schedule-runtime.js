@@ -3514,21 +3514,21 @@ function createScheduleRuntime(deps) {
     }
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const source = await loadSource(ctx, config.active_source_id);
-    /* ⭐ §3 · העריכה מוצמדת למדיניות שעליה הפרסום נבנה. מדיניות שהשתנתה
-     * מאז (קווים, תוויות, תפקידים) פירושה שהשורות הקיימות נושאות מינימום
-     * ותוויות ישנים ושורות חדשות ייבנו מחדשים — ערבוב שאינו ניתן לביקורת.
-     * במקרה כזה בונים סידור חדש, לא עורכים את הישן. */
-    if (active.plan.policy_digest !== policy.digest) {
-      throw new ScheduleRuntimeError('edit-policy-changed',
-        'חוקי התחנה השתנו מאז שהסידור הזה פורסם. יש לבנות או לייבא סידור חדש במקום לערוך אותו.', 'failed-precondition');
-    }
+    /* ⭐ §3 · העריכה נעשית תמיד מול המדיניות **הפעילה** (זו שהפרסום הנגזר
+     * ייבדק מולה ב-publish). עריכה ידנית תמיד אפשרית — הכרעת אלדד (5.9):
+     * כשחוקי התחנה השתנו מאז הפרסום, השורות הקיימות מיושרות למדיניות
+     * הפעילה (`rebase_policy`), הדוח אומר זאת במפורש (`policy_changed`),
+     * והיומן רושם מאיזו חתימה. אין ערבוב של שתי מדיניויות בתוצאה. */
+    const policyChanged = active.plan.policy_digest !== policy.digest;
     const editPolicy = await editPolicyFor(ctx, policy, active);
     const people = source.peopleRaw.filter((person) => person.active === true);
     let edits;
     let applied;
     try {
       edits = scheduleEdit.normalizeEdits(data.edits, { from: active.plan.from, to: active.plan.to });
-      applied = scheduleEdit.applyEdits({ plan: active.plan, edits, people, policy: editPolicy.value, station_id: ctx.sid });
+      applied = scheduleEdit.applyEdits({
+        plan: active.plan, edits, people, policy: editPolicy.value, station_id: ctx.sid, rebase_policy: policyChanged
+      });
     } catch (error) { scheduleEditError(error); }
     const effective = effectiveSource(ctx, source, policy, []);
     const plan = Object.assign({}, applied.plan, {
@@ -3565,6 +3565,7 @@ function createScheduleRuntime(deps) {
     const gapReport = gapReportFor(gapCtx, editPolicy.value, plan);
     return {
       ctx, config, data, base: Object.assign({}, base, { policy_digest: policy.digest }),
+      policyChanged: policyChanged ? { from: active.plan.policy_digest, to: policy.digest, rows_rebased: applied.rows_rebased } : null,
       active, policy, editPolicy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport
     };
   }
@@ -3597,6 +3598,7 @@ function createScheduleRuntime(deps) {
       next_revision: basis.base.revision + 1,
       edit_digest: basis.editDigest,
       station_map: basis.editPolicy.station_map,
+      policy_changed: basis.policyChanged,
       gaps: gapSummaryFor(basis.gapReport)
     };
   }
@@ -3691,7 +3693,8 @@ function createScheduleRuntime(deps) {
         edited: true, edit_base: basis.base, edit_digest: basis.editDigest,
         edit_summary: {
           edits: edits.length, changes: basis.applied.changes.length,
-          people: basis.applied.people_changed, warnings: basis.applied.warnings.length
+          people: basis.applied.people_changed, warnings: basis.applied.warnings_total,
+          policy_changed: basis.policyChanged
         },
         edit_report: report
       });
@@ -3702,6 +3705,7 @@ function createScheduleRuntime(deps) {
         action: 'edit-draft', draft_id: draftId, request_id: requestId,
         base_publication_id: base.publication_id, base_revision: base.revision,
         edit_digest: basis.editDigest, by: ctx.uid, at: FV.serverTimestamp(),
+        policy_changed: basis.policyChanged,
         changes: basis.applied.changes.slice(0, MAX_EDIT_REPORT_CHANGES).map((change) => ({
           uid: change.uid, date: change.date, before: change.before, after: change.after
         })),

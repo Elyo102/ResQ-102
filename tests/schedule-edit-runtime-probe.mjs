@@ -391,8 +391,20 @@ function auditOf(db) {
       yotvata: { label: 'יטבתה', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] }
     }, rest: { min_gap_days: 1 }, rotation: null, max_shifts_per_month: null } }));
   db._put(ST + '/schedule_state/runtime', Object.assign({}, db._get(ST + '/schedule_state/runtime'), { active_policy_id: changed.policy_id }));
-  await rejectsCode('5.4.8 המדיניות השתנתה מאז הפרסום → edit-policy-changed', () => rt.previewScheduleEdit(req({ expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] })), 'edit-policy-changed');
-  ok('5.4.9 (לא נוגע) המדיניות המקורית עדיין קיימת', typeof policyId === 'string');
+  // ⭐ הכרעת אלדד (5.9): עריכה ידנית תמיד אפשרית. המדיניות השתנתה → השורות
+  // מיושרות למדיניות הפעילה (קו אילת 7 → 5), הדוח אומר זאת, היומן רושם.
+  const rebased = await rt.previewScheduleEdit(req({ expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] }));
+  ok('5.4.8 המדיניות השתנתה מאז הפרסום → העריכה מותרת, הדוח מסמן policy_changed', rebased.policy_changed && rebased.policy_changed.from !== rebased.policy_changed.to && rebased.policy_changed.rows_rebased > 0, JSON.stringify(rebased.policy_changed));
+  ok('5.4.9 הקו האדום בדוח הוא של המדיניות הפעילה (5), לא של הפרסום (7)', rebased.below_minimum.every((row) => row.sub_station !== 'eilat' || row.minimum === 5), JSON.stringify(rebased.below_minimum));
+  const done2 = await rt.applyScheduleEdit(req({ request_id: 'e-rebase', expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest }));
+  eq('5.4.10 פורסם revision 3 על המדיניות החדשה', done2.revision, 3);
+  const pub3 = db._get(ST + '/schedule_publications/' + done2.publication_id);
+  eq('5.4.11 הפרסום הערוך נושא את חתימת המדיניות הפעילה', pub3.policy_digest === rebased.policy_changed.to, true);
+  const rebaseAudit = auditOf(db).find((a) => a.action === 'edit-draft' && a.draft_id === done2.draft_id);
+  ok('5.4.12 היומן רושם מאיזו מדיניות יושר', rebaseAudit && rebaseAudit.policy_changed && rebaseAudit.policy_changed.from === rebased.policy_changed.from, JSON.stringify(rebaseAudit && rebaseAudit.policy_changed));
+  const board3 = await rt.getStationRange(req({ from: '2026-09-02', to: '2026-09-02' }, 'u2'));
+  eq('5.4.13 הלוח: קו אילת עכשיו 5', board3.days[0].sub_stations.find((s) => s.sub_station === 'eilat').minimum, 5);
+  ok('5.4.14 (לא נוגע) המדיניות המקורית עדיין קיימת', typeof policyId === 'string');
 }
 
 /* 5.5 §5+§6 · תקרת אזהרות ודוח; תפקיד רק מהמדיניות. */

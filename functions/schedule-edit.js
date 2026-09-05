@@ -208,11 +208,42 @@ function applyEdits(input) {
   const edits = normalizeEdits(inp.edits, { from: plan.from, to: plan.to });
 
   const rows = clone(plan.rows);
+  /* ⭐ עריכה ידנית תמיד אפשרית (הכרעת אלדד, 5.9). כשחוקי התחנה השתנו מאז
+   * הפרסום, כל השורות הקיימות מיושרות למדיניות **האפקטיבית** (קו מינימום,
+   * תווית, תוויות תפקיד) — כך שהתוצאה כולה עומדת על מדיניות אחת, לא על
+   * ערבוב של ישנה וחדשה. שורה בתחנת קצה שכבר אינה במדיניות נשארת כפי שהיא
+   * ומקבלת אזהרה; אי אפשר לשבץ אליה. */
+  let rowsRebased = 0;
+  const rebaseWarnings = [];
+  if (inp.rebase_policy === true) {
+    const seenUnknown = new Set();
+    rows.forEach((row) => {
+      const spec = subStationSpec(policy, row.sub_station);
+      if (!spec) {
+        if (!seenUnknown.has(row.sub_station)) {
+          seenUnknown.add(row.sub_station);
+          rebaseWarnings.push({ code: 'sub-station-not-in-policy', sub_station: row.sub_station });
+        }
+        return;
+      }
+      const minimum = Number.isInteger(spec.minimum) ? spec.minimum : 0;
+      const label = nonEmpty(spec.label) ? spec.label : row.sub_station;
+      let changed = row.minimum !== minimum || row.label !== label;
+      row.minimum = minimum;
+      row.label = label;
+      (row.slots || []).forEach((slot) => {
+        if (!slot || slot.role === undefined || slot.role === null) return;
+        const nextLabel = roleLabelFor(policy, row.sub_station, slot.role);
+        if (slot.label !== nextLabel) { slot.label = nextLabel; changed = true; }
+      });
+      if (changed) rowsRebased += 1;
+    });
+  }
   const absences = clone(Array.isArray(plan.absences) ? plan.absences : []);
   const coverage = plain(plan.absence_coverage) ? clone(plan.absence_coverage) : null;
   const touched = new Map();   // uid|date → before
-  const warnings = [];
-  let warningsTotal = 0;
+  const warnings = rebaseWarnings.slice();
+  let warningsTotal = warnings.length;
   const warn = (entry) => {
     warningsTotal += 1;
     if (warnings.length < MAX_WARNINGS) warnings.push(entry);
@@ -330,6 +361,8 @@ function applyEdits(input) {
     warnings,
     warnings_total: warningsTotal,
     warnings_truncated: warningsTotal - warnings.length,
+    policy_rebased: inp.rebase_policy === true,
+    rows_rebased: rowsRebased,
     counts: {
       edits: edits.length, changes: changes.length, people: people_changed.length,
       dates: Array.from(new Set(changes.map((c) => c.date))).length,

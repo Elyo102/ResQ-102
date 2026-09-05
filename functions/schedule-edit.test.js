@@ -206,4 +206,24 @@ test('§5 warnings are capped at MAX_WARNINGS and the rest is counted', () => {
   assert.ok(JSON.stringify(out.warnings).length < 20000, 'warnings payload must stay small');
 });
 
+test('policy changed since the publication: rows are rebased onto the active policy (minimum, labels), unknown sub-stations warned, nothing refused', () => {
+  const changed = {
+    sub_stations: {
+      eilat: { label: 'אילת מרכז', minimum: 3, requirements: [{ role: 'ff', label: 'כבאי', count: 3, required: true }, { role: 'driver', label: 'נהג', count: 1, required: false }] }
+      // shahmon הוסרה מהמדיניות
+    }
+  };
+  const out = edit.applyEdits({ plan: basePlan(), people, policy: changed, rebase_policy: true, edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }] });
+  const eilat1 = out.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'eilat');
+  assert.deepEqual([eilat1.minimum, eilat1.label, eilat1.slots[0].label, eilat1.below_minimum], [3, 'אילת מרכז', 'כבאי', true]);
+  assert.equal(out.policy_rebased, true);
+  assert.ok(out.rows_rebased >= 3, String(out.rows_rebased));
+  assert.deepEqual(out.warnings.filter((w) => w.code === 'sub-station-not-in-policy').map((w) => w.sub_station), ['shahmon']);
+  const shahmon = out.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'shahmon');
+  assert.deepEqual([shahmon.minimum, shahmon.label], [0, 'שחמון'], 'a row whose station left the policy is kept as it was');
+  throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy: changed, rebase_policy: true, edits: [{ kind: 'assign', uid: 'u1', dates: ['2026-09-02'], sub_station: 'shahmon' }] }), 'edit-sub-station-unknown');
+  const plainRun = edit.applyEdits({ plan: basePlan(), people, policy: changed, edits: [{ kind: 'unassign', uid: 'u2', dates: ['2026-09-01'] }] });
+  assert.equal(plainRun.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'eilat').minimum, 2, 'without rebase_policy the rows keep their own minimum');
+});
+
 console.log('\n' + passed + ' schedule-edit unit checks passed.');
