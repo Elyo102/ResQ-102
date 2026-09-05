@@ -23,6 +23,9 @@ const b=await chromium.launch();
 let bad=0;
 function ck(what,got,want){const ok=String(got)===String(want);if(!ok)bad++;
   console.log((ok?'✓':'✗')+' '+what+': '+got+(ok?'':'  — ציפיתי '+want));}
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlNkh0AAAAASUVORK5CYII=',
+  'base64');
 
 for (const role of ['commander','firefighter']) {
   const ctx=await b.newContext({viewport:{width:900,height:1000}});
@@ -60,13 +63,31 @@ for (const role of ['commander','firefighter']) {
   // צד בלי תמונה: מצב ריק מפורש, ואפשרות להעלות.
   await tab(0);
   ck('מצב "אין תמונה"', await pg.isVisible('.empty').catch(()=>false), 'true');
-  ck('כפתור העלאה לכולם',
-     await pg.$$eval('#photoActs button',e=>e.length).catch(()=>0), 1);
+  ck('מצלמה וגלריה זמינות בהעלאה הראשונה',
+     await pg.$$eval('#photoActs button',e=>e.length).catch(()=>0), 2);
+  ck('כפתור מצלמה מפעיל קלט capture',
+     await pg.getAttribute('#basePick','capture').catch(()=>''), 'environment');
+  ck('כפתור גלריה אינו כופה מצלמה',
+     await pg.getAttribute('#baseGallery','capture').catch(()=>null), null);
+  ck('שני מקורות התמונה מסומנים במפורש',
+     await pg.$$eval('#photoActs button',e=>e.map(x=>x.dataset.photoSource).join(',')),
+     'camera,gallery');
+  const writesBefore = await pg.evaluate(() => (window.__FIRESTORE_WRITES || []).length);
+  await pg.setInputFiles('#baseGallery', {
+    name:'fleet-from-gallery.png', mimeType:'image/png', buffer:ONE_PIXEL_PNG
+  });
+  await pg.waitForFunction((before) => (window.__FIRESTORE_WRITES || []).length > before,
+                           writesBefore);
+  const galleryWrites = await pg.evaluate((before) =>
+    (window.__FIRESTORE_WRITES || []).slice(before).filter((w) =>
+      /vehicle_views\/v2__front$/.test(w.path)).length, writesBefore);
+  ck('בחירה אמיתית מהגלריה נשמרת פעם אחת לצד הנכון', galleryWrites, 1);
 
   // החלפת תמונה קיימת — סגל בלבד.
   await tab(1);
-  ck('כפתור החלפה', await pg.$$eval('#photoActs button',e=>e.length).catch(()=>0),
-     role==='commander' ? 1 : 0);
+  ck('כפתורי החלפה — מצלמה וגלריה לסגל בלבד',
+     await pg.$$eval('#photoActs button',e=>e.length).catch(()=>0),
+     role==='commander' ? 2 : 0);
 
   // לחיצה על נקודה פותחת את הכרטיס.
   await pg.click('.pin'); await pg.waitForTimeout(400);
@@ -74,6 +95,25 @@ for (const role of ['commander','firefighter']) {
   ck('בורר חומרה בכרטיס',
      await pg.$$eval('#dlgBody select',e=>e.length).catch(()=>0),
      role==='commander' ? 1 : 0);
+
+  // לחיצה על התמונה (לא על נקודה קיימת) פותחת דיווח חדש.
+  await pg.click('#dlgX');
+  await pg.click('.stage img.base',{position:{x:90,y:90}});
+  await pg.waitForTimeout(250);
+  ck('בדיווח חדש יש בחירה בין מצלמה לגלריה',
+     await pg.$$eval('#nShotCameraBtn,#nShotGalleryBtn',e=>e.length).catch(()=>0), 2);
+  ck('גלריית התקלה אינה כופה מצלמה',
+     await pg.getAttribute('#nShotGallery','capture').catch(()=>null), null);
+  await pg.setInputFiles('#nShot', {
+    name:'camera.png', mimeType:'image/png', buffer:ONE_PIXEL_PNG
+  });
+  await pg.setInputFiles('#nShotGallery', {
+    name:'gallery.png', mimeType:'image/png', buffer:ONE_PIXEL_PNG
+  });
+  ck('בחירת גלריה אחרונה מחליפה את בחירת המצלמה',
+     await pg.textContent('#nShotName'), 'gallery.png');
+  ck('קלט המצלמה נוקה אחרי בחירה מהגלריה',
+     await pg.$eval('#nShot',e=>e.files.length), 0);
 
   ck('שגיאות מסוף', errs.length, 0);
   await ctx.close();
