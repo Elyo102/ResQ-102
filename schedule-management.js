@@ -2578,15 +2578,14 @@ $('importPaste').addEventListener('input', () => {
   $('importFileStatus').textContent = 'מצב הדבקה ידנית.';
   invalidateImportReport();
 });
-$('importFile').addEventListener('change', async () => {
-  const file = $('importFile').files && $('importFile').files[0];
+async function loadImportFile(file) {
   state.importAliases = {};
   state.importMatrix = null;
   state.importFileName = null;
   state.importedDraft = null;
   state.importSelectedFile = file || null;
   if (!file) {
-    $('importFileStatus').textContent = 'לא נבחר קובץ.';
+    $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
     invalidateImportReport();
     return;
   }
@@ -2598,7 +2597,10 @@ $('importFile').addEventListener('change', async () => {
     state.importMatrix = result.matrix;
     state.importFileName = result.name;
     $('importPaste').value = '';
-    $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
+    $('importFileStatus').textContent = result.name
+      + (result.sheet ? ' · גיליון ' + result.sheet : '')
+      + (result.month ? ' · ' + result.month : '')
+      + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
     message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק תצוגה מקדימה" כדי לראות מה ייובא.', 'info');
   } catch (error) {
     $('importFile').value = '';
@@ -2607,6 +2609,10 @@ $('importFile').addEventListener('change', async () => {
     message('importMessage', errorText(error), 'err');
   }
   invalidateImportReport();
+}
+$('importFile').addEventListener('change', async () => {
+  const file = $('importFile').files && $('importFile').files[0];
+  await loadImportFile(file);
 });
 $('importMonth').addEventListener('change', async () => {
   invalidateImportReport();

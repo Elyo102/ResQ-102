@@ -1567,6 +1567,9 @@ try {
     assert.equal(await sheetPage.locator('#publish').isEnabled(), false, 'publishing still needs the review checkbox');
   });
   await test('a local CSV file is parsed in the browser and only its matrix reaches the callable', async () => {
+    const accepted = await sheetPage.locator('#importFile').getAttribute('accept');
+    assert.match(accepted, /\.xlsx/);
+    assert.match(accepted, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
     const csv = '\ufeff,1/9,2/9,3/9\r\nאילת,א,ב,ג\r\n';
     await sheetPage.locator('#importFile').focus();
     const focusOutline = await sheetPage.locator('label[for="importFile"]').evaluate((el) => {
