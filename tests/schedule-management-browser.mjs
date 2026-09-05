@@ -1444,7 +1444,7 @@ try {
   importReportReady.report_digest = 'rd_ready'; importReportReady.blocked_by = []; importReportReady.blocked = false;
   importReportReady.accept = { missing_stations:false, ignored_blocks:true };
   const importedDraft = {
-    draft_id:'draft_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
+    draft_id:'draft_import_1', content_digest:'digest_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
     summary:{ filled:5, blocking_gaps:0, days_below_minimum:0, rejected_manual:0, open_rows:0, imported_below_minimum:1, imported_absences:2 },
     report: importReportReady
   };
@@ -1593,6 +1593,200 @@ try {
   });
   await sheetImporter.close();
 
+  /* ==================================================================
+   * ייבוא לתצוגה כשהמנוע כבוי: הכתיבה יוצרת טיוטה חתומה, ורק פעולה
+   * מפורשת נוספת בוחרת אותה ללוח. הפעולה הזאת אינה מעבר מצב, פרסום
+   * או שליחת הודעות. הסרה מחזירה את תצוגת ה-legacy בלי למחוק את הטיוטה.
+   * ================================================================== */
+  const offMonth = today.slice(0, 7);
+  const offDates = [monthRange(today).from, shiftDay(monthRange(today).from, 1), shiftDay(monthRange(today).from, 2)];
+  const offSetup = JSON.parse(JSON.stringify(setup));
+  offSetup.mode = 'off';
+  offSetup.configured = true;
+  offSetup.policy.sub_stations = [
+    { id:'eilat', label:'אילת', minimum:7, requirements:[] },
+    { id:'shahmon', label:'שחמון', minimum:null, requirements:[] },
+    { id:'timna', label:'תמנע', minimum:null, requirements:[] },
+    { id:'yotvata', label:'יטבתה', minimum:null, requirements:[] }
+  ];
+  const offImportReport = {
+    month:offMonth, dates:offDates, from:offDates[0], to:offDates[2],
+    counts:{ days:3, stations:4, assignments:17, absences:4, unresolved:0,
+      duplicates:0, skipped:0, ignored_names:0, below_minimum:0 },
+    blocks:[
+      { label:'אילת', kind:'station', sub_station:'eilat', absence:null, rows:[3, 17], names:8 },
+      { label:'שחמון', kind:'station', sub_station:'shahmon', absence:null, rows:[18, 22], names:4 },
+      { label:'תמנע', kind:'station', sub_station:'timna', absence:null, rows:[23, 27], names:3 },
+      { label:'יטבתה', kind:'station', sub_station:'yotvata', absence:null, rows:[28, 29], names:2 }
+    ],
+    unresolved:[], duplicates:[], ignored:[], missing_stations:[], warnings:[],
+    people:[], report_digest:'rd_off_display', blocked_by:[], blocked:false,
+    accept:{ missing_stations:false, ignored_blocks:false }
+  };
+  const offImportedDraft = {
+    draft_id:'draft_off_display', content_digest:'digest_off_display', duplicate:false,
+    from:offDates[0], to:offDates[2],
+    summary:{ filled:17, blocking_gaps:0, days_below_minimum:0, rejected_manual:0,
+      open_rows:0, imported_below_minimum:0, imported_absences:4 },
+    report:offImportReport
+  };
+  const inputOrder = ['אדם ראשון', 'אדם שני', 'אדם שלישי', 'אדם רביעי',
+    'אדם חמישי', 'אדם שישי', 'אדם שביעי', 'אדם שמיני'];
+  const stationPeople = (prefix, count, crew) => Array.from({ length:count }, (_, index) => ({
+    uid:prefix + '_' + (index + 1), person:prefix === 'eilat' ? inputOrder[index] : prefix + ' ' + (index + 1),
+    role_label:'לוחם', hours:'07:00-07:00', crew, is_me:false
+  }));
+  const readyAbsences = { sick:'ready', reserve:'ready', course:'ready', leave:'ready' };
+  const importedDisplayDays = offDates.map((date, index) => ({
+    date, crew:['A', 'B', 'C'][index], events:[], guards_status:'ready', guards:[],
+    absences_status:'ready', absence_coverage:readyAbsences,
+    absences:index === 0 ? [
+      { uid:'sick_1', display:'נעדר מחלה', kind:'sick', is_me:false },
+      { uid:'reserve_1', display:'נעדר מילואים', kind:'reserve', is_me:false },
+      { uid:'course_1', display:'נעדר קורס', kind:'course', location:'north', is_me:false },
+      { uid:'leave_1', display:'נעדר חופש', kind:'leave', location:'eilat', is_me:false }
+    ] : [],
+    sub_stations:[
+      { sub_station:'eilat', label:'אילת', minimum:7, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('eilat', 8, 'A') : [] },
+      { sub_station:'shahmon', label:'שחמון', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('שחמון', 4, 'A') : [] },
+      { sub_station:'timna', label:'תמנע', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('תמנע', 3, 'A') : [] },
+      { sub_station:'yotvata', label:'יטבתה', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('יטבתה', 2, 'A') : [] }
+    ]
+  }));
+  const offImportedPreview = {
+    draft_id:offImportedDraft.draft_id, expected_content_digest:offImportedDraft.content_digest,
+    imported:true, from:offDates[0], to:offDates[2], week_start:offDates[0], days:importedDisplayDays
+  };
+  const importedDisplayRange = {
+    mode:'off', active:true, source:'imported-display', display_only:true,
+    publication_id:null, revision:null, from:offDates[0], to:offDates[2], days:importedDisplayDays
+  };
+  const displayOff = { month:offMonth, enabled:false, generation:0, draft_id:null,
+    content_digest:null, mode:'off' };
+  const displayShown = { month:offMonth, enabled:true, generation:1,
+    draft_id:offImportedDraft.draft_id, content_digest:offImportedDraft.content_digest,
+    mode:'off', duplicate:false };
+  const displayCleared = { month:offMonth, enabled:false, generation:2,
+    draft_id:null, content_digest:null, mode:'off', duplicate:false };
+
+  const offImport = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(offImport, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayOff }],
+    previewScheduleImport:[{ data:offImportReport }],
+    importScheduleSheet:[{ data:offImportedDraft }],
+    getScheduleDraftPreview:[{ data:offImportedPreview }],
+    setScheduleDisplay:[{ data:displayShown }, { data:displayCleared }],
+    getStationScheduleRange:[{ data:importedDisplayRange }, { data:legacyRange('off') }]
+  });
+  const offImportPage = await offImport.newPage();
+  await offImportPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await offImportPage.locator('#appMain:not(.hide)').waitFor();
+
+  await test('an appointed manager can choose, check and import a schedule file while the engine is off', async () => {
+    assert.equal(await offImportPage.locator('#manageView').isVisible(), true);
+    assert.match(await offImportPage.locator('#mode').textContent(), /מנוע הסידור החדש עדיין כבוי/);
+    assert.equal(await offImportPage.locator('#runPlanner').isDisabled(), true);
+    assert.equal(await offImportPage.locator('#importCheck').isEnabled(), true);
+    assert.equal(await offImportPage.locator('#importStationMap').isVisible(), false,
+      'the canonical four-station policy needs no legacy mapping');
+    const csv = '\ufeff,1/9,2/9,3/9\r\nאילת,א,ב,ג\r\nשחמון,ד,ה,ו\r\nתמנע,ז,ח,ט\r\nיטבתה,י,יא,יב\r\n';
+    await offImportPage.locator('#importFile').setInputFiles({
+      name:'off-board.csv', mimeType:'text/csv', buffer:Buffer.from(csv, 'utf8')
+    });
+    await offImportPage.locator('#importFileStatus').filter({ hasText:'off-board.csv' }).waitFor();
+    await offImportPage.locator('#importCheck').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    assert.equal(await offImportPage.locator('#importRun').isEnabled(), true);
+    await offImportPage.locator('#importRun').click();
+    await offImportPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true);
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.find((entry) => entry.name === 'previewScheduleImport');
+    assert.equal(preview.payload.month, offMonth);
+    assert.deepEqual(preview.payload.matrix[1].slice(0, 2), ['אילת', 'א']);
+    const imported = calls.find((entry) => entry.name === 'importScheduleSheet');
+    assert.equal(imported.payload.expected_report_digest, offImportReport.report_digest);
+    assert.match(imported.payload.request_id, /^import_/);
+    assert.match(await offImportPage.locator('#importMessage').textContent(), /לא הופעל מנוע ולא נשלחה הודעה/);
+  });
+
+  await test('showing the imported draft sends its signed identity and renders the four stations without changing mode', async () => {
+    await offImportPage.locator('#importShow').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const shown = calls.filter((entry) => entry.name === 'setScheduleDisplay')[0];
+    assert.ok(shown);
+    assert.deepEqual(Object.assign({}, shown.payload, { request_id:undefined }), {
+      action:'show', month:offMonth, request_id:undefined, expected_generation:0,
+      draft_id:offImportedDraft.draft_id, expected_content_digest:offImportedDraft.content_digest
+    });
+    assert.match(shown.payload.request_id, /^display_/);
+    assert.equal(Object.hasOwn(shown.payload, 'stationId'), false);
+    assert.match(await offImportPage.locator('#mode').textContent(), /מנוע הסידור החדש עדיין כבוי/);
+    assert.match(await offImportPage.locator('#importDisplayStatus').textContent(), /המנוע לא הופעל ולא נשלחו התראות/);
+
+    await offImportPage.locator('[data-tab="station"]').click();
+    await offImportPage.locator('#stationBoard').waitFor();
+    assert.deepEqual(await offImportPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    const eilatCell = offImportPage.locator('#stationBoard > [role="row"]').nth(1).locator(':scope > .cell').first();
+    assert.deepEqual(await eilatCell.locator(':scope > .nm').allTextContents(), inputOrder,
+      'names must stay in the file order');
+    const namesBeforeLine = await eilatCell.locator(':scope > .rulebar').evaluate((line) => {
+      let count = 0;
+      for (let item = line.previousElementSibling; item; item = item.previousElementSibling) {
+        if (item.classList.contains('nm')) count += 1;
+      }
+      return count;
+    });
+    assert.equal(namesBeforeLine, 7, 'the Eilat red line must be after the seventh person');
+    assert.equal(await eilatCell.locator(':scope > .rulebar > .ruleline').count(), 1);
+    assert.deepEqual(await offImportPage.locator('#stationBoard .absence-stub b').allTextContents(),
+      ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await offImportPage.locator('#stationBoard .absence-name').allTextContents(),
+      ['נעדר מחלה', 'נעדר מילואים', 'נעדר קורס', 'נעדר חופשאילת']);
+    assert.match(await offImportPage.locator('#stationNote').textContent(), /מקובץ הסידור שיובא.*המנוע נשאר off/);
+  });
+
+  await test('clearing the imported display restores the legacy board and leaves the imported draft intact', async () => {
+    await offImportPage.locator('[data-tab="manage"]').click();
+    assert.equal(await offImportPage.locator('#importClear').isVisible(), true);
+    await offImportPage.locator('#importClear').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const cleared = calls.filter((entry) => entry.name === 'setScheduleDisplay')[1];
+    assert.ok(cleared);
+    assert.deepEqual(Object.assign({}, cleared.payload, { request_id:undefined }), {
+      action:'clear', month:offMonth, request_id:undefined, expected_generation:1
+    });
+    assert.match(cleared.payload.request_id, /^display_/);
+    assert.equal(Object.hasOwn(cleared.payload, 'draft_id'), false);
+    assert.match(await offImportPage.locator('#importMessage').textContent(), /נתוני הייבוא עצמם נשמרו ולא נמחקו/);
+    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true,
+      'the imported draft remains available to show again');
+    await offImportPage.locator('[data-tab="station"]').click();
+    await offImportPage.locator('#stationBoard').waitFor();
+    assert.match(await offImportPage.locator('#stationNote').textContent(), /מהסידור הקיים/);
+    assert.equal(await offImportPage.locator('#stationBoard .cell.unknown').count() > 0, true);
+  });
+
+  await test('the off-mode import display flow has no engine, publication, delivery or notification side effect', async () => {
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const forbidden = ['setScheduleRuntimeMode', 'promoteScheduleToNew', 'runSchedulePlanner',
+      'publishSchedule', 'rollbackSchedule', 'respondToSchedule', 'deliverScheduleOutbox'];
+    assert.deepEqual(calls.filter((entry) => forbidden.includes(entry.name)), []);
+    assert.equal(calls.some((entry) => /notification|outbox/i.test(entry.name)), false);
+    assert.deepEqual(calls.filter((entry) => entry.name === 'setScheduleDisplay').map((entry) => entry.payload.action),
+      ['show', 'clear']);
+  });
+  await offImport.close();
+
   /* ⭐ final-review §2 · תשובת ייבוא שאבדה אחרי שהשרת כבר יצר את הטיוטה:
    * הניסיון הממתין נשמר (payload מלא + מזהה), ואחרי שכינוי שאינו קשור השתנה
    * (הדוח החדש נושא חתימה אחרת) — הלחיצה הבאה שולחת **בדיוק** את אותה בקשה
@@ -1654,5 +1848,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 43);
-console.log('\n43 schedule management browser checks passed.');
+assert.equal(passed, 47);
+console.log('\n47 schedule management browser checks passed.');
