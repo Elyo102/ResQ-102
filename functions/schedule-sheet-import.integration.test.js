@@ -9,10 +9,9 @@
  *  כינוי שאינו קשור; final-review: השבתת קורא בזמן קריאת הלוח); ושערי
  *  ההרשאה של שני ה-callables.
  *
- *  ⚠ הקובץ **לא הורץ** על ידי מי שכתב אותו — אין אמולטור בסביבה שלו
- *  (הורדת ה-jar חסומה ב-proxy). נבדק ב-`node --check` ונכתב מול אותן
- *  חתימות שה-probe בזיכרון (`tests/sheet-import-runtime-probe.mjs`)
- *  מריץ בהצלחה על ה-runtime האמיתי. Codex מריץ על `demo-resq`.
+ *  כיסוי 42H.2 של תצוגת הייבוא במצב כבוי הורץ מול אמולטור Firestore
+ *  אמיתי על `demo-resq`: הרשאות חיות, show/clear, idempotency, CAS,
+ *  שלמות הטיוטה, לוח ארבע התחנות ומרוץ שינוי המצביע.
  *
  *  הרצה:
  *    firebase emulators:exec --only firestore --project demo-resq \
@@ -68,7 +67,8 @@ function runtime(hooks) {
     createPublication,
     createService: createScheduleService,
     isSuper: () => false,
-    sendPush: async () => ({ sent: 1 })
+    sendPush: async () => ({ sent: 1 }),
+    beforeLiveGuardViewRecheck: hooks && hooks.beforeLiveGuardViewRecheck
   });
 }
 
@@ -379,6 +379,259 @@ async function test(name, fn) {
       schema_version: 1, station_id: SID, uid: MGR, roles: ['schedule_manager'], active: true, revision: 3
     });
   });
+
+  /* ------------------------------------------------------------------
+   * 42H.2 · תצוגת טיוטת ייבוא כשהמנוע כבוי
+   *
+   * מצביע התצוגה נפרד במכוון מ-runtime/active/publications/outbox.  כל
+   * הבדיקות כאן רצות מול עסקאות Firestore אמיתיות, כולל CAS ומרוצים.
+   * ------------------------------------------------------------------ */
+  const displayRef = station().collection('schedule_state').doc('display_2026_09');
+  const draftRef = station().collection('schedule_drafts').doc(imported.draft_id);
+  const displayAuditCount = async () => {
+    const snap = await station().collection('schedule_audit').get();
+    return snap.docs.filter((doc) => (doc.data() || {}).kind === 'schedule-display').length;
+  };
+  const restoreManager = async (revision) => {
+    await station().collection('users').doc(MGR).set({
+      station: SID, role: 'firefighter', full_name: 'אחראי בדיקה', active: true
+    });
+    await station().collection('schedule_access').doc(MGR).set({
+      schema_version: 1, station_id: SID, uid: MGR,
+      roles: ['schedule_manager'], active: true, revision
+    });
+  };
+  const showInput = (requestId, generation) => ({
+    action: 'show', month: '2026-09', request_id: requestId,
+    expected_generation: generation,
+    draft_id: imported.draft_id,
+    expected_content_digest: imported.content_digest
+  });
+
+  await runtimeDoc().set({ mode: 'off' }, { merge: true });
+  const displayRuntimeBefore = (await runtimeDoc().get()).data() || {};
+  const displayPublicationsBefore = (await station().collection('schedule_publications').get()).size;
+  const displayAuditsBefore = await displayAuditCount();
+
+  await test('display status and selection refuse a non-manager without writing a pointer', async () => {
+    const statusError = await caught(() => api.getScheduleDisplayStatus(req('viewer', { month: '2026-09' })));
+    assert.equal(statusError && statusError.code, 'manager-required');
+    const setError = await caught(() => api.setScheduleDisplay(req('viewer', showInput('display_denied', 0))));
+    assert.equal(setError && setError.code, 'manager-required');
+    assert.equal((await displayRef.get()).exists, false);
+    assert.equal(await displayAuditCount(), displayAuditsBefore);
+  });
+
+  await test('an unset month reports disabled generation zero', async () => {
+    const status = await api.getScheduleDisplayStatus(req(MGR, { month: '2026-09' }));
+    assert.deepEqual(status, {
+      month: '2026-09', enabled: false, generation: 0,
+      draft_id: null, content_digest: null, from: null, to: null
+    });
+  });
+
+  await test('display status refuses a manager appointment revoked after the pointer read', async () => {
+    let fired = false;
+    const barrier = firestoreWithCollectionReadBarrier('/schedule_state/display_2026_09', async () => {
+      fired = true;
+      await station().collection('schedule_access').doc(MGR).delete();
+    });
+    const error = await caught(() => runtime({ db: barrier })
+      .getScheduleDisplayStatus(req(MGR, { month: '2026-09' })));
+    assert.equal(fired, true);
+    assert.equal(error && error.code, 'manager-revoked', error && error.message);
+    await restoreManager(4);
+  });
+
+  await test('show refuses a manager appointment revoked after the draft read and writes nothing', async () => {
+    let fired = false;
+    const barrier = firestoreWithCollectionReadBarrier('/schedule_drafts/' + imported.draft_id, async () => {
+      fired = true;
+      await station().collection('schedule_access').doc(MGR).delete();
+    });
+    const error = await caught(() => runtime({ db: barrier })
+      .setScheduleDisplay(req(MGR, showInput('display_revoked', 0))));
+    assert.equal(fired, true);
+    assert.equal(error && error.code, 'manager-revoked', error && error.message);
+    assert.equal((await displayRef.get()).exists, false);
+    assert.equal(await displayAuditCount(), displayAuditsBefore);
+    await restoreManager(5);
+  });
+
+  await test('show refuses a digest that is not the signed imported draft', async () => {
+    const input = showInput('display_bad_digest', 0);
+    input.expected_content_digest = '0'.repeat(64);
+    const error = await caught(() => api.setScheduleDisplay(req(MGR, input)));
+    assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
+    assert.equal((await displayRef.get()).exists, false);
+  });
+
+  await test('show refuses a draft whose station metadata does not match the caller station', async () => {
+    await draftRef.update({ station_id: 'different_station' });
+    try {
+      const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_wrong_station', 0))));
+      assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
+      assert.equal((await displayRef.get()).exists, false);
+    } finally {
+      await draftRef.update({ station_id: SID });
+    }
+  });
+
+  await test('show refuses a non-imported draft even when the snapshot is otherwise signed', async () => {
+    await draftRef.update({ imported: false });
+    try {
+      const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_not_imported', 0))));
+      assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
+      assert.equal((await displayRef.get()).exists, false);
+    } finally {
+      await draftRef.update({ imported: true });
+    }
+  });
+
+  await test('show refuses an incomplete imported draft', async () => {
+    await draftRef.update({ snapshot_complete: false });
+    try {
+      const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_incomplete', 0))));
+      assert.equal(error && error.code, 'display-draft-invalid', error && error.message);
+      assert.equal((await displayRef.get()).exists, false);
+    } finally {
+      await draftRef.update({ snapshot_complete: true });
+    }
+  });
+
+  await test('show is refused in new mode and cannot move runtime or active publication state', async () => {
+    await runtimeDoc().set({ mode: 'new' }, { merge: true });
+    try {
+      const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_new_mode', 0))));
+      assert.equal(error && error.code, 'display-mode-blocked', error && error.message);
+      assert.equal((await displayRef.get()).exists, false);
+      assert.equal((await station().collection('schedule_state').doc('active').get()).exists, false);
+      assert.equal((await station().collection('schedule_publications').get()).size, displayPublicationsBefore);
+    } finally {
+      await runtimeDoc().set({ mode: 'off' }, { merge: true });
+    }
+  });
+
+  let shown = null;
+  await test('show selects the signed import in off mode without publishing, notifying or changing mode', async () => {
+    shown = await api.setScheduleDisplay(req(MGR, showInput('display_show_1', 0)));
+    assert.deepEqual([
+      shown.enabled, shown.generation, shown.mode, shown.draft_id, shown.content_digest
+    ], [true, 1, 'off', imported.draft_id, imported.content_digest]);
+    assert.deepEqual((await runtimeDoc().get()).data() || {}, displayRuntimeBefore,
+      'בחירת תצוגה שינתה את מסמך מצב המנוע');
+    assert.equal((await station().collection('schedule_state').doc('active').get()).exists, false);
+    assert.equal((await station().collection('schedule_publications').get()).size, displayPublicationsBefore);
+    assert.equal(await displayAuditCount(), displayAuditsBefore + 1);
+  });
+
+  await test('status exposes the selected immutable draft and current generation', async () => {
+    const status = await api.getScheduleDisplayStatus(req(MGR, { month: '2026-09' }));
+    assert.deepEqual(status, {
+      month: '2026-09', enabled: true, generation: 1,
+      draft_id: imported.draft_id, content_digest: imported.content_digest,
+      from: '2026-09-01', to: '2026-09-03'
+    });
+  });
+
+  await test('off-mode station range is the ordered four-station import with line seven and absences', async () => {
+    const board = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    assert.deepEqual([board.mode, board.source, board.imported, board.display_only, board.display_generation],
+      ['off', 'imported-display', true, true, 1]);
+    assert.deepEqual(board.days.map((day) => day.crew), ['A', 'B', 'C']);
+    assert.deepEqual(board.days[0].sub_stations.map((item) => [item.sub_station, item.label]), [
+      ['eilat', 'אילת'], ['shahmon', 'שחמון'], ['timna', 'תמנע'], ['yotvata', 'יטבתה']
+    ]);
+    assert.deepEqual(board.days[0].sub_stations[0].people.map((person) => person.uid),
+      ['u1', 'u2', 'u9', 'u5', 'u8', 'u7', 'u4'], 'סדר השמות מהקובץ השתנה');
+    assert.deepEqual(board.days[0].sub_stations[0].people.map((person) => person.person),
+      ['רועי כהן', 'דניאל לוי', 'ליאור נחום', 'גיא ברק', 'אורי שלום', 'נועם דהן', 'עמית פרץ']);
+    assert.deepEqual([
+      board.days[0].sub_stations[0].minimum,
+      board.days[0].sub_stations[0].below_minimum,
+      board.days[1].sub_stations[0].minimum,
+      board.days[1].sub_stations[0].below_minimum
+    ], [7, false, 7, true], 'קו המינימום של אילת אינו 7');
+    assert.deepEqual(board.days[0].absences.map((item) => [item.uid, item.kind, item.location || null]),
+      [['u6', 'sick', null], ['u1', 'leave', 'north']]);
+  });
+
+  await test('show replay is idempotent and a reused request id with different intent conflicts', async () => {
+    const replay = await api.setScheduleDisplay(req(MGR, showInput('display_show_1', 0)));
+    assert.deepEqual([replay.duplicate, replay.enabled, replay.generation], [true, true, 1]);
+    assert.equal(await displayAuditCount(), displayAuditsBefore + 1);
+    const conflict = await caught(() => api.setScheduleDisplay(req(MGR, {
+      action: 'clear', month: '2026-09', request_id: 'display_show_1', expected_generation: 1
+    })));
+    assert.equal(conflict && conflict.code, 'request-conflict', conflict && conflict.message);
+  });
+
+  await test('a stale generation loses the real Firestore transaction race without a second audit', async () => {
+    const error = await caught(() => api.setScheduleDisplay(req(MGR, showInput('display_stale_generation', 0))));
+    assert.equal(error && error.code, 'display-generation-conflict', error && error.message);
+    assert.equal((await displayRef.get()).data().generation, 1);
+    assert.equal(await displayAuditCount(), displayAuditsBefore + 1);
+  });
+
+  await test('a pointer changed after the imported snapshot read aborts the board response', async () => {
+    let fired = false;
+    const racing = runtime({
+      beforeLiveGuardViewRecheck: async ({ kind }) => {
+        if (fired || kind !== 'imported-display') return;
+        fired = true;
+        await displayRef.update({ generation: 2 });
+      }
+    });
+    const error = await caught(() => racing.getStationRange(
+      req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+    assert.equal(fired, true);
+    assert.equal(error && error.code, 'schedule-display-changed', error && error.message);
+    assert.equal(error && error.days, undefined);
+  });
+
+  await test('a viewer disabled after the imported snapshot read receives no board', async () => {
+    let fired = false;
+    const racing = runtime({
+      beforeLiveGuardViewRecheck: async ({ kind }) => {
+        if (fired || kind !== 'imported-display') return;
+        fired = true;
+        await station().collection('users').doc('viewer').set({
+          station: SID, role: 'firefighter', full_name: 'צופה בדיקה', active: false
+        });
+      }
+    });
+    const error = await caught(() => racing.getStationRange(
+      req('viewer', { from: '2026-09-01', to: '2026-09-03' })));
+    assert.equal(fired, true);
+    assert.equal(error && error.code, 'board-viewer-changed', error && error.message);
+    assert.equal(error && error.days, undefined);
+    await station().collection('users').doc('viewer').set({
+      station: SID, role: 'firefighter', full_name: 'צופה בדיקה', active: true
+    });
+  });
+
+  await test('clear is generation-checked, idempotent and returns the off board to legacy', async () => {
+    const clearInput = {
+      action: 'clear', month: '2026-09', request_id: 'display_clear_1', expected_generation: 2
+    };
+    const cleared = await api.setScheduleDisplay(req(MGR, clearInput));
+    assert.deepEqual([cleared.enabled, cleared.generation, cleared.mode], [false, 3, 'off']);
+    const replay = await api.setScheduleDisplay(req(MGR, clearInput));
+    assert.deepEqual([replay.duplicate, replay.enabled, replay.generation], [true, false, 3]);
+    const status = await api.getScheduleDisplayStatus(req(MGR, { month: '2026-09' }));
+    assert.deepEqual([status.enabled, status.generation, status.draft_id], [false, 3, null]);
+    const board = await api.getStationRange(req('viewer', { from: '2026-09-01', to: '2026-09-03' }));
+    assert.equal(board.source, 'legacy');
+    assert.equal((await draftRef.get()).exists, true, 'clear must not delete the imported draft');
+    assert.deepEqual((await runtimeDoc().get()).data() || {}, displayRuntimeBefore,
+      'clear changed the engine mode/configuration');
+    assert.equal((await station().collection('schedule_state').doc('active').get()).exists, false);
+    assert.equal((await station().collection('schedule_publications').get()).size, displayPublicationsBefore);
+    assert.equal(await displayAuditCount(), displayAuditsBefore + 2);
+  });
+
+  // Existing publication coverage below starts from shadow mode and no display.
+  await runtimeDoc().set({ mode: 'shadow' }, { merge: true });
 
   await test('publish in shadow prepares only — no active pointer', async () => {
     const prepared = await api.publish(req(MGR, {
