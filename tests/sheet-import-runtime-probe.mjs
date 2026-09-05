@@ -47,6 +47,7 @@ try {
 /* ---------------- Firestore בזיכרון (קריאה, כתיבה, עסקה, batch) ---------------- */
 function createFakeDb() {
   const docs = new Map();
+  let beforeRead = null;
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v, (k, val) => (val && val.__ts ? 'ts' : val))));
   function snapshot(path) {
     const has = docs.has(path);
@@ -60,6 +61,7 @@ function createFakeDb() {
       orderBy() { return this; },
       doc: (id) => docRef(path + '/' + String(id)),
       async get() {
+        if (beforeRead) await beforeRead(path, 'query');
         const prefix = path + '/';
         const out = [];
         for (const key of Array.from(docs.keys()).sort()) {
@@ -82,7 +84,10 @@ function createFakeDb() {
     return {
       path, id: path.slice(path.lastIndexOf('/') + 1),
       collection: (name) => query(path + '/' + name, [], null),
-      async get() { return snapshot(path); },
+      async get() {
+        if (beforeRead) await beforeRead(path, 'document');
+        return snapshot(path);
+      },
       async set(value, options) {
         if (options && options.merge && docs.has(path)) docs.set(path, Object.assign({}, docs.get(path), clone(value)));
         else docs.set(path, clone(value));
@@ -117,7 +122,8 @@ function createFakeDb() {
     _put(path, value) { docs.set(path, clone(value)); },
     _del(path) { docs.delete(path); },
     _get(path) { return docs.has(path) ? clone(docs.get(path)) : null; },
-    _paths(prefix) { return Array.from(docs.keys()).filter((k) => k.indexOf(prefix) === 0).sort(); }
+    _paths(prefix) { return Array.from(docs.keys()).filter((k) => k.indexOf(prefix) === 0).sort(); },
+    _setBeforeRead(fn) { beforeRead = typeof fn === 'function' ? fn : null; }
   };
 }
 
@@ -214,6 +220,55 @@ const SHEET = [
   row(['בצפון', 'רועי', '', ''])
 ].join('\n');
 
+/* ==================================================================
+ * 0 · ביצועים בטוחים: קריאות זהות בלתי תלויות מתחילות יחד
+ * ================================================================== */
+{
+  const db = createFakeDb();
+  db._put(ST + '/users/' + MGR, {
+    station_id: SID, station: SID, is_active: true, active: true,
+    role: 'firefighter', full_name: 'מ'
+  });
+  db._put(ST + '/schedule_access/' + MGR, {
+    schema_version: 1, station_id: SID, uid: MGR,
+    roles: ['schedule_manager'], active: true, revision: 1
+  });
+  db._put(ST + '/schedule_state/runtime', { mode: 'off' });
+  const started = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const identityPaths = new Set([
+    ST + '/users/' + MGR,
+    ST + '/schedule_access/' + MGR
+  ]);
+  db._setBeforeRead(async (path, kind) => {
+    if (kind === 'document' && identityPaths.has(path)) {
+      started.push(path);
+      await gate;
+    }
+  });
+  const pending = buildRuntime(db).getStatus(req({}));
+  await new Promise((resolve) => setImmediate(resolve));
+  eq('0.1 משתמש חי ומינוי מתחילים באותו גל',
+    started.slice().sort(), Array.from(identityPaths).sort());
+  release();
+  eq('0.2 התשובה נשארת זהה אחרי הקריאה המקבילה',
+    (await pending).mode, 'off');
+
+  // גם כשהקריאה למינוי נכשלת, משתמש שאינו קיים מקבל את אותה
+  // תשובת user-first — בלי חשיפת עצם קיומו של מסמך המינוי.
+  db._setBeforeRead(async (path, kind) => {
+    if (kind === 'document' && path === ST + '/schedule_access/' + MGR) {
+      const error = new Error('access read failed');
+      error.code = 'access-read-failed';
+      throw error;
+    }
+  });
+  db._del(ST + '/users/' + MGR);
+  await rejectsCode('0.3 משתמש חסר אינו לומד שכשל מסמך המינוי',
+    () => buildRuntime(db).getStatus(req({})), 'live-user-required');
+}
+
 /* ================================================================== */
 {
   const db = createFakeDb();
@@ -309,7 +364,28 @@ const SHEET = [
   }
 
   // 4 · תצוגה מקדימה של הטיוטה — השבלונה.
-  const preview = await rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
+  // תמונה מלאה: rows/events/absences/people אינם תלויים זה בזה ולכן
+  // ארבע הקריאות חייבות להתחיל יחד. כך נחסך round trip בלי לשנות
+  // את מספר הקריאות, הספירות או חתימת התוכן.
+  const snapshotBase = ST + '/schedule_drafts/' + imported.draft_id;
+  const snapshotPaths = new Set(['rows', 'events', 'absences', 'people']
+    .map((name) => snapshotBase + '/' + name));
+  const snapshotStarted = [];
+  let releaseSnapshot;
+  const snapshotGate = new Promise((resolve) => { releaseSnapshot = resolve; });
+  db._setBeforeRead(async (path, kind) => {
+    if (kind === 'query' && snapshotPaths.has(path)) {
+      snapshotStarted.push(path);
+      await snapshotGate;
+    }
+  });
+  const previewPending = rt.getDraftPreview(req({ draft_id: imported.draft_id, start: '2026-09-01' }));
+  await new Promise((resolve) => setImmediate(resolve));
+  eq('4.0 ארבעת חלקי התמונה המלאה מתחילים באותו גל',
+    snapshotStarted.slice().sort(), Array.from(snapshotPaths).sort());
+  releaseSnapshot();
+  const preview = await previewPending;
+  db._setBeforeRead(null);
   eq('4.1 מיובא', preview.imported, true);
   const d1 = preview.days[0];
   eq('4.2 שורות = ארבע התחנות מהמדיניות, בסדר', d1.sub_stations.map((s) => s.sub_station), ['eilat', 'shahmon', 'timna', 'yotvata']);

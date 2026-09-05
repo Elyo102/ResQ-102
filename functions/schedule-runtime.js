@@ -326,7 +326,16 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('station-required',
         'לחשבון אין שיוך תחנה תקין.', 'failed-precondition');
     }
-    const userSnap = await liveUserRef(sid, uid).get();
+    // These two documents are independent and are needed for every valid
+    // request. Start both reads together, but preserve the user-first failure
+    // semantics below: an invalid/inactive user must never learn whether an
+    // appointment document exists.
+    const identityReads = await Promise.allSettled([
+      liveUserRef(sid, uid).get(),
+      scheduleAccessRef(sid, uid).get()
+    ]);
+    if (identityReads[0].status === 'rejected') throw identityReads[0].reason;
+    const userSnap = identityReads[0].value;
     if (!userSnap.exists) {
       throw new ScheduleRuntimeError('live-user-required',
         'החשבון אינו קיים ברשימת המשתמשים הפעילה של התחנה.', 'permission-denied');
@@ -347,7 +356,8 @@ function createScheduleRuntime(deps) {
     // Never use a token claim or the profile itself for this capability:
     // an access record is read live for every call so a removal takes effect
     // immediately, without waiting for a token refresh.
-    const accessSnap = await scheduleAccessRef(sid, uid).get();
+    if (identityReads[1].status === 'rejected') throw identityReads[1].reason;
+    const accessSnap = identityReads[1].value;
     const access = accessSnap.exists ? (accessSnap.data() || {}) : null;
     return Object.freeze({
       uid,
@@ -1439,7 +1449,13 @@ function createScheduleRuntime(deps) {
     }
     let absenceQuery = ref.collection('absences');
     if (Array.isArray(dates) && dates.length) absenceQuery = absenceQuery.where('date', 'in', dates);
-    const pair = await Promise.all([rowsQuery.get(), eventsQuery.get(), absenceQuery.get()]);
+    const dateFiltered = Array.isArray(dates) && dates.length > 0;
+    const snapshotReads = [rowsQuery.get(), eventsQuery.get(), absenceQuery.get()];
+    // A full people dictionary is independent of rows/events and can share the
+    // same Firestore round trip. A date-filtered read stays two-stage because
+    // its exact people IDs are derived from the returned rows and events.
+    if (!dateFiltered) snapshotReads.push(ref.collection('people').get());
+    const pair = await Promise.all(snapshotReads);
     const absences = normalizeSnapshotAbsences(pair[2].docs.reduce((acc, doc) => {
       const value = doc.data() || {};
       return acc.concat(Array.isArray(value.entries) ? value.entries : []);
@@ -1449,15 +1465,13 @@ function createScheduleRuntime(deps) {
     const events = pair[1].docs.map((doc) => doc.data() || {})
       .sort((a, b) => compareCanonical(a.id, b.id));
     let peopleDocs;
-    if (Array.isArray(dates) && dates.length) {
+    if (dateFiltered) {
       const ids = new Set();
       rows.forEach((row) => (row.slots || []).forEach((slot) => ids.add(slot.person)));
       events.forEach((event) => (event.people || []).forEach((id) => ids.add(id)));
       const refs = Array.from(ids).sort().map((id) => ref.collection('people').doc(id));
       peopleDocs = refs.length ? await db.getAll.apply(db, refs) : [];
-    } else {
-      peopleDocs = (await ref.collection('people').get()).docs;
-    }
+    } else peopleDocs = pair[3].docs;
     const roster = peopleDocs.filter((doc) => doc.exists).map((doc) => doc.data() || {});
     if (!dates && (rows.length !== meta.row_count || events.length !== meta.event_count)) {
       throw new ScheduleRuntimeError('snapshot-count-mismatch',
