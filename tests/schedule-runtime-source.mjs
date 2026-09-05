@@ -1931,5 +1931,18 @@ check('§4/§5/§6 the pure edit module keeps UID_RE, MAX_WARNINGS and the role 
   assert.ok(runtime.includes('report.report_bytes = requireEditReportSize(report);'));
 });
 
-assert.equal(passed, 120);
-console.log('\n120 schedule runtime source checks passed.');
+check('seq457: the qualification save re-validates quota and label uniqueness on the catalog read inside the transaction; a policy change needs an explicit acknowledgement', () => {
+  const save = runtime.slice(runtime.indexOf('async function saveQualification(req)'), runtime.indexOf('async function deleteQualification(req)'));
+  assert.ok(save.includes('loadQualificationCatalog(ctx, txRead)'));
+  assert.ok(save.includes("throw new ScheduleRuntimeError('qualification-catalog-changed'"));
+  assert.ok(runtime.includes("new ScheduleRuntimeError('edit-policy-acknowledgement-required'"));
+  const edit = read('functions/schedule-edit.js');
+  assert.equal(/uid \+ '\|'/.test(edit), false, 'no uid|date string keys');
+  assert.ok(edit.includes('touched.set(uid, new Map())'));
+  const quals = read('functions/schedule-qualifications.js');
+  assert.ok(quals.includes('const out = Object.create(null);') && quals.includes("'__proto__', 'constructor', 'prototype'"));
+  assert.ok(ui.includes("'sub-station-not-in-policy':") && ui.includes('editPolicyAcknowledgement()'));
+});
+
+assert.equal(passed, 121);
+console.log('\n121 schedule runtime source checks passed.');

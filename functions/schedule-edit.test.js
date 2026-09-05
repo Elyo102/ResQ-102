@@ -226,4 +226,20 @@ test('policy changed since the publication: rows are rebased onto the active pol
   assert.equal(plainRun.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'eilat').minimum, 2, 'without rebase_policy the rows keep their own minimum');
 });
 
+test('seq457 §1 a uid containing | (or any separator) keeps its own before/after state — no string keys', () => {
+  const weird = 'a|2026-09-01|b';
+  const ppl = people.concat([{ id: weird, full_name: 'פלוני', sub_station: 'eilat', roles: ['ff'], active: true }]);
+  const plan = basePlan();
+  plan.rows[0].slots.push({ person: weird, role: null, label: null, source: 'imported' });
+  const out = edit.applyEdits({ plan, people: ppl, policy, edits: [
+    { kind: 'assign', uid: weird, dates: ['2026-09-01', '2026-09-02'], sub_station: 'shahmon' },
+    { kind: 'absence', uid: weird, dates: ['2026-09-03'], absence: { kind: 'sick' } }
+  ] });
+  assert.deepEqual(out.changes.map((c) => [c.uid, c.date, c.before.sub_station, c.after.sub_station]), [
+    [weird, '2026-09-01', 'eilat', 'shahmon'], [weird, '2026-09-02', null, 'shahmon'], [weird, '2026-09-03', null, null]
+  ]);
+  assert.deepEqual(out.people_changed, [weird]);
+  assert.equal(out.counts.dates, 3);
+});
+
 console.log('\n' + passed + ' schedule-edit unit checks passed.');

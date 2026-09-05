@@ -12,6 +12,10 @@
  * ==================================================================== */
 
 const KEY_RE = /^[a-z][a-z0-9_]{1,39}$/;
+/* ⭐ seq457 §4 · מפתחות שמורים של Object.prototype — עוברים את KEY_RE אבל
+ * משבשים ספירה ומיזוג באובייקטים רגילים. נדחים בכניסה, מתעלמים בקריאה. */
+const RESERVED_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty', '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__', 'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString']);
+function validKey(key) { return KEY_RE.test(key) && RESERVED_KEYS.indexOf(key) === -1; }
 const MAX_LABEL = 40;
 const MAX_CUSTOM = 40;
 const MAX_PER_PERSON = 20;
@@ -58,7 +62,7 @@ function cleanLabel(raw, what) {
 function mergeCatalog(stored) {
   const byKey = new Map();
   (Array.isArray(stored) ? stored : []).forEach((doc) => {
-    if (plain(doc) && KEY_RE.test(String(doc.key || ''))) byKey.set(doc.key, doc);
+    if (plain(doc) && validKey(String(doc.key || ''))) byKey.set(doc.key, doc);
   });
   const out = CANONICAL.map((base) => {
     const doc = byKey.get(base.key) || {};
@@ -98,7 +102,7 @@ function mergeCatalog(stored) {
 function normalizeSave(input, current, catalog) {
   const inp = plain(input) ? input : {};
   const key = String(inp.key || '').trim();
-  if (!KEY_RE.test(key)) fail('qualification-key', 'מפתח הכשירות: אותיות לטיניות קטנות, ספרות וקו תחתון (2–40).');
+  if (!validKey(key)) fail('qualification-key', 'מפתח הכשירות: אותיות לטיניות קטנות, ספרות וקו תחתון (2–40), לא מילה שמורה.');
   const builtin = CANONICAL_KEYS.indexOf(key) !== -1;
   const base = builtin ? CANONICAL.find((q) => q.key === key) : null;
   if (!current && !builtin) {
@@ -142,7 +146,7 @@ function normalizeHoldings(raw, catalog) {
   const seen = new Set();
   raw.forEach((key) => {
     const k = String(key || '');
-    const entry = known.get(k);
+    const entry = validKey(k) ? known.get(k) : null;
     if (!entry) fail('holdings-unknown', 'כשירות לא מוכרת: ' + k);
     if (entry.active === false) fail('holdings-inactive', 'הכשירות „' + entry.label + '" מושבתת ואינה ניתנת להקצאה.');
     seen.add(k);
@@ -161,16 +165,22 @@ function diffHoldings(before, after) {
 
 /** ספירת מחזיקים לכל כשירות מתוך מסמכי האנשים. */
 function holdersByKey(personDocs) {
-  const out = {};
+  // Object.create(null): אין ירושה מ-Object.prototype, ולכן `constructor`
+  // ברשימת מחזיקים אינו מתחיל מספירה של פונקציה.
+  const out = Object.create(null);
   (Array.isArray(personDocs) ? personDocs : []).forEach((doc) => {
     if (!plain(doc) || !Array.isArray(doc.qualifications)) return;
-    doc.qualifications.forEach((key) => { out[key] = (out[key] || 0) + 1; });
+    doc.qualifications.forEach((raw) => {
+      const key = String(raw || '');
+      if (!key || RESERVED_KEYS.indexOf(key) !== -1) return;
+      out[key] = (out[key] || 0) + 1;
+    });
   });
-  return out;
+  return Object.assign({}, out);
 }
 
 module.exports = Object.freeze({
-  QualificationError, CANONICAL, CANONICAL_KEYS, CRITICAL_KEYS, KEY_RE,
+  QualificationError, CANONICAL, CANONICAL_KEYS, CRITICAL_KEYS, KEY_RE, RESERVED_KEYS, validKey,
   MAX_LABEL, MAX_CUSTOM, MAX_PER_PERSON, MAX_MINIMUM,
   mergeCatalog, normalizeSave, deleteBlocker, normalizeHoldings, diffHoldings, holdersByKey
 });

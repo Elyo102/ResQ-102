@@ -1377,12 +1377,13 @@ function createScheduleRuntime(deps) {
         }
         entry.location = item.location;
       }
-      const key = entry.date + '|' + entry.uid + '|' + entry.kind + '|' + (entry.location || '');
+      // seq457 §1 · מפתח מבני (UID יכול להכיל `|`), לא שרשור מחרוזות.
+      const key = JSON.stringify([entry.date, entry.uid, entry.kind, entry.location || '']);
       if (seen.has(key)) throw new ScheduleRuntimeError('snapshot-absences', 'היעדרות כפולה.');
       seen.add(key);
       return entry;
     });
-    return out.sort((a, b) => compareCanonical(a.date + '|' + a.uid + '|' + a.kind, b.date + '|' + b.uid + '|' + b.kind));
+    return out.sort((a, b) => compareCanonical(a.date, b.date) || compareCanonical(a.uid, b.uid) || compareCanonical(a.kind, b.kind));
   }
 
   function absenceDocuments(absences) {
@@ -3727,6 +3728,14 @@ function createScheduleRuntime(deps) {
     if (!basis.applied.changes.length) {
       throw new ScheduleRuntimeError('edit-no-changes', 'העריכה אינה משנה דבר בסידור הפעיל.', 'failed-precondition');
     }
+    /* ⭐ seq457 §2 · חוקי התחנה השתנו מאז הפרסום → השורות יושרו; הביצוע דורש
+     * אישור מפורש של אחראי הסידור על **החתימה** של החוקים שאליהם יושרו. */
+    if (basis.policyChanged && String(data.policy_acknowledgement || '') !== basis.policyChanged.to) {
+      const error = new ScheduleRuntimeError('edit-policy-acknowledgement-required',
+        'חוקי התחנה השתנו מאז שהסידור פורסם ו-' + basis.policyChanged.rows_rebased + ' שורות יושרו לחוקים הפעילים. יש לאשר זאת במפורש לפני הביצוע.', 'failed-precondition');
+      error.detail = { policy_changed: basis.policyChanged };
+      throw error;
+    }
     const report = scheduleEditReport(basis);
     report.report_bytes = requireEditReportSize(report);
     await db.runTransaction(async (tx) => {
@@ -3908,8 +3917,14 @@ function createScheduleRuntime(deps) {
     const auditRef = qualificationAuditRef(ctx.sid, requestId);
     let duplicate = false;
     await db.runTransaction(async (tx) => {
-      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), docRef, auditRef];
-      const snaps = await Promise.all(refs.map((item) => tx.get(item)));
+      const txRead = (item) => tx.get(item);
+      /* ⭐ seq457 §5 · הקטלוג נקרא **בעסקה**: מכסת המותאמות וייחוד התווית
+       * נבדקים על מה שהעסקה רואה, כך ששתי שמירות מקבילות אינן עוקפות מכסה
+       * ואינן יוצרות שתי כשירויות באותו שם. */
+      const [snaps, liveCatalog] = await Promise.all([
+        Promise.all([liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), docRef, auditRef].map(txRead)),
+        loadQualificationCatalog(ctx, txRead)
+      ]);
       requireLiveManager(snaps[0], snaps[1], ctx);
       if (snaps[3].exists) {
         if ((snaps[3].data() || {}).fingerprint !== fingerprint) {
@@ -3922,6 +3937,12 @@ function createScheduleRuntime(deps) {
       const liveRevision = live && Number.isInteger(live.revision) ? live.revision : 0;
       if (liveRevision !== expectedRevision) {
         throw new ScheduleRuntimeError('qualification-revision-stale', 'הכשירות השתנתה בינתיים. יש לרענן.', 'aborted');
+      }
+      const liveCurrent = liveCatalog.find((entry) => entry.key === next.key) || null;
+      let liveNext;
+      try { liveNext = qualifications.normalizeSave(data, liveCurrent, liveCatalog); } catch (error) { qualificationError(error); }
+      if (digest(liveNext) !== digest(next)) {
+        throw new ScheduleRuntimeError('qualification-catalog-changed', 'הקטלוג השתנה בינתיים. יש לרענן ולשמור שוב.', 'aborted');
       }
       tx.set(docRef, Object.assign({}, next, {
         station_id: ctx.sid, revision: liveRevision + 1,
@@ -4126,6 +4147,8 @@ function createScheduleRuntime(deps) {
   function gapSummaryFor(report) {
     return {
       summary: report.summary,
+      candidates_basis: report.candidates_basis,
+      candidates_note: report.candidates_note,
       blocking: report.blocking.slice(0, MAX_GAP_DETAIL),
       acknowledgeable: report.acknowledgeable.slice(0, MAX_GAP_DETAIL),
       truncated: report.blocking.length > MAX_GAP_DETAIL || report.acknowledgeable.length > MAX_GAP_DETAIL,

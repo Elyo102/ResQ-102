@@ -17,6 +17,12 @@
 
 const MAX_CANDIDATES = 12;
 const MAX_DAYS = 400;
+/* ⭐ seq457 §3 · המועמדים כאן נבחרים לפי **כשירות ופניות ביום בלבד**:
+ * פעיל, לא משובץ באותו יום, לא בהיעדרות, מחזיק בכשירות. הם **אינם**
+ * נבדקים מול מנוע הזכאות (זמינות, נעילות, סבב, מנוחה). לכן כל רשימה
+ * נושאת את הבסיס שלה במפורש, ואין שום נתיב שמחיל מועמד אוטומטית —
+ * אחראי הסידור משבץ ידנית דרך העריכה, והעריכה עוברת את כל הבדיקות. */
+const CANDIDATE_BASIS = 'qualification-only';
 
 class ScheduleGapError extends Error {
   constructor(code, message) { super(message); this.name = 'ScheduleGapError'; this.code = code; }
@@ -75,7 +81,7 @@ function analyzeGaps(input) {
     rows.forEach((r) => (r.slots || []).forEach((s) => { if (s && nonEmpty(s.person)) assigned.add(s.person); }));
     const absent = absentBy.get(date) || new Set();
     const free = Array.from(people.keys()).filter((uid) => !assigned.has(uid) && !absent.has(uid)).sort((a, b) => compareText(people.get(a), people.get(b)));
-    const candidateList = (filter) => free.filter(filter).slice(0, MAX_CANDIDATES).map((uid) => ({ uid, name: people.get(uid) }));
+    const candidateList = (filter) => free.filter(filter).slice(0, MAX_CANDIDATES).map((uid) => ({ uid, name: people.get(uid), basis: CANDIDATE_BASIS }));
 
     const stationGap = stationMinimum > 0 && assigned.size < stationMinimum ? stationMinimum - assigned.size : 0;
     const subs = rows.map((r) => {
@@ -118,6 +124,8 @@ function analyzeGaps(input) {
     blocking,
     acknowledgeable,
     digest,
+    candidates_basis: CANDIDATE_BASIS,
+    candidates_note: 'מועמדים לפי כשירות ופניות ביום בלבד — לא נבדקו זמינות, נעילות, סבב ומנוחה. אין שיבוץ אוטומטי.',
     summary: {
       days: days.length,
       days_with_gaps: days.filter((d) => d.has_gap).length,
@@ -134,4 +142,4 @@ function acknowledgementValid(report, acknowledgement) {
   return nonEmpty(acknowledgement) && acknowledgement === report.digest;
 }
 
-module.exports = Object.freeze({ ScheduleGapError, analyzeGaps, acknowledgementValid, MAX_CANDIDATES, MAX_DAYS, stable });
+module.exports = Object.freeze({ ScheduleGapError, analyzeGaps, acknowledgementValid, MAX_CANDIDATES, MAX_DAYS, CANDIDATE_BASIS, stable });

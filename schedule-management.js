@@ -2643,13 +2643,16 @@ function gapAcknowledgement(gaps, ackId) {
   return $(ackId).checked ? gaps.digest : '';
 }
 
+const CANDIDATES_NOTE = 'מועמדים לפי כשירות ופניות ביום בלבד — לא נבדקו זמינות, נעילות, סבב ומנוחה. אין שיבוץ אוטומטי: שיבוץ נעשה ידנית דרך עריכת הסידור.';
 function renderGapDays(days, box) {
   clear(box);
+  /* ⭐ seq457 §3 · הבסיס של המועמדים נאמר פעם אחת ובמפורש. */
+  if ((days || []).some((day) => day.has_gap)) box.appendChild(node('div', 'sub', CANDIDATES_NOTE));
   (days || []).forEach((day) => {
     const wrap = node('div', 'gapday');
     wrap.appendChild(node('b', 'date', dateLabel(day.date) + ' · ' + day.total + ' משובצים' + (day.station_minimum ? ' מתוך מינימום ' + day.station_minimum : '')));
     if (day.station_gap > 0) {
-      wrap.appendChild(node('div', 'gap other', 'סה״כ בתחנה: חסרים ' + day.station_gap + ' · מועמדים: ' + ((day.station_candidates || []).map((c) => c.name).join(', ') || 'אין פנויים')));
+      wrap.appendChild(node('div', 'gap other', 'סה״כ בתחנה: חסרים ' + day.station_gap + ' · מועמדים (כשירות בלבד): ' + ((day.station_candidates || []).map((c) => c.name).join(', ') || 'אין פנויים')));
     }
     (day.sub_stations || []).forEach((sub) => {
       if (sub.gap > 0) wrap.appendChild(node('div', 'gap other', sub.label + ': ' + sub.people + ' מתוך ' + sub.minimum + ' (חסרים ' + sub.gap + ')'));
@@ -2658,7 +2661,7 @@ function renderGapDays(days, box) {
       if (q.gap <= 0) return;
       const line = node('div', 'gap ' + (q.critical ? 'critical' : 'other'));
       line.appendChild(node('span', '', (q.critical ? 'קריטי · ' : '') + q.label + ': ' + q.present + ' מתוך ' + q.minimum));
-      line.appendChild(node('span', 'cands', 'מועמדים: ' + ((q.candidates || []).map((c) => c.name).join(', ') || 'אין פנויים עם הכשירות')));
+      line.appendChild(node('span', 'cands', 'מועמדים (כשירות בלבד): ' + ((q.candidates || []).map((c) => c.name).join(', ') || 'אין פנויים עם הכשירות')));
       wrap.appendChild(line);
     });
     if (!day.has_gap) wrap.appendChild(node('div', 'ok', 'אין פערים'));
@@ -2718,7 +2721,8 @@ $('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
 $('draftGapAck').addEventListener('change', updatePublishAvailability);
 $('gapLoad').addEventListener('click', managerAction(loadActiveGaps));
 $('gapStationMinimumSave').addEventListener('click', managerAction(saveStationMinimum));
-$('editGapAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !(state.editReport.counts.changes && !editGapsBlock()); });
+$('editGapAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
+$('editPolicyAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
 
 /* ==================================================================
  *  42H.2 · חבילה א׳ — עריכת הסידור הפעיל
@@ -2733,8 +2737,17 @@ const EDIT_ABSENCE_HE = { sick: 'מחלה', reserve: 'מילואים', course: '
 const EDIT_WARN_HE = {
   'assigned-while-absent': 'משובץ ביום שבו רשומה לו היעדרות',
   'absent-while-assigned': 'נרשמה היעדרות ביום שבו הוא משובץ',
-  'not-assigned': 'לא היה משובץ ביום הזה — אין מה להסיר'
+  'not-assigned': 'לא היה משובץ ביום הזה — אין מה להסיר',
+  'sub-station-not-in-policy': 'תחנת הקצה אינה בחוקי התחנה הפעילים — השורות שלה נשמרות כפי שהן ואי אפשר לשבץ אליה'
 };
+/* ⭐ seq457 §2 · אזהרה מנוסחת לפי מה שיש בה: אדם+יום, או תחנת קצה — לעולם לא undefined. */
+function editWarningText(warning) {
+  const what = EDIT_WARN_HE[warning.code] || warning.code;
+  if (warning.code === 'sub-station-not-in-policy') return editStationLabel(warning.sub_station) + ' · ' + what;
+  const who = warning.name || warning.uid || '';
+  const when = warning.date ? dateLabel(warning.date) : '';
+  return [who, when, what].filter(Boolean).join(' · ');
+}
 
 function editBase() {
   const active = state.status && state.status.active;
@@ -2939,7 +2952,18 @@ function renderEditReport(report) {
   });
   if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
   const warnings = $('editWarnings'); clear(warnings);
-  (report.warnings || []).forEach((warning) => warnings.appendChild(node('div', 'change warn', warning.name + ' · ' + dateLabel(warning.date) + ' · ' + (EDIT_WARN_HE[warning.code] || warning.code))));
+  /* ⭐ seq457 §2 · חוקי התחנה השתנו מאז הפרסום — נאמר במפורש, עם מספר השורות
+   * שיושרו, ודורש אישור מפורש (תיבה) לפני הביצוע. */
+  const policyBox = $('editPolicyChanged');
+  if (report.policy_changed) {
+    policyBox.hidden = false;
+    $('editPolicyChangedText').textContent = 'חוקי התחנה השתנו מאז שהסידור הזה פורסם. ' + report.policy_changed.rows_rebased
+      + ' שורות יושרו לחוקים הפעילים (קו מינימום ותוויות). הביצוע יפרסם את הסידור על החוקים הפעילים.';
+    $('editPolicyAck').checked = false;
+    $('editPolicyAckText').textContent = 'ראיתי שחוקי התחנה השתנו ואני מאשר/ת לפרסם את הסידור הערוך על החוקים הפעילים';
+  } else policyBox.hidden = true;
+  if (report.warnings_truncated) warnings.appendChild(node('div', 'change warn', 'מוצגות ' + report.warnings.length + ' אזהרות מתוך ' + report.warnings_total + '.'));
+  (report.warnings || []).forEach((warning) => warnings.appendChild(node('div', 'change warn', editWarningText(warning))));
   (report.below_minimum || []).forEach((row) => warnings.appendChild(node('div', 'change weak', row.label + ' · ' + dateLabel(row.date) + ' · ' + row.people + ' מתוך קו ' + row.minimum)));
   $('editGapAck').checked = false;
   renderGapSummary(report.gaps, { box: 'editGaps', list: 'editGapsList', ackWrap: 'editGapAckWrap', ackText: 'editGapAckText' });
@@ -2948,6 +2972,15 @@ function renderEditReport(report) {
 function editGapsBlock() {
   const gaps = state.editReport && state.editReport.gaps;
   return !!gaps && (gaps.blocking || []).length > 0;
+}
+/* האישור על שינוי החוקים — חתימת החוקים הפעילים, או '' כשלא אושר, או null כשאין צורך. */
+function editPolicyAcknowledgement() {
+  const changed = state.editReport && state.editReport.policy_changed;
+  if (!changed) return null;
+  return $('editPolicyAck').checked ? changed.to : '';
+}
+function editApplyAllowed() {
+  return !!(state.editReport && state.editReport.counts.changes && !editGapsBlock() && editPolicyAcknowledgement() !== '');
 }
 
 async function checkEdit() {
@@ -2961,7 +2994,8 @@ async function checkEdit() {
     if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
     else if (editGapsBlock()) message('editMessage', 'השינוי משאיר פער בכשירות קריטית — אי אפשר לפרסם אותו. שבצו מהמועמדים או בטלו את ההסרה.', 'err');
     else message('editMessage', report.counts.changes + ' שינויים ל-' + report.counts.people + ' עובדים. ' + report.notifications + ' עובדים יקבלו הודעה אחת. אפשר לבצע.', 'ok');
-    $('editApply').disabled = !!state.editPending ? false : !(report.counts.changes && !editGapsBlock());
+    if (report.policy_changed && report.counts.changes && !editGapsBlock()) message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — ' + report.policy_changed.rows_rebased + ' שורות יושרו. יש לאשר בתיבה לפני הביצוע.', 'warn');
+    $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed();
     if (state.editPending) message('editMessage', pendingEditText(), 'warn');
   } catch (error) {
     state.editReport = null; $('editReport').hidden = true;
@@ -2989,11 +3023,14 @@ async function applyEdit() {
   else {
     const acknowledgement = gapAcknowledgement(state.editReport.gaps, 'editGapAck');
     if (acknowledgement === '') { message('editMessage', 'יש פערים שדורשים אישור מפורש לפני הביצוע.', 'err'); return; }
+    const policyAck = editPolicyAcknowledgement();
+    if (policyAck === '') { message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — יש לאשר זאת במפורש לפני הביצוע.', 'err'); return; }
     const digestValue = state.editReport.edit_digest;
     state.editRequestIds = state.editRequestIds || {};
     if (!state.editRequestIds[digestValue]) state.editRequestIds[digestValue] = requestId('edit');
     payload = Object.assign({ request_id: state.editRequestIds[digestValue], expected_edit_digest: digestValue }, editPayload());
     if (acknowledgement) payload.gap_acknowledgement = acknowledgement;
+    if (policyAck) payload.policy_acknowledgement = policyAck;
   }
   state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
   message('editMessage', pending ? 'שולח שוב את אותה בקשה…' : 'מבצע ומפרסם גרסה חדשה…', 'info');

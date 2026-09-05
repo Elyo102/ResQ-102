@@ -106,4 +106,37 @@ function auditOf(db) { return db._paths(ST + '/schedule_qualification_audit/').m
   db._put(ST + '/schedule_access/' + MGR, { schema_version: 1, station_id: SID, uid: MGR, roles: ['schedule_manager'], active: true, revision: 1 });
 }
 
+/* seq457 §4/§5 · מפתחות שמורים; מכסה וייחוד תווית נבדקים בתוך העסקה. */
+{
+  const db = createFakeDb();
+  const { rt } = await seed(db);
+  await rejectsCode('6.1 מפתח __proto__ נדחה', () => rt.saveQualification(req({ request_id: 'q-proto', key: '__proto__', label: 'א', expected_revision: 0 })), 'qualification-key');
+  await rejectsCode('6.2 מפתח constructor נדחה', () => rt.saveQualification(req({ request_id: 'q-ctor', key: 'constructor', label: 'ב', expected_revision: 0 })), 'qualification-key');
+  await rejectsCode('6.3 כשירות constructor לאדם נדחית', () => rt.setPersonQualifications(req({ request_id: 'q-ctor-p', person: 'u1', qualifications: ['constructor'] })), 'holdings-unknown');
+  // מסמך זדוני/ישן בקטלוג עם מפתח שמור — מתעלמים ממנו, והספירה נשארת נכונה.
+  db._put(ST + '/schedule_qualifications/constructor', { station_id: SID, label: 'זבל', active: true, revision: 1 });
+  db._put(ST + '/schedule_person_qualifications/u2', { station_id: SID, uid: 'u2', qualifications: ['constructor', 'driver'], revision: 1 });
+  const cat = await rt.getQualificationCatalog(req({}));
+  ok('6.4 הקטלוג מתעלם ממפתח שמור, המחזיקים נספרים נכון', !cat.catalog.some((e) => e.key === 'constructor') && cat.holders.driver === 1 && !Object.prototype.hasOwnProperty.call(cat.holders, 'constructor'), JSON.stringify([cat.catalog.map((e) => e.key), cat.holders]));
+
+  // מרוץ: בין קריאת הקטלוג לעסקה נוספת כשירות עם אותה תווית → העסקה מסרבת.
+  const originalTx = db.runTransaction;
+  db.runTransaction = async (fn) => {
+    db._put(ST + '/schedule_qualifications/diver_b', { station_id: SID, key: 'diver_b', label: 'צוללן', active: true, minimum: 0, order: 1000, revision: 1 });
+    db.runTransaction = originalTx;
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('6.5 תווית כפולה שנוספה במקביל → נדחה בעסקה', () => rt.saveQualification(req({ request_id: 'q-dup', key: 'diver_a', label: 'צוללן', expected_revision: 0 })), 'qualification-label-duplicate');
+  eq('6.6 לא נוצרה diver_a', db._get(ST + '/schedule_qualifications/diver_a') || null, null);
+  // מרוץ מכסה: 39 מותאמות + אחת שנוספה במקביל → ה-40 של הבקשה נדחית.
+  for (let i = 0; i < 38; i += 1) db._put(ST + '/schedule_qualifications/custom_' + i, { station_id: SID, key: 'custom_' + i, label: 'מותאמת ' + i, active: true, minimum: 0, order: 1000 + i, revision: 1 });
+  db.runTransaction = async (fn) => {
+    db._put(ST + '/schedule_qualifications/custom_last', { station_id: SID, key: 'custom_last', label: 'מותאמת אחרונה', active: true, minimum: 0, order: 2000, revision: 1 });
+    db.runTransaction = originalTx;
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('6.7 מכסת המותאמות נבדקת בעסקה (הוספה מקבילה ממלאת אותה)', () => rt.saveQualification(req({ request_id: 'q-cap', key: 'custom_over', label: 'מעבר למכסה', expected_revision: 0 })), 'qualification-limit');
+  eq('6.8 לא נוצרה custom_over', db._get(ST + '/schedule_qualifications/custom_over') || null, null);
+}
+
 finish('schedule-qualifications runtime probe checks passed');

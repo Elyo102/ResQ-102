@@ -241,7 +241,7 @@ function applyEdits(input) {
   }
   const absences = clone(Array.isArray(plan.absences) ? plan.absences : []);
   const coverage = plain(plan.absence_coverage) ? clone(plan.absence_coverage) : null;
-  const touched = new Map();   // uid|date → before
+  const touched = new Map();   // uid → Map(date → before)
   const warnings = rebaseWarnings.slice();
   let warningsTotal = warnings.length;
   const warn = (entry) => {
@@ -249,9 +249,12 @@ function applyEdits(input) {
     if (warnings.length < MAX_WARNINGS) warnings.push(entry);
   };
 
+  /* ⭐ seq457 §1 · מפתח זוגי (Map מקונן) — UID יכול להכיל כל תו, כולל `|`,
+   * ולכן אין מחרוזת `uid|date` בשום מקום. */
   const remember = (uid, date) => {
-    const key = uid + '|' + date;
-    if (!touched.has(key)) touched.set(key, stateOf(rows, absences, uid, date));
+    if (!touched.has(uid)) touched.set(uid, new Map());
+    const byDate = touched.get(uid);
+    if (!byDate.has(date)) byDate.set(date, stateOf(rows, absences, uid, date));
   };
 
   function rowFor(date, sub) {
@@ -332,15 +335,17 @@ function applyEdits(input) {
     row.below_minimum = row.coverage !== 'missing' && minimum > 0 && row.slots.length < minimum;
   });
   kept.sort((a, b) => compareText(a.date + '|' + a.sub_station, b.date + '|' + b.sub_station));
-  absences.sort((a, b) => compareText(a.date + '|' + a.uid, b.date + '|' + b.uid));
+  absences.sort((a, b) => compareText(a.date, b.date) || compareText(a.uid, b.uid));
 
   const changes = [];
-  Array.from(touched.keys()).sort().forEach((key) => {
-    const [uid, date] = key.split('|');
-    const before = touched.get(key);
-    const after = stateOf(kept, absences, uid, date);
-    if (sameState(before, after)) return;
-    changes.push({ uid, date, before, after });
+  Array.from(touched.keys()).sort(compareText).forEach((uid) => {
+    const byDate = touched.get(uid);
+    Array.from(byDate.keys()).sort().forEach((date) => {
+      const before = byDate.get(date);
+      const after = stateOf(kept, absences, uid, date);
+      if (sameState(before, after)) return;
+      changes.push({ uid, date, before, after });
+    });
   });
 
   const nextPlan = Object.assign({}, plan, {

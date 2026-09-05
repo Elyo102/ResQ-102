@@ -90,4 +90,18 @@ test('diff and holder counts', () => {
   assert.deepEqual(q.holdersByKey([{ qualifications: ['a', 'b'] }, { qualifications: ['b'] }, { nope: true }]), { a: 1, b: 2 });
 });
 
+test('seq457 §4 reserved prototype keys are refused as qualification keys and ignored in catalog / holdings / counts', () => {
+  ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty'].forEach((key) => {
+    throwsCode(() => q.normalizeSave({ key, label: 'x' + key }, null, q.mergeCatalog([])), 'qualification-key');
+  });
+  const catalog = q.mergeCatalog([{ key: 'constructor', label: 'בעיה', active: true }, { key: '__proto__', label: 'בעיה2' }, { key: 'diver', label: 'צוללן' }]);
+  assert.deepEqual(catalog.filter((e) => !e.builtin).map((e) => e.key), ['diver']);
+  const counts = q.holdersByKey([{ qualifications: ['constructor', 'diver', '__proto__'] }, { qualifications: ['diver', 'prototype'] }]);
+  assert.deepEqual(counts, { diver: 2 });
+  assert.equal(Object.prototype.hasOwnProperty.call(counts, 'constructor'), false);
+  assert.equal(typeof Object.prototype.constructor, 'function', 'Object.prototype must stay untouched');
+  throwsCode(() => q.normalizeHoldings(['constructor'], catalog), 'holdings-unknown');
+  throwsCode(() => q.normalizeHoldings(['__proto__'], catalog), 'holdings-unknown');
+});
+
 console.log('\n' + passed + ' schedule-qualifications unit checks passed.');

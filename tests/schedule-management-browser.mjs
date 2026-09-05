@@ -2163,6 +2163,58 @@ try {
     people:[{ uid:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'], qualifications:['driver'], revision:1, legacy:[] }],
     unknown_holders:[]
   };
+  /* ⭐ seq457 §2 · חוקי התחנה השתנו מאז הפרסום: הדוח אומר כמה שורות יושרו,
+   * אזהרת תחנה-שאינה-בחוקים מוצגת עם יעד אמיתי (לא undefined), והביצוע נעול
+   * עד אישור מפורש שנשלח כחתימת החוקים הפעילים. */
+  const editReportRebased = Object.assign({}, editReport, {
+    edit_digest:'ed_rebase',
+    policy_changed:{ from:'pol_old', to:'pol_new', rows_rebased:12 },
+    warnings:[
+      { code:'assigned-while-absent', uid:'crew_1', date: today, name:'טל חודרה' },
+      { code:'sub-station-not-in-policy', sub_station:'ghost_station' }
+    ],
+    warnings_total:2, warnings_truncated:0
+  });
+  const rebaseCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
+  await prepare(rebaseCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusEditable }, { data:statusEdited }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getMyScheduleV2:[{ data:mine }, { data:mine }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
+    previewScheduleEdit:[{ data:editReportRebased }],
+    applyScheduleEdit:[{ data:{ duplicate:false, draft_id:'d_rb', publication_id:'p_edit_6', revision:6, notified_people:1, report:editReportRebased } }]
+  });
+  const rebasePage = await rebaseCtx.newPage();
+  await rebasePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await rebasePage.locator('#appMain:not(.hide)').waitFor();
+  await test('edit card: a policy change since the publication is shown with the rebased row count, the foreign-station warning names its station, and apply waits for an explicit acknowledgement', async () => {
+    await rebasePage.fill('#editSearch', 'טל');
+    await rebasePage.locator('#editSearchResults button').first().click();
+    await rebasePage.selectOption('#editRange', 'day');
+    await rebasePage.fill('#editDate', today);
+    await rebasePage.locator('#editDate').dispatchEvent('change');
+    await rebasePage.selectOption('#editAction', 'unassign');
+    await rebasePage.locator('#editAdd').click();
+    await rebasePage.locator('#editCheck').click();
+    await rebasePage.locator('#editMessage .warn').waitFor();
+    assert.equal(await rebasePage.locator('#editPolicyChanged').isVisible(), true);
+    assert.match(await rebasePage.locator('#editPolicyChangedText').textContent(), /12 שורות יושרו/);
+    const warnings = await rebasePage.locator('#editWarnings').textContent();
+    assert.equal(/undefined|null/.test(warnings), false, 'a warning must never render undefined: ' + warnings);
+    assert.match(warnings, /ghost_station · תחנת הקצה אינה בחוקי התחנה הפעילים/);
+    assert.match(warnings, /טל חודרה/);
+    assert.equal(await rebasePage.locator('#editApply').isEnabled(), false, 'no apply before the policy acknowledgement');
+    await rebasePage.locator('#editPolicyAck').check();
+    assert.equal(await rebasePage.locator('#editApply').isEnabled(), true);
+    await rebasePage.locator('#editApply').click();
+    await rebasePage.locator('#editMessage .ok').waitFor();
+    const calls = await rebasePage.evaluate(() => window.__CALLABLE_CALLS);
+    const apply = calls.find((entry) => entry.name === 'applyScheduleEdit');
+    assert.equal(apply.payload.policy_acknowledgement, 'pol_new', 'the acknowledgement travels as the active policy digest');
+    assert.equal(apply.payload.expected_edit_digest, 'ed_rebase');
+  });
+  await rebaseCtx.close();
+
   /* ⭐ ביקורת §7 · טלפון (390px): כרטיס העריכה, בקרת הפערים והכשירויות
    * נשארים בתוך המסך — הדף אינו גולל לרוחב, הטבלה גוללת בתוך המכולה שלה. */
   const phoneManagerCtx = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
@@ -2394,7 +2446,11 @@ try {
     // פירוט לפי יום — מועמדים בלבד.
     await gapPage.locator('#draftGapsDetail').click();
     await gapPage.locator('#draftGapsDays .gapday').waitFor();
-    assert.match(await gapPage.locator('#draftGapsDays').textContent(), /מועמדים: טל חודרה/);
+    const daysText = await gapPage.locator('#draftGapsDays').textContent();
+    assert.match(daysText, /מועמדים \(כשירות בלבד\): טל חודרה/);
+    // seq457 §3 · הבסיס של המועמדים נאמר במפורש, ואין שום כפתור שמחיל מועמד.
+    assert.match(daysText, /לא נבדקו זמינות, נעילות, סבב ומנוחה/);
+    assert.equal(await gapPage.locator('#draftGapsDays button').count(), 0, 'no auto-apply control for candidates');
     const detail = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'getScheduleGapReport');
     assert.deepEqual(detail.payload, { draft_id:'draft_1' });
     await gapPage.locator('#draftGapAck').check();
@@ -2475,5 +2531,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 63);
+assert.equal(passed, 64);
 console.log('\n' + passed + ' schedule management browser checks passed.');

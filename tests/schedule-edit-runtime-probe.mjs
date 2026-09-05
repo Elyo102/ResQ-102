@@ -397,7 +397,11 @@ function auditOf(db) {
   const rebased = await rt.previewScheduleEdit(req({ expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }] }));
   ok('5.4.8 המדיניות השתנתה מאז הפרסום → העריכה מותרת, הדוח מסמן policy_changed', rebased.policy_changed && rebased.policy_changed.from !== rebased.policy_changed.to && rebased.policy_changed.rows_rebased > 0, JSON.stringify(rebased.policy_changed));
   ok('5.4.9 הקו האדום בדוח הוא של המדיניות הפעילה: שחמון 2, אילת נשאר 7 (חוזה הייבוא)', rebased.below_minimum.some((row) => row.sub_station === 'shahmon' && row.minimum === 2) && rebased.below_minimum.every((row) => row.sub_station !== 'eilat' || row.minimum === 7), JSON.stringify(rebased.below_minimum));
-  const done2 = await rt.applyScheduleEdit(req({ request_id: 'e-rebase', expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest }));
+  // seq457 §2 · הביצוע דורש אישור מפורש על חתימת החוקים שאליהם יושרו השורות.
+  await rejectsCode('5.4.9b בלי אישור על שינוי החוקים → edit-policy-acknowledgement-required', () => rt.applyScheduleEdit(req({ request_id: 'e-rebase', expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest })), 'edit-policy-acknowledgement-required');
+  await rejectsCode('5.4.9c אישור על חתימה אחרת → נדחה', () => rt.applyScheduleEdit(req({ request_id: 'e-rebase', expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest, policy_acknowledgement: rebased.policy_changed.from })), 'edit-policy-acknowledgement-required');
+  eq('5.4.9d לא נוצרה טיוטה מהניסיונות שנדחו', db._paths(ST + '/schedule_drafts').filter((k) => k.split('/').length === 4 && (db._get(k) || {}).edited === true && (db._get(k) || {}).edit_base && (db._get(k) || {}).edit_base.revision === 2).length, 0);
+  const done2 = await rt.applyScheduleEdit(req({ request_id: 'e-rebase', expected: expectedOf(p2), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest, policy_acknowledgement: rebased.policy_changed.to }));
   eq('5.4.10 פורסם revision 3 על המדיניות החדשה', done2.revision, 3);
   const pub3 = db._get(ST + '/schedule_publications/' + done2.publication_id);
   eq('5.4.11 הפרסום הערוך נושא את חתימת המדיניות הפעילה', pub3.policy_digest === rebased.policy_changed.to, true);
@@ -423,14 +427,14 @@ function auditOf(db) {
   ok('5.5.3 אזהרות חסומות ב-200 והשאר נספרות', report.warnings.length === 200 && report.warnings_total > 200 && report.warnings_truncated === report.warnings_total - 200, JSON.stringify([report.warnings.length, report.warnings_total, report.warnings_truncated]));
   ok('5.5.4 גודל הדוח מדווח ומתחת לתקרה', Number.isInteger(report.report_bytes) && report.report_bytes < 256 * 1024, String(report.report_bytes));
   // אותו runtime עם תקרה נמוכה (seam לבדיקה בלבד): הדוח נדחה בדוח ובביצוע, בלי טיוטה.
-  const tight = buildRuntime(db, { editReportByteLimit: 2000 });
+  const tight = buildRuntime(db, { editReportByteLimit: 2600 });
   const drafts = () => db._paths(ST + '/schedule_drafts').filter((k) => k.split('/').length === 4).length;
   const draftsBefore = drafts();
   await rejectsCode('5.5.5 דוח מעל התקרה → edit-too-large (preview)', () => tight.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: many })), 'edit-too-large');
   await rejectsCode('5.5.6 ביצוע מעל התקרה → edit-too-large, בלי טיוטה', () => tight.applyScheduleEdit(req({ request_id: 'big', expected: expectedOf(pointer), edits: many, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'edit-too-large');
   eq('5.5.7 לא נוצרה טיוטה', drafts(), draftsBefore);
   const small = await tight.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] }));
-  ok('5.5.8 עריכה קטנה עוברת גם עם התקרה הנמוכה', small.report_bytes <= 2000, String(small.report_bytes));
+  ok('5.5.8 עריכה קטנה עוברת גם עם התקרה הנמוכה', small.report_bytes <= 2600, String(small.report_bytes));
 }
 
 finish('schedule-edit runtime probe checks passed');

@@ -395,6 +395,8 @@ async function test(name, fn) {
     assert.ok(rebased.policy_changed && rebased.policy_changed.rows_rebased > 0, JSON.stringify(rebased.policy_changed));
     // קו אילת בפרסום מיובא קבוע על 7 (חוזה ההטלה הקנונית); היישור נראה בתוויות/קווים אחרים.
     assert.ok(rebased.below_minimum.every((row) => row.sub_station !== 'eilat' || row.minimum === 7));
+    const unacked = await caught(() => api.applyScheduleEdit(req(MGR, { request_id: 'edit_rebase', expected: expectedOf(current), edits: [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-02'] }], expected_edit_digest: rebased.edit_digest, gap_acknowledgement: rebased.gaps.digest })));
+    assert.equal(unacked && unacked.code, 'edit-policy-acknowledgement-required');
     // מחזירים את המדיניות המקורית כדי שה-rollback שלמטה ירוץ על אותו בסיס.
     await runtimeDoc().set({ active_policy_id: cfg.active_policy_id }, { merge: true });
   });

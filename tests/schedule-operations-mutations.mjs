@@ -114,6 +114,20 @@ const MUTATIONS = [
     "    await db.runTransaction(async (tx) => {", ['editProbe']],
   ['§6 תפקיד חופשי מתקבל (assign)', 'edit',
     "    if (edit.kind === 'assign') requireKnownRole(policy, edit.sub_station, edit.role, index);", "", ['editUnit', 'editProbe']],
+  // --- ביקורת Codex על 77e4881 (seq457) ---
+  ['seq457 §1 מפתח מחרוזתי uid|date (UID עם | נשבר)', 'edit',
+    "    if (!touched.has(uid)) touched.set(uid, new Map());\n    const byDate = touched.get(uid);\n    if (!byDate.has(date)) byDate.set(date, stateOf(rows, absences, uid, date));",
+    "    const flat = uid + '|' + date;\n    if (!touched.has(flat)) touched.set(flat, new Map([[date, stateOf(rows, absences, uid, date)]]));", ['editUnit']],
+  ['seq457 §2 ביצוע בלי אישור על שינוי החוקים', 'runtime',
+    "    if (basis.policyChanged && String(data.policy_acknowledgement || '') !== basis.policyChanged.to) {", "    if (false) {", ['editProbe']],
+  ['seq457 §3 מועמדים בלי תיוג הבסיס', 'gaps',
+    "    const candidateList = (filter) => free.filter(filter).slice(0, MAX_CANDIDATES).map((uid) => ({ uid, name: people.get(uid), basis: CANDIDATE_BASIS }));",
+    "    const candidateList = (filter) => free.filter(filter).slice(0, MAX_CANDIDATES).map((uid) => ({ uid, name: people.get(uid) }));", ['gapsUnit']],
+  ['seq457 §4 מפתחות שמורים מתקבלים בקטלוג', 'quals',
+    "function validKey(key) { return KEY_RE.test(key) && RESERVED_KEYS.indexOf(key) === -1; }", "function validKey(key) { return KEY_RE.test(key); }", ['qualsUnit', 'qualsProbe']],
+  ['seq457 §5 מכסה/כפילות לא נבדקות בעסקה (הנרמול בעסקה מבוטל)', 'runtime',
+    "      try { liveNext = qualifications.normalizeSave(data, liveCurrent, liveCatalog); } catch (error) { qualificationError(error); }",
+    "      liveNext = next;", ['qualsProbe']],
   ['§6 תפקיד חופשי מתקבל (role)', 'edit',
     "        requireKnownRole(policy, hit.row.sub_station, edit.role, index);", "", ['editUnit', 'editProbe']]
 ];

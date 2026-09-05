@@ -69,6 +69,13 @@ test('candidates only: free (not assigned, not absent), active, holding the qual
   assert.deepEqual(d2.station_candidates.map((c) => c.uid).sort(), ['u1', 'u4']);
   assert.ok(lead.candidates.every((c) => typeof c.name === 'string'));
   assert.deepEqual(out.days[0].qualifications.find((q) => q.key === 'driver').candidates, [], 'no gap → no candidates');
+  // seq457 §3 · כל מועמד נושא את הבסיס שלו במפורש: כשירות ופניות ביום בלבד, לא זכאות מלאה.
+  assert.ok(lead.candidates.concat(driver.candidates, d2.station_candidates).every((c) => c.basis === 'qualification-only'));
+  assert.equal(out.candidates_basis, 'qualification-only');
+  assert.ok(/אין שיבוץ אוטומטי/.test(out.candidates_note));
+  const src = require('node:fs').readFileSync(require.resolve('./schedule-gaps'), 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.equal(/slots\.push|rows\.push|\.slots\s*=|person:/.test(code), false, 'the gaps module must never place anyone');
 });
 
 test('critical gaps block; the rest are acknowledgeable with a digest bound to the exact list', () => {
