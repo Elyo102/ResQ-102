@@ -26,7 +26,7 @@ export const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
 // המסך יציג משמרת שהשרת יחסום — וזה נראה כמו תקלה.
 export function visibleCrews(claims) {
   const c = claims || {};
-  const isSuper = c.super === true || c.role === 'super_admin';
+  const isSuper = c.super === true;
   // מפקד התחנה רואה את שלוש המשמרות — כך קובע seesShift()
   // בכללי האבטחה, וההערה למעלה כבר הבטיחה זהות. בלעדיו הוא
   // היה רואה רק את משמרתו, והוא **התפקיד היחיד** שמאשר

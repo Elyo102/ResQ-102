@@ -260,7 +260,9 @@ onAuthStateChanged(auth, async (user) => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
   if (epoch !== state.authEpoch) return;
-  const isMember = MEMBER_ROLES.indexOf(c.role) !== -1;
+  // A verified Firebase super claim has every role capability. A role name
+  // or fixed email never acts as a fallback for that authority.
+  const isMember = c.super === true || MEMBER_ROLES.indexOf(c.role) !== -1;
   const sid = typeof c.stationId === 'string' && /^[A-Za-z0-9_-]{2,120}$/.test(c.stationId)
     ? c.stationId : '';
   if (!isMember || !sid) {

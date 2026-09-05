@@ -169,7 +169,6 @@ await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const fns = getFunctions(app, 'europe-west1');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const $ = id => document.getElementById(id);
 
 let SID = '';
@@ -497,7 +496,7 @@ function paintStatus(data){
       ' · ' + timeText(last.completed_at || last.started_at)
     : 'עדיין לא נשמר צילום צל.';
   paintRun(last);
-  if (CLAIMS.super === true || String(auth.currentUser && auth.currentUser.email || '').toLowerCase() === SUPER_ADMIN) {
+  if (CLAIMS.super === true) {
     $('btnMode').classList.remove('hide');
     $('btnMode').className = on ? 'stop' : 'go';
     $('btnMode').textContent = on ? 'כבה מצב צל' : 'הפעל מצב צל';
@@ -758,7 +757,7 @@ onAuthStateChanged(auth, async user => {
   if (!user) { location.replace('./login.html?next=attendance-shadow.html'); return; }
   let claims = {};
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
-  const superUser = claims.super === true || String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const superUser = claims.super === true;
   const allowed = superUser || claims.role === 'hr_coordinator' ||
                   claims.role === 'station_commander';
   SID = claims.stationId || (superUser ? STATION_ID : '');

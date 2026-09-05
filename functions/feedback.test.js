@@ -12,19 +12,45 @@ const req = (data = {}, uid = 'user.with.dot', claims = token) => ({ auth: { uid
   request_id: 'fb_request_0001', screen: 'feedback.html', version: '42G.0',
   category: 'problem', rating: 2, text: 'הכפתור לא מגיב', allow_contact: true, ...data
 } });
-function fixture(seed = {}, clock = () => '2026-09-03T10:00:00.000Z') {
-  const db = createFakeFirestore({ 'stations/alpha_1/users/user.with.dot': member,
-    'stations/alpha_1/users/user2': member, ...seed });
+function fixture(seed = {}, clock = () => '2026-09-03T10:00:00.000Z', withProfiles = true) {
+  const db = createFakeFirestore({
+    ...(withProfiles ? { 'stations/alpha_1/users/user.with.dot': member,
+      'stations/alpha_1/users/user2': member } : {}),
+    ...seed
+  });
   return { db, service: createFeedback({ db, FieldValue: db.FieldValue, HttpsError, hash, clock }) };
 }
 const bad = (code) => (error) => error.code === code;
-test('authentication and station-member role are required with no super fallback', async () => {
+test('authentication and canonical station are required; email and role cannot impersonate super', async () => {
   const { service, db } = fixture();
   await assert.rejects(service.submit({ data: req().data }), bad('unauthenticated'));
   for (const claims of [{ ...token, stationId: '' }, { ...token, role: '' },
-    { super: true, email: 'fire102.shits@gmail.com', stationId: 'alpha_1' }]) {
+    { super: false, role: 'super_admin', stationId: 'alpha_1' },
+    { super: false, role: '', email: 'fire102.shits@gmail.com', stationId: 'alpha_1' }]) {
     await assert.rejects(service.submit(req({}, 'user.with.dot', claims)));
   }
+  assert.equal(db.writes.length, 0);
+});
+test('verified super submits within the signed station without a live profile or member role', async () => {
+  const { db, service } = fixture({}, () => '2026-09-03T10:00:00.000Z', false);
+  const claims = { stationId: 'alpha_1', role: '', super: true, email: 'ordinary@example.invalid' };
+  const out = await service.submit(req({}, 'super.with.dot', claims));
+  const saved = db.read('stations/alpha_1/feedback/' + out.id);
+  assert.equal(saved.uid, 'super.with.dot');
+  assert.equal(saved.role, 'super_admin');
+  assert.equal(saved.employee_number, '');
+  assert.equal(db.keys().some((key) => key.startsWith('stations/beta_2/')), false);
+  await assert.rejects(service.submit(req({ stationId: 'beta_2' }, 'super.with.dot', claims)), bad('invalid-argument'));
+  await assert.rejects(service.submit(req({ request_id: 'fb_request_0002' }, 'super.with.dot',
+    { ...claims, stationId: '' })), bad('failed-precondition'));
+});
+test('verified super remains subject to the per-user daily feedback quota', async () => {
+  const quota = 'stations/alpha_1/feedback_quota/super.with.dot_2026-09-03';
+  const { db, service } = fixture({ [quota]: { count: LIMITS.perUserPerDay } },
+    () => '2026-09-03T10:00:00.000Z', false);
+  await assert.rejects(service.submit(req({}, 'super.with.dot', {
+    stationId: 'alpha_1', role: '', super: true
+  })), bad('resource-exhausted'));
   assert.equal(db.writes.length, 0);
 });
 test('shape validation rejects hidden identity, invalid values and oversized text without truncation', async () => {

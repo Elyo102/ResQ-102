@@ -60,10 +60,15 @@ async function fixture(file = 'forms.html', role = 'firefighter', blockBootstrap
     if (!local.startsWith(root + path.sep) || !fs.existsSync(local) || !fs.statSync(local).isFile()) return route.fulfill({ status: 404, body: '' });
     let body = fs.readFileSync(local);
     if (mutation && path.basename(local) === 'monitoring-bootstrap.js') {
-      const guard = mutation === 'role' ? ' || claims.role !== permit.role' : 'claims.stationId !== permit.stationId || ';
+      const guards = {
+        role:'(!permit.super && claims.role !== permit.role)',
+        station:'claims.stationId !== permit.stationId',
+        super:'(claims.super === true) !== permit.super'
+      };
+      const guard = guards[mutation];
       body = body.toString('utf8');
-      assert.ok(body.includes(guard), 'mutation must alter the actual guard');
-      body = body.replace(guard, '');
+      assert.ok(guard && body.includes(guard), 'mutation must alter the actual guard');
+      body = body.replace(guard, 'false');
     }
     return route.fulfill({ status: 200, contentType: mime[path.extname(local)] || 'application/octet-stream', body });
   });
@@ -166,6 +171,25 @@ try {
     } finally { await f.context.close(); }
   });
 
+  await test('verified super without member role reports only with a canonical signed station', async () => {
+    const f = await fixture('forms.html');
+    try {
+      await f.page.evaluate(() => window.__SMOKE_EMIT_AUTH('pending', 'ops-super', {
+        role:'', super:true, stationId:'eilat_102', email:'ordinary@example.invalid'
+      }));
+      await errorEvent(f.page, 'TypeError'); await reportCount(f.page, 1);
+      await f.page.evaluate(() => window.__SMOKE_EMIT_AUTH('pending', 'role-only', {
+        role:'super_admin', super:false, stationId:'eilat_102', email:'fire102.shits@gmail.com'
+      }));
+      await errorEvent(f.page, 'ReferenceError'); await settle(f.page);
+      await f.page.evaluate(() => window.__SMOKE_EMIT_AUTH('pending', 'super-no-station', {
+        role:'', super:true, stationId:'', email:'ordinary@example.invalid'
+      }));
+      await errorEvent(f.page, 'RangeError'); await settle(f.page);
+      assert.equal((await reports(f.page)).length, 1);
+    } finally { await f.context.close(); }
+  });
+
   await test('call begun by A is never reported as B when its promise later rejects', async () => {
     const f = await fixture();
     try {
@@ -241,6 +265,23 @@ try {
       } finally { await f.context.close(); }
     });
   }
+
+  await test('super: removing the final verified-claim guard is detected', async () => {
+    const f = await fixture('forms.html', 'super', false, 'super');
+    try {
+      await probe(f.page);
+      await f.page.evaluate(async () => {
+        const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js');
+        getAuth().currentUser.getIdTokenResult = async () => ({ claims:{
+          role:'firefighter', super:false, stationId:'eilat_102'
+        } });
+        window.__SDK_REJECT(); await window.__BUSINESS_DONE;
+      });
+      await reportCount(f.page, 1);
+      assert.equal((await reports(f.page)).length, 1,
+        'the same scenario must expose a removed super-claim guard');
+    } finally { await f.context.close(); }
+  });
 
   await test('global and callable failures share the ten-attempt cap; failed reports cannot loop', async () => {
     const f = await fixture();

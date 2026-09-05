@@ -124,8 +124,9 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
-// New, station-member-only submissions. Both modules re-authorize the live
-// station profile inside their write transaction, including idempotent replay.
+// New station-scoped submissions. Ordinary users are re-authorized against the
+// live station profile; a verified super claim may submit without a member
+// profile. Both modules keep the same station scope and idempotent transaction.
 exports.reportIncident = onCall({ enforceAppCheck: true }, async (req) => incidentLog.report(req));
 exports.submitFeedback = onCall({ enforceAppCheck: true }, async (req) => feedback.submit(req));
 
@@ -157,11 +158,9 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   createEngine: scheduleCalendar.createCalendarEngine,
   createPublication: schedulePublication.createPublication,
   createService: scheduleService.createScheduleService,
-  /* ⭐ P1-3. סמכות „מנהל-על" למצב מנוע הסידור היא claim `super:true`
-   * **בלבד**. `isSuperAdmin` הכללי מקבל גם התאמת כתובת מייל קבועה,
-   * וכתובת מייל אינה claim מאומת — היא שדה בטוקן שאפשר להנפיק
-   * בדרכים אחרות. הזזת מצב המנוע משנה את מה שכל התחנה רואה, ולכן
-   * היא לא נשענת על ההתאמה הזאת. שאר המערכת ממשיכה כרגיל. */
+  /* סמכות מנהל־על מגיעה רק מ-claim חתום `super:true`, כמו בשער
+   * המרכזי ובכללי Firestore. שינוי מצב המנוע נשאר כפוף גם לחוזה
+   * המעבר ולבדיקות המוכנות — אלה תנאי בטיחות, לא הרשאת תפקיד. */
   isSuper: function (auth) {
     return !!(auth && auth.token && auth.token.super === true);
   },
@@ -389,8 +388,7 @@ function requireAuth(req) {
 }
 
 function isSuperAdmin(auth) {
-  if (auth.token.super === true) return true;
-  return String(auth.token.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  return !!(auth && auth.token && auth.token.super === true);
 }
 
 function requireSuperAdmin(req) {
@@ -3206,8 +3204,7 @@ exports.runReportNow = onCall(
   async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
-  const isSuper = auth.token.super === true ||
-    String(auth.token.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const isSuper = isSuperAdmin(auth);
   if (!isSuper) throw new HttpsError('permission-denied', 'למנהל מערכת בלבד.');
 
   const mk = String((req.data || {}).month || '') ||
@@ -3798,8 +3795,7 @@ exports.sendBroadcast = onCall(
 
   const t = auth.token || {};
   const sid = callerStation(req, auth);
-  const isSuper = t.super === true ||
-                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const isSuper = isSuperAdmin(auth);
   const role = t.role || '';
   const myCrew = t.shift || '';
 
@@ -3910,8 +3906,7 @@ exports.sendCallout = onCall(
 
   const t = auth.token || {};
   const sid = callerStation(req, auth);
-  const isSuper = t.super === true ||
-                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const isSuper = isSuperAdmin(auth);
   const role = t.role || '';
   const myCrew = t.shift || '';
 
@@ -4065,8 +4060,7 @@ exports.closeCallout = onCall(async (req) => {
 
   const t = auth.token || {};
   const sid = callerStation(req, auth);
-  const isSuper = t.super === true ||
-                  String(t.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const isSuper = isSuperAdmin(auth);
   const role = t.role || '';
 
   const id = String((req.data || {}).id || '').trim();

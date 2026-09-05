@@ -279,8 +279,6 @@ await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
-
 const $ = id => document.getElementById(id);
 renderStuckNav('');
 initPWA({ offer: false });
@@ -308,8 +306,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  IS_SUPER = c.super === true ||
-             String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  IS_SUPER = c.super === true;
   const isMember = IS_SUPER ||
     MEMBER_ROLES.indexOf(c.role) !== -1;
 

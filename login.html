@@ -596,7 +596,7 @@ function hasServerAssignment(claims){
 
 function hasCompleteServerAssignment(claims){
   claims = claims || {};
-  if (claims.super === true || claims.role === 'super_admin') return true;
+  if (claims.super === true) return true;
   return !!claims.emp && VALID_ROLES.indexOf(String(claims.role || '')) !== -1 &&
          !!claims.stationId;
 }
@@ -934,7 +934,7 @@ async function route(user){
   } catch (ignore) {}
 
   // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
-  if (claims.super === true || claims.role === 'super_admin') {
+  if (claims.super === true) {
     await loadProfile(user, claims);
     return;
   }
@@ -1136,7 +1136,7 @@ async function loadProfile(user, claims){
     if (snap.exists()) u = snap.data();
   } catch (ignore) {}
 
-  const isSuper = claims.super === true || claims.role === 'super_admin';
+  const isSuper = claims.super === true;
 
   $('pName').textContent    = u ? u.full_name : (user.email || '');
   $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';

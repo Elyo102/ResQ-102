@@ -10,20 +10,42 @@ const hash = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
 const member = { stationId: 'alpha_1', role: 'firefighter', is_active: true, employee_number: '9001' };
 const req = (data = {}, extra = {}) => ({ auth: { uid: 'user.with.dot', token: { ...member, ...extra } },
   data: { kind: 'client-error', screen: 'swaps.html', version: '42G.0', code: 'TypeError', callable: 'unknown', ...data } });
-function fixture(seed = {}) {
-  const db = createFakeFirestore({ 'stations/alpha_1/users/user.with.dot': member, ...seed });
+function fixture(seed = {}, withProfile = true) {
+  const db = createFakeFirestore({
+    ...(withProfile ? { 'stations/alpha_1/users/user.with.dot': member } : {}),
+    ...seed
+  });
   const service = createIncidentLog({ db, FieldValue: db.FieldValue, HttpsError, hash, clock: () => '2026-09-03T10:00:00.000Z' });
   return { db, service };
 }
 const bad = (code) => (error) => error.code === code;
 
-test('caller must authenticate with a canonical station and member role; no super/email bypass', async () => {
+test('caller must authenticate with a canonical station; email and role cannot impersonate super', async () => {
   const { db, service } = fixture();
   await assert.rejects(service.report({ data: req().data }), bad('unauthenticated'));
   for (const extra of [{ stationId: '' }, { stationId: '../alpha' }, { role: '' },
-    { role: '', super: true, email: 'fire102.shits@gmail.com' }]) {
+    { role: 'super_admin', super: false },
+    { role: '', super: false, email: 'fire102.shits@gmail.com' }]) {
     await assert.rejects(service.report(req({}, extra)));
   }
+  assert.equal(db.writes.length, 0);
+});
+test('verified super uses only the signed station and works without a live profile or member role', async () => {
+  const { db, service } = fixture({}, false);
+  const claims = { stationId: 'alpha_1', role: '', super: true, email: 'ordinary@example.invalid' };
+  const out = await service.report(req({}, claims));
+  assert.equal(out.accepted, true);
+  const path = 'stations/alpha_1/incidents/' + out.fingerprint;
+  assert.deepEqual(db.read(path).roles, ['super_admin']);
+  assert.equal(db.keys().some((key) => key.startsWith('stations/beta_2/')), false);
+  await assert.rejects(service.report(req({ stationId: 'beta_2' }, claims)), bad('invalid-argument'));
+  await assert.rejects(service.report(req({}, { ...claims, stationId: '' })), bad('failed-precondition'));
+});
+test('verified super remains subject to the station daily incident cap', async () => {
+  const day = 'stations/alpha_1/incident_days/2026-09-03';
+  const { db, service } = fixture({ [day]: { count: DAY_CAP } }, false);
+  const out = await service.report(req({}, { stationId: 'alpha_1', role: '', super: true }));
+  assert.deepEqual(out, { accepted: false, reason: 'day-cap', fingerprint: out.fingerprint });
   assert.equal(db.writes.length, 0);
 });
 test('valid dotted UID produces finite incident with no identity', async () => {

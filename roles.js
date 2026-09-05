@@ -102,7 +102,7 @@ export function roleRank(id) {
 // המסמך יכול להיות ישן; הטוקן הוא מה שהשרת יאכוף.
 
 export function isSuper(c) {
-  return !!c && (c.super === true || c.role === 'super_admin');
+  return !!c && c.super === true;
 }
 export function isMember(c) {
   return isSuper(c) || (!!c && MEMBER_ROLES.indexOf(c.role) !== -1);

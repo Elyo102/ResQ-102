@@ -226,8 +226,6 @@ const fns  = getFunctions(app, 'europe-west1');
 const guardStatsCall = httpsCallable(fns, 'getGuardLoadStatistics');
 const scheduleStatusCall = httpsCallable(fns, 'getScheduleRuntimeStatus');
 const workdaysCall = httpsCallable(fns, 'getEffectiveWorkdays');
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
-
 const $ = id => document.getElementById(id);
 renderStuckNav('');
 initPWA({ offer: false });
@@ -253,8 +251,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   // אנליטיקה היא כלי ניהול. כבאי רואה את העומס שלו במסך
   // האבטחות; כאן מסתכלים על אנשים אחרים, וזה לא לכולם.
   let liveManager = false;

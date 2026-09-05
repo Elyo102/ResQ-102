@@ -51,7 +51,7 @@ const GROUPS = [
 import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h3';
 
 function allowed(who, claims) {
-  const isSuper = claims.super === true || claims.role === 'super_admin';
+  const isSuper = claims.super === true;
   if (who === 'any')    return true;
   if (who === 'super')  return isSuper;
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(claims.role) !== -1;

@@ -26,6 +26,7 @@ const db = app.firestore();
 const sid = 'ops_it_' + crypto.randomBytes(6).toString('hex');
 const root = db.collection('stations').doc(sid);
 const uid = 'ops.user.with.dot';
+const superUid = 'ops.super.with.dot';
 const profileRef = root.collection('users').doc(uid);
 const profile = { stationId: sid, role: 'firefighter', employee_number: 'live_123', is_active: true };
 const token = { stationId: sid, role: 'firefighter', emp: 'stale_999' };
@@ -36,6 +37,9 @@ const deps = (database = db) => ({ db: database, FieldValue: admin.firestore.Fie
 const feedback = createFeedback(deps());
 const incidents = createIncidentLog(deps());
 const request = (data) => ({ auth: { uid, token }, data });
+const superRequest = (data) => ({ auth: { uid:superUid, token:{
+  stationId:sid, role:'', super:true, email:'ordinary@example.invalid'
+} }, data });
 const feedbackData = (id, extra = {}) => ({ request_id: id, screen: 'feedback.html', version: '42G.0',
   category: 'problem', rating: 2, text: 'בדיקת אמולטור מקומית', allow_contact: true, ...extra });
 const reportData = { kind: 'client-error', screen: 'feedback.html', version: '42G.0', code: 'TypeError', callable: 'unknown' };
@@ -119,6 +123,18 @@ function revokeAtRetry() {
     for (const forbidden of [uid, 'live_123', 'stale_999', 'message', 'frame']) {
       assert.equal(JSON.stringify(saved).includes(forbidden), false);
     }
+  });
+  await test('verified super can report and submit without a station user profile', async () => {
+    assert.equal((await root.collection('users').doc(superUid).get()).exists, false);
+    const incident = await incidents.report(superRequest({ ...reportData, code:'RangeError' }));
+    const incidentDoc = (await root.collection('incidents').doc(incident.fingerprint).get()).data();
+    assert.deepEqual(incidentDoc.roles, ['super_admin']);
+    const out = await feedback.submit(superRequest(feedbackData('ops_super_0001')));
+    const saved = (await root.collection('feedback').doc(out.id).get()).data();
+    assert.equal(saved.uid, superUid);
+    assert.equal(saved.role, 'super_admin');
+    assert.equal(saved.employee_number, '');
+    assert.equal((await db.collection('stations').doc('other_station').collection('feedback').get()).empty, true);
   });
   await test('inactive, moved and role-changed live users cannot submit or replay', async () => {
     const data = feedbackData('ops_replay_0001');

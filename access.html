@@ -185,8 +185,6 @@ const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
-
 // אין מסך כניסה בכל דף. יש אחד, והוא login.html.
 //
 // הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
@@ -260,8 +258,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   // אותה רשימה בדיוק כמו staff() בכללי האבטחה וכמו nav.js.
   //
   // הגרסה הקודמת פספסה את סגן מפקד המשמרת ואת מפקד התחנה —

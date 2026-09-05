@@ -1532,7 +1532,7 @@ export function initBulletin(options) {
   purgeLegacyBulletinDrafts();
   purgeLegacyBulletinReads();
   const claims = opts.claims || {};
-  const isSuper = claims.super === true || claims.role === 'super_admin';
+  const isSuper = claims.super === true;
   const canShiftCommand = isSuper ||
     claims.role === 'commander' || claims.role === 'deputy';
   state = {

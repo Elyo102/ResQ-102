@@ -214,9 +214,6 @@ await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
-// חשבון מנהל המערכת. משמש כרשת ביטחון לבדיקת ההרשאה למטה,
-// למקרה שההרשאות בטוקן עוד לא נטענו.
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const fns  = getFunctions(app, 'europe-west1');
 
 const $ = id => document.getElementById(id);
@@ -925,8 +922,7 @@ async function runAll(user){
 
   if (!user) { location.replace('./login.html?next=check.html'); return; }
 
-  const isSuper = (c && c.super === true) ||
-                  String((user.email || '')).toLowerCase() === SUPER_ADMIN;
+  const isSuper = c && c.super === true;
   if (!isSuper) {
     document.body.innerHTML =
       '<div style="max-width:520px;margin:60px auto;padding:26px;' +

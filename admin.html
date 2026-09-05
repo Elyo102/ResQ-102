@@ -272,6 +272,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         לחיפוש בלבד; הבחירה נשמרת לפי מזהה החשבון.
       </div>
 
+      <div id="transferScopePanel" class="hide">
+        <label for="transferScope">תחנה לניהול העברות</label>
+        <select id="transferScope"><option value="">— בחר תחנה —</option></select>
+        <div class="ln" style="font-size:12px;color:var(--muted);margin-top:8px">
+          מנהל־על פועל בכל פעם בתחנה אחת שנבחרה במפורש. השרת מאמת
+          את התחנה מחדש ואינו מחזיר בקשות מתחנות אחרות.
+        </div>
+      </div>
+
       <div id="transferSourcePanel" class="hide">
         <label for="transferSearch">חיפוש עובד לפי שם</label>
         <div class="two">
@@ -373,7 +382,6 @@ const callListTransfers = httpsCallable(fns, 'listStationTransfers');
 const callDecideTransfer = httpsCallable(fns, 'decideStationTransfer');
 const callCancelTransfer = httpsCallable(fns, 'cancelStationTransfer');
 
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 let roleOperationId = '';
 
 function newOperationId(prefix){
@@ -621,6 +629,7 @@ $('btnScheduleAccessDisable').onclick = function () { setScheduleAccess(false); 
 let canCreateStationTransfer = false;
 let canApproveStationTransfer = false;
 let canListOutgoingStationTransfer = false;
+let isSuperStationTransferOperator = false;
 let transferSelected = null;
 let transferPeople = [];
 let transferTargets = [];
@@ -646,6 +655,38 @@ function captureTransferTargets(data){
     seen.add(id); rows.push({ station_id:id, name:name.slice(0, 160) });
     return rows;
   }, []).sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
+  if (isSuperStationTransferOperator) renderTransferScope();
+}
+
+function renderTransferScope(){
+  const select = $('transferScope');
+  const selected = String(transferStationId || '');
+  clearNode(select);
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— בחר תחנה —';
+  select.appendChild(placeholder);
+  const rows = [];
+  const seen = new Set();
+  STATIONS.concat(transferTargets.map(function (station) {
+    return { id:station.station_id, name:station.name };
+  })).forEach(function (station) {
+    const id = String((station || {}).id || '');
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    rows.push({ id:id, name:String(station.name || id) });
+  });
+  if (selected && !seen.has(selected)) {
+    rows.push({ id:selected, name:stationName(selected) || selected });
+  }
+  rows.sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
+  rows.forEach(function (station) {
+    const option = document.createElement('option');
+    option.value = station.id;
+    option.textContent = station.name;
+    select.appendChild(option);
+  });
+  select.value = selected;
 }
 
 function renderTransferTargets(sourceStationId){
@@ -667,8 +708,15 @@ function renderTransferTargets(sourceStationId){
 }
 
 function updateTransferCreateButton(){
-  $('transferCreate').disabled = !canCreateStationTransfer || !transferSelected ||
+  $('transferCreate').disabled = !canCreateStationTransfer || !transferStationId ||
+    !transferSelected ||
     !$('transferTarget').value;
+}
+
+function transferPayload(fields){
+  return Object.assign({}, fields || {}, {
+    station_id:String(transferStationId || '')
+  });
 }
 
 function selectTransferPerson(uid){
@@ -718,7 +766,7 @@ async function searchTransferPeople(){
   $('transferSearchButton').disabled = true;
   msg('transferCreateMsg', 'מחפש...', 'info');
   try {
-    const result = await callSearchTransfers({ name: query });
+    const result = await callSearchTransfers(transferPayload({ name:query }));
     if (generation !== transferGeneration) return;
     const data = result.data || {};
     captureTransferTargets(data);
@@ -743,11 +791,11 @@ async function createTransferRequest(){
   $('transferCreate').disabled = true;
   msg('transferCreateMsg', 'שולח בקשה לתחנת היעד...', 'info');
   try {
-    const result = await callCreateTransfer({
+    const result = await callCreateTransfer(transferPayload({
       target_uid: transferSelected.uid,
       target_station_id: $('transferTarget').value,
       request_id: newOperationId('transfer-')
-    });
+    }));
     if (generation !== transferGeneration) return;
     captureTransferTargets(result.data || {});
     msg('transferCreateMsg',
@@ -815,7 +863,7 @@ async function loadOutgoingTransfers(){
   const generation = transferGeneration;
   $('transferOutgoingRefresh').disabled = true;
   try {
-    const result = await callListTransfers({ direction:'outgoing' });
+    const result = await callListTransfers(transferPayload({ direction:'outgoing' }));
     if (generation !== transferGeneration) return;
     const data = result.data || {};
     captureTransferTargets(data);
@@ -841,7 +889,7 @@ async function cancelTransferRequest(requestId, row){
   row.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
   msg('transferOutgoingMsg', 'מבטל בקשה...', 'info');
   try {
-    const result = await callCancelTransfer({ request_id:requestId });
+    const result = await callCancelTransfer(transferPayload({ request_id:requestId }));
     if (generation !== transferGeneration) return;
     captureTransferTargets(result.data || {});
     msg('transferOutgoingMsg', 'הבקשה בוטלה. העובד נשאר בתחנה הנוכחית.', 'ok');
@@ -905,7 +953,7 @@ async function loadIncomingTransfers(){
   const generation = transferGeneration;
   $('transferRefresh').disabled = true;
   try {
-    const result = await callListTransfers({ direction: 'incoming' });
+    const result = await callListTransfers(transferPayload({ direction:'incoming' }));
     if (generation !== transferGeneration) return;
     const data = result.data || {};
     const rows = Array.isArray(data.transfers) ? data.transfers : [];
@@ -933,10 +981,10 @@ async function decideTransferRequest(requestId, decision, row){
     ? (isRecovery ? 'משלים את ההעברה...' : 'מעביר את העובד...')
     : 'דוחה בקשה...', 'info');
   try {
-    const payload = {
+    const payload = transferPayload({
       request_id: requestId,
       decision: decision
-    };
+    });
     if (decision === 'reject') payload.reason_code = 'not_accepted';
     await callDecideTransfer(payload);
     if (generation !== transferGeneration) return;
@@ -963,6 +1011,22 @@ $('transferTarget').onchange = updateTransferCreateButton;
 $('transferCreate').onclick = createTransferRequest;
 $('transferRefresh').onclick = loadIncomingTransfers;
 $('transferOutgoingRefresh').onclick = loadOutgoingTransfers;
+$('transferScope').onchange = function () {
+  transferGeneration++;
+  transferStationId = String($('transferScope').value || '');
+  transferSelected = null;
+  transferPeople = [];
+  renderTransferPeople();
+  renderTransferTargets(transferStationId);
+  renderIncomingTransfers([]);
+  renderOutgoingTransfers([]);
+  msg('transferCreateMsg', '', '');
+  msg('transferIncomingMsg', '', '');
+  msg('transferOutgoingMsg', '', '');
+  if (!transferStationId) return;
+  if (canApproveStationTransfer) loadIncomingTransfers();
+  if (canListOutgoingStationTransfer) loadOutgoingTransfers();
+};
 
 // ---------- כניסה ----------
 
@@ -1008,6 +1072,7 @@ onAuthStateChanged(auth, async user => {
   canCreateStationTransfer = false;
   canApproveStationTransfer = false;
   canListOutgoingStationTransfer = false;
+  isSuperStationTransferOperator = false;
   transferSelected = null;
   transferPeople = [];
   transferTargets = [];
@@ -1035,9 +1100,7 @@ onAuthStateChanged(auth, async user => {
     claims = t.claims || {};
   } catch (ignore) {}
 
-  const verified = user.emailVerified === true;
-  const isSuper  = claims.super === true ||
-                   String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = claims.super === true;
 
   // אישור בקשות ושינוי תפקידים דורשים מנהל-על בשרת. המינוי החי של
   // אחראי/ת סידור מעניק קישור למסך החדש; דרגה לבדה היא צפייה.
@@ -1090,16 +1153,17 @@ onAuthStateChanged(auth, async user => {
   isSuperScheduleAccessOperator = isSuper;
   $('scheduleAccessCard').classList.toggle('hide', !canManageScheduleAccess);
 
-  // העברה היא סמכות כוח-אדם נפרדת: HR במקור יוצר בקשה;
-  // HR או מפקד התחנה ביעד מאשרים. super יכול לפתוח בקשה עבור
-  // בעל תפקיד בכיר, אך אינו עוקף את אישור תחנת היעד.
+  // העברה היא סמכות כוח-אדם נפרדת. מנהל־על מאומת מקבל את כל
+  // הפעולות, אך בוחר תחנה מפורשת וכל בקשה נשלחת עם התחום הזה.
+  // מקור הסמכות היחיד הוא claims.super===true — לא מייל ולא תפקיד.
   canCreateStationTransfer = isSuper || claims.role === 'hr_coordinator';
-  canApproveStationTransfer = claims.role === 'hr_coordinator' ||
+  canApproveStationTransfer = isSuper || claims.role === 'hr_coordinator' ||
     claims.role === 'station_commander';
-  // list(direction=outgoing) קשור לתחנת המקור החיה של HR. מנהל-על
-  // רשאי לפתוח בקשה ממוקדת אך אינו מקבל רשימת תחנה ללא מקור מפורש.
-  canListOutgoingStationTransfer = !isSuper && claims.role === 'hr_coordinator';
+  canListOutgoingStationTransfer = isSuper || claims.role === 'hr_coordinator';
+  isSuperStationTransferOperator = isSuper;
   transferStationId = String(claims.stationId || '');
+  renderTransferScope();
+  $('transferScopePanel').classList.toggle('hide', !isSuperStationTransferOperator);
   $('stationTransferCard').classList.toggle('hide',
     !canCreateStationTransfer && !canApproveStationTransfer);
   $('transferSourcePanel').classList.toggle('hide', !canCreateStationTransfer);

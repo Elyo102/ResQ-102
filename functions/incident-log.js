@@ -3,7 +3,7 @@
 // Anonymous technical categories only. No error messages, stacks, URLs,
 // arbitrary notes or identity enter incident documents. Feedback is separate.
 const contract = require('./ops-telemetry-contract');
-const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
+const { createOpsMemberIdentity, ACTOR_ROLES } = require('./ops-member-identity');
 const access = require('./schedule-access');
 const { KINDS, STATUSES, finite } = contract;
 const LIMITS = Object.freeze({ screensPerIncident: 12, versionsPerIncident: 12, rolesPerIncident: 12, list: 500 });
@@ -34,7 +34,7 @@ function safeIncident(id, data) {
     last_version: finite(data.last_version, contract.VERSIONS),
     screens: boundedValues(data.screens, null, contract.SCREENS, LIMITS.screensPerIncident),
     versions: boundedValues(data.versions, null, contract.VERSIONS, LIMITS.versionsPerIncident),
-    roles: boundedValues(data.roles, null, MEMBER_ROLES, LIMITS.rolesPerIncident),
+    roles: boundedValues(data.roles, null, ACTOR_ROLES, LIMITS.rolesPerIncident),
     resolved_at: iso(data.resolved_at),
     resolved_by: contract.OPERATOR_LABELS.includes(data.resolved_by) ? data.resolved_by : null,
     note_code: contract.NOTE_CODES.includes(data.note_code) ? data.note_code : 'none'
@@ -62,7 +62,7 @@ function createIncidentLog(deps) {
       'incident-v2', sid, categories.kind, categories.screen, categories.code, categories.callable
     ]))).slice(0, 40);
     if (!FINGERPRINT_RE.test(fingerprint)) throw new HttpsError('internal', 'טביעת האצבע אינה תקינה.');
-    return Object.freeze({ ...categories, fingerprint, role: finite(role, MEMBER_ROLES) });
+    return Object.freeze({ ...categories, fingerprint, role: finite(role, ACTOR_ROLES) });
   }
 
   async function report(req) {
@@ -94,7 +94,7 @@ function createIncidentLog(deps) {
         last_seen: FieldValue.serverTimestamp(), last_seen_iso: nowIso, last_version: plan.version,
         screens: boundedValues(old.screens, plan.screen, contract.SCREENS, LIMITS.screensPerIncident),
         versions: boundedValues(old.versions, plan.version, contract.VERSIONS, LIMITS.versionsPerIncident),
-        roles: boundedValues(old.roles, actor.role, MEMBER_ROLES, LIMITS.rolesPerIncident),
+        roles: boundedValues(old.roles, actor.role, ACTOR_ROLES, LIMITS.rolesPerIncident),
         resolved_at: reopen ? null : old.resolved_at,
         resolved_by: reopen ? null : old.resolved_by,
         note_code: reopen ? 'none' : old.note_code

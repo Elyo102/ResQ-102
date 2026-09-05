@@ -234,7 +234,6 @@ const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;');
 
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
 import { initAppCheck } from './appcheck.js?v=42h3';
@@ -262,8 +261,7 @@ onAuthStateChanged(auth, async user => {
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
 
   ME = { uid: user.uid, email: String(user.email || '').toLowerCase() };
 

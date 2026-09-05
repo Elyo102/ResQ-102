@@ -215,7 +215,6 @@ const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;');
 
-const SUPER_ADMIN = 'fire102.shits@gmail.com';
 const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
@@ -251,8 +250,7 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
 
-  const isSuper = c.super === true ||
-                  String(user.email || '').toLowerCase() === SUPER_ADMIN;
+  const isSuper = c.super === true;
   const isMember = isSuper ||
     MEMBER_ROLES.indexOf(c.role) !== -1;
 

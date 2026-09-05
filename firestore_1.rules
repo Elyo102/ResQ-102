@@ -53,14 +53,12 @@ service cloud.firestore {
       return signedIn() && claim('emp') != '';
     }
 
-    // מנהל-על. שדה ה-super מגיע מהפונקציה bootstrapSuperAdmin.
-    // בדיקת המייל היא רשת ביטחון: אם ה-claim נמחק בטעות,
-    // מנהל המערכת עדיין יכול להיכנס ולתקן. חייב להיות זהה
-    // לערך SUPER_ADMIN_EMAIL ב-functions/index.js.
+    // מנהל-על. רק claim חתום שהונפק בשרת מעניק סמכות בזמן ריצה.
+    // כתובת המייל משמשת רק למסלול bootstrap שמנפיק את ה-claim;
+    // היא אינה הרשאה בפני עצמה.
     function isSuper() {
       return signedIn()
-             && (request.auth.token.get('super', false) == true
-                 || request.auth.token.email.lower() == 'fire102.shits@gmail.com');
+             && request.auth.token.get('super', false) == true;
     }
 
     // ---------- שיוך לתחנה ----------

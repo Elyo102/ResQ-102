@@ -29,12 +29,14 @@ const now = '2026-09-03T10:00:00.000Z', sid = 'alpha_1', uid = 'ops.user';
 const profilePath = 'stations/' + sid + '/users/' + uid;
 const profile = { stationId: sid, role: 'firefighter', is_active: true, employee_number: '9001' };
 const auth = { uid, token: { stationId: sid, role: 'firefighter', emp: 'obsolete-token-value' } };
+const superAuth = { uid:'ops.super', token:{ stationId:sid, role:'', super:true,
+  email:'ordinary@example.invalid' } };
 const report = { kind: 'manual', screen: 'feedback.html', version: '42G.0', code: 'Error', callable: 'unknown' };
 const input = { category: 'problem', rating: 2, text: 'בדיקת משוב סינתטי', allow_contact: false };
 const context = { screen: 'feedback.html', version: '42G.0', day: now.slice(0, 10) };
 class TestHttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
-function fixture() {
-  const db = createFakeFirestore({ [profilePath]: profile });
+function fixture(options = {}) {
+  const db = createFakeFirestore(options.withoutProfile ? {} : { [profilePath]: profile });
   const transact = db.runTransaction.bind(db);
   db.transactionReads = [];
   db.runTransaction = (work) => transact((tx) => {
@@ -47,6 +49,7 @@ function fixture() {
   return { db, incidents: createIncidentLog(deps), feedback: createFeedback(deps) };
 }
 const request = (data) => ({ auth, data });
+const superRequest = (data) => ({ auth:superAuth, data });
 let passed = 0, failed = 0;
 async function check(name, fn) {
   try { await fn(); passed++; console.log('PASS ' + name); }
@@ -154,6 +157,31 @@ await check('both services require canonical live membership despite valid-looki
     assert.equal(db.writes.length, 0);
   }
 });
+await check('verified super has both ops capabilities without a profile, but only in the signed station', async () => {
+  const payload = await feedbackClient.buildSubmission(input, context);
+  const { db, incidents, feedback } = fixture({ withoutProfile:true });
+  const incident = await incidents.report(superRequest(report));
+  const submitted = await feedback.submit(superRequest(payload));
+  assert.equal(incident.accepted, true);
+  assert.equal(db.read('stations/' + sid + '/incidents/' + incident.fingerprint).roles[0], 'super_admin');
+  const stored = db.read('stations/' + sid + '/feedback/' + submitted.id);
+  assert.equal(stored.role, 'super_admin'); assert.equal(stored.uid, superAuth.uid);
+  assert.equal(stored.employee_number, '');
+  assert.equal(db.keys().some((key) => key.startsWith('stations/beta_2/')), false);
+  await assert.rejects(incidents.report({ auth:superAuth, data:{ ...report, stationId:'beta_2' } }),
+    (error) => error.code === 'invalid-argument');
+  await assert.rejects(feedback.submit({ auth:superAuth, data:{ ...payload, station_id:'beta_2' } }),
+    (error) => error.code === 'invalid-argument');
+});
+await check('ops super authority comes only from the verified claim, never email or role text', () => {
+  const source = withoutComments(read('functions/ops-member-identity.js'));
+  const bootstrap = withoutComments(read('monitoring-bootstrap.js'));
+  assert.match(source, /token\.super\s*===\s*true/);
+  assert.doesNotMatch(source, /token\.email|auth\.token\.email|SUPER_ADMIN_EMAIL/);
+  assert.doesNotMatch(source, /token\.role\s*===\s*['"]super_admin['"]/);
+  assert.match(bootstrap, /claims\.super\s*===\s*true/);
+  assert.doesNotMatch(bootstrap, /claims\.role\s*===\s*['"]super_admin['"]|claims\.email/);
+});
 await check('feedback stores live identity and does not distort private feedback text', async () => {
   const { db, feedback } = fixture();
   const text = 'טקסט סינתטי עם 050-1234567 ודוגמה@example.invalid';
@@ -253,11 +281,11 @@ await check('hosting excludes private directories and ops CLI scripts', () => {
   }
   assert.ok(ignore.includes('*.mjs') || ['ops-export.mjs', 'ops-backup.mjs'].every((file) => ignore.includes(file)));
 });
-await check('feedback page stays member-only without fixed-email authority', () => {
+await check('feedback page permits verified super without fixed-email or role fallback authority', () => {
   const page = read('feedback.html');
-  assert.ok(page.includes('MEMBER_ROLES.indexOf(c.role) !== -1'));
+  assert.ok(page.includes('c.super === true || MEMBER_ROLES.indexOf(c.role) !== -1'));
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
-  assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===/);
+  assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===|c\.role\s*===\s*['"]super_admin['"]/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
   assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h3['"]/);
   assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,

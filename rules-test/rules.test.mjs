@@ -101,6 +101,12 @@ const missingHr = who('u_hr_missing', 'hr-missing@x.com', {
   emp: '404', role: 'hr_coordinator', stationId: SID, shift: ''
 });
 const superA  = who('u_sup',  'fire102.shits@gmail.com', { super: true });
+// ההרשאה מגיעה רק מ-claim חתום: לא מהכתובת הקבועה, ולא
+// מתלות מקרית בקיומו של email בטוקן.
+const fixedEmailWithoutClaim = who('u_fixed_mail', 'fire102.shits@gmail.com', {});
+const superClaimWithoutEmail = env.authenticatedContext(
+  'u_super_claim_only', { super: true }
+).firestore();
 const pending = who('u_pend', 'pend@x.com', {});                       // נרשם, טרם אושר
 const pendingMail = who('u_pend_mail', 'right@x.com', {});
 const pendingStatus = who('u_pend_status', 'status@x.com', {});
@@ -678,6 +684,12 @@ await blocked('🔒 קריאת יומן שינויי ההרשאות בידי כ�
 
 await ok('מנהל-על קורא את יומן שינויי ההרשאות',
   getDoc(doc(superA, 'admin_audit/e1')));
+
+await blocked('🔒 כתובת מנהל-המערכת בלי super:true אינה הרשאה',
+  getDoc(doc(fixedEmailWithoutClaim, 'admin_audit/e1')));
+
+await ok('super:true חתום עובד גם בלי כתובת אימייל בטוקן',
+  getDoc(doc(superClaimWithoutEmail, 'admin_audit/e1')));
 
 await blocked('🔒 מנהל-על כותב ליומן הביקורת מהדפדפן',
   setDoc(doc(superA, 'admin_audit/e2'), { what: 'זיוף' }));
