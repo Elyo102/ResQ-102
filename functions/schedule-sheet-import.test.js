@@ -95,6 +95,24 @@ test('בלוקים: תחנה נגמרת בשורת השעה הראשונה; מה
   assert.deepEqual(S.namesInCell('אבטחה 06:00-17:00'), ['אבטחה 06:00-17:00']);
 });
 
+test('גבול תא ממוזג של XLSX גובר על heuristic ואזור האירועים אינו נכנס ליטבתה', () => {
+  const p = S.parseSheet(SHEET, {
+    month: '2026-09', policy: POLICY,
+    label_spans: [{ column: 0, start_row: 7, end_row: 7 }]
+  });
+  const yotvata = p.blocks.find((b) => b.sub_station === 'yotvata');
+  assert.deepEqual(yotvata.rows, [8, 8]);
+  assert.deepEqual(yotvata.cells['2026-09-01'], ['גיא']);
+  const ignored = p.blocks.find((b) => b.kind === 'ignored' && b.rows[0] === 9);
+  assert.deepEqual(ignored.rows, [9, 11]);
+  assert.equal(ignored.after, 'יטבתה');
+  assert.deepEqual(p.label_spans, [{ column: 0, start_row: 7, end_row: 7 }]);
+  assert.throws(() => S.parseSheet(SHEET, {
+    month: '2026-09', policy: POLICY,
+    label_spans: [{ column: 1, start_row: 7, end_row: 7 }]
+  }), { code: 'label-spans-invalid' });
+});
+
 test('פענוח: שיבוצים לכל תחנה ותאריך (גם ריקים), כינויים, unresolved, כפילויות, קו', () => {
   const p = S.parseSheet(SHEET, { month: '2026-09', policy: POLICY });
   const r = S.resolveSheet(p, { people: PEOPLE, policy: POLICY, station_id: 'eilat_102' });
@@ -225,11 +243,27 @@ test('מיפוי מפורש מתחנות ישנות לארבע התחנות הק
   });
   assert.deepEqual(Object.keys(projected.policy.sub_stations), ['eilat', 'shahmon', 'timna', 'yotvata']);
   assert.deepEqual(Object.values(projected.policy.sub_stations).map((sub) => sub.label), ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
-  assert.deepEqual(Object.values(projected.policy.sub_stations).map((sub) => sub.minimum), [9, 4, 3, 0]);
+  assert.deepEqual(Object.values(projected.policy.sub_stations).map((sub) => sub.minimum), [7, 4, 3, 0],
+    'הקו האדום של אילת קבוע על שבעה גם כשה-policy הישן נקרא main עם ערך אחר');
   assert.deepEqual(legacy.sub_stations.main, {
     label: 'ראשית', minimum: 9, requirements: [{ role: 'driver', count: 2 }]
   }, 'המדיניות החיה לא השתנתה');
   assert.equal(S.projectCanonicalPolicy(POLICY).mapping.eilat, 'eilat');
+});
+
+test('אותו אדם בשיבוץ ובהיעדרות באותו יום מדווח כסתירה ולא מוכרע בשקט', () => {
+  const sheet = [
+    row(['', '1/9', '2/9', '3/9']), row(['', 'ג', 'ד', 'ה']),
+    row(['אילת', 'רועי כהן', '', '']),
+    row(['מחלה', 'רועי כהן', '', ''])
+  ].join('\n');
+  const resolved = S.resolveSheet(S.parseSheet(sheet, { month: '2026-09', policy: POLICY }),
+    { people: PEOPLE, policy: POLICY, station_id: 's' });
+  assert.deepEqual(resolved.assignment_absence_conflicts, [{
+    uid: 'u1', date: '2026-09-01', stations: ['eilat'],
+    absences: [{ kind: 'sick', location: null }]
+  }]);
+  assert.equal(resolved.counts.assignment_absence_conflicts, 1);
 });
 
 test('גבולות: הדבקה ענקית ותאריך כפול נדחים; בלי מדיניות אין פענוח', () => {

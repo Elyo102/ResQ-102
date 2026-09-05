@@ -18,6 +18,10 @@ function shiftDay(iso, amount) {
   date.setUTCDate(date.getUTCDate() + amount);
   return date.toISOString().slice(0, 10);
 }
+function shiftMonthValue(ym, amount) {
+  const date = new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1 + amount, 1));
+  return date.toISOString().slice(0, 7);
+}
 const yesterday = shiftDay(today, -1);
 const tomorrow = shiftDay(today, 1);
 
@@ -562,7 +566,7 @@ try {
   await prepare(absenceCtx, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }],
-    getStationScheduleRange:[{ data:absenceRange }]
+    getStationScheduleRange:[{ data:absenceRange }, { data:absenceRange }]
   });
   const absencePage = await absenceCtx.newPage();
   await absencePage.goto(base, { waitUntil:'load' });
@@ -608,12 +612,14 @@ try {
       assert.equal(await absencePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     }
   });
-  await test('personal board does not inherit station absence rows or issue extra range reads', async () => {
+  await test('personal board does not inherit station absence rows and requests only the operational range', async () => {
     await absencePage.locator('#mineTab').click();
     await absencePage.locator('#mineBoard .hcell').first().waitFor();
     assert.equal(await absencePage.locator('#mineBoard .absence-cell').count(), 0);
     const calls = await absencePage.evaluate(() => window.__CALLABLE_CALLS);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
+    const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(ranges.length, 2);
+    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true, false]);
   });
   await absenceCtx.close();
 
@@ -646,7 +652,8 @@ try {
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
     getMyScheduleV2:[{ data:mine }, { data:mineAnswered }, { data:mineAnswered }, { data:mineAnswered }],
-    getStationScheduleRange:[{ data:stationRange }, { data:stationRangeGuardsUnavailable }, { data:stationRangeGuardsUnavailable }],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRangeGuardsUnavailable },
+      { data:stationRangeGuardsUnavailable }, { data:stationRangeGuardsUnavailable }],
     respondToSchedule:[{ data:{ duplicate:false, response_id:'r_1', answer:'confirm' } }]
   });
   const phonePage = await phone.newPage();
@@ -777,17 +784,16 @@ try {
       .find((entry) => entry.name === 'getMyScheduleV2');
     assert.equal(mineCall.payload.date, today);
   });
-  await test('station mobile view is a full month strip, in one call', async () => {
+  await test('station mobile view is a full month strip and uses the imported-display range only for that tab', async () => {
     await phonePage.locator('[data-tab="station"]').dispatchEvent('click');
     await phonePage.locator('#stationBoard .hcell').first().waitFor();
     const columns = await phonePage.locator('#stationBoard .hcell').count();
     assert.ok(columns >= 28 && columns <= 31, 'חודש שלם, לא שלושה ימים: ' + columns);
     assert.match(await phonePage.locator('#stationContent').textContent(), /טל חודרה/);
-    // ⭐ שתי הלשוניות חולקות קריאה אחת לחודש. הקריאה הזאת קוראת
-    // את התמונה החתומה בשלמותה, ולכן כפילות שלה אינה ניואנס.
-    const before = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
-      .filter((entry) => entry.name === 'getStationScheduleRange').length;
-    assert.equal(before, 1);
+    const rangeCalls = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
+      .filter((entry) => entry.name === 'getStationScheduleRange');
+    const before = rangeCalls.length;
+    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false, true]);
 
     // מעבר חודש הוא קריאה חדשה — וכאן הוא מחזיר כשל בקריאת אבטחות.
     const current = Number((await phonePage.locator('.months button[aria-pressed="true"]')
@@ -796,7 +802,7 @@ try {
     await phonePage.locator('#stationBoard .hcell').first().waitFor();
     const after = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
       .filter((entry) => entry.name === 'getStationScheduleRange').length;
-    assert.equal(after, 2);
+    assert.equal(after, before + 1);
     // כשל בקריאת אבטחות נאמר, ואינו הופך את הלוח לריק.
     assert.match(await phonePage.locator('#stationNote').textContent(), /לא ניתן לטעון אבטחות כרגע/);
     assert.doesNotMatch(await phonePage.locator('#stationContent').textContent(), /אין סידור להצגה/);
@@ -882,7 +888,9 @@ try {
     assert.match(await shadowMemberPage.locator('#mineContent').textContent(), /טל חודרה/);
     const calls = await shadowMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
+    const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(ranges.length, 2);
+    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true, false]);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
   await shadowMember.close();
@@ -1443,8 +1451,17 @@ try {
   const importReportReady = JSON.parse(JSON.stringify(importReportAccept));
   importReportReady.report_digest = 'rd_ready'; importReportReady.blocked_by = []; importReportReady.blocked = false;
   importReportReady.accept = { missing_stations:false, ignored_blocks:true };
+  const importReportConflict = JSON.parse(JSON.stringify(importReportReady));
+  importReportConflict.report_digest = 'rd_assignment_absence_conflict';
+  importReportConflict.counts.assignment_absence_conflicts = 1;
+  importReportConflict.assignment_absence_conflicts = [{
+    uid:'stub-uid', name:'אלדד יונה', date:today, stations:['main'],
+    absences:[{ kind:'sick', location:null }]
+  }];
+  importReportConflict.blocked_by = ['assignment-absence-conflicts'];
+  importReportConflict.blocked = true;
   const importedDraft = {
-    draft_id:'draft_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
+    draft_id:'draft_import_1', content_digest:'digest_import_1', duplicate:false, from: today, to: shiftDay(today, 2),
     summary:{ filled:5, blocking_gaps:0, days_below_minimum:0, rejected_manual:0, open_rows:0, imported_below_minimum:1, imported_absences:2 },
     report: importReportReady
   };
@@ -1468,7 +1485,8 @@ try {
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:mine }],
     getStationScheduleRange:[{ data:stationRange }],
-    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportAccept }, { data:importReportReady }, { data:importReportReady }],
+    previewScheduleImport:[{ data:importReportBlocked }, { data:importReportAccept }, { data:importReportReady },
+      { data:importReportReady }, { data:importReportConflict }],
     importScheduleSheet:[{ data:importedDraft }],
     getScheduleDraftPreview:[{ data:importedPreview }]
   });
@@ -1492,7 +1510,7 @@ try {
     await sheetPage.locator('#importMessage .warn').waitFor();
     assert.match(await sheetPage.locator('#importMessage').textContent(), /שמות שלא זוהו/);
     assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
-    assert.equal(await sheetPage.locator('#importCounts .metric').count(), 6);
+    assert.equal(await sheetPage.locator('#importCounts .metric').count(), 7);
     assert.deepEqual(await sheetPage.locator('#importBlocks .blocktag').allTextContents(),
       ['אילת · 5 שיבוצים', '(בלי תווית) · שורות 10–12 לא יובאו', 'מחלה · 1', 'באילת · 1']);
     assert.equal(await sheetPage.locator('#importUnresolved .row').count(), 2);
@@ -1567,6 +1585,9 @@ try {
     assert.equal(await sheetPage.locator('#publish').isEnabled(), false, 'publishing still needs the review checkbox');
   });
   await test('a local CSV file is parsed in the browser and only its matrix reaches the callable', async () => {
+    const accepted = await sheetPage.locator('#importFile').getAttribute('accept');
+    assert.match(accepted, /\.xlsx/);
+    assert.match(accepted, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
     const csv = '\ufeff,1/9,2/9,3/9\r\nאילת,א,ב,ג\r\n';
     await sheetPage.locator('#importFile').focus();
     const focusOutline = await sheetPage.locator('label[for="importFile"]').evaluate((el) => {
@@ -1587,8 +1608,379 @@ try {
     const filePreview = previews[3];
     assert.deepEqual(filePreview.payload.matrix, [['', '1/9', '2/9', '3/9'], ['אילת', 'א', 'ב', 'ג']]);
     assert.equal(Object.hasOwn(filePreview.payload, 'paste'), false);
+    assert.equal(Object.hasOwn(filePreview.payload, 'label_spans'), false,
+      'CSV must not invent XLSX merged-label metadata');
+  });
+  await test('assignment and absence on the same day show who and where, and keep import blocked', async () => {
+    await sheetPage.locator('#importFile').setInputFiles({
+      name:'schedule-conflict.csv', mimeType:'text/csv',
+      buffer:Buffer.from(',1/9,2/9,3/9\r\nאילת,א,ב,ג\r\n', 'utf8')
+    });
+    await sheetPage.locator('#importCheck').click();
+    await sheetPage.locator('#importMessage .warn').waitFor();
+    assert.match(await sheetPage.locator('#importMessage').textContent(), /גם בשיבוץ וגם בהיעדרות/);
+    const conflictText = await sheetPage.locator('#importDuplicates').textContent();
+    assert.match(conflictText, /אלדד יונה.*אילת.*מחלה.*יש לבחור אחד מהם בגיליון/);
+    assert.ok(conflictText.includes(String(Number(today.slice(8))) + '.' + String(Number(today.slice(5, 7)))),
+      'conflict report includes the exact day and month');
+    assert.deepEqual(await sheetPage.locator('#importCounts .metric span').allTextContents(),
+      ['ימים', 'שיבוצים', 'היעדרויות', 'ימים מתחת לקו', 'שמות לא מזוהים', 'כפילויות', 'שיבוץ וגם היעדרות']);
+    assert.equal(await sheetPage.locator('#importCounts .metric b').last().textContent(), '1');
+    assert.equal(await sheetPage.locator('#importRun').isEnabled(), false);
   });
   await sheetImporter.close();
+
+  /* ==================================================================
+   * ייבוא לתצוגה כשהמנוע כבוי: הכתיבה יוצרת טיוטה חתומה, ורק פעולה
+   * מפורשת נוספת בוחרת אותה ללוח. הפעולה הזאת אינה מעבר מצב, פרסום
+   * או שליחת הודעות. הסרה מחזירה את תצוגת ה-legacy בלי למחוק את הטיוטה.
+  * ================================================================== */
+  const offMonth = today.slice(0, 7);
+  const offDates = rangeDays(today, (date) => date);
+  const offSetup = JSON.parse(JSON.stringify(setup));
+  offSetup.mode = 'off';
+  offSetup.configured = true;
+  offSetup.policy.sub_stations = [
+    // המדיניות החיה שונה בכוונה: הלוח חייב להשתמש בקו 7 החתום בבלוק.
+    { id:'eilat', label:'אילת', minimum:9, requirements:[] },
+    { id:'shahmon', label:'שחמון', minimum:null, requirements:[] },
+    { id:'timna', label:'תמנע', minimum:null, requirements:[] },
+    { id:'yotvata', label:'יטבתה', minimum:null, requirements:[] }
+  ];
+  const offImportReport = {
+    month:offMonth, dates:offDates, from:offDates[0], to:offDates[offDates.length - 1],
+    counts:{ days:offDates.length, stations:4, assignments:37, absences:4, unresolved:0,
+      duplicates:0, skipped:0, ignored_names:0, below_minimum:0 },
+    blocks:[
+      { label:'אילת', kind:'station', sub_station:'eilat', absence:null, rows:[3, 17], names:8 },
+      { label:'שחמון', kind:'station', sub_station:'shahmon', absence:null, rows:[18, 22], names:4 },
+      { label:'תמנע', kind:'station', sub_station:'timna', absence:null, rows:[23, 27], names:3 },
+      { label:'יטבתה', kind:'station', sub_station:'yotvata', absence:null, rows:[28, 29], names:2 }
+    ],
+    unresolved:[], duplicates:[], ignored:[], missing_stations:[], warnings:[],
+    people:[], report_digest:'rd_off_display', blocked_by:[], blocked:false,
+    accept:{ missing_stations:false, ignored_blocks:false }
+  };
+  const offImportedDraft = {
+    draft_id:'draft_off_display', content_digest:'digest_off_display', duplicate:false,
+    from:offDates[0], to:offDates[offDates.length - 1],
+    summary:{ filled:17, blocking_gaps:0, days_below_minimum:0, rejected_manual:0,
+      open_rows:0, imported_below_minimum:0, imported_absences:4 },
+    report:offImportReport
+  };
+  const inputOrder = ['אדם ראשון', 'אדם שני', 'אדם שלישי', 'אדם רביעי',
+    'אדם חמישי', 'אדם שישי', 'אדם שביעי', 'אדם שמיני'];
+  const stationPeople = (prefix, count, crew) => Array.from({ length:count }, (_, index) => ({
+    uid:prefix + '_' + (index + 1), person:prefix === 'eilat' ? inputOrder[index] : prefix + ' ' + (index + 1),
+    role_label:'לוחם', hours:'07:00-07:00', crew, is_me:false
+  }));
+  const readyAbsences = { sick:'ready', reserve:'ready', course:'ready', leave:'ready' };
+  const importedDisplayDays = offDates.map((date, index) => ({
+    date, crew:['A', 'B', 'C'][index], events:[], guards_status:'ready', guards:[],
+    absences_status:'ready', absence_coverage:readyAbsences,
+    absences:index === 0 ? [
+      { uid:'sick_1', display:'נעדר מחלה', kind:'sick', is_me:false },
+      { uid:'reserve_1', display:'נעדר מילואים', kind:'reserve', is_me:false },
+      { uid:'course_1', display:'נעדר קורס', kind:'course', location:'north', is_me:false },
+      { uid:'leave_1', display:'נעדר חופש', kind:'leave', location:'eilat', is_me:false }
+    ] : [],
+    sub_stations:[
+      { sub_station:'eilat', label:'אילת', minimum:7, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('eilat', 8, 'A')
+          : index === 1 ? stationPeople('eilat', 5, 'B')
+          : index === 2 ? stationPeople('eilat', 7, 'C') : [] },
+      { sub_station:'shahmon', label:'שחמון', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('שחמון', 4, 'A') : [] },
+      { sub_station:'timna', label:'תמנע', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('תמנע', 3, 'A') : [] },
+      { sub_station:'yotvata', label:'יטבתה', minimum:null, coverage:'ready', below_minimum:false,
+        people:index === 0 ? stationPeople('יטבתה', 2, 'A') : [] }
+    ]
+  }));
+  const offImportedPreview = {
+    draft_id:offImportedDraft.draft_id, expected_content_digest:offImportedDraft.content_digest,
+    imported:true, from:offDates[0], to:offDates[offDates.length - 1], week_start:offDates[0], days:importedDisplayDays
+  };
+  const importedDisplayRange = {
+    mode:'off', active:true, source:'imported-display', display_only:true,
+    publication_id:null, revision:null, from:offDates[0], to:offDates[offDates.length - 1], days:importedDisplayDays
+  };
+  const displayOff = { month:offMonth, enabled:false, generation:0, draft_id:null,
+    content_digest:null, mode:'off' };
+  const displayShown = { month:offMonth, enabled:true, generation:1,
+    draft_id:offImportedDraft.draft_id, content_digest:offImportedDraft.content_digest,
+    mode:'off', duplicate:false };
+  const displayCleared = { month:offMonth, enabled:false, generation:2,
+    draft_id:null, content_digest:null, mode:'off', duplicate:false };
+
+  const xlsxImport = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(xlsxImport, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayOff }],
+    previewScheduleImport:[{ data:offImportReport }],
+    importScheduleSheet:[{ data:offImportedDraft }],
+    getScheduleDraftPreview:[{ data:offImportedPreview }]
+  });
+  const xlsxSpans = [{ column:0, start_row:27, end_row:28 }];
+  await xlsxImport.route('**/schedule-file-import.js*', (route) => route.fulfill({
+    status:200, contentType:'text/javascript', body:`
+      export async function readScheduleFile(file, options) {
+        return { name:file.name, kind:'xlsx', sheet:'ספטמבר', month:options.month,
+          matrix:[['', '1/9'], ['אילת', 'אדם']],
+          label_spans:[{ column:0, start_row:27, end_row:28 }] };
+      }
+    `
+  }));
+  const xlsxPage = await xlsxImport.newPage();
+  await xlsxPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await xlsxPage.locator('#appMain:not(.hide)').waitFor();
+  await test('XLSX merged-label metadata reaches both preview and import, while CSV never sends it', async () => {
+    await xlsxPage.locator('#importFile').setInputFiles({
+      name:'schedule.xlsx', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer:Buffer.from('stub-xlsx')
+    });
+    await xlsxPage.locator('#importFileStatus').filter({ hasText:'schedule.xlsx' }).waitFor();
+    await xlsxPage.locator('#importCheck').click();
+    await xlsxPage.locator('#importMessage .ok').waitFor();
+    await xlsxPage.locator('#importRun').click();
+    await xlsxPage.locator('#previewMessage .ok').waitFor();
+    const calls = await xlsxPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.find((entry) => entry.name === 'previewScheduleImport');
+    const imported = calls.find((entry) => entry.name === 'importScheduleSheet');
+    assert.deepEqual(preview.payload.label_spans, xlsxSpans);
+    assert.deepEqual(imported.payload.label_spans, xlsxSpans);
+  });
+  await xlsxImport.close();
+
+  const partialDates = offDates.slice(0, 3);
+  const partialReport = Object.assign({}, offImportReport, {
+    dates:partialDates, from:partialDates[0], to:partialDates[2], report_digest:'rd_partial_display',
+    counts:Object.assign({}, offImportReport.counts, { days:3 })
+  });
+  const partialDraft = Object.assign({}, offImportedDraft, {
+    draft_id:'draft_partial_display', content_digest:'digest_partial_display',
+    from:partialDates[0], to:partialDates[2], report:partialReport
+  });
+  const partialPreview = Object.assign({}, offImportedPreview, {
+    draft_id:partialDraft.draft_id, expected_content_digest:partialDraft.content_digest,
+    from:partialDates[0], to:partialDates[2], days:importedDisplayDays.slice(0, 3)
+  });
+  const partialImport = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(partialImport, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayOff }],
+    previewScheduleImport:[{ data:partialReport }],
+    importScheduleSheet:[{ data:partialDraft }],
+    getScheduleDraftPreview:[{ data:partialPreview }]
+  });
+  const partialPage = await partialImport.newPage();
+  await partialPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await partialPage.locator('#appMain:not(.hide)').waitFor();
+  await test('a partial-month imported draft can be reviewed but cannot be selected for the monthly board', async () => {
+    await partialPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
+    await partialPage.locator('#importCheck').click();
+    await partialPage.locator('#importMessage .ok').waitFor();
+    await partialPage.locator('#importRun').click();
+    await partialPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await partialPage.locator('#importShow').isDisabled(), true);
+    assert.equal((await partialPage.evaluate(() => window.__CALLABLE_CALLS))
+      .some((entry) => entry.name === 'setScheduleDisplay'), false);
+  });
+  await partialImport.close();
+
+  const offImport = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(offImport, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayOff }],
+    previewScheduleImport:[{ data:offImportReport }],
+    importScheduleSheet:[{ data:offImportedDraft }],
+    getScheduleDraftPreview:[{ data:offImportedPreview }],
+    setScheduleDisplay:[{ data:displayShown }, { data:displayCleared }],
+    getStationScheduleRange:[{ data:importedDisplayRange }, { data:legacyRange('off') }]
+  });
+  const offImportPage = await offImport.newPage();
+  await offImportPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await offImportPage.locator('#appMain:not(.hide)').waitFor();
+
+  await test('an appointed manager can choose, check and import a schedule file while the engine is off', async () => {
+    assert.equal(await offImportPage.locator('#manageView').isVisible(), true);
+    assert.match(await offImportPage.locator('#mode').textContent(), /מנוע הסידור החדש עדיין כבוי/);
+    assert.equal(await offImportPage.locator('#runPlanner').isDisabled(), true);
+    assert.equal(await offImportPage.locator('#importCheck').isEnabled(), true);
+    assert.equal(await offImportPage.locator('#importStationMap').isVisible(), false,
+      'the canonical four-station policy needs no legacy mapping');
+    const csv = '\ufeff,1/9,2/9,3/9\r\nאילת,א,ב,ג\r\nשחמון,ד,ה,ו\r\nתמנע,ז,ח,ט\r\nיטבתה,י,יא,יב\r\n';
+    await offImportPage.locator('#importFile').setInputFiles({
+      name:'off-board.csv', mimeType:'text/csv', buffer:Buffer.from(csv, 'utf8')
+    });
+    await offImportPage.locator('#importFileStatus').filter({ hasText:'off-board.csv' }).waitFor();
+    await offImportPage.locator('#importCheck').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    assert.equal(await offImportPage.locator('#importRun').isEnabled(), true);
+    await offImportPage.locator('#importRun').click();
+    await offImportPage.locator('#previewMessage .ok').waitFor();
+    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true);
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.find((entry) => entry.name === 'previewScheduleImport');
+    assert.equal(preview.payload.month, offMonth);
+    assert.deepEqual(preview.payload.matrix[1].slice(0, 2), ['אילת', 'א']);
+    const imported = calls.find((entry) => entry.name === 'importScheduleSheet');
+    assert.equal(imported.payload.expected_report_digest, offImportReport.report_digest);
+    assert.match(imported.payload.request_id, /^import_/);
+    assert.match(await offImportPage.locator('#importMessage').textContent(), /לא הופעל מנוע ולא נשלחה הודעה/);
+  });
+
+  await test('showing the imported draft sends its signed identity and renders the four stations without changing mode', async () => {
+    await offImportPage.locator('#importShow').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const shown = calls.filter((entry) => entry.name === 'setScheduleDisplay')[0];
+    assert.ok(shown);
+    assert.deepEqual(Object.assign({}, shown.payload, { request_id:undefined }), {
+      action:'show', month:offMonth, request_id:undefined, expected_generation:0,
+      draft_id:offImportedDraft.draft_id, expected_content_digest:offImportedDraft.content_digest
+    });
+    assert.match(shown.payload.request_id, /^display_/);
+    assert.equal(Object.hasOwn(shown.payload, 'stationId'), false);
+    assert.match(await offImportPage.locator('#mode').textContent(), /מנוע הסידור החדש עדיין כבוי/);
+    assert.match(await offImportPage.locator('#importDisplayStatus').textContent(), /המנוע לא הופעל ולא נשלחו התראות/);
+
+    await offImportPage.locator('[data-tab="station"]').click();
+    await offImportPage.locator('#stationBoard').waitFor();
+    assert.deepEqual(await offImportPage.locator('#stationBoard .hcell .crew').evaluateAll((nodes) =>
+      nodes.slice(0, 3).map((item) => item.textContent.trim())),
+    ['משמרת א׳', 'משמרת ב׳', 'משמרת ג׳'],
+    'the primary 24-hour crew stays visible even when displayed people span several crews');
+    assert.deepEqual(await offImportPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.equal(await offImportPage.locator('#stationBoard .stub:not(.absence-stub)').first().locator('small').textContent(),
+      'קו 7', 'the signed block minimum wins over the current policy value');
+    const eilatCells = offImportPage.locator('#stationBoard > [role="row"]').nth(1).locator(':scope > .cell');
+    const eilatCell = eilatCells.nth(0);
+    assert.deepEqual(await eilatCell.locator(':scope > .nm:not(.line-slot)').allTextContents(), inputOrder,
+      'names must stay in the file order');
+    for (const [dayIndex, visibleNames, emptySlots] of [[0, 8, 0], [1, 5, 2], [2, 7, 0]]) {
+      const cell = eilatCells.nth(dayIndex);
+      assert.equal(await cell.locator(':scope > .nm:not(.line-slot)').count(), visibleNames);
+      assert.equal(await cell.locator(':scope > .line-slot').count(), emptySlots);
+      const namesBeforeLine = await cell.locator(':scope > .rulebar').evaluate((line) => {
+        let count = 0;
+        for (let item = line.previousElementSibling; item; item = item.previousElementSibling) {
+          if (item.classList.contains('nm')) count += 1;
+        }
+        return count;
+      });
+      assert.equal(namesBeforeLine, 7, 'the Eilat red line must stay after physical slot seven');
+      assert.equal(await cell.locator(':scope > .rulebar > .ruleline').count(), 1);
+    }
+    assert.deepEqual(await offImportPage.locator('#stationBoard .absence-stub b').allTextContents(),
+      ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await offImportPage.locator('#stationBoard .absence-name').allTextContents(),
+      ['נעדר מחלה', 'נעדר מילואים', 'נעדר קורס', 'נעדר חופשאילת']);
+    assert.match(await offImportPage.locator('#stationNote').textContent(), /מקובץ הסידור שיובא.*המנוע נשאר off/);
+  });
+
+  await test('clearing the imported display restores the legacy board and leaves the imported draft intact', async () => {
+    await offImportPage.locator('[data-tab="manage"]').click();
+    assert.equal(await offImportPage.locator('#importClear').isVisible(), true);
+    await offImportPage.locator('#importClear').click();
+    await offImportPage.locator('#importMessage .ok').waitFor();
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const cleared = calls.filter((entry) => entry.name === 'setScheduleDisplay')[1];
+    assert.ok(cleared);
+    assert.deepEqual(Object.assign({}, cleared.payload, { request_id:undefined }), {
+      action:'clear', month:offMonth, request_id:undefined, expected_generation:1
+    });
+    assert.match(cleared.payload.request_id, /^display_/);
+    assert.equal(Object.hasOwn(cleared.payload, 'draft_id'), false);
+    assert.match(await offImportPage.locator('#importMessage').textContent(), /נתוני הייבוא עצמם נשמרו ולא נמחקו/);
+    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true,
+      'the imported draft remains available to show again');
+    await offImportPage.locator('[data-tab="station"]').click();
+    await offImportPage.locator('#stationBoard').waitFor();
+    assert.match(await offImportPage.locator('#stationNote').textContent(), /מהסידור הקיים/);
+    assert.equal(await offImportPage.locator('#stationBoard .cell.unknown').count() > 0, true);
+  });
+
+  await test('the off-mode import display flow has no engine, publication, delivery or notification side effect', async () => {
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
+    const forbidden = ['setScheduleRuntimeMode', 'promoteScheduleToNew', 'runSchedulePlanner',
+      'publishSchedule', 'rollbackSchedule', 'respondToSchedule', 'deliverScheduleOutbox'];
+    assert.deepEqual(calls.filter((entry) => forbidden.includes(entry.name)), []);
+    assert.equal(calls.some((entry) => /notification|outbox/i.test(entry.name)), false);
+    assert.deepEqual(calls.filter((entry) => entry.name === 'setScheduleDisplay').map((entry) => entry.payload.action),
+      ['show', 'clear']);
+  });
+  await offImport.close();
+
+  const staleMonth = shiftMonthValue(offMonth, 1);
+  const finalMonth = shiftMonthValue(offMonth, 2);
+  const staleStatus = { month:staleMonth, enabled:true, generation:9,
+    draft_id:'stale_draft', content_digest:'stale_digest', mode:'off' };
+  const finalStatus = { month:finalMonth, enabled:false, generation:3,
+    draft_id:null, content_digest:null, mode:'off' };
+  const statusRace = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(statusRace, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[
+      { data:displayOff },
+      { data:staleStatus, delay:140 },
+      { data:finalStatus, delay:5 }
+    ]
+  });
+  const statusRacePage = await statusRace.newPage();
+  await statusRacePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await statusRacePage.locator('#appMain:not(.hide)').waitFor();
+  await test('a late display-status response cannot overwrite the month selected afterwards', async () => {
+    await statusRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getScheduleDisplayStatus').length === 1);
+    await statusRacePage.locator('#importMonth').evaluate((input, value) => { input.value = value; }, staleMonth);
+    await statusRacePage.locator('#importMonth').dispatchEvent('change');
+    await statusRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getScheduleDisplayStatus').length === 2);
+    await statusRacePage.locator('#importMonth').evaluate((input, value) => { input.value = value; }, finalMonth);
+    await statusRacePage.locator('#importMonth').dispatchEvent('change');
+    await statusRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getScheduleDisplayStatus').length === 3);
+    await statusRacePage.waitForTimeout(180);
+    assert.equal(await statusRacePage.inputValue('#importMonth'), finalMonth);
+    assert.equal(await statusRacePage.locator('#importClear').isVisible(), false);
+    assert.doesNotMatch(await statusRacePage.locator('#importDisplayStatus').textContent(), new RegExp(staleMonth));
+    const calls = await statusRacePage.evaluate(() => window.__CALLABLE_CALLS);
+    assert.deepEqual(calls.filter((entry) => entry.name === 'getScheduleDisplayStatus')
+      .map((entry) => entry.payload.month), [offMonth, staleMonth, finalMonth]);
+  });
+  await statusRace.close();
+
+  const clearRace = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(clearRace, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayShown }, { data:finalStatus, delay:5 }],
+    setScheduleDisplay:[{ data:displayCleared, delay:140 }]
+  });
+  const clearRacePage = await clearRace.newPage();
+  await clearRacePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await clearRacePage.locator('#appMain:not(.hide)').waitFor();
+  await test('clear is bound to the visible month and generation; its late response cannot clear a later month', async () => {
+    assert.equal(await clearRacePage.locator('#importClear').isVisible(), true);
+    await clearRacePage.locator('#importClear').click();
+    await clearRacePage.locator('#importMonth').evaluate((input, value) => { input.value = value; }, finalMonth);
+    await clearRacePage.locator('#importMonth').dispatchEvent('change');
+    await clearRacePage.waitForTimeout(180);
+    const calls = await clearRacePage.evaluate(() => window.__CALLABLE_CALLS);
+    const cleared = calls.find((entry) => entry.name === 'setScheduleDisplay');
+    assert.equal(cleared.payload.month, offMonth);
+    assert.equal(cleared.payload.expected_generation, displayShown.generation);
+    assert.equal(await clearRacePage.inputValue('#importMonth'), finalMonth);
+    assert.equal(await clearRacePage.locator('#importClear').isVisible(), false);
+    assert.doesNotMatch(await clearRacePage.locator('#importMessage').textContent(), /הוסר מהלוח/);
+  });
+  await clearRace.close();
 
   /* ⭐ final-review §2 · תשובת ייבוא שאבדה אחרי שהשרת כבר יצר את הטיוטה:
    * הניסיון הממתין נשמר (payload מלא + מזהה), ואחרי שכינוי שאינו קשור השתנה
@@ -1651,5 +2043,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 43);
-console.log('\n43 schedule management browser checks passed.');
+assert.equal(passed, 52);
+console.log('\n52 schedule management browser checks passed.');

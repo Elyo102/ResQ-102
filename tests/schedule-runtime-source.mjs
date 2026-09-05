@@ -524,8 +524,11 @@ check('the month strip reads the whole verified snapshot and is bounded', () => 
   assert.ok(range.includes('await activeSnapshotStillCurrent(ctx, config, active)'));
   assert.ok(range.includes('checkedLegacyWindow(ctx, config, range.from, range.to)'));
   assert.equal(/data\.(station_id|stationId)/.test(range), false);
-  // שתי הלשוניות חולקות קריאה אחת לחודש.
-  assert.ok(ui.includes('function fetchRange(ym)'));
+  // הלוח התחנתי רשאי לבקש תצוגת ייבוא; הלוח האישי נשאר תמיד על
+  // מקור הסידור התפעולי ואינו יורש בחירת תצוגה של מנהל.
+  assert.ok(ui.includes('function fetchRange(ym, displayImported)'));
+  assert.ok(ui.includes('fetchRange(state.month, true)'));
+  assert.ok(ui.includes('fetchRange(state.month, false)'));
   assert.ok(ui.includes('function invalidateRange()'));
 });
 check('management visibility is driven by server status', () => {
@@ -586,7 +589,7 @@ check('legacy guard events use a bounded trusted-station bridge before the final
   assert.ok(integration.includes('legacy guards remain flexible while their schedule projection stays private'));
 });
 check('legacy guard rendering uses a safe station form and personal responses omit colleagues', () => {
-  assert.ok(runtime.includes('function legacyDayBlock(day, viewer, events)'));
+  assert.ok(runtime.includes('function legacyDayBlock(day, viewer, events, primaryCrew)'));
   assert.ok(runtime.includes("hours: event.start + '–' + event.end"));
   assert.ok(runtime.includes("&& (event.people || []).some((person) => person.uid === ctx.uid)"));
   assert.ok(runtime.includes('people: Object.freeze(event.people.map((uid) => knownPeople.get(uid)).filter(Boolean))'));
@@ -594,9 +597,11 @@ check('legacy guard rendering uses a safe station form and personal responses om
   const stationGuardStart = runtime.indexOf('function stationGuardsForDate(events, date, viewer)');
   const stationGuardEnd = runtime.indexOf('function myGuardsForDate', stationGuardStart);
   const stationGuard = runtime.slice(stationGuardStart, stationGuardEnd);
-  const legacyDayStart = runtime.indexOf('function legacyDayBlock(day, viewer, events)');
+  const legacyDayStart = runtime.indexOf('function legacyDayBlock(day, viewer, events, primaryCrew)');
   const legacyDayEnd = runtime.indexOf('function legacyStationView', legacyDayStart);
   const legacyDay = runtime.slice(legacyDayStart, legacyDayEnd);
+  assert.ok(legacyDay.includes('crew: primaryCrew'));
+  assert.equal(legacyDay.includes('crews.size === 1'), false);
   assert.ok(stationGuard.includes('person: person.display'));
   assert.ok(legacyDay.includes('person: person.display'));
   assert.equal(stationGuard.includes('uid: person.uid'), false);
@@ -900,7 +905,7 @@ check('effective views recheck runtime mode and active pointers are fully bound 
 check('a V2 view fails closed when the active pointer changes during its read', () => {
   const currentStart = runtime.indexOf('async function activeSnapshotStillCurrent(ctx, config, active)');
   const start = runtime.indexOf('async function checkedActiveSnapshot(ctx, config, dates)');
-  const end = runtime.indexOf('function legacyDayBlock(day, viewer, events)', start);
+  const end = runtime.indexOf('function legacyDayBlock(day, viewer, events, primaryCrew)', start);
   const guard = runtime.slice(start, end);
   const current = runtime.slice(currentStart, start);
   const hook = guard.indexOf('await beforeEffectiveViewRecheck');

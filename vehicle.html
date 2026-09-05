@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h1">
+<link rel="stylesheet" href="./theme.css?v=42h2">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -169,6 +169,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="row" id="photoActs"></div>
       <input type="file" id="basePick" accept="image/*" capture="environment"
              class="hide">
+      <input type="file" id="baseGallery" accept="image/*" class="hide">
       <div class="msg" id="baseMsg"></div>
     </div>
 
@@ -190,18 +191,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h1';
-import { renderNav, renderStuckNav } from './nav.js?v=42h1';
-import { MEMBER_ROLES } from './roles.js?v=42h1';
-import { initPWA } from './pwa.js?v=42h1';
-import { watchCallouts } from './callout.js?v=42h1';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h2';
+import { renderNav, renderStuckNav } from './nav.js?v=42h2';
+import { MEMBER_ROLES } from './roles.js?v=42h2';
+import { initPWA } from './pwa.js?v=42h2';
+import { watchCallouts } from './callout.js?v=42h2';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=42h1';
+  from './vmap.js?v=42h2';
 import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
-  from './faults.js?v=42h1';
+  from './faults.js?v=42h2';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -219,7 +220,7 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h1';
+import { initAppCheck } from './appcheck.js?v=42h2';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -359,7 +360,7 @@ function renderVehicles(){
 // **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
 // פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
 // פתיחה של המסך, לכולם, לנצח.
-const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h1' };
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h2' };
 
 function renderImport(){
   const box = $('importRow');
@@ -441,7 +442,7 @@ function renderStage(){
       (nx && nx !== side ? '<br>מומלץ להשלים לפי הסדר: ' +
         esc(sideHe(nx)) + ' קודם.' : '') +
       '</div></div></div>';
-    addPhotoBtn('העלה תמונת ' + sideHe(side));
+    addPhotoBtns(sideHe(side), false);
     return;
   }
 
@@ -488,21 +489,33 @@ function renderStage(){
     '<span class="k"><i style="background:var(--good)"></i>טופלה</span>' +
     '<span class="k">' + list.length + ' נקודות · לחץ על התמונה כדי לדווח</span>';
 
-  if (CAN_MANAGE) addPhotoBtn('החלף תמונת ' + sideHe(side), true);
+  if (CAN_MANAGE) addPhotoBtns(sideHe(side), true);
 }
 
-function addPhotoBtn(text, warn){
-  const b = document.createElement('button');
-  b.className = 'btn' + (warn ? '' : ' go');
-  b.textContent = text;
-  b.onclick = function () {
+function addPhotoBtns(subject, warn){
+  const choices = [
+    { input:'basePick',
+      text:(warn ? 'צלם מחדש' : 'צלם') + ' במצלמה · ' + subject,
+      primary:true },
+    { input:'baseGallery',
+      text:(warn ? 'בחר תמונה חלופית' : 'בחר תמונה') + ' מהגלריה · ' + subject,
+      primary:false }
+  ];
+  choices.forEach(function (choice) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn' + (!warn && choice.primary ? ' go' : '');
+    b.textContent = choice.text;
+    b.dataset.photoSource = choice.input === 'basePick' ? 'camera' : 'gallery';
+    b.onclick = function () {
     if (warn && !window.confirm(
       'החלפת התמונה מזיזה את כל הנקודות שכבר סומנו על הצד הזה.\n\n' +
       'הן נשמרות כיחס לתמונה, ולכן בזווית אחרת הן יצביעו על מקום ' +
       'אחר ברכב.\n\nלהחליף?')) return;
-    $('basePick').click();
-  };
-  $('photoActs').appendChild(b);
+      $(choice.input).click();
+    };
+    $('photoActs').appendChild(b);
+  });
 }
 
 function sortByTime(list){
@@ -512,9 +525,9 @@ function sortByTime(list){
 
 // ---------- העלאת תמונת הרכב ----------
 
-$('basePick').onchange = async function (){
-  const file = this.files && this.files[0];
-  this.value = '';
+async function uploadBasePhoto(picker){
+  const file = picker.files && picker.files[0];
+  picker.value = '';
   if (!file || !vid) return;
 
   msg('מקטין ומעלה…', 'info');
@@ -537,7 +550,10 @@ $('basePick').onchange = async function (){
   } catch (e) {
     msg('ההעלאה נכשלה. (' + (e.code || e.message || '') + ')', 'err');
   }
-};
+}
+
+$('basePick').onchange = function () { return uploadBasePhoto(this); };
+$('baseGallery').onchange = function () { return uploadBasePhoto(this); };
 
 // ---------- דיווח חדש בנקודה ----------
 
@@ -555,11 +571,30 @@ function newAt(pt){
       'placeholder="למשל: מכה בדופן מאחורי הגלגל">' +
     '<label>תיאור</label><textarea id="nDesc" maxlength="600"></textarea>' +
     '<label>צילום המכה (לא חובה)</label>' +
-    '<input type="file" id="nShot" accept="image/*" capture="environment">' +
+    '<div class="row"><button type="button" class="btn sm" id="nShotCameraBtn">' +
+      'צלם במצלמה</button>' +
+    '<button type="button" class="btn sm" id="nShotGalleryBtn">' +
+      'בחר מהגלריה</button>' +
+    '<span class="note" id="nShotName">לא נבחרה תמונה</span></div>' +
+    '<input type="file" id="nShot" accept="image/*" capture="environment" class="hide">' +
+    '<input type="file" id="nShotGallery" accept="image/*" class="hide">' +
     '<div class="row"><button class="btn go" id="nSave">שמור דיווח</button>' +
     '<button class="btn" id="nCancel">ביטול</button></div>' +
     '<div class="msg" id="nMsg"></div>';
   $('ov').classList.add('on');
+
+  let selectedShot = null;
+  function chooseShot(picker, other){
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    selectedShot = file;
+    other.value = '';
+    $('nShotName').textContent = file.name || 'נבחרה תמונה';
+  }
+  $('nShotCameraBtn').onclick = () => $('nShot').click();
+  $('nShotGalleryBtn').onclick = () => $('nShotGallery').click();
+  $('nShot').onchange = function () { chooseShot(this, $('nShotGallery')); };
+  $('nShotGallery').onchange = function () { chooseShot(this, $('nShot')); };
 
   $('nCancel').onclick = close;
   $('nSave').onclick = async function (){
@@ -583,7 +618,7 @@ function newAt(pt){
         created_at: serverTimestamp()
       });
 
-      const file = $('nShot').files && $('nShot').files[0];
+      const file = selectedShot;
       if (file) {
         try {
           const im = await shrinkImage(file);

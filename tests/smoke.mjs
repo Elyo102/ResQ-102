@@ -56,7 +56,7 @@ const MUST_ALL = {
   'people.html': ['#qName','#btnDoSearch','#results','#resCard','#sMsg',
                   '#roster','#rosterCard','#rosterNote'],
   'vehicle.html': ['#vehChips','#sideChips','#stageWrap','#legend',
-                   '#photoActs','#basePick','#list','#ov','#dlgBody'],
+                   '#photoActs','#basePick','#baseGallery','#list','#ov','#dlgBody'],
   'import.html': ['#knob','#master','#mState','#ready',
                   '#hPaste','#hDry','#hRun','#hMsg','#hSum'],
   'access.html': ['#sid','#btnLoad','#rows','#tbl'],

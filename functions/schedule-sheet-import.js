@@ -26,6 +26,7 @@ const MAX_CELLS = 40000;
 const MAX_NAMES_PER_CELL = 40;   // תא עם יותר מזה — מדווח ומדולג כולו, לא נחתך בשקט
 const MAX_ROWS = 400;
 const MAX_CELL_CHARS = 2000;
+const MAX_LABEL_SPANS = 256;
 const CANONICAL_STATIONS = Object.freeze(['eilat', 'shahmon', 'timna', 'yotvata']);
 const CANONICAL_STATION_LABELS = Object.freeze({
   eilat: 'אילת', shahmon: 'שחמון', timna: 'תמנע', yotvata: 'יטבתה'
@@ -166,6 +167,37 @@ function normalizeGrid(input) {
   });
 }
 
+function normalizeLabelSpans(raw, grid, labelColumn, dateRow) {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.length > MAX_LABEL_SPANS) {
+    fail('label-spans-invalid', 'גבולות התוויות בקובץ Excel אינם תקינים');
+  }
+  const spans = raw.map((item) => {
+    if (!plain(item) || Object.keys(item).some((key) =>
+      key !== 'column' && key !== 'start_row' && key !== 'end_row')
+        || !Number.isInteger(item.column) || !Number.isInteger(item.start_row)
+        || !Number.isInteger(item.end_row) || item.column !== labelColumn
+        || item.start_row <= dateRow || item.start_row < 0
+        || item.end_row < item.start_row || item.end_row >= grid.length) {
+      fail('label-spans-invalid', 'גבולות התוויות בקובץ Excel אינם תקינים');
+    }
+    const label = normText((grid[item.start_row] || [])[item.column]);
+    if (!label) fail('label-spans-invalid', 'טווח תווית בקובץ Excel חסר כותרת');
+    for (let row = item.start_row + 1; row <= item.end_row; row += 1) {
+      if (normText((grid[row] || [])[item.column])) {
+        fail('label-spans-invalid', 'טווח תווית בקובץ Excel מכיל כותרת נוספת');
+      }
+    }
+    return { column: item.column, start_row: item.start_row, end_row: item.end_row, label };
+  }).sort((a, b) => a.start_row - b.start_row || a.end_row - b.end_row);
+  for (let index = 1; index < spans.length; index += 1) {
+    if (spans[index].start_row <= spans[index - 1].end_row) {
+      fail('label-spans-invalid', 'גבולות התוויות בקובץ Excel חופפים');
+    }
+  }
+  return spans;
+}
+
 function parseSheet(input, options) {
   const opts = plain(options) ? options : {};
   const month = String(opts.month || '');
@@ -215,6 +247,8 @@ function parseSheet(input, options) {
     for (let c = 0; c < width; c += 1) if (!dateCols.has(c)) { labelColumn = c; break; }
     warnings.push({ code: 'label-column-guessed', detail: 'לא זוהו תוויות מוכרות; עמודת התוויות נקבעה כעמודה הראשונה' });
   }
+  const labelSpans = normalizeLabelSpans(opts.label_spans, grid, labelColumn, dateRow);
+  const spanByStart = new Map((labelSpans || []).map((span) => [span.start_row, span]));
 
   // שורות → בלוקים לפי תוויות. התווית יכולה לשבת בשורה הראשונה של
   // הבלוק (תא ממוזג בהדבקה) או בשורה האחרונה (כמו שרואים בגיליון).
@@ -240,8 +274,16 @@ function parseSheet(input, options) {
   const blocks = [];
   if (labelsOnTop) {
     labeled.forEach((item, i) => {
-      const end = i + 1 < labeled.length ? labeled[i + 1].row - 1 : grid.length - 1;
+      const exact = spanByStart.get(item.row);
+      const nextStart = i + 1 < labeled.length ? labeled[i + 1].row : grid.length;
+      const end = exact ? exact.end_row : nextStart - 1;
       blocks.push({ label: item.label, first: item.row, last: end });
+      // A merged station label is also its authoritative lower boundary.
+      // Rows between that boundary and the next labelled block are a separate
+      // free-form area (events/guards/notes), never station personnel.
+      if (exact && end + 1 < nextStart) {
+        blocks.push({ label: '', first: end + 1, last: nextStart - 1, after: item.label });
+      }
     });
     if (firstDataRow !== -1 && labeled.length && firstDataRow < labeled[0].row) {
       blocks.unshift({ label: '', first: firstDataRow, last: labeled[0].row - 1 });
@@ -274,7 +316,8 @@ function parseSheet(input, options) {
         if (columns.some((col) => TIME_RE.test(String((grid[r] || [])[col.index] || '')))) { cut = r; break; }
       }
     }
-    if (cut === -1) { split.push({ label: block.label, first: block.first, last: block.last, absence, station, kind: absence ? 'absence' : isStation ? 'station' : 'ignored' }); return; }
+    if (cut === -1) { split.push({ label: block.label, first: block.first, last: block.last, absence, station,
+      kind: absence ? 'absence' : isStation ? 'station' : 'ignored', after: block.after || null }); return; }
     if (cut > block.first) split.push({ label: block.label, first: block.first, last: cut - 1, absence, station, kind: isStation ? 'station' : 'ignored' });
     split.push({ label: '', first: cut, last: block.last, absence: null, station: null, kind: 'ignored', after: block.label });
   });
@@ -313,6 +356,9 @@ function parseSheet(input, options) {
   return Object.freeze({
     month, dates: Object.freeze(dates), date_row: dateRow + 1, label_column: labelColumn + 1,
     columns: Object.freeze(columns), labels_on_top: labelsOnTop,
+    label_spans: Object.freeze((labelSpans || []).map((span) => Object.freeze({
+      column: span.column, start_row: span.start_row, end_row: span.end_row
+    }))),
     blocks: Object.freeze(out), warnings: Object.freeze(warnings)
   });
 }
@@ -417,7 +463,12 @@ function projectCanonicalPolicy(policy, rawMapping) {
     const old = oldId && plain(policy.sub_stations[oldId]) ? policy.sub_stations[oldId] : {};
     subs[id] = Object.assign({}, old, {
       label: CANONICAL_STATION_LABELS[id],
-      minimum: Number.isInteger(old.minimum) ? old.minimum : CANONICAL_STATION_MINIMUMS[id]
+      // Product contract: the visible red line for the main Eilat station is
+      // fixed after seven people in an imported workbook.  A legacy policy
+      // may call the same block `main` and carry another minimum; projecting
+      // that value would silently move the line the user approved.
+      minimum: id === 'eilat' ? CANONICAL_STATION_MINIMUMS.eilat
+        : (Number.isInteger(old.minimum) ? old.minimum : CANONICAL_STATION_MINIMUMS[id])
     });
   });
   return Object.freeze({
@@ -540,6 +591,32 @@ function resolveSheet(parsed, options) {
     });
   });
   absences.sort((a, b) => ((a.date + a.uid + a.kind) < (b.date + b.uid + b.kind) ? -1 : 1));
+  // A person cannot be presented as both working and absent on the same day.
+  // The source workbook can contain that contradiction (for example a name
+  // under a station and again under reserve duty).  Never choose one silently:
+  // surface the exact date/person and block the import until the workbook is
+  // corrected.
+  const absencesByPersonDay = new Map();
+  absences.forEach((entry) => {
+    const key = entry.date + '|' + entry.uid;
+    if (!absencesByPersonDay.has(key)) absencesByPersonDay.set(key, []);
+    absencesByPersonDay.get(key).push({ kind: entry.kind, location: entry.location || null });
+  });
+  const assignmentAbsenceConflicts = [];
+  perDate.forEach((seen, date) => {
+    seen.forEach((subs, uid) => {
+      const abs = absencesByPersonDay.get(date + '|' + uid);
+      if (!abs) return;
+      assignmentAbsenceConflicts.push({
+        uid, date, stations: Array.from(new Set(subs)).sort(), absences: abs.slice()
+      });
+    });
+  });
+  assignmentAbsenceConflicts.sort((a, b) => {
+    const left = a.date + '|' + a.uid;
+    const right = b.date + '|' + b.uid;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   const absenceCoverage = {};
   ABSENCE_KINDS.forEach((kind) => {
     absenceCoverage[kind] = parsed.blocks.some((block) => block.kind === 'absence'
@@ -558,6 +635,7 @@ function resolveSheet(parsed, options) {
     absences: Object.freeze(absences),
     unresolved: Object.freeze(unresolvedList),
     duplicates: Object.freeze(duplicates),
+    assignment_absence_conflicts: Object.freeze(assignmentAbsenceConflicts),
     ignored: Object.freeze(ignored),
     missing_stations: Object.freeze(missingStations),
     absence_coverage: Object.freeze(absenceCoverage),
@@ -569,6 +647,7 @@ function resolveSheet(parsed, options) {
       absences: absences.length,
       unresolved: unresolvedList.reduce((n, u) => n + u.count, 0),
       duplicates: duplicates.length,
+      assignment_absence_conflicts: assignmentAbsenceConflicts.length,
       missing_stations: missingStations.length,
       ignored_names: ignored.reduce((n, b) => n + b.names, 0),
       oversized_cells: (parsed.warnings || []).filter((w) => w.code === 'cell-too-many-names').length,
