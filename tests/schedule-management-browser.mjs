@@ -2728,10 +2728,281 @@ try {
     assert.deepEqual(previewCall.payload.edits, [{ kind:'unassign', uid:'departed_1', dates:[today] }]);
   });
   await invalidCtx.close();
+
+  /* מטמון לוח חודשי מכיל את כל אנשי התחנה. לכן החלפת זהות בתוך
+   * אותו עמוד חייבת לבטל גם ערך שכבר נשמר וגם תשובה ישנה שעדיין
+   * בדרך; אחרת משתמש ב׳ עלול לראות לרגע את תשובת משתמש א׳. */
+  const principalRange = (label, uid) => {
+    const view = JSON.parse(JSON.stringify(stationRange));
+    view.days.forEach((entry) => {
+      entry.sub_stations = [{
+        sub_station:'eilat', label:'אילת', minimum:7, coverage:'ready', below_minimum:false,
+        people:[{ uid, person:label, role_label:'לוחם', hours:'07:00-07:00', is_me:true }]
+      }];
+      entry.events = [];
+      entry.guards = [];
+    });
+    return view;
+  };
+  const rangeA = principalRange('מידע פרטי של משתמש א', 'user-a');
+  const rangeB = principalRange('מידע של משתמש ב', 'user-b');
+
+  const authSwapCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authSwapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB }]
+  });
+  const authSwapPage = await authSwapCtx.newPage();
+  await authSwapPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await authSwapPage.getByText('מידע פרטי של משתמש א').first().waitFor();
+  await test('range cache is cleared when authenticated user A changes to user B in the same month', async () => {
+    await authSwapPage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authSwapPage.getByText('מידע של משתמש ב').first().waitFor();
+    assert.equal(await authSwapPage.getByText('מידע פרטי של משתמש א').count(), 0);
+    const calls = await authSwapPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 2,
+      'a new principal must perform a new authorized range read');
+    await authSwapPage.locator('[data-tab="mine"]').click();
+    await authSwapPage.getByText('מידע של משתמש ב').first().waitFor();
+    const afterMine = await authSwapPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(afterMine.filter((entry) => entry.name === 'getStationScheduleRange').length, 2,
+      'station and personal tabs still share one range read inside the new auth generation');
+  });
+  await authSwapCtx.close();
+
+  const authRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA, delay:180 }, { data:rangeB, delay:5 }]
+  });
+  const authRacePage = await authRaceCtx.newPage();
+  await authRacePage.goto(base + '?tab=station', { waitUntil:'domcontentloaded' });
+  await authRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getStationScheduleRange'));
+  await test('a late range response for user A cannot overwrite user B after an auth transition', async () => {
+    await authRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authRacePage.getByText('מידע של משתמש ב').first().waitFor();
+    await authRacePage.waitForTimeout(230);
+    assert.equal(await authRacePage.getByText('מידע פרטי של משתמש א').count(), 0);
+    assert.equal(await authRacePage.getByText('מידע של משתמש ב').count() > 0, true);
+    assert.equal(await authRacePage.locator('#stationContent .msg.err').count(), 0,
+      'discarding a stale response must not replace the new board with an error');
+  });
+  await authRaceCtx.close();
+
+  const authRejectCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authRejectCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[
+      { reject:true, code:'functions/permission-denied', message:'old user denied', delay:180 },
+      { data:rangeB, delay:5 }
+    ]
+  });
+  const authRejectPage = await authRejectCtx.newPage();
+  const authRejectErrors = [];
+  authRejectPage.on('pageerror', (error) => authRejectErrors.push(error.message));
+  await authRejectPage.goto(base + '?tab=station', { waitUntil:'domcontentloaded' });
+  await authRejectPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getStationScheduleRange'));
+  await test('a late rejection for user A is inert after user B has rendered', async () => {
+    await authRejectPage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authRejectPage.getByText('מידע של משתמש ב').first().waitFor();
+    await authRejectPage.waitForTimeout(230);
+    assert.equal(await authRejectPage.locator('#stationContent .msg.err').count(), 0);
+    assert.equal(await authRejectPage.getByText('מידע של משתמש ב').count() > 0, true);
+    assert.deepEqual(authRejectErrors, []);
+  });
+  await authRejectCtx.close();
+
+  const personalA = JSON.parse(JSON.stringify(mine));
+  personalA.days[0].role_label = 'כרטיס אישי סודי של משתמש א';
+  const personalB = JSON.parse(JSON.stringify(mine));
+  personalB.days[0].role_label = 'כרטיס אישי של משתמש ב';
+  const personalSwapCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(personalSwapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB, delay:5 }],
+    getMyScheduleV2:[{ data:personalA }, { data:personalB, delay:400 }]
+  });
+  const personalSwapPage = await personalSwapCtx.newPage();
+  await personalSwapPage.goto(base + '?tab=mine', { waitUntil:'load' });
+  await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').waitFor();
+  await test('user A personal card stays cleared while user B daily response is still pending', async () => {
+    const clearedImmediately = await personalSwapPage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+        email:'user-b@example.invalid', stationId:'eilat_102'
+      });
+      return document.getElementById('mineToday').textContent === ''
+        && document.getElementById('mineToday').hidden === true;
+    });
+    assert.equal(clearedImmediately, true,
+      'the previous personal card must be cleared synchronously at the auth boundary');
+    await personalSwapPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getStationScheduleRange').length === 2);
+    await personalSwapPage.waitForTimeout(80);
+    assert.equal(await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').count(), 0);
+    assert.equal(await personalSwapPage.locator('#mineToday').isHidden(), true,
+      'a fast monthly response may not reveal the previous daily card');
+    await personalSwapPage.getByText('כרטיס אישי של משתמש ב').waitFor();
+    assert.equal(await personalSwapPage.locator('#mineToday').isVisible(), true);
+    assert.equal(await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').count(), 0);
+  });
+  await personalSwapCtx.close();
+
+  const tokenRefreshCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(tokenRefreshCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB, delay:80 }]
+  });
+  const tokenRefreshPage = await tokenRefreshCtx.newPage();
+  await tokenRefreshPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await tokenRefreshPage.getByText('מידע פרטי של משתמש א').first().waitFor();
+  await test('same-UID ID-token refresh clears old station data and performs a fresh authorized read', async () => {
+    await tokenRefreshPage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid', {
+      email:'same-user@example.invalid', stationId:'other_102', role:'firefighter'
+    }));
+    assert.equal(await tokenRefreshPage.getByText('מידע פרטי של משתמש א').count(), 0,
+      'sensitive board data is removed synchronously at the token boundary');
+    await tokenRefreshPage.getByText('מידע של משתמש ב').first().waitFor();
+    const calls = await tokenRefreshPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 2);
+  });
+  await tokenRefreshCtx.close();
+
+  const sameScopeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(sameScopeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeA }, { data:rangeA }]
+  });
+  const sameScopePage = await sameScopeCtx.newPage();
+  await sameScopePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await sameScopePage.locator('#appMain:not(.hide)').waitFor();
+  const nextMonth = shiftMonthValue(today.slice(0, 7), 1);
+  const nextMonthIndex = Number(nextMonth.slice(5, 7)) - 1;
+  await sameScopePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+  assert.equal(await sameScopePage.locator('#policySteps .step.min .n').textContent(), '3');
+  await sameScopePage.locator('[data-tab="station"]').click();
+  await sameScopePage.locator('#stationBoard').waitFor();
+  await sameScopePage.locator('#stationHead button[data-index="' + nextMonthIndex + '"]').click();
+  await sameScopePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .filter((entry) => entry.name === 'getStationScheduleRange').length === 2);
+  await test('routine same-scope token refresh preserves the selected month and unsaved manager policy', async () => {
+    await sameScopePage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid'));
+    await sameScopePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getStationScheduleRange').length === 3);
+    assert.equal(await sameScopePage.locator('#stationHead button[data-index="' + nextMonthIndex + '"]')
+      .getAttribute('aria-pressed'), 'true');
+    const calls = await sameScopePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(ranges.at(-1).payload.from.slice(0, 7), nextMonth);
+    assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1,
+      'routine token refresh may not reload and overwrite an unsaved policy');
+    await sameScopePage.locator('[data-tab="manage"]').click();
+    assert.equal(await sameScopePage.locator('#policySteps .step.min .n').textContent(), '3');
+    assert.equal(await sameScopePage.locator('#savePolicy').isEnabled(), true);
+  });
+  await sameScopeCtx.close();
+
+  const revokeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(revokeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusFirefighter }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleRange:[{ data:rangeB }]
+  });
+  const revokePage = await revokeCtx.newPage();
+  await revokePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await revokePage.locator('#manageView:not([hidden])').waitFor();
+  await test('manager-to-member identity change conceals old management data before the new status resolves', async () => {
+    const hiddenImmediately = await revokePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', { email:'user-b@example.invalid' });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await revokePage.locator('#appMain:not(.hide)').waitFor();
+    await revokePage.getByText('מידע של משתמש ב').first().waitFor();
+    assert.equal(await revokePage.locator('#manageTab').isVisible(), false);
+    assert.equal(await revokePage.locator('#stationView').isVisible(), true);
+  });
+  await revokeCtx.close();
+
+  const setupStationA = JSON.parse(JSON.stringify(setup));
+  setupStationA.policy.sub_stations[0].label = 'מדיניות סודית של תחנה א';
+  setupStationA.people[0].name = 'עובד סודי של תחנה א';
+  const managerScopeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(managerScopeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[
+      { data:setupStationA },
+      { reject:true, code:'functions/unavailable', message:'station B setup unavailable', delay:40 }
+    ]
+  });
+  const managerScopePage = await managerScopeCtx.newPage();
+  await managerScopePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await managerScopePage.getByRole('button', { name:'מדיניות סודית של תחנה א' }).waitFor();
+  await test('manager A workspace is erased when manager B setup fails in another station', async () => {
+    const hiddenImmediately = await managerScopePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+        email:'manager-b@example.invalid', stationId:'station_b'
+      });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await managerScopePage.locator('#appMain:not(.hide)').waitFor();
+    assert.equal(await managerScopePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await managerScopePage.locator('#manageView').isVisible(), false);
+    assert.equal(await managerScopePage.getByText('מדיניות סודית של תחנה א').count(), 0);
+    assert.equal(await managerScopePage.getByText('עובד סודי של תחנה א').count(), 0);
+    assert.equal(await managerScopePage.locator('#policySubs').textContent(), '');
+    assert.equal(await managerScopePage.locator('#policySteps').textContent(), '');
+  });
+  await managerScopeCtx.close();
+
+  const staleQualCatalog = {
+    catalog:[{ key:'station_a_secret', label:'כשירות סודית של תחנה א', order:10,
+      critical:false, builtin:false, active:true, minimum:0, revision:1 }],
+    holders:{ station_a_secret:1 }, holdings_revision:1,
+    people:[{ uid:'manager-a', name:'עובד סודי מכשירויות תחנה א', sub_station:'eilat',
+      roles:['firefighter'], qualifications:['station_a_secret'], revision:1, legacy:[] }],
+    unknown_holders:[], gap_policy:{ station_minimum:7, revision:1 }
+  };
+  const qualRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(qualRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[
+      { data:setup },
+      { reject:true, code:'functions/unavailable', message:'station B setup unavailable', delay:30 }
+    ],
+    getQualificationCatalog:[{ data:staleQualCatalog, delay:220 }]
+  });
+  const qualRacePage = await qualRaceCtx.newPage();
+  await qualRacePage.goto(base + '?tab=quals', { waitUntil:'domcontentloaded' });
+  await qualRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getQualificationCatalog'));
+  await test('a late qualifications response from manager A is inert after manager B setup fails', async () => {
+    await qualRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+      email:'manager-b@example.invalid', stationId:'station_b'
+    }));
+    await qualRacePage.locator('#appMain:not(.hide)').waitFor();
+    await qualRacePage.waitForTimeout(260);
+    assert.equal(await qualRacePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await qualRacePage.locator('#qualsView').isVisible(), false);
+    assert.equal(await qualRacePage.getByText('כשירות סודית של תחנה א').count(), 0);
+    assert.equal(await qualRacePage.getByText('עובד סודי מכשירויות תחנה א').count(), 0);
+    assert.equal(await qualRacePage.locator('#qualRows').textContent(), '');
+    assert.equal(await qualRacePage.locator('#qualPeople').textContent(), '');
+  });
+  await qualRaceCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 67);
+assert.equal(passed, 76);
 console.log('\n' + passed + ' schedule management browser checks passed.');

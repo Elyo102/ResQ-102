@@ -534,11 +534,15 @@ check('the month strip reads the whole verified snapshot and is bounded', () => 
   // תצוגה בלבד, ולכן מעבר בין הלשוניות אינו יוצר קריאת חודש שנייה.
   // במצב off מותר להן להציג את קובץ האימון בלי להפוך אותו לתפעולי.
   assert.ok(ui.includes('function fetchRange(ym, displayImported)'));
-  assert.equal(ui.split('fetchRange(state.month, true)').length - 1, 2);
+  assert.equal(ui.split('fetchRange(requestedMonth, true)').length - 1, 2);
   assert.equal(ui.includes('fetchRange(state.month, false)'), false);
   assert.ok(ui.includes('const days = daysWithMe(view.days)'));
   assert.ok(ui.includes('person.is_me === true && person.cancelled !== true'));
   assert.ok(ui.includes('function invalidateRange()'));
+  assert.ok(ui.includes('onIdTokenChanged(auth, (user) =>'));
+  assert.ok(ui.includes('state.rangeRequest += 1'));
+  assert.ok(ui.includes('state.rangePending === pending'));
+  assert.ok(ui.includes('generation !== state.authGeneration'));
 });
 check('management visibility is driven by server status', () => {
   assert.ok(ui.includes("$('manageTab').hidden = !canManageSchedule()"));
@@ -2013,6 +2017,31 @@ check('42H.4: rollback runs the current gap gate inside its activation transacti
   assert.ok(body.includes('gap_report: rollbackGapRecord'));
 });
 
+check('42H.5: every asynchronous management path fences late responses to its auth scope', () => {
+  const names = [
+    'checkSource', 'saveSource', 'promotePending', 'promoteToNew',
+    'refreshAfterModeChange', 'applyModeChange', 'respond', 'savePolicy',
+    'checkImport', 'importSheet', 'showImportedSchedule', 'clearImportedSchedule',
+    'loadDraftPreview', 'runPlanner', 'publishDraft', 'rollbackSchedule',
+    'loadDraftGapDays', 'loadActiveGaps', 'saveStationMinimum', 'checkEdit',
+    'refreshStatusAfterEdit', 'applyEdit', 'loadQualifications',
+    'saveQualificationRow', 'deleteQualificationRow', 'addQualification',
+    'savePersonQualifications'
+  ];
+  for (const name of names) {
+    const start = ui.indexOf('async function ' + name + '(');
+    assert.ok(start > -1, name + ' must exist');
+    const next = ui.indexOf('\nasync function ', start + 16);
+    const body = ui.slice(start, next < 0 ? ui.length : next);
+    assert.ok(body.includes('authTask()'), name + ' must capture the auth scope');
+    assert.ok(body.includes('authTaskCurrent(task)'), name + ' must fence its continuation');
+  }
+  assert.ok(ui.includes('authContextVersion: state.authContextVersion + 1'),
+    'a scope reset must invalidate every pending management continuation');
+  assert.ok(ui.includes("if ((previousStatus.manager === true) !== (status.manager === true)) {\n    resetScopedWorkspace();"),
+    'a live manager grant change must invalidate privileged responses too');
+});
+
 check('release blocker: rollback fingerprints the acknowledgement and duplicate receipts stay complete', () => {
   const rollback = runtime.slice(runtime.indexOf('async function rollback(req)'), runtime.indexOf('function requestedViewDate('));
   assert.ok(rollback.includes("intent: 'rollback'"));
@@ -2026,5 +2055,5 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 127);
-console.log('\n127 schedule runtime source checks passed.');
+assert.equal(passed, 128);
+console.log('\n128 schedule runtime source checks passed.');
