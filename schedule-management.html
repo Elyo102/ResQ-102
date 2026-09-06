@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h3">
+  <link rel="stylesheet" href="./theme.css?v=42h4">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -16,20 +16,43 @@
        ================================================================== */
     :root{
       --sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-bg:#eef2f7;
-      /* תחנות קצה — גרסה כהה, שהיא ברירת המחדל של theme.css */
-      --s1:#17294a;--s1t:#c6dafc; --s2:#12301f;--s2t:#b6e8c9;
-      --s3:#332406;--s3t:#f5dda6; --s4:#241539;--s4t:#ddc8f6;
+      /* תחנות קצה (עיצוב 5.9, מוקאפ מאושר): לכל תחנה צבע שבב (--sN),
+         צבע דיו (--sNt), קצה (--sNe) ורצועת שורה עדינה (--sNb).
+         גרסה כהה תחילה — ברירת המחדל של theme.css. */
+      --s1:#20304C;--s1t:#A9C6F6;--s1e:#2C4570;--s1b:#171F2E;
+      --s2:#1C3626;--s2t:#9BD9AB;--s2e:#2C4E38;--s2b:#15241B;
+      --s3:#3A3216;--s3t:#EAD08A;--s3e:#544824;--s3b:#262214;
+      --s4:#173139;--s4t:#8FD3E3;--s4e:#264B55;--s4b:#132229;
+      --sb-abs:#3C2427;--sb-abs-t:#EFACB2;--sb-abs-e:#57333A;
+      --sb-sick:#3E2320;--sb-sick-t:#F1AEA4;--sb-sick-e:#5C332E;
+      --sb-course:#2C2440;--sb-course-t:#C9B4EE;--sb-course-e:#41345E;
+      --sb-today:#241A15;--sb-today-e:#5A3327;--sb-ember:#F26B45;
+      --sb-shadow:0 1px 2px rgba(0,0,0,.3);
       --dayw:96px;--stub:64px;
     }
     @media (prefers-color-scheme: light){
       :root:not([data-theme="dark"]){
-        --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
-        --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+        --s1:#D3E3FA;--s1t:#234C9C;--s1e:#A9C6F2;--s1b:#EEF4FD;
+        --s2:#CFEBD6;--s2t:#24703E;--s2e:#AEDDBA;--s2b:#EDF7F0;
+        --s3:#F9EAB8;--s3t:#7E5F10;--s3e:#EBD68C;--s3b:#FDF7E6;
+        --s4:#CBE9F0;--s4t:#1A6577;--s4e:#A7D8E3;--s4b:#EAF6F9;
+        --sb-abs:#F6DAD8;--sb-abs-t:#A2454F;--sb-abs-e:#EEC2C0;
+        --sb-sick:#F8D6D0;--sb-sick-t:#AF382A;--sb-sick-e:#F0B9B0;
+        --sb-course:#E8DEF7;--sb-course-t:#66459F;--sb-course-e:#D6C6EE;
+        --sb-today:#FDF3EE;--sb-today-e:#F3C2B1;--sb-ember:#E4572E;
+        --sb-shadow:0 1px 2px rgba(23,32,48,.04);
       }
     }
     :root[data-theme="light"]{
-      --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
-      --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+      --s1:#D3E3FA;--s1t:#234C9C;--s1e:#A9C6F2;--s1b:#EEF4FD;
+      --s2:#CFEBD6;--s2t:#24703E;--s2e:#AEDDBA;--s2b:#EDF7F0;
+      --s3:#F9EAB8;--s3t:#7E5F10;--s3e:#EBD68C;--s3b:#FDF7E6;
+      --s4:#CBE9F0;--s4t:#1A6577;--s4e:#A7D8E3;--s4b:#EAF6F9;
+      --sb-abs:#F6DAD8;--sb-abs-t:#A2454F;--sb-abs-e:#EEC2C0;
+      --sb-sick:#F8D6D0;--sb-sick-t:#AF382A;--sb-sick-e:#F0B9B0;
+      --sb-course:#E8DEF7;--sb-course-t:#66459F;--sb-course-e:#D6C6EE;
+      --sb-today:#FDF3EE;--sb-today-e:#F3C2B1;--sb-ember:#E4572E;
+      --sb-shadow:0 1px 2px rgba(23,32,48,.04);
     }
     *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
     body{margin:0;min-height:100vh;background:var(--bg,var(--sched-bg));color:var(--txt,#1c2532);
@@ -42,8 +65,23 @@
     .crumb{font-size:12px;color:var(--muted,#748091);font-weight:700;width:100%}
     .head h1{font-size:26px;margin:0}
     .head .who{margin-inline-start:auto;color:var(--muted,#748091);font-size:13px}
-    .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
+    .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;background:var(--panel,#f5f7fa);padding:5px;border-radius:14px;margin-bottom:14px}
     .tabs.manage-only{grid-template-columns:1fr}.tabs.views-only{grid-template-columns:repeat(2,1fr)}
+    /* 42H.2 · כשירויות */
+    .qualtable{width:100%;border-collapse:collapse;font-size:12px}
+    .qualtable th,.qualtable td{padding:6px 8px;border-bottom:1px solid var(--line,#dfe5ec);text-align:right;vertical-align:middle}
+    .qualtable th{font-size:11px;color:var(--muted,#748091);font-weight:700}
+    .qualtable input[type="text"]{min-height:30px;font-size:12px;width:100%}
+    .qualtable input[type="number"]{min-height:30px;font-size:12px;width:64px}
+    .qualtable .critical{color:var(--bad,#dc2626);font-weight:800;font-size:11px}
+    .qualtable .off{opacity:.55}
+    .qualtable button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .qualpeople .person{display:grid;grid-template-columns:minmax(140px,1fr) 3fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line,#dfe5ec);border-radius:10px;margin-top:6px}
+    .qualpeople .person .held{display:flex;flex-wrap:wrap;gap:6px}
+    .qualpeople .person .held label{font-size:11px;border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:3px 7px;display:flex;gap:4px;align-items:center}
+    .qualpeople .person .held label.on{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .qualpeople .legacy{font-size:11px;color:var(--muted,#748091)}
+    .qualpeople .person button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:5px 9px;cursor:pointer;color:inherit}
     .tabs button{border:0;border-radius:10px;background:transparent;color:var(--txt,#1c2532);font-weight:800}
     .tabs button.on{background:var(--sched-blue);color:#fff;box-shadow:0 4px 14px rgba(52,125,189,.22)}
     .card{background:var(--card,#fff);border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:16px;margin-bottom:13px;box-shadow:0 5px 18px rgba(25,38,58,.06)}
@@ -126,69 +164,114 @@
     .wkjump button{font-size:13px;font-weight:800;width:44px;height:44px;min-height:44px;
       border-radius:8px;border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#748091);padding:0}
     .wkjump b{font-size:12px;font-weight:700;color:var(--muted,#748091);min-width:62px;text-align:center}
+    /* ==================================================================
+       הלוח · עיצוב 5.9 (מוקאפ מאושר) — עיצוב בלבד, אותו DOM ואותה לוגיקה.
+       עמודת התחנות מימין, ימים משמאל, שמות בשבבים בצבע התחנה בטור יורד,
+       תאריך למעלה ויום-בשבוע מתחתיו, ומתחת לתחנות — מה שמחוץ למשמרת.
+       הצבע של המשמרת (א׳/ב׳/ג׳ — הכרעת 4.9) נשאר: שטיפת עמודה עדינה
+       ותג בכותרת היום; צבע התחנה יושב על השבב ועל תווית השורה.
+       ================================================================== */
     .board{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
+      gap:5px;padding:5px;
       overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
       /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
          הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
-      scroll-padding-inline-start:var(--stub);
-      border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+      scroll-padding-inline-start:calc(var(--stub) + 5px);
+      border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--panel,#f5f7fa)}
     /* ARIA grid hierarchy without an extra visual box: every logical row owns
        its headers/cells, while the children remain the CSS-grid items. */
     .board>[role="row"]{display:contents}
-    .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:6px 3px 7px;
-      text-align:center;border-bottom:1px solid var(--line,#dfe5ec)}
+    .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:7px 4px 6px;
+      text-align:center;border:1px solid var(--line,#dfe5ec);border-radius:11px;
+      display:flex;flex-direction:column;align-items:center;gap:1px;box-shadow:var(--sb-shadow)}
     .hcell.snap{scroll-snap-align:start}
-    .hcell .dw{font-size:10px;color:var(--muted,#748091);font-weight:600;line-height:1.3}
-    .hcell .dd{font-size:13px;font-weight:800;line-height:1.25}
+    /* התאריך למעלה, היום מתחתיו — סדר תצוגה בלבד; ה-DOM לא השתנה. */
+    .hcell .dd{order:1;font-size:15px;font-weight:700;line-height:1.2;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+    .hcell .dw{order:2;font-size:12.5px;color:var(--muted,#748091);font-weight:600;line-height:1.3}
+    .hcell .crew{order:3}
     .hcell.we .dw{color:var(--sched-blue)}
-    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--card,#fff);
-      border-bottom:1px solid var(--line,#dfe5ec)}
+    .hcell.today{background:var(--sb-today);border-color:var(--sb-today-e)}
+    .hcell.today .dd,.hcell.today .dw{color:var(--sb-ember)}
+    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--panel,#f5f7fa)}
     .stub{position:sticky;inset-inline-start:0;z-index:2;background:var(--card,#fff);
-      display:flex;flex-direction:column;justify-content:center;padding:0 9px;
-      border-inline-start:1px solid var(--line-soft,#eef2f7)}
-    .stub b{font-size:12px;font-weight:800;line-height:1.2}
-    .stub small{font-size:10px;color:var(--muted,#748091);font-weight:600}
-    .cell{padding:5px 6px 7px;border-inline-start:1px solid var(--card,#fff);
-      border-top:2px solid var(--card,#fff);min-width:0}
+      display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
+      border:1px solid var(--line,#dfe5ec);border-radius:11px;box-shadow:var(--sb-shadow)}
+    .stub b{font-size:13.5px;font-weight:600;line-height:1.2}
+    .stub small{font-size:10.5px;font-weight:600;opacity:.75}
+    .stub.s1{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
+    .stub.s2{background:var(--s2);border-color:var(--s2e);color:var(--s2t)}
+    .stub.s3{background:var(--s3);border-color:var(--s3e);color:var(--s3t)}
+    .stub.s4{background:var(--s4);border-color:var(--s4e);color:var(--s4t)}
+    .cell{padding:5px;min-width:0;min-height:34px;display:flex;flex-direction:column;gap:3px;
+      background:var(--card,#fff);border:1px solid var(--line-soft,#eef2f7);border-radius:11px}
     .cell.snap{scroll-snap-align:start}
-    /* השבלונה של הגיליון (הכרעת אלדד 4.9): השורה = תחנת קצה (הפס
-       הצבעוני בתווית), העמודה = היום, וצבע העמודה = המשמרת שעובדת
+    /* רצועת השורה בצבע התחנה — עדין, כדי שהשבבים יישאו את הצבע. */
+    .cell.s1{background:var(--s1b);border-color:var(--s1e)}.cell.s2{background:var(--s2b);border-color:var(--s2e)}
+    .cell.s3{background:var(--s3b);border-color:var(--s3e)}.cell.s4{background:var(--s4b);border-color:var(--s4e)}
+    /* השבלונה של הגיליון (הכרעת אלדד 4.9): צבע העמודה = המשמרת שעובדת
        באותה יממה — א׳ אדום, ב׳ ירוק, ג׳ כחול. האות נשארת בכותרת
        היום בכל מצב, כי אדום/ירוק אינם נבדלים לכולם. */
-    .cell.s1{background:var(--s1)}.cell.s2{background:var(--s2)}
-    .cell.s3{background:var(--s3)}.cell.s4{background:var(--s4)}
     .cell.col-A{background:var(--crewA-bg,#fbe6e4)}
     .cell.col-B{background:var(--crewB-bg,#e2f2e9)}
     .cell.col-C{background:var(--crewC-bg,#e4ecfd)}
-    .stub.s1{box-shadow:inset -4px 0 0 var(--s1t)}.stub.s2{box-shadow:inset -4px 0 0 var(--s2t)}
-    .stub.s3{box-shadow:inset -4px 0 0 var(--s3t)}.stub.s4{box-shadow:inset -4px 0 0 var(--s4t)}
     .hcell .crew{display:inline-block;margin-top:3px;font-size:10px;font-weight:800;line-height:1.5;
       padding:0 6px;border-radius:6px;border:1px solid transparent;color:var(--muted,#748091);
       background:var(--panel,#f3f6fa)}
     .hcell .crew.crew-A{color:var(--crewA,#b3261e);background:var(--crewA-bg,#fbe6e4);border-color:var(--crewA,#b3261e)}
     .hcell .crew.crew-B{color:var(--crewB,#1f6b45);background:var(--crewB-bg,#e2f2e9);border-color:var(--crewB,#1f6b45)}
     .hcell .crew.crew-C{color:var(--crewC,#1d4ed8);background:var(--crewC-bg,#e4ecfd);border-color:var(--crewC,#1d4ed8)}
-    .nm{font-size:12px;font-weight:500;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    /* שם = שבב אחד בשורה משלו, בצבע התחנה. הצוות (כשידוע) נשאר בצבע הטקסט. */
+    .nm{font-size:12.5px;font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      padding:3px 8px;border-radius:7px;border:1px solid var(--line-soft,#eef2f7);background:var(--card,#fff)}
     .nm.line-slot{visibility:hidden;user-select:none}
     .cell .nm{color:var(--txt,#1c2532)}
+    .cell.s1 .nm{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
+    .cell.s2 .nm{background:var(--s2);border-color:var(--s2e);color:var(--s2t)}
+    .cell.s3 .nm{background:var(--s3);border-color:var(--s3e);color:var(--s3t)}
+    .cell.s4 .nm{background:var(--s4);border-color:var(--s4e);color:var(--s4t)}
     .cell .nm.crew-A{color:var(--crewA,#b3261e)}
     .cell .nm.crew-B{color:var(--crewB,#1f6b45)}
     .cell .nm.crew-C{color:var(--crewC,#1d4ed8)}
     /* שורות ההיעדרות — מחלה · מילואים · קורסים · חופש — מתחת לתחנות,
        כמו בתחתית הגיליון. חופש נושא תג מיקום: חו"ל / צפון / אילת. */
-    .stub.absence{border-top:1px solid var(--line,#dfe5ec)}
-    .stub.absence b{color:var(--muted,#5a6573)}
-    .absence-cell{background:var(--card,#fff);border-top:1px solid var(--line-soft,#eef2f7)}
-    .absence-cell.first{border-top:1px solid var(--line,#dfe5ec)}
+    .stub.absence{background:var(--sb-abs);border-color:var(--sb-abs-e);color:var(--sb-abs-t)}
+    .stub.absence b{color:inherit}
+    .absence-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
     .absence-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
-    .absence-empty{font-size:11px;color:var(--muted,#748091);opacity:.6}
-    .absence-name{font-weight:600}
+    .absence-empty{font-size:11px;color:var(--muted,#748091);opacity:.6;padding:3px 2px}
+    .absence-name{font-weight:500;background:var(--sb-abs);border-color:var(--sb-abs-e);color:var(--sb-abs-t)}
+    .absence-cell[data-absence-kind="sick"] .absence-name{background:var(--sb-sick);border-color:var(--sb-sick-e);color:var(--sb-sick-t)}
+    .absence-cell[data-absence-kind="course"] .absence-name{background:var(--sb-course);border-color:var(--sb-course-e);color:var(--sb-course-t)}
     .absence-location{display:inline-block;margin-inline-start:4px;padding:0 5px;
-      border:1px solid var(--line,#dfe5ec);border-radius:5px;font-size:10px;font-weight:700;
-      color:var(--muted,#5a6573);background:var(--panel,#f3f6fa)}
+      border:1px solid var(--sb-abs-e);border-radius:5px;font-size:10px;font-weight:700;
+      color:inherit;background:transparent;opacity:.85}
     /* ---------------- הדבקת הסידור מהגיליון ---------------- */
     .importcard{border-color:var(--sched-blue)}
+    /* 42H.2 · עריכת הסידור הפעיל */
+    .editcard{border-color:var(--sched-blue)}
+    .editsearch{position:relative}
+    .editsearch .results{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .editsearch .results button{font-size:12px;border:1px solid var(--line,#dfe5ec);background:var(--panel,#f7f9fc);border-radius:9px;padding:6px 10px;cursor:pointer;color:inherit}
+    .editsearch .results button[aria-pressed="true"]{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .editperson{font-weight:700;font-size:13px;margin-top:6px;min-height:18px}
+    .editlist .row{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border:1px solid var(--line,#dfe5ec);border-radius:9px;margin-top:6px;background:var(--panel,#f7f9fc)}
+    .editlist .row b{flex:1}
+    .editlist .row button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
+    .editchange{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;padding:6px 10px;border-radius:9px;background:var(--panel,#f7f9fc);margin-top:6px}
+    .editchange .arrow{color:var(--muted,#748091)}
+    .editdates{font-size:12px;color:var(--muted,#748091);margin-top:6px}
+    /* 42H.2 ג׳ · בקרת פערים */
+    .gapbox{margin-top:10px;border:1px solid var(--line,#dfe5ec);border-radius:11px;padding:10px;background:var(--panel,#f7f9fc)}
+    .gapbox.critical{border-color:var(--bad,#dc2626)}
+    .gaphead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+    .gap{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border-radius:9px;margin-top:5px;background:var(--bg,#fff)}
+    .gap.critical{color:var(--bad,#dc2626);font-weight:700;background:var(--bad-bg,#fef2f2)}
+    .gap.other{color:var(--warn,#765500);background:var(--warn-bg,#fff5d7)}
+    .gap .cands{font-weight:400;color:var(--muted,#748091)}
+    .gapday{margin-top:8px;border-top:1px solid var(--line,#dfe5ec);padding-top:6px;font-size:12px}
+    .gapday b.date{display:block;margin-bottom:4px}
+    .gapday .ok{color:var(--muted,#748091)}
     .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
     .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
     .unres{display:grid;gap:7px;margin-top:10px}
@@ -215,8 +298,7 @@
     @media (max-width:640px){.importrow,.stationmap-grid{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
-    .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
-      background:var(--card,#fff);padding:0 4px}
+    .nm.me{box-shadow:0 0 0 2px var(--sched-blue);border-color:var(--sched-blue)}
     .rulebar{display:flex;align-items:center;gap:3px;margin:5px 0 4px;min-height:10px}
     .ruleline{flex:1;height:0;border-top:2px solid var(--bad,#dc2626);border-radius:2px;min-width:8px}
     .flag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:5px;
@@ -292,6 +374,12 @@
       .tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}
       .override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}
       .override .remove{grid-column:1/-1}.card{padding:13px}
+      /* 42H.2 · הפאנלים החדשים בטלפון: שורת אדם בעמודה אחת, טבלת הקטלוג
+       * גוללת בתוך המכולה שלה ולא מרחיבה את הדף. */
+      .qualpeople .person{grid-template-columns:1fr}
+      .qualpeople .person button{justify-self:start}
+      .qualtable{min-width:520px}
+      .editchange{grid-template-columns:1fr}
     }
   </style>
 </head>
@@ -343,6 +431,7 @@
     <button type="button" data-tab="manage" id="manageTab">ניהול</button>
     <button type="button" data-tab="mine" id="mineTab">הסידור שלי</button>
     <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
+    <button type="button" data-tab="quals" id="qualsTab" hidden>כשירויות</button>
   </nav>
 
   <section id="manageView" hidden>
@@ -480,6 +569,78 @@
       </article>
     </div>
 
+    <!-- 42H.2 · חבילה ג׳ — בקרת פערים על הסידור הפעיל -->
+    <article class="card" id="gapCard" hidden>
+      <h2>בקרת פערים — הסידור הפעיל</h2>
+      <div class="sub">לכל יום: כמה משובצים מול המינימום הכולל לתחנה, כל תחנת קצה מול הקו שלה, וכל כשירות מול המינימום שלה.
+        לכל פער מוצעים <b>מועמדים בלבד</b> — פנויים באותו יום, בלי היעדרות, עם הכשירות. המערכת לעולם אינה משבצת בעצמה.</div>
+      <div class="btns"><button class="btn" id="gapLoad" type="button">בדוק פערים בסידור הפעיל</button></div>
+      <div class="summary hide" id="gapSummary"></div>
+      <div id="gapDays"></div>
+      <div id="gapMessage" aria-live="polite"></div>
+    </article>
+
+    <!-- 42H.2 · חבילה א׳ — עריכת הסידור הפעיל (רק במצב פעיל, רק אחראי סידור) -->
+    <article class="card editcard" id="editCard" hidden>
+      <h2>עריכת הסידור הפעיל</h2>
+      <div class="sub">איתור עובד, בחירת יום / שבוע / חודש, ושינוי תחנה, תפקיד או היעדרות.
+        כל ביצוע יוצר <b>גרסה חדשה</b> של הסידור (הקודמת נשמרת ואפשר לחזור אליה), נרשם ביומן,
+        ושולח לכל עובד שהשתנה הודעה מסכמת אחת.</div>
+      <div class="fields">
+        <div class="editsearch" style="grid-column:1/-1">
+          <label for="editSearch">חיפוש עובד</label>
+          <input id="editSearch" type="search" placeholder="שם, חלק משם או מספר עובד" autocomplete="off">
+          <div class="results" id="editSearchResults"></div>
+          <div class="editperson" id="editPerson"></div>
+        </div>
+        <div><label for="editRange">טווח</label>
+          <select id="editRange"><option value="day">יום</option><option value="week">שבוע</option><option value="month">חודש</option></select></div>
+        <div><label for="editDate">תאריך</label><input id="editDate" type="date"></div>
+        <div><label for="editAction">פעולה</label>
+          <select id="editAction">
+            <option value="assign">שיבוץ לתחנה</option>
+            <option value="unassign">הסרה מהסידור</option>
+            <option value="role">שינוי תפקיד</option>
+            <option value="absence">היעדרות</option>
+          </select></div>
+        <div id="editStationWrap"><label for="editStation">תחנה</label><select id="editStation"></select></div>
+        <div id="editRoleWrap"><label for="editRole">תפקיד</label><select id="editRole"><option value="">ללא תפקיד</option></select></div>
+        <div id="editAbsenceWrap" hidden><label for="editAbsence">סוג היעדרות</label>
+          <select id="editAbsence">
+            <option value="sick">מחלה</option><option value="reserve">מילואים</option>
+            <option value="course">קורס</option><option value="leave">חופש</option><option value="">ביטול היעדרות</option>
+          </select></div>
+        <div id="editLocationWrap" hidden><label for="editLocation">מיקום החופש</label>
+          <select id="editLocation"><option value="">לא צוין</option><option value="abroad">חו"ל</option><option value="north">צפון</option><option value="eilat">אילת</option></select></div>
+      </div>
+      <div class="editdates" id="editDates"></div>
+      <div class="btns"><button class="btn" id="editAdd" type="button">+ הוסף לרשימת השינויים</button></div>
+      <div class="editlist" id="editList"></div>
+      <div class="btns">
+        <button class="btn" id="editCheck" type="button" disabled>בדוק את השינויים</button>
+        <button class="btn primary" id="editApply" type="button" disabled>בצע ופרסם גרסה חדשה</button>
+      </div>
+      <div id="editReport" hidden>
+        <div class="gapbox" id="editPolicyChanged" hidden>
+          <div class="gaphead"><b>חוקי התחנה השתנו</b></div>
+          <div id="editPolicyChangedText"></div>
+          <label class="req-flag" style="margin-top:8px"><input id="editPolicyAck" type="checkbox"><span id="editPolicyAckText"></span></label>
+        </div>
+        <div class="summary" id="editCounts"></div>
+        <div id="editPeople"></div>
+        <div id="editChanges"></div>
+        <div id="editWarnings"></div>
+        <div class="gapbox" id="editGaps" hidden>
+          <div class="gaphead"><b>בקרת פערים אחרי השינוי</b></div>
+          <div id="editGapsList"></div>
+          <label class="req-flag" id="editGapAckWrap" hidden style="margin-top:8px">
+            <input id="editGapAck" type="checkbox"><span id="editGapAckText"></span>
+          </label>
+        </div>
+      </div>
+      <div id="editMessage" aria-live="polite"></div>
+    </article>
+
     <article class="card hide" id="draftPreviewCard">
       <h2>תצוגה מקדימה של הטיוטה</h2>
       <div class="sub">זה הסידור שיפורסם. עברו בין השבועות ובדקו שמות, אירועים וחוסרים לפני אישור.</div>
@@ -492,11 +653,52 @@
         </div>
       </div>
       <div id="draftPreview"><div class="loader"></div></div>
+      <!-- 42H.2 ג׳ · בקרת פערים על הטיוטה כולה -->
+      <div class="gapbox" id="draftGaps" hidden>
+        <div class="gaphead"><b id="draftGapsTitle">בקרת פערים</b><button class="btn" id="draftGapsDetail" type="button">פירוט לפי יום</button></div>
+        <div id="draftGapsList"></div>
+        <div id="draftGapsDays"></div>
+        <label class="req-flag" id="draftGapAckWrap" hidden style="margin-top:8px">
+          <input id="draftGapAck" type="checkbox"><span id="draftGapAckText"></span>
+        </label>
+      </div>
       <label class="req-flag" style="margin-top:12px;font-size:13px">
         <input id="reviewDraft" type="checkbox" disabled>
         בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו
       </label>
       <div id="previewMessage" aria-live="polite"></div>
+    </article>
+  </section>
+
+  <!-- 42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים (אחראי סידור בלבד; הכול בשרת) -->
+  <section id="qualsView" hidden>
+    <article class="card">
+      <h2>קטלוג הכשירויות</h2>
+      <div class="sub">כשירות היא יכולת מבצעית — לא תפקיד הרשאה. תשע הכשירויות המובנות בסדר קבוע; שלוש הראשונות
+        <b>קריטיות</b>: פער בהן חוסם פרסום. אפשר לשנות תווית, להשבית, לקבוע מינימום ליום, ולהוסיף כשירויות מותאמות.
+        מחיקה — רק לכשירות מותאמת שאיש אינו מחזיק בה.</div>
+      <div style="overflow-x:auto"><table class="qualtable" id="qualTable"><thead><tr>
+        <th>#</th><th>כשירות</th><th>קריטית</th><th>מינימום ליום</th><th>מחזיקים</th><th>פעילה</th><th></th>
+      </tr></thead><tbody id="qualRows"></tbody></table></div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="gapStationMinimum">מינימום כולל לתחנה ליום</label><input id="gapStationMinimum" type="number" min="0" max="500" value="0"></div>
+        <div style="display:flex;align-items:end"><button class="btn" id="gapStationMinimumSave" type="button">שמור מינימום תחנה</button></div>
+      </div>
+      <div id="gapPolicyMessage" aria-live="polite"></div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="qualNewKey">מפתח (לטינית)</label><input id="qualNewKey" type="text" placeholder="למשל diver" autocomplete="off"></div>
+        <div><label for="qualNewLabel">תווית</label><input id="qualNewLabel" type="text" placeholder="למשל צוללן" autocomplete="off"></div>
+        <div><label for="qualNewMinimum">מינימום ליום</label><input id="qualNewMinimum" type="number" min="0" max="200" value="0"></div>
+        <div style="display:flex;align-items:end"><button class="btn" id="qualAdd" type="button">+ הוסף כשירות מותאמת</button></div>
+      </div>
+      <div id="qualMessage" aria-live="polite"></div>
+    </article>
+    <article class="card">
+      <h2>כשירויות לאדם</h2>
+      <div class="sub">לכל אדם כמה כשירויות שרוצים. הרשימה נשמרת בשרת עם יומן; „מהמערכת הישנה" הוא רמז בלבד ואינו מיובא אוטומטית.</div>
+      <div class="fields"><div style="grid-column:1/-1"><label for="qualSearch">חיפוש עובד</label><input id="qualSearch" type="search" placeholder="שם או חלק משם" autocomplete="off"></div></div>
+      <div class="qualpeople" id="qualPeople"></div>
+      <div id="qualPeopleMessage" aria-live="polite"></div>
     </article>
   </section>
 
@@ -521,6 +723,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h3"></script>
+<script type="module" src="./schedule-management.js?v=42h4"></script>
 </body>
 </html>

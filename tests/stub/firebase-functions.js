@@ -101,7 +101,12 @@ export function httpsCallable(_functions, name){
   return payload => {
     if (typeof window !== 'undefined') {
       window.__CALLABLE_CALLS = window.__CALLABLE_CALLS || [];
-      window.__CALLABLE_CALLS.push({ name, payload });
+      // Firebase serializes the payload at call time. Keep the probe faithful:
+      // later client mutations must not rewrite the recorded first attempt.
+      const recordedPayload = payload === undefined
+        ? undefined
+        : JSON.parse(JSON.stringify(payload));
+      window.__CALLABLE_CALLS.push({ name, payload:recordedPayload });
       window.__CALLABLE_INFLIGHT = (window.__CALLABLE_INFLIGHT || 0) + 1;
       window.__CALLABLE_MAX_INFLIGHT = Math.max(
         window.__CALLABLE_MAX_INFLIGHT || 0,
@@ -119,7 +124,11 @@ export function httpsCallable(_functions, name){
         window.__CALLABLE_INFLIGHT = Math.max(0, (window.__CALLABLE_INFLIGHT || 1) - 1);
       }
       if (step && step.reject) {
-        reject({ code:step.code || 'functions/unavailable', message:step.message || 'stub failure' });
+        reject({
+          code:step.code || 'functions/unavailable',
+          message:step.message || 'stub failure',
+          details:step.details
+        });
         return;
       }
       resolve({ data:(step && step.data) || defaultCallableStep(name, payload).data });

@@ -1474,6 +1474,17 @@ service cloud.firestore {
       match /schedule_access/{uid} {
         allow read, write: if false;
       }
+      // קטלוג הכשירויות, ההחזקות לפי אדם ויומן השינויים הם מצב שרת
+      // רגיש. לקוחות משתמשים רק ב-Callable שמבצע הרשאה ו-CAS חיים.
+      match /schedule_qualifications/{qualificationId} {
+        allow read, write: if false;
+      }
+      match /schedule_person_qualifications/{uid} {
+        allow read, write: if false;
+      }
+      match /schedule_qualification_audit/{entryId} {
+        allow read, write: if false;
+      }
       match /schedule_policies/{policyId} {
         allow read, write: if false;
       }

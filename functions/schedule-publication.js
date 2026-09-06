@@ -40,7 +40,13 @@ const CHANGE = Object.freeze({
   CREW_CHANGED: 'crew_changed',
   EVENT_ASSIGNED: 'event_assigned',
   EVENT_CHANGED: 'event_changed',
-  EVENT_CANCELLED: 'event_cancelled'
+  EVENT_CANCELLED: 'event_cancelled',
+  /* ⭐ 42H.2 · היעדרות היא חלק מהסידור של האדם: נרשמה, הוסרה או השתנתה
+   * — הוא מקבל הודעה כמו על שיבוץ. **הסיבה לעולם אינה בהודעה**
+   * (מחלה/מילואים/קורס/חופש ומיקום נשארים באפליקציה בלבד). */
+  ABSENCE_ADDED: 'absence_added',
+  ABSENCE_REMOVED: 'absence_removed',
+  ABSENCE_CHANGED: 'absence_changed'
 });
 
 const ALL_CHANGES = Object.freeze(Object.keys(CHANGE).map((k) => CHANGE[k]));
@@ -241,6 +247,64 @@ function createPublication(deps) {
     return view;
   }
 
+  /**
+   * ⭐ היעדרויות לפי אדם ותאריך. הרשומה שנשמרת להשוואה נושאת **רק** את
+   * הסוג והמיקום לצורך זיהוי שינוי — הם אינם יוצאים מהמודול: לפריטי
+   * ההודעה נכנס תאריך בלבד (ראו absenceItem).
+   */
+  function absenceView(plan) {
+    const view = new Map();
+    const list = plan.absences;
+    if (list === undefined || list === null) return view;
+    if (!Array.isArray(list)) throw new PublicationError('plan-absences', 'רשימת ההיעדרויות אינה מערך');
+    for (const entry of list) {
+      if (!isPlainObject(entry) || !isNonEmptyString(entry.uid) || !isNonEmptyString(entry.date)
+          || !isNonEmptyString(entry.kind)) {
+        throw new PublicationError('plan-absences', 'רשומת היעדרות אינה תקינה');
+      }
+      if (!view.has(entry.uid)) view.set(entry.uid, new Map());
+      const byDate = view.get(entry.uid);
+      if (byDate.has(entry.date)) {
+        throw new PublicationError('duplicate-absence', 'האדם ' + entry.uid + ' עם שתי היעדרויות בתאריך ' + entry.date);
+      }
+      byDate.set(entry.date, {
+        date: entry.date,
+        signature: entry.kind + '|' + (isNonEmptyString(entry.location) ? entry.location : '')
+      });
+    }
+    return view;
+  }
+
+  /** רשימת ההיעדרויות בצורה קנונית — לחתימת התוכן בלבד. */
+  function canonicalAbsences(plan) {
+    const out = [];
+    absenceView(plan).forEach((byDate, uid) => {
+      byDate.forEach((entry) => out.push([entry.date, uid, entry.signature]));
+    });
+    out.sort((a, b) => (a[0] + '|' + a[1] < b[0] + '|' + b[1] ? -1 : 1));
+    return out;
+  }
+
+  /* פריט היעדרות להודעה: תאריך בלבד. אין סוג, אין מיקום, אין סיבה. */
+  function absenceItem(entry) { return { date: entry.date }; }
+
+  function diffOnePersonAbsences(prev, next) {
+    const out = [];
+    const dates = new Set();
+    if (prev) for (const k of prev.keys()) dates.add(k);
+    if (next) for (const k of next.keys()) dates.add(k);
+    for (const date of Array.from(dates).sort()) {
+      const a = prev ? prev.get(date) : undefined;
+      const b = next ? next.get(date) : undefined;
+      if (!a && b) out.push({ kind: CHANGE.ABSENCE_ADDED, date, to: absenceItem(b) });
+      else if (a && !b) out.push({ kind: CHANGE.ABSENCE_REMOVED, date, from: absenceItem(a) });
+      else if (a.signature !== b.signature) {
+        out.push({ kind: CHANGE.ABSENCE_CHANGED, date, from: absenceItem(a), to: absenceItem(b) });
+      }
+    }
+    return out;
+  }
+
   function sameCrew(a, b) {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
@@ -346,12 +410,16 @@ function createPublication(deps) {
       throw new PublicationError('previous-events-without-plan', 'אי אפשר למסור אירועים קודמים בלי תוכנית קודמת');
     }
     const prevEvents = prev ? eventView(inp.previous_events, 'אירועי התוכנית הקודמת', prev) : new Map();
+    const nextAbsences = absenceView(next);
+    const prevAbsences = prev ? absenceView(prev) : new Map();
 
     const people = new Set();
     for (const k of nextView.keys()) people.add(k);
     for (const k of prevView.keys()) people.add(k);
     for (const k of nextEvents.keys()) people.add(k);
     for (const k of prevEvents.keys()) people.add(k);
+    for (const k of nextAbsences.keys()) people.add(k);
+    for (const k of prevAbsences.keys()) people.add(k);
 
     if (people.size > LIMITS.MAX_PEOPLE) {
       throw new PublicationError('too-many-people', 'יותר מדי אנשים בפרסום אחד');
@@ -362,7 +430,8 @@ function createPublication(deps) {
       // בפרסום ראשון כל השיבוצים והאירועים האישיים הם מידע חדש.
       // פונקציות ההשוואה כבר מייצגות אותם כתוספות כאשר הצד הקודם חסר.
       const changes = diffOnePerson(prevView.get(person), nextView.get(person))
-        .concat(diffOnePersonEvents(prevEvents.get(person), nextEvents.get(person)));
+        .concat(diffOnePersonEvents(prevEvents.get(person), nextEvents.get(person)))
+        .concat(diffOnePersonAbsences(prevAbsences.get(person), nextAbsences.get(person)));
       if (!changes.length) continue;
       if (changes.length > LIMITS.MAX_CHANGES_PER_PERSON) {
         throw new PublicationError('too-many-changes', 'יותר מדי שינויים לאדם אחד');
@@ -441,7 +510,11 @@ function createPublication(deps) {
     crew_changed: 'השתנה הצוות',
     event_assigned: 'שובצת לאירוע',
     event_changed: 'אירוע עודכן',
-    event_cancelled: 'אירוע ירד'
+    event_cancelled: 'אירוע ירד',
+    // ⭐ היעדרות — בלי הסיבה. „נרשמה היעדרות · 4/9" ותו לא.
+    absence_added: 'נרשמה היעדרות',
+    absence_removed: 'הוסרה היעדרות',
+    absence_changed: 'עודכנה היעדרות'
   });
 
   function itemText(item) {
@@ -564,6 +637,9 @@ function createPublication(deps) {
 
     const contentHash = hash(stable({
       rows: next.rows,
+      /* ⭐ 42H.2 · היעדרויות בחתימה: פרסום ששינה רק היעדרות הוא תוכן אחר —
+       * אחרת „אותו מזהה, אותו תוכן" היה בולע אותו כלחיצה כפולה. */
+      absences: canonicalAbsences(next),
       events: inp.next_events || null,
       station: next.station_id,
       contract_station_id: next.contract_station_id,
