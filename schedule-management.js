@@ -1273,6 +1273,7 @@ function renderBoard(target, days, options) {
   const dayCrew = (day) => (['A', 'B', 'C'].includes(day.crew) ? day.crew : null);
   days.forEach((day, index) => {
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
+      + (day.date === localDate() ? ' today' : '')
       + (index % 7 === 0 ? ' snap' : ''));
     head.setAttribute('role', 'columnheader');
     head.appendChild(node('div', 'dw', DOW[new Date(day.date + 'T00:00:00.000Z').getUTCDay()]));
@@ -1298,7 +1299,9 @@ function renderBoard(target, days, options) {
 
     days.forEach((day, index) => {
       const crew = dayCrew(day);
-      const cell = node('div', 'cell ' + (crew ? 'col-' + crew : subClass(subIndex)) + (index % 7 === 0 ? ' snap' : ''));
+      // עיצוב 5.9: מחלקת התחנה תמיד על התא (רצועה + שבבים בצבע התחנה);
+      // מחלקת המשמרת נוספת עליה כשהצוות ידוע (הכרעת 4.9 — צבע העמודה).
+      const cell = node('div', 'cell ' + subClass(subIndex) + (crew ? ' col-' + crew : '') + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
       cellContent(cell, block);
@@ -1334,7 +1337,7 @@ function renderBoard(target, days, options) {
 
 function fitColumns(board) {
   if (!board) return;
-  const stub = 64;
+  const stub = 92;   // עיצוב 5.9: תווית תחנה רחבה יותר (שבב + שם + קו)
   const available = board.clientWidth - stub;
   // שבוע מלא כשהמסך מרשה; אחרת העמודה הצרה ביותר שעדיין קריאה,
   // והגלילה משלימה את השבוע.

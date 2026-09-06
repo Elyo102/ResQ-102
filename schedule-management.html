@@ -16,20 +16,43 @@
        ================================================================== */
     :root{
       --sched-blue:#347dbd;--sched-blue-soft:#dce9f8;--sched-bg:#eef2f7;
-      /* תחנות קצה — גרסה כהה, שהיא ברירת המחדל של theme.css */
-      --s1:#17294a;--s1t:#c6dafc; --s2:#12301f;--s2t:#b6e8c9;
-      --s3:#332406;--s3t:#f5dda6; --s4:#241539;--s4t:#ddc8f6;
+      /* תחנות קצה (עיצוב 5.9, מוקאפ מאושר): לכל תחנה צבע שבב (--sN),
+         צבע דיו (--sNt), קצה (--sNe) ורצועת שורה עדינה (--sNb).
+         גרסה כהה תחילה — ברירת המחדל של theme.css. */
+      --s1:#20304C;--s1t:#A9C6F6;--s1e:#2C4570;--s1b:#171F2E;
+      --s2:#1C3626;--s2t:#9BD9AB;--s2e:#2C4E38;--s2b:#15241B;
+      --s3:#3A3216;--s3t:#EAD08A;--s3e:#544824;--s3b:#262214;
+      --s4:#173139;--s4t:#8FD3E3;--s4e:#264B55;--s4b:#132229;
+      --sb-abs:#3C2427;--sb-abs-t:#EFACB2;--sb-abs-e:#57333A;
+      --sb-sick:#3E2320;--sb-sick-t:#F1AEA4;--sb-sick-e:#5C332E;
+      --sb-course:#2C2440;--sb-course-t:#C9B4EE;--sb-course-e:#41345E;
+      --sb-today:#241A15;--sb-today-e:#5A3327;--sb-ember:#F26B45;
+      --sb-shadow:0 1px 2px rgba(0,0,0,.3);
       --dayw:96px;--stub:64px;
     }
     @media (prefers-color-scheme: light){
       :root:not([data-theme="dark"]){
-        --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
-        --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+        --s1:#D3E3FA;--s1t:#234C9C;--s1e:#A9C6F2;--s1b:#EEF4FD;
+        --s2:#CFEBD6;--s2t:#24703E;--s2e:#AEDDBA;--s2b:#EDF7F0;
+        --s3:#F9EAB8;--s3t:#7E5F10;--s3e:#EBD68C;--s3b:#FDF7E6;
+        --s4:#CBE9F0;--s4t:#1A6577;--s4e:#A7D8E3;--s4b:#EAF6F9;
+        --sb-abs:#F6DAD8;--sb-abs-t:#A2454F;--sb-abs-e:#EEC2C0;
+        --sb-sick:#F8D6D0;--sb-sick-t:#AF382A;--sb-sick-e:#F0B9B0;
+        --sb-course:#E8DEF7;--sb-course-t:#66459F;--sb-course-e:#D6C6EE;
+        --sb-today:#FDF3EE;--sb-today-e:#F3C2B1;--sb-ember:#E4572E;
+        --sb-shadow:0 1px 2px rgba(23,32,48,.04);
       }
     }
     :root[data-theme="light"]{
-      --s1:#dce9fb;--s1t:#1c3f86; --s2:#dcf3e3;--s2t:#14532d;
-      --s3:#fdf1d3;--s3t:#713f12; --s4:#f2e9fd;--s4t:#4c1d95;
+      --s1:#D3E3FA;--s1t:#234C9C;--s1e:#A9C6F2;--s1b:#EEF4FD;
+      --s2:#CFEBD6;--s2t:#24703E;--s2e:#AEDDBA;--s2b:#EDF7F0;
+      --s3:#F9EAB8;--s3t:#7E5F10;--s3e:#EBD68C;--s3b:#FDF7E6;
+      --s4:#CBE9F0;--s4t:#1A6577;--s4e:#A7D8E3;--s4b:#EAF6F9;
+      --sb-abs:#F6DAD8;--sb-abs-t:#A2454F;--sb-abs-e:#EEC2C0;
+      --sb-sick:#F8D6D0;--sb-sick-t:#AF382A;--sb-sick-e:#F0B9B0;
+      --sb-course:#E8DEF7;--sb-course-t:#66459F;--sb-course-e:#D6C6EE;
+      --sb-today:#FDF3EE;--sb-today-e:#F3C2B1;--sb-ember:#E4572E;
+      --sb-shadow:0 1px 2px rgba(23,32,48,.04);
     }
     *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
     body{margin:0;min-height:100vh;background:var(--bg,var(--sched-bg));color:var(--txt,#1c2532);
@@ -141,67 +164,88 @@
     .wkjump button{font-size:13px;font-weight:800;width:44px;height:44px;min-height:44px;
       border-radius:8px;border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#748091);padding:0}
     .wkjump b{font-size:12px;font-weight:700;color:var(--muted,#748091);min-width:62px;text-align:center}
+    /* ==================================================================
+       הלוח · עיצוב 5.9 (מוקאפ מאושר) — עיצוב בלבד, אותו DOM ואותה לוגיקה.
+       עמודת התחנות מימין, ימים משמאל, שמות בשבבים בצבע התחנה בטור יורד,
+       תאריך למעלה ויום-בשבוע מתחתיו, ומתחת לתחנות — מה שמחוץ למשמרת.
+       הצבע של המשמרת (א׳/ב׳/ג׳ — הכרעת 4.9) נשאר: שטיפת עמודה עדינה
+       ותג בכותרת היום; צבע התחנה יושב על השבב ועל תווית השורה.
+       ================================================================== */
     .board{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
+      gap:5px;padding:5px;
       overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
       /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
          הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
-      scroll-padding-inline-start:var(--stub);
-      border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+      scroll-padding-inline-start:calc(var(--stub) + 5px);
+      border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--panel,#f5f7fa)}
     /* ARIA grid hierarchy without an extra visual box: every logical row owns
        its headers/cells, while the children remain the CSS-grid items. */
     .board>[role="row"]{display:contents}
-    .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:6px 3px 7px;
-      text-align:center;border-bottom:1px solid var(--line,#dfe5ec)}
+    .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:7px 4px 6px;
+      text-align:center;border:1px solid var(--line,#dfe5ec);border-radius:11px;
+      display:flex;flex-direction:column;align-items:center;gap:1px;box-shadow:var(--sb-shadow)}
     .hcell.snap{scroll-snap-align:start}
-    .hcell .dw{font-size:10px;color:var(--muted,#748091);font-weight:600;line-height:1.3}
-    .hcell .dd{font-size:13px;font-weight:800;line-height:1.25}
+    /* התאריך למעלה, היום מתחתיו — סדר תצוגה בלבד; ה-DOM לא השתנה. */
+    .hcell .dd{order:1;font-size:15px;font-weight:700;line-height:1.2;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+    .hcell .dw{order:2;font-size:12.5px;color:var(--muted,#748091);font-weight:600;line-height:1.3}
+    .hcell .crew{order:3}
     .hcell.we .dw{color:var(--sched-blue)}
-    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--card,#fff);
-      border-bottom:1px solid var(--line,#dfe5ec)}
+    .hcell.today{background:var(--sb-today);border-color:var(--sb-today-e)}
+    .hcell.today .dd,.hcell.today .dw{color:var(--sb-ember)}
+    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--panel,#f5f7fa)}
     .stub{position:sticky;inset-inline-start:0;z-index:2;background:var(--card,#fff);
-      display:flex;flex-direction:column;justify-content:center;padding:0 9px;
-      border-inline-start:1px solid var(--line-soft,#eef2f7)}
-    .stub b{font-size:12px;font-weight:800;line-height:1.2}
-    .stub small{font-size:10px;color:var(--muted,#748091);font-weight:600}
-    .cell{padding:5px 6px 7px;border-inline-start:1px solid var(--card,#fff);
-      border-top:2px solid var(--card,#fff);min-width:0}
+      display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
+      border:1px solid var(--line,#dfe5ec);border-radius:11px;box-shadow:var(--sb-shadow)}
+    .stub b{font-size:13.5px;font-weight:600;line-height:1.2}
+    .stub small{font-size:10.5px;font-weight:600;opacity:.75}
+    .stub.s1{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
+    .stub.s2{background:var(--s2);border-color:var(--s2e);color:var(--s2t)}
+    .stub.s3{background:var(--s3);border-color:var(--s3e);color:var(--s3t)}
+    .stub.s4{background:var(--s4);border-color:var(--s4e);color:var(--s4t)}
+    .cell{padding:5px;min-width:0;min-height:34px;display:flex;flex-direction:column;gap:3px;
+      background:var(--card,#fff);border:1px solid var(--line-soft,#eef2f7);border-radius:11px}
     .cell.snap{scroll-snap-align:start}
-    /* השבלונה של הגיליון (הכרעת אלדד 4.9): השורה = תחנת קצה (הפס
-       הצבעוני בתווית), העמודה = היום, וצבע העמודה = המשמרת שעובדת
+    /* רצועת השורה בצבע התחנה — עדין, כדי שהשבבים יישאו את הצבע. */
+    .cell.s1{background:var(--s1b);border-color:var(--s1e)}.cell.s2{background:var(--s2b);border-color:var(--s2e)}
+    .cell.s3{background:var(--s3b);border-color:var(--s3e)}.cell.s4{background:var(--s4b);border-color:var(--s4e)}
+    /* השבלונה של הגיליון (הכרעת אלדד 4.9): צבע העמודה = המשמרת שעובדת
        באותה יממה — א׳ אדום, ב׳ ירוק, ג׳ כחול. האות נשארת בכותרת
        היום בכל מצב, כי אדום/ירוק אינם נבדלים לכולם. */
-    .cell.s1{background:var(--s1)}.cell.s2{background:var(--s2)}
-    .cell.s3{background:var(--s3)}.cell.s4{background:var(--s4)}
     .cell.col-A{background:var(--crewA-bg,#fbe6e4)}
     .cell.col-B{background:var(--crewB-bg,#e2f2e9)}
     .cell.col-C{background:var(--crewC-bg,#e4ecfd)}
-    .stub.s1{box-shadow:inset -4px 0 0 var(--s1t)}.stub.s2{box-shadow:inset -4px 0 0 var(--s2t)}
-    .stub.s3{box-shadow:inset -4px 0 0 var(--s3t)}.stub.s4{box-shadow:inset -4px 0 0 var(--s4t)}
     .hcell .crew{display:inline-block;margin-top:3px;font-size:10px;font-weight:800;line-height:1.5;
       padding:0 6px;border-radius:6px;border:1px solid transparent;color:var(--muted,#748091);
       background:var(--panel,#f3f6fa)}
     .hcell .crew.crew-A{color:var(--crewA,#b3261e);background:var(--crewA-bg,#fbe6e4);border-color:var(--crewA,#b3261e)}
     .hcell .crew.crew-B{color:var(--crewB,#1f6b45);background:var(--crewB-bg,#e2f2e9);border-color:var(--crewB,#1f6b45)}
     .hcell .crew.crew-C{color:var(--crewC,#1d4ed8);background:var(--crewC-bg,#e4ecfd);border-color:var(--crewC,#1d4ed8)}
-    .nm{font-size:12px;font-weight:500;line-height:1.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    /* שם = שבב אחד בשורה משלו, בצבע התחנה. הצוות (כשידוע) נשאר בצבע הטקסט. */
+    .nm{font-size:12.5px;font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      padding:3px 8px;border-radius:7px;border:1px solid var(--line-soft,#eef2f7);background:var(--card,#fff)}
     .nm.line-slot{visibility:hidden;user-select:none}
     .cell .nm{color:var(--txt,#1c2532)}
+    .cell.s1 .nm{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
+    .cell.s2 .nm{background:var(--s2);border-color:var(--s2e);color:var(--s2t)}
+    .cell.s3 .nm{background:var(--s3);border-color:var(--s3e);color:var(--s3t)}
+    .cell.s4 .nm{background:var(--s4);border-color:var(--s4e);color:var(--s4t)}
     .cell .nm.crew-A{color:var(--crewA,#b3261e)}
     .cell .nm.crew-B{color:var(--crewB,#1f6b45)}
     .cell .nm.crew-C{color:var(--crewC,#1d4ed8)}
     /* שורות ההיעדרות — מחלה · מילואים · קורסים · חופש — מתחת לתחנות,
        כמו בתחתית הגיליון. חופש נושא תג מיקום: חו"ל / צפון / אילת. */
-    .stub.absence{border-top:1px solid var(--line,#dfe5ec)}
-    .stub.absence b{color:var(--muted,#5a6573)}
-    .absence-cell{background:var(--card,#fff);border-top:1px solid var(--line-soft,#eef2f7)}
-    .absence-cell.first{border-top:1px solid var(--line,#dfe5ec)}
+    .stub.absence{background:var(--sb-abs);border-color:var(--sb-abs-e);color:var(--sb-abs-t)}
+    .stub.absence b{color:inherit}
+    .absence-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
     .absence-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
-    .absence-empty{font-size:11px;color:var(--muted,#748091);opacity:.6}
-    .absence-name{font-weight:600}
+    .absence-empty{font-size:11px;color:var(--muted,#748091);opacity:.6;padding:3px 2px}
+    .absence-name{font-weight:500;background:var(--sb-abs);border-color:var(--sb-abs-e);color:var(--sb-abs-t)}
+    .absence-cell[data-absence-kind="sick"] .absence-name{background:var(--sb-sick);border-color:var(--sb-sick-e);color:var(--sb-sick-t)}
+    .absence-cell[data-absence-kind="course"] .absence-name{background:var(--sb-course);border-color:var(--sb-course-e);color:var(--sb-course-t)}
     .absence-location{display:inline-block;margin-inline-start:4px;padding:0 5px;
-      border:1px solid var(--line,#dfe5ec);border-radius:5px;font-size:10px;font-weight:700;
-      color:var(--muted,#5a6573);background:var(--panel,#f3f6fa)}
+      border:1px solid var(--sb-abs-e);border-radius:5px;font-size:10px;font-weight:700;
+      color:inherit;background:transparent;opacity:.85}
     /* ---------------- הדבקת הסידור מהגיליון ---------------- */
     .importcard{border-color:var(--sched-blue)}
     /* 42H.2 · עריכת הסידור הפעיל */
@@ -254,8 +298,7 @@
     @media (max-width:640px){.importrow,.stationmap-grid{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
-    .nm.me{box-shadow:0 0 0 1.5px var(--sched-blue);border-radius:5px;
-      background:var(--card,#fff);padding:0 4px}
+    .nm.me{box-shadow:0 0 0 2px var(--sched-blue);border-color:var(--sched-blue)}
     .rulebar{display:flex;align-items:center;gap:3px;margin:5px 0 4px;min-height:10px}
     .ruleline{flex:1;height:0;border-top:2px solid var(--bad,#dc2626);border-radius:2px;min-width:8px}
     .flag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:5px;
