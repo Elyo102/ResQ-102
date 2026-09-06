@@ -124,19 +124,20 @@ try {
   assert.equal(await page.locator('#stationView').isVisible(), true);
   assert.equal(await page.locator('#mineTab').isVisible(), true);
   assert.equal(await page.locator('#manageTab').isVisible(), false);
-  assert.deepEqual(await page.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+  assert.deepEqual(await page.locator('#stationBoard .stub[data-station] b').allTextContents(),
     ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
   assert.match(await page.locator('#stationContent').textContent(), /לא הוזן/);
   await page.locator('[data-tab="mine"]').click();
   assert.equal(await page.locator('#mineView').isVisible(), true);
   await page.locator('#mineBoard .hcell').first().waitFor({ state:'visible', timeout:5000 });
-  assert.match(await page.locator('#mineContent').textContent(), /טל חודרה/);
-  // ⭐ הלשונית האישית קוראת פעם אחת את הטווח התפעולי ואינה
-  // ממחזרת את הטיוטה המיובאת שמותר להציג רק בלוח התחנה.
+  assert.equal((await page.locator('#mineContent').textContent()).includes('טל חודרה'), false);
+  assert.match(await page.locator('#mineNote').textContent(), /יש לייבא את הקובץ/);
+  // ⭐ הלשונית האישית ממחזרת את אותו טווח חודשי מורשה ומסננת
+  // ממנו תאריכי עבודה; אין קריאת חודש נוספת במעבר לשונית.
   const afterMine = await page.evaluate(() => window.__CALLABLE_CALLS || []);
   const rangeCalls = afterMine.filter((entry) => entry.name === 'getStationScheduleRange');
-  assert.equal(rangeCalls.length, 2);
-  assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false]);
+  assert.equal(rangeCalls.length, 1);
+  assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true]);
   const firestoreWrites = await page.evaluate(() => window.__FIRESTORE_WRITES || []);
   assert.equal(firestoreWrites.length, 0);
 

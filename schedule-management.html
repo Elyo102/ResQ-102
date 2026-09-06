@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h4">
+  <link rel="stylesheet" href="./theme.css?v=42h5">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -224,7 +224,7 @@
     /* שם = שבב אחד בשורה משלו, בצבע התחנה. הצוות (כשידוע) נשאר בצבע הטקסט. */
     .nm{font-size:12.5px;font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
       padding:3px 8px;border-radius:7px;border:1px solid var(--line-soft,#eef2f7);background:var(--card,#fff)}
-    .nm.line-slot{visibility:hidden;user-select:none}
+    .nm.empty-slot{color:transparent;user-select:none;min-height:24px}
     .cell .nm{color:var(--txt,#1c2532)}
     .cell.s1 .nm{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
     .cell.s2 .nm{background:var(--s2);border-color:var(--s2e);color:var(--s2t)}
@@ -299,6 +299,11 @@
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
     .nm.me{box-shadow:0 0 0 2px var(--sched-blue);border-color:var(--sched-blue)}
+    .mine-marker{display:inline-flex;align-items:center;margin-inline-start:5px;padding:0 5px;
+      border-radius:5px;background:var(--sched-blue);color:#fff;font-size:9px;font-weight:900;line-height:1.5}
+    .template-overflow{outline:2px solid var(--warn,#e0a23c);outline-offset:-2px}
+    .flag.overflow{color:var(--warn,#765500);background:var(--warn-bg,#fff7df);
+      border:1px solid var(--warn,#e0a23c);white-space:normal}
     .rulebar{display:flex;align-items:center;gap:3px;margin:5px 0 4px;min-height:10px}
     .ruleline{flex:1;height:0;border-top:2px solid var(--bad,#dc2626);border-radius:2px;min-width:8px}
     .flag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:5px;
@@ -308,6 +313,15 @@
       border:1px solid var(--warn,#e0a23c);display:block;margin-top:5px;white-space:normal}
     .flag.guard{background:var(--info-bg,#eaf3ff);border:1px solid var(--sched-blue);
       color:var(--txt,#1c2532);display:block;margin-top:5px;white-space:normal}
+    .stub.notes{background:var(--warn-bg,#fff7df);border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
+    .notes-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
+    .notes-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
+    .note-item{font-size:10.5px;font-weight:700;border-radius:6px;padding:3px 6px;
+      white-space:normal;overflow-wrap:anywhere;background:var(--warn-bg,#fff7df);border:1px solid var(--warn,#e0a23c)}
+    .note-item.guard-note{background:var(--info-bg,#eaf3ff);border-color:var(--sched-blue)}
+    .note-item.cancelled{text-decoration:line-through;opacity:.65}
+    .note-status{display:block;font-size:9.5px;font-weight:600;opacity:.82;margin-top:2px}
+    .notes-unavailable{font-size:10px;color:var(--muted,#748091);font-weight:700}
     .board-note{font-size:12px;color:var(--muted,#748091);margin-top:8px;line-height:1.6}
 
     /* ---------------- מתג מצב המנוע ----------------
@@ -705,10 +719,8 @@
   <section id="mineView" hidden>
     <div class="card">
       <h2>הסידור שלי</h2>
-      <div class="sub">אותו לוח של התחנה. המשמרות שלך מסומנות במסגרת כחולה.</div>
-      <div class="pills" style="margin:10px 0 0">
-        <button class="pill" id="mineOnly" type="button" aria-pressed="false">רק הימים שלי</button>
-      </div>
+      <div class="sub">מוצגים רק התאריכים שבהם שובצת לעבודה. בכל תאריך מופיע הלוח המלא לפי תחנות;
+        השם שלך מסומן גם במסגרת וגם בתווית „אני”.</div>
     </div>
     <div class="mine-list" id="mineToday"></div>
     <div class="boardhead" id="mineHead"></div>
@@ -723,6 +735,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h4"></script>
+<script type="module" src="./schedule-management.js?v=42h5"></script>
 </body>
 </html>

@@ -330,8 +330,8 @@ try {
     assert.equal(await managerPage.locator('#draftSummary .metric').count(), 4);
     await managerPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await managerPage.locator('#draftBoard .hcell').count(), 7);
-    // 4.9: שורות ההיעדרות מוצגות גם בתצוגה המקדימה — אותה שבלונה כמו הלוח.
-    assert.equal(await managerPage.locator('#draftBoard .absence-cell').count(), 7 * 4);
+    // אותה שבלונה כמו הלוח: הערות ולאחריהן ארבע שורות ההיעדרות.
+    assert.equal(await managerPage.locator('#draftBoard .cell[data-board-row]').count(), 7 * 5);
     assert.match(await managerPage.locator('#draftPreview').textContent(), /טל חודרה/);
     assert.equal(await managerPage.locator('#publish').isEnabled(), false);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
@@ -540,7 +540,9 @@ try {
     const success = body.indexOf('const successText =');
     const reset = body.indexOf('resetPublishRequest();', success);
     const discard = body.indexOf('state.draft = null;', success);
-    const refresh = body.indexOf('state.status = (await call.status({})).data;', success);
+    const refresh = body.indexOf('const status = (await call.status({})).data;', success);
+    const refreshGuard = body.indexOf('if (!authTaskCurrent(task)) return;', refresh);
+    const refreshApply = body.indexOf('state.status = status;', refresh);
     assert.ok(start > -1 && end > start, 'publishDraft source boundary was not found');
     assert.ok(success > -1 && reset > success,
       'successful publish no longer clears its retained request id');
@@ -548,6 +550,8 @@ try {
       'retry state is not cleared before the successful draft is discarded');
     assert.ok(refresh > discard,
       'fallible refresh moved ahead of successful publish cleanup');
+    assert.ok(refreshGuard > refresh && refreshApply > refreshGuard,
+      'publish refresh is no longer fenced before applying its result');
   });
   await retryManager.close();
 
@@ -630,14 +634,16 @@ try {
   const absencePage = await absenceCtx.newPage();
   await absencePage.goto(base, { waitUntil:'load' });
   await absencePage.locator('#stationBoard .absence-cell').first().waitFor();
-  await test('station absence rows use closed labels and leave-only locations with safe text', async () => {
-    assert.deepEqual(await absencePage.locator('#stationBoard .absence-stub b').allTextContents(),
-      ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+  await test('station bottom rows use the fixed old-sheet order and safe text', async () => {
+    assert.deepEqual(await absencePage.locator('#stationBoard .stub[data-board-row] b').allTextContents(),
+      ['הערות', 'מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await absencePage.locator('#stationBoard .stub[data-board-row]').evaluateAll((nodes) =>
+      nodes.map((item) => item.dataset.boardRow)), ['notes', 'sick', 'reserve', 'course', 'leave']);
     assert.equal(await absencePage.locator('#stationBoard .absence-name').count(), 5);
     assert.deepEqual(await absencePage.locator('#stationBoard .absence-location').allTextContents(), ['חו״ל']);
-    assert.equal(await absencePage.locator('#stationBoard .absence-cell img, #stationBoard .absence-cell script').count(), 0);
+    assert.equal(await absencePage.locator('#stationBoard [data-board-row] img, #stationBoard [data-board-row] script').count(), 0);
     assert.equal(await absencePage.locator('#stationBoard [data-absence-kind="unknown"]').count(), 0,
-      'התבנית נשארת עם ארבע שורות ההערות שנקבעו');
+      'סוג היעדרות לא מוכר אינו יוצר שורה חדשה');
   });
   await test('unknown absence data is distinct from a verified empty list', async () => {
     const cell = (index) => absencePage.locator('#stationBoard [data-absence-kind="sick"][data-date="'
@@ -663,22 +669,22 @@ try {
     assert.equal(new Set([colors.first, colors.a, colors.c, colors.neutral]).size, 4);
     assert.equal(await absencePage.locator('#stationBoard .crew-constructor').count(), 0);
   });
-  await test('absence rows stay inside the monthly board at 360 and 390 pixels', async () => {
+  await test('all five bottom rows stay inside the monthly board at 360 and 390 pixels', async () => {
     for (const width of [360, 390]) {
       await absencePage.setViewportSize({ width, height:844 });
       assert.equal(await absencePage.locator('#stationBoard .hcell').count(), absenceRange.days.length);
-      assert.equal(await absencePage.locator('#stationBoard .absence-cell').count(), absenceRange.days.length * 4);
+      assert.equal(await absencePage.locator('#stationBoard .cell[data-board-row]').count(), absenceRange.days.length * 5);
       assert.equal(await absencePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     }
   });
-  await test('personal board does not inherit station absence rows and requests only the operational range', async () => {
+  await test('personal board reuses the imported-display range and includes the same bottom rows', async () => {
     await absencePage.locator('#mineTab').click();
     await absencePage.locator('#mineBoard .hcell').first().waitFor();
-    assert.equal(await absencePage.locator('#mineBoard .absence-cell').count(), 0);
+    assert.equal(await absencePage.locator('#mineBoard .stub[data-board-row]').count(), 5);
     const calls = await absencePage.evaluate(() => window.__CALLABLE_CALLS);
     const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
-    assert.equal(ranges.length, 2);
-    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true, false]);
+    assert.equal(ranges.length, 1, 'station → mine in the same month must reuse one signed range');
+    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true]);
   });
   await absenceCtx.close();
 
@@ -697,10 +703,10 @@ try {
       await page.locator('#stationBoard .absence-name').first().waitFor();
       assert.equal(await page.locator('#stationBoard .hcell').count(), absenceOnly.days.length);
       assert.equal(await page.locator('#stationBoard .absence-name').count(), 5);
-      assert.deepEqual(await page.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+      assert.deepEqual(await page.locator('#stationBoard .stub[data-station] b').allTextContents(),
         ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
-      assert.equal(await page.locator('#stationBoard .cell:not(.absence-cell).unknown').count(), absenceOnly.days.length * 4);
-      assert.match(await page.locator('#stationBoard .cell:not(.absence-cell).unknown').first().textContent(), /לא הוזן/);
+      assert.equal(await page.locator('#stationBoard .cell[data-station].unknown').count(), absenceOnly.days.length * 4);
+      assert.match(await page.locator('#stationBoard .cell[data-station].unknown').first().textContent(), /לא הוזן/);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     } finally {
       await context.close();
@@ -824,24 +830,26 @@ try {
   });
   await forced.close();
 
-  await test('personal mobile view remains available after station is the default', async () => {
+  await test('personal mobile view is the same full board, automatically limited to actual work days', async () => {
     await phonePage.locator('[data-tab="mine"]').dispatchEvent('click');
-    await phonePage.locator('#mineToday .assignment').first().waitFor();
-    assert.match(await phonePage.locator('#mineToday').textContent(), /טל חודרה/);
-    assert.match(await phonePage.locator('#mineToday').textContent(), /קורס חילוץ/);
-    assert.match(await phonePage.locator('#mineToday').textContent(), /אבטחת אירוע/);
-    const guard = phonePage.locator('#mineToday .guard-card').filter({ hasText:'אבטחת אירוע' });
-    assert.equal(await guard.count(), 1);
-    assert.equal(await guard.locator('.confirm,.decline').count(), 0);
-    await phonePage.locator('.assignment .confirm').first().dispatchEvent('click');
-    await phonePage.getByText('אישרתי', { exact:true }).waitFor();
-    const response = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
-      .find((entry) => entry.name === 'respondToSchedule');
-    assert.equal(response.payload.person, undefined);
-    assert.equal(response.payload.stationId, undefined);
-    const mineCall = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
-      .find((entry) => entry.name === 'getMyScheduleV2');
-    assert.equal(mineCall.payload.date, today);
+    await phonePage.locator('#mineBoard .hcell').first().waitFor();
+    assert.equal(await phonePage.locator('#mineBoard .hcell').count(), 1,
+      'only the date containing a non-cancelled is_me assignment is shown');
+    assert.deepEqual(await phonePage.locator('#mineBoard .stub[data-station] b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.match(await phonePage.locator('#mineContent').textContent(), /טל חודרה/);
+    assert.match(await phonePage.locator('#mineContent').textContent(), /קורס חילוץ/);
+    assert.match(await phonePage.locator('#mineContent').textContent(), /אבטחת כוננות/);
+    assert.deepEqual(await phonePage.locator('#mineBoard .stub[data-board-row] b').allTextContents(),
+      ['הערות', 'מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.equal(await phonePage.locator('#mineOnly').count(), 0,
+      'the personal filter is the view contract, not an optional toggle');
+    const calls = await phonePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1,
+      'the operational daily card may load only when the range is the live publication');
+    const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(ranges.length, 1);
+    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true]);
   });
   await test('station mobile view is a full month strip and uses the imported-display range only for that tab', async () => {
     await phonePage.locator('[data-tab="station"]').dispatchEvent('click');
@@ -852,7 +860,7 @@ try {
     const rangeCalls = (await phonePage.evaluate(() => window.__CALLABLE_CALLS))
       .filter((entry) => entry.name === 'getStationScheduleRange');
     const before = rangeCalls.length;
-    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false, true]);
+    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true]);
 
     // מעבר חודש הוא קריאה חדשה — וכאן הוא מחזיר כשל בקריאת אבטחות.
     const current = Number((await phonePage.locator('.months button[aria-pressed="true"]')
@@ -902,7 +910,7 @@ try {
     assert.equal(await offPage.locator('#manageTab').isVisible(), false);
     assert.equal(await offPage.locator('#stationView').isVisible(), true);
     await offPage.locator('#stationBoard .hcell').first().waitFor();
-    assert.deepEqual(await offPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+    assert.deepEqual(await offPage.locator('#stationBoard .stub[data-station] b').allTextContents(),
       ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
     assert.doesNotMatch(await offPage.locator('#stationContent').textContent(), /משמרת [אבג]/);
     assert.match(await offPage.locator('#stationContent').textContent(), /לא הוזן/);
@@ -915,13 +923,22 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
-  await test('off mode keeps the personal legacy view available without an edit response', async () => {
+  await test('off mode keeps the personal legacy board available without a second data source', async () => {
     await offPage.locator('[data-tab="mine"]').click();
     assert.equal(await offPage.locator('#mineView').isVisible(), true);
     await offPage.locator('#mineBoard .hcell').first().waitFor();
-    assert.match(await offPage.locator('#mineContent').textContent(), /טל חודרה/);
+    assert.equal(await offPage.locator('#mineBoard .hcell').count(), 1,
+      'the legacy crew still identifies the work date');
+    assert.deepEqual(await offPage.locator('#mineBoard .stub[data-station] b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.equal(await offPage.locator('#mineBoard .cell[data-station].unknown').count(), 4,
+      'legacy A/B/C data is never invented as a station placement');
+    assert.doesNotMatch(await offPage.locator('#mineContent').textContent(), /משמרת [אבג]/);
+    assert.match(await offPage.locator('#mineNote').textContent(), /לא הודבק|קובץ/);
     assert.equal(await offPage.locator('#mineToday .confirm').count(), 0);
     const calls = await offPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 1);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
   });
   await off.close();
@@ -944,12 +961,15 @@ try {
     await shadowMemberPage.locator('#stationBoard .hcell').first().waitFor();
     await shadowMemberPage.locator('[data-tab="mine"]').click();
     await shadowMemberPage.locator('#mineBoard .hcell').first().waitFor();
-    assert.match(await shadowMemberPage.locator('#mineContent').textContent(), /טל חודרה/);
+    assert.equal(await shadowMemberPage.locator('#mineBoard .hcell').count(), 1);
+    assert.deepEqual(await shadowMemberPage.locator('#mineBoard .stub[data-station] b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.equal(await shadowMemberPage.locator('#mineBoard .cell[data-station].unknown').count(), 4);
     const calls = await shadowMemberPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
     const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
-    assert.equal(ranges.length, 2);
-    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true, false]);
+    assert.equal(ranges.length, 1, 'station and mine share the same monthly range');
+    assert.deepEqual(ranges.map((entry) => entry.payload.display_imported), [true]);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerSetup'), false);
   });
   await shadowMember.close();
@@ -1015,7 +1035,7 @@ try {
 
     await shadowManagerPage.locator('[data-tab="station"]').click();
     assert.match(await shadowManagerPage.locator('#stationNote').textContent(), /הסידור הקיים/);
-    assert.deepEqual(await shadowManagerPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+    assert.deepEqual(await shadowManagerPage.locator('#stationBoard .stub[data-station] b').allTextContents(),
       ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
     assert.match(await shadowManagerPage.locator('#stationContent').textContent(), /לא הוזן/);
   });
@@ -1618,12 +1638,12 @@ try {
       ['שובצו', 'היעדרויות', 'ימים מתחת לקו', 'יובא מהגיליון']);
     // השבלונה: אות המשמרת בכותרת, העמודה בצבע המשמרת, שם בצבע הצוות, שורות היעדרות.
     assert.deepEqual(await sheetPage.locator('#draftBoard .hcell .crew').allTextContents(), ['משמרת א׳', 'משמרת ב׳', 'משמרת ג׳']);
-    assert.deepEqual(await sheetPage.locator('#draftBoard .stub:not(.absence-stub) b').allTextContents(),
+    assert.deepEqual(await sheetPage.locator('#draftBoard .stub[data-station] b').allTextContents(),
       ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
     assert.equal(await sheetPage.locator('#draftBoard').getAttribute('role'), 'grid');
-    assert.equal(await sheetPage.locator('#draftBoard [role="row"]').count(), 9);
+    assert.equal(await sheetPage.locator('#draftBoard [role="row"]').count(), 10);
     assert.equal(await sheetPage.locator('#draftBoard [role="columnheader"]').count(), 4);
-    assert.equal(await sheetPage.locator('#draftBoard [role="rowheader"]').count(), 8);
+    assert.equal(await sheetPage.locator('#draftBoard [role="rowheader"]').count(), 9);
     assert.equal(await sheetPage.locator('#draftBoard [role="columnheader"]').evaluateAll((cells) =>
       cells.every((cell) => cell.parentElement && cell.parentElement.getAttribute('role') === 'row')), true,
     'every column header is owned by a grid row');
@@ -1637,7 +1657,8 @@ try {
       getComputedStyle(document.querySelector('#draftBoard .cell.' + cls)).backgroundColor));
     assert.equal(new Set(tints).size, 3, 'three distinct column colours');
     assert.equal(await sheetPage.locator('#draftBoard .nm.crew-A').count(), 3);
-    assert.deepEqual(await sheetPage.locator('#draftBoard .absence-stub b').allTextContents(), ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await sheetPage.locator('#draftBoard .stub[data-board-row] b').allTextContents(),
+      ['הערות', 'מחלה', 'מילואים', 'קורסים', 'חופש']);
     assert.deepEqual(await sheetPage.locator('#draftBoard .absence-name').allTextContents(), ['טל חודרה', 'אלדד יונהאילת']);
     assert.deepEqual(await sheetPage.locator('#draftBoard .absence-location').allTextContents(), ['אילת']);
     assert.equal(await sheetPage.locator('#draftBoard .absence-cell.unknown').count(), 0);
@@ -1728,14 +1749,23 @@ try {
     report:offImportReport
   };
   const inputOrder = ['אדם ראשון', 'אדם שני', 'אדם שלישי', 'אדם רביעי',
-    'אדם חמישי', 'אדם שישי', 'אדם שביעי', 'אדם שמיני'];
-  const stationPeople = (prefix, count, crew) => Array.from({ length:count }, (_, index) => ({
+    'אדם חמישי', 'אדם שישי', 'אדם שביעי', 'אדם שמיני', 'אדם תשיעי', 'אדם עשירי',
+    'אדם 11', 'אדם 12', 'אדם 13', 'אדם 14', 'אדם 15', 'אדם 16'];
+  const stationPeople = (prefix, count, crew, options) => Array.from({ length:count }, (_, index) => ({
     uid:prefix + '_' + (index + 1), person:prefix === 'eilat' ? inputOrder[index] : prefix + ' ' + (index + 1),
-    role_label:'לוחם', hours:'07:00-07:00', crew, is_me:false
+    role_label:'לוחם', hours:'07:00-07:00', crew,
+    is_me:!!(options && options.me && index === 0),
+    cancelled:!!(options && options.cancelled && index === 0)
   }));
   const readyAbsences = { sick:'ready', reserve:'ready', course:'ready', leave:'ready' };
-  const importedDisplayDays = offDates.map((date, index) => ({
-    date, crew:['A', 'B', 'C'][index], events:[], guards_status:'ready', guards:[],
+  const importedCounts = [[10, 5, 4, 2], [9, 4, 4, 2], [9, 5, 4, 2], [16, 5, 4, 2]];
+  const importedDisplayDays = offDates.map((date, index) => {
+    const counts = importedCounts[index] || [0, 0, 0, 0];
+    return ({
+    date, crew:['A', 'B', 'C'][index],
+    events:index === 0 ? [{ id:'event_imported', title:'הערת סידור', hours:'10:00-12:00' }] : [],
+    guards_status:index === 2 ? 'unavailable' : 'ready',
+    guards:index === 0 ? [{ id:'guard_imported', title:'אבטחת אירוע', hours:'18:00-22:00', people:[] }] : [],
     absences_status:'ready', absence_coverage:readyAbsences,
     absences:index === 0 ? [
       { uid:'sick_1', display:'נעדר מחלה', kind:'sick', is_me:false },
@@ -1745,17 +1775,17 @@ try {
     ] : [],
     sub_stations:[
       { sub_station:'eilat', label:'אילת', minimum:7, coverage:'ready', below_minimum:false,
-        people:index === 0 ? stationPeople('eilat', 8, 'A')
-          : index === 1 ? stationPeople('eilat', 5, 'B')
-          : index === 2 ? stationPeople('eilat', 7, 'C') : [] },
+        people:stationPeople('eilat', counts[0], ['A', 'B', 'C'][index],
+          index === 0 ? { me:true } : index === 2 ? { me:true, cancelled:true } : null) },
       { sub_station:'shahmon', label:'שחמון', minimum:null, coverage:'ready', below_minimum:false,
-        people:index === 0 ? stationPeople('שחמון', 4, 'A') : [] },
+        people:stationPeople('שחמון', counts[1], ['A', 'B', 'C'][index]) },
       { sub_station:'timna', label:'תמנע', minimum:null, coverage:'ready', below_minimum:false,
-        people:index === 0 ? stationPeople('תמנע', 3, 'A') : [] },
+        people:stationPeople('תמנע', counts[2], ['A', 'B', 'C'][index]) },
       { sub_station:'yotvata', label:'יטבתה', minimum:null, coverage:'ready', below_minimum:false,
-        people:index === 0 ? stationPeople('יטבתה', 2, 'A') : [] }
+        people:stationPeople('יטבתה', counts[3], ['A', 'B', 'C'][index]) }
     ]
-  }));
+  });
+  });
   const offImportedPreview = {
     draft_id:offImportedDraft.draft_id, expected_content_digest:offImportedDraft.content_digest,
     imported:true, from:offDates[0], to:offDates[offDates.length - 1], week_start:offDates[0], days:importedDisplayDays
@@ -1913,18 +1943,21 @@ try {
       nodes.slice(0, 3).map((item) => item.textContent.trim())),
     ['משמרת א׳', 'משמרת ב׳', 'משמרת ג׳'],
     'the primary 24-hour crew stays visible even when displayed people span several crews');
-    assert.deepEqual(await offImportPage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+    assert.deepEqual(await offImportPage.locator('#stationBoard .stub[data-station] b').allTextContents(),
       ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
-    assert.equal(await offImportPage.locator('#stationBoard .stub:not(.absence-stub)').first().locator('small').textContent(),
+    assert.equal(await offImportPage.locator('#stationBoard .stub[data-station="eilat"] small').textContent(),
       'קו 7', 'the signed block minimum wins over the current policy value');
-    const eilatCells = offImportPage.locator('#stationBoard > [role="row"]').nth(1).locator(':scope > .cell');
+    const eilatCells = offImportPage.locator('#stationBoard .cell[data-station="eilat"]');
     const eilatCell = eilatCells.nth(0);
-    assert.deepEqual(await eilatCell.locator(':scope > .nm:not(.line-slot)').allTextContents(), inputOrder,
+    assert.deepEqual(await eilatCell.locator(':scope > .name-slot:not(.empty-slot)').evaluateAll((nodes) =>
+      nodes.map((item) => String(item.firstChild && item.firstChild.nodeValue || '').trim())), inputOrder.slice(0, 10),
       'names must stay in the file order');
-    for (const [dayIndex, visibleNames, emptySlots] of [[0, 8, 0], [1, 5, 2], [2, 7, 0]]) {
+    for (const [dayIndex, visibleNames, emptySlots] of [[0, 10, 5], [1, 9, 6], [2, 9, 6]]) {
       const cell = eilatCells.nth(dayIndex);
-      assert.equal(await cell.locator(':scope > .nm:not(.line-slot)').count(), visibleNames);
-      assert.equal(await cell.locator(':scope > .line-slot').count(), emptySlots);
+      assert.equal(await cell.locator(':scope > .name-slot:not(.empty-slot)').count(), visibleNames);
+      assert.equal(await cell.locator(':scope > .empty-slot').count(), emptySlots);
+      assert.equal(await cell.locator(':scope > .name-slot').count(), 15,
+        'Eilat preserves the 15-row physical template regardless of 19/20/21 occupied names');
       const namesBeforeLine = await cell.locator(':scope > .rulebar').evaluate((line) => {
         let count = 0;
         for (let item = line.previousElementSibling; item; item = item.previousElementSibling) {
@@ -1935,11 +1968,83 @@ try {
       assert.equal(namesBeforeLine, 7, 'the Eilat red line must stay after physical slot seven');
       assert.equal(await cell.locator(':scope > .rulebar > .ruleline').count(), 1);
     }
-    assert.deepEqual(await offImportPage.locator('#stationBoard .absence-stub b').allTextContents(),
-      ['מחלה', 'מילואים', 'קורסים', 'חופש']);
+    const overflowCell = eilatCells.nth(3);
+    assert.deepEqual(await overflowCell.locator(':scope > .name-slot:not(.empty-slot)').evaluateAll((nodes) =>
+      nodes.map((item) => String(item.firstChild && item.firstChild.nodeValue || '').trim())), inputOrder,
+      'an over-template day must preserve every source name in its original order');
+    assert.equal(await overflowCell.locator(':scope > .name-slot').count(), 16, 'overflow is expanded, never truncated');
+    assert.equal(await overflowCell.evaluate((cell) => cell.classList.contains('template-overflow')), true,
+      'overflow beyond the 15-row template is visible to the manager');
+    assert.match(await overflowCell.textContent(), /נוספו 1 שמות מעבר לתבנית/);
+
+    for (const [stationId, expectedSlots, occupiedByDay] of [
+      ['shahmon', 5, [5, 4, 5]], ['timna', 5, [4, 4, 4]], ['yotvata', 2, [2, 2, 2]]
+    ]) {
+      for (let dayIndex = 0; dayIndex < 3; dayIndex += 1) {
+        const cell = offImportPage.locator('#stationBoard .cell[data-station="' + stationId + '"]').nth(dayIndex);
+        assert.equal(await cell.locator(':scope > .name-slot').count(), expectedSlots,
+          stationId + ' physical slot floor on day ' + dayIndex);
+        assert.equal(await cell.locator(':scope > .name-slot:not(.empty-slot)').count(), occupiedByDay[dayIndex],
+          stationId + ' occupied names on day ' + dayIndex);
+      }
+    }
+    for (const [date, expected] of [[offDates[0], 21], [offDates[1], 19], [offDates[2], 20]]) {
+      assert.equal(await offImportPage.locator('#stationBoard .cell[data-station][data-date="' + date + '"]')
+        .evaluateAll((cells) => cells.reduce((sum, cell) =>
+          sum + cell.querySelectorAll(':scope > .name-slot:not(.empty-slot)').length, 0)), expected,
+      'the imported shift keeps all ' + expected + ' occupied names');
+    }
+
+    assert.deepEqual(await offImportPage.locator('#stationBoard .stub[data-board-row] b').allTextContents(),
+      ['הערות', 'מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.deepEqual(await offImportPage.locator('#stationBoard .stub[data-board-row]').evaluateAll((nodes) =>
+      nodes.map((item) => item.dataset.boardRow)), ['notes', 'sick', 'reserve', 'course', 'leave']);
     assert.deepEqual(await offImportPage.locator('#stationBoard .absence-name').allTextContents(),
       ['נעדר מחלה', 'נעדר מילואים', 'נעדר קורס', 'נעדר חופשאילת']);
+    const noteCells = offImportPage.locator('#stationBoard .cell[data-board-row="notes"]');
+    assert.match(await noteCells.nth(0).textContent(), /הערת סידור/);
+    assert.match(await noteCells.nth(0).textContent(), /אבטחת אירוע/);
+    assert.equal((await noteCells.nth(1).textContent()).trim(), '—', 'verified empty notes are explicit');
+    assert.equal(await noteCells.nth(1).evaluate((cell) => cell.classList.contains('unknown')), false);
+    assert.equal(await noteCells.nth(2).evaluate((cell) => cell.classList.contains('unknown')), true,
+      'an unavailable notes source is not misreported as empty');
     assert.match(await offImportPage.locator('#stationNote').textContent(), /מקובץ הסידור שיובא.*המנוע נשאר off/);
+  });
+
+  await test('mine in off mode reuses the imported board, shows only real work dates and keeps full station context', async () => {
+    await offImportPage.locator('[data-tab="mine"]').click();
+    await offImportPage.locator('#mineBoard .hcell').first().waitFor();
+    assert.equal(await offImportPage.locator('#mineBoard .hcell').count(), 1,
+      'a non-work day and a cancelled own assignment are both excluded');
+    assert.deepEqual(await offImportPage.locator('#mineBoard .stub[data-station] b').allTextContents(),
+      ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    const occupied = await offImportPage.locator('#mineBoard .cell[data-station] .name-slot:not(.empty-slot)').count();
+    assert.equal(occupied, 21, 'the personal day still shows all four station crews');
+    assert.deepEqual(await offImportPage.locator('#mineBoard .stub[data-board-row] b').allTextContents(),
+      ['הערות', 'מחלה', 'מילואים', 'קורסים', 'חופש']);
+    assert.match(await offImportPage.locator('#mineBoard .cell[data-board-row="notes"]').textContent(), /הערת סידור/);
+    assert.match(await offImportPage.locator('#mineBoard .cell[data-board-row="notes"]').textContent(), /אבטחת אירוע/);
+    const me = offImportPage.locator('#mineBoard [data-is-me="true"]');
+    assert.equal(await me.count(), 1);
+    assert.match((await me.getAttribute('aria-label')) || '', /אני/,
+      'colour alone is not an accessible current-user marker');
+    assert.equal(await offImportPage.locator('#mineOnly').count(), 0,
+      'the personal-date filter is always on and cannot be accidentally disabled');
+    const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const rangeCalls = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(rangeCalls.length, 1, 'station and mine share one cached imported-display range');
+    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true]);
+    assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0,
+      'the personal tab must not mix an operational daily card with imported-display data');
+    assert.equal(calls.some((entry) => ['setScheduleRuntimeMode', 'promoteScheduleToNew',
+      'publishSchedule', 'respondToSchedule'].includes(entry.name)), false,
+    'viewing the imported schedule while off may not activate, publish, notify or answer');
+    for (const width of [390, 360]) {
+      await offImportPage.setViewportSize({ width, height:844 });
+      assert.equal(await offImportPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,
+        'the 21-name personal board must not overflow a ' + width + 'px phone page');
+    }
+    await offImportPage.setViewportSize({ width:1440, height:1000 });
   });
 
   await test('clearing the imported display restores the legacy board and leaves the imported draft intact', async () => {
@@ -2199,10 +2304,11 @@ try {
     assert.equal(await editPage.locator('#editList .row').count(), 0, 'the list is cleared after a verified answer');
     assert.equal(await editPage.locator('#editApply').isEnabled(), false);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 2, 'status refreshed after the edit');
-    // אחרי 2b12d98 הלוח האישי והלוח התחנתי הם שתי קריאות טווח נפרדות (operational / imported-display).
+    // שתי התצוגות משתמשות באותו טווח חתום; הרענון פותח קריאה אחת
+    // ומשתף את אותה Promise במקום להכפיל קריאות אחרי כל עריכה.
     const rangeAfter = calls.filter((entry) => entry.name === 'getStationScheduleRange').slice(rangeCallsBefore);
-    assert.equal(rangeAfter.length, 2, 'board reloaded exactly once per view after the edit');
-    assert.deepEqual(rangeAfter.map((entry) => entry.payload.display_imported === true).sort(), [false, true]);
+    assert.equal(rangeAfter.length, 1, 'both boards share one reloaded range after the edit');
+    assert.deepEqual(rangeAfter.map((entry) => entry.payload.display_imported === true), [true]);
   });
   await editCtx.close();
 
@@ -2626,10 +2732,343 @@ try {
     assert.deepEqual(previewCall.payload.edits, [{ kind:'unassign', uid:'departed_1', dates:[today] }]);
   });
   await invalidCtx.close();
+
+  /* מטמון לוח חודשי מכיל את כל אנשי התחנה. לכן החלפת זהות בתוך
+   * אותו עמוד חייבת לבטל גם ערך שכבר נשמר וגם תשובה ישנה שעדיין
+   * בדרך; אחרת משתמש ב׳ עלול לראות לרגע את תשובת משתמש א׳. */
+  const principalRange = (label, uid) => {
+    const view = JSON.parse(JSON.stringify(stationRange));
+    view.days.forEach((entry) => {
+      entry.sub_stations = [{
+        sub_station:'eilat', label:'אילת', minimum:7, coverage:'ready', below_minimum:false,
+        people:[{ uid, person:label, role_label:'לוחם', hours:'07:00-07:00', is_me:true }]
+      }];
+      entry.events = [];
+      entry.guards = [];
+    });
+    return view;
+  };
+  const rangeA = principalRange('מידע פרטי של משתמש א', 'user-a');
+  const rangeB = principalRange('מידע של משתמש ב', 'user-b');
+
+  const authSwapCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authSwapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB }]
+  });
+  const authSwapPage = await authSwapCtx.newPage();
+  await authSwapPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await authSwapPage.getByText('מידע פרטי של משתמש א').first().waitFor();
+  await test('range cache is cleared when authenticated user A changes to user B in the same month', async () => {
+    await authSwapPage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authSwapPage.getByText('מידע של משתמש ב').first().waitFor();
+    assert.equal(await authSwapPage.getByText('מידע פרטי של משתמש א').count(), 0);
+    const calls = await authSwapPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 2,
+      'a new principal must perform a new authorized range read');
+    await authSwapPage.locator('[data-tab="mine"]').click();
+    await authSwapPage.getByText('מידע של משתמש ב').first().waitFor();
+    const afterMine = await authSwapPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(afterMine.filter((entry) => entry.name === 'getStationScheduleRange').length, 2,
+      'station and personal tabs still share one range read inside the new auth generation');
+  });
+  await authSwapCtx.close();
+
+  const authRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA, delay:180 }, { data:rangeB, delay:5 }]
+  });
+  const authRacePage = await authRaceCtx.newPage();
+  await authRacePage.goto(base + '?tab=station', { waitUntil:'domcontentloaded' });
+  await authRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getStationScheduleRange'));
+  await test('a late range response for user A cannot overwrite user B after an auth transition', async () => {
+    await authRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authRacePage.getByText('מידע של משתמש ב').first().waitFor();
+    await authRacePage.waitForTimeout(230);
+    assert.equal(await authRacePage.getByText('מידע פרטי של משתמש א').count(), 0);
+    assert.equal(await authRacePage.getByText('מידע של משתמש ב').count() > 0, true);
+    assert.equal(await authRacePage.locator('#stationContent .msg.err').count(), 0,
+      'discarding a stale response must not replace the new board with an error');
+  });
+  await authRaceCtx.close();
+
+  const authRejectCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(authRejectCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[
+      { reject:true, code:'functions/permission-denied', message:'old user denied', delay:180 },
+      { data:rangeB, delay:5 }
+    ]
+  });
+  const authRejectPage = await authRejectCtx.newPage();
+  const authRejectErrors = [];
+  authRejectPage.on('pageerror', (error) => authRejectErrors.push(error.message));
+  await authRejectPage.goto(base + '?tab=station', { waitUntil:'domcontentloaded' });
+  await authRejectPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getStationScheduleRange'));
+  await test('a late rejection for user A is inert after user B has rendered', async () => {
+    await authRejectPage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      email:'user-b@example.invalid', stationId:'eilat_102'
+    }));
+    await authRejectPage.getByText('מידע של משתמש ב').first().waitFor();
+    await authRejectPage.waitForTimeout(230);
+    assert.equal(await authRejectPage.locator('#stationContent .msg.err').count(), 0);
+    assert.equal(await authRejectPage.getByText('מידע של משתמש ב').count() > 0, true);
+    assert.deepEqual(authRejectErrors, []);
+  });
+  await authRejectCtx.close();
+
+  const personalA = JSON.parse(JSON.stringify(mine));
+  personalA.days[0].role_label = 'כרטיס אישי סודי של משתמש א';
+  const personalB = JSON.parse(JSON.stringify(mine));
+  personalB.days[0].role_label = 'כרטיס אישי של משתמש ב';
+  const personalSwapCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(personalSwapCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB, delay:5 }],
+    getMyScheduleV2:[{ data:personalA }, { data:personalB, delay:400 }]
+  });
+  const personalSwapPage = await personalSwapCtx.newPage();
+  await personalSwapPage.goto(base + '?tab=mine', { waitUntil:'load' });
+  await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').waitFor();
+  await test('user A personal card stays cleared while user B daily response is still pending', async () => {
+    const clearedImmediately = await personalSwapPage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+        email:'user-b@example.invalid', stationId:'eilat_102'
+      });
+      return document.getElementById('mineToday').textContent === ''
+        && document.getElementById('mineToday').hidden === true;
+    });
+    assert.equal(clearedImmediately, true,
+      'the previous personal card must be cleared synchronously at the auth boundary');
+    await personalSwapPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getStationScheduleRange').length === 2);
+    await personalSwapPage.waitForTimeout(80);
+    assert.equal(await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').count(), 0);
+    assert.equal(await personalSwapPage.locator('#mineToday').isHidden(), true,
+      'a fast monthly response may not reveal the previous daily card');
+    await personalSwapPage.getByText('כרטיס אישי של משתמש ב').waitFor();
+    assert.equal(await personalSwapPage.locator('#mineToday').isVisible(), true);
+    assert.equal(await personalSwapPage.getByText('כרטיס אישי סודי של משתמש א').count(), 0);
+  });
+  await personalSwapCtx.close();
+
+  const tokenRefreshCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(tokenRefreshCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeB, delay:80 }]
+  });
+  const tokenRefreshPage = await tokenRefreshCtx.newPage();
+  await tokenRefreshPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await tokenRefreshPage.getByText('מידע פרטי של משתמש א').first().waitFor();
+  await test('same-UID ID-token refresh clears old station data and performs a fresh authorized read', async () => {
+    await tokenRefreshPage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid', {
+      email:'same-user@example.invalid', stationId:'other_102', role:'firefighter'
+    }));
+    assert.equal(await tokenRefreshPage.getByText('מידע פרטי של משתמש א').count(), 0,
+      'sensitive board data is removed synchronously at the token boundary');
+    await tokenRefreshPage.getByText('מידע של משתמש ב').first().waitFor();
+    const calls = await tokenRefreshPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter((entry) => entry.name === 'getStationScheduleRange').length, 2);
+  });
+  await tokenRefreshCtx.close();
+
+  const sameScopeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(sameScopeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleRange:[{ data:rangeA }, { data:rangeA }, { data:rangeA }]
+  });
+  const sameScopePage = await sameScopeCtx.newPage();
+  await sameScopePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await sameScopePage.locator('#appMain:not(.hide)').waitFor();
+  const nextMonth = shiftMonthValue(today.slice(0, 7), 1);
+  const nextMonthIndex = Number(nextMonth.slice(5, 7)) - 1;
+  await sameScopePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+  assert.equal(await sameScopePage.locator('#policySteps .step.min .n').textContent(), '3');
+  await sameScopePage.locator('[data-tab="station"]').click();
+  await sameScopePage.locator('#stationBoard').waitFor();
+  await sameScopePage.locator('#stationHead button[data-index="' + nextMonthIndex + '"]').click();
+  await sameScopePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .filter((entry) => entry.name === 'getStationScheduleRange').length === 2);
+  await test('routine same-scope token refresh preserves the selected month and unsaved manager policy', async () => {
+    await sameScopePage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid'));
+    await sameScopePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter((entry) => entry.name === 'getStationScheduleRange').length === 3);
+    assert.equal(await sameScopePage.locator('#stationHead button[data-index="' + nextMonthIndex + '"]')
+      .getAttribute('aria-pressed'), 'true');
+    const calls = await sameScopePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const ranges = calls.filter((entry) => entry.name === 'getStationScheduleRange');
+    assert.equal(ranges.at(-1).payload.from.slice(0, 7), nextMonth);
+    assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1,
+      'routine token refresh may not reload and overwrite an unsaved policy');
+    await sameScopePage.locator('[data-tab="manage"]').click();
+    assert.equal(await sameScopePage.locator('#policySteps .step.min .n').textContent(), '3');
+    assert.equal(await sameScopePage.locator('#savePolicy').isEnabled(), true);
+  });
+  await sameScopeCtx.close();
+
+  const policyAuthRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  const policyStrengthening = Object.assign({}, policyWeakening, {
+    changes:[{ kind:'minimum', sub_station:'main', from:2, to:3, weakens:false }],
+    weakening:[]
+  });
+  await prepare(policyAuthRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }, { data:setup }],
+    previewSchedulePolicy:[{ data:policyStrengthening, delay:80 }],
+    saveSchedulePolicy:[{ data:policySaved }]
+  });
+  const policyAuthRacePage = await policyAuthRaceCtx.newPage();
+  await policyAuthRacePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await policyAuthRacePage.locator('#appMain:not(.hide)').waitFor();
+  await test('an old manager preview cannot become a write while new token claims are still loading', async () => {
+    await policyAuthRacePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+    await policyAuthRacePage.locator('#savePolicy').click();
+    await policyAuthRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some((entry) => entry.name === 'previewSchedulePolicy'));
+    const hiddenImmediately = await policyAuthRacePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+        email:'manager-b@example.invalid', stationId:'station_b', __token_delay_ms:220
+      });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await policyAuthRacePage.waitForTimeout(130);
+    const callsDuringClaims = await policyAuthRacePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(callsDuringClaims.some((entry) => entry.name === 'saveSchedulePolicy'), false,
+      'manager A preview crossed the token boundary and wrote as manager B');
+    await policyAuthRacePage.locator('#appMain:not(.hide)').waitFor();
+  });
+  await policyAuthRaceCtx.close();
+
+  const sameScopeWriteCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(sameScopeWriteCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    previewSchedulePolicy:[{ data:policyStrengthening, delay:80 }],
+    saveSchedulePolicy:[{ data:policySaved }]
+  });
+  const sameScopeWritePage = await sameScopeWriteCtx.newPage();
+  await sameScopeWritePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await sameScopeWritePage.locator('#appMain:not(.hide)').waitFor();
+  await test('same-scope token refresh during a write stays closed until server truth is reloaded', async () => {
+    await sameScopeWritePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+    await sameScopeWritePage.locator('#savePolicy').click();
+    await sameScopeWritePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some((entry) => entry.name === 'previewSchedulePolicy'));
+    await sameScopeWritePage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid', {
+      __token_delay_ms:220
+    }));
+    await sameScopeWritePage.waitForTimeout(130);
+    assert.equal((await sameScopeWritePage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .some((entry) => entry.name === 'saveSchedulePolicy'), false);
+    await sameScopeWritePage.locator('#appMain:not(.hide)').waitFor();
+    assert.match(await sameScopeWritePage.locator('#availabilityTitle').textContent(), /נדרש אימות מחדש/);
+    assert.equal(await sameScopeWritePage.locator('#manageView').isVisible(), false,
+      'an interrupted operation must not silently unlock the management screen');
+  });
+  await sameScopeWriteCtx.close();
+
+  const revokeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(revokeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusFirefighter }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getStationScheduleRange:[{ data:rangeB }]
+  });
+  const revokePage = await revokeCtx.newPage();
+  await revokePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await revokePage.locator('#manageView:not([hidden])').waitFor();
+  await test('manager-to-member identity change conceals old management data before the new status resolves', async () => {
+    const hiddenImmediately = await revokePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', { email:'user-b@example.invalid' });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await revokePage.locator('#appMain:not(.hide)').waitFor();
+    await revokePage.getByText('מידע של משתמש ב').first().waitFor();
+    assert.equal(await revokePage.locator('#manageTab').isVisible(), false);
+    assert.equal(await revokePage.locator('#stationView').isVisible(), true);
+  });
+  await revokeCtx.close();
+
+  const setupStationA = JSON.parse(JSON.stringify(setup));
+  setupStationA.policy.sub_stations[0].label = 'מדיניות סודית של תחנה א';
+  setupStationA.people[0].name = 'עובד סודי של תחנה א';
+  const managerScopeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(managerScopeCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[
+      { data:setupStationA },
+      { reject:true, code:'functions/unavailable', message:'station B setup unavailable', delay:40 }
+    ]
+  });
+  const managerScopePage = await managerScopeCtx.newPage();
+  await managerScopePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await managerScopePage.getByRole('button', { name:'מדיניות סודית של תחנה א' }).waitFor();
+  await test('manager A workspace is erased when manager B setup fails in another station', async () => {
+    const hiddenImmediately = await managerScopePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+        email:'manager-b@example.invalid', stationId:'station_b'
+      });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await managerScopePage.locator('#appMain:not(.hide)').waitFor();
+    assert.equal(await managerScopePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await managerScopePage.locator('#manageView').isVisible(), false);
+    assert.equal(await managerScopePage.getByText('מדיניות סודית של תחנה א').count(), 0);
+    assert.equal(await managerScopePage.getByText('עובד סודי של תחנה א').count(), 0);
+    assert.equal(await managerScopePage.locator('#policySubs').textContent(), '');
+    assert.equal(await managerScopePage.locator('#policySteps').textContent(), '');
+  });
+  await managerScopeCtx.close();
+
+  const staleQualCatalog = {
+    catalog:[{ key:'station_a_secret', label:'כשירות סודית של תחנה א', order:10,
+      critical:false, builtin:false, active:true, minimum:0, revision:1 }],
+    holders:{ station_a_secret:1 }, holdings_revision:1,
+    people:[{ uid:'manager-a', name:'עובד סודי מכשירויות תחנה א', sub_station:'eilat',
+      roles:['firefighter'], qualifications:['station_a_secret'], revision:1, legacy:[] }],
+    unknown_holders:[], gap_policy:{ station_minimum:7, revision:1 }
+  };
+  const qualRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(qualRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[
+      { data:setup },
+      { reject:true, code:'functions/unavailable', message:'station B setup unavailable', delay:30 }
+    ],
+    getQualificationCatalog:[{ data:staleQualCatalog, delay:220 }]
+  });
+  const qualRacePage = await qualRaceCtx.newPage();
+  await qualRacePage.goto(base + '?tab=quals', { waitUntil:'domcontentloaded' });
+  await qualRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some((entry) => entry.name === 'getQualificationCatalog'));
+  await test('a late qualifications response from manager A is inert after manager B setup fails', async () => {
+    await qualRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+      email:'manager-b@example.invalid', stationId:'station_b'
+    }));
+    await qualRacePage.locator('#appMain:not(.hide)').waitFor();
+    await qualRacePage.waitForTimeout(260);
+    assert.equal(await qualRacePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await qualRacePage.locator('#qualsView').isVisible(), false);
+    assert.equal(await qualRacePage.getByText('כשירות סודית של תחנה א').count(), 0);
+    assert.equal(await qualRacePage.getByText('עובד סודי מכשירויות תחנה א').count(), 0);
+    assert.equal(await qualRacePage.locator('#qualRows').textContent(), '');
+    assert.equal(await qualRacePage.locator('#qualPeople').textContent(), '');
+  });
+  await qualRaceCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 66);
+assert.equal(passed, 78);
 console.log('\n' + passed + ' schedule management browser checks passed.');

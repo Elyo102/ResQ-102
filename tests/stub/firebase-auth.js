@@ -40,11 +40,15 @@ function makeUser(roleName, uid, extraClaims){
     email_verified: true,
     firebase: { sign_in_provider: 'password' }
   }, ROLES[roleName] || ROLES.super, extraClaims || {});
+  const tokenDelay = Math.max(0, Number(claims.__token_delay_ms) || 0);
+  delete claims.__token_delay_ms;
   return {
     uid: uid || 'stub-uid',
     email: claims.email || 'eldad50@gmail.com',
     emailVerified: claims.email_verified !== false,
-    getIdTokenResult: () => Promise.resolve({ claims: claims }),
+    getIdTokenResult: () => tokenDelay > 0
+      ? new Promise(resolve => setTimeout(() => resolve({ claims: claims }), tokenDelay))
+      : Promise.resolve({ claims: claims }),
     getIdToken: force => {
       markAuth('getIdToken', { force:force === true });
       if (typeof window !== 'undefined' && window.__AUTH_HOLD_TOKEN === true) {
@@ -59,6 +63,7 @@ let USER = makeUser(WHO,
   (typeof window !== 'undefined' && window.__SMOKE_UID) || 'stub-uid');
 
 const observers = new Set();
+const idTokenObservers = new Set();
 const AUTH = { currentUser: SIGNED_OUT ? null : USER };
 function markAuth(name, detail){
   if (typeof window === 'undefined') return;
@@ -70,6 +75,11 @@ export function onAuthStateChanged(a, cb){
   observers.add(cb);
   setTimeout(() => cb(AUTH.currentUser), 20);
   return () => observers.delete(cb);
+}
+export function onIdTokenChanged(a, cb){
+  idTokenObservers.add(cb);
+  setTimeout(() => cb(AUTH.currentUser), 20);
+  return () => idTokenObservers.delete(cb);
 }
 
 // בדיקות מרוץ יכולות להחליף זהות בלי לטעון מחדש את מודול ה-stub.
@@ -85,30 +95,51 @@ if (typeof window !== 'undefined') {
     markAuth('emitAuth', { role:roleName == null ? '' : roleName,
                            uid:AUTH.currentUser ? AUTH.currentUser.uid : '' });
     observers.forEach(cb => cb(AUTH.currentUser));
+    idTokenObservers.forEach(cb => cb(AUTH.currentUser));
+  };
+  // החלפת claims לאותו UID אינה אירוע auth-state, אבל היא כן אירוע
+  // ID-token. הבדיקה הזאת מוודאת שהמסך מאזין לערוץ המחמיר יותר.
+  window.__SMOKE_EMIT_ID_TOKEN = function (roleName, uid, extraClaims) {
+    USER = makeUser(roleName, uid, extraClaims);
+    AUTH.currentUser = USER;
+    markAuth('emitIdToken', { role:roleName, uid:USER.uid });
+    idTokenObservers.forEach(cb => cb(USER));
   };
 }
 export function signInWithEmailAndPassword(){
   markAuth('signInWithEmailAndPassword');
   AUTH.currentUser = USER;
-  setTimeout(() => observers.forEach(cb => cb(USER)), 0);
+  setTimeout(() => {
+    observers.forEach(cb => cb(USER));
+    idTokenObservers.forEach(cb => cb(USER));
+  }, 0);
   return Promise.resolve({ user: USER });
 }
 export function createUserWithEmailAndPassword(){
   markAuth('createUserWithEmailAndPassword');
   AUTH.currentUser = USER;
-  setTimeout(() => observers.forEach(cb => cb(USER)), 0);
+  setTimeout(() => {
+    observers.forEach(cb => cb(USER));
+    idTokenObservers.forEach(cb => cb(USER));
+  }, 0);
   return Promise.resolve({ user: USER });
 }
 export function signOut(){
   markAuth('signOut');
   AUTH.currentUser = null;
-  setTimeout(() => observers.forEach(cb => cb(null)), 0);
+  setTimeout(() => {
+    observers.forEach(cb => cb(null));
+    idTokenObservers.forEach(cb => cb(null));
+  }, 0);
   return Promise.resolve();
 }
 export function deleteUser(){
   markAuth('deleteUser');
   AUTH.currentUser = null;
-  setTimeout(() => observers.forEach(cb => cb(null)), 0);
+  setTimeout(() => {
+    observers.forEach(cb => cb(null));
+    idTokenObservers.forEach(cb => cb(null));
+  }, 0);
   return Promise.resolve();
 }
 export function updatePassword(){ return Promise.resolve(); }

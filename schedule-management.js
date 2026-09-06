@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h4';
-import { renderNav, renderStuckNav } from './nav.js?v=42h4';
-import { initPWA } from './pwa.js?v=42h4';
-import { initAppCheck } from './appcheck.js?v=42h4';
-import { readScheduleFile } from './schedule-file-import.js?v=42h4';
+import { firebaseConfig } from './firebase-config.js?v=42h5';
+import { renderNav, renderStuckNav } from './nav.js?v=42h5';
+import { initPWA } from './pwa.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h5';
+import { readScheduleFile } from './schedule-file-import.js?v=42h5';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h4';
+import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h5';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -49,6 +49,9 @@ const call = Object.freeze({
 const $ = (id) => document.getElementById(id);
 const state = {
   user: null, claims: {}, status: null, setup: null, draft: null,
+  // כל אירוע התחברות מקבל דור חדש. כך תשובה שהתחילה עבור משתמש
+  // קודם אינה יכולה להיכנס למטמון או להיצבע במסך של המשתמש הבא.
+  authGeneration: 0, authScope: null, authContextVersion: 0,
   draftPreview: null, previewStart: null,
   // מזהה פרסום הוא חלק מחוזה ה-idempotency עם השרת. כל ניסיון
   // חוזר על אותה טיוטה חתומה ובאותה כוונה (הכנה/פרסום) חייב להשתמש
@@ -65,7 +68,7 @@ const state = {
   importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
   importStationMap: null, importDisplay: null, displayRequestIds: {}, displayStatusSequence: 0,
   // הלוח
-  month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
+  month: null, range: null, rangeMonth: null, rangePending: null, rangeRequest: 0,
   tab: null, busy: false
 };
 
@@ -79,10 +82,12 @@ const DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', '
 // מוצהר, ולא תקלה שמישהו יגלה כשתיפתח תחנת קצה נוספת.
 const SUB_CLASS = ['s1', 's2', 's3', 's4'];
 const FIXED_STATIONS = Object.freeze([
-  Object.freeze({ id:'eilat', label:'אילת', minimum:7 }),
-  Object.freeze({ id:'shahmon', label:'שחמון', minimum:null }),
-  Object.freeze({ id:'timna', label:'תמנע', minimum:null }),
-  Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null })
+  // גובה השורות נלקח מתבנית הסידור השנתית של תחנת אילת. זו רצפת
+  // תצוגה בלבד, לא תקרת כוח אדם: שם נוסף תמיד מוצג ולעולם אינו נחתך.
+  Object.freeze({ id:'eilat', label:'אילת', minimum:7, minVisualSlots:15 }),
+  Object.freeze({ id:'shahmon', label:'שחמון', minimum:null, minVisualSlots:5 }),
+  Object.freeze({ id:'timna', label:'תמנע', minimum:null, minVisualSlots:5 }),
+  Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null, minVisualSlots:2 })
 ]);
 
 function localDate() {
@@ -263,6 +268,7 @@ function hideScheduleViews() {
   $('manageView').hidden = true;
   $('mineView').hidden = true;
   $('stationView').hidden = true;
+  $('qualsView').hidden = true;
 }
 
 function showUnavailable(title, text) {
@@ -564,6 +570,7 @@ function renderSourceReport(report, blockedCode) {
 
 async function checkSource() {
   if (state.sourceBusy) return;
+  const task = authTask();
   const rows = sourceRowsForServer();
   if (!rows) return;
   state.sourceBusy = true;
@@ -573,6 +580,7 @@ async function checkSource() {
   message('sourceMessage', 'בודק את הרשימה מול חוקי התחנה…', 'info');
   try {
     const result = (await call.sourcePreview({ rows })).data;
+    if (!authTaskCurrent(task)) return;
     state.sourcePlan = result;
     renderSourceReport(result.report, result.code);
     if (result.blocked) {
@@ -584,11 +592,14 @@ async function checkSource() {
         result.counts.people + ' אנשים ייכנסו למקור, כמהדורה ' + result.revision + '.', 'ok');
     }
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     renderSourceReport(null);
     message('sourceMessage', errorText(error), 'err');
   } finally {
-    state.sourceBusy = false;
-    updateSourceButtons();
+    if (authTaskCurrent(task)) {
+      state.sourceBusy = false;
+      updateSourceButtons();
+    }
   }
 }
 
@@ -603,6 +614,7 @@ function droppedCount(plan) {
 
 async function saveSource() {
   if (state.sourceBusy || !state.sourcePlan || state.sourcePlan.blocked) return;
+  const task = authTask();
   const rows = sourceRowsForServer();
   const rejected = state.sourcePlan.report ? state.sourcePlan.report.rejected : 0;
   if (rejected > 0 && !$('sourceAccept').checked) return;
@@ -634,6 +646,7 @@ async function saveSource() {
       accept_carry_dropped: dropped > 0 ? dropped : undefined,
       accept_missing: missing > 0 ? missing : undefined
     })).data;
+    if (!authTaskCurrent(task)) return;
     message('sourceMessage', result.written
       ? 'המקור נשמר כמהדורה ' + result.revision + ' עם ' + result.counts.people + ' אנשים.'
         + (result.activated ? ' הוא המקור הפעיל.' : '')
@@ -642,14 +655,21 @@ async function saveSource() {
     $('sourceAccept').checked = false;
     renderSourceReport(null);
     await loadSetup();
+    if (!authTaskCurrent(task)) return;
     await loadModeOptions();
-    state.status = (await call.status({})).data;
+    if (!authTaskCurrent(task)) return;
+    const status = (await call.status({})).data;
+    if (!authTaskCurrent(task)) return;
+    state.status = status;
     setMode(state.status);
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     message('sourceMessage', errorText(error), 'err');
   } finally {
-    state.sourceBusy = false;
-    updateSourceButtons();
+    if (authTaskCurrent(task)) {
+      state.sourceBusy = false;
+      updateSourceButtons();
+    }
   }
 }
 
@@ -816,13 +836,16 @@ function updateModeApply() {
   $('modeApply').disabled = state.modeBusy || !ready;
 }
 
-async function loadModeOptions() {
+async function loadModeOptions(generation = state.authGeneration) {
+  let view = null;
   try {
-    state.modeView = (await call.modeOptions({})).data;
+    view = (await call.modeOptions({})).data;
   } catch (error) {
     // כשל בקריאת האפשרויות אינו מסתיר את המסך ואינו ממציא הרשאה.
-    state.modeView = null;
+    view = null;
   }
+  if (generation !== state.authGeneration) return;
+  state.modeView = view;
   renderModeCard();
 }
 
@@ -866,9 +889,10 @@ function verifiedCutoverResult(pending, raw) {
   return result;
 }
 
-async function promotePending() {
+async function promotePending(task = authTask()) {
   const pending = state.pendingCutover;
   const result = verifiedCutoverResult(pending, (await call.cutoverPromote(pending)).data);
+  if (!authTaskCurrent(task)) return null;
   state.pendingCutover = null;
   state.cutoverRequestId = null;
   return result;
@@ -881,6 +905,7 @@ function cutoverSuccessText(result) {
 
 async function promoteToNew() {
   if (state.modeBusy) return;
+  const task = authTask();
   const pending = state.pendingCutover;
   const candidate = usableCandidate();
   /* ⭐ 386.3 · בקשה ממתינה קודמת למועמד: אחרי commit אמיתי הרענון
@@ -892,12 +917,14 @@ async function promoteToNew() {
   try {
     if (pending) {
       message('modeMessage', 'שולח שוב את המעבר שלא קיבל תשובה…', 'info');
-      result = await promotePending();
+      result = await promotePending(task);
+      if (!authTaskCurrent(task)) return;
     } else {
       message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
       const report = (await call.cutoverPreview({
         candidate_publication_id: candidate.publication_id
       })).data;
+      if (!authTaskCurrent(task)) return;
       if (report.blocked) {
         const why = Object.keys(report.by_reason || {})
           .filter((key) => report.by_reason[key] > 0)
@@ -938,20 +965,23 @@ async function promoteToNew() {
         accept_changes: accept,
         expected_mode: state.modeView.current
       };
-      result = await promotePending();
+      result = await promotePending(task);
+      if (!authTaskCurrent(task)) return;
     }
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     /* ⭐ אין תשובה מאומתת — הכוונה נשארת ב-pendingCutover, והכפתור
      * הבא שולח אותה שוב לפני כל preview. */
     message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. (' + (error.code || error.message) + ') '
       + (state.pendingCutover ? 'אפשר לנסות שוב — אותה בקשה, לא מעבר חדש. ' : '')
       + 'המצב נטען מחדש מהשרת.', 'err');
-    try { await refreshAfterModeChange(); } catch (_) { /* הודעה כבר הוצגה */ }
+    try { await refreshAfterModeChange(task); } catch (_) { /* הודעה כבר הוצגה */ }
+    if (!authTaskCurrent(task)) return;
     return;
   } finally {
     /* ⭐ 386.1 · כל יציאה — דוח חסום, ביטול באחד משני האישורים, כשל —
      * משחררת את המסך. הרענון של ההצלחה רץ מחוץ ל-try הזה. */
-    if (result === null) {
+    if (result === null && authTaskCurrent(task)) {
       state.modeBusy = false;
       updateModeApply();
     }
@@ -960,32 +990,44 @@ async function promoteToNew() {
    * נכשל" — הוא „המעבר הצליח, המסך לא התרענן". */
   message('modeMessage', cutoverSuccessText(result), 'ok');
   try {
-    await refreshAfterModeChange();
+    await refreshAfterModeChange(task);
+    if (!authTaskCurrent(task)) return;
   } catch (_) {
+    if (!authTaskCurrent(task)) return;
     message('modeMessage', cutoverSuccessText(result)
       + ' מצב המסך לא התרענן; יש לרענן את הדף לפני פעולה נוספת.', 'warn');
   } finally {
-    state.modeBusy = false;
-    updateModeApply();
+    if (authTaskCurrent(task)) {
+      state.modeBusy = false;
+      updateModeApply();
+    }
   }
 }
 
-async function refreshAfterModeChange() {
-  state.status = (await call.status({})).data;
+async function refreshAfterModeChange(task = authTask()) {
+  const status = (await call.status({})).data;
+  if (!authTaskCurrent(task)) return false;
+  state.status = status;
   setMode(state.status);
   invalidateRange();
   showScheduleViews();
   await loadModeOptions();
+  if (!authTaskCurrent(task)) return false;
   await loadSetup();
+  if (!authTaskCurrent(task)) return false;
   if (state.tab === 'station') await loadStationRange();
+  if (!authTaskCurrent(task)) return false;
   if (state.tab === 'mine') await loadMineRange();
+  if (!authTaskCurrent(task)) return false;
   setRollbackAvailability();
   updatePublishAvailability();
   updateRunAvailability();
+  return true;
 }
 
 async function applyModeChange() {
   if (state.modeBusy || !state.modeTarget || !state.modeView) return;
+  const task = authTask();
   const target = state.modeTarget;
   const from = state.modeView.current;
   // ⭐ מעבר ל-new אינו עובר כאן. השרת דוחה אותו, והמסך לא מתיימר.
@@ -1007,6 +1049,7 @@ async function applyModeChange() {
       reason_code: $('modeReason').value,
       expected_mode: from
     })).data;
+    if (!authTaskCurrent(task)) return;
     message('modeMessage', result.changed
       ? 'מצב המנוע שונה מ„' + (MODE_LABEL[result.from] || result.from)
         + '" ל„' + (MODE_LABEL[result.to] || result.to) + '".'
@@ -1016,12 +1059,16 @@ async function applyModeChange() {
     $('modeConfirm').value = '';
     $('modeReason').value = '';
     // המצב השתנה — כל מה שנגזר ממנו נטען מחדש מהשרת.
-    await refreshAfterModeChange();
+    await refreshAfterModeChange(task);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     message('modeMessage', errorText(error), 'err');
   } finally {
-    state.modeBusy = false;
-    renderModeCard();
+    if (authTaskCurrent(task)) {
+      state.modeBusy = false;
+      renderModeCard();
+    }
   }
 }
 
@@ -1059,8 +1106,10 @@ function appendAbsenceRows(board, days) {
   rows.forEach(([kind, label], rowIndex) => {
     const ariaRow = node('div', 'board-row');
     ariaRow.setAttribute('role', 'row');
+    ariaRow.dataset.boardRow = kind;
     const stub = node('div', 'stub absence absence-stub');
     stub.setAttribute('role', 'rowheader');
+    stub.dataset.boardRow = kind;
     stub.appendChild(node('b', '', label));
     ariaRow.appendChild(stub);
     days.forEach((day, index) => {
@@ -1071,6 +1120,7 @@ function appendAbsenceRows(board, days) {
         + (ready ? '' : ' unknown') + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
       cell.dataset.absenceKind = kind;
+      cell.dataset.boardRow = kind;
       cell.dataset.date = day.date;
       if (!ready) cell.title = 'אין נתון: החודש הזה לא הודבק מהגיליון';
       const people = ready ? day.absences.filter((item) => absenceKind(item) === kind) : [];
@@ -1088,6 +1138,63 @@ function appendAbsenceRows(board, days) {
   });
 }
 
+function noteLabel(prefix, item) {
+  const title = item && typeof item.title === 'string' && item.title.trim()
+    ? item.title.trim() : 'ללא כותרת';
+  const hours = item && typeof item.hours === 'string' && item.hours.trim()
+    ? ' · ' + item.hours.trim() : '';
+  return prefix + ' · ' + title + hours;
+}
+
+/* הערות, אירועים ואבטחות שייכים ליום כולו ולא לאילת דווקא. לכן הם
+ * מקבלים שורה קבועה מתחת לארבע התחנות, כמו בגיליון המקור. מידע חסר
+ * נשאר „לא ידוע"; רשימה מאומתת וריקה מקבלת מקף. */
+function appendNotesRow(board, days) {
+  const ariaRow = node('div', 'board-row');
+  ariaRow.setAttribute('role', 'row');
+  ariaRow.dataset.boardRow = 'notes';
+  const stub = node('div', 'stub notes notes-stub');
+  stub.setAttribute('role', 'rowheader');
+  stub.dataset.boardRow = 'notes';
+  stub.appendChild(node('b', '', 'הערות'));
+  ariaRow.appendChild(stub);
+
+  days.forEach((day, index) => {
+    const eventsReady = Array.isArray(day.events);
+    const guardsReady = day.guards_status === 'ready' && Array.isArray(day.guards);
+    const ready = eventsReady && guardsReady;
+    const cell = node('div', 'cell notes-cell' + (ready ? '' : ' unknown')
+      + (index % 7 === 0 ? ' snap' : ''));
+    cell.setAttribute('role', 'gridcell');
+    cell.dataset.boardRow = 'notes';
+    cell.dataset.date = day.date;
+    if (!ready) cell.title = 'חלק ממידע ההערות אינו זמין';
+
+    if (eventsReady) (day.events || []).forEach((event) => {
+      const row = node('div', 'note-item event-note', noteLabel('אירוע', event));
+      if (event.cancelled === true) {
+        row.classList.add('cancelled');
+        row.appendChild(node('span', 'note-status', 'בוטל'));
+      }
+      cell.appendChild(row);
+    });
+    if (Array.isArray(day.guards)) (day.guards || []).forEach((guard) => {
+      const names = (guard.people || []).map((person) =>
+        typeof person === 'string' ? person : person && person.person).filter(Boolean);
+      const row = node('div', 'note-item guard-note', noteLabel('אבטחה', guard));
+      row.appendChild(node('span', 'note-status', names.length ? names.join(' · ') : 'טרם אוישה'));
+      cell.appendChild(row);
+    });
+    if (!ready) {
+      cell.appendChild(node('span', 'notes-unavailable', 'אין נתון מלא'));
+    } else if (!cell.children.length) {
+      cell.appendChild(node('span', 'absence-empty', '—'));
+    }
+    ariaRow.appendChild(cell);
+  });
+  board.appendChild(ariaRow);
+}
+
 function absenceNote(days) {
   if (!days || !days.length) return '';
   const ready = days.filter((day) => ABSENCE_ROWS.every(([kind]) => absenceDataReady(day, kind))).length;
@@ -1100,35 +1207,107 @@ function absenceNote(days) {
 /**
  * ⭐ מטמון חתום אחד לכל חודש ולכל סוג תצוגה.
  *
- * „סידור התחנה" רשאי להציג טיוטה מיובאת שנבחרה להצגה, בעוד
- * „הסידור שלי" נשאר תמיד על הסידור התפעולי. לכן מעבר בין שתי
- * הלשוניות דורש לכל היותר קריאה אחת לכל סוג ואסור למחזר ביניהן
- * תשובה, גם כשהחודש זהה.
+ * „סידור התחנה" ו„הסידור שלי" משתמשים באותה תשובת תצוגה חודשית;
+ * הלשונית האישית רק מסננת מתוכה ימים. לכן מעבר ביניהן אינו מוסיף
+ * קריאת שרת. תצוגה תפעולית ותצוגת קובץ עדיין מופרדות במפתח.
  *
  * המטמון מוחלף בכל החלפת חודש, ומתאפס בפרסום ובחזרה לאחור.
  */
-function invalidateRange() { state.range = null; state.rangeMonth = null; state.rangePending = null; }
+function invalidateRange() {
+  state.rangeRequest += 1;
+  state.range = null;
+  state.rangeMonth = null;
+  state.rangePending = null;
+}
+
+function rangePrincipal() {
+  return state.user && state.user.uid ? String(state.user.uid) : '';
+}
+
+function authScopeKey(user, claims) {
+  const token = claims || {};
+  return JSON.stringify([
+    user && user.uid ? String(user.uid) : '',
+    String(token.stationId || token.station_id || ''),
+    String(token.districtId || token.district_id || ''),
+    String(token.role || ''),
+    String(token.emp || token.employee_number || ''),
+    String(token.shift || ''),
+    token.super === true
+  ]);
+}
+
+function scopedOperationInFlight() {
+  return state.busy === true || state.policyBusy === true
+    || state.sourceBusy === true || state.modeBusy === true;
+}
+
+/*
+ * תשובת שרת שייכת לדור הטוקן, לזהות ולתחום ההרשאה שהתחילו אותה.
+ * רענון טוקן ללא פעולה פתוחה שומר את הטופס והחודש; רענון באמצע
+ * פעולה מבטל את ההמשך ונשאר סגור עד טעינה מחדש. כך תשובה מאוחרת
+ * של מנהל/ת א׳ אינה יכולה להמשיך ככתיבה של מנהל/ת ב׳.
+ */
+function authTask() {
+  return Object.freeze({
+    generation: state.authGeneration,
+    version: state.authContextVersion,
+    principal: rangePrincipal(),
+    scope: state.authScope
+  });
+}
+
+function authTaskCurrent(task) {
+  return !!task
+    && task.generation === state.authGeneration
+    && task.version === state.authContextVersion
+    && task.principal === rangePrincipal()
+    && task.scope === state.authScope;
+}
+
+function staleRangeError() {
+  const error = new Error('התחלף המשתמש או טווח התצוגה בזמן הטעינה.');
+  error.code = 'stale-range-view';
+  return error;
+}
+
+function isStaleRangeError(error) {
+  return error && error.code === 'stale-range-view';
+}
 
 function fetchRange(ym, displayImported) {
   const display = displayImported === true;
-  const rangeKey = ym + '|' + (display ? 'imported' : 'operational');
+  const generation = state.authGeneration;
+  const principal = rangePrincipal();
+  const rangeKey = generation + '|' + principal + '|' + ym + '|'
+    + (display ? 'imported' : 'operational');
   if (state.rangeMonth === rangeKey && state.range) return Promise.resolve(state.range);
   if (state.rangeMonth === rangeKey && state.rangePending) return state.rangePending;
   const bounds = monthBounds(ym);
+  const request = ++state.rangeRequest;
   state.rangeMonth = rangeKey;
   state.range = null;
-  state.rangePending = call.range({
+  let pending;
+  const isCurrent = () => state.authGeneration === generation
+    && rangePrincipal() === principal
+    && state.rangeRequest === request
+    && state.rangeMonth === rangeKey
+    && state.rangePending === pending;
+  pending = call.range({
     from: bounds.from, to: bounds.to, display_imported: display
   }).then((result) => {
-    if (state.rangeMonth !== rangeKey) return result.data;
+    if (!isCurrent()) throw staleRangeError();
     state.range = result.data;
     state.rangePending = null;
     return result.data;
   }, (error) => {
-    if (state.rangeMonth === rangeKey) { state.rangeMonth = null; state.rangePending = null; }
+    if (!isCurrent()) throw staleRangeError();
+    state.rangeMonth = null;
+    state.rangePending = null;
     throw error;
   });
-  return state.rangePending;
+  state.rangePending = pending;
+  return pending;
 }
 
 // כשל בקריאת אבטחות אינו הופך לוח לריק ואינו נראה כמו „אין
@@ -1169,25 +1348,12 @@ function subOrder(days) {
   return FIXED_STATIONS.map((station) => ({
     id: station.id,
     label: station.label,
-    minimum: lineOf(station.id)
+    minimum: lineOf(station.id),
+    minVisualSlots: station.minVisualSlots
   }));
 }
 
-// „הסידור שלי" נשאר שימושי גם כשהמנוע כבוי: במצב legacy אין מיפוי
-// אמין ממשמרת א/ב/ג לתחנת קצה, ולכן מציגים שם את שורת המשמרת האישית
-// כפי שהשרת החזיר. בלוח התחנתי לעולם לא משתמשים ברשימה הזאת.
-function legacySubOrder(days) {
-  const seen = [];
-  const labels = new Map();
-  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!sub || !sub.sub_station) return;
-    if (!seen.includes(sub.sub_station)) seen.push(sub.sub_station);
-    if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
-  }));
-  return seen.map((id) => ({ id, label: labels.get(id) || id, minimum: null }));
-}
-
-function cellContent(cell, block) {
+function cellContent(cell, block, minVisualSlots) {
   const people = (block && block.people) || [];
   const missing = !block || block.coverage === 'missing';
   // `block.minimum` הוא המינימום החתום של היום המוצג. `sub.minimum`
@@ -1196,6 +1362,9 @@ function cellContent(cell, block) {
     ? block.minimum : null;
   // קו 0 (או חסר) = „אין קו": אין קו אדום ואין „מתחת לקו".
   const minimum = Number.isInteger(declared) && declared > 0 ? declared : null;
+
+  const visualFloor = Number.isInteger(minVisualSlots) && minVisualSlots > 0
+    ? minVisualSlots : 0;
 
   if (missing) {
     cell.classList.add('unknown');
@@ -1207,19 +1376,26 @@ function cellContent(cell, block) {
     // ידית: הוא ההחלטה ששמורה ב-`schedule_policies`, ומשנים אותה
     // בכרטיס „חוקי התחנה" — במקום שבו היא באמת נשמרת.
     if (minimum !== null && minimum !== undefined && index === minimum) {
-      const bar = node('div', 'rulebar');
+      const bar = node('div', 'rulebar redline');
+      bar.dataset.afterSlot = String(minimum);
       bar.appendChild(node('span', 'ruleline'));
       cell.appendChild(bar);
     }
-    const row = node('div', 'nm'
+    const row = node('div', 'nm name-slot'
       + (index === 0 ? ' lead' : '')
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
+    row.dataset.slotIndex = String(index + 1);
+    if (person.is_me) {
+      row.dataset.isMe = 'true';
+      row.setAttribute('aria-label', (person.person || person.uid || '—') + ' · אני');
+    }
     if (['A', 'B', 'C'].includes(person.crew)) {
       row.classList.add('crew-' + person.crew);
       row.title = 'משמרת ' + ({ A: 'א', B: 'ב', C: 'ג' })[person.crew];
     }
     row.textContent = person.person || person.uid || '—';
+    if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
     cell.appendChild(row);
   });
 
@@ -1227,13 +1403,27 @@ function cellContent(cell, block) {
   // שומרות את מיקומו, בלי להציג אדם מומצא או לספור אותו כשיבוץ.
   if (!missing && minimum !== null && minimum !== undefined && people.length <= minimum) {
     for (let index = people.length; index < minimum; index += 1) {
-      const slot = node('div', 'nm line-slot', '\u00a0');
+      const slot = node('div', 'nm name-slot line-slot empty-slot', '\u00a0');
+      slot.dataset.slotIndex = String(index + 1);
       slot.setAttribute('aria-hidden', 'true');
       cell.appendChild(slot);
     }
-    const bar = node('div', 'rulebar');
+    const bar = node('div', 'rulebar redline');
+    bar.dataset.afterSlot = String(minimum);
     bar.appendChild(node('span', 'ruleline'));
     cell.appendChild(bar);
+  }
+  const filledUntil = Math.max(people.length, minimum || 0);
+  for (let index = filledUntil; index < visualFloor; index += 1) {
+    const slot = node('div', 'nm name-slot empty-slot', '\u00a0');
+    slot.dataset.slotIndex = String(index + 1);
+    slot.setAttribute('aria-hidden', 'true');
+    cell.appendChild(slot);
+  }
+  if (people.length > visualFloor && visualFloor > 0) {
+    cell.classList.add('template-overflow');
+    cell.appendChild(node('span', 'flag overflow',
+      'נוספו ' + (people.length - visualFloor) + ' שמות מעבר לתבנית'));
   }
   if (block && block.below_minimum && minimum !== null && minimum !== undefined) {
     cell.appendChild(node('span', 'flag under',
@@ -1290,8 +1480,10 @@ function renderBoard(target, days, options) {
   subs.forEach((sub, subIndex) => {
     const ariaRow = node('div', 'board-row');
     ariaRow.setAttribute('role', 'row');
+    ariaRow.dataset.station = sub.id;
     const stub = node('div', 'stub ' + subClass(subIndex));
     stub.setAttribute('role', 'rowheader');
+    stub.dataset.station = sub.id;
     stub.appendChild(node('b', '', sub.label));
     stub.appendChild(node('small', '',
       sub.minimum === null || sub.minimum === undefined ? 'אין קו' : 'קו ' + sub.minimum));
@@ -1303,31 +1495,19 @@ function renderBoard(target, days, options) {
       // מחלקת המשמרת נוספת עליה כשהצוות ידוע (הכרעת 4.9 — צבע העמודה).
       const cell = node('div', 'cell ' + subClass(subIndex) + (crew ? ' col-' + crew : '') + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
+      cell.dataset.station = sub.id;
+      cell.dataset.date = day.date;
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
-      cellContent(cell, block);
-      // אירועים ואבטחות שייכים ליום כולו ולא לתחנת קצה. הם נתלים
-      // על השורה הראשונה בלבד, כדי שלא יופיעו ארבע פעמים.
-      if (subIndex === 0) {
-        (day.events || []).forEach((event) => {
-          cell.appendChild(node('span', 'flag evt',
-            event.title + (event.hours ? ' · ' + event.hours : '')));
-        });
-        (day.guards || []).forEach((guard) => {
-          // אבטחה בלי אנשים אינה „ריקה" — היא טרם אוישה, וזה מידע
-          // תפעולי שאסור שייעלם רק מפני שהתא צר.
-          const names = (guard.people || []).map((person) =>
-            typeof person === 'string' ? person : person.person).filter(Boolean);
-          cell.appendChild(node('span', 'flag guard',
-            'אבטחה · ' + guard.title + (guard.hours ? ' · ' + guard.hours : '')
-            + ' · ' + (names.length ? names.join(' · ') : 'טרם אוישה')));
-        });
-      }
+      cellContent(cell, block, sub.minVisualSlots);
       ariaRow.appendChild(cell);
     });
     board.appendChild(ariaRow);
   });
 
-  if (opts.showAbsences !== false) appendAbsenceRows(board, days);
+  if (opts.showAbsences !== false) {
+    appendNotesRow(board, days);
+    appendAbsenceRows(board, days);
+  }
   target.appendChild(board);
   fitColumns(board);
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
@@ -1402,14 +1582,17 @@ function watchWeekLabel(boardId, weekLabelId, dayCount) {
 
 async function loadStationRange(ym) {
   if (!canViewSchedule()) return;
-  state.month = ym || state.month || monthStart();
-  renderBoardHead($('stationHead'), state.month,
+  const generation = state.authGeneration;
+  const requestedMonth = ym || state.month || monthStart();
+  state.month = requestedMonth;
+  renderBoardHead($('stationHead'), requestedMonth,
     (value) => loadStationRange(value), 'stationBoard', 'stationWeek');
   const box = $('stationContent');
   clear(box); box.appendChild(node('div', 'loader'));
   $('stationNote').textContent = '';
   try {
-    const view = await fetchRange(state.month, true);
+    const view = await fetchRange(requestedMonth, true);
+    if (generation !== state.authGeneration || state.month !== requestedMonth) return;
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
@@ -1424,6 +1607,8 @@ async function loadStationRange(ym) {
         : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
       + absenceNote(view.days) + guardsNotice(view.days);
   } catch (error) {
+    if (isStaleRangeError(error) || generation !== state.authGeneration
+        || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
   }
@@ -1528,64 +1713,90 @@ function renderMineToday() {
 async function respond(itemId, answer, reasonCode) {
   if (!state.status || state.status.mode !== 'new' || state.busy ||
       !state.mine || !state.mine.publication_id) return;
+  const task = authTask();
   state.busy = true;
   try {
     await call.respond({
       request_id: requestId('answer'), publication_id: state.mine.publication_id,
       item_id: itemId, answer, reason_code: reasonCode
     });
+    if (!authTaskCurrent(task)) return;
     await loadMine();
-  } catch (error) { alert(errorText(error)); }
-  finally { state.busy = false; }
+    if (!authTaskCurrent(task)) return;
+  } catch (error) {
+    if (!authTaskCurrent(task)) return;
+    alert(errorText(error));
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
-async function loadMine() {
+async function loadMine(generation = state.authGeneration) {
   if (!canViewSchedule()) return;
+  const principal = rangePrincipal();
+  let mine;
   try {
-    state.mine = (await call.mine({ date: localDate() })).data;
-  } catch (error) { state.mine = { active: false, error: errorText(error) }; }
+    mine = (await call.mine({ date: localDate() })).data;
+  } catch (error) { mine = { active: false, error: errorText(error) }; }
+  if (generation !== state.authGeneration || rangePrincipal() !== principal) return false;
+  state.mine = mine;
   renderMineToday();
-}
-
-function mySubStation() {
-  const person = state.setup && Array.isArray(state.setup.people)
-    ? state.setup.people.find((item) => item.id === (state.user && state.user.uid)) : null;
-  return person ? person.sub_station : null;
+  return true;
 }
 
 function daysWithMe(days) {
   return (days || []).filter((day) => (day.sub_stations || []).some((sub) =>
-    (sub.people || []).some((person) => person.is_me === true)));
+    (sub.people || []).some((person) => person.is_me === true && person.cancelled !== true)));
 }
 
 async function loadMineRange(ym) {
   if (!canViewSchedule()) return;
-  state.month = ym || state.month || monthStart();
-  loadMine();
-  renderBoardHead($('mineHead'), state.month,
+  const generation = state.authGeneration;
+  const requestedMonth = ym || state.month || monthStart();
+  state.month = requestedMonth;
+  renderBoardHead($('mineHead'), requestedMonth,
     (value) => loadMineRange(value), 'mineBoard', 'mineWeek');
   const box = $('mineContent');
   clear(box); box.appendChild(node('div', 'loader'));
   $('mineNote').textContent = '';
   try {
-    const view = await fetchRange(state.month, false);
+    // „הסידור שלי" הוא מסנן תצוגה על אותו לוח חודשי מורשה של
+    // התחנה. כך הוא מציג גם טיוטת אימון שנבחרה להצגה בזמן שהמנוע
+    // כבוי, בלי להפוך אותה לסידור תפעולי ובלי לגעת בפרסום או בפוש.
+    const view = await fetchRange(requestedMonth, true);
+    if (generation !== state.authGeneration || state.month !== requestedMonth) return;
+    const displayOnly = view.source === 'imported-display';
+    // הפאנל היומי מכיל מידע אישי של המשתמש הקודם. הוא נשאר מוסתר
+    // עד שגם תשובת היום של הדור הנוכחי הושלמה, ולא רק עד שהלוח
+    // החודשי החדש הגיע. אחרת תשובת טווח מהירה ותשובת יום איטית
+    // עלולות לחשוף לרגע את הכרטיס של הזהות הקודמת.
+    $('mineToday').hidden = true;
+    if (displayOnly) {
+      state.mine = null;
+      renderMineToday();
+    } else {
+      if (await loadMine(generation) === false) return;
+      if (generation !== state.authGeneration || state.month !== requestedMonth) return;
+      $('mineToday').hidden = false;
+    }
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
       return;
     }
-    const days = state.mineOnly ? daysWithMe(view.days) : view.days;
-    const only = mySubStation();
+    const days = daysWithMe(view.days);
     renderBoard(box, days, { id: 'mineBoard',
-      subs: view.source === 'legacy' ? legacySubOrder(days) : undefined,
-      onlySub: view.source === 'legacy' ? undefined : (only || undefined), showAbsences: false,
+      showAbsences: true,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
-    $('mineNote').textContent = (only
-      ? 'מוצגת תחנת הקצה שלך. „סידור התחנה" מציג את כל התחנה.'
-      : 'לא ניתן לזהות את תחנת הקצה שלך מהמקור, ולכן מוצגות כל התחנות.')
-      + guardsNotice(view.days);
+    $('mineNote').textContent = 'מוצגים רק הימים שבהם שובצת לעבודה בפועל. בכל יום מוצגות כל ארבע התחנות.'
+      + (displayOnly ? ' זו תצוגת אימון מהקובץ המיובא; המנוע נשאר ' + view.mode + '.' : '')
+      + (view.source === 'legacy'
+        ? ' הסידור הקיים יודע את המשמרת אך לא את תחנת הקצה; יש לייבא את הקובץ כדי להציג שמות לפי תחנה.' : '')
+      + absenceNote(days) + guardsNotice(days);
   } catch (error) {
+    if (isStaleRangeError(error) || generation !== state.authGeneration
+        || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
   }
@@ -1829,12 +2040,14 @@ function policyDraftPayload() {
 
 async function savePolicy() {
   if (state.policyBusy || !state.policy || !policyComplete()) return;
+  const task = authTask();
   state.policyBusy = true;
   $('savePolicy').disabled = true;
   message('policyMessage', 'בודק מה משתנה לפני השמירה…', 'info');
   try {
     const draft = policyDraftPayload();
     const preview = (await call.policyPreview({ draft })).data;
+    if (!authTaskCurrent(task)) return;
     renderChanges(preview);
     if (preview.kind === 'unchanged') {
       message('policyMessage', 'החוקים זהים למה שכבר שמור. לא נוצרה גרסה חדשה.', 'ok');
@@ -1854,6 +2067,7 @@ async function savePolicy() {
       expected_policy_id: state.policy.active_policy_id,
       confirm_weakening: $('confirmWeakening').checked === true
     })).data;
+    if (!authTaskCurrent(task)) return;
     renderChanges(saved);
     message('policyMessage', saved.written
       ? 'חוקי התחנה נשמרו כגרסה ' + saved.version
@@ -1871,18 +2085,23 @@ async function savePolicy() {
         + 'יש להריץ את המנוע מחדש.', 'warn');
     }
     await loadSetup();
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     const code = errorCode(error);
     if (code === 'policy-conflict') {
       message('policyMessage', errorText(error), 'err');
       await loadSetup();
+      if (!authTaskCurrent(task)) return;
     } else {
       message('policyMessage', errorText(error), 'err');
     }
   } finally {
-    state.policyBusy = false;
-    renderPolicy();
-    updatePublishAvailability();
+    if (authTaskCurrent(task)) {
+      state.policyBusy = false;
+      renderPolicy();
+      updatePublishAvailability();
+    }
   }
 }
 
@@ -2176,12 +2395,14 @@ function importBlockedText(report) {
 
 async function checkImport() {
   if (state.busy) return;
+  const task = authTask();
   let input;
   try { input = importInput(); } catch (error) { message('importMessage', error.message, 'err'); return; }
   state.busy = true; $('importCheck').disabled = true; $('importRun').disabled = true;
   message('importMessage', 'קורא את ההדבקה…', 'info');
   try {
     const report = (await call.importPreview(input)).data;
+    if (!authTaskCurrent(task)) return;
     state.importReport = report;
     renderImportReport(report);
     if (report.blocked) {
@@ -2193,15 +2414,22 @@ async function checkImport() {
     $('importRun').disabled = !state.importPending && (report.blocked === true || !canManageSchedule());
     if (state.importPending) message('importMessage', pendingImportText(), 'warn');
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     state.importReport = null;
     $('importReport').hidden = true;
     message('importMessage', errorText(error), 'err');
     $('importRun').disabled = !state.importPending;
-  } finally { state.busy = false; $('importCheck').disabled = false; }
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      $('importCheck').disabled = false;
+    }
+  }
 }
 
 async function importSheet() {
   if (state.busy) return;
+  const task = authTask();
   const pending = state.importPending;
   if (!pending && (!state.importReport || state.importReport.blocked)) return;
   let payload;
@@ -2226,6 +2454,7 @@ async function importSheet() {
   state.importPending = { payload };
   try {
     const result = (await call.importSheet(payload)).data;
+    if (!authTaskCurrent(task)) return;
     if (!receiptOk(result, ['draft_id', 'from', 'to'])) throw malformedReceipt();
     state.importPending = null;
     state.draft = result;
@@ -2235,8 +2464,10 @@ async function importSheet() {
       + '). לא הופעל מנוע ולא נשלחה הודעה. בדוק אותה למטה ואז לחץ „הצג בלוח”.', 'ok');
     message('runMessage', 'הטיוטה שלמטה יובאה מהגיליון.', 'info');
     await loadDraftPreview(result.from, true);
+    if (!authTaskCurrent(task)) return;
     $('draftPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) {
       // סירוב מפורש של השרת — הבקשה נענתה; אין מה לשלוח שוב.
       state.importPending = null;
@@ -2246,10 +2477,12 @@ async function importSheet() {
       message('importMessage', pendingImportText() + ' (' + errorText(error) + ')', 'warn');
     }
   } finally {
-    state.busy = false; $('importCheck').disabled = false;
-    $('importRun').disabled = !state.importPending;
-    updateImportDisplayAvailability();
-    updatePublishAvailability();
+    if (authTaskCurrent(task)) {
+      state.busy = false; $('importCheck').disabled = false;
+      $('importRun').disabled = !state.importPending;
+      updateImportDisplayAvailability();
+      updatePublishAvailability();
+    }
   }
 }
 
@@ -2290,7 +2523,7 @@ function updateImportDisplayAvailability() {
     || state.importDisplay.month !== month;
 }
 
-async function loadImportDisplayStatus(month) {
+async function loadImportDisplayStatus(month, generation = state.authGeneration) {
   if (!canManageSchedule() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
   if ($('importMonth').value !== month) return;
   const sequence = ++state.displayStatusSequence;
@@ -2298,12 +2531,13 @@ async function loadImportDisplayStatus(month) {
   renderImportDisplayStatus();
   try {
     const status = (await call.displayStatus({ month })).data;
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+    if (generation !== state.authGeneration || sequence !== state.displayStatusSequence || $('importMonth').value !== month
         || !status || status.month !== month) return;
     state.importDisplay = status;
     renderImportDisplayStatus();
   } catch (error) {
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
+    if (generation !== state.authGeneration || sequence !== state.displayStatusSequence
+        || $('importMonth').value !== month) return;
     state.importDisplay = null;
     $('importClear').hidden = true;
     $('importDisplayStatus').textContent = 'לא ניתן לבדוק איזה סידור מיובא מוצג: ' + errorText(error);
@@ -2313,10 +2547,12 @@ async function loadImportDisplayStatus(month) {
 
 async function showImportedSchedule() {
   if (state.busy || $('importShow').disabled || !state.importedDraft) return;
+  const task = authTask();
   const draft = state.importedDraft;
   const month = $('importMonth').value;
   if (!state.importDisplay || state.importDisplay.month !== month) {
     await loadImportDisplayStatus(month);
+    if (!authTaskCurrent(task)) return;
   }
   if (!state.importDisplay || state.importDisplay.month !== month
       || $('importMonth').value !== month || state.importedDraft !== draft
@@ -2334,7 +2570,7 @@ async function showImportedSchedule() {
       draft_id: draft.draft_id,
       expected_content_digest: draft.content_digest
     })).data;
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+    if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month
         || !result || result.month !== month) return;
     state.importDisplay = result;
     renderImportDisplayStatus();
@@ -2342,18 +2578,23 @@ async function showImportedSchedule() {
       + state.status.mode + ' ולא נשלחה שום התראה.', 'ok');
     invalidateRange();
     await loadStationRange(month);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
+    if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
     await loadImportDisplayStatus(month);
+    if (!authTaskCurrent(task)) return;
   } finally {
-    state.busy = false;
-    updateImportDisplayAvailability();
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      updateImportDisplayAvailability();
+    }
   }
 }
 
 async function clearImportedSchedule() {
   if (state.busy || $('importClear').disabled || !state.importDisplay) return;
+  const task = authTask();
   const month = $('importMonth').value;
   const status = state.importDisplay;
   if (status.month !== month || status.enabled !== true) return;
@@ -2368,20 +2609,24 @@ async function clearImportedSchedule() {
       request_id: displayRequestId('clear', month, generation, null, null),
       expected_generation: generation
     })).data;
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month
+    if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month
         || !result || result.month !== month) return;
     state.importDisplay = result;
     renderImportDisplayStatus();
     message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
     invalidateRange();
     await loadStationRange(month);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
-    if (sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
+    if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
     await loadImportDisplayStatus(month);
+    if (!authTaskCurrent(task)) return;
   } finally {
-    state.busy = false;
-    updateImportDisplayAvailability();
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      updateImportDisplayAvailability();
+    }
   }
 }
 
@@ -2447,6 +2692,7 @@ function renderDraftPreview(preview) {
 
 async function loadDraftPreview(start, resetApproval) {
   if (!state.draft) return;
+  const task = authTask();
   state.previewStart = start || state.draft.from;
   state.draftPreview = null;
   if (resetApproval !== false) $('reviewDraft').checked = false;
@@ -2460,6 +2706,7 @@ async function loadDraftPreview(start, resetApproval) {
       draft_id: state.draft.draft_id,
       start: state.previewStart
     })).data;
+    if (!authTaskCurrent(task)) return;
     if (!state.draft || preview.draft_id !== state.draft.draft_id) return;
     state.draftPreview = preview;
     state.previewStart = preview.week_start;
@@ -2472,13 +2719,15 @@ async function loadDraftPreview(start, resetApproval) {
     $('reviewDraft').disabled = false;
     message('previewMessage', 'הטיוטה מוצגת לבדיקה. היא עדיין לא פורסמה.', 'ok');
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     message('previewMessage', errorText(error), 'err');
   }
-  updatePublishAvailability();
+  if (authTaskCurrent(task)) updatePublishAvailability();
 }
 
 async function runPlanner() {
   if (state.busy) return;
+  const task = authTask();
   state.busy = true; $('runPlanner').disabled = true; state.draft = null; state.draftPreview = null;
   resetPublishRequest();
   $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
@@ -2491,17 +2740,28 @@ async function runPlanner() {
       request_id: requestId('draft'), start: startMonth + '-01',
       months: Number($('months').value), overrides: overrides()
     })).data;
+    if (!authTaskCurrent(task)) return;
     state.draft = result;
     renderSummary(result.summary || {});
     message('runMessage', 'הטיוטה הושלמה. היא עדיין לא פורסמה ולא נשלחה שום הודעה.', 'ok');
     await loadDraftPreview(result.from, true);
-  } catch (error) { message('runMessage', errorText(error), 'err'); }
-  finally { state.busy = false; $('runPlanner').disabled = false; updatePublishAvailability(); }
+    if (!authTaskCurrent(task)) return;
+  } catch (error) {
+    if (!authTaskCurrent(task)) return;
+    message('runMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      $('runPlanner').disabled = false;
+      updatePublishAvailability();
+    }
+  }
 }
 
 async function publishDraft() {
   if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
+  const task = authTask();
   const preparing = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
@@ -2527,6 +2787,7 @@ async function publishDraft() {
     };
     if (acknowledgement) publishPayload.gap_acknowledgement = acknowledgement;
     const result = (await call.publish(publishPayload)).data;
+    if (!authTaskCurrent(task)) return;
     if (preparing && (result.prepared !== true || result.notified_people !== 0)) {
       throw new Error('השרת לא אישר שהסידור הוכן בלבד וללא הודעות. יש לרענן לפני ניסיון נוסף.');
     }
@@ -2545,20 +2806,32 @@ async function publishDraft() {
     $('draftSummary').classList.add('hide');
     invalidateRange();
     try {
-      state.status = (await call.status({})).data;
+      const status = (await call.status({})).data;
+      if (!authTaskCurrent(task)) return;
+      state.status = status;
       setMode(state.status); setRollbackAvailability(); updateEditAvailability();
       await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+      if (!authTaskCurrent(task)) return;
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
       if (preparing && state.modeView && state.modeView.may_change === true) await loadModeOptions();
     } catch (_) {
+      if (!authTaskCurrent(task)) return;
       // The write already succeeded. Never invite a second write by presenting
       // a refresh failure as a failed prepare/publish operation.
       message('publishMessage', successText
         + ' מצב המסך לא התרענן; יש לרענן את הדף לפני פעולה נוספת.', 'warn');
     }
-  } catch (error) { message('publishMessage', errorText(error), 'err'); }
-  finally { state.busy = false; setRollbackAvailability(); updatePublishAvailability(); }
+  } catch (error) {
+    if (!authTaskCurrent(task)) return;
+    message('publishMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      setRollbackAvailability();
+      updatePublishAvailability();
+    }
+  }
 }
 
 function setRollbackAvailability() {
@@ -2570,6 +2843,7 @@ function setRollbackAvailability() {
 
 async function rollbackSchedule() {
   if (state.busy || $('rollback').disabled) return;
+  const task = authTask();
   const active = state.status.active;
   const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
     + 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.';
@@ -2586,7 +2860,9 @@ async function rollbackSchedule() {
     let result;
     try {
       result = (await call.rollback(payload)).data;
+      if (!authTaskCurrent(task)) return;
     } catch (error) {
+      if (!authTaskCurrent(task)) return;
       const detail = error && error.details && error.details.detail;
       if (errorCode(error) !== 'gaps-acknowledgement-required'
           || !detail || !detail.digest) throw error;
@@ -2603,29 +2879,54 @@ async function rollbackSchedule() {
       if (!ok) throw new Error('החזרה בוטלה.');
       payload.gap_acknowledgement = String(detail.digest);
       result = (await call.rollback(payload)).data;
+      if (!authTaskCurrent(task)) return;
     }
     message('rollbackMessage', 'החזרה הושלמה כגרסה ' + result.revision + '.', 'ok');
-    state.status = (await call.status({})).data;
+    const status = (await call.status({})).data;
+    if (!authTaskCurrent(task)) return;
+    state.status = status;
     setMode(state.status); setRollbackAvailability(); updateEditAvailability();
     invalidateRange();
     await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     message('rollbackMessage', errorText(error), 'err');
   } finally {
-    state.busy = false; setRollbackAvailability();
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      setRollbackAvailability();
+    }
   }
 }
 
-async function loadSetup() {
+async function loadSetup(generation = state.authGeneration) {
   if (!canManageSchedule()) return;
   try {
-    state.setup = (await call.setup({})).data;
+    const setup = (await call.setup({})).data;
+    if (generation !== state.authGeneration) return;
+    state.setup = setup;
     state.policy = policyFromSetup(state.setup);
     state.policyDirty = false;
     renderPolicy();
     renderImportStationMap();
     renderSourceSummary();
-  } catch (error) { message('policyMessage', errorText(error), 'err'); }
+    return true;
+  } catch (error) {
+    if (generation !== state.authGeneration) return;
+    // כשל בטעינת תחנה לעולם אינו משאיר על המסך את המדיניות או
+    // הסגל שנקראו קודם. זה חשוב במיוחד במחשב משותף, כאשר מנהל/ת
+    // מתחנה אחרת נכנס/ת מיד אחרי המנהל/ת הקודם/ת.
+    state.setup = null;
+    state.policy = null;
+    state.policySub = null;
+    state.policyDirty = false;
+    renderPolicy();
+    renderImportStationMap();
+    renderSourceSummary();
+    message('policyMessage', errorText(error), 'err');
+    return false;
+  }
 }
 
 /* ==================================================================
@@ -2730,20 +3031,28 @@ function renderGapDays(days, box, options = {}) {
 
 async function loadDraftGapDays() {
   if (!state.draft || state.busy) return;
+  const task = authTask();
   $('draftGapsDetail').disabled = true;
   try {
     const report = (await call.gapReport({ draft_id: state.draft.draft_id })).data;
+    if (!authTaskCurrent(task)) return;
     renderGapDays(report.days, $('draftGapsDays'));
-  } catch (error) { message('previewMessage', errorText(error), 'err'); }
-  finally { $('draftGapsDetail').disabled = false; }
+  } catch (error) {
+    if (!authTaskCurrent(task)) return;
+    message('previewMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) $('draftGapsDetail').disabled = false;
+  }
 }
 
 async function loadActiveGaps() {
   if (state.busy || !canManageSchedule()) return;
+  const task = authTask();
   $('gapLoad').disabled = true;
   message('gapMessage', 'בודק את הסידור הפעיל…', 'info');
   try {
     const report = (await call.gapReport({})).data;
+    if (!authTaskCurrent(task)) return;
     const box = $('gapSummary'); clear(box); box.classList.remove('hide');
     [['ימים', report.summary.days], ['ימים עם פער', report.summary.days_with_gaps], ['פערים קריטיים', report.summary.critical_gaps],
       ['פערים אחרים', report.summary.other_gaps], ['מינימום תחנה', report.summary.station_minimum || '—']].forEach(([label, value]) => {
@@ -2754,26 +3063,36 @@ async function loadActiveGaps() {
       ? 'יש פערים בכשירויות קריטיות. עריכה שמשאירה אותם לא תתפרסם — שבצו מהמועמדים דרך „עריכת הסידור הפעיל".'
       : (report.summary.other_gaps ? 'יש פערים שאינם קריטיים. הם מוצגים; פרסום עם פערים כאלה דורש אישור מפורש.' : 'אין פערים בסידור הפעיל.'),
       report.summary.critical_gaps ? 'err' : (report.summary.other_gaps ? 'warn' : 'ok'));
-  } catch (error) { message('gapMessage', errorText(error), 'err'); }
-  finally { $('gapLoad').disabled = false; }
+  } catch (error) {
+    if (!authTaskCurrent(task)) return;
+    message('gapMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) $('gapLoad').disabled = false;
+  }
 }
 
 async function saveStationMinimum() {
   if (state.busy) return;
+  const task = authTask();
   const minimum = Number($('gapStationMinimum').value || 0);
   const policy = (state.quals && state.quals.gap_policy) || { revision: 0 };
   const intent = { station_minimum: minimum, expected_revision: policy.revision || 0 };
   state.busy = true;
   try {
     const result = (await call.gapPolicy(Object.assign({ request_id: intentRequestId('gappolicy', intent) }, intent))).data;
+    if (!authTaskCurrent(task)) return;
     releaseIntent('gappolicy', intent);
     message('gapPolicyMessage', 'מינימום כולל לתחנה: ' + result.station_minimum + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) releaseIntent('gappolicy', intent);
     message('gapPolicyMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
     if (errorCode(error) === 'gap-policy-revision-stale') await loadQualifications(true);
-  } finally { state.busy = false; }
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
 $('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
@@ -3044,10 +3363,12 @@ function editApplyAllowed() {
 
 async function checkEdit() {
   if (state.busy || !canEditSchedule() || !(state.editList && state.editList.length)) return;
+  const task = authTask();
   state.busy = true; $('editCheck').disabled = true; $('editApply').disabled = true;
   message('editMessage', 'בודק את השינויים מול הסידור הפעיל…', 'info');
   try {
     const report = (await call.editPreview(editPayload())).data;
+    if (!authTaskCurrent(task)) return;
     state.editReport = report;
     renderEditReport(report);
     if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
@@ -3057,24 +3378,37 @@ async function checkEdit() {
     $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed();
     if (state.editPending) message('editMessage', pendingEditText(), 'warn');
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     state.editReport = null; $('editReport').hidden = true;
     message('editMessage', errorText(error), 'err');
     $('editApply').disabled = !state.editPending;
-    if (errorCode(error) === 'edit-base-stale') await refreshStatusAfterEdit();
-  } finally { state.busy = false; $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length); }
+    if (errorCode(error) === 'edit-base-stale') await refreshStatusAfterEdit(task);
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length);
+    }
+  }
 }
 
-async function refreshStatusAfterEdit() {
+async function refreshStatusAfterEdit(task = authTask()) {
   try {
-    state.status = (await call.status({})).data;
+    const status = (await call.status({})).data;
+    if (!authTaskCurrent(task)) return false;
+    state.status = status;
     setMode(state.status);
     setRollbackAvailability();
     updateEditAvailability();
-  } catch (_) { /* המסך יראה את השגיאה הבאה */ }
+    return true;
+  } catch (_) {
+    if (!authTaskCurrent(task)) return false;
+    return false; /* המסך יראה את השגיאה הבאה */
+  }
 }
 
 async function applyEdit() {
   if (state.busy) return;
+  const task = authTask();
   const pending = state.editPending;
   if (!pending && (!state.editReport || !state.editReport.counts.changes || editGapsBlock())) return;
   let payload;
@@ -3096,27 +3430,38 @@ async function applyEdit() {
   state.editPending = { payload };
   try {
     const result = (await call.editApply(payload)).data;
+    if (!authTaskCurrent(task)) return;
     /* ⭐ §7 · תשובה בלי מזהה פרסום וגרסה אינה קבלה — הבקשה נשארת ממתינה. */
     if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
       + (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת. אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
-    await refreshStatusAfterEdit();
+    await refreshStatusAfterEdit(task);
+    if (!authTaskCurrent(task)) return;
     invalidateRange();
     await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) {
       state.editPending = null;
       message('editMessage', errorText(error), 'err');
-      if (errorCode(error) === 'edit-base-stale') { state.editReport = null; $('editReport').hidden = true; await refreshStatusAfterEdit(); }
+      if (errorCode(error) === 'edit-base-stale') {
+        state.editReport = null;
+        $('editReport').hidden = true;
+        await refreshStatusAfterEdit(task);
+        if (!authTaskCurrent(task)) return;
+      }
     } else {
       message('editMessage', pendingEditText() + ' (' + errorText(error) + ')', 'warn');
     }
   } finally {
-    state.busy = false;
-    $('editApply').disabled = !state.editPending;
-    $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length) || !!state.editPending;
+    if (authTaskCurrent(task)) {
+      state.busy = false;
+      $('editApply').disabled = !state.editPending;
+      $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length) || !!state.editPending;
+    }
   }
 }
 
@@ -3149,14 +3494,18 @@ $('editApply').addEventListener('click', managerAction(applyEdit));
  * ================================================================== */
 async function loadQualifications(quiet) {
   if (!canManageSchedule()) return;
+  const task = authTask();
   if (!quiet) message('qualMessage', 'טוען…', 'info');
   try {
-    state.quals = (await call.qualCatalog({})).data;
+    const quals = (await call.qualCatalog({})).data;
+    if (!authTaskCurrent(task)) return false;
+    state.quals = quals;
     if (!quiet) message('qualMessage', '', 'info');
     $('gapStationMinimum').value = String((state.quals.gap_policy && state.quals.gap_policy.station_minimum) || 0);
     renderQualCatalog();
     renderQualPeople();
   } catch (error) {
+    if (!authTaskCurrent(task)) return false;
     state.quals = null;
     message('qualMessage', errorText(error), 'err');
   }
@@ -3207,6 +3556,7 @@ function renderQualCatalog() {
 
 async function saveQualificationRow(entry, tr) {
   if (state.busy) return;
+  const task = authTask();
   const label = tr.querySelector('input[data-field="label"]').value;
   const minimum = Number(tr.querySelector('input[data-field="minimum"]').value);
   const active = tr.querySelector('input[data-field="active"]').checked;
@@ -3219,35 +3569,47 @@ async function saveQualificationRow(entry, tr) {
   state.busy = true;
   try {
     const result = (await call.qualSave(payload)).data;
+    if (!authTaskCurrent(task)) return;
     releaseIntent('qual', intent);
     message('qualMessage', 'נשמר: ' + label + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) releaseIntent('qual', intent);
     message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
     if (errorCode(error) === 'qualification-revision-stale') await loadQualifications(true);
-  } finally { state.busy = false; }
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
 async function deleteQualificationRow(entry) {
   if (state.busy) return;
+  const task = authTask();
   if (!confirm('למחוק את הכשירות „' + entry.label + '"? הפעולה נרשמת ביומן.')) return;
   const intent = { key: entry.key, expected_revision: entry.revision || 0 };
   state.busy = true;
   try {
     await call.qualDelete(Object.assign({ request_id: intentRequestId('qualdel', intent) }, intent));
+    if (!authTaskCurrent(task)) return;
     releaseIntent('qualdel', intent);
     message('qualMessage', 'נמחקה: ' + entry.label + '.', 'ok');
     await loadQualifications(true);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) releaseIntent('qualdel', intent);
     message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
     await loadQualifications(true);
-  } finally { state.busy = false; }
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
 async function addQualification() {
   if (state.busy) return;
+  const task = authTask();
   const key = $('qualNewKey').value.trim();
   const label = $('qualNewLabel').value.trim();
   const minimum = Number($('qualNewMinimum').value || 0);
@@ -3256,14 +3618,19 @@ async function addQualification() {
   state.busy = true;
   try {
     const result = (await call.qualSave(Object.assign({ request_id: intentRequestId('qualnew', intent) }, intent))).data;
+    if (!authTaskCurrent(task)) return;
     releaseIntent('qualnew', intent);
     message('qualMessage', 'נוספה: ' + label + ' (' + result.key + ').', 'ok');
     $('qualNewKey').value = ''; $('qualNewLabel').value = ''; $('qualNewMinimum').value = '0';
     await loadQualifications(true);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) releaseIntent('qualnew', intent);
     message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
-  } finally { state.busy = false; }
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
 function renderQualPeople() {
@@ -3302,37 +3669,52 @@ function renderQualPeople() {
 
 async function savePersonQualifications(person, row) {
   if (state.busy) return;
+  const task = authTask();
   const keys = Array.from(row.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
   const intent = { person: person.uid, qualifications: keys, expected_revision: person.revision || 0 };
   state.busy = true;
   try {
     const result = (await call.qualPerson(Object.assign({ request_id: intentRequestId('qualperson', intent) }, intent))).data;
+    if (!authTaskCurrent(task)) return;
     releaseIntent('qualperson', intent);
     message('qualPeopleMessage', person.name + ': ' + (result.qualifications.length ? result.qualifications.length + ' כשירויות' : 'בלי כשירויות') + ' (גרסה ' + result.revision + ').', 'ok');
     await loadQualifications(true);
+    if (!authTaskCurrent(task)) return;
   } catch (error) {
+    if (!authTaskCurrent(task)) return;
     if (errorCode(error)) releaseIntent('qualperson', intent);
     message('qualPeopleMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
     if (errorCode(error) === 'holdings-revision-stale') await loadQualifications(true);
-  } finally { state.busy = false; }
+  } finally {
+    if (authTaskCurrent(task)) state.busy = false;
+  }
 }
 
 $('qualAdd').addEventListener('click', managerAction(addQualification));
 $('qualSearch').addEventListener('input', renderQualPeople);
 
-async function boot(user) {
+async function boot(user, generation, knownClaims, knownStatus) {
+  if (generation !== state.authGeneration) return;
   state.user = user;
-  try { state.claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { state.claims = {}; }
+  let claims = knownClaims;
+  if (claims === undefined) {
+    try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
+  }
+  if (generation !== state.authGeneration || state.user !== user) return;
+  state.claims = claims;
+  state.authScope = authScopeKey(user, claims);
   renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
   $('who').textContent = user.displayName || user.email || '';
-  $('appMain').classList.remove('hide');
   try {
-    state.status = (await call.status({})).data;
+    const status = knownStatus === undefined ? (await call.status({})).data : knownStatus;
+    if (generation !== state.authGeneration || state.user !== user) return;
+    state.status = status;
     setMode(state.status || {});
 
     if (!canViewSchedule()) {
       showUnavailable('הסידור החדש עדיין אינו פעיל',
         'לא ניתן לקבוע איזו תצוגת סידור בטוחה להצגה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
+      $('appMain').classList.remove('hide');
       return;
     }
 
@@ -3341,27 +3723,30 @@ async function boot(user) {
     if (!$('importMonth').value) $('importMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
-    await Promise.all([loadSetup(), loadModeOptions(), loadImportDisplayStatus($('importMonth').value)]);
+    const [setupLoaded] = await Promise.all([loadSetup(generation), loadModeOptions(generation),
+      loadImportDisplayStatus($('importMonth').value, generation)]);
+    if (generation !== state.authGeneration || state.user !== user) return;
+    if (canManageSchedule() && setupLoaded === false) {
+      throw new Error('לא ניתן לטעון את הגדרות התחנה הנוכחית.');
+    }
     updateImportDisplayAvailability();
     updateEditAvailability();
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
+    $('appMain').classList.remove('hide');
   } catch (error) {
+    if (generation !== state.authGeneration || state.user !== user) return;
     state.status = null;
     const box = $('mode');
     box.className = 'mode bad';
     box.lastElementChild.textContent = 'לא ניתן לאמת את מצב מנוע הסידור.';
     showUnavailable('לא ניתן לטעון את הסידור כרגע',
       'המערכת לא מציגה נתונים ישנים כאשר בדיקת ההרשאה או מצב המנוע נכשלה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
+    $('appMain').classList.remove('hide');
   }
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) =>
   button.addEventListener('click', () => chooseTab(button.dataset.tab)));
-$('mineOnly').addEventListener('click', () => {
-  state.mineOnly = !state.mineOnly;
-  $('mineOnly').setAttribute('aria-pressed', state.mineOnly ? 'true' : 'false');
-  loadMineRange();
-});
 $('previewPrev').addEventListener('click', () => {
   if (!state.draftPreview || $('previewPrev').disabled) return;
   loadDraftPreview(shiftDate(state.previewStart, -7), false);
@@ -3418,6 +3803,7 @@ $('importPaste').addEventListener('input', () => {
   invalidateImportReport();
 });
 async function loadImportFile(file) {
+  const task = authTask();
   state.importAliases = {};
   state.importMatrix = null;
   state.importLabelSpans = null;
@@ -3434,6 +3820,7 @@ async function loadImportFile(file) {
     const month = $('importMonth').value;
     if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('יש לבחור חודש לפני בחירת הקובץ.');
     const result = await readScheduleFile(file, { month });
+    if (!authTaskCurrent(task) || state.importSelectedFile !== file) return;
     state.importMatrix = result.matrix;
     state.importLabelSpans = result.kind === 'xlsx' && Array.isArray(result.label_spans)
       ? result.label_spans : null;
@@ -3445,6 +3832,7 @@ async function loadImportFile(file) {
       + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
     message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק תצוגה מקדימה" כדי לראות מה ייובא.', 'info');
   } catch (error) {
+    if (!authTaskCurrent(task) || state.importSelectedFile !== file) return;
     $('importFile').value = '';
     state.importSelectedFile = null;
     state.importLabelSpans = null;
@@ -3458,6 +3846,7 @@ $('importFile').addEventListener('change', async () => {
   await loadImportFile(file);
 });
 $('importMonth').addEventListener('change', async () => {
+  const task = authTask();
   const month = $('importMonth').value;
   // תשובת סטטוס/ניקוי של החודש הקודם אינה רשאית לחזור ולצייר אותו.
   ++state.displayStatusSequence;
@@ -3471,21 +3860,21 @@ $('importMonth').addEventListener('change', async () => {
     $('importFileStatus').textContent = 'החודש השתנה — קורא שוב את קובץ ה-Excel…';
     try {
       const result = await readScheduleFile(file, { month });
-      if ($('importMonth').value !== month || state.importSelectedFile !== file) return;
+      if (!authTaskCurrent(task) || $('importMonth').value !== month || state.importSelectedFile !== file) return;
       state.importMatrix = result.matrix;
       state.importLabelSpans = result.kind === 'xlsx' && Array.isArray(result.label_spans)
         ? result.label_spans : null;
       state.importFileName = result.name;
       $('importFileStatus').textContent = result.name + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
     } catch (error) {
-      if ($('importMonth').value !== month || state.importSelectedFile !== file) return;
+      if (!authTaskCurrent(task) || $('importMonth').value !== month || state.importSelectedFile !== file) return;
       state.importMatrix = null;
       state.importLabelSpans = null;
       $('importFileStatus').textContent = 'הקובץ לא נקרא לחודש שנבחר.';
       message('importMessage', errorText(error), 'err');
     }
   }
-  if ($('importMonth').value === month) await loadImportDisplayStatus(month);
+  if (authTaskCurrent(task) && $('importMonth').value === month) await loadImportDisplayStatus(month);
 });
 $('importAcceptMissing').addEventListener('change', invalidateImportReport);
 $('importAcceptIgnored').addEventListener('change', invalidateImportReport);
@@ -3522,7 +3911,168 @@ $('sourceCheck').addEventListener('click', managerAction(checkSource));
 $('sourceSave').addEventListener('click', managerAction(saveSource));
 addEventListener('resize', refitAll);
 
-onAuthStateChanged(auth, (user) => {
-  if (!user) { location.replace('./login.html?next=schedule-management.html'); return; }
-  boot(user);
+// כל המידע הבא שייך לזהות ולתחנה שאושרו בשרת. החלפת scope אינה
+// רק החלפת לוח: היא מוחקת גם טיוטות, מדיניות, מקור, התאמות שמות,
+// כשירויות ומזהי ניסיון חוזר. כך כשל בטעינת התחנה הבאה אינו יכול
+// לחשוף או לשלוח מחדש תוכן מהתחנה הקודמת.
+function resetScopedWorkspace() {
+  Object.assign(state, {
+    authContextVersion: state.authContextVersion + 1,
+    setup: null, draft: null, draftPreview: null, previewStart: null,
+    publishRequestId: null, publishRequestKey: null,
+    policy: null, policySub: null, policyDirty: false, policyBusy: false,
+    modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
+    pendingCutover: null,
+    sourceTable: null, sourceMap: null, sourceActive: null,
+    sourcePlan: null, sourceBusy: false,
+    importAliases: {}, importMatrix: null, importLabelSpans: null,
+    importFileName: null, importSelectedFile: null, importedDraft: null,
+    importStationMap: null, importDisplay: null, importReport: null,
+    importPending: null, importRequestIds: {}, displayRequestIds: {},
+    displayStatusSequence: state.displayStatusSequence + 1,
+    editList: [], editPending: null, editPerson: null, editPersonSub: null,
+    editReport: null, editRequestIds: {}, role: null, sub_station: null,
+    absence: null, quals: null, intentRequestIds: {}, busy: false,
+    month: null, tab: null
+  });
+
+  document.querySelectorAll('#manageView input,#manageView textarea,#manageView select,'
+    + '#qualsView input,#qualsView textarea,#qualsView select').forEach((field) => {
+    if (field.type === 'checkbox' || field.type === 'radio') field.checked = field.defaultChecked;
+    else if (field.tagName === 'SELECT') field.selectedIndex = 0;
+    else field.value = field.defaultValue || '';
+  });
+
+  [
+    'modeTargets', 'modeMessage', 'policySubs', 'policySteps', 'policyChanges',
+    'policyMessage', 'sourceMap', 'sourceActiveValues', 'sourceCounts',
+    'sourceReport', 'sourceMessage', 'importStationMapGrid', 'importCounts',
+    'importBlocks', 'importUnresolved', 'importDuplicates', 'importMessage',
+    'overrideList', 'draftSummary', 'gapSummary', 'gapDays', 'gapMessage',
+    'editSearchResults', 'editPerson', 'editStation', 'editRole', 'editDates', 'editList', 'editCounts',
+    'editPeople', 'editChanges', 'editWarnings', 'editGapsList', 'editMessage',
+    'draftPreview', 'draftGapsList', 'draftGapsDays', 'previewMessage',
+    'qualRows', 'qualPeople', 'qualMessage', 'qualPeopleMessage',
+    'gapPolicyMessage'
+  ].forEach((id) => { const element = $(id); if (element) clear(element); });
+
+  ['sourceMap', 'sourceActive', 'sourceCounts', 'sourceAcceptWrap',
+    'sourceReportWrap', 'importStationMap', 'importReport', 'gapCard',
+    'editCard', 'editReport', 'editPolicyChanged', 'editGaps', 'draftGaps']
+    .forEach((id) => { const element = $(id); if (element) element.hidden = true; });
+  $('modeCard').hidden = true;
+  $('modeForm').hidden = true;
+  $('draftPreviewCard').classList.add('hide');
+  $('draftSummary').classList.add('hide');
+  $('draftBadge').hidden = true;
+  $('sourceSummary').textContent = 'טוען מדיניות ומקור נתונים…';
+  $('sourceSummaryLine').textContent = 'אין מקור כוח-אדם פעיל.';
+  $('policyVersion').textContent = '';
+  $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
+  $('importDisplayStatus').textContent = 'הייבוא אינו מפעיל את המנוע ואינו שולח התראות.';
+}
+
+async function handleIdToken(user) {
+  const previousScope = state.authScope;
+  const previousStatus = state.status;
+  // ההחלפה מבטלת באופן סינכרוני כל המשך של פעולה שהתחילה תחת
+  // הטוקן הקודם. בלי דור המשימה, preview ישן יכול היה לחזור בזמן
+  // ההמתנה ל-claims ולשלוח את ה-save הבא תחת המשתמש החדש.
+  const interruptedOperation = scopedOperationInFlight();
+  state.authGeneration += 1;
+  const generation = state.authGeneration;
+  invalidateRange();
+  state.status = null;
+  state.mine = null;
+  $('appMain').classList.add('hide');
+  clear($('stationContent'));
+  clear($('mineContent'));
+  clear($('mineToday'));
+  $('stationNote').textContent = '';
+  $('mineNote').textContent = '';
+  $('mineToday').hidden = true;
+  if (!user) {
+    if (previousScope) resetScopedWorkspace();
+    state.user = null;
+    state.claims = {};
+    state.authScope = null;
+    location.replace('./login.html?next=schedule-management.html');
+    return;
+  }
+
+  let claims = {};
+  try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
+  if (generation !== state.authGeneration) return;
+  const nextScope = authScopeKey(user, claims);
+
+  // זהות או תחום הרשאה השתנו: אתחול מלא הוא מכוון. המסך כבר הוסתר
+  // והלוחות כבר נמחקו לפני ההמתנה לטוקן, ולכן אין חלון שבו הרשאה
+  // ישנה ממשיכה להיראות למשתמש החדש.
+  if (!previousScope || previousScope !== nextScope || !previousStatus) {
+    if (previousScope && previousScope !== nextScope) resetScopedWorkspace();
+    await boot(user, generation, claims);
+    return;
+  }
+
+  // רענון טוקן רגיל של אותו אדם ובאותו תחום אינו מוחק טופס שטרם
+  // נשמר ואינו מקפיץ את החודש לינואר/לחודש הנוכחי. עדיין קוראים את
+  // הסטטוס החי מחדש, כי מינוי אחראי/ת סידור יכול להשתנות בלי claims.
+  let status;
+  try { status = (await call.status({})).data; } catch (error) {
+    if (generation !== state.authGeneration) return;
+    showUnavailable('לא ניתן לטעון את הסידור כרגע',
+      'לא ניתן לאמת מחדש את ההרשאה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
+    $('appMain').classList.remove('hide');
+    return;
+  }
+  if (generation !== state.authGeneration) return;
+
+  // שינוי במינוי הניהולי הוא שינוי סמכות גם כש-UID וה-claims זהים.
+  // במקרה כזה מאתחלים מחדש ולא משמרים מסך ניהול מההרשאה הקודמת.
+  if ((previousStatus.manager === true) !== (status.manager === true)) {
+    resetScopedWorkspace();
+    await boot(user, generation, claims, status);
+    return;
+  }
+
+  // אם הטוקן התרענן באמצע פעולה, אי אפשר לדעת מהדפדפן בלבד אם
+  // כתיבה שכבר יצאה הושלמה. לכן לא פותחים שוב את הכפתורים ולא
+  // מזמינים ניסיון כפול: מציגים מצב סגור ודורשים טעינה מחדש, שתמשוך
+  // את אמת השרת. רענון שגרתי ללא פעולה ממשיך לשמור חודש וטופס.
+  if (interruptedOperation) {
+    state.user = user;
+    state.claims = claims;
+    state.authScope = nextScope;
+    state.status = status;
+    renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+    $('who').textContent = user.displayName || user.email || '';
+    showUnavailable('נדרש אימות מחדש לפני פעולה נוספת',
+      'זהות המשתמש התרעננה בזמן פעולה. כדי לבדוק אם הפעולה הושלמה בלי לשלוח אותה שוב, יש לרענן את המסך.');
+    $('appMain').classList.remove('hide');
+    return;
+  }
+
+  state.user = user;
+  state.claims = claims;
+  state.authScope = nextScope;
+  state.status = status;
+  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+  $('who').textContent = user.displayName || user.email || '';
+  setMode(status || {});
+  if (!canViewSchedule()) {
+    showUnavailable('הסידור החדש עדיין אינו פעיל',
+      'לא ניתן לקבוע איזו תצוגת סידור בטוחה להצגה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
+    $('appMain').classList.remove('hide');
+    return;
+  }
+  setRollbackAvailability();
+  showScheduleViews();
+  updateImportDisplayAvailability();
+  updateEditAvailability();
+  chooseTab(state.tab || new URLSearchParams(location.search).get('tab') || 'station', false);
+  $('appMain').classList.remove('hide');
+}
+
+onIdTokenChanged(auth, (user) => {
+  void handleIdToken(user);
 });
