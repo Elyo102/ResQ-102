@@ -26,6 +26,36 @@ test('root config and station config are distinct policies', () => {
   assert.equal(station.scope, 'station');
 });
 
+test('schedule qualification state is backed up, restorable, and retained by its data class', () => {
+  const catalog = backupPolicy.getPolicy('stations/{sid}/schedule_qualifications/{qualificationId}');
+  const holdings = backupPolicy.getPolicy('stations/{sid}/schedule_person_qualifications/{uid}');
+  const audit = backupPolicy.getPolicy('stations/{sid}/schedule_qualification_audit/{entryId}');
+  assert.ok(catalog);
+  assert.ok(holdings);
+  assert.ok(audit);
+  assert.deepEqual([
+    catalog.classification, catalog.monitorPolicy, catalog.backupPolicy,
+    catalog.restorePolicy, catalog.retention, catalog.humanReadable
+  ], [
+    'source_of_truth', 'count_any_loss', 'managed_export',
+    'restore', 'policy_required_before_wiring', 'redacted'
+  ]);
+  assert.deepEqual([
+    holdings.classification, holdings.monitorPolicy, holdings.backupPolicy,
+    holdings.restorePolicy, holdings.retention, holdings.humanReadable
+  ], [
+    'source_of_truth', 'count_drop', 'managed_export',
+    'restore', 'policy_required_before_wiring', 'forbidden'
+  ]);
+  assert.deepEqual([
+    audit.classification, audit.monitorPolicy, audit.backupPolicy,
+    audit.restorePolicy, audit.retention, audit.humanReadable
+  ], [
+    'audit_log', 'activity', 'managed_export',
+    'restore', 'audit_retention_policy_required', 'forbidden'
+  ]);
+});
+
 test('identity data is one restore-consistency group', () => {
   const expected = [
     'registration_requests/{uid}', 'emp_index/{emp}',

@@ -2344,6 +2344,26 @@ async function test(name, fn) {
     assert.equal(restored.size, manifest.count);
   });
 
+  await test('qualification or minimum changes after preparation force a fresh prepare before cutover', async () => {
+    const gapPolicyRef = station().collection('schedule_state').doc('gap_policy');
+    const before = await gapPolicyRef.get();
+    await gapPolicyRef.set({ station_id: SID, station_minimum: 99, revision: 1 });
+    try {
+      const error = await caught(() => api.promoteToNew(req('commander', 'commander', {
+        request_id: 'cut_gap_stale', candidate_publication_id: preparedId,
+        expected_mode: 'shadow', expected_preflight_signature: preflightSignature,
+        accept_changes: preflightChanges > 0 ? preflightSignature : undefined
+      })));
+      assert.ok(error, 'פערים שהשתנו אחרי ההכנה לא נחסמו');
+      assert.equal(error.code, 'cutover-gaps-changed');
+      assert.equal(((await station().collection('schedule_publications').doc(preparedId).get()).data() || {}).status, 'prepared');
+      assert.equal((await station().collection('schedule_mode_operations').doc('cut_gap_stale').get()).exists, false);
+    } finally {
+      if (before.exists) await gapPolicyRef.set(before.data());
+      else await gapPolicyRef.delete();
+    }
+  });
+
   await test('the cutover activates publication, pointer and mode together', async () => {
     const report = await api.previewCutover(req('commander', 'commander', {
       candidate_publication_id: preparedId

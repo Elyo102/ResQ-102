@@ -84,7 +84,10 @@ function archive(root, stage, entries, verifyOnly = false) {
   const zip = path.join(stage, 'documents.zip');
   const opts = { cwd: root, timeout: 120000, maxBuffer: 128 * 1024 * 1024, windowsHide: true };
   if (process.platform === 'win32') {
-    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path.join(HERE, 'ops-backup-archive.ps1'), '-RootPath', root, '-InventoryPath', path.join(stage, 'inventory.json'), '-ZipPath', zip, ...(verifyOnly ? ['-VerifyOnly'] : [])], opts);
+    // The archive helper is a repository-owned script invoked with fixed
+    // arguments.  Limit the execution-policy override to this child process so
+    // a machine-wide Restricted policy does not make verified backups unusable.
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, 'ops-backup-archive.ps1'), '-RootPath', root, '-InventoryPath', path.join(stage, 'inventory.json'), '-ZipPath', zip, ...(verifyOnly ? ['-VerifyOnly'] : [])], opts);
   } else {
     if (!verifyOnly) execFileSync('zip', ['-q', zip, '-@'], { ...opts, input: entries.map(e => e.path).join('\n') + '\n' });
     execFileSync('unzip', ['-t', zip], opts);

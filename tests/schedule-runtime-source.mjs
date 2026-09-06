@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
+const editIntegration = read('functions/schedule-edit.integration.test.js');
 const publication = read('functions/schedule-publication.js');
 const service = read('functions/schedule-service.js');
 const access = read('functions/schedule-access.js');
@@ -288,7 +289,8 @@ check('snapshot completion rechecks live manager access after rows are staged', 
   const finalizerEnd = runtime.indexOf('async function requireLiveManagerNow', finalizerStart);
   const finalizer = runtime.slice(finalizerStart, finalizerEnd);
   assert.ok(start > -1 && end > start);
-  assert.ok(body.includes('await commitWrites(ops)'));
+  assert.ok(body.includes('await commitWrites(ops, {'));
+  assert.ok(body.includes('snapshot: true'));
   assert.ok(body.includes('snapshot_complete: true'));
   assert.equal(body.includes("status: 'complete'"), false);
   assert.ok(finalizer.includes('await beforeSnapshotFinalize({ kind: \'draft\''));
@@ -398,7 +400,9 @@ check('an unavailable runtime fails closed without reopening the legacy schedule
 });
 check('station schedule is the default view and denied management falls back to it', () => {
   assert.ok(ui.includes("if (name === 'manage' && !canManageSchedule()) name = 'station'"));
-  assert.ok(ui.includes("['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station'"));
+  // 42H.2 · גם לשונית הכשירויות נופלת ל„סידור התחנה" בלי מינוי חי.
+  assert.ok(ui.includes("if (name === 'quals' && !canManageSchedule()) name = 'station'"));
+  assert.ok(ui.includes("['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station'"));
   assert.ok(ui.includes("|| 'station'"));
 });
 check('personal schedule reads only the requested day', () => {
@@ -1921,5 +1925,103 @@ check('42G.28: getEffectiveWorkdays is a member VIEW callable with a closed enve
   assert.equal(/crew|position_in_cycle|anchor_date/.test(shift.replace(/\/\*[\s\S]*?\*\//g, '')), false, 'shift hours must not carry the cycle');
 });
 
-assert.equal(passed, 119);
-console.log('\n119 schedule runtime source checks passed.');
+/* ------------------------------------------------------------------ *
+ * 42H.2 · ביקורת Codex על 0e9a8dc (seq453)
+ * ------------------------------------------------------------------ */
+
+check('§1 the publish gap gate is recomputed inside the publish transaction from tx reads', () => {
+  const publishBody = runtime.slice(runtime.indexOf('async function publish(req)'), runtime.indexOf('async function rollback(req)'));
+  assert.ok(publishBody.includes('gapContext(ctx, config, gapPeople, txRead)'), 'the in-transaction gap context must read through tx.get');
+  assert.ok(publishBody.includes('gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);\n      requireGapClearance(gapReport, gapAcknowledgement);'), 'the binding clearance check must run inside the transaction');
+  const txStart = publishBody.indexOf('await db.runTransaction(async (tx) => {');
+  assert.ok(txStart > -1 && publishBody.indexOf('requireGapClearance(gapReport, gapAcknowledgement);') > txStart);
+  // הבדיקה המוקדמת רצה גם לניסיון חוזר של פרסום ב-staging (אינה מותנית ב-!existing.exists).
+  assert.ok(publishBody.includes('const earlyCtx = await gapContext(ctx, config, gapPeople);'));
+  assert.equal(publishBody.includes('if (!existing.exists) {\n      const gapCtx'), false, 'the gate must not be skipped on a staging retry');
+  // הקוראים מקבלים `read` ומשתמשים בו — אחרת tx.get אינו אלא קישוט.
+  assert.ok(runtime.includes('async function loadQualificationCatalog(ctx, read)') && runtime.includes('(read || directRead)(qualificationCatalogRef(ctx.sid)'));
+  assert.ok(runtime.includes('async function loadPersonQualifications(ctx, read)') && runtime.includes("(read || directRead)(stationRef(ctx.sid).collection('schedule_person_qualifications')"));
+  assert.ok(runtime.includes('async function loadGapPolicy(ctx, read)') && runtime.includes('(read || directRead)(gapPolicyRef(ctx.sid))'));
+  assert.ok(runtime.includes('async function loadLiveGapPeople(ctx, sourcePeople, read)')
+    && runtime.includes("(read || directRead)(stationRef(ctx.sid).collection('users')"),
+  'the canonical live roster must use the same tx reader');
+  assert.ok(runtime.includes('person.active !== false && activeOperationalMember(live.get(person.id), ctx.sid)'),
+    'source activity and canonical live membership are both required');
+  assert.ok(runtime.includes("report.digest = digest({ gap_digest: report.digest, basis_digest: gapBasisDigest(gapCtx) });"),
+    'an acknowledgement must be bound to the live gap basis');
+});
+
+check('§3 edits always run against the active policy (rows rebased when it changed) and the canonical projection of an imported plan', () => {
+  // הכרעת אלדד (5.9): עריכה ידנית תמיד אפשרית — אין סירוב על מדיניות שהשתנתה, יש יישור.
+  assert.equal(runtime.includes("'edit-policy-changed'"), false, 'manual editing must always be possible');
+  assert.ok(runtime.includes('rebase_policy: policyChanged'));
+  assert.ok(runtime.includes('const editPolicy = await editPolicyFor(ctx, policy, active);'));
+  assert.ok(runtime.includes('sheetImport.projectCanonicalPolicy(policyValue, map)'));
+  assert.ok(runtime.includes('projectedPolicyForPlan('), 'preview, reports, edits and publish share one policy projection helper');
+  assert.ok(runtime.includes('station_map: importedStationMapOf(null, draftMeta),'), 'the publication must carry the station map');
+});
+
+check('release blocker: source drift keeps the active signed roster/events and permits only removals for departed people', () => {
+  const body = runtime.slice(runtime.indexOf('async function scheduleEditBasis(ctx, req)'),
+    runtime.indexOf('function scheduleEditReport(basis)'));
+  assert.ok(body.includes('const editablePeople = people.filter((person) => snapshotPeople.has(person.id));'));
+  assert.ok(body.includes('events: active.events') && body.includes('roster: active.roster'));
+  assert.ok(body.includes('sourceChanged') && body.includes('snapshot_preserved: true'));
+  assert.ok(runtime.includes('snapshot_source_id: basis.snapshotSourceId'));
+  assert.ok(editIntegration.includes('source drift preserves the signed snapshot while allowing removal of a departed assignee'));
+});
+
+check('§4/§5/§6 the pure edit module keeps UID_RE, MAX_WARNINGS and the role check', () => {
+  const edit = read('functions/schedule-edit.js');
+  assert.ok(edit.includes('const UID_RE = /^[^\\s/\\u0000-\\u001f\\u007f]{1,128}$/;'), 'UID must not be filtered to alphanumerics');
+  assert.ok(edit.includes('if (!UID_RE.test(uid))'));
+  assert.ok(edit.includes('const MAX_WARNINGS = 200;') && edit.includes('if (warnings.length < MAX_WARNINGS) warnings.push(entry);'));
+  assert.ok(edit.includes("fail('edit-role-unknown'"));
+  assert.ok(runtime.includes('report.report_bytes = requireEditReportSize(report);'));
+});
+
+check('seq457: the qualification save re-validates quota and label uniqueness on the catalog read inside the transaction; a policy change needs an explicit acknowledgement', () => {
+  const save = runtime.slice(runtime.indexOf('async function saveQualification(req)'), runtime.indexOf('async function deleteQualification(req)'));
+  assert.ok(save.includes('loadQualificationCatalog(ctx, txRead)'));
+  assert.ok(save.includes("throw new ScheduleRuntimeError('qualification-catalog-changed'"));
+  assert.ok(runtime.includes("new ScheduleRuntimeError('edit-policy-acknowledgement-required'"));
+  const edit = read('functions/schedule-edit.js');
+  assert.equal(/uid \+ '\|'/.test(edit), false, 'no uid|date string keys');
+  assert.ok(edit.includes('touched.set(uid, new Map())'));
+  const quals = read('functions/schedule-qualifications.js');
+  assert.ok(quals.includes('const out = Object.create(null);') && quals.includes("'__proto__', 'constructor', 'prototype'"));
+  assert.ok(ui.includes("'sub-station-not-in-policy':") && ui.includes('editPolicyAcknowledgement()'));
+});
+
+check('42H.4: prepared cutover is bound to the exact gap basis and acknowledgement', () => {
+  const body = runtime.slice(runtime.indexOf('async function promoteToNew(req)'), runtime.indexOf('async function replayPreparedPublication('));
+  assert.ok(body.includes('gapContext(ctx, liveRuntime, candidateGapPeople, txRead)'));
+  assert.ok(body.includes("new ScheduleRuntimeError('cutover-gaps-changed'"));
+  assert.ok(body.includes('preparedGap.basis_digest !== gapBasisDigest(liveGapCtx)'));
+  assert.ok(body.includes("requireGapClearance(liveGapReport, String(preparedGap.acknowledgement || ''))"));
+});
+
+check('42H.4: rollback runs the current gap gate inside its activation transaction', () => {
+  const body = runtime.slice(runtime.indexOf('async function rollback(req)'), runtime.indexOf('function requestedViewDate('));
+  const txAt = body.indexOf('await db.runTransaction(async (tx) => {');
+  const gateAt = body.lastIndexOf('requireGapClearance(rollbackGapReport, gapAcknowledgement)');
+  assert.ok(body.includes('gapContext(ctx, config, rollbackGapPeople, txRead)'));
+  assert.ok(txAt > -1 && gateAt > txAt, 'rollback gap gate must run inside the activation transaction');
+  assert.ok(body.includes('gap_report: rollbackGapRecord'));
+});
+
+check('release blocker: rollback fingerprints the acknowledgement and duplicate receipts stay complete', () => {
+  const rollback = runtime.slice(runtime.indexOf('async function rollback(req)'), runtime.indexOf('function requestedViewDate('));
+  assert.ok(rollback.includes("intent: 'rollback'"));
+  assert.ok(rollback.includes('gap_acknowledgement: gapAcknowledgement || null'));
+  assert.ok(rollback.indexOf('firstPub.request_fingerprint !== requestFingerprint')
+    < rollback.indexOf('firstActive.publication_id === pubId'));
+  assert.ok(rollback.includes('rolled_back_to: publication.rollback_target_publication_id'));
+  const publish = runtime.slice(runtime.indexOf('async function publish(req)'), runtime.indexOf('async function rollback(req)'));
+  for (const field of ['prepared: false', 'blocked_notifications: existingData.blocked_notifications',
+    'summary: existingData.summary']) assert.ok(publish.includes(field), field);
+  assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
+});
+
+assert.equal(passed, 127);
+console.log('\n127 schedule runtime source checks passed.');

@@ -172,6 +172,12 @@ npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-
 Assert-ResQNative 'schedule authoring integration'
 npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-sheet-import.integration.test.js"
 Assert-ResQNative 'schedule sheet-import integration'
+npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-edit.integration.test.js"
+Assert-ResQNative 'schedule edit integration'
+npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-qualifications.integration.test.js"
+Assert-ResQNative 'schedule qualifications integration'
+npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js"
+Assert-ResQNative 'schedule gaps integration'
 ```
 
 מיד אחרי השערים מודדים שוב את אותו עץ. אסור להכין אישור מתוך מצב

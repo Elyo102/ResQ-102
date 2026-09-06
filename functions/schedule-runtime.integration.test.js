@@ -1861,6 +1861,7 @@ async function test(name, fn) {
 
   let publicationId;
   let firstNewRevision = 0;
+  let firstPublishReceipt = null;
   await test('new mode activates one complete publication and only then queues pushes', async () => {
     // The preceding cutover already activated draft_one. Build a real change,
     // rather than expecting another notification for the identical schedule.
@@ -1904,6 +1905,7 @@ async function test(name, fn) {
     const result = await api.publish(req('manager', 'commander', {
       draft_id: draftId, expected_content_digest: previewDigest, request_id: 'publish_one'
     }));
+    firstPublishReceipt = result;
     publicationId = result.publication_id;
     assert.equal(result.revision, revisionBefore + 1);
     assert.ok(result.revision >= 2, 'המעבר שלפני התרחיש הזה לא הפעיל פרסום');
@@ -1924,8 +1926,8 @@ async function test(name, fn) {
     const result = await api.publish(req('manager', 'commander', {
       draft_id: draftId, expected_content_digest: previewDigest, request_id: 'publish_one'
     }));
-    assert.equal(result.duplicate, true);
-    assert.equal(result.publication_id, publicationId);
+    assert.deepEqual(result, Object.assign({}, firstPublishReceipt, { duplicate: true }),
+      'direct publish replay must return the complete original receipt');
     assert.equal((await outbox.docs[0].ref.get()).data().status, 'queued');
   });
 
@@ -2027,6 +2029,7 @@ async function test(name, fn) {
   });
 
   let secondPublicationId;
+  let rollbackReceipt = null;
   await test('a second publication can be rolled back only by creating a new revision', async () => {
     const secondDraft = await api.runPlanner(req('manager', 'commander', {
       request_id: 'draft_two', start: '2026-09-01', months: 1,
@@ -2053,10 +2056,25 @@ async function test(name, fn) {
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'snapshot-digest-mismatch');
     await targetPerson.set(originalPerson);
 
+    const criticalRef = db.doc('stations/' + SID + '/schedule_qualifications/shift_lead');
+    await criticalRef.set({
+      station_id: SID, label: 'ראש משמרת', active: true, minimum: 1,
+      critical: true, order: 10, revision: 1
+    });
+    await assert.rejects(api.rollback(req('manager', 'commander', {
+      request_id: 'rollback_unsafe_gap', expected_active_publication_id: secondPublicationId,
+      target_publication_id: publicationId, reason_code: 'wrong_assignment'
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'gaps-critical');
+    await criticalRef.delete();
+    const stillSecond = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
+    assert.equal(stillSecond.publication_id, secondPublicationId,
+      'rollback with a current critical gap moved the active pointer');
+
     const rolled = await api.rollback(req('manager', 'commander', {
       request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
       target_publication_id: publicationId, reason_code: 'wrong_assignment'
     }));
+    rollbackReceipt = rolled;
     assert.equal(rolled.revision, firstNewRevision + 2);
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     assert.equal(active.publication_id, rolled.publication_id);
@@ -2074,7 +2092,12 @@ async function test(name, fn) {
       request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
       target_publication_id: publicationId, reason_code: 'wrong_assignment'
     }));
-    assert.equal(duplicate.duplicate, true);
+    assert.deepEqual(duplicate, Object.assign({}, rollbackReceipt, { duplicate: true }),
+      'rollback replay must return the complete original receipt');
+    await assert.rejects(api.rollback(req('manager', 'commander', {
+      request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
+      target_publication_id: publicationId, reason_code: 'operational_safety'
+    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'rollback-conflict');
     assert.equal(duplicate.publication_id, active.publication_id);
     const mineAfter = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
     assert.ok(mineAfter.days.every((day) => !day.answer));

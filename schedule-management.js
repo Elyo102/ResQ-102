@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h3';
-import { renderNav, renderStuckNav } from './nav.js?v=42h3';
-import { initPWA } from './pwa.js?v=42h3';
-import { initAppCheck } from './appcheck.js?v=42h3';
-import { readScheduleFile } from './schedule-file-import.js?v=42h3';
+import { firebaseConfig } from './firebase-config.js?v=42h4';
+import { renderNav, renderStuckNav } from './nav.js?v=42h4';
+import { initPWA } from './pwa.js?v=42h4';
+import { initAppCheck } from './appcheck.js?v=42h4';
+import { readScheduleFile } from './schedule-file-import.js?v=42h4';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h3';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h4';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -30,6 +30,14 @@ const call = Object.freeze({
   importSheet: httpsCallable(functions, 'importScheduleSheet'),
   displayStatus: httpsCallable(functions, 'getScheduleDisplayStatus'),
   displaySet: httpsCallable(functions, 'setScheduleDisplay'),
+  editPreview: httpsCallable(functions, 'previewScheduleEdit'),
+  editApply: httpsCallable(functions, 'applyScheduleEdit'),
+  qualCatalog: httpsCallable(functions, 'getQualificationCatalog'),
+  qualSave: httpsCallable(functions, 'saveQualification'),
+  qualDelete: httpsCallable(functions, 'deleteQualification'),
+  qualPerson: httpsCallable(functions, 'setPersonQualifications'),
+  gapReport: httpsCallable(functions, 'getScheduleGapReport'),
+  gapPolicy: httpsCallable(functions, 'saveScheduleGapPolicy'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
   publish: httpsCallable(functions, 'publishSchedule'),
   rollback: httpsCallable(functions, 'rollbackSchedule'),
@@ -115,6 +123,35 @@ function requestId(prefix) {
     ? globalThis.crypto.randomUUID().replace(/-/g, '')
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
   return prefix + '_' + id;
+}
+
+/* ⭐ 42H.2 (ביקורת §7) · מזהה פעולה **לכוונה**, לא ללחיצה. שמירת כשירות,
+ * מחיקה, כשירויות לאדם ומינימום תחנה: אותם שדות בדיוק = אותו request_id,
+ * עד שהשרת ענה (הצלחה או סירוב מפורש). כשל תקשורת עמום משאיר את המזהה,
+ * כך שהלחיצה הבאה היא ניסיון חוזר של אותה פעולה — לא פעולה שנייה. */
+function intentRequestId(scope, intent) {
+  state.intentRequestIds = state.intentRequestIds || {};
+  const key = scope + ':' + JSON.stringify(intent);
+  if (!state.intentRequestIds[key]) state.intentRequestIds[key] = requestId(scope);
+  return state.intentRequestIds[key];
+}
+function releaseIntent(scope, intent) {
+  if (!state.intentRequestIds) return;
+  delete state.intentRequestIds[scope + ':' + JSON.stringify(intent)];
+}
+/* ⭐ קבלה שהגיעה אבל אינה קבלה — בלי המזהים שהשרת מחזיר — היא תשובה
+ * עמומה, לא הצלחה: הבקשה נשארת ממתינה לשליחה חוזרת. */
+function receiptOk(result, fields) {
+  if (!result || typeof result !== 'object') return false;
+  return fields.every((field) => {
+    const value = result[field];
+    return typeof value === 'string' ? value.length > 0 : Number.isInteger(value);
+  });
+}
+function malformedReceipt() {
+  const error = new Error('התשובה מהשרת חסרה. הבקשה תישלח שוב.');
+  error.malformedReceipt = true;
+  return error;
 }
 
 function resetPublishRequest() {
@@ -242,6 +279,7 @@ function showScheduleViews() {
   $('mineTab').hidden = false;
   $('stationTab').hidden = false;
   $('manageTab').hidden = !canManageSchedule();
+  $('qualsTab').hidden = !canManageSchedule();
   updateRunAvailability();
   $('scheduleTabs').classList.remove('manage-only');
   $('scheduleTabs').classList.toggle('views-only', !canManageSchedule());
@@ -252,7 +290,8 @@ function chooseTab(name, replaceUrl = true) {
   // תמונת התחנה לפני שהוא עובר לסידור האישי. כתובת ניהול אינה דרך
   // לעקוף את המינוי החי של אחראי/ת הסידור.
   if (name === 'manage' && !canManageSchedule()) name = 'station';
-  if (['manage', 'mine', 'station'].indexOf(name) === -1) name = 'station';
+  if (name === 'quals' && !canManageSchedule()) name = 'station';   // 42H.2 · אותו שער ללשונית הכשירויות
+  if (['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station';
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.classList.toggle('on', button.dataset.tab === name);
@@ -261,6 +300,7 @@ function chooseTab(name, replaceUrl = true) {
   $('manageView').hidden = name !== 'manage';
   $('mineView').hidden = name !== 'mine';
   $('stationView').hidden = name !== 'station';
+  $('qualsView').hidden = name !== 'quals';
   if (replaceUrl) {
     const url = new URL(location.href);
     url.searchParams.set('tab', name);
@@ -268,6 +308,7 @@ function chooseTab(name, replaceUrl = true) {
   }
   if (name === 'mine') loadMineRange();
   if (name === 'station') loadStationRange();
+  if (name === 'quals') loadQualifications();
 }
 
 /* ==================================================================
@@ -2182,6 +2223,7 @@ async function importSheet() {
   state.importPending = { payload };
   try {
     const result = (await call.importSheet(payload)).data;
+    if (!receiptOk(result, ['draft_id', 'from', 'to'])) throw malformedReceipt();
     state.importPending = null;
     state.draft = result;
     state.importedDraft = result;
@@ -2360,8 +2402,11 @@ function updatePublishAvailability() {
   const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
   /* ⭐ P0-2. ב-`shadow` פרסום הוא **הכנה**, ולכן הוא מותר שם — זה
    * כל מה שסוגר את חלון הלוח הריק. ב-`off` הוא חסום כמו קודם. */
+  const gapReport = state.draftPreview && state.draftPreview.gaps;
+  const critical = !!gapReport && (gapReport.blocking || []).length > 0;
+  const needsAck = !!gapReport && !critical && (gapReport.acknowledgeable || []).length > 0;
   const ready = !!state.draft && !!state.draftPreview && $('reviewDraft').checked
-    && canRunSchedule() && gaps === 0;
+    && canRunSchedule() && gaps === 0 && !critical && (!needsAck || $('draftGapAck').checked);
   $('publish').disabled = state.busy || !ready;
   $('publish').textContent = state.status && state.status.mode === 'shadow'
     ? 'הכן את הסידור' : 'פרסום הסידור';
@@ -2416,6 +2461,11 @@ async function loadDraftPreview(start, resetApproval) {
     state.draftPreview = preview;
     state.previewStart = preview.week_start;
     renderDraftPreview(preview);
+    // 42H.2 ג׳ · פערים על הטיוטה כולה: קריטי נועל את הפרסום; אחר — אישור חתום.
+    clear($('draftGapsDays'));
+    if (resetApproval !== false) $('draftGapAck').checked = false;
+    const blocked = renderGapSummary(preview.gaps, { box: 'draftGaps', list: 'draftGapsList', ackWrap: 'draftGapAckWrap', ackText: 'draftGapAckText' });
+    $('draftGapsTitle').textContent = blocked ? 'בקרת פערים — פער קריטי חוסם פרסום' : 'בקרת פערים';
     $('reviewDraft').disabled = false;
     message('previewMessage', 'הטיוטה מוצגת לבדיקה. היא עדיין לא פורסמה.', 'ok');
   } catch (error) {
@@ -2452,6 +2502,10 @@ async function publishDraft() {
   const preparing = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
+  const gapReport = state.draftPreview.gaps;
+  if (gapReport && (gapReport.blocking || []).length) { message('publishMessage', 'אי אפשר לפרסם: פער בכשירות קריטית.', 'err'); return; }
+  const acknowledgement = gapAcknowledgement(gapReport, 'draftGapAck');
+  if (acknowledgement === '') { message('publishMessage', 'יש פערים שדורשים אישור מפורש לפני הפרסום.', 'err'); return; }
   const confirmation = preparing
     ? 'להכין את הטיוטה לבדיקה? הסידור הקיים יישאר פעיל ולא תישלח הודעה לאיש.'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
@@ -2463,11 +2517,13 @@ async function publishDraft() {
     const draftId = state.draft.draft_id;
     const expectedContentDigest = state.draftPreview.expected_content_digest;
     const intent = preparing ? 'prepare' : 'publish';
-    const result = (await call.publish({
+    const publishPayload = {
       draft_id: draftId,
       expected_content_digest: expectedContentDigest,
       request_id: requestIdForPublication(draftId, expectedContentDigest, intent)
-    })).data;
+    };
+    if (acknowledgement) publishPayload.gap_acknowledgement = acknowledgement;
+    const result = (await call.publish(publishPayload)).data;
     if (preparing && (result.prepared !== true || result.notified_people !== 0)) {
       throw new Error('השרת לא אישר שהסידור הוכן בלבד וללא הודעות. יש לרענן לפני ניסיון נוסף.');
     }
@@ -2487,7 +2543,7 @@ async function publishDraft() {
     invalidateRange();
     try {
       state.status = (await call.status({})).data;
-      setMode(state.status); setRollbackAvailability();
+      setMode(state.status); setRollbackAvailability(); updateEditAvailability();
       await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
@@ -2518,15 +2574,36 @@ async function rollbackSchedule() {
   state.busy = true; setRollbackAvailability();
   message('rollbackMessage', 'מחזיר לגרסה הקודמת בפעולה בטוחה…', 'info');
   try {
-    const result = (await call.rollback({
+    const payload = {
       request_id: requestId('rollback'),
       expected_active_publication_id: active.publication_id,
       target_publication_id: active.previous_publication_id,
       reason_code: 'operational_safety'
-    })).data;
+    };
+    let result;
+    try {
+      result = (await call.rollback(payload)).data;
+    } catch (error) {
+      const detail = error && error.details && error.details.detail;
+      if (errorCode(error) !== 'gaps-acknowledgement-required'
+          || !detail || !detail.digest) throw error;
+      const gaps = Array.isArray(detail.acknowledgeable) ? detail.acknowledgeable : [];
+      const count = detail.summary && Number(detail.summary.other_gaps || 0) || gaps.length;
+      const visible = gaps.slice(0, 6).map((gap) => '• ' + gapText(gap));
+      const hidden = Math.max(0, count - visible.length);
+      const summary = visible.length
+        ? '\n\n' + visible.join('\n') + (hidden ? '\n• ועוד ' + hidden + ' פערים' : '')
+        : '';
+      const ok = confirm('בגרסה הקודמת יש ' + count
+        + ' פערי תקן או כשירות שאינם קריטיים:' + summary
+        + '\n\nלחזור אליה למרות זאת? האישור המדויק יירשם ביומן.');
+      if (!ok) throw new Error('החזרה בוטלה.');
+      payload.gap_acknowledgement = String(detail.digest);
+      result = (await call.rollback(payload)).data;
+    }
     message('rollbackMessage', 'החזרה הושלמה כגרסה ' + result.revision + '.', 'ok');
     state.status = (await call.status({})).data;
-    setMode(state.status); setRollbackAvailability();
+    setMode(state.status); setRollbackAvailability(); updateEditAvailability();
     invalidateRange();
     await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
   } catch (error) {
@@ -2547,6 +2624,698 @@ async function loadSetup() {
     renderSourceSummary();
   } catch (error) { message('policyMessage', errorText(error), 'err'); }
 }
+
+/* ==================================================================
+ *  42H.2 · חבילה ג׳ — בקרת פערים (תצוגה משותפת)
+ * ------------------------------------------------------------------
+ *  פער קריטי — הכפתור נעול והסיבה כתובה. פער אחר — רשימה + תיבת אישור
+ *  שמצרפת לבקשה את חתימת הרשימה המדויקת (gap_acknowledgement). המסך
+ *  מציג מועמדים; הוא לעולם אינו משבץ.
+ * ================================================================== */
+const GAP_KIND_HE = {
+  qualification: 'כשירות', station: 'מינימום תחנה', sub_station: 'קו תחנת קצה',
+  assignment: 'שיבוץ לא תקף', coverage: 'יום חסר בסידור'
+};
+
+function gapText(gap) {
+  const what = gap.kind === 'station' ? 'סה״כ בתחנה' : (gap.kind === 'sub_station' ? (gap.label || gap.key) : (gap.label || gap.key));
+  return dateLabel(gap.date) + ' · ' + GAP_KIND_HE[gap.kind] + ': ' + what + ' — ' + gap.present + ' מתוך ' + gap.minimum + ' (חסרים ' + gap.gap + ')';
+}
+
+/** מצייר סיכום פערים לתוך קופסה: רשימת חוסמים/אחרים + תיבת אישור. מחזיר האם חוסם. */
+function renderGapSummary(gaps, ids) {
+  const box = $(ids.box);
+  if (!gaps) { box.hidden = true; return false; }
+  const blocking = gaps.blocking || [];
+  const other = gaps.acknowledgeable || [];
+  box.hidden = !blocking.length && !other.length;
+  box.classList.toggle('critical', blocking.length > 0);
+  const list = $(ids.list); clear(list);
+  blocking.forEach((gap) => list.appendChild(node('div', 'gap critical', 'חוסם · ' + gapText(gap))));
+  other.forEach((gap) => list.appendChild(node('div', 'gap other', gapText(gap))));
+  if (gaps.truncated) list.appendChild(node('div', 'gap other', 'מוצגים רק הפערים הראשונים; הרשימה המלאה בפירוט לפי יום.'));
+  const ackWrap = $(ids.ackWrap);
+  ackWrap.hidden = blocking.length > 0 || !other.length;
+  if (!ackWrap.hidden) {
+    $(ids.ackText).textContent = 'ראיתי ' + other.length + ' פערים (מינימום תחנה / קו תחנת קצה / כשירות לא-קריטית) ואני מאשר/ת לפרסם למרות זאת. האישור נרשם ביומן על שמי.';
+  }
+  return blocking.length > 0;
+}
+
+function gapAcknowledgement(gaps, ackId) {
+  if (!gaps || !(gaps.acknowledgeable || []).length) return undefined;
+  return $(ackId).checked ? gaps.digest : '';
+}
+
+const CANDIDATES_NOTE = 'מועמדים לפי כשירות ופניות ביום בלבד — לא נבדקו זמינות, נעילות, סבב ומנוחה. אין שיבוץ אוטומטי: שיבוץ נעשה ידנית דרך עריכת הסידור.';
+function queueInvalidAssignmentRemoval(entry, date) {
+  if (!canEditSchedule() || !entry || !entry.uid || !date) return;
+  state.editList = state.editList || [];
+  const exists = state.editList.some((item) => item.kind === 'unassign'
+    && item.uid === entry.uid && item.dates.length === 1 && item.dates[0] === date);
+  if (!exists) {
+    state.editList.push({
+      kind: 'unassign', uid: entry.uid,
+      name: entry.label || entry.uid, dates: [date]
+    });
+  }
+  invalidateEditReport();
+  renderEditList();
+  message('editMessage', exists
+    ? 'ההסרה כבר נמצאת ברשימת העריכה.'
+    : 'נוספה הסרה של ' + (entry.label || entry.uid) + ' בתאריך ' + dateLabel(date) + '. יש לבדוק את השינויים ולפרסם.',
+  exists ? 'info' : 'warn');
+}
+
+function renderGapDays(days, box, options = {}) {
+  clear(box);
+  /* ⭐ seq457 §3 · הבסיס של המועמדים נאמר פעם אחת ובמפורש. */
+  if ((days || []).some((day) => day.has_gap)) box.appendChild(node('div', 'sub', CANDIDATES_NOTE));
+  (days || []).forEach((day) => {
+    const wrap = node('div', 'gapday');
+    wrap.appendChild(node('b', 'date', dateLabel(day.date) + ' · ' + day.total + ' משובצים' + (day.station_minimum ? ' מתוך מינימום ' + day.station_minimum : '')));
+    if (day.station_gap > 0) {
+      wrap.appendChild(node('div', 'gap other', 'סה״כ בתחנה: חסרים ' + day.station_gap + ' · מועמדים (כשירות בלבד): ' + ((day.station_candidates || []).map((c) => c.name).join(', ') || 'אין פנויים')));
+    }
+    (day.sub_stations || []).forEach((sub) => {
+      if (sub.gap > 0) wrap.appendChild(node('div', 'gap other', sub.label + ': ' + sub.people + ' מתוך ' + sub.minimum + ' (חסרים ' + sub.gap + ')'));
+    });
+    (day.qualifications || []).forEach((q) => {
+      if (q.gap <= 0) return;
+      const line = node('div', 'gap ' + (q.critical ? 'critical' : 'other'));
+      line.appendChild(node('span', '', (q.critical ? 'קריטי · ' : '') + q.label + ': ' + q.present + ' מתוך ' + q.minimum));
+      line.appendChild(node('span', 'cands', 'מועמדים (כשירות בלבד): ' + ((q.candidates || []).map((c) => c.name).join(', ') || 'אין פנויים עם הכשירות')));
+      wrap.appendChild(line);
+    });
+    (day.invalid_assignments || []).forEach((entry) => {
+      const line = node('div', 'gap critical');
+      line.appendChild(node('span', '', 'חוסם · ' + (entry.label || entry.uid)
+        + ' כבר אינו עובד פעיל אך עדיין משובץ'
+        + (entry.sub_station ? ' ב' + editStationLabel(entry.sub_station) : '') + '.'));
+      if (options.allowRemediation && canEditSchedule()) {
+        const remove = node('button', '', 'הוסף הסרה לעריכת הסידור');
+        remove.type = 'button';
+        remove.addEventListener('click', () => queueInvalidAssignmentRemoval(entry, day.date));
+        line.appendChild(remove);
+      }
+      wrap.appendChild(line);
+    });
+    if (!day.has_gap) wrap.appendChild(node('div', 'ok', 'אין פערים'));
+    box.appendChild(wrap);
+  });
+}
+
+async function loadDraftGapDays() {
+  if (!state.draft || state.busy) return;
+  $('draftGapsDetail').disabled = true;
+  try {
+    const report = (await call.gapReport({ draft_id: state.draft.draft_id })).data;
+    renderGapDays(report.days, $('draftGapsDays'));
+  } catch (error) { message('previewMessage', errorText(error), 'err'); }
+  finally { $('draftGapsDetail').disabled = false; }
+}
+
+async function loadActiveGaps() {
+  if (state.busy || !canManageSchedule()) return;
+  $('gapLoad').disabled = true;
+  message('gapMessage', 'בודק את הסידור הפעיל…', 'info');
+  try {
+    const report = (await call.gapReport({})).data;
+    const box = $('gapSummary'); clear(box); box.classList.remove('hide');
+    [['ימים', report.summary.days], ['ימים עם פער', report.summary.days_with_gaps], ['פערים קריטיים', report.summary.critical_gaps],
+      ['פערים אחרים', report.summary.other_gaps], ['מינימום תחנה', report.summary.station_minimum || '—']].forEach(([label, value]) => {
+      const metric = node('div', 'metric'); metric.append(node('b', '', value), node('span', '', label)); box.appendChild(metric);
+    });
+    renderGapDays(report.days, $('gapDays'), { allowRemediation: true });
+    message('gapMessage', report.summary.critical_gaps
+      ? 'יש פערים בכשירויות קריטיות. עריכה שמשאירה אותם לא תתפרסם — שבצו מהמועמדים דרך „עריכת הסידור הפעיל".'
+      : (report.summary.other_gaps ? 'יש פערים שאינם קריטיים. הם מוצגים; פרסום עם פערים כאלה דורש אישור מפורש.' : 'אין פערים בסידור הפעיל.'),
+      report.summary.critical_gaps ? 'err' : (report.summary.other_gaps ? 'warn' : 'ok'));
+  } catch (error) { message('gapMessage', errorText(error), 'err'); }
+  finally { $('gapLoad').disabled = false; }
+}
+
+async function saveStationMinimum() {
+  if (state.busy) return;
+  const minimum = Number($('gapStationMinimum').value || 0);
+  const policy = (state.quals && state.quals.gap_policy) || { revision: 0 };
+  const intent = { station_minimum: minimum, expected_revision: policy.revision || 0 };
+  state.busy = true;
+  try {
+    const result = (await call.gapPolicy(Object.assign({ request_id: intentRequestId('gappolicy', intent) }, intent))).data;
+    releaseIntent('gappolicy', intent);
+    message('gapPolicyMessage', 'מינימום כולל לתחנה: ' + result.station_minimum + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('gappolicy', intent);
+    message('gapPolicyMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'gap-policy-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
+}
+
+$('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
+$('draftGapAck').addEventListener('change', updatePublishAvailability);
+$('gapLoad').addEventListener('click', managerAction(loadActiveGaps));
+$('gapStationMinimumSave').addEventListener('click', managerAction(saveStationMinimum));
+$('editGapAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
+$('editPolicyAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
+
+/* ==================================================================
+ *  42H.2 · חבילה א׳ — עריכת הסידור הפעיל
+ * ------------------------------------------------------------------
+ *  המסך אוסף שינויים (אדם × טווח × פעולה) לרשימה, מבקש דוח מהשרת
+ *  („בדוק"), ורק אז „בצע ופרסם": השרת יוצר גרסה חדשה עם CAS על הפרסום
+ *  שהמסך ראה (publication_id + revision + חתימה). כל שינוי ברשימה מבטל
+ *  את הדוח. תשובה שאבדה — אותה בקשה נשלחת שוב (כמו בייבוא).
+ * ================================================================== */
+const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות' };
+const EDIT_ABSENCE_HE = { sick: 'מחלה', reserve: 'מילואים', course: 'קורס', leave: 'חופש' };
+const EDIT_WARN_HE = {
+  'assigned-while-absent': 'משובץ ביום שבו רשומה לו היעדרות',
+  'absent-while-assigned': 'נרשמה היעדרות ביום שבו הוא משובץ',
+  'not-assigned': 'לא היה משובץ ביום הזה — אין מה להסיר',
+  'sub-station-not-in-policy': 'תחנת הקצה אינה בחוקי התחנה הפעילים — השורות שלה נשמרות כפי שהן ואי אפשר לשבץ אליה'
+};
+/* ⭐ seq457 §2 · אזהרה מנוסחת לפי מה שיש בה: אדם+יום, או תחנת קצה — לעולם לא undefined. */
+function editWarningText(warning) {
+  const what = EDIT_WARN_HE[warning.code] || warning.code;
+  if (warning.code === 'sub-station-not-in-policy') return editStationLabel(warning.sub_station) + ' · ' + what;
+  const who = warning.name || warning.uid || '';
+  const when = warning.date ? dateLabel(warning.date) : '';
+  return [who, when, what].filter(Boolean).join(' · ');
+}
+
+function editBase() {
+  const active = state.status && state.status.active;
+  if (!active || !active.publication_id || !active.content_digest || !active.revision) return null;
+  return { publication_id: active.publication_id, revision: active.revision, content_digest: active.content_digest };
+}
+
+function canEditSchedule() {
+  return canManageSchedule() && state.status.mode === 'new' && !!editBase();
+}
+
+function editStations() {
+  const policy = state.setup && state.setup.policy;
+  return policy && Array.isArray(policy.sub_stations) ? policy.sub_stations : [];
+}
+
+function editRolesFor(subId) {
+  const station = editStations().find((s) => s.id === subId);
+  return station && Array.isArray(station.requirements) ? station.requirements : [];
+}
+
+function editStationLabel(id) {
+  const station = editStations().find((s) => s.id === id);
+  return station ? station.label : (id || '');
+}
+
+/** התאריכים של הטווח שנבחר — יום, השבוע (ראשון–שבת) או החודש, חתוך לטווח הפרסום. */
+function editDatesFor(range, iso) {
+  const active = state.status && state.status.active;
+  if (!iso) return [];
+  let from = iso;
+  let to = iso;
+  if (range === 'week') {
+    const day = new Date(iso + 'T00:00:00.000Z').getUTCDay();   // 0 = ראשון
+    from = shiftDate(iso, -day);
+    to = shiftDate(from, 6);
+  } else if (range === 'month') {
+    const bounds = monthBounds(iso.slice(0, 7));
+    from = bounds.from; to = bounds.to;
+  }
+  if (active && active.from && from < active.from) from = active.from;
+  if (active && active.to && to > active.to) to = active.to;
+  const out = [];
+  for (let d = from; d <= to && out.length < 62; d = shiftDate(d, 1)) out.push(d);
+  return out;
+}
+
+function renderEditDates() {
+  const dates = editDatesFor($('editRange').value, $('editDate').value);
+  const box = $('editDates');
+  if (!$('editDate').value) { box.textContent = ''; return; }
+  const active = state.status && state.status.active;
+  box.textContent = dates.length
+    ? dates.length + ' ימים: ' + dateLabel(dates[0]) + (dates.length > 1 ? ' — ' + dateLabel(dates[dates.length - 1]) : '')
+    : 'התאריך מחוץ לטווח הסידור הפעיל' + (active && active.from ? ' (' + dateLabel(active.from) + ' — ' + dateLabel(active.to) + ')' : '') + '.';
+}
+
+function renderEditControls() {
+  const action = $('editAction').value;
+  $('editStationWrap').hidden = action !== 'assign';
+  $('editRoleWrap').hidden = action !== 'assign' && action !== 'role';
+  $('editAbsenceWrap').hidden = action !== 'absence';
+  $('editLocationWrap').hidden = action !== 'absence' || $('editAbsence').value !== 'leave';
+  const stationSelect = $('editStation');
+  if (!stationSelect.options.length) {
+    editStations().forEach((station) => {
+      const option = node('option', '', station.label); option.value = station.id; stationSelect.appendChild(option);
+    });
+  }
+  const roleSelect = $('editRole');
+  const subId = action === 'assign' ? stationSelect.value : (state.editPersonSub || stationSelect.value);
+  const current = roleSelect.value;
+  clear(roleSelect);
+  const none = node('option', '', 'ללא תפקיד'); none.value = ''; roleSelect.appendChild(none);
+  const seen = new Set();
+  (action === 'role' ? editStations().flatMap((s) => s.requirements || []) : editRolesFor(subId)).forEach((requirement) => {
+    if (!requirement || seen.has(requirement.role)) return;
+    seen.add(requirement.role);
+    const option = node('option', '', requirement.label || requirement.role); option.value = requirement.role; roleSelect.appendChild(option);
+  });
+  roleSelect.value = seen.has(current) ? current : '';
+}
+
+function renderEditSearch() {
+  const box = $('editSearchResults'); clear(box);
+  const people = (state.setup && state.setup.people) || [];
+  const query = $('editSearch').value.trim();
+  if (!query) return;
+  const q = query.toLowerCase();
+  const hits = people.filter((p) => String(p.name || '').toLowerCase().indexOf(q) !== -1
+    || String(p.id).toLowerCase() === q).slice(0, 12);
+  if (!hits.length) { box.appendChild(node('span', 'sub', 'לא נמצא עובד פעיל בשם הזה.')); return; }
+  hits.forEach((person) => {
+    const button = node('button', '', person.name + (person.sub_station ? ' · ' + editStationLabel(person.sub_station) : ''));
+    button.type = 'button'; button.dataset.uid = person.id;
+    button.setAttribute('aria-pressed', state.editPerson && state.editPerson.id === person.id ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      state.editPerson = person; state.editPersonSub = person.sub_station || null;
+      $('editPerson').textContent = 'נבחר: ' + person.name;
+      if (person.sub_station && $('editStation').querySelector('option[value="' + person.sub_station + '"]')) $('editStation').value = person.sub_station;
+      renderEditSearch(); renderEditControls();
+    });
+    box.appendChild(button);
+  });
+}
+
+function editItemText(item) {
+  const name = item.name;
+  const when = item.dates.length === 1 ? dateLabel(item.dates[0]) : item.dates.length + ' ימים (' + dateLabel(item.dates[0]) + ' — ' + dateLabel(item.dates[item.dates.length - 1]) + ')';
+  if (item.kind === 'assign') return name + ' · שיבוץ ל' + editStationLabel(item.sub_station) + (item.role ? ' כ' + (item.role_label || item.role) : '') + ' · ' + when;
+  if (item.kind === 'unassign') return name + ' · הסרה מהסידור · ' + when;
+  if (item.kind === 'role') return name + ' · תפקיד: ' + (item.role ? (item.role_label || item.role) : 'ללא') + ' · ' + when;
+  if (item.absence === null) return name + ' · ביטול היעדרות · ' + when;
+  return name + ' · ' + EDIT_ABSENCE_HE[item.absence.kind] + (item.absence.location ? ' (' + ABSENCE_LOCATIONS.get(item.absence.location) + ')' : '') + ' · ' + when;
+}
+
+function renderEditList() {
+  const box = $('editList'); clear(box);
+  (state.editList || []).forEach((item, index) => {
+    const row = node('div', 'row');
+    row.appendChild(node('b', '', editItemText(item)));
+    const remove = node('button', '', 'הסר'); remove.type = 'button';
+    remove.addEventListener('click', () => { state.editList.splice(index, 1); invalidateEditReport(); renderEditList(); });
+    row.appendChild(remove);
+    box.appendChild(row);
+  });
+  $('editCheck').disabled = !(state.editList && state.editList.length) || !canEditSchedule() || !!state.editPending;
+}
+
+function editPayload() {
+  return {
+    expected: editBase(),
+    edits: (state.editList || []).map((item) => {
+      const out = { kind: item.kind, uid: item.uid, dates: item.dates.slice() };
+      if (item.kind === 'assign') { out.sub_station = item.sub_station; out.role = item.role || null; }
+      if (item.kind === 'role') out.role = item.role || null;
+      if (item.kind === 'absence') out.absence = item.absence;
+      return out;
+    })
+  };
+}
+
+function invalidateEditReport() {
+  state.editReport = null;
+  $('editReport').hidden = true;
+  $('editApply').disabled = !state.editPending;
+  if (state.editPending) message('editMessage', pendingEditText(), 'warn');
+  else if ($('editMessage').textContent) message('editMessage', 'הרשימה השתנתה — יש ללחוץ שוב על „בדוק את השינויים".', 'info');
+}
+
+function pendingEditText() {
+  return 'התשובה על הביצוע לא הגיעה. לחץ שוב על „בצע ופרסם" — אותה בקשה בדיוק תישלח שוב, ולא תיווצר גרסה נוספת.';
+}
+
+function addEditItem() {
+  if (!canEditSchedule()) return;
+  const person = state.editPerson;
+  if (!person) { message('editMessage', 'יש לבחור עובד מהחיפוש.', 'err'); return; }
+  const dates = editDatesFor($('editRange').value, $('editDate').value);
+  if (!dates.length) { message('editMessage', 'יש לבחור תאריך בתוך טווח הסידור הפעיל.', 'err'); return; }
+  const action = $('editAction').value;
+  const item = { kind: action, uid: person.id, name: person.name, dates };
+  if (action === 'assign') {
+    item.sub_station = $('editStation').value;
+    if (!item.sub_station) { message('editMessage', 'יש לבחור תחנה.', 'err'); return; }
+    item.role = $('editRole').value || null;
+  } else if (action === 'role') {
+    item.role = $('editRole').value || null;
+  } else if (action === 'absence') {
+    const kind = $('editAbsence').value;
+    item.absence = kind ? Object.assign({ kind }, kind === 'leave' && $('editLocation').value ? { location: $('editLocation').value } : {}) : null;
+  }
+  if (item.role) {
+    const requirement = editStations().flatMap((s) => s.requirements || []).find((r) => r.role === item.role);
+    item.role_label = requirement ? (requirement.label || requirement.role) : item.role;
+  }
+  state.editList = state.editList || [];
+  state.editList.push(item);
+  message('editMessage', '', 'info');
+  invalidateEditReport();
+  renderEditList();
+}
+
+function renderEditReport(report) {
+  const wrap = $('editReport'); wrap.hidden = false;
+  const counts = $('editCounts'); clear(counts); counts.classList.remove('hide');
+  [['שינויים', report.counts.changes], ['עובדים שישתנו', report.counts.people], ['ימים', report.counts.dates],
+    ['הודעות שיישלחו', report.notifications], ['ימים מתחת לקו אחרי השינוי', (report.below_minimum || []).length], ['גרסה חדשה', report.next_revision]]
+    .forEach(([label, value]) => {
+      const metric = node('div', 'metric'); metric.append(node('b', '', value), node('span', '', label)); counts.appendChild(metric);
+    });
+  const people = $('editPeople'); clear(people);
+  (report.people_changed || []).forEach((person) => people.appendChild(node('span', 'blocktag station', person.name + ' · ' + person.changes)));
+  const changes = $('editChanges'); clear(changes);
+  const describe = (state) => (state.sub_station ? editStationLabel(state.sub_station) + (state.role ? ' · ' + state.role : '') : 'לא משובץ')
+    + (state.absence ? ' · ' + EDIT_ABSENCE_HE[state.absence.kind] + (state.absence.location ? ' (' + ABSENCE_LOCATIONS.get(state.absence.location) + ')' : '') : '');
+  (report.changes || []).forEach((change) => {
+    const row = node('div', 'editchange');
+    row.appendChild(node('b', '', change.name + ' · ' + dateLabel(change.date)));
+    row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
+    changes.appendChild(row);
+  });
+  if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
+  const warnings = $('editWarnings'); clear(warnings);
+  /* ⭐ seq457 §2 · חוקי התחנה השתנו מאז הפרסום — נאמר במפורש, עם מספר השורות
+   * שיושרו, ודורש אישור מפורש (תיבה) לפני הביצוע. */
+  const policyBox = $('editPolicyChanged');
+  if (report.policy_changed) {
+    policyBox.hidden = false;
+    $('editPolicyChangedText').textContent = 'חוקי התחנה השתנו מאז שהסידור הזה פורסם. ' + report.policy_changed.rows_rebased
+      + ' שורות יושרו לחוקים הפעילים (קו מינימום ותוויות). הביצוע יפרסם את הסידור על החוקים הפעילים.';
+    $('editPolicyAck').checked = false;
+    $('editPolicyAckText').textContent = 'ראיתי שחוקי התחנה השתנו ואני מאשר/ת לפרסם את הסידור הערוך על החוקים הפעילים';
+  } else policyBox.hidden = true;
+  if (report.warnings_truncated) warnings.appendChild(node('div', 'change warn', 'מוצגות ' + report.warnings.length + ' אזהרות מתוך ' + report.warnings_total + '.'));
+  (report.warnings || []).forEach((warning) => warnings.appendChild(node('div', 'change warn', editWarningText(warning))));
+  (report.below_minimum || []).forEach((row) => warnings.appendChild(node('div', 'change weak', row.label + ' · ' + dateLabel(row.date) + ' · ' + row.people + ' מתוך קו ' + row.minimum)));
+  $('editGapAck').checked = false;
+  renderGapSummary(report.gaps, { box: 'editGaps', list: 'editGapsList', ackWrap: 'editGapAckWrap', ackText: 'editGapAckText' });
+}
+
+function editGapsBlock() {
+  const gaps = state.editReport && state.editReport.gaps;
+  return !!gaps && (gaps.blocking || []).length > 0;
+}
+/* האישור על שינוי החוקים — חתימת החוקים הפעילים, או '' כשלא אושר, או null כשאין צורך. */
+function editPolicyAcknowledgement() {
+  const changed = state.editReport && state.editReport.policy_changed;
+  if (!changed) return null;
+  return $('editPolicyAck').checked ? changed.to : '';
+}
+function editApplyAllowed() {
+  return !!(state.editReport && state.editReport.counts.changes && !editGapsBlock() && editPolicyAcknowledgement() !== '');
+}
+
+async function checkEdit() {
+  if (state.busy || !canEditSchedule() || !(state.editList && state.editList.length)) return;
+  state.busy = true; $('editCheck').disabled = true; $('editApply').disabled = true;
+  message('editMessage', 'בודק את השינויים מול הסידור הפעיל…', 'info');
+  try {
+    const report = (await call.editPreview(editPayload())).data;
+    state.editReport = report;
+    renderEditReport(report);
+    if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
+    else if (editGapsBlock()) message('editMessage', 'השינוי משאיר פער בכשירות קריטית — אי אפשר לפרסם אותו. שבצו מהמועמדים או בטלו את ההסרה.', 'err');
+    else message('editMessage', report.counts.changes + ' שינויים ל-' + report.counts.people + ' עובדים. ' + report.notifications + ' עובדים יקבלו הודעה אחת. אפשר לבצע.', 'ok');
+    if (report.policy_changed && report.counts.changes && !editGapsBlock()) message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — ' + report.policy_changed.rows_rebased + ' שורות יושרו. יש לאשר בתיבה לפני הביצוע.', 'warn');
+    $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed();
+    if (state.editPending) message('editMessage', pendingEditText(), 'warn');
+  } catch (error) {
+    state.editReport = null; $('editReport').hidden = true;
+    message('editMessage', errorText(error), 'err');
+    $('editApply').disabled = !state.editPending;
+    if (errorCode(error) === 'edit-base-stale') await refreshStatusAfterEdit();
+  } finally { state.busy = false; $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length); }
+}
+
+async function refreshStatusAfterEdit() {
+  try {
+    state.status = (await call.status({})).data;
+    setMode(state.status);
+    setRollbackAvailability();
+    updateEditAvailability();
+  } catch (_) { /* המסך יראה את השגיאה הבאה */ }
+}
+
+async function applyEdit() {
+  if (state.busy) return;
+  const pending = state.editPending;
+  if (!pending && (!state.editReport || !state.editReport.counts.changes || editGapsBlock())) return;
+  let payload;
+  if (pending) payload = pending.payload;
+  else {
+    const acknowledgement = gapAcknowledgement(state.editReport.gaps, 'editGapAck');
+    if (acknowledgement === '') { message('editMessage', 'יש פערים שדורשים אישור מפורש לפני הביצוע.', 'err'); return; }
+    const policyAck = editPolicyAcknowledgement();
+    if (policyAck === '') { message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — יש לאשר זאת במפורש לפני הביצוע.', 'err'); return; }
+    const digestValue = state.editReport.edit_digest;
+    state.editRequestIds = state.editRequestIds || {};
+    if (!state.editRequestIds[digestValue]) state.editRequestIds[digestValue] = requestId('edit');
+    payload = Object.assign({ request_id: state.editRequestIds[digestValue], expected_edit_digest: digestValue }, editPayload());
+    if (acknowledgement) payload.gap_acknowledgement = acknowledgement;
+    if (policyAck) payload.policy_acknowledgement = policyAck;
+  }
+  state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
+  message('editMessage', pending ? 'שולח שוב את אותה בקשה…' : 'מבצע ומפרסם גרסה חדשה…', 'info');
+  state.editPending = { payload };
+  try {
+    const result = (await call.editApply(payload)).data;
+    /* ⭐ §7 · תשובה בלי מזהה פרסום וגרסה אינה קבלה — הבקשה נשארת ממתינה. */
+    if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
+    state.editPending = null;
+    state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
+    message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
+      + (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת. אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
+    await refreshStatusAfterEdit();
+    invalidateRange();
+    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+  } catch (error) {
+    if (errorCode(error)) {
+      state.editPending = null;
+      message('editMessage', errorText(error), 'err');
+      if (errorCode(error) === 'edit-base-stale') { state.editReport = null; $('editReport').hidden = true; await refreshStatusAfterEdit(); }
+    } else {
+      message('editMessage', pendingEditText() + ' (' + errorText(error) + ')', 'warn');
+    }
+  } finally {
+    state.busy = false;
+    $('editApply').disabled = !state.editPending;
+    $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length) || !!state.editPending;
+  }
+}
+
+function updateEditAvailability() {
+  const card = $('editCard');
+  if (!card) return;
+  const may = canEditSchedule();
+  card.hidden = !canManageSchedule() || !state.status || state.status.mode !== 'new';
+  $('gapCard').hidden = card.hidden || !may;
+  if (!card.hidden && !may) message('editMessage', 'אין סידור פעיל לעריכה.', 'info');
+  if (may && state.status.active && state.status.active.from && !$('editDate').value) $('editDate').value = localDate() >= state.status.active.from && localDate() <= state.status.active.to ? localDate() : state.status.active.from;
+  renderEditControls(); renderEditDates(); renderEditList();
+}
+
+$('editSearch').addEventListener('input', renderEditSearch);
+$('editRange').addEventListener('change', renderEditDates);
+$('editDate').addEventListener('change', renderEditDates);
+$('editAction').addEventListener('change', renderEditControls);
+$('editStation').addEventListener('change', renderEditControls);
+$('editAbsence').addEventListener('change', renderEditControls);
+$('editAdd').addEventListener('click', managerAction(addEditItem));
+$('editCheck').addEventListener('click', managerAction(checkEdit));
+$('editApply').addEventListener('click', managerAction(applyEdit));
+
+/* ==================================================================
+ *  42H.2 · חבילה ב׳ — קטלוג כשירויות ומחזיקים
+ * ------------------------------------------------------------------
+ *  כל פעולה נשלחת לשרת עם request_id ו-revision צפוי; המסך מציג את
+ *  מה שהשרת החזיר ולא ממציא. מחיקה מוצעת רק לכשירות מותאמת בלי מחזיקים.
+ * ================================================================== */
+async function loadQualifications(quiet) {
+  if (!canManageSchedule()) return;
+  if (!quiet) message('qualMessage', 'טוען…', 'info');
+  try {
+    state.quals = (await call.qualCatalog({})).data;
+    if (!quiet) message('qualMessage', '', 'info');
+    $('gapStationMinimum').value = String((state.quals.gap_policy && state.quals.gap_policy.station_minimum) || 0);
+    renderQualCatalog();
+    renderQualPeople();
+  } catch (error) {
+    state.quals = null;
+    message('qualMessage', errorText(error), 'err');
+  }
+}
+
+function renderQualCatalog() {
+  const view = state.quals;
+  const body = $('qualRows'); clear(body);
+  if (!view) return;
+  view.catalog.forEach((entry, index) => {
+    const tr = node('tr', entry.active ? '' : 'off');
+    tr.dataset.key = entry.key;
+    tr.appendChild(node('td', '', String(index + 1)));
+    const labelCell = node('td', '');
+    const labelInput = node('input', ''); labelInput.type = 'text'; labelInput.value = entry.label; labelInput.dataset.field = 'label';
+    labelInput.setAttribute('aria-label', 'תווית ' + entry.key);
+    labelCell.appendChild(labelInput);
+    labelCell.appendChild(node('div', 'sub', entry.key + (entry.builtin ? ' · מובנית' : ' · מותאמת')));
+    tr.appendChild(labelCell);
+    tr.appendChild(node('td', entry.critical ? 'critical' : '', entry.critical ? 'קריטית' : '—'));
+    const minCell = node('td', '');
+    const minInput = node('input', ''); minInput.type = 'number'; minInput.min = '0'; minInput.max = '200'; minInput.value = String(entry.minimum || 0); minInput.dataset.field = 'minimum';
+    minInput.setAttribute('aria-label', 'מינימום ' + entry.key);
+    minCell.appendChild(minInput);
+    tr.appendChild(minCell);
+    tr.appendChild(node('td', '', String((view.holders || {})[entry.key] || 0)));
+    const activeCell = node('td', '');
+    const activeInput = node('input', ''); activeInput.type = 'checkbox'; activeInput.checked = entry.active !== false; activeInput.dataset.field = 'active';
+    activeInput.setAttribute('aria-label', 'פעילה ' + entry.key);
+    activeCell.appendChild(activeInput);
+    tr.appendChild(activeCell);
+    const actions = node('td', '');
+    const save = node('button', '', 'שמור'); save.type = 'button'; save.dataset.action = 'save';
+    save.addEventListener('click', managerAction(() => saveQualificationRow(entry, tr)));
+    actions.appendChild(save);
+    const holders = (view.holders || {})[entry.key] || 0;
+    if (!entry.builtin) {
+      const del = node('button', '', holders ? 'בשימוש (' + holders + ')' : 'מחק'); del.type = 'button'; del.dataset.action = 'delete';
+      del.disabled = holders > 0;
+      del.title = holders ? 'יש להסיר את הכשירות מכל המחזיקים לפני מחיקה' : '';
+      del.addEventListener('click', managerAction(() => deleteQualificationRow(entry)));
+      actions.appendChild(del);
+    }
+    tr.appendChild(actions);
+    body.appendChild(tr);
+  });
+}
+
+async function saveQualificationRow(entry, tr) {
+  if (state.busy) return;
+  const label = tr.querySelector('input[data-field="label"]').value;
+  const minimum = Number(tr.querySelector('input[data-field="minimum"]').value);
+  const active = tr.querySelector('input[data-field="active"]').checked;
+  const intent = { key: entry.key, label, minimum, active, expected_revision: entry.revision || 0 };
+  const payload = Object.assign({ request_id: intentRequestId('qual', intent) }, intent);
+  if (entry.critical && !active) {
+    if (!confirm('„' + entry.label + '" היא כשירות קריטית. השבתה מבטלת את בקרת הפער שלה. להמשיך?')) return;
+    payload.confirm_critical = true;
+  }
+  state.busy = true;
+  try {
+    const result = (await call.qualSave(payload)).data;
+    releaseIntent('qual', intent);
+    message('qualMessage', 'נשמר: ' + label + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qual', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'qualification-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
+}
+
+async function deleteQualificationRow(entry) {
+  if (state.busy) return;
+  if (!confirm('למחוק את הכשירות „' + entry.label + '"? הפעולה נרשמת ביומן.')) return;
+  const intent = { key: entry.key, expected_revision: entry.revision || 0 };
+  state.busy = true;
+  try {
+    await call.qualDelete(Object.assign({ request_id: intentRequestId('qualdel', intent) }, intent));
+    releaseIntent('qualdel', intent);
+    message('qualMessage', 'נמחקה: ' + entry.label + '.', 'ok');
+    await loadQualifications(true);
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualdel', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    await loadQualifications(true);
+  } finally { state.busy = false; }
+}
+
+async function addQualification() {
+  if (state.busy) return;
+  const key = $('qualNewKey').value.trim();
+  const label = $('qualNewLabel').value.trim();
+  const minimum = Number($('qualNewMinimum').value || 0);
+  if (!key || !label) { message('qualMessage', 'יש למלא מפתח ותווית.', 'err'); return; }
+  const intent = { key, label, minimum, active: true, expected_revision: 0 };
+  state.busy = true;
+  try {
+    const result = (await call.qualSave(Object.assign({ request_id: intentRequestId('qualnew', intent) }, intent))).data;
+    releaseIntent('qualnew', intent);
+    message('qualMessage', 'נוספה: ' + label + ' (' + result.key + ').', 'ok');
+    $('qualNewKey').value = ''; $('qualNewLabel').value = ''; $('qualNewMinimum').value = '0';
+    await loadQualifications(true);
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualnew', intent);
+    message('qualMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+  } finally { state.busy = false; }
+}
+
+function renderQualPeople() {
+  const view = state.quals;
+  const box = $('qualPeople'); clear(box);
+  if (!view) return;
+  const q = $('qualSearch').value.trim().toLowerCase();
+  const people = (view.people || []).filter((person) => !q || String(person.name).toLowerCase().indexOf(q) !== -1).slice(0, 60);
+  if (!people.length) { box.appendChild(node('div', 'sub', view.people && view.people.length ? 'לא נמצא עובד בשם הזה.' : 'אין מקור כוח אדם פעיל — אין אנשים להצגה.')); return; }
+  const active = view.catalog.filter((entry) => entry.active !== false);
+  people.forEach((person) => {
+    const row = node('div', 'person'); row.dataset.uid = person.uid;
+    const who = node('div', '');
+    who.appendChild(node('b', '', person.name));
+    if (person.legacy && person.legacy.length) who.appendChild(node('div', 'legacy', 'מהמערכת הישנה: ' + person.legacy.join(', ')));
+    row.appendChild(who);
+    const held = node('div', 'held');
+    const chosen = new Set(person.qualifications || []);
+    active.forEach((entry) => {
+      const label = node('label', chosen.has(entry.key) ? 'on' : '');
+      const input = node('input', ''); input.type = 'checkbox'; input.value = entry.key; input.checked = chosen.has(entry.key);
+      input.addEventListener('change', () => label.classList.toggle('on', input.checked));
+      label.appendChild(input); label.appendChild(node('span', '', entry.label));
+      held.appendChild(label);
+    });
+    row.appendChild(held);
+    const save = node('button', '', 'שמור'); save.type = 'button';
+    save.addEventListener('click', managerAction(() => savePersonQualifications(person, row)));
+    row.appendChild(save);
+    box.appendChild(row);
+  });
+  if ((view.unknown_holders || []).length) {
+    box.appendChild(node('div', 'change warn', (view.unknown_holders.length) + ' מחזיקי כשירויות אינם במקור כוח האדם הפעיל (עזבו או טרם הוזנו).'));
+  }
+}
+
+async function savePersonQualifications(person, row) {
+  if (state.busy) return;
+  const keys = Array.from(row.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+  const intent = { person: person.uid, qualifications: keys, expected_revision: person.revision || 0 };
+  state.busy = true;
+  try {
+    const result = (await call.qualPerson(Object.assign({ request_id: intentRequestId('qualperson', intent) }, intent))).data;
+    releaseIntent('qualperson', intent);
+    message('qualPeopleMessage', person.name + ': ' + (result.qualifications.length ? result.qualifications.length + ' כשירויות' : 'בלי כשירויות') + ' (גרסה ' + result.revision + ').', 'ok');
+    await loadQualifications(true);
+  } catch (error) {
+    if (errorCode(error)) releaseIntent('qualperson', intent);
+    message('qualPeopleMessage', errorCode(error) ? errorText(error) : 'הפעולה לא אושרה (' + errorText(error) + '). לחיצה חוזרת תשלח את אותה בקשה בדיוק.', 'err');
+    if (errorCode(error) === 'holdings-revision-stale') await loadQualifications(true);
+  } finally { state.busy = false; }
+}
+
+$('qualAdd').addEventListener('click', managerAction(addQualification));
+$('qualSearch').addEventListener('input', renderQualPeople);
 
 async function boot(user) {
   state.user = user;
@@ -2571,6 +3340,7 @@ async function boot(user) {
     showScheduleViews();
     await Promise.all([loadSetup(), loadModeOptions(), loadImportDisplayStatus($('importMonth').value)]);
     updateImportDisplayAvailability();
+    updateEditAvailability();
     chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
   } catch (error) {
     state.status = null;

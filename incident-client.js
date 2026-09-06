@@ -11,7 +11,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -23,28 +23,28 @@ export const TELEMETRY_CODES = Object.freeze([
 // Explicit public onCall names only; never accept a free-form action label.
 export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
-  'approveRegistration', 'assignGuard', 'backupToSheetNow',
+  'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
-  'closeCallout', 'createStationTransfer', 'decideStationTransfer',
+  'closeCallout', 'createStationTransfer', 'decideStationTransfer', 'deleteQualification',
   'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
   'getGuardManagementStatus', 'getJoinCode',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
-  'getScheduleDisplayStatus', 'getScheduleDraftPreview', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
+  'getQualificationCatalog', 'getScheduleDisplayStatus', 'getScheduleDraftPreview',
+  'getScheduleGapReport', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
   'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
   'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
   'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
   'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listStationTransfers',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
-  'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleImport', 'previewSchedulePolicy',
+  'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleEdit', 'previewScheduleImport', 'previewSchedulePolicy',
   'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
   'rejectRegistration', 'replyToBulletinMessage', 'reportIncident',
   'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
   'rollbackSchedule', 'runAttendanceShadowNow', 'runReportNow',
-  'runSchedulePlanner', 'saveSchedulePolicy', 'saveScheduleSource',
+  'runSchedulePlanner', 'saveQualification', 'saveScheduleGapPolicy', 'saveSchedulePolicy', 'saveScheduleSource',
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
-  'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode',
-  'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
+  'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'whoAmI'
 ]);
