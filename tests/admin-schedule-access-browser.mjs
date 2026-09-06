@@ -311,23 +311,26 @@ try {
     // הלשונית זמינה — אבל היא אינה הלשונית שאליה הכתובת מובילה.
     assert.equal(await legacySchedulePage.locator('#manageTab').isVisible(), true);
     assert.equal(await legacySchedulePage.locator('#manageView').isVisible(), false);
-    assert.deepEqual(await legacySchedulePage.locator('#stationBoard .stub:not(.absence-stub) b').allTextContents(),
+    assert.deepEqual(await legacySchedulePage.locator('#stationBoard .stub[data-station] b').allTextContents(),
       ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
     assert.match(await legacySchedulePage.locator('#stationContent').textContent(), /לא הוזן/);
 
     await legacySchedulePage.locator('[data-tab="mine"]').click();
     assert.equal(await legacySchedulePage.locator('#mineView').isVisible(), true);
     await legacySchedulePage.locator('#mineBoard .hcell').first().waitFor();
-    assert.match(await legacySchedulePage.locator('#mineContent').textContent(), /טל חודרה/);
+    assert.equal((await legacySchedulePage.locator('#mineBoard .stub[data-station] b').allTextContents()).join('|'),
+      'אילת|שחמון|תמנע|יטבתה');
+    assert.equal((await legacySchedulePage.locator('#mineContent').textContent()).includes('טל חודרה'), false);
+    assert.match(await legacySchedulePage.locator('#mineNote').textContent(), /יש לייבא את הקובץ/);
 
     const calls = await legacySchedulePage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 1);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 1);
-    // ⭐ תצוגת הייבוא שייכת ללוח התחנה בלבד. „שלי" קורא את הטווח
-    // התפעולי בנפרד, כדי שטיוטת תצוגה ב-off לא תהפוך לשיבוץ אישי.
+    // שתי הלשוניות חולקות את אותה תשובת חודש מורשית; „שלי" מסנן
+    // ממנה רק תאריכי עבודה ואינו יוצר מקור נתונים שני.
     const rangeCalls = calls.filter((entry) => entry.name === 'getStationScheduleRange');
-    assert.equal(rangeCalls.length, 2);
-    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true, false]);
+    assert.equal(rangeCalls.length, 1);
+    assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true]);
     assert.equal(calls.some((entry) => entry.name === 'respondToSchedule'), false);
     const firestoreWrites = await legacySchedulePage.evaluate(() => window.__FIRESTORE_WRITES || []);
     assert.equal(firestoreWrites.length, 0);

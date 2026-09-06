@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h4';
-import { renderNav, renderStuckNav } from './nav.js?v=42h4';
-import { initPWA } from './pwa.js?v=42h4';
-import { initAppCheck } from './appcheck.js?v=42h4';
-import { readScheduleFile } from './schedule-file-import.js?v=42h4';
+import { firebaseConfig } from './firebase-config.js?v=42h5';
+import { renderNav, renderStuckNav } from './nav.js?v=42h5';
+import { initPWA } from './pwa.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h5';
+import { readScheduleFile } from './schedule-file-import.js?v=42h5';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h4';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h5';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -65,7 +65,7 @@ const state = {
   importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
   importStationMap: null, importDisplay: null, displayRequestIds: {}, displayStatusSequence: 0,
   // הלוח
-  month: null, range: null, rangeMonth: null, rangePending: null, mineOnly: false,
+  month: null, range: null, rangeMonth: null, rangePending: null,
   tab: null, busy: false
 };
 
@@ -79,10 +79,12 @@ const DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', '
 // מוצהר, ולא תקלה שמישהו יגלה כשתיפתח תחנת קצה נוספת.
 const SUB_CLASS = ['s1', 's2', 's3', 's4'];
 const FIXED_STATIONS = Object.freeze([
-  Object.freeze({ id:'eilat', label:'אילת', minimum:7 }),
-  Object.freeze({ id:'shahmon', label:'שחמון', minimum:null }),
-  Object.freeze({ id:'timna', label:'תמנע', minimum:null }),
-  Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null })
+  // גובה השורות נלקח מתבנית הסידור השנתית של תחנת אילת. זו רצפת
+  // תצוגה בלבד, לא תקרת כוח אדם: שם נוסף תמיד מוצג ולעולם אינו נחתך.
+  Object.freeze({ id:'eilat', label:'אילת', minimum:7, minVisualSlots:15 }),
+  Object.freeze({ id:'shahmon', label:'שחמון', minimum:null, minVisualSlots:5 }),
+  Object.freeze({ id:'timna', label:'תמנע', minimum:null, minVisualSlots:5 }),
+  Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null, minVisualSlots:2 })
 ]);
 
 function localDate() {
@@ -1059,8 +1061,10 @@ function appendAbsenceRows(board, days) {
   rows.forEach(([kind, label], rowIndex) => {
     const ariaRow = node('div', 'board-row');
     ariaRow.setAttribute('role', 'row');
+    ariaRow.dataset.boardRow = kind;
     const stub = node('div', 'stub absence absence-stub');
     stub.setAttribute('role', 'rowheader');
+    stub.dataset.boardRow = kind;
     stub.appendChild(node('b', '', label));
     ariaRow.appendChild(stub);
     days.forEach((day, index) => {
@@ -1071,6 +1075,7 @@ function appendAbsenceRows(board, days) {
         + (ready ? '' : ' unknown') + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
       cell.dataset.absenceKind = kind;
+      cell.dataset.boardRow = kind;
       cell.dataset.date = day.date;
       if (!ready) cell.title = 'אין נתון: החודש הזה לא הודבק מהגיליון';
       const people = ready ? day.absences.filter((item) => absenceKind(item) === kind) : [];
@@ -1088,6 +1093,63 @@ function appendAbsenceRows(board, days) {
   });
 }
 
+function noteLabel(prefix, item) {
+  const title = item && typeof item.title === 'string' && item.title.trim()
+    ? item.title.trim() : 'ללא כותרת';
+  const hours = item && typeof item.hours === 'string' && item.hours.trim()
+    ? ' · ' + item.hours.trim() : '';
+  return prefix + ' · ' + title + hours;
+}
+
+/* הערות, אירועים ואבטחות שייכים ליום כולו ולא לאילת דווקא. לכן הם
+ * מקבלים שורה קבועה מתחת לארבע התחנות, כמו בגיליון המקור. מידע חסר
+ * נשאר „לא ידוע"; רשימה מאומתת וריקה מקבלת מקף. */
+function appendNotesRow(board, days) {
+  const ariaRow = node('div', 'board-row');
+  ariaRow.setAttribute('role', 'row');
+  ariaRow.dataset.boardRow = 'notes';
+  const stub = node('div', 'stub notes notes-stub');
+  stub.setAttribute('role', 'rowheader');
+  stub.dataset.boardRow = 'notes';
+  stub.appendChild(node('b', '', 'הערות'));
+  ariaRow.appendChild(stub);
+
+  days.forEach((day, index) => {
+    const eventsReady = Array.isArray(day.events);
+    const guardsReady = day.guards_status === 'ready' && Array.isArray(day.guards);
+    const ready = eventsReady && guardsReady;
+    const cell = node('div', 'cell notes-cell' + (ready ? '' : ' unknown')
+      + (index % 7 === 0 ? ' snap' : ''));
+    cell.setAttribute('role', 'gridcell');
+    cell.dataset.boardRow = 'notes';
+    cell.dataset.date = day.date;
+    if (!ready) cell.title = 'חלק ממידע ההערות אינו זמין';
+
+    if (eventsReady) (day.events || []).forEach((event) => {
+      const row = node('div', 'note-item event-note', noteLabel('אירוע', event));
+      if (event.cancelled === true) {
+        row.classList.add('cancelled');
+        row.appendChild(node('span', 'note-status', 'בוטל'));
+      }
+      cell.appendChild(row);
+    });
+    if (Array.isArray(day.guards)) (day.guards || []).forEach((guard) => {
+      const names = (guard.people || []).map((person) =>
+        typeof person === 'string' ? person : person && person.person).filter(Boolean);
+      const row = node('div', 'note-item guard-note', noteLabel('אבטחה', guard));
+      row.appendChild(node('span', 'note-status', names.length ? names.join(' · ') : 'טרם אוישה'));
+      cell.appendChild(row);
+    });
+    if (!ready) {
+      cell.appendChild(node('span', 'notes-unavailable', 'אין נתון מלא'));
+    } else if (!cell.children.length) {
+      cell.appendChild(node('span', 'absence-empty', '—'));
+    }
+    ariaRow.appendChild(cell);
+  });
+  board.appendChild(ariaRow);
+}
+
 function absenceNote(days) {
   if (!days || !days.length) return '';
   const ready = days.filter((day) => ABSENCE_ROWS.every(([kind]) => absenceDataReady(day, kind))).length;
@@ -1100,10 +1162,9 @@ function absenceNote(days) {
 /**
  * ⭐ מטמון חתום אחד לכל חודש ולכל סוג תצוגה.
  *
- * „סידור התחנה" רשאי להציג טיוטה מיובאת שנבחרה להצגה, בעוד
- * „הסידור שלי" נשאר תמיד על הסידור התפעולי. לכן מעבר בין שתי
- * הלשוניות דורש לכל היותר קריאה אחת לכל סוג ואסור למחזר ביניהן
- * תשובה, גם כשהחודש זהה.
+ * „סידור התחנה" ו„הסידור שלי" משתמשים באותה תשובת תצוגה חודשית;
+ * הלשונית האישית רק מסננת מתוכה ימים. לכן מעבר ביניהן אינו מוסיף
+ * קריאת שרת. תצוגה תפעולית ותצוגת קובץ עדיין מופרדות במפתח.
  *
  * המטמון מוחלף בכל החלפת חודש, ומתאפס בפרסום ובחזרה לאחור.
  */
@@ -1169,25 +1230,12 @@ function subOrder(days) {
   return FIXED_STATIONS.map((station) => ({
     id: station.id,
     label: station.label,
-    minimum: lineOf(station.id)
+    minimum: lineOf(station.id),
+    minVisualSlots: station.minVisualSlots
   }));
 }
 
-// „הסידור שלי" נשאר שימושי גם כשהמנוע כבוי: במצב legacy אין מיפוי
-// אמין ממשמרת א/ב/ג לתחנת קצה, ולכן מציגים שם את שורת המשמרת האישית
-// כפי שהשרת החזיר. בלוח התחנתי לעולם לא משתמשים ברשימה הזאת.
-function legacySubOrder(days) {
-  const seen = [];
-  const labels = new Map();
-  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!sub || !sub.sub_station) return;
-    if (!seen.includes(sub.sub_station)) seen.push(sub.sub_station);
-    if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
-  }));
-  return seen.map((id) => ({ id, label: labels.get(id) || id, minimum: null }));
-}
-
-function cellContent(cell, block) {
+function cellContent(cell, block, minVisualSlots) {
   const people = (block && block.people) || [];
   const missing = !block || block.coverage === 'missing';
   // `block.minimum` הוא המינימום החתום של היום המוצג. `sub.minimum`
@@ -1196,6 +1244,9 @@ function cellContent(cell, block) {
     ? block.minimum : null;
   // קו 0 (או חסר) = „אין קו": אין קו אדום ואין „מתחת לקו".
   const minimum = Number.isInteger(declared) && declared > 0 ? declared : null;
+
+  const visualFloor = Number.isInteger(minVisualSlots) && minVisualSlots > 0
+    ? minVisualSlots : 0;
 
   if (missing) {
     cell.classList.add('unknown');
@@ -1207,19 +1258,26 @@ function cellContent(cell, block) {
     // ידית: הוא ההחלטה ששמורה ב-`schedule_policies`, ומשנים אותה
     // בכרטיס „חוקי התחנה" — במקום שבו היא באמת נשמרת.
     if (minimum !== null && minimum !== undefined && index === minimum) {
-      const bar = node('div', 'rulebar');
+      const bar = node('div', 'rulebar redline');
+      bar.dataset.afterSlot = String(minimum);
       bar.appendChild(node('span', 'ruleline'));
       cell.appendChild(bar);
     }
-    const row = node('div', 'nm'
+    const row = node('div', 'nm name-slot'
       + (index === 0 ? ' lead' : '')
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
+    row.dataset.slotIndex = String(index + 1);
+    if (person.is_me) {
+      row.dataset.isMe = 'true';
+      row.setAttribute('aria-label', (person.person || person.uid || '—') + ' · אני');
+    }
     if (['A', 'B', 'C'].includes(person.crew)) {
       row.classList.add('crew-' + person.crew);
       row.title = 'משמרת ' + ({ A: 'א', B: 'ב', C: 'ג' })[person.crew];
     }
     row.textContent = person.person || person.uid || '—';
+    if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
     cell.appendChild(row);
   });
 
@@ -1227,13 +1285,27 @@ function cellContent(cell, block) {
   // שומרות את מיקומו, בלי להציג אדם מומצא או לספור אותו כשיבוץ.
   if (!missing && minimum !== null && minimum !== undefined && people.length <= minimum) {
     for (let index = people.length; index < minimum; index += 1) {
-      const slot = node('div', 'nm line-slot', '\u00a0');
+      const slot = node('div', 'nm name-slot line-slot empty-slot', '\u00a0');
+      slot.dataset.slotIndex = String(index + 1);
       slot.setAttribute('aria-hidden', 'true');
       cell.appendChild(slot);
     }
-    const bar = node('div', 'rulebar');
+    const bar = node('div', 'rulebar redline');
+    bar.dataset.afterSlot = String(minimum);
     bar.appendChild(node('span', 'ruleline'));
     cell.appendChild(bar);
+  }
+  const filledUntil = Math.max(people.length, minimum || 0);
+  for (let index = filledUntil; index < visualFloor; index += 1) {
+    const slot = node('div', 'nm name-slot empty-slot', '\u00a0');
+    slot.dataset.slotIndex = String(index + 1);
+    slot.setAttribute('aria-hidden', 'true');
+    cell.appendChild(slot);
+  }
+  if (people.length > visualFloor && visualFloor > 0) {
+    cell.classList.add('template-overflow');
+    cell.appendChild(node('span', 'flag overflow',
+      'נוספו ' + (people.length - visualFloor) + ' שמות מעבר לתבנית'));
   }
   if (block && block.below_minimum && minimum !== null && minimum !== undefined) {
     cell.appendChild(node('span', 'flag under',
@@ -1290,8 +1362,10 @@ function renderBoard(target, days, options) {
   subs.forEach((sub, subIndex) => {
     const ariaRow = node('div', 'board-row');
     ariaRow.setAttribute('role', 'row');
+    ariaRow.dataset.station = sub.id;
     const stub = node('div', 'stub ' + subClass(subIndex));
     stub.setAttribute('role', 'rowheader');
+    stub.dataset.station = sub.id;
     stub.appendChild(node('b', '', sub.label));
     stub.appendChild(node('small', '',
       sub.minimum === null || sub.minimum === undefined ? 'אין קו' : 'קו ' + sub.minimum));
@@ -1303,31 +1377,19 @@ function renderBoard(target, days, options) {
       // מחלקת המשמרת נוספת עליה כשהצוות ידוע (הכרעת 4.9 — צבע העמודה).
       const cell = node('div', 'cell ' + subClass(subIndex) + (crew ? ' col-' + crew : '') + (index % 7 === 0 ? ' snap' : ''));
       cell.setAttribute('role', 'gridcell');
+      cell.dataset.station = sub.id;
+      cell.dataset.date = day.date;
       const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
-      cellContent(cell, block);
-      // אירועים ואבטחות שייכים ליום כולו ולא לתחנת קצה. הם נתלים
-      // על השורה הראשונה בלבד, כדי שלא יופיעו ארבע פעמים.
-      if (subIndex === 0) {
-        (day.events || []).forEach((event) => {
-          cell.appendChild(node('span', 'flag evt',
-            event.title + (event.hours ? ' · ' + event.hours : '')));
-        });
-        (day.guards || []).forEach((guard) => {
-          // אבטחה בלי אנשים אינה „ריקה" — היא טרם אוישה, וזה מידע
-          // תפעולי שאסור שייעלם רק מפני שהתא צר.
-          const names = (guard.people || []).map((person) =>
-            typeof person === 'string' ? person : person.person).filter(Boolean);
-          cell.appendChild(node('span', 'flag guard',
-            'אבטחה · ' + guard.title + (guard.hours ? ' · ' + guard.hours : '')
-            + ' · ' + (names.length ? names.join(' · ') : 'טרם אוישה')));
-        });
-      }
+      cellContent(cell, block, sub.minVisualSlots);
       ariaRow.appendChild(cell);
     });
     board.appendChild(ariaRow);
   });
 
-  if (opts.showAbsences !== false) appendAbsenceRows(board, days);
+  if (opts.showAbsences !== false) {
+    appendNotesRow(board, days);
+    appendAbsenceRows(board, days);
+  }
   target.appendChild(board);
   fitColumns(board);
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
@@ -1547,44 +1609,47 @@ async function loadMine() {
   renderMineToday();
 }
 
-function mySubStation() {
-  const person = state.setup && Array.isArray(state.setup.people)
-    ? state.setup.people.find((item) => item.id === (state.user && state.user.uid)) : null;
-  return person ? person.sub_station : null;
-}
-
 function daysWithMe(days) {
   return (days || []).filter((day) => (day.sub_stations || []).some((sub) =>
-    (sub.people || []).some((person) => person.is_me === true)));
+    (sub.people || []).some((person) => person.is_me === true && person.cancelled !== true)));
 }
 
 async function loadMineRange(ym) {
   if (!canViewSchedule()) return;
   state.month = ym || state.month || monthStart();
-  loadMine();
   renderBoardHead($('mineHead'), state.month,
     (value) => loadMineRange(value), 'mineBoard', 'mineWeek');
   const box = $('mineContent');
   clear(box); box.appendChild(node('div', 'loader'));
   $('mineNote').textContent = '';
   try {
-    const view = await fetchRange(state.month, false);
+    // „הסידור שלי" הוא מסנן תצוגה על אותו לוח חודשי מורשה של
+    // התחנה. כך הוא מציג גם טיוטת אימון שנבחרה להצגה בזמן שהמנוע
+    // כבוי, בלי להפוך אותה לסידור תפעולי ובלי לגעת בפרסום או בפוש.
+    const view = await fetchRange(state.month, true);
+    const displayOnly = view.source === 'imported-display';
+    $('mineToday').hidden = displayOnly;
+    if (displayOnly) {
+      state.mine = null;
+      renderMineToday();
+    } else {
+      await loadMine();
+    }
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
       return;
     }
-    const days = state.mineOnly ? daysWithMe(view.days) : view.days;
-    const only = mySubStation();
+    const days = daysWithMe(view.days);
     renderBoard(box, days, { id: 'mineBoard',
-      subs: view.source === 'legacy' ? legacySubOrder(days) : undefined,
-      onlySub: view.source === 'legacy' ? undefined : (only || undefined), showAbsences: false,
+      showAbsences: true,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
-    $('mineNote').textContent = (only
-      ? 'מוצגת תחנת הקצה שלך. „סידור התחנה" מציג את כל התחנה.'
-      : 'לא ניתן לזהות את תחנת הקצה שלך מהמקור, ולכן מוצגות כל התחנות.')
-      + guardsNotice(view.days);
+    $('mineNote').textContent = 'מוצגים רק הימים שבהם שובצת לעבודה בפועל. בכל יום מוצגות כל ארבע התחנות.'
+      + (displayOnly ? ' זו תצוגת אימון מהקובץ המיובא; המנוע נשאר ' + view.mode + '.' : '')
+      + (view.source === 'legacy'
+        ? ' הסידור הקיים יודע את המשמרת אך לא את תחנת הקצה; יש לייבא את הקובץ כדי להציג שמות לפי תחנה.' : '')
+      + absenceNote(days) + guardsNotice(days);
   } catch (error) {
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
@@ -3357,11 +3422,6 @@ async function boot(user) {
 
 document.querySelectorAll('[data-tab]').forEach((button) =>
   button.addEventListener('click', () => chooseTab(button.dataset.tab)));
-$('mineOnly').addEventListener('click', () => {
-  state.mineOnly = !state.mineOnly;
-  $('mineOnly').setAttribute('aria-pressed', state.mineOnly ? 'true' : 'false');
-  loadMineRange();
-});
 $('previewPrev').addEventListener('click', () => {
   if (!state.draftPreview || $('previewPrev').disabled) return;
   loadDraftPreview(shiftDate(state.previewStart, -7), false);

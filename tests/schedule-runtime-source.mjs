@@ -530,11 +530,14 @@ check('the month strip reads the whole verified snapshot and is bounded', () => 
   assert.ok(range.includes('await activeSnapshotStillCurrent(ctx, config, active)'));
   assert.ok(range.includes('checkedLegacyWindow(ctx, config, range.from, range.to)'));
   assert.equal(/data\.(station_id|stationId)/.test(range), false);
-  // הלוח התחנתי רשאי לבקש תצוגת ייבוא; הלוח האישי נשאר תמיד על
-  // מקור הסידור התפעולי ואינו יורש בחירת תצוגה של מנהל.
+  // שתי הלשוניות משתמשות באותה תשובת חודש מאושרת. „שלי" הוא מסנן
+  // תצוגה בלבד, ולכן מעבר בין הלשוניות אינו יוצר קריאת חודש שנייה.
+  // במצב off מותר להן להציג את קובץ האימון בלי להפוך אותו לתפעולי.
   assert.ok(ui.includes('function fetchRange(ym, displayImported)'));
-  assert.ok(ui.includes('fetchRange(state.month, true)'));
-  assert.ok(ui.includes('fetchRange(state.month, false)'));
+  assert.equal(ui.split('fetchRange(state.month, true)').length - 1, 2);
+  assert.equal(ui.includes('fetchRange(state.month, false)'), false);
+  assert.ok(ui.includes('const days = daysWithMe(view.days)'));
+  assert.ok(ui.includes('person.is_me === true && person.cancelled !== true'));
   assert.ok(ui.includes('function invalidateRange()'));
 });
 check('management visibility is driven by server status', () => {

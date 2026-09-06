@@ -83,7 +83,7 @@ try {
       assert.match(call.payload.request_id, /^fb_[a-f0-9]{40}$/);
       assert.equal(call.payload.allow_contact, false);
       assert.equal(call.payload.screen, 'swaps.html');
-      assert.equal(call.payload.version, '42H.4');
+      assert.equal(call.payload.version, '42H.5');
       assert.equal(await f.page.locator('#text').inputValue(), '');
       assert.equal(await f.page.locator('#send').isDisabled(), true);
       assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -227,7 +227,7 @@ try {
     const f = await fixture();
     try {
       const result = await f.page.evaluate(async () => {
-        const m = await import('./incident-client.js?v=42h4');
+        const m = await import('./incident-client.js?v=42h5');
         const err = { code: 'secret-user-id', name: 'TypeError' };
         for (const field of ['message', 'stack', 'frame']) Object.defineProperty(err, field,
           { get() { throw new Error('private field was read'); } });
