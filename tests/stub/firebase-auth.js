@@ -40,11 +40,15 @@ function makeUser(roleName, uid, extraClaims){
     email_verified: true,
     firebase: { sign_in_provider: 'password' }
   }, ROLES[roleName] || ROLES.super, extraClaims || {});
+  const tokenDelay = Math.max(0, Number(claims.__token_delay_ms) || 0);
+  delete claims.__token_delay_ms;
   return {
     uid: uid || 'stub-uid',
     email: claims.email || 'eldad50@gmail.com',
     emailVerified: claims.email_verified !== false,
-    getIdTokenResult: () => Promise.resolve({ claims: claims }),
+    getIdTokenResult: () => tokenDelay > 0
+      ? new Promise(resolve => setTimeout(() => resolve({ claims: claims }), tokenDelay))
+      : Promise.resolve({ claims: claims }),
     getIdToken: force => {
       markAuth('getIdToken', { force:force === true });
       if (typeof window !== 'undefined' && window.__AUTH_HOLD_TOKEN === true) {

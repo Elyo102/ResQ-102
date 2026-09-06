@@ -1237,14 +1237,20 @@ function authScopeKey(user, claims) {
   ]);
 }
 
+function scopedOperationInFlight() {
+  return state.busy === true || state.policyBusy === true
+    || state.sourceBusy === true || state.modeBusy === true;
+}
+
 /*
- * תשובת שרת שייכת לזהות ולתחום ההרשאה שהתחילו אותה. רענון טוקן
- * רגיל לא מבטל פעולה של אותו אדם באותה תחנה; החלפת אדם, תחנה או
- * סמכות ניהול כן מבטלת אותה. כך תשובה מאוחרת של מנהל/ת א׳ אינה
- * יכולה לצבוע מחדש את המסך או לשחרר כפתורים בזמן שמנהל/ת ב׳ עובד/ת.
+ * תשובת שרת שייכת לדור הטוקן, לזהות ולתחום ההרשאה שהתחילו אותה.
+ * רענון טוקן ללא פעולה פתוחה שומר את הטופס והחודש; רענון באמצע
+ * פעולה מבטל את ההמשך ונשאר סגור עד טעינה מחדש. כך תשובה מאוחרת
+ * של מנהל/ת א׳ אינה יכולה להמשיך ככתיבה של מנהל/ת ב׳.
  */
 function authTask() {
   return Object.freeze({
+    generation: state.authGeneration,
     version: state.authContextVersion,
     principal: rangePrincipal(),
     scope: state.authScope
@@ -1253,6 +1259,7 @@ function authTask() {
 
 function authTaskCurrent(task) {
   return !!task
+    && task.generation === state.authGeneration
     && task.version === state.authContextVersion
     && task.principal === rangePrincipal()
     && task.scope === state.authScope;
@@ -3968,6 +3975,10 @@ function resetScopedWorkspace() {
 async function handleIdToken(user) {
   const previousScope = state.authScope;
   const previousStatus = state.status;
+  // ההחלפה מבטלת באופן סינכרוני כל המשך של פעולה שהתחילה תחת
+  // הטוקן הקודם. בלי דור המשימה, preview ישן יכול היה לחזור בזמן
+  // ההמתנה ל-claims ולשלוח את ה-save הבא תחת המשתמש החדש.
+  const interruptedOperation = scopedOperationInFlight();
   state.authGeneration += 1;
   const generation = state.authGeneration;
   invalidateRange();
@@ -4021,6 +4032,23 @@ async function handleIdToken(user) {
   if ((previousStatus.manager === true) !== (status.manager === true)) {
     resetScopedWorkspace();
     await boot(user, generation, claims, status);
+    return;
+  }
+
+  // אם הטוקן התרענן באמצע פעולה, אי אפשר לדעת מהדפדפן בלבד אם
+  // כתיבה שכבר יצאה הושלמה. לכן לא פותחים שוב את הכפתורים ולא
+  // מזמינים ניסיון כפול: מציגים מצב סגור ודורשים טעינה מחדש, שתמשוך
+  // את אמת השרת. רענון שגרתי ללא פעולה ממשיך לשמור חודש וטופס.
+  if (interruptedOperation) {
+    state.user = user;
+    state.claims = claims;
+    state.authScope = nextScope;
+    state.status = status;
+    renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+    $('who').textContent = user.displayName || user.email || '';
+    showUnavailable('נדרש אימות מחדש לפני פעולה נוספת',
+      'זהות המשתמש התרעננה בזמן פעולה. כדי לבדוק אם הפעולה הושלמה בלי לשלוח אותה שוב, יש לרענן את המסך.');
+    $('appMain').classList.remove('hide');
     return;
   }
 

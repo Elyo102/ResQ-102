@@ -540,7 +540,9 @@ try {
     const success = body.indexOf('const successText =');
     const reset = body.indexOf('resetPublishRequest();', success);
     const discard = body.indexOf('state.draft = null;', success);
-    const refresh = body.indexOf('state.status = (await call.status({})).data;', success);
+    const refresh = body.indexOf('const status = (await call.status({})).data;', success);
+    const refreshGuard = body.indexOf('if (!authTaskCurrent(task)) return;', refresh);
+    const refreshApply = body.indexOf('state.status = status;', refresh);
     assert.ok(start > -1 && end > start, 'publishDraft source boundary was not found');
     assert.ok(success > -1 && reset > success,
       'successful publish no longer clears its retained request id');
@@ -548,6 +550,8 @@ try {
       'retry state is not cleared before the successful draft is discarded');
     assert.ok(refresh > discard,
       'fallible refresh moved ahead of successful publish cleanup');
+    assert.ok(refreshGuard > refresh && refreshApply > refreshGuard,
+      'publish refresh is no longer fenced before applying its result');
   });
   await retryManager.close();
 
@@ -2910,6 +2914,68 @@ try {
   });
   await sameScopeCtx.close();
 
+  const policyAuthRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  const policyStrengthening = Object.assign({}, policyWeakening, {
+    changes:[{ kind:'minimum', sub_station:'main', from:2, to:3, weakens:false }],
+    weakening:[]
+  });
+  await prepare(policyAuthRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }, { data:setup }],
+    previewSchedulePolicy:[{ data:policyStrengthening, delay:80 }],
+    saveSchedulePolicy:[{ data:policySaved }]
+  });
+  const policyAuthRacePage = await policyAuthRaceCtx.newPage();
+  await policyAuthRacePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await policyAuthRacePage.locator('#appMain:not(.hide)').waitFor();
+  await test('an old manager preview cannot become a write while new token claims are still loading', async () => {
+    await policyAuthRacePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+    await policyAuthRacePage.locator('#savePolicy').click();
+    await policyAuthRacePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some((entry) => entry.name === 'previewSchedulePolicy'));
+    const hiddenImmediately = await policyAuthRacePage.evaluate(() => {
+      window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
+        email:'manager-b@example.invalid', stationId:'station_b', __token_delay_ms:220
+      });
+      return document.getElementById('appMain').classList.contains('hide');
+    });
+    assert.equal(hiddenImmediately, true);
+    await policyAuthRacePage.waitForTimeout(130);
+    const callsDuringClaims = await policyAuthRacePage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(callsDuringClaims.some((entry) => entry.name === 'saveSchedulePolicy'), false,
+      'manager A preview crossed the token boundary and wrote as manager B');
+    await policyAuthRacePage.locator('#appMain:not(.hide)').waitFor();
+  });
+  await policyAuthRaceCtx.close();
+
+  const sameScopeWriteCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(sameScopeWriteCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    previewSchedulePolicy:[{ data:policyStrengthening, delay:80 }],
+    saveSchedulePolicy:[{ data:policySaved }]
+  });
+  const sameScopeWritePage = await sameScopeWriteCtx.newPage();
+  await sameScopeWritePage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await sameScopeWritePage.locator('#appMain:not(.hide)').waitFor();
+  await test('same-scope token refresh during a write stays closed until server truth is reloaded', async () => {
+    await sameScopeWritePage.getByRole('button', { name:'הוסף · קו מינימום' }).click();
+    await sameScopeWritePage.locator('#savePolicy').click();
+    await sameScopeWritePage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some((entry) => entry.name === 'previewSchedulePolicy'));
+    await sameScopeWritePage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid', {
+      __token_delay_ms:220
+    }));
+    await sameScopeWritePage.waitForTimeout(130);
+    assert.equal((await sameScopeWritePage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .some((entry) => entry.name === 'saveSchedulePolicy'), false);
+    await sameScopeWritePage.locator('#appMain:not(.hide)').waitFor();
+    assert.match(await sameScopeWritePage.locator('#availabilityTitle').textContent(), /נדרש אימות מחדש/);
+    assert.equal(await sameScopeWritePage.locator('#manageView').isVisible(), false,
+      'an interrupted operation must not silently unlock the management screen');
+  });
+  await sameScopeWriteCtx.close();
+
   const revokeCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
   await prepare(revokeCtx, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusFirefighter }],
@@ -3004,5 +3070,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 76);
+assert.equal(passed, 78);
 console.log('\n' + passed + ' schedule management browser checks passed.');

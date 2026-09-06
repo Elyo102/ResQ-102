@@ -2038,6 +2038,18 @@ check('42H.5: every asynchronous management path fences late responses to its au
   }
   assert.ok(ui.includes('authContextVersion: state.authContextVersion + 1'),
     'a scope reset must invalidate every pending management continuation');
+  const taskFence = ui.slice(ui.indexOf('function authTask()'), ui.indexOf('function staleRangeError()'));
+  assert.ok(taskFence.includes('generation: state.authGeneration')
+    && taskFence.includes('task.generation === state.authGeneration'),
+  'an ID-token event must invalidate old continuations before its claims resolve');
+  const tokenHandler = ui.slice(ui.indexOf('async function handleIdToken(user)'),
+    ui.indexOf('\nonIdTokenChanged(auth', ui.indexOf('async function handleIdToken(user)')));
+  assert.ok(tokenHandler.indexOf('state.authGeneration += 1;')
+    < tokenHandler.indexOf('await user.getIdTokenResult()'),
+  'the token generation must change synchronously before claims are awaited');
+  assert.ok(tokenHandler.includes('const interruptedOperation = scopedOperationInFlight();')
+    && tokenHandler.includes("showUnavailable('נדרש אימות מחדש לפני פעולה נוספת'"),
+  'a token refresh during an in-flight operation must stay fail-closed until reload');
   assert.ok(ui.includes("if ((previousStatus.manager === true) !== (status.manager === true)) {\n    resetScopedWorkspace();"),
     'a live manager grant change must invalidate privileged responses too');
 });
