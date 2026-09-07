@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ResQ — משאבי אנוש</title>
+<link rel="icon" href="./favicon.ico">
+<link rel="stylesheet" href="./theme.css?v=42h6">
+<link rel="stylesheet" href="./hr-hours-ui.css?v=42h6">
+</head>
+<body>
+<main id="hr-workspace" class="hr-workspace">
+  <header class="hr-heading"><div><p class="hr-eyebrow">ResQ · משאבי אנוש</p><h1>דוחות שעות עובדים</h1><p>כל דוחות החודש, במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
+  <section class="hr-toolbar" aria-label="בחירת חודש"><label>חודש הדוחות <input data-hr="month" type="month" required></label><button data-hr="refresh" type="button">רענון</button><span data-hr="count"></span></section>
+  <p data-hr="message" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
+  <div class="hr-layout">
+    <aside class="hr-card" aria-label="רשימת עובדים"><h2>עובדי התחנה</h2><div data-hr="people" class="hr-people"></div><button data-hr="more" type="button" hidden>טעינת עובדים נוספים</button></aside>
+    <section class="hr-card hr-document" aria-label="דוח העובד">
+      <nav class="hr-report-nav" aria-label="מעבר בין דוחות"><button data-hr="previous" type="button" aria-keyshortcuts="ArrowRight">→ הדוח הקודם</button><span data-hr="position"></span><button data-hr="next" type="button" aria-keyshortcuts="ArrowLeft">הדוח הבא ←</button></nav>
+      <div data-hr="detail" class="hr-detail"><p>בחרו עובד לצפייה בדוח.</p></div>
+    </section>
+  </div>
+</main>
+<script type="module">
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h6';
+// The authenticated production adapter is a separate reviewed integration.
+// This public shell has no identities, fixture data or Firebase calls.
+createHrHoursUI(document.getElementById('hr-workspace'));
+</script>
+</body>
+</html>
