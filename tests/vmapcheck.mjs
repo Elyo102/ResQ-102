@@ -73,7 +73,10 @@ for (const role of ['commander','firefighter']) {
      await pg.$$eval('#photoActs button',e=>e.map(x=>x.dataset.photoSource).join(',')),
      'camera,gallery');
   const writesBefore = await pg.evaluate(() => (window.__FIRESTORE_WRITES || []).length);
-  await pg.setInputFiles('#baseGallery', {
+  const chooserPromise = pg.waitForEvent('filechooser');
+  await pg.click('#photoActs button[data-photo-source="gallery"]');
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
     name:'fleet-from-gallery.png', mimeType:'image/png', buffer:ONE_PIXEL_PNG
   });
   await pg.waitForFunction((before) => (window.__FIRESTORE_WRITES || []).length > before,

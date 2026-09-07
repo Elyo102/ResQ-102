@@ -55,6 +55,77 @@ const CLOCK = () => '2026-09-01T06:00:00.000Z';
 const hash = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
 const randomId = () => crypto.randomBytes(12).toString('hex');
 
+// A hash/generated ID or real Firestore timestamp can coincide with a short
+// employee number. Exempt only validated technical fields at the DTO root.
+function assertSchedulePrivacy(value, secrets, kind) {
+  const hex = (v) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+  const publicationId = (v) => typeof v === 'string' && /^p_(?:rb_)?[a-f0-9]{40}$/.test(v);
+  const sourceId = (v) => typeof v === 'string' && /^source_\d+_[a-f0-9]{12}(?:_[a-f0-9]{10})?$/.test(v);
+  const policyId = (v) => typeof v === 'string' && /^policy_v\d+_[a-f0-9]{12}$/.test(v);
+  const nullable = (validate) => (v) => v === null || validate(v);
+  const iso = (v) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v)
+    && Number.isFinite(Date.parse(v)) && new Date(v).toISOString() === v;
+  const timestamp = (v) => v instanceof admin.firestore.Timestamp
+    && Object.keys(v).sort().join(',') === '_nanoseconds,_seconds'
+    && Number.isInteger(v.seconds) && v.seconds >= -62135596800 && v.seconds <= 253402300799
+    && Number.isInteger(v.nanoseconds) && v.nanoseconds >= 0 && v.nanoseconds <= 999999999;
+  const schemas = {
+    preflight: {
+      signature: hex, policy_digest: nullable(hex), source_digest: nullable(hex),
+      content_hash: nullable(hex), legacy_revision: nullable(hex),
+      candidate_publication_id: nullable(publicationId), predecessor_publication_id: nullable(publicationId),
+      candidate_source_id: nullable(sourceId), candidate_policy_id: nullable(policyId),
+      generated_at: iso, expires_at: iso
+    },
+    sourceAudit: {
+      content_digest: hex, source_id: sourceId, supersedes: nullable(sourceId), at: iso
+    },
+    modeAudit: {
+      preflight_signature: hex, publication_id: publicationId,
+      at: (v) => iso(v) || timestamp(v)
+    }
+  };
+  const technical = schemas[kind];
+  assert.ok(technical, 'unknown privacy schema');
+  const raw = JSON.stringify(value);
+  for (const secret of secrets.filter((item) => !/^\d+$/.test(item))) {
+    assert.equal(raw.indexOf(secret), -1, kind + ' contains private text: ' + secret);
+  }
+  function scanText(text, path) {
+    for (const secret of secrets) {
+      assert.equal(String(text).indexOf(secret), -1, kind + ' contains private data at ' + path);
+    }
+  }
+  // Inspect every key, including nested keys inside typed technical values.
+  function scanKeys(node, path) {
+    if (!node || typeof node !== 'object') return;
+    for (const [key, child] of Object.entries(node)) {
+      const normalized = key.replace(/[_-]/g, '').toLowerCase();
+      assert.ok(!['name', 'fullname', 'firstname', 'lastname', 'displayname',
+        'employeenumber', 'email', 'phone', 'phonenumber', 'mobile'].includes(normalized),
+      kind + ' contains a personal field at ' + path + '.' + key);
+      scanText(key, path + '.' + key);
+      scanKeys(child, path + '.' + key);
+    }
+  }
+  function scanLeaves(node, path, depth) {
+    if (node === null || node === undefined) return;
+    if (typeof node !== 'object') {
+      scanText(node, path);
+      return;
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (depth === 0 && Object.prototype.hasOwnProperty.call(technical, key)) {
+        assert.ok(technical[key](child), kind + ' has an invalid technical field: ' + key);
+      } else {
+        scanLeaves(child, path + '.' + key, depth + 1);
+      }
+    }
+  }
+  scanKeys(value, '$');
+  scanLeaves(value, '$', 0);
+}
+
 function station() { return db.collection('stations').doc(SID); }
 function runtimeDoc() { return station().collection('schedule_state').doc('runtime'); }
 
@@ -2158,12 +2229,9 @@ async function test(name, fn) {
     assert.equal(report.by_reason[CUTOVER_REASON.OUT_OF_RANGE], 0,
       'ה-preflight מצא יום מחוץ לטווח הפרסום');
     assert.equal(report.blocked, false, 'דוח המעבר נחסם על פיקסצ׳ר legacy');
-    const text = JSON.stringify(report);
-    for (const uid of ['manager', 'viewer', 'commander',
+    assertSchedulePrivacy(report, ['manager', 'viewer', 'commander',
       'worker_a', 'worker_b', 'worker_c', 'worker_d', 'worker_e', 'worker_f',
-      '9001', '9002', '9003', '9004', '9005', '9006']) {
-      assert.equal(text.indexOf(uid), -1, 'הדוח מכיל מזהה: ' + uid);
-    }
+      '9001', '9002', '9003', '9004', '9005', '9006'], 'preflight');
     const stored = (await station().collection('schedule_preflight')
       .doc(preparedId).get()).data() || {};
     assert.equal(stored.signature, report.signature);
@@ -2464,23 +2532,34 @@ async function test(name, fn) {
    * ================================================================ */
 
   await test('failures and audit records carry no names or employee numbers', async () => {
+    const collision = hash('schedule-audit-privacy-1663');
+    const timestamp = new admin.firestore.Timestamp(1788750000, 900100000);
+    assert.ok(collision.includes('9001'), 'deterministic hash collision fixture changed');
+    assert.ok(JSON.stringify(timestamp).includes('9001'), 'timestamp collision fixture changed');
+    assertSchedulePrivacy({ preflight_signature: collision, at: timestamp },
+      ['בדיקה אלף', '9001'], 'modeAudit');
+    for (const injected of [
+      { note: 'בדיקה אלף' }, { note: 'employee 9001' }, { note: 9001 },
+      { nested: [{ value: 9001 }] }, { nested: { signature: collision } },
+      { nested: { employee_number: 'not-a-fixture-number' } },
+      { at: Object.assign(new admin.firestore.Timestamp(1788750000, 900100000), { note: 'employee 9001' }) },
+      { preflight_signature: '9001' }
+    ]) {
+      assert.throws(() => assertSchedulePrivacy(injected, ['בדיקה אלף', '9001'], 'modeAudit'),
+        assert.AssertionError, 'privacy checker accepted deliberately injected personal data');
+    }
     const error = await caught(() => api.saveSource(req('manager', 'firefighter', {
       request_id: 'src_bad', activate: true, expected_source_id: sourceId,
       rows: [{ row: 2, employee_number: 'לא-מספר', full_name: 'בדיקה סודית', sub_station: 'a', active: true, roles: ['driver'] }]
     })));
     assert.ok(error, 'שורה פגומה לא נדחתה');
     const audits = await station().collection('schedule_source_audit').get();
-    const text = JSON.stringify(audits.docs.map((doc) => doc.data()));
-    for (const secret of ['בדיקה אלף', 'בדיקה בית', 'בדיקה סודית',
+    const sourceSecrets = ['בדיקה אלף', 'בדיקה בית', 'בדיקה סודית',
       'פרופיל אלף', 'פרופיל בית', 'פרופיל גימל', 'פרופיל דלת', 'פרופיל הא', 'פרופיל וו',
-      '9001', '9002', '9003', '9004', '9005', '9006']) {
-      assert.equal(text.indexOf(secret), -1, 'היומן מכיל מידע אישי: ' + secret);
-    }
+      '9001', '9002', '9003', '9004', '9005', '9006'];
+    audits.docs.forEach((doc) => assertSchedulePrivacy(doc.data(), sourceSecrets, 'sourceAudit'));
     const modeAudits = await station().collection('schedule_mode_audit').get();
-    const modeText = JSON.stringify(modeAudits.docs.map((doc) => doc.data()));
-    for (const secret of ['בדיקה אלף', '9001']) {
-      assert.equal(modeText.indexOf(secret), -1, 'יומן המצב מכיל מידע אישי');
-    }
+    modeAudits.docs.forEach((doc) => assertSchedulePrivacy(doc.data(), ['בדיקה אלף', '9001'], 'modeAudit'));
   });
 
   console.log('\n' + passed + ' schedule authoring Firestore integration checks passed.');
