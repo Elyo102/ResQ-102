@@ -52,6 +52,10 @@ jobs:
         working-directory: tests
         run: npm run browser
 
+      - name: היסטוריית צי ורכב שהורד משירות
+        working-directory: tests
+        run: npm run fleet:history
+
       # סריקה נפרדת של כל דפי ה-HTML ברוחב טלפון. בדיקות הדפדפן
       # הרגילות מכסות מסכים ממוקדים בלבד ואינן מחליפות שער overflow מלא.
       - name: כל המסכים ברוחב טלפון

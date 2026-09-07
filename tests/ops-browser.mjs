@@ -227,7 +227,7 @@ try {
     const f = await fixture();
     try {
       const result = await f.page.evaluate(async () => {
-        const m = await import('./incident-client.js?v=42h5');
+        const m = await import('./incident-client.js?v=42h6');
         const err = { code: 'secret-user-id', name: 'TypeError' };
         for (const field of ['message', 'stack', 'frame']) Object.defineProperty(err, field,
           { get() { throw new Error('private field was read'); } });

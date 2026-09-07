@@ -131,6 +131,8 @@ try {
       assert.match(await page.locator('#stageWrap').innerText(),/לא הוצגה מפה של רכב אחר/);
       assert.equal(await page.locator('#stageWrap img,#photoActs button,#importRow button').count(),0);
       await page.locator('#baseGallery').setInputFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
+      assert.equal(await page.locator('#errBar').isVisible(),true);
+      assert.match(await page.locator('#errBar').innerText(),/בחירת הרכב התיישנה/);
       await noNewWrites(page);
     });
   }
@@ -188,5 +190,28 @@ try {
     await page.waitForFunction(()=>document.getElementById('impMsg').textContent.includes('אינו פעיל'));
     await noNewWrites(page);
   },false);
+  for (const action of ['grade','closeFault','wipe']) {
+    await scenario(action+' shows visible feedback for a stale vehicle target without writes','vehicle.html?v=retired',async page=>{
+      await page.evaluate(()=>{
+        const a=window.__HISTORY_ACTIONS;
+        const f=window.__HISTORY_FIXTURE.faults.find(f=>f.id==='open-history');
+        window.__STALE_FAULT={f,target:a.captureFaultTarget(f)};
+      });
+      await select(page,'Active test vehicle');
+      await page.evaluate(async action=>{
+        const a=window.__HISTORY_ACTIONS, {f,target}=window.__STALE_FAULT;
+        if(action==='grade') {
+          const sel={disabled:false};
+          await a.grade(f,'blocking',sel,target);
+          window.__STALE_SELECT_ENABLED=!sel.disabled;
+        } else await a[action](f,target);
+      },action);
+      assert.equal(await page.locator('#errBar').isVisible(),true);
+      assert.equal(await page.locator('#errBar').getAttribute('role'),'alert');
+      assert.match(await page.locator('#errBar').innerText(),/הרכב או המשתמש השתנו/);
+      if(action==='grade') assert.equal(await page.evaluate(()=>window.__STALE_SELECT_ENABLED),true);
+      await noNewWrites(page);
+    });
+  }
   console.log(passed+' fleet history browser checks passed (local fixtures, not emulator).');
 } finally { await browser.close(); await new Promise(resolve=>server.close(resolve)); }

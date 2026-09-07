@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h5">
+<link rel="stylesheet" href="./theme.css?v=42h6">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -408,12 +408,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h5';
-import { renderNav, renderStuckNav } from './nav.js?v=42h5';
-import { MEMBER_ROLES } from './roles.js?v=42h5';
-import { initPWA } from './pwa.js?v=42h5';
-import { watchCallouts } from './callout.js?v=42h5';
-import { CREW_HE, plural } from './rotation.js?v=42h5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h6';
+import { renderNav, renderStuckNav } from './nav.js?v=42h6';
+import { MEMBER_ROLES } from './roles.js?v=42h6';
+import { initPWA } from './pwa.js?v=42h6';
+import { watchCallouts } from './callout.js?v=42h6';
+import { CREW_HE, plural } from './rotation.js?v=42h6';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -432,7 +432,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h6';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

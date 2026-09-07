@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h5">
+<link rel="stylesheet" href="./theme.css?v=42h6">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -138,7 +138,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </style>
 </head>
 <body>
-<div id="errBar"></div>
+<div id="errBar" role="alert" aria-live="assertive"></div>
 <div class="wrap">
 
   <div id="denyCard" class="card hide">
@@ -191,18 +191,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h5';
-import { renderNav, renderStuckNav } from './nav.js?v=42h5';
-import { MEMBER_ROLES } from './roles.js?v=42h5';
-import { initPWA } from './pwa.js?v=42h5';
-import { watchCallouts } from './callout.js?v=42h5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h6';
+import { renderNav, renderStuckNav } from './nav.js?v=42h6';
+import { MEMBER_ROLES } from './roles.js?v=42h6';
+import { initPWA } from './pwa.js?v=42h6';
+import { watchCallouts } from './callout.js?v=42h6';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=42h5';
+  from './vmap.js?v=42h6';
 import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
-  from './faults.js?v=42h5';
+  from './faults.js?v=42h6';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -219,7 +219,7 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h6';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -241,6 +241,15 @@ window.addEventListener('error', function (e) {
 function msg(t, cls, id){
   const m = $(id || 'baseMsg');
   m.textContent = t; m.className = 'msg ' + (cls || 'info');
+}
+
+function actionError(error){
+  close();
+  const bar = $('errBar');
+  bar.textContent = 'אירעה שגיאה. יש לבדוק את מצב הנתונים לפני ניסיון נוסף. ' +
+    String(error && (error.message || error.code) || '');
+  bar.style.display = 'block';
+  bar.scrollIntoView({ block:'start' });
 }
 
 // ---------- הרשאה ----------
@@ -393,7 +402,7 @@ function renderVehicles(){
 // **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
 // פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
 // פתיחה של המסך, לכולם, לנצח.
-const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h5' };
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h6' };
 
 function renderImport(){
   const box = $('importRow');
@@ -581,7 +590,11 @@ async function uploadBasePhoto(picker){
   const target = photoTargets.get(picker.id);
   photoTargets.delete(picker.id);
   picker.value = '';
-  if (!file || !target) return;
+  if (!file) return;
+  if (!target) {
+    actionError(new Error('בחירת הרכב התיישנה. יש לבחור רכב ולפתוח שוב את בחירת התמונה.'));
+    return;
+  }
 
   msg('מקטין ומעלה…', 'info');
   try {
@@ -604,6 +617,7 @@ async function uploadBasePhoto(picker){
     await loadAll();
   } catch (e) {
     msg('ההעלאה נכשלה. (' + (e.code || e.message || '') + ')', 'err');
+    actionError(e);
   }
 }
 
@@ -809,7 +823,7 @@ async function grade(f, sev, sel, target){
       graded_key: new Date().toISOString()
     }, { merge:true });
     close(); await loadAll();
-  } catch (e) { sel.disabled = false; }
+  } catch (e) { sel.disabled = false; actionError(e); }
 }
 
 async function closeFault(f, target){
@@ -823,7 +837,7 @@ async function closeFault(f, target){
       fixed_key: new Date().toISOString(), fixed_at: serverTimestamp()
     }, { merge:true });
     close(); await loadAll();
-  } catch (e) {}
+  } catch (e) { actionError(e); }
 }
 
 async function wipe(f, target){
@@ -843,7 +857,7 @@ async function wipe(f, target){
     await deleteDoc(doc(db, 'stations', target.sid, 'faults', target.id));
     delete shots[target.id];
     close(); await loadAll();
-  } catch (e) {}
+  } catch (e) { actionError(e); }
 }
 
 // ---------- הרשימה מתחת ----------
