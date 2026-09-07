@@ -212,10 +212,13 @@ const TASKS_EXTRA = [
     created_key:'2026-08-19T14:30:00.000Z' }]
 ];
 
-// רכבי עיגון.
+// רכבי הצי הלוגיסטיים. a1 נכתב **בלי** השדה active — כך נראה כל
+// רכב שנוצר לפני שהשדה היה קיים, וזה בדיוק המצב שחייב להיקרא
+// כ„פעיל". a3 ירד מהצי, ומאמת שהוא אינו מופיע בשום רשימה פעילה.
 const VEHICLES = [
   ['a1', { name:'טרנזיט לבן', plate:'12-345-67', kind:'anchor' }],
-  ['a2', { name:'טנדר לוגיסטי', plate:'98-765-43', kind:'anchor' }]
+  ['a2', { name:'טנדר לוגיסטי', plate:'98-765-43', kind:'anchor', active:true }],
+  ['a3', { name:'רכב שירד מהצי', plate:'11-222-33', kind:'anchor', active:false }]
 ];
 
 const MEMBER_QUALS = [
@@ -594,6 +597,57 @@ export function getDocFromServer(ref){
   return getDoc(ref);
 }
 
+/* ---------- עסקאות ----------
+ *
+ * הזיוף אינו מריץ מרוץ אמיתי — אין כאן שני לקוחות ואין commit. מה שהוא
+ * כן נותן: המסלול עובר בעסקה, הקריאה שבתוכה היא הקריאה שהקוד מסתמך
+ * עליה, וניתן להזריק „המסמך השתנה מאז שנטען" דרך
+ * `window.__TX_DOC_OVERRIDE = { '<path>': <data|null> }`. כך נבדק
+ * שהכתיבה נבנית מחדש על המצב הטרי ושהתנגשות אמיתית נעצרת.
+ * המרוץ עצמו מוכח באמולטור, לא כאן. */
+export async function runTransaction(dbRef, updateFunction){
+  const tx = {
+    async get(ref){
+      const path = (ref && ref.path) || '';
+      if (typeof window !== 'undefined' && window.__TX_HOLD_READ === true) {
+        await new Promise(resolve => {
+          window.__TX_READ_PENDING = (window.__TX_READ_PENDING || 0) + 1;
+          window.__TX_RELEASE_READ = resolve;
+        });
+      }
+      const overrides = (typeof window !== 'undefined' && window.__TX_DOC_OVERRIDE) || null;
+      if (overrides && Object.prototype.hasOwnProperty.call(overrides, path)) {
+        const value = overrides[path];
+        return Promise.resolve({
+          exists: () => value !== null && value !== undefined,
+          data: () => (value === null ? undefined : value),
+          id: path.split('/').pop() || 'stub'
+        });
+      }
+      return getDoc(ref);
+    },
+    set(ref, value, options){
+      const path = (ref && ref.path) || '';
+      assertWritable(value, false, '');
+      if (typeof window !== 'undefined') {
+        window.__FIRESTORE_WRITES = window.__FIRESTORE_WRITES || [];
+        window.__FIRESTORE_WRITES.push({ path, value, options: options || null, tx: true });
+      }
+      return tx;
+    },
+    update(ref, value){ return tx.set(ref, value, { merge: true }); }
+  };
+  if (typeof window !== 'undefined' && window.__TX_RETRY_SWAP) {
+    // Discard the first attempt just as a transaction conflict does.
+    const retry = window.__TX_RETRY_SWAP;
+    window.__TX_RETRY_SWAP = null;
+    const discard = { get:tx.get, set(){ return discard; }, update(){ return discard; } };
+    await updateFunction(discard);
+    window.__SMOKE_SWAP_USER(retry.role, retry.uid, retry.claims);
+  }
+  return updateFunction(tx);
+}
+
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
   if (/\/attendance_shadow_reports\/[^/]+$/.test(p) &&
@@ -630,7 +684,15 @@ function getDoc0(ref){
     return Promise.resolve(docSnap({ status:'pending' }, p.split('/').pop()));
   }
   if (p.indexOf('config/redline') !== -1) return Promise.resolve(docSnap(REDLINE, 'redline'));
-  if (p.indexOf('config/board') !== -1)   return Promise.resolve(docSnap(BOARD, 'board'));
+  if (p.indexOf('config/board') !== -1) {
+    if (typeof window !== 'undefined' && window.__BOARD_EXTRA_INACTIVE) {
+      const value = JSON.parse(JSON.stringify(BOARD));
+      value.vehicles.push({ id:'already-off', name:'Already inactive', active:false,
+        slots:[{ id:'off-slot', job:'kept', req:'' }] });
+      return Promise.resolve(docSnap(value, 'board'));
+    }
+    return Promise.resolve(docSnap(BOARD, 'board'));
+  }
   if (/\/shifts\//.test(p))               return Promise.resolve(docSnap(SHIFT, 'shift'));
   return Promise.resolve(docSnap(PROFILE));
 }
@@ -874,9 +936,19 @@ export function onSnapshot(q, next, err){
   };
 }
 
-export function addDoc(){ return Promise.resolve({ id: 'new1' }); }
+export function addDoc(ref, value){
+  assertWritable(value, false, '');
+  // נרשם בנפרד מ-__FIRESTORE_WRITES כדי שבדיקות קיימות שסופרות
+  // כתיבות setDoc לא ישתנו רק מפני שהוספה נרשמת עכשיו גם היא.
+  if (typeof window !== 'undefined') {
+    window.__FIRESTORE_ADDS = window.__FIRESTORE_ADDS || [];
+    window.__FIRESTORE_ADDS.push({ path:(ref && ref.path) || '', value:value });
+  }
+  return Promise.resolve({ id: 'new1' });
+}
 export function setDoc(ref, value, options){
   const path = (ref && ref.path) || '';
+  assertWritable(value, false, '');
   if (typeof window !== 'undefined') {
     window.__FIRESTORE_WRITES = window.__FIRESTORE_WRITES || [];
     window.__FIRESTORE_WRITES.push({ path:path, value:value, options:options || null });
@@ -903,7 +975,37 @@ export function setDoc(ref, value, options){
   return Promise.resolve();
 }
 export function deleteDoc(){ return Promise.resolve(); }
-export function serverTimestamp(){ return null; }
+/* ה-SDK האמיתי מחזיר כאן sentinel, לא ערך. הזיוף החזיר `null`, ולכן
+ * כתיבה שהכניסה חותמת שרת **לתוך מערך** עברה כאן בשקט — בעוד ש-Firebase
+ * דוחה אותה: „serverTimestamp() is not currently supported inside arrays".
+ * זה בדיוק הבאג שהבדיקה החמיצה, ולכן הזיוף מחזיר עכשיו sentinel מסומן
+ * ו-assertWritable אוכף עליו את אותו איסור. */
+const SERVER_TIMESTAMP = Object.freeze({ __sentinel: 'serverTimestamp' });
+export function serverTimestamp(){ return SERVER_TIMESTAMP; }
+
+function isSentinel(v){ return !!v && typeof v === 'object' && v.__sentinel === 'serverTimestamp'; }
+
+/* עובר על מה שנכתב ומוודא שאין sentinel בתוך מערך, בכל עומק. */
+function assertWritable(value, insideArray, path){
+  if (isSentinel(value)) {
+    if (insideArray) {
+      const error = new Error('Function setDoc() called with invalid data. ' +
+        'serverTimestamp() is not currently supported inside arrays (found in field ' + (path || '?') + ')');
+      error.code = 'invalid-argument';
+      throw error;
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(function (item, i) { assertWritable(item, true, (path || '') + '[' + i + ']'); });
+    return;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    Object.keys(value).forEach(function (k) {
+      assertWritable(value[k], insideArray, (path ? path + '.' : '') + k);
+    });
+  }
+}
 export function writeBatch(){
   return { set(){}, delete(){}, commit(){ return Promise.resolve(); } };
 }

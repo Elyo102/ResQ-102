@@ -68,7 +68,10 @@ const EXPECT = {
                  alerts:{ work:true, send:true, key:false, opts:4 },
                  callout:{ card:true, opts:5, pick:false },
                  guards:{ work:true, create:false },
-                 faults:{ work:true, anchor:true, sev:true, grade:true },
+                 // 6.9 · עריכת הצי צרה מ-staff: מפקד משמרת, סגן, מפקד תחנה
+                 // ומנהל-על. רכזת כוח אדם רואה את הצי ואינה עורכת אותו —
+                 // הכרעת אלדד, ואותה קבוצה בדיוק ב-fleetManager() שבכללים.
+                 faults:{ work:true, anchor:false, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
   // סגן מפקד משמרת: אותן סמכויות כמו מפקד, נעול למשמרת ב'.
   deputy:      { nav:['לוח מודעות','סידור','נוכחות','תקלות','טפסים','החלפות','חוות דעת','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
@@ -198,13 +201,19 @@ for (const role of Object.keys(EXPECT)) {
   const bVeh  = await pg.isVisible('#btnAddVeh').catch(()=>false);
   const bPen  = await pg.$$eval('#fleet .x', e => e.length).catch(()=>0);
   const bTool = await pg.$$eval('#fleet .veh .tools .btn', e => e.length).catch(()=>0);
-  const bEdit = bVeh || bPen > 0 || bTool > 0;
+  const bFleet = bVeh || bPen > 0 || bTool > 0;
+  const bCommand = await pg.$$eval('#chain .click', e => e.length > 0).catch(()=>false);
+  const bAssign = await pg.$$eval('#fleet .srow.click', e => e.length > 0).catch(()=>false);
+  const bEdit = bCommand || bAssign;
   const wantB = EXPECT[role].board;
-  const okB = bWork === wantB.work && bEdit === wantB.edit;
+  const wantFleet = ['super', 'commander', 'deputy', 'stcmd'].includes(role);
+  const okB = bWork === wantB.work && bCommand === wantB.edit &&
+              bAssign === wantB.edit && bFleet === wantFleet;
   console.log((okB?'✓':'✗') + ' [' + role + '] ציוות: לוח=' + bWork +
               ' עריכה=' + bEdit + ' (רכב=' + bVeh + ' עיפרון=' + bPen +
-              ' כלים=' + bTool + ')');
-  if (!okB) { bad++; console.log('    ציפיתי: לוח=' + wantB.work + ' עריכה=' + wantB.edit); }
+              ' כלים=' + bTool + ' פיקוד=' + bCommand + ' שיבוץ=' + bAssign + ')');
+  if (!okB) { bad++; console.log('    ציפיתי: לוח=' + wantB.work +
+    ' פיקוד ושיבוץ=' + wantB.edit + ' צי=' + wantFleet); }
 
   // נעילת מפקד משמרת: אילו כפתורי משמרת בכלל קיימים ונראים.
   if (EXPECT[role].crews) {
@@ -289,11 +298,11 @@ for (const role of Object.keys(EXPECT)) {
     if (!okG) { bad++; console.log('    ציפיתי: ' + JSON.stringify(wantG)); }
   }
 
-  // תקלות. כל כבאי מדווח — זו כל הנקודה. רכבי עיגון לסגל.
+  // תקלות. כל כבאי מדווח — זו כל הנקודה. עריכת הצי לקבוצה הצרה.
   await pg.goto('http://localhost:'+PORT+'/faults.html', {waitUntil:'load'});
   await pg.waitForTimeout(1700);
   const xWork = await pg.isVisible('#work').catch(()=>false);
-  // כרטיס רכבי העיגון יושב בלשונית "מצב הצי". בלי לפתוח אותה
+  // כרטיס עריכת הרכבים יושב בלשונית "מצב הצי". בלי לפתוח אותה
   // הוא מוסתר לכולם, וזה מצב הלשונית — לא ההרשאה.
   //
   // וקודם עונים לקריאת הפתע: היא חוסמת כל לחיצה בדף עד שעונים,

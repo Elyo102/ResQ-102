@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.5';
 const EXPECTED_DATE = '6.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 205; // +1 schedule-file-import.js on the schedule management screen.
+const EXPECTED_VERSIONED_REFERENCES = 207; // Existing 42H.6 references plus fleet.js on board/faults.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

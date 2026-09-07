@@ -139,6 +139,22 @@ service cloud.firestore {
                  ['deputy', 'commander', 'station_commander', 'hr_coordinator']);
     }
 
+    // מי רשאי לשנות את **הצי** — להוסיף רכב, לשנות את שמו ומספר
+    // הרישוי שלו, ולהוריד אותו מהצי.
+    //
+    // הכרעת אלדד (6.9): מפקד משמרת, סגן מפקד משמרת, מפקד תחנה
+    // ומנהל-על. רכזת כוח אדם **אינה** בקבוצה: היא staff לכל דבר
+    // אחר — סידור, שעות, כוח אדם — אבל הרכבים אינם תחומה, והורדת
+    // רכב מהצי היא החלטה מבצעית.
+    //
+    // חייב להיות זהה ל-FLEET_ROLES ב-fleet.js. אם הם ייפרדו, המסך
+    // יציע פעולה שהשרת יחסום, וזה נראה כמו תקלה ולא כמו גבול.
+    function fleetManager(sid) {
+      return isSuper()
+             || (liveStationIdentity(sid) && claim('role') in
+                 ['deputy', 'commander', 'station_commander']);
+    }
+
     // מי רשאי לכתוב בלוג המשמרת. סגל פיקודי **ועוד** שתי דרגות
     // השטח. זו הקבוצה היחידה במערכת שאינה staff ואינה member —
     // ולכן היא נשאלת בשם משלה ולא נגזרת מאחת מהן.
@@ -662,10 +678,24 @@ service cloud.firestore {
             && request.resource.data.get('vehicles', []).size() <= 40
             && request.resource.data.get('command', []) is list
             && request.resource.data.get('command', []).size() <= 20
+            // שרשרת הפיקוד והשיבוץ הם עבודת staff מלאה, ובכללה
+            // רכזת כוח אדם. **הרכבים אינם.** כתיבה שמשנה את מערך
+            // הרכבים — הוספה, שינוי שם, הורדה מהצי — דורשת
+            // fleetManager. כתיבה שמשאירה את המערך כפי שהוא נשארת
+            // פתוחה לכל staff, כדי שעריכת הפיקוד לא תיחסם.
+            // ביצירת המסמך אין `resource`, ולכן המערך ההתחלתי
+            // נחשב שינוי ודורש fleetManager.
+            && (
+              fleetManager(sid)
+              || (resource != null
+                  && request.resource.data.get('vehicles', [])
+                     == resource.data.get('vehicles', []))
+            )
           )
         );
 
-        allow delete: if staff(sid);
+        // Preserve vehicle history and assignments; removal is active:false.
+        allow delete: if staff(sid) && docId != 'board';
       }
 
 
@@ -679,9 +709,16 @@ service cloud.firestore {
       // רכבי עיגון — רכבים קטנים למשימות לוגיסטיות. רכבי כיבוי
       // וחילוץ אינם כאן; הם מוגדרים בתוך config/board, כי שם הם
       // נושאים משבצות ותפקידים. כל רכב חי במקום אחד בדיוק.
+      // רכבי הצי הלוגיסטיים. קריאה לכל חבר תחנה — הצי הוא מידע
+      // מבצעי שכל כבאי צריך. כתיבה ל-fleetManager בלבד (ראה למעלה).
+      //
+      // מחיקה חסומה **בכוונה**: על רכב נכתבת היסטוריית תקלות
+      // ופגיעות בשם, ומסמך שנמחק הופך כל דיווח כזה ל„רכב לא ידוע"
+      // בדיעבד. הורדה מהצי היא `active:false`, לא מחיקה.
       match /vehicles/{vehicleId} {
-        allow read:  if member(sid);
-        allow write: if staff(sid);
+        allow read:   if member(sid);
+        allow create, update: if fleetManager(sid);
+        allow delete: if false;
       }
 
       // תצלומים ליליים — ספירת מסמכים לגילוי אובדן נתונים.

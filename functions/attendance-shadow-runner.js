@@ -1,5 +1,21 @@
 'use strict';
 
+/* רכב מושבת אינו בצי, ולכן אינו תורם משבצות לצילום הנוכחות: משבצת
+ * של רכב שירד מהצי הייתה נספרת כחסרה ומורידה את הכשירות על רכב
+ * שכבר לא קיים. הסינון יושב **כאן**, בנקודת הקריאה של המסמך, כדי
+ * שהמודול הטהור `attendance-shadow.js` לא יצטרך להכיר את המושג —
+ * הוא מקבל לוח, וללוח שהוא מקבל אין רכבים מושבתים.
+ *
+ * רכב בלי השדה `active` הוא פעיל: כך נראים כל הרכבים שנכתבו לפני
+ * שהשדה נוסף, ואם היעדרו היה נקרא כ„מושבת" הצילום היה מתרוקן. */
+function activeBoard(board) {
+  if (!board || !Array.isArray(board.vehicles)) return board;
+  return Object.assign({}, board, {
+    vehicles: board.vehicles.filter(function (v) { return !!v && v.active !== false; })
+  });
+}
+
+
 // Firestore orchestration for v41A attendance Shadow.
 //
 // This module owns I/O, leases, retention and reports. The calculation itself
@@ -420,7 +436,7 @@ function createAttendanceShadowService(options) {
       users: values[0],
       roster: values[1],
       rotations: values[2],
-      board: values[3].exists ? (values[3].data() || {}) : null,
+      board: activeBoard(values[3].exists ? (values[3].data() || {}) : null),
       subStations: values[4],
       overrides: values[5].overrides,
       swaps: values[5].swaps,

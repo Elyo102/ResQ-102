@@ -756,7 +756,10 @@ async function loadStatic(){
 
       const mine = Object.keys(assign).filter(k => assign[k] === snapshot.uid);
       let found = snapshot.mySite;
+      // משבצת של רכב מושבת אינה מקור לתחנת המשנה שלי: הרכב ירד
+      // מהצי, והשיבוץ הישן נשאר שמור רק כדי ששחזור יהיה מלא.
       (board.vehicles || []).forEach(function (v) {
+        if (!v || v.active === false) return;
         (v.slots || []).forEach(function (sl) {
           if (mine.indexOf(sl.id) !== -1 && sl.site && !found) found = sl.site;
         });
