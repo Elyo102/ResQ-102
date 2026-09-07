@@ -522,3 +522,5 @@ try {
   await browser.close();
   server.close();
 }
+
+await import('./fleet-history-browser.mjs');

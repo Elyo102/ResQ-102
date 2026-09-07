@@ -40,7 +40,7 @@ const SHELL = [
   './vehicle.html', './sign.html',
   './index.html',
   './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
-  './guards.js', './faults.js', './forms.js', './stats.js',
+  './guards.js', './faults.js', './fleet.js', './forms.js', './stats.js',
   // חתימות, הפקת מסמכים, תפקידים ולוג המשמרת. בלי אלה,
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.

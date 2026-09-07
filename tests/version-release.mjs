@@ -45,6 +45,12 @@ function localModuleImports(source) {
     const target = match[2].split(/[?#]/, 1)[0].slice(2);
     if (/\.(?:js|css)$/.test(target)) found.push(target);
   }
+  // HTML entry points also load local modules through script src. Dynamic
+  // imports (e.g. the optional vehicle photo bundle) are not startup dependencies.
+  for (const match of String(source).matchAll(/<script\b[^>]*\bsrc\s*=\s*(['"])(\.\/[^'"]+)\1[^>]*>/gi)) {
+    const target = match[2].split(/[?#]/, 1)[0].slice(2);
+    if (target.endsWith('.js')) found.push(target);
+  }
   return found;
 }
 
@@ -79,7 +85,7 @@ function audit(files) {
     errors.push('service-worker SHELL is statically auditable');
   } else {
     for (const entry of shell) {
-      if (!entry.endsWith('.js')) continue;
+      if (!/\.(?:js|html)$/.test(entry)) continue;
       const source = files.get(entry);
       if (typeof source !== 'string') {
         errors.push('service-worker SHELL target exists: ./' + entry);
@@ -162,5 +168,15 @@ mustFail('vehicle business query mutation', replaceExactlyOne(files, 'faults.htm
 mustFail('offline module closure mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
   "'./schedule-management.js', './schedule-file-import.js', './board.html'",
   "'./schedule-management.js', './board.html'"));
+const missingFleet = replaceExactlyOne(files, 'firebase-messaging-sw.js',
+  "'./faults.js', './fleet.js',", "'./faults.js',");
+for (const entry of ['board.html', 'faults.html']) {
+  assert.ok(audit(missingFleet).errors.includes('./' + entry + ': offline dependency missing from SHELL: ./fleet.js'),
+    entry + ' catches the missing fleet module through its real HTML import');
+}
+const missingScriptSource = replaceExactlyOne(files, 'firebase-messaging-sw.js',
+  "'./schedule-management.js',", '');
+assert.ok(audit(missingScriptSource).errors.includes('./schedule-management.html: offline dependency missing from SHELL: ./schedule-management.js'),
+  'HTML script src participates in the offline closure');
 
-console.log('Release version contract: ' + baseline.count + ' references; 10/10 mutations caught.');
+console.log('Release version contract: ' + baseline.count + ' references; 12/12 mutations caught.');

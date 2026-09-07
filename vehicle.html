@@ -226,7 +226,8 @@ const db   = getFirestore(app);
 
 let SID = '', ME = { uid:'', name:'', crew:'' }, CAN_MANAGE = false;
 let faults = [], views = [], fleet = [], shots = {};
-let vid = '', side = 'right';
+let vid = '', side = 'right', vehicleRequested = false;
+const photoTargets = new Map();
 
 initPWA({ offer:false });
 
@@ -271,6 +272,7 @@ onAuthStateChanged(auth, async user => {
 
   // רכב מהכתובת, כדי שקישור ממסך התקלות יפתח את הרכב הנכון.
   const q = new URLSearchParams(location.search);
+  vehicleRequested = q.has('v');
   vid = q.get('v') || '';
   const s = q.get('side') || '';
   if (SIDES.some(x => x.id === s)) side = s;
@@ -302,13 +304,45 @@ async function loadAll(){
   });
   if (vw) vw.forEach(d => views.push(Object.assign({ id:d.id }, d.data() || {})));
 
-  fleet = mergeFleet(boardVehicles, anchors);
-  if (!fleet.some(v => v.id === vid)) vid = fleet.length ? fleet[0].id : '';
+  fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
+  // A deep link is an identity, not a suggestion. Never replace an explicit
+  // archived/missing vehicle with a different one that happens to be first.
+  if (!vid && !vehicleRequested) vid = (fleet.find(v => v.active !== false) || {}).id || '';
 
   render();
 }
 
 // ---------- ציור ----------
+
+function canAddToVehicle(id = vid){
+  return !!id && fleet.some(v => v.id === id && v.active !== false);
+}
+
+function captureVehicleTarget(){
+  return { id:vid, side, sid:SID, uid:ME.uid, name:ME.name, crew:ME.crew };
+}
+
+function requireVehicleTarget(target){
+  if (!target || target.id !== vid || target.side !== side || target.sid !== SID ||
+      target.uid !== auth.currentUser?.uid || !canAddToVehicle(target.id)) {
+    throw new Error('בחירת הרכב השתנתה או שהרכב אינו פעיל. יש לפתוח את הפעולה מחדש.');
+  }
+}
+
+function knownFaultVehicle(f){
+  return !!f && f.vehicle_id === vid && fleet.some(v => v.id === f.vehicle_id);
+}
+
+function captureFaultTarget(f){
+  return { id:f.id, vehicle:f.vehicle_id, sid:SID, uid:ME.uid, name:ME.name };
+}
+
+function requireFaultTarget(target){
+  if (!target || !target.id || target.sid !== SID || target.uid !== auth.currentUser?.uid ||
+      !knownFaultVehicle({vehicle_id:target.vehicle})) {
+    throw new Error('הרכב או המשתמש השתנו. יש לפתוח את התקלה מחדש.');
+  }
+}
 
 function render(){
   renderVehicles();
@@ -334,17 +368,18 @@ function renderVehicles(){
     if (v.id === vid) b.className = 'on';
     b.innerHTML = '<i style="background:' + st.color + '"></i>' +
                   esc(v.name) + (v.role ? ' <span class="n">·</span> ' +
-                  esc(v.role) : '');
+                  esc(v.role) : '') + (v.active === false ? ' · הוצא מהצי' : '');
     b.onclick = function () { vid = v.id; render(); };
     box.appendChild(b);
   });
 
   const v = fleet.filter(x => x.id === vid)[0];
-  if (!v) { $('vehState').textContent = ''; return; }
+  if (!v) { $('vehState').textContent = vehicleRequested ? 'הרכב שבקישור לא נמצא. לא נבחר רכב אחר.' : ''; return; }
   const st = vehicleState(faults, v.id);
   const cov = coverage(views, v.id);
   const miss = missingHe(views, v.id);
   $('vehState').innerHTML =
+    (v.active === false ? '<b>הרכב הוצא מהצי — מוצגת ההיסטוריה שלו.</b><br>' : '') +
     '<b style="color:' + st.color + '">' + esc(st.he) + '</b> · ' +
     'סט תמונות ' + cov.done + ' מתוך ' + cov.total +
     (miss ? ' · ' + esc(miss) : '');
@@ -363,7 +398,8 @@ const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v
 function renderImport(){
   const box = $('importRow');
   box.innerHTML = '';
-  if (!CAN_MANAGE || !vid) return;
+  if (!CAN_MANAGE || !canAddToVehicle()) return;
+  const target = captureVehicleTarget();
 
   // מוצג רק כשלרכב הנבחר אין אף תמונה. אחרי הייבוא הכפתור
   // נעלם מעצמו, ואי אפשר לדרוס בטעות סט קיים.
@@ -380,14 +416,16 @@ function renderImport(){
     b.disabled = true;
     msg('טוען את הסט…', 'info', 'impMsg');
     try {
+      requireVehicleTarget(target);
       const mod = await import(BUNDLE.src);
       let n = 0;
       for (const sd of SIDES) {
         const data = mod.SET[sd.id];
         if (!data) continue;
-        await setDoc(doc(db, 'stations', SID, 'vehicle_views', viewId(vid, sd.id)), {
-          vehicle_id: vid, side: sd.id, photo: data, w: 1400, h: 1050,
-          by_uid: ME.uid, by_name: ME.name,
+        requireVehicleTarget(target);
+        await setDoc(doc(db, 'stations', target.sid, 'vehicle_views', viewId(target.id, sd.id)), {
+          vehicle_id: target.id, side: sd.id, photo: data, w: 1400, h: 1050,
+          by_uid: target.uid, by_name: target.name,
           created_key: new Date().toISOString(), created_at: serverTimestamp()
         });
         n++;
@@ -426,7 +464,20 @@ function renderStage(){
   $('legend').innerHTML = '';
   $('baseMsg').className = 'msg';
 
+  const vehicle = fleet.find(v => v.id === vid);
+  if (!vehicle) {
+    wrap.innerHTML = '<div class="stage"><div class="empty">' +
+      (vehicleRequested ? 'הרכב שבקישור לא נמצא. לא הוצגה מפה של רכב אחר.' : 'בחר רכב כדי להציג את מפת הפגיעות.') +
+      '</div></div>';
+    return;
+  }
+
   const have = viewsOf(views, vid)[side];
+
+  if (!have && vehicle.active === false) {
+    wrap.innerHTML = '<div class="stage"><div class="empty">הרכב הוצא מהצי. אין תמונה היסטורית לצד הזה.</div></div>';
+    return;
+  }
 
   if (!have) {
     // אין תמונה — אין על מה לסמן. אומרים בדיוק מה חסר ומה
@@ -440,12 +491,12 @@ function renderStage(){
       (nx && nx !== side ? '<br>מומלץ להשלים לפי הסדר: ' +
         esc(sideHe(nx)) + ' קודם.' : '') +
       '</div></div></div>';
-    addPhotoBtns(sideHe(side), false);
+    if (canAddToVehicle()) addPhotoBtns(sideHe(side), false);
     return;
   }
 
   const st = document.createElement('div');
-  st.className = 'stage pick';
+  st.className = 'stage' + (canAddToVehicle() ? ' pick' : '');
 
   const img = document.createElement('img');
   img.className = 'base';
@@ -472,7 +523,7 @@ function renderStage(){
 
   // לחיצה על התמונה עצמה פותחת דיווח חדש באותה נקודה.
   st.onclick = function (e) {
-    if (e.target !== img) return;
+    if (e.target !== img || !canAddToVehicle()) return;
     const pt = pointAt(img.getBoundingClientRect(), e.clientX, e.clientY);
     newAt(pt);
   };
@@ -485,9 +536,10 @@ function renderStage(){
     SEVERITIES.map(s => '<span class="k"><i style="background:' + s.color +
       '"></i>' + esc(s.he) + '</span>').join('') +
     '<span class="k"><i style="background:var(--good)"></i>טופלה</span>' +
-    '<span class="k">' + list.length + ' נקודות · לחץ על התמונה כדי לדווח</span>';
+    '<span class="k">' + list.length + ' נקודות' +
+      (canAddToVehicle() ? ' · לחץ על התמונה כדי לדווח' : ' · היסטוריה') + '</span>';
 
-  if (CAN_MANAGE) addPhotoBtns(sideHe(side), true);
+  if (CAN_MANAGE && canAddToVehicle()) addPhotoBtns(sideHe(side), true);
 }
 
 function addPhotoBtns(subject, warn){
@@ -510,6 +562,7 @@ function addPhotoBtns(subject, warn){
       'החלפת התמונה מזיזה את כל הנקודות שכבר סומנו על הצד הזה.\n\n' +
       'הן נשמרות כיחס לתמונה, ולכן בזווית אחרת הן יצביעו על מקום ' +
       'אחר ברכב.\n\nלהחליף?')) return;
+      photoTargets.set(choice.input, captureVehicleTarget());
       $(choice.input).click();
     };
     $('photoActs').appendChild(b);
@@ -525,23 +578,27 @@ function sortByTime(list){
 
 async function uploadBasePhoto(picker){
   const file = picker.files && picker.files[0];
+  const target = photoTargets.get(picker.id);
+  photoTargets.delete(picker.id);
   picker.value = '';
-  if (!file || !vid) return;
+  if (!file || !target) return;
 
   msg('מקטין ומעלה…', 'info');
   try {
+    requireVehicleTarget(target);
     // 1600 פיקסל ולא 1280 כמו בצילום תקלה: על התמונה הזו
     // מסמנים נקודות באצבע, וכל פיקסל הוא דיוק סימון.
     const im = await shrinkImage(file, 1600, 820 * 1024);
-    const id = viewId(vid, side);
-    const exists = !!viewsOf(views, vid)[side];
+    requireVehicleTarget(target);
+    const id = viewId(target.id, target.side);
+    const exists = !!viewsOf(views, target.id)[target.side];
     const body = {
-      vehicle_id: vid, side: side, photo: im.data, w: im.w, h: im.h,
-      by_uid: ME.uid, by_name: ME.name,
+      vehicle_id: target.id, side: target.side, photo: im.data, w: im.w, h: im.h,
+      by_uid: target.uid, by_name: target.name,
       created_key: new Date().toISOString(), created_at: serverTimestamp()
     };
     // merge כדי שהחלפה לא תמחק את מי שהעלה במקור.
-    await setDoc(doc(db, 'stations', SID, 'vehicle_views', id), body,
+    await setDoc(doc(db, 'stations', target.sid, 'vehicle_views', id), body,
                  exists ? { merge:true } : undefined);
     msg('התמונה נשמרה.', 'ok');
     await loadAll();
@@ -556,6 +613,8 @@ $('baseGallery').onchange = function () { return uploadBasePhoto(this); };
 // ---------- דיווח חדש בנקודה ----------
 
 function newAt(pt){
+  if (!canAddToVehicle()) return;
+  const target = captureVehicleTarget();
   const kinds = FAULT_KINDS.filter(k => k.needsVehicle);
   $('dlgTitle').textContent = 'דיווח חדש · ' + sideHe(side);
   $('dlgHint').textContent =
@@ -602,16 +661,17 @@ function newAt(pt){
     b.disabled = true;
     msg('שומר…', 'info', 'nMsg');
     try {
+      requireVehicleTarget(target);
       const now = new Date();
-      const ref = await addDoc(collection(db, 'stations', SID, 'faults'), {
+      const ref = await addDoc(collection(db, 'stations', target.sid, 'faults'), {
         kind: $('nKind').value,
-        vehicle_id: vid,
-        vehicle_name: (fleet.filter(v => v.id === vid)[0] || {}).name || '',
-        side: side, x: pt.x, y: pt.y,
+        vehicle_id: target.id,
+        vehicle_name: (fleet.find(v => v.id === target.id) || {}).name || '',
+        side: target.side, x: pt.x, y: pt.y,
         title: title,
         desc: $('nDesc').value.trim(),
         severity: 'unset', status: 'open', photos: 0,
-        by_uid: ME.uid, by_name: ME.name, crew: ME.crew,
+        by_uid: target.uid, by_name: target.name, crew: target.crew,
         date: toKey(now), created_key: now.toISOString(),
         created_at: serverTimestamp()
       });
@@ -620,10 +680,12 @@ function newAt(pt){
       if (file) {
         try {
           const im = await shrinkImage(file);
-          await addDoc(collection(db, 'stations', SID, 'faults', ref.id, 'photos'),
-                       { data: im.data, w: im.w, h: im.h, by_uid: ME.uid,
+          requireVehicleTarget(target);
+          await addDoc(collection(db, 'stations', target.sid, 'faults', ref.id, 'photos'),
+                       { data: im.data, w: im.w, h: im.h, by_uid: target.uid,
                          created_key: new Date().toISOString() });
-          await setDoc(doc(db, 'stations', SID, 'faults', ref.id),
+          requireVehicleTarget(target);
+          await setDoc(doc(db, 'stations', target.sid, 'faults', ref.id),
                        { photos: 1 }, { merge:true });
         } catch (pe) {
           // הדיווח כבר נשמר. צילום שנכשל אינו סיבה לאבד אותו.
@@ -663,6 +725,7 @@ function openFault(f, n){
 }
 
 function faultCard(f, n){
+  const target = captureFaultTarget(f);
   const open = isOpen(f);
   const col = open ? sevColor(f.severity) : 'var(--good)';
   const el = document.createElement('div');
@@ -687,22 +750,22 @@ function faultCard(f, n){
 
   // דירוג — סגל בלבד. הכבאי מתאר מה ראה; כמה זה חמור זו
   // החלטה מבצעית של ראש המשמרת.
-  if (CAN_MANAGE && open) {
+  if (knownFaultVehicle(f) && CAN_MANAGE && open) {
     const sel = document.createElement('select');
     sel.style.width = 'auto';
     sel.innerHTML = '<option value="unset">' + esc(UNSET.he) + '</option>' +
       SEVERITIES.map(s => '<option value="' + s.id + '">' + esc(s.he) +
         '</option>').join('');
     sel.value = needsGrading(f) ? 'unset' : f.severity;
-    sel.onchange = () => grade(f, sel.value, sel);
+    sel.onchange = () => grade(f, sel.value, sel, target);
     acts.appendChild(sel);
   }
 
-  if (open && (CAN_MANAGE || f.by_uid === ME.uid)) {
-    acts.appendChild(btn('סגור', 'btn sm', () => closeFault(f)));
+  if (knownFaultVehicle(f) && open && (CAN_MANAGE || f.by_uid === ME.uid)) {
+    acts.appendChild(btn('סגור', 'btn sm', () => closeFault(f, target)));
   }
-  if (CAN_MANAGE && isDamage(f)) {
-    acts.appendChild(btn('מחק פגיעה', 'btn sm', () => wipe(f)));
+  if (knownFaultVehicle(f) && CAN_MANAGE && isDamage(f)) {
+    acts.appendChild(btn('מחק פגיעה', 'btn sm', () => wipe(f, target)));
   }
   if (acts.children.length) el.appendChild(acts);
   return el;
@@ -737,43 +800,48 @@ function paint(list, box){
   });
 }
 
-async function grade(f, sev, sel){
+async function grade(f, sev, sel, target){
   sel.disabled = true;
   try {
-    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
-      severity: sev, graded_by: ME.uid, graded_by_name: ME.name,
+    requireFaultTarget(target);
+    await setDoc(doc(db, 'stations', target.sid, 'faults', target.id), {
+      severity: sev, graded_by: target.uid, graded_by_name: target.name,
       graded_key: new Date().toISOString()
     }, { merge:true });
     close(); await loadAll();
   } catch (e) { sel.disabled = false; }
 }
 
-async function closeFault(f){
+async function closeFault(f, target){
   const what = window.prompt('מה נעשה? (אפשר להשאיר ריק)', '');
   if (what === null) return;
   try {
-    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+    requireFaultTarget(target);
+    await setDoc(doc(db, 'stations', target.sid, 'faults', target.id), {
       status:'fixed', fix_note:String(what || '').slice(0,300),
-      fixed_by: ME.uid, fixed_by_name: ME.name,
+      fixed_by: target.uid, fixed_by_name: target.name,
       fixed_key: new Date().toISOString(), fixed_at: serverTimestamp()
     }, { merge:true });
     close(); await loadAll();
   } catch (e) {}
 }
 
-async function wipe(f){
+async function wipe(f, target){
   if (!window.confirm('למחוק את "' + (f.title || '') + '"?\n\n' +
       DAMAGE_DELETE_WHY + '\n\nלמחוק?')) return;
   try {
+    requireFaultTarget(target);
     try {
       const ps = await getDocs(
-        collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+        collection(db, 'stations', target.sid, 'faults', target.id, 'photos'));
       for (const d of ps.docs) {
-        await deleteDoc(doc(db,'stations',SID,'faults',f.id,'photos',d.id));
+        requireFaultTarget(target);
+        await deleteDoc(doc(db,'stations',target.sid,'faults',target.id,'photos',d.id));
       }
     } catch (ignore) {}
-    await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
-    delete shots[f.id];
+    requireFaultTarget(target);
+    await deleteDoc(doc(db, 'stations', target.sid, 'faults', target.id));
+    delete shots[target.id];
     close(); await loadAll();
   } catch (e) {}
 }

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 import {
   FLEET_ROLES, managesFleet, isActiveVehicle, activeVehicles, inactiveVehicles,
@@ -25,6 +26,7 @@ import {
   reactivationPatch, applyToBoardVehicle, NAME_MAX, PLATE_MAX, atFor, boardStamp
 } from '../fleet.js';
 import { mergeFleet } from '../faults.js';
+import { vehicleStats } from '../stats.js';
 import { allSlots } from '../readiness.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -334,4 +336,58 @@ check('fleet authority never revives email or role-only super shortcuts', () => 
   assert.equal(/email|super_admin/.test(body), false);
 });
 
-console.log('\n' + passed + ' fleet checks passed (pure module + source pins + runner).');
+check('history opt-in retains retired operational and logistics vehicles without changing operational defaults', () => {
+  const board = [{ id:'live' }, { id:'retired', active:false }];
+  const anchors = [{ id:'retired-anchor', active:false }];
+  const before = JSON.stringify({ board, anchors });
+  assert.deepEqual(mergeFleet(board, anchors).map(v => v.id), ['live']);
+  const history = mergeFleet(board, anchors, { includeInactive:true });
+  assert.deepEqual(history.map(v => [v.id, v.active]), [['live', true], ['retired', false], ['retired-anchor', false]]);
+  const rows = vehicleStats(history, [{ vehicle_id:'retired', kind:'vehicle', status:'fixed',
+    severity:'blocking', created_key:'2026-09-01T00:00:00Z', fixed_key:'2026-09-03T00:00:00Z' }], '2026-01-01');
+  assert.equal(rows.find(v => v.id === 'retired').total, 1);
+  assert.equal(rows.find(v => v.id === 'retired').downDays, 2);
+  assert.equal(JSON.stringify({ board, anchors }), before);
+});
+
+// Run the actual service-worker install/activate/fetch handlers. Only static
+// app assets are cached here; Google messaging is stubbed, not network-tested.
+{
+  const handlers = {}, saved = new Map(), deleted = [];
+  const origin = 'https://offline-fleet.example.invalid';
+  const key = value => new URL(typeof value === 'string' ? value : value.url, origin + '/').pathname;
+  const context = vm.createContext({ URL, Response, console,
+    fetch:async () => { throw new Error('offline'); },
+    caches:{
+      open:async () => ({
+        add:async value => saved.set(key(value), new Response(fs.readFileSync(path.join(root, key(value).slice(1))))),
+        put:async (request, response) => saved.set(key(request), response.clone())
+      }),
+      keys:async () => ['resq-vold-release1'],
+      delete:async name => { deleted.push(name); return true; },
+      match:async request => saved.get(key(request))?.clone()
+    },
+    self:{ location:{origin}, addEventListener:(event, fn) => { handlers[event] = fn; },
+      skipWaiting:async()=>{}, clients:{claim:async()=>{}}, registration:{} },
+    importScripts:()=>{}, firebase:{initializeApp(){}, messaging:()=>({onBackgroundMessage(){}})}
+  });
+  vm.runInContext(read('firebase-messaging-sw.js'), context);
+  for (const event of ['install','activate']) {
+    let pending;
+    handlers[event]({ waitUntil:p => { pending = p; } });
+    await pending;
+  }
+  assert.deepEqual(deleted, ['resq-vold-release1']);
+  for (const file of ['board.html', 'faults.html', 'fleet.js?v=42h6']) {
+    let pending;
+    handlers.fetch({ request:{ method:'GET',url:origin+'/'+file,mode:file.endsWith('.html')?'navigate':'cors' },
+      respondWith:p => { pending = p; } });
+    const response = await pending;
+    assert.equal(response.status, 200, file + ' available before first online visit');
+    assert.equal((await response.text()).replace(/\r\n/g,'\n'), read(file.split('?')[0]));
+  }
+  passed += 1;
+  console.log('✓ real worker lifecycle caches fleet module before offline board/faults startup');
+}
+
+console.log('\n' + passed + ' fleet checks passed (pure module + source pins + runner + worker).');
