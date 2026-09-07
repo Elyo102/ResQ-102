@@ -46,6 +46,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
+  'getHrMonthReports', 'getHrEmployeeReport',
   'whoAmI'
 ]);
 

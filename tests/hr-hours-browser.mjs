@@ -14,7 +14,7 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
     const url=new URL(route.request().url());if(url.origin!==origin)return route.abort();
     const file=path.resolve(root,'.'+url.pathname);if(!file.startsWith(root+path.sep)||!fs.existsSync(file))return route.fulfill({status:404,body:''});
     let body=fs.readFileSync(file);
-    if(file.endsWith('hr.html')&&connected)body=body.toString().replace("createHrHoursUI(document.getElementById('hr-workspace'));","window.__UI=createHrHoursUI(document.getElementById('hr-workspace'),window.__adapter);");
+    if(file.endsWith('hr-client.js'))body="import { createHrHoursUI } from './hr-hours-ui.js?v=42h6'; window.__UI=createHrHoursUI(document.getElementById('hr-workspace')"+(connected?',window.__adapter':'')+");";
     await route.fulfill({status:200,contentType:file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':'text/javascript',body});
   });
   await context.addInitScript(()=>{

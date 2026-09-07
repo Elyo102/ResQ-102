@@ -50,6 +50,7 @@ const imports = firebaseScreens.flatMap(file => {
   if (file === 'schedule-management.html') {
     body += '\n' + fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
   }
+  if (file === 'hr.html') body += '\n' + fs.readFileSync(path.join(root, 'hr-client.js'), 'utf8');
   return body.includes('initAppCheck') ? [{ file, body }] : [];
 });
 check(imports.length === firebaseScreens.length,

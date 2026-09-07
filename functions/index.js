@@ -32,6 +32,7 @@ const scheduleAccessAdminModule = require('./schedule-access-admin');
 const stationTransferModule = require('./station-transfer');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
+const hrHoursModule = require('./hr-hours-service');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -124,6 +125,9 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
+const hrHours = hrHoursModule.createHrHoursService({ db, HttpsError });
+exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
+exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
 // New station-scoped submissions. Ordinary users are re-authorized against the
 // live station profile; a verified super claim may submit without a member
 // profile. Both modules keep the same station scope and idempotent transaction.

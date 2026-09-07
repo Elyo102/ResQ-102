@@ -1,6 +1,6 @@
 'use strict';
 
-// Read-only, not yet registered as a callable. Report contents never grant
+// Read-only service for the HR callables. Report contents never grant
 // identity or authority. Historical reads stay anchored to the old local user.
 const access = require('./schedule-access');
 const { createOpsMemberIdentity } = require('./ops-member-identity');

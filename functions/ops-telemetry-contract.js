@@ -46,6 +46,7 @@ const CALLABLES = Object.freeze([
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
+  'getHrMonthReports', 'getHrEmployeeReport',
   'whoAmI'
 ]);
 const INPUT_FIELDS = Object.freeze(['kind', 'screen', 'version', 'code', 'callable']);
