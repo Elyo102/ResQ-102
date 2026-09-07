@@ -17,6 +17,7 @@ const ITEMS = [
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
+  { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
   { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342', group: 'station' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043', group: 'mine' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },
@@ -54,6 +55,7 @@ function allowed(who, claims) {
   const isSuper = claims.super === true;
   if (who === 'any')    return true;
   if (who === 'super')  return isSuper;
+  if (who === 'hr') return isSuper || claims.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(claims.role) !== -1;
   // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
   // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.

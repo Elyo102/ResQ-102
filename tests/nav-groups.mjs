@@ -79,7 +79,7 @@ const member = [
 ];
 const staff = member.concat(['access.html', 'admin.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
-const all = audit.concat(['import.html', 'check.html']);
+const all = audit.concat(['hr.html', 'import.html', 'check.html']);
 const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
@@ -87,7 +87,9 @@ const roles = [
   ['deputy', { role:'deputy' }, staff, 3],
   ['commander', { role:'commander' }, staff, 3],
   ['station_commander', { role:'station_commander' }, audit, 3],
-  ['hr_coordinator', { role:'hr_coordinator' }, audit, 3],
+  ['hr_coordinator', { role:'hr_coordinator' }, audit.concat(['hr.html']), 3],
+  ['string_super', { role:'firefighter', super:'true' }, member, 2],
+  ['role_email_super', { role:'super_admin', email:'synthetic@example.invalid' }, ['login.html'], 1],
   ['district_commander', { role:'district_commander' }, ['login.html'], 1],
   ['super', { role:'firefighter', super:true }, all, 3]
 ];

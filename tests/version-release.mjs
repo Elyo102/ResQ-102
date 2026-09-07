@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.6';
 const EXPECTED_DATE = '7.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 207; // Existing 42H.6 references plus fleet.js on board/faults.
+const EXPECTED_VERSIONED_REFERENCES = 214; // Existing 42H.6 references plus seven HR shell/client imports.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
@@ -179,4 +179,9 @@ const missingScriptSource = replaceExactlyOne(files, 'firebase-messaging-sw.js',
 assert.ok(audit(missingScriptSource).errors.includes('./schedule-management.html: offline dependency missing from SHELL: ./schedule-management.js'),
   'HTML script src participates in the offline closure');
 
-console.log('Release version contract: ' + baseline.count + ' references; 12/12 mutations caught.');
+for (const target of ['hr-client.js', 'hr-hours-ui.js']) {
+  const missing = replaceExactlyOne(files, 'firebase-messaging-sw.js', "'./" + target + "',", '');
+  assert.ok(audit(missing).errors.some(error => error.includes('offline dependency missing from SHELL: ./' + target)),
+    'HR HTML/module startup requires ' + target + ' offline');
+}
+console.log('Release version contract: ' + baseline.count + ' references; 14/14 mutations caught.');

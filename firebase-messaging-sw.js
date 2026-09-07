@@ -35,6 +35,7 @@ const SHELL = [
   './login.html', './schedule.html', './schedule-management.html',
   './schedule-management.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
+  './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
   './quals.html', './alerts.html', './stats.html', './people.html',
   './vehicle.html', './sign.html',
