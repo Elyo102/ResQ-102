@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h5">
+<link rel="stylesheet" href="./theme.css?v=42h6">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -199,26 +199,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h5';
-import { renderNav, renderStuckNav } from './nav.js?v=42h5';
-import { initPWA } from './pwa.js?v=42h5';
-import { watchCallouts } from './callout.js?v=42h5';
-import { CREW_HE } from './rotation.js?v=42h5';
-import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h5';
-import { mergeFleet } from './faults.js?v=42h5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h6';
+import { renderNav, renderStuckNav } from './nav.js?v=42h6';
+import { initPWA } from './pwa.js?v=42h6';
+import { watchCallouts } from './callout.js?v=42h6';
+import { CREW_HE } from './rotation.js?v=42h6';
+import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h6';
+import { mergeFleet } from './faults.js?v=42h6';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h5';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h6';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h5';
+  from './monitored-functions.js?v=42h6';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h6';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -400,7 +400,7 @@ async function loadAll(){
   // אחרי הסגל: השאלה „מי עובד" נשאלת על כל מי שבסגל, בקריאה אחת.
   await Promise.all([guardStats, loadEffectiveWorkdays(people.map(p => p.uid))]);
 
-  fleet = mergeFleet(boardVehicles, anchors);
+  fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
   ctx = { effective, swaps: swaps.filter(s => s.status === 'approved'), guards };
 
   render();
@@ -458,6 +458,7 @@ function renderVehicles(since){
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td><div class="nm">' + esc(r.name) +
+        (fleet.some(v => v.id === r.id && v.active === false) ? ' <span class="why">· הוצא מהצי</span>' : '') +
         (r.kind === 'anchor' ? ' <span class="why">· עיגון</span>' : '') +
         '</div><div class="why">' + esc(vehicleWhy(r)) + '</div></td>' +
       // "פחות מיום" ולא "<1". הסימן הזה נכתב כאן כטקסט גולמי

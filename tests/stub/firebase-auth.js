@@ -46,9 +46,17 @@ function makeUser(roleName, uid, extraClaims){
     uid: uid || 'stub-uid',
     email: claims.email || 'eldad50@gmail.com',
     emailVerified: claims.email_verified !== false,
-    getIdTokenResult: () => tokenDelay > 0
-      ? new Promise(resolve => setTimeout(() => resolve({ claims: claims }), tokenDelay))
-      : Promise.resolve({ claims: claims }),
+    getIdTokenResult: () => {
+      if (typeof window !== 'undefined' && window.__SMOKE_DEFER_CLAIMS === true) {
+        return new Promise(resolve => {
+          window.__SMOKE_CLAIMS_PENDING = window.__SMOKE_CLAIMS_PENDING || [];
+          window.__SMOKE_CLAIMS_PENDING.push(() => resolve({ claims: claims }));
+        });
+      }
+      return tokenDelay > 0
+        ? new Promise(resolve => setTimeout(() => resolve({ claims: claims }), tokenDelay))
+        : Promise.resolve({ claims: claims });
+    },
     getIdToken: force => {
       markAuth('getIdToken', { force:force === true });
       if (typeof window !== 'undefined' && window.__AUTH_HOLD_TOKEN === true) {
@@ -85,6 +93,17 @@ export function onIdTokenChanged(a, cb){
 // בדיקות מרוץ יכולות להחליף זהות בלי לטעון מחדש את מודול ה-stub.
 // זו נקודת בדיקה בלבד; קוד הייצור אינו רואה אותה.
 if (typeof window !== 'undefined') {
+  window.__SMOKE_SWAP_USER = function (roleName, uid, extraClaims) {
+    USER = makeUser(roleName, uid, extraClaims);
+    AUTH.currentUser = USER;
+    markAuth('swapUser', { role:roleName, uid:USER.uid });
+  };
+  window.__SMOKE_RELEASE_CLAIMS = function () {
+    const pending = window.__SMOKE_CLAIMS_PENDING || [];
+    window.__SMOKE_CLAIMS_PENDING = [];
+    pending.forEach(fn => fn());
+    return pending.length;
+  };
   window.__SMOKE_EMIT_AUTH = function (roleName, uid, extraClaims) {
     if (roleName == null) {
       AUTH.currentUser = null;

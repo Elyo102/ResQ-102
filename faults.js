@@ -166,17 +166,32 @@ export const VEHICLE_KINDS = [
   { id: 'anchor', he: 'רכב עיגון' }
 ];
 
-export function mergeFleet(boardVehicles, anchorVehicles) {
+// רכב מושבת אינו בצי, והסינון יושב **כאן ולא בכל מסך בנפרד**:
+// שלושה מסכים קוראים את אותו מיזוג, וסינון משוכפל הוא בדיוק הדרך
+// שבה רכב שהוסר נעלם במסך אחד ונשאר במסך השני.
+//
+// רכב בלי השדה `active` הוא פעיל — כל הרכבים שנכתבו לפני שהשדה
+// היה קיים. רק `active === false` מסיר מהצי.
+//
+// `managed` אומר „הרשומה הזאת נערכת ישירות": רכב עיגון הוא מסמך
+// משלו, רכב מבצעי הוא אובייקט בתוך מסמך הלוח. שניהם ניתנים
+// לעריכה במצב הצי — אבל לא באותה כתיבה.
+export function mergeFleet(boardVehicles, anchorVehicles, options = {}) {
   const out = [];
+  // Operational pickers remain active-only. History readers explicitly opt in;
+  // including an archived record never reactivates it or writes the source.
+  const history = options.includeInactive === true;
+  const live = function (v) { return !!v && !!v.id && (history || v.active !== false); };
+  const state = v => history ? { active:v.active !== false } : {};
   (boardVehicles || []).forEach(function (v) {
-    if (!v || !v.id) return;
-    out.push({ id: v.id, name: v.name || v.id, kind: 'fire',
-               role: v.role || '', managed: false });
+    if (!live(v)) return;
+    out.push(Object.assign({ id: v.id, name: v.name || v.id, kind: 'fire',
+               role: v.role || '', plate: v.plate || '', managed: false }, state(v)));
   });
   (anchorVehicles || []).forEach(function (v) {
-    if (!v || !v.id) return;
-    out.push({ id: v.id, name: v.name || v.id, kind: 'anchor',
-               role: v.plate || '', managed: true });
+    if (!live(v)) return;
+    out.push(Object.assign({ id: v.id, name: v.name || v.id, kind: 'anchor',
+               role: v.plate || '', plate: v.plate || '', managed: true }, state(v)));
   });
   return out;
 }

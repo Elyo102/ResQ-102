@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h5">
+<link rel="stylesheet" href="./theme.css?v=42h6">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -142,6 +142,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   #rep .x{ position:absolute; top:12px; inset-inline-end:16px; color:var(--muted);
            font-size:26px; cursor:pointer; line-height:1 }
   #rep .x:hover{ color:var(--txt) }
+
+  /* ---------- עריכת רכב ---------- */
+  #veh{ position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:1100;
+        display:none; align-items:flex-start; justify-content:center;
+        padding:24px 16px; overflow:auto }
+  #veh.on{ display:flex }
+  #veh .repBox{ background:var(--card); border:1px solid var(--line);
+                border-radius:13px; max-width:440px; width:100%; padding:20px;
+                position:relative }
+  #veh .x{ position:absolute; top:12px; inset-inline-end:16px; color:var(--muted);
+           font-size:26px; cursor:pointer; line-height:1 }
+  #veh .x:hover{ color:var(--txt) }
+  .vehActs{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
+  .btn.danger{ border-color:var(--bad,#dc2626); color:var(--bad,#dc2626) }
+  .v .edit{ flex:none }
+  /* רכב שהורד מהצי — שורה שקטה עם דרך אחת בחזרה. */
+  .off{ display:flex; align-items:center; gap:10px; padding:9px 11px; margin-top:6px;
+        border:1px dashed var(--line); border-radius:9px; background:var(--panel) }
+  .off .nm{ flex:1; font-size:13px; color:var(--muted) }
 </style>
 </head>
 <body>
@@ -181,9 +200,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div id="dlgBody"></div>
 </div></div>
 
+<!-- עריכת רכב. חלון נפרד מדוח הנזק, כי שני חלונות שחולקים אותו
+     גוף היו נפתחים זה על גבי זה ברגע שלוחצים „ערוך" מתוך הדוח. -->
+<div id="veh"><div class="repBox">
+  <span class="x" id="vehX">&times;</span>
+  <h2 id="vehTitle">רכב</h2>
+  <div class="note" id="vehSub"></div>
+  <label>שם הרכב</label>
+  <input type="text" id="vName" maxlength="50" placeholder="טרנזיט לבן">
+  <label>מספר רישוי</label>
+  <input type="text" id="vPlate" maxlength="20" placeholder="12-345-67">
+  <div id="vRoleWrap" class="hide">
+    <label>ייעוד</label>
+    <input type="text" id="vRole" maxlength="20" placeholder="כיבוי">
+  </div>
+  <div class="msg" id="vehMsg"></div>
+  <div class="vehActs">
+    <button class="btn go" id="vehSave">שמור</button>
+    <button class="btn danger" id="vehOff">הורד מהצי</button>
+    <button class="btn" id="vehCancel">ביטול</button>
+  </div>
+  <div class="note" id="vehWhy"></div>
+</div></div>
+
 <div class="wrap">
   <h1>תקלות וחפיפת משמרת</h1>
   <div class="sub" id="whoSub">—</div>
+  <div class="msg" id="mainMsg" role="alert"></div>
 
   <div class="card hide" id="denyCard">
     <div class="note" id="denyWho"></div>
@@ -334,16 +377,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         </div>
         <div>
           <div class="card hide" id="anchorCard">
-            <h2>רכבי עיגון</h2>
+            <h2>רכבים</h2>
             <div class="note" style="margin-bottom:2px">
-              רכבים קטנים למשימות לוגיסטיות. רכבי כיבוי וחילוץ
-              מוגדרים בלוח הציוות, כי שם הם נושאים משבצות.
+              רכב שנוסף כאן נכנס לצי עם שם ומספר רישוי. רכבי כיבוי
+              וחילוץ מוגדרים בלוח הציוות, כי שם הם נושאים משבצות —
+              אבל את השם ואת מספר הרישוי שלהם עורכים גם מכאן.
             </div>
             <label>שם הרכב</label>
             <input type="text" id="aName" maxlength="50" placeholder="טרנזיט לבן">
             <label>מספר רישוי</label>
             <input type="text" id="aPlate" maxlength="20" placeholder="12-345-67">
-            <button class="btn" id="btnAnchor">הוסף רכב עיגון</button>
+            <button class="btn" id="btnAnchor">הוסף רכב</button>
             <div class="msg" id="anchorMsg"></div>
             <div id="anchorList"></div>
           </div>
@@ -364,12 +408,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h5';
-import { renderNav, renderStuckNav } from './nav.js?v=42h5';
-import { MEMBER_ROLES } from './roles.js?v=42h5';
-import { initPWA } from './pwa.js?v=42h5';
-import { watchCallouts } from './callout.js?v=42h5';
-import { CREW_HE, plural } from './rotation.js?v=42h5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h6';
+import { renderNav, renderStuckNav } from './nav.js?v=42h6';
+import { MEMBER_ROLES } from './roles.js?v=42h6';
+import { initPWA } from './pwa.js?v=42h6';
+import { watchCallouts } from './callout.js?v=42h6';
+import { CREW_HE, plural } from './rotation.js?v=42h6';
 import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -377,16 +421,18 @@ import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage } from './faults.js?v=42h5';
+         shrinkImage } from './faults.js?v=42h6';
+import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h6';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h6';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -406,16 +452,105 @@ function msg(text, kind, box){
   m.className = 'msg ' + (text ? (kind || '') : '');
 }
 
-let SID = '', ME = null, CAN_MANAGE = false;
+let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
 let faults = [], fleet = [], anchors = [], shots = {}, handovers = {};
+// מסמך הלוח **כפי שהוא בשרת**, שלם: הרכבים המבצעיים ושרשרת הפיקוד.
+// נשמר שלם ולא מסונן, כי עריכת רכב מבצעי כותבת את המסמך כולו בחזרה
+// — כתיבה של מערך מסונן הייתה מוחקת מהמסמך את הרכבים המושבתים.
+let boardDoc = null;
+// רכבי הצי הלוגיסטיים כולל המושבתים. `anchors` מכיל רק את הפעילים;
+// הרשימה הזאת היא מה שמאפשר להחזיר רכב לצי.
+let anchorDocs = [];
+
+/* seq477 §8 · דור הזהות.
+ *
+ * `onAuthStateChanged` יורה שוב כשמתחלף המשתמש, וגם כשה-claims שלו
+ * משתנים — למשל העברה לתחנה אחרת. עד כאן `SID` ו-`ME` הוחלפו במקום,
+ * בעוד שחלון עריכת הרכב, מסמך הלוח שבמטמון וקריאה שעדיין בדרך המשיכו
+ * להתייחס לזהות הקודמת. התוצאה: כתיבה שיוצאת עם משתמש אחד ותוכן של
+ * אחר, או תשובה של תחנה א׳ שנכתבת על מסך של תחנה ב׳.
+ *
+ * הדור עולה בכל החלפת זהות. קריאה בודקת אותו כשהיא חוזרת, כתיבה
+ * בודקת אותו לפני ואחרי, וחלון העריכה נסגר. */
+let AUTH_GEN = 0;
+let PRIV_SIG = '';
+
+function bumpIdentity(){
+  AUTH_GEN += 1;
+  PRIV_SIG = '';
+  ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
+  vehEditing = null;
+  boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
+  faults = []; handovers = {}; shots = {};
+  $('work').classList.add('hide');
+  $('anchorCard').classList.add('hide');
+  $('denyCard').classList.add('hide');
+  $('fleetList').replaceChildren();
+  $('anchorList').replaceChildren();
+  $('aName').value = ''; $('aPlate').value = '';
+  $('rep').classList.remove('on');
+  $('lb').classList.remove('on');
+  const box = $('veh');
+  if (box) box.classList.remove('on');
+  return AUTH_GEN;
+}
+
+/** תעודת זהות לכתיבה: דור, משתמש ותחנה כפי שהם **ברגע שהכתיבה יוצאת**.
+ *
+ * seq485 §B1 · ה-uid נלקח מ-`auth.currentUser` ולא רק מ-`ME`. `ME` הוא
+ * מצב של המסך, ומי שכותב אותו הוא ה-observer — שנמסר **אסינכרונית**.
+ * בין הרגע שבו Firebase כבר מחזיק את המשתמש החדש ובין הרגע שבו
+ * ה-callback רץ ומרים דור, `ME` ו-`AUTH_GEN` עדיין של הקודם: הכתיבה
+ * הייתה עוברת ונרשמת על שמו. אין כאן עקיפת חוקים — ב׳ מורשה באותה
+ * תחנה — אבל השם שנרשם בתקלה הוא של א׳, וזה שקר בהיסטוריה. */
+function currentUid(){
+  const u = auth.currentUser;
+  return u ? u.uid : '';
+}
+
+function writeFence(){
+  if (!ME || !SID) throw new Error('identity-missing');
+  const live = currentUid();
+  if (!live || live !== ME.uid) {
+    const error = new Error('identity-changed');
+    error.code = 'identity-changed';
+    throw error;
+  }
+  return { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+}
+
+/** בכל נקודת בדיקה — הזהות עדיין אותה זהות, אחרת הכתיבה אינה שלנו.
+ *  נבדקים ארבעה דברים, ו**המשתמש החי הוא הרביעי**: דור המסך יכול
+ *  עוד לא לדעת שהמשתמש התחלף. */
+function assertFence(f){
+  if (!f || f.gen !== AUTH_GEN || !ME || f.uid !== ME.uid || f.sid !== SID ||
+      currentUid() !== f.uid) {
+    const error = new Error('identity-changed');
+    error.code = 'identity-changed';
+    throw error;
+  }
+}
+
+function assertFleetFence(f){
+  assertFence(f);
+  if (!CAN_FLEET) throw new Error('fleet-forbidden');
+}
 
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
+  /* seq483 §2 · הדור נלקח כאן ו**נבדק אחרי כל await**. בלי הבדיקות
+   * האלה, callback ישן של משתמש א׳ שחוזר אחרי שמשתמש ב׳ כבר נטען
+   * דורס את `ME`, `SID` ו-`CAN_FLEET` — והמסך מציג את ב׳ עם ההרשאות
+   * של א׳. `onAuthStateChanged` לבדו אינו מספיק: הוא אינו יורה על
+   * רענון claims של אותו משתמש, ולכן גם הטוקן נבדק בהמשך. */
+  const gen = bumpIdentity();
+  const stale = () => gen !== AUTH_GEN || currentUid() !== user.uid;
   if (!user) { location.replace('./login.html?next=faults.html'); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (stale()) return;
 
   const isSuper = c.super === true;
   const isMember = isSuper ||
@@ -430,11 +565,21 @@ onAuthStateChanged(auth, async user => {
   }
 
   CAN_MANAGE = isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1;
+  // עריכת הצי היא קבוצה צרה יותר מ-staff: מפקד משמרת, סגן, מפקד
+  // תחנה ומנהל-על. רכזת כוח אדם היא staff לכל דבר אחר ואינה כאן.
+  // אותה הכרעה בדיוק נאכפת ב-fleetManager() שבכללי האבטחה — המסך
+  // מסתיר, השרת חוסם.
+  CAN_FLEET = managesFleet(Object.assign({}, c, { super: isSuper }));
   ME = { uid: user.uid, crew: c.shift || '', full_name: '' };
+  /* seq485 §B3 · חתימת ההרשאות נלקחת כאן, מהטוקן שכבר בידינו, כדי
+   * שהפולינג ישווה מול מה שהמסך **באמת** נבנה ממנו. */
+  PRIV_SIG = privilegeSignature(user, c);
   try {
     const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (stale()) return;
     if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
   } catch (ignore) {}
+  if (stale()) return;
 
   $('work').classList.remove('hide');
   $('whoSub').textContent = (ME.full_name || user.email) +
@@ -442,10 +587,62 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'faults.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
-  if (CAN_MANAGE) $('anchorCard').classList.remove('hide');
+  if (CAN_FLEET) $('anchorCard').classList.remove('hide');
   setupForm();
+  if (stale()) return;
   await loadAll();
 });
+
+/* אותו משתמש, claims חדשים — העברה לתחנה אחרת, שינוי תפקיד, ביטול
+ * הרשאה. `onAuthStateChanged` **אינו** יורה על זה, ולכן טוקן שהתחדש
+ * היה משאיר את המסך עם התחנה וההרשאות הישנות. seq483 §2. */
+/* seq485 §B3 · **חתימת ההרשאות**, לא שלושה שדות נבחרים.
+ *
+ * הבדיקה הקודמת השוותה תחנה, `CAN_FLEET` ו-uid בלבד. רכזת כוח אדם
+ * שהופכת לכבאית שומרת את אותו uid, את אותה תחנה, ו-`CAN_FLEET`
+ * הוא false בשני המקרים — ולכן שום דבר לא נראה שונה, `CAN_MANAGE`
+ * נשאר true, והמסך המשיך להציע פעולות ניהול. מה שמושווה עכשיו הוא
+ * כל מה שנגזר מהטוקן, כך שכל שינוי הרשאה נתפס ולא רק זה שנבחר. */
+function privilegeSignature(user, claims){
+  const c = claims || {};
+  const isSuper = c.super === true;
+  const sid = c.stationId || (isSuper ? STATION_ID : '');
+  return [
+    user ? user.uid : '',
+    sid,
+    String(c.role || ''),
+    isSuper ? '1' : '0',
+    managesFleet(Object.assign({}, c, { super: isSuper })) ? '1' : '0',
+    (isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1) ? '1' : '0',
+    String(c.shift || ''),
+    String(c.disabled === true ? '1' : '0')
+  ].join('|');
+}
+
+setInterval(async () => {
+  const user = auth.currentUser;
+  if (!user || !ME) return;
+  /* seq485 §B2 · הדור והמשתמש נלקחים **לפני** ההמתנה ונבדקים אחריה.
+   * תשובת טוקן של א׳ שחוזרת אחרי שב׳ כבר נכנס נראתה כמו „הזהות
+   * השתנתה" — והמסך של ב׳ נטען מחדש בלי סיבה. תשובה של זהות שאינה
+   * הזהות הנוכחית פשוט נזרקת. */
+  const gen = AUTH_GEN;
+  const uid = user.uid;
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) { return; }
+  if (gen !== AUTH_GEN || currentUid() !== uid || !ME || ME.uid !== uid) return;
+
+  /* אין „זריעה עצלה" כאן בכוונה. אם הפולינג היה רשאי לקבוע את
+   * החתימה כשהיא ריקה, תשובה ישנה שחוזרת ראשונה הייתה קובעת בסיס
+   * שגוי — ומשם ואילך שינוי אמיתי היה נראה כמו „אין שינוי". החתימה
+   * נקבעת רק במקום אחד: ה-handler שבנה את המסך. */
+  if (!PRIV_SIG) return;
+  const sig = privilegeSignature(user, c);
+  if (sig === PRIV_SIG) return;
+  /* משהו בהרשאות השתנה. מרימים דור — מה שבאוויר יידחה — ונטענים מחדש. */
+  bumpIdentity();
+  location.reload();
+}, 60 * 1000);
 
 // ---------- טעינה ----------
 
@@ -453,32 +650,49 @@ async function loadAll(){
   // ארבע קריאות במקביל ולא בזה אחר זה. אף אחת מהן אינה
   // תלויה בקודמת, וההמתנה הסדרתית הייתה כ-800 מילישניות של
   // מסך ריק מטלפון סלולרי.
-  faults = []; anchors = []; handovers = {};
+  const origin = { gen: AUTH_GEN, uid: ME && ME.uid, sid: SID };
+  try { assertFence(origin); } catch (ignore) { return; }
+  faults = []; anchors = []; anchorDocs = []; handovers = {};
+  boardDoc = null;
   let boardVehicles = [];
 
   const safe = p => p.catch(function () { return null; });
 
   const [fs_, bd, vs, hs] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', SID, 'faults'))),
-    safe(getDoc(doc(db, 'stations', SID, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', SID, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', SID, 'handovers')))
+    safe(getDocs(collection(db, 'stations', origin.sid, 'faults'))),
+    safe(getDoc(doc(db, 'stations', origin.sid, 'config', 'board'))),
+    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles'))),
+    safe(getDocs(collection(db, 'stations', origin.sid, 'handovers')))
   ]);
 
+  /* התשובה חזרה — אבל למי? אם הזהות התחלפה בזמן שחיכינו, הנתונים
+   * האלה שייכים למשתמש או לתחנה הקודמים ואסור לצייר אותם. */
+  try { assertFence(origin); } catch (ignore) { return; }
+
   if (fs_) fs_.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
-  if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
+  if (bd && bd.exists()) {
+    const b = bd.data() || {};
+    boardDoc = {
+      vehicles: Array.isArray(b.vehicles) ? b.vehicles : [],
+      command:  Array.isArray(b.command)  ? b.command  : []
+    };
+    boardVehicles = boardDoc.vehicles;
+  }
   if (vs) vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
-    anchors.push(Object.assign({ id: d.id }, v));
+    anchorDocs.push(Object.assign({ id: d.id }, v));
   });
+  // `mergeFleet` מסנן מושבתים בעצמו; `anchors` נשאר הרשימה הפעילה
+  // שכל שאר המסך מסתמך עליה.
+  anchors = anchorDocs.filter(v => v.active !== false);
   if (hs) hs.forEach(d => {
     handovers[d.id] = Object.assign({ id: d.id }, d.data() || {});
   });
 
   fleet = mergeFleet(boardVehicles, anchors);
 
-  renderFilter(); renderOpen(); renderShift(); renderFleet(); renderHist();
+  renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
 }
 
 // ---------- לשוניות ----------
@@ -514,7 +728,12 @@ function setupForm(){
   };
   $('nSev').onchange();
   $('btnNew').onclick = createFault;
-  $('btnAnchor').onclick = addAnchor;
+  $('btnAnchor').onclick = addVehicle;
+  $('vehSave').onclick = saveVehicleEdit;
+  $('vehOff').onclick = deactivateVehicle;
+  $('vehCancel').onclick = closeVehicleEditor;
+  $('vehX').onclick = closeVehicleEditor;
+  $('veh').onclick = e => { if (e.target === $('veh')) closeVehicleEditor(); };
   $('lbX').onclick = () => $('lb').classList.remove('on');
   $('repX').onclick = () => $('rep').classList.remove('on');
   $('rep').onclick = e => { if (e.target === $('rep')) $('rep').classList.remove('on'); };
@@ -544,7 +763,7 @@ async function createFault(){
 
   const vid = needsVehicle(kind) ? $('nVeh').value : '';
   if (needsVehicle(kind) && !vid) {
-    msg('צריך לבחור רכב. אם אין רכבים מוגדרים — הוסף רכב עיגון או ' +
+    msg('צריך לבחור רכב. אם אין רכבים מוגדרים — הוסף רכב במצב הצי או ' +
         'הגדר רכבים בלוח הציוות.', 'err');
     return;
   }
@@ -595,15 +814,17 @@ async function createFault(){
   b.disabled = false;
 }
 
-async function addAnchor(){
-  const n = $('aName').value.trim();
-  if (!n) { msg('צריך שם לרכב.', 'err', 'anchorMsg'); return; }
+async function addVehicle(){
+  const edit = vehicleEdit({ name: $('aName').value, plate: $('aPlate').value });
+  if (!edit.ok) { msg('צריך שם לרכב.', 'err', 'anchorMsg'); return; }
   const b = $('btnAnchor'); b.disabled = true;
   try {
-    await addDoc(collection(db, 'stations', SID, 'vehicles'), {
-      name: n, plate: $('aPlate').value.trim(), kind: 'anchor',
+    const fence = writeFence();
+    await addDoc(collection(db, 'stations', fence.sid, 'vehicles'), Object.assign({
+      kind: 'anchor', active: true,
       by_uid: ME.uid, created_at: serverTimestamp()
-    });
+    }, edit.patch));
+    assertFence(fence);
     msg('הרכב נוסף.', 'ok', 'anchorMsg');
     $('aName').value = ''; $('aPlate').value = '';
     await loadAll();
@@ -611,6 +832,187 @@ async function addAnchor(){
     msg('ההוספה נכשלה. (' + (e.code || e.message) + ')', 'err', 'anchorMsg');
   }
   b.disabled = false;
+}
+
+// ---------- עריכת רכב ----------
+//
+// שני סוגי הרכבים נערכים באותו חלון, אבל **לא באותה כתיבה**: רכב
+// לוגיסטי הוא מסמך משלו, ורכב מבצעי הוא אובייקט בתוך מסמך הלוח,
+// שנכתב שלם בכל שמירה (כך דורשים כללי האבטחה: ארבעה מפתחות בדיוק).
+//
+// „הורד מהצי" אינו מוחק. על רכב נכתבת היסטוריית תקלות ופגיעות בשם,
+// ומחיקה הייתה הופכת כל דיווח כזה ל„רכב לא ידוע" בדיעבד. הרשומה
+// נשארת, ההיסטוריה נשארת קריאה, ואפשר להחזיר את הרכב.
+
+let vehEditing = null;
+
+function openVehicleEditor(v, origin){
+  // A saved/detached control still belongs to its original rendered record.
+  // It must not mint a new identity after another station finishes loading.
+  try { assertFleetFence(origin); } catch (ignore) { showFleetIdentityChange(); return; }
+  msg('', '', 'mainMsg');
+  vehEditing = Object.assign({}, v, { origin });
+  const operational = v.kind !== 'anchor';
+  $('vehTitle').textContent = 'עריכת רכב';
+  $('vehSub').textContent = operational
+    ? 'רכב מבצעי · המשבצות שלו נשארות בלוח הציוות'
+    : 'רכב לוגיסטי';
+  $('vName').value  = v.name || '';
+  $('vPlate').value = v.plate || '';
+  $('vRoleWrap').classList.toggle('hide', !operational);
+  $('vRole').value = operational ? (v.role || '') : '';
+  const open = fleetFaultCount(v.id);
+  $('vehWhy').textContent = 'הורדה מהצי אינה מחיקה: הרכב יורד מהרשימות '
+    + 'ומהבחירה בתקלה חדשה, וההיסטוריה שלו נשארת קריאה. אפשר להחזיר אותו.'
+    + (open ? ' על הרכב הזה ' + plural(open, 'תקלה אחת פתוחה', 'תקלות פתוחות') + '.' : '');
+  msg('', '', 'vehMsg');
+  $('veh').classList.add('on');
+}
+
+function closeVehicleEditor(){
+  vehEditing = null;
+  $('veh').classList.remove('on');
+}
+
+function showFleetIdentityChange(){
+  closeVehicleEditor();
+  // Also used after an await: the write outcome can be unknown, so do not
+  // claim that an operation was cancelled or that nothing was saved.
+  msg('המשתמש או ההרשאות השתנו. רעננו ובדקו את המצב לפני פעולה נוספת. (identity-changed)',
+    'err', 'mainMsg');
+}
+
+/* כמה תקלות פתוחות על הרכב — נאמר למי שמוריד אותו מהצי, כדי
+ * שההחלטה תילקח מול המספר ולא בלעדיו. פגיעות אינן נספרות: הן
+ * חיווי נפרד ואינן מונעות מהרכב לצאת. */
+function fleetFaultCount(vid){
+  return vehicleState(faults, vid).faults.length;
+}
+
+/* seq477 §6 · שינוי רכב אחד — בעסקה, על המצב הטרי.
+ *
+ * עד כאן נכתב מסמך הלוח **מהמטמון**: הרכבים ושרשרת הפיקוד כפי שנקראו
+ * בטעינת המסך. מפקד ששינה שם רכב בזמן שרכזת ערכה את שרשרת הפיקוד
+ * דרס לה את העריכה, ושמירה על מטמון ישן החזירה רכב מושבת לפעיל.
+ *
+ * המסך הזה משנה **רכב אחד**, ולכן אין כאן התנגשות אמיתית: העסקה
+ * קוראת את המסמך מחדש, מחילה את השינוי על הרכב הזה בלבד, וכותבת
+ * בחזרה את שרשרת הפיקוד ואת שאר הרכבים **כפי שהם בשרת** ולא כפי
+ * שהיו כשהמסך נטען. עריכה מקבילה של הפיקוד שורדת.
+ *
+ * `mutate(vehicles)` מקבל את המערך הטרי ומחזיר את החדש. */
+async function saveBoardVehicles(mutate, fence){
+  assertFleetFence(fence);
+  /* seq483 §3 · הזהות נבדקת **בתוך** העסקה, אחרי הקריאה ומיד לפני
+   * הכתיבה — ובכל ניסיון מחדש. עסקת Firestore יכולה לרוץ שוב, וקודם
+   * לכן הבדיקה הייתה רק אחרי שהעסקה כולה הסתיימה: החלפת משתמש בזמן
+   * שה-`tx.get` ממתין עדיין הגיעה ל-`tx.set` עם המחבר הישן, והשער
+   * שאחרי כן רק דיווח על כך — אחרי שהכתיבה כבר יצאה.
+   *
+   * ה-ref עצמו נבנה מחדש בכל ניסיון מתוך ה-fence, ולא מ-`SID` הגלובלי,
+   * כדי שאפילו הנתיב לא יוכל להיגזר מזהות שהתחלפה. */
+  await runTransaction(db, async (tx) => {
+    assertFleetFence(fence);                  // גם בניסיון חוזר
+    const ref = doc(db, 'stations', fence.sid, 'config', 'board');
+    const snap = await tx.get(ref);
+    assertFleetFence(fence);                  // אחרי הקריאה
+    if (!snap.exists()) throw new Error('board-missing');
+    const fresh = snap.data() || {};
+    const vehicles = Array.isArray(fresh.vehicles) ? fresh.vehicles : [];
+    const next = mutate(vehicles);
+    assertFleetFence(fence);                  // ומיד לפני הכתיבה
+    tx.set(ref, {
+      vehicles: next,
+      command: Array.isArray(fresh.command) ? fresh.command : [],
+      updated_at: serverTimestamp(), by: fence.uid
+    });
+  });
+  assertFence(fence);
+}
+
+async function saveVehicleEdit(){
+  if (!vehEditing) return;
+  const v = vehEditing;
+  const fence = v.origin;
+  try { assertFleetFence(fence); } catch (ignore) { showFleetIdentityChange(); return; }
+  const operational = v.kind !== 'anchor';
+  const edit = vehicleEdit({
+    name: $('vName').value, plate: $('vPlate').value,
+    role: operational ? $('vRole').value : undefined
+  });
+  if (!edit.ok) { msg('צריך שם לרכב.', 'err', 'vehMsg'); return; }
+  const b = $('vehSave'); b.disabled = true;
+  try {
+    if (operational) {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, v.id, edit.patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', v.id), edit.patch, { merge: true });
+      assertFence(fence);
+    }
+    closeVehicleEditor();
+    msg('הרכב עודכן.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+  }
+  b.disabled = false;
+}
+
+async function deactivateVehicle(){
+  if (!vehEditing) return;
+  const v = vehEditing;
+  const fence = v.origin;
+  try { assertFleetFence(fence); } catch (ignore) { showFleetIdentityChange(); return; }
+  const open = fleetFaultCount(v.id);
+  const warn = 'להוריד את "' + (v.name || '') + '" מהצי?'
+    + (open ? '\nיש עליו ' + plural(open, 'תקלה אחת פתוחה', 'תקלות פתוחות') + '.' : '')
+    + '\nההיסטוריה נשמרת ואפשר להחזיר אותו.';
+  if (!confirm(warn)) return;
+  const b = $('vehOff'); b.disabled = true;
+  try {
+    assertFleetFence(fence);
+    /* רכב מבצעי יושב בתוך מערך, ושם Firebase דוחה חותמת שרת. `atFor`
+     * בוחר: מסמך → חותמת שרת; מערך → מחרוזת ISO מהלקוח. */
+    const patch = deactivationPatch({ uid: ME.uid, at: atFor(v.kind, serverTimestamp()) });
+    if (v.kind !== 'anchor') {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, v.id, patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', v.id), patch, { merge: true });
+      assertFence(fence);
+    }
+    closeVehicleEditor();
+    msg('הרכב ירד מהצי.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('ההורדה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+  }
+  b.disabled = false;
+}
+
+async function restoreVehicle(kind, id, fence){
+  try {
+    assertFleetFence(fence);
+    const patch = reactivationPatch();
+    if (kind !== 'anchor') {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, id, patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', id), patch, { merge: true });
+      assertFence(fence);
+    }
+    msg('הרכב חזר לצי.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('השחזור נכשל. (' + (e.code || e.message) + ')', 'err', 'anchorMsg');
+  }
 }
 
 // ---------- ציור תקלה ----------
@@ -1047,12 +1449,12 @@ function damageReport(v){
   $('rep').classList.add('on');
 }
 
-function renderFleet(){
+function renderFleet(origin){
   const box = $('fleetList');
   box.innerHTML = '';
   if (!fleet.length) {
     box.innerHTML = '<div class="note">לא הוגדרו רכבים. רכבי כיבוי ' +
-      'מוגדרים בלוח הציוות; רכבי עיגון כאן.</div>';
+      'וחילוץ מוגדרים בלוח הציוות; שאר הרכבים נוספים כאן.</div>';
   }
   fleet.forEach(function (v) {
     const st = vehicleState(faults, v.id);
@@ -1074,6 +1476,19 @@ function renderFleet(){
     el.title = 'פתח דוח נזק';
     el.onclick = () => damageReport(v);
 
+    // עריכה — שם, מספר רישוי, והורדה מהצי. כפתור נפרד ולא לחיצה
+    // על השורה, בדיוק מאותה סיבה שכפתור „מפה" נפרד: לשורה כבר יש
+    // משמעות אחת, ושתי פעולות על אותה לחיצה זה הימור.
+    if (CAN_FLEET) {
+      const ed = document.createElement('button');
+      ed.className = 'btn sm edit';
+      ed.textContent = 'ערוך';
+      ed.title = 'שם, מספר רישוי, והורדה מהצי';
+      ed.setAttribute('data-veh-edit', v.id);
+      ed.onclick = (e) => { e.stopPropagation(); openVehicleEditor(v, origin); };
+      el.appendChild(ed);
+    }
+
     // מפת הרכב — ארבע התמונות והנקודות עליהן. כפתור נפרד
     // ולא לחיצה על השורה, כי לשורה כבר יש משמעות אחרת
     // ושתי פעולות על אותה לחיצה זה הימור.
@@ -1090,13 +1505,49 @@ function renderFleet(){
     box.appendChild(el);
   });
 
+  renderRemoved(origin);
+}
+
+/* רכבים שהורדו מהצי — משני המקורות, עם דרך אחת בחזרה. מוצג רק
+ * למי שרשאי לערוך את הצי, וכשאין כאלה הקטע פשוט אינו קיים: רשימה
+ * ריקה עם כותרת נראית כמו תקלה. */
+function renderRemoved(origin){
   const al = $('anchorList');
   if (!al) return;
-  al.innerHTML = anchors.length
-    ? '<div class="note" style="margin-top:10px">' +
-      anchors.map(a => esc(a.name) + (a.plate ? ' · ' + esc(a.plate) : ''))
-             .join('<br>') + '</div>'
-    : '<div class="note" style="margin-top:10px">אין רכבי עיגון.</div>';
+  al.innerHTML = '';
+  if (!CAN_FLEET) return;
+
+  const off = []
+    .concat(inactiveVehicles((boardDoc && boardDoc.vehicles) || [])
+      .map(v => ({ id: v.id, name: v.name || v.id, plate: v.plate || '', kind: 'fire' })))
+    .concat(inactiveVehicles(anchorDocs)
+      .map(v => ({ id: v.id, name: v.name || v.id, plate: v.plate || '', kind: 'anchor' })));
+
+  if (!off.length) return;
+
+  const head = document.createElement('div');
+  head.className = 'note';
+  head.style.marginTop = '12px';
+  head.textContent = 'ירדו מהצי · ' + plural(off.length, 'רכב אחד', 'רכבים');
+  al.appendChild(head);
+
+  off.forEach(function (v) {
+    const row = document.createElement('div');
+    row.className = 'off';
+    row.setAttribute('data-veh-off', v.id);
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = v.name + (v.plate ? ' · ' + v.plate : '') +
+      (v.kind === 'anchor' ? '' : ' · מבצעי');
+    row.appendChild(nm);
+    const back = document.createElement('button');
+    back.className = 'btn sm';
+    back.textContent = 'החזר לצי';
+    back.setAttribute('data-veh-restore', v.id);
+    back.onclick = () => restoreVehicle(v.kind, v.id, origin);
+    row.appendChild(back);
+    al.appendChild(row);
+  });
 }
 
 function renderHist(){

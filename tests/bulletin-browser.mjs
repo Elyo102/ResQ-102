@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const releaseVersion = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, '')).v;
 const stub = path.join(here, 'stub');
 let port = 0;
 const types = {
@@ -698,7 +699,7 @@ try {
         failureReport.kind === 'callable-failed' &&
         failureReport.callable === 'postBulletinMessage' &&
         failureReport.code === 'functions/unavailable' &&
-        failureReport.screen === 'login.html' && failureReport.version === '42H.5',
+        failureReport.screen === 'login.html' && failureReport.version === releaseVersion,
         'הניטור שולח רק חמש קטגוריות טכניות, ללא תוכן ההודעה או מזהה הבקשה');
   await page.locator('#boardTabs [data-board-id="shahmon"]').click();
   await page.getByText('תקלה במזגן בחדר התדריכים', { exact:true })

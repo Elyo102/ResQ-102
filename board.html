@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h5">
+<link rel="stylesheet" href="./theme.css?v=42h6">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -285,28 +285,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h5';
-import { stationName, subStationAvailable } from './stations.js?v=42h5';
-import { renderNav, renderStuckNav } from './nav.js?v=42h5';
-import { MEMBER_ROLES } from './roles.js?v=42h5';
-import { initPWA } from './pwa.js?v=42h5';
-import { watchCallouts } from './callout.js?v=42h5';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h6';
+import { stationName, subStationAvailable } from './stations.js?v=42h6';
+import { renderNav, renderStuckNav } from './nav.js?v=42h6';
+import { MEMBER_ROLES } from './roles.js?v=42h6';
+import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h6';
+import { initPWA } from './pwa.js?v=42h6';
+import { watchCallouts } from './callout.js?v=42h6';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h5';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h6';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=42h5';
-import { SITE_SEED } from './hours.js?v=42h5';
-import { plural } from './rotation.js?v=42h5';
+  from './faults.js?v=42h6';
+import { SITE_SEED } from './hours.js?v=42h6';
+import { plural } from './rotation.js?v=42h6';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged }
+import { getAuth, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         writeBatch, serverTimestamp }
+         writeBatch, serverTimestamp, runTransaction }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h5';
+import { initAppCheck } from './appcheck.js?v=42h6';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -373,7 +374,9 @@ function uid(p){
   return p + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
 }
 
-let SID = '', CAN_EDIT = false, CREW = 'A';
+let SID = '', CAN_EDIT = false, CAN_FLEET = false, CREW = 'A';
+let AUTH_GEN = 0;
+let overlayFence = null;
 let ME = { uid: '', full_name: '' };
 let MY_CREWS = CREWS.slice();   // אילו משמרות מותר לי לראות
 let board  = { vehicles: [], command: [] };
@@ -388,11 +391,44 @@ let held   = {};          // uid -> [qid]
 
 // ---------- הרשאה ----------
 
-onAuthStateChanged(auth, async user => {
+function boardFence(edit = false, fleet = false){
+  const fence = { gen:AUTH_GEN, user:auth.currentUser, uid:ME.uid,
+                  sid:SID, crew:CREW, edit:edit, fleet:fleet };
+  assertBoardFence(fence);
+  return fence;
+}
+function assertBoardFence(fence){
+  if (!fence || fence.gen !== AUTH_GEN || !fence.uid || !fence.sid ||
+      !auth.currentUser || auth.currentUser !== fence.user ||
+      auth.currentUser.uid !== fence.uid || ME.uid !== fence.uid || SID !== fence.sid ||
+      (fence.edit && !CAN_EDIT) || (fence.fleet && !CAN_FLEET)) {
+    const error = new Error('identity-changed');
+    error.code = 'identity-changed';
+    throw error;
+  }
+}
+function editorCurrent(fence){
+  try { assertBoardFence(fence); return true; }
+  catch (error) { closeOv(); boardSaveFailed(error); return false; }
+}
+
+onIdTokenChanged(auth, async user => {
+  const gen = ++AUTH_GEN;
+  CAN_EDIT = false; CAN_FLEET = false; IS_STCMD = false;
+  SID = ''; ME = { uid:'', full_name:'' };
+  board = { vehicles:[], command:[] }; assign = {}; boardFingerprint = null;
+  people = []; faults = []; waivers = {}; quals = []; sites = []; held = {};
+  MY_CREWS = [];
+  closeOv();
+  $('work').classList.add('hide');
+  $('btnAddVeh').classList.add('hide');
+  $('btnSites').classList.add('hide');
+  const stale = () => gen !== AUTH_GEN || auth.currentUser !== user;
   if (!user) { location.replace('./login.html?next=board.html'); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (stale()) return;
 
   const isSuper = c.super === true;
   const isMember = isSuper ||
@@ -408,12 +444,15 @@ onAuthStateChanged(auth, async user => {
   }
 
   CAN_EDIT = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+  CAN_FLEET = managesFleet(c);
   IS_STCMD = isSuper || c.role === 'station_commander';
   ME = { uid: user.uid, full_name: '' };
   try {
     const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (stale()) return;
     if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
   } catch (ignore) {}
+  if (stale()) return;
 
   // מפקד משמרת מנהל את המשמרת שלו. הכפתורים של האחרות לא
   // מוסתרים אלא לא נוצרים — כפתור שהשרת ידחה גרוע מכפתור שאין.
@@ -425,21 +464,25 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'board.html', user.email || '');
   watchCallouts(db, SID, user.uid, { name: user.email || '' });
 
-  if (CAN_EDIT) {
-    $('btnAddVeh').classList.remove('hide');
-    $('btnSites').classList.remove('hide');
-  }
+  if (CAN_FLEET) $('btnAddVeh').classList.remove('hide');
+  if (CAN_EDIT) $('btnSites').classList.remove('hide');
   $('foot').textContent = CAN_EDIT
     ? 'לחיצה על שורה משבצת אדם · לחיצה על ✎ עורכת את המשבצת · המאגר כלל-תחנתי, גם ממשמרות אחרות'
     : 'לצפייה בלבד. השיבוץ נערך על ידי מפקד משמרת, רכז כוח אדם ומנהל המערכת.';
 
-  await loadStatic();
-  await loadCrew();
+  try {
+    await loadStatic();
+    if (stale()) return;
+    await loadCrew();
+  } catch (error) {
+    if (!stale()) boardSaveFailed(error);
+  }
 });
 
 // ---------- טעינה ----------
 
 async function loadStatic(){
+  const fence = boardFence();
   // מקורות הנתונים האלה בלתי תלויים. פתיחה מקבילית מקצרת את
   // ההמתנה ברשת איטית בלי לשנות נתיב, שאילתה, הרשאה או עלות.
   // העיבוד למטה נשאר באותו סדר כדי לשמור על ה-seed ועל הודעות
@@ -458,6 +501,7 @@ async function loadStatic(){
     settle(() => getDocs(collection(db, 'stations', SID, 'sub_stations'))),
     settle(() => getDoc(doc(db, 'stations', SID, 'config', 'board')))
   ]);
+  assertBoardFence(fence);
 
   // תקלות פתוחות. בלעדיהן הלוח מציג רכב מאויש במלואו בזמן
   // שהרכב עצמו בחוץ — בדיוק המצב שבו המערכת אומרת דבר אחד
@@ -520,19 +564,22 @@ async function loadStatic(){
     });
     sites.sort((a, b) => a.order - b.order);
     if (!sites.length && CAN_EDIT) {
+      assertBoardFence(fence);
       const batch = writeBatch(db);
       SITE_SEED.forEach(function (s) {
         batch.set(doc(db, 'stations', SID, 'sub_stations', s.id), {
           name: s.name, fixed_hours: s.fixed_hours, order: s.order,
           is_active: true, archived: false,
-          updated_at: serverTimestamp(), by: auth.currentUser.uid
+          updated_at: serverTimestamp(), by: fence.uid
         }, { merge: true });
         sites.push(Object.assign({}, s));
       });
       await batch.commit();
+      assertBoardFence(fence);
     }
   } catch (ignore) {}
 
+  assertBoardFence(fence);
   if (boardRead.error) {
     const e = boardRead.error;
     msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
@@ -544,9 +591,13 @@ async function loadStatic(){
         vehicles: Array.isArray(v.vehicles) ? v.vehicles : [],
         command:  Array.isArray(v.command)  ? v.command  : []
       };
+      boardFingerprint = fingerprintBoard(board);
     } else {
+      /* אין מסמך. זו עובדה שצריך להשוות אליה בשמירה — אחרת לקוח אחר
+       * שיצר אותו בינתיים ייעלם תחת היצירה שלנו. */
+      boardFingerprint = BOARD_ABSENT;
       board = JSON.parse(JSON.stringify(SEED));
-      if (CAN_EDIT) await saveBoard('המבנה ההתחלתי נוצר. אפשר לשנות הכל.');
+      if (CAN_FLEET) await saveBoard('המבנה ההתחלתי נוצר. אפשר לשנות הכל.');
     }
   } catch (e) {
     msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
@@ -555,33 +606,116 @@ async function loadStatic(){
 
 // השיבוץ נפרד לכל משמרת, ולכן נטען מחדש בכל החלפה.
 async function loadCrew(){
+  const fence = boardFence();
   assign = {};
   try {
-    const s = await getDoc(doc(db, 'stations', SID, 'shifts', CREW));
+    const s = await getDoc(doc(db, 'stations', fence.sid, 'shifts', fence.crew));
+    assertBoardFence(fence);
+    if (fence.crew !== CREW) return;
     if (s.exists()) {
       const v = s.data() || {};
       assign = (v.assign && typeof v.assign === 'object') ? v.assign : {};
     }
   } catch (e) {
+    assertBoardFence(fence);
+    if (fence.crew !== CREW) return;
     msg('לא הצלחתי לקרוא את השיבוץ של משמרת ' + CREW_HE[CREW] +
         '. (' + (e.code || e.message) + ')', 'err');
   }
   render();
 }
 
-async function saveBoard(okText){
-  await setDoc(doc(db, 'stations', SID, 'config', 'board'), {
-    vehicles: board.vehicles, command: board.command,
-    updated_at: serverTimestamp(), by: auth.currentUser.uid
+/* seq477 §6 · שמירה עם זיהוי התנגשות.
+ *
+ * המסך הזה עורך **מבנה**: מוסיף ומסיר משבצות, משנה את שרשרת הפיקוד,
+ * מוריד רכב מהצי. שינוי מבני אי אפשר למזג אוטומטית — שתי עריכות
+ * מקבילות של אותה משבצת אינן „שתיהן נכונות". לכן כאן לא ממזגים אלא
+ * **עוצרים**: העסקה קוראת את המסמך מחדש, ואם הוא השתנה מאז שהמסך
+ * טען אותו, הכתיבה אינה יוצאת והמשתמש מתבקש לרענן.
+ *
+ * זה ההבדל ממסך „מצב הצי", שמשנה רכב אחד ולכן יכול למזג על המצב
+ * הטרי בלי לשאול. שם מיזוג הוא התשובה הנכונה; כאן עצירה היא. */
+/* `null` = טרם נטען כלום. **היעדר מסמך אינו null** אלא ABSENT — מצב
+ * שאפשר להשוות אליו. seq483 §4: כשהמסמך לא היה קיים בטעינה, שני
+ * השערים למטה נבדקו מול `!== null` ולכן שניהם דילגו, והשמירה יצאה
+ * בלי בדיקה בכלל — ודרסה מסמך שלקוח אחר יצר בינתיים. */
+const BOARD_ABSENT = '\u0000absent';
+let boardFingerprint = null;
+
+function fingerprintBoard(data){
+  if (data === null || data === undefined) return BOARD_ABSENT;
+  const d = data;
+  return JSON.stringify([d.vehicles || [], d.command || []]);
+}
+
+/* התנגשות אינה „שמירה נכשלה". היא אומרת שמישהו אחר שינה את אותו לוח,
+ * ושהמסך שמוצג כרגע אינו מה שיש בשרת. לכן היא נאמרת במילים ומרעננת —
+ * שמירה חוזרת על מצב ישן הייתה מוחקת בדיוק את מה שהאחר עשה. */
+function boardSaveFailed(e){
+  if (e && e.code === 'board-conflict') {
+    msg('מישהו אחר שינה את הלוח בינתיים. טוענים מחדש כדי שלא נדרוס את ' +
+        'השינוי שלו — בדוק מה השתנה ובצע שוב את מה שרצית.', 'err');
+    /* seq483 §5 · לטעון מחדש **ולצייר**. המסך כבר הראה את השינוי
+     * האופטימי לפני השמירה; טעינה בלי ציור משאירה על המסך מצב שאינו
+     * קיים בשרת, ומזמינה את המשתמש לשמור אותו שוב. גם השיבוץ נטען
+     * מחדש, כי הוא נקרא ממסמך אחר ויכול היה להשתנות באותו זמן. */
+    (async () => {
+      try {
+        await loadStatic();
+        await loadCrew();   // loadCrew מסיים ב-render()
+        render();
+      } catch (error) {
+        msg('הטעינה מחדש נכשלה. רענן את הדף. (' +
+            ((error && (error.code || error.message)) || '') + ')', 'err');
+      }
+    })();
+    return;
+  }
+  msg('השמירה נכשלה. (' + ((e && (e.code || e.message)) || '') + ')', 'err');
+}
+
+async function saveBoard(okText, fence = boardFence(true)){
+  assertBoardFence(fence);
+  const expected = boardFingerprint;
+  if (expected === null) throw new Error('board-not-loaded');
+  const next = JSON.parse(JSON.stringify({ vehicles:board.vehicles, command:board.command }));
+  await runTransaction(db, async (tx) => {
+    assertBoardFence(fence);
+    const ref = doc(db, 'stations', fence.sid, 'config', 'board');
+    const snap = await tx.get(ref);
+    assertBoardFence(fence);
+    const fresh = snap.exists() ? (snap.data() || {}) : null;
+    /* השוואה **אחת** לכל המקרים: מה שיש עכשיו מול מה שהיה כשטענו.
+     * מסמך שנעלם, מסמך שנוצר בינתיים, ומסמך ששונה — כולם אי-התאמה.
+     * `boardFingerprint === null` פירושו שעוד לא טענו, וזו הפעם
+     * היחידה שאין מול מה להשוות. */
+    if (fingerprintBoard(fresh) !== expected) {
+      const error = new Error(fresh ? 'board-changed' : 'board-vanished');
+      error.code = 'board-conflict';
+      throw error;
+    }
+    if (!CAN_FLEET && (!fresh || JSON.stringify(next.vehicles) !== JSON.stringify(fresh.vehicles || []))) {
+      throw new Error('fleet-permission-denied');
+    }
+    assertBoardFence(fence);
+    tx.set(ref, {
+      vehicles: next.vehicles, command: next.command,
+      updated_at: serverTimestamp(), by: fence.uid
+    });
   });
+  assertBoardFence(fence);
+  boardFingerprint = fingerprintBoard(next);
   if (okText) msg(okText, 'ok');
 }
 
-async function saveAssign(okText){
-  await setDoc(doc(db, 'stations', SID, 'shifts', CREW),
+async function saveAssign(okText, fence = boardFence(true)){
+  assertBoardFence(fence);
+  if (fence.crew !== CREW) throw new Error('crew-changed');
+  await setDoc(doc(db, 'stations', fence.sid, 'shifts', fence.crew),
                { assign: assign, updated_at: serverTimestamp(),
-                 by: auth.currentUser.uid },
+                 by: fence.uid },
                { merge: true });
+  assertBoardFence(fence);
   if (okText) msg(okText, 'ok');
 }
 
@@ -657,7 +791,13 @@ function renderFleet(){
   const box = $('fleet');
   box.innerHTML = '';
 
-  if (!board.vehicles.length) {
+  // רכב מושבת יורד מהצי במסך „מצב הצי", ולכן גם מכאן. הסינון הוא
+  // **בנקודת השימוש ולא בנקודת הקריאה**: `board.vehicles` נשמר שלם,
+  // כי saveBoard כותב את המערך כולו בחזרה — סינון בקריאה היה מוחק
+  // את הרכבים המושבתים מהמסמך בשמירה הראשונה.
+  const shown = board.vehicles.filter(function (v) { return !v || v.active !== false; });
+
+  if (!shown.length) {
     box.innerHTML = '<div class="card"><div class="note">' +
       'אין עדיין רכבים. ' +
       (CAN_EDIT ? 'לחץ "＋ רכב" כדי להוסיף.' : 'מפקד המשמרת יוסיף אותם.') +
@@ -665,7 +805,7 @@ function renderFleet(){
     return;
   }
 
-  board.vehicles.forEach(function (v) {
+  shown.forEach(function (v) {
     const slots = v.slots || [];
     const filled = slots.filter(s => assign[s.id]).length;
 
@@ -686,7 +826,7 @@ function renderFleet(){
       '<span class="cnt' + (filled < slots.length ? ' bad' : '') + '">' +
         filled + ' מתוך ' + slots.length + '</span>';
 
-    if (CAN_EDIT) {
+    if (CAN_FLEET) {
       const tools = document.createElement('div');
       tools.className = 'tools';
       const e1 = document.createElement('button');
@@ -758,6 +898,8 @@ function renderFleet(){
 
       if (CAN_EDIT) {
         row.onclick = () => pickPerson(s.id, s.job, s.req || '');
+      }
+      if (CAN_FLEET) {
         const pen = document.createElement('span');
         pen.className = 'x'; pen.textContent = '✎'; pen.title = 'ערוך משבצת';
         pen.onclick = (ev) => { ev.stopPropagation(); editSlot(v, s); };
@@ -799,6 +941,7 @@ function renderVerdict(){
   // אם אלדד יחליט שרכב משבית מפיל את הכשירות — כאן משנים,
   // בשורה אחת: bs.below = bs.below || downVeh.length > 0.
   const downVeh = (board.vehicles || []).filter(function (v) {
+    if (!v || v.active === false) return false;   // רכב שאינו בצי אינו משבית
     return vehicleState(faults, v.id).id === 'blocked';
   });
   $('vehWarn').classList.toggle('hide', !downVeh.length);
@@ -899,14 +1042,22 @@ async function decideWaiver(wv, status){
 
 // ---------- חלונית ----------
 
-function closeOv(){ $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
+function closeOv(){ overlayFence = null; $('ov').classList.remove('on'); $('dlg').innerHTML = ''; }
 $('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOv(); });
 
-function openOv(html){
+function openOv(html, fence = boardFence(true)){
+  assertBoardFence(fence);
+  overlayFence = fence;
   $('dlg').innerHTML = html;
   $('ov').classList.add('on');
 }
+$('dlg').addEventListener('click', event => {
+  if (!editorCurrent(overlayFence)) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, true);
 
 // בחירת אדם. הרשימה כלל-תחנתית במכוון: מי שמשובץ במשמרת אחרת
 // עדיין יכול לאייש משבצת כאן, וזה בדיוק המצב שבו צריך אותו.
@@ -958,7 +1109,7 @@ function pickPerson(slotId, jobLabel, req){
         closeOv();
         render();
         try { await saveAssign('שובץ: ' + (p.full_name || '')); }
-        catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+        catch (e) { boardSaveFailed(e); }
       };
       box.appendChild(it);
     });
@@ -973,7 +1124,7 @@ function pickPerson(slotId, jobLabel, req){
     closeOv();
     render();
     try { await saveAssign('המשבצת פונתה.'); }
-    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    catch (e) { boardSaveFailed(e); }
   };
   $('pcancel').onclick = closeOv;
 }
@@ -1090,6 +1241,8 @@ function qualOptions(sel){
 }
 
 function editVehicle(v){
+  if (!CAN_FLEET) return;
+  const editFence = boardFence(true, true);
   openOv(
     '<h3>רכב</h3>' +
     '<div class="hint">השם והייעוד מופיעים בראש הכרטיס.</div>' +
@@ -1099,30 +1252,48 @@ function editVehicle(v){
     '<input type="text" id="vr" maxlength="20" value="' + esc(v.role || '') + '">' +
     '<div class="acts">' +
       '<button class="btn go" id="vsave">שמור</button>' +
-      '<button class="btn" id="vdel">מחק רכב</button>' +
+      '<button class="btn" id="vdel">הורד מהצי</button>' +
       '<button class="btn" id="vcancel">ביטול</button>' +
-    '</div>'
+    '</div>' +
+    '<div class="hint">הורדה מהצי אינה מחיקה: הרכב יורד מהלוח וממצב הצי, ' +
+    'המשבצות והשיבוצים שלו נשמרים, וההיסטוריה שנכתבה על שמו נשארת קריאה. ' +
+    'אפשר להחזיר אותו במסך „מצב הצי".</div>'
   );
   $('vsave').onclick = async () => {
+    if (!editorCurrent(editFence)) return;
     const n = String($('vn').value || '').trim();
     if (!n) { msg('צריך שם לרכב.', 'err'); return; }
     v.name = n; v.role = String($('vr').value || '').trim();
     closeOv(); render();
-    try { await saveBoard('הרכב עודכן.'); }
-    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    try { await saveBoard('הרכב עודכן.', editFence); }
+    catch (e) { boardSaveFailed(e); }
   };
+  /* seq477 §7 · הורדה מהצי, לא מחיקה.
+   *
+   * עד כאן הכפתור מחק את הרכב מהמערך **ואת השיבוצים של האנשים
+   * למשבצות שלו**. שתי אבידות: היסטוריית התקלות שנכתבה על שם הרכב
+   * הופכת ל„רכב לא ידוע" בדיעבד, ושיבוץ של אדם נמחק בלי שאיש ביקש
+   * למחוק אותו — ואם הרכב חוזר, הוא חוזר ריק.
+   *
+   * עכשיו: `active:false` בלבד. הרכב יורד מהלוח, מהצי ומחישוב
+   * הכשירות; המשבצות והשיבוצים נשארים במקומם, ולכן החזרה מלאה. */
   $('vdel').onclick = async () => {
-    (v.slots || []).forEach(s => { delete assign[s.id]; });
-    board.vehicles = board.vehicles.filter(x => x.id !== v.id);
+    if (!editorCurrent(editFence)) return;
+    if (!confirm('להוריד את "' + (v.name || '') + '" מהצי?\n' +
+                 'המשבצות והשיבוצים נשמרים, וההיסטוריה נשארת. אפשר להחזיר במצב הצי.')) return;
+    board.vehicles = applyToBoardVehicle(board.vehicles, v.id,
+      deactivationPatch({ uid: editFence.uid, at: boardStamp() }));
     closeOv(); render();
-    try { await saveBoard('הרכב נמחק.'); await saveAssign(); }
-    catch (e) { msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    try { await saveBoard('הרכב ירד מהצי.', editFence); }
+    catch (e) { boardSaveFailed(e); }
   };
   $('vcancel').onclick = closeOv;
 }
 
 // slot === null פירושו הוספה
 function editSlot(v, slot){
+  if (!CAN_FLEET) return;
+  const editFence = boardFence(true, true);
   const isNew = !slot;
   openOv(
     '<h3>' + (isNew ? 'משבצת חדשה' : 'משבצת') + '</h3>' +
@@ -1142,6 +1313,7 @@ function editSlot(v, slot){
     '</div>'
   );
   $('ssave').onclick = async () => {
+    if (!editorCurrent(editFence)) return;
     const j = String($('sj').value || '').trim();
     if (!j) { msg('צריך שם תפקיד.', 'err'); return; }
     const r = $('sr').value || '';
@@ -1153,20 +1325,23 @@ function editSlot(v, slot){
       slot.job = j; slot.req = r; slot.site = st;
     }
     closeOv(); render();
-    try { await saveBoard(isNew ? 'המשבצת נוספה.' : 'המשבצת עודכנה.'); }
-    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    try { await saveBoard(isNew ? 'המשבצת נוספה.' : 'המשבצת עודכנה.', editFence); }
+    catch (e) { boardSaveFailed(e); }
   };
   if (!isNew) $('sdel').onclick = async () => {
+    if (!editorCurrent(editFence)) return;
     delete assign[slot.id];
     v.slots = (v.slots || []).filter(x => x.id !== slot.id);
     closeOv(); render();
-    try { await saveBoard('המשבצת נמחקה.'); await saveAssign(); }
-    catch (e) { msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    try { await saveBoard('המשבצת נמחקה.', editFence); await saveAssign('', editFence); }
+    catch (e) { boardSaveFailed(e); }
   };
   $('scancel').onclick = closeOv;
 }
 
 $('btnAddVeh').onclick = () => {
+  if (!CAN_FLEET) return;
+  const editFence = boardFence(true, true);
   openOv(
     '<h3>רכב חדש</h3>' +
     '<div class="hint">הרכב נוסף לשלוש המשמרות. השיבוץ נפרד לכל אחת.</div>' +
@@ -1187,8 +1362,8 @@ $('btnAddVeh').onclick = () => {
       role: String($('vr').value || '').trim(), slots: []
     });
     closeOv(); render();
-    try { await saveBoard('הרכב נוסף. עכשיו אפשר להוסיף לו משבצות.'); }
-    catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+    try { await saveBoard('הרכב נוסף. עכשיו אפשר להוסיף לו משבצות.', editFence); }
+    catch (e) { boardSaveFailed(e); }
   };
   $('vcancel').onclick = closeOv;
 };

@@ -38,12 +38,18 @@ export function visibleCrews(claims) {
 }
 
 // כל המשבצות של הלוח — שרשרת הפיקוד והרכבים יחד.
+//
+// רכב מושבת (`active === false`) אינו תורם משבצות: משבצת של רכב
+// שאינו בצי הייתה נספרת כ„חסרה" ומורידה את כשירות המשמרת על
+// רכב שכבר לא קיים. רכב בלי השדה `active` הוא פעיל — כך נראים
+// כל הרכבים שנכתבו לפני שהשדה נוסף.
 export function allSlots(board) {
   const b = board || {};
   const out = (b.command || []).map(function (c) {
     return { id: c.id, job: c.rank, req: c.req || '', where: 'פיקוד' };
   });
   (b.vehicles || []).forEach(function (v) {
+    if (!v || v.active === false) return;
     (v.slots || []).forEach(function (s) {
       out.push({ id: s.id, job: s.job, req: s.req || '', where: v.name });
     });
