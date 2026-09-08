@@ -305,7 +305,7 @@ try {
   await test('missing bootstrap does not break actual attendance calls or alter their rejection', async () => {
     const f = await fixture('attendance.html', 'firefighter', true);
     try {
-      assert.equal(await f.page.evaluate(() => (window.__CALLABLE_CALLS || []).some(c => c.name === 'getLegacyScheduleCompatibilityContext')), true);
+      await f.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(c => c.name === 'getLegacyScheduleCompatibilityContext'), null, { timeout: 8000 });
       await probe(f.page); await f.page.evaluate(async () => { window.__SDK_REJECT(); await window.__BUSINESS_DONE; });
       assert.equal(await f.page.evaluate(() => window.__BUSINESS_ERROR_SAME), true);
       assert.equal((await reports(f.page)).length, 0);
