@@ -50,12 +50,17 @@ async function blocked(name, p) {
   }
 }
 
+const emulatorEndpoint = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+if (!/^(127\.0\.0\.1|localhost):\d+$/.test(emulatorEndpoint)) throw new Error('loopback emulator only');
+const [emulatorHost, emulatorPortText] = emulatorEndpoint.split(':');
+const emulatorPort = Number(emulatorPortText);
+if (!Number.isInteger(emulatorPort) || emulatorPort < 1 || emulatorPort > 65535) throw new Error('invalid emulator port');
 const env = await initializeTestEnvironment({
   projectId: 'resq-rules-test',
   firestore: {
     rules: readFileSync('../firestore.rules', 'utf8'),
-    host: '127.0.0.1',
-    port: 8080
+    host: emulatorHost,
+    port: emulatorPort
   }
 });
 

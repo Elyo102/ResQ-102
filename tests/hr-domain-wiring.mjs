@@ -108,8 +108,7 @@ await check('reviewed dispatcher, both producers, policy and existing hours modu
 await check('existing automatic hours/report/mail producers retain their baseline bodies', () => {
   const blocks = index.split(/(?=^exports\.)/m);
   const old = { hoursReminder: '003f88d5a96aec52264411971761a18fa989da146b4f3a0f8d7bc2f77bc326d4',
-    onReportChange: 'cc1236a2d6c884db0069174da4b5af139350b83017842ea0aae031637f4ce811',
-    monthlyHrReport: '022d0adaed0054191c3e462947f19a27f7c99c18ac22c5d3f11dcafdc6a2bb43' };
+    onReportChange: 'cc1236a2d6c884db0069174da4b5af139350b83017842ea0aae031637f4ce811' };
   for (const [name, digest] of Object.entries(old)) {
     const block = blocks.find(value => value.startsWith('exports.' + name + ' =')); assert.ok(block, name);
     const boundary = block.lastIndexOf('\n// ----------');

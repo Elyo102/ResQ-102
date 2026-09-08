@@ -556,6 +556,21 @@ const DATA_POLICIES = Object.freeze([
     'temporary', 'none', 'exclude', 'do_not_restore',
     'restricted_identity', 'policy_required_before_wiring',
     'Global document actor rate limits must not be restored; exclusion activates no deletion.',
+    { humanReadable:'forbidden' }),
+  policy('stations/{sid}/hr_attachments/{attachmentId}', 'station',
+    'source_of_truth', 'count_drop', 'managed_export', 'specialized_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'Private lifecycle and exact object-generation metadata. Coherent parent/revision/object-generation/ledger restore including unknown writers remains unresolved; no export, restore or deletion activated.',
+    { humanReadable:'forbidden' }),
+  policy('stations/{sid}/hr_attachment_ledgers/{ledgerId}', 'station',
+    'source_of_truth', 'count_drop', 'managed_export', 'specialized_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'Durable quota conservation includes uncertain writes, not rebuildable from ready files or disposable on expiry. Coherent parent/revision/object-generation/ledger restore remains unresolved; no export, restore or deletion activated.',
+    { humanReadable:'forbidden' }),
+  policy('hr_attachment_actor_quotas/{quotaId}', 'root',
+    'temporary', 'none', 'exclude', 'do_not_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'Global attachment actor rate limits must not be restored; exclusion activates no deletion.',
     { humanReadable:'forbidden' })
 ]);
 

@@ -12,7 +12,7 @@ const SCREENS = Object.freeze([
   'feedback.html', 'forms.html', 'sign.html', 'schedule.html', 'stats.html',
   'swaps.html', 'people.html', 'login.html', 'quals.html'
 ]);
-const VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6']);
+const VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7']);
 const CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -53,6 +53,7 @@ const CALLABLES = Object.freeze([
   'publishHrDocument', 'reviseHrDocument', 'listMyHrDocuments', 'listHrProcedures',
   'listManagedHrDocuments', 'getHrDocument', 'markHrDocumentOpened', 'acknowledgeHrDocument',
   'listHrDocumentReceipts', 'nudgeHrDocument',
+  'reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment',
   'requestHrHoursNudge', 'getHrHoursNudgeStatus', 'listHrHoursNudges',
   'whoAmI'
 ]);

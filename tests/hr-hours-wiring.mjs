@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './hr-legacy-mail-retirement.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -125,8 +126,7 @@ await check('all13 original indexes and32 field overrides match immutable b1451e
 await check('old automatic reminder/report producers and reviewed modules are unchanged', () => {
   const oldExports = index.split(/(?=^exports\.)/m);
   const pins = { hoursReminder: '003f88d5a96aec52264411971761a18fa989da146b4f3a0f8d7bc2f77bc326d4',
-    onReportChange: 'cc1236a2d6c884db0069174da4b5af139350b83017842ea0aae031637f4ce811',
-    monthlyHrReport: '022d0adaed0054191c3e462947f19a27f7c99c18ac22c5d3f11dcafdc6a2bb43' };
+    onReportChange: 'cc1236a2d6c884db0069174da4b5af139350b83017842ea0aae031637f4ce811' };
   for (const [name, digest] of Object.entries(pins)) {
     const block = oldExports.find(b => b.startsWith('exports.' + name + ' =')); assert.ok(block, name);
     const boundary = block.lastIndexOf('\n// ----------');

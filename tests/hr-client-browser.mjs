@@ -20,17 +20,21 @@ const index = fs.readFileSync(path.join(root, 'functions/index.js'), 'utf8');
 const registration = index.match(/const hrHours = hrHoursModule\.createHrHoursService\([\s\S]*?exports\.getHrEmployeeReport = [^\n]+;/)?.[0];
 assert.ok(registration, 'actual HR service/export registration block exists');
 const db = {}, HttpsError = class {}, exports = {}, registered = [], received = [];
+const injectedAuth = {}, authFactoryCalls = [];
 vm.runInNewContext(registration, { db, HttpsError, exports,
+  admin: { auth() { authFactoryCalls.push(true); return injectedAuth; } },
   hrHoursModule: { createHrHoursService(deps) {
-    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'db']);
+    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db']);
+    assert.equal(deps.auth, injectedAuth);
     assert.equal(deps.db, db); assert.equal(deps.HttpsError, HttpsError);
     received.push(deps);
     return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }) };
   } },
   onCall(options, handler) { registered.push(options); return handler; }
 });
-await check('actual export block creates one service with only db and HttpsError', async () => {
+await check('actual export block creates one service with exact db Auth and HttpsError', async () => {
   assert.equal(received.length, 1);
+  assert.equal(authFactoryCalls.length, 1);
 });
 await check('both actual read-only callables enforce AppCheck and forward original request', async () => {
   assert.equal(registered.length, 2);

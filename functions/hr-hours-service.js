@@ -11,7 +11,8 @@ const text = value => typeof value === 'string' ? value : '';
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 
-function createHrHoursService({ db, HttpsError, hooks = {} }) {
+function createHrHoursService({ db, auth, HttpsError, hooks = {} }) {
+  if (!db || !auth || typeof auth.getUser !== 'function' || typeof HttpsError !== 'function') throw new TypeError('db, auth and HttpsError required');
   const identity = createOpsMemberIdentity({ db, HttpsError });
   const error = (code, message) => new HttpsError(code, message);
   function request(req, keys) {
@@ -20,7 +21,28 @@ function createHrHoursService({ db, HttpsError, hooks = {} }) {
     const data = req.data;
     if (!plain(data) || Object.keys(data).some(k => !keys.includes(k))) throw error('invalid-argument', 'בקשה לא תקינה.');
     try { monthKey(data.month); } catch (_) { throw error('invalid-argument', 'חודש לא תקין.'); }
-    return { ctx, data };
+    const authTime = req.auth.token.auth_time;
+    if (!Number.isSafeInteger(authTime) || authTime < 0 || !Number.isSafeInteger(authTime * 1000)) throw error('unauthenticated', 'Refresh your sign-in.');
+    return { ctx, data, authTime };
+  }
+  async function live(tx, requestContext) {
+    const { ctx, authTime } = requestContext;
+    let record;
+    try { record = await auth.getUser(ctx.uid); }
+    catch (e) {
+      if (e && e.code === 'auth/user-not-found') throw error('permission-denied', 'The current account is unavailable.');
+      throw error('unavailable', 'Current authentication could not be verified.');
+    }
+    const claims = record && record.customClaims;
+    if (!record || record.uid !== ctx.uid || record.disabled === true || !plain(claims)
+      || claims.stationId !== ctx.sid || (claims.super === true) !== ctx.super
+      || (!ctx.super && claims.role !== ctx.role)) throw error('permission-denied', 'Your role or station changed. Refresh your sign-in.');
+    if (record.tokensValidAfterTime !== undefined) {
+      const validAfter = typeof record.tokensValidAfterTime === 'string' ? Date.parse(record.tokensValidAfterTime) : NaN;
+      if (!Number.isFinite(validAfter)) throw error('unavailable', 'Authentication validity is unavailable.');
+      if (authTime * 1000 < validAfter) throw error('permission-denied', 'Your sign-in was revoked.');
+    }
+    return identity.requireLive(tx, ctx);
   }
   function stamp(snap) {
     if (!snap.exists) return 'missing';
@@ -57,12 +79,12 @@ function createHrHoursService({ db, HttpsError, hooks = {} }) {
     }
     return p;
   }
-  async function finalize(ctx, fences) {
+  async function finalize(requestContext, fences) {
     if (typeof hooks.beforeFinalize === 'function') await hooks.beforeFinalize();
     // A fresh read after the data transaction detects revocation/transfer during
     // loading. No claim that a read can prevent changes after this boundary.
     await db.runTransaction(async tx => {
-      await identity.requireLive(tx, ctx);
+      await live(tx, requestContext);
       const entries = [...fences.values()];
       const current = await Promise.all(entries.map(f => tx.get(f.ref)));
       if (current.some((snap, i) => stamp(snap) !== entries[i].version)) {
@@ -77,13 +99,14 @@ function createHrHoursService({ db, HttpsError, hooks = {} }) {
       state: 'unavailable', issue, reminder_eligible: false };
   }
   async function listMonth(req) {
-    const { ctx, data } = request(req, ['month', 'cursor']);
+    const requestContext = request(req, ['month', 'cursor']);
+    const { ctx, data } = requestContext;
     if (own(data, 'cursor') && !access.validUid(data.cursor)) throw error('invalid-argument', 'סמן עמוד לא תקין.');
     const root = db.collection('stations').doc(ctx.sid), fences = new Map();
     const response = await db.runTransaction(async tx => {
       // SDK retry must not keep versions from a previous attempt.
       fences.clear();
-      await identity.requireLive(tx, ctx);
+      await live(tx, requestContext);
       let query = root.collection('users').orderBy('__name__').limit(PAGE_SIZE + 1);
       if (data.cursor) query = query.startAfter(data.cursor);
       const page = await tx.get(query), scanned = page.docs.slice(0, PAGE_SIZE);
@@ -106,18 +129,19 @@ function createHrHoursService({ db, HttpsError, hooks = {} }) {
       return { month: data.month, items,
         next_cursor: page.docs.length > PAGE_SIZE ? scanned[scanned.length - 1].id : null };
     });
-    await finalize(ctx, fences);
+    await finalize(requestContext, fences);
     return response;
   }
   async function getEmployeeMonth(req) {
-    const { ctx, data } = request(req, ['month', 'uid']);
+    const requestContext = request(req, ['month', 'uid']);
+    const { ctx, data } = requestContext;
     if (!access.validUid(data.uid)) throw error('invalid-argument', 'משתמש לא תקין.');
     const root = db.collection('stations').doc(ctx.sid), fences = new Map();
     let response;
     try {
       response = await db.runTransaction(async tx => {
         fences.clear();
-        await identity.requireLive(tx, ctx);
+        await live(tx, requestContext);
         const snap = await tx.get(root.collection('users').doc(data.uid));
         if (!snap.exists) throw error('not-found', 'העובד אינו מופיע ברישומי התחנה.');
         const p = await binding(tx, fences, snap, ctx);
@@ -136,7 +160,7 @@ function createHrHoursService({ db, HttpsError, hooks = {} }) {
       if (e instanceof HrHoursInputError) throw error('failed-precondition', 'נתוני הדוח דורשים בדיקה (' + e.code + ').');
       throw e;
     }
-    await finalize(ctx, fences);
+    await finalize(requestContext, fences);
     return response;
   }
   return Object.freeze({ listMonth, getEmployeeMonth });

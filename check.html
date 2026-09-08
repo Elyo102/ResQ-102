@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h6">
+<link rel="stylesheet" href="./theme.css?v=42h7">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -87,14 +87,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card">
     <h2>5 · הרצה ידנית</h2>
     <div class="sub" style="margin-bottom:0">
-      הסריקה הלילית רצה מעצמה ב-02:10, והדוח למשאבי אנוש ב-1 לחודש ב-06:00.
-      כאן אפשר להריץ אותן עכשיו כדי לבדוק. למנהל-על בלבד.
+      הסריקה הלילית רצה מעצמה ב-02:10. כאן מנהל-על יכול להריץ אותה לבדיקה.
+      דוחות השעות זמינים במסך משאבי אנוש באפליקציה, במקום הדוח החודשי במייל.
     </div>
     <label class="k" style="margin-top:12px;display:block">חודש</label>
     <input type="text" id="mkey" placeholder="2026-08">
     <div>
       <button id="btnScan">הרץ סריקה עכשיו</button>
-      <button class="ghost" id="btnReport">בנה ושלח דוח למשאבי אנוש</button>
+      <button class="ghost" id="btnReport">דוחות שעות באפליקציה</button>
     </div>
     <div id="runOut"></div>
   </div>
@@ -194,7 +194,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h6';
+import { firebaseConfig } from './firebase-config.js?v=42h7';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -202,14 +202,14 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          deleteDoc, query, where, orderBy, limit, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h6';
-import { renderStuckNav, renderNav } from './nav.js?v=42h6';
-import * as SEED from './seed.js?v=42h6';
-import { initPWA } from './pwa.js?v=42h6';
+  from './monitored-functions.js?v=42h7';
+import { renderStuckNav, renderNav } from './nav.js?v=42h7';
+import * as SEED from './seed.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h6';
+import { initAppCheck } from './appcheck.js?v=42h7';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -1059,37 +1059,8 @@ $('btnBk').onclick = async () => {
   b.disabled = false;
 };
 
-// שולח מייל אמיתי לכתובת אמיתית. אישור מפורש לפני, כי לחיצה
-// בטעות שולחת דוח למשאבי אנוש ואי אפשר לבטל אותה.
-$('btnReport').onclick = async () => {
-  const mk = $('mkey').value.trim();
-  const ok = window.confirm(
-    'הפעולה בונה את הדוח החודשי של ' + mk + ' ושולחת אותו במייל ' +
-    'לכתובת lisaa@102.gov.il.\n\n' +
-    'המייל יוצא בפועל רק אם תוסף המיילים מותקן. להמשיך?');
-  if (!ok) return;
-
-  const b = $('btnReport'); b.disabled = true;
-  $('runOut').innerHTML = '';
-  try {
-    const res = await httpsCallable(fns, 'runReportNow')({
-      what: 'report', month: mk });
-    const d = res.data || {};
-    line('runOut', 'הדוח נבנה', 'חודש ' + d.month, 'ok');
-    line('runOut', 'עובדים בדוח', String(d.people));
-    line('runOut', 'חריגות בשעות', String(d.over), d.over ? 'warn' : 'ok');
-    line('runOut', 'נשלח למייל', d.sent ? 'כן — נכנס לתור השליחה' : 'לא',
-         d.sent ? 'ok' : 'warn');
-    if (d.sent) {
-      line('runOut', 'שים לב',
-           'המייל יצא בפועל רק אם תוסף המיילים של Firebase מותקן. ' +
-           'עד אז הוא ממתין בתור.', 'warn');
-    }
-  } catch (e) {
-    line('runOut', 'בניית הדוח נכשלה', (e.code || '') + ' ' + (e.message || ''), 'bad');
-  }
-  b.disabled = false;
-};
+// Monthly HR reports now live in the authenticated in-app workspace.
+$('btnReport').onclick = () => { window.location.assign('hr.html'); };
 
 $('btnRun').onclick  = () => runSearch();
 $('btnAgain').onclick = () => runAll(auth.currentUser);

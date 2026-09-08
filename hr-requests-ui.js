@@ -1,4 +1,4 @@
-import { MEMBER_ROLES } from './roles.js?v=42h6';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 const KEY = /^[a-f0-9]{64}$/;
@@ -24,24 +24,70 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   let owner = null, generation = 0, listGeneration = 0, detailGeneration = 0;
   let mode = 'mine', items = [], cursor = null, selected = null, events = [], eventCursor = null;
   let listLoading = false, detailLoading = false, busy = false, pending = null, creating = false, disposed = false;
+  let attachments = null, attachmentOrigin = null, attachmentLocked = false, attachmentRefresh = false;
+  let attachmentSyncing = false, suspended = false;
+  const attachmentHost = q('attachments');
   const removers = [];
   const on = (target, event, fn) => { target.addEventListener(event, fn); removers.push(() => target.removeEventListener(event, fn)); };
   const message = text => { q('message').textContent = text; };
   function session() { try { const s = adapter.currentSession(); return member(s) ? s : null; } catch (_) { return null; } }
   function alive(g, s) {
-    if (disposed) return false;
+    if (disposed || suspended) return false;
     if (session() !== owner) { resetIdentity(); return false; }
     return !!s && s === owner && g === generation;
   }
   function dirty() { return !!(q('subject').value || q('body').value || q('reply').value); }
   function clearDrafts() { q('subject').value = ''; q('body').value = ''; q('reply').value = ''; q('send-now').checked = false; }
+  const childLocked = () => attachmentLocked || attachmentRefresh;
+  function clearAttachments() {
+    attachmentOrigin = null;
+    if (attachmentHost) attachmentHost.hidden = true;
+    if (!attachments) return;
+    attachmentSyncing = true;
+    try { attachments.setContext(null); } finally { attachmentSyncing = false; }
+  }
+  function syncAttachments() {
+    if (!attachments || attachmentSyncing || disposed) return;
+    // A child's own pending operation must never invalidate its own context.
+    if (attachmentLocked) return;
+    if (!owner || suspended || attachmentRefresh || busy || pending || listLoading || detailLoading || creating || !selected) {
+      if (attachmentOrigin) clearAttachments();
+      return;
+    }
+    const next = { session: owner, generation, detailGeneration, id: selected.case_id, revision: selected.revision,
+      canUpload: selected.status !== 'closed' };
+    if (attachmentOrigin && attachmentOrigin.session === next.session && attachmentOrigin.generation === next.generation
+      && attachmentOrigin.detailGeneration === next.detailGeneration && attachmentOrigin.id === next.id
+      && attachmentOrigin.revision === next.revision && attachmentOrigin.canUpload === next.canUpload) return;
+    attachmentOrigin = next; attachmentHost.hidden = false;
+    attachmentSyncing = true;
+    try { attachments.setContext({ parent_kind: 'request', parent_id: next.id, parent_revision: next.revision, canUpload: next.canUpload }); }
+    finally { attachmentSyncing = false; }
+  }
+  async function attachmentPublished(result) {
+    const origin = attachmentOrigin;
+    if (!origin || !alive(origin.generation, origin.session) || detailGeneration !== origin.detailGeneration
+      || selected?.case_id !== origin.id || attachmentRefresh || !KEY.test(result?.attachment_id || '')
+      || !Number.isSafeInteger(result?.revision) || result.revision < 1) return;
+    attachmentRefresh = true;
+    clearAttachments(); controls();
+    message('הקובץ צורף. מרענן את הפנייה; אין בכך אישור לשליחה או לקבלת התראה.');
+    try {
+      await Promise.all([loadList(), openCase(origin.id, false, true)]);
+      if (!alive(origin.generation, origin.session)) return;
+      message(selected?.case_id === origin.id ? 'הקובץ צורף והפנייה רועננה. אין אישור למסירת התראה.'
+        : 'הקובץ צורף, אך רענון הפנייה אינו זמין כרגע. רעננו כדי לבדוק; אין להעלות שוב בגלל כשל הרענון.');
+    } finally {
+      if (alive(origin.generation, origin.session)) { attachmentRefresh = false; controls(); }
+    }
+  }
   function mayNavigate() {
-    if (!alive(generation, owner) || busy || pending) return false;
+    if (!alive(generation, owner) || busy || pending || childLocked()) return false;
     if (dirty() && !window.confirm('הטיוטה טרם נשמרה. לעבור ולמחוק את הטיוטה?')) return false;
     clearDrafts(); return true;
   }
   function controls() {
-    const locked = !owner || busy || !!pending;
+    const locked = !owner || busy || !!pending || childLocked();
     q('workspace').hidden = !owner; q('login').hidden = !!owner;
     q('inbox').hidden = !manager(owner);
     q('mine').setAttribute('aria-pressed', String(mode === 'mine')); q('inbox').setAttribute('aria-pressed', String(mode === 'inbox'));
@@ -60,8 +106,9 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     const eligible = usable && (ownerSide ? ['open', 'in_progress'].includes(selected.status) : manager(owner) && selected.status === 'waiting_employee');
     q('nudge').hidden = !eligible; q('nudge').disabled = locked || !eligible;
     q('notification').hidden = !owner || (!creating && !usable);
-    q('pending').hidden = !pending || busy; q('retry').disabled = busy || !owner;
+    q('pending').hidden = !pending || busy; q('retry').disabled = busy || !owner || childLocked();
     for (const button of q('list').querySelectorAll('button')) button.disabled = locked;
+    syncAttachments();
   }
   function renderList() {
     q('list').replaceChildren();
@@ -93,6 +140,7 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     q('status').value = selected.status; controls();
   }
   async function loadList(append = false) {
+    if (attachmentLocked) return;
     const g = generation, s = owner, l = ++listGeneration, originMode = mode;
     if (!alive(g, s)) return;
     listLoading = true; controls();
@@ -123,6 +171,7 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     return result;
   }
   async function openCase(id, append = false, keepDraft = false) {
+    if (attachmentLocked) return;
     const g = generation, s = owner, d = ++detailGeneration;
     if (!alive(g, s)) return;
     const previousEvents = append ? events : [], after = append ? eventCursor : null;
@@ -145,7 +194,7 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     return 'hr-' + [...bytes].map(v => v.toString(16).padStart(2, '0')).join('');
   }
   async function submit(method) {
-    if (!alive(generation, owner) || busy || pending) return;
+    if (!alive(generation, owner) || busy || pending || childLocked()) return;
     if (method !== 'create' && (!selected || detailLoading)) return;
     if (method === 'setStatus' && !manager(owner)) return;
     const payload = { request_id: newRequestId(), send_now: q('send-now').checked,
@@ -157,7 +206,7 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   }
   async function perform() {
     const operation = pending;
-    if (!operation || busy || !alive(operation.generation, operation.session)) return;
+    if (!operation || busy || childLocked() || !alive(operation.generation, operation.session)) return;
     busy = true; controls(); message('שומר את הבקשה…');
     try {
       const result = await adapter[operation.method](operation.payload);
@@ -186,7 +235,9 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     } finally { if (alive(operation.generation, operation.session)) { busy = false; controls(); } }
   }
   function resetIdentity() {
-    owner = session(); ++generation; ++listGeneration; ++detailGeneration;
+    // Parent subscriber runs first, before the child could reload an old parent.
+    clearAttachments(); attachmentLocked = false; attachmentRefresh = false;
+    owner = suspended ? null : session(); ++generation; ++listGeneration; ++detailGeneration;
     mode = 'mine'; items = []; cursor = null; selected = null; events = []; eventCursor = null;
     pending = null; busy = false; listLoading = false; detailLoading = false; creating = false;
     clearDrafts(); renderList(); renderDetail();
@@ -200,15 +251,25 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   };
   on(q('mine'), 'click', () => changeMode('mine')); on(q('inbox'), 'click', () => changeMode('inbox'));
   on(q('new'), 'click', () => { if (!mayNavigate()) return; ++detailGeneration; selected = null; events = []; eventCursor = null; detailLoading = false; creating = true; renderList(); renderDetail(); q('subject').focus(); });
-  on(q('refresh'), 'click', () => { if (!alive(generation, owner) || busy || pending) return; const id = selected?.case_id; void loadList(); if (id) void openCase(id, false, true); });
-  on(q('more'), 'click', () => { if (!busy && !pending && cursor) void loadList(true); });
-  on(q('events-more'), 'click', () => { if (!busy && !pending && selected && eventCursor) void openCase(selected.case_id, true, true); });
+  on(q('refresh'), 'click', () => { if (!alive(generation, owner) || busy || pending || childLocked()) return; const id = selected?.case_id; void loadList(); if (id) void openCase(id, false, true); });
+  on(q('more'), 'click', () => { if (!busy && !pending && !childLocked() && cursor) void loadList(true); });
+  on(q('events-more'), 'click', () => { if (!busy && !pending && !childLocked() && selected && eventCursor) void openCase(selected.case_id, true, true); });
   on(q('create'), 'submit', e => { e.preventDefault(); if (q('create').reportValidity()) void submit('create'); });
   on(q('reply-form'), 'submit', e => { e.preventDefault(); if (q('reply-form').reportValidity()) void submit('reply'); });
   on(q('status-save'), 'click', () => { void submit('setStatus'); });
   on(q('nudge'), 'click', () => { void submit('nudge'); });
   on(q('retry'), 'click', () => { void perform(); });
-  on(window, 'beforeunload', e => { if (pending || dirty()) { e.preventDefault(); e.returnValue = ''; } });
-  const unsubscribe = adapter.subscribeIdentity(resetIdentity); resetIdentity();
-  return { destroy() { disposed = true; unsubscribe(); for (const remove of removers) remove(); owner = null; ++generation; ++detailGeneration; ++listGeneration; pending = null; clearDrafts(); items = []; selected = null; events = []; renderList(); renderDetail(); controls(); } };
+  on(window, 'beforeunload', e => { if (pending || childLocked() || dirty()) { e.preventDefault(); e.returnValue = ''; } });
+  on(window, 'pagehide', () => { suspended = true; resetIdentity(); });
+  on(window, 'pageshow', () => { if (suspended && !disposed) { suspended = false; resetIdentity(); } });
+  const unsubscribe = adapter.subscribeIdentity(resetIdentity);
+  if (attachmentHost && typeof adapter.mountAttachments === 'function') {
+    attachments = adapter.mountAttachments(attachmentHost, {
+      onLockChange(value) { attachmentLocked = value === true; if (!disposed) controls(); },
+      onPublished: attachmentPublished
+    });
+  }
+  resetIdentity();
+  return { destroy() { disposed = true; clearAttachments(); attachments?.destroy(); attachments = null; attachmentLocked = false; attachmentRefresh = false;
+    unsubscribe(); for (const remove of removers) remove(); owner = null; ++generation; ++detailGeneration; ++listGeneration; pending = null; clearDrafts(); items = []; selected = null; events = []; renderList(); renderDetail(); controls(); } };
 }

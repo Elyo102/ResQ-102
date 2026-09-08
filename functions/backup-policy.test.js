@@ -289,12 +289,17 @@ const hrControlPaths = [
   'hr_request_actor_quotas/{quotaId}',
   'hr_document_actor_quotas/{quotaId}'
 ];
-const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths);
+const hrAttachmentPaths = [
+  'stations/{sid}/hr_attachments/{attachmentId}',
+  'stations/{sid}/hr_attachment_ledgers/{ledgerId}',
+  'hr_attachment_actor_quotas/{quotaId}'
+];
+const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths);
 
-test('exact sixteen private HR paths are classified with no readable or automatic-retention permission', () => {
+test('exact nineteen private HR paths are classified with no readable or automatic-retention permission', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports'));
-  assert.equal(hrPaths.length, 16);
+  assert.equal(hrPaths.length, 19);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);
@@ -332,6 +337,23 @@ test('nine HR control/queue entries are excluded, never restore active delivery 
       ['temporary', 'none', 'exclude', 'do_not_restore'], path);
     assert.match(item.reason, /exclusion activates no deletion/i, path);
   }
+});
+
+test('attachment metadata requires specialized coherent restore; quota exclusion activates no deletion', () => {
+  for (const path of hrAttachmentPaths.slice(0, 2)) {
+    const item = backupPolicy.getPolicy(path);
+    assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
+      ['source_of_truth', 'count_drop', 'managed_export', 'specialized_restore'], path);
+    assert.match(item.reason, /parent\/revision\/object-generation\/ledger restore.*unresolved/i);
+    assert.match(item.reason, /no export, restore or deletion activated/i);
+  }
+  const ledger = backupPolicy.getPolicy(hrAttachmentPaths[1]);
+  assert.match(ledger.reason, /uncertain writes/i);
+  assert.match(ledger.reason, /not rebuildable from ready files or disposable on expiry/i);
+  const quota = backupPolicy.getPolicy(hrAttachmentPaths[2]);
+  assert.deepEqual([quota.classification, quota.monitorPolicy, quota.backupPolicy, quota.restorePolicy],
+    ['temporary', 'none', 'exclude', 'do_not_restore']);
+  assert.match(quota.reason, /exclusion activates no deletion/i);
 });
 
 test('every private HR classification rejects a human-readable mutation', () => {

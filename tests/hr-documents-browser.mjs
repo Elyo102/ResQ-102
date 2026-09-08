@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), origin = 'http://127.0.0.1:41996';
-const files = ['hr-documents.html', 'hr-documents-client.js', 'hr-documents-ui.js', 'hr-documents-ui.css'];
+const files = ['hr-documents.html', 'hr-documents-client.js', 'hr-documents-ui.js', 'hr-documents-ui.css', 'hr-attachments-ui.js', 'hr-attachments-ui.css'];
 const hashes = () => Object.fromEntries(files.map(f => [f, createHash('sha256').update(fs.readFileSync(path.join(root, f))).digest('hex')]));
 const before = hashes(), browser = await chromium.launch(), contexts = new Set();
 let passed = 0;
@@ -14,12 +14,22 @@ async function fixture({ connected = true, role = 'firefighter', superUser = fal
   const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width, height: 900 }, colorScheme: theme }); contexts.add(context);
   await context.addInitScript(options => {
     const t = window.__docs = { calls: [], held: [], claimsHeld: [], dirHeld: [], hold: null, holdClaims: false, holdDirectory: false, reject: null,
-      lost: null, observers: [], publications: [], receipts: {}, operations: {}, created: 0, directory: [], queries: [], nameReads: [], appCheck: false, localMember: options.localMember };
-    t.makeUser = (uid, role = 'firefighter', superUser = false) => ({ uid, getIdTokenResult() {
-      const result = { claims: { stationId: 'fixture_station', role, super: superUser } };
-      if (t.holdClaims) { t.holdClaims = false; return new Promise(resolve => t.claimsHeld.push(() => resolve(result))); }
-      return Promise.resolve(result);
-    } });
+      lost: null, observers: [], publications: [], receipts: {}, operations: {}, created: 0, directory: [], queries: [], nameReads: [], appCheck: false, localMember: options.localMember,
+      attachments: {}, attachmentCounter: 0, badAttachmentEpoch: null, failGet: false };
+    t.makeUser = (uid, role = 'firefighter', superUser = false) => {
+      const claims = { stationId: 'fixture_station', role, super: superUser, auth_time: 1788220800 };
+      return { uid, claims, getIdTokenResult() {
+        const result = { claims };
+        if (t.holdClaims) { t.holdClaims = false; return new Promise(resolve => t.claimsHeld.push(() => resolve(result))); }
+        return Promise.resolve(result);
+      } };
+    };
+    // Independent synthetic server epoch; do not consume the held SDK claim getter.
+    t.attachmentEpoch = async () => {
+      const u = t.auth.currentUser, c = u.claims;
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([u.uid, c.stationId, c.super === true ? 'super_admin' : c.role, c.super === true])));
+      return { uid: u.uid, station_id: c.stationId, auth_time: c.auth_time, claims_digest: [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('') };
+    };
     t.auth = { currentUser: options.connected ? t.makeUser('owner', options.role, options.superUser) : null };
     t.emit = (uid, role = 'firefighter', superUser = false) => { t.auth.currentUser = uid ? t.makeUser(uid, role, superUser) : null; return Promise.all(t.observers.map(fn => fn(t.auth.currentUser))); };
     t.add = (id, kind = 'document', target = 'owner', title = 'מסמך לבדיקה') => {
@@ -42,6 +52,7 @@ async function fixture({ connected = true, role = 'firefighter', superUser = fal
           .sort((a, b) => a.document_id.localeCompare(b.document_id)).filter(d => !data.cursor || d.document_id > data.cursor);
         const page = rows.slice(0, 25); result = { items: page.map(summary), next_cursor: rows.length > 25 ? page.at(-1).document_id : null };
       } else if (name === 'getHrDocument') {
+        if (t.failGet) { t.failGet = false; throw Object.assign(new Error('Synthetic refresh failure'), { code: 'functions/unavailable' }); }
         if (!d) throw Object.assign(new Error('missing'), { code: 'functions/not-found' });
         const n = data.revision || d.current_revision;
         result = { ...summary(d), ...d.versions[n], revision: n, is_current: n === d.current_revision,
@@ -50,6 +61,37 @@ async function fixture({ connected = true, role = 'firefighter', superUser = fal
         const rows = Object.entries(t.receipts).filter(([k]) => k.startsWith(data.document_id + ':' + data.revision + ':')).map(([, r]) => r)
           .sort((a, b) => a.recipient_uid.localeCompare(b.recipient_uid)).filter(r => !data.cursor || r.recipient_uid > data.cursor);
         const page = rows.slice(0, 25); result = { document_id: d.document_id, revision: data.revision, current_revision: d.current_revision, items: page, next_cursor: rows.length > 25 ? page.at(-1).recipient_uid : null };
+      } else if (['reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment'].includes(name)) {
+        // Transport DTOs only: real composed client/host/child, not a Storage or parent-domain simulation proof.
+        const epoch = await t.attachmentEpoch();
+        if (t.badAttachmentEpoch) { Object.assign(epoch, t.badAttachmentEpoch); t.badAttachmentEpoch = null; }
+        const row = a => ({ attachment_id: a.id, display_name: a.input.display_name, declared_type: a.input.declared_type,
+          byte_length: a.input.byte_length, revision: a.revision, created_at_ms: 1788220800000 });
+        const ready = a => ({ attachment_id: a.id, state: 'ready', revision: a.revision, notification_status: 'policy_pending', duplicate: false, epoch });
+        let a = Object.values(t.attachments).find(a => data.attachment_id ? a.id === data.attachment_id : a.input.request_id === data.request_id);
+        if (name === 'listHrAttachments') {
+          const parent = t.publications.find(d => d.document_id === data.parent_id), ids = parent.versions[data.revision].attachment_ids || [];
+          result = { items: Object.values(t.attachments).filter(a => ids.includes(a.id)).map(row), next_cursor: null, revision: data.revision, epoch };
+        } else if (name === 'reserveHrAttachment') {
+          if (a && JSON.stringify(a.input) !== JSON.stringify(data)) throw new Error('Attachment retry changed immutable payload');
+          if (!a) { a = { id: (++t.attachmentCounter).toString(16).padStart(64, '0'), input: structuredClone(data) }; t.attachments[a.id] = a; }
+          result = a.revision ? { ...ready(a), duplicate: true, reserve_expires_ms: 1788221700000 }
+            : { attachment_id: a.id, state: 'reserved', duplicate: false, reserve_expires_ms: 1788221700000, epoch };
+        } else if (name === 'uploadHrAttachment') {
+          const { content_base64, ...intent } = data;
+          if (JSON.stringify(a.input) !== JSON.stringify(intent)) throw new Error('Upload changed immutable payload');
+          if (!a.revision) {
+            const parent = t.publications.find(d => d.document_id === a.input.parent_id), old = parent.versions[parent.current_revision];
+            a.revision = ++parent.current_revision; a.content_base64 = content_base64;
+            parent.versions[a.revision] = { ...old, attachment_ids: [...(old.attachment_ids || []), a.id] };
+          }
+          result = ready(a);
+        } else if (name === 'resumeHrAttachment') {
+          result = a.revision ? ready(a) : { attachment_id: a.id, state: 'reserved', resume: 'upload-required', epoch };
+        } else {
+          const { revision, created_at_ms, ...metadata } = row(a);
+          result = { ...metadata, content_base64: a.content_base64, epoch };
+        }
       } else {
         const old = t.operations[data.request_id];
         if (old) { if (JSON.stringify(old.data) !== JSON.stringify(data)) throw new Error('Retry changed immutable payload'); result = { ...old.result, duplicate: true }; }
@@ -113,13 +155,19 @@ async function open(p, letter = 'a') {
   await p.locator('[data-document="' + letter.repeat(64) + '"]').click(); await p.locator('.doc-body').waitFor();
   await p.waitForFunction(() => !document.querySelector('[data-d="refresh"]').disabled);
 }
+const attachmentBytes = Buffer.from('%PDF-1.4\nsynthetic composed document fixture\n%%EOF');
+async function chooseAttachment(p) {
+  await q(p, 'attachments').locator('input[type=file]').setInputFiles({ name: 'document-private.pdf', mimeType: 'application/pdf', buffer: attachmentBytes });
+  await q(p, 'attachments').locator('.hra-item[data-state="chosen"]').waitFor();
+}
 async function check(name, fn) { await fn(); ++passed; console.log('PASS ' + name); }
 async function newForm(p) { await q(p, 'new').click(); await q(p, 'title').fill('כותרת פרטית'); await q(p, 'text').fill('טיוטת פרסום'); }
 try {
   await check('public and unsupported-role shell has no private reads or fake file control', async () => {
     for (const opts of [{ connected: false }, { role: 'district_commander' }]) { const f = await fixture(opts);
       assert.equal(await q(f.page, 'workspace').isHidden(), true); assert.equal(await f.page.evaluate(() => __docs.calls.length), 0);
-      assert.equal(await f.page.locator('input[type=file]').count(), 0); assert.ok((await f.page.locator('body').innerText()).includes('שליחת קבצים עדיין אינה זמינה')); await f.close(); }
+      assert.equal(await f.page.locator('input[type=file]:visible').count(), 0); assert.equal(await q(f.page, 'attachments').isHidden(), true);
+      assert.equal((await f.page.locator('body').innerText()).includes('טקסט פרטי'), false); await f.close(); }
   });
   await check('actual client opens only rendered body once and requires separate acknowledgment', async () => {
     const f = await fixture(); assert.equal(await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'markHrDocumentOpened').length), 0);
@@ -137,6 +185,77 @@ try {
     const f = await fixture({ superUser: true, localMember: false }); await q(f.page, 'procedures').click(); await open(f.page, 'b');
     assert.equal(await f.page.evaluate(() => __docs.calls.some(c => ['markHrDocumentOpened', 'acknowledgeHrDocument'].includes(c.name))), false);
     assert.equal(await q(f.page, 'ack').isHidden(), true); assert.equal(await q(f.page, 'show-receipts').isVisible(), true); await f.close();
+  });
+  await check('composed first empty attachment list uses the exact displayed revision and signed-super epoch', async () => {
+    const f = await fixture({ superUser: true, localMember: false }); await open(f.page);
+    await q(f.page, 'attachments').locator('.hra-empty').filter({ hasText: 'אין קבצים' }).waitFor();
+    const calls = await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'listHrAttachments'));
+    assert.equal(calls.length, 1); assert.deepEqual(calls[0].data, { parent_kind: 'document', parent_id: 'a'.repeat(64), revision: 1 });
+    assert.equal(await q(f.page, 'workspace').isVisible(), true); assert.equal(await q(f.page, 'attachments').locator('.hra-row').count(), 0);
+    assert.equal(await f.page.evaluate(() => __docs.calls.some(c => ['reserveHrAttachment', 'uploadHrAttachment', 'markHrDocumentOpened', 'acknowledgeHrDocument'].includes(c.name))), false); await f.close();
+  });
+  await check('composed wrong auth time or full-length wrong digest clears the entire document host', async () => {
+    for (const patch of [{ auth_time: 1788220801 }, { claims_digest: 'f'.repeat(64) }]) {
+      const f = await fixture({ superUser: true, localMember: false });
+      await f.page.evaluate(patch => { __docs.badAttachmentEpoch = patch; }, patch);
+      await f.page.locator('[data-document="' + 'a'.repeat(64) + '"]').click();
+      await f.page.waitForFunction(() => __docs.calls.some(c => c.name === 'listHrAttachments'));
+      await q(f.page, 'workspace').waitFor({ state: 'hidden' });
+      assert.equal((await f.page.locator('body').innerText()).includes('טקסט פרטי'), false);
+      assert.equal(await q(f.page, 'attachments').locator('.hra-row:visible,.hra-item:visible').count(), 0); await f.close();
+    }
+  });
+  await check('composed held upload locks navigation and refreshes document N+1 without copying acknowledgment', async () => {
+    const f = await fixture({ role: 'hr_coordinator' }); await open(f.page); await q(f.page, 'ack').click();
+    await q(f.page, 'ack').waitFor({ state: 'hidden' });
+    const oldReceipt = await f.page.evaluate(() => structuredClone(__docs.receipts['a'.repeat(64) + ':1:owner']));
+    await chooseAttachment(f.page); await f.page.evaluate(() => { __docs.hold = 'uploadHrAttachment'; });
+    await q(f.page, 'attachments').getByRole('button', { name: 'העלו את הקובץ', exact: true }).click();
+    await f.page.waitForFunction(() => __docs.held.length === 1);
+    for (const key of ['mine', 'procedures', 'refresh', 'new', 'version', 'load-version', 'latest', 'revise']) assert.equal(await q(f.page, key).isDisabled(), true);
+    assert.equal(await f.page.locator('[data-document="' + 'a'.repeat(64) + '"]').isDisabled(), true);
+    const beforeNav = await f.page.evaluate(() => __docs.calls.length);
+    await q(f.page, 'procedures').dispatchEvent('click'); await q(f.page, 'refresh').dispatchEvent('click');
+    await q(f.page, 'load-version').dispatchEvent('click'); await q(f.page, 'new').dispatchEvent('click');
+    await f.page.locator('[data-document="' + 'a'.repeat(64) + '"]').dispatchEvent('click');
+    assert.equal(await f.page.evaluate(() => __docs.calls.length), beforeNav);
+    await f.page.evaluate(() => __docs.held.splice(0).forEach(fn => fn()));
+    await f.page.waitForFunction(() => document.querySelector('[data-d="version"]').value === '2' && !document.querySelector('[data-d="ack"]').disabled);
+    await q(f.page, 'attachments').locator('.hra-row').waitFor();
+    assert.equal(await q(f.page, 'detail').getByRole('heading').innerText(), 'המסמך האישי');
+    assert.deepEqual(await f.page.evaluate(() => __docs.receipts['a'.repeat(64) + ':1:owner']), oldReceipt);
+    assert.equal(await f.page.evaluate(() => __docs.receipts['a'.repeat(64) + ':2:owner'].acknowledged_at_ms), null);
+    assert.equal(await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'acknowledgeHrDocument').length), 1);
+    const calls = await f.page.evaluate(() => __docs.calls.filter(c => ['reserveHrAttachment', 'uploadHrAttachment'].includes(c.name)));
+    assert.equal(calls.length, 2); const { content_base64, ...intent } = calls[1].data; assert.deepEqual(intent, calls[0].data);
+    assert.deepEqual(Object.keys(intent).sort(), ['request_id', 'parent_kind', 'parent_id', 'parent_revision', 'display_name', 'declared_type', 'byte_length', 'content_sha256'].sort());
+    assert.equal(intent.parent_revision, 1); assert.equal(intent.content_sha256, createHash('sha256').update(attachmentBytes).digest('hex'));
+    assert.equal(content_base64, attachmentBytes.toString('base64'));
+    await q(f.page, 'version').fill('1'); await q(f.page, 'load-version').click();
+    await q(f.page, 'attachments').locator('.hra-empty').filter({ hasText: 'אין קבצים' }).waitFor();
+    assert.equal(await q(f.page, 'attachments').locator('input[type=file]:visible').count(), 0);
+    assert.equal(await q(f.page, 'attachments').locator('.hra-row').count(), 0);
+    const lists = await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'listHrAttachments').map(c => c.data));
+    assert.ok(lists.some(d => d.parent_id === 'a'.repeat(64) && d.revision === 2)); assert.equal(lists.at(-1).revision, 1); await f.close();
+  });
+  await check('composed ready publication survives a failed parent refresh without another upload', async () => {
+    const f = await fixture({ superUser: true, localMember: false }); await open(f.page); await chooseAttachment(f.page);
+    await f.page.evaluate(() => { __docs.failGet = true; });
+    await q(f.page, 'attachments').getByRole('button', { name: 'העלו את הקובץ', exact: true }).click();
+    await f.page.waitForFunction(() => document.querySelector('[data-d="message"]').textContent.includes('אין צורך להעלות'));
+    assert.equal(await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'uploadHrAttachment').length), 1);
+    await q(f.page, 'refresh').click();
+    assert.equal(await f.page.evaluate(() => __docs.calls.filter(c => c.name === 'uploadHrAttachment').length), 1); await f.close();
+  });
+  await check('composed identity clear prevents held ready upload from restoring the previous document', async () => {
+    const f = await fixture({ role: 'hr_coordinator' }); await open(f.page); await chooseAttachment(f.page);
+    await f.page.evaluate(() => { __docs.hold = 'uploadHrAttachment'; });
+    await q(f.page, 'attachments').getByRole('button', { name: 'העלו את הקובץ', exact: true }).click();
+    await f.page.waitForFunction(() => __docs.held.length === 1); await f.page.evaluate(() => __docs.emit(null));
+    const count = await f.page.evaluate(() => __docs.calls.length); await f.page.evaluate(() => __docs.held.splice(0).forEach(fn => fn()));
+    await q(f.page, 'workspace').waitFor({ state: 'hidden' }); assert.equal(await f.page.evaluate(() => __docs.calls.length), count);
+    assert.equal((await f.page.locator('body').innerText()).includes('document-private.pdf'), false);
+    assert.equal(await q(f.page, 'attachments').locator('.hra-item:visible').count(), 0); await f.close();
   });
   await check('directory picker filters aliases/inactive/wrong station and never silently selects a UID', async () => {
     const f = await fixture({ role: 'hr_coordinator' }); await newForm(f.page);

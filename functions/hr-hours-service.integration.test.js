@@ -15,17 +15,35 @@ const root = db.collection('stations').doc(sid), globalRefs = new Map();
 const actor = 'hr.' + suffix, uid = 'person.' + suffix, emp = 'emp_' + suffix, month = '2026-09';
 const profileRef = root.collection('users').doc(uid), actorRef = root.collection('users').doc(actor);
 class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
-const req = (data, token = { stationId: sid, role: 'hr_coordinator' }) => ({ auth: { uid: actor, token }, data });
+const AUTH_TIME = 1788220800;
+const req = (data, token = { stationId: sid, role: 'hr_coordinator' }) => ({ auth: { uid: actor, token: { auth_time: AUTH_TIME, ...token } }, data });
+// Real Firestore and actual domain; Auth is an explicit SDK-shaped in-memory double.
+const authRecords = new Map();
+let authFailure = null, authCalls = [];
+const auth = { async getUser(id) {
+  authCalls.push(id);
+  if (authFailure) throw Object.assign(new Error('synthetic Auth failure'), { code: authFailure });
+  if (!authRecords.has(id)) throw Object.assign(new Error('synthetic absent account'), { code: 'auth/user-not-found' });
+  return structuredClone(authRecords.get(id));
+} };
+function resetAuth() {
+  authFailure = null; authCalls = [];
+  authRecords.set(actor, { uid: actor, disabled: false, customClaims: { stationId: sid, role: 'hr_coordinator' },
+    tokensValidAfterTime: new Date(AUTH_TIME * 1000).toUTCString() });
+  authRecords.set('super.' + suffix, { uid: 'super.' + suffix, disabled: false,
+    customClaims: { stationId: sid, super: true } });
+}
 const profile = { stationId: sid, employee_number: emp, full_name: 'עובד בדיקה', crew: 'A', role: 'firefighter', active: true, is_active: true };
 const rawReport = { uid, emp_number: emp, month, status: 'approved', days: ['2026-09-01'], total_hours: 24 };
 const rawDay = { uid, emp_number: emp, month, date: '2026-09-01', hours: 24, start: '08:00', end: '08:00', end_day: 1 };
 const reportRef = root.collection('monthly_reports').doc(emp + '_' + month);
-const service = hooks => createHrHoursService({ db, HttpsError, hooks });
+const service = hooks => createHrHoursService({ db, auth, HttpsError, hooks });
 let passed = 0;
 async function putGlobal(path, value) {
   const ref = db.doc(path); globalRefs.set(path, ref); await ref.set(value); return ref;
 }
 async function seed() {
+  resetAuth();
   await actorRef.set({ stationId: sid, role: 'hr_coordinator', active: true, employee_number: 'hr_' + suffix });
   await profileRef.set(profile);
   await putGlobal('emp_index/' + emp, { uid, stationId: sid, active: true, retired: false, status: 'active' });
@@ -139,6 +157,53 @@ const rejectsCode = (fn, code) => assert.rejects(fn, e => e.code === code);
       await rejectsCode(() => service().getEmployeeMonth(req({ month, uid })), 'failed-precondition');
       await Promise.all(refs.map(ref => ref.delete()));
     });
+    for (const method of ['listMonth', 'getEmployeeMonth']) {
+      const data = method === 'listMonth' ? { month } : { month, uid };
+      await check(method + ': invalid authentication times fail before Auth reads', async () => {
+        for (const value of [undefined, null, -1, 0.5, '1000', Number.MAX_SAFE_INTEGER]) {
+          resetAuth();
+          await rejectsCode(() => service()[method](req(data, { stationId: sid, role: 'hr_coordinator', auth_time: value })), 'unauthenticated');
+          assert.equal(authCalls.length, 0);
+        }
+      });
+      const cases = [
+        ['disabled', () => { authRecords.get(actor).disabled = true; }, 'permission-denied'],
+        ['missing account', () => authRecords.delete(actor), 'permission-denied'],
+        ['wrong record UID', () => { authRecords.get(actor).uid = 'other'; }, 'permission-denied'],
+        ['station changed', () => { authRecords.get(actor).customClaims.stationId = 'other_station'; }, 'permission-denied'],
+        ['role changed', () => { authRecords.get(actor).customClaims.role = 'firefighter'; }, 'permission-denied'],
+        ['fresh super upgrade', () => { authRecords.get(actor).customClaims.super = true; }, 'permission-denied'],
+        ['malformed claims', () => { authRecords.get(actor).customClaims = []; }, 'permission-denied'],
+        ['revoked sign-in', () => { authRecords.get(actor).tokensValidAfterTime = new Date((AUTH_TIME + 1) * 1000).toUTCString(); }, 'permission-denied'],
+        ...[null, 123, 'not-a-date'].map(value => ['invalid validity ' + String(value), () => { authRecords.get(actor).tokensValidAfterTime = value; }, 'unavailable']),
+        ['Auth unavailable', () => { authFailure = 'auth/internal-error'; }, 'unavailable']
+      ];
+      for (const stage of ['initial', 'final']) {
+        await check(method + ': ' + stage + ' fresh Auth failures reject whole response', async () => {
+          for (const [label, change, code] of cases) {
+            resetAuth();
+            const hooks = stage === 'final' ? { beforeFinalize: change } : {};
+            if (stage === 'initial') change();
+            await assert.rejects(() => service(hooks)[method](req(data)), e => e.code === code, label);
+            assert.equal(authCalls.length, stage === 'initial' ? 1 : 2, label);
+          }
+          resetAuth();
+        });
+      }
+      await check(method + ': equality and absent marker permit exactly two actor-only Auth reads', async () => {
+        for (const marker of [new Date(AUTH_TIME * 1000).toUTCString(), undefined]) {
+          resetAuth(); authRecords.get(actor).tokensValidAfterTime = marker;
+          await service()[method](req(data)); assert.deepEqual(authCalls, [actor, actor]);
+        }
+      });
+      await check(method + ': profile-free signed super stays bounded by fresh super and station', async () => {
+        const r = req(data, { stationId: sid, super: true }); r.auth.uid = 'super.' + suffix;
+        resetAuth(); await service()[method](r);
+        assert.deepEqual(authCalls, [r.auth.uid, r.auth.uid]);
+        await rejectsCode(() => service({ beforeFinalize() { authRecords.get(r.auth.uid).customClaims.super = false; } })[method](r), 'permission-denied');
+        resetAuth();
+      });
+    }
     console.log(passed + ' HR hours emulator scenarios passed. No production contacted.');
   } finally {
     // Unique test namespace and explicitly tracked global fixture references.

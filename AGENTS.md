@@ -18,7 +18,7 @@ These rules apply to every Codex task in this repository.
 - Validation must be proportionate to risk and include relevant automated tests plus targeted end-to-end or emulator checks when applicable. Never promise zero risk or absolute certainty; report failures, untested areas, assumptions, and residual risks.
 - Notify the user when work starts. When work finishes, report the changes, exact test results, failures, untested areas, and remaining risks.
 - A single explicit user approval may authorize one complete, predefined workflow, including only the implementation, validation, commit, push, and pull-request steps listed in the approval request. The request must state the scope, branch and other targets, planned actions, validation gates, known risks, and stopping conditions. Approval does not extend to omitted steps.
-- Stop and request renewed approval if the scope, target, planned actions, material risk, validation result, or rollback assumptions change; if validation fails; or if either reviewer identifies a new material concern.
+- User instruction (2026-09-08): failed validation automatically authorizes corrective changes and reruns within the already approved workflow, without renewed approval solely because a test failed. Continue this repair-and-validation cycle toward deployment; retain the two-reviewer comparison and report actual results. Stop and request renewed approval for material changes to scope, target, planned actions, risk, or rollback assumptions, or a new material reviewer concern. This exception does not grant additional production permissions.
 - Merge to `main`, deploy, and every production action are excluded unless each is explicitly included in advance and the approval request names the exact production target and action, released commits or diff, required validation, known risks, and rollback plan.
 - Never state that Claude or any named external reviewer inspected or approved work unless that reviewer was actually connected and performed the review. If a second reviewer is unavailable, stop before implementation and tell the user.
 
@@ -41,7 +41,7 @@ Before requesting production approval, state:
 4. completed validation and known risks;
 5. the rollback plan.
 
-Approval is single-use and limited to the complete workflow and steps described. If the scope, target, planned action, material risk, validation result, or rollback assumptions change, stop and ask again.
+Approval is single-use and limited to the complete workflow and steps described. Failed validation permits corrective changes and reruns within that approved workflow without asking again. If the scope, target, planned production action, material risk, or rollback assumptions change, stop and ask again. Production actions remain subject to the exact approval requirements above.
 
 ## Validation
 

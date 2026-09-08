@@ -1,9 +1,9 @@
-import { firebaseConfig } from './firebase-config.js?v=42h6';
+import { firebaseConfig } from './firebase-config.js?v=42h7';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h6';
-import { initAppCheck } from './appcheck.js?v=42h6';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h6';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h7';
+import { initAppCheck } from './appcheck.js?v=42h7';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h7';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

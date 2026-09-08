@@ -35,6 +35,8 @@ const feedbackModule = require('./feedback');
 const hrHoursModule = require('./hr-hours-service');
 const hrRequestsModule = require('./hr-requests');
 const hrDocumentsModule = require('./hr-documents');
+const hrAttachmentServiceModule = require('./hr-attachment-service');
+const hrAttachmentsStorageModule = require('./hr-attachments-storage');
 const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
@@ -131,7 +133,7 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
-const hrHours = hrHoursModule.createHrHoursService({ db, HttpsError });
+const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
 const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
@@ -153,6 +155,31 @@ exports.markHrDocumentOpened = onCall({ enforceAppCheck: true }, async (req) => 
 exports.acknowledgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.acknowledge(req));
 exports.listHrDocumentReceipts = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listReceipts(req));
 exports.nudgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.nudge(req));
+// Private attachment infrastructure must be provisioned and verified before
+// deployment. Never fall back to the browser/default/deployment bucket.
+const HR_PRIVATE_BUCKET = 'station-102-hr-private-europe-west1';
+const HR_ATTACHMENT_OPTIONS = Object.freeze({ enforceAppCheck: true, region: 'europe-west1',
+  timeoutSeconds: 120, memory: '512MiB', concurrency: 1, maxInstances: 3,
+  serviceAccount: 'resq-hr-attachments@station-102.iam.gserviceaccount.com' });
+let hrAttachmentService;
+function getHrAttachmentService() {
+  if (!hrAttachmentService) {
+    const storage = hrAttachmentsStorageModule.createHrAttachmentsStorage({
+      bucket: admin.storage().bucket(HR_PRIVATE_BUCKET)
+    });
+    hrAttachmentService = hrAttachmentServiceModule.createHrAttachmentService({
+      db, auth: admin.auth(), storage, HttpsError, requests: hrRequests, documents: hrDocuments
+    });
+  }
+  return hrAttachmentService;
+}
+// Limits apply PER callable. Timeout does not prove an underlying write ended;
+// the service preserves uncertain writes and their quota ledger accordingly.
+exports.reserveHrAttachment = onCall({ ...HR_ATTACHMENT_OPTIONS }, async (req) => getHrAttachmentService().reserve(req));
+exports.uploadHrAttachment = onCall({ ...HR_ATTACHMENT_OPTIONS }, async (req) => getHrAttachmentService().upload(req));
+exports.resumeHrAttachment = onCall({ ...HR_ATTACHMENT_OPTIONS }, async (req) => getHrAttachmentService().resume(req));
+exports.listHrAttachments = onCall({ ...HR_ATTACHMENT_OPTIONS }, async (req) => getHrAttachmentService().list(req));
+exports.downloadHrAttachment = onCall({ ...HR_ATTACHMENT_OPTIONS }, async (req) => getHrAttachmentService().download(req));
 const hrHoursNudges = hrHoursNudgesModule.createHrHoursNudges({ db, auth: admin.auth(), HttpsError });
 const hrHoursNudgeStatus = hrHoursNudgeStatusModule.createHrHoursNudgeStatus({ db, auth: admin.auth(), HttpsError });
 exports.requestHrHoursNudge = onCall({ enforceAppCheck: true }, async (req) => hrHoursNudges.request(req));
@@ -3245,7 +3272,8 @@ exports.monthlyHrReport = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
-  await buildAndSendMonthly(prevMonthKey(new Date()));
+  // Replaced by authorized in-app HR reports. Keep the export for safe rollout.
+  return { retired: true, replacement: 'hr.html' };
 });
 
 // הרצה ידנית של אחת מהשתיים, למנהל-על. בלי זה אי אפשר לבדוק
@@ -3279,8 +3307,7 @@ exports.runReportNow = onCall(
              flagged: flagged.length };
   }
 
-  const out = await buildAndSendMonthly(mk);
-  return Object.assign({ ok: true, month: mk }, out);
+  throw new HttpsError('failed-precondition', 'דוחות השעות זמינים כעת במסך משאבי אנוש (hr.html); הדוח במייל הופסק.');
 });
 
 

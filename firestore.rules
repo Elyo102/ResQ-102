@@ -429,8 +429,17 @@ service cloud.firestore {
     match /hr_document_actor_quotas/{quotaId} {
       allow read, write: if false;
     }
+    match /hr_attachment_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
 
     match /stations/{sid} {
+      match /hr_attachments/{attachmentId} {
+        allow read, write: if false;
+      }
+      match /hr_attachment_ledgers/{ledgerId} {
+        allow read, write: if false;
+      }
       match /hr_nudge_actions/{actionId} {
         allow read, write: if false;
       }

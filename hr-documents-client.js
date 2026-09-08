@@ -1,11 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h6';
+import { firebaseConfig } from './firebase-config.js?v=42h7';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, doc, query, where, limit, getDocsFromServer, getDocFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h6';
-import { initAppCheck } from './appcheck.js?v=42h6';
-import { MEMBER_ROLES } from './roles.js?v=42h6';
-import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h6';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h7';
+import { initAppCheck } from './appcheck.js?v=42h7';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
+import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h7';
+
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h7';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -23,6 +25,41 @@ const manager = s => s?.super === true || s?.role === 'hr_coordinator';
 const uid = v => typeof v === 'string' && /^[^\u0000-\u001f\u007f/]{1,128}$/.test(v);
 function originManager() { const s = currentSession(); if (!s || !manager(s)) throw denied(); return s; }
 function checkOrigin(s) { if (currentSession() !== s) throw denied(); }
+
+const attachmentNames = { reserve: 'reserveHrAttachment', upload: 'uploadHrAttachment',
+  resume: 'resumeHrAttachment', list: 'listHrAttachments', download: 'downloadHrAttachment' };
+const attachmentTransports = Object.fromEntries(Object.entries(attachmentNames).map(([method, name]) => [method, httpsCallable(functions, name)]));
+async function attachmentEpoch(candidate, claims) {
+  if (!Number.isSafeInteger(claims.auth_time) || claims.auth_time < 0) return null;
+  const bytes = new TextEncoder().encode(JSON.stringify([candidate.uid, claims.stationId,
+    claims.super === true ? 'super_admin' : claims.role, claims.super === true]));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Object.freeze({ uid: candidate.uid, station_id: claims.stationId, auth_time: claims.auth_time,
+    claims_digest: Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('') });
+}
+async function attachmentCall(method, data) {
+  const origin = currentSession(), originUser = user;
+  if (!origin?.attachmentEpoch) throw denied();
+  try {
+    const { data: result } = await attachmentTransports[method](data);
+    if (currentSession() !== origin || user !== originUser) throw denied();
+    const expected = origin.attachmentEpoch, actual = result?.epoch;
+    if (!actual || !['uid', 'station_id', 'auth_time', 'claims_digest'].every(key => actual[key] === expected[key])) throw denied();
+    return result;
+  } catch (error) {
+    if (currentSession() === origin && user === originUser &&
+      ['functions/permission-denied', 'functions/unauthenticated'].includes(error?.code)) {
+      ++epoch; user = null; session = null; notify();
+    }
+    throw error;
+  }
+}
+function mountAttachments(element, callbacks) {
+  return createHrAttachmentsUI(element, { ...callbacks, currentSession,
+    subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    ...Object.fromEntries(Object.keys(attachmentNames).map(method => [method, data => attachmentCall(method, data)])) });
+}
+
 async function call(method, data) {
   const origin = currentSession(), originUser = user;
   if (!origin) throw denied();
@@ -81,7 +118,7 @@ async function lookupNames({ uids }) {
   return result; // Missing/moved/unavailable names never remove receipt rows.
 }
 createHrDocumentsUI(document.getElementById('hr-documents'), {
-  currentSession, subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+  mountAttachments, currentSession, subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   ...Object.fromEntries(Object.keys(names).map(method => [method, data => call(method, data)])), searchPeople, lookupNames
 });
 onIdTokenChanged(auth, async candidate => {
@@ -91,6 +128,8 @@ onIdTokenChanged(auth, async candidate => {
     const { claims } = await candidate.getIdTokenResult();
     if (generation !== epoch || auth.currentUser !== candidate) return;
     if (!claims || (claims.super !== true && !MEMBER_ROLES.includes(claims.role)) || typeof claims.stationId !== 'string' || !claims.stationId.trim()) return;
-    user = candidate; session = Object.freeze({ uid: candidate.uid, stationId: claims.stationId, role: claims.role, super: claims.super === true, epoch: generation }); notify();
+    const serverEpoch = await attachmentEpoch(candidate, claims);
+    if (generation !== epoch || auth.currentUser !== candidate) return;
+    user = candidate; session = Object.freeze({ uid: candidate.uid, stationId: claims.stationId, role: claims.role, super: claims.super === true, epoch: generation, attachmentEpoch: serverEpoch }); notify();
   } catch (_) { /* No identity or private error logging. */ }
 }, () => { ++epoch; user = null; session = null; notify(); });
