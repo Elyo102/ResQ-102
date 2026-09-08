@@ -1,0 +1,396 @@
+'use strict';
+// Actual domain producers and real Firestore transactions; Auth/FCM are local
+// synthetic dependencies. No Google Auth, FCM, browser, scheduler or production.
+const assert = require('node:assert/strict');
+if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080' || process.env.GCLOUD_PROJECT !== 'demo-resq') {
+  console.error('NOT RUN: FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 and GCLOUD_PROJECT=demo-resq required.');
+  process.exit(2);
+}
+process.env.METADATA_SERVER_DETECTION = 'none';
+const { randomBytes, createHash } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const admin = require('firebase-admin');
+const { createHrRequests } = require('./hr-requests');
+const { createHrDocuments } = require('./hr-documents');
+const { createHrDomainDispatch, LIMITS } = require('./hr-domain-dispatch');
+const { notificationIntent } = require('./hr-notification-policy');
+const sourceFiles = ['hr-domain-dispatch.js', 'hr-requests.js', 'hr-documents.js', 'hr-hours-dispatch.js', 'hr-notification-policy.js'];
+const sourceHashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(path.join(__dirname, f))).digest('hex')]));
+const beforeHashes = sourceHashes();
+const app = admin.initializeApp({ projectId: 'demo-resq' }, 'hr-domain-dispatch-' + process.pid), db = app.firestore();
+const runId = randomBytes(6).toString('hex'), runtime = db.doc('config/runtime');
+const authTime = Date.parse('2026-09-01T00:00:00Z') / 1000;
+const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
+const records = new Map(), roots = [], quotas = new Map(), tests = [];
+const auth = { async getUser(uid) {
+  const record = records.get(uid);
+  if (record instanceof Error) throw record;
+  if (!record) throw Object.assign(new Error('synthetic missing Auth'), { code: 'auth/user-not-found' });
+  return structuredClone(record);
+} };
+const accepted = p => ({ responses: p.tokens.map((_, i) => ({ success: true, messageId: 'synthetic/' + i })) });
+let sequence = 0, passed = 0, priorRuntime;
+const collections = { request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs' };
+const active = ['policy_pending', 'discovering', 'queued', 'processing', 'deferred', 'blocked'];
+async function fixture() {
+  const sid = 'hr_domain_it_' + runId + '_' + (++sequence), root = db.doc('stations/' + sid); roots.push(root);
+  const f = { sid, root, people: {}, at: Date.parse('2026-09-08T09:00:00Z'), calls: [] };
+  f.add = async (name, role = 'firefighter', superUser = false, profile = true) => {
+    const uid = name + '_' + sid, claims = { stationId: sid, ...(superUser ? { super: true } : { role }) };
+    records.set(uid, { uid, disabled: false, customClaims: claims, tokensValidAfterTime: new Date(authTime * 1000).toUTCString() });
+    if (profile) await root.collection('users').doc(uid).set({ stationId: sid, role, active: true, full_name: 'PRIVATE_SYNTHETIC_NAME' });
+    for (const [collection, prefix] of [['hr_request_actor_quotas', 'hr-request-quota-v1'], ['hr_document_actor_quotas', 'hr-document-quota-v1']]) {
+      const ref = db.doc(collection + '/' + hash([prefix, uid])); quotas.set(ref.path, ref);
+    }
+    const token = 'synthetic-token-' + uid;
+    await root.collection('push_tokens').doc(uid).set({ tokens: [{ token }], prefs: { report_mine: false, hr_private: false, hr_document: false, hr_request: false } });
+    return f.people[name] = { uid, claims, token };
+  };
+  await f.add('owner'); await f.add('other'); await f.add('hr', 'hr_coordinator'); await f.add('command', 'station_commander');
+  f.req = (name, data) => ({ auth: { uid: f.people[name].uid, token: { ...f.people[name].claims, auth_time: authTime } }, data });
+  f.requests = createHrRequests({ db, auth, HttpsError, clock: () => f.at });
+  f.documents = createHrDocuments({ db, auth, HttpsError, clock: () => f.at });
+  f.create = (id = 'create-001', extra = {}) => f.requests.create(f.req('owner', {
+    request_id: id, subject: 'PRIVATE_CASE_SUBJECT', text: 'PRIVATE_CASE_BODY', send_now: false, ...extra }));
+  f.action = (c, id, extra = {}) => ({ request_id: id, case_id: c.case_id, expected_revision: c.revision, send_now: false, ...extra });
+  f.publish = (id = 'publish-001', extra = {}) => f.documents.publish(f.req('hr', {
+    request_id: id, kind: 'document', target_uid: f.people.owner.uid, title: 'PRIVATE_DOCUMENT_TITLE',
+    text: 'PRIVATE_DOCUMENT_BODY', requires_ack: true, send_now: false, ...extra }));
+  f.procedure = (id = 'procedure-001') => f.documents.publish(f.req('hr', {
+    request_id: id, kind: 'procedure', title: 'PRIVATE_PROCEDURE_TITLE', text: 'PRIVATE_PROCEDURE_BODY', requires_ack: true, send_now: false }));
+  f.revise = (d, id = 'revision-002') => f.documents.revise(f.req('hr', { request_id: id, document_id: d.document_id,
+    expected_revision: d.current_revision, title: 'PRIVATE_NEW_TITLE', text: 'PRIVATE_NEW_BODY', requires_ack: true, send_now: false }));
+  f.receipt = (d, id, revision = d.revision) => ({ request_id: id, document_id: d.document_id, revision });
+  f.nudge = (d, id = 'nudge-001', actor = 'hr') => f.documents.nudge(f.req(actor, {
+    ...f.receipt(d, id), target_uid: f.people.owner.uid, send_now: false }));
+  f.jobs = family => root.collection(collections[family]).get();
+  f.intents = () => root.collection('hr_domain_notification_intents').get();
+  f.intent = async () => { const q = await f.intents(); assert.equal(q.size, 1); return q.docs[0]; };
+  f.job = async family => { const q = await f.jobs(family); assert.equal(q.size, 1); return q.docs[0]; };
+  f.tokens = (name, values) => root.collection('push_tokens').doc(f.people[name].uid).set({ tokens: values.map(token => ({ token })), prefs: { hr_private: false } });
+  f.worker = ({ send = accepted, hooks = {}, database = db } = {}) => createHrDomainDispatch({ db: database, auth, HttpsError,
+    clock: () => f.at, hooks, messaging: { async sendEachForMulticast(payload) { f.calls.push(payload); return send(payload); } } });
+  f.generate = async (family, worker = f.worker()) => {
+    const jobs = await f.jobs(family); assert.ok(jobs.size > 0);
+    for (const d of jobs.docs) {
+      for (let i = 0; i < 20; ++i) {
+        const saved = (await d.ref.get()).data();
+        if (!active.includes(saved.status)) break;
+        const result = await worker.processJob({ stationId: sid, family, job_id: d.id });
+        if (['deferred', 'blocked'].includes(result.status)) break;
+        assert.ok(i < 19, 'bounded fixture generation must finish');
+      }
+    }
+    assert.equal(f.calls.length, 0, 'processJob never invokes transport');
+  };
+  return f;
+}
+function failedRead(readPath, stagedWrite = false) {
+  return { collectionGroup: db.collectionGroup.bind(db), collection: db.collection.bind(db), doc: db.doc.bind(db),
+    runTransaction: fn => db.runTransaction(tx => fn(new Proxy(tx, { get(target, key) {
+      if (key === 'get') return ref => ref.path === readPath ? Promise.reject(new Error('PRIVATE_IO_ERROR')) : target.get(ref);
+      if (key === 'create' && stagedWrite) return (...args) => { target.create(...args); throw new Error('synthetic staged-write failure'); };
+      const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+    } }))) };
+}
+async function cleanup() {
+  for (const root of roots.splice(0)) { assert.ok(root.id.startsWith('hr_domain_it_' + runId)); await db.recursiveDelete(root); assert.equal((await root.listCollections()).length, 0); }
+  const refs = [...quotas.values()]; for (const ref of refs) await ref.delete();
+  if (refs.length) assert.ok((await db.getAll(...refs)).every(d => !d.exists));
+  quotas.clear(); records.clear();
+}
+const check = (name, fn) => tests.push({ name, fn });
+const isDenied = e => e.terminal === true;
+async function bounded(promise, message) {
+  let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), 20000); })]); }
+  finally { clearTimeout(timer); }
+}
+
+check('real request fanout uses current local HR and signed super, not commanders or global Auth discovery', async () => {
+  const f = await fixture(); await f.add('localSuper', 'firefighter', true); await f.add('globalSuper', null, true, false);
+  const c = await f.create(); const caseRef = f.root.collection('hr_requests').doc(c.case_id);
+  const before = (await caseRef.get()).data(), eventsBefore = (await caseRef.collection('events').get()).docs.map(d => d.data());
+  await f.generate('request'); const q = await f.intents(); assert.equal(q.size, 2);
+  assert.deepEqual(q.docs.map(d => d.data().recipient_uid).sort(), [f.people.hr.uid, f.people.localSuper.uid].sort());
+  const result = await f.worker().run(); assert.equal(result.transport_calls, 2); assert.equal(result.device_starts, 2);
+  for (const p of f.calls) {
+    assert.deepEqual(Object.keys(p.data).sort(), ['body', 'important', 'tag', 'title', 'url']);
+    assert.equal(p.data.url, './hr-requests.html'); assert.equal(p.data.important, '0'); assert.equal(p.webpush.headers.Urgency, 'normal');
+    assert.equal(JSON.stringify(p.data).includes('PRIVATE_'), false); assert.equal(Object.hasOwn(p, 'notification'), false);
+  }
+  assert.deepEqual((await caseRef.get()).data(), before); assert.deepEqual((await caseRef.collection('events').get()).docs.map(d => d.data()), eventsBefore);
+  await f.worker().run(); assert.equal(f.calls.length, 2);
+});
+check('real targeted document identity, family-qualified intent and mandatory category preserve privacy', async () => {
+  const f = await fixture(); await f.root.collection('users').doc(f.people.owner.uid).set({ station_id: f.sid, role: 'firefighter', is_active: true });
+  await f.publish(); await f.generate('document'); const j = (await f.job('document')).data(), i = await f.intent();
+  assert.equal(i.id, notificationIntent({ station_id: f.sid, recipient_uid: f.people.owner.uid, type: j.type, event_id: 'document:' + j.event_id }).id);
+  assert.notEqual(i.id, notificationIntent({ station_id: f.sid, recipient_uid: f.people.owner.uid, type: j.type, event_id: 'request:' + j.event_id }).id);
+  await f.worker().run(); const after = (await i.ref.get()).data();
+  assert.equal(after.status, 'accepted'); assert.equal(after.delivery_status, 'provider_outcome_only'); assert.equal(after.transport_type, 'hr_private');
+  assert.deepEqual(f.calls[0].tokens, [f.people.owner.token]); assert.equal(f.calls[0].data.url, './hr-documents.html');
+  assert.equal(f.calls[0].data.tag, 'hr-domain-' + i.id); assert.equal(JSON.stringify(after).includes('PRIVATE_'), false);
+  assert.equal(JSON.stringify(after).includes(f.people.owner.token), false);
+});
+check('concurrent generation and SDK claim remain one deterministic child and one send', async () => {
+  const f = await fixture(); await f.publish(); const j = await f.job('document'), w = f.worker(), input = { stationId: f.sid, family: 'document', job_id: j.id };
+  await Promise.all([w.processJob(input), w.processJob(input)]); assert.equal((await f.intents()).size, 1);
+  await Promise.all([w.run(), w.run()]); assert.equal(f.calls.length, 1); assert.equal((await f.intent()).data().status, 'accepted');
+  assert.equal((await f.jobs('document')).size, 1);
+});
+check('routine request updates survive close while stale explicit nudge does not', async () => {
+  const f = await fixture(), c = await f.create();
+  const n = await f.requests.nudge(f.req('owner', f.action(c, 'owner-nudge')));
+  await f.requests.setStatus(f.req('hr', f.action({ ...c, revision: n.revision }, 'close-case', { status: 'closed' })));
+  await f.worker().run(); await f.worker().run();
+  const jobs = (await f.jobs('request')).docs.map(d => d.data()); assert.equal(jobs.length, 3);
+  assert.equal(jobs.find(j => j.type === 'hr_nudge').status, 'cancelled');
+  assert.equal(f.calls.length, 2); assert.deepEqual(f.calls.flatMap(p => p.tokens).sort(), [f.people.owner.token, f.people.hr.token].sort());
+});
+check('old document revision stays a neutral event and opened/ack do not create jobs', async () => {
+  const f = await fixture(), d = await f.publish(), newer = await f.revise(d);
+  await f.documents.markOpened(f.req('owner', f.receipt(newer, 'opened-new')));
+  await f.documents.acknowledge(f.req('owner', f.receipt(newer, 'acknowledge-new')));
+  assert.equal((await f.jobs('document')).size, 2); await f.generate('document'); await f.worker().run(); assert.equal(f.calls.length, 2);
+  assert.equal((await f.intents()).docs.filter(x => x.data().status === 'accepted').length, 2);
+});
+check('document nudge uses current outstanding receipt and accepts another current HR author', async () => {
+  const f = await fixture(), d = await f.publish(); await f.add('hr2', 'hr_coordinator');
+  await f.documents.markOpened(f.req('owner', f.receipt(d, 'opened-only'))); await f.nudge(d, 'second-hr-nudge', 'hr2');
+  await f.generate('document'); await f.worker().run(); assert.equal(f.calls.length, 2, 'opened alone does not satisfy required ack');
+  await f.nudge(d, 'before-ack-nudge'); await f.documents.acknowledge(f.req('owner', f.receipt(d, 'ack-after-nudge')));
+  await f.worker().run(); assert.equal(f.calls.length, 2); assert.ok((await f.jobs('document')).docs.some(x => x.data().status === 'no_recipient'));
+  const g = await fixture(), plain = await g.publish('without-ack', { requires_ack: false }); await g.nudge(plain);
+  await g.documents.markOpened(g.req('owner', g.receipt(plain, 'plain-opened'))); await g.generate('document'); await g.worker().run();
+  assert.equal(g.calls.length, 1, 'only ordinary event survives opening when ack is not required');
+});
+check('source actor/audience/revision tampering fails closed before transport', async () => {
+  for (const change of [{ audience: 'station_members' }, { actor_uid: 'arbitrary_uid' }, { revision: 999 }]) {
+    const f = await fixture(); await f.publish(); const j = await f.job('document'); await j.ref.update(change);
+    await assert.rejects(() => f.worker().processJob({ stationId: f.sid, family: 'document', job_id: j.id }), isDenied);
+    assert.equal((await j.ref.get()).data().status, 'cancelled'); assert.equal((await f.intents()).size, 0); assert.equal(f.calls.length, 0);
+  }
+  const f = await fixture(), c = await f.create(), j = await f.job('request');
+  await f.root.collection('hr_requests').doc(c.case_id).collection('events').doc(j.id).update({ actor_uid: f.people.hr.uid });
+  await f.worker().run(); assert.equal((await j.ref.get()).data().status, 'cancelled'); assert.equal(f.calls.length, 0);
+});
+check('fresh original actor revocation/disable/station/role and malformed marker prevent sending', async () => {
+  const updates = [{ disabled: true }, { tokensValidAfterTime: new Date((authTime + 1) * 1000).toUTCString() },
+    { customClaims: { stationId: 'elsewhere', role: 'hr_coordinator' } }, { customClaims: { role: 'firefighter' } }, { tokensValidAfterTime: null }];
+  for (const update of updates) {
+    const f = await fixture(); await f.publish(); await f.generate('document');
+    const actualUpdate = update.customClaims && !update.customClaims.stationId
+      ? { ...update, customClaims: { stationId: f.sid, ...update.customClaims } } : update;
+    records.set(f.people.hr.uid, { ...records.get(f.people.hr.uid), ...actualUpdate }); await f.worker().run();
+    assert.equal(f.calls.length, 0); assert.ok(['cancelled', 'blocked'].includes((await f.intent()).data().status));
+  }
+});
+check('live recipient disabled/moved/profile and HR audience downgrade are rechecked at claim', async () => {
+  for (const mode of ['disabled', 'moved', 'inactive']) {
+    const f = await fixture(); await f.publish(); await f.generate('document');
+    if (mode === 'disabled') records.get(f.people.owner.uid).disabled = true;
+    if (mode === 'moved') records.get(f.people.owner.uid).customClaims.stationId = 'elsewhere';
+    if (mode === 'inactive') await f.root.collection('users').doc(f.people.owner.uid).update({ active: false });
+    await f.worker().run(); assert.equal(f.calls.length, 0); assert.equal((await f.intent()).data().status, 'cancelled');
+  }
+  const f = await fixture(); await f.create(); await f.generate('request');
+  records.get(f.people.hr.uid).customClaims.role = 'firefighter'; await f.root.collection('users').doc(f.people.hr.uid).update({ role: 'firefighter' });
+  await f.worker().run(); assert.equal(f.calls.length, 0); assert.equal((await f.intent()).data().status, 'cancelled');
+});
+check('successful empty HR scan is no_recipient, not a swallowed Auth or DB failure', async () => {
+  const f = await fixture(); await f.root.collection('users').doc(f.people.hr.uid).update({ active: false }); await f.create();
+  await f.generate('request'); assert.equal((await f.job('request')).data().status, 'no_recipient'); assert.equal((await f.intents()).size, 0);
+  const g = await fixture(); await g.create(); const j = await g.job('request'), w = g.worker();
+  await w.processJob({ stationId: g.sid, family: 'request', job_id: j.id });
+  const before = (await j.ref.get()).data(), saved = records.get(g.people.hr.uid); records.set(g.people.hr.uid, new Error('PRIVATE_AUTH_OUTAGE'));
+  await assert.rejects(() => w.processJob({ stationId: g.sid, family: 'request', job_id: j.id }));
+  const after = (await j.ref.get()).data(); assert.equal(after.status, 'blocked'); assert.equal(after.cursor, before.cursor); assert.deepEqual(after.counts, before.counts);
+  assert.equal((await g.intents()).size, 0); records.set(g.people.hr.uid, saved); g.at = after.next_check_ms;
+  await g.generate('request'); assert.equal((await g.intents()).size, 1);
+});
+check('final recipient eligibility loss skips only that candidate rather than cancelling a whole fanout', async () => {
+  const f = await fixture(); await f.add('hr2', 'hr_coordinator'); await f.create();
+  const j = await f.job('request'), input = { stationId: f.sid, family: 'request', job_id: j.id };
+  await f.worker().processJob(input);
+  const w = f.worker({ hooks: { beforeJobWrites({ phase }) { if (phase === 'enqueue') records.get(f.people.hr.uid).disabled = true; } } });
+  const result = await w.processJob(input); assert.equal(result.status, 'completed');
+  const q = await f.intents(); assert.equal(q.size, 1); assert.equal(q.docs[0].data().recipient_uid, f.people.hr2.uid);
+  assert.equal(result.counts.eligible, 1); assert.equal(result.counts.intents, 1);
+});
+check('I/O rejection and staged transaction crash do not advance cursor or partly create intents', async () => {
+  const f = await fixture(); await f.procedure(); const j = await f.job('document'), input = { stationId: f.sid, family: 'document', job_id: j.id };
+  await f.worker().processJob(input); const before = (await j.ref.get()).data();
+  const bad = f.worker({ database: failedRead(f.root.path + '/users/' + f.people.owner.uid) });
+  await assert.rejects(() => bad.processJob(input)); let after = (await j.ref.get()).data();
+  assert.equal(after.status, 'blocked'); assert.equal(after.cursor, before.cursor); assert.deepEqual(after.counts, before.counts); assert.equal((await f.intents()).size, 0);
+  f.at = after.next_check_ms; await assert.rejects(() => f.worker({ database: failedRead(null, true) }).processJob(input));
+  after = (await j.ref.get()).data(); assert.equal(after.cursor, before.cursor); assert.deepEqual(after.counts, before.counts); assert.equal((await f.intents()).size, 0);
+  f.at = after.next_check_ms; await f.worker().processJob(input); assert.equal((await f.intents()).size, 3);
+});
+check('routine night queue survives until morning; original TTL and expired consent never extend', async () => {
+  const f = await fixture(); f.at = Date.parse('2026-09-08T20:00:00Z'); await f.publish(); const created = f.at;
+  await f.worker().run(); let j = (await f.job('document')).data(); assert.equal(j.status, 'deferred'); assert.equal(j.expires_at_ms, created + LIMITS.routineMs);
+  assert.equal((await f.intents()).size, 0); assert.equal(f.calls.length, 0); f.at = j.not_before_ms;
+  await f.worker().run(); assert.equal(f.calls.length, 1);
+  const g = await fixture(); g.at = Date.parse('2026-09-08T19:10:00Z'); await g.publish('consented-001', { send_now: true });
+  const start = g.at; g.at += LIMITS.consentMs; await g.worker().run(); j = (await g.job('document')).data();
+  assert.equal(j.status, 'deferred'); assert.equal(j.expires_at_ms, start + LIMITS.routineMs); assert.equal(g.calls.length, 0);
+  g.at = start + LIMITS.routineMs; await g.worker().run(); assert.equal((await g.job('document')).data().status, 'expired');
+});
+check('uninitialized old job is discovered through created_at and nudge expiry remains one hour', async () => {
+  const f = await fixture(), d = await f.publish(); await f.nudge(d); const jobs = (await f.jobs('document')).docs;
+  for (const j of jobs) assert.equal(Object.hasOwn(j.data(), 'updated_at_ms'), false);
+  f.at += LIMITS.nudgeMs; await f.worker().run();
+  const saved = (await f.jobs('document')).docs.map(d => d.data()); assert.equal(saved.find(j => j.type === 'hr_nudge').status, 'expired');
+  assert.equal(f.calls.length, 1); assert.equal(saved.find(j => j.type === 'hr_document').expires_at_ms, jobs.find(j => j.data().type === 'hr_document').data().created_at_ms + LIMITS.routineMs);
+});
+check('fresh global silence has no allowlist or send_now bypass, and existing suppression never replays', async () => {
+  const f = await fixture(), d = await f.publish('confirmed-001', { send_now: true }); await f.generate('document');
+  await runtime.set({ silent: true, silent_allow: [f.people.owner.uid] }); await f.worker().run();
+  assert.equal(f.calls.length, 0); assert.equal((await f.intent()).data().status, 'suppressed');
+  await f.documents.nudge(f.req('hr', { ...f.receipt(d, 'producer-suppressed'), target_uid: f.people.owner.uid, send_now: true }));
+  assert.ok((await f.jobs('document')).docs.some(j => j.data().type === 'hr_nudge' && j.data().status === 'suppressed'));
+  await runtime.set({ silent: false, silent_allow: [] }); await f.worker().run(); assert.equal(f.calls.length, 0);
+});
+check('final claim time crossing quiet defers; afterClaim known-unstarted routine also defers safely', async () => {
+  for (const hookName of ['beforeClaim', 'afterClaim']) {
+    const f = await fixture(); f.at = Date.parse('2026-09-08T18:59:59Z'); await f.publish(); await f.generate('document');
+    await f.worker({ hooks: { [hookName]() { f.at = Date.parse('2026-09-08T19:00:01Z'); } } }).run();
+    let i = (await f.intent()).data(); assert.equal(i.status, 'deferred', hookName + ' must preserve routine update'); assert.equal(f.calls.length, 0);
+    assert.ok(i.not_before_ms > f.at); f.at = i.not_before_ms; await f.worker().run(); assert.equal(f.calls.length, 1);
+    i = (await f.intent()).data(); assert.equal(i.status, 'accepted');
+  }
+});
+check('final job clock expiry does not create children and afterClaim expiry never starts SDK', async () => {
+  const f = await fixture(); await f.publish(); const start = f.at;
+  await f.worker({ hooks: { beforeJobWrites() { f.at = start + LIMITS.routineMs; } } }).run();
+  assert.equal((await f.job('document')).data().status, 'expired'); assert.equal((await f.intents()).size, 0);
+  const g = await fixture(); await g.publish(); await g.generate('document'); const created = g.at;
+  await g.worker({ hooks: { afterClaim() { g.at = created + LIMITS.routineMs; } } }).run();
+  assert.equal(g.calls.length, 0); assert.equal((await g.intent()).data().status, 'cancelled');
+});
+check('bounded discovery freezes observed ID maximum, never creates children before enqueue', async () => {
+  const f = await fixture(); for (let i = 0; i < 24; ++i) await f.add('member' + String(i).padStart(2, '0'));
+  await f.procedure(); const j = await f.job('document'), input = { stationId: f.sid, family: 'document', job_id: j.id }, w = f.worker();
+  let result = await w.processJob(input); assert.equal(result.discovery_scanned, 25); assert.equal(result.phase, 'discover'); assert.equal((await f.intents()).size, 0);
+  result = await w.processJob(input); assert.equal(result.discovery_scanned, 28); assert.equal(result.phase, 'enqueue'); assert.equal((await f.intents()).size, 0);
+  const max = (await j.ref.get()).data().max_uid; await f.add('zzzz-late'); assert.ok(f.people['zzzz-late'].uid > max);
+  await f.generate('document'); const q = await f.intents(); assert.equal(q.size, 27); assert.equal(q.docs.some(d => d.data().recipient_uid === f.people['zzzz-late'].uid), false);
+  assert.equal((await j.ref.get()).data().max_uid, max); assert.equal((await j.ref.get()).data().counts.scanned, 28);
+});
+check('failed initial heads back off so the healthy 26th source can progress', async () => {
+  const f = await fixture();
+  const healthyCase = await f.requests.create(f.req('other', { request_id: 'healthy-case', subject: 'PRIVATE_HEALTHY_CASE', text: 'PRIVATE_HEALTHY_BODY', send_now: false }));
+  await f.generate('request'); await f.worker().run(); assert.equal(f.calls.length, 1);
+  for (let i = 0; i < 25; ++i) { await f.create('head-' + String(i).padStart(4, '0')); f.at += 60001; }
+  await f.requests.reply(f.req('hr', f.action(healthyCase, 'healthy-reply', { text: 'PRIVATE_HEALTHY_REPLY' })));
+  const first = await f.root.collection('hr_request_notification_jobs').where('status', '==', 'policy_pending').orderBy('created_at_ms').limit(25).get();
+  assert.equal(first.size, 25); assert.ok(first.docs.every(j => j.data().actor_uid === f.people.owner.uid));
+  records.set(f.people.owner.uid, new Error('PRIVATE_AUTH_OUTAGE'));
+  for (let i = 0; i < 4; ++i) { const r = await f.worker().run(); assert.ok(r.job_pages <= 25); f.at += 1; }
+  assert.equal(f.calls.length, 2); assert.deepEqual(f.calls[1].tokens, [f.people.other.token]);
+  const failing = (await f.jobs('request')).docs.filter(d => d.data().actor_uid === f.people.owner.uid);
+  assert.equal(failing.length, 25); assert.ok(failing.every(d => ['policy_pending', 'blocked'].includes(d.data().status)));
+});
+check('missing device is terminal and malformed runtime/token I/O blocks without pretending success', async () => {
+  const f = await fixture(); await f.tokens('owner', []); await f.publish(); await f.generate('document'); await f.worker().run();
+  assert.equal((await f.intent()).data().status, 'no_device'); await f.tokens('owner', ['later-token']); await f.worker().run(); assert.equal(f.calls.length, 0);
+  const g = await fixture(); await g.publish(); await g.generate('document'); await runtime.set({ silent: 'false' }); await g.worker().run();
+  let i = (await g.intent()).data(); assert.equal(i.status, 'blocked'); assert.equal(g.calls.length, 0); await runtime.set({ silent: false }); g.at = i.next_check_ms;
+  await g.worker({ database: failedRead(g.root.path + '/push_tokens/' + g.people.owner.uid) }).run();
+  i = (await g.intent()).data(); assert.equal(i.status, 'blocked'); assert.equal(i.dispatch_check_count, 2); g.at = i.next_check_ms;
+  await g.root.collection('push_tokens').doc(g.people.owner.uid).set({ tokens: ['not-an-object'] }); await g.worker().run();
+  i = (await g.intent()).data(); assert.equal(i.status, 'blocked'); assert.equal(g.calls.length, 0);
+});
+check('device budget is total, deduplicates per recipient and never slices a recipient', async () => {
+  const f = await fixture(); await f.publish('owner-document'); await f.publish('other-document', { target_uid: f.people.other.uid });
+  await f.tokens('owner', Array.from({ length: 300 }, (_, i) => 'a-' + i)); await f.tokens('other', Array.from({ length: 250 }, (_, i) => 'b-' + i));
+  await f.generate('document'); const first = await f.worker().run(); assert.ok([250, 300].includes(first.device_starts)); assert.equal(f.calls.length, 1);
+  assert.equal((await f.intents()).docs.filter(d => d.data().status === 'queued').length, 1); await f.worker().run(); assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.reduce((n, p) => n + p.tokens.length, 0), 550);
+  const g = await fixture(); await g.publish(); await g.tokens('owner', ['same', 'same']); await g.generate('document'); await g.worker().run(); assert.deepEqual(g.calls[0].tokens, ['same']);
+  const h = await fixture(); await h.publish(); await h.tokens('owner', Array.from({ length: 501 }, (_, i) => 'large-' + i)); await h.generate('document'); await h.worker().run();
+  const v = (await h.intent()).data(); assert.equal(v.status, 'blocked'); assert.equal(v.reason, 'token-limit'); assert.equal(v.terminal, true); assert.equal(h.calls.length, 0);
+});
+check('five concurrent recipients and 25 checked intents are hard invocation caps', async () => {
+  const f = await fixture(); for (let i = 0; i < 27; ++i) await f.add('fan' + i); await f.procedure(); await f.generate('document');
+  assert.equal((await f.intents()).size, 30); let running = 0, peak = 0, entered, release, hold = true;
+  const atFive = new Promise(resolve => { entered = resolve; }), barrier = new Promise(resolve => { release = resolve; });
+  const w = f.worker({ send: async p => { ++running; peak = Math.max(peak, running); if (running === 5) entered(); if (hold) await barrier; --running; return accepted(p); } });
+  const execution = w.run();
+  try { await bounded(atFive, 'five synthetic sends were not entered'); assert.equal(f.calls.length, 5); }
+  finally { hold = false; release(); }
+  const result = await execution; assert.equal(peak, 5); assert.equal(result.intents_checked, 25); assert.equal(f.calls.length, 25);
+  await w.run(); assert.equal(f.calls.length, 30);
+});
+check('60 second start budget stops new work; page checks remain bounded', async () => {
+  const f = await fixture(); for (let i = 0; i < 6; ++i) await f.add('budget' + i); await f.procedure(); await f.generate('document');
+  const r = await f.worker({ send: p => { f.at += LIMITS.startBudgetMs; return accepted(p); } }).run();
+  assert.ok(f.calls.length >= 1 && f.calls.length <= 5); assert.ok(r.job_pages <= 25); assert.ok(r.device_starts <= 500);
+  assert.ok((await f.intents()).docs.some(d => ['queued', 'cancelled'].includes(d.data().status)));
+});
+check('fulfilled mixed batch preserves accepted/definite failure/network unknown without token or error leaks', async () => {
+  const f = await fixture(); await f.publish(); await f.tokens('owner', ['tok-a', 'tok-b', 'tok-c']); await f.generate('document');
+  await f.worker({ send: () => ({ responses: [{ success: true, messageId: 'ok' },
+    { success: false, error: { code: 'messaging/registration-token-not-registered', message: 'PRIVATE_TOKEN_ERROR' } },
+    { success: false, error: { code: 'app/network-error', message: 'PRIVATE_NETWORK_ERROR' } }] }) }).run();
+  const i = (await f.intent()).data(); assert.equal(i.status, 'outcome_unknown'); assert.deepEqual(i.outcome_counts, { accepted: 1, failed: 1, outcome_unknown: 1 });
+  assert.equal(i.device_outcomes.length, 3); assert.equal(JSON.stringify(i).includes('PRIVATE_'), false); assert.equal(JSON.stringify(i).includes('tok-'), false);
+  await f.worker().run(); assert.equal(f.calls.length, 1);
+});
+check('throw and malformed final response are unknown with no application resend', async () => {
+  for (const send of [() => { throw new Error('PRIVATE_THROW'); }, () => ({ responses: [] })]) {
+    const f = await fixture(); await f.publish(); await f.generate('document'); await f.worker({ send }).run();
+    assert.equal((await f.intent()).data().status, 'outcome_unknown'); await f.worker().run(); assert.equal(f.calls.length, 1);
+  }
+});
+check('crash before SDK and after SDK never turn expired attempting into a fresh send', async () => {
+  for (const name of ['afterClaim', 'afterSend']) {
+    const f = await fixture(); await f.publish(); await f.generate('document'); await f.worker({ hooks: { [name]() { throw new Error('synthetic crash'); } } }).run();
+    assert.equal((await f.intent()).data().status, 'attempting'); const calls = name === 'afterClaim' ? 0 : 1; assert.equal(f.calls.length, calls);
+    f.at += LIMITS.leaseMs; await f.worker().run(); assert.equal((await f.intent()).data().status, 'outcome_unknown'); assert.equal(f.calls.length, calls);
+  }
+});
+check('late SDK callback cannot overwrite lease unknown or a different attempt token', async () => {
+  const f = await fixture(); await f.publish(); await f.generate('document'); let release, entered;
+  const atSend = new Promise(resolve => { entered = resolve; });
+  const execution = f.worker({ send: p => new Promise(resolve => { release = () => resolve(accepted(p)); entered(); }) }).run();
+  try { await bounded(atSend, 'synthetic SDK was not entered'); f.at += LIMITS.leaseMs; await f.worker().run(); assert.equal((await f.intent()).data().status, 'outcome_unknown'); }
+  finally { if (release) release(); }
+  await execution; assert.equal((await f.intent()).data().status, 'outcome_unknown'); assert.equal(f.calls.length, 1);
+  const g = await fixture(); await g.publish(); await g.generate('document');
+  await g.worker({ hooks: { async afterSend({ path: p }) { await db.doc(p).update({ status: 'outcome_unknown', attempt_id: 'newer-attempt' }); } } }).run();
+  const i = (await g.intent()).data(); assert.equal(i.status, 'outcome_unknown'); assert.equal(i.attempt_id, 'newer-attempt');
+});
+check('dispatch never deletes or overwrites concurrently registered device tokens', async () => {
+  const f = await fixture(); await f.publish(); await f.generate('document');
+  await f.worker({ send: async () => { await f.tokens('owner', ['new-token', f.people.owner.token]); return { responses: [
+    { success: false, error: { code: 'messaging/registration-token-not-registered' } }] }; } }).run();
+  assert.equal((await f.intent()).data().status, 'failed');
+  assert.deepEqual((await f.root.collection('push_tokens').doc(f.people.owner.uid).get()).data().tokens.map(t => t.token), ['new-token', f.people.owner.token]);
+});
+
+(async () => {
+  const filter = process.env.HR_DOMAIN_TEST_FILTER || '', selected = tests.filter(t => !filter || t.name.includes(filter));
+  assert.ok(selected.length, 'filter must select a test');
+  try {
+    priorRuntime = await runtime.get(); console.log(JSON.stringify({ run: runId, source_hashes: beforeHashes, selected: selected.length, prior_runtime: priorRuntime.exists ? priorRuntime.data() : null }));
+    for (let n = 0; n < selected.length; ++n) {
+      const { name, fn } = selected[n]; await runtime.set({ silent: false, silent_allow: [] });
+      try { await fn(); ++passed; console.log('PASS ' + name); }
+      catch (e) { console.error('FAIL ' + name); for (const t of selected.slice(n + 1)) console.log('NOT RUN ' + t.name); throw e; }
+      finally { await cleanup(); }
+    }
+    console.log('HR domain dispatcher integration: ' + passed + '/' + selected.length + ' PASS; scope=' + (filter || 'all') + '; actual producers/Firestore, synthetic Auth/FCM only.');
+  } finally {
+    await cleanup();
+    if (priorRuntime) { if (priorRuntime.exists) await runtime.set(priorRuntime.data()); else await runtime.delete(); }
+    const restored = await runtime.get();
+    console.log(JSON.stringify({ cleanup_complete: true, runtime_restored: priorRuntime ? restored.exists === priorRuntime.exists && JSON.stringify(restored.data()) === JSON.stringify(priorRuntime.data()) : null }));
+    const after = sourceHashes(); assert.deepEqual(after, beforeHashes, 'product sources stayed frozen');
+    console.log(JSON.stringify({ source_hashes_unchanged: true, source_hashes: after }));
+    await app.delete();
+  }
+})().catch(e => { console.error(e.stack || e); process.exitCode = 1; });
