@@ -182,6 +182,88 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (ref) caseData(await tx.get(ref), r.ctx);
     });
   }
+  // Internal transaction ports, never callable endpoints. The caller owns the
+  // attachment reservation/byte quota and ready receipt in this SAME transaction.
+  // A ready replay uses read(), not prepare(): closing a case blocks new uploads,
+  // not an authorized read of already published evidence.
+  const attachmentBrand = Symbol('request-attachment-plan');
+  function attachmentIds(value) {
+    const ids = value === undefined ? [] : value;
+    if (!Array.isArray(ids) || ids.length > 10 || ids.some(id => typeof id !== 'string' || !KEY.test(id))
+      || new Set(ids).size !== ids.length) throw error('failed-precondition', 'Attachment membership is invalid.');
+    return ids.slice();
+  }
+  function attachmentInput(input) {
+    if (!plain(input) || !plain(input.ctx) || input.parent_kind !== 'request'
+      || typeof input.parent_id !== 'string' || !KEY.test(input.parent_id)
+      || !Number.isSafeInteger(input.authTime) || input.authTime < 0
+      || !Number.isSafeInteger(input.authTime * 1000)) throw error('invalid-argument', 'Invalid attachment parent context.');
+    const ctx = identity.context({ auth: { uid: input.ctx.uid, token: {
+      stationId: input.ctx.sid, role: input.ctx.role, super: input.ctx.super
+    } } });
+    if (own(input, 'attachment_id') && (typeof input.attachment_id !== 'string' || !KEY.test(input.attachment_id))) throw error('invalid-argument', 'Invalid attachment identity.');
+    if (own(input, 'revision')) throw error('invalid-argument', 'Request attachments use current case membership.');
+    return { ctx, authTime: input.authTime };
+  }
+  async function readAttachment(tx, input) {
+    const r = attachmentInput(input);
+    await live(tx, r);
+    const d = caseData(await tx.get(caseRef(r.ctx.sid, input.parent_id)), r.ctx), ids = attachmentIds(d.attachment_ids);
+    if (own(input, 'attachment_id') && !ids.includes(input.attachment_id)) throw error('permission-denied', 'Attachment is not part of this request.');
+    return { parent_kind: 'request', parent_id: d.case_id, revision: d.revision, attachment_ids: ids };
+  }
+  async function prepareAttachment(tx, input) {
+    const r = attachmentInput(input), { ctx } = r;
+    if (!Number.isSafeInteger(input.expected_revision) || input.expected_revision < 1
+      || typeof input.attachment_id !== 'string' || !KEY.test(input.attachment_id)
+      || typeof input.event_id !== 'string' || !KEY.test(input.event_id)) throw error('invalid-argument', 'Invalid attachment publication.');
+    const attachmentId = input.attachment_id, eventId = input.event_id, expected = input.expected_revision;
+    const ref = caseRef(ctx.sid, input.parent_id);
+    await live(tx, r);
+    const d = caseData(await tx.get(ref), ctx), ids = attachmentIds(d.attachment_ids);
+    if (d.status === 'closed') throw error('failed-precondition', 'The request is closed.');
+    if (d.revision !== expected) throw error('aborted', 'The request changed. Refresh before saving.');
+    if (ids.includes(attachmentId)) throw error('already-exists', 'Attachment is already published.');
+    if (ids.length >= 10) throw error('resource-exhausted', 'Attachment capacity reached.');
+    const revision = d.revision + 1;
+    if (!Number.isSafeInteger(revision)) throw error('failed-precondition', 'Revision overflow.');
+    let checked = false, committed = false;
+    return Object.freeze({ [attachmentBrand]: true,
+      async recheck(currentTx) {
+        if (currentTx !== tx || committed) throw error('failed-precondition', 'Invalid attachment transaction.');
+        checked = false;
+        await beforeWrites('attachment'); await live(tx, r);
+        const current = caseData(await tx.get(ref), ctx);
+        if (current.owner_uid !== d.owner_uid || current.revision !== expected || current.status !== d.status
+          || JSON.stringify(attachmentIds(current.attachment_ids)) !== JSON.stringify(ids)) throw error('aborted', 'The request changed.');
+        checked = true;
+      },
+      commit(currentTx, options) {
+        const at = options && options.at;
+        if (currentTx !== tx || !checked || committed || !Number.isSafeInteger(at) || at < 0
+          || !Number.isFinite(new Date(at).getTime())) throw error('failed-precondition', 'Attachment publication was not rechecked.');
+        committed = true;
+        const personal = d.owner_uid !== ctx.uid;
+        const event = { schema: 'hr-request-event-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
+          actor_uid: ctx.uid, kind: 'attachment', attachment_id: attachmentId, revision, created_at_ms: at };
+        tx.create(ref.collection('events').doc(eventId), event);
+        // Adding evidence does not imply the employee has completed an answer.
+        tx.set(ref, { ...d, revision, updated_at_ms: at, attachment_ids: ids.concat(attachmentId) });
+        tx.create(root(ctx.sid).collection('hr_request_notification_jobs').doc(eventId), {
+          schema: 'hr-request-notification-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
+          actor_uid: ctx.uid, actor_auth_time: r.authTime, audience: personal ? 'person' : 'station_hr',
+          ...(personal ? { recipient_uid: d.owner_uid } : {}), type: personal ? 'hr_reply' : 'hr_request',
+          status: 'policy_pending', delivery_status: 'intent_only', created_at_ms: at,
+          send_now: false, consent_expires_at_ms: 0, routine_after_quiet: true, exclude_actor: true
+        });
+        return { linked: true, revision, event_id: eventId, notification_status: 'policy_pending' };
+      }
+    });
+  }
+  const attachmentPorts = Object.freeze({ read: readAttachment, prepare: prepareAttachment,
+    recheck(tx, plan) { if (!plan || plan[attachmentBrand] !== true) throw error('failed-precondition', 'Invalid attachment plan.'); return plan.recheck(tx); },
+    commit(tx, plan, options) { if (!plan || plan[attachmentBrand] !== true) throw error('failed-precondition', 'Invalid attachment plan.'); return plan.commit(tx, options); }
+  });
   async function list(req, inbox = false) {
     const r = request(req, ['cursor']);
     if (inbox && !manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
@@ -211,9 +293,14 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       const events = docs.map(s => {
         const e = s.data();
         if (e.schema !== 'hr-request-event-v1' || e.case_id !== c.case_id || e.station_id !== r.ctx.sid
-          || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > c.revision) throw error('failed-precondition', 'Invalid request history.');
+          || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > c.revision
+          || (e.kind === 'attachment' && (e.event_id !== s.id || !access.validUid(e.actor_uid)
+            || typeof e.attachment_id !== 'string' || !KEY.test(e.attachment_id)
+            || !attachmentIds(c.attachment_ids).includes(e.attachment_id)
+            || own(e, 'text') || own(e, 'from_status') || own(e, 'to_status')))) throw error('failed-precondition', 'Invalid request history.');
         return { event_id: s.id, actor_uid: e.actor_uid, kind: e.kind, revision: e.revision,
           created_at_ms: e.created_at_ms, ...(own(e, 'text') ? { text: e.text } : {}),
+          ...(e.kind === 'attachment' ? { attachment_id: e.attachment_id } : {}),
           ...(own(e, 'from_status') ? { from_status: e.from_status, to_status: e.to_status } : {}) };
       });
       return { ...summary(c), events, next_cursor: page.size > PAGE_SIZE ? events[events.length - 1].revision : null };
@@ -222,6 +309,6 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   }
   return Object.freeze({ create: req => mutate(req, 'create'), reply: req => mutate(req, 'reply'),
     setStatus: req => mutate(req, 'setStatus'), nudge: req => mutate(req, 'nudge'),
-    list: req => list(req), listInbox: req => list(req, true), get });
+    list: req => list(req), listInbox: req => list(req, true), get, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES });

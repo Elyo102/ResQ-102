@@ -10,9 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const sha = value => createHash('sha256').update(value).digest('hex');
 const pins = {
-  'functions/hr-domain-dispatch.js': '865effdd9d27d902cca201152b74da8d45aeb85556bdbbb81e09180c194f2a95',
-  'functions/hr-requests.js': 'd514bab897a0ed7121c0cc4e95dfd901d2c6042d03ed7551c98c321a693c3e52',
-  'functions/hr-documents.js': '55deba3a07d75bebf0c30fcd90307c05118dd86fe4d07e85036acc322ad27802',
+  'functions/hr-domain-dispatch.js': 'd20c82b2ecbff97b8b34d54cb153848ac914072e5690c99d14e42a360beb0a61',
+  'functions/hr-requests.js': '16abae222216908cc8090ec1cfe8904920e8bdc75c5bf11b103d11dabccdfe2d',
+  'functions/hr-documents.js': '14640985ff4de88377fbdbd8b12af5325fd78ba699cd8a1eb0f2a9679af84a0e',
   'functions/hr-notification-policy.js': 'aaa75e85d52d202c9510332bada62b9d0f36a93e596de8fbd541f7df232017c1',
   'functions/hr-hours-dispatch.js': 'a4050957a89f8718342d27df1b8243d578464d2b838b67d07b5e89d96ddd471d',
   'functions/hr-hours-nudges.js': 'fd572de3dae6563bb8f63dd2e7a7baf8699598ad80dcafc47d244f89029724d7'

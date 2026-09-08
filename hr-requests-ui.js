@@ -84,7 +84,7 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     for (const event of events) {
       const entry = node('article', null, 'requests-event');
       const by = event.actor_uid === owner.uid ? 'אני' : event.actor_uid === selected.owner_uid ? 'העובד שפנה' : 'משאבי אנוש';
-      const kind = { create: 'פתיחת פנייה', reply: 'תגובה', setStatus: 'עדכון מצב', nudge: 'בקשת תזכורת' }[event.kind];
+      const kind = { create: 'פתיחת פנייה', reply: 'תגובה', setStatus: 'עדכון מצב', nudge: 'בקשת תזכורת', attachment: 'נוסף קובץ לפנייה' }[event.kind];
       entry.append(node('small', by + ' · ' + kind));
       if (event.text !== undefined) entry.append(node('p', event.text));
       if (event.to_status) entry.append(node('p', LABELS[event.from_status] + ' ← ' + LABELS[event.to_status]));
@@ -115,7 +115,8 @@ export function createHrRequestsUI(root, adapter = disconnected) {
       !(result.next_cursor === null || (Number.isSafeInteger(result.next_cursor) && result.next_cursor > 0))) throw new Error('invalid detail');
     for (const e of result.events) {
       if (!e || !KEY.test(e.event_id) || typeof e.actor_uid !== 'string' ||
-        !['create', 'reply', 'setStatus', 'nudge'].includes(e.kind) || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > result.revision ||
+        !['create', 'reply', 'setStatus', 'nudge', 'attachment'].includes(e.kind) || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > result.revision ||
+        (e.kind === 'attachment' && (typeof e.attachment_id !== 'string' || !KEY.test(e.attachment_id))) ||
         (e.text !== undefined && (typeof e.text !== 'string' || e.text.length > 1000)) ||
         (e.kind === 'setStatus' && (!Object.hasOwn(LABELS, e.from_status) || !Object.hasOwn(LABELS, e.to_status)))) throw new Error('invalid event');
     }

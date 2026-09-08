@@ -119,7 +119,7 @@ jobs:
       - name: HR private requests against Firestore
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-requests.integration.test.js"
+        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-requests.integration.test.js && node functions/hr-parent-attachments.integration.test.js"
 
       - name: פעולות זהות והרשמה מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && npm run test:identity"

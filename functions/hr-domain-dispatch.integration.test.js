@@ -13,6 +13,7 @@ const path = require('node:path');
 const admin = require('firebase-admin');
 const { createHrRequests } = require('./hr-requests');
 const { createHrDocuments } = require('./hr-documents');
+const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { createHrDomainDispatch, LIMITS } = require('./hr-domain-dispatch');
 const { notificationIntent } = require('./hr-notification-policy');
 const sourceFiles = ['hr-domain-dispatch.js', 'hr-requests.js', 'hr-documents.js', 'hr-hours-dispatch.js', 'hr-notification-policy.js'];
@@ -31,6 +32,7 @@ const auth = { async getUser(uid) {
   return structuredClone(record);
 } };
 const accepted = p => ({ responses: p.tokens.map((_, i) => ({ success: true, messageId: 'synthetic/' + i })) });
+const identity = createOpsMemberIdentity({ db, HttpsError });
 let sequence = 0, passed = 0, priorRuntime;
 const collections = { request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs' };
 const active = ['policy_pending', 'discovering', 'queued', 'processing', 'deferred', 'blocked'];
@@ -55,6 +57,21 @@ async function fixture() {
   f.create = (id = 'create-001', extra = {}) => f.requests.create(f.req('owner', {
     request_id: id, subject: 'PRIVATE_CASE_SUBJECT', text: 'PRIVATE_CASE_BODY', send_now: false, ...extra }));
   f.action = (c, id, extra = {}) => ({ request_id: id, case_id: c.case_id, expected_revision: c.revision, send_now: false, ...extra });
+  // Actual internal parent ports produce the event and durable job. This is
+  // not an attachment upload/Storage fixture and does not claim byte delivery.
+  f.attach = async (c, actor, label) => {
+    const input = { ctx: identity.context(f.req(actor, {})), authTime, parent_kind: 'request', parent_id: c.case_id,
+      expected_revision: c.revision, attachment_id: hash(['attachment', f.sid, label]), event_id: hash(['attachment-event', f.sid, label]) };
+    const ports = f.requests.attachmentPorts;
+    const result = await db.runTransaction(async tx => {
+      const plan = await ports.prepare(tx, input);
+      await ports.recheck(tx, plan);
+      const out = ports.commit(tx, plan, { at: f.at });
+      assert.ok(out && typeof out.then !== 'function', 'actual parent commit is synchronous/write-only');
+      return out;
+    });
+    return { input, result, job: f.root.collection(collections.request).doc(input.event_id) };
+  };
   f.publish = (id = 'publish-001', extra = {}) => f.documents.publish(f.req('hr', {
     request_id: id, kind: 'document', target_uid: f.people.owner.uid, title: 'PRIVATE_DOCUMENT_TITLE',
     text: 'PRIVATE_DOCUMENT_BODY', requires_ack: true, send_now: false, ...extra }));
@@ -133,6 +150,55 @@ check('real targeted document identity, family-qualified intent and mandatory ca
   assert.deepEqual(f.calls[0].tokens, [f.people.owner.token]); assert.equal(f.calls[0].data.url, './hr-documents.html');
   assert.equal(f.calls[0].data.tag, 'hr-domain-' + i.id); assert.equal(JSON.stringify(after).includes('PRIVATE_'), false);
   assert.equal(JSON.stringify(after).includes(f.people.owner.token), false);
+});
+check('attachment owner event preserves waiting_employee and routes a neutral update only to current HR', async () => {
+  const f = await fixture(), c = await f.create();
+  const waiting = await f.requests.setStatus(f.req('hr', f.action(c, 'attachment-waiting', { status: 'waiting_employee' })));
+  await f.generate('request'); await f.worker().run(); f.calls.length = 0;
+  const { input, result, job } = await f.attach({ ...c, revision: waiting.revision }, 'owner', 'owner-evidence');
+  assert.equal(result.revision, waiting.revision + 1);
+  const ref = f.root.collection('hr_requests').doc(c.case_id), parent = (await ref.get()).data();
+  const event = (await ref.collection('events').doc(input.event_id).get()).data();
+  assert.equal(parent.status, 'waiting_employee'); assert.deepEqual(parent.attachment_ids, [input.attachment_id]);
+  assert.equal(event.kind, 'attachment'); assert.equal(event.attachment_id, input.attachment_id);
+  const dto = await f.requests.get(f.req('owner', { case_id: c.case_id }));
+  assert.equal(dto.status, 'waiting_employee'); assert.equal(dto.events.find(e => e.event_id === input.event_id).attachment_id, input.attachment_id);
+  assert.equal((await job.get()).data().audience, 'station_hr');
+  await f.generate('request'); await f.worker().run();
+  const children = (await f.intents()).docs.filter(d => d.data().event_id === input.event_id);
+  assert.equal(children.length, 1); assert.equal(children[0].data().recipient_uid, f.people.hr.uid); assert.equal(children[0].data().status, 'accepted');
+  assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0].tokens, [f.people.hr.token]);
+  assert.deepEqual(Object.keys(f.calls[0].data).sort(), ['body', 'important', 'tag', 'title', 'url']);
+  assert.equal(f.calls[0].data.url, './hr-requests.html'); assert.equal(f.calls[0].data.important, '0');
+  assert.equal(Object.hasOwn(f.calls[0], 'notification'), false);
+  for (const secret of ['PRIVATE_', input.attachment_id, c.case_id, input.event_id]) assert.equal(JSON.stringify(f.calls[0].data).includes(secret), false);
+  assert.deepEqual((await ref.get()).data(), parent); assert.deepEqual((await ref.collection('events').doc(input.event_id).get()).data(), event);
+  await f.worker().run(); assert.equal(f.calls.length, 1, 'completed attachment job does not resend');
+});
+check('attachment nonowner HR event routes only to the case owner and retains the generic payload', async () => {
+  const f = await fixture(), c = await f.create();
+  await f.generate('request'); await f.worker().run(); f.calls.length = 0;
+  const { input, job } = await f.attach(c, 'hr', 'hr-evidence');
+  const produced = (await job.get()).data(); assert.equal(produced.type, 'hr_reply'); assert.equal(produced.audience, 'person');
+  assert.equal(produced.recipient_uid, f.people.owner.uid); assert.equal(produced.actor_auth_time, authTime);
+  await f.generate('request'); await f.worker().run();
+  const children = (await f.intents()).docs.filter(d => d.data().event_id === input.event_id);
+  assert.equal(children.length, 1); assert.equal(children[0].data().recipient_uid, f.people.owner.uid); assert.equal(children[0].data().status, 'accepted');
+  assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0].tokens, [f.people.owner.token]);
+  assert.deepEqual(Object.keys(f.calls[0].data).sort(), ['body', 'important', 'tag', 'title', 'url']);
+  assert.equal(f.calls[0].data.url, './hr-requests.html'); assert.equal(f.calls[0].data.important, '0');
+  for (const secret of ['PRIVATE_', input.attachment_id, c.case_id, input.event_id]) assert.equal(JSON.stringify(f.calls[0].data).includes(secret), false);
+  assert.equal((await f.root.collection('hr_requests').doc(c.case_id).get()).data().status, 'open');
+});
+check('attachment malformed event identity fails closed before child creation or transport', async () => {
+  for (const malformed of ['g'.repeat(64), ['a'.repeat(64)], null]) {
+    const f = await fixture(), c = await f.create(), { input, job } = await f.attach(c, 'owner', 'corrupt-evidence');
+    const ref = f.root.collection('hr_requests').doc(c.case_id), parent = (await ref.get()).data();
+    await ref.collection('events').doc(input.event_id).update({ attachment_id: malformed });
+    await assert.rejects(() => f.worker().processJob({ stationId: f.sid, family: 'request', job_id: input.event_id }), isDenied);
+    assert.equal((await job.get()).data().status, 'cancelled'); assert.equal((await f.intents()).size, 0); assert.equal(f.calls.length, 0);
+    assert.deepEqual((await ref.get()).data(), parent, 'rejecting a corrupt event does not mutate the business case');
+  }
 });
 check('concurrent generation and SDK claim remain one deterministic child and one send', async () => {
   const f = await fixture(); await f.publish(); const j = await f.job('document'), w = f.worker(), input = { stationId: f.sid, family: 'document', job_id: j.id };

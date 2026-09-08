@@ -118,7 +118,8 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         || !integer(p.revision) || p.revision < 1 || !plain(e) || e.schema !== 'hr-request-event-v1'
         || e.event_id !== j.event_id || e.case_id !== j.case_id || e.station_id !== j.station_id
         || e.actor_uid !== j.actor_uid || e.created_at_ms !== j.created_at_ms || !integer(e.revision)
-        || e.revision < 1 || e.revision > p.revision || !['create', 'reply', 'setStatus', 'nudge'].includes(e.kind)) throw fault('source-invalid', true);
+        || e.revision < 1 || e.revision > p.revision || !['create', 'reply', 'setStatus', 'nudge', 'attachment'].includes(e.kind)
+        || (e.kind === 'attachment' && (typeof e.attachment_id !== 'string' || !/^[a-f0-9]{64}$/.test(e.attachment_id)))) throw fault('source-invalid', true);
       const ownerSide = j.actor_uid === p.owner_uid, personal = e.kind === 'setStatus' || !ownerSide;
       const type = e.kind === 'nudge' ? 'hr_nudge' : personal ? 'hr_reply' : 'hr_request';
       if (j.type !== type || j.audience !== (personal ? 'person' : 'station_hr')

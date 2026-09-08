@@ -110,6 +110,39 @@ try {
     assert.equal(await q(f.page, 'detail').locator('img,a').count(), 0); assert.ok((await q(f.page, 'detail').innerText()).includes('<img src=x'));
     assert.deepEqual(await f.page.evaluate(() => [location.search, location.hash, localStorage.length, sessionStorage.length]), ['', '', 0, 0]); await f.close();
   });
+  await check('attachment history renders its label without reopening waiting_employee or inventing download links', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => {
+      const c = __requests.cases[0]; c.status = 'waiting_employee'; c.revision = 2;
+      c.events.push({ event_id: 'c'.repeat(64), actor_uid: 'owner', kind: 'attachment', attachment_id: 'd'.repeat(64), revision: 2, created_at_ms: 2 });
+    });
+    await open(f.page);
+    assert.equal(await q(f.page, 'detail').locator('.requests-tag').innerText(), 'ממתינה לעובד');
+    const entry = q(f.page, 'detail').locator('.requests-event').last();
+    assert.equal(await entry.innerText(), 'אני · נוסף קובץ לפנייה'); assert.equal(await entry.locator('a,button,img').count(), 0);
+    assert.equal((await q(f.page, 'detail').innerText()).includes('d'.repeat(64)), false);
+    assert.equal(await q(f.page, 'nudge').isHidden(), true);
+    assert.deepEqual(await f.page.evaluate(() => [__requests.cases[0].status, __requests.cases[0].revision]), ['waiting_employee', 2]);
+    assert.ok((await f.page.evaluate(() => __requests.calls.map(c => c.name))).every(name => ['listMyHrRequests', 'getHrRequest'].includes(name)));
+    await f.close();
+  });
+  await check('attachment malformed or missing identity rejects detail and exposes no attachment controls', async () => {
+    for (const attachmentId of ['g'.repeat(64), ['d'.repeat(64)], null, undefined]) {
+      const f = await fixture();
+      await f.page.evaluate(value => {
+        const c = __requests.cases[0]; c.revision = 2;
+        c.events.push({ event_id: 'c'.repeat(64), actor_uid: 'owner', kind: 'attachment', revision: 2,
+          ...(value === undefined ? {} : { attachment_id: value }) });
+      }, attachmentId);
+      await f.page.locator('[data-case="' + 'a'.repeat(64) + '"]').click();
+      await f.page.waitForFunction(() => document.querySelector('[data-r="message"]').textContent.includes('הפנייה אינה זמינה'));
+      assert.equal(await q(f.page, 'detail').locator('.requests-event').count(), 0);
+      assert.equal(await q(f.page, 'reply-form').isHidden(), true); assert.equal(await q(f.page, 'actions').isHidden(), true);
+      assert.equal((await q(f.page, 'detail').innerText()).includes('נוסף קובץ לפנייה'), false);
+      assert.ok((await f.page.evaluate(() => __requests.calls.map(c => c.name))).every(name => ['listMyHrRequests', 'getHrRequest'].includes(name)));
+      await f.close();
+    }
+  });
   await check('HR and signed super can choose inbox; ordinary command sees own view only', async () => {
     for (const options of [{ role: 'hr_coordinator' }, { superUser: true }]) {
       const f = await fixture(options); await q(f.page, 'inbox').click();

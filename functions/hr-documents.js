@@ -84,7 +84,14 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
     if (!plain(v) || v.schema !== 'hr-document-revision-v1' || v.station_id !== d.station_id || v.document_id !== d.document_id
       || v.revision !== number || !validRevision(number) || number > d.current_revision || typeof v.title !== 'string'
       || v.title.length > 80 || typeof v.text !== 'string' || v.text.length > 20000 || typeof v.requires_ack !== 'boolean') throw error('failed-precondition', 'Publication revision is unavailable.');
+    attachmentIds(v.attachment_ids);
     return v;
+  }
+  function attachmentIds(value) {
+    const ids = value === undefined ? [] : value;
+    if (!Array.isArray(ids) || ids.length > 10 || ids.some(id => typeof id !== 'string' || !KEY.test(id))
+      || new Set(ids).size !== ids.length) throw error('failed-precondition', 'Attachment membership is invalid.');
+    return ids.slice();
   }
   function receiptValue(snap, d, number, uid) {
     if (!snap.exists) return null;
@@ -206,7 +213,8 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
         };
         tx.create(revisionRef(ref, number), { schema: 'hr-document-revision-v1', document_id: ref.id,
           station_id: ctx.sid, revision: number, title: p.title, text: p.text,
-          requires_ack: p.requires_ack, author_uid: ctx.uid, created_at_ms: at });
+          requires_ack: p.requires_ack, author_uid: ctx.uid, created_at_ms: at,
+          attachment_ids: v ? attachmentIds(v.attachment_ids) : [] });
         tx.set(ref, next); d = next;
       }
       if (recipientAction) {
@@ -248,6 +256,90 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
     if (typeof hooks.beforeFinalize === 'function') await hooks.beforeFinalize();
     await db.runTransaction(async tx => { await live(tx, r); if (ref) metadata(await tx.get(ref), r.ctx); });
   }
+  // Internal only. All authority/recipient reads precede the caller's common
+  // timestamp and synchronous publication/ready/job writes. No SDK or storage
+  // side effect belongs in these transaction ports.
+  const attachmentBrand = Symbol('document-attachment-plan');
+  function attachmentInput(input) {
+    if (!plain(input) || !plain(input.ctx) || input.parent_kind !== 'document'
+      || typeof input.parent_id !== 'string' || !KEY.test(input.parent_id)
+      || !Number.isSafeInteger(input.authTime) || input.authTime < 0
+      || !Number.isSafeInteger(input.authTime * 1000)) throw error('invalid-argument', 'Invalid attachment parent context.');
+    const ctx = identity.context({ auth: { uid: input.ctx.uid, token: {
+      stationId: input.ctx.sid, role: input.ctx.role, super: input.ctx.super
+    } } });
+    if (own(input, 'revision') && !validRevision(input.revision)) throw error('invalid-argument', 'Invalid attachment revision.');
+    if (own(input, 'attachment_id') && (typeof input.attachment_id !== 'string' || !KEY.test(input.attachment_id))) throw error('invalid-argument', 'Invalid attachment identity.');
+    return { ctx, authTime: input.authTime };
+  }
+  async function readAttachment(tx, input) {
+    const r = attachmentInput(input);
+    await live(tx, r);
+    const ref = documentRef(r.ctx.sid, input.parent_id), d = metadata(await tx.get(ref), r.ctx);
+    const number = input.revision || d.current_revision, v = version(await tx.get(revisionRef(ref, number)), d, number);
+    const ids = attachmentIds(v.attachment_ids);
+    if (own(input, 'attachment_id') && !ids.includes(input.attachment_id)) throw error('permission-denied', 'Attachment is not part of this revision.');
+    return { parent_kind: 'document', parent_id: d.document_id, revision: number, attachment_ids: ids };
+  }
+  async function prepareAttachment(tx, input) {
+    const r = attachmentInput(input), { ctx } = r;
+    if (!manager(ctx)) throw error('permission-denied', 'HR authority required.');
+    if (!validRevision(input.expected_revision) || typeof input.attachment_id !== 'string' || !KEY.test(input.attachment_id)
+      || typeof input.event_id !== 'string' || !KEY.test(input.event_id)) throw error('invalid-argument', 'Invalid attachment publication.');
+    const expected = input.expected_revision, attachmentId = input.attachment_id, eventId = input.event_id;
+    const ref = documentRef(ctx.sid, input.parent_id);
+    await live(tx, r);
+    const d = metadata(await tx.get(ref), ctx);
+    if (d.current_revision !== expected) throw error('aborted', 'Publication changed. Review the current revision.');
+    const v = version(await tx.get(revisionRef(ref, expected)), d, expected), ids = attachmentIds(v.attachment_ids);
+    if (ids.includes(attachmentId)) throw error('already-exists', 'Attachment is already published.');
+    if (ids.length >= 10) throw error('resource-exhausted', 'Attachment capacity reached.');
+    if (d.kind === 'document') await recipient(tx, ctx.sid, d.target_uid);
+    const revision = expected + 1;
+    if (!validRevision(revision)) throw error('failed-precondition', 'Revision overflow.');
+    let checked = false, committed = false;
+    return Object.freeze({ [attachmentBrand]: true,
+      async recheck(currentTx) {
+        if (currentTx !== tx || committed) throw error('failed-precondition', 'Invalid attachment transaction.');
+        checked = false;
+        await beforeWrites('attachment'); await live(tx, r);
+        const current = metadata(await tx.get(ref), ctx);
+        if (current.current_revision !== expected || current.kind !== d.kind || current.target_uid !== d.target_uid) throw error('aborted', 'Publication changed.');
+        const currentVersion = version(await tx.get(revisionRef(ref, expected)), current, expected);
+        if (currentVersion.title !== v.title || currentVersion.text !== v.text || currentVersion.requires_ack !== v.requires_ack
+          || JSON.stringify(attachmentIds(currentVersion.attachment_ids)) !== JSON.stringify(ids)) throw error('aborted', 'Publication revision changed.');
+        if (d.kind === 'document') await recipient(tx, ctx.sid, d.target_uid);
+        checked = true;
+      },
+      commit(currentTx, options) {
+        const at = options && options.at;
+        if (currentTx !== tx || !checked || committed || !Number.isSafeInteger(at) || at < 0
+          || !Number.isFinite(new Date(at).getTime())) throw error('failed-precondition', 'Attachment publication was not rechecked.');
+        committed = true;
+        // Every new revision has its own untouched receipt collection. Old
+        // acknowledgments cannot silently apply to newly attached content.
+        tx.create(revisionRef(ref, revision), { schema: 'hr-document-revision-v1', document_id: ref.id,
+          station_id: ctx.sid, revision, title: v.title, text: v.text, requires_ack: v.requires_ack,
+          author_uid: ctx.uid, created_at_ms: at, attachment_ids: ids.concat(attachmentId) });
+        tx.set(ref, { ...d, current_revision: revision, updated_at_ms: at });
+        const personal = d.kind === 'document', self = personal && d.target_uid === ctx.uid;
+        const notificationStatus = self ? 'no_other_recipient' : 'policy_pending';
+        if (!self) tx.create(root(ctx.sid).collection('hr_document_notification_jobs').doc(eventId), {
+          schema: 'hr-document-notification-v1', event_id: eventId, document_id: ref.id, station_id: ctx.sid,
+          revision, actor_uid: ctx.uid, actor_auth_time: r.authTime,
+          audience: personal ? 'person' : 'station_members', ...(personal ? { recipient_uid: d.target_uid } : {}),
+          type: personal ? 'hr_document' : 'hr_procedure', status: notificationStatus,
+          delivery_status: 'intent_only', created_at_ms: at, send_now: false,
+          consent_expires_at_ms: 0, routine_after_quiet: true, exclude_actor: true
+        });
+        return { linked: true, revision, event_id: eventId, notification_status: notificationStatus };
+      }
+    });
+  }
+  const attachmentPorts = Object.freeze({ read: readAttachment, prepare: prepareAttachment,
+    recheck(tx, plan) { if (!plan || plan[attachmentBrand] !== true) throw error('failed-precondition', 'Invalid attachment plan.'); return plan.recheck(tx); },
+    commit(tx, plan, options) { if (!plan || plan[attachmentBrand] !== true) throw error('failed-precondition', 'Invalid attachment plan.'); return plan.commit(tx, options); }
+  });
   async function list(req, mode) {
     const r = request(req, mode === 'managed' ? ['kind', 'cursor'] : ['cursor']);
     if (mode === 'managed' && !manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
@@ -284,7 +376,8 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       }
       const receipt = eligible ? receiptValue(await tx.get(revisionRef(ref, number).collection('receipts').doc(r.ctx.uid)), d, number, r.ctx.uid) : null;
       return { ...summary(d), revision: number, title: v.title, text: v.text, requires_ack: v.requires_ack,
-        is_current: number === d.current_revision, recipient_eligible: eligible, receipt: receiptDto(receipt) };
+        is_current: number === d.current_revision, recipient_eligible: eligible, receipt: receiptDto(receipt),
+        attachment_ids: attachmentIds(v.attachment_ids) };
     });
     await finalRead(r, ref); return result;
   }
@@ -309,6 +402,6 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
   }
   return Object.freeze({ publish: req => mutate(req, 'publish'), revise: req => mutate(req, 'revise'),
     markOpened: req => mutate(req, 'markOpened'), acknowledge: req => mutate(req, 'acknowledge'), nudge: req => mutate(req, 'nudge'),
-    listMine: req => list(req, 'mine'), listProcedures: req => list(req, 'procedures'), listManaged: req => list(req, 'managed'), get, listReceipts });
+    listMine: req => list(req, 'mine'), listProcedures: req => list(req, 'procedures'), listManaged: req => list(req, 'managed'), get, listReceipts, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrDocuments, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, KINDS });
