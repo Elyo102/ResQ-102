@@ -596,6 +596,8 @@ export function getDoc(ref){
 export function getDocFromServer(ref){
   return getDoc(ref);
 }
+// Smoke fixture only: reuse query failure/delay hooks; no real offline cache.
+export function getDocsFromServer(q){ return getDocs(q); }
 
 /* ---------- עסקאות ----------
  *

@@ -327,16 +327,27 @@ try {
     } finally { await f.context.close(); }
   });
 
-  await test('all 21 Firebase screens bootstrap monitoring and all 14 factories use the facade', async () => {
+  await test('all 24 Firebase screens bootstrap monitoring and all 17 factories use the facade', async () => {
     const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html'].includes(n));
-    assert.equal(screens.length, 21);
+    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html'];
+    assert.deepEqual(screens.sort(), expectedScreens.sort());
+    const externalBootstrap = {
+      'schedule-management.html': 'schedule-management.js',
+      'hr.html': 'hr-client.js',
+      'hr-requests.html': 'hr-requests-client.js',
+      'hr-documents.html': 'hr-documents-client.js'
+    };
     for (const screen of screens) {
       let source = fs.readFileSync(path.join(root, screen), 'utf8');
-      if (screen === 'schedule-management.html') source += fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
+      const module = externalBootstrap[screen];
+      if (module) {
+        assert.ok(source.includes(`./${module}?v=42h6`), screen + ' disconnected bootstrap');
+        source += fs.readFileSync(path.join(root, module), 'utf8');
+      }
       assert.equal((source.match(/await initAppCheck\(app\);/g) || []).length, 1, screen);
     }
-    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','check.html','feedback.html','guards.html','import.html','login.html','schedule-management.js','stats.html','swaps.html','unlock.html'];
-    assert.equal(consumers.length, 14);
+    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','check.html','feedback.html','guards.html','import.html','login.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js'];
+    assert.equal(consumers.length, 17);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
       assert.ok(source.includes("from './monitored-functions.js?v=42h6'"), file);
