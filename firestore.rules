@@ -416,7 +416,57 @@ service cloud.firestore {
 
     // ---------- התחנה ----------
 
+    // Private HR data is available only through live-authorized server APIs.
+    match /hr_nudge_bulk_locks/{lockId} {
+      allow read, write: if false;
+    }
+    match /hr_nudge_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
+    match /hr_request_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
+    match /hr_document_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
+
     match /stations/{sid} {
+      match /hr_nudge_actions/{actionId} {
+        allow read, write: if false;
+      }
+      match /hr_nudge_intents/{intentId} {
+        allow read, write: if false;
+      }
+      match /hr_requests/{requestId} {
+        allow read, write: if false;
+      }
+      match /hr_requests/{requestId}/events/{eventId} {
+        allow read, write: if false;
+      }
+      match /hr_request_operations/{operationId} {
+        allow read, write: if false;
+      }
+      match /hr_request_notification_jobs/{jobId} {
+        allow read, write: if false;
+      }
+      match /hr_documents/{documentId} {
+        allow read, write: if false;
+      }
+      match /hr_documents/{documentId}/revisions/{revision} {
+        allow read, write: if false;
+      }
+      match /hr_documents/{documentId}/revisions/{revision}/receipts/{uid} {
+        allow read, write: if false;
+      }
+      match /hr_document_operations/{operationId} {
+        allow read, write: if false;
+      }
+      match /hr_document_notification_jobs/{jobId} {
+        allow read, write: if false;
+      }
+      match /hr_domain_notification_intents/{intentId} {
+        allow read, write: if false;
+      }
       // Ops submissions are authenticated and written by the server only.
       // Admin SDK export is separate; no client, including super, reads these.
       match /incidents/{fingerprint} {

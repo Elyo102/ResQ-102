@@ -101,6 +101,9 @@ await check('scheduled handler preserves worker rejection instead of swallowing 
 
 const config = JSON.parse(read('firestore.indexes.json'));
 const newGroups = ['hr_nudge_actions', 'hr_nudge_intents'];
+// The adjacent domain gate independently pins these exact13 indexes. They
+// are not part of this gate's immutable pre-HR baseline or its eight shapes.
+const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_domain_notification_intents'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
   ['hr_nudge_intents', 'expires_at_ms'], ['hr_nudge_intents', 'lease_until_ms'], ['hr_nudge_intents', 'not_before_ms'],
   ['hr_nudge_intents', 'next_check_ms'], ['hr_nudge_intents', 'created_at_ms']].map(([collectionGroup, fieldPath]) => ({
@@ -108,11 +111,11 @@ const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actio
 }));
 await check('exact eight required collection-group indexes, without duplicate or extra query shapes', () => {
   assert.deepEqual(config.indexes.filter(i => newGroups.includes(i.collectionGroup)), expectedIndexes);
-  assert.equal(config.indexes.length, 21);
+  assert.equal(config.indexes.length, 34);
 });
 await check('all13 original indexes and32 field overrides match immutable b1451e9 baseline', () => {
   assert.deepEqual(Object.keys(config).sort(), ['fieldOverrides', 'indexes']);
-  const old = config.indexes.filter(i => !newGroups.includes(i.collectionGroup));
+  const old = config.indexes.filter(i => !newGroups.includes(i.collectionGroup) && !domainGroups.includes(i.collectionGroup));
   assert.equal(old.length, 13); assert.equal(config.fieldOverrides.length, 32);
   // Canonical JSON hashes from read-only git show b1451e9. Runtime test needs
   // no Git installation/history and ignores only insignificant JSON whitespace.

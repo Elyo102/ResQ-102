@@ -38,6 +38,7 @@ const hrDocumentsModule = require('./hr-documents');
 const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
+const hrDomainDispatchModule = require('./hr-domain-dispatch');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -2471,6 +2472,14 @@ exports.resumeHrHoursNudges = onSchedule({
   schedule: '* * * * *', region: 'europe-west1', timeoutSeconds: 540,
   maxInstances: 1, concurrency: 1, retryCount: 0
 }, async () => await hrHoursDispatch.run());
+
+const hrDomainDispatch = hrDomainDispatchModule.createHrDomainDispatch({
+  db, auth: admin.auth(), messaging: admin.messaging(), HttpsError
+});
+exports.resumeHrDomainNotifications = onSchedule({
+  schedule: '* * * * *', region: 'europe-west1', timeoutSeconds: 540,
+  maxInstances: 1, concurrency: 1, retryCount: 0
+}, async () => await hrDomainDispatch.run());
 
 const STATION_ID   = 'eilat_102';
 const STATION_NAME = 'תחנה 102';

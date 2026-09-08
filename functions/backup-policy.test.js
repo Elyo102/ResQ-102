@@ -268,3 +268,78 @@ test('unclassified paths block instead of inheriting an unsafe default', () => {
     path:'stations/{sid}/unknown/{id}', current:{ ok:true }
   }), { status:'BLOCK', reasons:['unclassified_path'] });
 });
+
+const hrDurablePaths = [
+  ['stations/{sid}/hr_requests/{requestId}', 'source_of_truth', 'count_drop', 'restore'],
+  ['stations/{sid}/hr_requests/{requestId}/events/{eventId}', 'source_of_truth', 'count_drop', 'restore_after_parent'],
+  ['stations/{sid}/hr_request_operations/{operationId}', 'source_of_truth', 'count_drop', 'restore_after_parent'],
+  ['stations/{sid}/hr_documents/{documentId}', 'source_of_truth', 'count_drop', 'restore'],
+  ['stations/{sid}/hr_documents/{documentId}/revisions/{revision}', 'source_of_truth', 'count_drop', 'restore_after_parent'],
+  ['stations/{sid}/hr_documents/{documentId}/revisions/{revision}/receipts/{uid}', 'audit_log', 'activity', 'restore_after_parent'],
+  ['stations/{sid}/hr_document_operations/{operationId}', 'source_of_truth', 'count_drop', 'restore_after_parent']
+];
+const hrControlPaths = [
+  'stations/{sid}/hr_nudge_actions/{actionId}',
+  'stations/{sid}/hr_nudge_intents/{intentId}',
+  'stations/{sid}/hr_request_notification_jobs/{jobId}',
+  'stations/{sid}/hr_document_notification_jobs/{jobId}',
+  'stations/{sid}/hr_domain_notification_intents/{intentId}',
+  'hr_nudge_bulk_locks/{lockId}',
+  'hr_nudge_actor_quotas/{quotaId}',
+  'hr_request_actor_quotas/{quotaId}',
+  'hr_document_actor_quotas/{quotaId}'
+];
+const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths);
+
+test('exact sixteen private HR paths are classified with no readable or automatic-retention permission', () => {
+  const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
+    segment => segment.startsWith('hr_') && segment !== 'hr_reports'));
+  assert.equal(hrPaths.length, 16);
+  assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
+  for (const path of hrPaths) {
+    const item = backupPolicy.getPolicy(path);
+    assert.ok(item, path);
+    assert.equal(item.scope, path.startsWith('stations/') ? 'station' : 'root', path);
+    assert.equal(item.sensitivity, 'restricted_identity', path);
+    assert.equal(item.humanReadable, 'forbidden', path);
+    assert.equal(item.retention, 'policy_required_before_wiring', path);
+    const collectionGroup = path.split('/').at(-2);
+    assert.equal(firestoreIndexes.fieldOverrides.some(override =>
+      override.collectionGroup === collectionGroup && override.ttl === true), false, path + ' must not gain TTL');
+  }
+});
+
+test('seven durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {
+  assert.equal(hrDurablePaths.length, 7);
+  for (const [path, classification, monitor, restore] of hrDurablePaths) {
+    const item = backupPolicy.getPolicy(path);
+    assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
+      [classification, monitor, 'managed_export', restore], path);
+    assert.match(item.reason, /no export, restore or deletion activated/i, path);
+  }
+  for (const path of ['stations/{sid}/hr_request_operations/{operationId}', 'stations/{sid}/hr_document_operations/{operationId}']) {
+    const item = backupPolicy.getPolicy(path);
+    assert.match(item.reason, /coherent same-snapshot/i);
+    assert.match(item.reason, /procedure remains unresolved/i);
+  }
+});
+
+test('nine HR control/queue entries are excluded, never restore active delivery or erase unknown outcomes', () => {
+  assert.equal(hrControlPaths.length, 9);
+  for (const path of hrControlPaths) {
+    const item = backupPolicy.getPolicy(path);
+    assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
+      ['temporary', 'none', 'exclude', 'do_not_restore'], path);
+    assert.match(item.reason, /exclusion activates no deletion/i, path);
+  }
+});
+
+test('every private HR classification rejects a human-readable mutation', () => {
+  for (const path of hrPaths) {
+    for (const humanReadable of ['allowed', 'redacted']) {
+      const modified = { ...backupPolicy.getPolicy(path), humanReadable };
+      assert.ok(backupPolicy.validatePolicies([modified]).some(error =>
+        error.includes('identity data must be forbidden')), path + '/' + humanReadable);
+    }
+  }
+});
