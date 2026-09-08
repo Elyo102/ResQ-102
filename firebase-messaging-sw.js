@@ -37,6 +37,7 @@ const SHELL = [
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
   './hr-requests.html', './hr-requests-client.js', './hr-requests-ui.js', './hr-requests-ui.css',
+  './hr-documents.html', './hr-documents-client.js', './hr-documents-ui.js', './hr-documents-ui.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
   './quals.html', './alerts.html', './stats.html', './people.html',
   './vehicle.html', './sign.html',

@@ -11,9 +11,18 @@
 <body>
 <main id="hr-workspace" class="hr-workspace">
   <header class="hr-heading"><div><p class="hr-eyebrow">ResQ · משאבי אנוש</p><h1>דוחות שעות עובדים</h1><p>כל דוחות החודש, במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
-  <nav aria-label="משאבי אנוש"><a href="./hr-requests.html">פניות עובדים ופניות אישיות</a></nav>
+  <nav aria-label="משאבי אנוש"><a href="./hr-requests.html">פניות עובדים ופניות אישיות</a> · <a href="./hr-documents.html">נהלים ומסמכים</a></nav>
   <section class="hr-toolbar" aria-label="בחירת חודש"><label>חודש הדוחות <input data-hr="month" type="month" required></label><button data-hr="refresh" type="button">רענון</button><span data-hr="count"></span></section>
   <p data-hr="message" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
+  <section data-hr="nudges" class="hr-card hr-nudges" aria-label="תזכורות לדוחות שעות" hidden>
+    <h2>תזכורות לדוחות שעות</h2>
+    <p class="hr-meta">השרת בודק עובדים פעילים שדוחם חסר או ממתין לאישורם. פעולה לכל התחנה אינה מוגבלת לעובדים שנטענו כאן: החיפוש מתבצע בעמודים, והפעילות נבדקת בעת הכנת כל עמוד. אין כאן רשימת נמענים קפואה.</p>
+    <label class="hr-consent"><input data-hr="send-now" type="checkbox"> אישור חד־פעמי לפעולה גם בשעות השקט 22:00–07:00 לפי שעון ישראל. השתקת מערכת עדיין חלה.</label>
+    <button data-hr="nudge-station" type="button">בקשת תזכורות לכל התחנה לחודש הנבחר</button>
+    <p data-hr="nudge-message" role="status" aria-live="polite"></p>
+    <div data-hr="pending" class="hr-notice" hidden><p>תוצאת הבקשה אינה ידועה. ניסיון חוזר ישתמש באותה בקשה בדיוק. סגירת הדף אינה מבטלת פעולה שכבר נקלטה, ונתוני הניסיון החוזר לא יישמרו.</p><button data-hr="retry" type="button">ניסיון חוזר לאותה בקשה</button></div>
+    <div data-hr="confirmation" class="hr-notice" hidden><p data-hr="confirmation-text"></p><button data-hr="confirm" type="button">אישור חד־פעמי ובקשת תזכורת כעת</button></div>
+  </section>
   <div class="hr-layout">
     <aside class="hr-card" aria-label="רשימת עובדים"><h2>עובדי התחנה</h2><div data-hr="people" class="hr-people"></div><button data-hr="more" type="button" hidden>טעינת עובדים נוספים</button></aside>
     <section class="hr-card hr-document" aria-label="דוח העובד">
@@ -21,6 +30,13 @@
       <div data-hr="detail" class="hr-detail"><p>בחרו עובד לצפייה בדוח.</p></div>
     </section>
   </div>
+  <section data-hr="history" class="hr-card hr-nudges" aria-label="מצב בקשות התזכורת שלי" hidden>
+    <div class="hr-report-nav"><h2>בקשות התזכורת שלי בחודש הנבחר</h2><button data-hr="history-refresh" type="button">רענון רשימת הבקשות</button></div>
+    <p class="hr-meta">מוצגות רק בקשות של החשבון הנוכחי. הסדר אינו לפי הזמן. המצב הוא תמונת מצב, ללא רענון אוטומטי; סיום הכנת התזכורות אינו אישור לשליחה, למסירה או לקריאה.</p>
+    <p data-hr="history-message" role="status"></p><div data-hr="actions" class="hr-action-list"></div><button data-hr="actions-more" type="button" hidden>בקשות נוספות</button>
+    <div data-hr="action-detail" class="hr-action-detail"></div>
+    <p data-hr="status-message" role="status"></p><button data-hr="status-refresh" type="button" hidden>רענון מצב הבקשה מהעמוד הראשון</button><button data-hr="children-more" type="button" hidden>תוצאות נוספות</button>
+  </section>
 </main>
 <script type="module">
 import './hr-client.js?v=42h6';

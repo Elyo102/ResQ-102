@@ -1,5 +1,13 @@
 {
   "indexes": [
+    {"collectionGroup":"hr_nudge_actions","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"expires_at_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_actions","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"not_before_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_actions","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"updated_at_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_intents","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"expires_at_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_intents","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"lease_until_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_intents","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"not_before_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_intents","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"next_check_ms","order":"ASCENDING"}]},
+    {"collectionGroup":"hr_nudge_intents","queryScope":"COLLECTION_GROUP","fields":[{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"created_at_ms","order":"ASCENDING"}]},
     {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",

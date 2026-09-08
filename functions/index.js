@@ -34,6 +34,10 @@ const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
 const hrHoursModule = require('./hr-hours-service');
 const hrRequestsModule = require('./hr-requests');
+const hrDocumentsModule = require('./hr-documents');
+const hrHoursNudgesModule = require('./hr-hours-nudges');
+const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
+const hrHoursDispatchModule = require('./hr-hours-dispatch');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -137,6 +141,22 @@ exports.getHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrReques
 exports.replyHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.reply(req));
 exports.setHrRequestStatus = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setStatus(req));
 exports.nudgeHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.nudge(req));
+const hrDocuments = hrDocumentsModule.createHrDocuments({ db, auth: admin.auth(), HttpsError });
+exports.publishHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.publish(req));
+exports.reviseHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.revise(req));
+exports.listMyHrDocuments = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listMine(req));
+exports.listHrProcedures = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listProcedures(req));
+exports.listManagedHrDocuments = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listManaged(req));
+exports.getHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.get(req));
+exports.markHrDocumentOpened = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.markOpened(req));
+exports.acknowledgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.acknowledge(req));
+exports.listHrDocumentReceipts = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listReceipts(req));
+exports.nudgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.nudge(req));
+const hrHoursNudges = hrHoursNudgesModule.createHrHoursNudges({ db, auth: admin.auth(), HttpsError });
+const hrHoursNudgeStatus = hrHoursNudgeStatusModule.createHrHoursNudgeStatus({ db, auth: admin.auth(), HttpsError });
+exports.requestHrHoursNudge = onCall({ enforceAppCheck: true }, async (req) => hrHoursNudges.request(req));
+exports.getHrHoursNudgeStatus = onCall({ enforceAppCheck: true }, async (req) => hrHoursNudgeStatus.get(req));
+exports.listHrHoursNudges = onCall({ enforceAppCheck: true }, async (req) => hrHoursNudgeStatus.list(req));
 // New station-scoped submissions. Ordinary users are re-authorized against the
 // live station profile; a verified super claim may submit without a member
 // profile. Both modules keep the same station scope and idempotent transaction.
@@ -2442,6 +2462,15 @@ exports.reindexDirectory = onCall(async (req) => {
 // =====================================================================
 
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+
+const hrHoursDispatch = hrHoursDispatchModule.createHrHoursDispatch({
+  db, auth: admin.auth(), messaging: admin.messaging(), HttpsError,
+  processJob: hrHoursNudges.processJob
+});
+exports.resumeHrHoursNudges = onSchedule({
+  schedule: '* * * * *', region: 'europe-west1', timeoutSeconds: 540,
+  maxInstances: 1, concurrency: 1, retryCount: 0
+}, async () => await hrHoursDispatch.run());
 
 const STATION_ID   = 'eilat_102';
 const STATION_NAME = 'תחנה 102';

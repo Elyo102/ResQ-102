@@ -11,6 +11,9 @@ const auth = getAuth(app);
 const functions = getFunctions(app, 'europe-west1');
 const list = httpsCallable(functions, 'getHrMonthReports');
 const detail = httpsCallable(functions, 'getHrEmployeeReport');
+const nudge = httpsCallable(functions, 'requestHrHoursNudge');
+const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
+const nudges = httpsCallable(functions, 'listHrHoursNudges');
 const listeners = new Set();
 let epoch = 0;
 let user = null;
@@ -47,7 +50,10 @@ createHrHoursUI(document.getElementById('hr-workspace'), {
   currentSession,
   subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   listMonth(data) { return call(list, data); },
-  getEmployeeMonth(data) { return call(detail, data); }
+  getEmployeeMonth(data) { return call(detail, data); },
+  requestNudge(data) { return call(nudge, data); },
+  getNudgeStatus(data) { return call(nudgeStatus, data); },
+  listNudges(data) { return call(nudges, data); }
 });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;

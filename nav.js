@@ -19,6 +19,7 @@ const ITEMS = [
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
   { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
   { href: 'hr-requests.html', label: 'פנייה למשאבי אנוש', who: 'member', dot: '#0099cc', group: 'mine' },
+  { href: 'hr-documents.html', label: 'נהלים ומסמכים', who: 'member', dot: '#0099cc', group: 'mine' },
   { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342', group: 'station' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043', group: 'mine' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },

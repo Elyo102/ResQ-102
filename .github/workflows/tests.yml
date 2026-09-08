@@ -108,6 +108,14 @@ jobs:
       - name: HR requests actual callable registration and private telemetry
         run: node tests/hr-requests-wiring.mjs
 
+      - name: HR documents and hours actual release wiring
+        run: npm --prefix tests run hr:release:wiring
+
+      - name: HR durable notifications and documents against Firestore
+        env:
+          GCLOUD_PROJECT: demo-resq
+        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-hours-nudges.integration.test.js && node functions/hr-hours-dispatch.integration.test.js && node functions/hr-hours-nudge-status.integration.test.js && node functions/hr-documents.integration.test.js"
+
       - name: HR private requests against Firestore
         env:
           GCLOUD_PROJECT: demo-resq

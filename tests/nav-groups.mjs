@@ -75,7 +75,7 @@ function same(actual, expected, label) {
 const member = [
   'login.html', 'schedule-management.html', 'board.html', 'attendance.html', 'guards.html',
   'faults.html', 'forms.html', 'sign.html', 'swaps.html', 'feedback.html', 'quals.html',
-  'alerts.html', 'people.html', 'hr-requests.html'
+  'alerts.html', 'people.html', 'hr-requests.html', 'hr-documents.html'
 ];
 const staff = member.concat(['access.html', 'admin.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);

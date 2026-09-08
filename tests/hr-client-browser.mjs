@@ -67,10 +67,23 @@ async function fixture(options = {}) {
     h.transport = async (name, data) => {
       const identity = h.implicit();
       h.calls.push({ name, data: structuredClone(data), identity, appCheckReady: h.appCheckReady });
-      const person = { uid: 'employee-' + identity.uid, full_name: 'Synthetic ' + identity.uid + ' ' + identity.stationId, state: 'draft', historical: false };
-      const result = { data: name === 'getHrMonthReports'
-        ? { month: data.month, items: [person], next_cursor: null }
-        : { ...person, uid: data.uid, month: data.month, employee_number: '1001', rows: [], warnings: [], stored_total_hours: 24, current_detail_total_hours: 24 } };
+      const person = { uid: 'employee-' + identity.uid, full_name: 'Synthetic ' + identity.uid + ' ' + identity.stationId, state: 'draft', historical: false, reminder_eligible: true };
+      h.nudgeActions ||= [];
+      const action = () => ({action_id:'a'.repeat(64),station_id:identity.stationId,month:data.month,audience:data.uid?'person':'station',status:'completed',reason:null,
+        counts:{scanned:1,queued:1,suppressed:0,skipped:0,invalid:0},created_at_ms:1800000000000,expires_at_ms:1800003600000,not_before_ms:null,
+        phase:data.uid?'person':'complete',discovery_scanned:0,delivery_status:'intent_only',audience_semantics:data.uid?'active_when_requested':'active_when_enqueue_page_scanned_with_completed_discovery_uid_upper_bound'});
+      let value;
+      if(name==='getHrMonthReports')value={month:data.month,items:[person],next_cursor:null};
+      else if(name==='getHrEmployeeReport')value={...person,uid:data.uid,month:data.month,employee_number:'1001',rows:[],warnings:[],stored_total_hours:24,current_detail_total_hours:24};
+      else if(name==='requestHrHoursNudge'){
+        let record=h.nudgeActions.find(r=>r.request_id===data.request_id);
+        if(!record){record={...action(),recipient_uid:data.uid||null,updated_at_ms:1800000000000,status_scope:'generation_only',actor:identity.uid,request_id:data.request_id};h.nudgeActions.push(record);}
+        // Producer result intentionally lacks the richer read-only status fields.
+        value=Object.fromEntries(Object.entries(record).filter(([key])=>!['recipient_uid','updated_at_ms','status_scope','actor','request_id'].includes(key)));
+      }else if(name==='listHrHoursNudges')value={month:data.month,items:h.nudgeActions.filter(r=>r.actor===identity.uid&&r.station_id===identity.stationId&&r.month===data.month),next_cursor:null};
+      else if(name==='getHrHoursNudgeStatus')value={action:h.nudgeActions.find(r=>r.action_id===data.action_id&&r.actor===identity.uid&&r.station_id===identity.stationId),items:[],next_cursor:null,outcomes_scope:'this_page_only'};
+      else throw new Error('Unexpected callable '+name);
+      const result={data:value};
       if (h.holdNext === name) {
         h.holdNext = null;
         return new Promise((resolve, reject) => h.heldCalls.push({ name, identity,
@@ -136,9 +149,10 @@ try {
   await check('HR list/detail use SDK region and implicit token station, never station data', async () => {
     const f = await fixture(); await openDetail(f.page);
     const state = await f.page.evaluate(() => ({ calls: __HR.calls, region: __HR.region, storage: [localStorage.length, sessionStorage.length], url: location.href }));
-    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 2);
-    assert.deepEqual(Object.keys(state.calls[0].data), ['month']);
-    assert.deepEqual(Object.keys(state.calls[1].data).sort(), ['month', 'uid']);
+    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 3);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthReports').data), ['month']);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrHoursNudges').data), ['month']);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrEmployeeReport').data).sort(), ['month', 'uid']);
     state.calls.forEach(c => assert.equal(c.identity.stationId, 'fixture_station'));
     assert.deepEqual(state.storage, [0, 0]); assert.equal(state.url, origin + '/hr.html'); await f.close();
   });
@@ -186,7 +200,7 @@ try {
     const f = await fixture(); await openDetail(f.page);
     await f.page.evaluate(code => { __HR.rejectNext = { name: 'getHrEmployeeReport', code }; }, code);
     await f.page.locator('.hr-person').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 3); await f.close();
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 4); await f.close();
   });
   await check('old permission denial cannot clear a newer valid session and report', async () => {
     const f = await fixture(); await person(f.page);
@@ -208,7 +222,7 @@ try {
       __HR.heldCalls.shift().resolve();
     });
     await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 2);
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 3);
     await f.page.evaluate(() => __HR.dispatch(__HR.auth.currentUser)); await person(f.page);
     assert.ok((await f.page.locator('.hr-person').innerText()).includes('second_station')); await f.close();
   });
@@ -219,6 +233,30 @@ try {
     await f.page.evaluate(() => { const u = __HR.auth.currentUser; u.hold = false; __HR.dispatch(u); }); await openDetail(f.page);
     await f.page.evaluate(() => __HR.errors.forEach(cb => cb(new Error('synthetic observer failure'))));
     await privateEmpty(f.page); await f.close();
+  });
+  await check('actual bootstrap routes all three nudge transports through implicit current identity with immutable timeout retry',async()=>{
+    const f=await fixture();await openDetail(f.page);
+    await f.page.evaluate(()=>{__HR.rejectNext={name:'requestHrHoursNudge',code:'functions/deadline-exceeded'};});
+    await f.page.locator('[data-hr="nudge-person"]').click();await f.page.locator('[data-hr="pending"]').waitFor({state:'visible'});
+    await f.page.locator('[data-hr="retry"]').click();await f.page.locator('.hr-action-summary').waitFor();
+    const calls=await f.page.evaluate(()=>__HR.calls),requests=calls.filter(c=>c.name==='requestHrHoursNudge');
+    assert.equal(requests.length,2);assert.deepEqual(requests[0].data,requests[1].data);assert.equal(requests[0].data.uid,'employee-actor-a');
+    assert.deepEqual(Object.keys(requests[0].data).sort(),['month','request_id','send_now','uid']);
+    assert.deepEqual(Object.keys(calls.find(c=>c.name==='getHrHoursNudgeStatus').data),['action_id']);
+    assert.ok(calls.some(c=>c.name==='listHrHoursNudges'));assert.ok(calls.every(c=>c.appCheckReady&&c.identity.uid==='actor-a'&&c.identity.stationId==='fixture_station'));
+    assert.equal(await f.page.evaluate(()=>__HR.nudgeActions.length),1);assert.deepEqual(await f.page.evaluate(()=>[localStorage.length,sessionStorage.length,location.search]),[0,0,'']);await f.close();
+  });
+  await check('current status permission denial clears registered reminders and report through the real client',async()=>{
+    const f=await fixture();await openDetail(f.page);await f.page.locator('[data-hr="nudge-person"]').click();await f.page.locator('.hr-action-summary').waitFor();
+    await f.page.evaluate(()=>{__HR.rejectNext={name:'getHrHoursNudgeStatus',code:'functions/permission-denied'};});await f.page.locator('[data-hr="status-refresh"]').click();
+    await privateEmpty(f.page);assert.equal(await f.page.locator('[data-action]').count(),0);assert.equal(await f.page.locator('.hr-action-summary').count(),0);
+    assert.equal(await f.page.locator('[data-hr="nudge-message"]').innerText(),'');await f.close();
+  });
+  await check('old mutation response cannot attach status to a changed SDK user before observer',async()=>{
+    const f=await fixture();await openDetail(f.page);await f.page.evaluate(()=>{__HR.holdNext='requestHrHoursNudge';});await f.page.locator('[data-hr="nudge-person"]').click();
+    await f.page.waitForFunction(()=>__HR.heldCalls.length===1);await f.page.evaluate(()=>{__HR.auth.currentUser=__HR.makeUser('actor-b',{role:'hr_coordinator',stationId:'second_station'});__HR.heldCalls.shift().resolve();});
+    await privateEmpty(f.page);assert.equal(await f.page.locator('[data-hr="nudge-message"]').innerText(),'');assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrHoursNudgeStatus').length),0);
+    await f.page.evaluate(()=>__HR.dispatch(__HR.auth.currentUser));await person(f.page,'actor-b');assert.equal(await f.page.locator('[data-action]').count(),0);await f.close();
   });
   assert.deepEqual(sourceHashes(), before, 'actual product sources remain unchanged during suite');
   console.log('SOURCE_HASHES ' + JSON.stringify(before));
