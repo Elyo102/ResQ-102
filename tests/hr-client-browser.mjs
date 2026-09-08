@@ -49,6 +49,8 @@ async function fixture(options = {}) {
   await context.addInitScript(config => {
     const h = window.__HR = { calls: [], heldCalls: [], heldClaims: [], events: [], observers: [], errors: [],
       claimStarted: 0, claimSettled: 0, observerSettled: 0, appCheckReady: false, holdNext: null, rejectNext: null };
+    h.now = Date.now(); Date.now = () => h.now;
+    h.detailVersion = 0; h.detailText = '';
     h.makeUser = (uid, claims, hold = false) => ({ uid, claims, hold,
       getIdTokenResult() {
         ++h.claimStarted;
@@ -68,13 +70,17 @@ async function fixture(options = {}) {
       const identity = h.implicit();
       h.calls.push({ name, data: structuredClone(data), identity, appCheckReady: h.appCheckReady });
       const person = { uid: 'employee-' + identity.uid, full_name: 'Synthetic ' + identity.uid + ' ' + identity.stationId, state: 'draft', historical: false, reminder_eligible: true };
+      const people = Array.from({length:config.peopleCount||1},(_,i)=>({...person,
+        uid:person.uid+(i?'-'+(i+1):''),full_name:person.full_name+(i?' person '+(i+1):'')}));
       h.nudgeActions ||= [];
       const action = () => ({action_id:'a'.repeat(64),station_id:identity.stationId,month:data.month,audience:data.uid?'person':'station',status:'completed',reason:null,
         counts:{scanned:1,queued:1,suppressed:0,skipped:0,invalid:0},created_at_ms:1800000000000,expires_at_ms:1800003600000,not_before_ms:null,
         phase:data.uid?'person':'complete',discovery_scanned:0,delivery_status:'intent_only',audience_semantics:data.uid?'active_when_requested':'active_when_enqueue_page_scanned_with_completed_discovery_uid_upper_bound'});
       let value;
-      if(name==='getHrMonthReports')value={month:data.month,items:[person],next_cursor:null};
-      else if(name==='getHrEmployeeReport')value={...person,uid:data.uid,month:data.month,employee_number:'1001',rows:[],warnings:[],stored_total_hours:24,current_detail_total_hours:24};
+      if(name==='getHrMonthReports')value={month:data.month,items:people,next_cursor:null};
+      else if(name==='getHrEmployeeReport')value={...(people.find(p=>p.uid===data.uid)||person),uid:data.uid,month:data.month,
+        full_name:(people.find(p=>p.uid===data.uid)||person).full_name+' v'+h.detailVersion,employee_number:'1001',
+        rows:h.detailText?[{date:data.month+'-01',notes:h.detailText,hours:24}]:[],warnings:[],stored_total_hours:24,current_detail_total_hours:24};
       else if(name==='requestHrHoursNudge'){
         let record=h.nudgeActions.find(r=>r.request_id===data.request_id);
         if(!record){record={...action(),recipient_uid:data.uid||null,updated_at_ms:1800000000000,status_scope:'generation_only',actor:identity.uid,request_id:data.request_id};h.nudgeActions.push(record);}
@@ -118,7 +124,13 @@ async function fixture(options = {}) {
     if (modules[url.pathname]) return route.fulfill({ contentType: 'text/javascript', body: modules[url.pathname] });
     const file = path.resolve(root, '.' + url.pathname);
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return route.fulfill({ status: 404, body: '' });
-    return route.fulfill({ contentType: file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(file) });
+    let body=fs.readFileSync(file);
+    if(options.exposeAdapter&&file===path.join(root,'hr-hours-ui.js')){
+      const text=body.toString('utf8'),entry='export function createHrHoursUI(root, adapter=disconnected) {';
+      assert.equal(text.split(entry).length,2,'single actual controller entry for read-only adapter capture');
+      body=text.replace(entry,entry+'\nwindow.__HR.adapter=adapter;');
+    }
+    return route.fulfill({ contentType: file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.css') ? 'text/css' : 'text/javascript', body });
   });
   const page = await context.newPage(); page.setDefaultTimeout(5000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -198,8 +210,9 @@ try {
   });
   for (const code of ['functions/permission-denied', 'functions/unauthenticated']) await check('current ' + code + ' erases previously rendered list and report', async () => {
     const f = await fixture(); await openDetail(f.page);
+    await f.page.locator('.hr-person').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
     await f.page.evaluate(code => { __HR.rejectNext = { name: 'getHrEmployeeReport', code }; }, code);
-    await f.page.locator('.hr-person').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
+    await f.page.locator('[data-hr="detail-fresh"]').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
     await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 4); await f.close();
   });
   await check('old permission denial cannot clear a newer valid session and report', async () => {
@@ -257,6 +270,115 @@ try {
     await f.page.waitForFunction(()=>__HR.heldCalls.length===1);await f.page.evaluate(()=>{__HR.auth.currentUser=__HR.makeUser('actor-b',{role:'hr_coordinator',stationId:'second_station'});__HR.heldCalls.shift().resolve();});
     await privateEmpty(f.page);assert.equal(await f.page.locator('[data-hr="nudge-message"]').innerText(),'');assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrHoursNudgeStatus').length),0);
     await f.page.evaluate(()=>__HR.dispatch(__HR.auth.currentUser));await person(f.page,'actor-b');assert.equal(await f.page.locator('[data-action]').count(),0);await f.close();
+  });
+  await check('real UI A to B to A saves a detail GET and cached view requires a separate fresh read before nudge',async()=>{
+    const f=await fixture({peopleCount:2});await openDetail(f.page);
+    await f.page.locator('[data-uid="employee-actor-a-2"]').click();await f.page.getByRole('heading',{name:/person 2 v0/}).waitFor();
+    await f.page.locator('[data-uid="employee-actor-a"]').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),2);
+    assert.ok((await f.page.locator('[data-hr="detail"]').innerText()).includes('תמונת מצב מזיכרון הדף בלבד'));
+    assert.ok((await f.page.locator('[data-hr="detail"]').innerText()).includes('זמן קריאה'));
+    assert.equal(await f.page.locator('[data-hr="nudge-person"]').count(),0);
+    await f.page.locator('[data-hr="detail-fresh"]').click();await f.page.locator('[data-hr="nudge-person"]').waitFor();
+    const beforeNudge=await f.page.evaluate(()=>__HR.calls);
+    assert.equal(beforeNudge.filter(c=>c.name==='getHrEmployeeReport').length,3);
+    assert.equal(beforeNudge.filter(c=>c.name==='requestHrHoursNudge').length,0,'fresh read is not a business mutation');
+    beforeNudge.filter(c=>c.name==='getHrEmployeeReport').forEach(c=>assert.deepEqual(Object.keys(c.data).sort(),['month','uid']));
+    await f.page.locator('[data-hr="nudge-person"]').click();await f.page.locator('.hr-action-summary').waitFor();
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='requestHrHoursNudge').length),1);await f.close();
+  });
+  await check('actual cache TTL is 30 seconds from server completion, never sliding, and clock rollback misses',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    const result=await f.page.evaluate(async()=>{
+      const h=__HR,a=h.adapter,data={month:'2026-09',uid:'employee-actor-a'};
+      h.holdNext='getHrEmployeeReport';const pending=a.getEmployeeMonth(data);h.now+=10000;h.heldCalls.shift().resolve();
+      const first=await pending;h.now+=29000;const hit=await a.getEmployeeMonth(data);h.now+=1000;const expired=await a.getEmployeeMonth(data);
+      h.now=first.freshness.fetched_at_ms-1;const reversed=await a.getEmployeeMonth(data);
+      return {first:first.freshness,hit:hit.freshness,expired:expired.freshness,reversed:reversed.freshness,calls:h.calls.filter(c=>c.name==='getHrEmployeeReport').length};
+    });
+    assert.equal(result.first.source,'server');assert.equal(result.first.expires_at_ms-result.first.fetched_at_ms,30000);
+    assert.equal(result.hit.source,'memory');assert.equal(result.hit.fetched_at_ms,result.first.fetched_at_ms);
+    assert.equal(result.expired.source,'server');assert.equal(result.reversed.source,'server');assert.equal(result.calls,3);await f.close();
+  });
+  await check('actual cache LRU is ten entries and UTF8 aggregate cap is 512 KiB without slicing',async()=>{
+    const f=await fixture({exposeAdapter:true,peopleCount:12});
+    const result=await f.page.evaluate(async()=>{
+      const h=__HR,a=h.adapter,read=i=>a.getEmployeeMonth({month:'2026-09',uid:'employee-actor-a'+(i?'-'+(i+1):'')});
+      for(let i=0;i<10;i++)await read(i);const touch=await read(0);await read(10);const kept=await read(0),evicted=await read(1);
+      const lruCalls=h.calls.filter(c=>c.name==='getHrEmployeeReport').length;
+      a.clearReportCache();h.detailText='א'.repeat(100000);const before=h.calls.length;
+      await read(0);await read(1);await read(2);const byteEvicted=await read(0),byteCalls=h.calls.length-before;
+      a.clearReportCache();h.detailText='א'.repeat(300000);const beforeBig=h.calls.length;
+      const big1=await read(0),big2=await read(0);
+      return {touch:touch.freshness.source,kept:kept.freshness.source,evicted:evicted.freshness.source,lruCalls,
+        byteEvicted:byteEvicted.freshness.source,byteCalls,bigCalls:h.calls.length-beforeBig,
+        bigSources:[big1.freshness.source,big2.freshness.source],bigLength:big2.report.rows[0].notes.length};
+    });
+    assert.deepEqual([result.touch,result.kept,result.evicted],['memory','memory','server']);assert.equal(result.lruCalls,12);
+    assert.equal(result.byteEvicted,'server');assert.equal(result.byteCalls,4);assert.equal(result.bigCalls,2);
+    assert.deepEqual(result.bigSources,['server','server']);assert.equal(result.bigLength,300000);await f.close();
+  });
+  await check('returned cache reports are independent clones and forceFresh is local-only',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    const result=await f.page.evaluate(async()=>{
+      const h=__HR,a=h.adapter,data={month:'2026-09',uid:'employee-actor-a'};h.detailText='original note';
+      const one=await a.getEmployeeMonth(data);one.report.full_name='MUTATED';one.report.rows[0].notes='MUTATED';
+      const two=await a.getEmployeeMonth(data);two.report.rows[0].notes='MUTATED_AGAIN';
+      const three=await a.getEmployeeMonth(data),fresh=await a.getEmployeeMonth(data,{forceFresh:true});
+      return {name:three.report.full_name,note:three.report.rows[0].notes,source:three.freshness.source,
+        fresh:fresh.freshness.source,calls:h.calls.filter(c=>c.name==='getHrEmployeeReport')};
+    });
+    assert.ok(!result.name.includes('MUTATED'));assert.equal(result.note,'original note');assert.equal(result.source,'memory');assert.equal(result.fresh,'server');
+    assert.equal(result.calls.length,2);result.calls.forEach(c=>assert.deepEqual(Object.keys(c.data).sort(),['month','uid']));await f.close();
+  });
+  await check('reversed same-key network completions cannot replace newer cached report',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    const result=await f.page.evaluate(async()=>{
+      const h=__HR,a=h.adapter,data={month:'2026-09',uid:'employee-actor-a'};
+      h.detailVersion=1;h.holdNext='getHrEmployeeReport';const old=a.getEmployeeMonth(data);
+      h.detailVersion=2;h.holdNext='getHrEmployeeReport';const latest=a.getEmployeeMonth(data);
+      h.heldCalls.pop().resolve();await latest;h.heldCalls.pop().resolve();await old;
+      const cached=await a.getEmployeeMonth(data);return {name:cached.report.full_name,source:cached.freshness.source,calls:h.calls.filter(c=>c.name==='getHrEmployeeReport').length};
+    });
+    assert.ok(result.name.endsWith('v2'));assert.equal(result.source,'memory');assert.equal(result.calls,2);await f.close();
+  });
+  await check('explicit cache clear blocks held GET repopulation and errors never become cached fallback',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    const result=await f.page.evaluate(async()=>{
+      const h=__HR,a=h.adapter,data={month:'2026-09',uid:'employee-actor-a'};
+      h.detailVersion=1;h.holdNext='getHrEmployeeReport';const old=a.getEmployeeMonth(data);a.clearReportCache();
+      h.detailVersion=2;await a.getEmployeeMonth(data);h.heldCalls.shift().resolve();await old;
+      const cached=await a.getEmployeeMonth(data);
+      h.rejectNext={name:'getHrEmployeeReport',code:'functions/unavailable'};let error;
+      try{await a.getEmployeeMonth(data,{forceFresh:true});}catch(e){error=e.code;}
+      const retry=await a.getEmployeeMonth(data);return {cached:cached.report.full_name,error,retry:retry.freshness.source,calls:h.calls.filter(c=>c.name==='getHrEmployeeReport').length};
+    });
+    assert.ok(result.cached.endsWith('v2'));assert.equal(result.error,'functions/unavailable');assert.equal(result.retry,'server');assert.equal(result.calls,4);await f.close();
+  });
+  await check('refresh month pagehide and same UID station changes invalidate actual memory entries',async()=>{
+    const f=await fixture({exposeAdapter:true});await openDetail(f.page);
+    await f.page.locator('.hr-person').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
+    await f.page.locator('[data-hr="refresh"]').click();await openDetail(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),2);
+    await f.page.locator('[data-hr="month"]').fill('2026-08');await openDetail(f.page);
+    await f.page.locator('[data-hr="month"]').fill('2026-09');await openDetail(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),4);
+    await f.page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await openDetail(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),5);
+    await f.page.evaluate(()=>{const h=__HR,u=h.auth.currentUser;u.claims={role:'hr_coordinator',stationId:'second_station'};h.dispatch(u);});await openDetail(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),6);
+    assert.ok((await f.page.locator('[data-hr="detail"] h2').innerText()).includes('second_station'));
+    assert.deepEqual(await f.page.evaluate(async()=>[localStorage.length,sessionStorage.length,(await caches.keys()).length,location.search]),[0,0,0,'']);await f.close();
+  });
+  await check('warm cache cannot bypass pre-observer SDK identity switch or logout/login reset',async()=>{
+    const f=await fixture({exposeAdapter:true});await openDetail(f.page);
+    await f.page.evaluate(()=>{__HR.auth.currentUser=__HR.makeUser('actor-a',{role:'hr_coordinator',stationId:'second_station'});});
+    await f.page.locator('.hr-person').click();await privateEmpty(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),1);
+    await f.page.evaluate(()=>__HR.dispatch(__HR.auth.currentUser));await openDetail(f.page);
+    await f.page.evaluate(()=>__HR.dispatch(null));await privateEmpty(f.page);
+    await f.page.evaluate(()=>__HR.dispatch(__HR.makeUser('actor-a',{role:'hr_coordinator',stationId:'second_station'})));await openDetail(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),3);await f.close();
   });
   assert.deepEqual(sourceHashes(), before, 'actual product sources remain unchanged during suite');
   console.log('SOURCE_HASHES ' + JSON.stringify(before));

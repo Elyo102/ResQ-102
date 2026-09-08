@@ -47,7 +47,7 @@ function sessionKey(adapter) {
 export function createHrHoursUI(root, adapter=disconnected) {
   const q = key => root.querySelector('[data-hr="'+key+'"]');
   let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false;
-  let loadedDetail=null, pending=null, busy=false, confirmation=null;
+  let loadedDetail=null, loadedFreshness=null, pending=null, busy=false, confirmation=null;
   let history=[], historyCursor=null, historyLoading=false, historyGeneration=0;
   let action=null, actionId=null, children=[], childCursor=null, statusLoading=false, statusGeneration=0;
   const locked=()=>busy||!!pending;
@@ -56,7 +56,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   const parts=new Intl.DateTimeFormat('en',{timeZone:'Asia/Jerusalem',year:'numeric',month:'2-digit'}).formatToParts(new Date());
   q('month').value=parts.find(p=>p.type==='year').value+'-'+parts.find(p=>p.type==='month').value;
   const message = value => { q('message').textContent=value; };
-  function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;q('detail').replaceChildren(el('p',value)); }
+  function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;loadedFreshness=null;q('detail').replaceChildren(el('p',value)); }
   function controls() {
     q('previous').disabled=!owner || locked() || selected<=0;
     q('next').disabled=!owner || locked() || loading || (selected>=items.length-1 && !cursor);
@@ -68,7 +68,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
     q('confirmation').hidden=!confirmation;q('actions-more').hidden=!historyCursor;q('actions-more').disabled=locked()||historyLoading;
     q('status-refresh').hidden=!actionId;q('status-refresh').disabled=locked()||statusLoading;
     q('children-more').hidden=!childCursor;q('children-more').disabled=locked()||statusLoading;
-    for(const button of root.querySelectorAll('.hr-person,.hr-action-list button,[data-hr="nudge-person"]'))button.disabled=!owner||locked();
+    for(const button of root.querySelectorAll('.hr-person,.hr-action-list button,[data-hr="nudge-person"],[data-hr="detail-fresh"]'))button.disabled=!owner||locked();
     q('position').textContent=selected<0?'':(selected+1)+' מתוך '+items.length+(cursor?' ומעלה':'');
     q('count').textContent=items.length ? items.length+' עובדים נטענו'+(cursor?' · יש נוספים':'') : '';
   }
@@ -148,7 +148,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   }
   function startNudge(target=null,confirmed=null) {
     if(!mayAct())return;
-    if(target&&!(target===loadedDetail&&target.month===q('month').value&&target.reminder_eligible===true&&target.historical===false&&['missing','draft'].includes(target.state)))return;
+    if(target&&!(target===loadedDetail&&loadedFreshness?.source==='server'&&target.month===q('month').value&&target.reminder_eligible===true&&target.historical===false&&['missing','draft'].includes(target.state)))return;
     const basis=confirmed?confirmed.data:{month:q('month').value,...(target?{uid:target.uid}:{}),send_now:q('send-now').checked};
     const data=Object.freeze({...basis,request_id:crypto.randomUUID(),send_now:confirmed?true:basis.send_now});
     pending=Object.freeze({data,key:owner,g:generation,name:confirmed?confirmed.name:target?.full_name||'כל התחנה'});
@@ -195,10 +195,17 @@ export function createHrHoursUI(root, adapter=disconnected) {
     }
     controls();
   }
-  function renderDetail(p) {
-    loadedDetail=p;
+  function renderDetail(p,freshness) {
+    loadedDetail=p;loadedFreshness=freshness;
     const detail=q('detail'); detail.replaceChildren(el('h2',p.full_name),el('span',labels[p.state]||labels.unavailable,'hr-tag'),
       el('p','מספר עובד '+p.employee_number+' · '+p.month+(p.crew?' · משמרת '+p.crew:''),'hr-meta'));
+    detail.append(el('p',(freshness.source==='memory'?'תמונת מצב מזיכרון הדף בלבד':'נקרא מהשרת')+' · זמן קריאה: '+stamp(freshness.fetched_at_ms)+'. ייתכן שהנתונים השתנו מאז.','hr-meta'));
+    if(freshness.source==='memory'){
+      detail.append(el('p','לפני בקשת תזכורת אישית יש לבדוק את הדוח מחדש מול השרת. הבדיקה אינה שולחת תזכורת.','hr-notice'));
+      const fresh=el('button','בדיקת דוח עדכני מהשרת');fresh.type='button';fresh.dataset.hr='detail-fresh';
+      const g=generation,key=owner,d=detailGeneration,index=selected;
+      fresh.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration&&mayAct())void select(index,true);});detail.append(fresh);
+    }
     if(p.historical)detail.append(el('p','דוח היסטורי של עובד שאינו פעיל בתחנה.','hr-notice'));
     const totals=el('div',null,'hr-totals');
     for(const [title,value] of [['סך שעות בדוח השמור',p.stored_total_hours],['סך שעות בפירוט הנוכחי',p.current_detail_total_hours]]) {
@@ -206,7 +213,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
     }
     detail.append(totals,el('p','הפירוט מציג את רשומות הנוכחות הנוכחיות. אם תוקנו מאז אישור הדוח, ההבדל בסכומים מוצג כאן.','hr-meta'));
     for(const warning of p.warnings||[])detail.append(el('p',warnings[warning]||'יש נתונים בדוח הדורשים בדיקה.','hr-notice'));
-    if(p.reminder_eligible===true&&p.historical===false&&['missing','draft'].includes(p.state)){
+    if(freshness.source==='server'&&p.reminder_eligible===true&&p.historical===false&&['missing','draft'].includes(p.state)){
       const button=el('button',p.state==='missing'?'בקשת תזכורת להגשת הדוח':'בקשת תזכורת לאישור הדוח');button.type='button';button.dataset.hr='nudge-person';
       const g=generation,key=owner,d=detailGeneration;
       button.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration)startNudge(p);});detail.append(button);controls();
@@ -231,7 +238,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
     }
     table.append(body);wrap.append(table);detail.append(wrap);
   }
-  async function select(index) {
+  async function select(index,forceFresh=false) {
     const g=generation,key=owner;if(!alive(g,key)||locked()||!items[index])return;
     q('send-now').checked=false;
     selected=index;const d=++detailGeneration,p=items[index];
@@ -240,10 +247,12 @@ export function createHrHoursUI(root, adapter=disconnected) {
     if(p.state==='unavailable'){clearDetail('נתוני העובד דורשים בדיקה. אפשר להמשיך לדוח הבא.');return;}
     const month=q('month').value;
     try {
-      const value=await adapter.getEmployeeMonth({month,uid:p.uid});
+      const result=await adapter.getEmployeeMonth({month,uid:p.uid},{forceFresh});
       if(!alive(g,key)||d!==detailGeneration)return;
+      const value=result?.report,freshness=result?.freshness;
       if(!value || value.uid!==p.uid || value.month!==month || !Array.isArray(value.rows))throw new Error('invalid response');
-      renderDetail(value);
+      if(!freshness||!['server','memory'].includes(freshness.source)||!time(freshness.fetched_at_ms)||!time(freshness.expires_at_ms)||freshness.expires_at_ms<=freshness.fetched_at_ms||(forceFresh&&freshness.source!=='server'))throw new Error('invalid freshness');
+      renderDetail(value,freshness);controls();
     }catch(e){if(alive(g,key)&&d===detailGeneration)clearDetail('לא ניתן לטעון את הדוח כרגע. רעננו או עברו לדוח הבא.');}
   }
   async function loadPage(append=false, selectNew=false) {
@@ -263,11 +272,13 @@ export function createHrHoursUI(root, adapter=disconnected) {
   function refresh() {
     if(sessionKey(adapter)!==owner){resetIdentity();return;}
     if(locked()){q('month').value=pending.data.month;return;}
+    adapter.clearReportCache?.();
     ++generation;++detailGeneration;items=[];cursor=null;selected=-1;loading=false;renderPeople();clearDetail();
     confirmation=null;q('send-now').checked=false;q('confirmation-text').textContent='';q('nudge-message').textContent='';resetStatus();controls();
     if(owner){void loadPage();void loadHistory();}
   }
   function resetIdentity() {
+    adapter.clearReportCache?.();
     owner=sessionKey(adapter);++generation;++detailGeneration;items=[];cursor=null;selected=-1;loading=false;
     resetActions();
     renderPeople();clearDetail(owner?'בחרו עובד לצפייה בדוח.':'נדרש חיבור עם הרשאת משאבי אנוש.');
@@ -284,7 +295,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   for(const [name,fn] of bindings)q(name).addEventListener('click',fn);
   const beforeUnload=e=>{if(locked()){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',beforeUnload);
   const unsubscribe=adapter.subscribeIdentity(resetIdentity);resetIdentity();
-  return { refresh, destroy(){disposed=true;owner=null;++generation;++detailGeneration;unsubscribe();resetActions();controls();q('people').replaceChildren();clearDetail('המסך נסגר.');root.removeEventListener('keydown',keydown);
+  return { refresh, destroy(){disposed=true;owner=null;++generation;++detailGeneration;unsubscribe();adapter.clearReportCache?.();resetActions();controls();q('people').replaceChildren();clearDetail('המסך נסגר.');root.removeEventListener('keydown',keydown);
     for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
     q('month').removeEventListener('change',refresh);q('refresh').removeEventListener('click',refresh);q('next').removeEventListener('click',next);q('previous').removeEventListener('click',previous);q('more').removeEventListener('click',more);} };
 }

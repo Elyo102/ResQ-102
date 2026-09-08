@@ -18,7 +18,13 @@ const listeners = new Set();
 let epoch = 0;
 let user = null;
 let session = null;
-function notify() { for (const listener of listeners) listener(); }
+const REPORT_TTL_MS = 30000, REPORT_CACHE_ENTRIES = 10, REPORT_CACHE_BYTES = 512 * 1024;
+const reportCache = new Map(), latestReportFetch = new Map();
+let cacheOwner = null, cacheGeneration = 0, fetchSequence = 0, cacheBytes = 0;
+function clearReportCache() {
+  ++cacheGeneration; reportCache.clear(); latestReportFetch.clear(); cacheBytes = 0; cacheOwner = null;
+}
+function notify() { clearReportCache(); for (const listener of listeners) listener(); }
 function currentSession() {
   return user && auth.currentUser === user ? session : null;
 }
@@ -46,11 +52,48 @@ async function call(transport, data) {
     throw error;
   }
 }
+function removeReport(key) {
+  const entry = reportCache.get(key);
+  if (entry) { cacheBytes -= entry.bytes; reportCache.delete(key); }
+}
+async function getEmployeeMonth(data, { forceFresh = false } = {}) {
+  const origin = currentSession(), originUser = user;
+  if (!origin) { clearReportCache(); throw denied(); }
+  if (cacheOwner !== origin || forceFresh) { clearReportCache(); cacheOwner = origin; }
+  const key = JSON.stringify([origin.stationId, data.month, data.uid]), at = Date.now();
+  // TTL is a reuse deadline, not a promise to discover remote revocation or
+  // remove a report already rendered on screen. No stale/offline fallback.
+  for (const [id, entry] of reportCache) if (at < entry.fetchedAt || at >= entry.expiresAt) removeReport(id);
+  const cached = reportCache.get(key);
+  if (cached) {
+    if (currentSession() !== origin || user !== originUser) { clearReportCache(); throw denied(); }
+    reportCache.delete(key); reportCache.set(key, cached); // LRU only; never extend TTL.
+    return { report: structuredClone(cached.report), freshness: { source: 'memory', fetched_at_ms: cached.fetchedAt, expires_at_ms: cached.expiresAt } };
+  }
+  const generation = cacheGeneration, sequence = ++fetchSequence;
+  latestReportFetch.set(key, sequence);
+  try {
+    const report = await call(detail, data), fetchedAt = Date.now(), expiresAt = fetchedAt + REPORT_TTL_MS;
+    if (!report || report.uid !== data.uid || report.month !== data.month || !Array.isArray(report.rows) || report.rows.length > 31) throw new Error('Invalid report response.');
+    const bytes = new TextEncoder().encode(JSON.stringify(report)).byteLength;
+    if (currentSession() !== origin || user !== originUser) throw denied();
+    if (generation === cacheGeneration && cacheOwner === origin && latestReportFetch.get(key) === sequence && bytes <= REPORT_CACHE_BYTES) {
+      removeReport(key);
+      reportCache.set(key, { report: structuredClone(report), bytes, fetchedAt, expiresAt }); cacheBytes += bytes;
+      while (reportCache.size > REPORT_CACHE_ENTRIES || cacheBytes > REPORT_CACHE_BYTES) removeReport(reportCache.keys().next().value);
+    }
+    return { report: structuredClone(report), freshness: { source: 'server', fetched_at_ms: fetchedAt, expires_at_ms: expiresAt } };
+  } finally {
+    if (generation === cacheGeneration && latestReportFetch.get(key) === sequence) latestReportFetch.delete(key);
+  }
+}
+window.addEventListener('pagehide', clearReportCache);
 createHrHoursUI(document.getElementById('hr-workspace'), {
   currentSession,
   subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   listMonth(data) { return call(list, data); },
-  getEmployeeMonth(data) { return call(detail, data); },
+  getEmployeeMonth,
+  clearReportCache,
   requestNudge(data) { return call(nudge, data); },
   getNudgeStatus(data) { return call(nudgeStatus, data); },
   listNudges(data) { return call(nudges, data); }

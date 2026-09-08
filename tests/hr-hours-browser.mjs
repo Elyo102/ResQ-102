@@ -37,13 +37,15 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
         if(window.__holdLists)return new Promise(resolve=>window.__held.push({kind:'list',resolve:()=>resolve(result)}));
         return result;
       },
-      getEmployeeMonth:async data=>{
-        window.__calls.push({name:'detail',data});
+      clearReportCache:()=>{window.__cacheClears=(window.__cacheClears||0)+1;},
+      getEmployeeMonth:async (data,options={})=>{
+        window.__calls.push({name:'detail',data,options});
         const person=window.__people.find(p=>p.uid===data.uid);
         const result={...person,month:data.month,employee_number:'1001',crew:'A',stored_total_hours:24,current_detail_total_hours:22,
           warnings:['reported-total-differs'],rows:window.__emptyRows?[]:[{date:data.month+'-01',day_type_he:'רגיל',start:'08:00',end:'08:00',end_day:1,start2:'18:00',end2:'22:00',site_name:'אילת',notes:'הערה נפרדת',reason:'סיבה ישנה',overtime_reason:'נשארתי באירוע',hours:22}]};
-        if(window.__holdDetails)return new Promise(resolve=>window.__held.push({kind:'detail',resolve:()=>resolve(result)}));
-        return result;
+        const fetched=Date.now(),envelope={report:result,freshness:{source:window.__memoryDetail&&!options.forceFresh?'memory':'server',fetched_at_ms:fetched,expires_at_ms:fetched+30000}};
+        if(window.__holdDetails)return new Promise(resolve=>window.__held.push({kind:'detail',resolve:()=>resolve(envelope)}));
+        return envelope;
       },
       requestNudge:async data=>{
         __calls.push({name:'request',data:structuredClone(data)});
@@ -173,6 +175,41 @@ try {
     await f.page.locator('[data-hr="nudge-person"]').click();await f.page.waitForFunction(()=>__registered.length===1&&document.querySelector('[data-hr="nudge-message"]').textContent.includes('נרשמה'));
     const data=await f.page.evaluate(()=>__registered[0].data);assert.equal(data.uid,'u1');assert.equal(data.send_now,false);assert.deepEqual(Object.keys(data).sort(),['month','request_id','send_now','uid']);
     assert.equal(await f.page.locator('[data-hr="pending"]').isHidden(),true);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('memory snapshot has no personal mutation; fresh check is explicit and never sends automatically',async()=>{
+    const f=await fixture();await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="nudge-person"]').waitFor();
+    await f.page.evaluate(()=>{__savedNudge=document.querySelector('[data-hr="nudge-person"]');__memoryDetail=true;});
+    await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
+    const text=await f.page.locator('[data-hr="detail"]').innerText();assert.ok(text.includes('תמונת מצב מזיכרון הדף בלבד'));assert.ok(text.includes('זמן קריאה'));assert.ok(text.includes('ייתכן שהנתונים השתנו'));
+    assert.equal(await f.page.locator('[data-hr="nudge-person"]').count(),0);
+    await f.page.evaluate(()=>__savedNudge.click());assert.equal(await f.page.evaluate(()=>__registered.length),0);
+    await f.page.locator('[data-hr="detail-fresh"]').click();await f.page.locator('[data-hr="nudge-person"]').waitFor();
+    assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail').at(-1).options.forceFresh),true);
+    assert.equal(await f.page.evaluate(()=>__registered.length),0);await f.page.locator('[data-hr="nudge-person"]').click();
+    await f.page.waitForFunction(()=>__registered.length===1);assert.equal(await f.page.evaluate(()=>__registered[0].data.uid),'u1');await f.context.close();
+  });
+  await check('fresh response that is no longer outstanding removes cached nudge eligibility',async()=>{
+    const f=await fixture();await f.page.evaluate(()=>{__memoryDetail=true;});await f.page.locator('[data-uid="u1"]').click();
+    await f.page.locator('[data-hr="detail-fresh"]').waitFor();await f.page.evaluate(()=>{__people[0].state='approved';__people[0].reminder_eligible=false;});
+    await f.page.locator('[data-hr="detail-fresh"]').click();await f.page.locator('[data-hr="detail"] .hr-tag').getByText('מאושר',{exact:true}).waitFor();
+    assert.equal(await f.page.locator('[data-hr="nudge-person"]').count(),0);assert.equal(await f.page.evaluate(()=>__registered.length),0);await f.context.close();
+  });
+  await check('malformed freshness or forceFresh returning memory fails closed without private fallback',async()=>{
+    const f=await fixture();await f.page.evaluate(()=>{__memoryDetail=true;});await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
+    await f.page.evaluate(()=>{const original=__adapter.getEmployeeMonth;__adapter.getEmployeeMonth=async(data,options)=>{const value=await original(data,options);value.freshness.source='memory';return value;};});
+    await f.page.locator('[data-hr="detail-fresh"]').click();await f.page.getByText('לא ניתן לטעון את הדוח כרגע. רעננו או עברו לדוח הבא.').waitFor();
+    assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);assert.equal(await f.page.locator('[data-hr="nudge-person"]').count(),0);
+    await f.page.evaluate(()=>{const original=__adapter.getEmployeeMonth;__adapter.getEmployeeMonth=async(data,options)=>{const value=await original(data,options);value.freshness.expires_at_ms=value.freshness.fetched_at_ms;return value;};});
+    await f.page.locator('[data-uid="u1"]').click();await f.page.getByText('לא ניתן לטעון את הדוח כרגע. רעננו או עברו לדוח הבא.').waitFor();
+    assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);assert.equal(await f.page.evaluate(()=>__registered.length),0);await f.context.close();
+  });
+  await check('UI refresh month identity and destruction explicitly invalidate adapter detail memory',async()=>{
+    const f=await fixture();const initial=await f.page.evaluate(()=>__cacheClears);
+    await f.page.locator('[data-hr="refresh"]').click();assert.equal(await f.page.evaluate(()=>__cacheClears),initial+1);
+    await f.page.locator('[data-hr="month"]').fill('2025-08');assert.equal(await f.page.evaluate(()=>__cacheClears),initial+2);
+    await f.page.evaluate(()=>{__session={...__session,epoch:2};__emit();});assert.equal(await f.page.evaluate(()=>__cacheClears),initial+3);
+    await f.page.evaluate(()=>__UI.destroy());assert.equal(await f.page.evaluate(()=>__cacheClears),initial+4);
+    assert.equal(await f.page.locator('.hr-person').count(),0);assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);await f.context.close();
   });
   await check('ineligible states and historical reports never gain personal actions from a true summary flag',async()=>{
     const f=await fixture();
