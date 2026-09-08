@@ -33,6 +33,7 @@ const stationTransferModule = require('./station-transfer');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
 const hrHoursModule = require('./hr-hours-service');
+const hrRequestsModule = require('./hr-requests');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -128,6 +129,14 @@ const feedback = feedbackModule.createFeedback(opsDependencies);
 const hrHours = hrHoursModule.createHrHoursService({ db, HttpsError });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
+const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
+exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
+exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));
+exports.listHrRequestsInbox = onCall({ enforceAppCheck: true }, async (req) => hrRequests.listInbox(req));
+exports.getHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.get(req));
+exports.replyHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.reply(req));
+exports.setHrRequestStatus = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setStatus(req));
+exports.nudgeHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.nudge(req));
 // New station-scoped submissions. Ordinary users are re-authorized against the
 // live station profile; a verified super claim may submit without a member
 // profile. Both modules keep the same station scope and idempotent transaction.

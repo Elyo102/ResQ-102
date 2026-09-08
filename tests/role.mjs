@@ -113,6 +113,11 @@ const EXPECT = {
                  forms:{ work:false, appr:false }, stats:false }
 };
 
+// The personal HR inbox is available to station members, not pending users.
+for (const role of ['super', 'firefighter', 'commander', 'hr', 'deputy', 'stcmd']) {
+  EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('נוכחות') + 1, 0, 'פנייה למשאבי אנוש');
+}
+
 const b = await chromium.launch();
 let bad = 0;
 

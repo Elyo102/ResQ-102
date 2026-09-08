@@ -5,6 +5,7 @@
 // cannot be smuggled through a field that merely passes a regular expression.
 const KINDS = Object.freeze(['client-error', 'unhandled-rejection', 'callable-failed', 'manual']);
 const SCREENS = Object.freeze([
+  'hr.html', 'hr-requests.html',
   'unknown', 'index.html', 'import.html', 'guards.html', 'vehicle.html',
   'unlock.html', 'attendance.html', 'schedule-management.html', 'attendance-shadow.html',
   'alerts.html', 'admin.html', 'access.html', 'faults.html', 'check.html', 'board.html',
@@ -47,6 +48,8 @@ const CALLABLES = Object.freeze([
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport',
+  'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
+  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest',
   'whoAmI'
 ]);
 const INPUT_FIELDS = Object.freeze(['kind', 'screen', 'version', 'code', 'callable']);

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ResQ — פניות למשאבי אנוש</title>
+<link rel="icon" href="./favicon.ico">
+<link rel="stylesheet" href="./theme.css?v=42h6">
+<link rel="stylesheet" href="./hr-requests-ui.css?v=42h6">
+</head>
+<body>
+<main id="hr-requests" class="requests">
+  <header class="requests-heading"><div><p class="eyebrow">ResQ · משאבי אנוש</p><h1>פניות למשאבי אנוש</h1><p>שיחה פרטית עם משאבי אנוש, והטיפול בפנייה במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
+  <p data-r="message" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
+  <p data-r="login">לצפייה בפניות נדרש חיבור כעובד תחנה פעיל. <a href="./login.html">כניסה לרסקיו</a></p>
+  <section data-r="workspace" hidden>
+    <nav class="requests-toolbar" aria-label="בחירת תצוגת פניות"><button data-r="mine" type="button" aria-pressed="true">הפניות שלי</button><button data-r="inbox" type="button" hidden aria-pressed="false">תיבת משאבי אנוש</button><button data-r="refresh" type="button">רענון</button><button data-r="new" type="button">פנייה חדשה</button></nav>
+    <p class="requests-note">הפניות זמינות לעובד שפתח אותן ולמשאבי אנוש המורשים בתחנה. לאחר מעבר תחנה או הפסקת פעילות, יש לפנות למשאבי אנוש בתחנה הקודמת.</p>
+    <div class="requests-layout">
+      <aside class="requests-card"><h2 data-r="list-title">הפניות שלי</h2><div data-r="list" class="requests-list"></div><button data-r="more" type="button" hidden>טעינת פניות נוספות</button></aside>
+      <section class="requests-card" aria-label="תוכן הפנייה">
+        <form data-r="create" hidden><h2>פנייה חדשה</h2><label>נושא <input data-r="subject" maxlength="80" required autocomplete="off"></label><label>תוכן הפנייה <textarea data-r="body" maxlength="1000" rows="6" required autocomplete="off"></textarea></label><p class="requests-note">עד 80 תווים בנושא ועד 1,000 תווים בתוכן. הטיוטה נשמרת רק במסך הנוכחי ונמחקת ביציאה או ברענון הדף.</p><button data-r="save" type="submit">שמירת הפנייה</button></form>
+        <div data-r="detail"><p>בחרו פנייה או פתחו פנייה חדשה.</p></div>
+        <button data-r="events-more" type="button" hidden>טעינת המשך השיחה</button>
+        <form data-r="reply-form" hidden><label>הוספת תגובה <textarea data-r="reply" maxlength="1000" rows="4" required autocomplete="off"></textarea></label><button data-r="reply-save" type="submit">שמירת התגובה</button></form>
+        <div data-r="actions" class="requests-actions" hidden><label data-r="status-label" hidden>מצב טיפול <select data-r="status"><option value="open">פתוחה</option><option value="in_progress">בטיפול</option><option value="waiting_employee">ממתינה לעובד</option><option value="closed">סגורה</option></select></label><button data-r="status-save" type="button" hidden>עדכון מצב</button><button data-r="nudge" type="button" hidden>בקשת תזכורת לטיפול</button></div>
+        <div data-r="notification" class="requests-note" hidden><p>בין 22:00 ל־07:00 לפי שעון ישראל, ההתראה מיועדת לבוקר. אפשר לשמור פנייה או תגובה גם בלילה. תזכורת בלילה דורשת בחירה מפורשת. מצב שקט של המערכת עשוי למנוע התראה.</p><label class="requests-check"><input data-r="send-now" type="checkbox">לבקש התראה כעת גם בשעות הלילה, לפעולה הקרובה בלבד</label><p>שמירה אינה אישור שנשלחה או התקבלה התראה.</p></div>
+        <div data-r="pending" class="requests-note" hidden><p>לא ניתן לקבוע אם הפעולה נשמרה. ניסיון חוזר ישתמש באותה בקשה בדיוק. יש לברר את התוצאה לפני פעולה אחרת. סגירת הדף אינה מבטלת פעולה שאולי נשמרה, ומוחקת את פרטי הניסיון החוזר מהמכשיר.</p><button data-r="retry" type="button">ניסיון חוזר של אותה בקשה</button></div>
+      </section>
+    </div>
+  </section>
+</main>
+<script type="module" src="./hr-requests-client.js?v=42h6"></script>
+</body>
+</html>

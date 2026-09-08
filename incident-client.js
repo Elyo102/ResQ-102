@@ -5,6 +5,7 @@ export const TELEMETRY_KINDS = Object.freeze([
   'client-error', 'unhandled-rejection', 'callable-failed', 'manual'
 ]);
 export const TELEMETRY_SCREENS = Object.freeze([
+  'hr.html', 'hr-requests.html',
   'unknown', 'access.html', 'admin.html', 'alerts.html', 'attendance-shadow.html',
   'attendance.html', 'board.html', 'check.html', 'faults.html', 'feedback.html',
   'forms.html', 'guards.html', 'import.html', 'index.html', 'login.html',
@@ -47,6 +48,8 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport',
+  'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
+  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest',
   'whoAmI'
 ]);
 
