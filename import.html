@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — כלי מנהל</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1000px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:11px 18px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:12px; width:auto }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
+  th{ text-align:right; color:var(--muted); font-weight:600; font-size:11.5px;
+      padding:8px 6px; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:9px 6px; border-bottom:1px solid var(--line-soft) }
+  tr:last-child td{ border-bottom:0 }
+  .scroll{ overflow-x:auto }
+  .nm{ font-weight:600; white-space:nowrap }
+  .em{ color:var(--muted); font-size:12.5px; direction:ltr; unicode-bidi:isolate;
+       display:inline-block }
+  .mono{ font-family:Consolas,monospace; font-variant-numeric:tabular-nums }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px; padding:2px 10px;
+        white-space:nowrap; border:1px solid var(--line); color:var(--muted) }
+  .tag.cmd{ border-color:var(--accent); color:var(--accent) }
+  .tag.hr{ border-color:var(--pick); color:var(--pick) }
+  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 7px;
+       color:var(--on-accent) }
+  .cw.A{ background:var(--crewA) }
+  .cw.B{ background:var(--crewB); color:var(--crewB-on) }
+  .cw.C{ background:var(--crewC) }
+
+  .st{ font-size:11.5px; font-weight:700; white-space:nowrap }
+  .st.created{ color:var(--good) }
+  .st.updated{ color:var(--crewC) }
+  .st.failed{ color:var(--bad) }
+
+  .warn{ border:1px solid var(--warn); background:var(--warn-bg);
+         border-radius:10px; padding:14px 16px; margin-top:12px;
+         font-size:13.5px; line-height:1.75; color:var(--dim) }
+  .warn b{ color:var(--txt) }
+
+  .sw{ display:flex; align-items:center; gap:12px; padding:14px;
+       border:1px solid var(--line); border-radius:10px; background:var(--panel);
+       margin-top:10px }
+  .sw .lbl{ flex:1 }
+  .sw .lbl .t{ font-size:15px; font-weight:700 }
+  .sw .lbl .s{ font-size:12.5px; color:var(--muted); margin-top:3px;
+               line-height:1.6 }
+  .sw .state{ font-size:12px; font-weight:700; white-space:nowrap }
+  .sw .state.on{ color:var(--warn) }
+  .sw .state.off{ color:var(--good) }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+
+  /* ---------- המתג ----------
+     מתג פיזי ולא זוג כפתורים: "הפעל / כבה" מכריח לקרוא שתי
+     תוויות ולהסיק מהן מה המצב הנוכחי. מתג מראה את המצב
+     בצורתו, ולחיצה אחת הופכת אותו. */
+  .master{ display:flex; align-items:center; gap:18px; padding:20px;
+           border:2px solid var(--line); border-radius:14px;
+           background:var(--panel); margin-top:12px; flex-wrap:wrap }
+  .master.trial{ border-color:var(--warn) }
+  .master.live{ border-color:var(--go) }
+
+  .knob{ width:96px; height:50px; border-radius:99px; flex:none;
+         border:2px solid var(--line); background:var(--track);
+         position:relative; cursor:pointer; padding:0;
+         transition:background .18s ease, border-color .18s ease }
+  .knob::after{ content:""; position:absolute; top:3px;
+        inset-inline-start:3px; width:40px; height:40px; border-radius:50%;
+        background:var(--card); box-shadow:0 2px 8px rgba(0,0,0,.35);
+        transition:inset-inline-start .18s ease }
+  .master.live .knob{ background:var(--go); border-color:var(--go) }
+  .master.live .knob::after{ inset-inline-start:49px }
+  .knob:focus-visible{ outline:3px solid var(--accent); outline-offset:3px }
+  .knob:disabled{ opacity:.5; cursor:wait }
+
+  .master .txt{ flex:1 1 240px }
+  .master .txt .big{ font-size:21px; font-weight:800; line-height:1.2 }
+  .master.trial .txt .big{ color:var(--warn) }
+  .master.live  .txt .big{ color:var(--go) }
+  .master .txt .s{ font-size:13.5px; color:var(--muted); margin-top:5px;
+                   line-height:1.7 }
+
+  .ready{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px }
+  .ready div{ flex:1 1 120px; background:var(--card);
+              border:1px solid var(--line); border-radius:9px;
+              padding:11px; text-align:center }
+  .ready .v{ font-size:22px; font-weight:800;
+             font-variant-numeric:tabular-nums }
+  .ready .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+
+  .sum{ display:flex; gap:12px; flex-wrap:wrap; margin-top:12px }
+  /* סיכום הייבוא הוא טקסט זורם ולא אריחים: הוא מונה חודשים,
+     אנשים ושורות פגומות, ואריח לכל אחד מהם היה דורש גלילה
+     אופקית בטלפון. */
+  .longsum{ margin-top:14px; background:var(--panel); border:1px solid var(--line);
+            border-radius:9px; padding:13px; font-size:13px; line-height:1.9;
+            max-height:420px; overflow-y:auto }
+  .longsum .s{ color:var(--muted); font-size:12px }
+  .sum div{ flex:1 1 110px; background:var(--panel); border:1px solid var(--line);
+            border-radius:9px; padding:12px; text-align:center }
+  .sum .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
+  .sum .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+</style>
+</head>
+<body>
+<div id="errBar"></div>
+<div class="wrap">
+
+  <div id="denyCard" class="card hide">
+    <h2>אין הרשאה</h2>
+    <div class="note" id="denyWho"></div>
+    <div class="note">מסך הקליטה פתוח למנהל-על בלבד.</div>
+  </div>
+
+  <div id="work" class="hide">
+    <h1>כלי מנהל</h1>
+    <div class="sub">מצב המערכת וייבוא היסטוריית שעות</div>
+
+    <!-- ============ המתג ============ -->
+    <div class="card">
+      <h2>מצב המערכת</h2>
+      <div class="note">
+        מתג אחד. במצב ניסוי שום התראה ושום מייל לא יוצאים לאף אחד
+        חוץ ממך, וכל חסימה נרשמת. במצב חי הכל עובד כרגיל.
+      </div>
+
+      <div class="master trial" id="master">
+        <button class="knob" id="knob" role="switch"
+                aria-checked="false" aria-label="מצב המערכת"></button>
+        <div class="txt">
+          <div class="big" id="mState">בודק…</div>
+          <div class="s" id="mNote">—</div>
+        </div>
+      </div>
+
+      <div class="ready" id="ready"></div>
+      <div class="msg" id="swMsg"></div>
+    </div>
+
+    <!-- ============ היסטוריית שעות ============ -->
+    <div class="card">
+      <h2>ייבוא היסטוריית שעות מ-Shift-eilat</h2>
+      <div class="note">
+        פעולה חד-פעמית. בלעדיה, ביום המעבר ההיסטוריה נשארת
+        בגיליון — וכבאי שרוצה לראות כמה עבד במרץ פותח מערכת
+        שנייה. שתי מערכות במקביל זו לא תקופת מעבר.
+      </div>
+
+      <div class="warn" style="margin-top:12px">
+        <b>איך מפיקים את הקובץ:</b> ב-Shift-eilat, בתפריט
+        <b>פקודות</b>, הרץ <b>M170 — ייצוא היסטוריה לרסקיו</b>.
+        הוא שולח אליך קובץ CSV במייל. פתח אותו, סמן הכל, העתק,
+        והדבק כאן.
+      </div>
+
+      <label for="hPaste" style="display:block;font-size:12.5px;
+            color:var(--muted);margin:16px 0 4px">
+        הדבק כאן את תוכן הקובץ
+      </label>
+      <textarea id="hPaste" rows="6" spellcheck="false"
+        placeholder="שם,מספר עובד,משמרת,תאריך,סוג יום,כניסה,יציאה,..."
+        style="width:100%;padding:11px;background:var(--input);color:var(--txt);
+               border:1px solid var(--line);border-radius:7px;font-size:13px;
+               font-family:Consolas,monospace;direction:ltr;resize:vertical"></textarea>
+
+      <div class="row">
+        <button class="btn" id="hDry">בדיקה יבשה — בלי לכתוב כלום</button>
+        <button class="btn ok" id="hRun" disabled>כתוב למערכת</button>
+      </div>
+      <div class="note" style="margin-top:6px">
+        כפתור הכתיבה נפתח רק אחרי בדיקה יבשה נקייה. ייבוא של
+        אלפי רשומות שמתברר כשגוי אחרי הכתיבה הוא לא "נסה שוב" —
+        הוא ניקוי ידני של אוסף שלם.
+      </div>
+      <div class="msg" id="hMsg"></div>
+      <div class="longsum hide" id="hSum"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+import { getFirestore, collection, doc, getDocs, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { dryRun } from './histimport.js?v=42h7';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;');
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const fns  = getFunctions(app, 'europe-west1');
+
+let ME = { uid:'', email:'' };
+
+window.addEventListener('error', function (e) {
+  const b = $('errBar');
+  b.innerHTML = '<span class="xx" onclick="this.parentNode.style.display=\'none\'">×</span>' +
+    '<b>שגיאה במסך</b><code>' + esc(e.message || '') + '</code>';
+  b.style.display = 'block';
+});
+
+function msg(t, cls, id){
+  const m = $(id); m.textContent = t; m.className = 'msg ' + (cls || 'info');
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=import.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  const isSuper = c.super === true;
+
+  ME = { uid: user.uid, email: String(user.email || '').toLowerCase() };
+
+  if (!isSuper) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  $('work').classList.remove('hide');
+  renderNav(c, 'import.html', user.email || '');
+  await loadSilent();
+});
+
+// ---------- מצב שקט ----------
+
+async function loadSilent(){
+  try {
+    const r = await httpsCallable(fns, 'getSilentMode')({});
+    paintSilent(r.data || {});
+  } catch (e) {
+    $('mState').textContent = 'לא ידוע';
+    $('mNote').textContent = 'לא הצלחתי לקרוא את המצב מהשרת. (' +
+      (e.code || e.message || '') + ') — כנראה הפונקציות עוד לא נפרסו.';
+  }
+}
+
+let SILENT = true;
+
+function paintSilent(v){
+  const trial = v.silent === true;
+  SILENT = trial;
+
+  $('master').className = 'master ' + (trial ? 'trial' : 'live');
+  $('knob').setAttribute('aria-checked', trial ? 'false' : 'true');
+  $('mState').textContent = trial ? 'מצב ניסוי' : 'המערכת חיה';
+  $('mNote').innerHTML = trial
+    ? 'שום התראה ושום מייל לא יוצאים — חוץ מ־<b>' +
+      esc((v.allow || []).join(', ') || 'אף אחד') + '</b>.' +
+      (v.blocked ? ' עד כה נחסמו <b>' + v.blocked + '</b> התראות.' : '') +
+      '<br>הרם את המתג כשאתה מוכן להפעיל את המערכת לכל התחנה.'
+    : 'התראות ומיילים יוצאים לכל מי שנקלט. קריאת פתע תקפיץ להם ' +
+      'את המסך.<br>הורד את המתג כדי לחזור למצב ניסוי.';
+
+  // המספרים שמאחורי ההחלטה. "כמה נכנסו" הוא הנתון שקובע — מערכת
+  // חיה שאיש עוד לא נכנס אליה שולחת התראות למי שלא יודע שיש לו
+  // חשבון.
+  const acc = v.accounts || 0, si = v.signed_in || 0;
+  $('ready').innerHTML =
+    '<div><div class="v">' + acc + '</div><div class="k">חשבונות קיימים</div></div>' +
+    '<div><div class="v" style="color:' +
+      (si > 1 ? 'var(--good)' : 'var(--warn)') + '">' + si +
+      '</div><div class="k">כבר נכנסו פעם אחת</div></div>' +
+    '<div><div class="v" style="color:var(--muted)">' + (v.blocked || 0) +
+      '</div><div class="k">התראות שנחסמו</div></div>';
+}
+
+$('knob').onclick = () => setSilent(!SILENT ? true : false);
+
+async function setSilent(on){
+  // האזהרה מפרטת מה בדיוק מתחיל לקרות, ולא "האם אתה בטוח".
+  // "בטוח" זו שאלה שכולם עונים עליה כן בלי לקרוא.
+  if (!on && !window.confirm(
+      'המערכת עוברת למצב חי.\n\n' +
+      'מרגע זה:\n' +
+      '· קריאת פתע תקפיץ מסך מלא לכל מי שהוזעק\n' +
+      '· תקלה שתיפתח תשלח התראה למפקד המשמרת\n' +
+      '· בקשות והחלפות ישלחו מיילים\n\n' +
+      'לכל מי שנקלט, גם אם עוד לא נכנס למערכת פעם אחת.\n\n' +
+      'להפעיל?')) return;
+
+  $('knob').disabled = true;
+  msg('שומר…', 'info', 'swMsg');
+  try {
+    // הרשימה הפטורה: גם ה-uid וגם המייל. השליחות עובדות
+    // באחד מהשניים לפי המסלול — פוש לפי uid, מייל לפי כתובת —
+    // ומי שיציין רק אחד מהם יגלה שחצי מההתראות שלו נעלמו.
+    const r = await httpsCallable(fns, 'setSilentMode')({
+      silent: on, allow: on ? [ME.uid, ME.email] : []
+    });
+    msg(on ? 'מצב ניסוי. רק אתה מקבל התראות.'
+           : 'המערכת חיה. התראות יוצאות לכולם.', 'ok', 'swMsg');
+    await loadSilent();
+  } catch (e) {
+    msg('נכשל. (' + (e.code || e.message || '') + ')', 'err', 'swMsg');
+  }
+  $('knob').disabled = false;
+}
+
+// =================================================================
+//  ייבוא היסטוריית שעות
+// =================================================================
+//
+//  שני כפתורים, ותמיד באותו סדר: בדיקה יבשה ואז כתיבה. כפתור
+//  הכתיבה נעול עד שהבדיקה עברה נקייה, כי ייבוא של אלפי רשומות
+//  שמתברר כשגוי אחרי הכתיבה אינו "נסה שוב".
+
+const db = getFirestore(app);
+let HIST = null;   // תוצאת הבדיקה היבשה האחרונה
+
+// מספר העובד נשמר במסמכי users ולא במסמכי roster המצומצמים.
+// המסך פתוח למנהל-על בלבד, וממפה לזיכרון רק את ארבעת השדות
+// הנדרשים להתאמת היסטוריית השעות.
+async function loadRoster(){
+  const out = [];
+  const rs = await getDocs(collection(db, 'stations', STATION_ID, 'users'));
+  rs.forEach(function (d) {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    out.push({ uid: d.id, emp: String(v.employee_number || v.emp_number || ''),
+               name: v.full_name || '', crew: v.crew || '' });
+  });
+  return out;
+}
+
+$('hDry').onclick = async function () {
+  const b = $('hDry'); b.disabled = true;
+  $('hRun').disabled = true; HIST = null;
+  hmsg('קורא את הסגל ובודק את הקובץ…', 'info');
+  try {
+    const roster = await loadRoster();
+    if (!roster.length) {
+      hmsg('אין משתמשים פעילים בתחנה. הוסף משתמשים לפני ייבוא ההיסטוריה.', 'err');
+      b.disabled = false; return;
+    }
+    const r = dryRun($('hPaste').value, roster);
+    if (r.fatal) { hmsg(r.fatal, 'err'); $('hSum').classList.add('hide');
+                   b.disabled = false; return; }
+
+    HIST = r;
+    renderHist(r, roster.length);
+    // שורות פגומות אינן חוסמות — הן פשוט לא ייכתבו, והן
+    // מוצגות בשמן כדי שאפשר יהיה לתקן אותן בגיליון ולייצא
+    // שוב. מה שכן חוסם: אפס שורות תקינות.
+    $('hRun').disabled = r.ready.length === 0;
+    hmsg(r.ready.length
+      ? 'הבדיקה הסתיימה. שום דבר לא נכתב עדיין — עבור על הסיכום.'
+      : 'אין אף שורה תקינה בקובץ.', r.ready.length ? 'ok' : 'err');
+  } catch (e) {
+    hmsg('הבדיקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+$('hRun').onclick = async function () {
+  if (!HIST || !HIST.ready.length) return;
+  const n = HIST.ready.length;
+  if (!window.confirm('לכתוב ' + n + ' רשומות נוכחות למערכת?\n\n' +
+      'רשומה קיימת לאותו אדם ואותו יום תידרס.')) return;
+
+  const b = $('hRun'); b.disabled = true; $('hDry').disabled = true;
+  try {
+    // Firestore מגביל אצווה ל-500 פעולות. 12,000 רשומות הן
+    // 24 אצוות, ולכן הן נכתבות במנות עם דיווח התקדמות —
+    // מסך שנתקע בלי סימן חיים במשך דקה נסגר בידי המשתמש
+    // באמצע הכתיבה.
+    const CHUNK = 400;
+    let done = 0;
+    for (let i = 0; i < HIST.ready.length; i += CHUNK) {
+      const slice = HIST.ready.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      slice.forEach(function (o) {
+        batch.set(doc(db, 'stations', STATION_ID, 'attendance', o.id),
+                  Object.assign({}, o.rec, { updated_at: serverTimestamp() }));
+      });
+      await batch.commit();
+      done += slice.length;
+      hmsg('נכתבו ' + done + ' מתוך ' + n + '…', 'info');
+    }
+    hmsg('הושלם. ' + done + ' רשומות נכתבו. ההיסטוריה זמינה ' +
+         'עכשיו במסך הנוכחות.', 'ok');
+    HIST = null;
+  } catch (e) {
+    hmsg('הכתיבה נכשלה באמצע. (' + (e.code || '') + ' ' + (e.message || '') +
+         ') מה שנכתב עד כה נשאר — הרצה חוזרת בטוחה, היא דורסת ' +
+         'את אותן רשומות.', 'err');
+  }
+  b.disabled = false; $('hDry').disabled = false;
+};
+
+function hmsg(t, k){
+  const m = $('hMsg');
+  m.textContent = t || '';
+  m.className = 'msg ' + (t ? (k || '') : '');
+}
+
+function renderHist(r, rosterSize){
+  const box = $('hSum');
+  box.classList.remove('hide');
+
+  const months = Object.keys(r.months).sort();
+  const people = Object.keys(r.perPerson).sort();
+  const unknown = Object.keys(r.unknownPeople);
+
+  let h = '<b>' + r.ready.length + '</b> רשומות מוכנות מתוך ' +
+          r.totalRows + ' שורות · <b>' + r.totalHours + '</b> שעות · ' +
+          months.length + ' חודשים · ' + people.length + ' אנשים מתוך ' +
+          rosterSize + '<br><br>';
+
+  h += '<b>חודשים:</b><br>' + months.map(function (m) {
+    return '&nbsp;&nbsp;' + esc(m) + ' — ' + r.months[m] + ' ימים';
+  }).join('<br>') + '<br><br>';
+
+  h += '<b>לפי אדם:</b><br>' + people.map(function (p) {
+    return '&nbsp;&nbsp;' + esc(p) + ' — ' + r.perPerson[p].rows +
+           ' ימים · ' + r.perPerson[p].hours + ' שעות';
+  }).join('<br>');
+
+  if (r.dupes) {
+    h += '<br><br><b>' + r.dupes + '</b> שורות כפולות (אותו אדם, אותו יום) — ' +
+         'נלקחה הראשונה.';
+  }
+
+  // מי שלא נמצא מוצג בשמו ולא כמספר. "7 שורות נדחו" מכריח
+  // להשוות שתי רשימות ביד; "רמי · 12 שורות" אומר בדיוק מה
+  // לתקן.
+  if (unknown.length) {
+    h += '<br><br><b style="color:var(--warn)">לא נמצאו במערכת:</b><br>' +
+      unknown.map(function (u) {
+        return '&nbsp;&nbsp;' + esc(u) + ' — ' + r.unknownPeople[u] + ' שורות';
+      }).join('<br>') +
+      '<br><span class="s">ודא שהמשתמשים קיימים ופעילים, או תקן את השם ' +
+      'בגיליון וייצא שוב.</span>';
+  }
+
+  if (r.errors.length) {
+    h += '<br><br><b style="color:var(--bad)">' + r.errors.length +
+         ' שורות פגומות:</b><br>' +
+      r.errors.slice(0, 25).map(function (e) {
+        return '&nbsp;&nbsp;שורה ' + e.line + ' — ' + esc(e.why);
+      }).join('<br>') +
+      (r.errors.length > 25 ? '<br>&nbsp;&nbsp;ועוד ' + (r.errors.length - 25) : '');
+  }
+
+  box.innerHTML = h;
+}
+</script>
+</body>
+</html>

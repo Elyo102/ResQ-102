@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — לוח מודעות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="stylesheet" href="./bulletin.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+<link rel="preload" as="image" href="./resq-banner.jpg">
+
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;
+       min-height:100vh;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;padding:max(18px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left))}
+  body.with-nav{justify-content:flex-start}
+  body.with-nav .card{margin-top:10px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;
+        padding:28px;width:100%;max-width:440px;box-shadow:var(--shadow)}
+  h1{font-size:30px;letter-spacing:-.03em;margin:0 0 4px;text-align:center}
+  .sub{color:var(--muted);font-size:14px;text-align:center;margin-bottom:24px}
+  .tabs{display:flex;gap:6px;margin-bottom:22px;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .tab{flex:1;min-height:44px;width:auto;margin:0;padding:9px 12px;text-align:center;font-size:14px;font-weight:700;cursor:pointer;
+       background:transparent;border:0;border-radius:9px;color:var(--muted)}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+  label{display:block;font-size:14px;font-weight:650;color:var(--dim);margin:14px 0 6px}
+  input,select{width:100%;min-height:46px;padding:11px 12px;background:var(--input);color:var(--txt);
+        border:1px solid var(--line);border-radius:10px;font-size:16px;
+        font-family:inherit}
+  input:focus-visible,select:focus-visible,.tab:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  button{width:100%;min-height:46px;background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;
+        padding:12px 16px;font-size:15px;font-weight:700;cursor:pointer;margin-top:20px;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  /* כרטיס הגרסה. יושב במקום שבו היה "חיפוש עובד" — מסך
+     הבית הוא המקום שכולם רואים, וזו השורה שרוצים להקריא
+     בטלפון כשמישהו שואל "על איזו גרסה אתה". */
+  .ver{ border:1px solid var(--line); border-radius:10px; padding:12px 13px;
+        margin-top:16px; background:var(--panel); text-align:start }
+  .ver .vrow{ display:flex; align-items:baseline; gap:10px; font-size:13px;
+              color:var(--muted) }
+  .ver .vrow b{ margin-inline-start:auto; color:var(--txt); font-size:14px;
+                font-variant-numeric:tabular-nums }
+  .ver .note{ font-size:12px; color:var(--muted); line-height:1.6;
+              margin-top:7px }
+  .ver .note.new{ color:var(--accent); font-weight:700 }
+  .ver button{ margin-top:9px }
+  .link{background:none;border:0;color:var(--dim);font-size:14px;
+        cursor:pointer;margin-top:10px;text-decoration:underline;font-family:inherit}
+  .msg{margin-top:16px;padding:12px 14px;border:1px solid transparent;border-radius:10px;font-size:14px;
+       line-height:1.6;display:none}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg);border-color:var(--bad-bd)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}
+  /* מצב ניטרלי גלוי. בלעדיו הודעות כמו "לא נמצאו תוצאות" נכתבו
+     לאלמנט שנשאר display:none — והמסך נראה כאילו שום דבר לא קרה. */
+  .msg.info{display:block;background:var(--chip);color:var(--dim)}
+  .hide{display:none !important}
+  .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .profile{text-align:center;line-height:2}
+  .profile .big{font-size:19px;font-weight:600}
+  .profile .row{color:var(--muted);font-size:14px}
+  .wait{text-align:center;line-height:1.8}
+  .wait .icon{font-size:38px;margin-bottom:10px}
+  .wait .ttl{font-size:18px;font-weight:600;margin-bottom:8px}
+  .wait .txt{color:var(--muted);font-size:14px}
+  @media(max-width:560px){
+    .card{padding:22px 18px;border-radius:16px;max-width:100%}
+    h1{font-size:28px}
+    body.with-nav .card{margin-top:0}
+  }
+</style>
+<style>
+  .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
+  .pw-rules i{ font-style:normal; color:var(--muted) }
+  /* היה #7bc47f — ירוק בהיר לרקע כהה, שנעלם על כרטיס לבן.
+     זה הסימן היחיד שאומר "הסיסמה עומדת בתנאי". */
+  .pw-rules i.ok{ color:var(--good) }
+  .res{ border-bottom:1px solid var(--line); padding:11px 2px }
+  .res:last-child{ border-bottom:0 }
+  .res .n{ font-size:15px; font-weight:600 }
+  .res .d{ font-size:13px; color:var(--muted); margin-top:2px }
+  .back{ background:none; border:1px solid var(--line); color:var(--muted); margin-top:16px }
+</style>
+
+<style>
+  /* ============ מסך הכניסה ============
+     הסמל ברקע, וטופס הכניסה צף מעליו בזכוכית חלבית.
+     כל זה חל רק כשאיש אינו מחובר: אחרי הכניסה המסכים חוזרים
+     לרקע אטום, כי שם קוראים טבלאות ולוחות ולא מסתכלים על איור.
+
+     שקיפות 42% ולא פחות: ב-20% התמונה נראית מצוין והשדות
+     נעלמים, ועל מסך טלפון באור שמש זה נגמר בכבאי שלא רואה
+     לאן להקליד. */
+
+  #bgArt, #bgScrim{ position:fixed; inset:0; z-index:-2; display:none }
+  #bgScrim{ z-index:-1 }
+
+  /* מסך האיור הוא משטח כהה גם כשהטלפון במצב בהיר. בלי
+     צבעי foreground מפורשים, ערכת היום מציירת טקסט כהה על
+     זכוכית כהה — והוא כמעט נעלם. */
+  body.art{ background:#070d18; color:#f4f7fb }
+  body.art #bgArt, body.art #bgScrim{ display:block }
+
+  #bgArt{
+    background:url('./resq-banner.jpg') center center / contain no-repeat;
+    opacity:0; transform:scale(1.10);
+    transition:opacity 800ms ease, transform 4200ms cubic-bezier(.22,.9,.3,1);
+  }
+  body.art.ready #bgArt{ opacity:1; transform:scale(1) }
+
+  /* במסך רחב יש מקום — הסמל נפרש על הכל והכרטיס צף במרכזו. */
+  @media (min-aspect-ratio: 1/1){
+    #bgArt{ background-size:cover }
+  }
+
+  /* בטלפון הסמל רחב והמסך גבוה, ולכן הוא נכנס כרצועה. אם הרצועה
+     יושבת במרכז, הכרטיס מכסה אותה בדיוק — ורואים טשטוש במקום
+     איור. לכן הרצועה עולה לחלק העליון והטופס יורד למטה: הם רק
+     נושקים, וההשקה היא בדיוק המקום שבו הזכוכית עובדת. */
+  @media (max-aspect-ratio: 1/1){
+    #bgArt{ background-position:center 21% }
+    body.art{ justify-content:flex-end; padding-bottom:5vh }
+    #bgScrim{ background:
+      linear-gradient(180deg, rgba(6,10,18,.20) 0%, rgba(6,10,18,.30) 38%,
+                      rgba(6,10,18,.66) 62%, rgba(6,10,18,.80) 100%) }
+  }
+
+  #bgScrim{
+    background:radial-gradient(120% 70% at 50% 50%,
+               rgba(6,10,18,.30) 0%, rgba(6,10,18,.74) 100%);
+  }
+
+  body.art .card{
+    background:rgba(9,14,24,.42);
+    -webkit-backdrop-filter:blur(16px) saturate(1.25);
+    backdrop-filter:blur(16px) saturate(1.25);
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 16px 44px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+
+    opacity:0; transform:translateY(24px) scale(.97);
+    transition:opacity 640ms ease 2000ms,
+               transform 760ms cubic-bezier(.16,1,.3,1) 2000ms;
+    color:#f4f7fb;
+  }
+  body.art.ready .card{ opacity:1; transform:none }
+
+  body.art h1{ color:#f4f7fb; text-shadow:0 1px 10px rgba(0,0,0,.75) }
+  body.art .sub, body.art label, body.art .note, body.art .pw-rules,
+  body.art .pw-rules i{ color:#cbd5e1 }
+  body.art input, body.art select{ background:rgba(4,8,14,.78); border-color:rgba(255,255,255,.28); color:#f8fafc; caret-color:#f8fafc }
+  body.art select option{ background:#111827; color:#f8fafc }
+  body.art .tabs{ background:rgba(4,8,14,.78); border-color:rgba(255,255,255,.22) }
+  body.art .tab{ border-color:rgba(255,255,255,.18); color:#dbe4ee }
+  body.art .tab.on{ color:#fff }
+  body.art .link{ color:#dbe4ee }
+  body.art #btnLogin, body.art #btnFirst{ box-shadow:0 6px 18px rgba(232,89,12,.42) }
+
+  /* מי שביקש פחות תנועה מקבל את המסך מיד. */
+  @media (prefers-reduced-motion: reduce){
+    #bgArt, body.art .card{ transition:none !important;
+                            opacity:1 !important; transform:none !important }
+  }
+</style>
+</head>
+<body class="art">
+<div id="bgArt"></div>
+<div id="bgScrim"></div>
+
+<div id="errBar" role="alert" aria-live="assertive"><button type="button" class="xx" aria-label="סגירת הודעת השגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+// מציג שגיאות על המסך במקום להשאיר אותן בקונסולה.
+// בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
+// והמסך נראה תקין לגמרי.
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<script>
+// ההנפשה מתחילה כשהתמונה מוכנה, לא כשה-HTML נטען. אחרת ברשת
+// איטית הטופס עולה מעל מסך ריק, וההשהיה מרגישה כמו תקלה.
+(function(){
+  function go(){ document.body.classList.add('ready'); }
+  var im = new Image();
+  im.onload = go;
+  im.onerror = go;              // גם אם התמונה נכשלה — המסך חייב לעלות
+  im.src = './resq-banner.jpg';
+  setTimeout(go, 2500);         // רשת ביטחון
+})();
+</script>
+
+<div class="card">
+
+  <h1 id="pageTitle" tabindex="-1">לוח מודעות</h1>
+  <div class="sub" id="pageSub">ResQ · תחנה 102</div>
+
+  <!-- ============ טוען ============ -->
+  <!-- ברירת המחדל היא המסך הזה ולא טופס הכניסה. עד עכשיו הטופס
+       היה מצויר תמיד ונעלם כשהתברר שהמשתמש כבר מחובר — ולכן כל
+       מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
+  <div id="bootView">
+    <div class="wait">
+      <div class="icon">⏳</div>
+      <div class="ttl">רגע…</div>
+    </div>
+  </div>
+
+  <!-- ============ כניסה והרשמה ============ -->
+  <div id="authView" class="hide">
+    <div class="tabs" id="authTabs" role="tablist" aria-label="כניסה או הרשמה">
+      <button type="button" class="tab on" id="tabLogin" role="tab" tabindex="0" aria-selected="true" aria-controls="paneLogin">כניסה</button>
+      <button type="button" class="tab" id="tabFirst" role="tab" tabindex="-1" aria-selected="false" aria-controls="paneFirst">הרשמה</button>
+    </div>
+
+    <div id="paneLogin" role="tabpanel" aria-labelledby="tabLogin">
+      <label for="loginEmp">מספר עובד</label>
+      <input type="text" id="loginEmp" inputmode="numeric" autocomplete="username">
+      <label for="loginPass">סיסמה</label>
+      <input type="password" id="loginPass" autocomplete="current-password">
+      <button id="btnLogin">כניסה</button>
+      <button class="link" id="btnForgot">שכחתי סיסמה</button>
+      <div class="note">
+        עוד לא אושרת? אפשר להיכנס גם עם המייל שאיתו נרשמת, כדי לראות
+        את מצב הבקשה.
+      </div>
+    </div>
+
+    <div id="paneFirst" class="hide" role="tabpanel" aria-labelledby="tabFirst">
+      <label for="fName">שם מלא</label>
+      <input type="text" id="fName" autocomplete="name">
+
+      <label for="fEmail">מייל</label>
+      <input type="email" id="fEmail" autocomplete="email">
+
+      <label for="fPhone">טלפון</label>
+      <input type="tel" id="fPhone" inputmode="tel" autocomplete="tel">
+
+      <label for="fDistrict">מחוז</label>
+      <select id="fDistrict">
+        <option value="">בחר מחוז</option>
+      </select>
+
+      <label for="fStation">תחנה</label>
+      <select id="fStation">
+        <option value="">קודם בחר מחוז</option>
+      </select>
+
+      <label for="fShift">משמרת</label>
+      <select id="fShift">
+        <option value="">בחר משמרת</option>
+        <option value="A">משמרת א׳</option>
+        <option value="B">משמרת ב׳</option>
+        <option value="C">משמרת ג׳</option>
+        <option value="none">לא משובץ למשמרת</option>
+      </select>
+      <div class="note" style="margin-top:6px">
+        המשמרת קובעת את הסידור, את השעות ואת מי מאשר לך בקשות.
+        אם טעית — פנה לראש המשמרת.
+      </div>
+
+      <div id="newPasswordFields">
+        <label for="fPass">בחר סיסמה</label>
+        <input type="password" id="fPass" autocomplete="new-password" aria-describedby="pwRules">
+        <div class="pw-rules" id="pwRules">
+          <i id="pw1">8 תווים לפחות</i> ·
+          <i id="pw2">אות גדולה</i> ·
+          <i id="pw3">אות קטנה</i> ·
+          <i id="pw4">ספרה</i>
+        </div>
+
+        <label for="fPass2">אימות סיסמה</label>
+        <input type="password" id="fPass2" autocomplete="new-password">
+      </div>
+
+      <button id="btnFirst">שלח בקשה</button>
+      <button type="button" class="back hide" id="btnResubmitCancel">חזרה למסך החשבון</button>
+      <div class="note">
+        מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
+      </div>
+    </div>
+
+    <div class="msg" id="msg" aria-live="polite"></div>
+  </div>
+
+  <!-- ============ ממתין לאישור ============ -->
+  <div id="waitView" class="hide">
+    <div class="wait">
+      <div class="icon" id="waitIcon">⏳</div>
+      <div class="ttl" id="waitTtl">הבקשה נשלחה</div>
+      <div class="txt" id="waitTxt">
+        הבקשה שלך ממתינה לאישור מנהל המערכת.<br>
+        עם האישור יוקצה לך מספר עובד.<br><br>
+        <b>אחרי שתאושר — התנתק והתחבר מחדש.</b>
+      </div>
+      <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
+    </div>
+    <div class="msg" id="bootMsg" aria-live="polite"></div>
+    <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
+    <button id="btnResubmit" class="hide">מלא ושלח בקשה מחדש</button>
+    <button id="btnLogoutWait">התנתק</button>
+  </div>
+
+  <!-- ============ מסך ראשי ============ -->
+  <div id="homeView" class="hide">
+    <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
+             aria-labelledby="pageTitle">
+      <header class="bulletin-toolbar">
+        <div id="bulletinIdentity" class="bulletin-identity"></div>
+        <button type="button" id="bulletinCompose" class="bulletin-compose"
+                aria-expanded="false" aria-controls="bulletinForm">
+          + כתיבת הודעה
+        </button>
+      </header>
+
+      <p id="bulletinPrivacy" class="bulletin-privacy">
+        <strong>הלוח אינו מוקד חירום ואינו מיועד למידע אישי או רפואי.</strong>
+        תקלה בציוד או ברכב יש לתעד גם <a href="./faults.html">במסך התקלות</a>.
+      </p>
+
+      <div id="boardTabs" class="bulletin-board-tabs" role="tablist"
+           aria-label="בחירת לוח לפי תחנת משנה"></div>
+
+      <form id="bulletinForm" class="bulletin-form hide" novalidate>
+        <label for="bulletinCategory">סוג ההודעה</label>
+        <select id="bulletinCategory"></select>
+
+        <fieldset id="bulletinAudience" class="bulletin-audience hide">
+          <legend>איפה לפרסם?</legend>
+          <label class="bulletin-audience-option">
+            <input type="radio" name="bulletinAudience" value="board" checked>
+            <span>רק בלוח <strong id="bulletinCurrentBoardName">הנבחר</strong></span>
+          </label>
+          <label class="bulletin-audience-option">
+            <input type="radio" name="bulletinAudience" value="station">
+            <span>בכל תחנות המשנה (<strong id="bulletinAllBoardsCount">0</strong>)</span>
+          </label>
+          <div id="bulletinBroadcastConfirm" class="bulletin-broadcast-confirm hide">
+            <div id="bulletinBroadcastTargets" class="bulletin-broadcast-targets"></div>
+            <label>
+              <input type="checkbox" id="bulletinBroadcastApproved">
+              <span>אני מאשר שההודעה תפורסם בכל הלוחות המוצגים למעלה.</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <label for="bulletinText">מה חשוב שהמשמרת הבאה תדע?</label>
+        <textarea id="bulletinText" rows="5" maxlength="2000"
+                  placeholder="לדוגמה: חסר חלב במטבח, רכב 12 נכנס לטיפול, ציוד שממתין לבדיקה"></textarea>
+        <div class="bulletin-form-meta">
+          <span>השם, התפקיד, התאריך והשעה יצורפו אוטומטית.</span>
+          <span id="bulletinCharCount" class="bulletin-char-count">0 / 2000</span>
+        </div>
+        <div id="bulletinFormStatus" class="bulletin-form-status" aria-live="polite"></div>
+        <div class="bulletin-form-actions">
+          <button type="submit" id="bulletinSubmit">פרסם הודעה</button>
+          <button type="button" id="bulletinCancel" class="bulletin-cancel">סגור</button>
+        </div>
+      </form>
+
+      <div id="bulletinStatus" class="bulletin-status" aria-live="polite"></div>
+      <button type="button" id="bulletinRetry" class="bulletin-retry hide">נסה שוב</button>
+
+      <div id="bulletinFeed" class="bulletin-feed" role="feed"
+           aria-live="polite" aria-busy="true"></div>
+      <div id="bulletinEmpty" class="bulletin-empty hide">
+        עדיין אין הודעות בלוח הזה. אפשר להיות הראשון שמעדכן את המשמרת.
+      </div>
+      <button type="button" id="bulletinLoadMore" class="bulletin-load-more hide">
+        טען הודעות קודמות
+      </button>
+
+      <details id="accountDetails" class="bulletin-account">
+        <summary>החשבון שלי ועדכוני האפליקציה</summary>
+        <div class="profile">
+          <div class="big" id="pName"></div>
+          <div class="row" id="pRole"></div>
+          <div class="row" id="pCrew"></div>
+          <div class="row" id="pStation"></div>
+          <div class="row" id="pEmp"></div>
+        </div>
+        <div class="ver">
+          <div class="vrow"><span>גרסת האפליקציה</span><b id="verNow">…</b></div>
+          <div class="note" id="verMsg" aria-live="polite">האפליקציה מתעדכנת לבד בפתיחה. הכפתור כאן
+            הוא לרגע שבו אתה רוצה לוודא.</div>
+          <button class="link" id="btnUpdate">בדוק עדכון</button>
+        </div>
+        <a id="lnkAdmin" class="hide" href="./admin.html"
+           style="display:block;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px">
+           ניהול המערכת ואישור בקשות ←</a>
+        <button class="link" id="btnChangePw">שינוי סיסמה</button>
+        <button class="link" id="btnLogout">התנתק</button>
+      </details>
+    </section>
+  </div>
+
+  <!-- ============ שינוי סיסמה ============ -->
+  <div id="pwView" class="hide">
+    <h2 style="font-size:19px;margin:0 0 4px">שינוי סיסמה</h2>
+    <div class="sub">תצטרך להזין את הסיסמה הנוכחית.</div>
+
+    <label for="pwOld">סיסמה נוכחית</label>
+    <input type="password" id="pwOld" autocomplete="current-password">
+
+    <label for="pwNew">סיסמה חדשה</label>
+    <input type="password" id="pwNew" autocomplete="new-password" aria-describedby="changePwRules">
+    <div class="pw-rules" id="changePwRules">
+      <i id="cp1">8 תווים לפחות</i> ·
+      <i id="cp2">אות גדולה</i> ·
+      <i id="cp3">אות קטנה</i> ·
+      <i id="cp4">ספרה</i>
+    </div>
+
+    <label for="pwNew2">אימות סיסמה חדשה</label>
+    <input type="password" id="pwNew2" autocomplete="new-password">
+
+    <button id="btnSavePw">שמור סיסמה</button>
+    <button class="back" id="btnPwBack">חזרה</button>
+    <div class="msg" id="pwMsg" aria-live="polite"></div>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { DISTRICTS, stationsInDistrict, stationName, districtName,
+         subStationsForStation } from './stations.js?v=42h7';
+import { renderNav, clearNav } from './nav.js?v=42h7';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h7';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h7';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword,
+         createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+         deleteUser, updatePassword, reauthenticateWithCredential,
+         EmailAuthProvider, setPersistence, browserLocalPersistence }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
+         orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+// הפונקציות יושבות ב-europe-west1, קרוב למסד שב-eur3.
+// בלי לציין אזור, ה-SDK פונה ל-us-central1 ומקבל 404.
+const fns = getFunctions(app, 'europe-west1');
+const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
+const callReset = httpsCallable(fns, 'requestPasswordReset');
+const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
+const callWho   = httpsCallable(fns, 'whoAmI');
+
+// חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
+// וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
+const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
+
+// הכניסה נשמרת על המכשיר. הכבאי מזין סיסמה פעם אחת, וממכשיר
+// אחר יידרש שוב. הנחת העבודה: לטלפון האישי יש כבר נעילה משלו.
+setPersistence(auth, browserLocalPersistence).catch(function(){});
+
+const $ = id => document.getElementById(id);
+initPWA({ offer: true });
+
+function newRequestId(){
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
+// עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
+// כמחרוזת באנגלית באחד המסכים.
+const ROLE_HE = ROLES_HE;
+const CREW_HE = { A: "משמרת א'", B: "משמרת ב'", C: "משמרת ג'" };
+const DIST_HE = DISTRICTS.reduce(function (acc, d) {
+  acc[d.id] = d.name;
+  return acc;
+}, {});
+
+// ---------- רשימות מחוז ותחנה ----------
+//
+// עד עכשיו התחנה הייתה שדה טקסט חופשי. שני כבאים שהקלידו
+// "אילת" ו-"תחנת אילת" נחתו בשתי תחנות שונות במסד, ולא ראו
+// אחד את השני בשום מסך. עכשיו אפשר לבחור רק מתוך רשימה.
+
+function fillDistricts(){
+  const sel = $('fDistrict');
+  sel.innerHTML = '<option value="">בחר מחוז</option>';
+  DISTRICTS.forEach(function (d) {
+    const o = document.createElement('option');
+    o.value = d.open ? d.id : '';
+    o.textContent = d.open ? d.name : d.name + ' — בקרוב';
+    o.disabled = !d.open;
+    sel.appendChild(o);
+  });
+}
+
+function fillStations(districtId){
+  const sel = $('fStation');
+  sel.innerHTML = '';
+
+  if (!districtId) {
+    sel.innerHTML = '<option value="">קודם בחר מחוז</option>';
+    return;
+  }
+
+  const list = stationsInDistrict(districtId);
+  if (!list.length) {
+    sel.innerHTML = '<option value="">אין עדיין תחנות במחוז הזה</option>';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">בחר תחנה</option>';
+  list.forEach(function (st) {
+    const o = document.createElement('option');
+    o.value = st.id;
+    o.textContent = st.name;
+    sel.appendChild(o);
+  });
+
+  // תחנה יחידה במחוז — נבחרת מאליה. אין טעם לבקש בחירה מרשימה של אחד.
+  if (list.length === 1) sel.value = list[0].id;
+}
+
+fillDistricts();
+$('fDistrict').onchange = function () { fillStations(this.value); };
+
+let onboarding = false;
+let loginTransitionPending = false;
+let resubmitUser = null;
+
+function show(text, kind){
+  const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
+  m.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+}
+function clearMsg(){ $('msg').className = 'msg'; $('msg').removeAttribute('role'); }
+
+function resetRegistrationMode(){
+  resubmitUser = null;
+  $('authTabs').classList.remove('hide');
+  $('newPasswordFields').classList.remove('hide');
+  $('fEmail').readOnly = false;
+  $('btnFirst').textContent = 'שלח בקשה';
+  $('btnResubmitCancel').classList.add('hide');
+}
+
+function hasServerAssignment(claims){
+  claims = claims || {};
+  return claims.super === true || !!claims.emp || !!claims.role ||
+         !!claims.stationId || !!claims.districtId || !!claims.shift;
+}
+
+function hasCompleteServerAssignment(claims){
+  claims = claims || {};
+  if (claims.super === true) return true;
+  return !!claims.emp && VALID_ROLES.indexOf(String(claims.role || '')) !== -1 &&
+         !!claims.stationId;
+}
+
+function showView(name){
+  ['bootView','authView','waitView','homeView','pwView']
+    .forEach(function(v){
+      $(v).classList.toggle('hide', v !== name + 'View');
+    });
+  document.body.classList.toggle('bulletin-mode', name === 'home');
+}
+
+// רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
+// מול "רגע..." לנצח. אחרי שש שניות נופלים חזרה לטופס הכניסה.
+let authSettled = false;
+setTimeout(function(){ if (!authSettled) showView('auth'); }, 6000);
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------- מדיניות סיסמה ----------
+// שמונה תווים, אות גדולה, אות קטנה וספרה. המערכת מחזיקה נתוני
+// שכר ומחלה — זה ההפרש בין סיסמה שנשברת בשניות לאחת שלא.
+
+function pwCheck(p){
+  return {
+    len:   p.length >= 8,
+    upper: /[A-Z]/.test(p),
+    lower: /[a-z]/.test(p),
+    digit: /[0-9]/.test(p)
+  };
+}
+function pwOk(p){
+  const c = pwCheck(p);
+  return c.len && c.upper && c.lower && c.digit;
+}
+function paintRules(p, ids){
+  const c = pwCheck(p);
+  const on = [c.len, c.upper, c.lower, c.digit];
+  ids.forEach(function(id, i){ $(id).className = on[i] ? 'ok' : ''; });
+}
+$('fPass').oninput = function(){ paintRules(this.value, ['pw1','pw2','pw3','pw4']); };
+$('pwNew').oninput = function(){ paintRules(this.value, ['cp1','cp2','cp3','cp4']); };
+
+// ---------- לשוניות ----------
+
+const authTabs = [$('tabLogin'), $('tabFirst')];
+function activateAuthTab(index, moveFocus){
+  authTabs.forEach(function(tab, i){
+    const active = i === index;
+    tab.classList.toggle('on', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    tab.setAttribute('tabindex', active ? '0' : '-1');
+  });
+  $('paneLogin').classList.toggle('hide', index !== 0);
+  $('paneFirst').classList.toggle('hide', index !== 1);
+  clearMsg();
+  if (moveFocus) authTabs[index].focus();
+}
+authTabs.forEach(function(tab, index){
+  tab.onclick = function(){ activateAuthTab(index, false); };
+  tab.onkeydown = function(event){
+    let next = index;
+    if (event.key === 'ArrowRight') next = (index + 1) % authTabs.length;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + authTabs.length) % authTabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = authTabs.length - 1;
+    else return;
+    event.preventDefault();
+    activateAuthTab(next, true);
+  };
+});
+
+// ---------- כניסה ----------
+//
+// השדה מקבל מספר עובד או מייל.
+//
+// מספר עובד הוא הדרך הרגילה. מייל נשאר פתוח כי בין ההרשמה
+// לאישור עוד אין מספר עובד, והכבאי צריך דרך לראות שהבקשה
+// שלו ממתינה.
+
+$('btnLogin').onclick = async () => {
+  const btn = $('btnLogin');
+  clearMsg();
+
+  const id   = $('loginEmp').value.trim();
+  const pass = $('loginPass').value;
+  if (!id || !pass) { show('נא למלא מספר עובד וסיסמה.', 'err'); return; }
+
+  btn.disabled = true;
+  loginTransitionPending = true;
+  try {
+    if (id.indexOf('@') !== -1) {
+      await signInWithEmailAndPassword(auth, id.toLowerCase(), pass);
+    } else {
+      // השרת מאמת את מספר העובד ואת הסיסמה, ומחזיר את המייל
+      // המשויך. הכניסה עצמה נעשית כאן, בדרך הרגילה.
+      const res = await callLogin({ emp: id, password: pass });
+      await signInWithEmailAndPassword(auth, res.data.email, pass);
+    }
+  } catch (e) {
+    loginTransitionPending = false;
+    const code = String(e.code || '');
+    if (code.indexOf('resource-exhausted') !== -1) {
+      show(e.message, 'err');
+    } else if (code.indexOf('internal') !== -1) {
+      // הודעה כללית כאן הסתירה את הסיבה האמיתית ואילצה חפירה
+      // בלוגים. השרת לא שולח פרטים רגישים בהודעות האלה.
+      show('שגיאת שרת: ' + (e.message || 'לא ידועה') + ' [' + code + ']', 'err');
+    } else if (code.indexOf('failed-precondition') !== -1) {
+      show(e.message, 'err');
+    } else if (code.indexOf('unauthenticated') !== -1 ||
+               code.indexOf('invalid-credential') !== -1 ||
+               code.indexOf('wrong-password') !== -1 ||
+               code.indexOf('user-not-found') !== -1) {
+      show('מספר עובד או סיסמה שגויים.', 'err');
+    } else {
+      show('שגיאה: ' + (e.message || code || 'לא ידועה') + ' [' + code + ']', 'err');
+    }
+  }
+  btn.disabled = false;
+};
+
+// ---------- שכחתי פרטים ----------
+
+$('btnForgot').onclick = async () => {
+  const id = $('loginEmp').value.trim();
+  if (!id) { show('הזן מספר עובד או מייל בשדה למעלה ולחץ שוב.', 'err'); return; }
+
+  const btn = $('btnForgot');
+  btn.disabled = true;
+  try { await callReset({ id: id }); } catch (ignore) {}
+  btn.disabled = false;
+
+  // תשובה זהה בכל מקרה, כדי שלא יהיה אפשר לסרוק מספרי עובד.
+  show('אם הפרטים קיימים במערכת, נשלח מייל עם מספר העובד וקישור לבחירת סיסמה חדשה.', 'ok');
+};
+
+// ---------- הרשמה ----------
+
+$('btnFirst').onclick = async () => {
+  const btn = $('btnFirst');
+  clearMsg();
+
+  const name     = $('fName').value.trim();
+  const reusing  = !!(resubmitUser && auth.currentUser &&
+                      resubmitUser.uid === auth.currentUser.uid);
+  const email    = (reusing ? String(resubmitUser.email || '') :
+                    $('fEmail').value).trim().toLowerCase();
+  const phone    = $('fPhone').value.trim();
+  const district = $('fDistrict').value;
+  const station  = $('fStation').value;
+  const shift    = $('fShift').value;
+  const pass     = $('fPass').value;
+  const pass2    = $('fPass2').value;
+
+  if (!name || !email || !district || !station || !shift) {
+    show('נא למלא שם, מייל, מחוז, תחנה ומשמרת.', 'err'); return;
+  }
+  if (!reusing && pass !== pass2) {
+    show('הסיסמאות אינן תואמות.', 'err'); return;
+  }
+  if (!reusing && !pwOk(pass)) {
+    show('הסיסמה חייבת להיות באורך 8 תווים לפחות, ולכלול אות גדולה, אות קטנה וספרה.', 'err');
+    return;
+  }
+
+  btn.disabled = true;
+  onboarding = true;
+
+  let applicant = null;
+  let createdNow = false;
+
+  if (reusing) {
+    applicant = auth.currentUser;
+
+    // בקשה חוזרת אינה מסתמכת על הטוקן שבדפדפן: ייתכן שהמנהל
+    // כבר אישר והטוקן פשוט ישן. whoAmI קוראת את ה-claims החיים
+    // מ-Auth; אם היא לא עונה, לא כותבים דבר.
+    try {
+      const answer = await callWho({});
+      const live = (answer && answer.data) || {};
+      if (live.signedIn !== true || live.uid !== applicant.uid) {
+        throw new Error('זהות החשבון בשרת אינה תואמת לחשבון המחובר.');
+      }
+      const serverClaims = live.claims_on_server || {};
+      if (hasServerAssignment(serverClaims)) {
+        onboarding = false; btn.disabled = false;
+        if (hasCompleteServerAssignment(serverClaims)) {
+          await applicant.getIdToken(true);
+          resetRegistrationMode();
+          location.replace('./login.html');
+        } else {
+          showAssignmentRecovery(applicant);
+        }
+        return;
+      }
+
+      // לחיצה כפולה, לשונית אחרת או חיבור איטי לא ידרסו בקשה
+      // שכבר קיימת. המשתמש פשוט חוזר למסך ההמתנה.
+      const pending = await getDoc(doc(db, 'registration_requests', applicant.uid));
+      if (pending.exists()) {
+        onboarding = false; btn.disabled = false;
+        showWaiting(applicant, pending.data() || {});
+        return;
+      }
+    } catch (e) {
+      onboarding = false; btn.disabled = false;
+      show('לא ניתן לאמת כרגע את מצב החשבון, ולכן לא נשלחה בקשה. ' +
+           'בדוק חיבור ונסה שוב.', 'err');
+      return;
+    }
+  } else {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      applicant = cred.user;
+      createdNow = true;
+    } catch (e) {
+      onboarding = false; btn.disabled = false;
+      if (e.code === 'auth/email-already-in-use') {
+        show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה", ' +
+             'היכנס עם המייל והסיסמה, ומשם תוכל להגיש בקשה מחדש.', 'err');
+      } else if (e.code === 'auth/invalid-email') {
+        show('כתובת המייל אינה תקינה.', 'err');
+      } else {
+        show('שגיאה: ' + e.code, 'err');
+      }
+      return;
+    }
+  }
+
+  const requestRef = doc(db, 'registration_requests', applicant.uid);
+  try {
+    await setDoc(requestRef, {
+      request_id: newRequestId(),
+      full_name:  name,
+      email:      email,
+      phone:      phone,
+      districtId: district,
+      stationId:  station,
+      // המשמרת שהעובד בחר. 'none' נשמר כמחרוזת ריקה — כך
+      // הכללים והשרת מטפלים בו כמי שאינו נעול לאף משמרת,
+      // ולא כמשמרת בשם "none".
+      shift:      shift === 'none' ? '' : shift,
+      status:     'pending',
+      created_at: serverTimestamp()
+    });
+    onboarding = false; btn.disabled = false;
+    showWaiting();
+  } catch (e) {
+    // כשל רשת יכול להגיע אחרי שהשרת כבר שמר את הבקשה. קודם
+    // קוראים אותה בחזרה, ורק אם היעדרה הוכח מוחקים חשבון חדש.
+    // במצב לא ודאי שומרים את החשבון כדי לא לייצר בקשה יתומה.
+    let requestSaved = false;
+    let absenceConfirmed = false;
+    try {
+      const verification = await getDocFromServer(requestRef);
+      requestSaved = verification.exists();
+      absenceConfirmed = !requestSaved;
+    } catch (ignore) {}
+
+    onboarding = false; btn.disabled = false;
+
+    if (requestSaved) {
+      showWaiting(applicant);
+      $('waitTxt').innerHTML = 'החיבור נקטע בזמן השליחה, אבל בדקנו והבקשה נשמרה.<br>' +
+                              'היא ממתינה כעת לאישור מנהל המערכת.';
+      return;
+    }
+
+    if (createdNow && applicant && absenceConfirmed) {
+      try {
+        await deleteUser(applicant);
+      } catch (ignore) {
+        showRegistrationRecovery(applicant);
+        return;
+      }
+    } else if (!absenceConfirmed) {
+      showRegistrationRecovery(applicant);
+      return;
+    }
+
+    show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
+  }
+};
+
+// ---------- ניתוב ----------
+
+// רשימה סגורה של יעדים. בלעדיה, פרמטר בכתובת היה יכול להפנות
+// כבאי לאתר חיצוני שנראה כמו המערכת.
+const RETURNABLE = ['schedule.html', 'schedule-management.html', 'access.html', 'admin.html', 'check.html',
+                    'quals.html', 'board.html', 'attendance.html',
+                    'swaps.html', 'alerts.html'];
+
+function returnToCaller(){
+  let next = '';
+  try { next = new URLSearchParams(location.search).get('next') || ''; }
+  catch (ignore) {}
+  if (RETURNABLE.indexOf(next) === -1) return false;
+  location.replace('./' + next);
+  return true;
+}
+
+function logout(){ destroyBulletin(); return signOut(auth); }
+$('btnLogout').onclick     = logout;
+$('btnLogoutWait').onclick = logout;
+
+onAuthStateChanged(auth, user => {
+  authSettled = true;
+  if (onboarding) return;
+  if (!user) {
+    destroyBulletin();
+    // auth יכול להחזיר את מצב "אין משתמש" הראשוני בדיוק
+    // כשהמשתמש כבר לחץ כניסה. במקרה הזה לא מבטלים את ההנפשה
+    // של הכניסה שנמצאת בתהליך.
+    if (!$('btnLogin').disabled) loginTransitionPending = false;
+    clearNav();
+    resetRegistrationMode();
+    document.body.classList.remove('with-nav');
+    document.body.classList.add('art');
+    showView('auth');
+    return;
+  }
+  route(user);
+});
+
+async function route(user){
+  let claims = {};
+  try {
+    const t = await user.getIdTokenResult();
+    claims = t.claims || {};
+  } catch (ignore) {}
+
+  // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
+  if (claims.super === true) {
+    await loadProfile(user, claims);
+    return;
+  }
+
+  // Claims חלקיים אינם מספיקים לכניסה, גם אם מספר העובד כבר
+  // נכתב. אחרת כשל באמצע שיבוץ היה טוען את המערכת במצב סותר.
+  if (hasServerAssignment(claims) && !hasCompleteServerAssignment(claims)) {
+    showAssignmentRecovery(user);
+    return;
+  }
+
+  // בלי שום שיוך בטוקן — או שהבקשה ממתינה, או שטרם נשלחה.
+  if (!hasServerAssignment(claims)) {
+    let req = null;
+    let requestChecked = false;
+    try {
+      req = await getDoc(doc(db, 'registration_requests', user.uid));
+      requestChecked = true;
+    }
+    catch (ignore) {}
+
+    if (req && req.exists()) { showWaiting(user, req.data() || {}); return; }
+    if (!requestChecked) { showRegistrationRecovery(user); return; }
+    showNotLinked(user);
+    return;
+  }
+
+  await loadProfile(user, claims);
+}
+
+// מציג במפורש עם איזה חשבון הדפדפן מחובר. בלי זה אי אפשר לדעת
+// אם הבעיה היא הרשאות או פשוט חשבון אחר.
+function showWho(user){
+  $('waitWho').textContent = 'מחובר כרגע: ' + (user && user.email ? user.email : '—');
+}
+
+// מי שממתין לאישור עדיין צריך דרך חזרה הביתה — בלי תפקיד, אבל
+// לא בלי ניווט.
+function claims0(){ return {}; }
+
+// הסרגל מופיע רק אחרי כניסה. במסך הכניסה עצמו אין לאן לנווט.
+function navFor(claims, user, name){
+  // האיור שייך למסך הכניסה בלבד. מכאן והלאה קוראים טבלאות
+  // ולוחות, ורקע מצויר רק מפריע.
+  document.body.classList.remove('art');
+  document.body.classList.add('with-nav');
+  claims = claims || {};
+  // שם ומספר עובד, לא מייל. «eldad50@gmail.com» לא אומר כלום
+  // למי שמסתכל על המסך; «אלדד יונה · מס׳ 1» כן.
+  const who = (name || (user && user.email) || '') +
+              (claims.emp ? ' · מס׳ ' + claims.emp : '');
+  renderNav(claims, 'login.html', who);
+}
+
+function showNotLinked(user){
+  loginTransitionPending = false;
+  $('waitIcon').textContent = '🔒';
+  $('waitTtl').textContent  = 'החשבון אינו משויך';
+  $('waitTxt').innerHTML    = 'לא נמצאה בקשה פעילה עבור החשבון הזה.<br>' +
+                              'אפשר למלא את הפרטים ולשלוח בקשה מחדש ' +
+                              'מאותו חשבון.';
+  showWho(user);
+  navFor(claims0(), user, '');
+
+  // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
+  const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  $('btnBootstrap').classList.toggle('hide', !isBoot);
+  $('btnResubmit').classList.toggle('hide', isBoot);
+  if (isBoot) {
+    $('waitTxt').innerHTML = 'זהו חשבון ההקמה של המערכת, והוא עדיין לא הופעל.<br>' +
+                             'לחץ על הכפתור למטה כדי להפוך אותו למנהל מערכת.';
+  }
+
+  showView('wait');
+}
+
+function showWaiting(user, request){
+  loginTransitionPending = false;
+  const status = String((request || {}).status || 'pending');
+  $('waitIcon').textContent = '⏳';
+  if (status === 'processing') {
+    $('waitTtl').textContent = 'האישור בתהליך';
+    $('waitTxt').innerHTML = 'מנהל המערכת התחיל לטפל בבקשה. ' +
+      'היא נשמרה ותמשיך מאותה נקודה גם אם החיבור נקטע.<br><br>' +
+      '<b>אין צורך לשלוח בקשה נוספת.</b>';
+  } else if (status === 'needs_recovery') {
+    $('waitTtl').textContent = 'הבקשה נשמרה לבדיקה';
+    $('waitTxt').innerHTML = 'זוהה מצב שאינו חד-משמעי ולכן המערכת עצרה בבטחה. ' +
+      'הבקשה לא נמחקה ומנהל המערכת יבדוק אותה.';
+  } else {
+    $('waitTtl').textContent  = 'הבקשה נשלחה';
+    $('waitTxt').innerHTML    = 'הבקשה שלך ממתינה לאישור מנהל המערכת.<br>' +
+                                'עם האישור יוקצה לך מספר עובד.<br><br>' +
+                                '<b>אחרי שתאושר — התנתק והתחבר מחדש.</b>';
+  }
+  showWho(user);
+  navFor(claims0(), user, '');
+  $('btnBootstrap').classList.add('hide');
+  $('btnResubmit').classList.add('hide');
+  showView('wait');
+}
+
+function showRegistrationRecovery(user){
+  showWaiting(user);
+  $('waitIcon').textContent = '⚠️';
+  $('waitTtl').textContent  = 'מצב הבקשה לא אומת';
+  $('waitTxt').innerHTML    = 'החיבור נקטע ולא ניתן לוודא אם הבקשה נשמרה.<br>' +
+                              'החשבון נשמר כדי למנוע אובדן מידע. ' +
+                              'אל תיצור חשבון נוסף; נסה להתחבר שוב מאוחר יותר ' +
+                              'או פנה למנהל המערכת.';
+}
+
+function showAssignmentRecovery(user){
+  showWaiting(user);
+  $('waitIcon').textContent = '⚠️';
+  $('waitTtl').textContent  = 'השיוך לחשבון אינו שלם';
+  $('waitTxt').innerHTML    = 'נמצא שיוך חלקי לחשבון. לא נשלחה בקשה חדשה ' +
+                              'ולא נטען מידע מהמערכת, כדי למנוע מצב סותר.<br>' +
+                              'פנה למנהל המערכת להשלמת השיוך.';
+}
+
+$('btnResubmit').onclick = function(){
+  const user = auth.currentUser;
+  if (!user || !user.uid || !user.email) {
+    showView('auth');
+    show('החיבור לחשבון הסתיים. היכנס שוב ונסה מחדש.', 'err');
+    return;
+  }
+
+  resubmitUser = user;
+  $('authTabs').classList.add('hide');
+  $('newPasswordFields').classList.add('hide');
+  $('fEmail').value = user.email;
+  $('fEmail').readOnly = true;
+  $('btnFirst').textContent = 'שלח בקשה מחדש';
+  $('btnResubmitCancel').classList.remove('hide');
+  activateAuthTab(1, false);
+  showView('auth');
+  show('מלא את הפרטים העדכניים. הבקשה תישלח מאותו חשבון; ' +
+       'אין צורך ליצור סיסמה חדשה והיא תמתין לאישור מנהל.', 'info');
+  try { $('fName').focus(); } catch (ignore) {}
+};
+
+$('btnResubmitCancel').onclick = function(){
+  const user = auth.currentUser;
+  resetRegistrationMode();
+  clearMsg();
+  if (user) showNotLinked(user);
+  else showView('auth');
+};
+
+$('btnBootstrap').onclick = async () => {
+  const btn = $('btnBootstrap');
+  const m   = $('bootMsg');
+  btn.disabled = true;
+  btn.textContent = 'מפעיל...';
+  m.className = 'msg';
+
+  try {
+    await callBoot({});
+    // הטוקן הישן עדיין לא מכיל את ההרשאה. רענון כפוי, ואז ניתוב מחדש.
+    await auth.currentUser.getIdToken(true);
+    m.textContent = 'הופעל. טוען...';
+    m.className = 'msg ok';
+    await route(auth.currentUser);
+  } catch (e) {
+    m.textContent = (e && e.message) ? e.message : 'ההפעלה נכשלה.';
+    m.className = 'msg err';
+    btn.disabled = false;
+    btn.textContent = 'הפעל את חשבון מנהל המערכת';
+  }
+};
+
+// ---------- בקרת גישה ----------
+//
+// נרשמת התחברות אחרונה בלבד — כתיבה אחת בכניסה, בעלות אפסית.
+//
+// "מחובר ברגע זה" נשקל ונפסל: הוא דורש דיווח מחזורי מכל דפדפן,
+// ובקנה מידה ארצי זה עולה עשרות שקלים בחודש על נתון שאפשר
+// לחיות בלעדיו.
+
+async function markLogin(uid, sid, info){
+  try {
+    await setDoc(doc(db, 'stations', sid, 'presence', uid), {
+      last_login: serverTimestamp(),
+      emp:        info.emp || '',
+      full_name:  info.full_name || '',
+      crew:       info.crew || ''
+    }, { merge: true });
+  } catch (ignore) {}
+}
+
+async function loadProfile(user, claims){
+  const sid = claims.stationId || STATION_ID;
+
+  let u = null;
+  try {
+    const snap = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
+    if (snap.exists()) u = snap.data();
+  } catch (ignore) {}
+
+  const isSuper = claims.super === true;
+
+  $('pName').textContent    = u ? u.full_name : (user.email || '');
+  $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';
+  $('pCrew').textContent    = CREW_HE[claims.shift] || '';
+  // למנהל המערכת אין תחנה ואין מספר עובד — לא מציגים שדות ריקים.
+  $('pStation').textContent = isSuper && !claims.stationId ? '' :
+    (stationName((u && u.station) ? u.station : sid) +
+     (claims.districtId ? ' · ' + (DIST_HE[claims.districtId] || claims.districtId) : ''));
+  $('pEmp').textContent     = claims.emp ? ('מספר עובד: ' + claims.emp) : '';
+
+  $('lnkAdmin').classList.toggle('hide', !isSuper);
+
+  if (claims.emp && claims.stationId) {
+    markLogin(user.uid, sid, {
+      emp:       claims.emp,
+      full_name: u ? u.full_name : '',
+      crew:      claims.shift || ''
+    });
+  }
+
+  // מי שנשלח לכאן ממסך אחר — מוחזר אליו אחרי הכניסה, במקום
+  // להישאר תקוע במסך הבית ולנווט שוב ביד. רישום הכניסה כבר
+  // התחיל למעלה, ולכן המעבר אינו מדלג על מדד הנוכחות הקיים.
+  if (returnToCaller()) return;
+
+  const animate = loginTransitionPending && !$('authView').classList.contains('hide');
+  const reduceMotion = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (animate && !reduceMotion) {
+    $('authView').classList.add('bulletin-auth-leave');
+    await new Promise(function (resolve) { setTimeout(resolve, 200); });
+  }
+
+  navFor(claims, user, u ? u.full_name : '');
+  watchCallouts(db, sid, user.uid, { name: (u && u.full_name) || user.email || '' });
+  $('pageSub').textContent = 'ResQ · ' + (stationName(sid) || sid);
+
+  initBulletin({
+    db: db,
+    functions: fns,
+    user: user,
+    claims: claims,
+    stationId: sid,
+    profile: u || { full_name: user.email || '' },
+    roleLabels: ROLE_HE,
+    fallbackBoards: subStationsForStation(sid),
+    canAccess: isMember(claims),
+    sdk: {
+      collection: collection, getDocs: getDocs, query: query, where: where,
+      orderBy: orderBy, limit: limit, onSnapshot: onSnapshot,
+      startAfter: startAfter, httpsCallable: httpsCallable
+    }
+  });
+
+  if (animate && !reduceMotion) $('homeView').classList.add('bulletin-enter');
+  showView('home');
+  if (animate && !reduceMotion) {
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          $('homeView').classList.add('bulletin-enter-active');
+          setTimeout(resolve, 280);
+        });
+      });
+    });
+    $('authView').classList.remove('bulletin-auth-leave');
+    $('homeView').classList.remove('bulletin-enter', 'bulletin-enter-active');
+  }
+  loginTransitionPending = false;
+  try { $('pageTitle').focus({ preventScroll: true }); }
+  catch (ignore) { $('pageTitle').focus(); }
+}
+
+// ---------- גרסה ועדכון ----------
+//
+// version.js נטען דרך המטמון ולכן מספרו הוא הגרסה **הרצה**.
+// version.json נטען עם no-store ולכן מספרו הוא הגרסה
+// **שבשרת**. שונים — יש עדכון.
+//
+// זו הסיבה שהבדיקה הזו אמינה גם כשהכל נראה תקין: היא לא
+// שואלת את הדפדפן מה הוא חושב, היא משווה שני מספרים משני
+// מקורות שונים.
+
+$('verNow').textContent = APP_VERSION + ' · ' + APP_DATE;
+
+$('btnUpdate').onclick = async function () {
+  const b = $('btnUpdate'), m = $('verMsg');
+  b.disabled = true;
+  m.className = 'note';
+  m.textContent = 'בודק מול השרת…';
+
+  let server = null;
+  try {
+    // no-store, ו-t=… כדי שגם מטמון ביניים לא יחזיר עותק ישן.
+    const r = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    server = await r.json();
+  } catch (e) {
+    m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+    b.disabled = false;
+    return;
+  }
+
+  if (!server || String(server.v) === String(APP_VERSION)) {
+    m.textContent = 'אתה על הגרסה האחרונה.';
+    b.disabled = false;
+    return;
+  }
+
+  m.className = 'note new';
+  m.textContent = 'יש גרסה חדשה (' + server.v + '). מעדכן…';
+
+  await refreshInstalledApp({ version: server.v });
+};
+
+// ---------- שינוי סיסמה ----------
+
+$('btnChangePw').onclick = () => { $('pwMsg').className = 'msg'; showView('pw'); };
+$('btnPwBack').onclick   = () => { showView('home'); $('pageTitle').focus(); };
+
+$('btnSavePw').onclick = async () => {
+  const btn = $('btnSavePw');
+  const old = $('pwOld').value;
+  const nw  = $('pwNew').value;
+  const nw2 = $('pwNew2').value;
+
+  function m(t, k){ $('pwMsg').textContent = t; $('pwMsg').className = 'msg ' + k; }
+
+  if (!old || !nw) { m('נא למלא את שני השדות.', 'err'); return; }
+  if (nw !== nw2)  { m('הסיסמאות החדשות אינן תואמות.', 'err'); return; }
+  if (!pwOk(nw))   {
+    m('הסיסמה חייבת להיות באורך 8 תווים לפחות, ולכלול אות גדולה, אות קטנה וספרה.', 'err');
+    return;
+  }
+
+  const user = auth.currentUser;
+  if (!user || !user.email) { m('לא מחובר.', 'err'); return; }
+
+  btn.disabled = true;
+  try {
+    // Firebase דורש הזדהות מחדש לפני שינוי סיסמה, כדי שמי שמצא
+    // טלפון פתוח לא יוכל להשתלט על החשבון.
+    const cred = EmailAuthProvider.credential(user.email, old);
+    await reauthenticateWithCredential(user, cred);
+    await updatePassword(user, nw);
+
+    m('הסיסמה שונתה.', 'ok');
+    $('pwOld').value = ''; $('pwNew').value = ''; $('pwNew2').value = '';
+    paintRules('', ['cp1','cp2','cp3','cp4']);
+  } catch (e) {
+    const c = String(e.code || '');
+    if (c.indexOf('wrong-password') !== -1 || c.indexOf('invalid-credential') !== -1) {
+      m('הסיסמה הנוכחית שגויה.', 'err');
+    } else if (c.indexOf('weak-password') !== -1) {
+      m('הסיסמה חלשה מדי.', 'err');
+    } else {
+      m('שגיאה: ' + (e.code || e.message), 'err');
+    }
+  }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+/* ===================================================================
+   ResQ — פלטת הצבעים של המערכת
+   ===================================================================
+
+   כל צבע במערכת יושב כאן, ובשום מקום אחר. עד עכשיו כל מסך
+   נשא עותק משלו, וכל שינוי פלטה היה שש-עשרה עריכות שאחת מהן
+   נשכחת.
+
+   שני מצבים:
+
+     כהה   ברירת המחדל. זה מה שרץ היום, ולא נגעתי בו — אותם
+           ערכים בדיוק. מי שנמצא במצב כהה לא רואה שום שינוי
+     בהיר  נכנס לפעולה כשהטלפון מוגדר למצב בהיר
+
+   למה כהה הוא הבסיס ולא בהיר, בניגוד למקובל: הכהה הוא מה
+   שנבדק בשמונה מודולים לאורך שבוע. אם יש באג בפלטה הבהירה,
+   הוא נשאר אצל מי שבחר בהיר — ולא נוגע במי שכבר עובד.
+
+   שלושה מצבים, לא שניים:
+
+     :root                          כהה — ברירת מחדל
+     prefers-color-scheme: light    הטלפון מוגדר בהיר
+     [data-theme="light"|"dark"]    המשתמש בחר ידנית, וגובר
+
+   =================================================================== */
+
+:root{
+  color-scheme: dark;
+
+  /* --- יסודות ממשק משותפים (opt-in) --- */
+  --space-1:4px; --space-2:8px; --space-3:12px;
+  --space-4:16px; --space-5:24px; --space-6:32px;
+  --radius-sm:8px; --radius-md:12px; --radius-lg:16px;
+  --touch-min:44px;
+  --text-xs:12px; --text-sm:14px; --text-md:16px;
+  --text-lg:20px; --text-xl:28px;
+
+  /* --- משטחים --- */
+  --bg:#15171a;          /* רקע הדף */
+  --card:#1e2126;        /* כרטיס */
+  --panel:#191c20;       /* משטח פנימי בתוך כרטיס */
+  --input:#111316;       /* שדה קלט */
+  --chip:#23262c;        /* תג, כפתור משני */
+  --track:#2a2e36;       /* מסילת פס התקדמות */
+
+  /* --- קווים --- */
+  --line:#2c3036;        /* גבול ראשי */
+  --line-soft:#24272c;   /* מפריד בתוך רשימה */
+  --line-hover:#3d444d;  /* גבול במעבר עכבר */
+
+  /* --- טקסט --- */
+  --txt:#e8eaed;
+  --muted:#9aa0a6;
+  --dim:#b9c0c8;         /* טקסט מידע, בהיר ממשני */
+  --on-accent:#ffffff;   /* טקסט על רקע ההדגשה הכתום */
+  /* טקסט מודגש על רקע-מצב רך (bad-bg / good-bg / warn-bg / panel).
+     הרקעים האלה כהים בערכת הלילה ובהירים בערכת היום, ולכן צבע
+     קבוע אחד לא עובד בשתיהן. בלי הטוקן הזה השתמשו כאן
+     ב-on-accent, שהוא לבן תמיד — ובערכת היום שם הרכב או שם
+     האדם פשוט נעלמו מתוך המשפט. */
+  --on-soft:#ffffff;
+
+  /* --- הדגשה --- */
+  --accent:#e8590c;
+  --pick:#c77dff;        /* ממתין להכרעה — לא טוב ולא רע */
+  --in:#4dd0e1;          /* הצד שמקבל בהחלפה */
+  --note:#4d94ff;        /* מידע — לא טוב, לא רע, לא אזהרה */
+  /* ההדגשה ככתב. --accent עצמו יושב על צ'יפ אפור בסרגל
+     הניווט, ושם הוא נופל מתחת לסף הקריאוּת בערכה הבהירה. */
+  --accent-txt:#e8590c;
+
+  /* --- מצבים --- */
+  --bad:#ef5350;   --bad-bg:#241618;   --bad-bd:#5a2b2d;
+  --good:#66bb6a;  --good-bg:#16241a;  --good-bd:#2f4a33;
+  --warn:#e0a23c;  --warn-bg:#241f13;
+
+  /* --- הודעות --- */
+  --ok-bg:#1d3a20;   --ok-fg:#a5d6a7;
+  --err-bg:#3a1d1d;  --err-fg:#ef9a9a;
+  --info-bg:#23262c; --info-fg:#b9c0c8;
+  --soft-bad:#f0b2b2;      /* טקסט אזהרה רך על כרטיס */
+
+  /* --- פס השגיאה העליון --- */
+  --bar-bg:#3a1d1d; --bar-fg:#ffcdd2; --bar-line:#c62828; --bar-strong:#ffffff;
+
+  /* --- אישור --- */
+  --go:#2e7d32; --go-txt:#ffffff;
+
+  /* --- משמרות ---
+     הועתקו מהמערכת שכבאי אילת משתמשים בה: א' אדום, ב' ירוק,
+     ג' כחול. מוארים לרקע כהה. **האות נשארת על התג בכל מצב**
+     — כ-8% מהגברים אינם מבחינים בין אדום לירוק, וא' מול ב'
+     הן בדיוק הזוג הזה. */
+  --crewA:#f0523f;  --crewA-bg:#3a1c19;
+  --crewB:#35c46b;  --crewB-bg:#14301f;
+  --crewC:#4d94ff;  --crewC-bg:#16263f;
+  --crewB-on:#0d1f12;   /* טקסט כהה על תג ב' מלא */
+
+  /* --- צל --- */
+  --shadow:0 10px 34px rgba(0,0,0,.45);
+}
+
+/* ===================================================================
+   בהיר
+   ===================================================================
+
+   לא היפוך. כל ערך נבחר מחדש:
+
+   * צבעי המשמרות רוויים וכהים יותר — הגרסה המוארת נועדה
+     לרקע כהה, ועל לבן היא נראית דהויה
+   * ההדגשה יורדת מ-#e8590c לכתום-לבנה עמוק יותר, כי הכתום
+     הבהיר על לבן אינו עומד בניגודיות לטקסט
+   * הרקע אינו לבן טהור אלא אפור-כחלחל קל, שמפחית סנוור
+     ומאפשר לכרטיס הלבן להיראות כמשטח נפרד
+
+   =================================================================== */
+
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    color-scheme: light;
+
+    --bg:#eef1f5;
+    --card:#ffffff;
+    --panel:#f5f7fa;
+    --input:#ffffff;
+    --chip:#e6eaf0;
+    --track:#dde2ea;
+
+    --line:#d3dae3;
+    --line-soft:#e6eaf0;
+    --line-hover:#adb8c6;
+
+    --txt:#131820;
+    --muted:#5d6675;
+    --dim:#414b59;
+    --on-accent:#ffffff;
+    --on-soft:#131820;
+
+    --accent:#c1440e;
+    --pick:#7b3fa8;
+    --in:#00707d;
+    --note:#1d4ed8;
+    --accent-txt:#963109;
+
+    --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+    --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+    --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+    --ok-bg:#e2f2e9;   --ok-fg:#175236;
+    --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+    --info-bg:#e9edf3; --info-fg:#3d4653;
+    --soft-bad:#8c1d17;
+
+    --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+    --go:#1f6b45; --go-txt:#ffffff;
+
+    --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+    --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+    --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+    --crewB-on:#ffffff;
+
+    --shadow:0 10px 30px rgba(19,24,32,.12);
+  }
+}
+
+/* בחירה ידנית גוברת על הטלפון, לשני הכיוונים. */
+:root[data-theme="light"]{
+  color-scheme: light;
+
+  --bg:#eef1f5;
+  --card:#ffffff;
+  --panel:#f5f7fa;
+  --input:#ffffff;
+  --chip:#e6eaf0;
+  --track:#dde2ea;
+
+  --line:#d3dae3;
+  --line-soft:#e6eaf0;
+  --line-hover:#adb8c6;
+
+  --txt:#131820;
+  --muted:#5d6675;
+  --dim:#414b59;
+  --on-accent:#ffffff;
+  --on-soft:#131820;
+
+  --accent:#c1440e;
+  --pick:#7b3fa8;
+  --in:#00707d;
+  --note:#1d4ed8;
+  --accent-txt:#963109;
+
+  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+  --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+  --ok-bg:#e2f2e9;   --ok-fg:#175236;
+  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+  --info-bg:#e9edf3; --info-fg:#3d4653;
+  --soft-bad:#8c1d17;
+
+  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+  --go:#1f6b45; --go-txt:#ffffff;
+
+  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+  --crewB-on:#ffffff;
+
+  --shadow:0 10px 30px rgba(19,24,32,.12);
+}
+
+/* מצב כהה מפורש — גובר על טלפון שמוגדר בהיר.
+   הערכים זהים ל-:root ולכן אין צורך לחזור עליהם; הבלוק קיים
+   כדי שהבורר הידני ינצח את שאילתת המדיה. */
+:root[data-theme="dark"]{ color-scheme: dark; }
+
+/* ===================================================================
+   פס השגיאה — משותף לכל המסכים
+   =================================================================== */
+
+#errBar{
+  position:fixed; inset-inline:0; top:0; z-index:9999; display:none;
+  background:var(--bar-bg); color:var(--bar-fg);
+  border-bottom:2px solid var(--bar-line);
+  padding:12px 16px; font-family:"Segoe UI",Arial,sans-serif;
+  font-size:13px; line-height:1.7; direction:rtl;
+  max-height:45vh; overflow:auto;
+}
+#errBar b{ color:var(--bar-strong); display:block; margin-bottom:4px; font-size:14px }
+#errBar code{ direction:ltr; display:block; margin-top:6px; color:var(--err-fg);
+              font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap }
+#errBar .xx{ position:absolute; inset-inline-end:8px; top:4px; cursor:pointer;
+             width:44px; min-height:44px; margin:0; padding:0;
+             border:0; background:transparent; color:var(--bar-strong); font-size:22px }
+
+/* ===================================================================
+   מתג המצב — יושב בסרגל הניווט
+   =================================================================== */
+
+#themeBtn{
+  flex:none; width:auto; margin:0;
+  background:var(--chip); border:1px solid var(--line);
+  color:var(--muted); border-radius:10px; padding:9px 12px;
+  font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;
+  line-height:1; white-space:nowrap;
+}
+#themeBtn:hover{ color:var(--txt); border-color:var(--line-hover) }
+#themeBtn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+
+@media (prefers-reduced-motion:no-preference){
+  #themeBtn{ transition:color .12s ease, border-color .12s ease }
+}
+
+/* רכיבי UI משותפים — מחלקות opt-in בלבד. מסך משתמש בהן
+   במפורש אחרי בדיקה, ולכן השכבה אינה דורסת CSS קיים. */
+.ui-page{width:min(1120px,100%);margin-inline:auto;padding:var(--space-4);color:var(--txt)}
+.ui-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg);padding:var(--space-5);box-shadow:var(--shadow)}
+.ui-stack{display:flex;flex-direction:column;gap:var(--space-4)}
+.ui-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.ui-field{display:flex;flex-direction:column;gap:var(--space-2)}
+.ui-field>label{color:var(--dim);font-size:var(--text-sm);font-weight:700}
+.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
+.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
+.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+.ui-btn:disabled,.ui-control:disabled{opacity:.58;cursor:not-allowed}
+.ui-message{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--info-bg);color:var(--info-fg);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);line-height:1.55}
+.ui-message--success{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}
+.ui-message--error{background:var(--err-bg);color:var(--err-fg);border-color:var(--bad-bd)}
+.ui-empty{padding:var(--space-6) var(--space-4);text-align:center;color:var(--muted)}
+.ui-table-scroll{max-width:100%;overflow:auto;overscroll-behavior-inline:contain}
+.ui-skeleton{min-height:var(--touch-min);border-radius:var(--radius-md);background:linear-gradient(90deg,var(--panel),var(--chip),var(--panel));background-size:200% 100%;animation:ui-shimmer 1.2s linear infinite}
+@keyframes ui-shimmer{to{background-position:-200% 0}}
+:where(.ui-btn,.ui-control):focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.ui-skeleton{animation:none}}
+@media (max-width:560px){.ui-page{padding:var(--space-3)}.ui-card{padding:var(--space-4);border-radius:var(--radius-md)}.ui-cluster>.ui-btn{flex:1 1 140px}}

@@ -1,0 +1,1952 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — דוח נוכחות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:20px }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:14px; padding:18px; margin-bottom:14px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600 }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.stop{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px }
+
+  .mo{ display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap }
+  .mo .lbl{ color:var(--txt); font-size:18px; font-weight:750; min-width:132px;
+            text-align:center; margin:0 }
+  .mo button{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
+              border-radius:10px; width:44px; height:44px; font-size:20px;
+              cursor:pointer; font-family:inherit }
+  .mo button:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+
+  .tot{ display:flex; gap:12px; flex-wrap:wrap; align-items:stretch }
+  .tot div{ flex:1 1 130px; background:var(--panel); border:1px solid var(--line);
+            border-radius:9px; padding:12px; text-align:center }
+  .tot .v{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums }
+  .tot .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
+  .tot .v.soft{ color:var(--warn) }
+
+  .state{ display:inline-flex; min-height:30px; align-items:center; font-size:12px;
+          font-weight:700; border-radius:20px; padding:3px 12px;
+          border:1px solid var(--line); color:var(--muted); margin-inline-start:auto }
+  .state.submitted{ border-color:var(--warn); color:var(--warn) }
+  .state.approved{ border-color:var(--good-bd); color:var(--good) }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
+  th{ text-align:right; color:var(--muted); font-weight:600; font-size:11.5px;
+      padding:7px 5px; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:9px 5px; border-bottom:1px solid var(--line-soft); vertical-align:middle }
+  tr:last-child td{ border-bottom:0 }
+  tr.sug td{ opacity:.55 }
+  tr.run td{ background:var(--warn-bg) }
+  .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
+  .dw{ color:var(--muted); font-size:11.5px }
+  .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; color:var(--on-accent) }
+  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:var(--crewB-on) }
+  .cw.C{ background:var(--crewC) }
+  .hh{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
+  /* טווח שעות הוא ביטוי משמאל לימין. בלי הבידוד הזה הדפדפן
+     הופך את סדר הצדדים ו-07:00–08:00 מוצג כ-08:00–07:00. */
+  .rng{ direction:ltr; unicode-bidi:isolate; display:inline-block }
+  .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
+        padding:1px 9px; color:var(--muted); white-space:nowrap }
+  .tag.no{ border-color:var(--bad); color:var(--bad) }
+  .scroll{ overflow-x:auto }
+  .field-label{ display:block; color:var(--muted); font-size:12.5px;
+                font-weight:650; margin:10px 0 5px }
+  .pick-control{ min-height:44px; flex:1; min-width:200px; border:1px solid var(--line);
+                 border-radius:10px; background:var(--input); color:var(--txt);
+                 padding:9px 11px; font:inherit }
+  .pick-control:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+  .sr-only{ position:absolute!important; width:1px!important; height:1px!important;
+            padding:0!important; margin:-1px!important; overflow:hidden!important;
+            clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important }
+
+  /* עמודת ההערות. רוחב מרבי ושתי שורות לכל היותר — הערה
+     ארוכה אחת אחרת מותחת את כל השורה, וכל שאר הדוח נדחס.
+     הטקסט המלא נשאר זמין בריחוף. */
+  .nt{ max-width:260px; font-size:12.5px; color:var(--dim);
+       line-height:1.5; white-space:normal; word-break:break-word }
+  .nt span{ display:-webkit-box; -webkit-line-clamp:2; line-clamp:2;
+            -webkit-box-orient:vertical; overflow:hidden }
+  .nt .em{ color:var(--muted) }
+  @media (max-width:700px){ .nt{ max-width:170px } }
+
+  /* ---------- טבלת ימי החודש בטלפון ----------
+     שבע עמודות לא נכנסות ל-390 פיקסלים. מה שקרה בפועל:
+     הכותרת "הערות" נשברה ל"הערו/ת", התאריך נשבר ותג המשמרת
+     ירד לשורה שנייה, וכל שורה קיבלה גובה אחר — טבלה שנראית
+     עקומה.
+     הרוחב לא ייפתר בהקטנת גופן; הפתרון הוא לוותר על מבנה
+     הטבלה עצמו. כל יום הופך לכרטיס: תאריך למעלה, כפתור
+     בפינה, והשדות מתחת עם תווית לכל אחד — כי בלי שורת
+     הכותרת אין דרך אחרת לדעת מה זה "24".
+     שדה ריק פשוט לא מוצג. "תחנה —" הוא רעש, לא מידע. */
+  @media (max-width:620px){
+    .days table, .days tbody, .days tr, .days td { display:block; width:auto }
+    .days thead{ display:none }
+    .days table{ margin-top:8px }
+    .days tr{ position:relative; border:1px solid var(--line-soft);
+              border-radius:10px; padding:9px 12px 10px; margin-bottom:8px }
+    .days tr:last-child{ margin-bottom:0 }
+    .days tr.run{ border-color:var(--warn) }
+    .days tr.run td{ background:transparent }
+    .days td{ border:0; padding:2px 0; line-height:1.6 }
+    .days td.dash{ display:none }          /* שדה ריק לא תופס שורה */
+    .days td[data-l]::before{
+      content:attr(data-l) ': '; color:var(--muted);
+      font-size:11.5px; font-weight:600 }
+    /* שורת הכותרת של הכרטיס: תאריך, יום ומשמרת — בלי תווית,
+       ועם מקום פנוי בצד לכפתור. */
+    .days td.c-date{ font-size:15px; padding:0 0 5px;
+                     padding-inline-end:78px; white-space:normal }
+    .days td.c-date::before{ content:none }
+    .days td.c-act{ position:absolute; top:8px; inset-inline-end:12px;
+                    padding:0 }
+    .days td.c-act::before{ content:none }
+    .days td.c-act .btn{ margin:0; width:auto; min-width:64px }
+    /* בכרטיס אין עמודה שנדחסת, ולכן ההערה נקראת במלואה. */
+    .days .nt{ max-width:none }
+    .days .nt span{ -webkit-line-clamp:none; line-clamp:none; overflow:visible;
+                    display:inline }
+    .days td[colspan]{ border:0; padding:16px 0 }
+  }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .msg:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
+  .hide{ display:none !important }
+  .subject-pending-hide{ display:none !important }
+  .row{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-top:12px }
+
+  #ov{ position:fixed; inset:0; background:rgba(8,10,13,.72); z-index:1000;
+       display:none; align-items:flex-start; justify-content:center;
+       padding:5vh 14px; overflow:auto }
+  #ov.on{ display:flex }
+  .dlg{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+        width:100%; max-width:460px; padding:18px }
+  .dlg h3{ margin:0 0 3px; font-size:17px }
+  .dlg .hint{ color:var(--muted); font-size:12.5px; margin-bottom:12px; line-height:1.7 }
+  .dlg label{ display:block; font-size:12.5px; color:var(--muted); margin:11px 0 4px }
+  .dlg input, .dlg select, .dlg textarea{ width:100%; padding:10px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  /* בלי זה, אייקון השעון של שדה הזמן מצויר בשחור על רקע שחור
+     והמשתמש לא רואה שיש שם כפתור בכלל. color-scheme אומר
+     לדפדפן לצייר את הפקדים המובנים בגרסה הכהה שלהם. */
+  .dlg input[type="time"]::-webkit-calendar-picker-indicator,
+  .dlg input[type="date"]::-webkit-calendar-picker-indicator{
+    filter:invert(1) brightness(1.6); opacity:.85; cursor:pointer }
+  .dlg textarea{ min-height:64px; resize:vertical }
+  .two{ display:grid; grid-template-columns:1fr 1fr; gap:9px }
+  .three{ display:grid; grid-template-columns:1fr 1fr 1.1fr; gap:9px }
+  @media (max-width:430px){ .three{ grid-template-columns:1fr 1fr } }
+  .seg{ border:1px solid var(--line); border-radius:9px; padding:2px 11px 12px;
+        margin-top:9px; background:var(--panel) }
+  .chk{ display:flex !important; align-items:center; gap:8px; cursor:pointer;
+        font-size:13.5px !important; color:var(--txt) !important; margin:13px 0 0 !important }
+  .chk input{ width:auto !important; margin:0 }
+  .shapeNote{ font-size:12px; color:var(--muted); line-height:1.7; margin-top:6px }
+  .ot{ border:1px solid var(--warn); background:var(--warn-bg); border-radius:9px;
+       padding:2px 12px 13px; margin-top:12px }
+  .otHead{ font-size:13px; color:var(--warn); line-height:1.7; margin-top:11px }
+  .otHead b{ color:var(--on-soft) }
+  .ot.req{ border-color:var(--bad-bd); background:var(--bad-bg) }
+  .ot.req .otHead, .ot.req .otHead b, .reqTag{ color:var(--bad) }
+  .reqTag{ font-weight:700 }
+  .sum-line{ display:flex; justify-content:space-between; gap:12px;
+             padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px }
+  .sum-line:last-child{ border-bottom:0 }
+  .sum-line b{ font-variant-numeric:tabular-nums }
+  .sum-big{ font-size:30px; font-weight:800; text-align:center;
+            font-variant-numeric:tabular-nums; margin:4px 0 2px }
+  .sum-bad{ color:var(--bad) }
+  .sum-ot{ font-size:12.5px; color:var(--muted); line-height:1.8; margin-top:8px }
+  .sum-ot .no{ color:var(--bad) }
+  .acts{ display:flex; gap:8px; margin-top:15px; flex-wrap:wrap }
+  @media (max-width:620px){
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .sub{ margin-bottom:15px }
+    .card{ border-radius:12px; padding:14px }
+    .mo{ justify-content:center }
+    .mo .lbl{ flex:1; min-width:120px }
+    .state{ width:100%; justify-content:center; margin-inline-start:0 }
+    .row .btn{ flex:1 1 160px }
+    .dlg{ padding:16px }
+  }
+</style>
+</head>
+<body>
+
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<main class="wrap">
+  <h1>דוח נוכחות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard" role="status">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין דוח להציג.</div>
+  </div>
+
+  <div id="work" class="hide" aria-busy="false">
+
+    <!-- ============ תיקון שעות לאדם אחר ============
+         מוצג לרכז/ת כוח אדם ולמנהל-על בלבד. כשנבחר אדם,
+         כל המסך עובר לעבוד עליו — טעינה, עריכה ושמירה —
+         ופס כתום נשאר על המסך כל הזמן. פס כזה נראה מיותר
+         עד הפעם הראשונה שמישהו עורך את החודש הלא נכון
+         ולא שם לב. -->
+    <div class="card hide" id="pickCard">
+      <h2>תיקון שעות</h2>
+      <div class="note">
+        בחר אדם כדי לפתוח את החודש שלו. כל שינוי נרשם על שמך
+        ומופיע לו במסך.
+      </div>
+      <label class="field-label" for="pickWho">איש צוות</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="pickWho" class="pick-control"></select>
+        <button type="button" class="btn" id="pickGo">פתח</button>
+        <button type="button" class="btn hide" id="pickBack">חזרה אליי</button>
+      </div>
+      <div id="pickMsg" class="note" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="bar hide" id="otherBar"
+         role="status" aria-live="polite"
+         style="background:#e8590c;color:#fff;padding:10px 14px;
+                border-radius:8px;margin:0 0 12px;font-weight:bold"></div>
+
+    <div class="card">
+      <div class="mo">
+        <button type="button" id="prev" aria-label="החודש הקודם">‹</button>
+        <h2 class="lbl" id="moLabel" aria-live="polite">—</h2>
+        <button type="button" id="next" aria-label="החודש הבא">›</button>
+        <span class="state" id="state" role="status" aria-live="polite">טיוטה</span>
+      </div>
+
+      <div class="tot">
+        <div><div class="v" id="tHours">0</div><div class="k">שעות שנשמרו</div></div>
+        <div><div class="v" id="tDays">0</div><div class="k">ימים שדווחו</div></div>
+        <div><div class="v soft" id="tSug">0</div><div class="k">ימים לפי הסידור שטרם נשמרו</div></div>
+      </div>
+
+      <div class="row">
+        <button type="button" class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
+        <button type="button" class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
+        <button type="button" class="btn" id="btnView">הצג סיכום חודשי</button>
+        <button type="button" class="btn hide" id="btnSync">תקן לפי הסידור</button>
+        <button type="button" class="btn hide" id="btnRecalc">חשב מחדש</button>
+        <button type="button" class="btn hide" id="btnUnsubmit">בטל שליחה</button>
+        <button type="button" class="btn hide" id="btnApprove">אשר את החודש</button>
+        <button type="button" class="btn hide" id="btnReopen">פתח מחדש</button>
+      </div>
+      <div class="msg" id="msg" role="status" aria-live="polite" tabindex="-1"></div>
+    </div>
+
+    <div class="card" id="timerCard">
+      <h2>שעון משמרת</h2>
+      <div class="note" id="timerNote" aria-live="polite">—</div>
+      <div class="row">
+        <button type="button" class="btn go" id="btnStart">התחל משמרת</button>
+        <button type="button" class="btn stop hide" id="btnStop">סיים משמרת</button>
+        <button type="button" class="btn sm" id="btnManual">דיווח ידני</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ימי החודש</h2>
+      <div class="note">
+        ימים שהמשמרת שלך עובדת בהם מופיעים מראש לפי הסידור, כולל חריגות.
+        לחיצה על שורה פותחת עריכה.
+      </div>
+      <div class="scroll days">
+        <table>
+          <caption class="sr-only">ימי הנוכחות בחודש הנבחר</caption>
+          <thead>
+            <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנה</th>
+                <th class="hh">סה״כ</th><th class="nt">הערות</th><th></th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card hide" id="apprCard">
+      <h2>דוחות שממתינים לאישור</h2>
+      <div class="note" id="apprNote">—</div>
+      <div class="scroll">
+        <table>
+          <caption class="sr-only">דוחות חודשיים שממתינים לאישור</caption>
+          <thead><tr><th>שם</th><th>משמרת</th><th>חודש</th><th class="hh">שעות</th><th></th></tr></thead>
+          <tbody id="apprRows"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="apprMsg" role="status" aria-live="polite"></div>
+    </div>
+
+  </div>
+</main>
+
+<div id="ov" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" aria-hidden="true">
+  <div class="dlg" id="dlg" tabindex="-1"></div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { subStationAvailable } from './stations.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { crewOnDate, swapEffect, overrideOn,
+         overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
+  from './rotation.js?v=42h7';
+import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
+         workdaysSourceLabel } from './effective-workdays.js?v=42h7';
+import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
+         recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
+         overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
+         SHAPES, shapeOf, shapeHe }
+  from './hours.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+         query, where, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const callMyGuardAttendance = httpsCallable(fns, 'getMyGuardAttendance');
+const callLegacyScheduleCompatibilityContext =
+  httpsCallable(fns, 'getLegacyScheduleCompatibilityContext');
+const callEffectiveWorkdays = httpsCallable(fns, 'getEffectiveWorkdays');
+
+const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
+
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'msg');
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_APPROVE = false, MY_SHIFT = '', IS_SUPER = false;
+
+// SUBJ — על מי הדף עובד כרגע. שווה ל-ME אלא אם רכזת כוח אדם
+// בחרה אדם אחר. ראה ההסבר המלא במקום שבו הוא נקבע.
+let SUBJ = null, CAN_EDIT_OTHERS = false;
+let PEOPLE = [];
+let subjectGeneration = 0;
+let staticLoadGeneration = 0;
+let monthLoadGeneration = 0;
+let guardLoadGeneration = 0;
+
+// האם אנחנו כרגע על מישהו אחר. כל כתיבה במצב הזה נחתמת.
+function onOther() { return !!(SUBJ && ME && SUBJ.emp !== ME.emp); }
+
+// A verified super account is allowed to manage attendance without owning an
+// employee number.  Until a subject is selected, keep only the picker and the
+// independent approvals list visible; no read or write may use an empty key.
+function setSubjectWorkspaceVisible(visible) {
+  Array.from($('work').children).forEach(function (child) {
+    if (child.id === 'pickCard' || child.id === 'apprCard') return;
+    child.classList.toggle('subject-pending-hide', !visible);
+  });
+}
+
+// חותמת התיעוד. נדרשת על ידי כללי האבטחה בכל עריכה של רשומה
+// שאינה שלך, ו-edited_by חייב להיות ה-uid האמיתי — הכלל בודק
+// אותו מול request.auth.uid, כך שאי אפשר לערוך בשם אחר.
+function stamp(body) {
+  if (!onOther()) return body;
+  return Object.assign({}, body, {
+    edited_by:      ME.uid,
+    edited_by_name: ME.full_name || '',
+    edited_at:      serverTimestamp()
+  });
+}
+let viewYear, viewMonth;
+let rotations = [], overrides = {}, sites = [], scheduleCompatibilityMode = '';
+let effective = null;   // תשובת getEffectiveWorkdays לחודש המוצג — „האם אני עובד" מגיע רק ממנה
+let myGuards = [];   // אבטחות אישיות של החשבון המחובר בלבד
+let records = {};          // 'YYYY-MM-DD' -> record
+let report  = null;        // מסמך הדוח החודשי
+let mySite  = '';          // תחנת הקצה שאני משובץ בה בלוח הציוות
+let swaps   = [];          // כל ההחלפות המאושרות בתחנה; הסינון לאדם נעשה בחישוב
+
+const GUARD_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const GUARD_TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+function guardMonthRange(year, month){
+  return {
+    from: dateKey(year, month, 1),
+    to: dateKey(year, month, daysInMonth(year, month))
+  };
+}
+
+// ה-callable מחזיר היטל אישי מצומצם, אבל גם כאן בונים עצם חדש
+// מהשדות היחידים שהמסך צריך. כך שדה עתידי בתשובת השרת לא יכול
+// להפוך בטעות לנתון שמופיע בדוח השעות או במילוי האוטומטי.
+function personalGuardRows(result){
+  const rows = result && result.data && Array.isArray(result.data.guards)
+    ? result.data.guards : [];
+  return rows.map(function (item) {
+    if (!item || typeof item !== 'object') return null;
+    const date = String(item.date || '');
+    const start = String(item.start || '');
+    const end = String(item.end || '');
+    if (!GUARD_DATE_RE.test(date) || !GUARD_TIME_RE.test(start) || !GUARD_TIME_RE.test(end)) {
+      return null;
+    }
+    return {
+      id: typeof item.id === 'string' ? item.id : '',
+      date: date,
+      title: typeof item.title === 'string' ? item.title : '',
+      start: start,
+      end: end,
+      status: typeof item.status === 'string' ? item.status : ''
+    };
+  }).filter(function (item) {
+    // ההתנהגות הישנה דילגה על ביטולים, ולכן ביטול אינו ממלא
+    // מראש יום עבודה בדוח.
+    return item && item.status !== 'cancelled';
+  });
+}
+
+async function readMyGuardAttendance(snapshot){
+  // השרת תמיד מחזיר את האבטחות של החשבון המחובר, לא של subject.
+  // רכזת כוח אדם שעורכת מישהו אחר מקבלת כאן רשימה ריקה במכוון:
+  // אסור להציג את האבטחות שלה בתוך הדוח של עובד אחר.
+  if (!snapshot || snapshot.subjectUid !== snapshot.viewerUid) return [];
+  const range = guardMonthRange(snapshot.year, snapshot.month);
+  try {
+    const result = await callMyGuardAttendance(range);
+    return personalGuardRows(result);
+  } catch (ignore) {
+    // כמו הקריאה הישירה שהוחלפה: כשל זמני באבטחות אינו מוחק את
+    // דוח השעות כולו. ברירת המחדל הריקה בטוחה יותר מנתון ישן.
+    return [];
+  }
+}
+
+// טעינת אבטחות יכולה להתחיל גם מתוך סנכרון וגם מתוך טעינת חודש.
+// רק מי שהתחיל אחרון רשאי לפרסם את תוצאתו; אחרת תשובה ישנה
+// לאותו חודש ולאותו אדם עלולה לדרוס תוצאה חדשה יותר.
+function beginMyGuardAttendance(snapshot){
+  const generation = ++guardLoadGeneration;
+  return readMyGuardAttendance(snapshot).then(function (guards) {
+    return { generation: generation, guards: guards };
+  });
+}
+
+function siteHoursOf(id){
+  const s = sites.filter(x => x.id === id)[0];
+  return s ? Number(s.fixed_hours || 0) : 0;
+}
+function siteName(id){
+  const s = sites.filter(x => x.id === id)[0];
+  return s ? s.name : '';
+}
+
+const COMPATIBILITY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_ROTATION_FIELDS = [
+  'crew', 'position_in_cycle', 'cycle_days', 'anchor_date', 'is_active',
+  'shift_start', 'shift_end', 'shift_hours', 'commander_start',
+  'commander_shift_hours', 'special_end', 'special_shift_hours'
+];
+
+// ההקשר מגיע רק מהשרת, ללא stationId מהדפדפן. גם כאן מעתיקים
+// רשימת היתר בלבד: תשובה פגומה או מצב new אינם הופכים בטעות
+// למערכים ריקים שמסווגים את כל אנשי התחנה כמי שאינם במשמרת.
+function legacyCompatibilityData(result){
+  const data = result && result.data;
+  if (!data || (data.mode !== 'off' && data.mode !== 'shadow') ||
+      !Array.isArray(data.rotations) || !data.overrides ||
+      typeof data.overrides !== 'object' || Array.isArray(data.overrides)) {
+    throw new Error('legacy-schedule-compatibility-shape');
+  }
+
+  const safeRotations = data.rotations.map(function (row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('legacy-schedule-rotation-shape');
+    }
+    const safe = {};
+    COMPATIBILITY_ROTATION_FIELDS.forEach(function (field) {
+      if (Object.prototype.hasOwnProperty.call(row, field)) safe[field] = row[field];
+    });
+    return safe;
+  });
+  const safeOverrides = {};
+  Object.keys(data.overrides).forEach(function (date) {
+    const row = data.overrides[date];
+    if (!COMPATIBILITY_DATE_RE.test(date) || !row || typeof row !== 'object' ||
+        Array.isArray(row) || row.date !== date || !Array.isArray(row.extra_crews)) {
+      throw new Error('legacy-schedule-override-shape');
+    }
+    safeOverrides[date] = {
+      date: date,
+      kind: typeof row.kind === 'string' ? row.kind : '',
+      crew: typeof row.crew === 'string' ? row.crew : '',
+      extra_crews: row.extra_crews.slice()
+    };
+  });
+  return { mode: data.mode, rotations: safeRotations, overrides: safeOverrides };
+}
+
+function showLegacyCompatibilityFailure(){
+  scheduleCompatibilityMode = '';
+  effective = null;
+  rotations = [];
+  overrides = {};
+  swaps = [];
+  $('rows').innerHTML = '';
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear + ' · נתונים לא זמינים';
+  $('tHours').textContent = '—';
+  $('tDays').textContent = '—';
+  $('tSug').textContent = '—';
+  setMonthUnavailable();
+  msg('לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. רענן את הדף ונסה שוב.', 'err');
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=attendance.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true;
+  const isMember = isSuper ||
+    MEMBER_ROLES.indexOf(c.role) !== -1;
+
+  // Super authority does not invent a tenant.  The signed station claim is
+  // still the operational scope for every attendance read and write.
+  SID = c.stationId || '';
+  if (!isMember || !SID || (!isSuper && !c.emp)) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  MY_SHIFT = c.shift || '';
+  IS_SUPER = isSuper;
+  CAN_APPROVE = isSuper || ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  ME = { uid: user.uid, emp: String(c.emp || ''), crew: c.shift || '',
+         role: c.role || '', full_name: '' };
+
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  // ---------- על מי המסך עובד ----------
+  //
+  // עד 25.8.2026 המסך הזה עבד תמיד על ME, ובכל 17 מקומות
+  // שנגעו בנתונים היה כתוב ME.emp במפורש. אלדד ביקש שרכזת
+  // כוח אדם תוכל לתקן שעות של אחרים, ולכן הופרדו שני דברים
+  // שהיו אותו דבר: **מי מחובר** ו**על מי מסתכלים**.
+  //
+  // ME נשאר הזהות — מי חתום, מי מאשר, מה כתוב בכותרת.
+  // SUBJ הוא נושא הדף — למי שייכות הרשומות שנטענות ונכתבות.
+  // ברירת המחדל היא שהם אותו אדם, וזה המצב אצל 43 מתוך 44
+  // האנשים בתחנה.
+  //
+  // ⚠️ כל נתיב נתונים חייב להשתמש ב-SUBJ. נתיב שנשאר עם
+  // ME.emp ייראה תקין לגמרי כשמסתכלים על עצמך — ויכתוב
+  // לרשומה הלא נכונה ברגע שרכזת תפתח מישהו אחר. tests/assign.mjs
+  // נופל אם נשאר ME.emp באחד מהם.
+  SUBJ = ME.emp ? Object.assign({}, ME) : null;
+  const initialSubjectGeneration = ++subjectGeneration;
+  CAN_EDIT_OTHERS = isSuper || c.role === 'hr_coordinator';
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.emp ? ' · מס׳ ' + ME.emp : '') +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'attendance.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  const now = new Date();
+  viewYear = now.getFullYear();
+  viewMonth = now.getMonth();
+
+  // תיקון שעות לאחרים — רכז/ת כוח אדם ומנהל-על בלבד.
+  // מפקד משמרת אינו מקבל את זה: אלדד ביקש הפרדה בין
+  // כוח אדם לפיקוד המשמרת, ותיקון שעות הוא כוח אדם.
+  if (CAN_EDIT_OTHERS) {
+    $('pickCard').classList.remove('hide');
+    loadPeople();
+    $('pickGo').onclick = async () => {
+      const emp = $('pickWho').value;
+      if (!emp) { msg('בחר אדם מהרשימה.', 'err', 'pickMsg'); return; }
+      const p = PEOPLE.filter(function (x) { return x.emp === emp; })[0];
+      if (!p) { msg('לא מצאתי את האדם הזה.', 'err', 'pickMsg'); return; }
+      $('pickGo').disabled = true;
+      try { await switchTo(p); msg('', '', 'pickMsg'); }
+      catch (e) { msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', 'pickMsg'); }
+      $('pickGo').disabled = false;
+    };
+    $('pickBack').onclick = async () => {
+      if (!ME.emp) return;
+      $('pickWho').value = '';
+      await switchTo(null);
+      msg('', '', 'pickMsg');
+    };
+  }
+
+  if (!SUBJ) {
+    setSubjectWorkspaceVisible(false);
+    msg('בחר איש צוות כדי לפתוח את דוח הנוכחות שלו.', 'info', 'pickMsg');
+    if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
+    return;
+  }
+
+  const staticReady = await loadStatic();
+  if (!staticReady || initialSubjectGeneration !== subjectGeneration) return;
+  await loadMonth();
+  if (CAN_APPROVE) { $('apprCard').classList.remove('hide'); loadApprovals(); }
+});
+
+// ---------- טעינה ----------
+
+async function loadStatic(){
+  const generation = ++staticLoadGeneration;
+  const snapshot = {
+    sid: SID,
+    uid: SUBJ.uid,
+    emp: String(SUBJ.emp),
+    crew: SUBJ.crew || '',
+    mySite: mySite,
+    year: viewYear,
+    month: viewMonth
+  };
+  const next = {};
+  let compatibilityFailure = null;
+
+  // ארבעת המקורות והקשר הסידור אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
+  // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
+  // המקורות שאינם בסיס לחישוב עדיין מבודדים בכשל; הקשר הסידור
+  // עצמו נכשל בקול ועוצר את החישוב במקום לפרסם תוצאה מטעה.
+  // ⭐ „האם אני עובד" — מהשרת, מהסידור האפקטיבי (legacy כולל החלפות
+  // מאושרות, או הפרסום הפעיל). זה המקור היחיד להצעת ימים ולמילוי
+  // אוטומטי. המחזור והחריגים נטענים בנפרד ורק ב-off/shadow, לתצוגה
+  // (אות המשמרת, סוג החריגה) ולשעות המשמרת; במצב new השעות מגיעות
+  // מתצורת התחנה בתוך תשובת ימי העבודה.
+  const loadLegacyCompatibility = async function () {
+    try {
+      const range = guardMonthRange(snapshot.year, snapshot.month);
+      next.effective = parseEffectiveWorkdays(await callEffectiveWorkdays({
+        from: range.from, to: range.to, uids: [snapshot.uid]
+      }));
+      if (next.effective.mode === 'new') {
+        next.compatibility = { mode: 'new', rotations: [], overrides: {} };
+        return;
+      }
+      // התחנה נגזרת מהזהות החיה בשרת; הדפדפן שולח רק
+      // את הטווח המזערי שנדרש לחודש המוצג.
+      const result = await callLegacyScheduleCompatibilityContext(range);
+      next.compatibility = legacyCompatibilityData(result);
+      if (next.compatibility.mode !== next.effective.mode) {
+        throw new Error('schedule-mode-changed');
+      }
+    } catch (error) {
+      compatibilityFailure = error;
+    }
+  };
+
+  // איפה אני משובץ בלוח הציוות של המשמרת שלי. משמש כברירת
+  // מחדל לימים שעוד לא דיווחתי — כדי שהדוח יראה גם איפה עבדתי
+  // או אעבוד, ולא רק מתי.
+  const loadBoardSite = async function () {
+    try {
+      const pair = await Promise.all([
+        getDoc(doc(db, 'stations', snapshot.sid, 'config', 'board')),
+        snapshot.crew
+          ? getDoc(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
+          : Promise.resolve(null)
+      ]);
+      const b = pair[0], s = pair[1];
+      const board  = b.exists() ? (b.data() || {}) : {};
+      const assign = (s && s.exists() && (s.data() || {}).assign) || {};
+
+      const mine = Object.keys(assign).filter(k => assign[k] === snapshot.uid);
+      let found = snapshot.mySite;
+      // משבצת של רכב מושבת אינה מקור לתחנת המשנה שלי: הרכב ירד
+      // מהצי, והשיבוץ הישן נשאר שמור רק כדי ששחזור יהיה מלא.
+      (board.vehicles || []).forEach(function (v) {
+        if (!v || v.active === false) return;
+        (v.slots || []).forEach(function (sl) {
+          if (mine.indexOf(sl.id) !== -1 && sl.site && !found) found = sl.site;
+        });
+      });
+      next.mySite = found;
+    } catch (ignore) {}
+  };
+
+  // החלפות מאושרות. אדם שהחליף לא עובד ביום שלו, וכן עובד
+  // ביום של מי שהחליף איתו — ושני הימים חייבים להופיע נכון
+  // במילוי מראש, אחרת הדוח מתחיל שגוי.
+  const loadSwaps = async function () {
+    try {
+      const sw = await getDocs(collection(db, 'stations', snapshot.sid, 'swaps'));
+      const found = [];
+      sw.forEach(d => {
+        const v = d.data() || {};
+        if (v.status === 'approved') found.push(v);
+      });
+      next.swaps = found;
+    } catch (ignore) {}
+  };
+
+  const loadSites = async function () {
+    try {
+      const ss = await getDocs(collection(db, 'stations', snapshot.sid, 'sub_stations'));
+      const found = [];
+      ss.forEach(d => {
+        const v = d.data() || {};
+        if (!subStationAvailable(v)) return;
+        found.push({ id: d.id, name: v.name || '',
+                     fixed_hours: Number(v.fixed_hours || 0),
+                     order: Number(v.order || 0) });
+      });
+      found.sort((a, b) => a.order - b.order);
+      next.sites = found;
+    } catch (ignore) {}
+  };
+
+  await Promise.all([
+    loadLegacyCompatibility(),
+    loadBoardSite(), loadSwaps(), loadSites()
+  ]);
+
+  const current = generation === staticLoadGeneration &&
+    SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
+    String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew &&
+    viewYear === snapshot.year && viewMonth === snapshot.month;
+  if (!current) return false;
+
+  if (compatibilityFailure || !next.compatibility || !next.effective) {
+    showLegacyCompatibilityFailure();
+    return false;
+  }
+
+  scheduleCompatibilityMode = next.compatibility.mode;
+  effective = next.effective;
+  // במצב new אין מחזור בדפדפן: שעות המשמרת מגיעות כתצורת תחנה
+  // (hours_source: legacy-rotation-config) ונעטפות בצורת רשומת מחזור
+  // כדי ש-shiftTimes() ימשיך לעבוד. אין צוותים ואין חריגים להצגה.
+  rotations = effective.mode === 'new'
+    ? (shiftRotationShim(effective) ? [shiftRotationShim(effective)] : [])
+    : next.compatibility.rotations;
+  overrides = next.compatibility.overrides;
+  if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
+  if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
+  if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;
+  return true;
+}
+
+function setMonthBusy(busy){
+  $('work').setAttribute('aria-busy', busy ? 'true' : 'false');
+  ['prev','next','btnFill','btnSubmit','btnView','btnSync','btnRecalc',
+   'btnUnsubmit','btnApprove','btnReopen','btnStart','btnStop','btnManual'].forEach(function (id) {
+    const el = $(id);
+    if (el) el.disabled = !!busy;
+  });
+  document.querySelectorAll('.days button').forEach(function (el) {
+    el.disabled = !!busy;
+  });
+}
+
+// כשל תאימות הוא מצב סופי של בקשת הרשת, לא טעינה אינסופית.
+// מאפשרים מעבר חודש כניסיון חוזר, אך משאירים כל פעולה שמחשבת או
+// שומרת נתונים חסומה עד שבסיס הסידור נטען מחדש בהצלחה.
+function setMonthUnavailable(){
+  setMonthBusy(false);
+  $('work').setAttribute('aria-busy', 'false');
+  ['btnFill','btnSubmit','btnView','btnSync','btnRecalc','btnUnsubmit',
+   'btnApprove','btnReopen','btnStart','btnStop','btnManual'].forEach(function (id) {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+  document.querySelectorAll('.days button').forEach(function (el) {
+    el.disabled = true;
+  });
+}
+
+// פעולה שהתחילה לפני מעבר חודש עלולה להסתיים בזמן שהחודש
+// החדש עדיין נטען. במקרה כזה אסור לה להפעיל את הכפתור מחדש;
+// loadMonth האחרון ישחרר את כל הכפתורים רק אחרי שהנתונים הוחלפו.
+function releaseMonthAction(button){
+  button.disabled = $('work').getAttribute('aria-busy') === 'true' ||
+    !scheduleCompatibilityMode;
+}
+
+async function loadMonth(){
+  const generation = ++monthLoadGeneration;
+  const snapshot = {
+    sid: SID,
+    emp: String(SUBJ.emp),
+    subject: subjectGeneration,
+    subjectUid: SUBJ.uid,
+    viewerUid: ME && ME.uid,
+    year: viewYear,
+    month: viewMonth
+  };
+  const mk = monthKey(snapshot.year, snapshot.month);
+  const nextRecords = {};
+  let nextReport = null;
+  let attendanceError = null;
+  const guardRequest = beginMyGuardAttendance(snapshot);
+  setMonthBusy(true);
+
+  // רשומות החודש ומצב הדוח הן שתי קריאות עצמאיות. שתיהן
+  // מתחילות יחד ובונות תוצאה מקומית. רק דור הטעינה האחרון
+  // רשאי לפרסם אותה, כך שחודש איטי לא יכול לדרוס חודש חדש.
+  const loaded = await Promise.all([
+    (async function () {
+      // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
+      // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
+      // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
+      try {
+        const qs = await getDocs(query(
+          collection(db, 'stations', snapshot.sid, 'attendance'),
+          where('emp_number', '==', snapshot.emp),
+          where('month', '==', mk)
+        ));
+        qs.forEach(function (d) {
+          const v = d.data() || {};
+          nextRecords[v.date] = Object.assign({ id: d.id }, v);
+        });
+      } catch (e) {
+        attendanceError = e;
+      }
+    })(),
+    (async function () {
+      try {
+        const r = await getDoc(doc(db, 'stations', snapshot.sid, 'monthly_reports',
+                                   snapshot.emp + '_' + mk));
+        if (r.exists()) nextReport = r.data();
+      } catch (ignore) {}
+    })(),
+    guardRequest
+  ]);
+  const guardResult = loaded[2];
+
+  const current = generation === monthLoadGeneration &&
+    snapshot.subject === subjectGeneration && SID === snapshot.sid &&
+    SUBJ && String(SUBJ.emp) === snapshot.emp &&
+    SUBJ.uid === snapshot.subjectUid && ME && ME.uid === snapshot.viewerUid &&
+    viewYear === snapshot.year && viewMonth === snapshot.month;
+  if (!current) return false;
+
+  records = nextRecords;
+  report = nextReport;
+  if (guardResult.generation === guardLoadGeneration) myGuards = guardResult.guards;
+  if (attendanceError) {
+    const code = String(attendanceError.code || '');
+    if (code.indexOf('failed-precondition') !== -1) {
+      msg('חסר אינדקס במסד. הרץ deploy.bat — הוא פורס גם אינדקסים.', 'err');
+    } else {
+      msg('לא הצלחתי לקרוא את הדוח. (' +
+          (attendanceError.code || attendanceError.message) + ')', 'err');
+    }
+  }
+
+  render();
+  setMonthBusy(false);
+  return true;
+}
+
+// ---------- ציור ----------
+
+function locked(){
+  return !!(report && report.status === 'approved');
+}
+
+function suggestedDays(){
+  const out = [];
+  if (!effective) return out;
+  const last = daysInMonth(viewYear, viewMonth);
+  for (let d = 1; d <= last; d++) {
+    const key = dateKey(viewYear, viewMonth, d);
+    // רק יום שידוע שעובדים בו. לא-ידוע אינו מוצע — ואינו „חופש".
+    if (worksOn(effective, SUBJ.uid, key) !== true) continue;
+    if (records[key]) continue;
+    out.push(key);
+  }
+  return out;
+}
+
+function baseTimes(){
+  const t = shiftTimes(rotations[0], ME.role, false);
+  return { start: t.start, end: t.end };
+}
+
+// האם אני עובד בתאריך הזה לפי הסבב וההחלפות המאושרות. אותה
+// פונקציה בדיוק שמסך הסידור משתמש בה — שני המסכים חייבים
+// להסכים, אחרת אבטחה תיראה "יום חופש" באחד ו"בתוך המשמרת"
+// בשני.
+// true · false · 'unknown' — הקורא מחליט מה לעשות עם לא-ידוע, לא הפונקציה.
+function workingOn(key){
+  return worksOn(effective, SUBJ.uid, key);
+}
+
+// ימים בחודש המוצג שהסידור לא יודע עליהם (מחוץ לכיסוי הפרסום).
+function unknownDaysThisMonth(){
+  if (!effective) return [];
+  const last = daysInMonth(viewYear, viewMonth);
+  return unknownDaysBetween(effective, dateKey(viewYear, viewMonth, 1), dateKey(viewYear, viewMonth, last));
+}
+
+function myGuardOn(key){
+  return myGuards.filter(g => String(g.date || '') === String(key))[0] || null;
+}
+
+function render(){
+  const unknownDays = unknownDaysThisMonth();
+  $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear +
+    (effective ? ' · לפי ' + workdaysSourceLabel(effective) : '') +
+    (unknownDays.length
+      ? ' · ' + unknownDays.length + ' ימים מחוץ לסידור הידוע — לא מולאו ולא הוצעו'
+      : '');
+
+  const list = Object.keys(records).sort();
+  const saved = list.map(k => records[k]);
+  const total = monthTotal(saved, siteHoursOf);
+  const sug = suggestedDays();
+
+  $('tHours').textContent = total;
+  $('tDays').textContent  = saved.length;
+  $('tSug').textContent   = sug.length;
+
+  const st = (report && report.status) || 'draft';
+  $('state').className = 'state ' + st;
+  $('state').textContent = st === 'approved' ? 'מאושר'
+                        : st === 'submitted' ? 'ממתין לאישור' : 'טיוטה';
+
+  $('btnFill').classList.toggle('hide', !sug.length || locked() || st === 'submitted');
+  $('btnSync').classList.toggle('hide', locked());
+  $('btnRecalc').classList.toggle('hide', !saved.length);
+  // "בדקתי ואישרתי את הדיווחים שלי" היא הצהרה אישית.
+  // רכזת שעורכת עבור מישהו אחר יכולה לתקן לו שעות, אבל
+  // לא להצהיר בשמו שהוא בדק אותן.
+  $('btnSubmit').classList.toggle('hide',
+    onOther() || st !== 'draft' || !saved.length);
+  $('btnUnsubmit').classList.toggle('hide', onOther() || st !== 'submitted');
+  $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
+  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && st === 'approved'));
+
+  renderTimer();
+  renderRows(sug);
+}
+
+function renderTimer(){
+  const today = new Date();
+  const key = dateKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const rec = records[key];
+  const running = !!(rec && rec.start && !rec.end);
+
+  $('btnStart').classList.toggle('hide', running || locked());
+  $('btnStop').classList.toggle('hide', !running);
+
+  if (locked()) {
+    $('timerNote').textContent = 'החודש אושר ונעול. פנה למפקד כדי לפתוח אותו.';
+  } else if (running) {
+    $('timerNote').textContent = 'משמרת פתוחה מ-' + rec.start + '. לחץ "סיים" כשתסיים.';
+  } else if (rec) {
+    $('timerNote').textContent = 'היום כבר מדווח: ' + dayTypeHe(rec.day_type) +
+      (rec.start ? ' · ' + rec.start + '–' + rec.end : '');
+  } else {
+    $('timerNote').textContent = 'לחיצה על "התחל" רושמת את השעה עכשיו על היום הנוכחי.';
+  }
+}
+
+function renderRows(sug){
+  const body = $('rows');
+  body.innerHTML = '';
+
+  const keys = Object.keys(records).concat(sug).sort();
+  if (!keys.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);' +
+      'text-align:center;padding:18px">אין ימים בחודש הזה.</td></tr>';
+    return;
+  }
+
+  keys.forEach(function (key) {
+    const rec = records[key];
+    const isSug = !rec;
+    const p = key.split('-');
+    const date = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    const ov = overrideOn(overrides, date);
+    const crew = crewOnDate(rotations, date, overrides);
+    const eff = swapEffect(swaps, SUBJ.uid, key);
+    const bt = baseTimes();
+
+    const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
+                          sub_station: mySite };
+    const hrs = calcHours(view, siteHoursOf(view.sub_station));
+    const why = reasonWhy(view, siteHoursOf(view.sub_station), shiftHoursFor());
+    const running = !!(rec && rec.start && !rec.end);
+
+    const tr = document.createElement('tr');
+    tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '');
+
+    // data-l הוא שם השדה. במסך רחב הוא לא מוצג — שורת הכותרת
+    // עושה את העבודה. בטלפון הטבלה נפרקת לכרטיסים, ואז זו
+    // התווית היחידה שאומרת מה המספר הזה.
+    // dash מסמן שדה ריק, כדי שהכרטיס לא יציג "תחנה: —".
+    const dash = (s) => (s === '—' ? ' dash' : '');
+    const site = view.sub_station ? esc(siteName(view.sub_station)) : '—';
+    const tot  = hrs == null ? '—' : String(hrs);
+
+    tr.innerHTML =
+      '<td class="c-date"><span class="d">' + Number(p[2]) + '.' + Number(p[1]) + '</span> ' +
+        '<span class="dw">' + DOWS[date.getDay()] + '</span>' +
+        (crew ? ' <span class="cw ' + crew + '" title="' + esc(CREW_HE[crew] || crew) +
+                '">' + (CREW_SHORT[crew] || crew) + '</span>' : '') +
+        (ov ? ' <span class="tag" title="' + esc(ov.note || '') + '">' +
+              esc(overrideKindHe(ov.kind)) + '</span>' : '') +
+        (eff === 'in' ? ' <span class="tag">נכנסת בהחלפה</span>' : '') + '</td>' +
+      '<td data-l="סוג">' + esc(dayTypeHe(view.day_type)) +
+        (isSug ? ' <span class="tag">לפי הסידור</span>' : '') +
+        (running ? ' <span class="tag">פתוחה</span>' : '') +
+        (needsTimes(view.day_type) && shapeOf(view) !== 'regular'
+          ? ' <span class="tag">' +
+            (shapeOf(view) === 'split' ? 'מפוצלת' : 'המשך משמרת') + '</span>' : '') +
+        (view.overtime_reason
+          ? ' <span class="tag" title="' + esc(view.overtime_reason) + '">נימוק</span>'
+          : '') + '</td>' +
+      '<td class="hh' + (needsTimes(view.day_type) ? '' : ' dash') +
+        '" data-l="שעות">' + (needsTimes(view.day_type)
+          ? '<span class="rng">' + esc(view.start || '—') + '–' +
+              esc(running ? '…' : (view.end || '—')) + '</span>' +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
+              esc(view.end2) + '</span>' : '')
+          : '—') + '</td>' +
+      '<td class="' + dash(site).trim() + '" data-l="תחנה">' + site + '</td>' +
+      '<td class="hh' + dash(tot) + '" data-l="סה״כ">' + tot + '</td>' +
+      // הערות. השדה קיים מזמן בטופס העריכה, אבל לא הופיע
+      // בטבלה — כלומר מי שכתב הערה לא ראה אותה שוב, ומי
+      // שקורא את הדוח לא ידע שהיא קיימת. שדה שנכתב ולא נקרא
+      // הוא שדה שמפסיקים למלא.
+      //
+      // שיוך אבטחה ממלא אותו לבד, ולכן העמודה הזו מסבירה
+      // בשקט למה ליום מסוים יש יותר שעות.
+      '<td class="nt' + (view.notes ? '' : ' dash') + '" data-l="הערות">' +
+        (view.notes
+          ? '<span title="' + esc(view.notes) + '">' + esc(view.notes) + '</span>'
+          : '<span class="em">—</span>') + '</td>';
+
+    const td = document.createElement('td');
+    td.className = 'c-act';
+    if (!locked()) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.date = key;
+      b.className = 'btn sm';
+      b.textContent = isSug ? 'שמור' : 'ערוך';
+      b.setAttribute('aria-label', (isSug ? 'שמירת' : 'עריכת') +
+        ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
+      b.onclick = () => editDay(key, rec);
+      td.appendChild(b);
+    }
+    tr.appendChild(td);
+    body.appendChild(tr);
+  });
+}
+
+// ---------- שמירה ----------
+
+function newRecord(key, patch){
+  const mk = monthKey(viewYear, viewMonth);
+  return Object.assign({
+    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
+    crew: SUBJ.crew, date: key, month: mk,
+    day_type: 'regular', start: '', end: '', sub_station: '', notes: '',
+    status: 'draft'
+  }, patch || {});
+}
+
+async function saveRecord(key, rec){
+  const body = Object.assign({}, rec);
+  delete body.id;
+
+  const fix = siteHoursOf(body.sub_station);
+  body.hours = calcHours(body, fix);
+
+  // שדות שהשרת קורא ואינו מחשב: הסיכום החודשי והריצה הלילית
+  // צריכים לדעת מה סוג היום בעברית, איפה זה היה, והאם היום
+  // דורש נימוק — בלי להריץ שוב את כללי החישוב בצד השרת.
+  // חישוב שני היה יוצר אפשרות שהמייל אומר מספר אחד והמסך אחר.
+  const site = sites.filter(s => s.id === body.sub_station)[0];
+  body.day_type_he     = dayTypeHe(body.day_type);
+  body.site_name       = site ? site.name : '';
+  body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
+
+  body.updated_at = serverTimestamp();
+  await setDoc(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(body));
+  records[key] = Object.assign({ id: recordId(SUBJ.emp, key) }, body);
+}
+
+$('btnFill').onclick = async () => {
+  const sug = suggestedDays();
+  if (!sug.length) return;
+  const b = $('btnFill'); b.disabled = true;
+  try {
+    const bt = baseTimes();
+    const batch = writeBatch(db);
+    sug.forEach(function (key) {
+      const rec = newRecord(key, { day_type: 'regular', start: bt.start,
+                                   end: bt.end, sub_station: mySite });
+      const fx = siteHoursOf(mySite);
+      const site0 = sites.filter(s => s.id === mySite)[0];
+      rec.hours           = calcHours(rec, fx);
+      rec.day_type_he     = dayTypeHe(rec.day_type);
+      rec.site_name       = site0 ? site0.name : '';
+      rec.reason_required = reasonWhy(rec, fx, shiftHoursFor()) !== '';
+      rec.updated_at = serverTimestamp();
+      batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(rec));
+      records[key] = rec;
+    });
+    await batch.commit();
+    msg(sug.length + ' ימים נשמרו לפי הסידור. אפשר לתקן כל אחד מהם.', 'ok');
+    render();
+  } catch (e) {
+    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
+  }
+};
+
+$('btnStart').onclick = async () => {
+  const now = new Date();
+  const key = dateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const hh = String(now.getHours()).padStart(2, '0') + ':' +
+             String(now.getMinutes()).padStart(2, '0');
+  try {
+    const rec = records[key]
+      ? Object.assign({}, records[key], { start: hh, end: '' })
+      : newRecord(key, { start: hh, end: '' });
+    await saveRecord(key, rec);
+    msg('המשמרת התחילה ב-' + hh + '.', 'ok');
+    render();
+  } catch (e) {
+    msg('לא הצלחתי לפתוח משמרת. (' + (e.code || e.message) + ')', 'err');
+  }
+};
+
+$('btnStop').onclick = async () => {
+  const now = new Date();
+  const key = dateKey(now.getFullYear(), now.getMonth(), now.getDate());
+  const rec = records[key];
+  if (!rec) return;
+  const hh = String(now.getHours()).padStart(2, '0') + ':' +
+             String(now.getMinutes()).padStart(2, '0');
+  try {
+    await saveRecord(key, Object.assign({}, rec, { end: hh }));
+    msg('המשמרת נסגרה ב-' + hh + '.', 'ok');
+    render();
+  } catch (e) {
+    msg('לא הצלחתי לסגור משמרת. (' + (e.code || e.message) + ')', 'err');
+  }
+};
+
+$('btnManual').onclick = () => {
+  const now = new Date();
+  editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
+          records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
+};
+
+// ---------- תיקון וחישוב מחדש ----------
+//
+// הסידור משתנה. חריגה נוספת, מישהו מחליף מישהו, והדוח שנבנה
+// לפני שבועיים כבר לא תואם. שני הכפתורים האלה נותנים למשתמש
+// לתקן את זה בעצמו במקום לפנות למפקד.
+
+$('btnSync').onclick = async () => {
+  const b = $('btnSync'); b.disabled = true;
+  const action = {
+    subject:subjectGeneration, subjectUid:SUBJ.uid, viewerUid:ME && ME.uid,
+    year:viewYear, month:viewMonth
+  };
+  try {
+    // הסידור והאבטחות האישיות נטענים מחדש — שניהם יכולים היו
+    // להשתנות מאז שהמסך נפתח. האבטחות נשארות אישיות גם בזמן
+    // שרכזת כוח אדם פותחת דוח של עובד אחר.
+    const guardRequest = beginMyGuardAttendance(action);
+    const loaded = await Promise.all([loadStatic(), guardRequest]);
+    const fresh = loaded[0];
+    const freshGuards = loaded[1];
+    const sameTarget = action.subject === subjectGeneration &&
+      action.subjectUid === (SUBJ && SUBJ.uid) && action.viewerUid === (ME && ME.uid) &&
+      action.year === viewYear && action.month === viewMonth;
+    // loadStatic already rendered the real compatibility error. Do not replace
+    // it with the unrelated "person or month changed" message.
+    if (!fresh) return;
+    if (!sameTarget) {
+      msg('התיקון בוטל כי האדם או החודש השתנו בזמן הטעינה.', 'info');
+      return;
+    }
+    if (freshGuards.generation === guardLoadGeneration) myGuards = freshGuards.guards;
+
+    const bt = baseTimes();
+    const last = daysInMonth(viewYear, viewMonth);
+    const added = [], extra = [];
+    const batch = writeBatch(db);
+    let n = 0;
+
+    for (let d = 1; d <= last; d++) {
+      const key  = dateKey(viewYear, viewMonth, d);
+      const working = worksOn(effective, SUBJ.uid, key);   // true · false · 'unknown'
+      const rec = records[key];
+
+      if (working === true && !rec) {
+        const add = newRecord(key, { day_type: 'regular', start: bt.start,
+                                     end: bt.end, sub_station: mySite });
+        const fx2 = siteHoursOf(mySite);
+        const st2 = sites.filter(s => s.id === mySite)[0];
+        add.hours           = calcHours(add, fx2);
+        add.day_type_he     = dayTypeHe(add.day_type);
+        add.site_name       = st2 ? st2.name : '';
+        add.reason_required = reasonWhy(add, fx2, shiftHoursFor()) !== '';
+        add.updated_at = serverTimestamp();
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)), stamp(add));
+        records[key] = add; added.push(d); n++;
+      }
+
+      // יום שדיווחת עליו והסידור אומר שלא עבדת. לא נמחק
+      // אוטומטית — יכול להיות נע״ת, ישיבה או החלפה אמיתית.
+      // רק מסומן, וההחלטה שלך.
+      if (working === false && rec && rec.day_type === 'regular') extra.push(d);
+    }
+
+    if (n) await batch.commit();
+
+    const parts = [];
+    if (added.length) parts.push('נוספו ' + added.length + ' ימים: ' + added.join(', '));
+    if (extra.length) parts.push('יש ' + extra.length +
+      ' ימים שדיווחת כרגילים והסידור אומר שלא עבדת: ' + extra.join(', ') +
+      '. בדוק אותם — אולי הם נע״ת או החלפה.');
+    if (!parts.length) parts.push('הדוח תואם לסידור. אין מה לתקן.');
+
+    msg(parts.join(' · '), extra.length ? 'info' : 'ok');
+    render();
+  } catch (e) {
+    msg('התיקון נכשל. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
+  }
+};
+
+// השעות נשמרות על הרשומה לצורך דוחות, ומחושבות מחדש בכל תצוגה.
+// אם השניים נפרדו — למשל אחרי שינוי באורך המשמרת של תחנת קצה —
+// הכפתור הזה מיישר אותם.
+$('btnRecalc').onclick = async () => {
+  const b = $('btnRecalc'); b.disabled = true;
+  try {
+    const keys = Object.keys(records);
+    const batch = writeBatch(db);
+    let fixed = 0;
+
+    keys.forEach(function (key) {
+      const r = records[key];
+      const h = calcHours(r, siteHoursOf(r.sub_station));
+      if (Number(r.hours) !== Number(h)) {
+        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)),
+                  stamp({ hours: h, updated_at: serverTimestamp() }), { merge: true });
+        r.hours = h; fixed++;
+      }
+    });
+
+    if (fixed) await batch.commit();
+    msg(fixed ? fixed + ' ימים תוקנו.'
+              : 'אין פער. השעות השמורות תואמות לחישוב.', 'ok');
+    render();
+  } catch (e) {
+    msg('החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
+  } finally {
+    releaseMonthAction(b);
+  }
+};
+
+// ---------- חלונית עריכה ----------
+
+let ovReturnFocus = null;
+function openOv(){
+  const ov = $('ov');
+  ovReturnFocus = document.activeElement;
+  ov.classList.add('on');
+  ov.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(function () {
+    const first = $('dlg').querySelector(
+      'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+    );
+    (first || $('dlg')).focus();
+  });
+}
+function closeOv(restoreFocus = true){
+  const back = ovReturnFocus;
+  $('ov').classList.remove('on');
+  $('ov').setAttribute('aria-hidden', 'true');
+  $('dlg').innerHTML = '';
+  ovReturnFocus = null;
+  if (restoreFocus && back && back.isConnected && typeof back.focus === 'function') back.focus();
+}
+function focusAfterRender(key){
+  requestAnimationFrame(function () {
+    const dayButton = key
+      ? Array.from(document.querySelectorAll('.days button[data-date]'))
+          .find(function (el) { return el.dataset.date === key; })
+      : null;
+    const target = dayButton || $('msg') || $('moLabel');
+    if (target && typeof target.focus === 'function') target.focus();
+  });
+}
+$('ov').onclick = e => { if (e.target === $('ov')) closeOv(); };
+document.addEventListener('keydown', function (e) {
+  if (!$('ov').classList.contains('on')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeOv(); return; }
+  if (e.key !== 'Tab') return;
+  const focusable = Array.from($('dlg').querySelectorAll(
+    'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  )).filter(el => el.offsetParent !== null);
+  if (!focusable.length) { e.preventDefault(); $('dlg').focus(); return; }
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+// כמה שעות הסידור קבע ליום הזה. כרגע אורך אחיד לתחנה; כשיהיו
+// אורכים שונים לימים שונים, זה המקום היחיד שישתנה.
+function shiftHoursFor(){
+  const t = shiftTimes(rotations[0], ME.role, false);
+  return Number(t.hours) || 24;
+}
+
+function dayOptions(sel){
+  return [0, 1, 2].map(function (n) {
+    const he = n === 0 ? 'אותו יום' : (n === 1 ? 'למחרת' : 'מחרתיים');
+    return '<option value="' + n + '"' + (Number(sel) === n ? ' selected' : '') +
+           '>' + he + '</option>';
+  }).join('');
+}
+
+function editDay(key, rec){
+  if (locked()) return;
+  const bt = baseTimes();
+
+  // אבטחה ביום הזה. אם הכבאי משובץ לאבטחה ביום שאינו יום
+  // המשמרת שלו, זה כמעט תמיד מה שהוא בא לדווח — ולכן השדות
+  // ממולאים מראש משם. הוא עדיין יכול לשנות הכל.
+  // „אבטחה ביום חופש" רק כשידוע שאינו יום משמרת (=== false). יום לא ידוע
+  // אינו יום חופש — ברירת המחדל נשארת דיווח רגיל, והכבאי בוחר.
+  const g = myGuardOn(key);
+  const dflt = (g && workingOn(key) === false)
+    ? { day_type: 'guard', start: g.start || bt.start, end: g.end || bt.end,
+        // תצוגת האבטחות האישית אינה כוללת מקום. כותרת האבטחה
+        // מספיקה כהקשר למילוי מראש, בלי להרחיב את מידע המיקום.
+        sub_station: mySite, notes: g.title || '' }
+    : { day_type: 'regular', start: bt.start, end: bt.end,
+        sub_station: mySite, notes: '' };
+
+  const v = rec || dflt;
+  const p = key.split('-');
+  const shape0 = rec ? shapeOf(rec) : 'regular';
+  const reasonMark = ' · נימוק חובה';
+
+  const types = DAY_TYPES.map(t =>
+    '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
+    '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
+    '</option>').join('');
+  const shapes = SHAPES.map(s =>
+    '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
+    '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
+    '</option>').join('');
+  const siteOpts = '<option value="">בלי תחנה</option>' + sites.map(s =>
+    '<option value="' + esc(s.id) + '"' + (s.id === v.sub_station ? ' selected' : '') +
+    '>' + esc(s.name) + (s.fixed_hours ? ' — ' + s.fixed_hours + ' שעות' : '') +
+    '</option>').join('');
+
+  $('dlg').innerHTML =
+    '<h3 id="dlgTitle">דיווח ליום ' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
+    '<div class="hint" id="dHint"></div>' +
+    '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
+
+    '<div id="dTimes">' +
+      '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
+      '<div class="shapeNote" id="dShapeNote"></div>' +
+
+      '<div class="seg">' +
+        '<div class="two">' +
+          '<div><label id="lStart" for="dStart">כניסה</label>' +
+            '<input type="time" id="dStart" value="' + esc(v.start || '') + '"></div>' +
+          '<div><label id="lEnd" for="dEnd">יציאה</label>' +
+            '<input type="time" id="dEnd" value="' + esc(v.end || '') + '"></div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="seg hide" id="dSeg2">' +
+        '<div class="two">' +
+          '<div><label for="dStart2">כניסה שנייה</label>' +
+            '<input type="time" id="dStart2" value="' + esc(v.start2 || '') + '"></div>' +
+          '<div><label for="dEnd2">יציאה שנייה</label>' +
+            '<input type="time" id="dEnd2" value="' + esc(v.end2 || '') + '"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div id="dOtBox" class="ot hide">' +
+      '<div class="otHead" id="dOtHead"></div>' +
+      '<label for="dOtReason">נימוק · חובה</label>' +
+      '<input type="text" id="dOtReason" maxlength="120" aria-describedby="dOtHead" value="' +
+        esc(v.overtime_reason || '') + '" placeholder="למשל: שריפה בשחמון, נשארתי עד ההחלפה">' +
+    '</div>' +
+
+    '<label for="dSite">תחנה</label><select id="dSite">' + siteOpts + '</select>' +
+    '<label for="dNotes">הערות</label><textarea id="dNotes" maxlength="200">' +
+      esc(v.notes || '') + '</textarea>' +
+    '<div class="acts">' +
+      '<button type="button" class="btn go" id="dSave">שמור</button>' +
+      (rec ? '<button type="button" class="btn" id="dDel">מחק את היום</button>' : '') +
+      '<button type="button" class="btn" id="dCancel">ביטול</button>' +
+    '</div>';
+  openOv();
+
+  // הצורה קובעת את חישוב היממות, ולא ניחוש מהשעות.
+  //
+  //   regular    הכלל הישן: אם היציאה קטנה או שווה לכניסה,
+  //              המשמרת חצתה חצות. תמיד עד 24 שעות.
+  //   continued  היציאה תמיד למחרת. תמיד מעל 24.
+  //   split      שני קטעים באותו יום, והסך הוא הסכום.
+  function current(){
+    const sh = $('dShape').value;
+    return {
+      day_type: $('dType').value,
+      shape: sh,
+      start: $('dStart').value,
+      end:   $('dEnd').value,
+      end_day: sh === 'continued' ? 1 : guessDayOffset($('dStart').value, $('dEnd').value),
+      start2: sh === 'split' ? $('dStart2').value : '',
+      end2:   sh === 'split' ? $('dEnd2').value : '',
+      end_day2: sh === 'split'
+                  ? guessDayOffset($('dStart2').value, $('dEnd2').value) : 0,
+      sub_station: $('dSite').value,
+      overtime_reason: $('dOtReason').value.trim()
+    };
+  }
+
+  const NOTES = {
+    regular:   'כניסה ויציאה. יציאה מוקדמת מהכניסה נחשבת למחרת.',
+    continued: 'היציאה למחרת. כל יום כזה גדול מ-24 שעות ולכן ' +
+               'תמיד יש בו שעות נוספות שדורשות נימוק.',
+    split:     'שתי כניסות ושתי יציאות באותו יום. הסך הוא סכום ' +
+               'שני הקטעים.'
+  };
+
+  const sync = function () {
+    const t  = $('dType').value;
+    const sh = $('dShape').value;
+
+    $('dTimes').style.display = needsTimes(t) ? '' : 'none';
+    $('dSeg2').classList.toggle('hide', sh !== 'split');
+    $('dShapeNote').textContent = NOTES[sh] || '';
+    $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
+    $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
+                            : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');
+
+    const cur   = current();
+    const fixed = siteHoursOf(cur.sub_station);
+    const h     = calcHours(cur, fixed);
+    const why   = reasonWhy(cur, fixed, shiftHoursFor());
+
+    $('dHint').innerHTML = 'שעות שיישמרו: <b>' + (h == null ? '—' : h) + '</b>' +
+      (fixed ? ' · תחנה עם אורך משמרת קבוע' : '');
+
+    $('dOtBox').classList.toggle('hide', !why);
+    if (why) {
+      const reasonInput = $('dOtReason');
+      const filled = !!reasonInput.value.trim();
+      reasonInput.required = true;
+      reasonInput.setAttribute('aria-required', 'true');
+      reasonInput.setAttribute('aria-invalid', filled ? 'false' : 'true');
+      $('dOtBox').classList.toggle('req', !filled);
+      $('dOtHead').innerHTML = '<b>' + esc(why) + '</b> — ' +
+        (filled
+          ? 'הנימוק יישמר עם היום.'
+          : '<span class="reqTag">חובה למלא נימוק.</span> משאבי אנוש צריכים ' +
+            'לדעת מה קרה כאן. בלי נימוק אי אפשר לשמור.');
+    } else {
+      $('dOtReason').required = false;
+      $('dOtReason').setAttribute('aria-required', 'false');
+      $('dOtReason').setAttribute('aria-invalid', 'false');
+      $('dOtBox').classList.remove('req');
+    }
+  };
+
+  ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
+  ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
+  sync();
+
+  $('dSave').onclick = async () => {
+    const cur = current();
+    const t   = cur.day_type;
+    const sh  = cur.shape;
+
+    if (needsTimes(t) && (!cur.start || !cur.end)) {
+      msg('בסוג הזה צריך כניסה ויציאה.', 'err'); return;
+    }
+    if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
+      msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
+    }
+
+    const fixed = siteHoursOf(cur.sub_station);
+    const h = calcHours(cur, fixed);
+    if (needsTimes(t) && h == null) {
+      msg('השעות לא מסתדרות. בדוק אותן שוב.', 'err'); return;
+    }
+
+    // "המשך משמרת" הוא לפי הגדרתו מעל יממה. אם המספרים אומרים
+    // אחרת, הצורה שנבחרה שגויה — ובלי הבדיקה הזו הרשומה נשמרת
+    // עם 24 שעות שנראות כמו משמרת רגילה.
+    if (needsTimes(t) && sh === 'continued' && !fixed && h <= 24) {
+      msg('המשך משמרת הוא מעל 24 שעות. כאן יצא ' + h +
+          '. בחר "משמרת רגילה", או תקן את השעות.', 'err');
+      return;
+    }
+    const why = reasonWhy(cur, fixed, shiftHoursFor());
+    if (why && !cur.overtime_reason) {
+      msg(why + ' — צריך לכתוב נימוק לפני שמירה.', 'err');
+      $('dOtReason').focus();
+      return;
+    }
+
+    try {
+      const base = rec ? Object.assign({}, rec) : newRecord(key);
+      await saveRecord(key, Object.assign(base, {
+        day_type: t,
+        shape:  needsTimes(t) ? sh : 'regular',
+        start:  needsTimes(t) ? cur.start : '',
+        end:    needsTimes(t) ? cur.end : '',
+        end_day:  needsTimes(t) ? cur.end_day : 0,
+        start2:   needsTimes(t) ? cur.start2 : '',
+        end2:     needsTimes(t) ? cur.end2 : '',
+        end_day2: needsTimes(t) ? cur.end_day2 : 0,
+        sub_station: cur.sub_station,
+        overtime_reason: cur.overtime_reason,
+        notes: $('dNotes').value.trim()
+      }));
+      closeOv(false); msg('היום נשמר.', 'ok'); render(); focusAfterRender(key);
+    } catch (e) {
+      msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    }
+  };
+
+  if (rec) $('dDel').onclick = async () => {
+    try {
+      await deleteDoc(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)));
+      delete records[key];
+      closeOv(false); msg('היום נמחק.', 'ok'); render(); focusAfterRender(key);
+    } catch (e) {
+      msg('המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    }
+  };
+  $('dCancel').onclick = closeOv;
+}
+
+
+// ---------- שליחה ואישור ----------
+
+async function writeReport(patch){
+  const mk = monthKey(viewYear, viewMonth);
+  const saved = Object.keys(records).sort();
+  const body = Object.assign({
+    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
+    crew: SUBJ.crew, month: mk,
+    days: saved,
+    total_hours: monthTotal(saved.map(k => records[k]), siteHoursOf),
+    updated_at: serverTimestamp()
+  }, patch);
+  await setDoc(doc(db, 'stations', SID, 'monthly_reports', SUBJ.emp + '_' + mk), stamp(body));
+  report = body;
+}
+
+// לפני שליחה — סיכום על המסך. הכבאי מאשר מה שהוא רואה, ולא
+// לוחץ "שלח" על משהו שהוא לא בדק. זה גם המקום היחיד שבו
+// יתגלה לו שיש יום עם שעות נוספות בלי נימוק, לפני שהמפקד
+// יגלה את זה במקומו.
+function submitPreview(){
+  const st = (report && report.status) || 'draft';
+  const saved = Object.keys(records).sort().map(k => records[k]);
+  const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
+  const sug = suggestedDays();
+
+  const typeLines = DAY_TYPES
+    .filter(t => s.byType[t.id])
+    .map(t => '<div class="sum-line"><span>' + t.he + '</span><b>' +
+              s.byType[t.id] + ' ימים</b></div>').join('');
+
+  const otLines = s.overtime.length
+    ? '<div class="sum-ot">' + s.overtime.map(function (o) {
+        const p2 = o.date.split('-');
+        return '<div>' + Number(p2[2]) + '.' + Number(p2[1]) + ' · ' +
+               esc(o.why) + ' · ' + (o.reason
+                 ? esc(o.reason)
+                 : '<span class="no">חסר נימוק</span>') + '</div>';
+      }).join('') + '</div>'
+    : '';
+
+  $('dlg').innerHTML =
+    '<h3 id="dlgTitle">בדקתי ואישרתי את הדיווחים שלי</h3>' +
+    '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
+      ' · ' + esc(SUBJ.full_name || '') + ' · מס׳ ' + esc(SUBJ.emp) + '</div>' +
+
+    '<div class="sum-big">' + s.hours + '</div>' +
+    '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
+
+    '<div class="sum-line"><span>ימים שדווחו</span><b>' + s.days + '</b></div>' +
+    typeLines +
+    (s.split ? '<div class="sum-line"><span>משמרות מפוצלות</span><b>' +
+                s.split + '</b></div>' : '') +
+    (s.overtime.length ? '<div class="sum-line"><span>ימים שדורשים נימוק</span><b>' +
+                s.overtime.length + '</b></div>' : '') +
+    (s.overtimeHours ? '<div class="sum-line"><span>שעות נוספות</span><b>' +
+                s.overtimeHours + '</b></div>' : '') +
+    (sug.length ? '<div class="sum-line sum-bad"><span>ימים בסידור שלא דיווחת</span><b>' +
+                sug.length + '</b></div>' : '') +
+    otLines +
+
+    (s.unexplained.length
+      ? '<div class="ot" style="margin-top:14px"><div class="otHead">' +
+        '<b>' + s.unexplained.length + '</b> ימים בלי נימוק. ' +
+        'צריך להשלים אותם לפני שליחה.</div></div>'
+      : '') +
+
+    (sug.length && !s.unexplained.length
+      ? '<div class="hint" style="margin-top:14px">יש ' + sug.length +
+        ' ימים שהסידור אומר שעבדת בהם ולא דיווחת. אפשר לשלוח בכל זאת.</div>'
+      : '') +
+
+    (st === 'approved'
+      ? '<div class="hint" style="margin-top:14px">החודש אושר ונעול.</div>'
+      : st === 'submitted'
+      ? '<div class="hint" style="margin-top:14px">הדוח כבר נשלח וממתין לאישור.</div>'
+      : '') +
+
+    '<div class="acts">' +
+      ((st === 'draft' && !s.unexplained.length)
+        ? '<button type="button" class="btn go" id="pSend">אישור ושליחה</button>' : '') +
+      '<button type="button" class="btn" id="pBack">חזרה לדוח</button>' +
+    '</div>';
+  openOv();
+
+  if ($('pSend')) $('pSend').onclick = async () => {
+    $('pSend').disabled = true;
+    try {
+      await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
+      closeOv(false);
+      msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
+      render(); focusAfterRender();
+    } catch (e) {
+      msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      $('pSend').disabled = false;
+    }
+  };
+  $('pBack').onclick = closeOv;
+}
+
+$('btnSubmit').onclick = submitPreview;
+
+// אותו סיכום, לצפייה בלבד, בכל רגע — גם אחרי שליחה ואישור.
+$('btnView').onclick = submitPreview;
+
+$('btnUnsubmit').onclick = async () => {
+  try {
+    await writeReport({ status: 'draft' });
+    msg('השליחה בוטלה.', 'ok'); render();
+  } catch (e) { msg('הביטול נכשל. (' + (e.code || e.message) + ')', 'err'); }
+};
+
+// אישור נועל את הרשומות עצמן, לא רק את מסמך הדוח. כללי האבטחה
+// אינם קוראים מסמך אחר כדי להחליט — אין בהם אף get() — ולכן
+// הנעילה חייבת לשבת על כל רשומה.
+async function setMonthStatus(emp, mk, days, status){
+  const batch = writeBatch(db);
+  (days || []).forEach(function (key) {
+    // אישור נוגע ברשומות של אדם אחר, ולכן הוא נחתם כמו כל
+    // עריכה. בלי החתימה כלל האבטחה החדש ידחה את האצווה כולה.
+    const body = { status: status, updated_at: serverTimestamp() };
+    if (emp !== ME.emp) {
+      body.edited_by      = ME.uid;
+      body.edited_by_name = ME.full_name || '';
+      body.edited_at      = serverTimestamp();
+    }
+    batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
+              body, { merge: true });
+  });
+  await batch.commit();
+}
+
+$('btnApprove').onclick = () => approveMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
+                                            Object.keys(records).sort(), 'msg');
+$('btnReopen').onclick  = () => reopenMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
+                                            Object.keys(records).sort(), 'msg');
+
+async function approveMonth(emp, mk, days, box){
+  try {
+    await setMonthStatus(emp, mk, days, 'approved');
+    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
+    await setDoc(ref, { status: 'approved', approved_by: ME.uid,
+                        approved_by_name: ME.full_name,
+                        approved_at: serverTimestamp() }, { merge: true });
+    msg('החודש אושר ונעול.', 'ok', box);
+    if (emp === SUBJ.emp) await loadMonth();
+    if (CAN_APPROVE) loadApprovals();
+  } catch (e) {
+    msg('האישור נכשל. (' + (e.code || e.message) + ')', 'err', box);
+  }
+}
+
+async function reopenMonth(emp, mk, days, box){
+  try {
+    await setMonthStatus(emp, mk, days, 'draft');
+    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
+    await setDoc(ref, { status: 'draft', reopened_by: ME.uid,
+                        reopened_by_name: ME.full_name,
+                        reopened_at: serverTimestamp() }, { merge: true });
+    msg('החודש נפתח מחדש.', 'ok', box);
+    if (emp === SUBJ.emp) await loadMonth();
+    if (CAN_APPROVE) loadApprovals();
+  } catch (e) {
+    msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+  }
+}
+
+// ---------- רשימת האישורים ----------
+
+// ---------- בורר האדם ----------
+//
+// קורא מ-users ולא מ-roster, כי מספר העובד יושב שם. roster
+// מחזיק שם ומשמרת בלבד — וזה בדיוק מה שהפיל את signReminder,
+// שקראה משם שדה שאף פעם לא נכתב והפסיקה לצאת בשקט.
+async function loadPeople(){
+  const sel = $('pickWho');
+  sel.innerHTML = '<option value="">טוען…</option>';
+  const out = [];
+  try {
+    const qs = await getDocs(collection(db, 'stations', SID, 'users'));
+    qs.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      const emp = String(v.employee_number || v.emp_number || '');
+      if (!emp) return;
+      out.push({ uid: d.id, emp: emp, crew: v.crew || '',
+                 full_name: v.full_name || ('מס׳ ' + emp) });
+    });
+  } catch (e) {
+    sel.innerHTML = '<option value="">לא הצלחתי לקרוא את רשימת האנשים</option>';
+    return;
+  }
+  out.sort(function (a, b) { return a.full_name.localeCompare(b.full_name, 'he'); });
+  PEOPLE = out;
+  sel.innerHTML = '<option value="">— בחר אדם —</option>' +
+    out.map(function (p) {
+      return '<option value="' + esc(p.emp) + '">' + esc(p.full_name) +
+             (p.crew ? ' · ' + esc(CREW_HE[p.crew] || p.crew) : '') + '</option>';
+    }).join('');
+}
+
+// מעבר לאדם אחר. **טוענים מחדש הכל**, ולא רק את הרשומות:
+// טבלת החודש נגזרת גם מהמשמרת של האדם ומההחלפות שלו, ולכן
+// החלפת נושא בלי טעינה מחדש הייתה מציגה את הימים של אחד
+// והשעות של אחר.
+async function switchTo(p){
+  if (!p && !ME.emp) return false;
+  const previousUid = SUBJ && SUBJ.uid;
+  SUBJ = p ? Object.assign({}, p) : Object.assign({}, ME);
+  setSubjectWorkspaceVisible(true);
+  if (previousUid !== SUBJ.uid) {
+    // שני הערכים האלה נגזרים מה-UID. אם הקריאה החדשה תיכשל,
+    // ברירת מחדל ריקה בטוחה יותר מהצגת אתר או אבטחה של אדם אחר.
+    mySite = '';
+    myGuards = [];
+  }
+  const generation = ++subjectGeneration;
+  monthLoadGeneration++;
+  setMonthBusy(true);
+  const other = onOther();
+
+  $('otherBar').classList.toggle('hide', !other);
+  if (other) {
+    $('otherBar').textContent =
+      'אתה עורך את ' + (SUBJ.full_name || ('מס׳ ' + SUBJ.emp)) +
+      ' — כל שינוי יירשם על שמך.';
+  }
+  $('pickBack').classList.toggle('hide', !other || !ME.emp);
+
+  const staticReady = await loadStatic();
+  if (!staticReady || generation !== subjectGeneration) return false;
+  await loadMonth();
+  return generation === subjectGeneration;
+}
+
+async function loadApprovals(){
+  const body = $('apprRows');
+  body.innerHTML = '';
+  let list = [];
+  try {
+    // **מסננים לפי משמרת בשאילתה עצמה, לא בתצוגה.**
+    //
+    // ההערה מתחת אומרת "מוצגים אנשי משמרת X בלבד" — והיא
+    // הניחה שהכללים מסננים. הם לא: שאילתה נדחית כולה אם מסמך
+    // אחד בתוצאה נכשל. מפקד משמרת א׳ נחסם ברגע שהיה דוח ממתין
+    // אחד ממשמרת ב׳, וראה "לא הצלחתי לקרוא את רשימת הדוחות"
+    // במקום את הדוחות שלו.
+    const wide = IS_SUPER ||
+      ['hr_coordinator', 'station_commander'].indexOf(ME.role) !== -1;
+    const qref = wide
+      ? query(collection(db, 'stations', SID, 'monthly_reports'),
+              where('status', '==', 'submitted'))
+      : query(collection(db, 'stations', SID, 'monthly_reports'),
+              where('status', '==', 'submitted'),
+              where('crew', '==', MY_SHIFT || '\u0000'));
+    const qs = await getDocs(qref);
+    qs.forEach(d => list.push(Object.assign({ id: d.id }, d.data() || {})));
+  } catch (e) {
+    msg('לא הצלחתי לקרוא את רשימת הדוחות. (' + (e.code || e.message) + ')',
+        'err', 'apprMsg');
+    return;
+  }
+
+  $('apprNote').textContent = MY_SHIFT && ME.role === 'commander'
+    ? 'מוצגים אנשי משמרת ' + (CREW_HE[MY_SHIFT] || MY_SHIFT) + ' בלבד.'
+    : 'כל התחנה.';
+
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);' +
+      'text-align:center;padding:16px">אין דוחות שממתינים לאישור.</td></tr>';
+    return;
+  }
+
+  list.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
+  list.forEach(function (r) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + esc(r.full_name || r.emp_number) + '</td>' +
+      '<td>' + (r.crew ? '<span class="cw ' + esc(r.crew) + '">' +
+        esc(CREW_SHORT[r.crew] || r.crew) + '</span>' : '—') + '</td>' +
+      '<td class="d">' + esc(r.month || '') + '</td>' +
+      '<td class="hh">' + (r.total_hours != null ? r.total_hours : '—') + '</td>';
+    const td = document.createElement('td');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn go sm';
+    b.textContent = 'אשר';
+    b.setAttribute('aria-label', 'אישור הדוח של ' + (r.full_name || r.emp_number) +
+      ' לחודש ' + (r.month || ''));
+    b.onclick = () => approveMonth(r.emp_number, r.month, r.days || [], 'apprMsg');
+    td.appendChild(b);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  });
+}
+
+// ---------- ניווט חודשים ----------
+
+$('prev').onclick = async () => {
+  viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
+};
+$('next').onclick = async () => {
+  viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+  msg('', ''); setMonthBusy(true);
+  if (await loadStatic()) await loadMonth();
+};
+</script>
+</body>
+</html>

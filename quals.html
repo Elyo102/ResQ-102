@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — כשירויות</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:22px; margin:0 0 4px }
+  h2{ font-size:16px; margin:0 0 4px; color:var(--accent) }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:22px }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7; margin-bottom:14px }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:20px; margin-bottom:16px }
+
+  label{ display:block; font-size:13px; color:var(--muted); margin:12px 0 4px }
+  input{ width:100%; padding:11px; background:var(--input); color:var(--txt);
+        border:1px solid var(--line); border-radius:6px; font-size:15px;
+        font-family:inherit }
+  input.num{ width:84px; text-align:center; font-variant-numeric:tabular-nums }
+  button{ background:var(--accent); color:var(--on-accent); border:0; border-radius:6px;
+        padding:11px 20px; font-size:15px; cursor:pointer; margin-top:16px;
+        font-family:inherit }
+  button:disabled{ opacity:.5; cursor:not-allowed }
+  input:disabled{ opacity:.55; cursor:not-allowed }
+  button.link{ background:none; border:1px solid var(--line); color:var(--muted) }
+  button.small{ padding:6px 12px; font-size:13px; margin-top:0 }
+
+  .msg{ margin-top:14px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  /* !important בכוונה: .addrow ו-.pick מגדירים display אחרי הכלל
+     הזה, ובאותה דרגת ייחוד — בלי זה תיבת "הוסף כשירות" נשארה
+     גלויה לכל כבאי, על כפתור שהשרת ידחה. */
+  .hide{ display:none !important }
+
+  .qrow{ display:flex; gap:10px; align-items:center; padding:9px 0;
+         border-bottom:1px solid var(--line-soft) }
+  .qrow:last-child{ border-bottom:0 }
+  .qrow input{ flex:1; padding:8px 10px; font-size:14px }
+  .qname{ flex:1; font-size:15px }
+
+  .addrow{ display:flex; gap:10px; align-items:center; margin-top:16px }
+  .addrow input{ flex:1 }
+  .addrow button{ margin-top:0; flex:none; white-space:nowrap }
+
+  .tbl{ width:100%; border-collapse:collapse; margin-top:8px; font-size:14px }
+  .tbl th{ text-align:right; color:var(--muted); font-weight:600; font-size:12px;
+           padding:8px 6px; border-bottom:1px solid var(--line); white-space:nowrap }
+  .tbl td{ padding:11px 6px; border-bottom:1px solid var(--line-soft); vertical-align:top }
+  .tbl tr:last-child td{ border-bottom:0 }
+  .nm{ font-weight:600 }
+  .scroll{ overflow-x:auto }
+
+  .chip{ display:inline-block; border:1px solid var(--line); border-radius:20px;
+         padding:2px 10px; font-size:12px; color:var(--muted); margin:2px 0 2px 4px }
+  .crew{ display:inline-block; border-radius:4px; padding:1px 8px; font-size:12px;
+         font-weight:700; color:var(--on-accent) }
+  .crew.A{ background:var(--crewA) } .crew.B{ background:var(--crewB) }
+  .crew.C{ background:var(--crewC) }
+
+  .rl{ border:1px solid var(--line); border-radius:10px; padding:14px;
+       margin-bottom:10px }
+  .rl.below{ border-color:var(--bad); background:var(--bad-bg) }
+  .rl.okline{ border-color:var(--good-bd) }
+  .rl h3{ margin:0 0 8px; font-size:15px; display:flex; align-items:center; gap:9px }
+  .verdict{ font-size:13px; font-weight:700 }
+  .verdict.below{ color:var(--bad) } .verdict.okline{ color:var(--good) }
+  .lack{ font-size:13px; line-height:1.9; color:var(--soft-bad) }
+  .lack b{ color:var(--on-soft) }
+  .counts{ font-size:12.5px; color:var(--muted); line-height:1.8 }
+
+  .picker{ margin-top:10px; border-top:1px solid var(--line); padding-top:12px }
+  .pick{ display:inline-flex; align-items:center; gap:7px; font-size:14px;
+         border:1px solid var(--line); border-radius:20px; padding:7px 13px;
+         margin:0 0 8px 8px; cursor:pointer }
+  .pick input{ width:auto; margin:0 }
+  .pick.on{ border-color:var(--accent); background:var(--warn-bg) }
+</style>
+</head>
+<body>
+
+<div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+
+  <h1>כשירויות וקו אדום</h1>
+  <div class="sub">מערך הכשירויות של התחנה, ומה נדרש כדי שמשמרת תהיה מעל הקו.</div>
+
+  <!-- אין הרשאה -->
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה, ולכן אין מה להציג כאן.</div>
+    <button class="link" id="btnOutDeny">התנתק</button>
+  </div>
+
+  <div id="work" class="hide">
+
+    <!-- מצב המשמרות -->
+    <div class="card">
+      <h2>מצב המשמרות מול הקו האדום</h2>
+      <div class="note" id="rlNote">נספרים אנשים פעילים בלבד, לפי המשמרת הרשומה עליהם.</div>
+      <div id="rlBoxes"></div>
+    </div>
+
+    <!-- מערך הכשירויות -->
+    <div class="card">
+      <h2>מערך הכשירויות של התחנה</h2>
+      <div class="note" id="catNote">
+        כל תחנה מחזיקה מערך משלה. השמות ניתנים לשינוי בכל רגע —
+        שינוי שם לא מנתק אותו מהאנשים שכבר סומנו.
+      </div>
+      <div id="catList"></div>
+
+      <div class="addrow hide" id="addRow">
+        <input type="text" id="newQual" maxlength="40" placeholder="שם כשירות חדשה">
+        <button class="small" id="btnAdd">הוסף</button>
+      </div>
+
+      <button class="link hide" id="btnSeed">התחל מרשימת בסיס</button>
+      <div class="msg" id="catMsg"></div>
+    </div>
+
+    <!-- קו אדום -->
+    <div class="card">
+      <h2>הקו האדום</h2>
+      <div class="note">
+        סף אחד לתחנה, זהה לכל המשמרות. מינימום 0 פירושו שהכשירות
+        לא נדרשת לקו האדום.
+      </div>
+
+      <label>מינימום אנשים במשמרת</label>
+      <input type="number" class="num" id="minHead" min="0" max="200" value="0">
+
+      <div id="rlQuals"></div>
+
+      <button id="btnSaveRL" class="hide">שמור קו אדום</button>
+      <div class="msg" id="rlMsg"></div>
+    </div>
+
+    <!-- אנשים -->
+    <div class="card">
+      <h2>מי כשיר למה</h2>
+      <div class="note" id="peopleNote"></div>
+      <label class="pick hide" id="scopeBox" style="margin-bottom:12px">
+        <input type="checkbox" id="onlyMine">
+        <span id="onlyMineLbl">רק המשמרת שלי</span>
+      </label>
+      <div class="scroll">
+        <table class="tbl" id="tbl">
+          <thead>
+            <tr><th>שם</th><th>משמרת</th><th>כשירויות</th><th></th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="peopleMsg"></div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { redlineState, visibleCrews } from './readiness.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
+         deleteDoc, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const CREWS   = ['A', 'B', 'C'];
+const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
+
+// רשימת הפתיחה. הצעה בלבד — נכתבת פעם אחת לתחנה ריקה,
+// וממנה והלאה היא נתון של התחנה כמו כל שם אחר.
+const SEED = ['נהג מפעיל משאבה', 'נושם אוויר דחוס', 'חילוץ מרכבים',
+              'חובש', 'מפעיל סולם מכני', 'חומרים מסוכנים', 'מפקד צוות'];
+
+const $ = id => document.getElementById(id);
+
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(el, text, kind){
+  const m = $(el);
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID     = '';
+let CAN_EDIT = false;
+let MY_CREWS = CREWS.slice();
+let ONLY_MINE = false;
+let quals   = [];   // [{id,name,order}]
+let people  = [];   // [{uid,full_name,crew}]
+let held    = {};   // uid -> [qid]
+let redline = { min_headcount: 0, min_quals: {} };
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) {
+    location.replace('./login.html?next=quals.html');
+    return;
+  }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true;
+  const isMember = isSuper ||
+    MEMBER_ROLES.indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+
+  if (!isMember || !SID) {
+    $('work').classList.add('hide');
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  // עריכה לסגל בלבד — זהה בדיוק ל-staff() בכללי האבטחה.
+  // אם המסך היה מציג כפתורים לכבאי רגיל, כל לחיצה הייתה
+  // נדחית בשרת והמסך היה נראה שבור.
+  CAN_EDIT = isSuper ||
+    ['deputy', 'commander', 'station_commander', 'hr_coordinator'].indexOf(c.role) !== -1;
+
+  // מפקד משמרת רואה את המשמרת שלו. אותה הגדרה בדיוק שבכללי
+  // האבטחה ובשאר המסכים.
+  MY_CREWS  = visibleCrews(c);
+  ONLY_MINE = MY_CREWS.length === 1;
+
+  $('denyCard').classList.add('hide');
+  $('work').classList.remove('hide');
+  renderNav(c, 'quals.html', user.email || '');
+  watchCallouts(db, SID, user.uid, { name: user.email || '' });
+
+  $('peopleNote').textContent = CAN_EDIT
+    ? 'לחץ "ערוך" כדי לסמן כשירויות. נשמר מיד.'
+    : 'לצפייה בלבד. עריכה פתוחה למפקד, לרכז כוח אדם ולמנהל המערכת.';
+
+  if (CAN_EDIT) {
+    $('addRow').classList.remove('hide');
+    $('btnSaveRL').classList.remove('hide');
+  } else {
+    $('minHead').disabled = true;
+  }
+
+  if (MY_CREWS.length === 1) {
+    $('scopeBox').classList.remove('hide');
+    $('onlyMine').checked = true;
+    $('onlyMineLbl').textContent = 'רק משמרת ' + (CREW_HE[MY_CREWS[0]] || MY_CREWS[0]);
+  }
+
+  await loadAll();
+});
+
+$('btnOutDeny').onclick = () => signOut(auth);
+
+// מפקד משמרת מתחיל עם האנשים שלו, ויכול לפתוח לכל התחנה —
+// כשירות היא נתון אישי, ולפעמים צריך לראות את מי ששאלת.
+$('onlyMine').onchange = function () {
+  ONLY_MINE = $('onlyMine').checked;
+  renderPeople();
+};
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  quals = []; people = []; held = {};
+
+  try {
+    const qs = await getDocs(collection(db, 'stations', SID, 'quals'));
+    qs.forEach(d => {
+      const v = d.data() || {};
+      quals.push({ id: d.id, name: v.name || '', order: Number(v.order || 0) });
+    });
+    quals.sort((a, b) => a.order - b.order ||
+                         String(a.name).localeCompare(String(b.name), 'he'));
+  } catch (e) {
+    msg('catMsg', 'לא הצלחתי לקרוא את מערך הכשירויות. (' +
+        (e.code || e.message) + ')', 'err');
+  }
+
+  try {
+    const rs = await getDocs(collection(db, 'stations', SID, 'roster'));
+    rs.forEach(d => {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      people.push({ uid: d.id, full_name: v.full_name || '', crew: v.crew || '' });
+    });
+    people.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
+  } catch (e) {
+    msg('peopleMsg', 'לא הצלחתי לקרוא את רשימת אנשי התחנה. (' +
+        (e.code || e.message) + ')', 'err');
+  }
+
+  try {
+    const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
+    ms.forEach(d => {
+      const v = d.data() || {};
+      held[d.id] = Array.isArray(v.quals) ? v.quals : [];
+    });
+  } catch (ignore) {}
+
+  try {
+    const rl = await getDoc(doc(db, 'stations', SID, 'config', 'redline'));
+    if (rl.exists()) {
+      const v = rl.data() || {};
+      redline = {
+        min_headcount: Number(v.min_headcount || 0),
+        min_quals: (v.min_quals && typeof v.min_quals === 'object') ? v.min_quals : {}
+      };
+    }
+  } catch (ignore) {}
+
+  renderCatalog();
+  renderRedlineForm();
+  renderPeople();
+  renderStatus();
+}
+
+// ---------- מערך הכשירויות ----------
+
+function renderCatalog(){
+  const box = $('catList');
+  box.innerHTML = '';
+
+  if (!quals.length) {
+    box.innerHTML = '<div class="note">אין עדיין כשירויות בתחנה הזו.</div>';
+    if (CAN_EDIT) $('btnSeed').classList.remove('hide');
+    return;
+  }
+  $('btnSeed').classList.add('hide');
+
+  quals.forEach(function (q) {
+    const row = document.createElement('div');
+    row.className = 'qrow';
+
+    if (CAN_EDIT) {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = q.name;
+      inp.maxLength = 40;
+      inp.onchange = () => renameQual(q, inp.value.trim(), inp);
+
+      const del = document.createElement('button');
+      del.className = 'link small';
+      del.textContent = 'מחק';
+      del.onclick = () => removeQual(q);
+
+      row.appendChild(inp);
+      row.appendChild(del);
+    } else {
+      const nm = document.createElement('div');
+      nm.className = 'qname';
+      nm.textContent = q.name;
+      row.appendChild(nm);
+    }
+    box.appendChild(row);
+  });
+}
+
+async function addQual(name){
+  const clean = String(name || '').trim();
+  if (!clean) { msg('catMsg', 'צריך שם.', 'err'); return; }
+  if (clean.length > 40) { msg('catMsg', 'השם ארוך מדי.', 'err'); return; }
+  if (quals.some(q => q.name === clean)) {
+    msg('catMsg', 'כשירות בשם הזה כבר קיימת.', 'err'); return;
+  }
+
+  const ref = doc(collection(db, 'stations', SID, 'quals'));
+  const order = quals.length ? Math.max.apply(null, quals.map(q => q.order)) + 1 : 1;
+
+  await setDoc(ref, {
+    name: clean, order: order, active: true,
+    created_at: serverTimestamp(), by: auth.currentUser.uid
+  });
+
+  quals.push({ id: ref.id, name: clean, order: order });
+  quals.sort((a, b) => a.order - b.order);
+  msg('catMsg', 'נוספה: ' + clean, 'ok');
+  renderCatalog(); renderRedlineForm(); renderPeople(); renderStatus();
+}
+
+async function renameQual(q, name, inp){
+  const clean = String(name || '').trim();
+  if (!clean) { inp.value = q.name; msg('catMsg', 'שם ריק לא נשמר.', 'err'); return; }
+  if (clean === q.name) return;
+
+  await setDoc(doc(db, 'stations', SID, 'quals', q.id),
+               { name: clean, updated_at: serverTimestamp(),
+                 by: auth.currentUser.uid },
+               { merge: true });
+
+  q.name = clean;
+  msg('catMsg', 'השם עודכן.', 'ok');
+  renderRedlineForm(); renderPeople(); renderStatus();
+}
+
+// מחיקה מנקה גם את הסימונים אצל אנשים ואת הדרישה בקו האדום.
+// בלי הניקוי, הקו האדום ממשיך לדרוש כשירות שאי אפשר לראות
+// ואי אפשר להעניק — משמרת שנתקעת אדומה בלי סיבה נראית.
+async function removeQual(q){
+  const uids = Object.keys(held).filter(u => (held[u] || []).indexOf(q.id) !== -1);
+
+  // **חלוקה למנות של 400.**
+  //
+  // אצווה ב-Firestore מוגבלת ל-500 פעולות. כאן יש פעולה אחת
+  // לכל אדם שמחזיק בכשירות — וכשירות נפוצה כמו נהג או נושא
+  // מסכה מוחזקת כמעט בידי כל הסגל.
+  //
+  // ברגע ש-499 אנשים מחזיקים בה, commit() נזרק, הכשירות
+  // **לא נמחקת**, ואף אחד לא מנוקה — כישלון שקט שמשאיר את
+  // הנתונים באמצע. ב-44 אנשים זה לא יכול לקרות, ולכן זה
+  // היה נשאר חבוי עד שהמערכת תגדל.
+  const CHUNK = 400;
+  const ops = uids.map(function (u) {
+    const left = held[u].filter(x => x !== q.id);
+    return { ref: doc(db, 'stations', SID, 'member_quals', u),
+             data: { quals: left, updated_at: serverTimestamp(),
+                     by: auth.currentUser.uid } };
+  });
+
+  // המנה הראשונה נושאת גם את מחיקת הכשירות עצמה ואת עדכון
+  // קו האדום, כדי שאם משהו ייפול — הכשירות כבר לא קיימת
+  // ואי אפשר להעניק אותה מחדש בטעות.
+  for (let i = 0; i < ops.length || i === 0; i += CHUNK) {
+    const batch = writeBatch(db);
+
+    if (i === 0) {
+      batch.delete(doc(db, 'stations', SID, 'quals', q.id));
+      if (redline.min_quals && redline.min_quals[q.id] != null) {
+        const next = Object.assign({}, redline.min_quals);
+        delete next[q.id];
+        batch.set(doc(db, 'stations', SID, 'config', 'redline'),
+                  { min_headcount: Number(redline.min_headcount || 0),
+                    min_quals: next, updated_at: serverTimestamp(),
+                    by: auth.currentUser.uid });
+        redline.min_quals = next;
+      }
+    }
+
+    ops.slice(i, i + CHUNK).forEach(function (o) { batch.set(o.ref, o.data); });
+    await batch.commit();
+  }
+
+  uids.forEach(u => { held[u] = held[u].filter(x => x !== q.id); });
+  quals = quals.filter(x => x.id !== q.id);
+
+  msg('catMsg', 'נמחקה: ' + q.name +
+      (uids.length ? ' · הוסרה גם מ-' + uids.length + ' אנשים' : ''), 'ok');
+  renderCatalog(); renderRedlineForm(); renderPeople(); renderStatus();
+}
+
+$('btnAdd').onclick = async () => {
+  const b = $('btnAdd'); b.disabled = true;
+  try { await addQual($('newQual').value); $('newQual').value = ''; }
+  catch (e) { msg('catMsg', 'ההוספה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+  b.disabled = false;
+};
+
+$('newQual').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('btnAdd').click(); }
+});
+
+$('btnSeed').onclick = async () => {
+  const b = $('btnSeed'); b.disabled = true;
+  try {
+    const batch = writeBatch(db);
+    SEED.forEach(function (name, i) {
+      const ref = doc(collection(db, 'stations', SID, 'quals'));
+      batch.set(ref, { name: name, order: i + 1, active: true,
+                       created_at: serverTimestamp(), by: auth.currentUser.uid });
+      quals.push({ id: ref.id, name: name, order: i + 1 });
+    });
+    await batch.commit();
+    $('btnSeed').classList.add('hide');
+    msg('catMsg', 'נוספו ' + SEED.length + ' כשירויות. שנה ומחק כרצונך.', 'ok');
+    renderCatalog(); renderRedlineForm(); renderPeople(); renderStatus();
+  } catch (e) {
+    quals = [];
+    msg('catMsg', 'לא הצלחתי לכתוב. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+// ---------- קו אדום ----------
+
+function renderRedlineForm(){
+  $('minHead').value = Number(redline.min_headcount || 0);
+
+  const box = $('rlQuals');
+  box.innerHTML = '';
+  if (!quals.length) return;
+
+  quals.forEach(function (q) {
+    const lab = document.createElement('label');
+    lab.textContent = 'מינימום · ' + q.name;
+
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'num';
+    inp.min = '0'; inp.max = '200';
+    inp.id = 'rlq_' + q.id;
+    inp.value = Number((redline.min_quals || {})[q.id] || 0);
+    inp.disabled = !CAN_EDIT;
+
+    box.appendChild(lab);
+    box.appendChild(inp);
+  });
+}
+
+$('btnSaveRL').onclick = async () => {
+  const b = $('btnSaveRL'); b.disabled = true;
+  try {
+    const head = Math.max(0, Math.min(200, parseInt($('minHead').value, 10) || 0));
+    const mins = {};
+    quals.forEach(function (q) {
+      const el = $('rlq_' + q.id);
+      const n  = Math.max(0, Math.min(200, parseInt(el ? el.value : 0, 10) || 0));
+      if (n > 0) mins[q.id] = n;
+    });
+
+    await setDoc(doc(db, 'stations', SID, 'config', 'redline'), {
+      min_headcount: head, min_quals: mins,
+      updated_at: serverTimestamp(), by: auth.currentUser.uid
+    });
+
+    redline = { min_headcount: head, min_quals: mins };
+    msg('rlMsg', 'הקו האדום נשמר.', 'ok');
+    renderStatus();
+  } catch (e) {
+    msg('rlMsg', 'השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+  b.disabled = false;
+};
+
+// ---------- אנשים ----------
+
+function qualName(id){
+  const q = quals.filter(x => x.id === id)[0];
+  return q ? q.name : null;
+}
+
+function shownPeople(){
+  if (!ONLY_MINE || MY_CREWS.length !== 1) return people;
+  return people.filter(p => p.crew === MY_CREWS[0]);
+}
+
+function renderPeople(){
+  const body = $('rows');
+  body.innerHTML = '';
+
+  const people = shownPeople();
+
+  if (!people.length) {
+    msg('peopleMsg', 'אין אנשים רשומים בתחנה הזו.', 'info');
+    return;
+  }
+  msg('peopleMsg', '', '');
+
+  people.forEach(function (p) {
+    const mine = (held[p.uid] || []).map(qualName).filter(Boolean);
+
+    const tr = document.createElement('tr');
+
+    const tdName = document.createElement('td');
+    tdName.className = 'nm';
+    tdName.textContent = p.full_name || '—';
+
+    const tdCrew = document.createElement('td');
+    tdCrew.innerHTML = p.crew
+      ? '<span class="crew ' + esc(p.crew) + '">' + esc(CREW_HE[p.crew] || p.crew) + '</span>'
+      : '—';
+
+    const tdQ = document.createElement('td');
+    tdQ.innerHTML = mine.length
+      ? mine.map(n => '<span class="chip">' + esc(n) + '</span>').join('')
+      : '<span class="chip">אין</span>';
+
+    const tdBtn = document.createElement('td');
+    if (CAN_EDIT && quals.length) {
+      const b = document.createElement('button');
+      b.className = 'link small';
+      b.textContent = 'ערוך';
+      b.onclick = () => togglePicker(tr, p, b);
+      tdBtn.appendChild(b);
+    }
+
+    tr.appendChild(tdName); tr.appendChild(tdCrew);
+    tr.appendChild(tdQ);    tr.appendChild(tdBtn);
+    body.appendChild(tr);
+  });
+}
+
+function togglePicker(tr, p, btn){
+  const open = tr.nextSibling && tr.nextSibling.dataset &&
+               tr.nextSibling.dataset.picker === p.uid;
+  if (open) { tr.nextSibling.remove(); btn.textContent = 'ערוך'; return; }
+
+  const row = document.createElement('tr');
+  row.dataset.picker = p.uid;
+  const td = document.createElement('td');
+  td.colSpan = 4;
+  const box = document.createElement('div');
+  box.className = 'picker';
+
+  quals.forEach(function (q) {
+    const on = (held[p.uid] || []).indexOf(q.id) !== -1;
+    const lab = document.createElement('label');
+    lab.className = 'pick' + (on ? ' on' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = on;
+    cb.onchange = () => setHeld(p, q.id, cb.checked, lab);
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(q.name));
+    box.appendChild(lab);
+  });
+
+  td.appendChild(box);
+  row.appendChild(td);
+  tr.parentNode.insertBefore(row, tr.nextSibling);
+  btn.textContent = 'סגור';
+}
+
+async function setHeld(p, qid, on, lab){
+  const before = (held[p.uid] || []).slice();
+  const next = on
+    ? before.concat(before.indexOf(qid) === -1 ? [qid] : [])
+    : before.filter(x => x !== qid);
+
+  held[p.uid] = next;
+  lab.className = 'pick' + (on ? ' on' : '');
+
+  try {
+    await setDoc(doc(db, 'stations', SID, 'member_quals', p.uid), {
+      quals: next, updated_at: serverTimestamp(), by: auth.currentUser.uid
+    });
+    msg('peopleMsg', 'נשמר · ' + (p.full_name || ''), 'ok');
+    renderStatus();
+    refreshChips(p);
+  } catch (e) {
+    held[p.uid] = before;
+    lab.className = 'pick' + (before.indexOf(qid) !== -1 ? ' on' : '');
+    const cb = lab.querySelector('input');
+    if (cb) cb.checked = before.indexOf(qid) !== -1;
+    msg('peopleMsg', 'השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+}
+
+// מעדכן את תאי הצ'יפים בלי לצייר מחדש את הטבלה — ציור מחדש
+// היה סוגר את החלונית הפתוחה באמצע העבודה.
+function refreshChips(p){
+  const rows = $('rows').children;
+  for (let i = 0; i < rows.length; i++) {
+    const tr = rows[i];
+    if (tr.dataset && tr.dataset.picker) continue;
+    if (tr.children[0] && tr.children[0].textContent === (p.full_name || '—')) {
+      const mine = (held[p.uid] || []).map(qualName).filter(Boolean);
+      tr.children[2].innerHTML = mine.length
+        ? mine.map(n => '<span class="chip">' + esc(n) + '</span>').join('')
+        : '<span class="chip">אין</span>';
+      return;
+    }
+  }
+}
+
+// ---------- מצב מול הקו ----------
+
+function renderStatus(){
+  const box = $('rlBoxes');
+  box.innerHTML = '';
+
+  const minHead = Number(redline.min_headcount || 0);
+  const mins    = redline.min_quals || {};
+  const anyRule = minHead > 0 || Object.keys(mins).length > 0;
+
+  if (!anyRule) {
+    box.innerHTML = '<div class="note">הקו האדום עוד לא הוגדר. ' +
+                    'קבע אותו למטה, וכאן יופיע מצב כל משמרת.</div>';
+    return;
+  }
+
+  MY_CREWS.forEach(function (crew) {
+    // אותו חישוב בדיוק שמסך הציוות וסידור העבודה משתמשים בו.
+    const st   = redlineState(people, held, redline, crew);
+    const head = st.head;
+    const lack = [];
+
+    st.gaps.forEach(function (g) {
+      if (g.kind === 'head') {
+        const gap = g.need - g.have;
+        lack.push('<b>' + (gap === 1 ? 'איש אחד' : gap + ' אנשים') + '</b> ' +
+                  '(' + g.have + ' מתוך ' + g.need + ')');
+      } else {
+        lack.push('<b>' + esc(qualName(g.qid)) + '</b> (' +
+                  g.have + ' מתוך ' + g.need + ')');
+      }
+    });
+
+    // הספירה המלאה — גם מה שעובר. בלעדיה רואים רק את מה שחסר
+    // ואי אפשר לדעת כמה בכלל נדרש.
+    const counts = [];
+    Object.keys(mins).forEach(function (qid) {
+      const need = Number(mins[qid] || 0);
+      if (need <= 0) return;
+      const name = qualName(qid);
+      if (!name) return;
+      const have = people.filter(p => p.crew === crew &&
+                    (held[p.uid] || []).indexOf(qid) !== -1).length;
+      counts.push(esc(name) + ': ' + have + '/' + need);
+    });
+
+    const below = st.below;
+    const div = document.createElement('div');
+    div.className = 'rl ' + (below ? 'below' : 'okline');
+    div.innerHTML =
+      '<h3><span class="crew ' + crew + '">' + CREW_HE[crew] + '</span>' +
+      '<span class="verdict ' + (below ? 'below' : 'okline') + '">' +
+      (below ? 'מתחת לקו האדום' : 'מעל הקו') + '</span></h3>' +
+      (below
+        ? '<div class="lack">מה חסר: ' + lack.join(' · ') + '</div>'
+        : '<div class="counts">' + head + ' אנשים' +
+          (counts.length ? ' · ' + counts.join(' · ') : '') + '</div>') +
+      (below && counts.length
+        ? '<div class="counts" style="margin-top:6px">' + counts.join(' · ') + '</div>'
+        : '');
+    box.appendChild(div);
+  });
+
+  // מי שאין לו משמרת רשומה אינו נספר באף אחת מהשלוש. בלי ההערה
+  // הזו הוא פשוט נעלם, והמספרים נראים נמוכים בלי סיבה נראית.
+  const noCrew = MY_CREWS.length === 3
+    ? people.filter(p => CREWS.indexOf(p.crew) === -1).length : 0;
+  if (noCrew) {
+    const w = document.createElement('div');
+    w.className = 'note';
+    w.style.marginTop = '12px';
+    w.textContent = noCrew + ' אנשים פעילים בלי משמרת רשומה. הם לא נספרים ' +
+                    'באף אחת מהשלוש — אפשר לשייך אותם במסך הניהול.';
+    box.appendChild(w);
+  }
+}
+</script>
+</body>
+</html>

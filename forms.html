@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — טפסים</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:1000px; margin:0 auto }
+  h1{ font-size:28px; line-height:1.15; letter-spacing:-.025em; margin:0 0 5px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:17px; line-height:1.3; margin:0 0 5px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:14px; padding:18px; margin-bottom:14px }
+  .cols{ display:grid; grid-template-columns:1fr; gap:14px }
+  @media (min-width:900px){ .cols{ grid-template-columns:1fr 1fr } }
+
+  label,.field-label{ display:block; font-size:12.5px; color:var(--muted);
+                      font-weight:650; margin:12px 0 4px }
+  label b,.field-label b{ color:var(--txt); font-weight:600 }
+  label i,.field-label i{ font-style:normal; color:var(--bad) }
+  select, textarea, input{ width:100%; min-height:44px; padding:10px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:10px;
+        font-size:15px; font-family:inherit }
+  :where(select,textarea,input,.btn,.tabs button):focus-visible{
+        outline:3px solid var(--accent); outline-offset:2px }
+  textarea{ min-height:76px; resize:vertical }
+  .fnote{ font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.6 }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:10px; min-height:44px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
+  .btn.no{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
+  .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
+  .tabs button{ flex:1 1 150px; min-height:48px; margin:0; background:var(--chip);
+                border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:10px 14px;
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+
+  /* ---------- הגשה ---------- */
+  .s{ border:1px solid var(--line); border-radius:11px; padding:13px;
+      margin-top:11px; background:var(--panel); border-inline-start-width:4px }
+  .s.submitted{ border-inline-start-color:var(--warn) }
+  .s.pending_station{ border-inline-start-color:var(--pick) }
+  .s.approved{ border-inline-start-color:var(--good) }
+  .s.rejected{ border-inline-start-color:var(--bad) }
+  .s.cancelled{ border-inline-start-color:var(--muted); opacity:.65 }
+  .s .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
+  .s .ttl{ font-size:15.5px; font-weight:700; flex:1 1 170px }
+  .s .vals{ margin-top:8px; font-size:13.5px; line-height:1.8 }
+  .s .vals b{ color:var(--muted); font-weight:600 }
+  .s .rep{ font-size:12px; color:var(--muted); margin-top:8px;
+           padding-top:8px; border-top:1px solid var(--line-soft); line-height:1.7 }
+  .s .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px }
+  .s .sig{ margin-top:9px }
+  .s .sig img{ height:56px; background:var(--on-accent); border-radius:6px; padding:3px;
+               display:block }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px;
+        padding:2px 10px; white-space:nowrap; border:1px solid var(--line) }
+  .lock{ font-size:11px; color:var(--pick); border:1px solid var(--line);
+         border-radius:20px; padding:2px 10px }
+
+  /* ---------- חתימה ---------- */
+  .sigbox{ margin-top:6px }
+  .sigbox canvas{ width:100%; height:150px; background:#ffffff;
+                  border:1px solid var(--line); border-radius:9px;
+                  touch-action:none; display:block; cursor:crosshair }
+  .sigbox .row{ display:flex; gap:8px; align-items:center; margin-top:7px;
+                flex-wrap:wrap }
+
+  /* כרטיס החתימה השמורה. הרקע לבן קבוע ולא var(--on-accent):
+     החתימה היא PNG עם קו כהה, ועל רקע כהה היא נעלמת. */
+  .sigcard{ display:flex; align-items:center; gap:12px; margin-top:6px;
+            border:1px solid var(--line); border-radius:10px;
+            padding:9px 11px; background:var(--panel) }
+  .sigcard img{ height:52px; max-width:190px; background:#ffffff;
+                border-radius:6px; padding:3px; flex:0 0 auto }
+  .sigcard .who{ min-width:0 }
+  .sigcard .who b{ display:block; font-size:14px }
+  .sigcard .who .note{ display:block; margin-top:2px }
+
+  label.agree{ display:flex; align-items:center; gap:8px; margin-top:10px;
+               color:var(--txt); font-size:13.5px; cursor:pointer }
+  label.agree input{ width:auto; margin:0; flex:0 0 auto;
+                     width:17px; height:17px; accent-color:var(--accent) }
+
+  /* שרשרת החתימות בכרטיס טופס קיים. */
+  .chain{ margin-top:10px; padding-top:9px;
+          border-top:1px solid var(--line-soft) }
+  .chain .step{ display:flex; align-items:center; gap:10px; margin-top:7px }
+  .chain .step img{ height:40px; max-width:150px; background:#ffffff;
+                    border-radius:5px; padding:2px; flex:0 0 auto }
+  .chain .step .t{ font-size:12.5px; line-height:1.6; min-width:0 }
+  .chain .step .t b{ font-weight:600 }
+  .chain .step.wait{ color:var(--muted); font-size:12.5px }
+  .chain .onbehalf{ color:var(--warn); font-size:11.5px }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none; white-space:pre-line }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+  @media (max-width:620px){
+    body{ padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)) }
+    h1{ font-size:24px }
+    .card{ border-radius:12px; padding:14px }
+    .tabs button{ flex-basis:130px; padding-inline:10px }
+    .s .acts .btn{ flex:1 1 130px }
+    .sigcard{ align-items:flex-start; flex-wrap:wrap }
+  }
+</style>
+</head>
+<body>
+
+<div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<main class="wrap">
+  <h1>טפסים</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard" role="status">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="tabs" role="tablist" aria-label="תצוגות טפסים">
+      <button type="button" id="tabNew" class="on" role="tab" tabindex="0" aria-selected="true" aria-controls="viewNew">מילוי טופס</button>
+      <button type="button" id="tabMine" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewMine">הטפסים שלי</button>
+      <button type="button" id="tabAppr" class="hide" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewAppr">ממתין לאישורי</button>
+      <button type="button" id="tabAway" role="tab" tabindex="-1" aria-selected="false" aria-controls="viewAway">מי בחופשה</button>
+    </div>
+
+    <!-- ========== טופס חדש ========== -->
+    <div id="viewNew" role="tabpanel" aria-labelledby="tabNew" aria-hidden="false">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>מילוי טופס</h2>
+            <label for="fPick">איזה טופס</label>
+            <select id="fPick" aria-describedby="fNote"></select>
+            <div class="note" id="fNote" style="margin-top:6px">—</div>
+            <div id="fFields"></div>
+
+            <div id="sigWrap" class="hide" role="group" aria-labelledby="sigLabel">
+              <div class="field-label" id="sigLabel">חתימה <i>*</i></div>
+
+              <!-- יש חתימה שמורה: מראים אותה ומאשרים בלחיצה. -->
+              <div id="sigHave" class="hide">
+                <div class="sigcard">
+                  <img id="sigImg" alt="החתימה שלך">
+                  <div class="who">
+                    <b id="sigName">—</b>
+                    <span class="note" id="sigMeta">—</span>
+                  </div>
+                </div>
+                <label class="agree">
+                  <input type="checkbox" id="sigAgree">
+                  <span>אני חותם על הטופס הזה בחתימתי.</span>
+                </label>
+                <div class="note" style="margin-top:4px">
+                  החתימה נשמרת <b>כעותק</b> בתוך הטופס, יחד עם שמך,
+                  מספר העובד והשעה. אם תחליף את חתימתך מחר —
+                  הטופס הזה ימשיך להראות את מה שנחתם היום.
+                  <a href="./sign.html" id="sigChange">החלף חתימה</a>
+                </div>
+              </div>
+
+              <!-- אין חתימה שמורה: מציירים או מעלים, פעם אחת. -->
+              <div id="sigNone" class="hide">
+                <div class="note">
+                  עוד לא שמרת חתימה. צייר אותה כאן <b>פעם אחת</b> —
+                  ומכאן והלאה תחתום בלחיצה אחת על כל טופס.
+                </div>
+                <div class="sigbox">
+                  <canvas id="sig"></canvas>
+                  <div class="row">
+                    <button class="btn sm" id="sigClear" type="button">נקה</button>
+                    <button class="btn sm" id="sigUpload" type="button">העלה תמונה</button>
+                    <input type="file" id="sigFile" accept="image/*" class="hide">
+                    <button class="btn sm go" id="sigSave" type="button">שמור חתימה</button>
+                  </div>
+                </div>
+                <div class="msg" id="sigMsg" role="status" aria-live="polite" tabindex="-1"></div>
+              </div>
+            </div>
+
+            <button type="button" class="btn go" id="btnSubmit">הגש</button>
+            <div class="msg" id="newMsg" role="status" aria-live="polite" tabindex="-1"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2>איך זה עובד</h2>
+            <div class="note">
+              הטופס מוגש לראש המשמרת שלך או לסגנו. באישור, מה שצריך
+              לקרות קורה לבד — בקשת חופשה מאושרת נכנסת לדוח השעות
+              כימי חופש, ואתה לא צריך לדווח אותם שוב.
+              <br><br>
+              טופס שנחתם — החתימה, השם והשעה נשמרים יחד ואי אפשר
+              לשנות אותם אחר כך.
+              <br><br>
+              <b>דוח פציעה סגור:</b> רואים אותו רק אתה, ראש המשמרת,
+              מפקד התחנה ורכז כוח אדם.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== שלי ========== -->
+    <div id="viewMine" class="hide" role="tabpanel" aria-labelledby="tabMine" aria-hidden="true">
+      <div class="card">
+        <h2>הטפסים שלי</h2>
+        <div class="note" id="mineNote" role="status" aria-live="polite">—</div>
+        <div id="mineList" role="list"></div>
+        <div class="msg" id="mineMsg" role="status" aria-live="polite" tabindex="-1"></div>
+      </div>
+    </div>
+
+    <!-- ========== לאישורי ========== -->
+    <div id="viewAppr" class="hide" role="tabpanel" aria-labelledby="tabAppr" aria-hidden="true">
+      <div class="card">
+        <h2>ממתין לאישורי</h2>
+        <div class="note" id="apprNote" role="status" aria-live="polite">—</div>
+        <div id="apprList" role="list"></div>
+        <div class="msg" id="apprMsg" role="status" aria-live="polite" tabindex="-1"></div>
+      </div>
+    </div>
+
+    <!-- ========== מי בחופשה ========== -->
+    <div id="viewAway" class="hide" role="tabpanel" aria-labelledby="tabAway" aria-hidden="true">
+      <div class="card">
+        <h2>מי בחופשה</h2>
+        <div class="note">
+          חופשות מאושרות. מי שבחו״ל או מחוץ לאילת אינו זמין להזעקה,
+          וקריאת פתע לא תכלול אותו.
+        </div>
+        <label for="awayDate">תאריך</label>
+        <input type="date" id="awayDate">
+        <div id="awayList" role="list" aria-live="polite"></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { CREW_HE } from './rotation.js?v=42h7';
+import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
+         subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
+         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42h7';
+import { loadSignature, saveSignature, attachPad, readImageFile }
+  from './signature.js?v=42h7';
+import { canSign, signState, signatureRecord, stepLabel, STEP }
+  from './signflow.js?v=42h7';
+import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         query, where, writeBatch, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'newMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_APPROVE = false, IS_WIDE = false;
+let subs = [], people = [];
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=forms.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true;
+  const isMember = isSuper ||
+    MEMBER_ROLES.indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  // ראש משמרת או סגנו מאשרים — כך אלדד הגדיר.
+  CAN_APPROVE = isSuper ||
+    ['commander','deputy','station_commander','hr_coordinator']
+      .indexOf(c.role) !== -1;
+  IS_WIDE = isSuper || c.role === 'station_commander' ||
+            c.role === 'hr_coordinator';
+
+  ME = { uid: user.uid, crew: c.shift || '', emp: String(c.emp || ''),
+         full_name: '', role: c.role || '', is_super: isSuper };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'forms.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  if (CAN_APPROVE) $('tabAppr').classList.remove('hide');
+  $('awayDate').value = toKey(new Date());
+  $('awayDate').oninput = renderAway;
+  setupForm();
+  await loadAll();
+});
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  // שתי הקריאות במקביל. אין ביניהן תלות.
+  subs = []; people = [];
+  const safe = p => p.catch(function () { return null; });
+  // **קריאה מסוננת, לא קריאה גורפת.**
+  //
+  // כללי Firestore אינם מסננים — שאילתה נדחית **כולה** אם מסמך
+  // אחד בתוצאה נכשל בכלל. קריאה גורפת של submissions נדחתה
+  // אצל כבאי כבר בטופס הראשון שאינו שלו, ואצל מפקד משמרת
+  // בטופס הראשון ממשמרת אחרת — ו-safe() בלע את השגיאה, כך
+  // ששלוש הלשוניות הוצגו ריקות בלי שום הודעה.
+  //
+  // מי שרואה הכל ממילא קורא גורף; לשאר בונים שתי שאילתות
+  // שתואמות בדיוק את מה שהכלל מתיר.
+  // IS_WIDE כבר מוגדר למעלה כ"מנהל-על, מפקד תחנה או רכז כוח
+  // אדם" — בדיוק קבוצת מי שהכלל מתיר לו לקרוא הכל.
+  const subQueries = IS_WIDE
+    ? [ getDocs(collection(db, 'stations', SID, 'submissions')) ]
+    : [ getDocs(query(collection(db, 'stations', SID, 'submissions'),
+                      where('by_uid', '==', ME.uid))) ]
+        .concat(CAN_APPROVE && ME.crew
+          ? [ getDocs(query(collection(db, 'stations', SID, 'submissions'),
+                            where('crew', '==', ME.crew),
+                            where('is_private', '==', false))) ]
+          : []);
+
+  const results = await Promise.all(
+    subQueries.map(safe).concat([safe(getDocs(collection(db, 'stations', SID, 'roster')))]));
+  const rs = results.pop();
+
+  // שתי השאילתות עלולות להחזיר את אותו מסמך (טופס שלי במשמרת
+  // שלי). איחוד לפי מזהה, אחרת הוא יופיע פעמיים ברשימה.
+  const seen = {};
+  results.forEach(function (qs) {
+    if (!qs) return;
+    qs.forEach(function (d) {
+      if (seen[d.id]) return;
+      seen[d.id] = true;
+      subs.push(Object.assign({ id: d.id }, d.data() || {}));
+    });
+  });
+  subs.sort((a,b) => String(b.created_key||'').localeCompare(String(a.created_key||'')));
+
+  if (rs) rs.forEach(d => {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '' });
+  });
+
+  renderMine(); renderAppr(); renderAway();
+}
+
+// ---------- לשוניות ----------
+
+const VIEWS = [['tabNew','viewNew'],['tabMine','viewMine'],
+               ['tabAppr','viewAppr'],['tabAway','viewAway']];
+function visibleViews(){
+  return VIEWS.filter(function (v) { return !$(v[0]).classList.contains('hide'); });
+}
+function activateView(tabId, moveFocus){
+  VIEWS.forEach(function (v) {
+    const active = v[0] === tabId;
+    $(v[0]).classList.toggle('on', active);
+    $(v[0]).setAttribute('aria-selected', active ? 'true' : 'false');
+    $(v[0]).setAttribute('tabindex', active ? '0' : '-1');
+    $(v[1]).classList.toggle('hide', !active);
+    $(v[1]).setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
+  if (moveFocus) $(tabId).focus();
+}
+VIEWS.forEach(function (v) {
+  const tab = $(v[0]);
+  tab.onclick = function () { activateView(v[0], false); };
+  tab.onkeydown = function (event) {
+    const tabs = visibleViews();
+    const at = tabs.findIndex(function (x) { return x[0] === v[0]; });
+    if (at < 0) return;
+    let next = at;
+    if (event.key === 'ArrowRight') next = (at + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (at - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    activateView(tabs[next][0], true);
+  };
+});
+
+// ---------- הטופס ----------
+
+function setupForm(){
+  $('fPick').innerHTML = BUILTIN_FORMS.map(f =>
+    '<option value="' + esc(f.id) + '">' + esc(f.he) + '</option>').join('');
+  $('fPick').onchange = drawFields;
+  $('btnSubmit').onclick = submitForm;
+  drawFields();
+  // טעינת החתימה השמורה. אינה מעכבת את ציור השדות — הטופס
+  // ניתן למילוי גם בזמן שהיא בדרך, והכפתור בודק אותה שוב.
+  initSig();
+}
+
+function curForm(){ return formById(BUILTIN_FORMS, $('fPick').value); }
+
+// השדות נבנים מההגדרה ולא כתובים ב-HTML. כשהטפסים הרשמיים
+// יגיעו, מחליפים את ההגדרה ב-forms.js וזה הכל.
+function drawFields(){
+  const f = curForm();
+  const box = $('fFields');
+  box.innerHTML = '';
+  msg('', '');
+  if (!f) return;
+
+  $('fNote').textContent = f.note || '';
+  $('sigWrap').classList.toggle('hide', !f.sign);
+  // ההסכמה מתאפסת בכל החלפת טופס. סימון שנשאר דולק מטופס
+  // קודם היה חותם על מסמך שהחותם לא קרא.
+  const ag = $('sigAgree');
+  if (ag) ag.checked = false;
+  if (f.sign) paintSig();
+
+  (f.fields || []).forEach(function (fl) {
+    const fieldId = 'fld_' + fl.id;
+    const lab = document.createElement('label');
+    lab.htmlFor = fieldId;
+    lab.innerHTML = '<b>' + esc(fl.he) + '</b>' + (fl.req ? ' <i>*</i>' : '');
+    box.appendChild(lab);
+
+    let el;
+    if (fl.type === 'long') {
+      el = document.createElement('textarea');
+    } else if (fl.type === 'pick') {
+      el = document.createElement('select');
+      el.innerHTML = '<option value="">— בחר —</option>' +
+        (fl.opts || []).map(o => '<option value="' + esc(o) + '">' +
+                                 esc(o) + '</option>').join('');
+    } else if (fl.type === 'yesno') {
+      el = document.createElement('select');
+      el.innerHTML = '<option value="">— בחר —</option>' +
+        '<option value="כן">כן</option><option value="לא">לא</option>';
+    } else {
+      el = document.createElement('input');
+      el.type = fl.type === 'date' ? 'date'
+              : fl.type === 'time' ? 'time'
+              : fl.type === 'number' ? 'number' : 'text';
+    }
+    el.id = fieldId;
+    box.appendChild(el);
+
+    if (fl.note) {
+      const n = document.createElement('div');
+      n.className = 'fnote';
+      n.id = fieldId + '_note';
+      n.textContent = fl.note;
+      el.setAttribute('aria-describedby', n.id);
+      box.appendChild(n);
+    }
+  });
+}
+
+function readValues(f){
+  const out = {};
+  (f.fields || []).forEach(function (fl) {
+    const el = $('fld_' + fl.id);
+    if (el) out[fl.id] = String(el.value || '').trim();
+  });
+  return out;
+}
+
+// ---------- חתימה ----------
+//
+// **החתימה נשמרת פעם אחת, ומכאן והלאה חותמים בלחיצה.**
+//
+// כאן היה לוח ציור שנפתח בכל טופס מחדש. כבאי שמגיש טופס
+// חופשה, דוח אי-החתמת כרטיס ודוח שעות חודשי מצייר באצבע
+// חמש-עשרה פעמים בשנה — ומפסיק לחתום. מסמך לא חתום מעכב
+// שכר של אדם, אז המחיר של חיכוך כאן הוא לא אסתטי.
+//
+// מה שנכנס לטופס הוא **עותק** של התמונה ולא הפניה לחתימה
+// השמורה. זו נקודה משפטית: אם מחר יחליף את חתימתו, טופס
+// שנחתם אתמול חייב להמשיך להראות את מה שנחתם בפועל.
+
+let MY_SIG = null;      // { image, full_name, emp_number }
+let pad = null;         // לוח הציור, נוצר רק כשאין חתימה שמורה
+
+async function initSig(){
+  MY_SIG = await loadSignature(db, SID, ME.uid);
+  paintSig();
+}
+
+function paintSig(){
+  const have = !!(MY_SIG && MY_SIG.image);
+  $('sigHave').classList.toggle('hide', !have);
+  $('sigNone').classList.toggle('hide', have);
+
+  if (have) {
+    $('sigImg').src   = MY_SIG.image;
+    $('sigName').textContent = MY_SIG.full_name || ME.full_name || '';
+    $('sigMeta').textContent =
+      (MY_SIG.emp_number || ME.emp ? 'מספר עובד ' + (MY_SIG.emp_number || ME.emp) : '') ;
+    $('sigAgree').checked = false;
+    return;
+  }
+
+  // לוח ציור. נוצר פעם אחת — attachPad מחשב גודל לפי
+  // getBoundingClientRect, ואם הקנבס מוסתר באותו רגע הרוחב
+  // יוצא 0 והציור נופל מחוץ לתמונה. לכן הוא נבנה רק אחרי
+  // שהמכל כבר גלוי.
+  if (!pad && !$('sigWrap').classList.contains('hide')) {
+    pad = attachPad($('sig'), {});
+    $('sigClear').onclick  = () => { pad.clear(); sigMsg(''); };
+    $('sigUpload').onclick = () => $('sigFile').click();
+    $('sigFile').onchange  = onSigFile;
+    $('sigSave').onclick   = onSigSave;
+  }
+}
+
+function sigMsg(t, k){ msg(t, k, 'sigMsg'); }
+
+async function onSigFile(e){
+  const f = (e.target.files || [])[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const img = await readImageFile(f, 600);
+    await pad.load(img);
+    sigMsg('התמונה נטענה. לחץ "שמור חתימה".', 'info');
+  } catch (err) {
+    sigMsg(err.message || 'טעינת התמונה נכשלה.', 'err');
+  }
+}
+
+async function onSigSave(){
+  if (!pad || pad.isEmpty()) { sigMsg('הלוח ריק — צייר או העלה תמונה.', 'err'); return; }
+  const b = $('sigSave'); b.disabled = true;
+  try {
+    const img = pad.toImage();
+    await saveSignature(db, SID, ME.uid, img,
+      { full_name: ME.full_name, emp_number: ME.emp });
+    MY_SIG = { image: img, full_name: ME.full_name, emp_number: ME.emp };
+    paintSig();
+    msg('החתימה נשמרה. מכאן והלאה תחתום בלחיצה.', 'ok');
+  } catch (err) {
+    sigMsg('שמירת החתימה נכשלה. (' + (err.code || '') + ' ' +
+           (err.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+// מה שנכנס לטופס בהגשה. ריק = לא נחתם.
+function myStamp(){
+  if (!MY_SIG || !MY_SIG.image) return null;
+  if (!$('sigAgree').checked) return null;
+  return signatureRecord(MY_SIG.image, {
+    uid: ME.uid,
+    full_name: MY_SIG.full_name || ME.full_name || '',
+    emp_number: MY_SIG.emp_number || ME.emp || '',
+    role: ME.role || ''
+  });
+}
+
+// אותה חתימה, בשלב אחר של השרשרת. משמשת את המאשר.
+function stampAs(){
+  if (!MY_SIG || !MY_SIG.image) return null;
+  return signatureRecord(MY_SIG.image, {
+    uid: ME.uid,
+    full_name: MY_SIG.full_name || ME.full_name || '',
+    emp_number: MY_SIG.emp_number || ME.emp || '',
+    role: ME.role || ''
+  });
+}
+
+// ---------- הגשה ----------
+
+async function submitForm(){
+  const f = curForm();
+  if (!f) return;
+  const values = readValues(f);
+
+  const errs = validate(f, values);
+
+  let stamp = null;
+  if (f.sign) {
+    if (!MY_SIG || !MY_SIG.image) {
+      errs.push('אין לך חתימה שמורה. צייר או העלה אותה למעלה, ' +
+                'לחץ "שמור חתימה", ואז הגש.');
+    } else if (!$('sigAgree').checked) {
+      errs.push('סמן את תיבת החתימה כדי לחתום על הטופס.');
+    } else {
+      stamp = myStamp();
+    }
+  }
+  if (errs.length) { msg(errs.join('\n'), 'err'); return; }
+
+  const b = $('btnSubmit'); b.disabled = true;
+  try {
+    const now = new Date();
+    // signatures הוא המבנה שכל המערכת קוראת — signflow.js
+    // יודע לקרוא ממנו מי חתם ומי הבא בתור. signature השטוח
+    // נשמר לצידו כי כרטיסים קיימים, כללי האבטחה וייצוא ה-PDF
+    // כבר מסתמכים עליו, ואין סיבה לשבור אותם בשביל שדה כפול
+    // ששוקל אותו דבר.
+    await addDoc(collection(db, 'stations', SID, 'submissions'), {
+      form_id: f.id, form_he: f.he,
+      kind: signKind(f),
+      values: values,
+      signature: stamp ? stamp.image : '',
+      signatures: stamp ? { employee: stamp } : {},
+      is_private: !!f.private,
+      status: 'submitted',
+      by_uid: ME.uid, by_name: ME.full_name || '',
+      by_emp: ME.emp, crew: ME.crew || '',
+      created_key: now.toISOString(),
+      created_at: serverTimestamp()
+    });
+    msg('הטופס הוגש. ראש המשמרת יקבל התראה.', 'ok');
+    drawFields();
+    await loadAll();
+  } catch (e) {
+    msg('ההגשה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+// ---------- כרטיס ----------
+
+function subCard(s, forAppr){
+  const f = formById(BUILTIN_FORMS, s.form_id);
+  const el = document.createElement('div');
+  el.className = 's ' + (s.status || 'submitted');
+  el.setAttribute('role', 'listitem');
+
+  el.innerHTML =
+    '<div class="top">' +
+      '<span class="ttl">' + esc(s.form_he || (f && f.he) || '') + '</span>' +
+      (s.is_private ? '<span class="lock">סגור</span>' : '') +
+      '<span class="tag" style="color:' + subColor(s.status) + '">' +
+        esc(subHe(s.status)) + '</span>' +
+    '</div>' +
+    '<div class="note">' + esc(summaryOf(f, s)) + '</div>';
+
+  const vals = document.createElement('div');
+  vals.className = 'vals';
+  vals.innerHTML = (f ? f.fields : []).map(function (fl) {
+    const v = (s.values || {})[fl.id];
+    if (!v) return '';
+    const show = fl.type === 'date' ? dmy(v) : v;
+    return '<b>' + esc(fl.he) + ':</b> ' + esc(show);
+  }).filter(Boolean).join('<br>');
+  el.appendChild(vals);
+
+  const chain = chainBox(s, f);
+  if (chain) el.appendChild(chain);
+
+  const rep = document.createElement('div');
+  rep.className = 'rep';
+  const when = String(s.created_key || '');
+  rep.textContent = 'הוגש: ' + (s.by_name || '') +
+    (when ? ' · ' + dmy(when.slice(0,10)) + ' ' + when.slice(11,16) : '') +
+    (s.crew ? ' · משמרת ' + (CREW_HE[s.crew] || s.crew) : '') +
+    (s.decided_by_name
+      ? ' · ' + (s.status === 'approved' ? 'אושר' : 'נדחה') +
+        ' ע״י ' + s.decided_by_name : '');
+  el.appendChild(rep);
+
+  if (s.decide_note) {
+    const dn = document.createElement('div');
+    dn.className = 'rep';
+    dn.style.borderTop = '0'; dn.style.paddingTop = '2px';
+    dn.textContent = 'הערת המאשר: ' + s.decide_note;
+    el.appendChild(dn);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+
+  if (forAppr && isPending(s)) {
+    acts.appendChild(btn('אשר', 'sm ok', () => decide(s, 'approved')));
+    acts.appendChild(btn('דחה', 'sm no', () => decide(s, 'rejected')));
+  }
+  // המגיש מבטל כל עוד לא הוכרע.
+  if (!forAppr && isPending(s) && s.by_uid === ME.uid) {
+    acts.appendChild(btn('בטל בקשה', 'sm', () => decide(s, 'cancelled')));
+  }
+  // הפקה. גם על טופס שעדיין ממתין — לפעמים צריך להראות
+  // למישהו מה הוגש לפני שהוכרע.
+  acts.appendChild(btn('הדפס / PDF', 'sm', () => printSub(s, f)));
+
+  if (acts.children.length) el.appendChild(acts);
+  return el;
+}
+
+// ---------- הפקת מסמך ----------
+//
+// אין כאן ספריית PDF. הדפדפן הופך דף ל-PDF בעצמו, גם
+// באנדרואיד וגם באייפון, והוא היחיד שיודע עברית ו-RTL
+// בלי להטמיע גופן. ראה docpdf.js.
+
+async function printSub(s, f){
+  try {
+    const now = new Date();
+    const doc = submissionDoc(s, f, {
+      station:  'תחנה 102 · אילת',
+      statusHe: subHe(s.status),
+      crewHe:   s.crew ? 'משמרת ' + (CREW_HE[s.crew] || s.crew) : '',
+      labels: { employee: stepLabel(STEP.EMPLOYEE),
+                commander: stepLabel(STEP.COMMANDER),
+                station_commander: stepLabel(STEP.STATION) },
+      footer: 'הופק ממערכת ResQ · תחנה 102 · הודפס בידי ' +
+              (ME.full_name || ''),
+      printedAt: dmy(toKey(now)) + ' ' +
+                 String(now.getHours()).padStart(2,'0') + ':' +
+                 String(now.getMinutes()).padStart(2,'0')
+    });
+    await printHtml(buildDocHtml(doc));
+  } catch (e) {
+    msg('ההדפסה נכשלה. (' + (e.message || e) + ') נסה מדפדפן ולא ' +
+        'מתוך האפליקציה המותקנת.', 'err', 'mineMsg');
+  }
+}
+
+function btn(text, cls, fn){
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn ' + cls;
+  b.textContent = text; b.onclick = fn;
+  return b;
+}
+
+// ---------- שרשרת החתימות בכרטיס ----------
+//
+// מציגה את מה שנחתם ואת מי שעוד חסר. הצגת החתימות בלי
+// לומר מי הבא בתור משאירה את המגיש בלי מושג למה שום דבר
+// לא קורה — וזה בדיוק הרגע שבו הוא מרים טלפון.
+
+function chainBox(s, f){
+  const kind = s.kind || signKind(f);
+  const sigs = s.signatures || {};
+  const st   = signState(kind, s);
+
+  // טפסים שנחתמו לפני המעבר למבנה signatures. מציגים את
+  // החתימה השטוחה כדי שהם לא ייראו כאילו איש לא חתם.
+  const legacy = !Object.keys(sigs).length && s.signature;
+  if (!f || (!f.sign && !legacy && !Object.keys(sigs).length)) return null;
+
+  const box = document.createElement('div');
+  box.className = 'chain';
+
+  if (legacy) {
+    box.appendChild(sigRow({ image: s.signature, name: s.by_name || '',
+                             at: s.created_key || '' }, 'הכבאי'));
+    return box;
+  }
+
+  st.required.forEach(function (step) {
+    const r = sigs[step];
+    if (r && r.image) { box.appendChild(sigRow(r, stepLabel(step))); return; }
+    const w = document.createElement('div');
+    w.className = 'step wait';
+    w.textContent = '○ ממתין לחתימת ' + stepLabel(step);
+    box.appendChild(w);
+  });
+  return box;
+}
+
+function sigRow(r, label){
+  const row = document.createElement('div');
+  row.className = 'step';
+
+  const im = document.createElement('img');
+  im.src = r.image; im.alt = 'חתימת ' + label;
+  row.appendChild(im);
+
+  const t = document.createElement('div');
+  t.className = 't';
+  const when = String(r.at || '');
+  t.innerHTML = '<b>' + esc(label) + '</b> · ' + esc(r.name || '') +
+    (r.emp ? ' · ' + esc(r.emp) : '') +
+    (when ? '<br>' + esc(dmy(when.slice(0,10)) + ' ' + when.slice(11,16)) : '');
+
+  // חתימה בשם אדם אחר לעולם אינה מתחזה. אם ראש משמרת חתם
+  // במקום כבאי — זה כתוב, עם הסיבה, ליד החתימה עצמה.
+  if (r.on_behalf_of) {
+    t.innerHTML += '<br><span class="onbehalf">⚠ נחתם בשם ' +
+      esc(r.on_behalf_name || r.on_behalf_of) +
+      (r.reason ? ' · ' + esc(r.reason) : '') + '</span>';
+  }
+  row.appendChild(t);
+  return row;
+}
+
+// ---------- הכרעה ----------
+
+// **אישור הוא חתימה, לא לחיצה.**
+//
+// עד כאן "אושר" היה שדה טקסט: שם המאשר ותאריך. מי שרצה
+// לטעון שלא אישר — לא היה מה להציג מולו. עכשיו האישור נושא
+// את חתימתו, ונשמר באותו מבנה כמו חתימת הכבאי.
+//
+// דחייה אינה נחתמת בכוונה. חתימה היא הסכמה; סירוב אינו
+// צריך ראיה גרפית, הוא צריך נימוק — ואותו כן דורשים.
+
+function meForSign(){
+  return { uid: ME.uid, role: ME.role || '', shift: ME.crew || '',
+           emp: ME.emp || '', full_name: ME.full_name || '',
+           super: ME.is_super === true };
+}
+
+async function decide(s, status){
+  const box = status === 'cancelled' ? 'mineMsg' : 'apprMsg';
+
+  let note = '';
+  if (status === 'rejected') {
+    note = window.prompt('למה נדחתה? (יוצג למגיש)', '');
+    if (note === null) return;
+    note = String(note || '').trim();
+    if (!note) { msg('דחייה בלי נימוק לא נשמרת. המגיש צריך לדעת למה.',
+                     'err', box); return; }
+  }
+
+  const patch = {
+    decide_note: String(note).slice(0, 300),
+    decided_by: ME.uid, decided_by_name: ME.full_name || '',
+    decided_key: new Date().toISOString()
+  };
+
+  // ---- אישור: חותמים ומחליטים לאן זה הולך ----
+  if (status === 'approved') {
+    const f    = formById(BUILTIN_FORMS, s.form_id);
+    const kind = s.kind || signKind(f);
+    const gate = canSign(kind, s, meForSign());
+
+    if (!gate.allowed) { msg(gate.why || 'אינך רשאי לחתום כאן.', 'err', box); return; }
+
+    if (!MY_SIG || !MY_SIG.image) {
+      msg('אין לך חתימה שמורה, ואישור הוא חתימה. פתח את מסך ' +
+          'החתימות, שמור חתימה פעם אחת, וחזור לכאן.', 'err', box);
+      return;
+    }
+
+    const stamp = stampAs();
+    const sigs  = Object.assign({}, s.signatures || {});
+    sigs[gate.step] = stamp;
+
+    // מה מצב המסמך אחרי החתימה הזאת. הבדיקה נעשית על העותק
+    // המעודכן ולא על המקור — אחרת חתימת ראש המשמרת לא
+    // נספרת, וכל בקשה הייתה נתקעת בשלב שלו.
+    const after = signState(kind, Object.assign({}, s, { signatures: sigs }));
+
+    patch.signatures = sigs;
+    patch.status = after.complete ? 'approved' : 'pending_station';
+
+    // מי חתם בכל שלב, בשדה שטוח — כדי שאפשר יהיה לסנן
+    // ולחפש בלי לפתוח מפות מקוננות בשאילתה.
+    if (gate.step === STEP.COMMANDER) {
+      patch.commander_uid  = ME.uid;
+      patch.commander_name = ME.full_name || '';
+    }
+    if (gate.step === STEP.STATION) {
+      patch.station_uid  = ME.uid;
+      patch.station_name = ME.full_name || '';
+    }
+  } else {
+    patch.status = status;
+  }
+
+  try {
+    await setDoc(doc(db, 'stations', SID, 'submissions', s.id),
+                 patch, { merge: true });
+
+    // חופשה מאושרת נכנסת לדוח השעות מעצמה. בלי זה הכבאי
+    // מדווח את אותם ימים פעם שנייה, וחצי מהם נשכחים.
+    //
+    // רק כשהיא אושרה **סופית**. חופשה בחו"ל שראש המשמרת
+    // חתם עליה עדיין ממתינה למפקד התחנה, ואסור שימי החופש
+    // ייכנסו לדוח לפני שהוא הכריע.
+    if (patch.status === 'approved' && s.form_id === 'leave') {
+      await fillLeave(s);
+    }
+    await loadAll();
+    msg(patch.status === 'approved'       ? 'אושר ונחתם.' :
+        patch.status === 'pending_station' ? 'נחתם והועבר למפקד התחנה — ' +
+                                             'חופשה בחו״ל דורשת את אישורו.' :
+        patch.status === 'rejected'        ? 'נדחה.' : 'בוטל.', 'ok', box);
+  } catch (e) {
+    msg('העדכון נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', box);
+  }
+}
+
+async function fillLeave(s){
+  const v = s.values || {};
+  const days = daysInRange(v.from, v.to);
+  if (!days.length) return;
+  try {
+    const batch = writeBatch(db);
+    days.forEach(function (k) {
+      const id = String(s.by_emp || s.by_uid) + '_' + k;
+      batch.set(doc(db, 'stations', SID, 'attendance', id), {
+        emp_number: String(s.by_emp || ''), uid: s.by_uid,
+        full_name: s.by_name || '', crew: s.crew || '',
+        date: k, month: k.slice(0, 7),
+        day_type: 'vacation', day_type_he: 'חופש',
+        hours: 24, from_form: s.id,
+        notes: 'חופשה מאושרת · ' + (v.where || ''),
+        updated_at: serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
+  } catch (e) {
+    // כישלון כאן לא מבטל את האישור. הבקשה אושרה, והמילוי
+    // האוטומטי הוא נוחות — לא התנאי.
+    msg('אושר, אבל מילוי ימי החופש בדוח נכשל. (' +
+        (e.code || e.message) + ') אפשר למלא ידנית.', 'info', 'apprMsg');
+  }
+}
+
+// ---------- תצוגות ----------
+
+function renderMine(){
+  const list = subs.filter(s => s.by_uid === ME.uid);
+  const box = $('mineList');
+  box.innerHTML = '';
+  $('mineNote').textContent = list.length
+    ? list.length + ' טפסים.'
+    : 'עוד לא הגשת טפסים.';
+  list.forEach(s => box.appendChild(subCard(s, false)));
+}
+
+function renderAppr(){
+  if (!CAN_APPROVE) return;
+  // ראש משמרת רואה את המשמרת שלו. מפקד תחנה ורכז — הכל.
+  //
+  // ומעבר לזה: מוצג רק מה שאני **באמת יכול לחתום עליו עכשיו**.
+  // בקשה שראש המשמרת כבר חתם עליה וממתינה למפקד התחנה לא
+  // תופיע אצל ראש המשמרת שוב, ובקשה שהגשתי בעצמי לא תופיע
+  // אצלי. רשימה שמציגה שורות שלוחצים עליהן ומקבלים "אינך
+  // רשאי" היא רשימה שמפסיקים לפתוח.
+  const me = meForSign();
+  const list = subs.filter(function (s) {
+    if (!isPending(s)) return false;
+    if (s.by_uid === ME.uid) return false;
+    if (!(IS_WIDE || !ME.crew || s.crew === ME.crew)) return false;
+    const f = formById(BUILTIN_FORMS, s.form_id);
+    return canSign(s.kind || signKind(f), s, me).allowed;
+  });
+  const box = $('apprList');
+  box.innerHTML = '';
+  $('apprNote').textContent = IS_WIDE
+    ? 'כל התחנה · ' + list.length + ' ממתינים.'
+    : 'משמרת ' + (CREW_HE[ME.crew] || ME.crew) + ' · ' +
+      list.length + ' ממתינים.';
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">' +
+                    'אין טפסים שממתינים לך.</div>';
+    return;
+  }
+  list.forEach(s => box.appendChild(subCard(s, true)));
+}
+
+function renderAway(){
+  const key = $('awayDate').value || toKey(new Date());
+  const map = awayOn(subs, key);
+  const box = $('awayList');
+  box.innerHTML = '';
+  const uids = Object.keys(map);
+  if (!uids.length) {
+    box.innerHTML = '<div class="note" style="padding-top:10px">' +
+      'אף אחד לא בחופשה מאושרת ביום הזה.</div>';
+    return;
+  }
+  uids.forEach(function (u) {
+    const a = map[u];
+    const el = document.createElement('div');
+    el.className = 's ' + (a.callable ? 'approved' : 'rejected');
+    el.setAttribute('role', 'listitem');
+    el.innerHTML =
+      '<div class="top"><span class="ttl">' + esc(a.name || u) + '</span>' +
+      '<span class="tag" style="color:' +
+        (a.callable ? 'var(--good)' : 'var(--bad)') + '">' +
+        esc(a.where) + '</span></div>' +
+      '<div class="note">' + esc(awayHe(a.where)) + '</div>';
+    box.appendChild(el);
+  });
+}
+</script>
+</body>
+</html>

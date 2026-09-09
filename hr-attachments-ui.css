@@ -1,0 +1,51 @@
+/* Private HR attachments. Tokens only: every colour lives in theme.css and
+   nowhere else, so both palettes and the manual switch keep working. */
+/* Scoped, not global: a fragment cannot assume the host page carries a reset,
+   and it must not impose one either. Without this the file input is its own
+   padding wider than its container, and a 360px screen scrolls sideways. */
+.hra,.hra *{box-sizing:border-box}
+.hra{display:grid;gap:14px;min-width:0}
+.hra h3{margin:0;font-size:18px}
+.hra ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.hra button,.hra input{font:inherit;color:var(--txt);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:44px;max-width:100%}
+.hra button{cursor:pointer}
+.hra button:disabled{opacity:.55;cursor:default}
+.hra button:focus-visible,.hra input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.hra [hidden]{display:none!important}
+.hra label{display:grid;gap:8px}
+/* The file input stays in the tab order and keeps its own semantics; only its
+   native English chrome is taken out of sight. */
+.hra-file{display:inline-flex;align-items:center;justify-content:center;position:relative;min-height:44px;padding:10px 18px;border:1px solid var(--line);border-radius:10px;background:var(--chip);color:var(--txt);font-weight:700;cursor:pointer}
+.hra-file input{position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:100%;block-size:100%;opacity:0;padding:0;border:0;min-height:0;cursor:inherit}
+.hra-file:focus-within{outline:3px solid var(--accent);outline-offset:3px}
+.hra-pick{display:grid;gap:8px;justify-items:start}
+.hra-pick .hra-problem{margin:0;justify-self:stretch}
+.hra-note,.hra-count{color:var(--muted);font-size:14px;line-height:1.7}
+.hra-item,.hra-row{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px;overflow-wrap:anywhere}
+.hra-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hra-name{flex:1 1 12ch;min-width:0;font-weight:700}
+.hra-meta{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
+.hra-tok{unicode-bidi:isolate}
+.hra-name bdi{unicode-bidi:isolate}
+.hra-state{font-size:14px;font-weight:700;color:var(--dim);border:1px solid var(--line);border-radius:8px;padding:4px 10px;white-space:nowrap}
+.hra-item[data-state=ready] .hra-state{color:var(--good);border-color:var(--good-bd)}
+.hra-item[data-state=failed] .hra-state{color:var(--bad);border-color:var(--bad-bd)}
+/* Uncertain is its own colour, because it is its own answer: not done and not
+   failed, and a screen that paints it as either is lying. */
+.hra-item[data-state=uncertain] .hra-state{color:var(--warn);border-color:var(--warn)}
+/* Busy is carried by the word first and the dot second: colour alone is not a
+   state, and a lone moving dot is not a label. */
+.hra-state[data-busy=yes]::after{content:"";display:inline-block;inline-size:7px;block-size:7px;margin-inline-start:7px;border-radius:50%;background:var(--accent);vertical-align:middle;animation:hra-pulse 1s ease-in-out infinite}
+@keyframes hra-pulse{50%{opacity:.25}}
+.hra-problem,.hra-ok,.hra-wait{margin:8px 0 0;font-size:14px;line-height:1.7;padding:10px 12px;border-radius:8px}
+.hra-problem{background:var(--err-bg);color:var(--err-fg);border:1px solid var(--bad-bd)}
+.hra-wait{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
+.hra-ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--good-bd)}
+.hra-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.hra-empty{color:var(--muted);line-height:1.7}
+.hra-empty:empty{display:none}
+.hra-row .hra-problem{margin-top:10px}
+/* Announcements are read aloud, not shown twice. */
+.hra-live{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:760px){.hra-acts>button,.hra-head>button{flex:1 1 130px}}
+@media(prefers-reduced-motion:reduce){.hra-state[data-busy=yes]::after{animation:none}}

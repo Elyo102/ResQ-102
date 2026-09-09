@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — ניהול</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+  .wrap{max-width:720px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:18px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  button{min-height:44px;background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
+        padding:10px 18px;font-size:14px;cursor:pointer;margin-top:14px;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button.ok{background:var(--ok)}
+  button.no{background:transparent;border:1px solid var(--bad-bd);color:var(--err-fg)}
+  .req{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;
+       background:var(--panel)}
+  .req .nm{font-size:16px;font-weight:600;margin-bottom:8px}
+  .req .ln{font-size:13px;color:var(--muted);line-height:1.9}
+  .req .ln b{color:var(--txt);font-weight:500}
+  .match{margin-top:10px;padding:9px;border-radius:6px;font-size:13px;line-height:1.6}
+  .match.found{background:var(--ok-bg);color:var(--ok-fg)}
+  .match.none{background:var(--err-bg);color:var(--err-fg)}
+  .acts{display:flex;gap:10px}
+  .acts button{flex:1}
+  .hide{display:none}
+  .who{font-size:13px;color:var(--muted)}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:24px 0}
+  .msg{margin-top:14px;padding:11px;border-radius:6px;font-size:13px;display:none}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
+  .msg.info{display:block;background:var(--chip);color:var(--dim)}
+  h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
+  select{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
+        border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  .two{display:flex;gap:12px}
+  .two>div{flex:1}
+  .rotstate{font-size:13px;color:var(--muted);background:var(--panel);border:1px solid var(--line);
+        border-radius:6px;padding:11px;line-height:1.8;margin-bottom:6px}
+  .rotstate b{color:var(--txt)}
+  .schedule-link{display:inline-block;margin-top:12px;color:var(--accent);font-weight:600}
+  .schedule-link.hide{display:none}
+  .transfer-choice{display:block;width:100%;text-align:right;background:var(--panel);
+    color:var(--txt);border:1px solid var(--line);margin-top:8px}
+  .transfer-choice.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--chip)}
+  .transfer-meta{font-size:12px;color:var(--muted);margin-top:4px}
+  @media(max-width:520px){
+    body{padding:10px}.card{padding:14px}.two{display:block}.two>div+div{margin-top:8px}
+    .acts{display:block}.acts button{width:100%}
+  }
+</style>
+</head>
+<body>
+<div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+// מציג שגיאות על המסך במקום להשאיר אותן בקונסולה.
+// בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
+// והמסך נראה תקין לגמרי.
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+
+  <h1>אישור בקשות הרשמה</h1>
+  <div class="sub">תחנת כיבוי אילת</div>
+
+  <!-- כניסה -->
+  <div class="card hide" id="authCard">
+    <label>מייל</label>
+    <input type="email" id="email" autocomplete="username">
+    <label>סיסמה</label>
+    <input type="password" id="pass" autocomplete="current-password">
+    <button id="btnIn">כניסה</button>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <!-- אין הרשאה -->
+  <div class="card hide" id="denyCard">
+    <div style="text-align:center;line-height:1.9">
+      <div style="font-size:34px">🔒</div>
+      <div style="font-size:17px;font-weight:600">אין לך הרשאה לדף הזה</div>
+      <div style="font-size:13px;color:var(--muted)">
+        הדף מיועד למנהל המערכת בלבד.
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px" id="denyWho"></div>
+    </div>
+    <div class="msg" id="denyMsg"></div>
+    <button id="btnVerify" class="hide" style="width:100%">שלח לי שוב מייל אימות</button>
+    <button id="btnOutDeny" class="ghost" style="width:100%">התנתק</button>
+  </div>
+
+  <!-- אזור עבודה -->
+  <div id="work" class="hide">
+    <div class="card">
+      <div class="who" id="who"></div>
+      <button id="btnOut" class="ghost">התנתק</button>
+    </div>
+    <div class="card" id="reqCard">
+      <h2>בקשות הרשמה</h2>
+      <div id="list"><div class="empty">טוען...</div></div>
+      <button id="btnRefresh" class="ghost">רענן רשימה</button>
+    </div>
+
+    <div class="card" id="usersCard">
+      <h2>משתמשים והרשאות</h2>
+      <div class="rotstate" id="usrState">לחץ "טען" כדי לראות מי רשום ומה התפקיד שלו.</div>
+      <button id="btnUsers">טען רשימת משתמשים</button>
+      <button id="btnReindex" class="ghost" style="margin-inline-start:8px">בנה מחדש את מפתח החיפוש</button>
+      <div class="msg" id="reindexMsg"></div>
+      <div id="usrList"></div>
+
+      <h2 style="margin-top:26px">הענקת תפקיד ידנית</h2>
+      <div class="rotstate">
+        לשימוש כשצריך לתקן תפקיד או להגדיר מישהו שלא עבר דרך בקשת הרשמה.
+      </div>
+
+      <!-- בורר לפי שם. נבנה מרשימת המשתמשים שנטענה למעלה. -->
+      <label for="rPick">בחר אדם קיים</label>
+      <select id="rPick">
+        <option value="">— טען קודם את רשימת המשתמשים —</option>
+      </select>
+      <div class="ln" id="rPickNote" style="margin-top:6px;color:var(--muted)">
+        בחירה כאן ממלאת את כל השדות מהמערכת. אפשר גם למלא ידנית
+        למטה — לאדם שעדיין אין לו חשבון.
+      </div>
+
+      <label>מייל המשתמש</label>
+      <input type="email" id="rEmail" autocomplete="off">
+
+      <div class="two">
+        <div>
+          <label>שם מלא</label>
+          <input type="text" id="rName" autocomplete="off"
+                 placeholder="ריק = לא משנה את השם הקיים">
+        </div>
+        <div>
+          <label>טלפון</label>
+          <input type="tel" id="rPhone" inputmode="tel" autocomplete="off"
+                 placeholder="ריק = לא משנה">
+        </div>
+      </div>
+
+      <div class="two">
+        <div>
+          <label>תפקיד</label>
+          <!-- הרשימה נבנית מ-roles.js. ראה שם: הבורר הזה
+               נכתב פעם ביד, ושני תפקידים קיימים פשוט חסרו בו. -->
+          <select id="rRole"></select>
+        </div>
+        <div>
+          <label>משמרת</label>
+          <select id="rShift">
+            <option value="">ללא</option>
+            <option value="A">משמרת א'</option>
+            <option value="B">משמרת ב'</option>
+            <option value="C">משמרת ג'</option>
+          </select>
+        </div>
+      </div>
+
+      <label>מספר עובד</label>
+      <input type="text" id="rEmp" inputmode="numeric">
+
+      <label>תחנה</label>
+      <select id="rStation"></select>
+
+      <label>ניהול המערכת</label>
+      <select id="rSuper">
+        <option value="keep">להשאיר כמו שהוא</option>
+        <option value="yes">גם מנהל מערכת</option>
+        <option value="no">לא מנהל מערכת</option>
+      </select>
+      <div class="ln" style="font-size:12px">
+        ניהול הוא תוספת לתפקיד. כבאי יכול להיות לוחם אש וגם מנהל,
+        באותו חשבון ובאותה כניסה.
+      </div>
+
+      <label>מחוז</label>
+      <select id="rDistrict">
+        <option value="south">דרום</option>
+        <option value="center">מרכז</option>
+        <option value="north">צפון</option>
+        <option value="jerusalem">ירושלים</option>
+        <option value="haifa">חוף</option>
+        <option value="dan">דן</option>
+      </select>
+
+      <button id="btnRole">הגדר תפקיד</button>
+      <div class="msg" id="roleMsg"></div>
+    </div>
+
+    <!-- מינוי נפרד מהתפקיד הראשי: אינו משתמש ברשימת המשתמשים
+         הרחבה, ואינו חושף כאן פרטי קשר או פרטי כוח-אדם. -->
+    <div class="card hide" id="scheduleAccessCard">
+      <h2>אחראי/ת סידור עבודה</h2>
+      <div class="rotstate" id="scheduleAccessState">
+        טוען את רשימת המינויים לתחנה...
+      </div>
+      <button type="button" id="btnScheduleAccessRefresh" class="ghost">רענן רשימה</button>
+
+      <label for="scheduleAccessPick">בחר אדם מהתחנה</label>
+      <select id="scheduleAccessPick">
+        <option value="">— טוען רשימה —</option>
+      </select>
+      <div class="ln" style="font-size:12px;color:var(--muted);margin-top:8px">
+        המינוי מאפשר עריכה, הרצה ופרסום של הסידור. הוא אינו משנה את
+        התפקיד הראשי של האדם.
+      </div>
+      <div class="acts">
+        <button type="button" id="btnScheduleAccessEnable">מנה כאחראי/ת סידור</button>
+        <button type="button" id="btnScheduleAccessDisable" class="no">הסר מינוי</button>
+      </div>
+      <div class="msg" id="scheduleAccessMsg"></div>
+      <div id="scheduleAccessList"></div>
+    </div>
+
+    <div class="card hide" id="stationTransferCard">
+      <h2>העברת עובד לתחנה אחרת</h2>
+      <div class="rotstate">
+        ההעברה נפתחת בתחנת המקור, אך העובד נשאר משויך אליה עד
+        שרכז/ת משאבי אנוש או מפקד/ת תחנת היעד מאשרים. השם משמש
+        לחיפוש בלבד; הבחירה נשמרת לפי מזהה החשבון.
+      </div>
+
+      <div id="transferScopePanel" class="hide">
+        <label for="transferScope">תחנה לניהול העברות</label>
+        <select id="transferScope"><option value="">— בחר תחנה —</option></select>
+        <div class="ln" style="font-size:12px;color:var(--muted);margin-top:8px">
+          מנהל־על פועל בכל פעם בתחנה אחת שנבחרה במפורש. השרת מאמת
+          את התחנה מחדש ואינו מחזיר בקשות מתחנות אחרות.
+        </div>
+      </div>
+
+      <div id="transferSourcePanel" class="hide">
+        <label for="transferSearch">חיפוש עובד לפי שם</label>
+        <div class="two">
+          <div><input id="transferSearch" type="search" autocomplete="off"
+                      placeholder="לפחות שני תווים"></div>
+          <div><button type="button" id="transferSearchButton" style="width:100%;margin-top:0">חפש</button></div>
+        </div>
+        <div id="transferResults"></div>
+
+        <label for="transferTarget">תחנת יעד</label>
+        <select id="transferTarget"><option value="">— בחר תחנת יעד —</option></select>
+        <button type="button" id="transferCreate" disabled>שלח לאישור תחנת היעד</button>
+        <div class="msg" id="transferCreateMsg"></div>
+
+        <div id="transferOutgoingPanel" class="hide">
+          <h2 style="margin-top:24px">בקשות שיצאו מהתחנה שלי</h2>
+          <button type="button" id="transferOutgoingRefresh" class="ghost">רענן בקשות יוצאות</button>
+          <div class="msg" id="transferOutgoingMsg"></div>
+          <div id="transferOutgoing"><div class="empty">אין בקשות טעונות.</div></div>
+        </div>
+      </div>
+
+      <h2 style="margin-top:24px">בקשות שממתינות לתחנה שלי</h2>
+      <button type="button" id="transferRefresh" class="ghost">רענן בקשות</button>
+      <div class="msg" id="transferIncomingMsg"></div>
+      <div id="transferIncoming"><div class="empty">אין בקשות טעונות.</div></div>
+    </div>
+
+    <div class="card" id="scheduleManagementCard">
+      <h2>ניהול סידור עבודה</h2>
+      <div class="rotstate">
+        הסידור התחנתי והאישי נמצאים במסך הסידור. כאשר המנוע החדש פעיל,
+        עריכה זמינה שם רק לאדם שמונה במפורש כאחראי/ת סידור עבודה.
+        נתוני המחזור הישן אינם נגישים עוד ממסך הניהול.
+      </div>
+      <a class="schedule-link hide" id="scheduleManagementLink"
+         href="./schedule-management.html">פתח ניהול סידור עבודה</a>
+    </div>
+
+    <!-- מסך המעבר אינו קורא עוד את collections הסידור הישנות. כך שיוך
+         שהוסר או טוקן ישן לא מקבלים נתוני סידור מחוץ למנוע החדש. -->
+    <div class="card hide" id="legacyRotationCard">
+      <h2>הסידור הישן נסגר</h2>
+      <div class="rotstate">
+        הסידור התחנתי, הסידור האישי וכל שינויי השיבוץ עברו למנוע החדש.
+        מסך זה אינו קורא ואינו מציג עוד את נתוני הסידור הישנים.
+      </div>
+      <a class="schedule-link hide" id="legacyRotationManageLink"
+         href="./schedule-management.html">פתח ניהול סידור עבודה</a>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+         sendEmailVerification }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, collection,
+         getDocs, query, where }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+import { CREW_HE } from './rotation.js?v=42h7';
+import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
+  from './stations.js?v=42h7';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h7';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+// הפונקציות יושבות באזור europe-west1, קרוב למסד שב-eur3.
+// בלי לציין אזור, ה-SDK פונה ל-us-central1 ומקבל 404.
+const fns = getFunctions(app, 'europe-west1');
+
+const callApprove  = httpsCallable(fns, 'approveRegistration');
+const callReject   = httpsCallable(fns, 'rejectRegistration');
+const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
+const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
+const callSetRole  = httpsCallable(fns, 'setUserRole');
+const callReindex  = httpsCallable(fns, 'reindexDirectory');
+// הרשאות הסידור נקראות ונכתבות רק דרך השרת. הדפדפן אינו שולח
+// תחנה ואינו פונה ישירות ל-Firestore, כדי שהשרת יקבע את הגבול.
+const callGetScheduleRuntimeStatus = httpsCallable(fns, 'getScheduleRuntimeStatus');
+const callGetScheduleManagerAccess = httpsCallable(fns, 'getScheduleManagerAccess');
+const callSetScheduleManagerAccess = httpsCallable(fns, 'setScheduleManagerAccess');
+const callSearchTransfers = httpsCallable(fns, 'searchStationTransferCandidates');
+const callCreateTransfer = httpsCallable(fns, 'createStationTransfer');
+const callListTransfers = httpsCallable(fns, 'listStationTransfers');
+const callDecideTransfer = httpsCallable(fns, 'decideStationTransfer');
+const callCancelTransfer = httpsCallable(fns, 'cancelStationTransfer');
+
+let roleOperationId = '';
+
+function newOperationId(prefix){
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return prefix + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// בורר התפקידים נבנה מיד, לפני כל טעינת נתונים. אם הוא ייבנה
+// בתוך onAuthStateChanged, מסך שנתקע בטעינה היה מציג בורר ריק
+// בלי שום רמז למה.
+{
+  const sel = document.getElementById('rRole');
+  if (sel) sel.innerHTML =
+    roleOptionsHtml([{ id: 'none', he: 'הסרת כל ההרשאות' }]);
+}
+
+// אין מסך כניסה בכל דף. יש אחד, והוא login.html.
+//
+// הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
+// לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
+// מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+function goSignIn(){
+  const back = encodeURIComponent(location.pathname.split('/').pop() || '');
+  location.replace('./login.html?next=' + back);
+}
+
+
+// הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
+// רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
+// נחסם, לא היה תפריט בכלל ולא הייתה דרך לצאת מהמסך.
+renderStuckNav('');
+
+const $ = id => document.getElementById(id);
+initPWA({ offer: false });
+
+// שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
+// עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
+// כמחרוזת באנגלית באחד המסכים.
+const ROLE_HE = ROLES_HE;
+const DIST_HE = DISTRICTS.reduce(function (acc, d) {
+  acc[d.id] = d.name.replace('מחוז ', '');
+  return acc;
+}, {});
+
+// אפשרויות תחנה לרשימה נפתחת. ערך שאינו ברשימה — למשל תחנה
+// שנוצרה בטעות מטקסט חופשי — נוסף כאפשרות משלו, כדי שהמאשר
+// יראה אותו ויוכל לתקן במקום שייעלם בשקט.
+function stationOptions(selected){
+  let html = '';
+  let found = false;
+
+  STATIONS.forEach(function (st) {
+    const on = st.id === selected;
+    if (on) found = true;
+    html += '<option value="' + esc(st.id) + '"' + (on ? ' selected' : '') +
+            '>' + esc(st.name) + '</option>';
+  });
+
+  if (selected && !found) {
+    html += '<option value="' + esc(selected) + '" selected>' +
+            esc(selected) + ' — לא ברשימה, מומלץ לתקן</option>';
+  }
+  if (!selected) {
+    html = '<option value="" selected>בחר תחנה</option>' + html;
+  }
+  return html;
+}
+
+function msg(el, text, kind){
+  const m = $(el);
+  m.textContent = text;
+  m.className = 'msg ' + (kind || '');
+}
+
+// ---------------------------------------------------------------------
+// מינוי אחראי/ת סידור
+//
+// זו רשימה מצומצמת בכוונה: השרת מחזיר רק uid, שם, התפקיד הראשי
+// ומצב המינוי. אין כאן מייל, טלפון, מספר עובד או מחוז — גם לא
+// כנתון מוסתר ב-DOM. כל הטקסט הדינמי נכתב ב-textContent.
+// ---------------------------------------------------------------------
+let canManageScheduleAccess = false;
+let scheduleAccessMembers = [];
+let isSuperScheduleAccessOperator = false;
+let scheduleAccessGeneration = 0;
+
+function clearNode(el){
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function scheduleAccessRole(raw){
+  const role = raw && typeof raw.primary_role === 'string'
+    ? raw.primary_role : (raw && typeof raw.role === 'string' ? raw.role : '');
+  return ROLE_HE[role] || 'ללא תפקיד';
+}
+
+function normalizeScheduleAccessMembers(data){
+  // members הוא החוזה הרשמי. שני השמות האחרים שומרים על תאימות
+  // מול שרת בפריסה מדורגת, בלי לחשוף שדות נוספים.
+  const source = Array.isArray(data && data.members) ? data.members
+    : (Array.isArray(data && data.people) ? data.people
+      : (Array.isArray(data && data.access) ? data.access : []));
+  const seen = new Set();
+  return source.reduce(function (list, raw) {
+    if (!raw || typeof raw !== 'object') return list;
+    const uid = typeof raw.uid === 'string' ? raw.uid.trim() : '';
+    if (!uid || seen.has(uid)) return list;
+    seen.add(uid);
+    list.push({
+      uid: uid,
+      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'ללא שם',
+      role: scheduleAccessRole(raw),
+      enabled: raw.enabled === true
+    });
+    return list;
+  }, []).sort(function (a, b) {
+    return a.name.localeCompare(b.name, 'he');
+  });
+}
+
+function selectedScheduleAccessMember(){
+  const uid = $('scheduleAccessPick').value;
+  return scheduleAccessMembers.find(function (member) { return member.uid === uid; }) || null;
+}
+
+function updateScheduleAccessButtons(){
+  const member = selectedScheduleAccessMember();
+  $('btnScheduleAccessEnable').disabled = !canManageScheduleAccess || !member || member.enabled;
+  $('btnScheduleAccessDisable').disabled = !canManageScheduleAccess || !member || !member.enabled;
+}
+
+function renderScheduleAccessMembers(){
+  const select = $('scheduleAccessPick');
+  const list = $('scheduleAccessList');
+  clearNode(select); clearNode(list);
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— בחר אדם —';
+  select.appendChild(placeholder);
+
+  scheduleAccessMembers.forEach(function (member) {
+    const option = document.createElement('option');
+    option.value = member.uid;
+    option.textContent = member.name + ' · ' + member.role +
+      (member.enabled ? ' · אחראי/ת סידור' : '');
+    select.appendChild(option);
+  });
+  // למנהל-על השרת מחזיר אדם אחד לפי הבחירה הקיימת ברשימת המשתמשים.
+  // בוחרים אותו מראש כדי שהפעולה הבאה אינה עלולה לפגוע באדם אחר.
+  if (isSuperScheduleAccessOperator && scheduleAccessMembers.length === 1) {
+    select.value = scheduleAccessMembers[0].uid;
+  }
+
+  const appointed = scheduleAccessMembers.filter(function (member) { return member.enabled; });
+  $('scheduleAccessState').textContent = appointed.length
+    ? appointed.length + ' אחראי/ות סידור ממונים כרגע.'
+    : 'אין כרגע אחראי/ות סידור ממונים.';
+
+  if (!appointed.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'אין מינוי פעיל.';
+    list.appendChild(empty);
+  } else {
+    appointed.forEach(function (member) {
+      const row = document.createElement('div');
+      row.className = 'req';
+      const name = document.createElement('div');
+      name.className = 'nm'; name.textContent = member.name;
+      const role = document.createElement('div');
+      role.className = 'ln'; role.textContent = 'תפקיד ראשי: ' + member.role;
+      const access = document.createElement('div');
+      access.className = 'match found'; access.textContent = 'ממונה כאחראי/ת סידור';
+      row.append(name, role, access); list.appendChild(row);
+    });
+  }
+  updateScheduleAccessButtons();
+}
+
+async function loadScheduleAccess(selectedUid){
+  if (!canManageScheduleAccess) return;
+  const generation = scheduleAccessGeneration;
+  const uid = typeof selectedUid === 'string' ? selectedUid.trim() : '';
+  // מנהל-על עשוי לעבוד בין תחנות. אין "רשימת תחנה" שניחשתה בצד
+  // הלקוח: הוא בוחר אדם מתוך רשימת המשתמשים הקיימת, והשרת גוזר
+  // את התחנה מן המשתמש. רכז/ת כוח-אדם נשאר/ת בקריאה הרגילה של התחנה.
+  if (isSuperScheduleAccessOperator && !uid) {
+    if (generation !== scheduleAccessGeneration) return;
+    scheduleAccessMembers = [];
+    renderScheduleAccessMembers();
+    $('scheduleAccessState').textContent = 'בחר אדם ברשימת "משתמשים והרשאות" כדי לראות או לעדכן את מינוי הסידור שלו.';
+    return;
+  }
+  $('btnScheduleAccessRefresh').disabled = true;
+  $('scheduleAccessState').textContent = 'טוען את רשימת המינויים...';
+  try {
+    const result = await callGetScheduleManagerAccess(
+      isSuperScheduleAccessOperator ? { uid: uid } : {});
+    if (generation !== scheduleAccessGeneration) return;
+    scheduleAccessMembers = normalizeScheduleAccessMembers(result.data || {});
+    renderScheduleAccessMembers();
+  } catch (e) {
+    if (generation !== scheduleAccessGeneration) return;
+    scheduleAccessMembers = [];
+    renderScheduleAccessMembers();
+    msg('scheduleAccessMsg', 'טעינת המינויים נכשלה: ' + (e.message || e.code || 'שגיאה'), 'err');
+  }
+  $('btnScheduleAccessRefresh').disabled = false;
+}
+
+async function setScheduleAccess(enabled){
+  if (!canManageScheduleAccess) return;
+  const generation = scheduleAccessGeneration;
+  const member = selectedScheduleAccessMember();
+  if (!member || member.enabled === enabled) return;
+  $('btnScheduleAccessEnable').disabled = true;
+  $('btnScheduleAccessDisable').disabled = true;
+  msg('scheduleAccessMsg', 'שומר...', 'info');
+  try {
+    // uid ומצב המינוי בלבד. התחנה וזהות המבצע נגזרים בשרת.
+    await callSetScheduleManagerAccess({ uid: member.uid, enabled: enabled });
+    if (generation !== scheduleAccessGeneration) return;
+    msg('scheduleAccessMsg', enabled ? 'המינוי נשמר.' : 'המינוי הוסר.', 'ok');
+    // אצל מנהל-על הרשימה היא בדיקת אדם יחיד. שומרים את אותו uid
+    // ברענון כדי שלא נאבד את הבחירה ונחזור בטעות למצב "בחר אדם".
+    await loadScheduleAccess(isSuperScheduleAccessOperator ? member.uid : '');
+  } catch (e) {
+    if (generation !== scheduleAccessGeneration) return;
+    msg('scheduleAccessMsg', 'שמירת המינוי נכשלה: ' + (e.message || e.code || 'שגיאה'), 'err');
+    updateScheduleAccessButtons();
+  }
+}
+
+$('btnScheduleAccessRefresh').onclick = function () {
+  loadScheduleAccess(isSuperScheduleAccessOperator ? $('rPick').value : '');
+};
+$('scheduleAccessPick').onchange = updateScheduleAccessButtons;
+$('btnScheduleAccessEnable').onclick = function () { setScheduleAccess(true); };
+$('btnScheduleAccessDisable').onclick = function () { setScheduleAccess(false); };
+
+// ---------------------------------------------------------------------
+// העברת עובד בין תחנות
+// ---------------------------------------------------------------------
+let canCreateStationTransfer = false;
+let canApproveStationTransfer = false;
+let canListOutgoingStationTransfer = false;
+let isSuperStationTransferOperator = false;
+let transferSelected = null;
+let transferPeople = [];
+let transferTargets = [];
+let transferStationId = '';
+let transferGeneration = 0;
+let transferDecisionInflight = new Set();
+
+function transferRoleName(role){
+  return ROLE_HE[String(role || '')] || String(role || 'ללא תפקיד');
+}
+
+function captureTransferTargets(data){
+  // targets הוא חוזה שרת. הלקוח אינו מנחש תחנות מ-STATIONS ואינו
+  // מקבל טקסט חופשי. שדה חסר שומר את הרשימה שכבר אומתה בתגובה
+  // קודמת; מערך ריק מפורש מנקה אותה ונכשל סגור.
+  if (!data || !Object.prototype.hasOwnProperty.call(data, 'targets')) return;
+  const source = Array.isArray(data.targets) ? data.targets : [];
+  const seen = new Set();
+  transferTargets = source.reduce(function (rows, raw) {
+    const id = String((raw || {}).station_id || '').trim();
+    const name = String((raw || {}).name || '').trim();
+    if (!/^[a-z0-9_-]{2,80}$/.test(id) || !name || seen.has(id)) return rows;
+    seen.add(id); rows.push({ station_id:id, name:name.slice(0, 160) });
+    return rows;
+  }, []).sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
+  if (isSuperStationTransferOperator) renderTransferScope();
+}
+
+function renderTransferScope(){
+  const select = $('transferScope');
+  const selected = String(transferStationId || '');
+  clearNode(select);
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— בחר תחנה —';
+  select.appendChild(placeholder);
+  const rows = [];
+  const seen = new Set();
+  STATIONS.concat(transferTargets.map(function (station) {
+    return { id:station.station_id, name:station.name };
+  })).forEach(function (station) {
+    const id = String((station || {}).id || '');
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    rows.push({ id:id, name:String(station.name || id) });
+  });
+  if (selected && !seen.has(selected)) {
+    rows.push({ id:selected, name:stationName(selected) || selected });
+  }
+  rows.sort(function (a, b) { return a.name.localeCompare(b.name, 'he'); });
+  rows.forEach(function (station) {
+    const option = document.createElement('option');
+    option.value = station.id;
+    option.textContent = station.name;
+    select.appendChild(option);
+  });
+  select.value = selected;
+}
+
+function renderTransferTargets(sourceStationId){
+  const select = $('transferTarget');
+  clearNode(select);
+  const first = document.createElement('option');
+  first.value = ''; first.textContent = '— בחר תחנת יעד —';
+  select.appendChild(first);
+  transferTargets.filter(function (station) { return station.station_id !== sourceStationId; })
+    .forEach(function (station) {
+      const option = document.createElement('option');
+      option.value = station.station_id; option.textContent = station.name;
+      select.appendChild(option);
+    });
+  if (select.options.length === 1) {
+    first.textContent = 'אין כרגע תחנת יעד פעילה שהשרת אישר';
+  }
+  updateTransferCreateButton();
+}
+
+function updateTransferCreateButton(){
+  $('transferCreate').disabled = !canCreateStationTransfer || !transferStationId ||
+    !transferSelected ||
+    !$('transferTarget').value;
+}
+
+function transferPayload(fields){
+  return Object.assign({}, fields || {}, {
+    station_id:String(transferStationId || '')
+  });
+}
+
+function selectTransferPerson(uid){
+  transferSelected = transferPeople.find(function (person) { return person.uid === uid; }) || null;
+  $('transferResults').querySelectorAll('[data-transfer-uid]').forEach(function (button) {
+    button.classList.toggle('selected', !!transferSelected &&
+      button.getAttribute('data-transfer-uid') === transferSelected.uid);
+  });
+  renderTransferTargets(transferSelected ? transferSelected.station_id : transferStationId);
+}
+
+function renderTransferPeople(){
+  const box = $('transferResults');
+  clearNode(box);
+  if (!transferPeople.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'לא נמצאו עובדים פעילים.';
+    box.appendChild(empty); return;
+  }
+  transferPeople.forEach(function (person) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'transfer-choice';
+    button.setAttribute('data-transfer-uid', person.uid);
+    const title = document.createElement('div');
+    title.textContent = person.full_name || 'ללא שם';
+    const meta = document.createElement('div');
+    meta.className = 'transfer-meta';
+    meta.textContent = [
+      person.employee_number ? 'מספר עובד ' + person.employee_number : '',
+      transferRoleName(person.role),
+      person.shift ? 'משמרת ' + person.shift : '',
+      stationName(person.station_id)
+    ].filter(Boolean).join(' · ');
+    button.append(title, meta);
+    button.onclick = function () { selectTransferPerson(person.uid); };
+    box.appendChild(button);
+  });
+}
+
+async function searchTransferPeople(){
+  if (!canCreateStationTransfer) return;
+  const query = $('transferSearch').value.trim();
+  if (query.length < 2) {
+    msg('transferCreateMsg', 'יש להזין לפחות שני תווים בשם.', 'err'); return;
+  }
+  const generation = transferGeneration;
+  $('transferSearchButton').disabled = true;
+  msg('transferCreateMsg', 'מחפש...', 'info');
+  try {
+    const result = await callSearchTransfers(transferPayload({ name:query }));
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    captureTransferTargets(data);
+    transferPeople = Array.isArray(data.people) ? data.people : [];
+    transferSelected = null;
+    renderTransferPeople();
+    renderTransferTargets(transferStationId);
+    msg('transferCreateMsg', transferPeople.length + ' תוצאות. בחר אדם במפורש.', 'ok');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    transferPeople = []; transferSelected = null; renderTransferPeople();
+    msg('transferCreateMsg', 'החיפוש נכשל: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferSearchButton').disabled = false;
+  }
+}
+
+async function createTransferRequest(){
+  if (!canCreateStationTransfer || !transferSelected || !$('transferTarget').value) return;
+  const generation = transferGeneration;
+  $('transferCreate').disabled = true;
+  msg('transferCreateMsg', 'שולח בקשה לתחנת היעד...', 'info');
+  try {
+    const result = await callCreateTransfer(transferPayload({
+      target_uid: transferSelected.uid,
+      target_station_id: $('transferTarget').value,
+      request_id: newOperationId('transfer-')
+    }));
+    if (generation !== transferGeneration) return;
+    captureTransferTargets(result.data || {});
+    msg('transferCreateMsg',
+      'הבקשה נשלחה. העובד נשאר בתחנה הנוכחית עד אישור היעד.', 'ok');
+    transferSelected = null; transferPeople = [];
+    $('transferSearch').value = ''; renderTransferPeople();
+    renderTransferTargets(transferStationId);
+    if (canListOutgoingStationTransfer) await loadOutgoingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferCreateMsg', 'שליחת הבקשה נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  }
+  updateTransferCreateButton();
+}
+
+function transferStatusName(status){
+  const names = {
+    pending_target:'ממתינה לאישור תחנת היעד', processing:'בתהליך העברה',
+    needs_recovery:'ממתינה להשלמת מערכת', completed:'הושלמה',
+    rejected:'נדחתה', cancelled:'בוטלה'
+  };
+  return names[String(status || '')] || String(status || 'מצב לא ידוע');
+}
+
+function renderOutgoingTransfers(rows){
+  const box = $('transferOutgoing'); clearNode(box);
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'אין בקשות העברה פעילות שיצאו מהתחנה.';
+    box.appendChild(empty); return;
+  }
+  rows.forEach(function (transfer) {
+    const row = document.createElement('div'); row.className = 'req';
+    row.setAttribute('data-transfer-request', transfer.request_id);
+    row.setAttribute('data-transfer-status', transfer.status || '');
+    const name = document.createElement('div'); name.className = 'nm';
+    name.textContent = transfer.full_name || 'ללא שם';
+    const details = document.createElement('div'); details.className = 'ln';
+    const target = transferTargets.find(function (station) {
+      return station.station_id === transfer.target_station_id;
+    });
+    details.textContent = [
+      'אל ' + (target ? target.name : stationName(transfer.target_station_id)),
+      transferRoleName(transfer.role), transfer.shift ? 'משמרת ' + transfer.shift : '',
+      transferStatusName(transfer.status)
+    ].filter(Boolean).join(' · ');
+    row.append(name, details);
+    if (transfer.status === 'pending_target') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const cancel = document.createElement('button'); cancel.type = 'button';
+      cancel.className = 'no'; cancel.textContent = 'בטל בקשה';
+      cancel.setAttribute('data-transfer-cancel', transfer.request_id);
+      cancel.onclick = function () { cancelTransferRequest(transfer.request_id, row); };
+      actions.appendChild(cancel); row.appendChild(actions);
+    }
+    box.appendChild(row);
+  });
+}
+
+async function loadOutgoingTransfers(){
+  if (!canListOutgoingStationTransfer) {
+    renderOutgoingTransfers([]); return;
+  }
+  const generation = transferGeneration;
+  $('transferOutgoingRefresh').disabled = true;
+  try {
+    const result = await callListTransfers(transferPayload({ direction:'outgoing' }));
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    captureTransferTargets(data);
+    renderTransferTargets(transferSelected ? transferSelected.station_id : transferStationId);
+    const rows = Array.isArray(data.transfers) ? data.transfers : [];
+    renderOutgoingTransfers(rows);
+    msg('transferOutgoingMsg', rows.length ? rows.length + ' בקשות פעילות.' : '',
+      rows.length ? 'info' : '');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    renderOutgoingTransfers([]);
+    msg('transferOutgoingMsg', 'טעינת הבקשות היוצאות נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferOutgoingRefresh').disabled = false;
+  }
+}
+
+async function cancelTransferRequest(requestId, row){
+  if (!canListOutgoingStationTransfer) return;
+  if (!confirm('לבטל את בקשת ההעברה? העובד יישאר בתחנה הנוכחית.')) return;
+  const generation = transferGeneration;
+  row.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
+  msg('transferOutgoingMsg', 'מבטל בקשה...', 'info');
+  try {
+    const result = await callCancelTransfer(transferPayload({ request_id:requestId }));
+    if (generation !== transferGeneration) return;
+    captureTransferTargets(result.data || {});
+    msg('transferOutgoingMsg', 'הבקשה בוטלה. העובד נשאר בתחנה הנוכחית.', 'ok');
+    await loadOutgoingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferOutgoingMsg', 'ביטול הבקשה נכשל: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+    row.querySelectorAll('button').forEach(function (button) { button.disabled = false; });
+  }
+}
+
+function renderIncomingTransfers(rows){
+  const box = $('transferIncoming'); clearNode(box);
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty'; empty.textContent = 'אין בקשות שממתינות לאישור התחנה.';
+    box.appendChild(empty); return;
+  }
+  rows.forEach(function (transfer) {
+    const row = document.createElement('div'); row.className = 'req';
+    row.setAttribute('data-transfer-request', transfer.request_id);
+    row.setAttribute('data-transfer-status', transfer.status || '');
+    const name = document.createElement('div'); name.className = 'nm';
+    name.textContent = transfer.full_name || 'ללא שם';
+    const details = document.createElement('div'); details.className = 'ln';
+    details.textContent = [
+      'מ-' + stationName(transfer.source_station_id),
+      transferRoleName(transfer.role),
+      transfer.shift ? 'משמרת ' + transfer.shift : '',
+      transferStatusName(transfer.status)
+    ].filter(Boolean).join(' · ');
+    row.append(name, details);
+    if (transfer.status === 'pending_target') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const approve = document.createElement('button'); approve.type = 'button';
+      approve.className = 'ok'; approve.textContent = 'אשר העברה';
+      approve.setAttribute('data-transfer-approve', transfer.request_id);
+      const reject = document.createElement('button'); reject.type = 'button';
+      reject.className = 'no'; reject.textContent = 'דחה';
+      reject.setAttribute('data-transfer-reject', transfer.request_id);
+      approve.onclick = function () { decideTransferRequest(transfer.request_id, 'approve', row); };
+      reject.onclick = function () { decideTransferRequest(transfer.request_id, 'reject', row); };
+      actions.append(approve, reject); row.appendChild(actions);
+    } else if (transfer.status === 'needs_recovery') {
+      const actions = document.createElement('div'); actions.className = 'acts';
+      const retry = document.createElement('button'); retry.type = 'button';
+      retry.className = 'ok'; retry.textContent = 'השלם העברה / נסה שוב';
+      retry.setAttribute('data-transfer-retry', transfer.request_id);
+      retry.onclick = function () { decideTransferRequest(transfer.request_id, 'approve', row); };
+      actions.appendChild(retry); row.appendChild(actions);
+    }
+    box.appendChild(row);
+  });
+}
+
+async function loadIncomingTransfers(){
+  if (!canApproveStationTransfer) {
+    renderIncomingTransfers([]); return;
+  }
+  const generation = transferGeneration;
+  $('transferRefresh').disabled = true;
+  try {
+    const result = await callListTransfers(transferPayload({ direction:'incoming' }));
+    if (generation !== transferGeneration) return;
+    const data = result.data || {};
+    const rows = Array.isArray(data.transfers) ? data.transfers : [];
+    renderIncomingTransfers(rows);
+    msg('transferIncomingMsg', rows.length ? rows.length + ' בקשות ממתינות.' : '',
+      rows.length ? 'info' : '');
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    renderIncomingTransfers([]);
+    msg('transferIncomingMsg', 'טעינת הבקשות נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+  } finally {
+    if (generation === transferGeneration) $('transferRefresh').disabled = false;
+  }
+}
+
+async function decideTransferRequest(requestId, decision, row){
+  const inflight = transferDecisionInflight;
+  if (!canApproveStationTransfer || inflight.has(requestId)) return;
+  const generation = transferGeneration;
+  const isRecovery = row.getAttribute('data-transfer-status') === 'needs_recovery';
+  inflight.add(requestId);
+  row.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
+  msg('transferIncomingMsg', decision === 'approve'
+    ? (isRecovery ? 'משלים את ההעברה...' : 'מעביר את העובד...')
+    : 'דוחה בקשה...', 'info');
+  try {
+    const payload = transferPayload({
+      request_id: requestId,
+      decision: decision
+    });
+    if (decision === 'reject') payload.reason_code = 'not_accepted';
+    await callDecideTransfer(payload);
+    if (generation !== transferGeneration) return;
+    msg('transferIncomingMsg', decision === 'approve'
+      ? (isRecovery ? 'השלמת ההעברה הצליחה.'
+        : 'ההעברה הושלמה. העובד יצטרך להתחבר מחדש.')
+      : 'הבקשה נדחתה.', 'ok');
+    await loadIncomingTransfers();
+  } catch (error) {
+    if (generation !== transferGeneration) return;
+    msg('transferIncomingMsg', 'הפעולה נכשלה: ' +
+      (error.message || error.code || 'שגיאה'), 'err');
+    row.querySelectorAll('button').forEach(function (button) { button.disabled = false; });
+  } finally {
+    inflight.delete(requestId);
+  }
+}
+
+$('transferSearchButton').onclick = searchTransferPeople;
+$('transferSearch').addEventListener('keydown', function (event) {
+  if (event.key === 'Enter') { event.preventDefault(); searchTransferPeople(); }
+});
+$('transferTarget').onchange = updateTransferCreateButton;
+$('transferCreate').onclick = createTransferRequest;
+$('transferRefresh').onclick = loadIncomingTransfers;
+$('transferOutgoingRefresh').onclick = loadOutgoingTransfers;
+$('transferScope').onchange = function () {
+  transferGeneration++;
+  transferStationId = String($('transferScope').value || '');
+  transferSelected = null;
+  transferPeople = [];
+  renderTransferPeople();
+  renderTransferTargets(transferStationId);
+  renderIncomingTransfers([]);
+  renderOutgoingTransfers([]);
+  msg('transferCreateMsg', '', '');
+  msg('transferIncomingMsg', '', '');
+  msg('transferOutgoingMsg', '', '');
+  if (!transferStationId) return;
+  if (canApproveStationTransfer) loadIncomingTransfers();
+  if (canListOutgoingStationTransfer) loadOutgoingTransfers();
+};
+
+// ---------- כניסה ----------
+
+$('btnIn').onclick = async () => {
+  const btn = $('btnIn');
+  btn.disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, $('email').value.trim().toLowerCase(), $('pass').value);
+  } catch (e) {
+    msg('authMsg', 'מייל או סיסמה שגויים.', 'err');
+  }
+  btn.disabled = false;
+};
+
+$('btnOut').onclick = () => signOut(auth);
+$('btnOutDeny').onclick = () => signOut(auth);
+
+$('btnVerify').onclick = async () => {
+  const b = $('btnVerify');
+  b.disabled = true;
+  try {
+    await sendEmailVerification(auth.currentUser);
+    msg('denyMsg', 'נשלח מייל אימות. פתח אותו, לחץ על הקישור, וחזור לכאן ורענן.', 'ok');
+  } catch (e) {
+    msg('denyMsg', 'שליחת המייל נכשלה: ' + (e.code || e.message), 'err');
+    b.disabled = false;
+  }
+};
+$('btnRefresh').onclick = () => loadRequests();
+
+onAuthStateChanged(auth, async user => {
+  scheduleAccessGeneration += 1;
+  transferGeneration += 1;
+  if (!user) {
+    goSignIn();
+    return;
+  }
+
+  // ברירת המחדל היא כשל-סגור לעריכה: לפני ובזמן כל טעינת מצב לא
+  // מוצג קישור לניהול. נתוני הסידור הישנים חסומים גם לקריאה.
+  canManageScheduleAccess = false;
+  isSuperScheduleAccessOperator = false;
+  canCreateStationTransfer = false;
+  canApproveStationTransfer = false;
+  canListOutgoingStationTransfer = false;
+  isSuperStationTransferOperator = false;
+  transferSelected = null;
+  transferPeople = [];
+  transferTargets = [];
+  transferStationId = '';
+  transferDecisionInflight = new Set();
+  renderTransferPeople();
+  renderTransferTargets('');
+  renderOutgoingTransfers([]);
+  renderIncomingTransfers([]);
+  msg('transferCreateMsg', '', '');
+  msg('transferOutgoingMsg', '', '');
+  msg('transferIncomingMsg', '', '');
+  $('scheduleAccessCard').classList.add('hide');
+  $('stationTransferCard').classList.add('hide');
+  $('legacyRotationCard').classList.add('hide');
+  $('scheduleManagementLink').classList.add('hide');
+  $('legacyRotationManageLink').classList.add('hide');
+
+  // התפקיד נקרא מהטוקן, לא ממסמך ב-Firestore.
+  // זו אותה מקור אמת שכללי האבטחה קוראים ממנו, ולכן אי אפשר
+  // להגיע למצב שהממשק מראה מסך ניהול והשרת דוחה כל פעולה.
+  let claims = {};
+  try {
+    const t = await user.getIdTokenResult();
+    claims = t.claims || {};
+  } catch (ignore) {}
+
+  const isSuper = claims.super === true;
+
+  // אישור בקשות ושינוי תפקידים דורשים מנהל-על בשרת. המינוי החי של
+  // אחראי/ת סידור מעניק קישור למסך החדש; דרגה לבדה היא צפייה.
+  //
+  // אימות מייל היה כאן תנאי סף והוסר מהמערכת ב-22.8 — התנאי נשאר
+  // בקוד והשאיר מנהלים בחוץ.
+  // אותה רשימה כמו staff() בכללי האבטחה וכמו nav.js. שני
+  // התפקידים שנוספו ב-23.8 לא הגיעו לכאן, והסרגל הציג להם
+  // כפתור שמוביל למסך "אין הרשאה".
+  const isStaff = ['deputy', 'commander', 'station_commander',
+                   'hr_coordinator'].indexOf(claims.role) !== -1;
+  // המינוי הוא חי ונפרד מהתפקיד הראשי, לכן חייבים לקבל אותו מהשרת
+  // גם עבור לוחם אש שמונה. כשל כאן אינו מעניק הרשאה לעריכה.
+  let scheduleRuntimeStatus = null;
+  try { scheduleRuntimeStatus = (await callGetScheduleRuntimeStatus({})).data || null; }
+  catch (ignore) {}
+  const isScheduleManager = !!(scheduleRuntimeStatus && scheduleRuntimeStatus.manager === true);
+  const roleOk  = isSuper || isStaff || isScheduleManager;
+  const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
+                  (claims.stationId ? ' · ' + stationName(claims.stationId) : '');
+
+  if (!roleOk) {
+    // חשוב: לא מנתקים אוטומטית. ניתוק כאן היה מפיל גם לשוניות
+    // אחרות של המערכת, כי Firebase משתף התחברות בין לשוניות.
+    $('authCard').classList.add('hide');
+    $('work').classList.add('hide');
+    $('denyCard').classList.remove('hide');
+    renderStuckNav(user.email || '');
+    $('denyWho').textContent = 'מחובר כ־' + user.email + ' · אין הרשאת ניהול';
+    // אימות מייל אינו תנאי סף יותר, ולכן הכפתור כאן רק היה מטעה.
+    $('btnVerify').classList.add('hide');
+    return;
+  }
+
+  $('denyCard').classList.add('hide');
+
+  renderNav(claims, 'admin.html', user.email || '');
+  watchCallouts(db, claims.stationId || STATION_ID, user.uid, { name: user.email || '' });
+  $('who').textContent = 'מחובר: ' + label;
+  $('authCard').classList.add('hide');
+  $('work').classList.remove('hide');
+
+  // מקטעים למנהל-על בלבד.
+  $('reqCard').classList.toggle('hide', !isSuper);
+  $('usersCard').classList.toggle('hide', !isSuper);
+  // רכז/ת כוח-אדם ומנהל-על יכולים לנהל מינוי נפרד; מפקדים וסגנים
+  // נשארים במצב צפייה עד שממונה להם מינוי מפורש. השרת בודק מחדש
+  // תחנה, תחום וסמכות — ההסתרה כאן היא ממשק בלבד.
+  canManageScheduleAccess = isSuper || claims.role === 'hr_coordinator';
+  isSuperScheduleAccessOperator = isSuper;
+  $('scheduleAccessCard').classList.toggle('hide', !canManageScheduleAccess);
+
+  // העברה היא סמכות כוח-אדם נפרדת. מנהל־על מאומת מקבל את כל
+  // הפעולות, אך בוחר תחנה מפורשת וכל בקשה נשלחת עם התחום הזה.
+  // מקור הסמכות היחיד הוא claims.super===true — לא מייל ולא תפקיד.
+  canCreateStationTransfer = isSuper || claims.role === 'hr_coordinator';
+  canApproveStationTransfer = isSuper || claims.role === 'hr_coordinator' ||
+    claims.role === 'station_commander';
+  canListOutgoingStationTransfer = isSuper || claims.role === 'hr_coordinator';
+  isSuperStationTransferOperator = isSuper;
+  transferStationId = String(claims.stationId || '');
+  renderTransferScope();
+  $('transferScopePanel').classList.toggle('hide', !isSuperStationTransferOperator);
+  $('stationTransferCard').classList.toggle('hide',
+    !canCreateStationTransfer && !canApproveStationTransfer);
+  $('transferSourcePanel').classList.toggle('hide', !canCreateStationTransfer);
+  $('transferOutgoingPanel').classList.toggle('hide', !canListOutgoingStationTransfer);
+  transferPeople = []; transferSelected = null;
+  renderTransferPeople(); renderTransferTargets(transferStationId);
+
+  if (isSuper) loadRequests();
+  if (canManageScheduleAccess) loadScheduleAccess(isSuper ? $('rPick').value : '');
+  if (canApproveStationTransfer) loadIncomingTransfers();
+  if (canListOutgoingStationTransfer) loadOutgoingTransfers();
+  // אין טעינת collections סידור ישנות. המינוי החי נותן רק נתיב
+  // למנוע החדש; כל השאר מקבלים הודעת מעבר נטולת נתונים.
+  $('legacyRotationCard').classList.remove('hide');
+  $('scheduleManagementLink').classList.toggle('hide', !isScheduleManager);
+  $('legacyRotationManageLink').classList.toggle('hide', !isScheduleManager);
+});
+
+// ---------- טעינת בקשות ----------
+
+async function loadRequests(){
+  const list = $('list');
+  list.innerHTML = '<div class="empty">טוען...</div>';
+
+  let snaps;
+  try {
+    const q = query(collection(db, 'registration_requests'),
+                    where('status', 'in', ['pending', 'processing', 'needs_recovery']));
+    snaps = await getDocs(q);
+  } catch (e) {
+    list.innerHTML = '<div class="empty">שגיאה בטעינה: ' + (e.code || e.message) + '</div>';
+    return;
+  }
+
+  if (snaps.empty) {
+    list.innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const d of snaps.docs) {
+    const r = d.data();
+    const state = String(r.status || 'pending');
+    const plan = r.locked_plan || {};
+    const isPending = state === 'pending';
+    const isLocked = r.resumable === true &&
+      (state === 'processing' || state === 'needs_recovery') &&
+      /^[A-Za-z0-9_-]{16,100}$/.test(String(r.operation_id || '')) &&
+      /^[a-f0-9]{64}$/.test(String(r.plan_fingerprint || '')) &&
+      plan && typeof plan === 'object' && String(plan.kind || '') !== '';
+    const isOrphanedReview = !isPending && !isLocked;
+    const stateLine = isOrphanedReview ?
+      '<div class="match" style="margin:8px 0">אין לבקשה תוכנית שרתית שניתן להמשיך. ' +
+      'אפשר להסיר רק את בקשת ההרשמה; השרת יוודא קודם שאין פעולת זהות פעילה.</div>' :
+      (state === 'processing' ?
+      '<div class="match" style="margin:8px 0">האישור התחיל ונשמר. מוצגת כאן התוכנית המדויקת שננעלה בשרת.</div>' :
+      (state === 'needs_recovery' ?
+        '<div class="match" style="margin:8px 0">הבקשה נשמרה ודורשת התאוששות מבוקרת. לא בוצעה דריסה או מחיקה.</div>' : ''));
+    const actions = isPending ?
+      '<div class="acts"><button class="ok" data-act="ok">אשר</button>' +
+      '<button class="no" data-act="no">דחה</button></div>' :
+      (isLocked ?
+        '<div class="acts"><button class="ok" data-act="resume">המשך את התוכנית המוצגת</button></div>' :
+        '<div class="acts"><button class="no" data-act="dismiss">הסר בקשה תקועה</button></div>');
+    const box = document.createElement('div');
+    box.className = 'req';
+
+    const lockedPlan = isLocked ?
+      '<div class="ln"><b>התוכנית שננעלה:</b></div>' +
+      '<div class="ln">תפקיד: <b>' + esc(ROLE_HE[plan.role] || plan.role || 'ללא') + '</b></div>' +
+      '<div class="ln">משמרת: <b>' + esc(plan.shift ? 'משמרת ' + plan.shift : 'ללא') + '</b></div>' +
+      '<div class="ln">תחנה: <b>' + esc(stationName(plan.stationId || '')) + '</b></div>' +
+      '<div class="ln">מחוז: <b>' + esc(DIST_HE[plan.districtId] || plan.districtId || '') + '</b></div>' +
+      '<div class="ln">מספר עובד: <b>' + esc(plan.emp || 'טרם הוקצה') + '</b></div>' : '';
+
+    const editablePlan = isPending ?
+      '<label style="margin-top:10px">תחנה</label>' +
+      '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
+      '<div class="two" style="margin-top:10px">' +
+        '<div><label>תפקיד</label>' +
+        '<select data-f="role">' + roleOptionsHtml() + '</select></div>' +
+        '<div><label>משמרת</label>' +
+        '<select data-f="shift">' +
+          '<option value="">ללא</option>' +
+          '<option value="A">משמרת א\'</option>' +
+          '<option value="B">משמרת ב\'</option>' +
+          '<option value="C">משמרת ג\'</option>' +
+        '</select></div>' +
+      '</div>' +
+      '<label style="margin-top:10px">מספר עובד</label>' +
+      '<input type="text" inputmode="numeric" data-f="emp" ' +
+        'placeholder="השאר ריק והמערכת תקצה את הפנוי הבא">' +
+      '<div class="ln" style="font-size:12px">' +
+        'אם לכבאי כבר יש קוד אישי מהמערכת הישנה — הקלד אותו כאן, והוא ישמור אותו.' +
+      '</div>' : '';
+
+    box.innerHTML =
+      '<div class="nm">' + esc(r.full_name) + '</div>' +
+
+      '<div class="ln">מייל: <b>' + esc(r.email) + '</b></div>' +
+      stateLine +
+      (r.phone ? '<div class="ln">טלפון: <b>' + esc(r.phone) + '</b></div>' : '') +
+      (r.stationId ? '<div class="ln">תחנה מבוקשת: <b>' + esc(stationName(r.stationId)) + '</b></div>' : '') +
+      (r.districtId ? '<div class="ln">מחוז: <b>' + esc(DIST_HE[r.districtId] || r.districtId) + '</b></div>' : '') +
+      lockedPlan + editablePlan +
+      actions;
+
+    const approveButton = box.querySelector('[data-act="ok"]');
+    const rejectButton = box.querySelector('[data-act="no"]');
+    const resumeButton = box.querySelector('[data-act="resume"]');
+    const dismissButton = box.querySelector('[data-act="dismiss"]');
+    if (approveButton) approveButton.onclick = () => approve(d.id, r, box);
+    if (rejectButton) rejectButton.onclick = () => reject(d.id, r.request_id || '',
+      r.server_generation || '', box, false);
+    if (resumeButton) resumeButton.onclick = () => resumeIdentity(d.id, r, box);
+    if (dismissButton) dismissButton.onclick = () => reject(d.id, r.request_id || '',
+      r.server_generation || '', box, true);
+    list.appendChild(box);
+  }
+}
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------- אישור ----------
+
+async function approve(uid, r, box){
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+
+  // כל האישור עובר לשרת. הדפדפן לא כותב תפקיד ולא נוגע
+  // ברשימת התחנה — הוא רק מבקש. הפונקציה מצליבה את הקוד
+  // האישי מול הרשימה, כותבת את התפקיד לטוקן, ורושמת ביומן.
+  try {
+    const sel = box.querySelector('[data-f="role"]');
+    const shf = box.querySelector('[data-f="shift"]');
+    const emp = box.querySelector('[data-f="emp"]');
+    const sta = box.querySelector('[data-f="station"]');
+
+    // התחנה והמחוז מגיעים מהבקשה עצמה, בשרת. כאן נקבעים רק
+    // התפקיד והמשמרת, ומספר העובד מוקצה אוטומטית.
+    const res = await callApprove({
+      uid:   uid,
+      request_id: String(r.request_id || ''),
+      request_generation: String(r.server_generation || ''),
+      role:  sel ? sel.value : 'firefighter',
+      shift: shf ? shf.value : '',
+      emp:   emp ? emp.value.trim() : '',
+      stationId: sta ? sta.value : '',
+      // המחוז נגזר מהתחנה שנבחרה. בלי זה, שינוי תחנה באישור היה
+      // משאיר את המחוז המקורי מהבקשה ויוצר שיוך סותר.
+      districtId: (STATIONS.filter(function (x) {
+        return x.id === (sta ? sta.value : '');
+      })[0] || {}).districtId || r.districtId || ''
+    });
+
+    // מספר העובד מוצג גדול ונשאר על המסך עד שסוגרים אותו ידנית.
+    // הגרסה הקודמת מחקה את הכרטיס אחרי 4 שניות — והמספר, שהוא
+    // הפרט היחיד שהמאשר חייב למסור לכבאי, נעלם איתו.
+    box.innerHTML =
+      '<div class="nm">' + esc(r.full_name) + '</div>' +
+      '<div class="match found" style="line-height:1.9">' +
+        'אושר · ' + esc(ROLE_HE[res.data.role] || res.data.role) +
+        '<div style="margin:10px 0;font-size:13px">מספר העובד שהוקצה</div>' +
+        '<div style="font-size:30px;font-weight:700;letter-spacing:3px;direction:ltr">' +
+          esc(res.data.emp) +
+        '</div>' +
+        '<div style="margin-top:10px"><b>מסור את המספר לכבאי.</b><br>' +
+        'הוא צריך להתנתק ולהתחבר מחדש כדי שהתפקיד ייכנס לתוקף.</div>' +
+      '</div>' +
+      '<button data-f="done" style="width:100%">הבנתי · סגור</button>';
+
+    box.querySelector('[data-f="done"]').onclick = function(){
+      box.remove();
+      if (!$('list').querySelector('.req')) {
+        $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+      }
+    };
+
+  } catch (e) {
+    const code = e.code || '';
+    let text = e.message || String(e);
+
+    if (e.details && e.details.request_refreshed === true) {
+      alert('הבקשה קיבלה מזהה בטוח. הרשימה תתרענן — אשר שוב.');
+      await loadRequests();
+      return;
+    }
+    if (e.details && (e.details.request_preserved === true ||
+                      e.details.needs_recovery === true)) {
+      alert('הבקשה נשמרה ולא נמחקה. היא דורשת בדיקה או המשך טיפול.');
+      await loadRequests();
+      return;
+    }
+
+    if (code.indexOf('not-found') !== -1) {
+      text = 'הבקשה לא נמצאה. ייתכן שכבר טופלה — רענן את הרשימה.';
+    } else if (code.indexOf('permission-denied') !== -1) {
+      text = 'אין לך הרשאה לאשר. רק מנהל המערכת יכול.';
+    } else if (code.indexOf('unavailable') !== -1) {
+      text = 'השירות נקטע באמצע, אך הפעולה נשמרה. לחץ שוב כדי להמשיך בבטחה.';
+    }
+
+    alert('האישור נכשל: ' + text);
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+// ---------- דחייה ----------
+
+async function reject(uid, requestId, requestGeneration, box, orphanedReview){
+  const question = orphanedReview ?
+    'להסיר את בקשת ההרשמה התקועה? פעולה זו אינה משנה הרשאות או פרופיל. ' +
+    'השרת יסרב אם קיימת פעולת זהות פעילה.' :
+    'לדחות את הבקשה?';
+  if (!confirm(question)) return;
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    await callReject({
+      uid: uid,
+      request_id: String(requestId || ''),
+      request_generation: String(requestGeneration || '')
+    });
+    box.remove();
+    if (!$('list').querySelector('.req')) {
+      $('list').innerHTML = '<div class="empty">אין בקשות ממתינות.</div>';
+    }
+  } catch (e) {
+    if (e.details && e.details.request_refreshed === true) {
+      alert('הבקשה קיבלה מזהה בטוח. הרשימה תתרענן — דחה שוב.');
+      await loadRequests();
+      return;
+    }
+    alert('שגיאה בדחייה: ' + (e.code || e.message));
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+async function resumeIdentity(uid, r, box){
+  if (!confirm('להמשיך בדיוק את התוכנית המוצגת בכרטיס?')) return;
+  box.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const res = await callResumeIdentity({
+      uid: uid,
+      operation_id: String(r.operation_id || ''),
+      plan_fingerprint: String(r.plan_fingerprint || '')
+    });
+    const data = res.data || {};
+    box.innerHTML =
+      '<div class="nm">הפעולה הושלמה</div>' +
+      '<div class="match found" style="line-height:1.9">' +
+        esc(data.message || 'התוכנית השמורה הושלמה בבטחה.') +
+        (data.emp ? '<div style="font-size:28px;font-weight:700;direction:ltr">' +
+          esc(data.emp) + '</div>' : '') +
+      '</div><button data-f="done" style="width:100%">הבנתי · סגור</button>';
+    box.querySelector('[data-f="done"]').onclick = function(){ box.remove(); };
+  } catch (e) {
+    if (e.details && e.details.recovery_blocked === true) {
+      alert('המערכת זיהתה מצב הרשאות שאינו תואם לתוכנית ולא דרסה אותו. ' +
+        'הפעולה נשמרה לבדיקת מנהל מערכת.');
+    } else {
+      alert('המשך הפעולה נכשל: ' + (e.message || e.code || String(e)));
+    }
+    box.querySelectorAll('button').forEach(b => b.disabled = false);
+    await loadRequests();
+  }
+}
+
+// =====================================================================
+//  משתמשים והרשאות
+//
+//  המקור לתפקיד הוא הטוקן, לא מסמך ב-Firestore. לכן המסך הזה
+//  שואל את השרת מה הוא רואה, ולא סורק אוסף users.
+//
+//  ההבדל חשוב: מסמך יכול להיות מעודכן בזמן שהטוקן ישן, ואז
+//  הממשק מראה תפקיד שכללי האבטחה לא מכירים.
+// =====================================================================
+
+// רשומות שנכתבו לפני שמפתח החיפוש קיים אינן ניתנות למציאה
+// ב"חיפוש עובד". הכפתור הזה מוסיף להן אותו. בטוח להריץ שוב ושוב.
+$('btnReindex').onclick = async () => {
+  const btn = $('btnReindex');
+  btn.disabled = true;
+  msg('reindexMsg', 'בונה...', 'info');
+  try {
+    const res = await callReindex({});
+    msg('reindexMsg',
+        'נסרקו ' + res.data.scanned + ' רשומות, עודכנו ' + res.data.updated + '. ' +
+        'החיפוש מעודכן.', 'ok');
+  } catch (e) {
+    msg('reindexMsg', 'נכשל: ' + (e.message || e.code), 'err');
+  }
+  btn.disabled = false;
+};
+
+$('btnUsers').onclick = async () => {
+  const btn = $('btnUsers');
+  const box = $('usrList');
+  btn.disabled = true;
+  $('usrState').textContent = 'טוען...';
+  box.innerHTML = '';
+
+  try {
+    const res = await callListUsers();
+    const users = res.data.users || [];
+
+    if (!users.length) {
+      $('usrState').textContent = 'אין משתמשים רשומים.';
+      btn.disabled = false;
+      return;
+    }
+
+    $('usrState').textContent = users.length + ' משתמשים רשומים.';
+    fillPicker(users);
+
+    users.forEach(function (u) {
+      const c = u.claims || {};
+      const row = document.createElement('div');
+      row.className = 'req';
+
+      const roleTxt = c.super === true
+        ? 'מנהל מערכת'
+        : (ROLE_HE[c.role] || (c.role ? c.role : 'ללא תפקיד'));
+
+      row.innerHTML =
+        '<div class="nm">' + esc(u.email) + '</div>' +
+        '<div class="ln">תפקיד: <b>' + esc(roleTxt) + '</b></div>' +
+        (c.stationId ? '<div class="ln">תחנה: <b>' + esc(stationName(c.stationId)) + '</b></div>' : '') +
+        (c.shift ? '<div class="ln">משמרת: <b>' + esc(CREW_HE[c.shift] || c.shift) + '</b></div>' : '') +
+        (c.emp ? '<div class="ln">מספר עובד: <b>' + esc(c.emp) + '</b></div>' : '') +
+        (c.districtId ? '<div class="ln">מחוז: <b>' +
+           esc(DIST_HE[c.districtId] || c.districtId) + '</b></div>' : '') +
+        (u.email_verified
+          ? '<div class="match found">המייל מאומת</div>'
+          : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
+
+      box.appendChild(row);
+    });
+
+  } catch (e) {
+    $('usrState').textContent = 'שגיאה: ' + (e.message || e.code);
+  }
+  btn.disabled = false;
+};
+
+// ---------------------------------------------------------------
+//  בורר האנשים
+// ---------------------------------------------------------------
+//
+//  אלדד ביקש לבחור **לפי שם** במקום להקליד מייל ומספר עובד
+//  ידנית בכל פעם. זה לא רק נוח: הקלדה ידנית של מספר עובד היא
+//  בדיוק המקום שבו טעות אחת מעניקה תפקיד לאדם הלא נכון, או
+//  נתקעת על "מספר העובד כבר שייך למישהו אחר".
+//
+//  הרשימה נבנית ממה שכבר נטען בכפתור שמעל — בלי קריאה נוספת
+//  לשרת.
+
+let PICK_USERS = [];
+
+function fillPicker(users) {
+  PICK_USERS = users || [];
+  const sel = $('rPick');
+
+  // מיון לפי שם בעברית. מי שאין לו שם יורד לסוף — הוא בדרך
+  // כלל חשבון שנרשם ולא הושלם, ולא מה שמחפשים.
+  const sorted = PICK_USERS.slice().sort(function (a, b) {
+    const an = a.full_name || '', bn = b.full_name || '';
+    if (!an && bn) return 1;
+    if (an && !bn) return -1;
+    return String(an).localeCompare(String(bn), 'he');
+  });
+
+  sel.innerHTML = '<option value="">— בחר אדם —</option>' +
+    sorted.map(function (u) {
+      const c = u.claims || {};
+      const label = (u.full_name || u.email || u.uid) +
+        (c.emp ? ' · ' + c.emp : '') +
+        (c.shift ? ' · ' + (CREW_HE[c.shift] || c.shift) : '') +
+        (u.full_name ? '' : '  (בלי שם)');
+      return '<option value="' + esc(u.uid) + '">' + esc(label) + '</option>';
+    }).join('');
+
+  $('rPickNote').textContent =
+    PICK_USERS.length + ' אנשים ברשימה. בחירה ממלאת את כל השדות.';
+}
+
+$('rPick').onchange = function () {
+  roleOperationId = '';
+  const uid = $('rPick').value;
+  if (!uid) {
+    if (isSuperScheduleAccessOperator && canManageScheduleAccess) loadScheduleAccess('');
+    return;
+  }
+  const u = PICK_USERS.filter(function (x) { return x.uid === uid; })[0];
+  if (!u) return;
+  const c = u.claims || {};
+
+  $('rEmail').value = u.email || '';
+  $('rName').value  = u.full_name || '';
+  $('rPhone').value = u.phone || '';
+
+  // התפקיד הנוכחי נבחר מראש, כדי שאפשר יהיה לשנות רק את מה
+  // שבאמת משתנה. בורר שמתאפס ל"לוחם אש" בכל בחירה היה מוריד
+  // בשוגג תפקיד למי שרק רצו לתקן לו את המשמרת.
+  if (c.role) $('rRole').value = c.role;
+  $('rShift').value   = c.shift || '';
+  $('rEmp').value     = c.emp || '';
+  if (c.stationId)  $('rStation').value  = c.stationId;
+  if (c.districtId) $('rDistrict').value = c.districtId;
+
+  // ניהול המערכת נשאר "להשאיר כמו שהוא" בכוונה. הוא הרשאה
+  // נפרדת, ומי שבא לתקן משמרת לא אמור להעניק או להסיר אותה
+  // בלי לשים לב.
+  // חתימת msg כאן היא (אלמנט, טקסט, סוג) — לא (טקסט, סוג, אלמנט)
+  // כמו בשאר המסכים. שוני קטן שאין סיבה שיפיל קריאה.
+  msg('roleMsg', 'נטען: ' + (u.full_name || u.email) +
+      '. שנה את מה שצריך ולחץ "הגדר תפקיד".', 'info');
+
+  // מינוי סידור אצל מנהל-על תמיד נבדק מול המשתמש שנבחר כאן. הלקוח
+  // שולח uid בלבד; התחנה נלמדת ומאומתת בשרת.
+  if (isSuperScheduleAccessOperator && canManageScheduleAccess) loadScheduleAccess(uid);
+};
+
+$('rStation').innerHTML = stationOptions(STATION_ID);
+
+['rEmail','rRole','rShift','rEmp','rDistrict','rName','rPhone','rStation','rSuper']
+  .forEach(function (id) {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', function () {
+      roleOperationId = '';
+    });
+  });
+
+$('btnRole').onclick = async () => {
+  const btn   = $('btnRole');
+  const email = $('rEmail').value.trim().toLowerCase();
+  const role  = $('rRole').value;
+  const shift = $('rShift').value;
+  const emp   = $('rEmp').value.trim();
+  const dist  = $('rDistrict').value;
+  const name  = $('rName').value.trim();
+  const phone = $('rPhone').value.trim();
+  const sta   = $('rStation').value;
+  const sup   = $('rSuper').value;
+
+  if (!email) { msg('roleMsg', 'נא להזין מייל.', 'err'); return; }
+  if (role !== 'none' && !emp) {
+    msg('roleMsg', 'נא להזין מספר עובד.', 'err');
+    return;
+  }
+
+  if (role === 'none' &&
+      !confirm('להסיר את כל ההרשאות של ' + email + '?')) return;
+
+  btn.disabled = true;
+  msg('roleMsg', 'שולח...', 'info');
+
+  try {
+    if (!roleOperationId) roleOperationId = newOperationId('role-');
+    const res = await callSetRole({
+      operation_id: roleOperationId,
+      email:      email,
+      role:       role,
+      stationId:  sta || STATION_ID,
+      districtId: dist,
+      shift:      shift,
+      emp:        emp,
+      full_name:  name,
+      phone:      phone,
+      super:      sup === 'yes' ? true : (sup === 'no' ? false : undefined)
+    });
+    msg('roleMsg', res.data.message, 'ok');
+    $('rEmail').value = '';
+    $('rEmp').value   = '';
+    $('rName').value  = '';
+    $('rPhone').value = '';
+    $('rSuper').value = 'keep';
+    roleOperationId = '';
+  } catch (e) {
+    let text = e.message || String(e);
+    const details = e.details || {};
+    if (details.operation_in_progress && details.operation_id && details.plan_fingerprint) {
+      const p = details.plan_summary || {};
+      const summary =
+        'קיימת תוכנית שמורה:\n' +
+        'תפקיד: ' + (ROLE_HE[p.role] || p.role || 'ללא') + '\n' +
+        'משמרת: ' + (p.shift || 'ללא') + '\n' +
+        'תחנה: ' + stationName(p.stationId || '') + '\n' +
+        'מספר עובד: ' + (p.emp || 'ללא') + '\n\n' +
+        'להמשיך בדיוק את התוכנית הזאת?';
+      if (confirm(summary)) {
+        try {
+          const resumed = await callResumeIdentity({
+            uid: String(details.target_uid || details.uid || $('rPick').value || ''),
+            operation_id: String(details.operation_id),
+            plan_fingerprint: String(details.plan_fingerprint)
+          });
+          msg('roleMsg', (resumed.data || {}).message || 'הפעולה השמורה הושלמה.', 'ok');
+          roleOperationId = '';
+          btn.disabled = false;
+          return;
+        } catch (resumeError) {
+          text = resumeError.message || String(resumeError);
+        }
+      } else {
+        text = 'התוכנית הקודמת נשמרה ולא שונתה.';
+      }
+    }
+    if (String(e.code || '').indexOf('not-found') !== -1) {
+      text = 'לא נמצא משתמש עם המייל הזה. הוא צריך להירשם קודם.';
+    }
+    msg('roleMsg', 'נכשל: ' + text, 'err');
+  }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>

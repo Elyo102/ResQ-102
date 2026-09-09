@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — תקלות וחפיפה</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1100px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+  .cols{ display:grid; grid-template-columns:1fr; gap:14px }
+  @media (min-width:900px){ .cols{ grid-template-columns:1.45fr 1fr } }
+
+  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  select, textarea, input{ width:100%; padding:10px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        font-size:15px; font-family:inherit }
+  textarea{ min-height:74px; resize:vertical }
+  input[type=file]{ padding:8px; font-size:13px }
+
+  .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
+        border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
+        font-family:inherit; font-weight:600; margin-top:14px }
+  .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn:disabled{ opacity:.5; cursor:not-allowed }
+
+  .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
+  .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
+                color:var(--muted); border-radius:9px; padding:9px 16px;
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+
+  /* ---------- תקלה ---------- */
+  .f{ border:1px solid var(--line); border-radius:11px; padding:13px;
+      margin-top:11px; background:var(--panel); border-inline-start-width:4px }
+  .f.blocking{ border-inline-start-color:var(--bad) }
+  .f.limiting{ border-inline-start-color:var(--warn) }
+  .f.minor{ border-inline-start-color:var(--crewC) }
+  .f.unset{ border-inline-start-color:var(--pick) }
+  .f.damage{ border-inline-start-color:#8d6e63 }
+  .f.done{ opacity:.62; border-inline-start-color:var(--good) }
+  .f .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
+  .f .ttl{ font-size:15.5px; font-weight:700; flex:1 1 180px }
+  .f .desc{ font-size:14px; line-height:1.7; margin-top:6px;
+            white-space:pre-wrap; word-break:break-word }
+  /* מי דיווח ומתי. אלדד ביקש שזה יופיע לצד כל תקלה, לא בתוך
+     תפריט — כשמשמרת מוסרת, זו השורה שקוראים. */
+  .f .rep{ font-size:12px; color:var(--muted); margin-top:8px;
+           padding-top:8px; border-top:1px solid var(--line-soft) }
+  .f .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px }
+
+  .tag{ font-size:11px; font-weight:700; border-radius:20px;
+        padding:2px 10px; white-space:nowrap; border:1px solid var(--line) }
+
+  .shots{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
+  .shots img{ width:96px; height:96px; object-fit:cover; border-radius:8px;
+              border:1px solid var(--line); cursor:pointer; display:block }
+  .shots .ld{ font-size:12px; color:var(--muted) }
+
+  /* ---------- צי ---------- */
+  .fleet{ display:grid; gap:10px; margin-top:10px }
+  .v{ display:flex; align-items:center; gap:11px; padding:12px;
+      border:1px solid var(--line); border-radius:10px; background:var(--panel) }
+  .v .dot{ width:11px; height:11px; border-radius:50%; flex:none }
+  .v .nm{ flex:1; font-size:14.5px; font-weight:600 }
+  .v .nm em{ display:block; font-style:normal; font-size:12px;
+             color:var(--muted); font-weight:400; margin-top:2px }
+  .v .st{ font-size:12px; font-weight:700; white-space:nowrap }
+
+  /* שורת נושא — רכב אחד או פריט אחד, עם הדיווח האחרון עליו.
+     הפס הצדדי נושא את החומרה הגרועה שעדיין פתוחה, ולא את
+     חומרת הדיווח האחרון. ההסבר למה — ב-faults.js. */
+  .subj{ border:1px solid var(--line); border-inline-start-width:4px;
+        border-radius:11px; padding:12px 13px; background:var(--panel);
+        margin-bottom:9px; cursor:pointer }
+  .subj:hover{ border-color:var(--line-hover) }
+  .subj:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+  .subj .hd{ display:flex; align-items:baseline; gap:10px }
+  .subj .nm{ flex:1; font-size:13px; font-weight:700; color:var(--muted) }
+  .subj .sev{ font-size:12px; font-weight:700; white-space:nowrap }
+  .subj .last{ font-size:15.5px; font-weight:700; margin-top:5px;
+              line-height:1.4 }
+  .subj .dsc{ font-size:13.5px; line-height:1.65; color:var(--dim);
+             margin-top:4px }
+  .subj .ft{ display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+            font-size:12px; color:var(--muted); margin-top:9px;
+            border-top:1px solid var(--line-soft); padding-top:8px }
+  .subj .more{ margin-inline-start:auto; color:var(--accent); font-weight:700;
+              white-space:nowrap }
+
+  .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none !important }
+
+  #lb{ position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:1200;
+       display:none; align-items:center; justify-content:center; padding:20px }
+  #lb.on{ display:flex }
+  #lb img{ max-width:100%; max-height:90vh; border-radius:9px }
+  #lb .x{ position:absolute; top:14px; inset-inline-end:18px; color:var(--on-accent);
+          font-size:30px; cursor:pointer; line-height:1 }
+
+  #rep{ position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:1100;
+        display:none; align-items:flex-start; justify-content:center;
+        padding:24px 16px; overflow:auto }
+  #rep.on{ display:flex }
+  #rep .repBox{ background:var(--card); border:1px solid var(--line);
+                border-radius:13px; max-width:680px; width:100%; padding:20px;
+                position:relative }
+  #rep .x{ position:absolute; top:12px; inset-inline-end:16px; color:var(--muted);
+           font-size:26px; cursor:pointer; line-height:1 }
+  #rep .x:hover{ color:var(--txt) }
+
+  /* ---------- עריכת רכב ---------- */
+  #veh{ position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:1100;
+        display:none; align-items:flex-start; justify-content:center;
+        padding:24px 16px; overflow:auto }
+  #veh.on{ display:flex }
+  #veh .repBox{ background:var(--card); border:1px solid var(--line);
+                border-radius:13px; max-width:440px; width:100%; padding:20px;
+                position:relative }
+  #veh .x{ position:absolute; top:12px; inset-inline-end:16px; color:var(--muted);
+           font-size:26px; cursor:pointer; line-height:1 }
+  #veh .x:hover{ color:var(--txt) }
+  .vehActs{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
+  .btn.danger{ border-color:var(--bad,#dc2626); color:var(--bad,#dc2626) }
+  .v .edit{ flex:none }
+  /* רכב שהורד מהצי — שורה שקטה עם דרך אחת בחזרה. */
+  .off{ display:flex; align-items:center; gap:10px; padding:9px 11px; margin-top:6px;
+        border:1px dashed var(--line); border-radius:9px; background:var(--panel) }
+  .off .nm{ flex:1; font-size:13px; color:var(--muted) }
+</style>
+</head>
+<body>
+
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div id="lb"><span class="x" id="lbX">&times;</span><img id="lbImg" alt=""></div>
+
+<div id="rep"><div class="repBox">
+  <span class="x" id="repX">&times;</span>
+  <h2 id="dlgTitle">—</h2>
+  <div class="note" id="dlgSub"></div>
+  <div id="dlgBody"></div>
+</div></div>
+
+<!-- עריכת רכב. חלון נפרד מדוח הנזק, כי שני חלונות שחולקים אותו
+     גוף היו נפתחים זה על גבי זה ברגע שלוחצים „ערוך" מתוך הדוח. -->
+<div id="veh"><div class="repBox">
+  <span class="x" id="vehX">&times;</span>
+  <h2 id="vehTitle">רכב</h2>
+  <div class="note" id="vehSub"></div>
+  <label>שם הרכב</label>
+  <input type="text" id="vName" maxlength="50" placeholder="טרנזיט לבן">
+  <label>מספר רישוי</label>
+  <input type="text" id="vPlate" maxlength="20" placeholder="12-345-67">
+  <div id="vRoleWrap" class="hide">
+    <label>ייעוד</label>
+    <input type="text" id="vRole" maxlength="20" placeholder="כיבוי">
+  </div>
+  <div class="msg" id="vehMsg"></div>
+  <div class="vehActs">
+    <button class="btn go" id="vehSave">שמור</button>
+    <button class="btn danger" id="vehOff">הורד מהצי</button>
+    <button class="btn" id="vehCancel">ביטול</button>
+  </div>
+  <div class="note" id="vehWhy"></div>
+</div></div>
+
+<div class="wrap">
+  <h1>תקלות וחפיפת משמרת</h1>
+  <div class="sub" id="whoSub">—</div>
+  <div class="msg" id="mainMsg" role="alert"></div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">אין לחשבון הזה שיוך לתחנה.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="tabs">
+      <button id="tabOpen" class="on">תקלות פתוחות</button>
+      <button id="tabShift">חפיפת משמרת</button>
+      <button id="tabFleet">מצב הצי</button>
+      <button id="tabHist">היסטוריה</button>
+    </div>
+
+    <!-- ========== פתוחות ========== -->
+    <div id="viewOpen">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>תקלות פתוחות</h2>
+            <div class="note" id="openNote">—</div>
+            <label>סינון לפי רכב</label>
+            <select id="fFilter"></select>
+            <div id="openList"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2>דיווח תקלה</h2>
+            <div class="note" style="margin-bottom:2px">
+              כל כבאי מדווח. השם שלך והשעה נשמרים אוטומטית.
+            </div>
+            <label>על מה</label>
+            <select id="nKind"></select>
+            <div id="nVehWrap">
+              <label>איזה רכב</label>
+              <select id="nVeh"></select>
+            </div>
+            <label>כותרת</label>
+            <input type="text" id="nTitle" maxlength="80" placeholder="נזילת שמן מתחת למנוע">
+            <label>תיאור</label>
+            <textarea id="nDesc" maxlength="600"
+              placeholder="מה בדיוק, מתי התגלה, מה כבר נעשה"></textarea>
+            <div id="sevWrap" class="hide">
+              <label>חומרה</label>
+              <select id="nSev"></select>
+              <div class="note" id="sevNote" style="margin-top:4px">—</div>
+            </div>
+            <div class="note" id="sevHint" style="margin-top:10px">
+              את החומרה קובע ראש המשמרת. תאר מה ראית וצלם —
+              הוא יעריך.
+            </div>
+            <label>צילום (לא חובה)</label>
+            <input type="file" id="nShot" accept="image/*" capture="environment" multiple>
+            <div class="note" id="shotNote">אפשר לצרף עד 3 תמונות. הן מוקטנות אוטומטית.</div>
+            <button class="btn go" id="btnNew">פתח תקלה</button>
+            <div class="msg" id="newMsg"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== חפיפה ========== -->
+    <div id="viewShift" class="hide">
+
+      <div class="card" id="hoSign">
+        <h2>מסירת אחריות</h2>
+        <div class="note" id="hoNote">—</div>
+        <div id="hoState"></div>
+        <div id="hoAcceptWrap" class="hide">
+          <label>הערכת מצב / מסר למשמרת הנכנסת</label>
+          <textarea id="hoMsg" maxlength="600"
+            placeholder="מה שחשוב שהמשמרת הבאה תדע ולא נכנס לשום סעיף אחר"></textarea>
+          <button class="btn ok" id="btnAccept">קיבלתי אחריות על המשמרת</button>
+          <div class="note" style="margin-top:6px">
+            הלחיצה נרשמת בלוג עם השם והשעה, ומהווה חתימה רשמית.
+            אי אפשר לשנות אותה בדיעבד.
+          </div>
+        </div>
+        <div class="msg" id="hoSignMsg"></div>
+        <div id="hoLog"></div>
+      </div>
+
+      <div class="card" id="hoBlockCard">
+        <h2>תמונת מצב</h2>
+        <div class="fleet" id="hoSummary"></div>
+      </div>
+
+      <div class="card">
+        <h2>תקלות רכבים</h2>
+        <div class="note">מה שהמשמרת הזו יורשת. לחיצה על שם רכב פותחת את דוח הנזק שלו.</div>
+        <div id="hoVeh"></div>
+      </div>
+
+      <div class="card">
+        <h2>פגיעות ומכות ברכבים</h2>
+        <div class="note">
+          נשארות רשומות עד שהמכה תוקנה בפועל במוסך. הסרה
+          באישור ראש משמרת בלבד.
+        </div>
+        <div id="hoDamage"></div>
+      </div>
+
+      <div class="card">
+        <h2>תקלות ציוד ומבנה</h2>
+        <div id="hoGear"></div>
+      </div>
+
+      <div class="card">
+        <h2>בתיקון כרגע</h2>
+        <div class="note">ציוד ורכבים שמישהו כבר לקח לטיפול.</div>
+        <div id="hoRepair"></div>
+      </div>
+
+      <div class="card">
+        <h2>משימות פתוחות</h2>
+        <div class="note">תחזוקת תחנה ותחזוקת ציוד שעדיין לא בוצעו.</div>
+        <div id="hoTasks"></div>
+      </div>
+
+      <div class="card">
+        <h2>רכבי עיגון זמינים</h2>
+        <div class="note">לוגיסטיקה. מה אפשר לקחת עכשיו ומה לא.</div>
+        <div class="fleet" id="hoAnchors"></div>
+      </div>
+
+      <div class="card">
+        <h2>מסרים והערכות מצב</h2>
+        <div class="note">מה שנכתב ולא נכנס לשום סעיף אחר.</div>
+        <div id="hoNotes"></div>
+      </div>
+
+    </div>
+
+    <!-- ========== צי ========== -->
+    <div id="viewFleet" class="hide">
+      <div class="cols">
+        <div>
+          <div class="card">
+            <h2>מצב הצי</h2>
+            <div class="note" style="margin-bottom:4px">
+              המצב נגזר מהתקלות הפתוחות ולא נשמר בנפרד — אין מה
+              לשכוח לעדכן.
+            </div>
+            <div class="fleet" id="fleetList"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card hide" id="anchorCard">
+            <h2>רכבים</h2>
+            <div class="note" style="margin-bottom:2px">
+              רכב שנוסף כאן נכנס לצי עם שם ומספר רישוי. רכבי כיבוי
+              וחילוץ מוגדרים בלוח הציוות, כי שם הם נושאים משבצות —
+              אבל את השם ואת מספר הרישוי שלהם עורכים גם מכאן.
+            </div>
+            <label>שם הרכב</label>
+            <input type="text" id="aName" maxlength="50" placeholder="טרנזיט לבן">
+            <label>מספר רישוי</label>
+            <input type="text" id="aPlate" maxlength="20" placeholder="12-345-67">
+            <button class="btn" id="btnAnchor">הוסף רכב</button>
+            <div class="msg" id="anchorMsg"></div>
+            <div id="anchorList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== היסטוריה ========== -->
+    <div id="viewHist" class="hide">
+      <div class="card">
+        <h2>תקלות שטופלו</h2>
+        <div class="note">מה נפל, מתי, ומי סגר.</div>
+        <div id="histList"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { MEMBER_ROLES } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { CREW_HE, plural } from './rotation.js?v=42h7';
+import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
+         FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
+         UNSET, needsGrading, isDamage, damagesOf, hasDamage,
+         DAMAGE_DELETE_WHY,
+         sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
+         vehicleReport, handoverId, acceptedLine, isTask, isNote,
+         bySubject, subjectLog, subjectName, latestOf,
+         shrinkImage } from './faults.js?v=42h7';
+import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+         deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function msg(text, kind, box){
+  const m = $(box || 'newMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.className = 'msg ' + (text ? (kind || '') : '');
+}
+
+let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
+let faults = [], fleet = [], anchors = [], shots = {}, handovers = {};
+// מסמך הלוח **כפי שהוא בשרת**, שלם: הרכבים המבצעיים ושרשרת הפיקוד.
+// נשמר שלם ולא מסונן, כי עריכת רכב מבצעי כותבת את המסמך כולו בחזרה
+// — כתיבה של מערך מסונן הייתה מוחקת מהמסמך את הרכבים המושבתים.
+let boardDoc = null;
+// רכבי הצי הלוגיסטיים כולל המושבתים. `anchors` מכיל רק את הפעילים;
+// הרשימה הזאת היא מה שמאפשר להחזיר רכב לצי.
+let anchorDocs = [];
+
+/* seq477 §8 · דור הזהות.
+ *
+ * `onAuthStateChanged` יורה שוב כשמתחלף המשתמש, וגם כשה-claims שלו
+ * משתנים — למשל העברה לתחנה אחרת. עד כאן `SID` ו-`ME` הוחלפו במקום,
+ * בעוד שחלון עריכת הרכב, מסמך הלוח שבמטמון וקריאה שעדיין בדרך המשיכו
+ * להתייחס לזהות הקודמת. התוצאה: כתיבה שיוצאת עם משתמש אחד ותוכן של
+ * אחר, או תשובה של תחנה א׳ שנכתבת על מסך של תחנה ב׳.
+ *
+ * הדור עולה בכל החלפת זהות. קריאה בודקת אותו כשהיא חוזרת, כתיבה
+ * בודקת אותו לפני ואחרי, וחלון העריכה נסגר. */
+let AUTH_GEN = 0;
+let PRIV_SIG = '';
+
+function bumpIdentity(){
+  AUTH_GEN += 1;
+  PRIV_SIG = '';
+  ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
+  vehEditing = null;
+  boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
+  faults = []; handovers = {}; shots = {};
+  $('work').classList.add('hide');
+  $('anchorCard').classList.add('hide');
+  $('denyCard').classList.add('hide');
+  $('fleetList').replaceChildren();
+  $('anchorList').replaceChildren();
+  $('aName').value = ''; $('aPlate').value = '';
+  $('rep').classList.remove('on');
+  $('lb').classList.remove('on');
+  const box = $('veh');
+  if (box) box.classList.remove('on');
+  return AUTH_GEN;
+}
+
+/** תעודת זהות לכתיבה: דור, משתמש ותחנה כפי שהם **ברגע שהכתיבה יוצאת**.
+ *
+ * seq485 §B1 · ה-uid נלקח מ-`auth.currentUser` ולא רק מ-`ME`. `ME` הוא
+ * מצב של המסך, ומי שכותב אותו הוא ה-observer — שנמסר **אסינכרונית**.
+ * בין הרגע שבו Firebase כבר מחזיק את המשתמש החדש ובין הרגע שבו
+ * ה-callback רץ ומרים דור, `ME` ו-`AUTH_GEN` עדיין של הקודם: הכתיבה
+ * הייתה עוברת ונרשמת על שמו. אין כאן עקיפת חוקים — ב׳ מורשה באותה
+ * תחנה — אבל השם שנרשם בתקלה הוא של א׳, וזה שקר בהיסטוריה. */
+function currentUid(){
+  const u = auth.currentUser;
+  return u ? u.uid : '';
+}
+
+function writeFence(){
+  if (!ME || !SID) throw new Error('identity-missing');
+  const live = currentUid();
+  if (!live || live !== ME.uid) {
+    const error = new Error('identity-changed');
+    error.code = 'identity-changed';
+    throw error;
+  }
+  return { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+}
+
+/** בכל נקודת בדיקה — הזהות עדיין אותה זהות, אחרת הכתיבה אינה שלנו.
+ *  נבדקים ארבעה דברים, ו**המשתמש החי הוא הרביעי**: דור המסך יכול
+ *  עוד לא לדעת שהמשתמש התחלף. */
+function assertFence(f){
+  if (!f || f.gen !== AUTH_GEN || !ME || f.uid !== ME.uid || f.sid !== SID ||
+      currentUid() !== f.uid) {
+    const error = new Error('identity-changed');
+    error.code = 'identity-changed';
+    throw error;
+  }
+}
+
+function assertFleetFence(f){
+  assertFence(f);
+  if (!CAN_FLEET) throw new Error('fleet-forbidden');
+}
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  /* seq483 §2 · הדור נלקח כאן ו**נבדק אחרי כל await**. בלי הבדיקות
+   * האלה, callback ישן של משתמש א׳ שחוזר אחרי שמשתמש ב׳ כבר נטען
+   * דורס את `ME`, `SID` ו-`CAN_FLEET` — והמסך מציג את ב׳ עם ההרשאות
+   * של א׳. `onAuthStateChanged` לבדו אינו מספיק: הוא אינו יורה על
+   * רענון claims של אותו משתמש, ולכן גם הטוקן נבדק בהמשך. */
+  const gen = bumpIdentity();
+  const stale = () => gen !== AUTH_GEN || currentUid() !== user.uid;
+  if (!user) { location.replace('./login.html?next=faults.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (stale()) return;
+
+  const isSuper = c.super === true;
+  const isMember = isSuper ||
+    MEMBER_ROLES.indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isMember || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  CAN_MANAGE = isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1;
+  // עריכת הצי היא קבוצה צרה יותר מ-staff: מפקד משמרת, סגן, מפקד
+  // תחנה ומנהל-על. רכזת כוח אדם היא staff לכל דבר אחר ואינה כאן.
+  // אותה הכרעה בדיוק נאכפת ב-fleetManager() שבכללי האבטחה — המסך
+  // מסתיר, השרת חוסם.
+  CAN_FLEET = managesFleet(Object.assign({}, c, { super: isSuper }));
+  ME = { uid: user.uid, crew: c.shift || '', full_name: '' };
+  /* seq485 §B3 · חתימת ההרשאות נלקחת כאן, מהטוקן שכבר בידינו, כדי
+   * שהפולינג ישווה מול מה שהמסך **באמת** נבנה ממנו. */
+  PRIV_SIG = privilegeSignature(user, c);
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (stale()) return;
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+  if (stale()) return;
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  renderNav(c, 'faults.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  if (CAN_FLEET) $('anchorCard').classList.remove('hide');
+  setupForm();
+  if (stale()) return;
+  await loadAll();
+});
+
+/* אותו משתמש, claims חדשים — העברה לתחנה אחרת, שינוי תפקיד, ביטול
+ * הרשאה. `onAuthStateChanged` **אינו** יורה על זה, ולכן טוקן שהתחדש
+ * היה משאיר את המסך עם התחנה וההרשאות הישנות. seq483 §2. */
+/* seq485 §B3 · **חתימת ההרשאות**, לא שלושה שדות נבחרים.
+ *
+ * הבדיקה הקודמת השוותה תחנה, `CAN_FLEET` ו-uid בלבד. רכזת כוח אדם
+ * שהופכת לכבאית שומרת את אותו uid, את אותה תחנה, ו-`CAN_FLEET`
+ * הוא false בשני המקרים — ולכן שום דבר לא נראה שונה, `CAN_MANAGE`
+ * נשאר true, והמסך המשיך להציע פעולות ניהול. מה שמושווה עכשיו הוא
+ * כל מה שנגזר מהטוקן, כך שכל שינוי הרשאה נתפס ולא רק זה שנבחר. */
+function privilegeSignature(user, claims){
+  const c = claims || {};
+  const isSuper = c.super === true;
+  const sid = c.stationId || (isSuper ? STATION_ID : '');
+  return [
+    user ? user.uid : '',
+    sid,
+    String(c.role || ''),
+    isSuper ? '1' : '0',
+    managesFleet(Object.assign({}, c, { super: isSuper })) ? '1' : '0',
+    (isSuper || ['deputy','commander','station_commander','hr_coordinator'].indexOf(c.role) !== -1) ? '1' : '0',
+    String(c.shift || ''),
+    String(c.disabled === true ? '1' : '0')
+  ].join('|');
+}
+
+setInterval(async () => {
+  const user = auth.currentUser;
+  if (!user || !ME) return;
+  /* seq485 §B2 · הדור והמשתמש נלקחים **לפני** ההמתנה ונבדקים אחריה.
+   * תשובת טוקן של א׳ שחוזרת אחרי שב׳ כבר נכנס נראתה כמו „הזהות
+   * השתנתה" — והמסך של ב׳ נטען מחדש בלי סיבה. תשובה של זהות שאינה
+   * הזהות הנוכחית פשוט נזרקת. */
+  const gen = AUTH_GEN;
+  const uid = user.uid;
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) { return; }
+  if (gen !== AUTH_GEN || currentUid() !== uid || !ME || ME.uid !== uid) return;
+
+  /* אין „זריעה עצלה" כאן בכוונה. אם הפולינג היה רשאי לקבוע את
+   * החתימה כשהיא ריקה, תשובה ישנה שחוזרת ראשונה הייתה קובעת בסיס
+   * שגוי — ומשם ואילך שינוי אמיתי היה נראה כמו „אין שינוי". החתימה
+   * נקבעת רק במקום אחד: ה-handler שבנה את המסך. */
+  if (!PRIV_SIG) return;
+  const sig = privilegeSignature(user, c);
+  if (sig === PRIV_SIG) return;
+  /* משהו בהרשאות השתנה. מרימים דור — מה שבאוויר יידחה — ונטענים מחדש. */
+  bumpIdentity();
+  location.reload();
+}, 60 * 1000);
+
+// ---------- טעינה ----------
+
+async function loadAll(){
+  // ארבע קריאות במקביל ולא בזה אחר זה. אף אחת מהן אינה
+  // תלויה בקודמת, וההמתנה הסדרתית הייתה כ-800 מילישניות של
+  // מסך ריק מטלפון סלולרי.
+  const origin = { gen: AUTH_GEN, uid: ME && ME.uid, sid: SID };
+  try { assertFence(origin); } catch (ignore) { return; }
+  faults = []; anchors = []; anchorDocs = []; handovers = {};
+  boardDoc = null;
+  let boardVehicles = [];
+
+  const safe = p => p.catch(function () { return null; });
+
+  const [fs_, bd, vs, hs] = await Promise.all([
+    safe(getDocs(collection(db, 'stations', origin.sid, 'faults'))),
+    safe(getDoc(doc(db, 'stations', origin.sid, 'config', 'board'))),
+    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles'))),
+    safe(getDocs(collection(db, 'stations', origin.sid, 'handovers')))
+  ]);
+
+  /* התשובה חזרה — אבל למי? אם הזהות התחלפה בזמן שחיכינו, הנתונים
+   * האלה שייכים למשתמש או לתחנה הקודמים ואסור לצייר אותם. */
+  try { assertFence(origin); } catch (ignore) { return; }
+
+  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
+  if (bd && bd.exists()) {
+    const b = bd.data() || {};
+    boardDoc = {
+      vehicles: Array.isArray(b.vehicles) ? b.vehicles : [],
+      command:  Array.isArray(b.command)  ? b.command  : []
+    };
+    boardVehicles = boardDoc.vehicles;
+  }
+  if (vs) vs.forEach(d => {
+    const v = d.data() || {};
+    if (v.kind && v.kind !== 'anchor') return;
+    anchorDocs.push(Object.assign({ id: d.id }, v));
+  });
+  // `mergeFleet` מסנן מושבתים בעצמו; `anchors` נשאר הרשימה הפעילה
+  // שכל שאר המסך מסתמך עליה.
+  anchors = anchorDocs.filter(v => v.active !== false);
+  if (hs) hs.forEach(d => {
+    handovers[d.id] = Object.assign({ id: d.id }, d.data() || {});
+  });
+
+  fleet = mergeFleet(boardVehicles, anchors);
+
+  renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
+}
+
+// ---------- לשוניות ----------
+
+const VIEWS = [['tabOpen','viewOpen'],['tabShift','viewShift'],
+               ['tabFleet','viewFleet'],['tabHist','viewHist']];
+VIEWS.forEach(function (v) {
+  $(v[0]).onclick = function () {
+    VIEWS.forEach(function (x) {
+      $(x[0]).classList.toggle('on', x[0] === v[0]);
+      $(x[1]).classList.toggle('hide', x[1] !== v[1]);
+    });
+  };
+});
+
+// ---------- טופס ----------
+
+function setupForm(){
+  $('nKind').innerHTML = FAULT_KINDS.map(k =>
+    '<option value="' + esc(k.id) + '">' + esc(k.he) + '</option>').join('');
+  // בורר החומרה מוצג לסגל בלבד. כבאי מדווח ולא מדרג.
+  $('sevWrap').classList.toggle('hide', !CAN_MANAGE);
+  $('sevHint').classList.toggle('hide', CAN_MANAGE);
+  $('nSev').innerHTML = SEVERITIES.map(s =>
+    '<option value="' + esc(s.id) + '">' + esc(s.he) + '</option>').join('');
+
+  $('nKind').onchange = function () {
+    $('nVehWrap').classList.toggle('hide', !needsVehicle($('nKind').value));
+  };
+  $('nSev').onchange = function () {
+    const s = SEVERITIES.filter(x => x.id === $('nSev').value)[0];
+    $('sevNote').textContent = s ? s.note : '';
+  };
+  $('nSev').onchange();
+  $('btnNew').onclick = createFault;
+  $('btnAnchor').onclick = addVehicle;
+  $('vehSave').onclick = saveVehicleEdit;
+  $('vehOff').onclick = deactivateVehicle;
+  $('vehCancel').onclick = closeVehicleEditor;
+  $('vehX').onclick = closeVehicleEditor;
+  $('veh').onclick = e => { if (e.target === $('veh')) closeVehicleEditor(); };
+  $('lbX').onclick = () => $('lb').classList.remove('on');
+  $('repX').onclick = () => $('rep').classList.remove('on');
+  $('rep').onclick = e => { if (e.target === $('rep')) $('rep').classList.remove('on'); };
+  $('lb').onclick = e => { if (e.target === $('lb')) $('lb').classList.remove('on'); };
+}
+
+function fillVehicleSelects(){
+  const opts = fleet.map(v =>
+    '<option value="' + esc(v.id) + '">' + esc(v.name) +
+    (v.kind === 'anchor' ? ' · עיגון' : '') + '</option>').join('');
+  $('nVeh').innerHTML = opts || '<option value="">אין רכבים מוגדרים</option>';
+  $('nVehWrap').classList.toggle('hide', !needsVehicle($('nKind').value));
+}
+
+function renderFilter(){
+  fillVehicleSelects();
+  $('fFilter').innerHTML = '<option value="">כל התקלות</option>' +
+    fleet.map(v => '<option value="' + esc(v.id) + '">' + esc(v.name) +
+                   '</option>').join('');
+  $('fFilter').onchange = renderOpen;
+}
+
+async function createFault(){
+  const kind = $('nKind').value;
+  const title = $('nTitle').value.trim();
+  if (!title) { msg('צריך כותרת קצרה.', 'err'); return; }
+
+  const vid = needsVehicle(kind) ? $('nVeh').value : '';
+  if (needsVehicle(kind) && !vid) {
+    msg('צריך לבחור רכב. אם אין רכבים מוגדרים — הוסף רכב במצב הצי או ' +
+        'הגדר רכבים בלוח הציוות.', 'err');
+    return;
+  }
+  const veh = fleet.filter(v => v.id === vid)[0];
+
+  const b = $('btnNew'); b.disabled = true;
+  msg('', '');
+
+  // התמונות מוקטנות לפני הכתיבה. אם הקטנה נכשלת — התקלה
+  // עדיין נשמרת. תקלה בלי צילום עדיפה על תקלה שלא נפתחה.
+  const files = Array.from($('nShot').files || []).slice(0, 3);
+  const pics = [], failed = [];
+  for (const f of files) {
+    try { pics.push(await shrinkImage(f)); }
+    catch (e) { failed.push((f.name || 'תמונה') + ': ' + (e.message || '')); }
+  }
+
+  try {
+    const now = new Date();
+    const ref = await addDoc(collection(db, 'stations', SID, 'faults'), {
+      kind: kind, vehicle_id: vid, vehicle_name: veh ? veh.name : '',
+      title: title, desc: $('nDesc').value.trim(),
+      // הערת חפיפה אינה תקלה ולכן אינה ממתינה להערכה.
+      severity: kind === 'note' ? 'minor'
+              : (CAN_MANAGE ? $('nSev').value : 'unset'),
+      status: 'open', photos: pics.length,
+      by_uid: ME.uid, by_name: ME.full_name || '', crew: ME.crew || '',
+      date: toKey(now), created_key: now.toISOString(),
+      created_at: serverTimestamp()
+    });
+
+    for (let i = 0; i < pics.length; i++) {
+      await setDoc(doc(db, 'stations', SID, 'faults', ref.id, 'photos', 'p' + i), {
+        data: pics[i].data, w: pics[i].w, h: pics[i].h,
+        by_uid: ME.uid, created_key: now.toISOString()
+      });
+    }
+
+    msg('התקלה נפתחה.' +
+        (pics.length ? ' ' + pics.length + ' תמונות צורפו.' : '') +
+        (failed.length ? ' לא נשמרו: ' + failed.join(' · ') : ''),
+        failed.length ? 'info' : 'ok');
+    $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
+    await loadAll();
+  } catch (e) {
+    msg('הפתיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+  b.disabled = false;
+}
+
+async function addVehicle(){
+  const edit = vehicleEdit({ name: $('aName').value, plate: $('aPlate').value });
+  if (!edit.ok) { msg('צריך שם לרכב.', 'err', 'anchorMsg'); return; }
+  const b = $('btnAnchor'); b.disabled = true;
+  try {
+    const fence = writeFence();
+    await addDoc(collection(db, 'stations', fence.sid, 'vehicles'), Object.assign({
+      kind: 'anchor', active: true,
+      by_uid: ME.uid, created_at: serverTimestamp()
+    }, edit.patch));
+    assertFence(fence);
+    msg('הרכב נוסף.', 'ok', 'anchorMsg');
+    $('aName').value = ''; $('aPlate').value = '';
+    await loadAll();
+  } catch (e) {
+    msg('ההוספה נכשלה. (' + (e.code || e.message) + ')', 'err', 'anchorMsg');
+  }
+  b.disabled = false;
+}
+
+// ---------- עריכת רכב ----------
+//
+// שני סוגי הרכבים נערכים באותו חלון, אבל **לא באותה כתיבה**: רכב
+// לוגיסטי הוא מסמך משלו, ורכב מבצעי הוא אובייקט בתוך מסמך הלוח,
+// שנכתב שלם בכל שמירה (כך דורשים כללי האבטחה: ארבעה מפתחות בדיוק).
+//
+// „הורד מהצי" אינו מוחק. על רכב נכתבת היסטוריית תקלות ופגיעות בשם,
+// ומחיקה הייתה הופכת כל דיווח כזה ל„רכב לא ידוע" בדיעבד. הרשומה
+// נשארת, ההיסטוריה נשארת קריאה, ואפשר להחזיר את הרכב.
+
+let vehEditing = null;
+
+function openVehicleEditor(v, origin){
+  // A saved/detached control still belongs to its original rendered record.
+  // It must not mint a new identity after another station finishes loading.
+  try { assertFleetFence(origin); } catch (ignore) { showFleetIdentityChange(); return; }
+  msg('', '', 'mainMsg');
+  vehEditing = Object.assign({}, v, { origin });
+  const operational = v.kind !== 'anchor';
+  $('vehTitle').textContent = 'עריכת רכב';
+  $('vehSub').textContent = operational
+    ? 'רכב מבצעי · המשבצות שלו נשארות בלוח הציוות'
+    : 'רכב לוגיסטי';
+  $('vName').value  = v.name || '';
+  $('vPlate').value = v.plate || '';
+  $('vRoleWrap').classList.toggle('hide', !operational);
+  $('vRole').value = operational ? (v.role || '') : '';
+  const open = fleetFaultCount(v.id);
+  $('vehWhy').textContent = 'הורדה מהצי אינה מחיקה: הרכב יורד מהרשימות '
+    + 'ומהבחירה בתקלה חדשה, וההיסטוריה שלו נשארת קריאה. אפשר להחזיר אותו.'
+    + (open ? ' על הרכב הזה ' + plural(open, 'תקלה אחת פתוחה', 'תקלות פתוחות') + '.' : '');
+  msg('', '', 'vehMsg');
+  $('veh').classList.add('on');
+}
+
+function closeVehicleEditor(){
+  vehEditing = null;
+  $('veh').classList.remove('on');
+}
+
+function showFleetIdentityChange(){
+  closeVehicleEditor();
+  // Also used after an await: the write outcome can be unknown, so do not
+  // claim that an operation was cancelled or that nothing was saved.
+  msg('המשתמש או ההרשאות השתנו. רעננו ובדקו את המצב לפני פעולה נוספת. (identity-changed)',
+    'err', 'mainMsg');
+}
+
+/* כמה תקלות פתוחות על הרכב — נאמר למי שמוריד אותו מהצי, כדי
+ * שההחלטה תילקח מול המספר ולא בלעדיו. פגיעות אינן נספרות: הן
+ * חיווי נפרד ואינן מונעות מהרכב לצאת. */
+function fleetFaultCount(vid){
+  return vehicleState(faults, vid).faults.length;
+}
+
+/* seq477 §6 · שינוי רכב אחד — בעסקה, על המצב הטרי.
+ *
+ * עד כאן נכתב מסמך הלוח **מהמטמון**: הרכבים ושרשרת הפיקוד כפי שנקראו
+ * בטעינת המסך. מפקד ששינה שם רכב בזמן שרכזת ערכה את שרשרת הפיקוד
+ * דרס לה את העריכה, ושמירה על מטמון ישן החזירה רכב מושבת לפעיל.
+ *
+ * המסך הזה משנה **רכב אחד**, ולכן אין כאן התנגשות אמיתית: העסקה
+ * קוראת את המסמך מחדש, מחילה את השינוי על הרכב הזה בלבד, וכותבת
+ * בחזרה את שרשרת הפיקוד ואת שאר הרכבים **כפי שהם בשרת** ולא כפי
+ * שהיו כשהמסך נטען. עריכה מקבילה של הפיקוד שורדת.
+ *
+ * `mutate(vehicles)` מקבל את המערך הטרי ומחזיר את החדש. */
+async function saveBoardVehicles(mutate, fence){
+  assertFleetFence(fence);
+  /* seq483 §3 · הזהות נבדקת **בתוך** העסקה, אחרי הקריאה ומיד לפני
+   * הכתיבה — ובכל ניסיון מחדש. עסקת Firestore יכולה לרוץ שוב, וקודם
+   * לכן הבדיקה הייתה רק אחרי שהעסקה כולה הסתיימה: החלפת משתמש בזמן
+   * שה-`tx.get` ממתין עדיין הגיעה ל-`tx.set` עם המחבר הישן, והשער
+   * שאחרי כן רק דיווח על כך — אחרי שהכתיבה כבר יצאה.
+   *
+   * ה-ref עצמו נבנה מחדש בכל ניסיון מתוך ה-fence, ולא מ-`SID` הגלובלי,
+   * כדי שאפילו הנתיב לא יוכל להיגזר מזהות שהתחלפה. */
+  await runTransaction(db, async (tx) => {
+    assertFleetFence(fence);                  // גם בניסיון חוזר
+    const ref = doc(db, 'stations', fence.sid, 'config', 'board');
+    const snap = await tx.get(ref);
+    assertFleetFence(fence);                  // אחרי הקריאה
+    if (!snap.exists()) throw new Error('board-missing');
+    const fresh = snap.data() || {};
+    const vehicles = Array.isArray(fresh.vehicles) ? fresh.vehicles : [];
+    const next = mutate(vehicles);
+    assertFleetFence(fence);                  // ומיד לפני הכתיבה
+    tx.set(ref, {
+      vehicles: next,
+      command: Array.isArray(fresh.command) ? fresh.command : [],
+      updated_at: serverTimestamp(), by: fence.uid
+    });
+  });
+  assertFence(fence);
+}
+
+async function saveVehicleEdit(){
+  if (!vehEditing) return;
+  const v = vehEditing;
+  const fence = v.origin;
+  try { assertFleetFence(fence); } catch (ignore) { showFleetIdentityChange(); return; }
+  const operational = v.kind !== 'anchor';
+  const edit = vehicleEdit({
+    name: $('vName').value, plate: $('vPlate').value,
+    role: operational ? $('vRole').value : undefined
+  });
+  if (!edit.ok) { msg('צריך שם לרכב.', 'err', 'vehMsg'); return; }
+  const b = $('vehSave'); b.disabled = true;
+  try {
+    if (operational) {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, v.id, edit.patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', v.id), edit.patch, { merge: true });
+      assertFence(fence);
+    }
+    closeVehicleEditor();
+    msg('הרכב עודכן.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+  }
+  b.disabled = false;
+}
+
+async function deactivateVehicle(){
+  if (!vehEditing) return;
+  const v = vehEditing;
+  const fence = v.origin;
+  try { assertFleetFence(fence); } catch (ignore) { showFleetIdentityChange(); return; }
+  const open = fleetFaultCount(v.id);
+  const warn = 'להוריד את "' + (v.name || '') + '" מהצי?'
+    + (open ? '\nיש עליו ' + plural(open, 'תקלה אחת פתוחה', 'תקלות פתוחות') + '.' : '')
+    + '\nההיסטוריה נשמרת ואפשר להחזיר אותו.';
+  if (!confirm(warn)) return;
+  const b = $('vehOff'); b.disabled = true;
+  try {
+    assertFleetFence(fence);
+    /* רכב מבצעי יושב בתוך מערך, ושם Firebase דוחה חותמת שרת. `atFor`
+     * בוחר: מסמך → חותמת שרת; מערך → מחרוזת ISO מהלקוח. */
+    const patch = deactivationPatch({ uid: ME.uid, at: atFor(v.kind, serverTimestamp()) });
+    if (v.kind !== 'anchor') {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, v.id, patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', v.id), patch, { merge: true });
+      assertFence(fence);
+    }
+    closeVehicleEditor();
+    msg('הרכב ירד מהצי.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('ההורדה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+  }
+  b.disabled = false;
+}
+
+async function restoreVehicle(kind, id, fence){
+  try {
+    assertFleetFence(fence);
+    const patch = reactivationPatch();
+    if (kind !== 'anchor') {
+      if (!boardDoc) throw new Error('board-missing');
+      await saveBoardVehicles((vehicles) => applyToBoardVehicle(vehicles, id, patch), fence);
+    } else {
+      assertFleetFence(fence);
+      await setDoc(doc(db, 'stations', fence.sid, 'vehicles', id), patch, { merge: true });
+      assertFence(fence);
+    }
+    msg('הרכב חזר לצי.', 'ok', 'anchorMsg');
+    await loadAll();
+  } catch (e) {
+    if (e.code === 'identity-changed') showFleetIdentityChange();
+    else msg('השחזור נכשל. (' + (e.code || e.message) + ')', 'err', 'anchorMsg');
+  }
+}
+
+// ---------- ציור תקלה ----------
+
+function faultCard(f){
+  const el = document.createElement('div');
+  el.className = 'f ' + (!isOpen(f) ? 'done'
+    : isDamage(f) ? 'damage'
+    : needsGrading(f) ? 'unset' : (f.severity || 'minor'));
+
+  const head = document.createElement('div');
+  head.className = 'top';
+  head.innerHTML =
+    '<span class="ttl">' + esc(f.title || '') + '</span>' +
+    '<span class="tag" style="color:' + stateColor(f.status) + '">' +
+      esc(stateHe(f.status)) + '</span>' +
+    (f.kind !== 'note'
+      ? '<span class="tag" style="color:' + sevColor(f.severity) + '">' +
+        esc(sevHe(f.severity)) + '</span>' : '') +
+    '<span class="tag">' + esc(kindHe(f.kind)) +
+      (f.vehicle_name ? ' · ' + esc(f.vehicle_name) : '') + '</span>';
+  el.appendChild(head);
+
+  if (f.desc) {
+    const d = document.createElement('div');
+    d.className = 'desc';
+    d.textContent = f.desc;
+    el.appendChild(d);
+  }
+
+  if (Number(f.photos || 0) > 0) {
+    const box = document.createElement('div');
+    box.className = 'shots';
+    box.innerHTML = '<span class="ld">טוען ' + f.photos + ' תמונות…</span>';
+    el.appendChild(box);
+    loadShots(f, box);
+  }
+
+  const rep = document.createElement('div');
+  rep.className = 'rep';
+  rep.textContent = 'דווח: ' + reportedLine(f) +
+    (f.crew ? ' · משמרת ' + (CREW_HE[f.crew] || f.crew) : '') +
+    (f.status === 'fixed' && f.fixed_by_name
+      ? ' · נסגר ע״י ' + f.fixed_by_name : '');
+  el.appendChild(rep);
+
+  if (f.fix_note) {
+    const fx = document.createElement('div');
+    fx.className = 'rep';
+    fx.style.borderTop = '0';
+    fx.style.paddingTop = '2px';
+    fx.textContent = 'טיפול: ' + f.fix_note;
+    el.appendChild(fx);
+  }
+
+  if (isOpen(f)) {
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+
+    // פגיעה אינה נסגרת ואינה מדורגת. היא קיימת עד שהיא
+    // מתוקנת בפועל, ואז היא נמחקת — באישור ראש משמרת בלבד.
+    if (isDamage(f)) {
+      if (CAN_MANAGE) {
+        acts.appendChild(actBtn('תוקנה במוסך — מחק', 'sm', () => wipeDamage(f)));
+      } else {
+        const n = document.createElement('span');
+        n.className = 'note';
+        n.textContent = 'הסרה באישור ראש משמרת, אחרי תיקון במוסך.';
+        acts.appendChild(n);
+      }
+      el.appendChild(acts);
+      return el;
+    }
+
+    // דירוג חומרה. סגל בלבד, וזה השדה היחיד שהוא משנה על
+    // תקלה של מישהו אחר.
+    if (CAN_MANAGE && f.kind !== 'note') {
+      const sel = document.createElement('select');
+      sel.style.width = 'auto';
+      sel.style.padding = '6px 10px';
+      sel.style.fontSize = '12.5px';
+      sel.innerHTML = (needsGrading(f)
+        ? '<option value="unset">' + esc(UNSET.he) + '</option>' : '') +
+        SEVERITIES.map(x => '<option value="' + esc(x.id) + '"' +
+          (x.id === f.severity ? ' selected' : '') + '>' +
+          esc(x.he) + '</option>').join('');
+      sel.onchange = () => grade(f, sel.value, sel);
+      acts.appendChild(sel);
+    }
+    // המדווח יכול לסגור את מה שהוא פתח; הסגל יכול לסגור הכל.
+    if (CAN_MANAGE || f.by_uid === ME.uid) {
+      if (f.status === 'open') {
+        acts.appendChild(actBtn('לקחתי לטיפול', 'sm', () => setState(f, 'in_repair')));
+      }
+      acts.appendChild(actBtn('סגור תקלה', 'sm ok', () => closeFault(f)));
+    }
+    if (acts.children.length) el.appendChild(acts);
+  }
+  return el;
+}
+
+function actBtn(text, cls, fn){
+  const b = document.createElement('button');
+  b.className = 'btn ' + cls;
+  b.textContent = text;
+  b.onclick = fn;
+  return b;
+}
+
+// התמונות נטענות רק כשהתקלה מצוירת, ולא בטעינה הראשונה.
+// מסך עם עשרים תקלות היה מוריד עשרים תמונות שאיש לא הסתכל בהן.
+async function loadShots(f, box){
+  if (shots[f.id]) { paintShots(shots[f.id], box); return; }
+  try {
+    const s = await getDocs(collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+    const list = [];
+    s.forEach(d => list.push(d.data() || {}));
+    shots[f.id] = list;
+    paintShots(list, box);
+  } catch (e) {
+    box.innerHTML = '<span class="ld">התמונות לא נטענו.</span>';
+  }
+}
+
+function paintShots(list, box){
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<span class="ld">אין תמונות.</span>'; return; }
+  list.forEach(function (p) {
+    if (!p || !p.data) return;
+    const im = document.createElement('img');
+    im.src = p.data;
+    im.alt = 'צילום התקלה';
+    im.onclick = function () {
+      $('lbImg').src = p.data;
+      $('lb').classList.add('on');
+    };
+    box.appendChild(im);
+  });
+}
+
+// מחיקת פגיעה. סופית, וכוללת את הצילומים — מסמך שנמחק
+// ב-Firestore אינו גורר את תת-האוסף שלו, וצילומים יתומים
+// היו נשארים לנצח בלי דרך להגיע אליהם.
+async function wipeDamage(f){
+  if (!window.confirm('למחוק את הפגיעה "' + (f.title || '') + '"?\n\n' +
+      DAMAGE_DELETE_WHY + '\n\nלמחוק?')) return;
+  try {
+    try {
+      const ps = await getDocs(
+        collection(db, 'stations', SID, 'faults', f.id, 'photos'));
+      for (const d of ps.docs) {
+        await deleteDoc(doc(db, 'stations', SID, 'faults', f.id, 'photos', d.id));
+      }
+    } catch (ignore) {}
+    await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
+    delete shots[f.id];
+    msg('הפגיעה נמחקה.', 'ok');
+    await loadAll();
+  } catch (e) {
+    msg('המחיקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  }
+}
+
+async function grade(f, sev, sel){
+  if (sev === 'unset') return;
+  sel.disabled = true;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+      severity: sev, graded_by: ME.uid, graded_by_name: ME.full_name || '',
+      graded_key: new Date().toISOString()
+    }, { merge: true });
+    await loadAll();
+  } catch (e) {
+    sel.disabled = false;
+    msg('קביעת החומרה נכשלה. (' + (e.code || e.message) + ')', 'err');
+  }
+}
+
+async function setState(f, st){
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id),
+                 { status: st }, { merge: true });
+    await loadAll();
+  } catch (e) { msg('העדכון נכשל. (' + (e.code || e.message) + ')', 'err'); }
+}
+
+async function closeFault(f){
+  const what = window.prompt('מה נעשה? (אפשר להשאיר ריק)', '');
+  if (what === null) return;
+  try {
+    await setDoc(doc(db, 'stations', SID, 'faults', f.id), {
+      status: 'fixed', fix_note: String(what || '').slice(0, 300),
+      fixed_by: ME.uid, fixed_by_name: ME.full_name || '',
+      fixed_key: new Date().toISOString(), fixed_at: serverTimestamp()
+    }, { merge: true });
+    await loadAll();
+  } catch (e) { msg('הסגירה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+}
+
+// ---------- תצוגות ----------
+
+// ---------- שורת נושא ----------
+//
+// שורה אחת לכל רכב או פריט, ובה **הדיווח האחרון בלבד**.
+// לחיצה פותחת את הלוג המלא — כל מה שאי פעם דווח על אותו
+// נושא, עם כפתורי הדירוג והסגירה.
+//
+// מה שמונע מזה להסתיר תקלה חמורה: הפס הצדדי והתג מציגים את
+// החומרה הגרועה **שעדיין פתוחה**, ולא את זו של הדיווח האחרון.
+// רכב עם פנס שרוף שדווח היום ונזילת שמן שפתוחה מאתמול נראה
+// אדום, לא כחול.
+function subRow(row){
+  const f = row.latest || {};
+  const el = document.createElement('div');
+  el.className = 'subj';
+  el.tabIndex = 0;
+  el.style.borderInlineStartColor = row.color;
+  el.innerHTML =
+    '<div class="hd">' +
+      '<span class="nm">' + esc(row.head || row.name) + '</span>' +
+      '<span class="sev" style="color:' + row.color + '">' +
+        esc(row.sev_he) + '</span></div>' +
+    '<div class="last">' + esc(f.title || '—') + '</div>' +
+    (f.desc ? '<div class="dsc">' + esc(f.desc) + '</div>' : '') +
+    '<div class="ft"><span>' + esc(reportedLine(f)) + '</span>' +
+      '<span class="more">' +
+        (row.hist_count > 1 ? row.hist_count + ' דיווחים · ' : '') +
+        'פתח לוג ›</span></div>';
+  const open = function(){ subjectReport(row); };
+  el.onclick = open;
+  el.onkeydown = function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  };
+  return el;
+}
+
+// הלוג. לרכב — כל מה שאי פעם נפתח עליו; לפריט בלי רכב — כל
+// הדיווחים שנשאו את אותה כותרת. פתוח וסגור, כדי שיהיה אפשר
+// לראות שזו הפעם השלישית שאותה מסכה נקרעת.
+function subjectReport(row){
+  const list = row.history || [];
+  $('dlgTitle').textContent = 'לוג · ' + row.name;
+  $('dlgSub').innerHTML = '<span style="color:' + row.color + '">' +
+    esc(row.sev_he) + '</span> · ' + list.length + ' דיווחים בסך הכל, ' +
+    list.filter(isOpen).length + ' פתוחים';
+  $('dlgBody').innerHTML = '';
+  if (!list.length) {
+    $('dlgBody').innerHTML = '<div class="note">אין דיווח.</div>';
+  }
+  list.forEach(f => $('dlgBody').appendChild(faultCard(f)));
+  $('rep').classList.add('on');
+}
+
+function renderOpen(){
+  const vid = $('fFilter').value;
+  const list = faults.filter(f =>
+    isOpen(f) && (!vid || f.vehicle_id === vid));
+  const rows = bySubject(list, faults);
+  const box = $('openList');
+  box.innerHTML = '';
+  $('openNote').textContent = list.length
+    ? plural(list.length, 'תקלה אחת פתוחה', 'תקלות פתוחות') + ' על ' +
+      plural(rows.length, 'נושא אחד', 'נושאים') + '. לחץ לפתיחת הלוג.'
+    : 'אין דיווח.';
+  rows.forEach(r => box.appendChild(subRow(r)));
+}
+
+function fill(boxId, list, empty){
+  const box = $(boxId);
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">' +
+                    esc(empty) + '</div>';
+    return;
+  }
+  bySubject(list, faults).forEach(r => box.appendChild(subRow(r)));
+}
+
+function renderShift(){
+  const today = toKey(new Date());
+  const bd = handoverBoard(faults, fleet);
+
+  $('hoNote').textContent = 'משמרת ' + (CREW_HE[ME.crew] || ME.crew || '—') +
+    ' · ' + dmy(today);
+
+  // תמונת מצב בשורה אחת לכל דבר שמעניין מפקד שנכנס.
+  const sum = $('hoSummary');
+  sum.innerHTML = '';
+  [
+    { he: 'ממתינות להערכת מפקד',
+      n: faults.filter(x => isOpen(x) && needsGrading(x) && x.kind !== 'note').length,
+      bad: faults.filter(x => isOpen(x) && needsGrading(x) && x.kind !== 'note').length > 0 },
+    { he: 'רכבים משביתים', n: bd.blocked.length, bad: bd.blocked.length > 0 },
+    { he: 'תקלות רכב פתוחות', n: bd.veh.length, bad: false },
+    { he: 'תקלות ציוד ומבנה', n: bd.gear.length, bad: false },
+    { he: 'משימות פתוחות', n: bd.tasks.length, bad: false },
+    { he: 'בתיקון', n: bd.inRepair.length, bad: false },
+    { he: 'רכבי עיגון זמינים',
+      n: bd.anchors.filter(a => a.available).length + ' מתוך ' + bd.anchors.length,
+      bad: bd.anchors.length > 0 && !bd.anchors.filter(a => a.available).length }
+  ].forEach(function (r) {
+    const el = document.createElement('div');
+    el.className = 'v';
+    el.innerHTML =
+      '<span class="dot" style="background:' +
+        (r.bad ? 'var(--bad)' : 'var(--good)') + '"></span>' +
+      '<span class="nm">' + esc(r.he) + '</span>' +
+      '<span class="st" style="color:' + (r.bad ? 'var(--bad)' : 'var(--txt)') + '">' +
+        esc(String(r.n)) + '</span>';
+    sum.appendChild(el);
+  });
+
+  // נוסח אחיד לכל מדור: "אין דיווח." מדור ריק צריך להיקרא
+  // כמדור ריק, ולא כמשפט שצריך לפענח בשש בבוקר.
+  fill('hoVeh',    bd.veh,      'אין דיווח.');
+  fill('hoDamage', faults.filter(x => isDamage(x) && isOpen(x)), 'אין דיווח.');
+  fill('hoGear',   bd.gear,     'אין דיווח.');
+  fill('hoRepair', bd.inRepair, 'אין דיווח.');
+  fill('hoTasks',  bd.tasks,    'אין דיווח.');
+  fill('hoNotes',  bd.notes,    'אין דיווח.');
+
+  const an = $('hoAnchors');
+  an.innerHTML = '';
+  if (!bd.anchors.length) {
+    an.innerHTML = '<div class="note">לא הוגדרו רכבי עיגון.</div>';
+  }
+  bd.anchors.forEach(function (a) {
+    const el = document.createElement('div');
+    el.className = 'v';
+    el.innerHTML =
+      '<span class="dot" style="background:' + a.color + '"></span>' +
+      '<span class="nm">' + esc(a.name) +
+        '<em>' + (a.plate ? esc(a.plate) + ' · ' : '') +
+        (a.available ? 'אפשר לקחת' : 'לא זמין') + '</em></span>' +
+      '<span class="st" style="color:' + a.color + '">' + esc(a.he) + '</span>';
+    an.appendChild(el);
+  });
+
+  renderSign(today);
+}
+
+// ---------- מסירת אחריות ----------
+
+function renderSign(today){
+  const id = handoverId(ME.crew, today);
+  const h = handovers[id];
+  const box = $('hoState');
+
+  // רק מפקד או סגנו מקבל אחריות. כבאי רואה את הרישום ולא
+  // יכול לחתום עליו.
+  const canSign = CAN_MANAGE && !!ME.crew;
+
+  if (h && h.accepted_key) {
+    box.innerHTML = '<div class="f done" style="border-inline-start-color:var(--good)">' +
+      '<div class="ttl">✓ החפיפה נמסרה</div>' +
+      '<div class="rep" style="border-top:0;padding-top:6px">' +
+      esc(acceptedLine(h)) + '</div>' +
+      (h.assessment ? '<div class="desc">' + esc(h.assessment) + '</div>' : '') +
+      '</div>';
+    $('hoAcceptWrap').classList.add('hide');
+  } else {
+    box.innerHTML = '<div class="f minor">' +
+      '<div class="ttl">האחריות עוד לא נמסרה היום</div>' +
+      '<div class="rep" style="border-top:0;padding-top:6px">' +
+      (canSign
+        ? 'קרא את הדף, ואז אשר קבלת אחריות.'
+        : 'מפקד המשמרת או סגנו מאשר את קבלת האחריות.') +
+      '</div></div>';
+    $('hoAcceptWrap').classList.toggle('hide', !canSign);
+  }
+
+  // הלוג. זו הרשומה שאלדד ביקש — מי מסר למי ומתי.
+  const log = Object.keys(handovers).map(k => handovers[k])
+    .filter(h => h && h.accepted_key)
+    .sort((a,b) => String(b.accepted_key).localeCompare(String(a.accepted_key)))
+    .slice(0, 20);
+  const lb = $('hoLog');
+  lb.innerHTML = log.length
+    ? '<div class="note" style="margin-top:14px;padding-top:12px;' +
+      'border-top:1px solid var(--line)"><b>לוג מסירות</b><br>' +
+      log.map(h => esc(acceptedLine(h))).join('<br>') + '</div>'
+    : '';
+}
+
+$('btnAccept') && ($('btnAccept').onclick = async () => {
+  const today = toKey(new Date());
+  const id = handoverId(ME.crew, today);
+  if (!window.confirm('לאשר קבלת אחריות על המשמרת?\n\n' +
+      'הפעולה נרשמת עם השם והשעה ומהווה חתימה רשמית. ' +
+      'אי אפשר לשנות אותה אחר כך.')) return;
+
+  // מי מסר: המפקד שחתם על החפיפה הקודמת. אם אין — נרשם
+  // במפורש שלא נמצאה מסירה קודמת, ולא מומצא שם.
+  const prev = Object.keys(handovers).map(k => handovers[k])
+    .filter(h => h && h.accepted_key && h.to_uid !== ME.uid)
+    .sort((a,b) => String(b.accepted_key).localeCompare(String(a.accepted_key)))[0];
+
+  const b = $('btnAccept'); b.disabled = true;
+  try {
+    const now = new Date();
+    await setDoc(doc(db, 'stations', SID, 'handovers', id), {
+      crew: ME.crew, date: today,
+      from_uid: prev ? prev.to_uid : '',
+      from_name: prev ? prev.to_name : 'לא נרשמה מסירה קודמת',
+      to_uid: ME.uid, to_name: ME.full_name || '',
+      assessment: $('hoMsg').value.trim(),
+      accepted_key: now.toISOString(),
+      accepted_at: serverTimestamp()
+    });
+    msg('האחריות נרשמה על שמך.', 'ok', 'hoSignMsg');
+    $('hoMsg').value = '';
+    await loadAll();
+  } catch (e) {
+    b.disabled = false;
+    msg('הרישום נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+        'err', 'hoSignMsg');
+  }
+});
+
+// ---------- דוח נזק לרכב ----------
+
+function damageReport(v){
+  const list = vehicleReport(faults, v.id);
+  const st = vehicleState(faults, v.id);
+  $('dlgBody').innerHTML = '';
+  $('dlgTitle').textContent = 'דוח נזק · ' + v.name;
+  $('dlgSub').innerHTML = '<span style="color:' + st.color + '">' + esc(st.he) +
+    '</span> · ' + plural(list.length, 'תקלה אחת', 'תקלות') + ' בסך הכל, ' +
+    list.filter(isOpen).length + ' פתוחות';
+  if (!list.length) {
+    $('dlgBody').innerHTML = '<div class="note">לא נפתחו תקלות על הרכב הזה.</div>';
+  }
+  list.forEach(f => $('dlgBody').appendChild(faultCard(f)));
+  $('rep').classList.add('on');
+}
+
+function renderFleet(origin){
+  const box = $('fleetList');
+  box.innerHTML = '';
+  if (!fleet.length) {
+    box.innerHTML = '<div class="note">לא הוגדרו רכבים. רכבי כיבוי ' +
+      'וחילוץ מוגדרים בלוח הציוות; שאר הרכבים נוספים כאן.</div>';
+  }
+  fleet.forEach(function (v) {
+    const st = vehicleState(faults, v.id);
+    const el = document.createElement('div');
+    el.className = 'v';
+    el.innerHTML =
+      '<span class="dot" style="background:' + st.color + '"></span>' +
+      '<span class="nm">' + esc(v.name) +
+        '<em>' + (v.kind === 'anchor' ? 'רכב עיגון' : 'רכב מבצעי') +
+        (v.role ? ' · ' + esc(v.role) : '') +
+        (st.faults.length ? ' · ' +
+           plural(st.faults.length, 'תקלה אחת פתוחה', 'תקלות פתוחות') : '') +
+        '</em></span>' +
+      (hasDamage(faults, v.id)
+        ? '<span class="st" style="color:#a1887f">' +
+          damagesOf(faults, v.id).length + ' פגיעות</span>' : '') +
+      '<span class="st" style="color:' + st.color + '">' + esc(st.he) + '</span>';
+    el.style.cursor = 'pointer';
+    el.title = 'פתח דוח נזק';
+    el.onclick = () => damageReport(v);
+
+    // עריכה — שם, מספר רישוי, והורדה מהצי. כפתור נפרד ולא לחיצה
+    // על השורה, בדיוק מאותה סיבה שכפתור „מפה" נפרד: לשורה כבר יש
+    // משמעות אחת, ושתי פעולות על אותה לחיצה זה הימור.
+    if (CAN_FLEET) {
+      const ed = document.createElement('button');
+      ed.className = 'btn sm edit';
+      ed.textContent = 'ערוך';
+      ed.title = 'שם, מספר רישוי, והורדה מהצי';
+      ed.setAttribute('data-veh-edit', v.id);
+      ed.onclick = (e) => { e.stopPropagation(); openVehicleEditor(v, origin); };
+      el.appendChild(ed);
+    }
+
+    // מפת הרכב — ארבע התמונות והנקודות עליהן. כפתור נפרד
+    // ולא לחיצה על השורה, כי לשורה כבר יש משמעות אחרת
+    // ושתי פעולות על אותה לחיצה זה הימור.
+    const mp = document.createElement('button');
+    mp.className = 'btn sm';
+    mp.textContent = 'מפה';
+    mp.title = 'ארבע תמונות הרכב, עם סימון התקלות והפגיעות';
+    mp.onclick = (e) => {
+      e.stopPropagation();
+      location.href = './vehicle.html?v=' + encodeURIComponent(v.id);
+    };
+    el.appendChild(mp);
+
+    box.appendChild(el);
+  });
+
+  renderRemoved(origin);
+}
+
+/* רכבים שהורדו מהצי — משני המקורות, עם דרך אחת בחזרה. מוצג רק
+ * למי שרשאי לערוך את הצי, וכשאין כאלה הקטע פשוט אינו קיים: רשימה
+ * ריקה עם כותרת נראית כמו תקלה. */
+function renderRemoved(origin){
+  const al = $('anchorList');
+  if (!al) return;
+  al.innerHTML = '';
+  if (!CAN_FLEET) return;
+
+  const off = []
+    .concat(inactiveVehicles((boardDoc && boardDoc.vehicles) || [])
+      .map(v => ({ id: v.id, name: v.name || v.id, plate: v.plate || '', kind: 'fire' })))
+    .concat(inactiveVehicles(anchorDocs)
+      .map(v => ({ id: v.id, name: v.name || v.id, plate: v.plate || '', kind: 'anchor' })));
+
+  if (!off.length) return;
+
+  const head = document.createElement('div');
+  head.className = 'note';
+  head.style.marginTop = '12px';
+  head.textContent = 'ירדו מהצי · ' + plural(off.length, 'רכב אחד', 'רכבים');
+  al.appendChild(head);
+
+  off.forEach(function (v) {
+    const row = document.createElement('div');
+    row.className = 'off';
+    row.setAttribute('data-veh-off', v.id);
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = v.name + (v.plate ? ' · ' + v.plate : '') +
+      (v.kind === 'anchor' ? '' : ' · מבצעי');
+    row.appendChild(nm);
+    const back = document.createElement('button');
+    back.className = 'btn sm';
+    back.textContent = 'החזר לצי';
+    back.setAttribute('data-veh-restore', v.id);
+    back.onclick = () => restoreVehicle(v.kind, v.id, origin);
+    row.appendChild(back);
+    al.appendChild(row);
+  });
+}
+
+function renderHist(){
+  const list = faults.filter(f => !isOpen(f));
+  const box = $('histList');
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = '<div class="note" style="padding-top:8px">אין דיווח.</div>';
+    return;
+  }
+  bySubject(list, faults).slice(0, 60)
+    .forEach(r => box.appendChild(subRow(r)));
+}
+</script>
+</body>
+</html>

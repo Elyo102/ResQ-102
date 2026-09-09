@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — בקרת גישה</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:20px }
+  .wrap{ max-width:900px; margin:0 auto }
+  h1{ font-size:22px; margin:0 0 4px }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:22px }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:20px; margin-bottom:16px }
+
+  label{ display:block; font-size:13px; color:var(--muted); margin:12px 0 4px }
+  input, select{ width:100%; padding:11px; background:var(--input); color:var(--txt);
+        border:1px solid var(--line); border-radius:6px; font-size:15px;
+        font-family:inherit }
+  button{ background:var(--accent); color:var(--on-accent); border:0; border-radius:6px;
+        padding:11px 20px; font-size:15px; cursor:pointer; margin-top:16px;
+        font-family:inherit }
+  button:disabled{ opacity:.5; cursor:not-allowed }
+  .link{ background:none; border:1px solid var(--line); color:var(--muted) }
+
+  .state{ color:var(--muted); font-size:13px; line-height:1.8 }
+  .msg{ margin-top:14px; padding:11px; border-radius:6px; font-size:13px;
+        line-height:1.6; display:none }
+  .msg.err{ display:block; background:var(--err-bg); color:var(--err-fg) }
+  .msg.ok{ display:block; background:var(--ok-bg); color:var(--ok-fg) }
+  .msg.info{ display:block; background:var(--chip); color:var(--dim) }
+  .hide{ display:none }
+
+  .tbl{ width:100%; border-collapse:collapse; margin-top:14px; font-size:14px }
+  .tbl th{ text-align:right; color:var(--muted); font-weight:600;
+           font-size:12px; padding:8px 6px; border-bottom:1px solid var(--line);
+           white-space:nowrap }
+  .tbl td{ padding:11px 6px; border-bottom:1px solid var(--line-soft); vertical-align:top }
+  .tbl tr:last-child td{ border-bottom:0 }
+  .nm{ font-weight:600 }
+  .em{ color:var(--muted); font-size:12.5px; direction:ltr; text-align:right }
+  .num{ font-variant-numeric:tabular-nums; white-space:nowrap }
+  .never{ color:var(--warn) }
+  .crew{ display:inline-block; border:1px solid var(--line); border-radius:4px;
+         padding:1px 7px; font-size:12px; color:var(--muted) }
+  .scroll{ overflow-x:auto }
+  .sum{ display:flex; gap:22px; flex-wrap:wrap; margin-top:6px;
+        font-size:13px; color:var(--muted) }
+  .sum b{ color:var(--txt); font-size:16px; display:block;
+          font-variant-numeric:tabular-nums }
+</style>
+</head>
+<body>
+<div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+// מציג שגיאות על המסך במקום להשאיר אותן בקונסולה.
+// בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
+// והמסך נראה תקין לגמרי.
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+
+  <h1>בקרת גישה</h1>
+  <div class="sub">מי רשום בתחנה, ותאריך הכניסה האחרון שלו.</div>
+
+  <!-- כניסה -->
+  <div class="card hide" id="authCard">
+    <div class="state">הכניסה למסך הזה מותרת לסגל התחנה ולמנהל המערכת.</div>
+    <label>מספר עובד או מייל</label>
+    <input type="text" id="who" autocomplete="username">
+    <label>סיסמה</label>
+    <input type="password" id="pass" autocomplete="current-password">
+    <button id="btnIn">כניסה</button>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <!-- אין הרשאה -->
+  <div class="card hide" id="denyCard">
+    <div class="state" id="denyWho"></div>
+    <div class="state">אין לחשבון הזה הרשאת צפייה בבקרת הגישה.</div>
+    <button class="link" id="btnOutDeny">התנתק</button>
+  </div>
+
+  <!-- הטבלה -->
+  <div id="work" class="hide">
+    <div class="card">
+      <div class="state" id="whoAmI"></div>
+
+      <label>תחנה</label>
+      <select id="sid"></select>
+
+      <div class="sum" id="summary"></div>
+
+      <button id="btnLoad">טען</button>
+      <button class="link" id="btnOut">התנתק</button>
+
+      <div class="scroll">
+        <table class="tbl hide" id="tbl">
+          <thead>
+            <tr>
+              <th>שם</th>
+              <th>מספר עובד</th>
+              <th>תפקיד</th>
+              <th>משמרת</th>
+              <th>טלפון</th>
+              <th>מייל</th>
+              <th>תאריך כניסה אחרון</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { STATIONS, stationName } from './stations.js?v=42h7';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h7';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword,
+         signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
+
+// אין מסך כניסה בכל דף. יש אחד, והוא login.html.
+//
+// הגרסה הקודמת שכפלה טופס כניסה לכל מסך — וכל אחד מהם ידע
+// לקבל מייל בלבד, בעוד המסך הראשי מקבל גם מספר עובד. התוצאה:
+// מי שהקליד את מספר העובד שלו כאן נדחה בלי סיבה מובנת.
+function goSignIn(){
+  const back = encodeURIComponent(location.pathname.split('/').pop() || '');
+  location.replace('./login.html?next=' + back);
+}
+
+
+// הסרגל נבנה מיד, לפני כל קריאה לשרת. בגרסה הקודמת הוא נבנה
+// רק אחרי שהפרופיל נטען — ואם הטעינה איטית, נכשלת, או שהמשתמש
+// נחסם, לא היה תפריט בכלל ולא הייתה דרך לצאת מהמסך.
+renderStuckNav('');
+
+const $ = id => document.getElementById(id);
+initPWA({ offer: false });
+
+// שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
+// עותקים של אותה מפה היו פירושם תפקיד חדש שמופיע למשתמש
+// כמחרוזת באנגלית באחד המסכים.
+const ROLE_HE = ROLES_HE;
+const CREW_HE = { A: "א'", B: "ב'", C: "ג'" };
+
+function msg(el, text, kind){
+  const m = $(el); m.textContent = text; m.className = 'msg ' + (kind || '');
+}
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------- כניסה ----------
+
+$('btnIn').onclick = async () => {
+  const btn = $('btnIn');
+  const id  = $('who').value.trim();
+  const pw  = $('pass').value;
+  if (!id || !pw) { msg('authMsg', 'נא למלא את שני השדות.', 'err'); return; }
+
+  btn.disabled = true;
+  try {
+    if (id.indexOf('@') !== -1) {
+      await signInWithEmailAndPassword(auth, id.toLowerCase(), pw);
+    } else {
+      // loginWithEmployeeNumber מחזיר את כתובת המייל, לא אסימון.
+      // מסלול האסימון הוסר מהשרת; הקוד כאן נשאר מאחור, ולכן
+      // **סיסמה נכונה דווחה כשגויה** — res.data.token היה
+      // undefined והכניסה נכשלה בשקט. login.html כבר תוקן.
+      const res = await callLogin({ emp: id, password: pw });
+      await signInWithEmailAndPassword(auth, res.data.email, pw);
+    }
+  } catch (e) {
+    msg('authMsg', 'מספר עובד או סיסמה שגויים.', 'err');
+  }
+  btn.disabled = false;
+};
+
+$('btnOut').onclick     = () => signOut(auth);
+$('btnOutDeny').onclick = () => signOut(auth);
+
+// ---------- הרשאה ----------
+// התפקיד נקרא מהטוקן — אותו מקור שכללי האבטחה קוראים ממנו.
+// כך אין מצב שהמסך נפתח והשרת דוחה כל שאילתה.
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { goSignIn(); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true;
+  // אותה רשימה בדיוק כמו staff() בכללי האבטחה וכמו nav.js.
+  //
+  // הגרסה הקודמת פספסה את סגן מפקד המשמרת ואת מפקד התחנה —
+  // הסרגל הציג להם את הכפתור והמסך חסם אותם. וכללה מפקד מחוז,
+  // שאינו staff באף כלל: הוא עבר את השער כאן ואז נכשל בקריאה
+  // הראשונה מהשרת.
+  const isStaff = ['deputy', 'commander', 'station_commander',
+                   'hr_coordinator'].indexOf(c.role) !== -1;
+
+  if (!isSuper && !isStaff) {
+    $('authCard').classList.add('hide');
+    $('work').classList.add('hide');
+    $('denyCard').classList.remove('hide');
+    renderStuckNav(user.email || '');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    return;
+  }
+
+  $('authCard').classList.add('hide');
+  $('denyCard').classList.add('hide');
+  $('work').classList.remove('hide');
+
+  renderNav(c, 'access.html', user.email || '');
+  watchCallouts(db, c.stationId || STATION_ID, user.uid, { name: user.email || '' });
+
+  $('whoAmI').textContent = 'מחובר: ' +
+    (isSuper ? 'מנהל מערכת' : (ROLE_HE[c.role] || c.role));
+
+  // רשימה קבועה, ולא הקלדה חופשית. ערך שאינו ברשימה — למשל
+  // תחנה שנוצרה בטעות — עדיין מוצג, כדי שאפשר יהיה לראות מה
+  // יושב שם ולא שייעלם מהעין.
+  const want = c.stationId || STATION_ID;
+  let html = '';
+  let found = false;
+  STATIONS.forEach(function (st) {
+    const on = st.id === want;
+    if (on) found = true;
+    html += '<option value="' + esc(st.id) + '"' + (on ? ' selected' : '') +
+            '>' + esc(st.name) + '</option>';
+  });
+  if (want && !found) {
+    html += '<option value="' + esc(want) + '" selected>' + esc(want) +
+            ' — לא ברשימה</option>';
+  }
+  $('sid').innerHTML = html;
+  load();
+});
+
+// ---------- טעינה ----------
+
+$('btnLoad').onclick = () => load();
+
+function fmt(ts){
+  if (!ts || !ts.toDate) return null;
+  const d = ts.toDate();
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() +
+         ' · ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+async function load(){
+  const sid = $('sid').value;
+  if (!sid) { msg('msg', 'נא להזין תחנה.', 'err'); return; }
+
+  const btn = $('btnLoad');
+  btn.disabled = true;
+  msg('msg', 'טוען...', 'info');
+  $('tbl').classList.add('hide');
+  $('rows').innerHTML = '';
+  $('summary').innerHTML = '';
+
+  let users = [], presence = {};
+
+  try {
+    const us = await getDocs(collection(db, 'stations', sid, 'users'));
+    // is_active=false נכתב בעת עזיבה. בלי הסינון הזה מי שהוסרו לו
+    // ההרשאות המשיך להופיע כאן עם טלפון ומייל.
+    us.forEach(function (d) {
+      const v = d.data() || {};
+      if (v.is_active === false) return;
+      users.push(Object.assign({ uid: d.id }, v));
+    });
+  } catch (e) {
+    msg('msg', 'אין הרשאה לקרוא את התחנה הזו, או שהיא לא קיימת. (' +
+        (e.code || e.message) + ')', 'err');
+    btn.disabled = false;
+    return;
+  }
+
+  try {
+    const ps = await getDocs(collection(db, 'stations', sid, 'presence'));
+    ps.forEach(d => { presence[d.id] = d.data(); });
+  } catch (ignore) {}
+
+  if (!users.length) {
+    msg('msg', 'אין כבאים רשומים בתחנה הזו.', 'info');
+    btn.disabled = false;
+    return;
+  }
+
+  users.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'he'));
+
+  let never = 0;
+
+  users.forEach(function (u) {
+    const p  = presence[u.uid] || {};
+    const ts = p.last_login;
+
+    if (!ts) never++;
+
+    const when = ts
+      ? '<span class="num">' + fmt(ts) + '</span>'
+      : '<span class="never">מעולם לא</span>';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="nm">' + esc(u.full_name || '—') + '</td>' +
+      '<td class="num">' + esc(u.employee_number || '—') + '</td>' +
+      '<td>' + esc(ROLE_HE[u.role] || u.role || '—') + '</td>' +
+      '<td>' + (u.crew ? '<span class="crew">' + esc(CREW_HE[u.crew] || u.crew) + '</span>' : '—') + '</td>' +
+      '<td class="num">' + esc(u.phone || '—') + '</td>' +
+      '<td class="em">' + esc(u.email || '—') + '</td>' +
+      '<td>' + when + '</td>';
+    $('rows').appendChild(tr);
+  });
+
+  $('summary').innerHTML =
+    '<div><b>' + users.length + '</b>רשומים</div>' +
+    '<div><b>' + never + '</b>מעולם לא נכנסו</div>';
+
+  $('tbl').classList.remove('hide');
+  msg('msg', '', '');
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

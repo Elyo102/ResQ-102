@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResQ — אנליטיקה</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון. מודול נטען מאוחר מדי,
+   והמשתמש היה רואה הבזק של הפלטה השנייה בכל מעבר מסך. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<style>
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
+  .wrap{ max-width:1180px; margin:0 auto }
+  h1{ font-size:21px; margin:0 0 3px }
+  .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
+
+  .card{ background:var(--card); border:1px solid var(--line);
+         border-radius:12px; padding:16px; margin-bottom:14px }
+
+  .win{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:16px }
+  .win button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
+               color:var(--muted); border-radius:9px; padding:8px 15px;
+               font-family:inherit; font-size:13.5px; font-weight:600; cursor:pointer }
+  .win button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+
+  /* ---------- כותרת מסקנה ---------- */
+  .lead{ border:1px solid var(--line); border-inline-start:4px solid var(--accent);
+         border-radius:10px; padding:14px 16px; background:var(--panel);
+         font-size:14.5px; line-height:1.75; margin-bottom:14px }
+  /* שם הרכב או האדם — ההדגשה של השורה.
+     היה כאן var(--on-accent), כלומר לבן. הוא נועד לטקסט
+     **על** רקע ההדגשה הכתום, אבל הכרטיס הזה תמיד בהיר:
+     panel רגיל, bad-bg ורוד, good-bg ירקרק. התוצאה הייתה
+     לבן על בהיר — השם פשוט נעלם, ומי שקרא את המשפט לא ידע
+     על איזה רכב מדובר. */
+  .lead b{ color:var(--txt) }
+  .lead.bad b{ color:var(--bad) }
+  .lead.ok  b{ color:var(--good) }
+  .lead.bad{ border-inline-start-color:var(--bad); background:var(--bad-bg) }
+  .lead.ok{ border-inline-start-color:var(--good); background:var(--good-bg) }
+
+  /* ---------- טבלת רכבים ---------- */
+  .tblwrap{ overflow-x:auto; margin-top:10px }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; min-width:640px }
+  th{ text-align:start; padding:9px 11px; color:var(--muted); font-size:11.5px;
+      font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap }
+  td{ padding:10px 11px; border-bottom:1px solid var(--line-soft); vertical-align:middle }
+  tr:last-child td{ border-bottom:0 }
+  td.n{ font-variant-numeric:tabular-nums; white-space:nowrap }
+  .lt{ font-size:11.5px; font-weight:600; color:var(--muted) }
+  td .nm{ font-weight:700 }
+  td .why{ font-size:11.5px; color:var(--muted); margin-top:2px }
+
+  /* פס יחסי בתוך התא. מספר לבד לא מראה יחס, וטבלה של
+     מספרים דורשת שהעין תשווה אותם בעצמה. */
+  .bar{ height:7px; background:var(--track); border-radius:99px; overflow:hidden;
+        min-width:60px; margin-top:5px }
+  .bar i{ display:block; height:100%; border-radius:99px; background:var(--accent) }
+  .bar i.bad{ background:var(--bad) }
+
+  /* ---------- עומסים ---------- */
+  .load{ display:grid; grid-template-columns:auto 1fr auto; gap:8px 12px;
+         align-items:center; margin-top:12px; font-size:13.5px }
+  .load .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+             max-width:190px }
+  .load .nm i{ font-style:normal; color:var(--muted); font-size:11.5px }
+  .load .tr{ height:10px; background:var(--track); border-radius:99px; overflow:hidden;
+             display:flex }
+  .load .tr span{ height:100% }
+  .load .tr .off{ background:var(--warn) }
+  .load .tr .sh{ background:var(--crewC) }
+  .load .tr .sw{ background:#26a69a }
+  .load .n{ font-variant-numeric:tabular-nums; color:var(--muted);
+            font-size:12.5px; white-space:nowrap }
+  .load .n b{ color:var(--txt) }
+
+  .key{ display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;
+        font-size:11.5px; color:var(--muted) }
+  .key span{ display:flex; align-items:center; gap:5px }
+  .key i{ width:9px; height:9px; border-radius:2px; display:inline-block }
+
+  /* ---------- טבלת הרכבים בטלפון ----------
+     שש עמודות ורוחב מזערי של 640 פיקסלים: בטלפון נראו שתי
+     עמודות, וארבע האחרות — תקלות, פגיעות, פתוחות וממוצע
+     סגירה — היו מעבר לקצה. אפשר לגלול אליהן, אבל אף אחד לא
+     גולל לצד בטבלה שהוא לא יודע שהיא נמשכת.
+     לכן כל רכב הופך לכרטיס, והמדדים יורדים לשורה משלהם עם
+     תווית לכל אחד. */
+  @media (max-width:620px){
+    #vTbl{ min-width:0 }
+    #vTbl, #vTbl tbody{ display:block }
+    #vTbl thead{ display:none }
+    /* שתי עמודות קבועות ולא שורה זורמת: כשהמדדים פשוט
+       נגלשים, כל כרטיס נשבר במקום אחר והתוויות לא עומדות
+       זו מתחת לזו. רשת מיישרת את כולם. */
+    #vTbl tr{ display:grid; grid-template-columns:1fr 1fr;
+              column-gap:12px; row-gap:1px;
+              border:1px solid var(--line-soft); border-radius:10px;
+              padding:10px 12px; margin-bottom:8px }
+    #vTbl td{ border:0; padding:0 }
+    #vTbl td:first-child{ grid-column:1 / -1; margin-bottom:7px }
+    #vTbl td.n{ display:block; margin:0;
+                font-size:12.5px; line-height:1.9 }
+    #vTbl td.n::before{ content:attr(data-l) ': '; color:var(--muted);
+                        font-size:11px; font-weight:600 }
+    /* הפס משווה בין שורות זו לזו. בכרטיסים נפרדים אין מה
+       להשוות אליו, והוא רק מותח את השורה. */
+    #vTbl .bar{ display:none }
+    #vTbl td[colspan]{ display:block; padding:14px 0 }
+    #vTbl td[colspan]::before{ content:none }
+  }
+
+  .hide{ display:none !important }
+</style>
+</head>
+<body>
+
+<div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
+  <b>המערכת נתקלה בשגיאה</b>
+  <span id="errWhat"></span>
+  <code id="errRaw"></code>
+</div>
+<script>
+(function(){
+  function boom(what, raw){
+    var b = document.getElementById('errBar');
+    if (!b) return;
+    document.getElementById('errWhat').textContent = what;
+    document.getElementById('errRaw').textContent  = raw || '';
+    b.style.display = 'block';
+  }
+  window.addEventListener('error', function(e){
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
+         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason || {};
+    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
+         (r.code || '') + ' ' + (r.message || String(r)));
+  });
+})();
+</script>
+
+<div class="wrap">
+  <h1>אנליטיקה</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note">המסך פתוח לסגל בלבד.</div>
+  </div>
+
+  <div id="work" class="hide">
+
+    <div class="win" id="winBar"></div>
+
+    <div class="card">
+      <h2>רכבים</h2>
+      <div class="note">
+        ממוין לפי ימי השבתה — כמה זמן הרכב לא היה זמין למשמרת.
+        זו השאלה היחידה שמתורגמת לכשירות מבצעית.
+      </div>
+      <div id="vLead"></div>
+      <div class="tblwrap"><table id="vTbl"></table></div>
+    </div>
+
+    <div class="card">
+      <h2>חלוקת עומסים</h2>
+      <div class="note" id="scoreWhy">—</div>
+      <div id="lLead"></div>
+      <div class="load" id="lList"></div>
+      <div class="key">
+        <span><i style="background:var(--warn)"></i> אבטחה ביום חופש</span>
+        <span><i style="background:var(--crewC)"></i> אבטחה בתוך המשמרת</span>
+        <span><i style="background:#26a69a"></i> כניסה בהחלפה</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
+import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { initPWA } from './pwa.js?v=42h7';
+import { watchCallouts } from './callout.js?v=42h7';
+import { CREW_HE } from './rotation.js?v=42h7';
+import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h7';
+import { mergeFleet } from './faults.js?v=42h7';
+import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h7';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from './monitored-functions.js?v=42h7';
+
+const app  = initializeApp(firebaseConfig);
+// App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
+import { initAppCheck } from './appcheck.js?v=42h7';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const fns  = getFunctions(app, 'europe-west1');
+const guardStatsCall = httpsCallable(fns, 'getGuardLoadStatistics');
+const scheduleStatusCall = httpsCallable(fns, 'getScheduleRuntimeStatus');
+const workdaysCall = httpsCallable(fns, 'getEffectiveWorkdays');
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let SID = '', ME = null, WIN = '365';
+let fleet = [], faults = [], guards = [], swaps = [], people = [];
+let effective = null, ctx = {};
+let guardLoadError = '';
+let scheduleLoadError = '';
+let guardLoadGeneration = 0;
+
+// ---------- הרשאה ----------
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=stats.html'); return; }
+
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+
+  const isSuper = c.super === true;
+  // אנליטיקה היא כלי ניהול. כבאי רואה את העומס שלו במסך
+  // האבטחות; כאן מסתכלים על אנשים אחרים, וזה לא לכולם.
+  let liveManager = false;
+  try {
+    const status = await scheduleStatusCall();
+    liveManager = !!(status && status.data && status.data.manager === true);
+  } catch (ignore) {}
+  const isStaff = isSuper || liveManager ||
+    ['deputy','commander','station_commander','hr_coordinator']
+      .indexOf(c.role) !== -1;
+
+  SID = c.stationId || (isSuper ? STATION_ID : '');
+  if (!isStaff || !SID) {
+    $('denyCard').classList.remove('hide');
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
+    renderStuckNav(user.email || '');
+    return;
+  }
+
+  ME = { uid: user.uid, crew: c.shift || '', full_name: '' };
+  try {
+    const u = await getDoc(doc(db, 'stations', SID, 'users', user.uid));
+    if (u.exists()) ME.full_name = (u.data() || {}).full_name || '';
+  } catch (ignore) {}
+
+  $('work').classList.remove('hide');
+  $('whoSub').textContent = (ME.full_name || user.email) +
+    (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
+  $('scoreWhy').textContent = SCORE_WHY;
+  renderNav(c, 'stats.html', user.email || '');
+  watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
+
+  await loadAll();
+  buildWindows();
+});
+
+// ---------- טעינה ----------
+
+function guardDayOffset(key, offset){
+  const d = new Date(String(key || '') + 'T12:00:00');
+  d.setDate(d.getDate() + offset);
+  return toKey(d);
+}
+
+function guardStatisticsRange(windowId){
+  const today = toKey(new Date());
+  // "הכול" הוסר מלוח העומס: מסלול השרת נושא לכל היותר שנה אחת,
+  // כדי שהמסך לא יהפוך לקריאת היסטוריה בלתי מוגבלת. גם אם טאב ישן
+  // שולח את הערך הישן, נשמרת תקרת השנה הבטוחה.
+  const from = sinceKey(windowId || WIN, new Date()) || guardDayOffset(today, -365);
+  return { from:from, to:today };
+}
+
+async function loadGuardStatistics(windowId){
+  const selectedWindow = windowId || WIN;
+  const generation = ++guardLoadGeneration;
+  let nextGuards = [];
+  let nextError = '';
+  try {
+    const result = await guardStatsCall(guardStatisticsRange(selectedWindow));
+    const rows = result && result.data && result.data.guards;
+    // A missing board is not an empty board. Treating a malformed/missing
+    // response as zero guards would publish a reassuring but false workload.
+    if (!Array.isArray(rows)) throw new Error('guard-statistics-contract');
+    nextGuards = rows.filter(row => row && typeof row === 'object');
+  } catch (error) {
+    nextError = 'לא הצלחנו לטעון את נתוני האבטחות לחלון שנבחר.';
+  }
+  // A slower earlier window must not overwrite the range label or the rows of
+  // the latest click. Publish only when both the request generation and the
+  // selected window still match.
+  if (generation !== guardLoadGeneration || WIN !== selectedWindow) return false;
+  guards = nextGuards;
+  guardLoadError = nextError;
+  return true;
+}
+
+// ⭐ מי עובד — מהשרת, מהסידור האפקטיבי, לכל מי שבסגל, לשנה אחת.
+// המסך מחליף חלונות קצרים בלי קריאה נוספת. תשובה פגומה → אין
+// סיווג, לא „כולם ביום חופש".
+async function loadEffectiveWorkdays(uids){
+  scheduleLoadError = '';
+  try {
+    const list = Array.from(new Set(uids.filter(Boolean)));
+    if (list.length > WORKDAYS_MAX_UIDS) throw new Error('workdays-too-many-uids');
+    const range = guardStatisticsRange('365');
+    effective = parseEffectiveWorkdays(await workdaysCall({ from: range.from, to: range.to, uids: list }));
+    return true;
+  } catch (error) {
+    effective = null;
+    scheduleLoadError = 'לא הצלחנו לטעון את בסיס הסידור. נתוני העומס לא יחושבו עד לרענון.';
+    return false;
+  }
+}
+
+async function loadAll(){
+  // כל האוספים נטענים **במקביל**, לא בזה אחר זה.
+  //
+  // הגרסה הקודמת חיכתה לכל אוסף לפני שביקשה את הבא. שמונה
+  // אוספים כפול כ-200 מילישניות הלוך-חזור מטלפון סלולרי הם
+  // כמעט שתי שניות של מסך ריק — והנתונים אינם תלויים זה בזה,
+  // אז ההמתנה הייתה מיותרת לגמרי.
+  //
+  // grab מפעיל מיד ואוסף את ההבטחה. הקריאות באתר הקריאה
+  // נשארו עם await, וזה בסדר: await על undefined אינו הליכה
+  // לרשת, ולכן כל השמונה יוצאות באותו רגע. מחכים להן פעם
+  // אחת ב-flush.
+  const jobs = [];
+  const grab = (name, fn) => {
+    jobs.push((async () => {
+      try { const s = await getDocs(collection(db, 'stations', SID, name)); fn(s); }
+      catch (ignore) {}
+    })());
+  };
+  const flush = () => Promise.all(jobs);
+  const guardStats = loadGuardStatistics(WIN);
+
+  people = [];
+  await grab('roster', s => s.forEach(d => {
+    const v = d.data() || {};
+    if (v.is_active === false) return;
+    people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '' });
+  }));
+
+  faults = [];
+  await grab('faults', s => s.forEach(d =>
+    faults.push(Object.assign({ id: d.id }, d.data() || {}))));
+
+  swaps = [];
+  await grab('swaps', s => s.forEach(d => swaps.push(d.data() || {})));
+
+  let boardVehicles = [];
+  try {
+    const b = await getDoc(doc(db, 'stations', SID, 'config', 'board'));
+    if (b.exists()) boardVehicles = (b.data() || {}).vehicles || [];
+  } catch (ignore) {}
+
+  const anchors = [];
+  await grab('vehicles', s => s.forEach(d => {
+    const v = d.data() || {};
+    if (v.kind && v.kind !== 'anchor') return;
+    anchors.push(Object.assign({ id: d.id }, v));
+  }));
+
+  await flush();
+  // אחרי הסגל: השאלה „מי עובד" נשאלת על כל מי שבסגל, בקריאה אחת.
+  await Promise.all([guardStats, loadEffectiveWorkdays(people.map(p => p.uid))]);
+
+  fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
+  ctx = { effective, swaps: swaps.filter(s => s.status === 'approved'), guards };
+
+  render();
+}
+
+// ---------- חלון זמן ----------
+
+function buildWindows(){
+  const bar = $('winBar');
+  bar.innerHTML = '';
+  WINDOWS.filter(w => w.id !== 'all').forEach(function (w) {
+    const b = document.createElement('button');
+    b.textContent = w.he;
+    b.className = w.id === WIN ? 'on' : '';
+    b.onclick = async function () {
+      WIN = w.id;
+      buildWindows();
+      if (!await loadGuardStatistics(w.id)) return;
+      ctx = { effective, swaps:swaps.filter(s => s.status === 'approved'), guards };
+      render();
+    };
+    bar.appendChild(b);
+  });
+}
+
+// ---------- ציור ----------
+
+function render(){
+  const since = sinceKey(WIN);
+  renderVehicles(since);
+  renderLoad(since);
+}
+
+function renderVehicles(since){
+  const rows = vehicleStats(fleet, faults, since);
+  const maxDown = Math.max(1, ...rows.map(r => r.downDays));
+
+  const worst = rows.filter(r => r.downDays > 0)[0];
+  $('vLead').innerHTML = !rows.length
+    ? '<div class="lead">לא הוגדרו רכבים.</div>'
+    : worst
+    ? '<div class="lead bad"><b>' + esc(worst.name) + '</b> ' +
+      (worst.downDays < 1
+        ? 'משבית כרגע.'
+        : 'היה משבית ' + Math.round(worst.downDays) +
+          ' ימים בתקופה — הכי הרבה בצי.') +
+      ' ' + esc(vehicleWhy(worst)) + '</div>'
+    : '<div class="lead ok">אף רכב לא היה משבית בתקופה.</div>';
+
+  const t = $('vTbl');
+  t.innerHTML = '<thead><tr><th>רכב</th><th>ימי השבתה</th><th>תקלות</th>' +
+    '<th>פגיעות</th><th>פתוחות</th><th>ממוצע סגירה</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  rows.forEach(function (r) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><div class="nm">' + esc(r.name) +
+        (fleet.some(v => v.id === r.id && v.active === false) ? ' <span class="why">· הוצא מהצי</span>' : '') +
+        (r.kind === 'anchor' ? ' <span class="why">· עיגון</span>' : '') +
+        '</div><div class="why">' + esc(vehicleWhy(r)) + '</div></td>' +
+      // "פחות מיום" ולא "<1". הסימן הזה נכתב כאן כטקסט גולמי
+      // בתוך innerHTML, והדפדפן — בעמוד שכולו ימין-לשמאל —
+      // סידר אותו הפוך והציג "1>", כלומר יותר מיום. ההפך
+      // הגמור מהכוונה, על עמודה שמפקד קורא כדי להחליט.
+      '<td class="n" data-l="ימי השבתה">' + (!r.downDays ? '—'
+         : r.downDays < 1 ? '<span class="lt">פחות מיום</span>'
+         : Math.round(r.downDays)) +
+        '<div class="bar"><i class="' + (r.downDays ? 'bad' : '') +
+        '" style="width:' + Math.round((r.downDays / maxDown) * 100) +
+        '%"></i></div></td>' +
+      '<td class="n" data-l="תקלות">' + r.tech + '</td>' +
+      '<td class="n" data-l="פגיעות">' + (r.damage || '—') + '</td>' +
+      '<td class="n" data-l="פתוחות">' + (r.open || '—') + '</td>' +
+      '<td class="n" data-l="ממוצע סגירה">' +
+        (r.avgClose == null ? '—' : r.avgClose + ' ימים') + '</td>';
+    tb.appendChild(tr);
+  });
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="why">אין נתונים.</td></tr>';
+  }
+  t.appendChild(tb);
+}
+
+function renderLoad(since){
+  if (scheduleLoadError || guardLoadError) {
+    $('lLead').innerHTML = '<div class="lead bad">' +
+      esc(scheduleLoadError || guardLoadError) + '</div>';
+    $('lList').innerHTML = '<div class="note">החישוב נעצר כדי לא להציג יום חופש או עומס שגוי.</div>';
+    return;
+  }
+  const map = loadStats(people, guards, swaps, ctx, since);
+  const rank = loadRank(map);
+  const fair = fairness(map);
+  const max = Math.max(1, ...rank.map(r => r.score));
+
+  $('lLead').innerHTML = '<div class="lead ' +
+    (fair.spread > Math.max(2, (fair.avg || 0) * 0.5) ? 'bad' : 'ok') + '">' +
+    esc(fair.he) +
+    (rank.length && rank[0].score
+      ? ' העמוס ביותר: <b>' + esc(rank[0].name) + '</b>.' : '') +
+    '</div>';
+
+  const box = $('lList');
+  box.innerHTML = '';
+  rank.forEach(function (r) {
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.innerHTML = esc(r.name || r.uid) +
+      (r.crew ? ' <i>' + esc(CREW_HE[r.crew] || r.crew) + '</i>' : '');
+
+    const tr = document.createElement('div');
+    tr.className = 'tr';
+    const w = v => Math.round((v / max) * 100) + '%';
+    tr.innerHTML =
+      '<span class="off" style="width:' + w(r.gOff * 2) + '"></span>' +
+      '<span class="sh"  style="width:' + w(r.gShift) + '"></span>' +
+      '<span class="sw"  style="width:' + w(r.swapIn) + '"></span>';
+
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.innerHTML = '<b>' + r.score + '</b> · ' + r.gOff + '/' +
+                  r.gShift + '/' + r.swapIn +
+                  (r.gUnknown ? ' <span class="note">(+' + r.gUnknown + ' לא סווגו)</span>' : '');
+
+    box.appendChild(nm); box.appendChild(tr); box.appendChild(n);
+  });
+  if (!rank.length) {
+    box.innerHTML = '<div class="note">לא נטענה רשימת סגל.</div>';
+  }
+}
+</script>
+</body>
+</html>
