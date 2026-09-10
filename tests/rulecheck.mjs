@@ -96,7 +96,8 @@ head('אילוץ ארכיטקטוני');
   // תגובה בודקת שהודעת-האב לא הוסתרה, דוח Shadow בודק שרק הדור
   // הפעיל קריא, ובקרת Shadow רגישה מאמתת שהמשתמש עדיין פעיל.
   // בנוסף, שער החברות הכללי קורא את אותו מסמך משתמש חי כדי שטוקן
-  // ישן לא ימשיך לעבוד אחרי העברה/השבתה. מינוי אחראי הסידור נבדק
+  // ישן לא ימשיך לעבוד אחרי העברה/השבתה. יצירת יום חופש אוטומטי
+  // בודקת טופס חופשה מאושר ומדויק. מינוי אחראי הסידור נבדק
   // ב-Functions; אין נתיב כתיבה ישיר מהלקוח ולכן הכללים אינם צריכים
   // לקרוא אותו.
   const gets = [...CODE.matchAll(/(?<![.\w])(get|exists|getAfter)\s*\(/g)];
@@ -112,10 +113,21 @@ head('אילוץ ארכיטקטוני');
   const identityOperationReads = [...CODE.matchAll(
     /(?<![.\w])(get|exists)\s*\(\s*\/databases\/\$\(database\)\/documents\/identity_operations\/\$\(uid\)\s*\)/g
   )];
-  if (gets.length === 7 &&
+  const approvedLeaveReads = [...CODE.matchAll(
+    /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/submissions\/\$\(formId\)\s*\)/g
+  )];
+  const historicalUserReads = CODE.split(
+    'get(/databases/$(database)/documents/stations/$(sid)/users/$(uid))'
+  ).length - 1;
+  const historicalReportReads =
+    CODE.split('exists(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1 +
+    CODE.split('get(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1;
+  if (gets.length === 12 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
-      liveUserReads.length === 2 && identityOperationReads.length === 3) {
-    ok('קריאות מוגבלות: תגובה, Shadow, שתי בדיקות חברות חיה ופעולת זהות');
+      liveUserReads.length === 2 && identityOperationReads.length === 3 &&
+      approvedLeaveReads.length === 1 && historicalUserReads === 2 &&
+      historicalReportReads === 2) {
+    ok('קריאות מוגבלות: תגובה, Shadow, חברות חיה, פעולת זהות, חופשה וייבוא היסטורי');
   } else if (gets.length) {
     fail(gets.length + ' קריאות get()/exists() — רק הנתיבים והכמויות המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
@@ -123,6 +135,18 @@ head('אילוץ ארכיטקטוני');
     fail('חסרות בדיקות נתיבי-האב המאושרות',
       'תגובה מוסתרת או דור Shadow חלקי עלולים לדלוף בנתיב ישיר');
   }
+}
+
+{
+  const source = fs.readFileSync(path.join(ROOT, 'import.html'), 'utf8');
+  const batch = source.match(/const\s+HISTORY_WRITE_BATCH\s*=\s*(\d+)\s*;/);
+  if (!batch) fail('חסרה מגבלת אצווה מפורשת לייבוא היסטורי');
+  else if (Number(batch[1]) > 6) fail('אצוות ייבוא היסטורי חורגת מתקציב Rules',
+    batch[1] + ' רשומות; המקסימום הבטוח הוא 6');
+  else if (!source.includes('i += HISTORY_WRITE_BATCH') ||
+           !source.includes('i + HISTORY_WRITE_BATCH')) {
+    fail('קבוע אצוות הייבוא אינו מחובר לשתי נקודות החיתוך');
+  } else ok('אצוות ייבוא היסטורי נשארת בתוך תקציב 20 קריאות Rules');
 }
 
 // ------------------------------------------------------------------

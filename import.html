@@ -243,6 +243,9 @@ const fns  = getFunctions(app, 'europe-west1');
 
 let ME = { uid:'', email:'' };
 let HIST = null, histGeneration = 0, histBusy = false, histDryBusy = false, histAllowed = false;
+// A row may consume three Rules reads (user + report exists/get). Firestore
+// permits 20 document-access calls per transaction, so six is the safe cap.
+const HISTORY_WRITE_BATCH = 6;
 let authGeneration = 0, pageSuspended = false;
 
 window.addEventListener('error', function (e) {
@@ -466,9 +469,9 @@ $('hRun').onclick = async function () {
   try {
     const token = await origin.user.getIdTokenResult(true);
     if (!current() || token.claims.super !== true) throw new Error('ההרשאה השתנתה.');
-    for (let i = 0; i < ready.length; i += 20) {
+    for (let i = 0; i < ready.length; i += HISTORY_WRITE_BATCH) {
       if (!current()) return;
-      const slice = ready.slice(i, i + 20);
+      const slice = ready.slice(i, i + HISTORY_WRITE_BATCH);
       if (new Set(slice.map(o => o.id)).size !== slice.length) throw new Error('ימים כפולים בייבוא.');
       const result = await runTransaction(db, async tx => {
         if (!current()) throw new Error('הייבוא השתנה.');

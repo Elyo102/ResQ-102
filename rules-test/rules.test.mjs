@@ -25,7 +25,7 @@ import {
 import { readFileSync } from 'fs';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs, query, where, orderBy, limit
+  collection, getDocs, query, where, orderBy, limit, serverTimestamp
 } from 'firebase/firestore';
 
 const SID = 'eilat_102';
@@ -163,6 +163,8 @@ await env.withSecurityRulesDisabled(async (c) => {
     { role: 'station_commander', crew: '', employee_number: '301', is_active: true, full_name: 'מפקד תחנה' });
   await setDoc(doc(d, `stations/${SID}/users/u_hr`),
     { role: 'hr_coordinator', crew: '', employee_number: '401', is_active: true, full_name: 'רכזת כוח אדם' });
+  await setDoc(doc(d, `stations/${SID}/users/u_legacy_num`),
+    { role: 'firefighter', crew: 'ג', employee_number: 501, is_active: true, full_name: 'עובד מספרי' });
   await setDoc(doc(d, `stations/${SID}/users/u_st_inactive`),
     { role: 'station_commander', crew: '', employee_number: '302', is_active: false, full_name: 'מפקד מושבת' });
   await setDoc(doc(d, `stations/${SID}/users/u_hr_inactive`),
@@ -206,6 +208,28 @@ await env.withSecurityRulesDisabled(async (c) => {
     { emp_number: '102', crew: 'ב', status: 'draft',    hours: 24 });
   await setDoc(doc(d, `stations/${SID}/attendance/att_ff_locked`),
     { emp_number: '101', crew: 'א', status: 'approved', hours: 24 });
+  await setDoc(doc(d, `stations/${SID}/attendance/101_2026-07-01`),
+    { emp_number: '101', uid: 'u_ff', crew: 'א', date: '2026-07-01',
+      month: '2026-07', status: 'approved', hours: 24,
+      edited_by: 'u_ff', edited_by_name: 'כבאי א' });
+  await setDoc(doc(d, `stations/${SID}/attendance/401_2026-07-01`),
+    { emp_number: '401', uid: 'u_hr', crew: '', date: '2026-07-01',
+      month: '2026-07', status: 'approved', hours: 24,
+      edited_by: 'u_hr', edited_by_name: 'רכזת כוח אדם' });
+  await setDoc(doc(d, `stations/${SID}/attendance/att_staff_guard`),
+    { emp_number: '102', uid: 'u_ffb', crew: 'ב', date: '2026-09-09',
+      month: '2026-09', status: 'submitted', hours: 24 });
+  await setDoc(doc(d, `stations/${SID}/monthly_reports/102_2026-09`),
+    { emp_number: '102', uid: 'u_ffb', crew: 'ב', month: '2026-09',
+      status: 'submitted', days: ['2026-09-09'], total_hours: 24 });
+  await setDoc(doc(d, `stations/${SID}/monthly_reports/101_2026-07`),
+    { emp_number: '101', uid: 'u_ff', crew: 'א', month: '2026-07',
+      status: 'approved', days: ['2026-07-01'], total_hours: 24,
+      approved_by: 'u_cmda' });
+  await setDoc(doc(d, `stations/${SID}/monthly_reports/401_2026-07`),
+    { emp_number: '401', uid: 'u_hr', crew: '', month: '2026-07',
+      status: 'approved', days: ['2026-07-01'], total_hours: 24,
+      approved_by: 'u_st' });
 
   await setDoc(doc(d, 'directory/u_ff'), { full_name: 'כבאי א', crew: 'א' });
   await setDoc(doc(d, 'admin_audit/e1'), { what: 'set_role' });
@@ -440,6 +464,11 @@ await env.withSecurityRulesDisabled(async (c) => {
     is_private: false, status: 'submitted',
     by_uid: 'u_cmda', by_name: 'מפקד א', by_emp: '201', crew: 'א',
     created_key: '2026-08-20T08:00:00.000Z' });
+  await setDoc(doc(d, `stations/${SID}/submissions/sub_leave_approved`), {
+    form_id: 'leave', form_he: 'בקשת חופשה', kind: 'vacation',
+    values: { from: '2026-09-10', to: '2026-09-12', where: 'בארץ' },
+    is_private: false, status: 'approved', by_uid: 'u_ff', by_name: 'כבאי א',
+    by_emp: '101', crew: 'א', created_key: '2026-08-20T08:00:00.000Z' });
 });
 
 console.log('\n\x1b[1m╔══════════════════════════════════════════════════╗');
@@ -614,6 +643,172 @@ await blocked('🔒 כבאי מתחנה אחרת קורא נוכחות באיל�
 
 await blocked('🔒 מבקר לא מחובר קורא נוכחות',
   getDoc(doc(anon, `stations/${SID}/attendance/att_ff_a`)));
+
+await blocked('🔒 סגל אינו עוקף את יומן התיקונים בשינוי תוכן',
+  updateDoc(doc(cmdB, `stations/${SID}/attendance/att_staff_guard`), {
+    hours: 99, edited_by: 'u_cmdb', edited_by_name: 'מפקד ב', edited_at: new Date()
+  }));
+
+await blocked('🔒 סגל אינו מוחק דיווח של עובד מחוץ ל-callable המתועד',
+  deleteDoc(doc(hrUser, `stations/${SID}/attendance/att_staff_guard`)));
+
+await ok('סגל מאשר דיווח במעבר צר וחתום בלבד',
+  updateDoc(doc(cmdB, `stations/${SID}/attendance/att_staff_guard`), {
+    status: 'approved', updated_at: new Date(), edited_by: 'u_cmdb',
+    edited_by_name: 'מפקד ב', edited_at: new Date()
+  }));
+
+await ok('ניסיון חוזר של אותו מאשר לדיווח נשאר אידמפוטנטי',
+  updateDoc(doc(cmdB, `stations/${SID}/attendance/att_staff_guard`), {
+    status: 'approved', updated_at: new Date(), edited_by: 'u_cmdb',
+    edited_by_name: 'מפקד ב', edited_at: new Date()
+  }));
+
+await blocked('🔒 אישור צר אינו פותח שינוי תוכן באותה כתיבה',
+  updateDoc(doc(cmdB, `stations/${SID}/attendance/att_ffb_b`), {
+    status: 'approved', hours: 99, edited_by: 'u_cmdb',
+    edited_by_name: 'מפקד ב', edited_at: new Date(), updated_at: new Date()
+  }));
+
+await ok('טופס חופשה מאושר יוצר רק יום חופש חסר שתואם לטופס',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/101_2026-09-11`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+    date: '2026-09-11', month: '2026-09',
+    day_type: 'vacation', day_type_he: 'חופש', hours: 24,
+    status: 'draft', source: 'approved_leave_form',
+    from_form: 'sub_leave_approved', notes: 'חופשה מאושרת',
+    updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 טופס מאושר אינו מאפשר לדרוס יום שכבר נוצר',
+  updateDoc(doc(cmdA, `stations/${SID}/attendance/101_2026-09-11`), {
+    hours: 99
+  }));
+
+await blocked('🔒 מזהה לא קנוני אינו יוצר יום חופשה כפול',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/leave_duplicate`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+    date: '2026-09-12', month: '2026-09', day_type: 'vacation',
+    day_type_he: 'חופש', hours: 24, status: 'draft',
+    source: 'approved_leave_form', from_form: 'sub_leave_approved',
+    notes: 'חופשה מאושרת', updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 מאשר אינו מחליף מספר עובד בטופס שהוגש',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_leave_approved`), {
+    by_emp: '102'
+  }));
+
+await blocked('🔒 מזהה מסמך לא קנוני אינו יוצר יום חופשה כפול',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/leave_duplicate`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+    date: '2026-09-12', month: '2026-09', day_type: 'vacation',
+    day_type_he: 'חופש', hours: 24, status: 'draft',
+    source: 'approved_leave_form', from_form: 'sub_leave_approved',
+    notes: 'חופשה מאושרת', updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 טופס חופשה אינו מזריק שדה נוסף לרשומת נוכחות',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/101_2026-09-12`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+    date: '2026-09-12', month: '2026-09', day_type: 'vacation',
+    day_type_he: 'חופש', hours: 24, status: 'draft',
+    source: 'approved_leave_form', from_form: 'sub_leave_approved',
+    notes: 'חופשה מאושרת', admin: true, updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 טופס חופשה אינו יוצר יום במשמרת אחרת',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/101_2026-09-12`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'ב',
+    date: '2026-09-12', month: '2026-09', day_type: 'vacation',
+    day_type_he: 'חופש', hours: 24, status: 'draft',
+    source: 'approved_leave_form', from_form: 'sub_leave_approved',
+    notes: 'חופשה מאושרת', updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 טופס חופשה אינו יוצר יום בשם שאינו המשתמש הקנוני',
+  setDoc(doc(cmdA, `stations/${SID}/attendance/101_2026-09-12`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'שם מוחלף', crew: 'א',
+    date: '2026-09-12', month: '2026-09', day_type: 'vacation',
+    day_type_he: 'חופש', hours: 24, status: 'draft',
+    source: 'approved_leave_form', from_form: 'sub_leave_approved',
+    notes: 'חופשה מאושרת', updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 מאשר אינו מחליף מספר עובד בטופס שהוגש',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_leave_approved`), {
+    by_emp: '102'
+  }));
+
+await ok('מנהל-על מייבא רק רשומת עבר חדשה ומסומנת imported',
+  setDoc(doc(superA, `stations/${SID}/attendance/101_2026-08-01`), {
+    emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+    date: '2026-08-01', month: '2026-08', day_type: 'regular',
+    shape: 'simple', start: '08:00', end: '16:00', sub_station: '',
+    hours: 8, notes: '', status: 'imported', imported_from: 'shift-eilat',
+    imported_key: '2026-09-10T00:00:00.000Z', source: 'import',
+    updated_at: serverTimestamp()
+  }));
+
+await ok('ייבוא עבר תומך במספר עובד מספרי מרשומה ותיקה',
+  setDoc(doc(superA, `stations/${SID}/attendance/501_2026-08-01`), {
+    emp_number: '501', uid: 'u_legacy_num', full_name: 'עובד מספרי', crew: 'ג',
+    date: '2026-08-01', month: '2026-08', day_type: 'regular',
+    shape: 'simple', start: '08:00', end: '16:00', sub_station: '',
+    hours: 8, notes: '', status: 'imported', imported_from: 'shift-eilat',
+    imported_key: '2026-09-10T00:00:00.000Z', source: 'import',
+    updated_at: serverTimestamp()
+  }));
+
+await blocked('🔒 רכזת אינה מתחזה לייבוא מנהל-על',
+  setDoc(doc(hrUser, `stations/${SID}/attendance/102_2026-08-01`), {
+    emp_number: '102', uid: 'u_ffb', crew: 'ב', date: '2026-08-01', month: '2026-08',
+    day_type: 'regular', status: 'imported', source: 'import', hours: 24
+  }));
+
+await blocked('🔒 סגל אינו משנה תוכן של דוח חודשי',
+  updateDoc(doc(hrUser, `stations/${SID}/monthly_reports/102_2026-09`), {
+    total_hours: 999
+  }));
+
+await blocked('🔒 סגל אינו מוחק דוח חודשי',
+  deleteDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`)));
+
+await ok('אישור דוח חודשי הוא מעבר צר וחתום',
+  updateDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`), {
+    status: 'approved', approved_by: 'u_st', approved_by_name: 'מפקד תחנה',
+    approved_at: new Date()
+  }));
+
+await ok('ניסיון חוזר של אותו מאשר נשאר אידמפוטנטי',
+  updateDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`), {
+    status: 'approved', approved_by: 'u_st', approved_by_name: 'מפקד תחנה',
+    approved_at: new Date()
+  }));
+
+await ok('בעל הרשאת HR פותח מחדש רשומת חודש מאושר של עצמו',
+  updateDoc(doc(hrUser, `stations/${SID}/attendance/401_2026-07-01`), {
+    status: 'draft', updated_at: new Date(), edited_by: 'u_hr',
+    edited_by_name: 'רכזת כוח אדם', edited_at: new Date()
+  }));
+
+await ok('בעל הרשאת HR פותח מחדש גם את מסמך החודש של עצמו',
+  updateDoc(doc(hrUser, `stations/${SID}/monthly_reports/401_2026-07`), {
+    status: 'draft', reopened_by: 'u_hr', reopened_by_name: 'רכזת כוח אדם',
+    reopened_at: new Date()
+  }));
+
+await blocked('🔒 כבאי רגיל אינו פותח מחדש רשומה מאושרת בעצמו',
+  updateDoc(doc(ff, `stations/${SID}/attendance/101_2026-07-01`), {
+    status: 'draft', updated_at: new Date(), edited_by: 'u_ff',
+    edited_by_name: 'כבאי א', edited_at: new Date()
+  }));
+
+await blocked('🔒 כבאי רגיל אינו פותח מחדש דוח חודשי מאושר בעצמו',
+  updateDoc(doc(ff, `stations/${SID}/monthly_reports/101_2026-07`), {
+    status: 'draft', reopened_by: 'u_ff', reopened_by_name: 'כבאי א',
+    reopened_at: new Date()
+  }));
 
 // ============================================================
 head('2 · פרופיל משתמש — הסלמת הרשאות');
@@ -1138,7 +1333,8 @@ await ok('כבאי מגיש טופס חתום בשמו',
     signature: 'data:image/png;base64,' + 'A'.repeat(400),
     signatures: { employee: { image: 'data:image/png;base64,' + 'A'.repeat(400),
                               uid: 'u_ff', name: 'כבאי א' } },
-    status: 'submitted', by_uid: 'u_ff', crew: 'א', is_private: false }));
+    status: 'submitted', by_uid: 'u_ff', by_name: 'כבאי א',
+    by_emp: '101', crew: 'א', is_private: false }));
 
 await blocked('🔒 כבאי מגיש טופס בשם כבאי אחר',
   setDoc(doc(ff, `stations/${SID}/submissions/sub_new_bad`), {

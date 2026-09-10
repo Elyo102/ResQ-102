@@ -2092,11 +2092,9 @@ async function setMonthStatus(emp, mk, days, status){
     // אישור נוגע ברשומות של אדם אחר, ולכן הוא נחתם כמו כל
     // עריכה. בלי החתימה כלל האבטחה החדש ידחה את האצווה כולה.
     const body = { status: status, updated_at: serverTimestamp() };
-    if (emp !== ME.emp) {
-      body.edited_by      = ME.uid;
-      body.edited_by_name = ME.full_name || '';
-      body.edited_at      = serverTimestamp();
-    }
+    body.edited_by      = ME.uid;
+    body.edited_by_name = ME.full_name || '';
+    body.edited_at      = serverTimestamp();
     batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
               body, { merge: true });
   });
@@ -2273,7 +2271,7 @@ async function loadPeople(){
       const emp = String(v.employee_number || v.emp_number || '');
       if (!emp) return;
       out.push({ uid: d.id, emp: emp, crew: v.crew || '',
-                 role: v.role || '', inactive: v.is_active === false,
+                 role: v.role || '', inactive: v.is_active === false || v.active === false,
                  full_name: v.full_name || ('מס׳ ' + emp) });
     });
   } catch (e) {
@@ -2309,6 +2307,13 @@ async function switchTo(p){
   monthLoadGeneration++;
   setMonthBusy(true);
   const other = onOther();
+
+  // Close employee-only controls synchronously, before either network load.
+  // Otherwise the previous subject's timer/fill buttons remain actionable for
+  // the short interval in which the HR view is switching people.
+  $('timerCard').classList.toggle('hide', other);
+  $('btnFill').classList.toggle('hide', other);
+  $('btnSync').classList.toggle('hide', other);
 
   $('otherBar').classList.toggle('hide', !other);
   if (other) {

@@ -226,6 +226,105 @@ service cloud.firestore {
              || myShift() == '' || myShift() == crew;
     }
 
+    // An approved leave form may create a missing vacation row, but it may
+    // never overwrite an existing attendance record. Cross-person content
+    // edits are routed through the audited callable.
+    function approvedLeaveFormMatches(sid, formId) {
+      let form = get(/databases/$(database)/documents/stations/$(sid)/submissions/$(formId)).data;
+      let uid = request.resource.data.get('uid', '');
+      let emp = request.resource.data.get('emp_number', '');
+      let user = get(/databases/$(database)/documents/stations/$(sid)/users/$(uid)).data;
+      return form.get('form_id', '') == 'leave'
+             && form.get('status', '') == 'approved'
+             && form.get('by_uid', '') == uid
+             && form.get('by_emp', '') == emp
+             && form.get('by_name', '') == request.resource.data.get('full_name', '')
+             && form.get('crew', '') == request.resource.data.get('crew', '')
+             && user.get('is_active', user.get('active', true)) != false
+             && user.get('full_name', '') == request.resource.data.get('full_name', '')
+             && user.get('crew', '') == request.resource.data.get('crew', '')
+             && (user.get('employee_number', user.get('emp_number', '')) == emp
+                 || (emp.matches('[0-9]+')
+                     && user.get('employee_number', user.get('emp_number', '')) is int
+                     && user.get('employee_number', user.get('emp_number', 0)) == int(emp)))
+             && request.resource.data.get('date', '') >= form.get('values', {}).get('from', '')
+             && request.resource.data.get('date', '') <= form.get('values', {}).get('to', '');
+    }
+
+    function approvedLeaveAttendanceCreate(sid, docId) {
+      let formId = request.resource.data.get('from_form', '');
+      let date = request.resource.data.get('date', '');
+      let month = request.resource.data.get('month', '');
+      return staff(sid)
+             && formId is string
+             && formId.matches('[A-Za-z0-9_-]{1,128}')
+             && approvedLeaveFormMatches(sid, formId)
+             && seesCrewData(sid, request.resource.data.get('crew', ''))
+             && docId == request.resource.data.get('emp_number', '') + '_' + date
+             && date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+             && month.matches('[0-9]{4}-(0[1-9]|1[0-2])')
+             && date.matches(month + '-(0[1-9]|[12][0-9]|3[01])')
+             && request.resource.data.get('day_type', '') == 'vacation'
+             && request.resource.data.get('day_type_he', '') == 'חופש'
+             && request.resource.data.get('hours', -1) == 24
+             && request.resource.data.get('status', '') == 'draft'
+             && request.resource.data.get('source', '') == 'approved_leave_form'
+             && request.resource.data.get('updated_at', null) == request.time
+             && request.resource.data.get('notes', '') is string
+             && request.resource.data.get('notes', '').size() <= 500
+             && request.resource.data.keys().hasAll([
+                  'emp_number', 'uid', 'full_name', 'crew', 'date', 'month',
+                  'day_type', 'day_type_he', 'hours', 'status', 'source',
+                  'from_form', 'notes', 'updated_at'
+                ])
+             && request.resource.data.keys().hasOnly([
+                  'emp_number', 'uid', 'full_name', 'crew', 'date', 'month',
+                  'day_type', 'day_type_he', 'hours', 'status', 'source',
+                  'from_form', 'notes', 'updated_at'
+                ]);
+    }
+
+    function validHistoricalImportCreate(sid, docId) {
+      let emp = request.resource.data.get('emp_number', '');
+      let uid = request.resource.data.get('uid', '');
+      let date = request.resource.data.get('date', '');
+      let month = request.resource.data.get('month', '');
+      let user = get(/databases/$(database)/documents/stations/$(sid)/users/$(uid)).data;
+      let reportId = emp + '_' + month;
+      return isSuper()
+             && emp is string && emp.size() > 0 && emp.size() <= 64
+             && uid is string && uid.size() > 0 && uid.size() <= 128
+             && (user.get('employee_number', user.get('emp_number', '')) == emp
+                 || (emp.matches('[0-9]+')
+                     && user.get('employee_number', user.get('emp_number', '')) is int
+                     && user.get('employee_number', user.get('emp_number', 0)) == int(emp)))
+             && docId == emp + '_' + date
+             && date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+             && month.matches('[0-9]{4}-(0[1-9]|1[0-2])')
+             && date.matches(month + '-(0[1-9]|[12][0-9]|3[01])')
+             && (!exists(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))
+                 || get(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId)).data.get('status', 'draft') == 'draft')
+             && request.resource.data.get('source', '') == 'import'
+             && request.resource.data.get('status', '') == 'imported'
+             && request.resource.data.get('imported_from', '') == 'shift-eilat'
+             && request.resource.data.get('hours', -1) is number
+             && request.resource.data.get('hours', -1) >= 0
+             && request.resource.data.get('hours', -1) <= 48
+             && request.resource.data.get('updated_at', null) == request.time
+             && request.resource.data.keys().hasAll([
+                  'emp_number', 'uid', 'full_name', 'crew', 'date', 'month',
+                  'day_type', 'shape', 'start', 'end', 'sub_station', 'hours',
+                  'notes', 'status', 'imported_from', 'imported_key', 'source',
+                  'updated_at'
+                ])
+             && request.resource.data.keys().hasOnly([
+                  'emp_number', 'uid', 'full_name', 'crew', 'date', 'month',
+                  'day_type', 'shape', 'start', 'end', 'start2', 'end2',
+                  'end_day', 'sub_station', 'hours', 'notes', 'status',
+                  'imported_from', 'imported_key', 'source', 'updated_at'
+                ]);
+    }
+
     // מספר עובד. המערכת מקצה אותו באישור ההרשמה, והוא מזהה
     // את הכבאי בכל הדיווחים שלו. הוא גם משמש כהגנה מפני זדון,
     // ולכן אינו גלוי לכבאים אחרים.
@@ -883,6 +982,8 @@ service cloud.firestore {
 
         allow create: if member(sid)
                       && request.resource.data.get('by_uid', '') == request.auth.uid
+                      && request.resource.data.get('by_emp', '') == myEmp()
+                      && request.resource.data.get('crew', '') == myShift()
                       && request.resource.data.get('status', '') == 'submitted'
                       && request.resource.data.get('form_id', '') != ''
                       && request.resource.data.get('signature', '').size() <= 400000
@@ -943,6 +1044,8 @@ service cloud.firestore {
                       // איזה טופס זה, ולאיזו משמרת הוא שייך. מפקד
                       // שמאשר אינו עורך — הוא מאשר.
                       && request.resource.data.get('by_uid', '')  == resource.data.get('by_uid', '')
+                      && request.resource.data.get('by_emp', '')  == resource.data.get('by_emp', '')
+                      && request.resource.data.get('by_name', '') == resource.data.get('by_name', '')
                       && request.resource.data.get('form_id', '') == resource.data.get('form_id', '')
                       && request.resource.data.get('crew', '')    == resource.data.get('crew', '')
                       && request.resource.data.get('values', {})  == resource.data.get('values', {})
@@ -1109,8 +1212,8 @@ service cloud.firestore {
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
-        allow create: if (staff(sid)
-                          && seesCrewData(sid, request.resource.data.get('crew', '')))
+        allow create: if approvedLeaveAttendanceCreate(sid, docId)
+                      || validHistoricalImportCreate(sid, docId)
                       || (member(sid)
                           && request.resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.keys().hasAll(['status'])
@@ -1142,17 +1245,40 @@ service cloud.firestore {
                           && seesCrewData(sid, resource.data.get('crew', ''))
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && request.resource.data.get('crew', '') == resource.data.get('crew', '')
-                          && (resource.data.get('emp_number', '') == myEmp()
-                              || request.resource.data.get('edited_by', '') == request.auth.uid))
+                          && resource.data.get('status', '') in ['', 'draft', 'submitted', 'imported']
+                          && request.resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('edited_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'updated_at', 'edited_by',
+                               'edited_by_name', 'edited_at'
+                             ]))
+                      || (staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', ''))
+                          && resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('edited_by', '') == resource.data.get('edited_by', '')
+                          && request.resource.data.get('edited_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'updated_at', 'edited_by',
+                               'edited_by_name', 'edited_at'
+                             ]))
+                      || (staff(sid)
+                          && resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
+                          && resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('status', '') == 'draft'
+                          && request.resource.data.get('edited_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'updated_at', 'edited_by',
+                               'edited_by_name', 'edited_at'
+                             ]))
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') != 'approved'
                           && request.resource.data.get('status', '') != 'approved');
 
-        allow delete: if (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', '')))
-                      || (member(sid)
+        allow delete: if (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && resource.data.get('status', '') != 'approved');
       }
@@ -1705,21 +1831,46 @@ service cloud.firestore {
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
-        allow create: if (staff(sid)
-                          && seesCrewData(sid, request.resource.data.get('crew', '')))
-                      || (member(sid)
+        allow create: if member(sid)
                           && request.resource.data.get('emp_number', '') == myEmp()
-                          && request.resource.data.get('status', '') != 'approved');
+                          && request.resource.data.get('status', '') != 'approved';
 
         allow update: if (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', '')))
+                          && seesCrewData(sid, resource.data.get('crew', ''))
+                          && resource.data.get('status', '') == 'submitted'
+                          && request.resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('approved_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'approved_by', 'approved_by_name',
+                               'approved_at'
+                              ]))
+                      || (staff(sid)
+                          && seesCrewData(sid, resource.data.get('crew', ''))
+                          && resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('approved_by', '') == resource.data.get('approved_by', '')
+                          && request.resource.data.get('approved_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'approved_by', 'approved_by_name',
+                               'approved_at'
+                             ]))
+                      || (staff(sid)
+                          && resource.data.get('emp_number', '') == myEmp()
+                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
+                          && resource.data.get('status', '') == 'approved'
+                          && request.resource.data.get('status', '') == 'draft'
+                          && request.resource.data.get('reopened_by', '') == request.auth.uid
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                               'status', 'reopened_by', 'reopened_by_name',
+                               'reopened_at'
+                             ]))
                       || (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') != 'approved'
                           && request.resource.data.get('status', '') != 'approved');
 
-        allow delete: if staff(sid);
+        allow delete: if false;
       }
     }
 
