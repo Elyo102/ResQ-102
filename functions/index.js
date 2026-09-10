@@ -45,6 +45,7 @@ const attendanceCorrectionsModule = require('./attendance-corrections');
 const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
+const personalLiveLabModule = require('./personal-live-lab');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -419,6 +420,133 @@ async function silentFor(who) {
   const key = String(who || '').toLowerCase();
   return allow.indexOf(key) === -1;
 }
+
+// ---------- מעבדת מכשיר אישית ----------
+// מסלול מבודד למנהל-העל: הודעת בדיקה ניטרלית לטוקן המדויק
+// של המכשיר הנוכחי. אין כאן שידור תחנתי, ניקוי טוקנים או כתיבה
+// עסקית. ההפעלה פגה אחרי 24 שעות ומשלוח מוגבל ל-3 ביום.
+
+const PERSONAL_LAB_OPTIONS = Object.freeze({
+  region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 30,
+  memory: '256MiB', maxInstances: 2, concurrency: 4
+});
+
+function labDay(ms) {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date(ms)).reduce((o, x) => Object.assign(o, { [x.type]: x.value }), {});
+  return p.year + p.month + p.day;
+}
+
+async function freshLabActor(req) {
+  const signed = requireAuth(req);
+  const user = await admin.auth().getUser(signed.uid);
+  if (!user || user.disabled) throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  const claims = user.customClaims || {};
+  if (claims.super !== true) throw new HttpsError('permission-denied', 'המעבדה זמינה למנהל המערכת בלבד.');
+  const authMs = Number((signed.token || {}).auth_time || 0) * 1000;
+  const validMs = Date.parse(user.tokensValidAfterTime || '') || 0;
+  if (!authMs || authMs < validMs) throw new HttpsError('unauthenticated', 'יש להתחבר מחדש לפני הפעלת המעבדה.');
+  const sid = String(claims.stationId || '');
+  if (!STATION_ID_RE.test(sid)) throw new HttpsError('failed-precondition', 'שיוך התחנה של המעבדה אינו תקין.');
+  return { uid: signed.uid, sid, super: true };
+}
+
+const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
+  HttpsError,
+  now: () => Date.now(),
+  freshActor: freshLabActor,
+  readConfig: async sid => {
+    const snap = await db.doc('stations/' + sid + '/live_lab_config/current').get();
+    return snap.exists ? (snap.data() || {}) : null;
+  },
+  activate: async (sid, uid, expires, at) => {
+    const ref = db.doc('stations/' + sid + '/live_lab_config/current');
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref), before = snap.exists ? (snap.data() || {}) : {};
+      if (before.enabled === true && Number(before.expires_at_ms || 0) > at &&
+          before.allowed_uid && before.allowed_uid !== uid) {
+        throw new HttpsError('failed-precondition', 'מעבדה אישית אחרת עדיין פעילה.');
+      }
+      tx.set(ref, { enabled: true, allowed_uid: uid, expires_at_ms: expires,
+        expires_at: admin.firestore.Timestamp.fromMillis(expires),
+        updated_at: FV.serverTimestamp(), updated_by: uid }, { merge: false });
+    });
+  },
+  hasToken: async (sid, uid, token) => {
+    const snap = await db.doc('stations/' + sid + '/push_tokens/' + uid).get();
+    if (!snap.exists) return false;
+    const list = Array.isArray((snap.data() || {}).tokens) ? snap.data().tokens : [];
+    return list.some(x => x && String(x.token || '') === token);
+  },
+  isSilent: async uid => {
+    let snap;
+    try { snap = await db.doc(RUNTIME_DOC).get(); }
+    catch (error) { throw new HttpsError('unavailable', 'לא ניתן לאמת מצב שקט כרגע.'); }
+    const value = snap.exists ? (snap.data() || {}) : {};
+    if (value.silent !== true) return false;
+    const allow = Array.isArray(value.silent_allow) ? value.silent_allow : [];
+    return allow.indexOf(String(uid || '').toLowerCase()) === -1;
+  },
+  reserve: async input => {
+    const probe = db.doc('stations/' + input.sid + '/live_lab_probes/' + input.requestId);
+    const config = db.doc('stations/' + input.sid + '/live_lab_config/current');
+    const quota = db.doc('stations/' + input.sid + '/live_lab_quotas/' + input.uid + '_' + labDay(input.now_ms));
+    return db.runTransaction(async tx => {
+      const reads = await Promise.all([tx.get(probe), tx.get(config), tx.get(quota)]);
+      if (reads[0].exists) {
+        const old = reads[0].data() || {};
+        if (old.fingerprint !== input.fingerprint) throw new HttpsError('already-exists', 'מזהה הבדיקה כבר בשימוש.');
+        return { duplicate: true, state: String(old.state || 'unknown') };
+      }
+      const cfg = reads[1].exists ? (reads[1].data() || {}) : {};
+      if (cfg.enabled !== true || cfg.allowed_uid !== input.uid ||
+          Number(cfg.expires_at_ms || 0) <= input.now_ms) {
+        throw new HttpsError('failed-precondition', 'מעבדת המכשיר אינה פעילה.');
+      }
+      const q = reads[2].exists ? (reads[2].data() || {}) : {};
+      if (Number(q.last_at_ms || 0) + 60000 > input.now_ms) {
+        throw new HttpsError('resource-exhausted', 'אפשר לבצע בדיקה אחת בדקה.');
+      }
+      if (Number(q.count || 0) >= 3) throw new HttpsError('resource-exhausted', 'מכסת שלוש הבדיקות היומית נוצלה.');
+      tx.create(probe, { uid: input.uid, fingerprint: input.fingerprint,
+        token_hash: input.token_hash, state: 'reserved', requested_at_ms: input.now_ms,
+        requested_at: FV.serverTimestamp(),
+        expires_at: admin.firestore.Timestamp.fromMillis(input.now_ms + 7 * 86400000) });
+      tx.set(quota, { uid: input.uid, day: labDay(input.now_ms),
+        count: Number(q.count || 0) + 1, last_at_ms: input.now_ms,
+        updated_at: FV.serverTimestamp(),
+        expires_at: admin.firestore.Timestamp.fromMillis(input.now_ms + 3 * 86400000) }, { merge: false });
+      return { duplicate: false, state: 'reserved' };
+    });
+  },
+  sendExact: async payload => admin.messaging().send({
+    token: payload.token,
+    data: { title: payload.title, body: payload.body, url: payload.url,
+      tag: payload.tag, important: '0', probe_id: payload.probe_id },
+    webpush: { headers: { Urgency: 'normal' } }
+  }),
+  finish: async (sid, id, state, messageId, at) => {
+    await db.doc('stations/' + sid + '/live_lab_probes/' + id).set({
+      state, provider_message_id_hash: messageId ? personalLiveLabModule.digest(messageId) : '',
+      completed_at_ms: at, completed_at: FV.serverTimestamp()
+    }, { merge: true });
+  },
+  ack: async (sid, uid, id, stage, at) => {
+    const ref = db.doc('stations/' + sid + '/live_lab_probes/' + id);
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref), value = snap.exists ? (snap.data() || {}) : {};
+      if (!snap.exists || value.uid !== uid) throw new HttpsError('not-found', 'הבדיקה לא נמצאה.');
+      const patch = {}; patch[stage + '_at_ms'] = at; patch[stage + '_at'] = FV.serverTimestamp();
+      tx.set(ref, patch, { merge: true });
+    });
+  }
+});
+
+exports.getPersonalLiveLabStatus = onCall(PERSONAL_LAB_OPTIONS, req => personalLiveLab.status(req));
+exports.enablePersonalLiveLab = onCall(PERSONAL_LAB_OPTIONS, req => personalLiveLab.enable(req));
+exports.sendPersonalLiveLabPush = onCall(PERSONAL_LAB_OPTIONS, req => personalLiveLab.send(req));
+exports.ackPersonalLiveLabPush = onCall(PERSONAL_LAB_OPTIONS, req => personalLiveLab.acknowledge(req));
 
 async function logSilenced(kind, to, subject) {
   try {

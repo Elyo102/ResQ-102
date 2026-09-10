@@ -1,10 +1,10 @@
-import { firebaseConfig } from './firebase-config.js?v=42h8';
+import { firebaseConfig } from './firebase-config.js?v=42h9';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h8';
-import { initAppCheck } from './appcheck.js?v=42h8';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h8';
-import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h8';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h9';
+import { initAppCheck } from './appcheck.js?v=42h9';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h9';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h9';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

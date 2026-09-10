@@ -30,7 +30,7 @@ const EXPECT = {
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true },
                  swaps:{ work:true, appr:true, pend:2 },
-                 alerts:{ work:true, send:true, key:true, opts:4 },
+                 alerts:{ work:true, send:true, key:true, lab:true, opts:4 },
                  callout:{ card:true, opts:5, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
@@ -269,6 +269,7 @@ for (const role of Object.keys(EXPECT)) {
   const aWork = await pg.isVisible('#work').catch(()=>false);
   const aSend = await pg.isVisible('#sendCard').catch(()=>false);
   const aKey  = await pg.isVisible('#keyCard').catch(()=>false);
+  const aLab  = await pg.isVisible('#labCard').catch(()=>false);
   const aOpts = await pg.$$eval('#target option', e=>e.length).catch(()=>0);
   // קריאת פתע. הכרטיס נפתח למפקד, לרכז ולמנהל-על בלבד. כבאי
   // מקבל קריאות אבל לא שולח אותן.
@@ -401,9 +402,10 @@ for (const role of Object.keys(EXPECT)) {
   const wantA = EXPECT[role].alerts;
   if (wantA) {
     const okA = aWork === wantA.work && aSend === wantA.send &&
-                aKey === wantA.key && (wantA.opts == null || aOpts === wantA.opts);
+                aKey === wantA.key && aLab === !!wantA.lab &&
+                (wantA.opts == null || aOpts === wantA.opts);
     console.log((okA?'✓':'✗') + ' [' + role + '] התראות: מסך=' + aWork +
-                ' שליחה=' + aSend + ' יעדים=' + aOpts + ' מפתח=' + aKey);
+                ' שליחה=' + aSend + ' יעדים=' + aOpts + ' מפתח=' + aKey + ' מעבדה=' + aLab);
     if (!okA) { bad++; console.log('    ציפיתי: ' + JSON.stringify(wantA)); }
   }
 

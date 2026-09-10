@@ -1,4 +1,4 @@
-import { MEMBER_ROLES } from './roles.js?v=42h8';
+import { MEMBER_ROLES } from './roles.js?v=42h9';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 const KEY = /^[a-f0-9]{64}$/;

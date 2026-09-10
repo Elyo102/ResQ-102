@@ -168,9 +168,12 @@ try {
   const coverageText = await first.page.locator('#coverage').textContent();
   check(coverageText.includes('2 מתוך 3 ימים') && coverageText.includes('חסרים 1'),
         'הכיסוי מחושב לפי ימים ולא לפי שורות אדם', coverageText);
+  const dayMetric = await first.page.locator('#stats .stat').first().textContent();
+  check(dayMetric.includes('2') && dayMetric.includes('ימים בלוח') && !dayMetric.includes('98'),
+        'מדד הימים מציג ימים ייחודיים ולא סכום שורות עובד-יום', dayMetric);
   const expectedReasons = [
-    'התקופה שנבחרה עדיין לא התחילה.', 'אין צילומי Shadow לתקופה שנבחרה.',
-    'הצילומים אינם כוללים רשומות עובדים.', 'חסרים ימי צילום בתקופה שנבדקה.',
+    'התקופה שנבחרה עדיין לא התחילה.', 'אין בדיקות התאמה לתקופה שנבחרה.',
+    'בדיקות ההתאמה אינן כוללות רשומות עובדים.', 'חסרים ימי בדיקה בתקופה שנבדקה.',
     'קיימות סתירות בסידור או בציוות.', 'קיימות בעיות זיהוי או קליטת עובדים.',
     'קיימות אזהרות נתונים שחוסמות אימות.',
     'נמצאו פערים בין הסידור לבין הדיווח בפועל.',

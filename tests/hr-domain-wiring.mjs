@@ -81,6 +81,7 @@ const config = JSON.parse(read('firestore.indexes.json'));
 const jobGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs', 'attendance_correction_notification_jobs'];
 const intentGroup = 'hr_domain_notification_intents';
 const domainGroups = [...jobGroups,intentGroup];
+const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
 const pairs = jobGroups.flatMap(group => ['created_at_ms', 'expires_at_ms', 'not_before_ms', 'updated_at_ms'].map(field => [group, field]))
   .concat(['expires_at_ms', 'lease_until_ms', 'not_before_ms', 'next_check_ms', 'created_at_ms'].map(field => [intentGroup, field]));
 const expectedIndexes = pairs.map(([collectionGroup, fieldPath]) => ({ collectionGroup, queryScope: 'COLLECTION_GROUP',
@@ -90,13 +91,16 @@ function validateIndexes(value) {
   assert.deepEqual(Object.keys(value).sort(), ['fieldOverrides', 'indexes']); assert.equal(value.indexes.length, 42);
   assert.deepEqual(ordered(value.indexes.filter(i => domainGroups.includes(i.collectionGroup))), ordered(expectedIndexes));
   const old = value.indexes.filter(i => !domainGroups.includes(i.collectionGroup));
-  assert.equal(old.length, 21); assert.equal(value.fieldOverrides.length, 32);
+  const oldOverrides = value.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup));
+  const liveLabOverrides = value.fieldOverrides.filter(i => liveLabGroups.includes(i.collectionGroup));
+  assert.equal(old.length, 21); assert.equal(oldOverrides.length, 32);
+  assert.deepEqual(liveLabOverrides.map(i => i.collectionGroup).sort(), liveLabGroups.slice().sort());
   // Canonical full pre-domain aee9832 snapshot: all eight hours +13 legacy,
   // and all field overrides. No Git dependency or arbitrary-group exclusion.
   assert.equal(sha(JSON.stringify(old)), 'b09f65a0d72538129360363c51dbc79ef702289c22b310753d9175171dbe713c');
-  assert.equal(sha(JSON.stringify(value.fieldOverrides)), '41571b75f7605882500137b420a1664964d2efd0cee6f3a6ef885c44399c9939');
+  assert.equal(sha(JSON.stringify(oldOverrides)), '41571b75f7605882500137b420a1664964d2efd0cee6f3a6ef885c44399c9939');
 }
-await check('exact21 domain query indexes append without changing21 existing indexes or32 overrides', () => validateIndexes(config));
+await check('exact21 domain query indexes append without changing21 existing indexes or32 baseline overrides', () => validateIndexes(config));
 await check('in-memory omitted, changed-scope and additional indexes fail the closed gate', () => {
   for (const mutate of [value => value.indexes.splice(value.indexes.findIndex(i => domainGroups.includes(i.collectionGroup)), 1),
     value => { value.indexes.find(i => domainGroups.includes(i.collectionGroup)).queryScope = 'COLLECTION'; },

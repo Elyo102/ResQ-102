@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#15171a">
   <title>ResQ · בקרת שעות</title>
-  <link rel="stylesheet" href="./theme.css?v=42h8">
+  <link rel="stylesheet" href="./theme.css?v=42h9">
   <style>
     body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);
          font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}
@@ -92,8 +92,8 @@
 <body>
 <main id="main" class="hide">
   <h1>בקרת שעות אוטומטיות</h1>
-  <div class="sub">המערכת משווה בין הסידור לבין הדיווח בפועל. זהו מצב צל בלבד —
-    הנתונים במסך הזה אינם משנים שעות, אינם מאשרים דוח ואינם נכנסים לשכר.</div>
+  <div class="sub">המערכת מבצעת בדיקת התאמה בטוחה בין הסידור לבין הדיווח בפועל.
+    הבדיקה אינה משנה שעות, אינה מאשרת דוח ואינה נכנסת לשכר.</div>
 
   <section class="card" aria-labelledby="statusTitle">
     <div class="bar">
@@ -101,12 +101,12 @@
         <h2 id="statusTitle">מצב המנגנון</h2>
         <span class="state off" id="modeState">בודק…</span>
       </div>
-      <button type="button" id="btnRun" class="go">הרץ צילום צל עכשיו</button>
+      <button type="button" id="btnRun" class="go">הרץ בדיקת התאמה עכשיו</button>
       <button type="button" id="btnMode" class="hide">—</button>
     </div>
     <div class="foot" id="lastRun">טוען את הריצה האחרונה…</div>
     <div class="run-panel hide" id="runPanel" aria-labelledby="runTitle" aria-live="polite">
-      <h3 id="runTitle">תוצאות הצילום היומי האחרון</h3>
+      <h3 id="runTitle">תוצאות הבדיקה היומית האחרונה</h3>
       <div class="run-grid" id="runMetrics"></div>
       <div class="run-message" id="runMessage"></div>
       <ul class="reason-list hide" id="runConflicts"></ul>
@@ -151,10 +151,10 @@
 </section>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h8';
-import { renderNav, renderStuckNav } from './nav.js?v=42h8';
-import { initPWA } from './pwa.js?v=42h8';
-import { initAppCheck } from './appcheck.js?v=42h8';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h9';
+import { renderNav, renderStuckNav } from './nav.js?v=42h9';
+import { initPWA } from './pwa.js?v=42h9';
+import { initAppCheck } from './appcheck.js?v=42h9';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -162,7 +162,7 @@ import { getFirestore, doc, getDoc, collection, getDocs, query,
          orderBy, limit, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h8';
+  from './monitored-functions.js?v=42h9';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -257,7 +257,7 @@ const RUN_STATUS = {
 };
 
 const RUN_RESULTS = [
-  ['ready_working','כשירים לעבודה','good'],
+  ['ready_working','עובדים שנבדקו ונמצאו תקינים','good'],
   ['ready_off','ביום חופשי',''],
   ['conflict','דורשים תיקון','bad'],
   ['warning','עם אזהרה','warn']
@@ -295,9 +295,9 @@ const RUN_ACTIONS = [
 
 const GATE_REASONS = {
   future_period:'התקופה שנבחרה עדיין לא התחילה.',
-  no_snapshot_runs:'אין צילומי Shadow לתקופה שנבחרה.',
-  no_snapshot_rows:'הצילומים אינם כוללים רשומות עובדים.',
-  missing_snapshot_days:'חסרים ימי צילום בתקופה שנבדקה.',
+  no_snapshot_runs:'אין בדיקות התאמה לתקופה שנבחרה.',
+  no_snapshot_rows:'בדיקות ההתאמה אינן כוללות רשומות עובדים.',
+  missing_snapshot_days:'חסרים ימי בדיקה בתקופה שנבדקה.',
   source_conflicts:'קיימות סתירות בסידור או בציוות.',
   identity_conflicts:'קיימות בעיות זיהוי או קליטת עובדים.',
   data_warnings:'קיימות אזהרות נתונים שחוסמות אימות.',
@@ -355,7 +355,7 @@ function paintRun(last){
     const k = document.createElement('div'); k.className = 'k'; k.textContent = item[1];
     card.append(n, k); metrics.appendChild(card);
   });
-  message.textContent = 'הצילום כולל ' + entryCount.toLocaleString('he-IL') +
+  message.textContent = 'הבדיקה כוללת ' + entryCount.toLocaleString('he-IL') +
     ' עובדים. אזהרות וקטגוריות תקלה עשויות לחפוף ואינן סכום עובדים ייחודיים.';
 
   const raw = last.conflict_counts && typeof last.conflict_counts === 'object' &&
@@ -487,19 +487,19 @@ function paintStatus(data){
   STATUS = data || {};
   const on = STATUS.mode === 'shadow';
   $('modeState').className = 'state ' + (on ? 'on' : 'off');
-  $('modeState').textContent = on ? 'מצב צל פעיל' : 'מצב צל כבוי';
+  $('modeState').textContent = on ? 'בדיקת התאמה פעילה' : 'בדיקת התאמה כבויה';
   $('btnRun').disabled = !on;
   const last = STATUS.last_run || null;
   $('lastRun').textContent = last
     ? 'ריצה אחרונה: ' + dateKeyText(last.target_date) + ' · ' +
       (RUN_STATUS[String(last.status || '')] || 'מצב לא ידוע') +
       ' · ' + timeText(last.completed_at || last.started_at)
-    : 'עדיין לא נשמר צילום צל.';
+    : 'עדיין לא נשמרה בדיקת התאמה.';
   paintRun(last);
   if (CLAIMS.super === true) {
     $('btnMode').classList.remove('hide');
     $('btnMode').className = on ? 'stop' : 'go';
-    $('btnMode').textContent = on ? 'כבה מצב צל' : 'הפעל מצב צל';
+    $('btnMode').textContent = on ? 'כבה בדיקת התאמה' : 'הפעל בדיקת התאמה';
   }
 }
 
@@ -552,18 +552,20 @@ function num(v){
 
 function paintSummary(report){
   const t = (report && report.totals) || {};
+  const coverage = validCoverage(report);
+  const workDays = safeCount(t.planned_work_days);
   const items = [
-    ['planned_work_rows','ימי עבודה שנבדקו',''],
-    ['exact_matches','התאמות מלאות','good'],
-    ['pending','ממתינים לדיווח','warn'],
-    ['explained_exceptions','חריגים מוסברים','warn'],
-    ['missing_attendance','דיווחים חסרים','bad'],
-    ['mismatches','פערים','bad'],
-    ['source_conflicts','סתירות מקור','bad'],
-    ['identity_conflict','בעיות זיהוי','bad']
+    [workDays === null && coverage ? coverage.complete : workDays,'ימים בלוח שנבדקו',''],
+    [t.exact_matches,'התאמות מלאות','good'],
+    [t.pending,'ממתינים לדיווח','warn'],
+    [t.explained_exceptions,'חריגים מוסברים','warn'],
+    [t.missing_attendance,'דיווחים חסרים','bad'],
+    [t.mismatches,'פערים','bad'],
+    [t.source_conflicts,'סתירות מקור','bad'],
+    [t.identity_conflict,'רשומות שדורשות התאמת עובד · הפירוט למטה','bad']
   ];
   $('stats').innerHTML = items.map(x =>
-    '<div class="stat ' + x[2] + '"><div class="n">' + num(t[x[0]]) +
+    '<div class="stat ' + x[2] + '"><div class="n">' + num(x[0]) +
     '</div><div class="k">' + x[1] + '</div></div>').join('');
 
   const gate = $('gate');

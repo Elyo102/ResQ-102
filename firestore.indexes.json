@@ -582,6 +582,24 @@
       "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "live_lab_config",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live_lab_probes",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live_lab_quotas",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

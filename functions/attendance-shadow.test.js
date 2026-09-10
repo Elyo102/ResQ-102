@@ -743,6 +743,21 @@ test('comparison summary counts exact and missing rows', function () {
   assert.equal(result.summary.missing_attendance, 1);
 });
 
+test('monthly summary counts unique calendar days instead of employee-day rows', function () {
+  const rows = [
+    { date:'2026-09-01', planned_work:true, planned_state:'ready', actual_state:'missing',
+      state:'pending', mismatch_codes:[] },
+    { date:'2026-09-01', planned_work:true, planned_state:'ready', actual_state:'missing',
+      state:'pending', mismatch_codes:[] },
+    { date:'olf', planned_work:true, planned_state:'ready', actual_state:'missing',
+      state:'pending', mismatch_codes:[] }
+  ];
+  rows[2].date = '2026-09-02';
+  const summary = engine.summarizeComparisons(rows);
+  assert.equal(summary.planned_work_rows, 3);
+  assert.equal(summary.planned_work_days, 2);
+});
+
 test('comparison indexes 5,000 UID/date rows instead of scanning quadratically', function () {
   const base = row(engine.buildDailySnapshot(baseInput()), 'uA');
   const entries = [], attendance = [], users = [];

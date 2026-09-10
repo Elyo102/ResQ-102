@@ -1171,6 +1171,19 @@ service cloud.firestore {
         allow read, write: if signedIn() && request.auth.uid == uid;
       }
 
+      // מעבדת המכשיר האישית מנוהלת רק דרך Callables מאומתים.
+      // היא מכילה UID, חותמות ניסוי ומכסה; אין למסך צורך לקרוא
+      // או לכתוב אותם ישירות.
+      match /live_lab_config/{docId} {
+        allow read, write: if false;
+      }
+      match /live_lab_probes/{probeId} {
+        allow read, write: if false;
+      }
+      match /live_lab_quotas/{quotaId} {
+        allow read, write: if false;
+      }
+
 
       // ---------- חתימה שמורה ----------
       //

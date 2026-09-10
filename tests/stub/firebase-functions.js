@@ -66,6 +66,10 @@ function stubWorkdays(payload){
 }
 
 function defaultCallableStep(name, payload){
+  if (name === 'getPersonalLiveLabStatus') return { data:{ active:false, expires_at_ms:0 } };
+  if (name === 'enablePersonalLiveLab') return { data:{ active:true, expires_at_ms:Date.now()+86400000 } };
+  if (name === 'sendPersonalLiveLabPush') return { data:{ probe_id:String((payload || {}).request_id || ''), state:'accepted', duplicate:false } };
+  if (name === 'ackPersonalLiveLabPush') return { data:{ ok:true } };
   if (name === 'getEffectiveWorkdays') return stubWorkdays(payload);
   if (name === 'getAttendanceCorrectionContext') {
     const data = payload || {};

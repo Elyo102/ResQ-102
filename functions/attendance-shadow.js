@@ -1008,6 +1008,7 @@ function summarizeComparisons(rows) {
   const totals = {
     snapshot_rows: list.length,
     planned_work_rows: 0,
+    planned_work_days: 0,
     planned_off_rows: 0,
     source_conflicts: 0,
     actual_rows: 0,
@@ -1021,8 +1022,12 @@ function summarizeComparisons(rows) {
     duplicate_actual: 0,
     pending: 0
   };
+  const plannedDates = new Set();
   list.forEach(function (row) {
-    if (row.planned_work) totals.planned_work_rows++;
+    if (row.planned_work) {
+      totals.planned_work_rows++;
+      if (validDateKey(row.date)) plannedDates.add(row.date);
+    }
     else totals.planned_off_rows++;
     if (row.planned_state === 'conflict') totals.source_conflicts++;
     if (row.actual_state === 'present') totals.actual_rows++;
@@ -1041,6 +1046,7 @@ function summarizeComparisons(rows) {
     if (row.mismatch_codes.indexOf('duplicate_actual') !== -1) totals.duplicate_actual++;
     if (row.state === 'pending') totals.pending++;
   });
+  totals.planned_work_days = plannedDates.size;
   return totals;
 }
 

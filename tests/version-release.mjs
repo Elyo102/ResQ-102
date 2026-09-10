@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.8';
+const EXPECTED_VERSION = '42H.9';
 const EXPECTED_DATE = '10.9.2026';
 const EXPECTED_VERSIONED_REFERENCES = 238; // Prior236 + monthly archive client/controller imports2.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
