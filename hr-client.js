@@ -1,15 +1,15 @@
-import { firebaseConfig } from './firebase-config.js?v=42h10';
+import { firebaseConfig } from './firebase-config.js?v=42h11';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, where, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h10';
-import { initAppCheck } from './appcheck.js?v=42h10';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h10';
-import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h10';
-import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h10';
-import { createLocalExportUI } from './hr-local-export-ui.js?v=42h10';
-import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h10';
-import { MEMBER_ROLES } from './roles.js?v=42h10';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h11';
+import { initAppCheck } from './appcheck.js?v=42h11';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h11';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h11';
+import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h11';
+import { createLocalExportUI } from './hr-local-export-ui.js?v=42h11';
+import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h11';
+import { MEMBER_ROLES } from './roles.js?v=42h11';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

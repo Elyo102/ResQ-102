@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#15171a">
+  <title>ResQ · תחזוקה חכמה</title>
+  <link rel="stylesheet" href="./theme.css?v=42h11">
+  <link rel="stylesheet" href="./maintenance.css?v=42h11">
+  <style>body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}@media(max-width:620px){body{padding:12px}}</style>
+</head>
+<body>
+<main id="main" class="maintenance-shell maintenance-hidden">
+  <div class="maintenance-head">
+    <div><h1 class="maintenance-title">מרכז תחזוקה חכם</h1><p class="maintenance-sub">המערכת מזהה תקלות טכניות, מאחדת כפילויות ומציעה דרך טיפול. היא אינה משנה סידור, שעות, הרשאות או נתוני עובדים.</p></div>
+    <div class="maintenance-toolbar"><span id="modeBadge" class="maintenance-mode">טוען…</span><button id="btnMode" type="button">—</button><button id="btnRefresh" type="button">רענון</button><button id="btnAnalyze" class="primary" type="button">אבחן עכשיו</button></div>
+  </div>
+  <section class="maintenance-card" aria-labelledby="statusTitle">
+    <h2 id="statusTitle" class="maintenance-section-title">מצב המערכת</h2>
+    <div class="maintenance-grid">
+      <div class="maintenance-kpi bad"><strong id="p0">0</strong><span>תקלות P0</span></div>
+      <div class="maintenance-kpi bad"><strong id="p1">0</strong><span>תקלות P1</span></div>
+      <div class="maintenance-kpi warn"><strong id="p2">0</strong><span>תקלות P2</span></div>
+      <div class="maintenance-kpi"><strong id="open">0</strong><span>אירועים פתוחים</span></div>
+      <div class="maintenance-kpi"><strong id="dropped">0</strong><span>מכסת דיווח יומית הושגה</span></div>
+    </div>
+    <p class="maintenance-sub">בדיקת בריאות אחרונה: <b id="heartbeat">—</b> · המונה מציג עד 200 האירועים הטכניים החדשים ביותר.</p>
+    <div id="message" class="maintenance-note">טוען את תמונת המצב…</div>
+  </section>
+  <section class="maintenance-card" aria-labelledby="queueTitle">
+    <h2 id="queueTitle" class="maintenance-section-title">תור טיפול</h2>
+    <div id="incidentList" class="maintenance-list"><div class="maintenance-empty">טוען…</div></div>
+  </section>
+  <section class="maintenance-note warn">בגרסה זו האבחון מבוסס כללים ובמצב תצפית בלבד. אין AI, אין תיקון אוטומטי ואין שינוי בסידור, בשעות, בהרשאות או בנתוני עובדים.</section>
+</main>
+<section id="deny" class="maintenance-card maintenance-deny maintenance-hidden"><h1>אין הרשאה למסך</h1><p class="maintenance-sub">מרכז התחזוקה זמין למנהל־העל בלבד.</p></section>
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h11';
+import { renderNav, renderStuckNav } from './nav.js?v=42h11';
+import { initPWA } from './pwa.js?v=42h11';
+import { initAppCheck } from './appcheck.js?v=42h11';
+import { createMaintenanceUi } from './maintenance-client.js?v=42h11';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h11';
+
+const app=initializeApp(firebaseConfig); await initAppCheck(app);
+const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
+let identity=null, epoch=0;
+renderStuckNav(''); initPWA({offer:false});
+const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList')};
+const ui=createMaintenanceUi({
+  elements,
+  currentIdentity:()=>identity,
+  onIdentityLost:()=>location.replace('./login.html'),
+  call:async(name,data)=>(await httpsCallable(fns,name)(data||{})).data
+});
+elements.refresh.addEventListener('click',ui.refresh);
+elements.analyze.addEventListener('click',ui.analyze);
+elements.mode.addEventListener('click',()=>ui.setMode(elements.modeBadge.classList.contains('observe')?'OFF':'OBSERVE'));
+onIdTokenChanged(auth,async user=>{
+  const mine=++epoch;
+  identity=null;
+  ui.invalidate();
+  $('main').classList.add('maintenance-hidden');
+  $('deny').classList.add('maintenance-hidden');
+  if(!user){location.replace('./login.html');return;}
+  const token=await user.getIdTokenResult();
+  if(mine!==epoch||auth.currentUser!==user)return;
+  const claims=token.claims||{};
+  identity={uid:user.uid,epoch:mine,super:claims.super===true};
+  renderNav(claims,'maintenance.html',user.email||'');
+  if(claims.super!==true){$('deny').classList.remove('maintenance-hidden');return;}
+  $('main').classList.remove('maintenance-hidden'); ui.refresh();
+});
+</script>
+</body>
+</html>
