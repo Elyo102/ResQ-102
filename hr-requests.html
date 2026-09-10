@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ResQ — פניות למשאבי אנוש</title>
 <link rel="icon" href="./favicon.ico">
-<link rel="stylesheet" href="./theme.css?v=42h7">
-<link rel="stylesheet" href="./hr-requests-ui.css?v=42h7">
-<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h7">
+<link rel="stylesheet" href="./theme.css?v=42h10">
+<link rel="stylesheet" href="./hr-requests-ui.css?v=42h10">
+<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h10">
 </head>
 <body>
 <main id="hr-requests" class="requests">
@@ -20,7 +20,7 @@
     <div class="requests-layout">
       <aside class="requests-card"><h2 data-r="list-title">הפניות שלי</h2><div data-r="list" class="requests-list"></div><button data-r="more" type="button" hidden>טעינת פניות נוספות</button></aside>
       <section class="requests-card" aria-label="תוכן הפנייה">
-        <form data-r="create" hidden><h2>פנייה חדשה</h2><label>נושא <input data-r="subject" maxlength="80" required autocomplete="off"></label><label>תוכן הפנייה <textarea data-r="body" maxlength="1000" rows="6" required autocomplete="off"></textarea></label><p class="requests-note">עד 80 תווים בנושא ועד 1,000 תווים בתוכן. הטיוטה נשמרת רק במסך הנוכחי ונמחקת ביציאה או ברענון הדף.</p><button data-r="save" type="submit">שמירת הפנייה</button></form>
+        <form data-r="create" hidden><h2>פנייה חדשה</h2><label>נושא <input data-r="subject" maxlength="80" required autocomplete="off"></label><label>תוכן הפנייה <textarea data-r="body" maxlength="1000" rows="6" required autocomplete="off"></textarea></label><p class="requests-note">עד 80 תווים בנושא ועד 1,000 תווים בתוכן. לאחר שמירת הפנייה אפשר לצרף צילום מסך, PDF או קובץ אחר באזור “קבצים מצורפים”. הטיוטה נשמרת רק במסך הנוכחי ונמחקת ביציאה או ברענון הדף.</p><button data-r="save" type="submit">שמירת הפנייה והמשך לצירוף קובץ</button></form>
         <div data-r="detail"><p>בחרו פנייה או פתחו פנייה חדשה.</p></div>
         <section data-r="attachments" aria-label="קבצים מצורפים לפנייה"></section>
         <button data-r="events-more" type="button" hidden>טעינת המשך השיחה</button>
@@ -32,6 +32,6 @@
     </div>
   </section>
 </main>
-<script type="module" src="./hr-requests-client.js?v=42h7"></script>
+<script type="module" src="./hr-requests-client.js?v=42h10"></script>
 </body>
 </html>

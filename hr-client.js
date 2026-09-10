@@ -1,19 +1,31 @@
-import { firebaseConfig } from './firebase-config.js?v=42h7';
+import { firebaseConfig } from './firebase-config.js?v=42h10';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h7';
-import { initAppCheck } from './appcheck.js?v=42h7';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h7';
+import { getFirestore, collection, query, where, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h10';
+import { initAppCheck } from './appcheck.js?v=42h10';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h10';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h10';
+import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h10';
+import { createLocalExportUI } from './hr-local-export-ui.js?v=42h10';
+import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h10';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app);
+const db = getFirestore(app);
 const functions = getFunctions(app, 'europe-west1');
 const list = httpsCallable(functions, 'getHrMonthReports');
 const detail = httpsCallable(functions, 'getHrEmployeeReport');
+const review = httpsCallable(functions, 'saveHrEmployeeReview');
 const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
+const listWorkforce = httpsCallable(functions, 'listHrWorkforceCases');
+const createWorkforce = httpsCallable(functions, 'createHrWorkforceCase');
+const updateWorkforce = httpsCallable(functions, 'updateHrWorkforceCase');
+const remindWorkforce = httpsCallable(functions, 'queueHrWorkforceReminder');
 const listeners = new Set();
 let epoch = 0;
 let user = null;
@@ -88,15 +100,51 @@ async function getEmployeeMonth(data, { forceFresh = false } = {}) {
   }
 }
 window.addEventListener('pagehide', clearReportCache);
-createHrHoursUI(document.getElementById('hr-workspace'), {
+async function reviewEmployeeMonth(data) {
+  const origin=currentSession(),originUser=user;
+  if(!origin)throw denied();
+  const result=await call(review,data);
+  // call() fences transport; this second fence owns effects after our await.
+  if(currentSession()!==origin || user!==originUser)throw denied();
+  clearReportCache();
+  return result;
+}
+const hoursAdapter = {
   currentSession,
   subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   listMonth(data) { return call(list, data); },
   getEmployeeMonth,
+  reviewEmployeeMonth,
   clearReportCache,
   requestNudge(data) { return call(nudge, data); },
   getNudgeStatus(data) { return call(nudgeStatus, data); },
   listNudges(data) { return call(nudges, data); }
+};
+createHrHoursUI(document.getElementById('hr-workspace'), hoursAdapter);
+createMonthArchiveUI(document.getElementById('hr-workspace'), hoursAdapter);
+createLocalExportUI(document.querySelector('[data-hr-local-export]'), {
+  ...hoursAdapter,
+  exportFiles(month, { guard }) { return buildLocalMonthFiles(hoursAdapter, month, { guard }); }
+}, { monthElement: document.querySelector('[data-hr="month"]') });
+function sameStation(value, sid) {
+  if (!value || typeof value !== 'object') return false;
+  const ids = ['stationId','station_id','station'].flatMap(k => typeof value[k] === 'string' && value[k].trim() ? [value[k].trim()] : []);
+  return ids.length > 0 && ids.every(id => id === sid);
+}
+async function searchPeople({ name }) {
+  const origin=currentSession(),originUser=user;
+  if(!origin || typeof name!=='string')throw denied();
+  const key=name.trim().toLowerCase().replace(/["'`׳״]/g,'');
+  if(key.length<2||key.length>80)throw new Error('invalid search');
+  const snap=await getDocsFromServer(query(collection(db,'directory'),where('name_prefixes','array-contains',key),limit(25)));
+  if(currentSession()!==origin||user!==originUser)throw denied();
+  return {items:snap.docs.flatMap(doc=>{const p=doc.data();return sameStation(p,origin.stationId)&&p.active!==false&&p.is_active!==false&&MEMBER_ROLES.includes(p.role)&&typeof p.full_name==='string'&&p.full_name.trim()
+    ?[{uid:doc.id,name:p.full_name.slice(0,160),crew:typeof p.crew==='string'?p.crew.slice(0,40):'',employee_number:String(p.employee_number??'').slice(0,64)}]:[];}),limited:snap.docs.length>=25};
+}
+createHrWorkforceUI(document.querySelector('[data-hr-workforce]'), {
+  currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);}, searchPeople,
+  listCases:data=>call(listWorkforce,data), createCase:data=>call(createWorkforce,data), updateCase:data=>call(updateWorkforce,data),
+  queueReminder:data=>call(remindWorkforce,data)
 });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;

@@ -27,7 +27,7 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h7-release1';
+const CACHE = 'resq-v42h10-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -36,6 +36,8 @@ const SHELL = [
   './schedule-management.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
+  './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css',
+  './hr-local-export.js', './hr-local-export-ui.js',
   './hr-requests.html', './hr-requests-client.js', './hr-requests-ui.js', './hr-requests-ui.css',
   './hr-documents.html', './hr-documents-client.js', './hr-documents-ui.js', './hr-documents-ui.css',
   './hr-attachments-ui.js', './hr-attachments-ui.css',

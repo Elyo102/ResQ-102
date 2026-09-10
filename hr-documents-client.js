@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h7';
+import { firebaseConfig } from './firebase-config.js?v=42h10';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, doc, query, where, limit, getDocsFromServer, getDocFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h7';
-import { initAppCheck } from './appcheck.js?v=42h7';
-import { MEMBER_ROLES } from './roles.js?v=42h7';
-import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h7';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h10';
+import { initAppCheck } from './appcheck.js?v=42h10';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
+import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h10';
 
-import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h7';
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h10';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

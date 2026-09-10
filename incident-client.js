@@ -12,7 +12,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -27,6 +27,8 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
+  'getPersonalLiveLabStatus', 'enablePersonalLiveLab',
+  'sendPersonalLiveLabPush', 'ackPersonalLiveLabPush',
   'closeCallout', 'createStationTransfer', 'decideStationTransfer', 'deleteQualification',
   'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
   'getGuardManagementStatus', 'getJoinCode',
@@ -48,6 +50,9 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport',
+  'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
+  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',
+  'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',
   'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
   'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest',
   'publishHrDocument', 'reviseHrDocument', 'listMyHrDocuments', 'listHrProcedures',
@@ -55,6 +60,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'listHrDocumentReceipts', 'nudgeHrDocument',
   'reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment',
   'requestHrHoursNudge', 'getHrHoursNudgeStatus', 'listHrHoursNudges',
+  'createHrWorkforceCase', 'updateHrWorkforceCase', 'listHrWorkforceCases', 'queueHrWorkforceReminder',
   'whoAmI'
 ]);
 

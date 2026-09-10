@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="stylesheet" href="./theme.css?v=42h10">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -114,6 +114,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .co .who b{ color:var(--muted); font-weight:600 }
 
   .hide{ display:none !important }
+  .lab-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:12px }
+  .lab-metric{ border:1px solid var(--line); border-radius:9px; padding:10px; background:var(--panel) }
+  .lab-metric b{ display:block; font-size:18px; color:var(--accent); direction:ltr; text-align:right }
+  .lab-metric span{ font-size:11.5px; color:var(--muted) }
+  @media(max-width:430px){ .lab-grid{ grid-template-columns:1fr } }
 </style>
 </head>
 <body>
@@ -220,6 +225,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div id="devList"></div>
     </div>
 
+    <div class="card hide" id="labCard">
+      <h2>מעבדת המכשיר שלי</h2>
+      <div class="note">
+        בדיקה אישית ומוגבלת למכשיר הזה בלבד. היא לא שולחת לאנשי התחנה,
+        לא משנה הרשאות ולא מפעילה פעולה מבצעית.
+      </div>
+      <div class="lab-grid" id="labMetrics"></div>
+      <button class="btn" id="btnLabMeasure">מדוד תגובת מערכת</button>
+      <button class="btn" id="btnLabEnable">הפעל מעבדה ל־24 שעות</button>
+      <button class="btn go" id="btnLabPush" disabled>שלח פוש בדיקה למכשיר הזה</button>
+      <div class="msg" id="labMsg"></div>
+    </div>
+
     <div class="card hide" id="sendCard">
       <h2>שליחת הודעה</h2>
       <div class="note" id="sendNote">—</div>
@@ -254,14 +272,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
-import { renderNav, renderStuckNav } from './nav.js?v=42h7';
-import { MEMBER_ROLES } from './roles.js?v=42h7';
-import { initPWA } from './pwa.js?v=42h7';
-import { watchCallouts } from './callout.js?v=42h7';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h10';
+import { renderNav, renderStuckNav } from './nav.js?v=42h10';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
+import { initPWA } from './pwa.js?v=42h10';
+import { watchCallouts } from './callout.js?v=42h10';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h7';
-import { CREW_HE } from './rotation.js?v=42h7';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h10';
+import { CREW_HE } from './rotation.js?v=42h10';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -269,12 +287,12 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h7';
+  from './monitored-functions.js?v=42h10';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h7';
+import { initAppCheck } from './appcheck.js?v=42h10';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -332,7 +350,10 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'alerts.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
-  if (IS_SUPER) $('keyCard').classList.remove('hide');
+  if (IS_SUPER) {
+    $('keyCard').classList.remove('hide');
+    $('labCard').classList.remove('hide');
+  }
 
   try { messaging = MSG.getMessaging(app); } catch (ignore) {}
 
@@ -342,6 +363,7 @@ onAuthStateChanged(auth, async user => {
   renderPrefs();
   renderState();
   await loadBroadcasts();
+  if (IS_SUPER) await loadLab();
 
   // התראה שמגיעה בזמן שהמסך פתוח.
   if (messaging) {
@@ -349,10 +371,93 @@ onAuthStateChanged(auth, async user => {
       MSG.onMessage(messaging, function (p) {
         const d = (p && p.data) || {};
         msg('התראה: ' + (d.title || '') + ' — ' + (d.body || ''), 'info', 'pMsg');
+        if (d.probe_id) acknowledgeLab(d.probe_id, 'foreground');
       });
     } catch (ignore) {}
   }
 });
+
+// ---------- מעבדת המכשיר האישית ----------
+
+let labActive = false;
+
+function labRequestId(){
+  if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'lab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 12);
+}
+
+function renderLabMetrics(roundtrip){
+  const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+  const values = [
+    ['תגובה ראשונה', nav ? Math.round(nav.responseStart - nav.startTime) + ' ms' : '—'],
+    ['טעינת מסך', nav && nav.loadEventEnd ? Math.round(nav.loadEventEnd - nav.startTime) + ' ms' : '—'],
+    ['בדיקת שרת', Number.isFinite(roundtrip) ? Math.round(roundtrip) + ' ms' : 'טרם נמדד'],
+    ['חיבור', navigator.onLine ? 'מקוון' : 'לא מקוון']
+  ];
+  $('labMetrics').innerHTML = values.map(v => '<div class="lab-metric"><b>' + esc(v[1]) +
+    '</b><span>' + esc(v[0]) + '</span></div>').join('');
+}
+
+async function loadLab(){
+  renderLabMetrics();
+  try {
+    const started = performance.now();
+    const res = await httpsCallable(fns, 'getPersonalLiveLabStatus')({});
+    renderLabMetrics(performance.now() - started);
+    labActive = !!(res.data && res.data.active);
+    $('btnLabEnable').classList.toggle('hide', labActive);
+    $('btnLabPush').disabled = !labActive || !myToken;
+    if (new URL(location.href).searchParams.get('lab_probe')) {
+      await acknowledgeLab(new URL(location.href).searchParams.get('lab_probe'), 'opened');
+      history.replaceState(null, '', './alerts.html');
+    }
+  } catch (e) {
+    msg('בדיקת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg');
+  }
+}
+
+async function acknowledgeLab(id, stage){
+  if (!IS_SUPER || !id) return;
+  try { await httpsCallable(fns, 'ackPersonalLiveLabPush')({ probe_id:id, stage }); }
+  catch (ignore) {}
+}
+
+$('btnLabMeasure').onclick = async () => {
+  const b = $('btnLabMeasure'); b.disabled = true;
+  try {
+    const started = performance.now();
+    await httpsCallable(fns, 'getPersonalLiveLabStatus')({});
+    const elapsed = performance.now() - started;
+    renderLabMetrics(elapsed);
+    msg('המדידה הסתיימה. זו מדידת המכשיר והחיבור שלך, לא בדיקת עומס של כלל המערכת.', 'ok', 'labMsg');
+  } catch (e) { msg('המדידה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  b.disabled = false;
+};
+
+$('btnLabEnable').onclick = async () => {
+  const b = $('btnLabEnable'); b.disabled = true;
+  try {
+    await httpsCallable(fns, 'enablePersonalLiveLab')({});
+    labActive = true; b.classList.add('hide'); $('btnLabPush').disabled = !myToken;
+    msg('המעבדה פעילה ל־24 שעות. הפוש יישלח רק לאחר לחיצה מפורשת.', 'ok', 'labMsg');
+  } catch (e) { msg('הפעלת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  b.disabled = false;
+};
+
+$('btnLabPush').onclick = async () => {
+  if (!myToken) { msg('תחילה הפעל התראות במכשיר הזה בכרטיס שמעל.', 'err', 'labMsg'); return; }
+  if (!confirm('לשלוח הודעת בדיקה ניטרלית למכשיר הזה בלבד?')) return;
+  const b = $('btnLabPush'); b.disabled = true;
+  try {
+    const r = await httpsCallable(fns, 'sendPersonalLiveLabPush')({ token:myToken, request_id:labRequestId() });
+    const state = r.data && r.data.state;
+    msg(state === 'accepted'
+      ? 'Firebase קיבל את ההודעה. כעת יש לוודא שהיא הופיעה בטלפון וללחוץ עליה.'
+      : 'תוצאת השליחה אינה ודאית; המערכת לא תשלח אותה שוב אוטומטית.',
+      state === 'accepted' ? 'ok' : 'info', 'labMsg');
+  } catch (e) { msg('בדיקת הפוש נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  b.disabled = !labActive || !myToken;
+};
 
 // ---------- טעינה ----------
 
@@ -393,6 +498,7 @@ async function saveTokens(okText){
 function renderState(){
   const el = $('pState');
   const has = tokens.some(t => t.token === myToken) && myToken;
+  if ($('btnLabPush')) $('btnLabPush').disabled = !labActive || !myToken;
 
   if (!pushSupported()) {
     el.className = 'state no';

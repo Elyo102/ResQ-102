@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="stylesheet" href="./theme.css?v=42h10">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -302,20 +302,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
-import { renderNav, renderStuckNav } from './nav.js?v=42h7';
-import { MEMBER_ROLES } from './roles.js?v=42h7';
-import { initPWA } from './pwa.js?v=42h7';
-import { watchCallouts } from './callout.js?v=42h7';
-import { CREW_HE } from './rotation.js?v=42h7';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h10';
+import { renderNav, renderStuckNav } from './nav.js?v=42h10';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
+import { initPWA } from './pwa.js?v=42h10';
+import { watchCallouts } from './callout.js?v=42h10';
+import { CREW_HE } from './rotation.js?v=42h10';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
          subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
-         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42h7';
+         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42h10';
 import { loadSignature, saveSignature, attachPad, readImageFile }
-  from './signature.js?v=42h7';
+  from './signature.js?v=42h10';
 import { canSign, signState, signatureRecord, stepLabel, STEP }
-  from './signflow.js?v=42h7';
-import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h7';
+  from './signflow.js?v=42h10';
+import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h10';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -325,7 +325,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h7';
+import { initAppCheck } from './appcheck.js?v=42h10';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -972,11 +972,14 @@ async function decide(s, status){
     // רק כשהיא אושרה **סופית**. חופשה בחו"ל שראש המשמרת
     // חתם עליה עדיין ממתינה למפקד התחנה, ואסור שימי החופש
     // ייכנסו לדוח לפני שהוא הכריע.
+    let leaveFill = null;
     if (patch.status === 'approved' && s.form_id === 'leave') {
-      await fillLeave(s);
+      leaveFill = await fillLeave(s);
     }
     await loadAll();
-    msg(patch.status === 'approved'       ? 'אושר ונחתם.' :
+    msg(patch.status === 'approved' && leaveFill && leaveFill.failed
+          ? 'אושר ונחתם. ' + leaveFill.failed + ' ימי חופשה לא נוספו לדוח; יש למלא אותם ידנית.' :
+        patch.status === 'approved'       ? 'אושר ונחתם.' :
         patch.status === 'pending_station' ? 'נחתם והועבר למפקד התחנה — ' +
                                              'חופשה בחו״ל דורשת את אישורו.' :
         patch.status === 'rejected'        ? 'נדחה.' : 'בוטל.', 'ok', box);
@@ -989,28 +992,34 @@ async function decide(s, status){
 async function fillLeave(s){
   const v = s.values || {};
   const days = daysInRange(v.from, v.to);
-  if (!days.length) return;
-  try {
-    const batch = writeBatch(db);
-    days.forEach(function (k) {
-      const id = String(s.by_emp || s.by_uid) + '_' + k;
-      batch.set(doc(db, 'stations', SID, 'attendance', id), {
+  if (!days.length) return { created: 0, existing: 0, failed: 0 };
+  let created = 0, existing = 0, failed = 0;
+  for (const k of days) {
+    const id = String(s.by_emp || s.by_uid) + '_' + k;
+    const ref = doc(db, 'stations', SID, 'attendance', id);
+    try {
+      await setDoc(ref, {
         emp_number: String(s.by_emp || ''), uid: s.by_uid,
         full_name: s.by_name || '', crew: s.crew || '',
         date: k, month: k.slice(0, 7),
         day_type: 'vacation', day_type_he: 'חופש',
-        hours: 24, from_form: s.id,
+        hours: 24, status: 'draft', source: 'approved_leave_form',
+        from_form: s.id,
         notes: 'חופשה מאושרת · ' + (v.where || ''),
         updated_at: serverTimestamp()
-      }, { merge: true });
-    });
-    await batch.commit();
-  } catch (e) {
-    // כישלון כאן לא מבטל את האישור. הבקשה אושרה, והמילוי
-    // האוטומטי הוא נוחות — לא התנאי.
-    msg('אושר, אבל מילוי ימי החופש בדוח נכשל. (' +
-        (e.code || e.message) + ') אפשר למלא ידנית.', 'info', 'apprMsg');
+      });
+      created++;
+    } catch (e) {
+      try {
+        const current = await getDoc(ref);
+        if (current.exists()) existing++;
+        else failed++;
+      } catch (_) {
+        failed++;
+      }
+    }
   }
+  return { created, existing, failed };
 }
 
 // ---------- תצוגות ----------

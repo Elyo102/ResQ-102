@@ -235,15 +235,16 @@ export function matchPerson(row, roster) {
   if (emp) {
     const byEmp = people.filter(function (p) {
       return String(p.emp == null ? '' : p.emp).trim() === emp;
-    })[0];
-    if (byEmp) return { person: byEmp, how: 'emp' };
+    });
+    return byEmp.length === 1 ? { person: byEmp[0], how: 'emp' }
+      : { person: null, how: byEmp.length ? 'ambiguous' : 'none' };
   }
 
   const n = normName(row.name);
   if (!n) return { person: null, how: 'none' };
 
-  const byName = people.filter(function (p) { return normName(p.name) === n; })[0];
-  if (byName) return { person: byName, how: 'name' };
+  const candidates = new Set(people.filter(function (p) { return normName(p.name) === n; }));
+  const exact = new Set(candidates);
 
   // כינויים. עוברים על הטבלה ובודקים אם השם בקובץ הוא כינוי
   // של מישהו שקיים.
@@ -252,11 +253,12 @@ export function matchPerson(row, roster) {
     const full = keys[i];
     const nicks = NAME_ALIASES[full].map(normName);
     if (nicks.indexOf(n) === -1 && normName(full) !== n) continue;
-    const p = people.filter(function (x) { return normName(x.name) === normName(full); })[0];
-    if (p) return { person: p, how: 'alias' };
+    people.filter(function (x) { return normName(x.name) === normName(full); })
+      .forEach(p => candidates.add(p));
   }
-
-  return { person: null, how: 'none' };
+  if (candidates.size !== 1) return { person: null, how: candidates.size ? 'ambiguous' : 'none' };
+  const person = [...candidates][0];
+  return { person, how: exact.has(person) ? 'name' : 'alias' };
 }
 
 // ---------------------------------------------------------------
@@ -382,7 +384,9 @@ export function dryRun(csvText, roster) {
       const label = (String(row.name || '').trim() || '(בלי שם)') +
                     (row.emp ? ' · ' + row.emp : '');
       unknownPeople[label] = (unknownPeople[label] || 0) + 1;
-      bad.push({ line: i + 1, why: 'לא נמצא במערכת: ' + label });
+      bad.push({ line: i + 1, why: (m.how === 'ambiguous'
+        ? 'נמצאו כמה עובדים מתאימים — יש לציין מספר עובד ייחודי: '
+        : 'לא נמצא במערכת: ') + label });
       continue;
     }
 

@@ -5,14 +5,41 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ResQ — משאבי אנוש</title>
 <link rel="icon" href="./favicon.ico">
-<link rel="stylesheet" href="./theme.css?v=42h7">
-<link rel="stylesheet" href="./hr-hours-ui.css?v=42h7">
+<link rel="stylesheet" href="./theme.css?v=42h10">
+<link rel="stylesheet" href="./hr-hours-ui.css?v=42h10">
+<link rel="stylesheet" href="./hr-workforce-ui.css?v=42h10">
 </head>
 <body>
 <main id="hr-workspace" class="hr-workspace">
-  <header class="hr-heading"><div><p class="hr-eyebrow">ResQ · משאבי אנוש</p><h1>דוחות שעות עובדים</h1><p>כל דוחות החודש, במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
-  <nav aria-label="משאבי אנוש"><a href="./hr-requests.html">פניות עובדים ופניות אישיות</a> · <a href="./hr-documents.html">נהלים ומסמכים</a></nav>
-  <section class="hr-toolbar" aria-label="בחירת חודש"><label>חודש הדוחות <input data-hr="month" type="month" required></label><button data-hr="refresh" type="button">רענון</button><span data-hr="count"></span></section>
+  <header class="hr-heading"><div><p class="hr-eyebrow">ResQ · משאבי אנוש</p><h1>דאשבורד משאבי אנוש</h1><p>מעקב כוח־אדם, דוחות שעות, פניות ומסמכים במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
+  <nav class="hr-main-nav" aria-label="משאבי אנוש"><a href="#workforce">כוח אדם ומעקב</a><a href="#hours">דוחות שעות</a><a href="./hr-requests.html">פניות וקבצים</a><a href="./hr-documents.html">נהלים והפצה</a><a href="./attendance-shadow.html">בקרת דיווחים</a></nav>
+  <section id="workforce" data-hr-workforce class="hr-card hr-workforce" aria-labelledby="workforce-title">
+    <div class="hr-report-nav"><div><h2 id="workforce-title">שליטה וניהול כוח אדם</h2><p class="hr-meta">המידע נגיש למשאבי אנוש ולמנהל־על בלבד. סיבות אישיות אינן נכללות בהודעות פוש.</p></div><button data-w="refresh" type="button">רענון</button></div>
+    <div class="hr-overview" aria-label="תמונת מצב">
+      <button data-w="tab-absence" class="hr-kpi" type="button" aria-pressed="true"><strong data-w="absence-count">—</strong><span>היעדרויות ממושכות פעילות</span></button>
+      <button data-w="tab-abroad" class="hr-kpi" type="button" aria-pressed="false"><strong data-w="abroad-count">—</strong><span>חופש בחו״ל</span><small>תאריך יציאה, חזרה ונימוק</small></button>
+      <button data-w="tab-due" class="hr-kpi" type="button" aria-pressed="false"><strong data-w="due-count">—</strong><span>תזכורות שהגיע מועדן</span></button>
+      <a class="hr-kpi" href="#hours"><strong>265+</strong><span>חשודים בחריגת שעות</span><small>לפי הדוח השמור; הפירוט נבדק בפתיחה</small></a>
+    </div>
+    <p data-w="message" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
+    <div class="hr-workforce-grid">
+      <section><h3>מעקבים פעילים</h3><div data-w="list" class="hr-case-list"></div><button data-w="more" type="button" hidden>טעינת מעקבים נוספים</button></section>
+       <form data-w="editor"><h3>הוספת מעקב כוח אדם</h3>
+        <label>חיפוש עובד <span class="hr-inline"><input data-w="search" maxlength="80" autocomplete="off"><button data-w="search-button" type="button">חיפוש</button></span></label>
+        <div data-w="candidates" class="hr-candidates"></div><p data-w="chosen" class="hr-meta">לא נבחר עובד.</p>
+        <label>סוג המעקב <select data-w="kind"><option value="long_absence">היעדרות ממושכת</option><option value="abroad_leave">חופש בחו״ל</option></select></label>
+        <label>תאריך התחלה/יציאה <input data-w="start" type="date" required></label>
+        <label>תאריך סיום/חזרה <input data-w="end" type="date"></label>
+        <label>נימוק פנימי למשאבי אנוש <textarea data-w="reason" maxlength="1000" rows="4" required></textarea></label>
+        <label>תזכורת למעקב <input data-w="followup" type="date"></label>
+        <button data-w="save" type="submit">שמירת המעקב</button>
+      </form>
+    </div>
+  </section>
+  <section id="hours" aria-labelledby="hours-title"><h2 id="hours-title" class="sr-only">דוחות שעות</h2>
+  <section class="hr-toolbar" aria-label="בחירת חודש"><label>חודש הדוחות <input data-hr="month" type="month" required></label><button data-hr="refresh" type="button">רענון</button><button data-hr="hours-anomalies" type="button" aria-pressed="false">❗ חשודים מעל 265 לפי הדוח השמור</button><span data-hr="count"></span></section>
+  <p data-hr="pending-summary" class="hr-hours-alert" role="status" hidden></p>
+  <section data-hr-local-export class="hr-card hr-local-export" aria-label="ייצוא מאובטח לתיקייה מקומית"><h2>שמירה לתיקייה מקומית</h2></section>
   <p data-hr="message" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
   <section data-hr="nudges" class="hr-card hr-nudges" aria-label="תזכורות לדוחות שעות" hidden>
     <h2>תזכורות לדוחות שעות</h2>
@@ -37,9 +64,10 @@
     <div data-hr="action-detail" class="hr-action-detail"></div>
     <p data-hr="status-message" role="status"></p><button data-hr="status-refresh" type="button" hidden>רענון מצב הבקשה מהעמוד הראשון</button><button data-hr="children-more" type="button" hidden>תוצאות נוספות</button>
   </section>
+  </section>
 </main>
 <script type="module">
-import './hr-client.js?v=42h7';
+import './hr-client.js?v=42h10';
 </script>
 </body>
 </html>
