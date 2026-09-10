@@ -42,6 +42,7 @@
 
     "ignore": [
       "firebase.json",
+      "firebase.attendance-test.json",
       ".git/**",
       ".github/**",
       ".firebase/**",

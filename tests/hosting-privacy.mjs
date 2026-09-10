@@ -33,6 +33,8 @@ for (const id of ['knob', 'master', 'mState', 'ready',
 }
 check(firebaseConfig.hosting.ignore.includes('roster-import.js'),
       'Firebase Hosting excludes roster-import.js as defense in depth');
+check(firebaseConfig.hosting.ignore.includes('firebase.attendance-test.json'),
+      'Firebase Hosting excludes the local attendance emulator configuration');
 check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the service-worker cache is rotated away from the exposed copy');
 
