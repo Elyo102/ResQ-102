@@ -48,6 +48,10 @@ function policy(path, scope, classification, monitorPolicy, backupPolicy,
 const DATA_POLICIES = Object.freeze([
   // Server-only operational reporting. This policy classifies data; it does
   // not enable a managed backup, export, scheduler or paid retention service.
+  policy('stations/{sid}/maintenance/config', 'station', 'source_of_truth',
+    'none', 'managed_export', 'restore', 'confidential', 'while_station_exists',
+    'Super-admin maintenance mode and bounded deterministic-analysis cooldown state.',
+    { humanReadable:'redacted' }),
   policy('stations/{sid}/incidents/{fingerprint}', 'station', 'monitor_state',
     'activity', 'exclude', 'do_not_restore', 'operational', 'manual_after_resolution',
     'Finite technical categories; no automatic expiry, manual deletion only after treatment.',

@@ -13,7 +13,8 @@
     "fleet:history": "node fleet-history-browser.mjs",
     "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs",
     "live:headers": "node live-header-smoke.mjs",
-    "all": "npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run browser:mobile && npm run hr:archive"
+    "all": "npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run browser:mobile && npm run hr:archive && npm run maintenance",
+    "maintenance": "node ../functions/maintenance-diagnosis.test.js && node ../functions/maintenance-service.test.js && node maintenance-wiring.mjs && node maintenance-browser.mjs"
   },
   "dependencies": {
     "playwright": "^1.48.0"

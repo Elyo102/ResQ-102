@@ -32,6 +32,7 @@ const scheduleAccessAdminModule = require('./schedule-access-admin');
 const stationTransferModule = require('./station-transfer');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
+const maintenanceServiceModule = require('./maintenance-service');
 const hrHoursModule = require('./hr-hours-service');
 const hrRequestsModule = require('./hr-requests');
 const hrDocumentsModule = require('./hr-documents');
@@ -139,6 +140,15 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
+const maintenanceService = maintenanceServiceModule.createMaintenanceService({
+  db, auth:admin.auth(), HttpsError, incidentLog,
+  clock:() => Date.now(), serverTimestamp:() => FV.serverTimestamp()
+});
+const MAINTENANCE_OPTIONS = Object.freeze({ region:'europe-west1', enforceAppCheck:true,
+  timeoutSeconds:60, memory:'256MiB', maxInstances:3, concurrency:1 });
+exports.getMaintenanceDashboard = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.getDashboard(req));
+exports.setMaintenanceMode = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.setMode(req));
+exports.runMaintenanceAnalysis = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.runAnalysis(req));
 const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
@@ -5212,8 +5222,8 @@ exports.systemHealth = onSchedule({
   const found = [];
 
   // level: 'stop' עוצר עלייה לאוויר, 'warn' צריך טיפול, 'info' לידיעה
-  function add(level, title, detail) {
-    found.push({ level: level, title: title, detail: String(detail || '') });
+  function add(level, code, title, detail) {
+    found.push({ level: level, code: code, title: title, detail: String(detail || '') });
   }
 
   // כל בדיקה בתוך try משלה. בדיקה שנופלת אינה מפילה את השאר —
@@ -5221,7 +5231,7 @@ exports.systemHealth = onSchedule({
   // הבעיה שכלב השמירה נועד לתפוס.
   async function check(name, fn) {
     try { await fn(); }
-    catch (e) { add('warn', 'בדיקה נכשלה · ' + name, (e && e.message) || String(e)); }
+    catch (e) { add('warn', 'SCHEDULED_TASK_SILENT', 'בדיקה נכשלה · ' + name, (e && e.message) || String(e)); }
   }
 
   // ---------- 1. מצב ניסוי ----------
@@ -5238,7 +5248,7 @@ exports.systemHealth = onSchedule({
       }
     } catch (ignore) {}
 
-    add('stop', 'המערכת עדיין במצב ניסוי',
+    add('stop', 'RUNTIME_SILENT_MODE', 'המערכת עדיין במצב ניסוי',
         'אף התראה, מייל או קריאת פתע אינם מגיעים לאף אחד חוץ ממך' +
         (days === null ? '.' : ', כבר ' + days + ' ימים.') +
         ' המתג נמצא במסך הקליטה.');
@@ -5252,15 +5262,20 @@ exports.systemHealth = onSchedule({
     const snap = await db.collection('stations/' + sid + '/backups')
       .orderBy('date', 'desc').limit(1).get();
     if (snap.empty) {
-      add('warn', 'אין תצלום אוספים',
+      add('warn', 'SCHEDULED_TASK_SILENT', 'אין תצלום אוספים',
           'nightlySnapshot לא כתב אף רשומה. ייתכן שהוא אינו רץ.');
       return;
     }
-    const counts = (snap.docs[0].data() || {}).counts || {};
+    const backup = snap.docs[0].data() || {};
+    const counts = backup.counts || {};
+    if (Array.isArray(backup.drops) && backup.drops.length) {
+      add('stop', 'SNAPSHOT_DATA_LOSS', 'ירידה חדה בנתוני התצלום',
+          'התצלום הלילי זיהה ירידה חדה. נדרשת בדיקת שלמות נתונים ידנית.');
+    }
     WHOLE_READ_COLS.forEach(function (name) {
       const n = counts[name];
       if (typeof n !== 'number' || n < SCREEN_READ_WARN) return;
-      add('warn', 'אוסף ' + name + ' הגיע ל-' + n + ' מסמכים',
+      add('warn', 'COLLECTION_GROWTH_WARNING', 'אוסף ' + name + ' הגיע ל-' + n + ' מסמכים',
           'מסך הסטטיסטיקה קורא את האוסף הזה שלם, בלי סינון תאריך. ' +
           'כל פתיחה של המסך עולה ' + n + ' קריאות, וזה רק גדל. ' +
           'צריך לסנן אותו לטווח תאריכים.');
@@ -5278,7 +5293,7 @@ exports.systemHealth = onSchedule({
         try { bytes = Buffer.byteLength(JSON.stringify(d.data() || {}), 'utf8'); }
         catch (ignore) { return; }
         if (bytes < DOC_WARN_BYTES) return;
-        add('warn', col + '/' + d.id + ' שוקל ' + Math.round(bytes / 1024) + 'KB',
+        add('warn', 'DOCUMENT_SIZE_WARNING', col + '/' + d.id + ' שוקל ' + Math.round(bytes / 1024) + 'KB',
             'הגבול הקשיח של מסמך ב-Firestore הוא 1024KB. מעבר לו הכתיבה ' +
             'נכשלת, ולא לאט — פתאום. צריך לפצל.');
       });
@@ -5295,7 +5310,7 @@ exports.systemHealth = onSchedule({
       const v = d.data() || {};
       return (v.to || '?') + ' · ' + (v.error || v.subject || '');
     }).join(' | ');
-    add('warn', s.size + ' מיילים נכשלו ביממה האחרונה', sample);
+    add('warn', 'MAIL_DELIVERY_FAILURES', s.size + ' מיילים נכשלו ביממה האחרונה', sample);
   });
 
   // ---------- 5. משימות מתוזמנות ששתקו ----------
@@ -5308,7 +5323,7 @@ exports.systemHealth = onSchedule({
     const scan = await db.doc('stations/' + sid + '/scans/' + monthKeyOf(now)).get();
     const ranAt = scan.exists ? (scan.data() || {}).ran_at : null;
     if (!ranAt || !ranAt.toDate || ranAt.toDate() < twoDays) {
-      add('warn', 'nightlyScan לא רץ ביומיים האחרונים',
+      add('warn', 'SCHEDULED_TASK_SILENT', 'nightlyScan לא רץ ביומיים האחרונים',
           'סריקת חריגות השעות היא מה שמייצר את ההתראות לרכזת. ' +
           'אם היא שותקת, אין התראות — וזה נראה כמו חודש בלי חריגות.');
     }
@@ -5317,7 +5332,7 @@ exports.systemHealth = onSchedule({
       .orderBy('date', 'desc').limit(1).get();
     const last = bk.empty ? '' : String((bk.docs[0].data() || {}).date || '');
     if (last && last < twoDays.toISOString().slice(0, 10)) {
-      add('warn', 'nightlySnapshot לא רץ מאז ' + last,
+      add('warn', 'SCHEDULED_TASK_SILENT', 'nightlySnapshot לא רץ מאז ' + last,
           'התצלום היומי הוא מה שמזהה מחיקה המונית. בלעדיו לא נדע.');
     }
   });
@@ -5339,7 +5354,7 @@ exports.systemHealth = onSchedule({
       if (!u.exists) orphans.push(d.id);
     }
     if (!orphans.length) return;
-    add('warn', orphans.length + ' מספרי עובד מצביעים על משתמש שאינו קיים',
+    add('warn', 'ORPHAN_EMPLOYEE_INDEX', orphans.length + ' מספרי עובד מצביעים על משתמש שאינו קיים',
         orphans.slice(0, 10).join(', '));
   });
 

@@ -17,6 +17,12 @@ const privateRoster = path.join(root, 'roster-import.js');
 const importHtml = fs.readFileSync(path.join(root, 'import.html'), 'utf8');
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(root, 'firebase.json'), 'utf8'));
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
+const hostingIgnore = firebaseConfig.hosting.ignore;
+function ignoredSensitiveConfig(name) {
+  return hostingIgnore.includes(name)
+    || (hostingIgnore.includes('firebase.*-test.json') && /^firebase\..*-test\.json$/.test(name))
+    || (hostingIgnore.includes('firebase.emulator*.json') && /^firebase\.emulator.*\.json$/.test(name));
+}
 
 check(!fs.existsSync(privateRoster), 'the private roster file is absent from the deploy tree');
 for (const token of ['roster-import', 'ROSTER', 'pwPaste', 'bulkImport']) {
@@ -33,13 +39,19 @@ for (const id of ['knob', 'master', 'mState', 'ready',
 }
 check(firebaseConfig.hosting.ignore.includes('roster-import.js'),
       'Firebase Hosting excludes roster-import.js as defense in depth');
+for (const name of ['firebase.attendance-test.json', 'firebase.emulator.42h11.json']) {
+  check(ignoredSensitiveConfig(name), 'Firebase Hosting excludes ' + name);
+}
+for (const name of fs.readdirSync(root).filter((entry) => /^firebase\..+\.json$/.test(entry))) {
+  check(ignoredSensitiveConfig(name), 'every Firebase sidecar config is excluded: ' + name);
+}
 check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the service-worker cache is rotated away from the exposed copy');
 
 const server = http.createServer((req, res) => {
   const requested = decodeURIComponent(String(req.url || '/').split('?')[0]);
   const file = path.join(root, requested.replace(/^\/+/, ''));
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+  if (ignoredSensitiveConfig(path.basename(file)) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404);
     res.end('not found');
     return;
@@ -50,9 +62,10 @@ const server = http.createServer((req, res) => {
 
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
-  const response = await fetch('http://127.0.0.1:' + server.address().port +
-                               '/roster-import.js');
-  check(response.status === 404, 'a local hosting probe returns 404 for roster-import.js');
+  for (const name of ['roster-import.js', 'firebase.attendance-test.json', 'firebase.emulator.42h11.json']) {
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/' + name);
+    check(response.status === 404, 'a local hosting probe returns 404 for ' + name);
+  }
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

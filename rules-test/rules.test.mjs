@@ -1865,6 +1865,23 @@ await env.withSecurityRulesDisabled(async (c) => {
 await blocked('🔒 ביטול מינוי לא פותח כתיבת חריגה ישנה',
   updateDoc(doc(ff, LEGACY_OVERRIDE), { kind: 'swap' }));
 
+head('תחזוקת מערכת — שרת בלבד');
+const MAINTENANCE_CONFIG = `stations/${SID}/maintenance/config`;
+await env.withSecurityRulesDisabled(async (c) => {
+  await setDoc(doc(c.firestore(), MAINTENANCE_CONFIG), {
+    mode: 'OFF', revision: 1, updated_by: 'server'
+  });
+});
+for (const [roleName, client] of [
+  ['אורח', anon], ['לוחם אש', ff], ['מפקד משמרת', cmdA],
+  ['מפקד תחנה', stCmd], ['משאבי אנוש', hrUser], ['מנהל-על', superA]
+]) {
+  await blocked(`🔒 ${roleName} אינו קורא תצורת תחזוקה ישירות`,
+    getDoc(doc(client, MAINTENANCE_CONFIG)));
+  await blocked(`🔒 ${roleName} אינו משנה תצורת תחזוקה ישירות`,
+    updateDoc(doc(client, MAINTENANCE_CONFIG), { mode: 'OBSERVE' }));
+}
+
 // ============================================================
 //  סיכום
 // ============================================================

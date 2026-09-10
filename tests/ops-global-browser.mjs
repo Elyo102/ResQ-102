@@ -106,7 +106,7 @@ async function errorEvent(page, name = 'TypeError') {
 }
 async function probe(page, mode = 'pending') {
   return page.evaluate(async mode => {
-    const sdk = await import('./monitored-functions.js?v=42h10');
+    const sdk = await import('./monitored-functions.js?v=42h11');
     window.__SDK_PROBE = true; window.__SDK_MODE = mode;
     window.__SDK_ERROR = new TypeError('private business text');
     const fn = sdk.httpsCallable({}, 'whoAmI');
@@ -132,7 +132,7 @@ try {
         const expectedListeners = { error:2, unhandledrejection:2, 'resq:callable-start':1 };
         assert.deepEqual(await f.page.evaluate(() => window.__MONITOR_LISTENERS), expectedListeners);
         await f.page.evaluate(async () => {
-          const { startMonitoring } = await import('./monitoring-bootstrap.js?v=42h10');
+          const { startMonitoring } = await import('./monitoring-bootstrap.js?v=42h11');
           startMonitoring({}); startMonitoring({});
         });
         assert.deepEqual(await f.page.evaluate(() => window.__MONITOR_LISTENERS), expectedListeners);
@@ -144,7 +144,7 @@ try {
     const f = await fixture();
     try {
       const result = await f.page.evaluate(async () => {
-        const sdk = await import('./monitored-functions.js?v=42h10');
+        const sdk = await import('./monitored-functions.js?v=42h11');
         const receiver = {}, factoryThis = {}, fns = {}, options = { timeout:12345 }, payload = {}, extra = {};
         window.__SDK_PROBE = true; window.__SDK_MODE = 'resolve'; window.__SDK_VALUE = { data:{ marker:'same' } };
         const fn = sdk.httpsCallable.call(factoryThis, fns, 'whoAmI', options);
@@ -290,8 +290,8 @@ try {
       await f.page.evaluate(() => { window.__CALLABLE_PLAN = { reportIncident: Array.from({ length:20 }, () => ({ reject:true, code:'functions/unavailable' })) }; });
       await errorEvent(f.page); await reportCount(f.page, 1);
       await f.page.evaluate(async () => {
-        const sdk = await import('./monitored-functions.js?v=42h10');
-        const { TELEMETRY_CALLABLES } = await import('./incident-client.js?v=42h10');
+        const sdk = await import('./monitored-functions.js?v=42h11');
+        const { TELEMETRY_CALLABLES } = await import('./incident-client.js?v=42h11');
         window.__SDK_PROBE = true; window.__SDK_MODE = 'reject'; window.__SDK_ERROR = new Error('private');
         await Promise.all(TELEMETRY_CALLABLES.filter(n => !['unknown','reportIncident'].includes(n)).slice(0,15).map(name => sdk.httpsCallable({}, name)({}).catch(() => {})));
       });
@@ -327,9 +327,9 @@ try {
     } finally { await f.context.close(); }
   });
 
-  await test('all 24 Firebase screens bootstrap monitoring and all 17 factories use the facade', async () => {
+  await test('all 25 Firebase screens bootstrap monitoring and all 17 factories use the facade', async () => {
     const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html'].includes(n));
-    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html'];
+    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html'];
     assert.deepEqual(screens.sort(), expectedScreens.sort());
     const externalBootstrap = {
       'schedule-management.html': 'schedule-management.js',
@@ -341,7 +341,7 @@ try {
       let source = fs.readFileSync(path.join(root, screen), 'utf8');
       const module = externalBootstrap[screen];
       if (module) {
-        assert.ok(source.includes(`./${module}?v=42h10`), screen + ' disconnected bootstrap');
+        assert.ok(source.includes(`./${module}?v=42h11`), screen + ' disconnected bootstrap');
         source += fs.readFileSync(path.join(root, module), 'utf8');
       }
       assert.equal((source.match(/await initAppCheck\(app\);/g) || []).length, 1, screen);
@@ -350,7 +350,7 @@ try {
     assert.equal(consumers.length, 17);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
-      assert.ok(source.includes("from './monitored-functions.js?v=42h10'"), file);
+      assert.ok(source.includes("from './monitored-functions.js?v=42h11'"), file);
       assert.ok(!source.includes('/firebase-functions.js'), file + ' bypasses the facade');
     }
     const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');

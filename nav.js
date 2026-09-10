@@ -33,7 +33,8 @@ const ITEMS = [
   { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f', group: 'admin' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
   { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a', group: 'admin' },
-  { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' }
+  { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' },
+  { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' }
 ];
 
 // שלוש קבוצות תצוגה בלבד. ההרשאה נשארת בשדה who של כל פריט.
@@ -51,7 +52,7 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h10';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h11';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true;

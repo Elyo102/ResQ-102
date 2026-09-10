@@ -637,6 +637,11 @@ service cloud.firestore {
       match /incident_days/{day} {
         allow read, write: if false;
       }
+      // Maintenance mode and cooldown are server-owned. Even a super-admin
+      // reaches them only through App-Check-protected callable functions.
+      match /maintenance/config {
+        allow read, write: if false;
+      }
       match /feedback/{feedbackId} {
         allow read, write: if false;
       }
