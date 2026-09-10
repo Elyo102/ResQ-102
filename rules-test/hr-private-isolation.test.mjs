@@ -47,7 +47,13 @@ function paths(uid) {
     'hr_hours_review_actor_quotas/' + id, base + '/hr_hours_review_notification_jobs/' + id,
     base + '/attendance_correction_events/' + id,
     base + '/attendance_correction_receipts/' + id,
-    base + '/attendance_correction_notification_jobs/' + id];
+    base + '/attendance_correction_notification_jobs/' + id,
+    base + '/hr_workforce_cases/' + id,
+    base + '/hr_workforce_cases/' + id + '/events/' + id,
+    base + '/hr_workforce_operations/' + id,
+    base + '/hr_workforce_reminder_locks/' + id,
+    base + '/hr_workforce_notification_jobs/' + id,
+    'hr_workforce_actor_quotas/' + id];
 }
 const knownPaths = new Set(), seeded = new Map();
 function seed(path, value) { knownPaths.add(path); seeded.set(path, value); }
@@ -59,7 +65,7 @@ for (const actor of actors) {
   if (actor.stationId) seed('stations/' + actor.stationId + '/users/' + actor.uid, {
     uid: actor.uid, role: actor.role, stationId: actor.stationId, employee_number: actor.emp,
     crew: 'A', active: true, is_active: true, full_name: 'Synthetic fixture' });
-  assert.equal(paths(actor.uid).length, 26);
+  assert.equal(paths(actor.uid).length, 32);
   for (const target of paths(actor.uid)) {
     seed(target, { uid: actor.uid, owner_uid: actor.uid, recipient_uid: actor.uid, target_uid: actor.uid,
       actor_uid: actor.uid, by_uid: actor.uid, station_id: sid, stationId: sid, status: 'open',
@@ -110,9 +116,9 @@ try {
       const results = await Promise.allSettled(checks.map(([kind, action]) => exactDenied(actor.label + ' ' + kind + ' ' + target, action)));
       const failure = results.find(value => value.status === 'rejected'); if (failure) throw failure.reason;
     }
-    console.log('PASS ' + actor.label + ': all26 private paths deny get, list, own-filtered list, create, update and delete');
+    console.log('PASS ' + actor.label + ': all32 private paths deny get, list, own-filtered list, create, update and delete');
   }
-  assert.equal(denied, actors.length * 26 * 6);
+  assert.equal(denied, actors.length * 32 * 6);
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     for (const [target, value] of seeded) assert.deepEqual((await getDocFromServer(doc(db, target))).data(), value, 'denials preserve data');

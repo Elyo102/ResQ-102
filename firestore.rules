@@ -548,6 +548,9 @@ service cloud.firestore {
     match /hr_attachment_actor_quotas/{quotaId} {
       allow read, write: if false;
     }
+    match /hr_workforce_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
 
     match /stations/{sid} {
       match /hr_attachments/{attachmentId} {
@@ -609,6 +612,21 @@ service cloud.firestore {
         allow read, write: if false;
       }
       match /hr_domain_notification_intents/{intentId} {
+        allow read, write: if false;
+      }
+      match /hr_workforce_cases/{recordId} {
+        allow read, write: if false;
+      }
+      match /hr_workforce_cases/{recordId}/events/{eventId} {
+        allow read, write: if false;
+      }
+      match /hr_workforce_operations/{operationId} {
+        allow read, write: if false;
+      }
+      match /hr_workforce_reminder_locks/{lockId} {
+        allow read, write: if false;
+      }
+      match /hr_workforce_notification_jobs/{jobId} {
         allow read, write: if false;
       }
       // Ops submissions are authenticated and written by the server only.

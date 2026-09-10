@@ -70,6 +70,12 @@ async function fixture(options = {}) {
     const h = window.__HR = { calls: [], heldCalls: [], heldClaims: [], events: [], observers: [], errors: [],
       claimStarted: 0, claimSettled: 0, observerSettled: 0, appCheckReady: false, holdNext: null, rejectNext: null };
     h.now = Date.now(); Date.now = () => h.now;
+    if(config.nativeDirectory){
+      class TestFile{constructor(){this.bytes=new Uint8Array();}async createWritable(){const self=this;return{async write(bytes){self.bytes=new Uint8Array(bytes);},async close(){},async abort(){}};}async getFile(){return new Blob([this.bytes]);}}
+      class TestDirectory{constructor(){this.children=new Map();}async getDirectoryHandle(name,{create=false}={}){const v=this.children.get(name);if(v instanceof TestDirectory)return v;if(v||!create)throw new DOMException('missing','NotFoundError');const d=new TestDirectory();this.children.set(name,d);return d;}async getFileHandle(name,{create=false}={}){const v=this.children.get(name);if(v instanceof TestFile)return v;if(v||!create)throw new DOMException('missing','NotFoundError');const f=new TestFile();this.children.set(name,f);return f;}}
+      h.directoryRoot=new TestDirectory();h.directoryPaths=(dir=h.directoryRoot,p='')=>[...dir.children].flatMap(([name,v])=>v instanceof TestDirectory?h.directoryPaths(v,p+name+'/'):[p+name]);
+      window.showDirectoryPicker=()=>Promise.resolve(h.directoryRoot);
+    }
     h.detailVersion = 0; h.detailText = '';
     h.makeUser = (uid, claims, hold = false) => ({ uid, claims, hold,
       getIdTokenResult() {
@@ -98,9 +104,10 @@ async function fixture(options = {}) {
         phase:data.uid?'person':'complete',discovery_scanned:0,delivery_status:'intent_only',audience_semantics:data.uid?'active_when_requested':'active_when_enqueue_page_scanned_with_completed_discovery_uid_upper_bound'});
       let value;
       if(name==='getHrMonthReports')value={month:data.month,items:people,next_cursor:null};
+      else if(name==='listHrWorkforceCases')value={items:[],next_cursor:null};
       else if(name==='getHrEmployeeReport')value={...(people.find(p=>p.uid===data.uid)||person),uid:data.uid,month:data.month,
-        full_name:(people.find(p=>p.uid===data.uid)||person).full_name+' v'+h.detailVersion,employee_number:'1001',
-        rows:h.detailText?[{date:data.month+'-01',notes:h.detailText,hours:24}]:[],warnings:[],stored_total_hours:24,current_detail_total_hours:24};
+        full_name:(people.find(p=>p.uid===data.uid)||person).full_name+' v'+h.detailVersion,employee_number:'1001',crew:'ג',
+        rows:h.detailText?[{date:data.month+'-01',day_type_he:'עבודה',start:'08:00',end:'16:00',start2:'',end2:'',site_name:'אילת',notes:h.detailText,overtime_reason:'',reason:'',end_day:0,end_day2:null,hours:24}]:[],warnings:[],stored_total_hours:24,current_detail_total_hours:24,detail_provenance:'current_attendance_not_historical_snapshot'};
       else if(name==='requestHrHoursNudge'){
         let record=h.nudgeActions.find(r=>r.request_id===data.request_id);
         if(!record){record={...action(),recipient_uid:data.uid||null,updated_at_ms:1800000000000,status_scope:'generation_only',actor:identity.uid,request_id:data.request_id};h.nudgeActions.push(record);}
@@ -140,6 +147,8 @@ async function fixture(options = {}) {
       if (url.pathname.endsWith('/firebase-app.js')) return route.fulfill({ contentType: 'text/javascript', body: 'export function initializeApp(config){return {config};}' });
       if (url.pathname.endsWith('/firebase-auth.js')) return route.fulfill({ contentType: 'text/javascript', body:
         'export function getAuth(){return window.__HR.auth;} export function onIdTokenChanged(auth,next,error){const h=window.__HR;h.observers.push(next);h.errors.push(error);h.events.push("auth-observer");queueMicrotask(()=>h.dispatch(auth.currentUser));return()=>{};}' });
+      if (url.pathname.endsWith('/firebase-firestore.js')) return route.fulfill({ contentType: 'text/javascript', body:
+        'export function getFirestore(){return {};} export function collection(){return {};} export function query(){return {};} export function where(){return {};} export function limit(){return {};} export async function getDocsFromServer(){return {docs:[]};}' });
     }
     if (url.origin !== origin) return route.abort();
     if (modules[url.pathname]) return route.fulfill({ contentType: 'text/javascript', body: modules[url.pathname] });
@@ -182,10 +191,11 @@ try {
   await check('HR list/detail use SDK region and implicit token station, never station data', async () => {
     const f = await fixture(); await openDetail(f.page);
     const state = await f.page.evaluate(() => ({ calls: __HR.calls, region: __HR.region, storage: [localStorage.length, sessionStorage.length], url: location.href }));
-    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 3);
+    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 4);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthReports').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrHoursNudges').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrEmployeeReport').data).sort(), ['month', 'uid']);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrWorkforceCases').data), []);
     state.calls.forEach(c => assert.equal(c.identity.stationId, 'fixture_station'));
     assert.deepEqual(state.storage, [0, 0]); assert.equal(state.url, origin + '/hr.html'); await f.close();
   });
@@ -234,7 +244,7 @@ try {
     await f.page.locator('.hr-person').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
     await f.page.evaluate(code => { __HR.rejectNext = { name: 'getHrEmployeeReport', code }; }, code);
     await f.page.locator('[data-hr="detail-fresh"]').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 4); await f.close();
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 5); await f.close();
   });
   await check('old permission denial cannot clear a newer valid session and report', async () => {
     const f = await fixture(); await person(f.page);
@@ -256,7 +266,7 @@ try {
       __HR.heldCalls.shift().resolve();
     });
     await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 3);
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 4);
     await f.page.evaluate(() => __HR.dispatch(__HR.auth.currentUser)); await person(f.page);
     assert.ok((await f.page.locator('.hr-person').innerText()).includes('second_station')); await f.close();
   });
@@ -427,6 +437,26 @@ try {
       return {old,source:(await __HR.adapter.getEmployeeMonth(data)).freshness.source};
     });
     assert.equal(result.old.code,'functions/unauthenticated');assert.equal(result.source,'memory');await f.close();
+  });
+  await check('actual HR page local export creates a verified month folder for its live station',async()=>{
+    const f=await fixture({nativeDirectory:true});await person(f.page);
+    await f.page.getByRole('button',{name:'ייצוא לתיקייה מקומית'}).click();
+    await f.page.locator('[data-hr-local-export] [role="status"]').filter({hasText:'הייצוא הושלם'}).waitFor({timeout:15000});
+    const paths=await f.page.evaluate(()=>__HR.directoryPaths());
+    assert.ok(paths.some(p=>p.startsWith('משאבי אנוש - fixture_station/run-')&&p.endsWith('/manifest.json')));
+    const month=await f.page.locator('[data-hr="month"]').inputValue();
+    assert.ok(paths.some(p=>p.includes(`/Synthetic actor-a fixture_station v0 [1001]/דוחות שעות/${month}/`)),paths.join('\n'));
+    await f.close();
+  });
+  await check('actual HR page held local export cannot complete after identity revocation',async()=>{
+    const f=await fixture({nativeDirectory:true});await person(f.page);
+    await f.page.evaluate(()=>{__HR.holdNext='getHrEmployeeReport';});
+    await f.page.getByRole('button',{name:'ייצוא לתיקייה מקומית'}).click();
+    await f.page.waitForFunction(()=>__HR.heldCalls.some(x=>x.name==='getHrEmployeeReport'));
+    await f.page.evaluate(()=>{__HR.dispatch(__HR.makeUser('actor-a',{role:'firefighter',stationId:'fixture_station'}));__HR.heldCalls.find(x=>x.name==='getHrEmployeeReport').resolve();});
+    await f.page.waitForTimeout(100);
+    assert.equal((await f.page.evaluate(()=>__HR.directoryPaths())).some(p=>p.endsWith('/manifest.json')),false);
+    await privateEmpty(f.page);await f.close();
   });
   assert.deepEqual(sourceHashes(), before, 'actual product sources remain unchanged during suite');
   console.log('SOURCE_HASHES ' + JSON.stringify(before));

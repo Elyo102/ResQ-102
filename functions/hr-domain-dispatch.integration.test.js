@@ -134,12 +134,12 @@ async function fixture() {
   f.generate = async (family, worker = f.worker()) => {
     const jobs = await f.jobs(family); assert.ok(jobs.size > 0);
     for (const d of jobs.docs) {
-      for (let i = 0; i < 20; ++i) {
+      for (let i = 0; i < 50; ++i) {
         const saved = (await d.ref.get()).data();
         if (!active.includes(saved.status)) break;
         const result = await worker.processJob({ stationId: sid, family, job_id: d.id });
         if (['deferred', 'blocked'].includes(result.status)) break;
-        assert.ok(i < 19, 'bounded fixture generation must finish');
+        assert.ok(i < 49, 'bounded fixture generation must finish');
       }
     }
     assert.equal(f.calls.length, 0, 'processJob never invokes transport');
@@ -564,16 +564,16 @@ check('device budget is total, deduplicates per recipient and never slices a rec
   const h = await fixture(); await h.publish(); await h.tokens('owner', Array.from({ length: 501 }, (_, i) => 'large-' + i)); await h.generate('document'); await h.worker().run();
   const v = (await h.intent()).data(); assert.equal(v.status, 'blocked'); assert.equal(v.reason, 'token-limit'); assert.equal(v.terminal, true); assert.equal(h.calls.length, 0);
 });
-check('five concurrent recipients and 25 checked intents are hard invocation caps', async () => {
-  const f = await fixture(); for (let i = 0; i < 27; ++i) await f.add('fan' + i); await f.procedure(); await f.generate('document');
-  assert.equal((await f.intents()).size, 30); let running = 0, peak = 0, entered, release, hold = true;
-  const atFive = new Promise(resolve => { entered = resolve; }), barrier = new Promise(resolve => { release = resolve; });
-  const w = f.worker({ send: async p => { ++running; peak = Math.max(peak, running); if (running === 5) entered(); if (hold) await barrier; --running; return accepted(p); } });
+check('ten concurrent recipients and 250 checked intents are hard invocation caps', async () => {
+  const f = await fixture(); for (let i = 0; i < 277; ++i) await f.add('fan' + i); await f.procedure(); await f.generate('document');
+   assert.equal((await f.intents()).size, 280); let running = 0, peak = 0, entered, release, hold = true;
+  const atTen = new Promise(resolve => { entered = resolve; }), barrier = new Promise(resolve => { release = resolve; });
+  const w = f.worker({ send: async p => { ++running; peak = Math.max(peak, running); if (running === 10) entered(); if (hold) await barrier; --running; return accepted(p); } });
   const execution = w.run();
-  try { await bounded(atFive, 'five synthetic sends were not entered'); assert.equal(f.calls.length, 5); }
+  try { await bounded(atTen, 'ten synthetic sends were not entered'); assert.equal(f.calls.length, 10); }
   finally { hold = false; release(); }
-  const result = await execution; assert.equal(peak, 5); assert.equal(result.intents_checked, 25); assert.equal(f.calls.length, 25);
-  await w.run(); assert.equal(f.calls.length, 30);
+  const result = await execution; assert.equal(peak, 10); assert.equal(result.intents_checked, 250); assert.equal(f.calls.length, 250);
+  await w.run(); assert.equal(f.calls.length, 280);
 });
 check('60 second start budget stops new work; page checks remain bounded', async () => {
   const f = await fixture(); for (let i = 0; i < 6; ++i) await f.add('budget' + i); await f.procedure(); await f.generate('document');

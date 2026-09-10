@@ -276,7 +276,10 @@ const hrDurablePaths = [
   ['stations/{sid}/hr_documents/{documentId}', 'source_of_truth', 'count_drop', 'restore'],
   ['stations/{sid}/hr_documents/{documentId}/revisions/{revision}', 'source_of_truth', 'count_drop', 'restore_after_parent'],
   ['stations/{sid}/hr_documents/{documentId}/revisions/{revision}/receipts/{uid}', 'audit_log', 'activity', 'restore_after_parent'],
-  ['stations/{sid}/hr_document_operations/{operationId}', 'source_of_truth', 'count_drop', 'restore_after_parent']
+  ['stations/{sid}/hr_document_operations/{operationId}', 'source_of_truth', 'count_drop', 'restore_after_parent'],
+  ['stations/{sid}/hr_workforce_cases/{recordId}', 'source_of_truth', 'count_drop', 'specialized_restore'],
+  ['stations/{sid}/hr_workforce_cases/{recordId}/events/{eventId}', 'audit_log', 'activity', 'restore_after_parent'],
+  ['stations/{sid}/hr_workforce_operations/{operationId}', 'source_of_truth', 'count_drop', 'restore_after_parent']
 ];
 const hrControlPaths = [
   'stations/{sid}/hr_nudge_actions/{actionId}',
@@ -287,7 +290,10 @@ const hrControlPaths = [
   'hr_nudge_bulk_locks/{lockId}',
   'hr_nudge_actor_quotas/{quotaId}',
   'hr_request_actor_quotas/{quotaId}',
-  'hr_document_actor_quotas/{quotaId}'
+  'hr_document_actor_quotas/{quotaId}',
+  'stations/{sid}/hr_workforce_reminder_locks/{lockId}',
+  'stations/{sid}/hr_workforce_notification_jobs/{jobId}',
+  'hr_workforce_actor_quotas/{quotaId}'
 ];
 const hrAttachmentPaths = [
   'stations/{sid}/hr_attachments/{attachmentId}',
@@ -307,10 +313,10 @@ const correctionPaths = [
 ];
 const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, correctionPaths);
 
-test('exact twenty-six private HR/correction paths are classified with no readable or automatic-retention permission', () => {
+test('exact thirty-two private HR/correction paths are classified with no readable or automatic-retention permission', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
-  assert.equal(hrPaths.length, 26);
+  assert.equal(hrPaths.length, 32);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);
@@ -367,8 +373,8 @@ test('inspection receipts, summary and quota have separate prospective restore c
   });
 });
 
-test('seven durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {
-  assert.equal(hrDurablePaths.length, 7);
+test('ten durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {
+  assert.equal(hrDurablePaths.length, 10);
   for (const [path, classification, monitor, restore] of hrDurablePaths) {
     const item = backupPolicy.getPolicy(path);
     assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
@@ -382,8 +388,8 @@ test('seven durable HR entries are prospective parent-dependent classifications,
   }
 });
 
-test('nine HR control/queue entries are excluded, never restore active delivery or erase unknown outcomes', () => {
-  assert.equal(hrControlPaths.length, 9);
+test('twelve HR control/queue entries are excluded, never restore active delivery or erase unknown outcomes', () => {
+  assert.equal(hrControlPaths.length, 12);
   for (const path of hrControlPaths) {
     const item = backupPolicy.getPolicy(path);
     assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],

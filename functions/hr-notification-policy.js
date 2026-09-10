@@ -15,6 +15,7 @@ const TYPES = Object.freeze({
   report_command: 'ממתין דוח שעות לאישורך',
   report_reviewed: 'דוח השעות שלך נבדק במשאבי אנוש',
   attendance_corrected: 'דיווח השעות שלך עודכן',
+  hr_workforce_followup: 'ממתין מעקב כוח אדם',
   schedule_change: 'הסידור שלך עודכן',
   guard_change: 'השיבוץ שלך לאבטחה עודכן'
 });

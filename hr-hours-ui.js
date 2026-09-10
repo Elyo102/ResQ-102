@@ -75,7 +75,7 @@ export function previousHrMonth(now = new Date()) {
 }
 export function createHrHoursUI(root, adapter=disconnected) {
   const q = key => root.querySelector('[data-hr="'+key+'"]');
-  let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false, suspended=false;
+  let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false, suspended=false, anomaliesOnly=false;
   let loadedDetail=null, loadedFreshness=null, pending=null, busy=false, confirmation=null;
   let reviewPending=null, reviewBusy=false, reviewRefresh=null, reviewId=null, reviewUncertain=false;
   let history=[], historyCursor=null, historyLoading=false, historyGeneration=0;
@@ -86,13 +86,16 @@ export function createHrHoursUI(root, adapter=disconnected) {
   const locked=()=>busy||!!pending||reviewBusy||!!reviewPending||!!reviewRefresh;
   const lockedMonth=()=>pending?.data.month||reviewPending?.data.month||reviewRefresh?.data.month||loadedDetail?.month;
   const sid=()=>JSON.parse(owner)[1];
+  const suspected=p=>typeof p.stored_total_hours==='number'&&p.stored_total_hours>265;
+  const visibleIndices=()=>items.map((p,i)=>({p,i})).filter(x=>!anomaliesOnly||suspected(x.p)).map(x=>x.i);
   // Locale format order is not a date-key contract.
   q('month').value=previousHrMonth();
   const message = value => { q('message').textContent=value; };
   function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;loadedFreshness=null;q('detail').replaceChildren(el('p',value)); }
   function controls() {
-    q('previous').disabled=!owner || locked() || selected<=0;
-    q('next').disabled=!owner || locked() || loading || (selected>=items.length-1 && !cursor);
+    const visible=visibleIndices(),position=visible.indexOf(selected);
+    q('previous').disabled=!owner || locked() || position<=0;
+    q('next').disabled=!owner || locked() || loading || (position>=visible.length-1 && !cursor);
     q('more').hidden=!cursor; q('more').disabled=loading||locked();
     q('refresh').disabled=!owner||locked(); q('month').disabled=!owner||locked();
     q('nudges').hidden=!owner;q('history').hidden=!owner;
@@ -104,8 +107,9 @@ export function createHrHoursUI(root, adapter=disconnected) {
     q('status-refresh').hidden=!actionId;q('status-refresh').disabled=locked()||statusLoading;
     q('children-more').hidden=!childCursor;q('children-more').disabled=locked()||statusLoading;
     for(const button of root.querySelectorAll('.hr-person,.hr-action-list button,[data-hr="nudge-person"],[data-hr="detail-fresh"],[data-hr="review-save"]'))button.disabled=!owner||locked();
-    q('position').textContent=selected<0?'':(selected+1)+' מתוך '+items.length+(cursor?' ומעלה':'');
-    q('count').textContent=items.length ? items.length+' עובדים נטענו'+(cursor?' · יש נוספים':'') : '';
+    q('hours-anomalies').disabled=!owner||locked();q('hours-anomalies').setAttribute('aria-pressed',String(anomaliesOnly));
+    q('position').textContent=position<0?'':(position+1)+' מתוך '+visible.length+(cursor?' ומעלה':'');
+    q('count').textContent=items.length ? (anomaliesOnly?visible.length+' חשודים מתוך ':'')+items.length+' עובדים נטענו'+(cursor?' · יש נוספים':'') : '';
   }
   function mayAct(){return alive(generation,owner)&&!locked();}
   function resetStatus() {
@@ -307,14 +311,19 @@ export function createHrHoursUI(root, adapter=disconnected) {
   function renderPeople() {
     q('people').replaceChildren();
     for(const [index,p] of items.entries()) {
+      if(anomaliesOnly&&!suspected(p))continue;
       const button=el('button',null,'hr-person'); button.type='button'; button.dataset.uid=p.uid;
       button.setAttribute('aria-pressed',String(index===selected));
       button.append(el('strong',p.full_name || 'שם חסר'),el('small',(labels[p.state]||labels.unavailable)+(p.historical?' · עובד לשעבר':'')));
+      if(typeof p.stored_total_hours==='number'&&p.stored_total_hours>265)button.append(el('small','❗ סכום שמור מעל 265 שעות · יש לפתוח ולאמת מול הפירוט העדכני'));
       button.append(inspectionBlock(p,false));
       const g=generation,key=owner;
       button.addEventListener('click',()=>{ if(alive(g,key))select(index); });
       q('people').append(button);
     }
+    const pending=items.filter(p=>['missing','draft'].includes(p.state)&&p.historical!==true).length;
+    q('pending-summary').hidden=pending===0;
+    q('pending-summary').textContent=pending?'❗ '+pending+' דיווחי שעות מהחודש החולף ממתינים להגשה או לאישור העובד.':' ';
     controls();
   }
   function renderDetail(p,freshness) {
@@ -341,6 +350,9 @@ export function createHrHoursUI(root, adapter=disconnected) {
       const box=el('div',title,'hr-total');box.append(el('strong',number(value)));totals.append(box);
     }
     detail.append(totals,el('p','הפירוט מציג את רשומות הנוכחות הנוכחיות. אם תוקנו מאז אישור הדוח, ההבדל בסכומים מוצג כאן.','hr-meta'));
+    if(typeof p.current_detail_total_hours==='number'&&p.current_detail_total_hours>265){
+      detail.append(el('p','❗ חריגת שעות: '+number(p.current_detail_total_hours)+' שעות בפירוט העדכני, מעל הסף של 265. נדרשת בדיקת משאבי אנוש.','hr-hours-alert'));
+    }
     for(const warning of p.warnings||[])detail.append(el('p',warnings[warning]||'יש נתונים בדוח הדורשים בדיקה.','hr-notice'));
     if(freshness.source==='server'&&p.reminder_eligible===true&&p.historical===false&&['missing','draft'].includes(p.state)){
       const button=el('button',p.state==='missing'?'בקשת תזכורת להגשת הדוח':'בקשת תזכורת לאישור הדוח');button.type='button';button.dataset.hr='nudge-person';
@@ -348,12 +360,16 @@ export function createHrHoursUI(root, adapter=disconnected) {
       button.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration)startNudge(p);});detail.append(button);controls();
     }
     if(!p.rows.length){detail.append(el('p','אין רשומות נוכחות לחודש הזה.'));return;}
+    const legend=el('div',null,'hr-legend');legend.setAttribute('aria-label','מקרא סוגי ימים');legend.append(el('span','מילואים','reserve'),el('span','מחלה','sick'),el('span','חופש','vacation'));detail.append(legend);
     const wrap=el('div',null,'hr-table-wrap');wrap.tabIndex=0;wrap.setAttribute('aria-label','פירוט שעות · ניתן לגלול לרוחב');
     const table=el('table'),head=el('thead'),tr=el('tr');
     for(const title of ['תאריך','סוג יום','כניסה','יציאה','מקום','הערות','שעות']){const th=el('th',title);th.scope='col';tr.append(th);}head.append(tr);table.append(head);
     const body=el('tbody');
     for(const row of p.rows){
       const r=el('tr');
+      if(row.day_type==='reserve')r.className='hr-day-reserve';
+      else if(row.day_type==='sick')r.className='hr-day-sick';
+      else if(row.day_type==='vacation')r.className='hr-day-vacation';
       const end=value=>value===1?' (+יום)':value===2?' (+יומיים)':'';
       const reasons=[['סיבה',row.reason],['הערות',row.notes],['נימוק לחריגה',row.overtime_reason]];
       const notes=reasons.filter((entry,i)=>entry[1]&&reasons.findIndex(other=>other[1]===entry[1])===i)
@@ -394,7 +410,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
       const merged=append?items.concat(value.items):value.items;
       if(merged.some(p=>!p||typeof p.uid!=='string') || new Set(merged.map(p=>p.uid)).size!==merged.length)throw new Error('invalid people');
       items=merged;cursor=value.next_cursor;renderPeople();message(items.length?'בחרו עובד, או עברו בין הדוחות עם החצים.':cursor?'לא נמצאו עובדים להצגה בעמוד זה. ניתן להמשיך לעמוד הבא.':'אין עובדים להצגה בחודש הזה.');
-      if(selectNew&&items[offset])await select(offset);
+      if(selectNew){const nextIndex=items.findIndex((p,i)=>i>=offset&&(!anomaliesOnly||suspected(p)));if(nextIndex>=0)await select(nextIndex);}
     }catch(e){if(alive(g,key)){items=[];cursor=null;selected=-1;++detailGeneration;renderPeople();clearDetail('רשימת הדוחות אינה זמינה כרגע.');message('טעינת הדוחות נכשלה. לחצו רענון כדי לנסות שוב.');}}
     finally{if(alive(g,key)){loading=false;controls();}}
   }
@@ -414,11 +430,12 @@ export function createHrHoursUI(root, adapter=disconnected) {
     renderPeople();clearDetail(owner?'בחרו עובד לצפייה בדוח.':'נדרש חיבור עם הרשאת משאבי אנוש.');
     message(owner?'טוען…':'ממתין לחיבור מאובטח עם הרשאה מתאימה.');if(owner){void loadPage();void loadHistory();}
   }
-  const next=()=>{if(!mayAct())return;if(selected+1<items.length)void select(selected+1);else if(cursor)void loadPage(true,true);};
-  const previous=()=>{if(mayAct()&&selected>0)void select(selected-1);};
+  const next=()=>{if(!mayAct())return;const visible=visibleIndices(),position=visible.indexOf(selected);if(visible[position+1]!==undefined)void select(visible[position+1]);else if(cursor)void loadPage(true,true);};
+  const previous=()=>{if(!mayAct())return;const visible=visibleIndices(),position=visible.indexOf(selected);if(position>0)void select(visible[position-1]);};
   const more=()=>{if(mayAct()&&cursor)void loadPage(true);};
   const keydown=e=>{if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.target.closest('input,textarea,select,[contenteditable]'))return;if(e.key==='ArrowLeft'&&!q('next').disabled){e.preventDefault();next();}else if(e.key==='ArrowRight'&&!q('previous').disabled){e.preventDefault();previous();}};
   q('month').addEventListener('change',refresh);q('refresh').addEventListener('click',refresh);q('next').addEventListener('click',next);q('previous').addEventListener('click',previous);q('more').addEventListener('click',more);root.addEventListener('keydown',keydown);
+  q('hours-anomalies').addEventListener('click',()=>{if(!mayAct())return;anomaliesOnly=!anomaliesOnly;selected=-1;++detailGeneration;renderPeople();clearDetail(anomaliesOnly?'בחרו עובד מרשימת החשודים.':'בחרו עובד לצפייה בדוח.');});
   const bindings=[['nudge-station',()=>startNudge()],['retry',()=>void submitPending()],['confirm',()=>{if(confirmation)startNudge(null,confirmation);}],
     ['history-refresh',()=>{if(mayAct()){resetStatus();controls();void loadHistory();}}],['actions-more',()=>{if(historyCursor)void loadHistory(true);}],
     ['status-refresh',()=>{if(actionId)void showStatus(actionId);}],['children-more',()=>{if(actionId&&childCursor)void showStatus(actionId,true);}]];

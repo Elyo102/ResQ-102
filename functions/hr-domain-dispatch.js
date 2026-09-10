@@ -8,17 +8,21 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const { decideNotification, notificationIntent } = require('./hr-notification-policy');
 const { validReview } = require('./hr-hours-review-contract');
 const { TARGET_ROLES: CORRECTION_TARGET_ROLES } = require('./attendance-corrections');
-const LIMITS = Object.freeze({ candidates: 25, pageSize: 25, jobPages: 25, perJob: 5,
-  intents: 25, concurrency: 5, devices: 500, startBudgetMs: 60000, leaseMs: 600000,
+const LIMITS = Object.freeze({ candidates: 250, pageSize: 25, jobPages: 25, perJob: 25,
+  intents: 250, concurrency: 10, devices: 500, startBudgetMs: 60000, leaseMs: 600000,
   routineMs: 86400000, nudgeMs: 3600000, consentMs: 3600000 });
-const COLLECTIONS = Object.freeze({ request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs', review: 'hr_hours_review_notification_jobs', correction: 'attendance_correction_notification_jobs' });
+const COLLECTIONS = Object.freeze({ request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs',
+  review: 'hr_hours_review_notification_jobs', correction: 'attendance_correction_notification_jobs',
+  workforce: 'hr_workforce_notification_jobs' });
 const INTENTS = 'hr_domain_notification_intents';
 const ACTIVE = ['discovering', 'queued', 'processing', 'deferred', 'blocked'];
 const READY = ['queued', 'blocked', 'deferred'];
 const FAILED = new Set(['messaging/invalid-argument', 'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered', 'messaging/mismatched-credential', 'messaging/sender-id-mismatch']);
 const TITLES = Object.freeze({ hr_request: 'יש עדכון בפניית עובד', hr_reply: 'יש עדכון בפנייה שלך',
-  hr_document: 'יש עדכון במסמך ברסקיו', hr_procedure: 'יש עדכון בנוהל ברסקיו', hr_nudge: 'ממתינה תזכורת לטיפול', report_reviewed: 'דוח השעות שלך נבדק במשאבי אנוש', attendance_corrected: 'דיווח השעות שלך עודכן' });
+  hr_document: 'יש עדכון במסמך ברסקיו', hr_procedure: 'יש עדכון בנוהל ברסקיו', hr_nudge: 'ממתינה תזכורת לטיפול',
+  hr_workforce_followup: 'ממתין מעקב כוח אדם', report_reviewed: 'דוח השעות שלך נבדק במשאבי אנוש',
+  attendance_corrected: 'דיווח השעות שלך עודכן' });
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
@@ -53,22 +57,29 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       j.type, j.created_at_ms, j.send_now, j.consent_expires_at_ms, j.routine_after_quiet, j.exclude_actor];
     if(family==='review')parts.push(j.employee_number,j.month,j.reviewed_revision);
     if(family==='correction')parts.push(j.employee_number,j.month);
+    if(family==='workforce')parts.push(j.record_id);
     return hash(JSON.stringify(parts));
   }
   function job(value, loc, family) {
-    const j = value, review = family === 'review', correction = family === 'correction', personalRecord = review || correction,
-      schema = correction ? 'attendance-correction-notification-v1' : review ? 'hr-review-notification-v1' : family === 'request' ? 'hr-request-notification-v1' : 'hr-document-notification-v1';
+    const j = value, review = family === 'review', correction = family === 'correction',
+      workforce = family === 'workforce', personalRecord = review || correction,
+      schema = correction ? 'attendance-correction-notification-v1' : review ? 'hr-review-notification-v1'
+        : family === 'request' ? 'hr-request-notification-v1'
+        : workforce ? 'hr-workforce-notification-v1' : 'hr-document-notification-v1';
     if (!plain(j) || j.schema !== schema || j.event_id !== loc.id || j.station_id !== loc.sid
       || !access.validUid(j.actor_uid) || !integer(j.actor_auth_time) || !Number.isSafeInteger(j.actor_auth_time * 1000)
       || !safeTime(j.created_at_ms) || typeof j.send_now !== 'boolean' || typeof j.routine_after_quiet !== 'boolean'
       || j.exclude_actor !== !personalRecord || !own(TITLES, j.type) || j.routine_after_quiet !== (j.type !== 'hr_nudge')
       || j.consent_expires_at_ms !== (j.send_now ? j.created_at_ms + LIMITS.consentMs : 0)
       || (j.audience === 'person' ? !access.validUid(j.recipient_uid) : own(j, 'recipient_uid'))
-      || !(personalRecord ? ['person'] : family === 'request' ? ['person', 'station_hr'] : ['person', 'station_members']).includes(j.audience)
+      || !(personalRecord ? ['person'] : family === 'request' ? ['person', 'station_hr']
+        : workforce ? ['station_hr'] : ['person', 'station_members']).includes(j.audience)
       || (personalRecord ? j.type!==(correction?'attendance_corrected':'report_reviewed') || j.send_now!==false || j.consent_expires_at_ms!==0
         || ['case_id','document_id','revision',...(correction?['reviewed_revision']:[])].some(k=>own(j,k))
         || typeof j.employee_number!=='string' || !j.employee_number.length || j.employee_number.length>64 || /[\u0000-\u001f\u007f/]/.test(j.employee_number)
         || typeof j.month!=='string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(j.month) || (review&&!key(j.reviewed_revision))
+        : workforce ? j.type !== 'hr_workforce_followup' || !key(j.record_id) || j.neutral !== true
+          || j.send_now !== false || j.consent_expires_at_ms !== 0 || j.routine_after_quiet !== true || j.exclude_actor !== true
         : family === 'request' ? !key(j.case_id) : !key(j.document_id) || !integer(j.revision) || j.revision < 1)) throw fault('invalid-job', true);
     const expires = j.created_at_ms + (j.routine_after_quiet ? LIMITS.routineMs : LIMITS.nudgeMs);
     if (!safeTime(expires)) throw fault('invalid-job', true);
@@ -114,7 +125,8 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       ctx = identity.context({ auth: { uid: j.actor_uid, token: c } });
       await identity.requireLive(tx, ctx);
     } catch (e) { throw fault('actor-profile-unavailable', ['permission-denied', 'failed-precondition', 'unauthenticated'].includes(codeOf(e))); }
-    if (source.family === 'correction' || source.family === 'review' || source.family === 'document' || source.event.kind === 'setStatus' || j.actor_uid !== source.parent.owner_uid) {
+    if (source.family === 'correction' || source.family === 'review' || source.family === 'document'
+      || source.family === 'workforce' || source.event.kind === 'setStatus' || j.actor_uid !== source.parent.owner_uid) {
       if (!ctx.super && ctx.role !== 'hr_coordinator') throw fault('actor-role-changed', true);
     }
   }
@@ -162,6 +174,22 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         || e.owner_uid!==j.recipient_uid || e.employee_number!==j.employee_number || e.month!==j.month
         || e.reviewed_revision!==j.reviewed_revision)throw fault('source-invalid',true);
       return {family,event:e};
+    }
+    if (family === 'workforce') {
+      const ref = station(j.station_id).collection('hr_workforce_cases').doc(j.record_id);
+      const [parentSnap, eventSnap] = await Promise.all([
+        tx.get(ref), tx.get(ref.collection('events').doc(j.event_id))
+      ]);
+      const p = parentSnap.exists ? parentSnap.data() : null;
+      const e = eventSnap.exists ? eventSnap.data() : null;
+      if (!plain(p) || p.schema !== 'hr-workforce-case-v1' || p.record_id !== j.record_id
+        || p.station_id !== j.station_id || p.status !== 'active' || !integer(p.revision) || p.revision < 1
+        || !plain(e) || e.schema !== 'hr-workforce-event-v1' || e.event_id !== j.event_id
+        || e.record_id !== j.record_id || e.station_id !== j.station_id || e.kind !== 'reminder'
+        || e.actor_uid !== j.actor_uid || e.actor_auth_time !== j.actor_auth_time
+        || e.revision !== p.revision || e.created_at_ms !== j.created_at_ms
+        || e.subject_uid !== p.subject_uid || e.reason !== 'followup_due') throw fault('source-invalid', true);
+      return { family, parent: p, event: e };
     }
     if (family === 'request') {
       const ref = station(j.station_id).collection('hr_requests').doc(j.case_id);
@@ -403,7 +431,9 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         dispatch_started_at_ms: at, token_count: tokens.length, updated_at_ms: at });
       return { attempt, tokens, expires: j.expires_at_ms, sendNow: j.send_now, consentExpires: j.consent_expires_at_ms,
         payload: { tokens, data: { title: TITLES[j.type], body: n.body,
-          url: ['review','correction'].includes(v.family) ? './attendance.html' : v.family === 'request' ? './hr-requests.html' : './hr-documents.html', tag: 'hr-domain-' + v.id, important: '0' },
+          url: ['review','correction'].includes(v.family) ? './attendance.html'
+            : v.family === 'request' ? './hr-requests.html' : v.family === 'workforce' ? './hr.html' : './hr-documents.html',
+          tag: 'hr-domain-' + v.id, important: '0' },
         webpush: { headers: { Urgency: 'normal' } } } };
     });
   }

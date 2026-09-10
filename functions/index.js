@@ -41,6 +41,7 @@ const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
 const hrDomainDispatchModule = require('./hr-domain-dispatch');
+const hrWorkforceModule = require('./hr-workforce');
 const attendanceCorrectionsModule = require('./attendance-corrections');
 const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
@@ -142,6 +143,13 @@ const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), Htt
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
 exports.saveHrEmployeeReview = onCall({ region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60, memory: '256MiB', maxInstances: 3, concurrency: 1 }, async (req) => hrHours.reviewEmployeeMonth(req));
+const hrWorkforce = hrWorkforceModule.createHrWorkforce({ db, auth: admin.auth(), HttpsError });
+const HR_WORKFORCE_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
+  timeoutSeconds: 60, memory: '256MiB', maxInstances: 3, concurrency: 1 });
+exports.listHrWorkforceCases = onCall(HR_WORKFORCE_OPTIONS, async req => hrWorkforce.list(req));
+exports.createHrWorkforceCase = onCall(HR_WORKFORCE_OPTIONS, async req => hrWorkforce.create(req));
+exports.updateHrWorkforceCase = onCall(HR_WORKFORCE_OPTIONS, async req => hrWorkforce.update(req));
+exports.queueHrWorkforceReminder = onCall(HR_WORKFORCE_OPTIONS, async req => hrWorkforce.queueReminder(req));
 const ATTENDANCE_CORRECTION_OPTIONS = Object.freeze({
   region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60,
   memory: '256MiB', maxInstances: 3, concurrency: 1
@@ -3155,7 +3163,7 @@ const SNAP_COLS = [
   'roster', 'users', 'quals', 'member_quals', 'rotations',
   'shift_overrides', 'sub_stations', 'vehicles', 'vehicle_views',
   'attendance', 'monthly_reports', 'swaps', 'guards', 'faults',
-  'handovers', 'submissions', 'broadcasts'
+  'handovers', 'submissions', 'broadcasts', 'hr_workforce_cases'
 ];
 
 // ירידה של יותר מרבע, או היעלמות מוחלטת של אוסף שהיה מלא.

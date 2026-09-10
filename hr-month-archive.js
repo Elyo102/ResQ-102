@@ -62,6 +62,17 @@ export async function renderPdf(title, lines, guard=()=>{}) {
   }await finish();guard();return imagePdf(images);}finally{canvas.width=0;canvas.height=0;images.length=0;}
 }
 const num=v=>v===null?'לא זמין':String(v);
+function validateDetailedReport(p, month, message) {
+  const number=v=>v===null||typeof v==='number'&&Number.isFinite(v)&&v>=0;
+  if(!p||typeof p.full_name!=='string'||!p.full_name.trim()||typeof p.employee_number!=='string'||!p.employee_number.trim()
+    ||typeof p.crew!=='string'||typeof p.historical!=='boolean'||!number(p.stored_total_hours)||!number(p.current_detail_total_hours)
+    ||!Array.isArray(p.warnings)||p.warnings.some(w=>typeof w!=='string')||!Array.isArray(p.rows)||p.rows.length>31
+    ||p.rows.some(r=>!r||typeof r.date!=='string'||!r.date.startsWith(month+'-')||!number(r.hours)
+      ||['day_type_he','start','end','start2','end2','site_name','notes','overtime_reason','reason'].some(k=>typeof r[k]!=='string')
+      ||![null,0,1,2].includes(r.end_day)||![null,0,1,2].includes(r.end_day2)))throw Error(message);
+  const dates=new Set(),days=new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();
+  for(const r of p.rows){const day=Number(r.date.slice(8));if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||day<1||day>days||dates.has(r.date))throw Error('תאריך נוכחות לא תקין');dates.add(r.date);}
+}
 function reportLines(p){
   const lines=['שם: '+p.full_name+' | מספר עובד: '+p.employee_number+' | משמרת: '+p.crew,
     p.historical?'רשומת עבר של עובד שאינו פעיל בתחנה.':'רשומת עובד פעיל בתחנה.',
@@ -75,6 +86,35 @@ function reportLines(p){
   }return lines;
 }
 const csvCell=v=>'"'+String(v??'').replace(/^[\s]*[=+\-@]/,m=>"'"+m).replace(/"/g,'""')+'"';
+// Produces one freshly-authorized PDF at a time for the explicit local-folder
+// exporter. It keeps no browser persistence and never returns stale cache data.
+export async function* buildLocalMonthFiles(adapter, month, {guard=()=>{},progress=()=>{},pdf=renderPdf}={}) {
+  folderName(month); const deadline=Date.now()+45*60000,people=[],seen=new Set(),cursors=new Set();let cursor,pages=0;
+  const check=()=>{guard();if(Date.now()>deadline)throw Error('זמן ההפקה הסתיים; לא נוצר ייצוא חלקי נוסף.');};
+  try {
+    do {
+      check();if(++pages>120)throw Error('יותר מדי עמודי עובדים.');
+      const page=await adapter.listMonth({month,...(cursor?{cursor}:{})});check();
+      if(page?.month!==month||!Array.isArray(page.items)||page.items.length>25||!(page.next_cursor===null||typeof page.next_cursor==='string'&&page.next_cursor))throw Error('רשימת דוחות לא תקינה');
+      for(const person of page.items){if(!person||typeof person.uid!=='string'||!person.uid||seen.has(person.uid)||!Object.hasOwn(states,person.state))throw Error('יש עובד שפרטיו דורשים בדיקה.');seen.add(person.uid);people.push(person);}
+      if(people.length>3000||page.next_cursor&&page.next_cursor===cursor||page.next_cursor&&page.items.length===0)throw Error('לא ניתן להשלים את רשימת העובדים.');
+      cursor=page.next_cursor;if(cursor){if(cursors.has(cursor))throw Error('סמן עמוד חוזר');cursors.add(cursor);}progress('נמצאו '+people.length+' עובדים');
+    } while(cursor);
+    if(!people.length)throw Error('אין עובדים להפקה בחודש שנבחר.');
+    for(let i=0;i<people.length;i++){
+      check();const value=await adapter.getEmployeeMonth({month,uid:people[i].uid},{forceFresh:true});check();const report=value?.report;
+      if(value?.freshness?.source!=='server'||!report||report.uid!==people[i].uid||report.month!==month||!Object.hasOwn(states,report.state)
+        ||!Array.isArray(report.rows)||report.rows.length>31||!Array.isArray(report.warnings)||report.detail_provenance!=='current_attendance_not_historical_snapshot'
+        )throw Error('לא התקבל דוח עדכני ותקין.');
+      validateDetailedReport(report,month,'לא התקבל דוח עדכני ותקין.');
+      const bytes=await pdf(folderName(month)+' — '+report.full_name,[...reportLines(report),'זמן הפקה: '+new Date().toISOString()],check);check();
+      progress('הוכן '+(i+1)+' מתוך '+people.length+' דוחות');
+      yield {kind:'hours',uid:report.uid,employeeNumber:report.employee_number,fullName:report.full_name,
+        month,name:'דוח שעות '+month+'.pdf',bytes};
+    }
+    check();await adapter.listMonth({month});check();
+  } finally {people.length=0;adapter.clearReportCache?.();}
+}
 export async function buildMonthArchive(adapter, month, {guard=()=>{},progress=()=>{},pdf=renderPdf}={}) {
   const folder=folderName(month),started=new Date().toISOString(),deadline=Date.now()+15*60000,files=[],people=[],seen=new Set(),cursors=new Set();let cursor,bytes=0,pages=0;
   const check=()=>{guard();if(Date.now()>deadline)throw Error('זמן ההפקה הסתיים; לא הורד ארכיון חלקי.');};
@@ -90,9 +130,7 @@ export async function buildMonthArchive(adapter, month, {guard=()=>{},progress=(
     const summary=[['שם','מספר עובד','משמרת','מצב','פעילות','שעות שמורות','שעות בפירוט נוכחי']],missing=[];
     for(let i=0;i<people.length;i++){check();const value=await adapter.getEmployeeMonth({month,uid:people[i].uid},{forceFresh:true});check();const p=value?.report;
       if(value?.freshness?.source!=='server'||!p||p.uid!==people[i].uid||p.month!==month||!Object.hasOwn(states,p.state)||!Array.isArray(p.rows)||p.rows.length>31||!Array.isArray(p.warnings)||p.detail_provenance!=='current_attendance_not_historical_snapshot')throw Error('לא התקבל דוח עדכני ותקין; ההפקה נעצרה.');
-      const number=v=>v===null||typeof v==='number'&&Number.isFinite(v)&&v>=0;
-      if(['full_name','employee_number','crew'].some(k=>typeof p[k]!=='string')||typeof p.historical!=='boolean'||!number(p.stored_total_hours)||!number(p.current_detail_total_hours)||p.warnings.some(w=>typeof w!=='string')||p.rows.some(r=>!r||typeof r.date!=='string'||!r.date.startsWith(month+'-')||!number(r.hours)||['day_type_he','start','end','start2','end2','site_name','notes','overtime_reason','reason'].some(k=>typeof r[k]!=='string')||![null,0,1,2].includes(r.end_day)||![null,0,1,2].includes(r.end_day2)))throw Error('פרטי הדוח אינם תקינים; לא הורד ארכיון חלקי.');
-      const dates=new Set();for(const r of p.rows){const day=Number(r.date.slice(8));if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||day<1||day>new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()||dates.has(r.date))throw Error('תאריך נוכחות לא תקין');dates.add(r.date);}
+      validateDetailedReport(p,month,'פרטי הדוח אינם תקינים; לא הורד ארכיון חלקי.');
       const title=folder+' — '+p.full_name;
       const data=await pdf(title,[...reportLines(p),'תחילת הפקה: '+started],check);check();
       add('דוחות/'+String(i+1).padStart(4,'0')+' - '+safeName(p.full_name)+' - '+safeName(p.employee_number)+'.pdf',data);

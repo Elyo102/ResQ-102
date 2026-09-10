@@ -1,4 +1,4 @@
-import { MEMBER_ROLES } from './roles.js?v=42h9';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
 
 const KEY = /^[a-f0-9]{64}$/;
 const uid = v => typeof v === 'string' && /^[^\u0000-\u001f\u007f/]{1,128}$/.test(v);

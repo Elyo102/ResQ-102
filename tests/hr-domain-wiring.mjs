@@ -10,10 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const sha = value => createHash('sha256').update(value).digest('hex');
 const pins = {
-  'functions/hr-domain-dispatch.js': '0a23ea04eb41398ba3a45c7e6ff9559b8e0054c4e2373f0fdb7eef1ecf45f89f',
+  'functions/hr-domain-dispatch.js': 'f828abd8ea4c673368f04d720a23675d6eacb3935cf76c6b6ba11b57ba9d2635',
   'functions/hr-requests.js': '16abae222216908cc8090ec1cfe8904920e8bdc75c5bf11b103d11dabccdfe2d',
   'functions/hr-documents.js': '14640985ff4de88377fbdbd8b12af5325fd78ba699cd8a1eb0f2a9679af84a0e',
-  'functions/hr-notification-policy.js': 'd2b161037aa3045f29f0cd70bba02eb08bdb3b578c90d75c2ec91b3345312222',
+  'functions/hr-notification-policy.js': '1f463af5e307dc96fec5da330673260ac9a8a0a4aadae7c5892ccc769c3e2668',
   'functions/hr-hours-dispatch.js': 'e071a6fce6e398522198f5c0aa75afd61000a138ebaeb416c02b2e21e27bd462',
   'functions/hr-hours-nudges.js': 'fd572de3dae6563bb8f63dd2e7a7baf8699598ad80dcafc47d244f89029724d7'
 };
@@ -78,7 +78,8 @@ await check('scheduled rejection is not swallowed, retried or converted to succe
 });
 
 const config = JSON.parse(read('firestore.indexes.json'));
-const jobGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs', 'attendance_correction_notification_jobs'];
+const jobGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs',
+  'attendance_correction_notification_jobs', 'hr_workforce_notification_jobs'];
 const intentGroup = 'hr_domain_notification_intents';
 const domainGroups = [...jobGroups,intentGroup];
 const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
@@ -88,7 +89,7 @@ const expectedIndexes = pairs.map(([collectionGroup, fieldPath]) => ({ collectio
   fields: [{ fieldPath: 'status', order: 'ASCENDING' }, { fieldPath, order: 'ASCENDING' }] }));
 const ordered = indexes => indexes.map(value => JSON.stringify(value)).sort();
 function validateIndexes(value) {
-  assert.deepEqual(Object.keys(value).sort(), ['fieldOverrides', 'indexes']); assert.equal(value.indexes.length, 42);
+  assert.deepEqual(Object.keys(value).sort(), ['fieldOverrides', 'indexes']); assert.equal(value.indexes.length, 46);
   assert.deepEqual(ordered(value.indexes.filter(i => domainGroups.includes(i.collectionGroup))), ordered(expectedIndexes));
   const old = value.indexes.filter(i => !domainGroups.includes(i.collectionGroup));
   const oldOverrides = value.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup));
@@ -100,7 +101,7 @@ function validateIndexes(value) {
   assert.equal(sha(JSON.stringify(old)), 'b09f65a0d72538129360363c51dbc79ef702289c22b310753d9175171dbe713c');
   assert.equal(sha(JSON.stringify(oldOverrides)), '41571b75f7605882500137b420a1664964d2efd0cee6f3a6ef885c44399c9939');
 }
-await check('exact21 domain query indexes append without changing21 existing indexes or32 baseline overrides', () => validateIndexes(config));
+await check('exact25 domain query indexes append without changing21 existing indexes or32 baseline overrides', () => validateIndexes(config));
 await check('in-memory omitted, changed-scope and additional indexes fail the closed gate', () => {
   for (const mutate of [value => value.indexes.splice(value.indexes.findIndex(i => domainGroups.includes(i.collectionGroup)), 1),
     value => { value.indexes.find(i => domainGroups.includes(i.collectionGroup)).queryScope = 'COLLECTION'; },

@@ -105,9 +105,10 @@ await check('scheduled handler preserves worker rejection instead of swallowing 
 
 const config = JSON.parse(read('firestore.indexes.json'));
 const newGroups = ['hr_nudge_actions', 'hr_nudge_intents'];
-// The adjacent domain gate independently pins these exact21 indexes. They
+// The adjacent domain gate independently pins these exact25 indexes. They
 // are not part of this gate's immutable pre-HR baseline or its eight shapes.
-const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs', 'attendance_correction_notification_jobs', 'hr_domain_notification_intents'];
+const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs',
+  'attendance_correction_notification_jobs', 'hr_workforce_notification_jobs', 'hr_domain_notification_intents'];
 const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
   ['hr_nudge_intents', 'expires_at_ms'], ['hr_nudge_intents', 'lease_until_ms'], ['hr_nudge_intents', 'not_before_ms'],
@@ -116,7 +117,7 @@ const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actio
 }));
 await check('exact eight required collection-group indexes, without duplicate or extra query shapes', () => {
   assert.deepEqual(config.indexes.filter(i => newGroups.includes(i.collectionGroup)), expectedIndexes);
-  assert.equal(config.indexes.length, 42);
+  assert.equal(config.indexes.length, 46);
 });
 await check('all13 original indexes and32 field overrides match immutable b1451e9 baseline', () => {
   assert.deepEqual(Object.keys(config).sort(), ['fieldOverrides', 'indexes']);

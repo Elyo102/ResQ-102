@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h9">
+<link rel="stylesheet" href="./theme.css?v=42h10">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -74,6 +74,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   tr:last-child td{ border-bottom:0 }
   tr.sug td{ opacity:.55 }
   tr.run td{ background:var(--warn-bg) }
+  tr.day-reserve td{ background:#dff5e5; color:#163d20 }
+  tr.day-sick td{ background:#fff2bd; color:#4e3500 }
+  tr.day-vacation td{ background:#dcecff; color:#07376a }
   .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
   .dw{ color:var(--muted); font-size:11.5px }
   .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px; color:var(--on-accent) }
@@ -369,22 +372,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h9';
-import { subStationAvailable } from './stations.js?v=42h9';
-import { renderNav, renderStuckNav } from './nav.js?v=42h9';
-import { MEMBER_ROLES } from './roles.js?v=42h9';
-import { initPWA } from './pwa.js?v=42h9';
-import { watchCallouts } from './callout.js?v=42h9';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h10';
+import { subStationAvailable } from './stations.js?v=42h10';
+import { renderNav, renderStuckNav } from './nav.js?v=42h10';
+import { MEMBER_ROLES } from './roles.js?v=42h10';
+import { initPWA } from './pwa.js?v=42h10';
+import { watchCallouts } from './callout.js?v=42h10';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h9';
+  from './rotation.js?v=42h10';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h9';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h10';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=42h9';
+  from './hours.js?v=42h10';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -392,11 +395,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h9';
+  from './monitored-functions.js?v=42h10';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h9';
+import { initAppCheck } from './appcheck.js?v=42h10';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -1227,7 +1230,9 @@ function renderRows(sug){
     const running = !!(rec && rec.start && !rec.end);
 
     const tr = document.createElement('tr');
-    tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '');
+    tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '') +
+      (view.day_type === 'reserve' ? ' day-reserve' : view.day_type === 'sick' ? ' day-sick' :
+       view.day_type === 'vacation' ? ' day-vacation' : '');
 
     // data-l הוא שם השדה. במסך רחב הוא לא מוצג — שורת הכותרת
     // עושה את העבודה. בטלפון הטבלה נפרקת לכרטיסים, ואז זו
