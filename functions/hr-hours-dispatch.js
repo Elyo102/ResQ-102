@@ -7,7 +7,7 @@ const access = require('./schedule-access');
 const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { projectEmployeeHours, HrHoursInputError } = require('./hr-hours-model');
 const { decideNotification, notificationIntent } = require('./hr-notification-policy');
-const LIMITS = Object.freeze({ candidates: 25, actionPages: 25, perAction: 5, intents: 25,
+const LIMITS = Object.freeze({ candidates: 25, intentCandidates: 100, actionPages: 25, perAction: 5, intents: 100,
   concurrency: 5, devices: 500, startBudgetMs: 60000, leaseMs: 600000 });
 const ACTIVE = ['discovering', 'queued', 'processing', 'deferred'];
 const READY = ['queued', 'blocked', 'deferred'];
@@ -180,9 +180,9 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
         dispatch_next_check_ms: Math.min(at + backoff(n + 1), v.expires_at_ms), dispatch_reason: 'page-check-unavailable' } : {}) });
     });
   }
-  function interleave(groups) {
+  function interleave(groups, candidates = LIMITS.candidates) {
     const out = [], seen = new Set();
-    for (let i = 0; i < LIMITS.candidates; ++i) for (const docs of groups) {
+    for (let i = 0; i < candidates; ++i) for (const docs of groups) {
       const d = docs[i]; if (d && !seen.has(d.ref.path)) { seen.add(d.ref.path); out.push(d); }
     }
     return out;
@@ -224,7 +224,7 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
       ic.where('status', '==', 'deferred').where('not_before_ms', '<=', at).orderBy('not_before_ms'),
       ic.where('status', '==', 'blocked').where('next_check_ms', '<=', at).orderBy('next_check_ms'),
       ic.where('status', '==', 'queued').orderBy('created_at_ms')];
-    const intents = interleave(await Promise.all(intentQueries.map(async q => (await q.limit(LIMITS.candidates).get()).docs)));
+    const intents = interleave(await Promise.all(intentQueries.map(async q => (await q.limit(LIMITS.intentCandidates).get()).docs)), LIMITS.intentCandidates);
     let reserved = 0;
     async function consume() {
       while (intents.length && stats.intents_checked < LIMITS.intents && within()) {

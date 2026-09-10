@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h7">
+<link rel="stylesheet" href="./theme.css?v=42h8">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ResQ">
@@ -218,16 +218,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h7';
-import { renderNav, renderStuckNav } from './nav.js?v=42h7';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h8';
+import { renderNav, renderStuckNav } from './nav.js?v=42h8';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h7';
-import { getFirestore, collection, doc, getDocs, writeBatch, serverTimestamp }
+  from './monitored-functions.js?v=42h8';
+import { getFirestore, collection, doc, getDocs, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { dryRun } from './histimport.js?v=42h7';
+import { dryRun } from './histimport.js?v=42h8';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
@@ -236,12 +236,14 @@ const esc = s => String(s == null ? '' : s)
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h7';
+import { initAppCheck } from './appcheck.js?v=42h8';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
 
 let ME = { uid:'', email:'' };
+let HIST = null, histGeneration = 0, histBusy = false, histDryBusy = false, histAllowed = false;
+let authGeneration = 0, pageSuspended = false;
 
 window.addEventListener('error', function (e) {
   const b = $('errBar');
@@ -257,10 +259,16 @@ function msg(t, cls, id){
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
+  const generation = ++authGeneration;
+  histAllowed = false;
+  invalidateHistory(true);
+  $('work').classList.add('hide');
+  if (pageSuspended) return;
   if (!user) { location.replace('./login.html?next=import.html'); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (pageSuspended || generation !== authGeneration || auth.currentUser !== user) return;
   const isSuper = c.super === true;
 
   ME = { uid: user.uid, email: String(user.email || '').toLowerCase() };
@@ -273,6 +281,8 @@ onAuthStateChanged(auth, async user => {
   }
 
   $('work').classList.remove('hide');
+  histAllowed = true;
+  historyControls();
   renderNav(c, 'import.html', user.email || '');
   await loadSilent();
 });
@@ -361,7 +371,31 @@ async function setSilent(on){
 //  שמתברר כשגוי אחרי הכתיבה אינו "נסה שוב".
 
 const db = getFirestore(app);
-let HIST = null;   // תוצאת הבדיקה היבשה האחרונה
+function historyControls(){
+  $('hDry').disabled = !histAllowed || histBusy || histDryBusy;
+  $('hRun').disabled = !histAllowed || histBusy || histDryBusy || !HIST || !HIST.ready.length;
+}
+function invalidateHistory(clearPaste = false){
+  histGeneration++;
+  HIST = null;
+  $('hSum').replaceChildren();
+  $('hSum').classList.add('hide');
+  hmsg('', '');
+  if (clearPaste) $('hPaste').value = '';
+  historyControls();
+}
+$('hPaste').addEventListener('input', () => invalidateHistory());
+window.addEventListener('pagehide', () => {
+  pageSuspended = true;
+  authGeneration++;
+  histAllowed = false;
+  invalidateHistory(true);
+  $('work').classList.add('hide');
+});
+// A restored page must obtain fresh authorization, not revive its old preview.
+window.addEventListener('pageshow', event => {
+  if (event.persisted) location.reload();
+});
 
 // מספר העובד נשמר במסמכי users ולא במסמכי roster המצומצמים.
 // המסך פתוח למנהל-על בלבד, וממפה לזיכרון רק את ארבעת השדות
@@ -379,20 +413,25 @@ async function loadRoster(){
 }
 
 $('hDry').onclick = async function () {
+  if (histBusy || histDryBusy || !histAllowed) return;
+  histDryBusy = true;
+  const generation = ++histGeneration, user = auth.currentUser, paste = $('hPaste').value;
   const b = $('hDry'); b.disabled = true;
   $('hRun').disabled = true; HIST = null;
   hmsg('קורא את הסגל ובודק את הקובץ…', 'info');
   try {
     const roster = await loadRoster();
+    if (generation !== histGeneration || auth.currentUser !== user || $('hPaste').value !== paste) return;
     if (!roster.length) {
       hmsg('אין משתמשים פעילים בתחנה. הוסף משתמשים לפני ייבוא ההיסטוריה.', 'err');
       b.disabled = false; return;
     }
-    const r = dryRun($('hPaste').value, roster);
+    const r = dryRun(paste, roster);
     if (r.fatal) { hmsg(r.fatal, 'err'); $('hSum').classList.add('hide');
                    b.disabled = false; return; }
 
     HIST = r;
+    HIST.origin = { user, paste, generation };
     renderHist(r, roster.length);
     // שורות פגומות אינן חוסמות — הן פשוט לא ייכתבו, והן
     // מוצגות בשמן כדי שאפשר יהיה לתקן אותן בגיליון ולייצא
@@ -402,45 +441,82 @@ $('hDry').onclick = async function () {
       ? 'הבדיקה הסתיימה. שום דבר לא נכתב עדיין — עבור על הסיכום.'
       : 'אין אף שורה תקינה בקובץ.', r.ready.length ? 'ok' : 'err');
   } catch (e) {
+    if (generation !== histGeneration || auth.currentUser !== user || $('hPaste').value !== paste) return;
     hmsg('הבדיקה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+  } finally {
+    histDryBusy = false;
+    historyControls();
   }
-  b.disabled = false;
 };
 
 $('hRun').onclick = async function () {
-  if (!HIST || !HIST.ready.length) return;
-  const n = HIST.ready.length;
+  if (histBusy || !HIST || !HIST.ready.length) return;
+  const origin = HIST.origin;
+  const current = () => histAllowed && origin && auth.currentUser === origin.user && origin.user &&
+    histGeneration === origin.generation && $('hPaste').value === origin.paste;
+  if (!current()) return;
+  const ready = HIST.ready.map(o => ({id:o.id,rec:structuredClone(o.rec)}));
+  const n = ready.length;
   if (!window.confirm('לכתוב ' + n + ' רשומות נוכחות למערכת?\n\n' +
-      'רשומה קיימת לאותו אדם ואותו יום תידרס.')) return;
+      'דיווחים קיימים וחודשים שהוגשו לא ישונו. יתווספו רק ימים חסרים.')) return;
 
+  histBusy = true;
   const b = $('hRun'); b.disabled = true; $('hDry').disabled = true;
+  let done = 0, skipped = 0, locked = 0;
   try {
-    // Firestore מגביל אצווה ל-500 פעולות. 12,000 רשומות הן
-    // 24 אצוות, ולכן הן נכתבות במנות עם דיווח התקדמות —
-    // מסך שנתקע בלי סימן חיים במשך דקה נסגר בידי המשתמש
-    // באמצע הכתיבה.
-    const CHUNK = 400;
-    let done = 0;
-    for (let i = 0; i < HIST.ready.length; i += CHUNK) {
-      const slice = HIST.ready.slice(i, i + CHUNK);
-      const batch = writeBatch(db);
-      slice.forEach(function (o) {
-        batch.set(doc(db, 'stations', STATION_ID, 'attendance', o.id),
-                  Object.assign({}, o.rec, { updated_at: serverTimestamp() }));
+    const token = await origin.user.getIdTokenResult(true);
+    if (!current() || token.claims.super !== true) throw new Error('ההרשאה השתנתה.');
+    for (let i = 0; i < ready.length; i += 20) {
+      if (!current()) return;
+      const slice = ready.slice(i, i + 20);
+      if (new Set(slice.map(o => o.id)).size !== slice.length) throw new Error('ימים כפולים בייבוא.');
+      const result = await runTransaction(db, async tx => {
+        if (!current()) throw new Error('הייבוא השתנה.');
+        const refs = new Map();
+        for (const o of slice) {
+          const r=o.rec, parsed=new Date(r.date+'T12:00:00Z');
+          if (typeof r.uid !== 'string' || !r.uid || r.uid.length>128 || /[\u0000-\u001f\u007f/]/.test(r.uid) ||
+              typeof r.emp_number !== 'string' || !r.emp_number.trim() || r.emp_number.length>64 || /[\u0000-\u001f\u007f/]/.test(r.emp_number) ||
+              !/^\d{4}-\d{2}-\d{2}$/.test(r.date) ||
+              !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0,10)!==r.date ||
+              r.month!==r.date.slice(0,7) || o.id!==r.emp_number+'_'+r.date) throw new Error('זהות דיווח לא תקינה.');
+          for(const [collection,id] of [['attendance',o.id],['users',r.uid],['monthly_reports',r.emp_number+'_'+r.month]]) {
+            const key=collection+'/'+id; refs.set(key,doc(db,'stations',STATION_ID,collection,id));
+          }
+        }
+        const snapshots=new Map(await Promise.all([...refs].map(async ([key,ref])=>[key,await tx.get(ref)])));
+        if (!current()) throw new Error('הייבוא השתנה.');
+        const add=[]; let existing=0,closed=0;
+        for(const o of slice) {
+          const r=o.rec, person=snapshots.get('users/'+r.uid);
+          const p=person.exists()?person.data():null;
+          if(!p || p.active===false || p.is_active===false || String(p.employee_number || p.emp_number || '')!==String(r.emp_number) ||
+             ['stationId','station_id','station'].some(k=>Object.hasOwn(p,k)&&
+               (typeof p[k]!=='string'||(p[k].trim()&&p[k].trim()!==STATION_ID)))) throw new Error('שיוך העובד השתנה; יש לבדוק מחדש.');
+          if(snapshots.get('attendance/'+o.id).exists()){existing++;continue;}
+          const monthly=snapshots.get('monthly_reports/'+r.emp_number+'_'+r.month);
+          if(monthly.exists()) {
+            const m=monthly.data(),status=Object.hasOwn(m,'status')?m.status:'draft';
+            if(String(m.emp_number)!==String(r.emp_number)||m.month!==r.month || (Object.hasOwn(m,'uid')&&m.uid!==r.uid)||!['draft','submitted','approved'].includes(status))throw new Error('דוח חודשי דורש בדיקה.');
+            if(status!=='draft'){closed++;continue;}
+          }
+          add.push(o);
+        }
+        add.forEach(o=>tx.set(refs.get('attendance/'+o.id),Object.assign({},o.rec,{source:'import',updated_at:serverTimestamp()})));
+        return {created:add.length,existing,closed};
       });
-      await batch.commit();
-      done += slice.length;
-      hmsg('נכתבו ' + done + ' מתוך ' + n + '…', 'info');
+      done+=result.created; skipped+=result.existing; locked+=result.closed;
+      if (!current()) return;
+      hmsg('נוספו '+done+'; קיימים שלא שונו: '+skipped+'; בחודשים שהוגשו: '+locked+'…','info');
     }
-    hmsg('הושלם. ' + done + ' רשומות נכתבו. ההיסטוריה זמינה ' +
-         'עכשיו במסך הנוכחות.', 'ok');
+    hmsg('הושלם. נוספו '+done+'; '+skipped+' קיימים נשמרו; '+locked+' דולגו בחודשים שהוגשו.','ok');
     HIST = null;
   } catch (e) {
-    hmsg('הכתיבה נכשלה באמצע. (' + (e.code || '') + ' ' + (e.message || '') +
-         ') מה שנכתב עד כה נשאר — הרצה חוזרת בטוחה, היא דורסת ' +
-         'את אותן רשומות.', 'err');
+    if(current()) hmsg('הייבוא נעצר. ידוע שנוספו '+done+' רשומות. ייתכן שהפעולה האחרונה נקלטה גם ללא תשובה; דיווחים קיימים לא יידרסו בניסיון חוזר. ('+(e.code||e.message)+')','err');
+  } finally {
+    histBusy=false;
+    historyControls();
   }
-  b.disabled = false; $('hDry').disabled = false;
 };
 
 function hmsg(t, k){

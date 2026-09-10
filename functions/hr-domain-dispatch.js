@@ -6,17 +6,19 @@ const { createHash, randomBytes } = require('node:crypto');
 const access = require('./schedule-access');
 const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { decideNotification, notificationIntent } = require('./hr-notification-policy');
+const { validReview } = require('./hr-hours-review-contract');
+const { TARGET_ROLES: CORRECTION_TARGET_ROLES } = require('./attendance-corrections');
 const LIMITS = Object.freeze({ candidates: 25, pageSize: 25, jobPages: 25, perJob: 5,
   intents: 25, concurrency: 5, devices: 500, startBudgetMs: 60000, leaseMs: 600000,
   routineMs: 86400000, nudgeMs: 3600000, consentMs: 3600000 });
-const COLLECTIONS = Object.freeze({ request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs' });
+const COLLECTIONS = Object.freeze({ request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs', review: 'hr_hours_review_notification_jobs', correction: 'attendance_correction_notification_jobs' });
 const INTENTS = 'hr_domain_notification_intents';
 const ACTIVE = ['discovering', 'queued', 'processing', 'deferred', 'blocked'];
 const READY = ['queued', 'blocked', 'deferred'];
 const FAILED = new Set(['messaging/invalid-argument', 'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered', 'messaging/mismatched-credential', 'messaging/sender-id-mismatch']);
 const TITLES = Object.freeze({ hr_request: 'יש עדכון בפניית עובד', hr_reply: 'יש עדכון בפנייה שלך',
-  hr_document: 'יש עדכון במסמך ברסקיו', hr_procedure: 'יש עדכון בנוהל ברסקיו', hr_nudge: 'ממתינה תזכורת לטיפול' });
+  hr_document: 'יש עדכון במסמך ברסקיו', hr_procedure: 'יש עדכון בנוהל ברסקיו', hr_nudge: 'ממתינה תזכורת לטיפול', report_reviewed: 'דוח השעות שלך נבדק במשאבי אנוש', attendance_corrected: 'דיווח השעות שלך עודכן' });
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
@@ -46,20 +48,28 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
     return station(input.stationId).collection(COLLECTIONS[input.family]).doc(input.job_id);
   }
   function basis(j, family) {
-    return hash(JSON.stringify([family, j.schema, j.event_id, j.station_id, j.actor_uid, j.actor_auth_time,
+    const parts = [family, j.schema, j.event_id, j.station_id, j.actor_uid, j.actor_auth_time,
       j.case_id ?? null, j.document_id ?? null, j.revision ?? null, j.audience, j.recipient_uid ?? null,
-      j.type, j.created_at_ms, j.send_now, j.consent_expires_at_ms, j.routine_after_quiet, j.exclude_actor]));
+      j.type, j.created_at_ms, j.send_now, j.consent_expires_at_ms, j.routine_after_quiet, j.exclude_actor];
+    if(family==='review')parts.push(j.employee_number,j.month,j.reviewed_revision);
+    if(family==='correction')parts.push(j.employee_number,j.month);
+    return hash(JSON.stringify(parts));
   }
   function job(value, loc, family) {
-    const j = value, schema = family === 'request' ? 'hr-request-notification-v1' : 'hr-document-notification-v1';
+    const j = value, review = family === 'review', correction = family === 'correction', personalRecord = review || correction,
+      schema = correction ? 'attendance-correction-notification-v1' : review ? 'hr-review-notification-v1' : family === 'request' ? 'hr-request-notification-v1' : 'hr-document-notification-v1';
     if (!plain(j) || j.schema !== schema || j.event_id !== loc.id || j.station_id !== loc.sid
       || !access.validUid(j.actor_uid) || !integer(j.actor_auth_time) || !Number.isSafeInteger(j.actor_auth_time * 1000)
       || !safeTime(j.created_at_ms) || typeof j.send_now !== 'boolean' || typeof j.routine_after_quiet !== 'boolean'
-      || j.exclude_actor !== true || !own(TITLES, j.type) || j.routine_after_quiet !== (j.type !== 'hr_nudge')
+      || j.exclude_actor !== !personalRecord || !own(TITLES, j.type) || j.routine_after_quiet !== (j.type !== 'hr_nudge')
       || j.consent_expires_at_ms !== (j.send_now ? j.created_at_ms + LIMITS.consentMs : 0)
       || (j.audience === 'person' ? !access.validUid(j.recipient_uid) : own(j, 'recipient_uid'))
-      || !(family === 'request' ? ['person', 'station_hr'] : ['person', 'station_members']).includes(j.audience)
-      || (family === 'request' ? !key(j.case_id) : !key(j.document_id) || !integer(j.revision) || j.revision < 1)) throw fault('invalid-job', true);
+      || !(personalRecord ? ['person'] : family === 'request' ? ['person', 'station_hr'] : ['person', 'station_members']).includes(j.audience)
+      || (personalRecord ? j.type!==(correction?'attendance_corrected':'report_reviewed') || j.send_now!==false || j.consent_expires_at_ms!==0
+        || ['case_id','document_id','revision',...(correction?['reviewed_revision']:[])].some(k=>own(j,k))
+        || typeof j.employee_number!=='string' || !j.employee_number.length || j.employee_number.length>64 || /[\u0000-\u001f\u007f/]/.test(j.employee_number)
+        || typeof j.month!=='string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(j.month) || (review&&!key(j.reviewed_revision))
+        : family === 'request' ? !key(j.case_id) : !key(j.document_id) || !integer(j.revision) || j.revision < 1)) throw fault('invalid-job', true);
     const expires = j.created_at_ms + (j.routine_after_quiet ? LIMITS.routineMs : LIMITS.nudgeMs);
     if (!safeTime(expires)) throw fault('invalid-job', true);
     if (own(j, 'dispatch_schema')) {
@@ -104,11 +114,55 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       ctx = identity.context({ auth: { uid: j.actor_uid, token: c } });
       await identity.requireLive(tx, ctx);
     } catch (e) { throw fault('actor-profile-unavailable', ['permission-denied', 'failed-precondition', 'unauthenticated'].includes(codeOf(e))); }
-    if (source.family === 'document' || source.event.kind === 'setStatus' || j.actor_uid !== source.parent.owner_uid) {
+    if (source.family === 'correction' || source.family === 'review' || source.family === 'document' || source.event.kind === 'setStatus' || j.actor_uid !== source.parent.owner_uid) {
       if (!ctx.super && ctx.role !== 'hr_coordinator') throw fault('actor-role-changed', true);
     }
   }
   async function sourceOf(tx, j, family) {
+    if(family==='correction'){
+      // The immutable event and durable replay receipt prove the original
+      // action. Later attendance/report edits do not erase that historical fact.
+      const [eventSnap,receiptSnap]=await Promise.all([
+        tx.get(station(j.station_id).collection('attendance_correction_events').doc(j.event_id)),
+        tx.get(station(j.station_id).collection('attendance_correction_receipts').doc(j.event_id))]);
+      const e=eventSnap.exists?eventSnap.data():null,r=receiptSnap.exists?receiptSnap.data():null;
+      const exact=(v,keys)=>plain(v)&&Object.keys(v).sort().join('|')===keys.slice().sort().join('|');
+      const timestamp=t=>t&&Number.isSafeInteger(t.seconds)&&t.seconds>=-62135596800&&t.seconds<=253402300799
+        &&Number.isInteger(t.nanoseconds)&&t.nanoseconds>=0&&t.nanoseconds<1e9;
+      const eventKeys=['schema','correction_id','station_id','actor_uid','actor_name','actor_role','actor_auth_time','target_uid','employee_number','month','operation','reason','request_id','fingerprint','created_at_ms','committed_at','evidence_encoding','calculation_config','changes'];
+      const receiptKeys=['schema','correction_id','station_id','actor_uid','target_uid','employee_number','month','request_id','fingerprint','changed_count'];
+      if(!exact(e,eventKeys)||!exact(r,receiptKeys)||e.schema!=='attendance-correction-event-v1'||r.schema!=='attendance-correction-receipt-v1'
+        ||e.correction_id!==j.event_id||e.station_id!==j.station_id||e.actor_uid!==j.actor_uid||e.actor_auth_time!==j.actor_auth_time
+        ||e.created_at_ms!==j.created_at_ms||e.target_uid!==j.recipient_uid||e.employee_number!==j.employee_number||e.month!==j.month
+        ||typeof e.request_id!=='string'||!/^[A-Za-z0-9_-]{8,120}$/.test(e.request_id)
+        ||hash(JSON.stringify(['attendance-correction-v1',e.station_id,e.actor_uid,e.request_id]))!==j.event_id
+        ||!key(e.fingerprint)||!['hr_coordinator','super_admin'].includes(e.actor_role)||typeof e.actor_name!=='string'||e.actor_name.length>500
+        ||typeof e.reason!=='string'||e.reason.length<20||e.reason.length>500||/[\u0000-\u001f\u007f]/.test(e.reason)
+        ||!['create','update','delete','recalculate'].includes(e.operation)||!timestamp(e.committed_at)||e.evidence_encoding!=='tagged-firestore-v2'
+        ||!plain(e.calculation_config)||!Array.isArray(e.changes)||e.changes.length<1||e.changes.length>31
+        ||!Number.isInteger(r.changed_count)||r.changed_count!==e.changes.length
+        ||['correction_id','station_id','actor_uid','target_uid','employee_number','month','request_id','fingerprint'].some(k=>r[k]!==e[k]))throw fault('source-invalid',true);
+      const seen=new Set();
+      for(const change of e.changes){
+        const date=change?.date,parsed=new Date(date+'T00:00:00Z');
+        if(!exact(change,['date','record_id','before_version','before','after'])||typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)
+          ||date.slice(0,7)!==j.month||!Number.isFinite(parsed.getTime())||parsed.toISOString().slice(0,10)!==date||seen.has(date)
+          ||change.record_id!==j.employee_number+'_'+date||!plain(change.before)||!plain(change.after)
+          ||(e.operation==='create'?change.before_version!=='absent':!exact(change.before_version,['seconds','nanoseconds'])||!timestamp(change.before_version)))throw fault('source-invalid',true);
+        seen.add(date);
+      }
+      if(e.operation!=='recalculate'&&e.changes.length!==1)throw fault('source-invalid',true);
+      return {family,event:e};
+    }
+    if(family==='review'){
+      const snap=await tx.get(station(j.station_id).collection('hr_hours_review_events').doc(j.event_id));
+      const e=snap.exists?snap.data():null;
+      if(!validReview(e) || e.schema!=='hr-hours-review-v2' || e.review_id!==j.event_id || e.station_id!==j.station_id
+        || e.actor_uid!==j.actor_uid || e.actor_auth_time!==j.actor_auth_time || e.created_at_ms!==j.created_at_ms
+        || e.owner_uid!==j.recipient_uid || e.employee_number!==j.employee_number || e.month!==j.month
+        || e.reviewed_revision!==j.reviewed_revision)throw fault('source-invalid',true);
+      return {family,event:e};
+    }
     if (family === 'request') {
       const ref = station(j.station_id).collection('hr_requests').doc(j.case_id);
       const [parentSnap, eventSnap] = await Promise.all([tx.get(ref), tx.get(ref.collection('events').doc(j.event_id))]);
@@ -146,11 +200,23 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
     return { family, parent: p, revision: v };
   }
   async function recipient(tx, j, source, uid) {
-    if (!access.validUid(uid) || uid === j.actor_uid || (j.audience === 'person' && uid !== j.recipient_uid)) throw fault('recipient-outside-audience', true);
+    const correction=source.family==='correction';
+    if (!access.validUid(uid) || (uid === j.actor_uid && source.family!=='review'&&!correction) || (j.audience === 'person' && uid !== j.recipient_uid)) throw fault('recipient-outside-audience', true);
     const snap = await tx.get(station(j.station_id).collection('users').doc(uid)), p = snap.exists ? snap.data() : null;
-    if (!plain(p) || !access.activeMember(p, j.station_id) || !MEMBER_ROLES.includes(p.role)) throw fault('recipient-inactive', true);
+    if (!plain(p) || !access.activeMember(p, j.station_id) || !(correction?CORRECTION_TARGET_ROLES:MEMBER_ROLES).includes(p.role)) throw fault('recipient-inactive', true);
     const user = await freshUser(uid), c = user.customClaims;
     if (c.stationId !== j.station_id || (c.super !== true && c.role !== p.role)) throw fault('recipient-binding-changed', true);
+    if(source.family==='review'||correction){
+      const n=p.employee_number;
+      if(!['string','number'].includes(typeof n) || (typeof n==='number' && !Number.isFinite(n)) || String(n)!==j.employee_number)throw fault('recipient-binding-changed',true);
+      const [index,directory]=await Promise.all([tx.get(db.collection('emp_index').doc(j.employee_number)),tx.get(db.collection('directory').doc(uid))]);
+      const i=index.exists?index.data():null,d=directory.exists?directory.data():null;
+      if(!plain(i) || i.uid!==uid || i.stationId!==j.station_id || i.active===false || i.retired===true || i.status==='retired'
+        || !access.activeMember(d,j.station_id))throw fault('recipient-binding-changed',true);
+      if(correction&&((own(p,'uid')&&p.uid!==uid)||['active','is_active'].some(k=>own(p,k)&&typeof p[k]!=='boolean')
+        ||(own(d,'uid')&&d.uid!==uid)||(own(d,'employee_number')&&
+          (!['string','number'].includes(typeof d.employee_number)||(typeof d.employee_number==='number'&&!Number.isFinite(d.employee_number))||String(d.employee_number)!==j.employee_number))))throw fault('recipient-binding-changed',true);
+    }
     if (j.audience === 'station_hr' && c.super !== true && p.role !== 'hr_coordinator') throw fault('recipient-not-hr', true);
     if (source.family === 'document' && j.type === 'hr_nudge') {
       const snap = await tx.get(station(j.station_id).collection('hr_documents').doc(j.document_id)
@@ -337,7 +403,7 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         dispatch_started_at_ms: at, token_count: tokens.length, updated_at_ms: at });
       return { attempt, tokens, expires: j.expires_at_ms, sendNow: j.send_now, consentExpires: j.consent_expires_at_ms,
         payload: { tokens, data: { title: TITLES[j.type], body: n.body,
-          url: v.family === 'request' ? './hr-requests.html' : './hr-documents.html', tag: 'hr-domain-' + v.id, important: '0' },
+          url: ['review','correction'].includes(v.family) ? './attendance.html' : v.family === 'request' ? './hr-requests.html' : './hr-documents.html', tag: 'hr-domain-' + v.id, important: '0' },
         webpush: { headers: { Urgency: 'normal' } } } };
     });
   }

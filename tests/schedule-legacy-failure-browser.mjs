@@ -50,6 +50,49 @@ async function contextWithPlan(plan) {
 }
 
 try {
+  for (const failReload of [false, true]) {
+    const context = await contextWithPlan({});
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.waitForFunction(() => document.querySelector('#btnManual') && !document.querySelector('#btnManual').disabled);
+    await page.addStyleTag({content:'#coWrap{display:none!important}'});
+    await page.locator('#btnManual').click();
+    await page.locator('#dSave').waitFor({state:'visible'});
+    await page.evaluate(fail => {
+      window.__retainedSave = document.querySelector('#dSave').onclick;
+      if (fail) window.__SMOKE_FAIL_PATHS = ['/monthly_reports/'];
+      document.querySelector('#next').click();
+    }, failReload);
+    await page.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false');
+    assert.equal(await page.locator('#ov').getAttribute('aria-hidden'), 'true');
+    const before = await page.evaluate(() => ({message:document.querySelector('#msg').textContent, writes:(window.__FIRESTORE_WRITES || []).length}));
+    await page.evaluate(async () => { await window.__retainedSave(); });
+    const after = await page.evaluate(() => ({message:document.querySelector('#msg').textContent, writes:(window.__FIRESTORE_WRITES || []).length}));
+    assert.deepEqual(after, before, 'retained edit callback cannot write or paint into a new month');
+    assert.equal(before.writes, 0);
+    await context.close();
+    console.log('✓ retained edit callback rejected after month navigation; failed reload='+failReload);
+  }
+  for (const failedPath of ['/monthly_reports/', '/attendance']) {
+    const context = await contextWithPlan({});
+    await context.addInitScript(value => { window.__SMOKE_FAIL_PATHS = [value]; }, failedPath);
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.waitForFunction(() => document.querySelector('#state')?.textContent === 'הדוח לא נטען');
+    assert.equal(await page.locator('#rows tr').count(), 0);
+    assert.equal(await page.locator('#tHours').textContent(), '—');
+    for (const id of ['btnFill','btnSync','btnSubmit','btnStart','btnManual']) {
+      assert.equal(await page.locator('#'+id).isDisabled(), true);
+    }
+    assert.equal(await page.evaluate(() => (window.__FIRESTORE_WRITES || []).length), 0);
+    await page.evaluate(() => { window.__SMOKE_FAIL_PATHS = []; });
+    await page.addStyleTag({content:'#coWrap{display:none!important}'});
+    await page.locator('#next').click();
+    await page.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false' && document.querySelector('#tHours')?.textContent !== '—');
+    assert.equal(await page.locator('#btnManual').isEnabled(), true);
+    await context.close();
+    console.log('✓ month read failure blocks writes and navigation recovers: '+failedPath);
+  }
   // A compatibility failure must clear old totals and finish the loading
   // state. Only month navigation remains available as an explicit retry;
   // every action that calculates or writes remains disabled.
@@ -175,4 +218,4 @@ try {
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n5/5 effective-schedule failure checks passed.');
+console.log('\n9/9 effective-schedule and month-read failure checks passed.');

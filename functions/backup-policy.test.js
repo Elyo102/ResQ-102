@@ -294,12 +294,23 @@ const hrAttachmentPaths = [
   'stations/{sid}/hr_attachment_ledgers/{ledgerId}',
   'hr_attachment_actor_quotas/{quotaId}'
 ];
-const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths);
+const hrReviewPaths = [
+  'stations/{sid}/hr_hours_review_events/{reviewId}',
+  'stations/{sid}/hr_hours_reviews/{summaryId}',
+  'hr_hours_review_actor_quotas/{quotaId}'
+];
+const hrReviewJobPath = 'stations/{sid}/hr_hours_review_notification_jobs/{jobId}';
+const correctionPaths = [
+  'stations/{sid}/attendance_correction_events/{correctionId}',
+  'stations/{sid}/attendance_correction_receipts/{correctionId}',
+  'stations/{sid}/attendance_correction_notification_jobs/{jobId}'
+];
+const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, correctionPaths);
 
-test('exact nineteen private HR paths are classified with no readable or automatic-retention permission', () => {
+test('exact twenty-six private HR/correction paths are classified with no readable or automatic-retention permission', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
-    segment => segment.startsWith('hr_') && segment !== 'hr_reports'));
-  assert.equal(hrPaths.length, 19);
+    segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
+  assert.equal(hrPaths.length, 26);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);
@@ -312,6 +323,48 @@ test('exact nineteen private HR paths are classified with no readable or automat
     assert.equal(firestoreIndexes.fieldOverrides.some(override =>
       override.collectionGroup === collectionGroup && override.ttl === true), false, path + ' must not gain TTL');
   }
+});
+
+test('correction evidence and receipts are durable; notification work cannot restore active delivery', () => {
+  for (const path of correctionPaths.slice(0, 2)) {
+    const p = backupPolicy.getPolicy(path);
+    assert.deepEqual([p.classification, p.monitorPolicy, p.backupPolicy, p.restorePolicy],
+      ['source_of_truth', 'count_drop', 'managed_export', 'specialized_restore']);
+    assert.match(p.reason, /Coherent same-snapshot event\/receipt\/attendance restore remains unresolved/);
+    assert.match(p.reason, /preserve original versions and attribution/);
+    assert.match(p.reason, /no export, restore or deletion activated/);
+    assert.match(p.reason, /never replay notifications/);
+  }
+  assert.match(backupPolicy.getPolicy(correctionPaths[0]).reason, /survives row deletion/);
+  assert.match(backupPolicy.getPolicy(correctionPaths[1]).reason, /independent of transient notification jobs/);
+  const job = backupPolicy.getPolicy(correctionPaths[2]);
+  assert.deepEqual([job.classification, job.monitorPolicy, job.backupPolicy, job.restorePolicy],
+    ['temporary', 'none', 'exclude', 'do_not_restore']);
+  assert.match(job.reason, /never restore into an active queue/);
+  assert.match(job.reason, /exclusion activates no deletion/);
+});
+
+test('inspection receipts, summary and quota have separate prospective restore contracts', () => {
+  const job=backupPolicy.getPolicy(hrReviewJobPath);
+  assert.deepEqual([job.classification,job.monitorPolicy,job.backupPolicy,job.restorePolicy],['temporary','none','exclude','do_not_restore']);
+  assert.match(job.reason,/never restore into an active queue/);
+  assert.match(job.reason,/exclusion activates no deletion/);
+  const expected = [
+    ['source_of_truth','count_drop','managed_export','specialized_restore'],
+    ['derived','required_document_shape','managed_export','specialized_restore'],
+    ['temporary','none','exclude','do_not_restore']
+  ];
+  hrReviewPaths.forEach((path,i) => {
+    const p=backupPolicy.getPolicy(path);
+    assert.deepEqual([p.classification,p.monitorPolicy,p.backupPolicy,p.restorePolicy],expected[i]);
+    if(i<2) {
+      assert.match(p.reason,/Preserve original reviewed_revision/);
+      assert.match(p.reason,/restored Firestore updateTime cannot manufacture current inspection/);
+      assert.match(p.reason,/restore remains unresolved/);
+      assert.match(p.reason,/no export, restore or deletion activated/);
+      assert.match(p.reason,/never replay notifications/);
+    } else assert.match(p.reason,/exclusion activates no deletion/);
+  });
 });
 
 test('seven durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {

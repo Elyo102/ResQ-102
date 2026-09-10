@@ -14,7 +14,7 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
     const url=new URL(route.request().url());if(url.origin!==origin)return route.abort();
     const file=path.resolve(root,'.'+url.pathname);if(!file.startsWith(root+path.sep)||!fs.existsSync(file))return route.fulfill({status:404,body:''});
     let body=fs.readFileSync(file);
-    if(file.endsWith('hr-client.js'))body="import { createHrHoursUI } from './hr-hours-ui.js?v=42h7'; window.__UI=createHrHoursUI(document.getElementById('hr-workspace')"+(connected?',window.__adapter':'')+");";
+    if(file.endsWith('hr-client.js'))body="import { createHrHoursUI } from './hr-hours-ui.js?v=42h8'; window.__UI=createHrHoursUI(document.getElementById('hr-workspace')"+(connected?',window.__adapter':'')+");";
     await route.fulfill({status:200,contentType:file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':'text/javascript',body});
   });
   await context.addInitScript(()=>{
@@ -22,6 +22,10 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
     window.__listeners=[];window.__calls=[];window.__held=[];window.__holdDetails=false;window.__holdLists=false;
     window.__people=[{uid:'u1',full_name:'עובד ראשון',state:'draft',historical:false,reminder_eligible:true},{uid:'u2',full_name:'עובד שני',state:'approved',historical:false,reminder_eligible:false},{uid:'u3',full_name:'עובד לשעבר',state:'draft',historical:true,reminder_eligible:false}];
     window.__registered=[];window.__historyRows=null;window.__children=[];window.__requestCount=0;
+    // Synthetic receipt transport; this suite exercises the actual DOM controller,
+    // not Firestore, callable authorization, quota enforcement or notification delivery.
+    const digest=crypto.subtle.digest.bind(crypto.subtle);
+    window.__nativeDigest=digest;window.__reviews=[];
     window.__makeAction=(data,id='a'.repeat(64))=>({action_id:id,station_id:__session.stationId,month:data.month,audience:data.uid?'person':'station',
       status:__quiet&&!data.send_now?'confirmation_required':data.uid?'completed':'discovering',reason:__quiet&&!data.send_now?'manual-quiet-hours-warning':null,
       counts:{scanned:data.uid&&!(__quiet&&!data.send_now)?1:0,queued:data.uid&&!(__quiet&&!data.send_now)?1:0,suppressed:0,skipped:0,invalid:0},created_at_ms:1800000000000,expires_at_ms:1800003600000,not_before_ms:null,
@@ -40,12 +44,27 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
       clearReportCache:()=>{window.__cacheClears=(window.__cacheClears||0)+1;},
       getEmployeeMonth:async (data,options={})=>{
         window.__calls.push({name:'detail',data,options});
+        if(window.__failReviewRefresh&&options.forceFresh&&__reviews.length)throw Object.assign(new Error('synthetic refresh failure'),{code:'functions/unavailable'});
         const person=window.__people.find(p=>p.uid===data.uid);
         const result={...person,month:data.month,employee_number:'1001',crew:'A',stored_total_hours:24,current_detail_total_hours:22,
           warnings:['reported-total-differs'],rows:window.__emptyRows?[]:[{date:data.month+'-01',day_type_he:'רגיל',start:'08:00',end:'08:00',end_day:1,start2:'18:00',end2:'22:00',site_name:'אילת',notes:'הערה נפרדת',reason:'סיבה ישנה',overtime_reason:'נשארתי באירוע',hours:22}]};
         const fetched=Date.now(),envelope={report:result,freshness:{source:window.__memoryDetail&&!options.forceFresh?'memory':'server',fetched_at_ms:fetched,expires_at_ms:fetched+30000}};
-        if(window.__holdDetails)return new Promise(resolve=>window.__held.push({kind:'detail',resolve:()=>resolve(envelope)}));
+        if(window.__holdDetails)return new Promise(resolve=>window.__held.push({kind:'detail',uid:data.uid,resolve:()=>resolve(envelope)}));
         return envelope;
+      },
+      reviewEmployeeMonth:async data=>{
+        const actor=__session.uid,copy=structuredClone(data);
+        __calls.push({name:'review',data:copy});
+        if(window.__reviewError)throw Object.assign(new Error('synthetic rejection'),{code:window.__reviewError});
+        const id=Array.from(new Uint8Array(await digest('SHA-256',new TextEncoder().encode(JSON.stringify(['hr-review-event-v1',actor,data.request_id])))),b=>b.toString(16).padStart(2,'0')).join('');
+        let saved=__reviews.find(r=>r.id===id),duplicate=!!saved;
+        if(saved&&JSON.stringify(saved.data)!==JSON.stringify(copy))throw Object.assign(new Error('synthetic mismatched replay'),{code:'functions/already-exists'});
+        if(!saved){saved={id,data:copy};__reviews.push(saved);const person=__people.find(p=>p.uid===data.uid);
+          person.review_unavailable=false;person.review={review_id:id,reviewed_revision:data.expected_revision,actor_uid:actor,reviewed_at:{seconds:1788955200,nanoseconds:0},current:true};}
+        if(window.__reviewLostReply){window.__reviewLostReply=false;throw Object.assign(new Error('synthetic lost receipt'),{code:'functions/deadline-exceeded'});}
+        const result={review_id:id,reviewed_revision:data.expected_revision,current:true,duplicate,...window.__reviewPatch};
+        if(window.__holdReviews)return new Promise(resolve=>__held.push({kind:'review',resolve:()=>resolve(result)}));
+        return result;
       },
       requestNudge:async data=>{
         __calls.push({name:'request',data:structuredClone(data)});
@@ -80,6 +99,12 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
   return {page,context,errors};
 }
 async function check(name,fn){await fn();passed++;console.log('PASS '+name);}
+async function openReview(f,options={}) {
+  await f.page.evaluate(options=>{Object.assign(__people[0],{snapshot_revision:'a'.repeat(64),revision_unavailable:false,...options});},options);
+  await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="review-save"]').waitFor();
+}
+async function reviewCallCount(f){return f.page.evaluate(()=>__calls.filter(c=>c.name==='review').length);}
+async function releaseKind(f,kind){await f.page.evaluate(kind=>{const selected=__held.filter(x=>x.kind===kind);__held=__held.filter(x=>x.kind!==kind);selected.forEach(x=>x.resolve());},kind);}
 try {
   await check('public disconnected shell has no employee data or calls',async()=>{
     const f=await fixture({connected:false});assert.equal(await f.page.locator('.hr-person').count(),0);
@@ -93,6 +118,27 @@ try {
     for(const value of ['הערה נפרדת','סיבה ישנה','נשארתי באירוע'])assert.ok(t.includes(value));
     assert.equal(await f.page.locator('tbody bdi').getAttribute('dir'),'ltr');
     assert.equal(await f.page.locator('tbody bdi').innerText(),'18:00–22:00');
+    assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  for(const mode of ['legacy','absent','unavailable','current','changed','historical','inconsistent'])await check('inspection display '+mode,async()=>{
+    const f=await fixture();
+    await f.page.evaluate(mode=>{
+      const p=__people.find(x=>x.uid==='u1');window.__memoryDetail=true;
+      if(mode==='legacy')return;
+      p.review_unavailable=mode==='unavailable';p.review=null;
+      if(['absent','unavailable'].includes(mode))return;
+      p.snapshot_revision='a'.repeat(64);p.revision_unavailable=false;
+      p.review={review_id:'c'.repeat(64),actor_uid:'<img src=x onerror=alert(1)>',reviewed_at:{seconds:1788955200,nanoseconds:0},
+        reviewed_revision:mode==='changed'||mode==='inconsistent'?'b'.repeat(64):'a'.repeat(64),
+        current:mode==='historical'?null:mode!=='changed'};
+    },mode);
+    await f.page.locator('[data-uid="u1"]').click();await f.page.getByRole('heading',{name:'עובד ראשון',exact:true}).waitFor();
+    const section=f.page.locator('[data-hr="detail"] [data-hr="inspection"]');
+    const expected={legacy:'אינו זמין בגרסה זו',absent:'לא נרשם עיון',unavailable:'אינם זמינים לבדיקה',current:'תואם לתמונת הדוח שנטענה',changed:'הדוח השתנה מאז העיון',historical:'התאמה לגרסה הנוכחית לא אומתה',inconsistent:'אינם זמינים לבדיקה'};
+    assert.ok((await section.innerText()).includes(expected[mode]));assert.equal(await section.locator('img').count(),0);
+    assert.ok((await f.page.locator('[data-hr="detail"]').innerText()).includes('תמונת מצב מזיכרון הדף'));
+    assert.equal(await f.page.evaluate(()=>__calls.filter(x=>x.name==='detail').length),1);
+    await f.page.evaluate(()=>{__session=null;__emit();});assert.equal(await f.page.locator('[data-hr="detail"] [data-hr="inspection"]').count(),0);
     assert.deepEqual(f.errors,[]);await f.context.close();
   });
   await check('left next and right previous use visible navigation',async()=>{
@@ -292,6 +338,93 @@ try {
     await f.page.waitForFunction(()=>__held.some(h=>h.kind==='request'));await f.page.evaluate(()=>{__session={...__session,uid:'other-actor',stationId:'other-station',epoch:2};__emit();__release();});
     assert.equal(await f.page.locator('[data-hr="pending"]').isHidden(),true);assert.equal(await f.page.locator('[data-hr="nudge-message"]').innerText(),'');
     assert.equal(await f.page.locator('[data-action]').count(),0);assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),false);await f.context.close();
+  });
+  await check('review save requires an eligible canonical server detail and never runs on a fresh read',async()=>{
+    const f=await fixture();
+    for(const fields of [{},{snapshot_revision:'invalid',revision_unavailable:false},{snapshot_revision:'a'.repeat(64),revision_unavailable:true},{snapshot_revision:'a'.repeat(64),revision_unavailable:false,state:'missing'}]){
+      await f.page.evaluate(fields=>{delete __people[0].snapshot_revision;delete __people[0].revision_unavailable;Object.assign(__people[0],{state:'draft'},fields);},fields);
+      await f.page.locator('[data-uid="u1"]').click();await f.page.locator('tbody tr').waitFor();assert.equal(await f.page.locator('[data-hr="review-save"]').count(),0);
+    }
+    for(const state of ['draft','submitted','approved']){await openReview(f,{state,historical:true});assert.equal(await f.page.locator('[data-hr="review-save"]').isEnabled(),true);}
+    await f.page.evaluate(()=>{__memoryDetail=true;});await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
+    assert.equal(await f.page.locator('[data-hr="review-save"]').count(),0);await f.page.locator('[data-hr="detail-fresh"]').click();await f.page.locator('[data-hr="review-save"]').waitFor();
+    assert.equal(await reviewCallCount(f),0);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('review locks synchronously before digest and keeps handlers locked through receipt and refresh',async()=>{
+    const f=await fixture();await openReview(f);const month=await f.page.locator('[data-hr="month"]').inputValue();
+    await f.page.evaluate(()=>{crypto.subtle.digest=(...args)=>new Promise(resolve=>{window.__finishDigest=async()=>resolve(await __nativeDigest(...args));});__holdReviews=true;});
+    await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>typeof __finishDigest==='function');
+    assert.equal(await reviewCallCount(f),0);assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),true);
+    await f.page.evaluate(()=>{for(const name of ['next','nudge-station','review-save'])document.querySelector('[data-hr="'+name+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));document.querySelector('[data-uid="u2"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));const m=document.querySelector('[data-hr="month"]');m.value='2024-01';m.dispatchEvent(new Event('change'));});
+    assert.equal(await f.page.locator('[data-hr="month"]').inputValue(),month);assert.equal(await f.page.locator('[data-hr="detail"] h2').innerText(),'עובד ראשון');
+    assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='request').length),0);
+    await f.page.evaluate(()=>__finishDigest());await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));
+    const data=await f.page.evaluate(()=>__calls.find(c=>c.name==='review').data);assert.deepEqual(Object.keys(data).sort(),['expected_revision','month','request_id','uid']);assert.equal(data.uid,'u1');assert.equal(data.month,month);assert.equal(data.expected_revision,'a'.repeat(64));assert.match(data.request_id,/^[0-9a-f-]{36}$/);
+    await f.page.evaluate(()=>{__holdDetails=true;});await releaseKind(f,'review');await f.page.waitForFunction(()=>__held.some(x=>x.kind==='detail'));
+    assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),true);
+    await f.page.evaluate(()=>{const m=document.querySelector('[data-hr="month"]');m.value='2023-01';m.dispatchEvent(new Event('change'));});assert.equal(await f.page.locator('[data-hr="month"]').inputValue(),month);
+    await releaseKind(f,'detail');await f.page.waitForFunction(()=>!document.querySelector('[data-hr="month"]').disabled);
+    assert.ok((await f.page.locator('[data-hr="detail"] [data-hr="inspection"]').innerText()).includes('תואם לתמונת הדוח'));
+    assert.equal(await reviewCallCount(f),1);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('local digest rejection sends nothing and permits an explicit fresh selection',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{crypto.subtle.digest=async()=>{throw new Error('synthetic digest failure');};});await f.page.locator('[data-hr="review-save"]').click();
+    await f.page.getByText('לא ניתן להכין שמירת עיון מאובטחת. לא נשלחה בקשה.').waitFor();assert.equal(await reviewCallCount(f),0);assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),false);
+    await f.page.evaluate(()=>{crypto.subtle.digest=__nativeDigest;});await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="review-save"]').waitFor();await f.page.locator('[data-hr="review-save"]').click();
+    await f.page.waitForFunction(()=>__reviews.length===1&&!document.querySelector('[data-hr="month"]').disabled);assert.equal(await reviewCallCount(f),1);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('identity change during digest discards intent before any transport',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{crypto.subtle.digest=(...args)=>new Promise(resolve=>{window.__finishDigest=async()=>resolve(await __nativeDigest(...args));});});await f.page.locator('[data-hr="review-save"]').click();
+    await f.page.waitForFunction(()=>typeof __finishDigest==='function');await f.page.evaluate(async()=>{__session=null;__emit();await __finishDigest();});
+    assert.equal(await reviewCallCount(f),0);assert.equal(await f.page.locator('.hr-person').count(),0);assert.equal(await f.page.locator('[data-hr="review-message"]').innerText(),'');assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('lost receipt retries the identical intent even after a later quota rejection',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__reviewLostReply=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.locator('[data-hr="review-retry"]').waitFor({state:'visible'});
+    assert.equal(await f.page.evaluate(()=>__reviews.length),1);await f.page.evaluate(()=>{__reviewError='functions/resource-exhausted';});await f.page.locator('[data-hr="review-retry"]').click();await f.page.locator('[data-hr="review-retry"]').waitFor({state:'visible'});
+    assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),true);assert.ok((await f.page.locator('[data-hr="review-message"]').innerText()).includes('לא ניתן לקבוע'));
+    await f.page.evaluate(()=>{__reviewError=null;});await f.page.locator('[data-hr="review-retry"]').click();await f.page.waitForFunction(()=>__calls.filter(c=>c.name==='review').length===3&&!document.querySelector('[data-hr="month"]').disabled);
+    const calls=await f.page.evaluate(()=>__calls.filter(c=>c.name==='review'));assert.deepEqual(calls[0].data,calls[1].data);assert.deepEqual(calls[0].data,calls[2].data);assert.equal(await f.page.evaluate(()=>__reviews.length),1);
+    assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail'&&c.options.forceFresh).length),1);assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  for(const patch of [{review_id:'f'.repeat(64)},{reviewed_revision:'b'.repeat(64)},{extra:true},{duplicate:'false'},{current:false},{current:null}])await check('invalid review receipt stays uncertain '+JSON.stringify(patch),async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(patch=>{__reviewPatch=patch;},patch);await f.page.locator('[data-hr="review-save"]').click();await f.page.locator('[data-hr="review-retry"]').waitFor({state:'visible'});
+    assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),true);assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail'&&c.options.forceFresh).length),0);
+    await f.page.evaluate(()=>{__reviewPatch=null;});await f.page.locator('[data-hr="review-retry"]').click();await f.page.waitForFunction(()=>__calls.filter(c=>c.name==='review').length===2&&!document.querySelector('[data-hr="month"]').disabled);
+    assert.equal(await f.page.evaluate(()=>__reviews.length),1);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  for(const current of [false,null])await check('validated duplicate review accepts historical current '+current,async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__reviewLostReply=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.locator('[data-hr="review-retry"]').waitFor({state:'visible'});
+    await f.page.evaluate(current=>{__reviewPatch={current};},current);await f.page.locator('[data-hr="review-retry"]').click();await f.page.waitForFunction(()=>__calls.filter(c=>c.name==='review').length===2&&!document.querySelector('[data-hr="month"]').disabled);
+    assert.ok((await f.page.locator('[data-hr="review-message"]').innerText()).includes('העיון נרשם'));assert.equal(await f.page.evaluate(()=>__reviews.length),1);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  for(const code of ['aborted','resource-exhausted'])await check('first definite review '+code+' requires reread without automatic rebase',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(code=>{__reviewError='functions/'+code;},code);await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__calls.some(c=>c.name==='review')&&!document.querySelector('[data-hr="month"]').disabled);
+    assert.equal(await f.page.locator('[data-hr="review-save"]').count(),0);assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.equal(await f.page.evaluate(()=>__reviews.length),0);assert.equal(await reviewCallCount(f),1);assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail').length),1);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('known review success survives failed refresh without duplicate write or stale save control',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__failReviewRefresh=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>document.querySelector('[data-hr="review-message"]').textContent.includes('הרענון נכשל'));
+    assert.ok((await f.page.locator('[data-hr="review-message"]').innerText()).includes('שמירת העיון אינה מתבטלת'));assert.equal(await f.page.locator('[data-hr="review-save"]').count(),0);assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.equal(await f.page.locator('[data-hr="month"]').isDisabled(),false);
+    await f.page.locator('[data-hr="review-retry"]').dispatchEvent('click');assert.equal(await reviewCallCount(f),1);await f.page.locator('[data-uid="u2"]').click();await f.page.getByRole('heading',{name:'עובד שני',exact:true}).waitFor();assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  for(const mode of ['observer','unobserved-same-key'])await check('held review result is fenced after identity '+mode,async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__holdReviews=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));
+    await f.page.evaluate(mode=>{__session=mode==='observer'?null:{...__session};if(mode==='observer')__emit();},mode);await releaseKind(f,'review');
+    await f.page.waitForFunction(()=>document.querySelector('[data-hr="review-message"]').textContent==='');assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail'&&c.options.forceFresh).length),0);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('pagehide clears private review state and resumes reads without replay only on pageshow',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__holdReviews=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));
+    const before=await f.page.evaluate(()=>__calls.length);await f.page.evaluate(()=>{dispatchEvent(new Event('pagehide'));__emit();__UI.refresh();});
+    assert.equal(await f.page.locator('.hr-person').count(),0);assert.equal(await f.page.locator('[data-hr="review-message"]').innerText(),'');assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);await releaseKind(f,'review');assert.equal(await f.page.evaluate(()=>__calls.length),before);
+    await f.page.evaluate(()=>dispatchEvent(new Event('pageshow')));await f.page.locator('.hr-person').first().waitFor();assert.equal(await reviewCallCount(f),1);assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('held post-save fresh detail cannot paint after identity reset',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__holdDetails=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='detail'));
+    await f.page.evaluate(()=>{__session=null;__emit();});await releaseKind(f,'detail');assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);assert.equal(await f.page.locator('[data-hr="review-message"]').innerText(),'');assert.equal(await f.page.locator('[data-hr="review-retry"]').isHidden(),true);assert.deepEqual(f.errors,[]);await f.context.close();
+  });
+  await check('prior selected detail cannot replace frozen review and a loading list cannot initiate review',async()=>{
+    const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__holdDetails=true;});await f.page.locator('[data-uid="u2"]').click();await f.page.locator('[data-uid="u1"]').click();await f.page.evaluate(()=>{const h=__held.find(x=>x.kind==='detail'&&x.uid==='u1');__held=__held.filter(x=>x!==h);h.resolve();});await f.page.locator('[data-hr="review-save"]').waitFor();
+    await f.page.evaluate(()=>{__holdReviews=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));await releaseKind(f,'detail');assert.equal(await f.page.locator('[data-hr="detail"] h2').innerText(),'עובד ראשון');assert.equal(await reviewCallCount(f),1);assert.deepEqual(f.errors,[]);await f.context.close();
+    const g=await fixture();await g.page.evaluate(()=>{__cursor='next';__UI.refresh();});await g.page.locator('[data-hr="more"]').waitFor({state:'visible'});await openReview(g);await g.page.evaluate(()=>{__holdLists=true;});await g.page.locator('[data-hr="more"]').click();await g.page.waitForFunction(()=>__held.some(x=>x.kind==='list'));await g.page.locator('[data-hr="review-save"]').dispatchEvent('click');assert.equal(await reviewCallCount(g),0);assert.deepEqual(g.errors,[]);await g.context.close();
   });
   for(const width of [320,390,1100])for(const theme of ['light','dark'])await check('readable layout '+width+' '+theme,async()=>{
     const f=await fixture({width,theme});await f.page.locator('[data-uid="u1"]').click();await f.page.locator('tbody tr').waitFor();

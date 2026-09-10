@@ -233,6 +233,20 @@ service cloud.firestore {
       return claim('emp');
     }
 
+    // Only a missing canonical OWN record may be checked before create-only
+    // attendance transactions. Existing reads, queries and writes stay unchanged.
+    function ownMissingHoursRecord(sid, docId, suffixPattern) {
+      let emp = myEmp();
+      let parts = docId.split('_');
+      let suffix = parts[parts.size() - 1];
+      return resource == null
+             && member(sid)
+             && emp is string && emp.size() > 0 && emp.size() <= 64
+             && emp.matches('[^\\x00-\\x1F\\x7F/]+')
+             && docId == emp + '_' + suffix
+             && suffix.matches(suffixPattern);
+    }
+
     // מחוז. תחנת אילת שייכת למחוז דרום.
     //
     // ההיררכיה לא מקוננת בנתיב בכוונה: נתיב כמו
@@ -426,6 +440,9 @@ service cloud.firestore {
     match /hr_request_actor_quotas/{quotaId} {
       allow read, write: if false;
     }
+    match /hr_hours_review_actor_quotas/{quotaId} {
+      allow read, write: if false;
+    }
     match /hr_document_actor_quotas/{quotaId} {
       allow read, write: if false;
     }
@@ -453,6 +470,25 @@ service cloud.firestore {
         allow read, write: if false;
       }
       match /hr_request_operations/{operationId} {
+        allow read, write: if false;
+      }
+      match /hr_hours_review_events/{reviewId} {
+        allow read, write: if false;
+      }
+      // Immutable correction evidence and delivery work are server-only.
+      match /attendance_correction_events/{correctionId} {
+        allow read, write: if false;
+      }
+      match /attendance_correction_receipts/{correctionId} {
+        allow read, write: if false;
+      }
+      match /attendance_correction_notification_jobs/{jobId} {
+        allow read, write: if false;
+      }
+      match /hr_hours_review_notification_jobs/{jobId} {
+        allow read, write: if false;
+      }
+      match /hr_hours_reviews/{summaryId} {
         allow read, write: if false;
       }
       match /hr_request_notification_jobs/{jobId} {
@@ -1069,6 +1105,7 @@ service cloud.firestore {
       // המאשר כותב 'approved' על כל רשומות החודש בפעולה אחת.
 
       match /attendance/{docId} {
+        allow get: if ownMissingHoursRecord(sid, docId, '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])');
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
@@ -1651,6 +1688,7 @@ service cloud.firestore {
       }
 
       match /monthly_reports/{docId} {
+        allow get: if ownMissingHoursRecord(sid, docId, '[0-9]{4}-(0[1-9]|1[0-2])');
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 

@@ -174,11 +174,11 @@ check(compatibilityMonthRace.length === 2 && compatibilityMonthRace.every(payloa
 // תחנת ברירת המחדל והאבטחות תלויות באדם שנבחר. קודם עוברים
 // לאדם אחר וחוזרים בצורה רגילה, כדי לוודא שמידע של אדם קודם
 // אינו משמש fallback גם כאשר שתי הטעינות הצליחו.
-await page.locator('#pickWho option[value="17"]').waitFor({ state:'attached' });
+await page.locator('#pickWho option[value="u2"]').waitFor({ state:'attached' });
 const guardCallsBeforeOther = await page.evaluate(() =>
   (window.__CALLABLE_CALLS || []).filter(call => call && call.name === 'getMyGuardAttendance')
     .map(call => call.payload));
-await page.selectOption('#pickWho', '17');
+await page.selectOption('#pickWho', 'u2');
 await page.evaluate(() => document.getElementById('pickGo').click());
 await page.waitForFunction(() =>
   document.getElementById('work').getAttribute('aria-busy') === 'false' &&
@@ -297,7 +297,7 @@ await page.evaluate(() => {
     40,40,40,40,40,40
   ];
   const pick = document.getElementById('pickWho');
-  pick.value = '17';
+  pick.value = 'u2';
   const go = document.getElementById('pickGo');
   go.disabled = false; go.click();
   const back = document.getElementById('pickBack');

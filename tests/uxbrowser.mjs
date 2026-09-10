@@ -45,19 +45,24 @@ await check(await page.locator('#tabLogin').getAttribute('aria-selected') === 't
 await check(await page.locator('#paneLogin').isVisible(), 'login panel is visible');
 await context.close();
 
-const appContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-await appContext.route('**/firebasejs/**', route => {
+const attendanceContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+await attendanceContext.route('**/firebasejs/**', route => {
   const name = route.request().url().split('/').pop().split('?')[0];
   const file = path.join(stub, name);
   route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
 });
-await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
-await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
-const attendance = await appContext.newPage();
+await attendanceContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+await attendanceContext.addInitScript('window.__SMOKE_ROLE = "super";');
+const attendance = await attendanceContext.newPage();
+// The shared fixture contains August records, not a query-filtering database.
+// Fix this page's date only; timers and the product's month guard remain real.
+await attendance.clock.setFixedTime(new Date('2026-08-25T12:00:00Z'));
 await attendance.goto('http://localhost:' + port + '/attendance.html', { waitUntil:'load' });
 await attendance.locator('.days .btn').first().waitFor({ state:'visible', timeout:8000 });
 await attendance.addStyleTag({ content:'#coWrap{display:none!important}' });
 const source = attendance.locator('.days .btn').first();
+await check((await source.getAttribute('data-date')).startsWith('2026-08-'), 'attendance fixture row belongs to August 2026');
+await check((await attendance.locator('#moLabel').textContent()).includes('אוגוסט 2026'), 'attendance displayed month matches the fixture');
 await source.focus();
 await attendance.keyboard.press('Enter');
 await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'false', 'attendance dialog opens semantically');
@@ -96,7 +101,114 @@ await attendance.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
 await attendance.waitForFunction(date => document.activeElement?.dataset?.date === date, sourceDate);
 await check(await attendance.evaluate(date => document.activeElement?.dataset?.date === date, sourceDate),
             'attendance save restores focus after the row is rebuilt');
+await attendanceContext.close();
 
+const correctionContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+await correctionContext.route('**/firebasejs/**', route => {
+  const name = route.request().url().split('/').pop().split('?')[0];
+  const file = path.join(stub, name);
+  route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
+});
+await correctionContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+await correctionContext.addInitScript(() => {
+  window.__SMOKE_ROLE = 'super';
+  const token = { seconds:1800000000, nanoseconds:7 };
+  const contextResult = { station_id:'eilat_102', target_uid:'u2', employee_number:'17', month:'2026-08',
+    target:{ full_name:'טל חודרה', crew:'A', role:'firefighter', inactive:false },
+    report:{ exists:true, status:'draft', expected_version:token },
+    days:[{ date:'2026-08-01', record_id:'17_2026-08-01', expected_version:token, can_correct:true,
+      record:{ day_type:'regular', shape:'regular', start:'07:00', end:'07:00', end_day:1,
+        start2:'', end2:'', end_day2:0, sub_station:'', overtime_reason:'', notes:'', reason:'',
+        hours:24, day_type_he:'רגיל', site_name:'', reason_required:false, status:'draft' } }],
+    missing_dates:Array.from({length:30},(_,i)=>'2026-08-'+String(i+2).padStart(2,'0')),
+    eligibility:{ can_create:true, can_recalculate:true, can_reopen:false, historical:false, reopening_valid:false },
+    snapshot_at_ms:1800000000000 };
+  window.__CALLABLE_PLAN = {
+    getAttendanceCorrectionContext:[{data:structuredClone(contextResult)},{data:structuredClone(contextResult)},
+      {data:structuredClone(contextResult)},{data:structuredClone(contextResult)}],
+    correctAttendanceDay:[{data:{ correction_id:'a'.repeat(64), changed_count:1, outcome:'recorded', notification_status:'intent_only', duplicate:false }}],
+    listAttendanceCorrectionAudit:[{data:{ station_id:'eilat_102',target_uid:'u2',employee_number:'17',month:'2026-08',
+      items:[{event_id:'a'.repeat(64),operation:'update',actor_uid:'stub-uid',actor_name:'אלדד יונה',created_at_ms:1800000000000,
+        reason:'תיקון מאושר לצורך בדיקת הממשק',dates:['2026-08-01']}],next_cursor:'a'.repeat(64) }},
+      {data:{ station_id:'eilat_102',target_uid:'u2',employee_number:'17',month:'2026-08',
+        items:[{event_id:'b'.repeat(64),operation:'recalculate',actor_uid:'stub-uid',actor_name:'אלדד יונה',created_at_ms:1800000001000,
+          reason:'חישוב מחדש לאחר בדיקה',dates:['2026-08-01']}],next_cursor:null }}],
+    getAttendanceCorrectionAudit:[{data:{ event_id:'a'.repeat(64),operation:'update',actor_uid:'stub-uid',actor_name:'אלדד יונה',
+      created_at_ms:1800000000000,reason:'תיקון מאושר לצורך בדיקת הממשק',station_id:'eilat_102',target_uid:'u2',employee_number:'17',month:'2026-08',
+      changes:[{date:'2026-08-01',before:{start:'07:00'},after:{start:'08:00'}}] }}]
+  };
+});
+const correction = await correctionContext.newPage();
+await correction.clock.setFixedTime(new Date('2026-08-25T12:00:00Z'));
+await correction.goto('http://localhost:' + port + '/attendance.html', { waitUntil:'load' });
+await correction.addStyleTag({ content:'#coWrap{display:none!important}' });
+await correction.locator('#pickWho').waitFor({state:'visible',timeout:8000});
+await correction.locator('#pickWho').selectOption('u2');
+await correction.locator('#pickGo').click();
+await correction.locator('.days .btn').first().waitFor({state:'visible',timeout:8000});
+await check(await correction.locator('#timerCard').evaluate(el=>el.classList.contains('hide')), 'HR view hides employee-only shift timer');
+await check(await correction.locator('#btnFill').evaluate(el=>el.classList.contains('hide')) &&
+  await correction.locator('#btnSync').evaluate(el=>el.classList.contains('hide')), 'HR view hides employee-only fill and schedule sync');
+await correction.locator('.days .btn').first().click();
+await check(await correction.locator('#dCorrectionReason').isVisible(), 'HR correction requires a dedicated visible reason');
+await correction.locator('#dStart').fill('08:00');
+await correction.locator('#dCorrectionReason').fill('תיקון שעות לאחר בדיקה מול העובד והמסמכים');
+await correction.locator('#dSave').click();
+await correction.locator('#ov').waitFor({state:'hidden',timeout:8000});
+const correctionCall = await correction.evaluate(() => __CALLABLE_CALLS.find(call=>call.name==='correctAttendanceDay'));
+await check(correctionCall.payload.target_uid==='u2' && correctionCall.payload.employee_number==='17' &&
+  correctionCall.payload.expected_version.seconds===1800000000 && correctionCall.payload.reason.includes('בדיקה מול העובד') &&
+  correctionCall.payload.patch.start==='08:00' && correctionCall.payload.patch.hours===undefined &&
+  correctionCall.payload.request_id.startsWith('web_'), 'HR correction sends canonical target, exact CAS and editable fields only');
+await correction.locator('#btnView').click();
+await check(await correction.locator('#pSend').count()===0, 'HR summary cannot submit an employee declaration');
+await correction.locator('#pBack').click();
+await correction.evaluate(() => {
+  __CALLABLE_PLAN.correctAttendanceDay = [
+    {reject:true,code:'functions/unavailable',message:'connection lost'},
+    {data:{ correction_id:'c'.repeat(64),changed_count:1,outcome:'recorded',notification_status:'intent_only',duplicate:true }}
+  ];
+});
+await correction.locator('.days .btn').first().click();
+await correction.locator('#dStart').fill('09:00');
+await correction.locator('#dCorrectionReason').fill('תיקון חוזר לאחר שלא התקבל אישור סופי מהשרת');
+await correction.locator('#dSave').click();
+await correction.waitForFunction(() => document.querySelector('#msg').textContent.includes('לא התקבל אישור סופי'));
+const uncertainId = await correction.evaluate(() => __CALLABLE_CALLS.filter(call=>call.name==='correctAttendanceDay').at(-1).payload.request_id);
+await correction.locator('#dStart').fill('10:00');
+await correction.locator('#dSave').click();
+await check(await correction.evaluate(() => __CALLABLE_CALLS.filter(call=>call.name==='correctAttendanceDay').length===2),
+  'changed correction is blocked while an uncertain operation exists');
+await correction.locator('#dStart').fill('09:00');
+await correction.locator('#dSave').click();
+await correction.locator('#ov').waitFor({state:'hidden',timeout:8000});
+await check(await correction.evaluate(id => {
+  const calls=__CALLABLE_CALLS.filter(call=>call.name==='correctAttendanceDay');
+  return calls.length===3 && calls.at(-1).payload.request_id===id;
+}, uncertainId), 'uncertain retry reuses the exact correction request id');
+await correction.locator('#btnLoadCorrectionAudit').click();
+await correction.locator('#btnMoreCorrectionAudit').waitFor({state:'visible',timeout:8000});
+await correction.locator('#btnMoreCorrectionAudit').click();
+await correction.getByRole('button',{name:/חושב חודש מחדש/}).waitFor({state:'visible',timeout:8000});
+await check(await correction.getByRole('button',{name:/חושב חודש מחדש/}).count()===1,
+  'correction audit exposes the next page');
+await correction.getByRole('button',{name:/עודכן יום/}).click();
+await correction.locator('#ov').waitFor({state:'visible',timeout:8000});
+await check((await correction.locator('#dlg').innerText()).includes('תיקון מאושר לצורך בדיקת הממשק'), 'employee audit opens the immutable correction reason');
+await check((await correction.locator('#dlg').innerText()).includes('07:00') &&
+  (await correction.locator('#dlg').innerText()).includes('08:00'), 'correction audit shows before and after values');
+await check(await correction.evaluate(() => __CALLABLE_CALLS.filter(call=>call.name==='listAttendanceCorrectionAudit').length===2 &&
+  __CALLABLE_CALLS.filter(call=>call.name==='getAttendanceCorrectionAudit').length===1), 'audit list and detail use the authenticated server boundary');
+await correctionContext.close();
+
+const appContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+await appContext.route('**/firebasejs/**', route => {
+  const name = route.request().url().split('/').pop().split('?')[0];
+  const file = path.join(stub, name);
+  route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
+});
+await appContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
+await appContext.addInitScript('window.__SMOKE_ROLE = "super";');
 const swaps = await appContext.newPage();
 await swaps.goto('http://localhost:' + port + '/swaps.html', { waitUntil:'load' });
 await swaps.addStyleTag({ content:'#coWrap{display:none!important}' });

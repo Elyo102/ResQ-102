@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "hr:archive": "node hr-month-archive.mjs",
     "hr:requests:wiring": "node hr-requests-wiring.mjs",
     "hr:release:wiring": "node hr-hours-wiring.mjs && node hr-documents-wiring.mjs && node hr-domain-wiring.mjs",
     "file-import": "node schedule-file-import.mjs",
@@ -12,7 +13,7 @@
     "fleet:history": "node fleet-history-browser.mjs",
     "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs",
     "live:headers": "node live-header-smoke.mjs",
-    "all": "npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run browser:mobile"
+    "all": "npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run browser:mobile && npm run hr:archive"
   },
   "dependencies": {
     "playwright": "^1.48.0"

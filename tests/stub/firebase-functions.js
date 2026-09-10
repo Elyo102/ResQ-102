@@ -67,6 +67,19 @@ function stubWorkdays(payload){
 
 function defaultCallableStep(name, payload){
   if (name === 'getEffectiveWorkdays') return stubWorkdays(payload);
+  if (name === 'getAttendanceCorrectionContext') {
+    const data = payload || {};
+    return { data:{
+      station_id:'eilat_102', target_uid:String(data.target_uid || ''),
+      employee_number:String(data.employee_number || ''), month:String(data.month || ''),
+      target:{ full_name:'טל חודרה', crew:'A', role:'firefighter', inactive:false },
+      report:{ exists:false, status:'draft', expected_version:null },
+      days:[], missing_dates:[],
+      eligibility:{ can_create:true, can_recalculate:true, can_reopen:false,
+        historical:false, reopening_valid:false },
+      snapshot_at_ms:Date.now()
+    } };
+  }
   if (name === 'getLegacyScheduleCompatibilityContext') {
     return { data:{
       mode:'shadow',

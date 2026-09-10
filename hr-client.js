@@ -1,9 +1,10 @@
-import { firebaseConfig } from './firebase-config.js?v=42h7';
+import { firebaseConfig } from './firebase-config.js?v=42h8';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h7';
-import { initAppCheck } from './appcheck.js?v=42h7';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h7';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h8';
+import { initAppCheck } from './appcheck.js?v=42h8';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h8';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h8';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -11,6 +12,7 @@ const auth = getAuth(app);
 const functions = getFunctions(app, 'europe-west1');
 const list = httpsCallable(functions, 'getHrMonthReports');
 const detail = httpsCallable(functions, 'getHrEmployeeReport');
+const review = httpsCallable(functions, 'saveHrEmployeeReview');
 const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
@@ -88,16 +90,28 @@ async function getEmployeeMonth(data, { forceFresh = false } = {}) {
   }
 }
 window.addEventListener('pagehide', clearReportCache);
-createHrHoursUI(document.getElementById('hr-workspace'), {
+async function reviewEmployeeMonth(data) {
+  const origin=currentSession(),originUser=user;
+  if(!origin)throw denied();
+  const result=await call(review,data);
+  // call() fences transport; this second fence owns effects after our await.
+  if(currentSession()!==origin || user!==originUser)throw denied();
+  clearReportCache();
+  return result;
+}
+const hoursAdapter = {
   currentSession,
   subscribeIdentity(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   listMonth(data) { return call(list, data); },
   getEmployeeMonth,
+  reviewEmployeeMonth,
   clearReportCache,
   requestNudge(data) { return call(nudge, data); },
   getNudgeStatus(data) { return call(nudgeStatus, data); },
   listNudges(data) { return call(nudges, data); }
-});
+};
+createHrHoursUI(document.getElementById('hr-workspace'), hoursAdapter);
+createMonthArchiveUI(document.getElementById('hr-workspace'), hoursAdapter);
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;
   user = null;

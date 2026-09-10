@@ -76,3 +76,9 @@ test('coercible notification types cannot carry hidden data', () => {
   rejects(() => intent(event({ type: { private: 'MEDICAL', toString: () => 'hr_document' } })), 'invalid-notification-type');
 });
 test('delimiter characters cannot cross station paths', () => rejects(() => intent(event({ recipient_uid: '../other' })), 'invalid-intent-identity'));
+test('attendance correction intent is neutral and has a separate stable type and family key',()=>{
+  const data=event({type:'attendance_corrected',event_id:'correction:'+ 'a'.repeat(64),reason:'PRIVATE_REASON',before:'PRIVATE_BEFORE',after:'PRIVATE_AFTER'});
+  const value=intent(data);assert.equal(value.title,'דיווח השעות שלך עודכן');assert.equal(value.body,'לצפייה בפרטים יש לפתוח את רסקיו.');
+  assert.equal(value.delivery_status,'intent_only');assert.equal(JSON.stringify(value).includes('PRIVATE_'),false);assert.equal(value.id,intent(data).id);
+  assert.notEqual(value.id,intent({...data,type:'report_reviewed'}).id);assert.notEqual(value.id,intent({...data,event_id:'review:'+ 'a'.repeat(64)}).id);
+});

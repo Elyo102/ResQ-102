@@ -6,6 +6,27 @@ const disconnected = { currentSession:()=>null, subscribeIdentity:()=>()=>{} };
 const el = (tag, value, className) => { const node=document.createElement(tag); if(value!=null)node.textContent=String(value); if(className)node.className=className; return node; };
 const number = value => typeof value==='number' && Number.isFinite(value) ? value.toLocaleString('he-IL',{maximumFractionDigits:2}) : '—';
 const KEY=/^[a-f0-9]{64}$/;
+function inspectionBlock(p, detail) {
+  const box=el(detail?'div':'span',null,'hr-meta');box.dataset.hr='inspection';
+  if(detail)box.append(el('h3','עיון משאבי אנוש — נפרד מאישור הדוח'));
+  const show=value=>{box.append(el(detail?'p':'small',value));return box;};
+  if(!Object.hasOwn(p,'review')&&!Object.hasOwn(p,'review_unavailable'))return show('מידע על עיון HR אינו זמין בגרסה זו.');
+  if(p.review_unavailable===true)return show('נתוני עיון HR אינם זמינים לבדיקה.');
+  if(p.review===null&&p.review_unavailable===false)return show('לא נרשם עיון HR.');
+  const r=p.review,t=r?.reviewed_at;
+  const millis=t&&t.seconds*1000+Math.floor(t.nanoseconds/1000000);
+  const valid=r&&p.review_unavailable===false&&typeof r.review_id==='string'&&KEY.test(r.review_id)
+    &&typeof r.reviewed_revision==='string'&&KEY.test(r.reviewed_revision)
+    &&typeof r.actor_uid==='string'&&r.actor_uid.length>0&&r.actor_uid.length<=128&&!/[\u0000-\u001f\u007f/]/.test(r.actor_uid)
+    &&[true,false,null].includes(r.current)&&t&&Number.isSafeInteger(t.seconds)&&t.seconds>=-62135596800&&t.seconds<=253402300799
+    &&Number.isInteger(t.nanoseconds)&&t.nanoseconds>=0&&t.nanoseconds<=999999999&&Number.isFinite(new Date(millis).getTime());
+  if(!valid)return show('נתוני עיון HR אינם זמינים לבדיקה.');
+  if(detail&&r.current!==null&&(typeof p.snapshot_revision!=='string'||!KEY.test(p.snapshot_revision)||p.revision_unavailable!==false
+      ||(p.snapshot_revision===r.reviewed_revision)!==r.current))return show('נתוני עיון HR אינם זמינים לבדיקה.');
+  box.append(el(detail?'p':'small','עיון אחרון: '+new Date(millis).toLocaleString('he-IL',{timeZone:'Asia/Jerusalem'})));
+  if(detail){const actor=el('p','מזהה הבודק: ');actor.append(el('bdi',r.actor_uid));box.append(actor);}
+  return show(!detail||r.current===null?'עיון היסטורי — התאמה לגרסה הנוכחית לא אומתה.':r.current?'העיון תואם לתמונת הדוח שנטענה.':'הדוח השתנה מאז העיון.');
+}
 const actionLabels={discovering:'איתור נמענים',queued:'ממתינה להכנה',processing:'בהכנה',deferred:'ההכנה נדחתה',confirmation_required:'נדרש אישור שעות שקט',completed:'הכנת התזכורות הסתיימה',expired:'פג תוקף ההכנה',expired_partial:'פג תוקף לאחר הכנה חלקית',cancelled:'ההכנה בוטלה'};
 const childLabels={queued:'ממתינה לטיפול',suppressed:'הושתקה',blocked:'חסומה',deferred:'נדחתה',attempting:'מתבצע ניסיון אצל הספק',no_device:'אין מכשיר זמין',cancelled:'בוטלה',accepted:'הספק קיבל — לא אישור מסירה',failed:'הניסיון נכשל',partial:'תוצאת ספק חלקית',outcome_unknown:'תוצאת הניסיון אינה ידועה'};
 const reasons=new Set(['manual-quiet-hours-warning','job-expired','actor-no-longer-authorized','routine','system-silent','manual-quiet-hours-confirmed','invalid-path','identity-unavailable','identity-missing','auth-unavailable','invalid-actor','actor-revoked','actor-profile-unavailable','recipient-moved','recipient-inactive','recipient-invalid','recipient-binding-changed','report-invalid','report-completed','invalid-intent','parent-invalid','parent-cancelled','silent-state-unavailable','tokens-invalid','expired','no-current-token','token-limit','unconfirmed-outcome','attempt-expired','dispatch-window-closed','preflight-unavailable','page-check-unavailable','unavailable']);
@@ -44,17 +65,29 @@ function sessionKey(adapter) {
   return JSON.stringify([s.uid,s.stationId,s.role,s.super===true,s.epoch]);
   } catch (_) { return null; }
 }
+export function previousHrMonth(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit'
+  }).formatToParts(now);
+  const year = Number(parts.find(p => p.type === 'year').value);
+  const month = Number(parts.find(p => p.type === 'month').value);
+  return String(month === 1 ? year - 1 : year) + '-' + String(month === 1 ? 12 : month - 1).padStart(2, '0');
+}
 export function createHrHoursUI(root, adapter=disconnected) {
   const q = key => root.querySelector('[data-hr="'+key+'"]');
-  let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false;
+  let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false, suspended=false;
   let loadedDetail=null, loadedFreshness=null, pending=null, busy=false, confirmation=null;
+  let reviewPending=null, reviewBusy=false, reviewRefresh=null, reviewId=null, reviewUncertain=false;
   let history=[], historyCursor=null, historyLoading=false, historyGeneration=0;
   let action=null, actionId=null, children=[], childCursor=null, statusLoading=false, statusGeneration=0;
-  const locked=()=>busy||!!pending;
+  const reviewFeedback=el('div',null,'hr-notice'),reviewMessage=el('p'),reviewRetry=el('button','ניסיון חוזר לאותה שמירת עיון');
+  reviewFeedback.dataset.hr='review-feedback';reviewMessage.dataset.hr='review-message';reviewMessage.setAttribute('role','status');
+  reviewRetry.type='button';reviewRetry.dataset.hr='review-retry';reviewFeedback.append(reviewMessage,reviewRetry);q('detail').after(reviewFeedback);
+  const locked=()=>busy||!!pending||reviewBusy||!!reviewPending||!!reviewRefresh;
+  const lockedMonth=()=>pending?.data.month||reviewPending?.data.month||reviewRefresh?.data.month||loadedDetail?.month;
   const sid=()=>JSON.parse(owner)[1];
   // Locale format order is not a date-key contract.
-  const parts=new Intl.DateTimeFormat('en',{timeZone:'Asia/Jerusalem',year:'numeric',month:'2-digit'}).formatToParts(new Date());
-  q('month').value=parts.find(p=>p.type==='year').value+'-'+parts.find(p=>p.type==='month').value;
+  q('month').value=previousHrMonth();
   const message = value => { q('message').textContent=value; };
   function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;loadedFreshness=null;q('detail').replaceChildren(el('p',value)); }
   function controls() {
@@ -65,10 +98,12 @@ export function createHrHoursUI(root, adapter=disconnected) {
     q('nudges').hidden=!owner;q('history').hidden=!owner;
     for(const name of ['nudge-station','send-now','history-refresh','confirm'])q(name).disabled=!owner||locked();
     q('retry').disabled=!owner||busy;q('pending').hidden=!pending||busy;
+    reviewFeedback.hidden=!reviewMessage.textContent&&!reviewPending;
+    reviewRetry.hidden=!reviewPending||reviewBusy;reviewRetry.disabled=!owner||reviewBusy||!!reviewRefresh;
     q('confirmation').hidden=!confirmation;q('actions-more').hidden=!historyCursor;q('actions-more').disabled=locked()||historyLoading;
     q('status-refresh').hidden=!actionId;q('status-refresh').disabled=locked()||statusLoading;
     q('children-more').hidden=!childCursor;q('children-more').disabled=locked()||statusLoading;
-    for(const button of root.querySelectorAll('.hr-person,.hr-action-list button,[data-hr="nudge-person"],[data-hr="detail-fresh"]'))button.disabled=!owner||locked();
+    for(const button of root.querySelectorAll('.hr-person,.hr-action-list button,[data-hr="nudge-person"],[data-hr="detail-fresh"],[data-hr="review-save"]'))button.disabled=!owner||locked();
     q('position').textContent=selected<0?'':(selected+1)+' מתוך '+items.length+(cursor?' ומעלה':'');
     q('count').textContent=items.length ? items.length+' עובדים נטענו'+(cursor?' · יש נוספים':'') : '';
   }
@@ -80,6 +115,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   }
   function resetActions() {
     pending=null;busy=false;confirmation=null;q('send-now').checked=false;
+    reviewPending=null;reviewBusy=false;reviewRefresh=null;reviewId=null;reviewUncertain=false;reviewMessage.textContent='';
     q('nudge-message').textContent='';q('confirmation-text').textContent='';resetStatus();
   }
   const recipientName=id=>items.find(p=>p.uid===id)?.full_name||'עובד שטרם נטען · שם לא זמין';
@@ -179,9 +215,94 @@ export function createHrHoursUI(root, adapter=disconnected) {
     controls();void showStatus(result.action_id);void loadHistory();
   }
   function alive(g, key) {
-    if(disposed)return false;
+    if(disposed||suspended)return false;
     if(sessionKey(adapter)!==owner){ resetIdentity(); return false; }
     return generation===g && owner===key && !!owner;
+  }
+  function reviewOwner(op) {
+    if(!alive(op.g,op.key))return false;
+    try { if(adapter.currentSession()===op.session)return true; } catch (_) {}
+    resetIdentity();return false;
+  }
+  const currentReview=op=>reviewOwner(op)&&reviewPending===op;
+  function validReviewResult(value,op) {
+    return value&&typeof value==='object'&&!Array.isArray(value)
+      &&Object.keys(value).sort().join(',')==='current,duplicate,review_id,reviewed_revision'
+      &&value.review_id===reviewId&&value.reviewed_revision===op.data.expected_revision
+      &&typeof value.duplicate==='boolean'&&[true,false,null].includes(value.current)
+      &&(value.duplicate||value.current===true);
+  }
+  function startReview(target) {
+    if(!mayAct()||loading||typeof adapter.reviewEmployeeMonth!=='function'
+      ||target!==loadedDetail||loadedFreshness?.source!=='server'||items[selected]?.uid!==target.uid
+      ||target.month!==q('month').value||!['draft','submitted','approved'].includes(target.state)
+      ||target.revision_unavailable!==false||typeof target.snapshot_revision!=='string'||!KEY.test(target.snapshot_revision))return;
+    let data,session;
+    try {
+      session=adapter.currentSession();
+      data=Object.freeze({month:target.month,uid:target.uid,expected_revision:target.snapshot_revision,request_id:crypto.randomUUID()});
+    } catch (_) {reviewMessage.textContent='לא ניתן להכין שמירת עיון מאובטחת. לא נשלחה בקשה.';controls();return;}
+    // Lock the exact intent synchronously, including while its receipt ID hashes.
+    ++detailGeneration;
+    reviewPending=Object.freeze({data,session,key:owner,g:generation,name:target.full_name||'העובד'});
+    reviewId=null;reviewUncertain=false;void submitReview();
+  }
+  async function submitReview() {
+    if(!reviewPending||reviewBusy||reviewRefresh||!currentReview(reviewPending))return;
+    const op=reviewPending;reviewBusy=true;reviewMessage.textContent='שומר תיעוד עיון…';controls();
+    let result=null,attempted=false;
+    try {
+      if(reviewId===null){
+        const bytes=new TextEncoder().encode(JSON.stringify(['hr-review-event-v1',op.session.uid,op.data.request_id]));
+        const digest=await crypto.subtle.digest('SHA-256',bytes);
+        if(!currentReview(op))return;
+        reviewId=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      if(!currentReview(op))return;
+      attempted=true;
+      result=await adapter.reviewEmployeeMonth(op.data);
+      if(!currentReview(op))return;
+      if(!validReviewResult(result,op))throw new Error('Invalid inspection receipt.');
+    } catch (e) {
+      result=null;
+      if(currentReview(op)){
+        if(!attempted){
+          reviewPending=null;reviewId=null;reviewMessage.textContent='לא ניתן להכין שמירת עיון מאובטחת. לא נשלחה בקשה.';
+        }else if(!reviewUncertain&&definite.has(errorCode(e))){
+          reviewPending=null;reviewId=null;
+          clearDetail('שמירת העיון לא הושלמה. יש לקרוא את הדוח מחדש לפני פעולה חדשה.');
+          reviewMessage.textContent=errorCode(e)==='resource-exhausted'?'בוצעו שמירות עיון רבות. המתינו ורעננו את הדוח לפני פעולה חדשה.':errorCode(e)==='aborted'?'הדוח השתנה. יש לרענן ולעיין בגרסה העדכנית; לא בוצעה שמירה אוטומטית לגרסה אחרת.':'לא ניתן לשמור עיון במצב הנוכחי. יש לרענן את הדוח או את ההתחברות.';
+        }else{
+          reviewUncertain=true;reviewMessage.textContent='לא ניתן לקבוע אם העיון נשמר. השתמשו רק בניסיון חוזר לאותה שמירת עיון; המזהה והדוח נשמרים ללא שינוי.';
+        }
+      }
+    } finally {
+      if(reviewOwner(op)&&(reviewPending===op||reviewPending===null)&&reviewRefresh===null){reviewBusy=false;controls();}
+    }
+    if(!result||!currentReview(op))return;
+    // This is known success. A failed following read cannot resurrect the write.
+    reviewPending=null;reviewBusy=false;reviewId=null;reviewUncertain=false;reviewRefresh=op;
+    reviewMessage.textContent='העיון נרשם עבור '+op.name+' · '+op.data.month+'. זהו תיעוד עיון בלבד, לא אישור הדוח. התראה כפופה לשעות שקט ולהשתקת המערכת; מצב מסירה אינו מאומת כאן.';
+    const d=++detailGeneration;clearDetail('העיון נרשם. טוען את הדוח מחדש…');controls();
+    try {
+      const response=await adapter.getEmployeeMonth({month:op.data.month,uid:op.data.uid},{forceFresh:true});
+      if(!reviewOwner(op)||reviewRefresh!==op||d!==detailGeneration)return;
+      const value=response?.report,freshness=response?.freshness;
+      if(!value||value.uid!==op.data.uid||value.month!==op.data.month||!Array.isArray(value.rows)
+        ||!freshness||freshness.source!=='server'||!time(freshness.fetched_at_ms)||!time(freshness.expires_at_ms)||freshness.expires_at_ms<=freshness.fetched_at_ms)throw new Error('Invalid refreshed report.');
+      items=items.map(p=>{
+        if(p.uid!==value.uid)return p;
+        const updated={...p};
+        for(const key of ['review','review_unavailable']){if(Object.hasOwn(value,key))updated[key]=value[key];else delete updated[key];}
+        return updated;
+      });
+      renderPeople();renderDetail(value,freshness);
+    }catch(_){
+      if(reviewOwner(op)&&reviewRefresh===op&&d===detailGeneration){
+        clearDetail('העיון נשמר, אך הדוח לא נטען מחדש. בחרו את העובד או רעננו כדי לקרוא שוב; אין לשלוח שמירה חוזרת.');
+        reviewMessage.textContent+=' הרענון נכשל, אך שמירת העיון אינה מתבטלת.';
+      }
+    }finally{if(reviewOwner(op)&&reviewRefresh===op){reviewRefresh=null;controls();}}
   }
   function renderPeople() {
     q('people').replaceChildren();
@@ -189,6 +310,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
       const button=el('button',null,'hr-person'); button.type='button'; button.dataset.uid=p.uid;
       button.setAttribute('aria-pressed',String(index===selected));
       button.append(el('strong',p.full_name || 'שם חסר'),el('small',(labels[p.state]||labels.unavailable)+(p.historical?' · עובד לשעבר':'')));
+      button.append(inspectionBlock(p,false));
       const g=generation,key=owner;
       button.addEventListener('click',()=>{ if(alive(g,key))select(index); });
       q('people').append(button);
@@ -201,10 +323,17 @@ export function createHrHoursUI(root, adapter=disconnected) {
       el('p','מספר עובד '+p.employee_number+' · '+p.month+(p.crew?' · משמרת '+p.crew:''),'hr-meta'));
     detail.append(el('p',(freshness.source==='memory'?'תמונת מצב מזיכרון הדף בלבד':'נקרא מהשרת')+' · זמן קריאה: '+stamp(freshness.fetched_at_ms)+'. ייתכן שהנתונים השתנו מאז.','hr-meta'));
     if(freshness.source==='memory'){
-      detail.append(el('p','לפני בקשת תזכורת אישית יש לבדוק את הדוח מחדש מול השרת. הבדיקה אינה שולחת תזכורת.','hr-notice'));
+      detail.append(el('p','לפני בקשת תזכורת אישית או שמירת עיון יש לבדוק את הדוח מחדש מול השרת. הבדיקה אינה שולחת תזכורת ואינה שומרת עיון.','hr-notice'));
       const fresh=el('button','בדיקת דוח עדכני מהשרת');fresh.type='button';fresh.dataset.hr='detail-fresh';
       const g=generation,key=owner,d=detailGeneration,index=selected;
       fresh.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration&&mayAct())void select(index,true);});detail.append(fresh);
+    }
+    detail.append(inspectionBlock(p,true));
+    if(typeof adapter.reviewEmployeeMonth==='function'&&freshness.source==='server'&&['draft','submitted','approved'].includes(p.state)
+      &&p.revision_unavailable===false&&typeof p.snapshot_revision==='string'&&KEY.test(p.snapshot_revision)){
+      const button=el('button','שמירת עיון HR בדוח שנטען');button.type='button';button.dataset.hr='review-save';
+      const g=generation,key=owner,d=detailGeneration;
+      button.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration)startReview(p);});detail.append(button);
     }
     if(p.historical)detail.append(el('p','דוח היסטורי של עובד שאינו פעיל בתחנה.','hr-notice'));
     const totals=el('div',null,'hr-totals');
@@ -270,16 +399,17 @@ export function createHrHoursUI(root, adapter=disconnected) {
     finally{if(alive(g,key)){loading=false;controls();}}
   }
   function refresh() {
+    if(suspended||disposed)return;
     if(sessionKey(adapter)!==owner){resetIdentity();return;}
-    if(locked()){q('month').value=pending.data.month;return;}
+    if(locked()){const month=lockedMonth();if(month)q('month').value=month;return;}
     adapter.clearReportCache?.();
     ++generation;++detailGeneration;items=[];cursor=null;selected=-1;loading=false;renderPeople();clearDetail();
-    confirmation=null;q('send-now').checked=false;q('confirmation-text').textContent='';q('nudge-message').textContent='';resetStatus();controls();
+    confirmation=null;q('send-now').checked=false;q('confirmation-text').textContent='';q('nudge-message').textContent='';reviewMessage.textContent='';resetStatus();controls();
     if(owner){void loadPage();void loadHistory();}
   }
   function resetIdentity() {
     adapter.clearReportCache?.();
-    owner=sessionKey(adapter);++generation;++detailGeneration;items=[];cursor=null;selected=-1;loading=false;
+    owner=suspended?null:sessionKey(adapter);++generation;++detailGeneration;items=[];cursor=null;selected=-1;loading=false;
     resetActions();
     renderPeople();clearDetail(owner?'בחרו עובד לצפייה בדוח.':'נדרש חיבור עם הרשאת משאבי אנוש.');
     message(owner?'טוען…':'ממתין לחיבור מאובטח עם הרשאה מתאימה.');if(owner){void loadPage();void loadHistory();}
@@ -294,8 +424,12 @@ export function createHrHoursUI(root, adapter=disconnected) {
     ['status-refresh',()=>{if(actionId)void showStatus(actionId);}],['children-more',()=>{if(actionId&&childCursor)void showStatus(actionId,true);}]];
   for(const [name,fn] of bindings)q(name).addEventListener('click',fn);
   const beforeUnload=e=>{if(locked()){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',beforeUnload);
+  const pagehide=()=>{suspended=true;resetIdentity();};
+  const pageshow=()=>{if(!disposed&&suspended){suspended=false;resetIdentity();}};
+  reviewRetry.addEventListener('click',submitReview);window.addEventListener('pagehide',pagehide);window.addEventListener('pageshow',pageshow);
   const unsubscribe=adapter.subscribeIdentity(resetIdentity);resetIdentity();
   return { refresh, destroy(){disposed=true;owner=null;++generation;++detailGeneration;unsubscribe();adapter.clearReportCache?.();resetActions();controls();q('people').replaceChildren();clearDetail('המסך נסגר.');root.removeEventListener('keydown',keydown);
     for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
+    reviewRetry.removeEventListener('click',submitReview);reviewFeedback.remove();window.removeEventListener('pagehide',pagehide);window.removeEventListener('pageshow',pageshow);
     q('month').removeEventListener('change',refresh);q('refresh').removeEventListener('click',refresh);q('next').removeEventListener('click',next);q('previous').removeEventListener('click',previous);q('more').removeEventListener('click',more);} };
 }

@@ -1,0 +1,20 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { createMonthRevision: revision } = require('./hr-month-revision');
+let passed = 0;
+const test = (name, fn) => { fn(); passed++; console.log('PASS ' + name); };
+const base = () => ({ stationId:'test_station', uid:'test.user', employeeNumber:'101', month:'2026-10', report:null,
+  attendance:[{id:'101_2026-10-01',version:{seconds:100,nanoseconds:1}},{id:'101_2026-10-02',version:{seconds:101,nanoseconds:2}}] });
+test('stable, order independent and nonmutating', () => {const a=base(),copy=structuredClone(a),r=revision(a);assert.match(r,/^[a-f0-9]{64}$/);assert.equal(revision(a),r);assert.deepEqual(a,copy);a.attendance.reverse();assert.equal(revision(a),r);});
+test('schema-v1 independently pinned canonical vector',()=>assert.equal(revision(base()),'a263cd95357d36309452468da6e1ede53c2d76a1f20dc5afbce6c96600a6a313'));
+for (const key of ['stationId','uid']) test('context '+key,()=>{const a=base(),r=revision(a);a[key]+='X';assert.notEqual(revision(a),r);});
+test('month and employee contexts',()=>{const a={...base(),attendance:[]},r=revision(a);assert.notEqual(revision({...a,month:'2026-11'}),r);assert.notEqual(revision({...a,employeeNumber:'202'}),r);});
+for (const field of ['seconds','nanoseconds']) test('day version '+field,()=>{const a=base(),r=revision(a);a.attendance[0].version[field]++;assert.notEqual(revision(a),r);});
+test('report present and both version fields',()=>{const a=base(),r=revision(a);a.report={id:'101_2026-10',version:{seconds:100,nanoseconds:0}};assert.notEqual(revision(a),r);for(const k of ['seconds','nanoseconds']){const b=structuredClone(a);b.report.version[k]++;assert.notEqual(revision(a),revision(b));}});
+test('added, removed, replaced rows',()=>{const a=base(),r=revision(a);a.attendance.pop();assert.notEqual(revision(a),r);a.attendance[0].id='101_2026-10-03';assert.notEqual(revision(a),r);});
+for(const emp of ['abcdefghijklmnopqrstuvw','a.b','a_b','a.*b'])test('literal full employee '+emp,()=>{const a=base();a.employeeNumber=emp;a.attendance=a.attendance.map(r=>({...r,id:emp+'_'+r.id.slice(-10)}));assert.match(revision(a),/^[a-f0-9]{64}$/);});
+const invalid = [a=>a.attendance.push(a.attendance[0]),a=>a.attendance[0].id='101_2026-10-32',a=>a.attendance[0].id='202_2026-10-01',a=>a.month='2026-13',a=>a.month='1899-10',a=>a.report={id:'202_2026-10',version:{seconds:0,nanoseconds:0}},a=>a.extra=true,a=>a.attendance[0].version.seconds='100',a=>a.attendance[0].version.nanoseconds=1e9,a=>a.attendance[0].version.nanoseconds=-1,a=>a.attendance[0].version.seconds=253402300800,a=>a.employeeNumber='a\nb\nc',a=>a.employeeNumber='',a=>a.employeeNumber='x'.repeat(65),a=>a.uid='a/b',a=>a.stationId=123,a=>a.attendance=Array(1),a=>a.report=undefined];
+invalid.forEach((change,i)=>test('invalid input '+i,()=>{const a=base();change(a);assert.throws(()=>revision(a));}));
+test('31 rows valid, 32 rejected',()=>{const a=base();a.attendance=Array.from({length:31},(_,i)=>({id:'101_2026-10-'+String(i+1).padStart(2,'0'),version:{seconds:0,nanoseconds:0}}));revision(a);a.attendance.push(a.attendance[0]);assert.throws(()=>revision(a));});
+test('leap calendar validation',()=>{const a=base();a.month='2024-02';a.attendance=[{id:'101_2024-02-29',version:{seconds:0,nanoseconds:0}}];revision(a);a.month='2026-02';a.attendance[0].id='101_2026-02-29';assert.throws(()=>revision(a));});
+console.log(passed+' revision unit cases passed; no integration or authorization claims.');

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import './hr-legacy-mail-retirement.mjs';
+import './attendance-corrections-wiring.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -9,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = ['functions/index.js', 'firestore.indexes.json', 'incident-client.js', 'functions/ops-telemetry-contract.js',
-  'functions/hr-hours-nudges.js', 'functions/hr-hours-dispatch.js'];
+  'functions/hr-hours-nudges.js', 'functions/hr-hours-dispatch.js',
+  'functions/attendance-corrections.js', 'functions/attendance-hours-calculator.js',
+  'functions/attendance-correction-config.js', 'functions/attendance-correction-support.js'];
 const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const hashes = () => Object.fromEntries(files.map(file => [file, sha(read(file))]));
@@ -102,9 +105,9 @@ await check('scheduled handler preserves worker rejection instead of swallowing 
 
 const config = JSON.parse(read('firestore.indexes.json'));
 const newGroups = ['hr_nudge_actions', 'hr_nudge_intents'];
-// The adjacent domain gate independently pins these exact13 indexes. They
+// The adjacent domain gate independently pins these exact21 indexes. They
 // are not part of this gate's immutable pre-HR baseline or its eight shapes.
-const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_domain_notification_intents'];
+const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs', 'attendance_correction_notification_jobs', 'hr_domain_notification_intents'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
   ['hr_nudge_intents', 'expires_at_ms'], ['hr_nudge_intents', 'lease_until_ms'], ['hr_nudge_intents', 'not_before_ms'],
   ['hr_nudge_intents', 'next_check_ms'], ['hr_nudge_intents', 'created_at_ms']].map(([collectionGroup, fieldPath]) => ({
@@ -112,7 +115,7 @@ const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actio
 }));
 await check('exact eight required collection-group indexes, without duplicate or extra query shapes', () => {
   assert.deepEqual(config.indexes.filter(i => newGroups.includes(i.collectionGroup)), expectedIndexes);
-  assert.equal(config.indexes.length, 34);
+  assert.equal(config.indexes.length, 42);
 });
 await check('all13 original indexes and32 field overrides match immutable b1451e9 baseline', () => {
   assert.deepEqual(Object.keys(config).sort(), ['fieldOverrides', 'indexes']);
@@ -133,7 +136,7 @@ await check('old automatic reminder/report producers and reviewed modules are un
     assert.equal(sha(block.slice(0, boundary >= 0 ? boundary : block.length).trim()), digest, name + ' baseline source changed');
   }
   assert.equal(sha(read('functions/hr-hours-nudges.js')), 'fd572de3dae6563bb8f63dd2e7a7baf8699598ad80dcafc47d244f89029724d7');
-  assert.equal(sha(read('functions/hr-hours-dispatch.js')), 'a4050957a89f8718342d27df1b8243d578464d2b838b67d07b5e89d96ddd471d');
+  assert.equal(sha(read('functions/hr-hours-dispatch.js')), 'e071a6fce6e398522198f5c0aa75afd61000a138ebaeb416c02b2e21e27bd462');
 });
 const client = await import('data:text/javascript;base64,' + Buffer.from(read('incident-client.js')).toString('base64'));
 const server = createRequire(import.meta.url)(path.join(root, 'functions/ops-telemetry-contract.js'));

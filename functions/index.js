@@ -41,6 +41,10 @@ const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
 const hrDomainDispatchModule = require('./hr-domain-dispatch');
+const attendanceCorrectionsModule = require('./attendance-corrections');
+const attendanceHoursCalculator = require('./attendance-hours-calculator');
+const attendanceCorrectionConfigModule = require('./attendance-correction-config');
+const attendanceCorrectionSupportModule = require('./attendance-correction-support');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -133,9 +137,57 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
-const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError });
+const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
+exports.saveHrEmployeeReview = onCall({ region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60, memory: '256MiB', maxInstances: 3, concurrency: 1 }, async (req) => hrHours.reviewEmployeeMonth(req));
+const ATTENDANCE_CORRECTION_OPTIONS = Object.freeze({
+  region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60,
+  memory: '256MiB', maxInstances: 3, concurrency: 1
+});
+function jerusalemMonth(milliseconds) {
+  const date = new Date(milliseconds);
+  if (!Number.isFinite(date.getTime())) throw new HttpsError('failed-precondition', 'Server month is unavailable.');
+  const parts = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit' })
+    .formatToParts(date).reduce((out, part) => Object.assign(out, { [part.type]: part.value }), {});
+  if (!/^\d{4}$/.test(parts.year || '') || !/^\d{2}$/.test(parts.month || '')) {
+    throw new HttpsError('failed-precondition', 'Server month is unavailable.');
+  }
+  return parts.year + '-' + parts.month;
+}
+let attendanceCorrections;
+let attendanceCorrectionSupport;
+const readAttendanceCorrectionConfig = attendanceCorrectionConfigModule
+  .createAttendanceCorrectionConfigReader({ db, HttpsError });
+function getAttendanceCorrections() {
+  if (!attendanceCorrections) attendanceCorrections = attendanceCorrectionsModule.createAttendanceCorrections({
+    db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
+    readConfig: readAttendanceCorrectionConfig,
+    calculate: attendanceHoursCalculator.calculateAttendanceDerived,
+    monthAt: jerusalemMonth
+  });
+  return attendanceCorrections;
+}
+exports.correctAttendanceDay = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrections().correctOneDay(req));
+exports.correctAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrections().correctMonthRecalc(req));
+function getAttendanceCorrectionSupport() {
+  if (!attendanceCorrectionSupport) attendanceCorrectionSupport = attendanceCorrectionSupportModule
+    .createAttendanceCorrectionSupport({
+      db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
+      monthAt: jerusalemMonth
+    });
+  return attendanceCorrectionSupport;
+}
+exports.getAttendanceCorrectionContext = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrectionSupport().getContext(req));
+exports.reopenAttendanceMonthForCorrection = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrectionSupport().reopen(req));
+exports.listAttendanceCorrectionAudit = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrectionSupport().listAudit(req));
+exports.getAttendanceCorrectionAudit = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceCorrectionSupport().getAudit(req));
 const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
 exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
 exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));

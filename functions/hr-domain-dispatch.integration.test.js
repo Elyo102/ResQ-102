@@ -2,8 +2,9 @@
 // Actual domain producers and real Firestore transactions; Auth/FCM are local
 // synthetic dependencies. No Google Auth, FCM, browser, scheduler or production.
 const assert = require('node:assert/strict');
-if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080' || process.env.GCLOUD_PROJECT !== 'demo-resq') {
-  console.error('NOT RUN: FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 and GCLOUD_PROJECT=demo-resq required.');
+const localEndpoint=/^(127\.0\.0\.1|localhost):(\d{1,5})$/.exec(process.env.FIRESTORE_EMULATOR_HOST || '');
+if (!localEndpoint || Number(localEndpoint[2])<1 || Number(localEndpoint[2])>65535 || process.env.GCLOUD_PROJECT !== 'demo-resq') {
+  console.error('NOT RUN: loopback Firestore emulator and GCLOUD_PROJECT=demo-resq required.');
   process.exit(2);
 }
 process.env.METADATA_SERVER_DETECTION = 'none';
@@ -13,10 +14,12 @@ const path = require('node:path');
 const admin = require('firebase-admin');
 const { createHrRequests } = require('./hr-requests');
 const { createHrDocuments } = require('./hr-documents');
+const { createHrHoursService } = require('./hr-hours-service');
+const { createAttendanceCorrections } = require('./attendance-corrections');
 const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { createHrDomainDispatch, LIMITS } = require('./hr-domain-dispatch');
 const { notificationIntent } = require('./hr-notification-policy');
-const sourceFiles = ['hr-domain-dispatch.js', 'hr-requests.js', 'hr-documents.js', 'hr-hours-dispatch.js', 'hr-notification-policy.js'];
+const sourceFiles = ['hr-domain-dispatch.js', 'hr-requests.js', 'hr-documents.js', 'hr-hours-dispatch.js', 'hr-notification-policy.js', 'hr-hours-service.js', 'hr-hours-review-contract.js', 'attendance-corrections.js'];
 const sourceHashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(path.join(__dirname, f))).digest('hex')]));
 const beforeHashes = sourceHashes();
 const app = admin.initializeApp({ projectId: 'demo-resq' }, 'hr-domain-dispatch-' + process.pid), db = app.firestore();
@@ -34,7 +37,7 @@ const auth = { async getUser(uid) {
 const accepted = p => ({ responses: p.tokens.map((_, i) => ({ success: true, messageId: 'synthetic/' + i })) });
 const identity = createOpsMemberIdentity({ db, HttpsError });
 let sequence = 0, passed = 0, priorRuntime;
-const collections = { request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs' };
+const collections = { request: 'hr_request_notification_jobs', document: 'hr_document_notification_jobs', review: 'hr_hours_review_notification_jobs', correction: 'attendance_correction_notification_jobs' };
 const active = ['policy_pending', 'discovering', 'queued', 'processing', 'deferred', 'blocked'];
 async function fixture() {
   const sid = 'hr_domain_it_' + runId + '_' + (++sequence), root = db.doc('stations/' + sid); roots.push(root);
@@ -54,6 +57,45 @@ async function fixture() {
   f.req = (name, data) => ({ auth: { uid: f.people[name].uid, token: { ...f.people[name].claims, auth_time: authTime } }, data });
   f.requests = createHrRequests({ db, auth, HttpsError, clock: () => f.at });
   f.documents = createHrDocuments({ db, auth, HttpsError, clock: () => f.at });
+  f.review = async (self=false) => {
+    const name=self?'hr':'owner',uid=f.people[name].uid,emp='full_employee_number_'+uid,month='2026-09';
+    for(const [p,value] of [['emp_index/'+emp,{uid,stationId:sid,active:true}],['directory/'+uid,{station:sid,active:true}]]){
+      const ref=db.doc(p);quotas.set(ref.path,ref);await ref.set(value);
+    }
+    await root.collection('users').doc(uid).update({employee_number:emp});
+    const q=db.doc('hr_hours_review_actor_quotas/'+hash(['hr-review-quota-v1',f.people.hr.uid]));quotas.set(q.path,q);
+    await root.collection('monthly_reports').doc(emp+'_'+month).set({uid,emp_number:emp,month,status:'submitted',total_hours:0,days:[]});
+    const hours=createHrHoursService({db,auth,HttpsError,clock:()=>f.at,serverTimestamp:()=>admin.firestore.FieldValue.serverTimestamp()});
+    const detail=await hours.getEmployeeMonth(f.req('hr',{month,uid}));
+    const data={month,uid,expected_revision:detail.snapshot_revision,request_id:'review-001'};
+    const result=await hours.reviewEmployeeMonth(f.req('hr',data));
+    return {result,emp,uid,month,replay:()=>hours.reviewEmployeeMonth(f.req('hr',data))};
+  };
+  f.correct = async ({self=false,role='firefighter',operation='create'}={}) => {
+    const name=self?'hr':'owner',uid=f.people[name].uid,emp='correction_employee_'+uid,month='2026-09',date=month+'-01';
+    if(!self){records.get(uid).customClaims.role=role;await root.collection('users').doc(uid).update({role});}
+    await root.collection('users').doc(uid).update({uid,employee_number:emp,crew:'A'});
+    for(const [p,value] of [['emp_index/'+emp,{uid,stationId:sid,active:true}],['directory/'+uid,{uid,stationId:sid,employee_number:emp,active:true}]]){
+      const ref=db.doc(p);quotas.set(ref.path,ref);await ref.set(value);
+    }
+    await root.collection('monthly_reports').doc(emp+'_'+month).set({uid,emp_number:emp,month,status:'draft'});
+    const dayRef=root.collection('attendance').doc(emp+'_'+date);
+    let expected='absent';
+    if(operation!=='create'){
+      await dayRef.set({uid,emp_number:emp,date,month,status:'draft',day_type:'regular',start:'07:00',end:'07:00',sub_station:'',hours:24,
+        legacy_unknown:{'a.b':{nested:[{items:[null,false,1.25,'עברית']}]}}});
+      const at=(await dayRef.get()).updateTime;expected={seconds:at.seconds,nanoseconds:at.nanoseconds};
+    }
+    // Actual producer and native transactions; configuration/calculation ports
+    // are synthetic here and have separate real-adapter tests.
+    const service=createAttendanceCorrections({db,auth,HttpsError,serverTimestamp:()=>admin.firestore.FieldValue.serverTimestamp(),clock:()=>f.at,
+      monthAt:()=>month,readConfig:async()=>({}),calculate:()=>({hours:24,day_type_he:'רגיל',site_name:'Synthetic site',reason_required:false})});
+    const common={target_uid:uid,employee_number:emp,month,reason:'PRIVATE_CORRECTION_REASON detailed justification',request_id:'correction-001'};
+    const data=operation==='recalculate'?{...common,days:[{date,expected_version:expected}]}:{...common,operation,date,expected_version:expected,
+      ...(operation==='delete'?{}:{patch:{day_type:'regular',notes:'PRIVATE_CORRECTED_NOTES'}})};
+    const invoke=()=>service[operation==='recalculate'?'correctMonthRecalc':'correctOneDay'](f.req('hr',data));
+    const result=await invoke();return {result,emp,uid,month,date,dayRef,replay:invoke};
+  };
   f.create = (id = 'create-001', extra = {}) => f.requests.create(f.req('owner', {
     request_id: id, subject: 'PRIVATE_CASE_SUBJECT', text: 'PRIVATE_CASE_BODY', send_now: false, ...extra }));
   f.action = (c, id, extra = {}) => ({ request_id: id, case_id: c.case_id, expected_revision: c.revision, send_now: false, ...extra });
@@ -120,10 +162,152 @@ async function cleanup() {
 }
 const check = (name, fn) => tests.push({ name, fn });
 const isDenied = e => e.terminal === true;
+function noDirectArrayChild(value, arrayParent=false){
+  if(Array.isArray(value)){assert.equal(arrayParent,false,'no direct nested Firestore array');value.forEach(v=>noDirectArrayChild(v,true));}
+  else if(value&&typeof value==='object')Object.values(value).forEach(v=>noDirectArrayChild(v,false));
+}
+function decodeEvidence(value){
+  if(value.type==='map')return Object.fromEntries(value.value.map(entry=>[entry.key,decodeEvidence(entry.value)]));
+  if(value.type==='array')return value.value.map(decodeEvidence);
+  return value.value;
+}
 async function bounded(promise, message) {
   let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), 20000); })]); }
   finally { clearTimeout(timer); }
 }
+
+check('correction actual operations send one neutral private-free notification including self and district target',async()=>{
+  for(const options of [{},{operation:'update'},{operation:'delete'},{operation:'recalculate'},{self:true},{role:'district_commander'}]){
+    const f=await fixture(),r=await f.correct(options);await f.generate('correction');await f.worker().run();
+    assert.equal(f.calls.length,1);const sent=f.calls[0];assert.deepEqual(sent.tokens,[f.people[options.self?'hr':'owner'].token]);
+    assert.deepEqual(Object.keys(sent.data).sort(),['body','important','tag','title','url']);
+    assert.equal(sent.data.title,'דיווח השעות שלך עודכן');assert.equal(sent.data.url,'./attendance.html');assert.equal(sent.data.important,'0');
+    for(const secret of ['PRIVATE_',r.uid,r.emp,r.month,r.result.correction_id])assert.equal(JSON.stringify(sent.data).includes(secret),false);
+    const job=await f.job('correction'),before=job.updateTime;await r.replay();await f.worker().run();
+    assert.equal(f.calls.length,1);assert.equal((await job.ref.get()).updateTime.isEqual(before),true);
+    assert.equal((await f.root.collection('attendance_correction_events').get()).size,1);
+    assert.equal((await f.root.collection('attendance_correction_receipts').get()).size,1);
+    const event=(await f.root.collection('attendance_correction_events').doc(r.result.correction_id).get()).data();
+    assert.equal(event.evidence_encoding,'tagged-firestore-v2');noDirectArrayChild(event);
+    if(options.operation&&options.operation!=='create'){
+      const legacy={'a.b':{nested:[{items:[null,false,1.25,'עברית']}]}};
+      assert.deepEqual(decodeEvidence(event.changes[0].before).legacy_unknown,legacy);
+      if(options.operation!=='delete')assert.deepEqual(decodeEvidence(event.changes[0].after).legacy_unknown,legacy);
+    }
+  }
+});
+check('correction quiet resumes at morning while silent and unknown state never bypass policy',async()=>{
+  for(const mode of ['quiet','silent','unknown']){
+    const f=await fixture();if(mode==='quiet')f.at=Date.parse('2026-09-08T20:00:00Z');await f.correct();
+    if(mode==='unknown')await runtime.delete();else await runtime.set({silent:mode==='silent',silent_allow:['hr_private']});
+    if(mode==='unknown')await assert.rejects(f.generate('correction'));else await f.generate('correction');
+    assert.equal((await f.job('correction')).data().status,mode==='quiet'?'deferred':mode==='silent'?'suppressed':'blocked');assert.equal(f.calls.length,0);
+    if(mode==='quiet'){f.at=Date.parse('2026-09-09T05:00:00Z');await f.worker().run();assert.equal(f.calls.length,1);}
+    await runtime.set({silent:false});
+  }
+});
+check('correction source and receipt mutations cannot manufacture a valid historical notification',async()=>{
+  for(const part of ['missing-event','missing-receipt','event-target','event-request','event-time','event-action','event-row','receipt-fingerprint','receipt-target','receipt-count','receipt-extra']){
+    const f=await fixture(),r=await f.correct(),id=r.result.correction_id;
+    const event=f.root.collection('attendance_correction_events').doc(id),receipt=f.root.collection('attendance_correction_receipts').doc(id);
+    if(part==='missing-event')await event.delete();else if(part==='missing-receipt')await receipt.delete();
+    else if(part==='event-target')await event.update({target_uid:f.people.other.uid});else if(part==='event-request')await event.update({request_id:'another-request'});
+    else if(part==='event-time')await event.update({actor_auth_time:0});else if(part==='event-action')await event.update({operation:'approve'});
+    else if(part==='event-row'){const e=(await event.get()).data();e.changes[0].record_id='other_'+r.date;await event.update({changes:e.changes});}
+    else if(part==='receipt-fingerprint')await receipt.update({fingerprint:'a'.repeat(64)});else if(part==='receipt-target')await receipt.update({target_uid:f.people.other.uid});
+    else if(part==='receipt-count')await receipt.update({changed_count:2});else await receipt.update({extra:true});
+    await assert.rejects(f.generate('correction'),isDenied);assert.equal((await f.job('correction')).data().status,'cancelled');assert.equal(f.calls.length,0);
+  }
+});
+check('correction job rejects foreign family fields and policy or identity substitution',async()=>{
+  for(const patch of [{recipient_uid:'wrong'},{employee_number:'wrong'},{month:'2026-08'},{actor_auth_time:0},{created_at_ms:0},
+    {case_id:'a'.repeat(64)},{document_id:'a'.repeat(64)},{reviewed_revision:'a'.repeat(64)},{type:'hr_reply'},{send_now:true},{exclude_actor:true}]){
+    const f=await fixture();await f.correct();const j=await f.job('correction');await j.ref.update(patch);
+    await assert.rejects(f.generate('correction'),isDenied);assert.equal((await j.ref.get()).data().status,'cancelled');assert.equal(f.calls.length,0);
+  }
+});
+check('correction rechecks demotion revocation transfer and complete canonical bindings before claim',async()=>{
+  for(const kind of ['actor-demotion','actor-revoked','local-inactive','local-uid','local-employee','local-alias','index','directory-uid','directory-employee','directory-inactive','target-auth']){
+    const f=await fixture(),r=await f.correct();await f.generate('correction');
+    if(kind==='actor-demotion')records.get(f.people.hr.uid).customClaims.role='firefighter';
+    else if(kind==='actor-revoked')records.get(f.people.hr.uid).tokensValidAfterTime=new Date((authTime+1)*1000).toUTCString();
+    else if(kind==='target-auth')records.get(r.uid).customClaims.stationId='other_station';
+    else if(kind==='index')await db.doc('emp_index/'+r.emp).update({stationId:'other_station'});
+    else if(kind.startsWith('directory'))await db.doc('directory/'+r.uid).update(kind==='directory-uid'?{uid:'other'}:kind==='directory-employee'?{employee_number:'other'}:{active:false});
+    else await f.root.collection('users').doc(r.uid).update(kind==='local-inactive'?{active:false}:kind==='local-uid'?{uid:'other'}:kind==='local-employee'?{employee_number:'other'}:{station:'other_station'});
+    await f.worker().run();assert.equal(f.calls.length,0);assert.equal((await f.intent()).data().status,'cancelled');
+  }
+});
+check('correction final fences stop held actor or recipient changes without erasing prior evidence',async()=>{
+  for(const stage of ['beforeJobWrites','beforeClaim'])for(const who of ['actor','recipient']){
+    const f=await fixture(),r=await f.correct();if(stage==='beforeClaim')await f.generate('correction');
+    const change=()=>{records.get(who==='actor'?f.people.hr.uid:r.uid).customClaims[who==='actor'?'role':'stationId']=who==='actor'?'firefighter':'other_station';};
+    const worker=f.worker({hooks:{[stage]:change}});
+    if(stage==='beforeJobWrites'&&who==='actor')await assert.rejects(f.generate('correction',worker),isDenied);
+    else if(stage==='beforeJobWrites')await f.generate('correction',worker);else await worker.run();
+    assert.equal(f.calls.length,0);assert.equal((await f.root.collection('attendance_correction_events').doc(r.result.correction_id).get()).exists,true);
+    assert.equal((await f.root.collection('attendance_correction_receipts').doc(r.result.correction_id).get()).exists,true);
+  }
+});
+check('correction evidence is historical and authorized replay never recreates a retired job',async()=>{
+  const f=await fixture(),r=await f.correct();await r.dayRef.update({notes:'later correction'});await f.generate('correction');await f.worker().run();assert.equal(f.calls.length,1);
+  await (await f.job('correction')).ref.delete();const result=await r.replay();assert.equal(result.duplicate,true);assert.equal((await f.jobs('correction')).size,0);await f.worker().run();assert.equal(f.calls.length,1);
+});
+check('original request document and review source digests retain exact pre-correction bytes',async()=>{
+  const f=await fixture();await f.create();await f.publish();await f.review();
+  for(const family of ['request','document','review']){
+    await f.generate(family);const j=(await f.job(family)).data();
+    const parts=[family,j.schema,j.event_id,j.station_id,j.actor_uid,j.actor_auth_time,j.case_id??null,j.document_id??null,j.revision??null,
+      j.audience,j.recipient_uid??null,j.type,j.created_at_ms,j.send_now,j.consent_expires_at_ms,j.routine_after_quiet,j.exclude_actor];
+    if(family==='review')parts.push(j.employee_number,j.month,j.reviewed_revision);
+    assert.equal(j.source_digest,hash(parts));
+  }
+});
+
+check('review actual producer sends neutral personal event once including self', async () => {
+  for(const self of [false,true]){
+    const f=await fixture(),r=await f.review(self);await f.generate('review');await f.worker().run();
+    assert.equal(f.calls.length,1);const sent=f.calls[0];
+    assert.deepEqual(sent.tokens,[f.people[self?'hr':'owner'].token]);
+    assert.equal(sent.data.url,'./attendance.html');assert.equal(sent.data.title,'דוח השעות שלך נבדק במשאבי אנוש');
+    for(const secret of [r.uid,r.emp,r.month,r.result.reviewed_revision])assert.equal(JSON.stringify(sent.data).includes(secret),false);
+    await r.replay();await f.worker().run();assert.equal(f.calls.length,1);
+  }
+});
+check('review silent suppresses, quiet defers and unknown runtime blocks without transport',async()=>{
+  for(const mode of ['silent','quiet','unknown']){
+    const f=await fixture();if(mode==='quiet')f.at=Date.parse('2026-09-08T20:00:00Z');
+    await f.review();if(mode==='silent')await runtime.set({silent:true});else if(mode==='unknown')await runtime.delete();else await runtime.set({silent:false});
+    if(mode==='unknown')await assert.rejects(f.generate('review'));else await f.generate('review');
+    assert.equal(f.calls.length,0);const j=(await f.job('review')).data();
+    assert.equal(j.status,mode==='silent'?'suppressed':mode==='quiet'?'deferred':'blocked');
+    if(mode==='quiet'){f.at=Date.parse('2026-09-09T05:00:00Z');await f.worker().run();assert.equal(f.calls.length,1);}
+    await runtime.set({silent:false});
+  }
+});
+check('review immutable source corruption cancels before any delivery',async()=>{
+  for(const patch of [{actor_auth_time:0},{created_at_ms:0},{recipient_uid:'wrong'},{employee_number:'wrong'},{month:'2026-08'},{reviewed_revision:'a'.repeat(64)},{case_id:'a'.repeat(64)},{exclude_actor:true},{send_now:true}]){
+    const f=await fixture();await f.review();const job=await f.job('review');await job.ref.update(patch);
+    await assert.rejects(f.generate('review'),isDenied);assert.equal((await job.ref.get()).data().status,'cancelled');assert.equal(f.calls.length,0);
+  }
+});
+check('review rechecks actor and canonical recipient after enqueue',async()=>{
+  for(const kind of ['actor','local','index','directory']){
+    const f=await fixture(),r=await f.review();await f.generate('review');
+    if(kind==='actor')records.get(f.people.hr.uid).customClaims.role='firefighter';
+    if(kind==='local')await f.root.collection('users').doc(r.uid).update({employee_number:'changed'});
+    if(kind==='index')await db.doc('emp_index/'+r.emp).update({stationId:'other'});
+    if(kind==='directory')await db.doc('directory/'+r.uid).update({active:false});
+    await f.worker().run();assert.equal(f.calls.length,0);assert.equal((await f.intent()).data().status,'cancelled');
+  }
+});
+check('review historical event survives later hours changes but not recipient transfer at final claim',async()=>{
+  const f=await fixture(),r=await f.review();await f.root.collection('monthly_reports').doc(r.emp+'_'+r.month).update({total_hours:1});
+  await f.generate('review');await f.worker().run();assert.equal(f.calls.length,1);
+  const g=await fixture(),s=await g.review();await g.generate('review');
+  await g.worker({hooks:{beforeClaim(){records.get(s.uid).customClaims.stationId='other';}}}).run();
+  assert.equal(g.calls.length,0);assert.equal((await g.intent()).data().status,'cancelled');
+});
 
 check('real request fanout uses current local HR and signed super, not commanders or global Auth discovery', async () => {
   const f = await fixture(); await f.add('localSuper', 'firefighter', true); await f.add('globalSuper', null, true, false);

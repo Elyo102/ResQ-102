@@ -119,7 +119,15 @@ is('גרשיים בשם אינם מפריעים',
 is('🔒 מי שאינו במערכת אינו מותאם',
    H.matchPerson({ emp: '999', name: 'מישהו' }, ROSTER).person, null);
 is('🔒 מספר עובד שגוי אינו נופל חזרה לשם באופן שקרי',
-   H.matchPerson({ emp: '999', name: 'אלדד יונה' }, ROSTER).how, 'name');
+   H.matchPerson({ emp: '999', name: 'אלדד יונה' }, ROSTER).how, 'none');
+is('מספר עובד כפול אינו נבחר לפי סדר הרשימה',
+   H.matchPerson({ emp: '201' }, ROSTER.concat({ ...ROSTER[1], uid: 'other' })).how, 'ambiguous');
+is('שם מלא כפול דורש בירור',
+   H.matchPerson({ name: ROSTER[0].name }, ROSTER.concat({ ...ROSTER[0], uid: 'other', emp: '900' })).how, 'ambiguous');
+is('שם מדויק שמתנגש בכינוי אינו מקבל עדיפות שקטה',
+   H.matchPerson({ name: 'רמי' }, ROSTER.concat({ uid: 'other', emp: '900', name: 'רמי' })).how, 'ambiguous');
+is('כינוי לשני עובדים אינו בוחר את הראשון',
+   H.matchPerson({ name: 'רמי' }, ROSTER.concat({ ...ROSTER[1], uid: 'other', emp: '900' })).person, null);
 
 // ============================================================
 head('5 · בניית הרשומה');

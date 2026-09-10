@@ -228,11 +228,15 @@ const meEmpLines = att.split('\n')
   });
 const allowed = [
   'SUBJ.emp !== ME.emp',           // onOther
+  'SUBJ.uid !== ME.uid',           // onOther uses canonical user identity
   "' · מס׳ ' + ME.emp",            // כותרת הזהות
   'CREW_HE[ME.crew]',              // כותרת הזהות
   'watchCallouts(db, SID, ME.uid', // קריאות פתע — למי שמחובר
   'viewerUid: ME && ME.uid',       // גבול קריאת אבטחות אישית
   'viewerUid:ME && ME.uid',        // אותו גבול בתוך פעולת סנכרון
+  'viewer: ME && ME.uid',          // גדר זהות לרשומת ביקורת
+  'fence.viewer === ME.uid',       // תשובת ביקורת שייכת לחשבון שפתח אותה
+  'auth.currentUser.uid === ME.uid', // השוואה לזהות Firebase החיה
   'ME && ME.uid === snapshot.viewerUid', // אימות דור הטעינה של אותה זהות
   'action.viewerUid === (ME && ME.uid)', // התאמת סנכרון לזהות שפתחה את הפעולה
   'SUBJ = ME.emp ? Object.assign({}, ME) : null;', // super ללא מספר עובד מתחיל בלי נושא
@@ -245,8 +249,13 @@ const allowed = [
   'approved_by: ME.uid',           // מי אישר
   'reopened_by: ME.uid'            // מי פתח מחדש
 ];
+const exactViewerGuards = new Set([
+  'return { sid: SID, uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,',
+  'target.uid === SUBJ.uid && target.emp === String(SUBJ.emp) && target.viewer === ME.uid &&',
+  'SUBJ.uid === target.uid && String(SUBJ.emp) === target.emp && ME.uid === target.viewer &&'
+]);
 const strays = meEmpLines.filter(function (o) {
-  return !allowed.some(function (a) { return o.t.indexOf(a) !== -1; });
+  return !exactViewerGuards.has(o.t.trim()) && !allowed.some(function (a) { return o.t.indexOf(a) !== -1; });
 });
 strays.forEach(function (o) {
   console.log('  ✗ שורה ' + o.n + ' עדיין על ME: ' + o.t.trim().slice(0, 70));
@@ -257,9 +266,56 @@ console.log('חתימת התיעוד');
 ok('stamp מוגדרת',            /function stamp\(body\)/.test(att));
 ok('edited_by הוא ה-uid האמיתי', /edited_by:\s+ME\.uid/.test(att));
 ok('עריכה עצמית לא נחתמת',    /if \(!onOther\(\)\) return body;/.test(att));
-ok('שמירת יום נחתמת',         /recordId\(SUBJ\.emp, key\)\), stamp\(body\)\)/.test(att));
-ok('מילוי אצווה נחתם',        /stamp\(rec\)/.test(att));
-ok('הוספה אוטומטית נחתמת',    /stamp\(add\)/.test(att));
+// Source-shape proofs only: native transaction/authorization tests are separate.
+function section(source, start, end) {
+  const a = source.indexOf(start), b = source.indexOf(end, a + start.length);
+  return a >= 0 && b > a ? source.slice(a, b) : '';
+}
+function writePins(source) {
+  const capture = section(source, 'function captureMonthWrite(){', 'function requireMonthWrite(');
+  const save = section(source, 'async function saveRecord(', 'async function createMissingDays(');
+  const create = section(source, 'async function createMissingDays(', 'async function refreshAfterCreation(');
+  const fill = section(source, "$('btnFill').onclick", "$('btnStart').onclick");
+  const sync = section(source, "$('btnSync').onclick", "$('btnRecalc').onclick");
+  return {
+    subject: capture.includes('uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,') &&
+      capture.includes('target.uid === SUBJ.uid && target.emp === String(SUBJ.emp) && target.viewer === ME.uid &&'),
+    save: save.includes("await setDoc(doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, key)), stamp(body));"),
+    create: create.includes('const body = stamp(Object.assign({}, entry));') &&
+      create.includes("ref: doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, date))") &&
+      create.includes('if (!existing[i].exists()) { tx.set(item.ref, item.body); created++; }'),
+    fill: fill.includes('const target = captureMonthWrite();') && fill.includes('const result = await createMissingDays(target, entries);'),
+    sync: sync.includes('const target = captureMonthWrite();') && sync.includes('const result = await createMissingDays(target, entries);')
+  };
+}
+const pins = writePins(att);
+ok('הנושא נלכד בנפרד מהעורך', pins.subject);
+ok('שמירת יום נחתמת', pins.save);
+ok('מילוי אצווה נחתם', pins.create && pins.fill);
+ok('הוספה אוטומטית נחתמת', pins.create && pins.sync);
+const mutations = [
+  ['capture uid', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: ME.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'subject'],
+  ['capture employee', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: SUBJ.uid, emp: String(ME.emp), viewer: ME.uid,', 'subject'],
+  ['save recipient', 'recordId(target.emp, key)), stamp(body)', 'recordId(ME.emp, key)), stamp(body)', 'save'],
+  ['save stamp', 'recordId(target.emp, key)), stamp(body)', 'recordId(target.emp, key)), body', 'save'],
+  ['create stamp', 'const body = stamp(Object.assign({}, entry));', 'const body = Object.assign({}, entry);', 'create'],
+  ['create recipient', 'recordId(target.emp, date))', 'recordId(ME.emp, date))', 'create'],
+  ['create body', 'tx.set(item.ref, item.body)', 'tx.set(item.ref, {})', 'create'],
+  ['create overwrite', 'if (!existing[i].exists()) { tx.set', 'if (true) { tx.set', 'create']
+];
+for (const [name, before, after, pin] of mutations) {
+  is('mutation target unique: ' + name, att.split(before).length - 1, 1);
+  ok('mutation rejected: ' + name, !writePins(att.replace(before, after))[pin]);
+}
+for (const [pin, start, end] of [
+  ['fill', "$('btnFill').onclick", "$('btnStart').onclick"],
+  ['sync', "$('btnSync').onclick", "$('btnRecalc').onclick"]
+]) {
+  const original = section(att, start, end), route = 'await createMissingDays(target, entries)';
+  is('mutation route unique: ' + pin, original.split(route).length - 1, 1);
+  const broken = att.replace(original, original.replace(route, 'await unsafeCreate(entries)'));
+  ok('mutation route rejected: ' + pin, !writePins(broken)[pin]);
+}
 ok('תיקון שעות נחתם',         /stamp\(\{ hours: h/.test(att));
 ok('אישור חודש נחתם',         /body\.edited_by      = ME\.uid/.test(att));
 

@@ -190,14 +190,14 @@ function failedRead(path) {
       const all = (await f.intents()).docs.map(d => d.data()); assert.ok(all.some(i => i.status === 'blocked' && i.reason === 'token-limit' && i.terminal));
       assert.ok(all.some(i => i.status === 'no_device')); await f.worker().run(); assert.equal(f.calls.length, 1);
     });
-    await check('max five recipients in flight and twenty-five intents checked per invocation', async () => {
-      const f = await fixture(30); await f.seed(); let active = 0, maximum = 0, entered, release, holding = true;
+    await check('max five recipients in flight and one hundred intents checked per invocation', async () => {
+      const f = await fixture(105); await f.seed(); let active = 0, maximum = 0, entered, release, holding = true;
       const five = new Promise(resolve => { entered = resolve; }), barrier = new Promise(resolve => { release = resolve; });
       const worker = f.worker({ send: async p => { ++active; maximum = Math.max(maximum, active);
         if (active === 5) entered(); if (holding) await barrier; --active; return accepted(p); } });
       const running = worker.run(); await five; assert.equal(f.calls.length, 5); holding = false; release();
-      const result = await running; assert.equal(maximum, 5); assert.equal(result.intents_checked, 25); assert.equal(f.calls.length, 25);
-      await worker.run(); assert.equal(f.calls.length, 30);
+      const result = await running; assert.equal(maximum, 5); assert.equal(result.intents_checked, 100); assert.equal(f.calls.length, 100);
+      const second = await worker.run(); assert.equal(second.intents_checked, 5); assert.equal(f.calls.length, 105);
     });
     await check('sixty-second start budget prevents subsequent recipient SDK starts', async () => {
       const f = await fixture(8); await f.seed();

@@ -17,32 +17,48 @@ async function check(name, run) { await run(); ++passed; console.log('PASS ' + n
 
 // Evaluate the actual, bounded export block without initializing any server SDK.
 const index = fs.readFileSync(path.join(root, 'functions/index.js'), 'utf8');
-const registration = index.match(/const hrHours = hrHoursModule\.createHrHoursService\([\s\S]*?exports\.getHrEmployeeReport = [^\n]+;/)?.[0];
+const registration = index.match(/const hrHours = hrHoursModule\.createHrHoursService\([\s\S]*?exports\.saveHrEmployeeReview = [^\n]+;/)?.[0];
 assert.ok(registration, 'actual HR service/export registration block exists');
 const db = {}, HttpsError = class {}, exports = {}, registered = [], received = [];
 const injectedAuth = {}, authFactoryCalls = [];
-vm.runInNewContext(registration, { db, HttpsError, exports,
+const timestampValue = Object.freeze({fixture:'server-timestamp'}), timestampCalls=[];
+let reviewCall = req => ({method:'review',req});
+vm.runInNewContext(registration, { db, HttpsError, exports, FV:{serverTimestamp(){timestampCalls.push(true);return timestampValue;}},
   admin: { auth() { authFactoryCalls.push(true); return injectedAuth; } },
   hrHoursModule: { createHrHoursService(deps) {
-    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db']);
+    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db', 'serverTimestamp']);
     assert.equal(deps.auth, injectedAuth);
     assert.equal(deps.db, db); assert.equal(deps.HttpsError, HttpsError);
     received.push(deps);
-    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }) };
+    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }), reviewEmployeeMonth: req => reviewCall(req) };
   } },
   onCall(options, handler) { registered.push(options); return handler; }
 });
 await check('actual export block creates one service with exact db Auth and HttpsError', async () => {
   assert.equal(received.length, 1);
   assert.equal(authFactoryCalls.length, 1);
+  assert.equal(timestampCalls.length,0,'timestamp must not be evaluated at factory construction');
+  assert.equal(received[0].serverTimestamp(),timestampValue);assert.equal(timestampCalls.length,1);
 });
 await check('both actual read-only callables enforce AppCheck and forward original request', async () => {
-  assert.equal(registered.length, 2);
-  registered.forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
+  assert.equal(registered.length, 3);
+  registered.slice(0,2).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
   const request = { auth: { uid: 'synthetic-reviewer' }, data: { month: '2026-09' } };
   const list = await exports.getHrMonthReports(request), detail = await exports.getHrEmployeeReport(request);
   assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail');
   assert.equal(list.req, request); assert.equal(detail.req, request);
+});
+await check('review callable has exact bounded options and preserves completion and rejection',async()=>{
+  assert.deepEqual(Object.keys(exports).sort(),['getHrEmployeeReport','getHrMonthReports','saveHrEmployeeReview']);
+  assert.equal((index.match(/exports\.saveHrEmployeeReview\s*=/g)||[]).length,1);
+  assert.deepEqual(JSON.parse(JSON.stringify(registered[2])),{region:'europe-west1',enforceAppCheck:true,timeoutSeconds:60,memory:'256MiB',maxInstances:3,concurrency:1});
+  const request=Object.freeze({data:{month:'2026-09',uid:'employee',expected_revision:'a'.repeat(64),request_id:'request_001'}});
+  const result=Object.freeze({review_id:'b'.repeat(64),reviewed_revision:'a'.repeat(64),current:true,duplicate:false});
+  let release,settled=false;reviewCall=req=>{assert.equal(req,request);return new Promise(resolve=>{release=resolve;});};
+  const pending=exports.saveHrEmployeeReview(request).then(v=>{settled=true;return v;});await Promise.resolve();assert.equal(settled,false);
+  release(result);assert.equal(await pending,result);
+  const failure=Error('synthetic save failure');reviewCall=()=>Promise.reject(failure);
+  await assert.rejects(()=>exports.saveHrEmployeeReview(request),e=>e===failure);
 });
 
 const browser = await chromium.launch();
@@ -92,6 +108,7 @@ async function fixture(options = {}) {
         value=Object.fromEntries(Object.entries(record).filter(([key])=>!['recipient_uid','updated_at_ms','status_scope','actor','request_id'].includes(key)));
       }else if(name==='listHrHoursNudges')value={month:data.month,items:h.nudgeActions.filter(r=>r.actor===identity.uid&&r.station_id===identity.stationId&&r.month===data.month),next_cursor:null};
       else if(name==='getHrHoursNudgeStatus')value={action:h.nudgeActions.find(r=>r.action_id===data.action_id&&r.actor===identity.uid&&r.station_id===identity.stationId),items:[],next_cursor:null,outcomes_scope:'this_page_only'};
+      else if(name==='saveHrEmployeeReview')value={review_id:'b'.repeat(64),reviewed_revision:data.expected_revision,current:true,duplicate:false};
       else throw new Error('Unexpected callable '+name);
       const result={data:value};
       if (h.holdNext === name) {
@@ -367,7 +384,9 @@ try {
     await f.page.locator('[data-hr="month"]').fill('2026-08');await openDetail(f.page);
     await f.page.locator('[data-hr="month"]').fill('2026-09');await openDetail(f.page);
     assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),4);
-    await f.page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await openDetail(f.page);
+    await f.page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await privateEmpty(f.page);
+    assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),4);
+    await f.page.evaluate(()=>window.dispatchEvent(new Event('pageshow')));await openDetail(f.page);
     assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),5);
     await f.page.evaluate(()=>{const h=__HR,u=h.auth.currentUser;u.claims={role:'hr_coordinator',stationId:'second_station'};h.dispatch(u);});await openDetail(f.page);
     assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),6);
@@ -383,6 +402,31 @@ try {
     await f.page.evaluate(()=>__HR.dispatch(null));await privateEmpty(f.page);
     await f.page.evaluate(()=>__HR.dispatch(__HR.makeUser('actor-a',{role:'hr_coordinator',stationId:'second_station'})));await openDetail(f.page);
     assert.equal(await f.page.evaluate(()=>__HR.calls.filter(c=>c.name==='getHrEmployeeReport').length),3);await f.close();
+  });
+  await check('review transport preserves four-field payload and invalidates old report cache',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    const result=await f.page.evaluate(async()=>{
+      const a=__HR.adapter,data={month:'2026-09',uid:'employee-actor-a'};
+      await a.getEmployeeMonth(data);const cached=await a.getEmployeeMonth(data);
+      const payload={...data,expected_revision:'a'.repeat(64),request_id:'review_request_001'};
+      const saved=await a.reviewEmployeeMonth(payload);const fresh=await a.getEmployeeMonth(data);
+      return {saved,cached:cached.freshness.source,fresh:fresh.freshness.source,call:__HR.calls.find(c=>c.name==='saveHrEmployeeReview')};
+    });
+    assert.equal(result.cached,'memory');assert.equal(result.fresh,'server');assert.equal(result.saved.current,true);
+    assert.deepEqual(Object.keys(result.call.data).sort(),['expected_revision','month','request_id','uid']);assert.equal(result.call.appCheckReady,true);
+    await f.close();
+  });
+  await check('old review response cannot clear newer session cache or return success',async()=>{
+    const f=await fixture({exposeAdapter:true});
+    await f.page.evaluate(()=>{__HR.holdNext='saveHrEmployeeReview';__HR.oldReview=__HR.adapter.reviewEmployeeMonth({month:'2026-09',uid:'employee-actor-a',expected_revision:'a'.repeat(64),request_id:'review_request_002'}).then(()=>({success:true}),e=>({code:e.code}));});
+    await f.page.evaluate(()=>__HR.dispatch(__HR.makeUser('actor-b',{role:'hr_coordinator',stationId:'new_station'})));
+    await f.page.waitForFunction(()=>__HR.adapter.currentSession()?.uid==='actor-b');
+    const result=await f.page.evaluate(async()=>{
+      const data={month:'2026-09',uid:'employee-actor-b'};await __HR.adapter.getEmployeeMonth(data);
+      __HR.heldCalls.shift().resolve();const old=await __HR.oldReview;
+      return {old,source:(await __HR.adapter.getEmployeeMonth(data)).freshness.source};
+    });
+    assert.equal(result.old.code,'functions/unauthenticated');assert.equal(result.source,'memory');await f.close();
   });
   assert.deepEqual(sourceHashes(), before, 'actual product sources remain unchanged during suite');
   console.log('SOURCE_HASHES ' + JSON.stringify(before));

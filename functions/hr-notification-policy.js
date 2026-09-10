@@ -13,6 +13,8 @@ const TYPES = Object.freeze({
   report_confirm: 'נדרש אישורך לדוח השעות',
   report_submit: 'נדרשת הגשת דוח השעות',
   report_command: 'ממתין דוח שעות לאישורך',
+  report_reviewed: 'דוח השעות שלך נבדק במשאבי אנוש',
+  attendance_corrected: 'דיווח השעות שלך עודכן',
   schedule_change: 'הסידור שלך עודכן',
   guard_change: 'השיבוץ שלך לאבטחה עודכן'
 });
