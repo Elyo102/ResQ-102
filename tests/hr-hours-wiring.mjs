@@ -110,6 +110,7 @@ const newGroups = ['hr_nudge_actions', 'hr_nudge_intents'];
 const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs',
   'attendance_correction_notification_jobs', 'hr_workforce_notification_jobs', 'hr_domain_notification_intents'];
 const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
+const healthShadowGroups = ['system_health_cycles', 'system_health_reports', 'health_shadow'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
   ['hr_nudge_intents', 'expires_at_ms'], ['hr_nudge_intents', 'lease_until_ms'], ['hr_nudge_intents', 'not_before_ms'],
   ['hr_nudge_intents', 'next_check_ms'], ['hr_nudge_intents', 'created_at_ms']].map(([collectionGroup, fieldPath]) => ({
@@ -122,7 +123,8 @@ await check('exact eight required collection-group indexes, without duplicate or
 await check('all13 original indexes and32 field overrides match immutable b1451e9 baseline', () => {
   assert.deepEqual(Object.keys(config).sort(), ['fieldOverrides', 'indexes']);
   const old = config.indexes.filter(i => !newGroups.includes(i.collectionGroup) && !domainGroups.includes(i.collectionGroup));
-  const oldOverrides = config.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup));
+  const oldOverrides = config.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup)
+    && !healthShadowGroups.includes(i.collectionGroup));
   assert.equal(old.length, 13); assert.equal(oldOverrides.length, 32);
   // Canonical JSON hashes from read-only git show b1451e9. Runtime test needs
   // no Git installation/history and ignores only insignificant JSON whitespace.

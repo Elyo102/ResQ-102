@@ -1705,6 +1705,12 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Candidate output of the multi-station watchdog. Server-only until
+      // parity is proven and the explicit cutover is approved.
+      match /health_shadow/{dateId} {
+        allow read, write: if false;
+      }
+
       match /scans/{monthKey} {
         allow read:  if hr(sid) || stationCommander(sid);
         allow write: if false;
@@ -1897,6 +1903,14 @@ service cloud.firestore {
       }
     }
 
+
+    // Durable multi-station watchdog cycles and reports are server-only.
+    match /system_health_cycles/{cycleId} {
+      allow read, write: if false;
+      match /system_health_reports/{stationId} {
+        allow read, write: if false;
+      }
+    }
 
     // ---------- ברירת מחדל: הכל חסום ----------
 
