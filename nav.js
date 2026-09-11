@@ -52,7 +52,7 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h13';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h14';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true;
@@ -107,6 +107,42 @@ function writeTrail(a) {
   catch (e) {}
 }
 
+export function clearNavigationTrail() {
+  try { sessionStorage.removeItem(TRAIL); }
+  catch (e) {}
+}
+
+// Safari's edge-swipe follows the browser history, while ResQ's visible Back
+// button follows the bounded in-app trail above.  When Safari restores the
+// login document from history, consume exactly one trail step and return a
+// closed, authorized plan.  This helper is deliberately pure: login.html
+// decides whether the navigation really was back/forward before applying it.
+export function planNativeBackRecovery(trail, claims) {
+  if (!Array.isArray(trail) || trail.length < 3 || trail.length > 12) return null;
+  const clean = [];
+  for (const value of trail) {
+    if (typeof value !== 'string') return null;
+    const item = ITEMS.find(function (entry) { return entry.href === value; });
+    if (!item || !allowed(item.who, claims || {})) return null;
+    if (clean[clean.length - 1] !== value) clean.push(value);
+  }
+  if (clean.length < 3 || clean[0] !== 'login.html') return null;
+  const current = clean[clean.length - 1];
+  const target = clean[clean.length - 2];
+  if (current === 'login.html' || target === 'login.html') return null;
+  return Object.freeze({
+    target: target,
+    remaining: Object.freeze(clean.slice(0, -2))
+  });
+}
+
+export function recoverNativeBack(claims) {
+  const plan = planNativeBackRecovery(readTrail(), claims);
+  if (!plan) return '';
+  writeTrail(plan.remaining);
+  return plan.target;
+}
+
 // המסלול הוא **דרך ולא יומן**: אם חזרת למסך שכבר היית בו,
 // הזנב נחתך. בלי זה מעבר הלוך-ושוב בין שני מסכים היה בונה
 // רשימה אינסופית, ו"חזרה" היה לוקח צעד אחורה בתוך לולאה
@@ -143,11 +179,16 @@ function styleOnce() {
   st.textContent = [
     // align-self:stretch נחוץ כי בדף הכניסה הגוף הוא flex ממורכז,
     // ובלעדיו הסרגל היה מתכווץ לרוחב התוכן שלו.
-    '#appNav{position:sticky;top:0;z-index:900;display:flex;gap:8px;',
+    '#appNav{--resq-safe-top:env(safe-area-inset-top,0px);',
+    '  --resq-safe-right:env(safe-area-inset-right,0px);',
+    '  --resq-safe-left:env(safe-area-inset-left,0px);',
+    '  position:sticky;top:0;z-index:900;display:flex;gap:8px;',
     '  align-items:center;flex-wrap:wrap;box-sizing:border-box;',
     '  align-self:stretch;flex:none;',
     '  background:var(--card);border-bottom:1px solid var(--line);',
-    '  padding:12px 16px;margin:-18px -18px 18px;',
+    '  padding:calc(12px + var(--resq-safe-top))',
+    '    calc(16px + var(--resq-safe-right)) 12px',
+    '    calc(16px + var(--resq-safe-left));margin:-18px -18px 18px;',
     '  font-family:"Segoe UI",Arial,sans-serif;direction:rtl}',
     '#appNav .brand{font-weight:800;font-size:17px;color:var(--txt);',
     '  letter-spacing:-.01em;margin-inline-end:8px;white-space:nowrap}',
@@ -221,7 +262,9 @@ function styleOnce() {
     //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
     //      על הניווט
     '@media (max-width:560px){',
-    '  #appNav{gap:6px;padding:8px 10px}',
+    '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
+    '    calc(10px + var(--resq-safe-right)) 8px',
+    '    calc(10px + var(--resq-safe-left))}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',

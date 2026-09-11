@@ -28,6 +28,17 @@ try {
   const base='http://127.0.0.1:'+srv.address().port;
   browser=await chromium.launch();
   for (const p of PAGES) {
+    const source=fs.readFileSync(path.join(ROOT,p),'utf8');
+    const scripts=[...source.matchAll(/<script[^>]+src=["']\.\/([^"']+\.js)/g)]
+      .map(match=>match[1]);
+    const hasNav=source.includes("from './nav.js") || scripts.some(file=>{
+      const full=path.join(ROOT,file);
+      return fs.existsSync(full) && fs.readFileSync(full,'utf8').includes("from './nav.js");
+    });
+    if(hasNav && !/name=["']viewport["'][^>]+viewport-fit=cover/.test(source)){
+      bad++;
+      console.log('✗ '+p+' טוען ניווט בלי viewport-fit=cover');
+    }
     const ctx=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
     try {
       await ctx.route('**/firebasejs/**',r=>{const n=r.request().url().split('/').pop().split('?')[0];
@@ -39,6 +50,11 @@ try {
       await pg.click('#coNo').catch(()=>{}); await pg.waitForTimeout(250);
       const r = await pg.evaluate(()=>{
         const de=document.documentElement;
+        const nav=document.getElementById('appNav');
+        // Chromium does not emulate iOS env(safe-area-*).  The production CSS
+        // exposes the resolved inset through a private variable so this check
+        // can exercise the exact layout formula with a 47px notch.
+        if(nav) nav.style.setProperty('--resq-safe-top','47px');
         const over=de.scrollWidth-de.clientWidth;
     // מי בדיוק בורח. שם האלמנט, לא רק "יש גלישה".
     //
@@ -62,14 +78,18 @@ try {
                   ' ('+Math.round(b.width)+'px)');
       }
     });
-        const nav=document.getElementById('appNav');
-        return {over, wide:wide.slice(0,4), nav:nav?Math.round(nav.getBoundingClientRect().height):0};
+        const first=nav&&nav.firstElementChild;
+        const navBox=nav&&nav.getBoundingClientRect();
+        const safe=nav?parseFloat(getComputedStyle(nav).paddingTop):0;
+        const safeOk=!nav || (safe>=55 && first && first.getBoundingClientRect().top>=navBox.top+47);
+        return {over, wide:wide.slice(0,4), nav:nav?Math.round(navBox.height):0, safeOk};
       });
-      const ok = r.over<=0 && !r.wide.length;
+      const ok = r.over<=0 && !r.wide.length && r.safeOk;
       if (!ok) bad++;
       console.log((ok?'✓':'✗')+' '+p.padEnd(17)+' סרגל '+String(r.nav).padStart(3)+'px'+
                   (r.over>0?'  · גלישה '+r.over+'px':'')+
-                  (r.wide.length?'  · רחב מדי: '+r.wide.join(' · '):''));
+                  (r.wide.length?'  · רחב מדי: '+r.wide.join(' · '):'')+
+                  (!r.safeOk?'  · אזור המכשיר אינו מוגן':''));
     } finally {
       await ctx.close();
     }

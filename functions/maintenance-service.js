@@ -165,7 +165,7 @@ function createMaintenanceService(deps) {
       itemByCode.set(key, {
         id:key, severity:rule.severity, title_code:titleCode(signal.code),
         runbook_code:rule.runbook_codes[0], count:Math.min(1_000_000, (old ? old.count : 0) + signal.count), screen:'server',
-        version:'42H.13', ai_state:'deterministic'
+        version:'42H.14', ai_state:'deterministic'
       });
     });
     const items = [...itemByCode.values()].sort((a,b) =>

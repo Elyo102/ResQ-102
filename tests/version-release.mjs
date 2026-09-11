@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.13';
-const EXPECTED_DATE = '11.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 253; // 42H.13 adds the live home fault summary.
+const EXPECTED_VERSION = '42H.14';
+const EXPECTED_DATE = '12.9.2026';
+const EXPECTED_VERSIONED_REFERENCES = 253; // 42H.14 fixes native Back and iOS safe areas.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

@@ -5400,7 +5400,7 @@ exports.systemHealth = onSchedule({
 });
 
 // =======================================================================
-//  כלב שמירה רב-תחנתי · 42H.13 · OBSERVE בלבד
+//  כלב שמירה רב-תחנתי · 42H.14 · OBSERVE בלבד
 // =======================================================================
 // המנגנון הישן נשאר פעיל. הגרסה הזו כותבת רק ל-health_shadow ואינה
 // שולחת הודעות או משנה נתוני מוצר. הפעלה דורשת במפורש:
@@ -5451,7 +5451,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.13', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.14', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

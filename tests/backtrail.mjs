@@ -73,6 +73,52 @@ try {
 
   // 4. לולאה: א → ב → א. המסלול הוא דרך ולא יומן, ולכן חזרה
   //    מ-א צריכה לצאת מהלולאה ולא להסתובב בתוכה.
+
+  // 5. Safari/iPhone edge-swipe follows browser history, not the visible
+  //    ResQ Back button.  Model the browser returning to login while the
+  //    bounded app trail still knows the two operational screens.
+  await go('login.html');
+  await go('schedule-management.html');
+  await pg.evaluate(() => sessionStorage.setItem('resq_trail', JSON.stringify([
+    'login.html', 'faults.html', 'schedule-management.html'
+  ])));
+  await pg.goBack({ waitUntil:'load' });
+  await pg.waitForTimeout(1800);
+  check('החלקת חזרה משחזרת את המסך הקודם', here(), 'faults.html');
+
+  // Direct entry and refresh are not Back gestures and must remain home.
+  await go('login.html');
+  await pg.evaluate(() => sessionStorage.setItem('resq_trail', JSON.stringify([
+    'login.html', 'faults.html', 'schedule-management.html'
+  ])));
+  await pg.reload({ waitUntil:'load' });
+  await pg.waitForTimeout(1400);
+  check('רענון ישיר אינו מפעיל שחזור חזרה', here(), 'login.html');
+
+  const plans = await pg.evaluate(async () => {
+    const nav = await import('./nav.js?native-back-contract');
+    const commander = { role:'station_commander', stationId:'eilat_102' };
+    return {
+      valid:nav.planNativeBackRecovery(['login.html','faults.html','board.html'], commander)?.target || '',
+      malformed:nav.planNativeBackRecovery(['login.html',{},'board.html'], commander),
+      unauthorized:nav.planNativeBackRecovery(['login.html','maintenance.html','board.html'], commander),
+      duplicate:nav.planNativeBackRecovery(['login.html','faults.html','faults.html'], commander)
+    };
+  });
+  check('תכנון חזרה תקין', plans.valid, 'faults.html');
+  check('מסלול פגום נדחה', plans.malformed, null);
+  check('יעד ללא הרשאה נדחה', plans.unauthorized, null);
+  check('כפילות אינה ממציאה צעד קודם', plans.duplicate, null);
+
+  await go('login.html');
+  await pg.evaluate(() => sessionStorage.setItem('resq_trail', JSON.stringify([
+    'login.html', 'faults.html', 'board.html'
+  ])));
+  await pg.evaluate(() => document.getElementById('btnLogout').click());
+  await pg.waitForTimeout(250);
+  const trailAfterLogout = await pg.evaluate(() => sessionStorage.getItem('resq_trail'));
+  check('התנתקות מוחקת את מסלול החזרה', trailAfterLogout, null);
+
   await go('login.html');
   await go('faults.html');
   await go('schedule.html');
