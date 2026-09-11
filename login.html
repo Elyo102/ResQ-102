@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h12">
-<link rel="stylesheet" href="./bulletin.css?v=42h12">
+<link rel="stylesheet" href="./theme.css?v=42h13">
+<link rel="stylesheet" href="./bulletin.css?v=42h13">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -406,6 +406,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         טען הודעות קודמות
       </button>
 
+      <section id="homeFaults" class="home-faults" aria-labelledby="homeFaultsTitle">
+        <div class="home-faults-head">
+          <div><h2 id="homeFaultsTitle">תקלות פתוחות</h2><p>המידע החשוב למשמרת הנכנסת, ישירות במסך הבית.</p></div>
+          <a href="./faults.html">לכל התקלות ←</a>
+        </div>
+        <div class="home-fault-tabs" role="tablist" aria-label="סוג התקלה">
+          <button type="button" role="tab" class="home-fault-tab is-active" data-fault-group="operational" aria-selected="true">רכב ומבצעי <b id="homeOperationalCount">0</b></button>
+          <button type="button" role="tab" class="home-fault-tab" data-fault-group="building" aria-selected="false">בינוי ותחזוקה <b id="homeBuildingCount">0</b></button>
+        </div>
+        <div id="homeFaultStatus" class="home-fault-status" aria-live="polite"></div>
+        <div id="homeFaultList" class="home-fault-list"></div>
+        <div id="homeFaultEmpty" class="home-fault-empty hide">אין תקלות פתוחות בקטגוריה הזאת.</div>
+      </section>
+
       <details id="accountDetails" class="bulletin-account">
         <summary>החשבון שלי ועדכוני האפליקציה</summary>
         <div class="profile">
@@ -458,15 +472,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h12';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h13';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h12';
-import { renderNav, clearNav } from './nav.js?v=42h12';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h12';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h12';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h12';
-import { watchCallouts } from './callout.js?v=42h12';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h12';
+         subStationsForStation } from './stations.js?v=42h13';
+import { renderNav, clearNav } from './nav.js?v=42h13';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h13';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h13';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h13';
+import { watchCallouts } from './callout.js?v=42h13';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h13';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h13';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -477,11 +492,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h12';
+  from './monitored-functions.js?v=42h13';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h12';
+import { initAppCheck } from './appcheck.js?v=42h13';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -903,7 +918,7 @@ function returnToCaller(){
   return true;
 }
 
-function logout(){ destroyBulletin(); return signOut(auth); }
+function logout(){ destroyHomeFaults(); destroyBulletin(); return signOut(auth); }
 $('btnLogout').onclick     = logout;
 $('btnLogoutWait').onclick = logout;
 
@@ -911,6 +926,7 @@ onAuthStateChanged(auth, user => {
   authSettled = true;
   if (onboarding) return;
   if (!user) {
+    destroyHomeFaults();
     destroyBulletin();
     // auth יכול להחזיר את מצב "אין משתמש" הראשוני בדיוק
     // כשהמשתמש כבר לחץ כניסה. במקרה הזה לא מבטלים את ההנפשה
@@ -1191,6 +1207,19 @@ async function loadProfile(user, claims){
       startAfter: startAfter, httpsCallable: httpsCallable
     }
   });
+  const canSeeFaults = isMember(claims);
+  $('homeFaults').classList.toggle('hide', !canSeeFaults);
+  if (canSeeFaults) {
+    initHomeFaults({
+      db:db, user:user, stationId:sid,
+      sdk:{ collection:collection, query:query, where:where, orderBy:orderBy, limit:limit, onSnapshot:onSnapshot },
+      elements:{
+        tabs:Array.from(document.querySelectorAll('[data-fault-group]')),
+        operationalCount:$('homeOperationalCount'), buildingCount:$('homeBuildingCount'),
+        status:$('homeFaultStatus'), list:$('homeFaultList'), empty:$('homeFaultEmpty')
+      }
+    });
+  } else destroyHomeFaults();
 
   if (animate && !reduceMotion) $('homeView').classList.add('bulletin-enter');
   showView('home');

@@ -27,7 +27,7 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h12-release1';
+const CACHE = 'resq-v42h13-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -52,7 +52,7 @@ const SHELL = [
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.
   './signature.js', './signflow.js', './docpdf.js',
-  './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './appcheck.js',
+  './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',

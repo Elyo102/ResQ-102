@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#15171a">
   <title>ResQ · תחזוקה חכמה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h12">
-  <link rel="stylesheet" href="./maintenance.css?v=42h12">
+  <link rel="stylesheet" href="./theme.css?v=42h13">
+  <link rel="stylesheet" href="./maintenance.css?v=42h13">
   <style>body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}@media(max-width:620px){body{padding:12px}}</style>
 </head>
 <body>
@@ -15,8 +15,18 @@
     <div><h1 class="maintenance-title">מרכז תחזוקה חכם</h1><p class="maintenance-sub">המערכת מזהה תקלות טכניות, מאחדת כפילויות ומציעה דרך טיפול. היא אינה משנה סידור, שעות, הרשאות או נתוני עובדים.</p></div>
     <div class="maintenance-toolbar"><span id="modeBadge" class="maintenance-mode">טוען…</span><button id="btnMode" type="button">—</button><button id="btnRefresh" type="button">רענון</button><button id="btnAnalyze" class="primary" type="button">אבחן עכשיו</button></div>
   </div>
+  <section class="maintenance-card" aria-labelledby="overviewTitle">
+    <h2 id="overviewTitle" class="maintenance-section-title">תמונת מצב ברורה</h2>
+    <div class="maintenance-overview">
+      <div class="maintenance-status" id="operationalCard"><span>מצב הפעלה</span><strong id="operationalState">טוען…</strong><small>האם הודעות ותהליכים פעילים כעת</small></div>
+      <div class="maintenance-status" id="healthCard"><span>בריאות טכנית</span><strong id="healthState">טוען…</strong><small>תקלות אמיתיות שדורשות טיפול</small></div>
+      <div class="maintenance-status" id="freshnessCard"><span>עדכניות הבדיקה</span><strong id="freshnessState">טוען…</strong><small>מתי התקבלה ראיית בריאות אחרונה</small></div>
+      <div class="maintenance-status" id="platformCard"><span>זמינות עכשיו</span><strong id="platformState">טוען…</strong><small>פעימות המתזמן ומסד הנתונים בחמש הדקות האחרונות</small></div>
+    </div>
+    <p class="maintenance-sub">מצב ניסוי או השתקה מוצג כמצב הפעלה בלבד ואינו נספר כתקלה.</p>
+  </section>
   <section class="maintenance-card" aria-labelledby="statusTitle">
-    <h2 id="statusTitle" class="maintenance-section-title">מצב המערכת</h2>
+    <h2 id="statusTitle" class="maintenance-section-title">תקלות טכניות</h2>
     <div class="maintenance-grid">
       <div class="maintenance-kpi bad"><strong id="p0">0</strong><span>תקלות P0</span></div>
       <div class="maintenance-kpi bad"><strong id="p1">0</strong><span>תקלות P1</span></div>
@@ -35,20 +45,20 @@
 </main>
 <section id="deny" class="maintenance-card maintenance-deny maintenance-hidden"><h1>אין הרשאה למסך</h1><p class="maintenance-sub">מרכז התחזוקה זמין למנהל־העל בלבד.</p></section>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h12';
-import { renderNav, renderStuckNav } from './nav.js?v=42h12';
-import { initPWA } from './pwa.js?v=42h12';
-import { initAppCheck } from './appcheck.js?v=42h12';
-import { createMaintenanceUi } from './maintenance-client.js?v=42h12';
+import { firebaseConfig } from './firebase-config.js?v=42h13';
+import { renderNav, renderStuckNav } from './nav.js?v=42h13';
+import { initPWA } from './pwa.js?v=42h13';
+import { initAppCheck } from './appcheck.js?v=42h13';
+import { createMaintenanceUi } from './maintenance-client.js?v=42h13';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h12';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h13';
 
 const app=initializeApp(firebaseConfig); await initAppCheck(app);
 const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
 let identity=null, epoch=0;
 renderStuckNav(''); initPWA({offer:false});
-const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList')};
+const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList'),operationalState:$('operationalState'),healthState:$('healthState'),freshnessState:$('freshnessState'),platformState:$('platformState'),operationalCard:$('operationalCard'),healthCard:$('healthCard'),freshnessCard:$('freshnessCard'),platformCard:$('platformCard')};
 const ui=createMaintenanceUi({
   elements,
   currentIdentity:()=>identity,
