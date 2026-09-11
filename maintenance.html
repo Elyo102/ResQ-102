@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#15171a">
   <title>ResQ · תחזוקה חכמה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h12">
-  <link rel="stylesheet" href="./maintenance.css?v=42h12">
+  <link rel="stylesheet" href="./theme.css?v=42h11">
+  <link rel="stylesheet" href="./maintenance.css?v=42h11">
   <style>body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}@media(max-width:620px){body{padding:12px}}</style>
 </head>
 <body>
@@ -35,14 +35,14 @@
 </main>
 <section id="deny" class="maintenance-card maintenance-deny maintenance-hidden"><h1>אין הרשאה למסך</h1><p class="maintenance-sub">מרכז התחזוקה זמין למנהל־העל בלבד.</p></section>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h12';
-import { renderNav, renderStuckNav } from './nav.js?v=42h12';
-import { initPWA } from './pwa.js?v=42h12';
-import { initAppCheck } from './appcheck.js?v=42h12';
-import { createMaintenanceUi } from './maintenance-client.js?v=42h12';
+import { firebaseConfig } from './firebase-config.js?v=42h11';
+import { renderNav, renderStuckNav } from './nav.js?v=42h11';
+import { initPWA } from './pwa.js?v=42h11';
+import { initAppCheck } from './appcheck.js?v=42h11';
+import { createMaintenanceUi } from './maintenance-client.js?v=42h11';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h12';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h11';
 
 const app=initializeApp(firebaseConfig); await initAppCheck(app);
 const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);

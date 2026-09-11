@@ -28,9 +28,7 @@ export const FAULT_KINDS = [
   { id: 'vehicle',  he: 'תקלת רכב',        needsVehicle: true,  group: 'fault' },
   { id: 'damage',   he: 'פגיעה ברכב',      needsVehicle: true,  group: 'damage' },
   { id: 'gear',     he: 'תקלת ציוד',       needsVehicle: false, group: 'fault' },
-  { id: 'building', he: 'תקלת בינוי ותחזוקה', needsVehicle: false, group: 'fault',
-    titlePlaceholder: 'לדוגמה: נזילה, תקלה בחשמל, דלת או מיזוג',
-    descPlaceholder: 'איפה התקלה, מה בדיוק קרה, מתי התגלתה ומה כבר נעשה' },
+  { id: 'building', he: 'תקלת מבנה',       needsVehicle: false, group: 'fault' },
   { id: 'task_st',  he: 'משימת תחזוקת תחנה', needsVehicle: false, group: 'task' },
   { id: 'task_eq',  he: 'משימת תחזוקת ציוד', needsVehicle: false, group: 'task' },
   { id: 'note',     he: 'מסר / הערכת מצב', needsVehicle: false, group: 'note' }
@@ -84,9 +82,6 @@ export function needsVehicle(id) {
   const k = FAULT_KINDS.filter(function (x) { return x.id === id; })[0];
   return !!(k && k.needsVehicle);
 }
-export function faultKind(id) {
-  return FAULT_KINDS.filter(function (x) { return x.id === id; })[0] || null;
-}
 
 // חומרה. הסדר כאן הוא סדר הדחיפות, ומשמש למיון.
 //
@@ -100,7 +95,7 @@ export function faultKind(id) {
 // להערכה, ומוצגת ראשונה כדי שלא תישכח.
 export const SEVERITIES = [
   { id: 'blocking', he: 'משבית',  color: 'var(--bad)', rank: 1,
-    note: 'הרכב, הציוד או המקום אינם בטוחים או כשירים לשימוש', staffOnly: true },
+    note: 'הרכב או הציוד לא כשיר לשימוש', staffOnly: true },
   { id: 'limiting', he: 'מגביל',  color: 'var(--warn)', rank: 2,
     note: 'אפשר להשתמש, עם מגבלה', staffOnly: true },
   { id: 'minor',    he: 'קלה',    color: 'var(--note)', rank: 3,
@@ -360,8 +355,7 @@ export function normTitle(t) {
 // צוברת היסטוריה משלה, בדיוק כמו רכב.
 export function subjectKey(f) {
   const v = f || {};
-  return v.vehicle_id ? 'v:' + v.vehicle_id
-    : 't:' + String(v.kind || '') + ':' + normTitle(v.title);
+  return v.vehicle_id ? 'v:' + v.vehicle_id : 't:' + normTitle(v.title);
 }
 
 export function subjectName(f) {

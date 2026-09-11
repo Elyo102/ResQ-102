@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h12';
-import { renderNav, renderStuckNav } from './nav.js?v=42h12';
-import { initPWA } from './pwa.js?v=42h12';
-import { initAppCheck } from './appcheck.js?v=42h12';
-import { readScheduleFile } from './schedule-file-import.js?v=42h12';
+import { firebaseConfig } from './firebase-config.js?v=42h11';
+import { renderNav, renderStuckNav } from './nav.js?v=42h11';
+import { initPWA } from './pwa.js?v=42h11';
+import { initAppCheck } from './appcheck.js?v=42h11';
+import { readScheduleFile } from './schedule-file-import.js?v=42h11';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h12';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h11';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
