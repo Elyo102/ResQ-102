@@ -262,9 +262,75 @@ function buildAiAdvisoryRequest(diagnosis) {
     fingerprint: diagnosis.fingerprint,
     deterministic_assessment_code: diagnosis.assessment_code,
     deterministic_severity: diagnosis.severity,
+    deterministic_state: diagnosis.state,
     allowed_states: STATES,
     allowed_runbook_codes: diagnosis.runbook_codes,
     evidence: Object.freeze(evidence)
+  });
+}
+
+function validateAiAdvisory(request, response) {
+  const requestFields = ['schema_version', 'fingerprint', 'deterministic_assessment_code',
+    'deterministic_severity', 'deterministic_state', 'allowed_states',
+    'allowed_runbook_codes', 'evidence'];
+  const responseFields = ['schema_version', 'fingerprint', 'assessment_code', 'severity',
+    'state', 'runbook_codes', 'confidence', 'evidence_codes'];
+  if (!exactKeys(request, requestFields) || Object.keys(request).length !== requestFields.length
+      || request.schema_version !== 1
+      || typeof request.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(request.fingerprint)
+      || !ASSESSMENT_CODES.includes(request.deterministic_assessment_code)
+      || !SEVERITIES.includes(request.deterministic_severity)
+      || !STATES.includes(request.deterministic_state)
+      || !Array.isArray(request.allowed_states)
+      || JSON.stringify(request.allowed_states) !== JSON.stringify(STATES)
+      || !Array.isArray(request.allowed_runbook_codes)
+      || request.allowed_runbook_codes.length < 1 || request.allowed_runbook_codes.length > 8
+      || new Set(request.allowed_runbook_codes).size !== request.allowed_runbook_codes.length
+      || request.allowed_runbook_codes.some((code) => !RUNBOOK_CODES.includes(code))
+      || !Array.isArray(request.evidence)) {
+    throw new TypeError('invalid AI advisory request');
+  }
+  const evidence = normalizeEvidence({ signals: request.evidence });
+  if (evidenceFingerprint(evidence) !== request.fingerprint) {
+    throw new TypeError('invalid AI advisory request fingerprint');
+  }
+  if (!exactKeys(response, responseFields) || Object.keys(response).length !== responseFields.length
+      || response.schema_version !== 1 || response.fingerprint !== request.fingerprint
+      || !ASSESSMENT_CODES.includes(response.assessment_code)
+      || response.assessment_code !== request.deterministic_assessment_code
+      || !SEVERITIES.includes(response.severity)
+      || response.severity !== request.deterministic_severity
+      || !STATES.includes(response.state)
+      || !request.allowed_states.includes(response.state)
+      || response.state !== request.deterministic_state
+      || !CONFIDENCE_CODES.includes(response.confidence)
+      || !Array.isArray(response.runbook_codes) || response.runbook_codes.length < 1
+      || response.runbook_codes.length > 8
+      || new Set(response.runbook_codes).size !== response.runbook_codes.length
+      || response.runbook_codes.some((code) => !request.allowed_runbook_codes.includes(code))
+      || !Array.isArray(response.evidence_codes)
+      || new Set(response.evidence_codes).size !== response.evidence_codes.length) {
+    throw new TypeError('invalid AI advisory response');
+  }
+  const expectedRunbooks = request.allowed_runbook_codes.slice().sort();
+  const returnedRunbooks = response.runbook_codes.slice().sort();
+  if (JSON.stringify(returnedRunbooks) !== JSON.stringify(expectedRunbooks)) {
+    throw new TypeError('invalid AI advisory runbooks');
+  }
+  const expectedEvidence = [...new Set(evidence.map((row) => row.code))].sort();
+  const returnedEvidence = response.evidence_codes.slice().sort();
+  if (JSON.stringify(returnedEvidence) !== JSON.stringify(expectedEvidence)) {
+    throw new TypeError('invalid AI advisory evidence');
+  }
+  return Object.freeze({
+    schema_version: 1,
+    fingerprint: response.fingerprint,
+    assessment_code: response.assessment_code,
+    severity: response.severity,
+    state: response.state,
+    runbook_codes: Object.freeze(response.runbook_codes.slice()),
+    confidence: response.confidence,
+    evidence_codes: Object.freeze(response.evidence_codes.slice())
   });
 }
 
@@ -272,5 +338,6 @@ module.exports = Object.freeze({
   SOURCES, INCIDENT_CODES, HEALTH_CODES, SIGNAL_CODES, SEVERITIES, STATES,
   RUNBOOK_CODES, ASSESSMENT_CODES, CONFIDENCE_CODES, AI_POLICY,
   normalizeEvidence, evidenceFingerprint, diagnoseMaintenance,
-  planAiInvocation, planAiOutcome, buildAiAdvisorySchema, buildAiAdvisoryRequest
+  planAiInvocation, planAiOutcome, buildAiAdvisorySchema, buildAiAdvisoryRequest,
+  validateAiAdvisory
 });

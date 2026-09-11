@@ -191,8 +191,70 @@ test('AI request contains sanitized categories and numbers only', () => {
   assert.doesNotMatch(serialized, /@|https?:|powershell|stack|employee|uid/i);
   assert.deepEqual(Object.keys(request).sort(), [
     'allowed_runbook_codes', 'allowed_states', 'deterministic_assessment_code',
-    'deterministic_severity', 'evidence', 'fingerprint', 'schema_version'
+    'deterministic_severity', 'deterministic_state', 'evidence', 'fingerprint', 'schema_version'
   ]);
+});
+
+test('AI response validator binds output to the exact request evidence and policy', () => {
+  const diagnosis = maintenance.diagnoseMaintenance(sample());
+  const request = maintenance.buildAiAdvisoryRequest(diagnosis);
+  const response = {
+    schema_version:1, fingerprint:request.fingerprint,
+    assessment_code:request.deterministic_assessment_code,
+    severity:request.deterministic_severity, state:request.deterministic_state,
+    runbook_codes:request.allowed_runbook_codes.slice(), confidence:'HIGH',
+    evidence_codes:request.evidence.map((row) => row.code)
+  };
+  const validated = maintenance.validateAiAdvisory(request, response);
+  assert.equal(Object.isFrozen(validated), true);
+  assert.deepEqual(validated.evidence_codes, response.evidence_codes);
+});
+
+test('AI response cannot change deterministic severity or state', () => {
+  const source = maintenance.diagnoseMaintenance({ signals:[
+    { source:'incident', code:'DATA_LOSS', count:1, age_minutes:0 }
+  ] });
+  const request = maintenance.buildAiAdvisoryRequest(source);
+  const base = {
+    schema_version:1, fingerprint:request.fingerprint,
+    assessment_code:request.deterministic_assessment_code,
+    severity:'P0', state:'SUGGEST', runbook_codes:request.allowed_runbook_codes.slice(),
+    confidence:'MEDIUM', evidence_codes:['DATA_LOSS']
+  };
+  assert.throws(() => maintenance.validateAiAdvisory(request, { ...base, severity:'P1' }),
+    /invalid AI advisory response/);
+  assert.throws(() => maintenance.validateAiAdvisory(request, { ...base, state:'OBSERVE' }),
+    /invalid AI advisory response/);
+  const empty = maintenance.diagnoseMaintenance({ signals:[] });
+  const emptyRequest = maintenance.buildAiAdvisoryRequest(empty);
+  const emptyResponse = {
+    schema_version:1, fingerprint:emptyRequest.fingerprint,
+    assessment_code:emptyRequest.deterministic_assessment_code,
+    severity:'P0', state:'SUGGEST', runbook_codes:emptyRequest.allowed_runbook_codes.slice(),
+    confidence:'HIGH', evidence_codes:[]
+  };
+  assert.throws(() => maintenance.validateAiAdvisory(emptyRequest, emptyResponse),
+    /invalid AI advisory response/);
+});
+
+test('AI response cannot add a runbook, omit evidence or add freeform fields', () => {
+  const diagnosis = maintenance.diagnoseMaintenance(sample());
+  const request = maintenance.buildAiAdvisoryRequest(diagnosis);
+  const base = {
+    schema_version:1, fingerprint:request.fingerprint,
+    assessment_code:request.deterministic_assessment_code,
+    severity:request.deterministic_severity, state:request.deterministic_state,
+    runbook_codes:request.allowed_runbook_codes.slice(), confidence:'LOW',
+    evidence_codes:request.evidence.map((row) => row.code)
+  };
+  assert.throws(() => maintenance.validateAiAdvisory(request,
+    { ...base, runbook_codes:['REVIEW_AUTH_CONFIGURATION'] }), /invalid AI advisory response/);
+  assert.throws(() => maintenance.validateAiAdvisory(request,
+    { ...base, runbook_codes:base.runbook_codes.slice(1) }), /invalid AI advisory runbooks/);
+  assert.throws(() => maintenance.validateAiAdvisory(request,
+    { ...base, evidence_codes:base.evidence_codes.slice(0,1) }), /invalid AI advisory evidence/);
+  assert.throws(() => maintenance.validateAiAdvisory(request,
+    { ...base, message:'run this command' }), /invalid AI advisory response/);
 });
 
 test('malformed diagnosis cannot be converted to an AI request', () => {
