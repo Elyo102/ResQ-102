@@ -14,7 +14,7 @@
 //  3. רק קוד שרת כותב לטוקן. זה הקובץ הזה.
 // =====================================================================
 
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
@@ -5440,6 +5440,33 @@ exports.systemHealthV2 = onSchedule({
   const result = await systemHealthV2Service.run({ run_id: runId, deadline_ms: Date.now() + 535000 });
   console.log('systemHealthV2', runId, result.verdict, result.reported || 0, result.total || 0);
   return result;
+});
+
+// A shallow platform heartbeat is intentionally cheap: one scheduled write
+// every five minutes and no roster, employee or queue scans. It answers
+// "is the scheduler and Firestore path alive now?"; the bounded daily scan
+// remains responsible for deep integrity checks.
+exports.systemHeartbeat = onSchedule({
+  schedule: 'every 5 minutes', timeZone: 'Asia/Jerusalem',
+  timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
+}, async () => {
+  await db.doc('system/heartbeat').set({
+    state: 'ok', version: '42H.13', at: FV.serverTimestamp()
+  }, { merge: false });
+});
+
+// Public, data-free availability endpoint for an external uptime monitor.
+// It performs no Firestore reads and exposes no deployment or user metadata.
+exports.healthz = onRequest({
+  region: 'europe-west1', timeoutSeconds: 10, maxInstances: 2, cors: false
+}, (req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.set('Allow', 'GET, HEAD').status(405).send('method-not-allowed');
+    return;
+  }
+  res.set('Cache-Control', 'no-store').status(200);
+  if (req.method === 'HEAD') { res.end(); return; }
+  res.json({ ok:true, service:'resq' });
 });
 
 

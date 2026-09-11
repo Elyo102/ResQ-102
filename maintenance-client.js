@@ -1,9 +1,10 @@
 const MODES = Object.freeze(['OFF', 'OBSERVE']);
 const MODE_HE = Object.freeze({ 'OFF':'כבוי', 'OBSERVE':'תצפית בלבד' });
 const SEVERITY_HE = Object.freeze({ 'P0':'קריטי', 'P1':'גבוה', 'P2':'בינוני', 'P3':'מידע' });
-const OPERATIONAL_HE = Object.freeze({ LIVE:'פעילה', SILENT:'ניסוי / שקט', UNKNOWN:'לא ידוע' });
-const HEALTH_HE = Object.freeze({ HEALTHY:'תקינה', DEGRADED:'דורשת תשומת לב', CRITICAL:'תקלה קריטית', UNKNOWN:'לא ידוע' });
-const FRESHNESS_HE = Object.freeze({ FRESH:'עדכנית', STALE:'ישנה', MISSING:'חסרה' });
+const OPERATIONAL_HE = Object.freeze({ 'LIVE':'פעילה', 'SILENT':'ניסוי / שקט', 'UNKNOWN':'לא ידוע' });
+const HEALTH_HE = Object.freeze({ 'HEALTHY':'תקינה', 'DEGRADED':'דורשת תשומת לב', 'CRITICAL':'תקלה קריטית', 'UNKNOWN':'לא ידוע' });
+const FRESHNESS_HE = Object.freeze({ 'FRESH':'עדכנית', 'STALE':'ישנה', 'MISSING':'חסרה' });
+const PLATFORM_HE = Object.freeze({ 'AVAILABLE':'זמינה', 'STALE':'לא התקבלה פעימה', 'MISSING':'אין עדיין ראיה' });
 const RUNBOOK_HE = Object.freeze({
   'ESCALATE_DATA_INTEGRITY_MANUAL':'בדיקת שלמות נתונים ידנית ומיידית',
   'REVIEW_BACKUP_QUARANTINE':'בדיקת גיבוי שנמצא בהסגר',
@@ -49,7 +50,7 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
     text(elements.p0, 0); text(elements.p1, 0); text(elements.p2, 0);
     text(elements.open, 0); text(elements.dropped, 0); text(elements.heartbeat, '—');
     text(elements.modeBadge, '—'); text(elements.mode, '—');
-    text(elements.operationalState, '—'); text(elements.healthState, '—'); text(elements.freshnessState, '—');
+    text(elements.operationalState, '—'); text(elements.healthState, '—'); text(elements.freshnessState, '—'); text(elements.platformState, '—');
     if (elements.list) elements.list.replaceChildren();
     message('', '');
   }
@@ -67,12 +68,15 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
     const operational = finite(dto && dto.operational_state, Object.keys(OPERATIONAL_HE), 'UNKNOWN');
     const health = finite(dto && dto.health_state, Object.keys(HEALTH_HE), 'UNKNOWN');
     const freshness = finite(dto && dto.health_freshness, Object.keys(FRESHNESS_HE), 'MISSING');
+    const platform = finite(dto && dto.platform_state, Object.keys(PLATFORM_HE), 'MISSING');
     text(elements.operationalState, OPERATIONAL_HE[operational]);
     text(elements.healthState, HEALTH_HE[health]);
     text(elements.freshnessState, FRESHNESS_HE[freshness]);
+    text(elements.platformState, PLATFORM_HE[platform]);
     if (elements.operationalCard) elements.operationalCard.dataset.state = operational.toLowerCase();
     if (elements.healthCard) elements.healthCard.dataset.state = health.toLowerCase();
     if (elements.freshnessCard) elements.freshnessCard.dataset.state = freshness.toLowerCase();
+    if (elements.platformCard) elements.platformCard.dataset.state = platform.toLowerCase();
     const rows = Array.isArray(dto && dto.items) ? dto.items : [];
     elements.list.replaceChildren();
     if (!rows.length) {

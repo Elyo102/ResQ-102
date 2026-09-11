@@ -18,7 +18,7 @@ async function check(name, run) { await run(); passed += 1; console.log('PASS ' 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
-  await page.setContent(`<div id="modeBadge"></div><button id="mode"></button><button id="refresh"></button><button id="analyze"></button><div id="message"></div><div id="operationalCard"><b id="operationalState"></b></div><div id="healthCard"><b id="healthState"></b></div><div id="freshnessCard"><b id="freshnessState"></b></div><b id="p0"></b><b id="p1"></b><b id="p2"></b><b id="open"></b><b id="dropped"></b><b id="heartbeat"></b><div id="list"></div>`);
+  await page.setContent(`<div id="modeBadge"></div><button id="mode"></button><button id="refresh"></button><button id="analyze"></button><div id="message"></div><div id="operationalCard"><b id="operationalState"></b></div><div id="healthCard"><b id="healthState"></b></div><div id="freshnessCard"><b id="freshnessState"></b></div><div id="platformCard"><b id="platformState"></b></div><b id="p0"></b><b id="p1"></b><b id="p2"></b><b id="open"></b><b id="dropped"></b><b id="heartbeat"></b><div id="list"></div>`);
   await page.addScriptTag({ content:source });
   await page.evaluate(() => {
     const byId = (id) => document.getElementById(id);
@@ -27,7 +27,8 @@ try {
       message:byId('message'), p0:byId('p0'), p1:byId('p1'), p2:byId('p2'), open:byId('open'),
       dropped:byId('dropped'), heartbeat:byId('heartbeat'), list:byId('list'),
       operationalState:byId('operationalState'), healthState:byId('healthState'), freshnessState:byId('freshnessState'),
-      operationalCard:byId('operationalCard'), healthCard:byId('healthCard'), freshnessCard:byId('freshnessCard') };
+      platformState:byId('platformState'), operationalCard:byId('operationalCard'), healthCard:byId('healthCard'),
+      freshnessCard:byId('freshnessCard'), platformCard:byId('platformCard') };
     window.ui = window.createMaintenanceUi({ elements,
       currentIdentity:() => window.fixture.identity,
       onIdentityLost:() => { window.fixture.lost += 1; },
@@ -70,19 +71,22 @@ try {
   });
   await check('operating mode, technical health and freshness render independently', async () => {
     await page.evaluate(() => window.ui.render({ mode:'OBSERVE', operational_state:'SILENT',
-      health_state:'HEALTHY', health_freshness:'FRESH', counts:{}, items:[] }));
+      health_state:'HEALTHY', health_freshness:'FRESH', platform_state:'AVAILABLE', counts:{}, items:[] }));
     assert.equal(await page.locator('#operationalState').textContent(), 'ניסוי / שקט');
     assert.equal(await page.locator('#healthState').textContent(), 'תקינה');
     assert.equal(await page.locator('#freshnessState').textContent(), 'עדכנית');
+    assert.equal(await page.locator('#platformState').textContent(), 'זמינה');
     assert.equal(await page.locator('#operationalCard').getAttribute('data-state'), 'silent');
     assert.equal(await page.locator('#healthCard').getAttribute('data-state'), 'healthy');
+    assert.equal(await page.locator('#platformCard').getAttribute('data-state'), 'available');
   });
   await check('unknown status values fail closed instead of appearing healthy', async () => {
     await page.evaluate(() => window.ui.render({ mode:'OFF', operational_state:'FUTURE',
-      health_state:'FUTURE', health_freshness:'FUTURE', counts:{}, items:[] }));
+      health_state:'FUTURE', health_freshness:'FUTURE', platform_state:'FUTURE', counts:{}, items:[] }));
     assert.equal(await page.locator('#operationalState').textContent(), 'לא ידוע');
     assert.equal(await page.locator('#healthState').textContent(), 'לא ידוע');
     assert.equal(await page.locator('#freshnessState').textContent(), 'חסרה');
+    assert.equal(await page.locator('#platformState').textContent(), 'אין עדיין ראיה');
   });
   await check('identity change fences an in-flight response', async () => {
     await page.evaluate(() => {

@@ -112,6 +112,18 @@ function timestamp(iso) { return { toDate:() => new Date(iso) }; }
     assert.equal(dto.health_state, 'UNKNOWN');
     assert.equal(dto.health_freshness, 'MISSING');
   });
+  await check('fresh shallow heartbeat proves current availability without changing deep health', async () => {
+    const f = fixture({ rows:{ 'config/runtime':{ silent:false },
+      'system/heartbeat':{ at:timestamp('2026-09-10T08:56:00.000Z') } } });
+    const dto = await f.service.getDashboard(f.request());
+    assert.equal(dto.platform_state, 'AVAILABLE');
+    assert.equal(dto.last_heartbeat_at, '2026-09-10T08:56:00.000Z');
+    assert.equal(dto.health_state, 'UNKNOWN');
+  });
+  await check('stale heartbeat never claims the platform is currently available', async () => {
+    const f = fixture({ rows:{ 'system/heartbeat':{ at:timestamp('2026-09-10T08:40:00.000Z') } } });
+    assert.equal((await f.service.getDashboard(f.request())).platform_state, 'STALE');
+  });
   await check('same incident code sums counts instead of keeping the maximum', async () => {
     const incident = (count) => ({ code:'functions/unavailable', kind:'callable-failed', count,
       last_seen_iso:'2026-09-10T08:59:00.000Z', first_screen:'hr', last_version:'42H.10' });

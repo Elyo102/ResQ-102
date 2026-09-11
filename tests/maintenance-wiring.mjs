@@ -42,4 +42,17 @@ check('maintenance config is explicitly classified for backup and restore', () =
   assert.equal(entry?.restorePolicy, 'restore');
   assert.equal(entry?.humanReadable, 'redacted');
 });
+check('shallow heartbeat is five-minute, bounded and does not scan user data', () => {
+  const block = index.slice(index.indexOf('exports.systemHeartbeat ='), index.indexOf('exports.healthz ='));
+  assert.match(block, /schedule: 'every 5 minutes'/);
+  assert.match(block, /db\.doc\('system\/heartbeat'\)\.set/);
+  assert.doesNotMatch(block, /collection\(|\.get\(|count\(/);
+});
+check('public health endpoint is stateless, finite and never exposes configuration', () => {
+  const block = index.slice(index.indexOf('exports.healthz ='), index.indexOf('// =======================================================================', index.indexOf('exports.healthz =')));
+  assert.match(block, /req\.method !== 'GET'/);
+  assert.match(block, /Cache-Control', 'no-store'/);
+  assert.match(block, /\{ ok:true, service:'resq' \}/);
+  assert.doesNotMatch(block, /db\.|admin\.|process\.env|station|email|uid/);
+});
 console.log('maintenance wiring: ' + passed + ' passed');

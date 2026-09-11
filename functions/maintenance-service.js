@@ -11,6 +11,8 @@ const ANALYSIS_COOLDOWN_MS = 60 * 1000;
 const HEALTH_STALE_MS = 36 * 60 * 60 * 1000;
 const OPERATIONAL_STATES = Object.freeze(['LIVE', 'SILENT', 'UNKNOWN']);
 const HEALTH_STATES = Object.freeze(['HEALTHY', 'DEGRADED', 'CRITICAL', 'UNKNOWN']);
+const PLATFORM_STATES = Object.freeze(['AVAILABLE', 'STALE', 'MISSING']);
+const HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 const CONFIG_PATH = (sid) => 'stations/' + sid + '/maintenance/config';
 
 function plain(value) {
@@ -128,12 +130,13 @@ function createMaintenanceService(deps) {
   async function load(ctx) {
     const now = new Date(clock());
     if (!Number.isFinite(now.getTime())) throw new HttpsError('internal', 'שעון התחזוקה אינו תקין.');
-    const [cfg, incidents, healthSnap, daySnap, runtimeSnap] = await Promise.all([
+    const [cfg, incidents, healthSnap, daySnap, runtimeSnap, heartbeatSnap] = await Promise.all([
       config(ctx.sid),
       incidentLog.list({ sid:ctx.sid, status:'open', limit:MAX_ITEMS }),
       db.collection('stations/' + ctx.sid + '/health').orderBy('date','desc').limit(1).get(),
       db.doc('stations/' + ctx.sid + '/incident_days/' + now.toISOString().slice(0,10)).get(),
-      db.doc('config/runtime').get()
+      db.doc('config/runtime').get(),
+      db.doc('system/heartbeat').get()
     ]);
     const latestHealth = healthSnap.empty ? null : healthSnap.docs[0];
     const health = latestHealth ? healthSignals(latestHealth, now.getTime()) : [{
@@ -180,9 +183,13 @@ function createMaintenanceService(deps) {
     const healthState = healthFreshness !== 'FRESH' ? 'UNKNOWN'
       : counts.P0 > 0 ? 'CRITICAL'
       : counts.P1 > 0 || counts.P2 > 0 ? 'DEGRADED' : 'HEALTHY';
+    const heartbeatAt = heartbeatSnap.exists ? timestampIso((heartbeatSnap.data() || {}).at) : null;
+    const platformState = !heartbeatAt ? 'MISSING'
+      : now.getTime() - Date.parse(heartbeatAt) <= HEARTBEAT_STALE_MS ? 'AVAILABLE' : 'STALE';
     return {
       schema_version:1, station_id:ctx.sid, mode:cfg.mode, config_revision:cfg.revision, counts,
       operational_state:operationalState, health_state:healthState, health_freshness:healthFreshness,
+      platform_state:platformState, last_heartbeat_at:heartbeatAt,
       open_count_scope:'open_within_newest_' + MAX_ITEMS + '_incidents', open_count_is_partial:true,
       last_health_at:lastHealthAt,
       analysis_kind:'deterministic', diagnosis_fingerprint:diagnosis.fingerprint, items
@@ -229,5 +236,6 @@ function createMaintenanceService(deps) {
 
 module.exports = Object.freeze({
   createMaintenanceService, MODES, MAX_ITEMS, ANALYSIS_COOLDOWN_MS, HEALTH_STALE_MS,
-  OPERATIONAL_STATES, HEALTH_STATES, incidentSignal, healthCode, healthSignals, timestampIso, titleCode
+  HEARTBEAT_STALE_MS, OPERATIONAL_STATES, HEALTH_STATES, PLATFORM_STATES,
+  incidentSignal, healthCode, healthSignals, timestampIso, titleCode
 });
