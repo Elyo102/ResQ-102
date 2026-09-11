@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h11">
+<link rel="stylesheet" href="./theme.css?v=42h12">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -37,6 +37,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
          border-radius:12px; padding:16px; margin-bottom:14px }
   .cols{ display:grid; grid-template-columns:1fr; gap:14px }
   @media (min-width:900px){ .cols{ grid-template-columns:1.45fr 1fr } }
+  .reportJump{ display:none; width:100%; margin:0 0 12px }
+  @media (max-width:899px){ .reportJump{ display:block } }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
@@ -244,6 +246,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
     <!-- ========== פתוחות ========== -->
     <div id="viewOpen">
+      <button class="btn go reportJump" id="jumpReport">+ דיווח תקלה חדשה</button>
       <div class="cols">
         <div>
           <div class="card">
@@ -255,24 +258,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           </div>
         </div>
         <div>
-          <div class="card">
+          <div class="card" id="reportCard">
             <h2>דיווח תקלה</h2>
             <div class="note" style="margin-bottom:2px">
               כל כבאי מדווח. השם שלך והשעה נשמרים אוטומטית.
             </div>
-            <label>על מה</label>
-            <select id="nKind"></select>
+            <label for="nKind">על מה</label>
+            <select id="nKind" aria-describedby="nKindHelp"></select>
+            <div class="note" id="nKindHelp" aria-live="polite"></div>
             <div id="nVehWrap">
-              <label>איזה רכב</label>
+              <label for="nVeh">איזה רכב</label>
               <select id="nVeh"></select>
             </div>
-            <label>כותרת</label>
+            <label for="nTitle">כותרת</label>
             <input type="text" id="nTitle" maxlength="80" placeholder="נזילת שמן מתחת למנוע">
-            <label>תיאור</label>
+            <label for="nDesc">תיאור</label>
             <textarea id="nDesc" maxlength="600"
               placeholder="מה בדיוק, מתי התגלה, מה כבר נעשה"></textarea>
             <div id="sevWrap" class="hide">
-              <label>חומרה</label>
+              <label for="nSev">חומרה</label>
               <select id="nSev"></select>
               <div class="note" id="sevNote" style="margin-top:4px">—</div>
             </div>
@@ -280,7 +284,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               את החומרה קובע ראש המשמרת. תאר מה ראית וצלם —
               הוא יעריך.
             </div>
-            <label>צילום (לא חובה)</label>
+            <label for="nShot">צילום (לא חובה)</label>
             <input type="file" id="nShot" accept="image/*" capture="environment" multiple>
             <div class="note" id="shotNote">אפשר לצרף עד 3 תמונות. הן מוקטנות אוטומטית.</div>
             <button class="btn go" id="btnNew">פתח תקלה</button>
@@ -332,7 +336,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
 
       <div class="card">
-        <h2>תקלות ציוד ומבנה</h2>
+        <h2>תקלות ציוד, בינוי ותחזוקה</h2>
         <div id="hoGear"></div>
       </div>
 
@@ -408,22 +412,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h11';
-import { renderNav, renderStuckNav } from './nav.js?v=42h11';
-import { MEMBER_ROLES } from './roles.js?v=42h11';
-import { initPWA } from './pwa.js?v=42h11';
-import { watchCallouts } from './callout.js?v=42h11';
-import { CREW_HE, plural } from './rotation.js?v=42h11';
-import { FAULT_KINDS, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h12';
+import { renderNav, renderStuckNav } from './nav.js?v=42h12';
+import { MEMBER_ROLES } from './roles.js?v=42h12';
+import { initPWA } from './pwa.js?v=42h12';
+import { watchCallouts } from './callout.js?v=42h12';
+import { CREW_HE, plural } from './rotation.js?v=42h12';
+import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
          DAMAGE_DELETE_WHY,
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage } from './faults.js?v=42h11';
+         shrinkImage } from './faults.js?v=42h12';
 import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
-         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h11';
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h12';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -432,7 +436,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h11';
+import { initAppCheck } from './appcheck.js?v=42h12';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -454,6 +458,7 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
 let faults = [], fleet = [], anchors = [], shots = {}, handovers = {};
+let FAULT_ATTEMPT = null;
 // מסמך הלוח **כפי שהוא בשרת**, שלם: הרכבים המבצעיים ושרשרת הפיקוד.
 // נשמר שלם ולא מסונן, כי עריכת רכב מבצעי כותבת את המסמך כולו בחזרה
 // — כתיבה של מערך מסונן הייתה מוחקת מהמסמך את הרכבים המושבתים.
@@ -482,6 +487,10 @@ function bumpIdentity(){
   vehEditing = null;
   boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
   faults = []; handovers = {}; shots = {};
+  FAULT_ATTEMPT = null;
+  $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
+  $('btnNew').disabled = false;
+  msg('', '');
   $('work').classList.add('hide');
   $('anchorCard').classList.add('hide');
   $('denyCard').classList.add('hide');
@@ -516,7 +525,9 @@ function writeFence(){
     error.code = 'identity-changed';
     throw error;
   }
-  return { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+  return { gen: AUTH_GEN, uid: ME.uid, sid: SID,
+           name: ME.full_name || '', crew: ME.crew || '',
+           canManage: CAN_MANAGE };
 }
 
 /** בכל נקודת בדיקה — הזהות עדיין אותה זהות, אחרת הכתיבה אינה שלנו.
@@ -719,8 +730,15 @@ function setupForm(){
   $('nSev').innerHTML = SEVERITIES.map(s =>
     '<option value="' + esc(s.id) + '">' + esc(s.he) + '</option>').join('');
 
-  $('nKind').onchange = function () {
-    $('nVehWrap').classList.toggle('hide', !needsVehicle($('nKind').value));
+  $('nKind').onchange = updateKindForm;
+  ['nKind','nVeh','nTitle','nDesc','nSev','nShot'].forEach(function (id) {
+    $(id).addEventListener(id === 'nTitle' || id === 'nDesc' ? 'input' : 'change',
+      function () { FAULT_ATTEMPT = null; });
+  });
+  updateKindForm();
+  $('jumpReport').onclick = function () {
+    $('reportCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('nKind').focus({ preventScroll: true });
   };
   $('nSev').onchange = function () {
     const s = SEVERITIES.filter(x => x.id === $('nSev').value)[0];
@@ -740,12 +758,24 @@ function setupForm(){
   $('lb').onclick = e => { if (e.target === $('lb')) $('lb').classList.remove('on'); };
 }
 
+function updateKindForm(){
+  const selected = faultKind($('nKind').value);
+  $('nVehWrap').classList.toggle('hide', !(selected && selected.needsVehicle));
+  $('nTitle').placeholder = (selected && selected.titlePlaceholder) ||
+    'נזילת שמן מתחת למנוע';
+  $('nDesc').placeholder = (selected && selected.descPlaceholder) ||
+    'מה בדיוק, מתי התגלה, מה כבר נעשה';
+  $('nKindHelp').textContent = selected && selected.id === 'building'
+    ? 'לתקלות במבנה, בתשתיות ובמערכות התחנה. אין צורך לבחור רכב.'
+    : '';
+}
+
 function fillVehicleSelects(){
   const opts = fleet.map(v =>
     '<option value="' + esc(v.id) + '">' + esc(v.name) +
     (v.kind === 'anchor' ? ' · עיגון' : '') + '</option>').join('');
   $('nVeh').innerHTML = opts || '<option value="">אין רכבים מוגדרים</option>';
-  $('nVehWrap').classList.toggle('hide', !needsVehicle($('nKind').value));
+  updateKindForm();
 }
 
 function renderFilter(){
@@ -768,39 +798,80 @@ async function createFault(){
     return;
   }
   const veh = fleet.filter(v => v.id === vid)[0];
-
-  const b = $('btnNew'); b.disabled = true;
+  const files = Array.from($('nShot').files || []).slice(0, 3);
+  const b = $('btnNew');
+  let fence;
+  try {
+    // הזהות, התחנה וכל תוכן הטופס נלכדים **לפני** עיבוד התמונה.
+    // החלפת חשבון בזמן ה-await אינה רשאית להעביר טופס ישן לחשבון החדש.
+    fence = writeFence();
+  } catch (e) {
+    msg('המשתמש או ההרשאות השתנו. פתחו את המסך מחדש לפני הדיווח.', 'err');
+    return;
+  }
+  const input = {
+    kind: kind, vid: vid, vehicle_name: veh ? veh.name : '', title: title,
+    desc: $('nDesc').value.trim(),
+    severity: kind === 'note' ? 'minor'
+      : (fence.canManage ? $('nSev').value : 'unset'),
+    files: files.map(f => ({ name:f.name || '', size:f.size, type:f.type || '',
+                            modified:f.lastModified || 0 }))
+  };
+  const attemptKey = JSON.stringify(input);
+  if (!FAULT_ATTEMPT || FAULT_ATTEMPT.key !== attemptKey ||
+      FAULT_ATTEMPT.fence.gen !== fence.gen) {
+    FAULT_ATTEMPT = {
+      key: attemptKey, fence: fence, now: new Date(),
+      ref: doc(collection(db, 'stations', fence.sid, 'faults'))
+    };
+  }
+  const attempt = FAULT_ATTEMPT;
+  b.disabled = true;
   msg('', '');
 
-  // התמונות מוקטנות לפני הכתיבה. אם הקטנה נכשלת — התקלה
-  // עדיין נשמרת. תקלה בלי צילום עדיפה על תקלה שלא נפתחה.
-  const files = Array.from($('nShot').files || []).slice(0, 3);
+  // כל התקלה ועד שלוש התמונות נכתבות בעסקה אחת: או שהכול נשמר,
+  // או ששום דבר לא נשמר. תשובה שאבדה ניתנת לניסיון חוזר על אותו id.
+  // העסקה קוראת לפני שהיא כותבת: אם אותו id כבר קיים, ה-commit הקודם
+  // נחת ורק התשובה אבדה. במקרה כזה אסור לכתוב שוב — מפקד כבר יכול היה
+  // לדרג, לסגור או להעביר את התקלה לטיפול.
   const pics = [], failed = [];
-  for (const f of files) {
-    try { pics.push(await shrinkImage(f)); }
-    catch (e) { failed.push((f.name || 'תמונה') + ': ' + (e.message || '')); }
-  }
-
   try {
-    const now = new Date();
-    const ref = await addDoc(collection(db, 'stations', SID, 'faults'), {
-      kind: kind, vehicle_id: vid, vehicle_name: veh ? veh.name : '',
-      title: title, desc: $('nDesc').value.trim(),
-      // הערת חפיפה אינה תקלה ולכן אינה ממתינה להערכה.
-      severity: kind === 'note' ? 'minor'
-              : (CAN_MANAGE ? $('nSev').value : 'unset'),
-      status: 'open', photos: pics.length,
-      by_uid: ME.uid, by_name: ME.full_name || '', crew: ME.crew || '',
-      date: toKey(now), created_key: now.toISOString(),
-      created_at: serverTimestamp()
-    });
-
-    for (let i = 0; i < pics.length; i++) {
-      await setDoc(doc(db, 'stations', SID, 'faults', ref.id, 'photos', 'p' + i), {
-        data: pics[i].data, w: pics[i].w, h: pics[i].h,
-        by_uid: ME.uid, created_key: now.toISOString()
-      });
+    for (const f of files) {
+      assertFence(attempt.fence);
+      try { pics.push(await shrinkImage(f)); }
+      catch (e) {
+        assertFence(attempt.fence);
+        failed.push((f.name || 'תמונה') + ': ' + (e.message || ''));
+      }
+      assertFence(attempt.fence);
     }
+
+    await runTransaction(db, async function (tx) {
+      assertFence(attempt.fence);
+      const existing = await tx.get(attempt.ref);
+      assertFence(attempt.fence);
+      if (existing.exists()) return;
+      tx.set(attempt.ref, {
+        kind: kind, vehicle_id: vid, vehicle_name: veh ? veh.name : '',
+        title: input.title, desc: input.desc, severity: input.severity,
+        status: 'open', photos: pics.length,
+        by_uid: attempt.fence.uid, by_name: attempt.fence.name,
+        crew: attempt.fence.crew,
+        date: toKey(attempt.now), created_key: attempt.now.toISOString(),
+        created_at: serverTimestamp()
+      });
+      for (let i = 0; i < pics.length; i++) {
+        tx.set(doc(attempt.ref, 'photos', 'p' + i), {
+          data: pics[i].data, w: pics[i].w, h: pics[i].h,
+          by_uid: attempt.fence.uid, created_key: attempt.now.toISOString()
+        });
+      }
+    });
+    if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
+    // השרת אישר שהאצווה נשמרה. אם הזהות התחלפה בדיוק לאחר מכן,
+    // לא מציירים הודעת הצלחה במסך של המשתמש החדש — אך גם לא משקרים
+    // שהדיווח הישן לא נשלח.
+    try { assertFence(attempt.fence); } catch (ignore) { return; }
 
     msg('התקלה נפתחה.' +
         (pics.length ? ' ' + pics.length + ' תמונות צורפו.' : '') +
@@ -809,9 +880,18 @@ async function createFault(){
     $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
     await loadAll();
   } catch (e) {
-    msg('הפתיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+    // פעולה מן הדור הקודם אינה רשאית לצייר או לנקות מצב של המשתמש
+    // החדש. bumpIdentity כבר ניקה את הכרטיס הישן.
+    if (attempt.fence.gen !== AUTH_GEN) return;
+    if (e.code === 'identity-changed' || e.message === 'identity-changed') {
+      if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
+      msg('המשתמש או ההרשאות השתנו. הדיווח הישן לא נשלח.', 'err');
+    } else {
+      msg('לא התקבל אישור שהדיווח נשמר. ניסיון חוזר ישלח את אותו דיווח, בלי ליצור מזהה חדש. (' +
+          (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+    }
   }
-  b.disabled = false;
+  if (fence.gen === AUTH_GEN) b.disabled = false;
 }
 
 async function addVehicle(){
@@ -1307,7 +1387,7 @@ function renderShift(){
       bad: faults.filter(x => isOpen(x) && needsGrading(x) && x.kind !== 'note').length > 0 },
     { he: 'רכבים משביתים', n: bd.blocked.length, bad: bd.blocked.length > 0 },
     { he: 'תקלות רכב פתוחות', n: bd.veh.length, bad: false },
-    { he: 'תקלות ציוד ומבנה', n: bd.gear.length, bad: false },
+    { he: 'תקלות ציוד, בינוי ותחזוקה', n: bd.gear.length, bad: false },
     { he: 'משימות פתוחות', n: bd.tasks.length, bad: false },
     { he: 'בתיקון', n: bd.inRepair.length, bad: false },
     { he: 'רכבי עיגון זמינים',

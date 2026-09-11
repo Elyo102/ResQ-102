@@ -4154,7 +4154,7 @@ exports.sendBroadcast = onCall(
 // מייבא מודולים של הדפדפן — שינוי בשם צריך להיעשות בשניהם.
 const FAULT_KIND_HE = {
   vehicle: 'תקלת רכב', damage: 'פגיעה ברכב', gear: 'תקלת ציוד',
-  building: 'תקלת מבנה', task_st: 'משימת תחזוקת תחנה',
+  building: 'תקלת בינוי ותחזוקה', task_st: 'משימת תחזוקת תחנה',
   task_eq: 'משימת תחזוקת ציוד', note: 'מסר'
 };
 function kindHeS(k) { return FAULT_KIND_HE[k] || 'תקלה'; }
