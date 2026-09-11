@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ResQ — לוח מודעות</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="./resq-180.png">
@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h13">
-<link rel="stylesheet" href="./bulletin.css?v=42h13">
+<link rel="stylesheet" href="./theme.css?v=42h14">
+<link rel="stylesheet" href="./bulletin.css?v=42h14">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -472,16 +472,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h13';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h14';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h13';
-import { renderNav, clearNav } from './nav.js?v=42h13';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h13';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h13';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h13';
-import { watchCallouts } from './callout.js?v=42h13';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h13';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h13';
+         subStationsForStation } from './stations.js?v=42h14';
+import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
+  from './nav.js?v=42h14';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h14';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h14';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h14';
+import { watchCallouts } from './callout.js?v=42h14';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h14';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h14';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -492,11 +493,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h13';
+  from './monitored-functions.js?v=42h14';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h13';
+import { initAppCheck } from './appcheck.js?v=42h14';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -918,9 +919,23 @@ function returnToCaller(){
   return true;
 }
 
-function logout(){ destroyHomeFaults(); destroyBulletin(); return signOut(auth); }
+function logout(){
+  destroyHomeFaults();
+  destroyBulletin();
+  clearNavigationTrail();
+  return signOut(auth);
+}
 $('btnLogout').onclick     = logout;
 $('btnLogoutWait').onclick = logout;
+
+let nativeBackArrival = (function () {
+  try {
+    const rows = performance.getEntriesByType && performance.getEntriesByType('navigation');
+    if (rows && rows[0]) return rows[0].type === 'back_forward';
+    return performance.navigation && performance.navigation.type === 2;
+  } catch (ignore) { return false; }
+})();
+let nativeBackRecoveryAttempted = false;
 
 onAuthStateChanged(auth, user => {
   authSettled = true;
@@ -942,12 +957,34 @@ onAuthStateChanged(auth, user => {
   route(user);
 });
 
+function returnFromNativeBack(claims){
+  if (!nativeBackArrival || nativeBackRecoveryAttempted) return false;
+  nativeBackRecoveryAttempted = true;
+  const target = recoverNativeBack(claims);
+  if (!target) return false;
+  location.replace('./' + target);
+  return true;
+}
+
+// Safari may restore the login page from its back-forward cache without
+// re-running Firebase's initial observer. Re-enter the same fail-closed route;
+// the one-shot guard above prevents a redirect loop.
+window.addEventListener('pageshow', function (event) {
+  if (!event.persisted) return;
+  nativeBackArrival = true;
+  nativeBackRecoveryAttempted = false;
+  if (auth.currentUser) route(auth.currentUser);
+});
+
 async function route(user){
   let claims = {};
   try {
     const t = await user.getIdTokenResult();
     claims = t.claims || {};
   } catch (ignore) {}
+
+  if ((claims.super === true || hasCompleteServerAssignment(claims)) &&
+      returnFromNativeBack(claims)) return;
 
   // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
   if (claims.super === true) {
