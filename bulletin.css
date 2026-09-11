@@ -185,6 +185,7 @@
 .home-fault-tab{width:100%;min-height:46px;margin:0;padding:9px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--dim);box-shadow:none}
 .home-fault-tab b{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-inline-start:5px;padding:0 6px;border-radius:999px;background:var(--chip);font-size:11px}
 .home-fault-tab.is-active{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+.home-fault-tab.is-active b{background:transparent;color:inherit;border:1px solid currentColor}
 .home-fault-list{display:grid;gap:8px}
 .home-fault-card{display:grid;gap:4px;padding:12px 13px;border:1px solid var(--line);border-inline-start:5px solid var(--warn);border-radius:12px;background:var(--panel);color:var(--txt);text-decoration:none}
 .home-fault-card[data-severity="critical"]{border-inline-start-color:var(--bad)}

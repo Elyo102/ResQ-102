@@ -146,7 +146,9 @@ ok('רושם גם כשאין ממצאים',
    srv.indexOf("'/health/' + today") < srv.indexOf('if (!found.length) return;'));
 ok('כל בדיקה עטופה',          /async function check\(name, fn\)/.test(srv));
 ok('בדיקה שנפלה היא ממצא',    /'בדיקה נכשלה · ' \+ name/.test(srv));
-ok('בודק מצב ניסוי',          /המערכת עדיין במצב ניסוי/.test(srv));
+ok('מצב ניסוי נרשם תפעולית ואינו מסווג כתקלה',
+   /systemHealth', 'operational-mode', 'silent'/.test(srv) &&
+   !/add\('stop', 'RUNTIME_SILENT_MODE'/.test(srv));
 ok('בודק אוספים שגדלו',       /WHOLE_READ_COLS/.test(srv));
 ok('בודק גבול מסמך',          /DOC_WARN_BYTES/.test(srv));
 ok('בודק משימות ששתקו',       /nightlyScan לא רץ ביומיים/.test(srv));

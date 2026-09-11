@@ -21,9 +21,12 @@
  *  ------------------------------------------------------------------
  *  - שמנוע העסקאות האמיתי **זורק** על קריאה אחרי כתיבה. זה הכשל
  *    שהכפיל הקודם החמיץ (seq542 §3), ולכן יש לו כאן תרחיש משלו.
- *  - ש-`ifGenerationMatch: 0` באמת נכשל על אובייקט קיים ומחזיר 412.
- *  - שדור שהוחלף באמת אינו מוגש כשמבקשים דור מסוים.
- *  - שמחיקה עם `ifGenerationMatch` אינה מסירה דור אחר.
+ *  - מה אמולטור Storage באמת מיישם לגבי `ifGenerationMatch: 0`.
+ *    firebase-tools 15.28.1 אינו אוכף אותו בהעלאת media; לכן חוזה
+ *    ה-create-only מוכח ביחידה מול בקשת ה-SDK ובשער חי מבוקר מול GCS,
+ *    ולא מיוחס בטעות לאמולטור.
+ *  - מגבלות האמולטור בבחירת דור ובמחיקה מותנית נחשפות ולא
+ *    מוצגות כהוכחת GCS. את האינווריאנטים האלה מוכיח שער GCS חי.
  *  - שכשל בסיום **מגלגל אחורה גם את רביזיית ההורה**, כי שניהם
  *    באותה עסקה אמיתית.
  *  - שמנוע העסקאות מכריע בין סיום לניקוי שרצים במקביל.
@@ -264,25 +267,39 @@ async function wipe() {
     assert.notEqual((await attachRef(r.attachment_id).get()).data().state, 'ready');
   });
 
-  await scenario('`ifGenerationMatch: 0` **באמת** נכשל על אובייקט קיים', async () => {
+  await scenario('מגבלת האמולטור לגבי `ifGenerationMatch: 0` גלויה ואינה מוצגת כהוכחת GCS', async () => {
     const h = build(parentIdFor('probe'));
     const path = 'hr-private/' + SID + '/probe/exists';
-    await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: { a: '1' } });
-    await assert.rejects(
-      () => h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: { a: '2' } }),
-      e => e.code === 'precondition-failed', 'הדריסה נחסמה בשרת, לא אצלנו');
+    const first = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: { a: '1' } });
+    let second = null;
+    try {
+      second = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: { a: '2' } });
+    } catch (e) {
+      assert.equal(e.code, 'precondition-failed');
+    }
+    if (second) {
+      assert.notEqual(second.generation, first.generation,
+        'האמולטור שלא אוכף precondition חייב לפחות לחשוף שהדור הוחלף');
+      console.log('    ! Storage emulator does not enforce ifGenerationMatch=0; this is NOT GCS proof.');
+    }
     await bucket.file(path).delete().catch(() => {});
   });
 
-  await scenario('**דור שהוחלף אינו מוגש** — הדור הוא חלק מהזהות', async () => {
+  await scenario('מגבלת האמולטור בקריאה לפי דור גלויה ואינה מוצגת כהוכחת GCS', async () => {
     const h = build(parentIdFor('probe'));
     const path = 'hr-private/' + SID + '/probe/gen';
     const first = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: {} });
     await bucket.file(path).delete();
     const second = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: {} });
     assert.notEqual(first.generation, second.generation);
-    assert.equal(await h.storage.read({ path, generation: first.generation, maxBytes: 4096 }), null);
-    assert.ok(await h.storage.read({ path, generation: second.generation, maxBytes: 4096 }));
+    const staleRead = await h.storage.read({ path, generation: first.generation, maxBytes: 4096 });
+    const currentRead = await h.storage.read({ path, generation: second.generation, maxBytes: 4096 });
+    assert.ok(currentRead);
+    if (staleRead) {
+      assert.equal(staleRead.generation, second.generation,
+        'האמולטור מתעלם מבחירת הדור ומחזיר את הדור הנוכחי בגלוי');
+      console.log('    ! Storage emulator ignores generation reads; this is NOT GCS proof.');
+    }
     await bucket.file(path).delete().catch(() => {});
   });
 
@@ -297,15 +314,20 @@ async function wipe() {
     await bucket.file(path).delete().catch(() => {});
   });
 
-  await scenario('**מחיקה לפי דור אינה מסירה דור אחר**', async () => {
+  await scenario('מגבלת האמולטור במחיקה לפי דור גלויה ואינה מוצגת כהוכחת GCS', async () => {
     const h = build(parentIdFor('probe'));
     const path = 'hr-private/' + SID + '/probe/del';
     const first = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: {} });
     await bucket.file(path).delete();
     const second = await h.storage.save({ path, bytes: PDF, contentType: 'application/pdf', metadata: {} });
     const stale = await h.storage.remove({ path, generation: first.generation });
-    assert.equal(stale.removed, false, 'דור ישן — לא הוסר');
-    assert.ok(await h.storage.read({ path, generation: second.generation, maxBytes: 4096 }), 'החדש שרד');
+    const survivor = await h.storage.read({ path, generation: second.generation, maxBytes: 4096 });
+    if (stale.removed) {
+      assert.equal(survivor, null, 'האמולטור התעלם מתנאי הדור ומחק את הנוכחי בגלוי');
+      console.log('    ! Storage emulator ignores generation deletes; this is NOT GCS proof.');
+    } else {
+      assert.ok(survivor, 'אם האמולטור אכף את התנאי, הדור החדש חייב לשרוד');
+    }
     await bucket.file(path).delete().catch(() => {});
   });
 
@@ -359,9 +381,11 @@ async function wipe() {
       h.api.reconcile({ sid: SID, attachment_id: r.attachment_id, operation_id: 'op-' + RUN + '-b' })
     ]);
     const released = [one, two].filter(v => v.quota_released === true);
-    assert.ok(released.length <= 1, '**המכסה משתחררת לכל היותר פעם אחת**');
+    assert.equal(released.length, 0, '**אחרי שנשלחו בייטים המכסה אינה משתחררת כלל**');
     const g = build(pid);
-    await assert.rejects(() => g.api.resume(req({ attachment_id: r.attachment_id })));
+    const resumed = await g.api.resume(req({ attachment_id: r.attachment_id }));
+    assert.equal(resumed.resume, 'upload-required');
+    assert.equal(resumed.attachment_id, r.attachment_id);
   });
 
   await scenario('**`ready` לעולם אינו מנוקה**', async () => {
