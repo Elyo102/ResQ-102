@@ -23,7 +23,7 @@ async function scenario({report, existing, retry=false, revoke=false, entries=[e
   if (existing !== undefined) store.set(dayPath, structuredClone(existing));
   let live=true, attempts=0, commits=0;
   const manual={...entry,hours:10,notes:'manual must survive'};
-  const context=vm.createContext({recordId,db:{},stamp:x=>x,
+  const context=vm.createContext({recordId,db:{},stamp:x=>x,onOther:()=>false,
     doc:(_, ...parts)=>parts.join('/'),
     requireMonthWrite:()=>{if(!live)throw new Error('stale context');},
     runTransaction:async (_, callback)=>{
