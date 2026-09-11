@@ -9,6 +9,8 @@ const MODE_FIELDS = Object.freeze(['mode', 'expected_revision']);
 const MAX_ITEMS = 200;
 const ANALYSIS_COOLDOWN_MS = 60 * 1000;
 const HEALTH_STALE_MS = 36 * 60 * 60 * 1000;
+const OPERATIONAL_STATES = Object.freeze(['LIVE', 'SILENT', 'UNKNOWN']);
+const HEALTH_STATES = Object.freeze(['HEALTHY', 'DEGRADED', 'CRITICAL', 'UNKNOWN']);
 const CONFIG_PATH = (sid) => 'stations/' + sid + '/maintenance/config';
 
 function plain(value) {
@@ -86,7 +88,11 @@ function healthSignals(doc, nowMs) {
   const signals = rows.map((finding) => {
     const code = plain(finding) && diagnosisCore.HEALTH_CODES.includes(finding.code)
       ? finding.code : (plain(finding) ? healthCode(finding.title) : null);
-    return code ? { source:'health', code, count:1, age_minutes:age } : null;
+    // Runtime silence is an intentional operating mode, not a technical
+    // incident. Historical snapshots may still contain the old finding, but
+    // the dashboard must never count it as a fault.
+    return code && code !== 'RUNTIME_SILENT_MODE'
+      ? { source:'health', code, count:1, age_minutes:age } : null;
   }).filter(Boolean);
   if (!ranAt || nowMs - Date.parse(ranAt) > HEALTH_STALE_MS) {
     signals.push({ source:'health', code:'HEALTH_CHECK_STALE', count:1, age_minutes:age });
@@ -122,11 +128,12 @@ function createMaintenanceService(deps) {
   async function load(ctx) {
     const now = new Date(clock());
     if (!Number.isFinite(now.getTime())) throw new HttpsError('internal', 'שעון התחזוקה אינו תקין.');
-    const [cfg, incidents, healthSnap, daySnap] = await Promise.all([
+    const [cfg, incidents, healthSnap, daySnap, runtimeSnap] = await Promise.all([
       config(ctx.sid),
       incidentLog.list({ sid:ctx.sid, status:'open', limit:MAX_ITEMS }),
       db.collection('stations/' + ctx.sid + '/health').orderBy('date','desc').limit(1).get(),
-      db.doc('stations/' + ctx.sid + '/incident_days/' + now.toISOString().slice(0,10)).get()
+      db.doc('stations/' + ctx.sid + '/incident_days/' + now.toISOString().slice(0,10)).get(),
+      db.doc('config/runtime').get()
     ]);
     const latestHealth = healthSnap.empty ? null : healthSnap.docs[0];
     const health = latestHealth ? healthSignals(latestHealth, now.getTime()) : [{
@@ -165,10 +172,19 @@ function createMaintenanceService(deps) {
     items.forEach((row) => { counts[row.severity] += 1; });
     const day = daySnap.exists ? (daySnap.data() || {}) : {};
     counts.dropped = safeCount(day.count) >= DAY_CAP ? 1 : 0;
+    const runtime = runtimeSnap.exists ? (runtimeSnap.data() || {}) : null;
+    const operationalState = runtime === null ? 'UNKNOWN' : runtime.silent === true ? 'SILENT' : 'LIVE';
+    const lastHealthAt = latestHealth ? timestampIso((latestHealth.data() || {}).ran_at) : null;
+    const healthFreshness = lastHealthAt && now.getTime() - Date.parse(lastHealthAt) <= HEALTH_STALE_MS
+      ? 'FRESH' : latestHealth ? 'STALE' : 'MISSING';
+    const healthState = healthFreshness !== 'FRESH' ? 'UNKNOWN'
+      : counts.P0 > 0 ? 'CRITICAL'
+      : counts.P1 > 0 || counts.P2 > 0 ? 'DEGRADED' : 'HEALTHY';
     return {
       schema_version:1, station_id:ctx.sid, mode:cfg.mode, config_revision:cfg.revision, counts,
+      operational_state:operationalState, health_state:healthState, health_freshness:healthFreshness,
       open_count_scope:'open_within_newest_' + MAX_ITEMS + '_incidents', open_count_is_partial:true,
-      last_health_at:latestHealth ? timestampIso((latestHealth.data() || {}).ran_at) : null,
+      last_health_at:lastHealthAt,
       analysis_kind:'deterministic', diagnosis_fingerprint:diagnosis.fingerprint, items
     };
   }
@@ -213,5 +229,5 @@ function createMaintenanceService(deps) {
 
 module.exports = Object.freeze({
   createMaintenanceService, MODES, MAX_ITEMS, ANALYSIS_COOLDOWN_MS, HEALTH_STALE_MS,
-  incidentSignal, healthCode, healthSignals, timestampIso, titleCode
+  OPERATIONAL_STATES, HEALTH_STATES, incidentSignal, healthCode, healthSignals, timestampIso, titleCode
 });

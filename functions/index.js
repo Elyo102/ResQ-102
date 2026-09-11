@@ -5250,10 +5250,8 @@ exports.systemHealth = onSchedule({
       }
     } catch (ignore) {}
 
-    add('stop', 'RUNTIME_SILENT_MODE', 'המערכת עדיין במצב ניסוי',
-        'אף התראה, מייל או קריאת פתע אינם מגיעים לאף אחד חוץ ממך' +
-        (days === null ? '.' : ', כבר ' + days + ' ימים.') +
-        ' המתג נמצא במסך הקליטה.');
+    console.log('systemHealth', 'operational-mode', 'silent',
+      days === null ? 'age-unknown' : 'days-' + days);
   });
 
   // ---------- 2. אוספים שנקראים שלמים ----------

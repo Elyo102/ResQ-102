@@ -15,8 +15,17 @@
     <div><h1 class="maintenance-title">מרכז תחזוקה חכם</h1><p class="maintenance-sub">המערכת מזהה תקלות טכניות, מאחדת כפילויות ומציעה דרך טיפול. היא אינה משנה סידור, שעות, הרשאות או נתוני עובדים.</p></div>
     <div class="maintenance-toolbar"><span id="modeBadge" class="maintenance-mode">טוען…</span><button id="btnMode" type="button">—</button><button id="btnRefresh" type="button">רענון</button><button id="btnAnalyze" class="primary" type="button">אבחן עכשיו</button></div>
   </div>
+  <section class="maintenance-card" aria-labelledby="overviewTitle">
+    <h2 id="overviewTitle" class="maintenance-section-title">תמונת מצב ברורה</h2>
+    <div class="maintenance-overview">
+      <div class="maintenance-status" id="operationalCard"><span>מצב הפעלה</span><strong id="operationalState">טוען…</strong><small>האם הודעות ותהליכים פעילים כעת</small></div>
+      <div class="maintenance-status" id="healthCard"><span>בריאות טכנית</span><strong id="healthState">טוען…</strong><small>תקלות אמיתיות שדורשות טיפול</small></div>
+      <div class="maintenance-status" id="freshnessCard"><span>עדכניות הבדיקה</span><strong id="freshnessState">טוען…</strong><small>מתי התקבלה ראיית בריאות אחרונה</small></div>
+    </div>
+    <p class="maintenance-sub">מצב ניסוי או השתקה מוצג כמצב הפעלה בלבד ואינו נספר כתקלה.</p>
+  </section>
   <section class="maintenance-card" aria-labelledby="statusTitle">
-    <h2 id="statusTitle" class="maintenance-section-title">מצב המערכת</h2>
+    <h2 id="statusTitle" class="maintenance-section-title">תקלות טכניות</h2>
     <div class="maintenance-grid">
       <div class="maintenance-kpi bad"><strong id="p0">0</strong><span>תקלות P0</span></div>
       <div class="maintenance-kpi bad"><strong id="p1">0</strong><span>תקלות P1</span></div>
@@ -48,7 +57,7 @@ const app=initializeApp(firebaseConfig); await initAppCheck(app);
 const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
 let identity=null, epoch=0;
 renderStuckNav(''); initPWA({offer:false});
-const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList')};
+const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList'),operationalState:$('operationalState'),healthState:$('healthState'),freshnessState:$('freshnessState'),operationalCard:$('operationalCard'),healthCard:$('healthCard'),freshnessCard:$('freshnessCard')};
 const ui=createMaintenanceUi({
   elements,
   currentIdentity:()=>identity,

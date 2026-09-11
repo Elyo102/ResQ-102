@@ -84,15 +84,33 @@ function timestamp(iso) { return { toDate:() => new Date(iso) }; }
     assert.ok(dto.items.some((item) => item.id === 'health:MAIL_DELIVERY_FAILURES'));
     assert.ok(!dto.items.some((item) => item.id === 'health:HEALTH_CHECK_STALE'));
   });
-  await check('runtime silent and snapshot drops remain distinct P0 health findings', async () => {
-    const f = fixture({ healthDocs:[{ ran_at:timestamp('2026-09-10T03:00:00.000Z'), findings:[
+  await check('runtime silence is an operating state and never a technical finding', async () => {
+    const f = fixture({ rows:{ 'config/runtime':{ silent:true } }, healthDocs:[{ ran_at:timestamp('2026-09-10T03:00:00.000Z'), findings:[
       { code:'RUNTIME_SILENT_MODE' }, { code:'SNAPSHOT_DATA_LOSS' }
     ] }] });
     const dto = await f.service.getDashboard(f.request());
-    for (const code of ['RUNTIME_SILENT_MODE','SNAPSHOT_DATA_LOSS']) {
-      const item = dto.items.find((row) => row.id === 'health:' + code);
-      assert.equal(item.severity, 'P0');
-    }
+    assert.equal(dto.operational_state, 'SILENT');
+    assert.equal(dto.health_state, 'CRITICAL');
+    assert.equal(dto.health_freshness, 'FRESH');
+    assert.equal(dto.items.some((row) => row.id === 'health:RUNTIME_SILENT_MODE'), false);
+    assert.equal(dto.items.find((row) => row.id === 'health:SNAPSHOT_DATA_LOSS').severity, 'P0');
+  });
+  await check('fresh clean health stays healthy while runtime is live', async () => {
+    const f = fixture({ rows:{ 'config/runtime':{ silent:false } }, healthDocs:[{
+      ran_at:timestamp('2026-09-10T03:00:00.000Z'), findings:[]
+    }] });
+    const dto = await f.service.getDashboard(f.request());
+    assert.equal(dto.operational_state, 'LIVE');
+    assert.equal(dto.health_state, 'HEALTHY');
+    assert.equal(dto.health_freshness, 'FRESH');
+    assert.equal(dto.counts.P0, 0);
+  });
+  await check('missing health evidence is unknown rather than healthy', async () => {
+    const f = fixture({ rows:{ 'config/runtime':{ silent:false } } });
+    const dto = await f.service.getDashboard(f.request());
+    assert.equal(dto.operational_state, 'LIVE');
+    assert.equal(dto.health_state, 'UNKNOWN');
+    assert.equal(dto.health_freshness, 'MISSING');
   });
   await check('same incident code sums counts instead of keeping the maximum', async () => {
     const incident = (count) => ({ code:'functions/unavailable', kind:'callable-failed', count,

@@ -305,10 +305,8 @@ function createFirestoreHealthPorts(deps) {
   async function scanGlobal({ cycle_id: cycleId, lease_token: token, deadline_ms: deadlineMs }) {
     const now = new Date(clock());
     const found = [];
-    const runtime = await db.doc('config/runtime').get();
-    if (runtime.exists && (runtime.data() || {}).silent === true) {
-      found.push(finding('stop', 'RUNTIME_SILENT_MODE', 'המערכת עדיין במצב ניסוי', 'השתקה ארגונית פעילה.'));
-    }
+    // Runtime silence is carried separately on every station report. It is an
+    // intentional operating state and must not enter the incident findings.
     const mail = await db.collection('mail_failures').where('at', '>=', new Date(now.getTime() - 86400000)).limit(50).get();
     if (!mail.empty) found.push(finding('warn', 'MAIL_DELIVERY_FAILURES', mail.size + ' מיילים נכשלו ביממה האחרונה',
       'הפרטים האישיים נשארו ברשומת המקור ואינם מועתקים לדוח התחנות.'));
