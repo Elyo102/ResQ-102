@@ -46,6 +46,14 @@ function policy(path, scope, classification, monitorPolicy, backupPolicy,
 }
 
 const DATA_POLICIES = Object.freeze([
+  policy('system_health_cycles/{cycleId}', 'root', 'derived',
+    'activity', 'exclude', 'do_not_restore', 'operational', 'ttl_30_days',
+    'Durable lease, inventory and summary for the rebuildable watchdog shadow cycle.',
+    { humanReadable:'redacted' }),
+  policy('system_health_cycles/{cycleId}/system_health_reports/{stationId}', 'root', 'derived',
+    'none', 'exclude', 'do_not_restore', 'operational', 'ttl_30_days',
+    'Deterministic per-station shadow report; rebuildable from source checks.',
+    { humanReadable:'redacted' }),
   // Server-only operational reporting. This policy classifies data; it does
   // not enable a managed backup, export, scheduler or paid retention service.
   policy('stations/{sid}/maintenance/config', 'station', 'source_of_truth',
@@ -444,6 +452,10 @@ const DATA_POLICIES = Object.freeze([
   policy('stations/{sid}/health/{dateId}', 'station', 'derived', 'activity',
     'rebuild', 'rebuild', 'confidential', 'rebuild_not_retain',
     'Generated health status can be rebuilt from source checks.',
+    { humanReadable:'redacted' }),
+  policy('stations/{sid}/health_shadow/{dateId}', 'station', 'derived', 'activity',
+    'exclude', 'do_not_restore', 'confidential', 'ttl_30_days',
+    'Candidate multi-station health output retained only for parity validation.',
     { humanReadable:'redacted' }),
   policy('stations/{sid}/scans/{monthKey}', 'station', 'derived', 'activity',
     'rebuild', 'rebuild', 'restricted_identity', 'rebuild_not_retain',

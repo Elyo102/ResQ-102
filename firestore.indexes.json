@@ -604,6 +604,24 @@
       "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "system_health_cycles",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "system_health_reports",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "health_shadow",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

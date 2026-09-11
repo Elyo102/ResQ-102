@@ -561,6 +561,19 @@ ok('6.26 השער מפיל recheck חסר של origin/main לפני merge',
 ok('6.27 השער מפיל rollback שעוצר אחרי הכשל הראשון',
   !analyseReleaseDoc(doc.replace("} catch { $resqRollbackFailures.Add('Functions: ' + $_.Exception.Message) }", "} catch { throw }")).rollbackAttemptsAllLayers);
 
+ok('6.28 מסמך הפריסה מחייב parity מקומי לפני push לענף הציבורי',
+  doc.includes('npm --prefix tests run pages:artifact -- "$resqDeployDir" "$resqPagesDir"') &&
+  doc.includes('HEAD:refs/heads/codex/pages-public-42h7'));
+ok('6.29 מסמך הפריסה מחייב אימות HTTP חי אחרי שני המארחים',
+  doc.includes('npm --prefix tests run pages:live -- "$resqDeployDir"') &&
+  /חלון התכנסות מוגבל של עשר[\s\S]{0,120}30 שניות/.test(doc));
+ok('6.30 rollback של Pages הוא commit קדימה ללא force-push',
+  /החזרה[\s\S]{0,180}commit חדש[\s\S]{0,180}fast-forward/.test(doc) &&
+  /אין force-push/.test(doc));
+ok('6.31 סקריפטי parity מחווטים לפקודות המדויקות',
+  scripts['pages:artifact'] === 'node pages-parity-gate.mjs' &&
+  scripts['pages:live'] === 'node pages-live-parity.mjs');
+
 /* ==================================================================
  * סיכום
  * ================================================================== */

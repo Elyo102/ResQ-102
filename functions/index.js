@@ -33,6 +33,8 @@ const stationTransferModule = require('./station-transfer');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
 const maintenanceServiceModule = require('./maintenance-service');
+const systemHealthServiceModule = require('./system-health-service');
+const systemHealthFirestoreModule = require('./system-health-firestore');
 const hrHoursModule = require('./hr-hours-service');
 const hrRequestsModule = require('./hr-requests');
 const hrDocumentsModule = require('./hr-documents');
@@ -4154,7 +4156,7 @@ exports.sendBroadcast = onCall(
 // מייבא מודולים של הדפדפן — שינוי בשם צריך להיעשות בשניהם.
 const FAULT_KIND_HE = {
   vehicle: 'תקלת רכב', damage: 'פגיעה ברכב', gear: 'תקלת ציוד',
-  building: 'תקלת מבנה', task_st: 'משימת תחזוקת תחנה',
+  building: 'תקלת בינוי ותחזוקה', task_st: 'משימת תחזוקת תחנה',
   task_eq: 'משימת תחזוקת ציוד', note: 'מסר'
 };
 function kindHeS(k) { return FAULT_KIND_HE[k] || 'תקלה'; }
@@ -5397,6 +5399,49 @@ exports.systemHealth = onSchedule({
     'המייל הזה נשלח רק כשיש ממצא. יום בלי מייל הוא יום תקין.</div>' +
     button(CONSOLE_URL, 'לקונסולה')
   ));
+});
+
+// =======================================================================
+//  כלב שמירה רב-תחנתי · 42H.12 · OBSERVE בלבד
+// =======================================================================
+// המנגנון הישן נשאר פעיל. הגרסה הזו כותבת רק ל-health_shadow ואינה
+// שולחת הודעות או משנה נתוני מוצר. הפעלה דורשת במפורש:
+// config/system_health_v2 { mode: 'OBSERVE' }.
+const systemHealthV2Ports = systemHealthFirestoreModule.createFirestoreHealthPorts({
+  db: db,
+  FieldValue: FV,
+  FieldPath: admin.firestore.FieldPath,
+  clock: function () { return Date.now(); },
+  randomId: function () { return crypto.randomUUID().replace(/-/g, ''); },
+  builtins: BUILTIN_TRANSFER_STATIONS,
+  knownDistricts: KNOWN_DISTRICTS,
+  activeIndex: identityCoordinatorModule.activeIndex
+});
+const systemHealthV2Service = systemHealthServiceModule.createSystemHealthService(Object.assign({
+  clock: function () { return Date.now(); }
+}, systemHealthV2Ports));
+
+exports.systemHealthV2 = onSchedule({
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  schedule: '15 6 * * *',
+  timeZone: 'Asia/Jerusalem',
+  region: 'europe-west1',
+  maxInstances: 1,
+  retryCount: 2,
+  minBackoffSeconds: 60
+}, async (event) => {
+  const config = await db.doc('config/system_health_v2').get();
+  const mode = config.exists ? String((config.data() || {}).mode || 'OFF') : 'OFF';
+  if (mode !== 'OBSERVE') {
+    console.log('systemHealthV2', 'OFF');
+    return { skipped: true, mode: 'OFF' };
+  }
+  const scheduled = String(event && event.scheduleTime || event && event.id || new Date().toISOString().slice(0, 10));
+  const runId = 'health_' + crypto.createHash('sha256').update(scheduled).digest('hex').slice(0, 32);
+  const result = await systemHealthV2Service.run({ run_id: runId, deadline_ms: Date.now() + 535000 });
+  console.log('systemHealthV2', runId, result.verdict, result.reported || 0, result.total || 0);
+  return result;
 });
 
 

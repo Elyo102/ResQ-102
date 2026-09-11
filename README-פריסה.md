@@ -377,6 +377,40 @@ if ($resqRollbackFailures.Count -gt 0) {
 
 ---
 
+## 3.1 · סנכרון אפליקציית GitHub Pages
+
+האפליקציה המותקנת אצל חלק מהמשתמשים נטענת גם מן הענף הציבורי
+`codex/pages-public-42h7`. לכן שחרור Hosting אינו שלם עד ששני המארחים
+מציגים את אותו manifest ציבורי. מכינים worktree מבודד של הענף הציבורי,
+מעתיקים אליו **רק** את קובצי `.firebase/hosting..cache` ואת הקובץ הריק
+`.nojekyll`, ואז מריצים לפני commit או push:
+
+```powershell
+npm --prefix tests run pages:artifact -- "$resqDeployDir" "$resqPagesDir"
+```
+
+השער נכשל על קובץ חסר, עודף או שונה, על קובץ פרטי, ועל קישור או
+`.nojekyll` שאינו קובץ ריק. רק אחרי PASS, ואחרי אישור ייצור שמציין במפורש
+גם את פעולת ה-push ואת ה-SHA הציבורי, דוחפים fast-forward בלבד:
+
+```powershell
+git -C "$resqPagesDir" push origin HEAD:refs/heads/codex/pages-public-42h7
+```
+
+אחרי ש-Firebase Hosting וגם GitHub Pages פורסמו, מריצים בדיקת HTTP חיה:
+
+```powershell
+npm --prefix tests run pages:live -- "$resqDeployDir"
+```
+
+Firebase חייב להתאים מיד. GitHub Pages מקבל חלון התכנסות מוגבל של עשר
+דקות ונבדק מחדש כל 30 שניות; אחרי החלון אי-התאמה היא כשל שחרור. החזרה
+לאחור של Pages נעשית ב-commit חדש שמחזיר את עץ הנכסים הציבורי הקודם
+וב-push fast-forward; אין force-push ואין חיבור היסטוריית `main` לענף
+הציבורי.
+
+---
+
 ## 4 · האישור החד-פעמי לייצור
 
 **פריסה אינה מתבצעת על סמך „הבדיקות ירוקות".** לפני כל פריסה נדרש
