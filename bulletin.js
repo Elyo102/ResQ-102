@@ -4,10 +4,11 @@
 // ובחלון של 30 הודעות. כתיבה והסתרה אינן נעשות מהדפדפן: הן
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
-import { subStationAvailable } from './stations.js?v=42h15';
+import { subStationAvailable } from './stations.js?v=42h16';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
+const HOME_VISIBLE_MESSAGES = 3;
 const REPLY_PAGE_SIZE = 20;
 const MAX_TEXT = 2000;
 const MAX_REPLY_TEXT = 1000;
@@ -986,14 +987,23 @@ function renderFeed(preferredFocus) {
   const feed = byId('bulletinFeed');
   const focus = preferredFocus || feedFocusSnapshot(feed);
   const messages = mergedMessages();
+  const visibleMessages = state.feedExpanded
+    ? messages : messages.slice(0, HOME_VISIBLE_MESSAGES);
   feed.replaceChildren();
-  messages.forEach(function (item) { feed.appendChild(renderMessage(item)); });
+  visibleMessages.forEach(function (item) { feed.appendChild(renderMessage(item)); });
   feed.setAttribute('aria-busy', 'false');
 
   const empty = byId('bulletinEmpty');
   empty.classList.toggle('hide', messages.length !== 0);
+  const toggle = byId('bulletinFeedToggle');
+  const hiddenCount = Math.max(0, messages.length - HOME_VISIBLE_MESSAGES);
+  toggle.classList.toggle('hide', hiddenCount === 0);
+  toggle.setAttribute('aria-expanded', state.feedExpanded ? 'true' : 'false');
+  toggle.textContent = state.feedExpanded
+    ? 'הצג רק את העדכונים האחרונים'
+    : 'הצג עוד ' + hiddenCount + ' עדכונים';
   const more = byId('bulletinLoadMore');
-  more.classList.toggle('hide', messages.length === 0 || !state.hasMore);
+  more.classList.toggle('hide', messages.length === 0 || !state.hasMore || !state.feedExpanded);
   restoreFeedFocus(feed, focus);
 
   if (state.lastLoadFromCache || navigator.onLine === false) {
@@ -1013,13 +1023,19 @@ function readMarker(boardId) {
 function scheduleMarkRead() {
   clearTimeout(state.readTimer);
   if (document.visibilityState === 'hidden' || !state.activeBoard) return;
+  const messages = mergedMessages();
+  // סימון זמן יחיד אינו יכול לייצג "קראתי את 3 החדשות אבל לא
+  // את 4–30". לכן פיד מקוצר נשאר לא-נקרא עד שהמשתמש פותח
+  // את הרשימה; עדיף חיווי שמרני על אישור קריאה שקרי.
+  if (!state.feedExpanded && messages.length > HOME_VISIBLE_MESSAGES) return;
   const boardId = state.activeBoard;
   const owner = state;
-  const newest = newestBulletinTime(mergedMessages());
+  const newest = newestBulletinTime(messages);
   if (!newest) return;
 
   state.readTimer = setTimeout(function () {
     if (state !== owner || state.activeBoard !== boardId || document.visibilityState === 'hidden') return;
+    if (!state.feedExpanded && mergedMessages().length > HOME_VISIBLE_MESSAGES) return;
     safeWrite(readStorageKey(state.user.uid, state.stationId, boardId), String(newest));
     state.unread[boardId] = 0;
     renderTabs();
@@ -1179,6 +1195,7 @@ function selectBoard(boardId, force) {
   clearTimeout(state.readTimer);
   state.generation++;
   state.activeBoard = boardId;
+  state.feedExpanded = false;
   state.liveDocs = [];
   state.olderDocs = [];
   state.hasMore = false;
@@ -1492,6 +1509,17 @@ function wireEvents() {
     subscribeToActive(true);
   }, { signal: signal });
   byId('bulletinLoadMore').addEventListener('click', loadOlder, { signal: signal });
+  byId('bulletinFeedToggle').addEventListener('click', function () {
+    const willExpand = !state.feedExpanded;
+    if (!willExpand && state.replyThread) {
+      stopReplyListener();
+      state.replyThread = null;
+    }
+    if (!willExpand) clearTimeout(state.readTimer);
+    state.feedExpanded = willExpand;
+    renderFeed();
+    if (willExpand) scheduleMarkRead();
+  }, { signal: signal });
   document.addEventListener('visibilitychange', handleVisibility, { signal: signal });
   window.addEventListener('pagehide', function () {
     stopListener();
@@ -1556,6 +1584,7 @@ export function initBulletin(options) {
     readTimer: 0,
     hasMore: false,
     loadingOlder: false,
+    feedExpanded: false,
     lastLoadFromCache: false,
     draftRequestId: '',
     attemptedFingerprint: '',
@@ -1588,6 +1617,8 @@ export function initBulletin(options) {
     'עדיין אין הודעות בלוח הזה. אפשר להיות הראשון שמעדכן את המשמרת.';
   byId('bulletinEmpty').classList.add('hide');
   byId('bulletinLoadMore').classList.add('hide');
+  byId('bulletinFeedToggle').classList.add('hide');
+  byId('bulletinFeedToggle').setAttribute('aria-expanded', 'false');
   byId('bulletinRetry').classList.add('hide');
   byId('bulletinAudience').classList.toggle('hide', !state.canShiftCommand);
   setAudience('board', true);

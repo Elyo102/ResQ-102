@@ -1,4 +1,4 @@
-import { exportLocalFiles } from './hr-local-export.js?v=42h15';
+import { exportLocalFiles } from './hr-local-export.js?v=42h16';
 
 // Deliberately not mounted by any existing page. Adapter must provide freshly
 // authorized bytes; this UI is not a server authorization boundary.
