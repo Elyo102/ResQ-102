@@ -94,7 +94,9 @@ for (const mutation of mutations) {
     cpSync(join(root, 'functions', file), join(dir, file));
   }
   const target = join(dir, mutation.file);
-  const source = readFileSync(target, 'utf8');
+  // Git may materialize this worktree with CRLF on Windows. Mutation anchors
+  // describe JavaScript semantics and must not depend on checkout EOL policy.
+  const source = readFileSync(target, 'utf8').replace(/\r\n?/g, '\n');
   assert.equal(source.includes(mutation.from), true, mutation.name + ': mutation anchor missing');
   writeFileSync(target, source.replace(mutation.from, mutation.to));
   const result = spawnSync(process.execPath, ['-e', mutation.probe], { cwd:dir, encoding:'utf8' });
