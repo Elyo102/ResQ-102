@@ -1681,7 +1681,6 @@ try {
     });
     await sheetPage.locator('#importFileStatus').filter({ hasText:'schedule.csv' }).waitFor();
     assert.equal(await sheetPage.inputValue('#importPaste'), '');
-    await sheetPage.locator('#importCheck').click();
     await sheetPage.locator('#importMessage .ok').waitFor();
     const previews = (await sheetPage.evaluate(() => window.__CALLABLE_CALLS))
       .filter((entry) => entry.name === 'previewScheduleImport');
@@ -1696,7 +1695,6 @@ try {
       name:'schedule-conflict.csv', mimeType:'text/csv',
       buffer:Buffer.from(',1/9,2/9,3/9\r\nאילת,א,ב,ג\r\n', 'utf8')
     });
-    await sheetPage.locator('#importCheck').click();
     await sheetPage.locator('#importMessage .warn').waitFor();
     assert.match(await sheetPage.locator('#importMessage').textContent(), /גם בשיבוץ וגם בהיעדרות/);
     const conflictText = await sheetPage.locator('#importDuplicates').textContent();
@@ -1830,7 +1828,6 @@ try {
       buffer:Buffer.from('stub-xlsx')
     });
     await xlsxPage.locator('#importFileStatus').filter({ hasText:'schedule.xlsx' }).waitFor();
-    await xlsxPage.locator('#importCheck').click();
     await xlsxPage.locator('#importMessage .ok').waitFor();
     await xlsxPage.locator('#importRun').click();
     await xlsxPage.locator('#previewMessage .ok').waitFor();
@@ -1906,7 +1903,6 @@ try {
       name:'off-board.csv', mimeType:'text/csv', buffer:Buffer.from(csv, 'utf8')
     });
     await offImportPage.locator('#importFileStatus').filter({ hasText:'off-board.csv' }).waitFor();
-    await offImportPage.locator('#importCheck').click();
     await offImportPage.locator('#importMessage .ok').waitFor();
     assert.equal(await offImportPage.locator('#importRun').isEnabled(), true);
     await offImportPage.locator('#importRun').click();

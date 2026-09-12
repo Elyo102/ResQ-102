@@ -120,6 +120,13 @@ try {
   loginPage.on('pageerror', e => loginErrors.push(e.message));
   await loginPage.goto('http://localhost:' + port + '/login.html', { waitUntil:'load' });
   await loginPage.locator('#authView').waitFor({ state:'visible', timeout:8000 });
+  const creatorCredit = loginPage.locator('#authView .login-credit');
+  check(await creatorCredit.count() === 1, 'קרדיט הפיתוח מופיע פעם אחת בלבד במסך הכניסה');
+  check((await creatorCredit.textContent()).trim() === 'פיתוח וייצור: אלדד יונה',
+    'קרדיט הפיתוח נושא את הנוסח המאושר');
+  check(await creatorCredit.isVisible(), 'קרדיט הפיתוח גלוי לפני התחברות');
+  check(await creatorCredit.getAttribute('tabindex') === null,
+    'קרדיט הפיתוח אינו מוסיף תחנת מקלדת');
   await loginPage.evaluate(() => {
     window.__LOGIN_MOTION = [];
     const auth = document.getElementById('authView');
@@ -141,6 +148,7 @@ try {
   await loginPage.locator('#loginPass').fill('123456');
   await loginPage.locator('#btnLogin').click();
   await loginPage.locator('#bulletinBoard').waitFor({ state:'visible', timeout:10000 });
+  check(!(await creatorCredit.isVisible()), 'קרדיט הפיתוח אינו מוצג בתוך מסך הבית לאחר התחברות');
   const motion = await loginPage.evaluate(() => window.__LOGIN_MOTION || []);
   const seconds = value => String(value || '').split(',').some(part => parseFloat(part) > 0);
   check(motion.length >= 2, 'המעבר החליף מצבים בין הכניסה ללוח');

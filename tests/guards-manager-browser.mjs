@@ -121,6 +121,10 @@ assert.doesNotMatch(source, /assignGuard/,
   'the browser must not retain the legacy assignment callable');
 assert.doesNotMatch(source, /grab\('guards'/,
   'the browser must not fall back to a raw guards collection read');
+assert.match(source, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/,
+  'the three-field mobile row must allow every column to shrink evenly');
+assert.match(source, /\.row3\s*>\s*div\s*\{\s*min-width:0/,
+  'intrinsic input width must not stretch one mobile column');
 
 let passed = 0;
 async function test(name, fn) {
@@ -462,6 +466,45 @@ await test('an ordinary firefighter without an appointment sees guards but no ma
     assert.equal(await mobilePage.locator('#dlgSave').isVisible(), true);
   });
   await mobile.close();
+
+  for (const width of [320, 375, 390]) {
+    const narrow = await browser.newContext({ viewport:{ width, height:844 }, locale:'he-IL' });
+    await prepare(narrow, 'firefighter', {
+      getGuardManagementStatus:[{ data:{ guard_manager:true } }]
+    });
+    const narrowPage = await narrow.newPage();
+    await open(narrowPage);
+
+    await test('the three guard fields stay equal and inside a ' + width + 'px viewport', async () => {
+      async function geometry(selector) {
+        return narrowPage.locator(selector).evaluate((row) => {
+          const boxes = Array.from(row.children, (node) => node.getBoundingClientRect());
+          const widths = boxes.map((box) => Math.round(box.width * 10) / 10);
+          const rowBox = row.getBoundingClientRect();
+          return {
+            widths,
+            equal:Math.max(...widths) - Math.min(...widths) <= 0.5,
+            inside:rowBox.left >= 0 && rowBox.right <= window.innerWidth &&
+              row.scrollWidth <= row.clientWidth
+          };
+        });
+      }
+      const creation = await geometry('#newCard .row3');
+      assert.equal(creation.equal, true, 'creation columns have equal width');
+      assert.equal(creation.inside, true, 'creation row does not overflow');
+
+      const card = narrowPage.locator('#openList .g', { hasText:'הופעה בפארק' });
+      await card.getByRole('button', { name:'ערוך' }).click();
+      await narrowPage.locator('#eSlots').waitFor();
+      const editing = await geometry('#dlg .row3');
+      assert.equal(editing.equal, true, 'editing columns have equal width');
+      assert.equal(editing.inside, true, 'editing row does not overflow');
+      assert.deepEqual(await narrowPage.locator('#dlg .row3 input').evaluateAll((inputs) =>
+        inputs.map((input) => input.id)), ['eStart', 'eEnd', 'eSlots'],
+      'keyboard order remains start, end, people');
+    });
+    await narrow.close();
+  }
 
   const conflict = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(conflict, 'firefighter', {

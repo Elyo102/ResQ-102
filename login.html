@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h14">
-<link rel="stylesheet" href="./bulletin.css?v=42h14">
+<link rel="stylesheet" href="./theme.css?v=42h15">
+<link rel="stylesheet" href="./bulletin.css?v=42h15">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -74,6 +74,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.info{display:block;background:var(--chip);color:var(--dim)}
   .hide{display:none !important}
   .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .login-credit{margin:18px 0 0;text-align:center;color:var(--muted);font-size:12px;font-weight:400;line-height:1.5}
   .profile{text-align:center;line-height:2}
   .profile .big{font-size:19px;font-weight:600}
   .profile .row{color:var(--muted);font-size:14px}
@@ -171,6 +172,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body.art .tab{ border-color:rgba(255,255,255,.18); color:#dbe4ee }
   body.art .tab.on{ color:#fff }
   body.art .link{ color:#dbe4ee }
+  body.art .login-credit{ color:#cbd5e1 }
   body.art #btnLogin, body.art #btnFirst{ box-shadow:0 6px 18px rgba(232,89,12,.42) }
 
   /* מי שביקש פחות תנועה מקבל את המסך מיד. */
@@ -317,6 +319,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="msg" id="msg" aria-live="polite"></div>
+    <p class="login-credit">פיתוח וייצור: אלדד יונה</p>
   </div>
 
   <!-- ============ ממתין לאישור ============ -->
@@ -472,17 +475,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h14';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h15';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h14';
+         subStationsForStation } from './stations.js?v=42h15';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h14';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h14';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h14';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h14';
-import { watchCallouts } from './callout.js?v=42h14';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h14';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h14';
+  from './nav.js?v=42h15';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h15';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h15';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h15';
+import { watchCallouts } from './callout.js?v=42h15';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h15';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h15';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -493,11 +496,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h14';
+  from './monitored-functions.js?v=42h15';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h14';
+import { initAppCheck } from './appcheck.js?v=42h15';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

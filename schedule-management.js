@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=42h14';
-import { renderNav, renderStuckNav } from './nav.js?v=42h14';
-import { initPWA } from './pwa.js?v=42h14';
-import { initAppCheck } from './appcheck.js?v=42h14';
-import { readScheduleFile } from './schedule-file-import.js?v=42h14';
+import { firebaseConfig } from './firebase-config.js?v=42h15';
+import { renderNav, renderStuckNav } from './nav.js?v=42h15';
+import { initPWA } from './pwa.js?v=42h15';
+import { initAppCheck } from './appcheck.js?v=42h15';
+import { readScheduleFile } from './schedule-file-import.js?v=42h15';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h14';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h15';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -3813,7 +3813,7 @@ async function loadImportFile(file) {
   if (!file) {
     $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
     invalidateImportReport();
-    return;
+    return false;
   }
   $('importFileStatus').textContent = 'קורא את הקובץ…';
   try {
@@ -3831,6 +3831,7 @@ async function loadImportFile(file) {
       + (result.month ? ' · ' + result.month : '')
       + ' · ' + result.matrix.length + ' שורות · נקרא מקומית';
     message('importMessage', 'הקובץ נקרא. לחץ/י על „בדוק תצוגה מקדימה" כדי לראות מה ייובא.', 'info');
+    return true;
   } catch (error) {
     if (!authTaskCurrent(task) || state.importSelectedFile !== file) return;
     $('importFile').value = '';
@@ -3838,12 +3839,20 @@ async function loadImportFile(file) {
     state.importLabelSpans = null;
     $('importFileStatus').textContent = 'הקובץ לא נקרא.';
     message('importMessage', errorText(error), 'err');
+    return false;
   }
-  invalidateImportReport();
 }
 $('importFile').addEventListener('change', async () => {
   const file = $('importFile').files && $('importFile').files[0];
-  await loadImportFile(file);
+  const loaded = await loadImportFile(file);
+  invalidateImportReport();
+  // בחירת קובץ היא תחילת אשף הייבוא, לא סוף שקט. מיד לאחר הקריאה
+  // המקומית מריצים את בדיקת התצוגה ומציגים לאחראי הסידור את הטיוטה
+  // או את החסם המדויק שעליו לטפל. שום דבר עדיין אינו מתפרסם.
+  if (loaded && state.importSelectedFile === file && canManageSchedule()) {
+    await checkImport();
+    if (!$('importReport').hidden) $('importReport').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  }
 });
 $('importMonth').addEventListener('change', async () => {
   const task = authTask();

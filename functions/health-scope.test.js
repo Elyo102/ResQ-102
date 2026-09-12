@@ -46,7 +46,7 @@ test('inventory equality is exact, fingerprint is not authoritative', () => {
 
 test('invalid and terminal cursors fail closed', () => {
   const cycle = scope.openCycle({ run_id: 'run_20260911_0007', stations });
-  assert.throws(() => scope.planPage(cycle, { stations_now: stations, budget_ms: 10, per_station_ms: 1, cursor: 'z' }), /cursor/);
+  assert.throws(() => scope.planPage(cycle, { stations_now: stations, budget_ms: 10, per_station_ms: 1, cursor: 'outside' }), /cycle inventory/);
   assert.throws(() => scope.planPage(cycle, { stations_now: stations, budget_ms: 10, per_station_ms: 1, cursor: 'gamma' }), /continuation/);
 });
 
@@ -65,6 +65,7 @@ test('silence is refreshed for every page and global wins', () => {
   assert.equal(page.scan[0].silent, true);
   assert.equal(page.scan[0].silence_reason, 'station');
   page = scope.planPage(cycle, { stations_now: stations, global_silent: true, budget_ms: 1, per_station_ms: 1 });
+  assert.equal(page.scan[0].silent, true);
   assert.equal(page.scan[0].silence_reason, 'global');
 });
 

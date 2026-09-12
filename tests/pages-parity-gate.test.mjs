@@ -52,11 +52,11 @@ try {
   assert.equal(comparePublicTrees(source, pages, APPROVED).nojekyll_valid, false);
   fs.writeFileSync(path.join(pages, '.nojekyll'), '');
 
-  write(source, 'firebase.emulator.42h14laug.json', '{}');
+  write(source, 'firebase.emulator.42h15laug.json', '{}');
   fs.appendFileSync(path.join(source, '.firebase', 'hosting..cache'),
-    '\nfirebase.emulator.42h14laug.json,private-hash');
+    '\nfirebase.emulator.42h15laug.json,private-hash');
   assert.throws(() => hostingManifest(source, APPROVED), /non-public path/);
-  fs.rmSync(path.join(source, 'firebase.emulator.42h14laug.json'));
+  fs.rmSync(path.join(source, 'firebase.emulator.42h15laug.json'));
   fs.writeFileSync(path.join(source, '.firebase', 'hosting..cache'), [
     'index.html,hash-a', 'app.js,hash-b', 'vehicle-41/front.jpg,hash-c'
   ].join('\n'));
