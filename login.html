@@ -342,6 +342,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <!-- ============ מסך ראשי ============ -->
   <div id="homeView" class="hide">
+    <header class="home-command-header" aria-labelledby="homeCommandTitle">
+      <div class="home-command-brand" aria-hidden="true"><b>Res<span>Q</span></b><small>102</small></div>
+      <div>
+        <h2 id="homeCommandTitle">כל מה שחשוב בתחנה, במקום אחד</h2>
+        <p>הודעות ועדכונים לפני תחילת המשמרת, ואחריהם התקלות הפתוחות שחשוב להכיר.</p>
+      </div>
+    </header>
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
       <section class="home-panel home-updates" aria-labelledby="homeUpdatesTitle">
