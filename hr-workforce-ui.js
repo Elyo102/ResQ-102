@@ -86,7 +86,7 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
     q('save').disabled = !signed || busy || !chosen;
     q('tab-absence').setAttribute('aria-pressed', String(filter === 'long_absence'));
     q('tab-abroad').setAttribute('aria-pressed', String(filter === 'abroad_leave'));
-    q('tab-due').setAttribute('aria-pressed', String(filter === 'due'));
+    q('tab-due').setAttribute('aria-pressed', String(filter === 'reminders'));
   }
 
   function editCase(item) {
@@ -103,7 +103,10 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
 
   function render() {
     const list = q('list'); list.replaceChildren();
-    const shown = items.filter(item => filter === 'due' ? due(item) : item.kind === filter);
+    const shown = filter === 'reminders'
+      ? items.slice().sort((a, b) => a.followup_date.localeCompare(b.followup_date)
+        || a.subject_full_name.localeCompare(b.subject_full_name, 'he'))
+      : items.filter(item => item.kind === filter);
     for (const item of shown) {
       const card = el('article', undefined, 'hr-case'); card.dataset.due = String(due(item));
       card.append(el('h4', item.subject_full_name),
@@ -121,12 +124,12 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
       }
       card.append(actions); list.append(card);
     }
-    if (!shown.length) list.append(el('p', filter === 'due'
-      ? 'אין תזכורות שהגיע מועדן ברשומות שנטענו.'
+    if (!shown.length) list.append(el('p', filter === 'reminders'
+      ? (cursor ? 'לא נמצאו תזכורות ברשומות שנטענו; קיימים מעקבים נוספים.' : 'אין תזכורות פעילות במעקבי כוח האדם.')
       : `אין ${kindLabel(filter)} פעיל ברשומות שנטענו.`, 'hr-meta'));
     q('absence-count').textContent = String(items.filter(x => x.kind === 'long_absence').length) + (cursor ? '+' : '');
     q('abroad-count').textContent = String(items.filter(x => x.kind === 'abroad_leave').length) + (cursor ? '+' : '');
-    q('due-count').textContent = String(items.filter(due).length) + (cursor ? '+' : '');
+    q('due-count').textContent = String(items.length) + (cursor ? '+' : '');
     controls();
   }
 
@@ -233,7 +236,7 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
   q('search-button').onclick = () => void search(); q('editor').addEventListener('submit', save);
   q('tab-absence').onclick = () => { filter = 'long_absence'; resetForm(); render(); };
   q('tab-abroad').onclick = () => { filter = 'abroad_leave'; resetForm(); render(); };
-  q('tab-due').onclick = () => { filter = 'due'; resetForm(); render(); };
+  q('tab-due').onclick = () => { filter = 'reminders'; resetForm(); render(); };
   const unsubscribe = adapter.subscribeIdentity(() => {
     const next = sessionKey(adapter); if (next === owner) return;
     owner = next; ++generation; attempts.clear(); items = []; cursor = null; busy = false; resetForm(); render();

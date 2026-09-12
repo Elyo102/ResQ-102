@@ -102,7 +102,7 @@ function createHrWorkforce({ db, auth, HttpsError, clock = Date.now, day = jerus
   function normalized(data) {
     if (!KINDS.includes(data.kind) || !STATUSES.includes(data.status)) throw error('invalid-argument', 'Invalid case kind or status.');
     const start = date(data.start_date), end = date(data.end_date, true), followup = date(data.followup_date);
-    if (end !== null && end < start || followup < start || data.kind === 'abroad_leave' && end === null
+    if (end !== null && end < start || data.kind === 'abroad_leave' && end === null
       || data.status === 'closed' && end === null) throw error('invalid-argument', 'Invalid case dates.');
     return { subject_uid: data.subject_uid, kind: data.kind, start_date: start, end_date: end,
       followup_date: followup, reason: text(data.reason, 2000), status: data.status };

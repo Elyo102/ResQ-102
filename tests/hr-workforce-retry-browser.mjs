@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:42117';
-const html = `<!doctype html><html lang="he" dir="rtl"><body><main id="root">
+const html = `<!doctype html><html lang="he" dir="rtl"><head><link rel="stylesheet" href="/hr-workforce-ui.css"></head><body><main id="root">
   <button data-w="refresh"></button>
   <button data-w="tab-absence"></button><strong data-w="absence-count"></strong>
   <button data-w="tab-abroad"></button><strong data-w="abroad-count"></strong>
@@ -34,6 +34,9 @@ async function fixture({ record = null } = {}) {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/hr-workforce-ui.js') return route.fulfill({
       contentType: 'text/javascript; charset=utf-8', body: fs.readFileSync(path.join(root, 'hr-workforce-ui.js'))
+    });
+    if (pathname === '/hr-workforce-ui.css') return route.fulfill({
+      contentType: 'text/css; charset=utf-8', body: fs.readFileSync(path.join(root, 'hr-workforce-ui.css'))
     });
     return route.fulfill({ contentType: 'text/html; charset=utf-8', body: html });
   });
@@ -103,8 +106,40 @@ async function check(name, body) { await body(); ++passed; console.log('PASS ' +
 
 await check('actual module parses and imports in Chromium', async () => {
   const f = await fixture();
-  try { assert.deepEqual(f.pageErrors, []); }
+  try {
+    assert.deepEqual(f.pageErrors, []);
+    assert.match(fs.readFileSync(path.join(root, 'hr.html'), 'utf8'),
+      /התזכורות שלי[\s\S]*מעקבי כוח האדם שבאחריותך/);
+  }
   finally { await f.browser.close(); }
+});
+
+await check('my reminders lists future active follow-ups without enabling an early reminder', async () => {
+  const future = { ...baseRecord, followup_date:'2099-12-31' };
+  const f = await fixture({ record:future });
+  try {
+    await f.page.locator('[data-w="tab-due"]').click();
+    assert.equal(await f.page.locator('.hr-case').count(), 1);
+    assert.match(await f.page.locator('.hr-case').textContent(), /2099-12-31/);
+    assert.equal(await f.page.locator('[data-w="due-count"]').textContent(), '1');
+    assert.equal(await f.page.locator('.hr-case-actions button').count(), 2,
+      'a future follow-up is visible but cannot be sent early');
+    assert.equal((await calls(f.page, 'reminder')).length, 0);
+  } finally { await f.browser.close(); }
+});
+
+await check('workforce editor controls use one readable font size', async () => {
+  const f = await fixture();
+  try {
+    const sizes = await f.page.locator('[data-w="editor"]').evaluate(form =>
+      ['input','select','textarea','button'].map(tag => getComputedStyle(form.querySelector(tag)).fontSize));
+    assert.deepEqual(sizes, ['16px','16px','16px','16px']);
+    for (const width of [320, 360, 390]) {
+      await f.page.setViewportSize({ width, height:844 });
+      assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+        true, `${width}px viewport must not scroll horizontally`);
+    }
+  } finally { await f.browser.close(); }
 });
 
 await check('create reuses the exact request after response loss and success clears it', async () => {

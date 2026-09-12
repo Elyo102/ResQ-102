@@ -39,6 +39,14 @@ const rejects = (fn, code) => assert.rejects(fn, e => e.code === code);
     for(const patch of [{start_date:'bad'},{kind:'sick'},{status:'draft'},{reason:''},{kind:'abroad_leave',end_date:null},{status:'closed',end_date:null},{end_date:'2026-08-31'}])
       await rejects(()=>f.service.create(f.req('hr',{...f.body(),...patch})), 'invalid-argument');
   });
+  await check('an open case may schedule follow-up before a future event starts', async () => {
+    const f=fixture();
+    const made=await f.service.create(f.req('hr',{...f.body(),start_date:'2026-11-02',end_date:null,
+      followup_date:'2026-09-13'}));
+    const saved=f.db.read(`stations/${sid}/hr_workforce_cases/${made.record_id}`);
+    assert.equal(saved.status,'active');assert.equal(saved.end_date,null);
+    assert.equal(saved.start_date,'2026-11-02');assert.equal(saved.followup_date,'2026-09-13');
+  });
   await check('exact replay is idempotent and changed payload collides', async () => {
     const f=fixture(), req=f.req('hr',f.body()), a=await f.service.create(req), b=await f.service.create(req);
     assert.equal(a.record_id,b.record_id); assert.equal(b.duplicate,true);
@@ -122,5 +130,5 @@ const rejects = (fn, code) => assert.rejects(fn, e => e.code === code);
     const guarded=createHrWorkforce({db,auth,HttpsError,clock:()=>at,hooks:{beforeFinalize(){users.get('hr').disabled=true;}}});
     await rejects(()=>guarded.list(req),'permission-denied');
   });
-  console.log(`${passed}/13 HR workforce unit groups passed`);
+  console.log(`${passed}/14 HR workforce unit groups passed`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
