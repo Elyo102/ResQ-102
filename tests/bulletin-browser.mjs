@@ -149,6 +149,16 @@ try {
   await loginPage.locator('#btnLogin').click();
   await loginPage.locator('#bulletinBoard').waitFor({ state:'visible', timeout:10000 });
   check(!(await creatorCredit.isVisible()), 'קרדיט הפיתוח אינו מוצג בתוך מסך הבית לאחר התחברות');
+  check((await loginPage.locator('#pageTitle').textContent()).trim() === 'שלום, אלדד יונה',
+    'מסך הבית נפתח בברכה אישית מהפרופיל המאומת');
+  check(/משמרת ג['׳]/.test(await loginPage.locator('#pageSub').textContent()),
+    'הקשר המשמרת מוצג מתחת לברכה');
+  check(await loginPage.locator('.home-panel').count() === 2,
+    'הודעות ותקלות מוצגות כשני אזורי מידע נפרדים');
+  check((await loginPage.locator('#homeUpdatesTitle').textContent()).trim() === 'עדכוני התחנה',
+    'אזור ההודעות מתאר במדויק את המידע שהשאילתה מחזירה');
+  check((await loginPage.locator('#homeFaultsTitle').textContent()).trim() === 'תקלות פתוחות',
+    'אזור התקלות נשאר נגיש ישירות במסך הבית');
   const motion = await loginPage.evaluate(() => window.__LOGIN_MOTION || []);
   const seconds = value => String(value || '').split(',').some(part => parseFloat(part) > 0);
   check(motion.length >= 2, 'המעבר החליף מצבים בין הכניסה ללוח');
@@ -536,6 +546,40 @@ try {
 
   await page.locator('#bulletinFeed [data-testid="bulletin-message"]').first()
     .waitFor({ state:'visible', timeout:8000 });
+  check(await page.locator('#bulletinFeed [data-testid="bulletin-message"]').count() === 3,
+        'מסך הבית מציג תחילה שלושה עדכונים אחרונים בלבד');
+  check(await page.locator('#bulletinFeedToggle').getAttribute('aria-expanded') === 'false',
+        'כפתור הרחבת העדכונים מדווח לקורא מסך שהוא סגור');
+  const homeReadKey = 'resq_bulletin_read:v2:stub-uid:eilat_102:rashit';
+  await page.evaluate(key => localStorage.setItem(key, '1'), homeReadKey);
+  await page.waitForTimeout(1050);
+  check(await page.evaluate(key => localStorage.getItem(key), homeReadKey) === '1',
+        'עדכונים מוסתרים אינם מסומנים כנקראו רק מפני שכרטיס הבית פתוח');
+  await page.locator('#bulletinFeedToggle').click();
+  check(await page.locator('#bulletinFeed [data-testid="bulletin-message"]').count() === 30,
+        'פתיחת הרשימה מציגה את כל העדכונים שכבר נטענו בלי קריאת שרת נוספת');
+  check(await page.locator('#bulletinFeedToggle').getAttribute('aria-expanded') === 'true',
+        'כפתור הרחבת העדכונים מדווח לקורא מסך שהוא פתוח');
+  await page.waitForFunction(key => localStorage.getItem(key) !== null, homeReadKey);
+  check(Number(await page.evaluate(key => localStorage.getItem(key), homeReadKey)) > 0,
+        'סימון הקריאה מתקדם רק אחרי שהמשתמש פתח את הרשימה המלאה');
+
+  const hiddenThreadMessage = page.locator('[data-message-id="br2"]');
+  await hiddenThreadMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
+  await page.waitForFunction(() => Object.entries(window.__FIRESTORE_ACTIVE_PATHS || {})
+    .some(([path, count]) => path.endsWith('/bulletin_replies') && Number(count || 0) === 1));
+  check(await bulletinReplyActiveListeners(page) === 1,
+        'פתיחת דיון בעדכון רביעי מפעילה מאזין יחיד');
+  await page.locator('#bulletinFeedToggle').click();
+  await page.waitForFunction(() => Object.entries(window.__FIRESTORE_ACTIVE_PATHS || {})
+    .filter(([path]) => path.endsWith('/bulletin_replies'))
+    .every(([, count]) => Number(count || 0) === 0));
+  check(await page.locator('.bulletin-thread').count() === 0 &&
+        await bulletinReplyActiveListeners(page) === 0,
+        'קיפול הרשימה סוגר דיון מוסתר ומבטל את המאזין שלו');
+  check(await page.evaluate(() => document.activeElement?.id === 'bulletinFeedToggle'),
+        'קיפול הרשימה משאיר את המיקוד על כפתור ההרחבה הגלוי');
+  await page.locator('#bulletinFeedToggle').click();
   const initialQuery = await page.evaluate(() => (window.__FIRESTORE_QUERIES || [])
     .find(q => q.path.endsWith('/rashit/bulletin_messages')));
   check(initialQuery?.constraints?.some(c => c.kind === 'where' && c.field === 'hidden' &&
@@ -601,6 +645,7 @@ try {
   await page.locator('#boardTabs [data-board-id="rashit"]').click();
   await page.getByText('עדכון חי ראשון', { exact:true })
     .waitFor({ state:'visible', timeout:5000 });
+  await page.locator('#bulletinFeedToggle').click();
   await page.evaluate(() => { window.__SMOKE_LAG_PLAN = [300]; });
   await page.locator('#bulletinLoadMore').click();
   await page.waitForTimeout(30);
@@ -639,6 +684,11 @@ try {
   check(await bulletinActiveListeners(page) === 1, 'גם במצב ריק נשאר מאזין יחיד');
 
   await page.locator('#boardTabs [data-board-id="rashit"]').click();
+  await page.locator('#bulletinFeed [data-testid="bulletin-message"]').first()
+    .waitFor({ state:'visible', timeout:5000 });
+  check(!await page.getByText('חסר חלב וביצים במטבח', { exact:true }).isVisible(),
+        'חזרה ללוח עמוס אינה פותחת מחדש את כל ההיסטוריה');
+  await page.locator('#bulletinFeedToggle').click();
   await page.getByText('חסר חלב וביצים במטבח', { exact:true })
     .waitFor({ state:'visible', timeout:5000 });
 
@@ -715,7 +765,7 @@ try {
   check(await page.locator('#bulletinText').inputValue() === '',
         'טיוטת ראשית אינה זולגת ללוח שחמון');
   await page.locator('#boardTabs [data-board-id="rashit"]').click();
-  await page.getByText('חסר חלב וביצים במטבח', { exact:true })
+  await page.locator('#bulletinFeed [data-testid="bulletin-message"]').first()
     .waitFor({ state:'visible', timeout:5000 });
   check(await page.locator('#bulletinText').inputValue() === 'הטיוטה חייבת להישאר',
         'חזרה לראשית משחזרת את הטיוטה של אותו לוח בלבד');
@@ -804,6 +854,12 @@ try {
     }));
     check(Math.max(layout.doc, layout.body) <= layout.viewport + 1,
           spec.name + ' ללא גלישה אופקית', JSON.stringify(layout));
+    const panelWidthsSafe = await responsivePage.locator('.home-panel').evaluateAll((nodes) =>
+      nodes.every((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.left >= -1 && rect.right <= window.innerWidth + 1;
+      }));
+    check(panelWidthsSafe, spec.name + ' משאיר את כרטיסי הבית בתוך המסך');
     check(await responsivePage.locator('#bulletinCompose').isVisible(),
           spec.name + ' משאיר את פעולת הכתיבה נגישה');
     if (spec.viewport.width <= 390) {

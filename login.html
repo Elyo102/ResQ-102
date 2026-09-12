@@ -344,23 +344,32 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div id="homeView" class="hide">
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
-      <header class="bulletin-toolbar">
-        <div id="bulletinIdentity" class="bulletin-identity"></div>
-        <button type="button" id="bulletinCompose" class="bulletin-compose"
-                aria-expanded="false" aria-controls="bulletinForm">
-          + כתיבת הודעה
-        </button>
-      </header>
+      <section class="home-panel home-updates" aria-labelledby="homeUpdatesTitle">
+        <header class="home-panel-head">
+          <div>
+            <p class="home-eyebrow">מה קורה בתחנה</p>
+            <h2 id="homeUpdatesTitle">עדכוני התחנה</h2>
+            <p>ההודעות האחרונות שפורסמו בתחנה.</p>
+          </div>
+        </header>
 
-      <p id="bulletinPrivacy" class="bulletin-privacy">
-        <strong>הלוח אינו מוקד חירום ואינו מיועד למידע אישי או רפואי.</strong>
-        תקלה בציוד או ברכב יש לתעד גם <a href="./faults.html">במסך התקלות</a>.
-      </p>
+        <div class="bulletin-toolbar">
+          <div id="bulletinIdentity" class="bulletin-identity"></div>
+          <button type="button" id="bulletinCompose" class="bulletin-compose"
+                  aria-expanded="false" aria-controls="bulletinForm">
+            + כתיבת הודעה
+          </button>
+        </div>
 
-      <div id="boardTabs" class="bulletin-board-tabs" role="tablist"
-           aria-label="בחירת לוח לפי תחנת משנה"></div>
+        <p id="bulletinPrivacy" class="bulletin-privacy">
+          <strong>הלוח אינו מוקד חירום ואינו מיועד למידע אישי או רפואי.</strong>
+          תקלה בציוד או ברכב יש לתעד גם <a href="./faults.html">במסך התקלות</a>.
+        </p>
 
-      <form id="bulletinForm" class="bulletin-form hide" novalidate>
+        <div id="boardTabs" class="bulletin-board-tabs" role="tablist"
+             aria-label="בחירת לוח לפי תחנת משנה"></div>
+
+        <form id="bulletinForm" class="bulletin-form hide" novalidate>
         <label for="bulletinCategory">סוג ההודעה</label>
         <select id="bulletinCategory"></select>
 
@@ -395,23 +404,32 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <button type="submit" id="bulletinSubmit">פרסם הודעה</button>
           <button type="button" id="bulletinCancel" class="bulletin-cancel">סגור</button>
         </div>
-      </form>
+        </form>
 
-      <div id="bulletinStatus" class="bulletin-status" aria-live="polite"></div>
-      <button type="button" id="bulletinRetry" class="bulletin-retry hide">נסה שוב</button>
+        <div id="bulletinStatus" class="bulletin-status" aria-live="polite"></div>
+        <button type="button" id="bulletinRetry" class="bulletin-retry hide">נסה שוב</button>
 
-      <div id="bulletinFeed" class="bulletin-feed" role="feed"
-           aria-live="polite" aria-busy="true"></div>
-      <div id="bulletinEmpty" class="bulletin-empty hide">
-        עדיין אין הודעות בלוח הזה. אפשר להיות הראשון שמעדכן את המשמרת.
-      </div>
-      <button type="button" id="bulletinLoadMore" class="bulletin-load-more hide">
-        טען הודעות קודמות
-      </button>
+        <div id="bulletinFeed" class="bulletin-feed" role="feed"
+             aria-live="polite" aria-busy="true"></div>
+        <div id="bulletinEmpty" class="bulletin-empty hide">
+          עדיין אין הודעות בלוח הזה. אפשר להיות הראשון שמעדכן את המשמרת.
+        </div>
+        <button type="button" id="bulletinFeedToggle" class="bulletin-feed-toggle hide"
+                aria-controls="bulletinFeed" aria-expanded="false">
+          הצג עדכונים נוספים
+        </button>
+        <button type="button" id="bulletinLoadMore" class="bulletin-load-more hide">
+          טען הודעות קודמות
+        </button>
+      </section>
 
-      <section id="homeFaults" class="home-faults" aria-labelledby="homeFaultsTitle">
+      <section id="homeFaults" class="home-faults home-panel" aria-labelledby="homeFaultsTitle">
         <div class="home-faults-head">
-          <div><h2 id="homeFaultsTitle">תקלות פתוחות</h2><p>המידע החשוב למשמרת הנכנסת, ישירות במסך הבית.</p></div>
+          <div>
+            <p class="home-eyebrow">בטיחות ורציפות</p>
+            <h2 id="homeFaultsTitle">תקלות פתוחות</h2>
+            <p>תקלות פעילות שחשוב להכיר לפני תחילת המשמרת.</p>
+          </div>
           <a href="./faults.html">לכל התקלות ←</a>
         </div>
         <div class="home-fault-tabs" role="tablist" aria-label="סוג התקלה">
@@ -1193,8 +1211,12 @@ async function loadProfile(user, claims){
   } catch (ignore) {}
 
   const isSuper = claims.super === true;
+  const profileName = (u && u.full_name) || user.email || '';
+  const contextParts = [];
+  if (claims.shift && CREW_HE[claims.shift]) contextParts.push(CREW_HE[claims.shift]);
+  if (!isSuper || claims.stationId) contextParts.push(stationName((u && u.station) ? u.station : sid) || sid);
 
-  $('pName').textContent    = u ? u.full_name : (user.email || '');
+  $('pName').textContent    = profileName;
   $('pRole').textContent    = ROLE_HE[claims.role] || claims.role || '';
   $('pCrew').textContent    = CREW_HE[claims.shift] || '';
   // למנהל המערכת אין תחנה ואין מספר עובד — לא מציגים שדות ריקים.
@@ -1229,7 +1251,8 @@ async function loadProfile(user, claims){
 
   navFor(claims, user, u ? u.full_name : '');
   watchCallouts(db, sid, user.uid, { name: (u && u.full_name) || user.email || '' });
-  $('pageSub').textContent = 'ResQ · ' + (stationName(sid) || sid);
+  $('pageTitle').textContent = profileName ? ('שלום, ' + profileName) : 'לוח מודעות';
+  $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
 
   initBulletin({
     db: db,
