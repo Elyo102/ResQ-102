@@ -66,8 +66,12 @@ assert.equal(linked.assignments[0].person.person_id, registeredPerson.person_id)
 assert.equal(Object.hasOwn(linked.assignments[0].person, 'linked_uid'), false);
 assert.equal(plan({ inventory:[registeredPerson], bindings:[Object.assign({}, binding,
   { expected_person_revision:3 })] }).conflicts[0].code, 'binding-stale');
-assert.equal(plan({ entries:[employeeEntry('00123', 'שם אחר')], inventory:[registeredPerson],
-  bindings:[binding] }).conflicts[0].code, 'binding-name-mismatch');
+const aliasedBinding = plan({ entries:[employeeEntry('00123', 'יונה')], inventory:[registeredPerson],
+  bindings:[binding] });
+assert.equal(aliasedBinding.ready, true);
+assert.equal(aliasedBinding.assignments[0].person.person_id, registeredPerson.person_id);
+assert.equal(aliasedBinding.assignments[0].person.display_name, 'יוסי כהן');
+assert.equal(Object.hasOwn(aliasedBinding.assignments[0].person, 'linked_uid'), false);
 assert.throws(() => plan({ inventory:[registeredPerson], bindings:[Object.assign({}, binding,
   { station_id:'other_station' })] }), (error) => error.code === 'binding-cross-scope');
 assert.throws(() => plan({ inventory:[registeredPerson], bindings:[Object.assign({}, binding,

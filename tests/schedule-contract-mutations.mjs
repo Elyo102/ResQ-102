@@ -60,6 +60,12 @@ const mutations = [
     probe:"const s=require('./schedule-import-identity'); const p={person_id:'sp_registered_001',station_id:'eilat_102',kind:'registered',linked_uid:'u',display_name:'x',active:true,revision:2}; const b={station_id:'eilat_102',source_namespace:'station-workbook-v1',source_key:{kind:'employee',value:'1'},person_id:p.person_id,expected_person_revision:1}; const r=s.planImportIdentities({station_id:'eilat_102',source_namespace:'station-workbook-v1',entries:[{source_key:b.source_key,display_name:'x'}],inventory:[p],bindings:[b]}); if(r.ready||r.conflicts[0]?.code!=='binding-stale')process.exit(1);"
   },
   {
+    name:'explicit binding accepts a workbook alias and keeps the canonical name', file:'schedule-import-identity.js',
+    from:'      } else {\n        // A binding is the explicit human decision that a workbook alias',
+    to:"      } else if (found.person.display_name !== entry.display_name) {\n        conflict('binding-name-mismatch', entry, binding.person_id);\n      } else {\n        // A binding is the explicit human decision that a workbook alias",
+    probe:"const s=require('./schedule-import-identity'); const p={person_id:'sp_registered_001',station_id:'eilat_102',kind:'registered',linked_uid:'u',display_name:'Canonical',active:true,revision:2}; const b={station_id:'eilat_102',source_namespace:'station-workbook-v1',source_key:{kind:'employee',value:'1'},person_id:p.person_id,expected_person_revision:2}; const r=s.planImportIdentities({station_id:'eilat_102',source_namespace:'station-workbook-v1',entries:[{source_key:b.source_key,display_name:'Alias'}],inventory:[p],bindings:[b]}); if(!r.ready||r.assignments[0]?.person.display_name!=='Canonical')process.exit(1);"
+  },
+  {
     name:'import collision never adopts foreign provenance', file:'schedule-import-identity.js',
     from:"found.person.kind !== 'external' || !sameSourceRef(found.source_ref, ref)", to:'false',
     probe:"const s=require('./schedule-import-identity'); const k={kind:'employee',value:'1'}; const p={person_id:s.generatedPersonId('eilat_102',k),station_id:'eilat_102',kind:'external',linked_uid:null,display_name:'x',active:true,revision:1,source_ref:{station_id:'eilat_102',source_namespace:'station-workbook-v1',source_key:{kind:'employee',value:'other'}}}; const r=s.planImportIdentities({station_id:'eilat_102',source_namespace:'station-workbook-v1',entries:[{source_key:k,display_name:'x'}],inventory:[p],bindings:[]}); if(r.ready||r.conflicts[0]?.code!=='identity-collision')process.exit(1);"

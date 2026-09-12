@@ -181,9 +181,10 @@ function planImportIdentities(input) {
       if (!found || found.person.active !== true
           || found.person.revision !== binding.expected_person_revision) {
         conflict('binding-stale', entry, binding.person_id);
-      } else if (found.person.display_name !== entry.display_name) {
-        conflict('binding-name-mismatch', entry, binding.person_id);
       } else {
+        // A binding is the explicit human decision that a workbook alias
+        // belongs to this person. The assignment keeps the canonical person
+        // name; the workbook alias never rewrites it.
         assign(entry, found.person);
       }
       continue;
