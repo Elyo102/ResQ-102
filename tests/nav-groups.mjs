@@ -28,6 +28,7 @@ const params = new URLSearchParams(location.search);
 const claims = JSON.parse(params.get('claims') || '{}');
 renderNav(claims, params.get('current') || 'attendance.html', 'בדיקה');
 window.__applyTheme = applyTheme;
+window.__renderNav = renderNav;
 window.__navReady = true;
 </script></body></html>`;
 
@@ -125,6 +126,49 @@ try {
     const direction = await mobilePage.locator('#appNav').evaluate(el => getComputedStyle(el).direction);
     if (direction !== 'rtl') throw new Error('direction is ' + direction);
   });
+  await test('mobile dock exposes the four approved permission-aware groups', async () => {
+    await mobilePage.evaluate(() => {
+      document.documentElement.style.setProperty('--resq-safe-left-override', '44px');
+      document.documentElement.style.setProperty('--resq-safe-right-override', '44px');
+    });
+    const labels = await mobilePage.locator('#resqDock > *').allTextContents();
+    same(labels, ['בית', 'המשמרת', 'התחנה', 'עוד'], 'mobile dock slots changed');
+    if (!await mobilePage.locator('#resqDock').isVisible()) throw new Error('dock is hidden');
+    const bodyPadding = await mobilePage.locator('body').evaluate(el => parseFloat(getComputedStyle(el).paddingBottom));
+    if (bodyPadding < 81) throw new Error('content is not protected from dock: ' + bodyPadding);
+    const edges = await mobilePage.locator('#resqDock > *').evaluateAll(nodes => ({
+      left:Math.min(...nodes.map(node => node.getBoundingClientRect().left)),
+      right:Math.max(...nodes.map(node => node.getBoundingClientRect().right))
+    }));
+    if (edges.left < 43 || edges.right > 347) throw new Error('landscape safe edges: ' + JSON.stringify(edges));
+  });
+  await test('mobile dock drawer contains only the selected permitted group', async () => {
+    await mobilePage.getByRole('button', { name:'המשמרת', exact:true }).click();
+    const mine = await mobilePage.locator('#resqDockSheet a').evaluateAll(nodes =>
+      nodes.map(node => new URL(node.href).pathname.split('/').pop()));
+    same(mine, member.filter(href => ['login.html','board.html','guards.html','sign.html','quals.html','alerts.html','people.html'].indexOf(href) === -1),
+      'mine drawer destination set changed');
+    if (await mobilePage.locator('#resqDockSheet').getAttribute('aria-labelledby') !== 'resqDockTitle') {
+      throw new Error('drawer has no accessible name');
+    }
+    const sheet = await mobilePage.locator('#resqDockSheet').boundingBox();
+    if (!sheet || sheet.x < 57 || sheet.x + sheet.width > 333) {
+      throw new Error('drawer leaves the landscape safe area: ' + JSON.stringify(sheet));
+    }
+    const drawerItems = mobilePage.locator('#resqDockSheet a,#resqDockSheet button');
+    await drawerItems.last().focus();
+    await mobilePage.keyboard.press('Tab');
+    if (!await drawerItems.first().evaluate(el => document.activeElement === el)) {
+      throw new Error('forward Tab escaped the dialog');
+    }
+    await mobilePage.keyboard.press('Shift+Tab');
+    if (!await drawerItems.last().evaluate(el => document.activeElement === el)) {
+      throw new Error('reverse Tab escaped the dialog');
+    }
+    await mobilePage.keyboard.press('Escape');
+    if (!await mobilePage.getByRole('button', { name:'המשמרת', exact:true })
+      .evaluate(el => document.activeElement === el)) throw new Error('dock focus was not restored');
+  });
   await test('mobile opens one group at a time and Escape closes in two stages', async () => {
     await mobilePage.locator('#navToggle').click();
     const doors = mobilePage.locator('button.door');
@@ -143,7 +187,7 @@ try {
   await test('mobile controls meet the 44px touch target', async () => {
     await mobilePage.locator('#navToggle').click();
     await mobilePage.locator('button.door').first().click();
-    const heights = await mobilePage.locator('#navToggle,button.door,.navPanel a,#themeBtn')
+    const heights = await mobilePage.locator('#navToggle,button.door,.navPanel a,#themeBtn,#resqDock > *')
       .evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height)
         .filter(height => height > 0));
     if (!heights.length || heights.some(height => height < 43.5)) {
@@ -159,6 +203,14 @@ try {
     if (await mobilePage.locator('html').getAttribute('data-theme') !== 'dark') throw new Error('dark mode failed');
     await mobilePage.evaluate(() => window.__applyTheme('light'));
     if (await mobilePage.locator('html').getAttribute('data-theme') !== 'light') throw new Error('light mode failed');
+  });
+  await test('claim replacement removes stale dock groups and hidden links', async () => {
+    await mobilePage.evaluate(() => window.__renderNav({ role:'district_commander' }, 'login.html', 'מחוז'));
+    const labels = await mobilePage.locator('#resqDock > *').allTextContents();
+    same(labels, ['בית', 'עוד'], 'district dock leaked member groups');
+    await mobilePage.getByRole('button', { name:'עוד', exact:true }).click();
+    if (await mobilePage.locator('#resqDockSheet a').count()) throw new Error('district drawer contains unauthorized links');
+    if (await mobilePage.locator('#dockThemeBtn').count() !== 1) throw new Error('theme utility is missing');
   });
   if (process.env.NAV_SCREENSHOT_DIR) {
     fs.mkdirSync(process.env.NAV_SCREENSHOT_DIR, { recursive:true });

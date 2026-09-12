@@ -11,6 +11,10 @@ function response(status, body = '') {
   return { status, arrayBuffer:async () => bytes.buffer };
 }
 try {
+  for (const version of ['42h16', '42h17']) {
+    assert.ok(PRIVATE_PROBES.includes('firebase.emulator.' + version + '.json'),
+      'private probe retains ' + version);
+  }
   fs.mkdirSync(path.join(temp, '.firebase'), { recursive:true });
   fs.writeFileSync(path.join(temp, 'index.html'), 'release-body');
   fs.writeFileSync(path.join(temp, '.firebase', 'hosting..cache'), 'index.html,hash');

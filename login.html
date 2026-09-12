@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h16">
-<link rel="stylesheet" href="./bulletin.css?v=42h16">
+<link rel="stylesheet" href="./theme.css?v=42h17">
+<link rel="stylesheet" href="./bulletin.css?v=42h17">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -500,17 +500,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h16';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h17';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h16';
+         subStationsForStation } from './stations.js?v=42h17';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h16';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h16';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h16';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h16';
-import { watchCallouts } from './callout.js?v=42h16';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h16';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h16';
+  from './nav.js?v=42h17';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h17';
+import { initPWA, refreshInstalledApp } from './pwa.js?v=42h17';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h17';
+import { watchCallouts } from './callout.js?v=42h17';
+import { initBulletin, destroyBulletin } from './bulletin.js?v=42h17';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h17';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -521,14 +521,36 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h16';
+  from './monitored-functions.js?v=42h17';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h16';
+import { initAppCheck } from './appcheck.js?v=42h17';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+let stopCallouts = function () {};
+let routeEpoch = 0;
+let routeUid = '';
+
+function destroyHomeRuntime(){
+  try { stopCallouts(); } catch (ignore) {}
+  stopCallouts = function () {};
+  destroyHomeFaults();
+  destroyBulletin();
+}
+
+function routeIsCurrent(user, epoch){
+  return !!user && epoch === routeEpoch && routeUid === user.uid &&
+    !!auth.currentUser && auth.currentUser.uid === user.uid;
+}
+
+function startRoute(user){
+  const epoch = ++routeEpoch;
+  routeUid = user && user.uid ? user.uid : '';
+  destroyHomeRuntime();
+  return user ? route(user, epoch) : Promise.resolve();
+}
 
 // הפונקציות יושבות ב-europe-west1, קרוב למסד שב-eur3.
 // בלי לציין אזור, ה-SDK פונה ל-us-central1 ומקבל 404.
@@ -948,8 +970,7 @@ function returnToCaller(){
 }
 
 function logout(){
-  destroyHomeFaults();
-  destroyBulletin();
+  destroyHomeRuntime();
   clearNavigationTrail();
   return signOut(auth);
 }
@@ -969,8 +990,7 @@ onAuthStateChanged(auth, user => {
   authSettled = true;
   if (onboarding) return;
   if (!user) {
-    destroyHomeFaults();
-    destroyBulletin();
+    startRoute(null);
     // auth יכול להחזיר את מצב "אין משתמש" הראשוני בדיוק
     // כשהמשתמש כבר לחץ כניסה. במקרה הזה לא מבטלים את ההנפשה
     // של הכניסה שנמצאת בתהליך.
@@ -982,7 +1002,7 @@ onAuthStateChanged(auth, user => {
     showView('auth');
     return;
   }
-  route(user);
+  startRoute(user);
 });
 
 function returnFromNativeBack(claims){
@@ -1001,22 +1021,24 @@ window.addEventListener('pageshow', function (event) {
   if (!event.persisted) return;
   nativeBackArrival = true;
   nativeBackRecoveryAttempted = false;
-  if (auth.currentUser) route(auth.currentUser);
+  if (auth.currentUser) startRoute(auth.currentUser);
 });
 
-async function route(user){
+async function route(user, epoch){
+  if (!routeIsCurrent(user, epoch)) return;
   let claims = {};
   try {
     const t = await user.getIdTokenResult();
     claims = t.claims || {};
   } catch (ignore) {}
+  if (!routeIsCurrent(user, epoch)) return;
 
   if ((claims.super === true || hasCompleteServerAssignment(claims)) &&
       returnFromNativeBack(claims)) return;
 
   // מנהל המערכת אינו כבאי ואין לו מספר עובד. הוא נכנס בלעדיו.
   if (claims.super === true) {
-    await loadProfile(user, claims);
+    await loadProfile(user, claims, epoch);
     return;
   }
 
@@ -1036,6 +1058,7 @@ async function route(user){
       requestChecked = true;
     }
     catch (ignore) {}
+    if (!routeIsCurrent(user, epoch)) return;
 
     if (req && req.exists()) { showWaiting(user, req.data() || {}); return; }
     if (!requestChecked) { showRegistrationRecovery(user); return; }
@@ -1043,7 +1066,7 @@ async function route(user){
     return;
   }
 
-  await loadProfile(user, claims);
+  await loadProfile(user, claims, epoch);
 }
 
 // מציג במפורש עם איזה חשבון הדפדפן מחובר. בלי זה אי אפשר לדעת
@@ -1180,7 +1203,7 @@ $('btnBootstrap').onclick = async () => {
     await auth.currentUser.getIdToken(true);
     m.textContent = 'הופעל. טוען...';
     m.className = 'msg ok';
-    await route(auth.currentUser);
+    await startRoute(auth.currentUser);
   } catch (e) {
     m.textContent = (e && e.message) ? e.message : 'ההפעלה נכשלה.';
     m.className = 'msg err';
@@ -1208,7 +1231,8 @@ async function markLogin(uid, sid, info){
   } catch (ignore) {}
 }
 
-async function loadProfile(user, claims){
+async function loadProfile(user, claims, epoch){
+  if (!routeIsCurrent(user, epoch)) return;
   const sid = claims.stationId || STATION_ID;
 
   let u = null;
@@ -1216,6 +1240,7 @@ async function loadProfile(user, claims){
     const snap = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
     if (snap.exists()) u = snap.data();
   } catch (ignore) {}
+  if (!routeIsCurrent(user, epoch)) return;
 
   const isSuper = claims.super === true;
   const profileName = (u && u.full_name) || user.email || '';
@@ -1255,9 +1280,13 @@ async function loadProfile(user, claims){
     $('authView').classList.add('bulletin-auth-leave');
     await new Promise(function (resolve) { setTimeout(resolve, 200); });
   }
+  if (!routeIsCurrent(user, epoch)) return;
 
   navFor(claims, user, u ? u.full_name : '');
-  watchCallouts(db, sid, user.uid, { name: (u && u.full_name) || user.email || '' });
+  try { stopCallouts(); } catch (ignore) {}
+  stopCallouts = watchCallouts(db, sid, user.uid, {
+    name: (u && u.full_name) || user.email || ''
+  });
   $('pageTitle').textContent = profileName ? ('שלום, ' + profileName) : 'לוח מודעות';
   $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
 
@@ -1302,6 +1331,7 @@ async function loadProfile(user, claims){
         });
       });
     });
+    if (!routeIsCurrent(user, epoch)) return;
     $('authView').classList.remove('bulletin-auth-leave');
     $('homeView').classList.remove('bulletin-enter', 'bulletin-enter-active');
   }

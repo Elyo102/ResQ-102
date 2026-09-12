@@ -171,13 +171,65 @@ export function ackCallout(db, sid, calloutId, uid, name, answer) {
 //  בו כשהוא ישכח שהמערכת שקטה.
 
 let modeStop = null;
+let modeResizeObserver = null;
+let activeOwner = null;
+let ownerSerial = 0;
+
+function clearModeBarOffset() {
+  if (modeResizeObserver) {
+    try { modeResizeObserver.disconnect(); } catch (ignore) {}
+    modeResizeObserver = null;
+  }
+  document.documentElement.style.removeProperty('--resq-mode-bar-height');
+}
+
+function trackModeBarHeight(el) {
+  clearModeBarOffset();
+  const update = function () {
+    if (!el || !el.isConnected) return;
+    const height = Math.ceil(el.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--resq-mode-bar-height', height + 'px');
+  };
+  update();
+  if (typeof ResizeObserver === 'function') {
+    modeResizeObserver = new ResizeObserver(update);
+    modeResizeObserver.observe(el);
+  }
+}
+
+function clearCalloutUi() {
+  const w = document.getElementById('coWrap');
+  if (!w) return;
+  w.classList.remove('on');
+  ['coText', 'coFrom', 'coMore', 'coErr'].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '';
+  });
+  const err = document.getElementById('coErr');
+  if (err) err.style.display = 'none';
+  ['coYes', 'coNo'].forEach(function (id) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = false;
+    btn.onclick = null;
+  });
+}
 
 function modeBar(mode) {
   const on = mode === 'trial';
   let el = document.getElementById('modeBar');
 
-  if (!on) { if (el) el.remove(); document.body.style.paddingTop = ''; return; }
-  if (el) return;
+  if (!on) {
+    if (el) el.remove();
+    document.body.classList.remove('has-mode-bar');
+    clearModeBarOffset();
+    return;
+  }
+  document.body.classList.add('has-mode-bar');
+  if (el) {
+    trackModeBarHeight(el);
+    return;
+  }
 
   el = document.createElement('div');
   el.id = 'modeBar';
@@ -185,21 +237,29 @@ function modeBar(mode) {
   el.innerHTML = '<b>מצב ניסוי</b> · התראות ומיילים חסומים לכל התחנה. ' +
                  'שום דבר לא יוצא החוצה.';
   el.style.cssText = [
-    'position:sticky', 'top:0', 'z-index:950',
+    'position:sticky', 'top:var(--resq-safe-top-override,env(safe-area-inset-top,0px))', 'z-index:950',
     'background:var(--warn-bg)', 'color:var(--warn)',
     'border-bottom:2px solid var(--warn)',
-    'padding:9px 16px', 'font-size:13px', 'font-weight:600',
+    'padding:9px 16px', 'box-sizing:border-box',
+    'width:100%', 'align-self:stretch',
+    'font-size:13px', 'font-weight:600',
     'line-height:1.6', 'direction:rtl', 'text-align:center',
     'font-family:"Segoe UI",Arial,sans-serif',
-    'margin:-18px -18px 0'
+    'margin:0'
   ].join(';');
   document.body.insertBefore(el, document.body.firstChild);
+  trackModeBarHeight(el);
 }
 
-export function watchMode(db) {
-  if (!db || modeStop) return;
+export function watchMode(db, owner) {
+  if (!db || !owner || owner.disposed) return;
+  if (modeStop) {
+    try { modeStop(); } catch (ignore) {}
+    modeStop = null;
+  }
   try {
     modeStop = onSnapshot(doc(db, 'config', 'mode'), function (d) {
+      if (activeOwner !== owner || owner.disposed) return;
       const v = (d.exists() ? d.data() : {}) || {};
       modeBar(v.mode || 'live');
     }, function () {});
@@ -208,7 +268,31 @@ export function watchMode(db) {
 
 export function watchCallouts(db, sid, uid, opts) {
   if (!db || !sid || !uid) return function () {};
-  watchMode(db);
+  if (activeOwner && typeof activeOwner.dispose === 'function') {
+    activeOwner.dispose();
+  }
+
+  const owner = {
+    id: ++ownerSerial,
+    disposed: false,
+    stop: function () {},
+    dispose: null
+  };
+  owner.dispose = function () {
+    if (owner.disposed) return;
+    owner.disposed = true;
+    try { owner.stop(); } catch (ignore) {}
+    if (activeOwner !== owner) return;
+    if (modeStop) {
+      try { modeStop(); } catch (ignore) {}
+      modeStop = null;
+    }
+    activeOwner = null;
+    modeBar('live');
+    clearCalloutUi();
+  };
+  activeOwner = owner;
+  watchMode(db, owner);
   const o = opts || {};
   let shownId = '';
 
@@ -222,6 +306,7 @@ export function watchCallouts(db, sid, uid, opts) {
   let stop = function () {};
   try {
     stop = onSnapshot(q, function (snap) {
+      if (activeOwner !== owner || owner.disposed) return;
       const list = [];
       snap.forEach(function (d) {
         const v = d.data() || {};
@@ -241,8 +326,9 @@ export function watchCallouts(db, sid, uid, opts) {
       const cur = list[0];
       if (cur.id === shownId) return;             // כבר על המסך
       shownId = cur.id;
-      show(db, sid, uid, cur.id, cur.v, o, list.length);
+      show(owner, db, sid, uid, cur.id, cur.v, o, list.length);
     }, function (err) {
+      if (activeOwner !== owner || owner.disposed) return;
       // מאזין שנפל לא אמור להפיל את המסך שמתחתיו.
       console.warn('callout watch: ' + (err && err.message));
     });
@@ -250,10 +336,12 @@ export function watchCallouts(db, sid, uid, opts) {
     console.warn('callout watch: ' + (e && e.message));
   }
 
-  return function () { try { stop(); } catch (ignore) {} };
+  owner.stop = stop;
+  return owner.dispose;
 }
 
-function show(db, sid, uid, id, v, o, count) {
+function show(owner, db, sid, uid, id, v, o, count) {
+  if (activeOwner !== owner || owner.disposed) return;
   const w = box();
   const t = document.getElementById('coText');
   const f = document.getElementById('coFrom');
@@ -270,15 +358,18 @@ function show(db, sid, uid, id, v, o, count) {
   const no  = document.getElementById('coNo');
 
   function answer(which) {
+    if (activeOwner !== owner || owner.disposed) return;
     yes.disabled = true; no.disabled = true;
     ackCallout(db, sid, id, uid, o.name || '', which)
       .then(function () {
+        if (activeOwner !== owner || owner.disposed) return;
         yes.disabled = false; no.disabled = false;
         w.classList.remove('on');
         // shownId נשאר — ה-onSnapshot יסיר את הקריאה מהרשימה
         // ואם יש עוד אחת, היא תקפוץ מיד.
       })
       .catch(function (err) {
+        if (activeOwner !== owner || owner.disposed) return;
         yes.disabled = false; no.disabled = false;
         e.textContent = 'התשובה לא נשמרה. ' +
           '(' + ((err && (err.code || err.message)) || 'שגיאה') + ') נסה שוב.';

@@ -396,6 +396,7 @@ for (let i = 1; i <= 31; i++) {
 }
 
 const ACTIVE_SNAPSHOT_LISTENERS = new Set();
+const ALL_SNAPSHOT_LISTENERS = [];
 
 async function emitBulletinSnapshots(boardId) {
   const suffix = '/sub_stations/' + boardId + '/bulletin_messages';
@@ -695,6 +696,11 @@ function getDoc0(ref){
     }
     return Promise.resolve(docSnap(BOARD, 'board'));
   }
+  const profileMatch = p.match(/^stations\/[^/]+\/users\/([^/]+)$/);
+  if (profileMatch && typeof window !== 'undefined' && window.__SMOKE_PROFILE_BY_UID) {
+    const value = window.__SMOKE_PROFILE_BY_UID[profileMatch[1]];
+    if (value) return Promise.resolve(docSnap(value, profileMatch[1]));
+  }
   if (/\/shifts\//.test(p))               return Promise.resolve(docSnap(SHIFT, 'shift'));
   return Promise.resolve(docSnap(PROFILE));
 }
@@ -878,7 +884,15 @@ export function getDocs(q){
   return delayed(EMPTY_QUERY);
 }
 
-export function updateDoc(){ return Promise.resolve(); }
+export function updateDoc(){
+  if (typeof window !== 'undefined' && window.__FIRESTORE_HOLD_UPDATES === true) {
+    return new Promise((resolve, reject) => {
+      window.__FIRESTORE_PENDING_UPDATES = window.__FIRESTORE_PENDING_UPDATES || [];
+      window.__FIRESTORE_PENDING_UPDATES.push({ resolve, reject });
+    });
+  }
+  return Promise.resolve();
+}
 
 // Minimal SDK-compatible FieldPath for browser tests.  The stub does not
 // persist updateDoc writes, but the export and literal segments are required
@@ -915,9 +929,29 @@ export function onSnapshot(q, next, err){
     const failFn = typeof err === 'function' ? err : (next && next.error);
     Promise.resolve().then(() => { if (failFn) failFn(new Error('stub-offline')); });
   } else if (fn) {
-    listener = { query:q, path:p, next:fn, live:true };
+    listener = {
+      query:q,
+      path:p,
+      next:fn,
+      error:typeof err === 'function' ? err : (next && next.error),
+      live:true
+    };
     ACTIVE_SNAPSHOT_LISTENERS.add(listener);
-    getDocs(q).then(s => { try { if (listener.live) fn(s); } catch (e) {} });
+    ALL_SNAPSHOT_LISTENERS.push(listener);
+    const initial = p === 'config/mode'
+      ? delayedRead(docSnap({
+          mode:(typeof window !== 'undefined' && window.__SMOKE_MODE) || 'live'
+        }, 'mode'), p).then(result => corruptRead(result, p))
+      : getDocs(q);
+    initial.then(s => {
+      try { if (listener.live) fn(s); } catch (e) {}
+    }, readError => {
+      try {
+        if (listener.live && typeof listener.error === 'function') {
+          listener.error(readError);
+        }
+      } catch (e) {}
+    });
   }
   let live = true;
   return function(){
@@ -934,7 +968,38 @@ export function onSnapshot(q, next, err){
         0,
         (window.__FIRESTORE_ACTIVE_PATHS[p] || 1) - 1
       );
+      const throwPaths = Array.isArray(window.__FIRESTORE_UNSUB_THROW_PATHS) ?
+        window.__FIRESTORE_UNSUB_THROW_PATHS : [];
+      if (throwPaths.some(item => p.indexOf(String(item)) !== -1)) {
+        throw new Error('stub-unsubscribe-failure');
+      }
     }
+  };
+}
+
+if (typeof window !== 'undefined') {
+  window.__FIRESTORE_DELIVER_CAPTURED = function (pathPart, rows, options) {
+    const matches = ALL_SNAPSHOT_LISTENERS.filter(item =>
+      item.path.indexOf(String(pathPart || '')) !== -1);
+    const item = options && options.oldest ? matches[0] : matches[matches.length - 1];
+    if (!item) return false;
+    if (options && options.error) {
+      if (typeof item.error === 'function') item.error(new Error('stub-late-error'));
+      return true;
+    }
+    const pairs = Array.isArray(rows) ? rows.map((row, index) => [
+      String((row && row.id) || ('captured-' + index)),
+      (row && row.data) || {}
+    ]) : [];
+    item.next(listSnap(pairs));
+    return true;
+  };
+  window.__FIRESTORE_RELEASE_UPDATES = function (rejectUpdate) {
+    const pending = window.__FIRESTORE_PENDING_UPDATES || [];
+    window.__FIRESTORE_PENDING_UPDATES = [];
+    pending.forEach(item => rejectUpdate ?
+      item.reject(new Error('stub-held-update-failure')) : item.resolve());
+    return pending.length;
   };
 }
 

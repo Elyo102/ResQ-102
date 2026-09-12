@@ -8,7 +8,8 @@ const FIREBASE_ORIGIN = 'https://station-102.web.app';
 const PAGES_ORIGIN = 'https://elyo102.github.io/ResQ-102';
 const PRIVATE_PROBES = Object.freeze([
   'firebase.json', 'firestore.rules', 'firestore.indexes.json',
-  'firebase.emulator.42h16.json', '.env.production', 'credentials.json',
+  'firebase.emulator.42h16.json', 'firebase.emulator.42h17.json',
+  '.env.production', 'credentials.json',
   'service-account.json', 'functions/index.js', 'tests/package.json',
   'rules-test/package.json', '.git/HEAD', '.firebase/hosting..cache'
 ]);
