@@ -23,5 +23,5 @@
 // שניהם מתעדכנים יחד בכל שחרור. שני מספרים שיוצאים מסנכרון
 // גורמים לאפליקציה לדווח "יש עדכון" לנצח.
 
-export const APP_VERSION = '42H.14';
+export const APP_VERSION = '42H.15';
 export const APP_DATE    = '12.9.2026';
