@@ -1035,6 +1035,7 @@ function scheduleMarkRead() {
 
   state.readTimer = setTimeout(function () {
     if (state !== owner || state.activeBoard !== boardId || document.visibilityState === 'hidden') return;
+    if (!state.feedExpanded && mergedMessages().length > HOME_VISIBLE_MESSAGES) return;
     safeWrite(readStorageKey(state.user.uid, state.stationId, boardId), String(newest));
     state.unread[boardId] = 0;
     renderTabs();
@@ -1514,6 +1515,7 @@ function wireEvents() {
       stopReplyListener();
       state.replyThread = null;
     }
+    if (!willExpand) clearTimeout(state.readTimer);
     state.feedExpanded = willExpand;
     renderFeed();
     if (willExpand) scheduleMarkRead();

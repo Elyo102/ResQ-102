@@ -560,9 +560,18 @@ try {
         'פתיחת הרשימה מציגה את כל העדכונים שכבר נטענו בלי קריאת שרת נוספת');
   check(await page.locator('#bulletinFeedToggle').getAttribute('aria-expanded') === 'true',
         'כפתור הרחבת העדכונים מדווח לקורא מסך שהוא פתוח');
-  await page.waitForFunction(key => localStorage.getItem(key) !== null, homeReadKey);
-  check(Number(await page.evaluate(key => localStorage.getItem(key), homeReadKey)) > 0,
+  await page.waitForFunction(key => Number(localStorage.getItem(key)) > 1, homeReadKey);
+  check(Number(await page.evaluate(key => localStorage.getItem(key), homeReadKey)) > 1,
         'סימון הקריאה מתקדם רק אחרי שהמשתמש פתח את הרשימה המלאה');
+
+  await page.locator('#bulletinFeedToggle').click();
+  await page.evaluate(key => localStorage.setItem(key, '1'), homeReadKey);
+  await page.locator('#bulletinFeedToggle').click();
+  await page.locator('#bulletinFeedToggle').click();
+  await page.waitForTimeout(1050);
+  check(await page.evaluate(key => localStorage.getItem(key), homeReadKey) === '1',
+        'פתיחה וסגירה מהירות אינן משאירות timer שמסמן עדכונים מוסתרים כנקראו');
+  await page.locator('#bulletinFeedToggle').click();
 
   const hiddenThreadMessage = page.locator('[data-message-id="br2"]');
   await hiddenThreadMessage.locator('[data-testid="bulletin-replies-toggle"]').click();
