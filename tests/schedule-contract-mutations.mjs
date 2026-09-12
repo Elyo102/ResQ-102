@@ -84,13 +84,44 @@ const mutations = [
     name:'duplicate source provenance blocks readiness', file:'schedule-import-identity.js',
     from:"if (inventoryProvenance.has(refId)) duplicateProvenance.set(refId, refKey);", to:'if (false) duplicateProvenance.set(refId, refKey);',
     probe:"const s=require('./schedule-import-identity'); const k={kind:'employee',value:'1'}; const id=s.generatedPersonId('eilat_102',k); const ref={station_id:'eilat_102',source_namespace:'station-workbook-v1',source_key:k}; const base={station_id:'eilat_102',kind:'external',linked_uid:null,display_name:'x',active:true,revision:1,source_ref:ref}; const r=s.planImportIdentities({station_id:'eilat_102',source_namespace:'station-workbook-v1',entries:[{source_key:k,display_name:'x'}],inventory:[{...base,person_id:id},{...base,person_id:'sp_duplicate_001'}],bindings:[]}); if(r.ready||!r.conflicts.some(x=>x.code==='duplicate-provenance'))process.exit(1);"
+  },
+  {
+    name:'binding document id remains namespace locked', file:'schedule-identity-store-contract.js',
+    from:"if (namespace !== imports.SOURCE_NAMESPACE) fail('source-namespace', 'מרחב המקור אינו מאושר.');",
+    to:"if (false) fail('source-namespace', 'מרחב המקור אינו מאושר.');",
+    probe:"const s=require('./schedule-identity-store-contract'); let ok=false; try{s.bindingDocumentId('foreign',{kind:'employee',value:'1'});}catch(e){ok=e.code==='source-namespace';} if(!ok)process.exit(1);"
+  },
+  {
+    name:'link index path never contains raw uid', file:'schedule-identity-store-contract.js',
+    from:"return 'sl_' + hash(['schedule-person-link-v1', clean]).slice(0, 48);",
+    to:"return 'sl_' + clean;",
+    probe:"const s=require('./schedule-identity-store-contract'); if(s.linkIndexDocumentId('private@example.com').includes('private@example.com'))process.exit(1);"
+  },
+  {
+    name:'public person never returns account linkage metadata', file:'schedule-identity-store-contract.js',
+    from:"active: person.active\n  });",
+    to:"active: person.active, kind:person.kind, linked:person.kind === 'registered', linked_uid:person.linked_uid\n  });",
+    probe:"const s=require('./schedule-identity-store-contract'); const p=s.publicPerson({person_id:'sp_person_001',station_id:'eilat_102',kind:'registered',linked_uid:'secret',display_name:'x',active:true,revision:1}); if(['linked_uid','kind','linked'].some(k=>Object.hasOwn(p,k)))process.exit(1);"
+  },
+  {
+    name:'identity state rejects undeclared fields', file:'schedule-identity-store-contract.js',
+    from:"if (keys.join('|') !== allowed.join('|') || value.schema_version !== 1",
+    to:"if (value.schema_version !== 1",
+    probe:"const s=require('./schedule-identity-store-contract'); let ok=false; try{s.normalizeState({schema_version:1,generation:'gen_001',revision:0,extra:true});}catch(e){ok=e.code==='state-shape';} if(!ok)process.exit(1);"
+  },
+  {
+    name:'identity state revision must remain safely incrementable', file:'schedule-identity-store-contract.js',
+    from:"!Number.isSafeInteger(value.revision) || value.revision < 0\n      || value.revision >= Number.MAX_SAFE_INTEGER",
+    to:"!Number.isInteger(value.revision) || value.revision < 0",
+    probe:"const s=require('./schedule-identity-store-contract'); let ok=false; try{s.normalizeState({schema_version:1,generation:'gen_001',revision:Number.MAX_SAFE_INTEGER+1});}catch(e){ok=e.code==='state-shape';} if(!ok)process.exit(1);"
   }
 ];
 
 for (const mutation of mutations) {
   const dir = mkdtempSync(join(tmpdir(), 'resq-schedule-contract-'));
   for (const file of ['schedule-person-contract.js', 'schedule-person-service.js',
-    'schedule-recipient-contract.js', 'schedule-range-contract.js', 'schedule-import-identity.js']) {
+    'schedule-recipient-contract.js', 'schedule-range-contract.js', 'schedule-import-identity.js',
+    'schedule-identity-store-contract.js']) {
     cpSync(join(root, 'functions', file), join(dir, file));
   }
   const target = join(dir, mutation.file);
