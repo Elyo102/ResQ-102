@@ -247,18 +247,35 @@ async function test(name, fn) {
     assert.equal(typeof preview.gaps.digest, 'string');
   });
 
-  await test('publish without the acknowledgement is refused; with a wrong digest refused; with the exact digest it prepares (shadow)', async () => {
+  await test('publish without the acknowledgement is refused; the exact digest activates trial with delivery suppressed', async () => {
     const missing = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest })));
     assert.equal(missing && missing.code, 'gaps-acknowledgement-required', missing && missing.message);
     assert.ok(missing.detail && missing.detail.digest === preview.gaps.digest);
     const wrong = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: 'nope' })));
     assert.equal(wrong && wrong.code, 'gaps-acknowledgement-required');
     assert.equal((await station().collection('schedule_publications').get()).size, 0, 'nothing written for a refused publish');
-    const prepared = await api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps.digest }));
-    assert.equal(prepared.prepared, true);
-    const pub = (await station().collection('schedule_publications').doc(prepared.publication_id).get()).data();
+    const published = await api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps.digest }));
+    assert.equal(published.prepared, false);
+    assert.equal(published.trial, true);
+    assert.equal(published.notified_people, 0);
+    const pubRef = station().collection('schedule_publications').doc(published.publication_id);
+    const pub = (await pubRef.get()).data();
+    assert.equal(pub.status, 'active');
+    assert.equal(pub.delivery_policy, 'suppressed_trial');
+    assert.equal(pub.delivery_allowed, false);
     assert.deepEqual([pub.gap_report.acknowledged, pub.gap_report.digest, pub.gap_report.acknowledged_by], [true, preview.gaps.digest, MGR]);
-    const audit = (await station().collection('schedule_audit').get()).docs.map((d) => d.data()).find((a) => a.action === 'prepare');
+    const pointer = (await station().collection('schedule_state').doc('active').get()).data() || {};
+    assert.deepEqual([pointer.publication_id, pointer.revision, pointer.content_digest],
+      [published.publication_id, pub.revision, pub.content_digest]);
+    const outbox = await pubRef.collection('schedule_outbox').get();
+    assert.equal(published.suppressed_notifications, outbox.size);
+    assert.ok(outbox.docs.every((doc) => {
+      const row = doc.data() || {};
+      return row.status === 'suppressed_trial'
+        && row.delivery_policy === 'suppressed_trial'
+        && row.delivery_allowed === false;
+    }), 'trial gap publication left a deliverable outbox row');
+    const audit = (await station().collection('schedule_audit').get()).docs.map((d) => d.data()).find((a) => a.action === 'publish');
     assert.equal(audit.gaps_acknowledged, preview.gaps.digest);
   });
 
