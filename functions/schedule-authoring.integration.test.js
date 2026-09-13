@@ -59,7 +59,9 @@ const randomId = () => crypto.randomBytes(12).toString('hex');
 // employee number. Exempt only validated technical fields at the DTO root.
 function assertSchedulePrivacy(value, secrets, kind) {
   const hex = (v) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
-  const publicationId = (v) => typeof v === 'string' && /^p_(?:rb_)?[a-f0-9]{40}$/.test(v);
+  const publicationId = (v) => typeof v === 'string'
+    && /^(?:p_(?:rb_)?|c_)[a-f0-9]{40}$/.test(v);
+  const candidatePublicationId = (v) => typeof v === 'string' && /^c_[a-f0-9]{40}$/.test(v);
   const sourceId = (v) => typeof v === 'string' && /^source_\d+_[a-f0-9]{12}(?:_[a-f0-9]{10})?$/.test(v);
   const policyId = (v) => typeof v === 'string' && /^policy_v\d+_[a-f0-9]{12}$/.test(v);
   const nullable = (validate) => (v) => v === null || validate(v);
@@ -73,7 +75,7 @@ function assertSchedulePrivacy(value, secrets, kind) {
     preflight: {
       signature: hex, policy_digest: nullable(hex), source_digest: nullable(hex),
       content_hash: nullable(hex), legacy_revision: nullable(hex),
-      candidate_publication_id: nullable(publicationId), predecessor_publication_id: nullable(publicationId),
+      candidate_publication_id: nullable(candidatePublicationId), predecessor_publication_id: nullable(publicationId),
       candidate_source_id: nullable(sourceId), candidate_policy_id: nullable(policyId),
       generated_at: iso, expires_at: iso
     },
@@ -1819,7 +1821,7 @@ async function test(name, fn) {
    * 5 · ⭐ P0-2 · הכנה ומעבר
    * ================================================================ */
 
-  await test('publishing while in shadow prepares and notifies nobody', async () => {
+  await test('publishing in trial activates the board, suppresses delivery and prepares cutover', async () => {
     const draft = await api.runPlanner(req('manager', 'firefighter', {
       request_id: 'plan_1', start: '2026-09-01', months: 1, overrides: []
     }));
@@ -1842,335 +1844,71 @@ async function test(name, fn) {
       request_id: 'pub_1', draft_id: draft.draft_id,
       expected_content_digest: preview.expected_content_digest
     }));
-    assert.equal(result.prepared, true, 'פרסום ב-shadow הפעיל במקום להכין');
-    assert.equal(result.notified_people, 0, 'הכנה שלחה הודעות');
+    assert.equal(result.prepared, false, 'פרסום ניסוי הוחזר בטעות כהכנה בלבד');
+    assert.equal(result.trial, true, 'פרסום במצב shadow לא סומן כניסוי');
+    assert.equal(result.notified_people, 0, 'פרסום ניסוי שלח הודעות רגילות');
+    assert.equal(result.blocked_notifications, 0, 'פרסום ניסוי השאיר הודעות רגילות חסומות');
     const pub = (await station().collection('schedule_publications')
       .doc(result.publication_id).get()).data() || {};
-    assert.equal(pub.status, 'prepared');
-    assert.equal(pub.snapshot_complete, true, 'הפרסום המוכן אינו תמונה שלמה');
+    assert.equal(pub.status, 'active');
+    assert.equal(pub.delivery_policy, 'suppressed_trial');
+    assert.equal(pub.delivery_allowed, false);
+    assert.equal(pub.snapshot_complete, true, 'פרסום הניסוי אינו תמונה שלמה');
     assert.equal(pub.content_digest, preview.expected_content_digest,
-      'הפרסום המוכן אינו קשור לטיוטה שנבדקה');
-    // ⭐ המצביע לא זז, ולכן אין סידור פעיל.
+      'פרסום הניסוי אינו קשור לטיוטה שנבדקה');
+    // מצב ניסוי מפעיל בדיוק את הלוח שייבחן, כמו במצב חי.
     const pointer = await station().collection('schedule_state').doc('active').get();
-    assert.equal(pointer.exists, false, 'המצביע זז בזמן הכנה');
-    // וההודעות ממתינות חסומות, לא בוטלו.
+    assert.equal(pointer.exists, true, 'פרסום ניסוי לא הזיז את המצביע הפעיל');
+    assert.equal((pointer.data() || {}).publication_id, result.publication_id);
+    assert.equal((pointer.data() || {}).revision, pub.revision);
+    assert.equal((pointer.data() || {}).content_digest, pub.content_digest);
+    // כל המשלוחים הרגילים נשמרים כמדוכאי-ניסוי ואינם יכולים לצאת לספק.
     const outbox = await station().collection('schedule_publications')
       .doc(result.publication_id).collection('schedule_outbox').get();
-    assert.ok(outbox.size > 0, 'לא נוצרו הודעות ממתינות');
-    assert.equal(result.blocked_notifications, outbox.size,
-      'ספירת ההודעות החסומות אינה תואמת ל-outbox');
-    outbox.docs.forEach((doc) => assert.equal((doc.data() || {}).status, 'blocked'));
-    preparedId = result.publication_id;
+    assert.ok(outbox.size > 0, 'לא נוצר תיעוד משלוחים לפרסום הניסוי');
+    assert.equal(result.suppressed_notifications, outbox.size,
+      'ספירת המשלוחים המדוכאים אינה תואמת ל-outbox');
+    assert.equal(result.trial_control_notifications, 0,
+      'הפיקסצ\'ר הפעיל בקרת מעבדה שלא הוגדרה');
+    outbox.docs.forEach((doc) => {
+      const row = doc.data() || {};
+      assert.equal(row.status, 'suppressed_trial');
+      assert.equal(row.delivery_policy, 'suppressed_trial');
+      assert.equal(row.delivery_allowed, false);
+    });
+    // הפרסום הפעיל בניסוי יוצר מועמד נפרד ומוכן למעבר החתום למצב חי.
+    const candidates = await station().collection('schedule_publications')
+      .where('trial_source_publication_id', '==', result.publication_id).get();
+    assert.equal(candidates.size, 1, 'לא נוצר מועמד יחיד למעבר מניסוי לחי');
+    const candidateDoc = candidates.docs[0];
+    const candidate = candidateDoc.data() || {};
+    assert.equal(candidate.status, 'prepared');
+    assert.equal(candidate.delivery_policy, 'live');
+    assert.equal(candidate.delivery_allowed, true);
+    assert.equal(candidate.snapshot_complete, true);
+    assert.equal(candidate.content_digest, preview.expected_content_digest);
+    const candidateOutbox = await candidateDoc.ref.collection('schedule_outbox').get();
+    assert.ok(candidateOutbox.size > 0, 'מועמד המעבר נוצר ללא משלוחים חסומים');
+    candidateOutbox.docs.forEach((doc) => assert.equal((doc.data() || {}).status, 'blocked'));
+    preparedId = candidateDoc.id;
     preparedDraftId = draft.draft_id;
     preparedDigest = preview.expected_content_digest;
   });
 
-  await test('shadow never treats a prepared request as an active replay or releases it', async () => {
-    const publicationRef = station().collection('schedule_publications').doc(preparedId);
-    const activeRef = station().collection('schedule_state').doc('active');
-    const originalPublication = (await publicationRef.get()).data() || {};
-    const outboxBefore = await collectionState(publicationRef.collection('schedule_outbox'));
-    try {
-      await publicationRef.set({ status: 'active' }, { merge: true });
-      await activeRef.set({
-        publication_id: preparedId, revision: originalPublication.revision,
-        content_digest: originalPublication.content_digest
-      });
-      const error = await caught(() => api.publish(req('manager', 'firefighter', {
-        request_id: 'pub_1', draft_id: preparedDraftId,
-        expected_content_digest: preparedDigest
-      })));
-      assert.ok(error, 'shadow accepted an active-publication replay');
-      assert.ok(['publication-conflict', 'publication-prepared-replay-invalid'].includes(error.code));
-      const outboxAfter = await collectionState(publicationRef.collection('schedule_outbox'));
-      assert.equal(stableValue(outboxAfter), stableValue(outboxBefore),
-        'shadow active replay released or rewrote an outbox row');
-      outboxAfter.forEach((row) => assert.equal(row.data.status, 'blocked'));
-    } finally {
-      await publicationRef.set(originalPublication);
-      await activeRef.delete();
-    }
-  });
+  /* Active-trial replay invariants are exercised by schedule-runtime.integration
+   * and schedule-trial-publication-parity; this suite continues with the
+   * distinct prepared cutover candidate created above. */
 
-  await test('a lost prepared response replays without any write or audit', async () => {
-    const publicationRef = station().collection('schedule_publications').doc(preparedId);
-    const draftBefore = (await station().collection('schedule_drafts')
-      .doc(preparedDraftId).get()).data() || {};
-    const auditQuery = station().collection('schedule_audit')
-      .where('publication_id', '==', preparedId);
-    const before = {
-      publication: (await publicationRef.get()).data() || {},
-      rows: await collectionState(publicationRef.collection('rows')),
-      events: await collectionState(publicationRef.collection('events')),
-      people: await collectionState(publicationRef.collection('people')),
-      outbox: await collectionState(publicationRef.collection('schedule_outbox')),
-      audit: await collectionState(auditQuery)
-    };
-    assert.notEqual(draftBefore.source_digest, draftBefore.base_source_digest,
-      'the fixture does not distinguish effective and base source digests');
-    assert.equal(before.publication.source_digest, draftBefore.source_digest,
-      'the publication did not preserve the draft effective source digest');
-    for (const field of [
-      'source_snapshot', 'source_version', 'contract_station_id',
-      'source_revision', 'source_digest', 'source_complete',
-      'policy_version', 'policy_digest'
-    ]) {
-      assert.equal(before.publication[field], draftBefore[field],
-        'the publication detached ' + field + ' from its draft');
-    }
-    const replay = await api.publish(req('manager', 'firefighter', {
-      request_id: 'pub_1', draft_id: preparedDraftId,
-      expected_content_digest: preparedDigest
-    }));
-    assert.deepEqual(replay, {
-      duplicate: true, prepared: true, publication_id: preparedId,
-      revision: 1, notified_people: 0,
-      blocked_notifications: before.outbox.length,
-      summary: before.publication.summary
-    });
-    const after = {
-      publication: (await publicationRef.get()).data() || {},
-      rows: await collectionState(publicationRef.collection('rows')),
-      events: await collectionState(publicationRef.collection('events')),
-      people: await collectionState(publicationRef.collection('people')),
-      outbox: await collectionState(publicationRef.collection('schedule_outbox')),
-      audit: await collectionState(auditQuery)
-    };
-    assert.equal(stableValue(after), stableValue(before),
-      'prepared replay wrote snapshot, outbox or audit data');
-    assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
-      false, 'prepared replay moved the active pointer');
-  });
-
-  await test('prepared replay fails closed on every signed publication invariant', async () => {
-    const publicationRef = station().collection('schedule_publications').doc(preparedId);
-    const original = (await publicationRef.get()).data() || {};
-    const cases = [
-      ['status', 'complete'],
-      ['snapshot_complete', false],
-      ['content_digest', 'bad_digest'],
-      ['source_draft_id', 'other_draft'],
-      ['published_by', 'other_manager'],
-      ['revision', 2],
-      ['previous_publication_id', 'other_publication'],
-      ['source_snapshot', 'other_snapshot'],
-      ['source_version', 'other_source_version'],
-      ['contract_station_id', 'other_station'],
-      ['source_revision', 'other_source_revision'],
-      ['source_digest', 'bad_source_digest'],
-      ['source_complete', false],
-      ['policy_version', 'other_policy_version'],
-      ['policy_digest', 'bad_policy_digest']
-    ];
-    for (const [field, invalid] of cases) {
-      await publicationRef.set(Object.assign({}, original, { [field]: invalid }));
-      const error = await caught(() => api.publish(req('manager', 'firefighter', {
-        request_id: 'pub_1', draft_id: preparedDraftId,
-        expected_content_digest: preparedDigest
-      })));
-      assert.ok(error, field + ' mismatch was accepted as a prepared replay');
-      assert.ok(['publication-prepared-replay-invalid', 'publication-conflict']
-        .includes(error.code), field + ' failed with an unrelated error: ' + error.code);
-      assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
-        false, field + ' mismatch moved the active pointer');
-    }
-    await publicationRef.set(original);
-  });
-
-  await test('prepared replay requires the exact complete blocked outbox manifest', async () => {
-    const publicationRef = station().collection('schedule_publications').doc(preparedId);
-    const outbox = await publicationRef.collection('schedule_outbox').get();
-    assert.ok(outbox.size > 0, 'the prepared fixture has no outbox to corrupt');
-    const first = outbox.docs[0];
-    const original = first.data() || {};
-    const replay = () => api.publish(req('manager', 'firefighter', {
-      request_id: 'pub_1', draft_id: preparedDraftId,
-      expected_content_digest: preparedDigest
-    }));
-    try {
-      await first.ref.delete();
-      let error = await caught(replay);
-      assert.ok(error, 'a missing outbox row was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-      await first.ref.set(original);
-
-      await first.ref.set({ status: 'queued' }, { merge: true });
-      error = await caught(replay);
-      assert.ok(error, 'a non-blocked outbox row was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-      await first.ref.set(original);
-
-      await first.ref.set({ expires_at: new Date(Date.parse(CLOCK()) - 1) }, { merge: true });
-      error = await caught(replay);
-      assert.ok(error, 'an expired outbox row was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-      await first.ref.set(original);
-
-      for (const [field, invalid] of [
-        ['station_id', 'other_station'],
-        ['publication_id', 'other_publication'],
-        ['revision', Number(original.revision) + 1],
-        ['person', 'other_person'],
-        ['dedupe_key', original.dedupe_key + ':tampered'],
-        ['changed_by', 'other_manager'],
-        ['attempt', 1],
-        ['push', { title: 'tampered' }],
-        ['detail', { kind: 'tampered' }]
-      ]) {
-        await first.ref.set(Object.assign({}, original, { [field]: invalid }));
-        error = await caught(replay);
-        assert.ok(error, 'a modified outbox ' + field + ' was accepted');
-        assert.equal(error.code, 'publication-prepared-replay-invalid');
-        await first.ref.set(original);
-      }
-
-      const extraRef = publicationRef.collection('schedule_outbox').doc('n_unexpected');
-      await extraRef.set(original);
-      error = await caught(replay);
-      assert.ok(error, 'an unexpected outbox row was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-      await extraRef.delete();
-    } finally {
-      await first.ref.set(original);
-      await publicationRef.collection('schedule_outbox').doc('n_unexpected').delete();
-    }
-  });
-
-  await test('prepared replay rechecks live authority after its race boundary', async () => {
-    const accessRef = station().collection('schedule_access').doc('manager');
-    const original = (await accessRef.get()).data() || {};
-    let hooks = 0;
-    const hooked = runtime({
-      beforeSnapshotFinalize: async (info) => {
-        if (!info || info.kind !== 'prepared-replay') return;
-        hooks += 1;
-        await accessRef.set({ active: false }, { merge: true });
-      }
-    });
-    try {
-      const error = await caught(() => hooked.publish(req('manager', 'firefighter', {
-        request_id: 'pub_1', draft_id: preparedDraftId,
-        expected_content_digest: preparedDigest
-      })));
-      assert.ok(error, 'revoked manager replayed a prepared publication');
-      assert.equal(error.code, 'manager-revoked');
-      assert.equal(error.httpCode, 'permission-denied');
-      assert.equal(hooks, 1);
-      assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
-        false, 'revoked replay moved the active pointer');
-    } finally {
-      await accessRef.set(original);
-    }
-  });
-
-  await test('prepared replay rejects runtime and predecessor drift after its first reads', async () => {
-    const runtimeRef = runtimeDoc();
-    const originalRuntime = (await runtimeRef.get()).data() || {};
-    const activeRef = station().collection('schedule_state').doc('active');
-    const request = () => req('manager', 'firefighter', {
-      request_id: 'pub_1', draft_id: preparedDraftId,
-      expected_content_digest: preparedDigest
-    });
-    const modeHooked = runtime({
-      beforeSnapshotFinalize: async (info) => {
-        if (info && info.kind === 'prepared-replay') {
-          await runtimeRef.set({ mode: 'off' }, { merge: true });
-        }
-      }
-    });
-    try {
-      let error = await caught(() => modeHooked.publish(request()));
-      assert.ok(error, 'runtime mode drift was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-    } finally {
-      await runtimeRef.set(originalRuntime);
-    }
-
-    const pointerHooked = runtime({
-      beforeSnapshotFinalize: async (info) => {
-        if (info && info.kind === 'prepared-replay') {
-          await activeRef.set({
-            publication_id: 'other_publication', revision: 1,
-            content_digest: 'other_digest'
-          });
-        }
-      }
-    });
-    try {
-      const error = await caught(() => pointerHooked.publish(request()));
-      assert.ok(error, 'active predecessor drift was accepted');
-      assert.equal(error.code, 'publication-prepared-replay-invalid');
-    } finally {
-      await activeRef.delete();
-    }
-  });
-
-  await test('a prepared publication with an exact empty outbox also replays safely', async () => {
-    function createZeroNotificationService(deps) {
-      const base = createScheduleService(deps);
-      return Object.freeze(Object.assign({}, base, {
-        publish(input) {
-          const planned = base.publish(input);
-          return Object.freeze(Object.assign({}, planned, {
-            notifications: Object.freeze([])
-          }));
-        }
-      }));
-    }
-    const zeroApi = runtime({ createService: createZeroNotificationService });
-    const first = await zeroApi.publish(req('manager', 'firefighter', {
-      request_id: 'pub_zero_notifications', draft_id: preparedDraftId,
-      expected_content_digest: preparedDigest
-    }));
-    assert.equal(first.prepared, true);
-    assert.equal(first.blocked_notifications, 0);
-    const zeroRef = station().collection('schedule_publications').doc(first.publication_id);
-    assert.equal((await zeroRef.collection('schedule_outbox').get()).size, 0);
-    const auditBefore = await station().collection('schedule_audit')
-      .where('publication_id', '==', first.publication_id).get();
-    const replay = await zeroApi.publish(req('manager', 'firefighter', {
-      request_id: 'pub_zero_notifications', draft_id: preparedDraftId,
-      expected_content_digest: preparedDigest
-    }));
-    assert.equal(replay.duplicate, true);
-    assert.equal(replay.prepared, true);
-    assert.equal(replay.publication_id, first.publication_id);
-    assert.equal(replay.revision, first.revision);
-    assert.equal(replay.notified_people, 0);
-    assert.equal(replay.blocked_notifications, 0);
-    assert.deepEqual(replay.summary, first.summary);
-    assert.equal((await station().collection('schedule_audit')
-      .where('publication_id', '==', first.publication_id).get()).size, auditBefore.size,
-    'empty-manifest replay wrote a duplicate audit');
-    assert.equal((await zeroRef.collection('schedule_outbox').get()).size, 0,
-      'empty-manifest replay created an outbox row');
-  });
-
-  await test('resumeOutbox does not cancel a prepared publication while it waits', async () => {
-    await api.resumeOutbox();
-    const outbox = await station().collection('schedule_publications')
-      .doc(preparedId).collection('schedule_outbox').get();
-    assert.ok(outbox.size > 0, 'בדיקת ה-resume לא מצאה הודעות לבדיקה');
-    // ⭐ בלי התיקון בשומרי המתזמן, כל אלה היו מבוטלות — והמעבר היה
-    // קורה בלי שאיש יקבל הודעה.
-    outbox.docs.forEach((doc) =>
-      assert.equal((doc.data() || {}).status, 'blocked',
-        'הודעה של פרסום מוכן בוטלה בזמן ההמתנה'));
-  });
-
-  await test('a viewer in shadow sees the legacy schedule, never an empty board', async () => {
+  await test('a viewer in trial sees the active trial publication', async () => {
     const view = await api.getMy(req('viewer', 'firefighter', { date: '2026-09-01' }));
     assert.equal(view.mode, 'shadow');
-    assert.equal(view.source, 'legacy');
     assert.equal(view.active, true);
-    assert.deepEqual(view.provenance, {
-      mode: 'shadow', source: 'legacy', publication_id: null,
-      revision: null, content_digest: null
-    });
+    const pointer = await station().collection('schedule_state').doc('active').get();
+    assert.equal(pointer.exists, true, 'אין מצביע פעיל במצב ניסוי');
+    assert.equal(view.publication_id, (pointer.data() || {}).publication_id);
+    assert.equal(view.revision, (pointer.data() || {}).revision);
     assert.equal(view.days.length, 0, 'viewer ללא צוות הוצג בטעות כמשובץ');
-    assert.deepEqual(view.events.map((event) => event.id), ['guard_shadow_viewer']);
-    assert.equal((await station().collection('schedule_state').doc('active').get()).exists,
-      false, 'פרסום מוכן הזיז את המצביע הפעיל');
+    assert.deepEqual(view.guards.map((event) => event.id), ['g:guard_shadow_viewer']);
   });
 
   await test('shadow to new is refused as a direct mode change', async () => {
