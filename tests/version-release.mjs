@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.17';
 const EXPECTED_DATE = '13.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 262; // 42H.17 refreshes the role-aware home experience and PWA shell.
+const EXPECTED_VERSIONED_REFERENCES = 263; // 42H.17 refreshes the role-aware home experience and PWA shell.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

@@ -305,7 +305,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h17';
 import { renderNav, renderStuckNav } from './nav.js?v=42h17';
 import { MEMBER_ROLES } from './roles.js?v=42h17';
-import { initPWA } from './pwa.js?v=42h17';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h17';
 import { watchCallouts } from './callout.js?v=42h17';
 import { CREW_HE } from './rotation.js?v=42h17';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
@@ -331,7 +331,6 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const $ = id => document.getElementById(id);
 renderStuckNav('');
-initPWA({ offer: false });
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -347,6 +346,11 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_APPROVE = false, IS_WIDE = false;
 let subs = [], people = [];
+let formDirty = false, signatureDirty = false, signatureBusy = false, submitBusy = false;
+registerPwaUpdateGuard(() => formDirty || signatureDirty || signatureBusy || submitBusy
+  ? { safe:false, reason:'יש טופס או חתימה שעדיין לא נשמרו.' }
+  : { safe:true });
+initPWA({ offer: false });
 
 // ---------- הרשאה ----------
 
@@ -490,8 +494,9 @@ VIEWS.forEach(function (v) {
 function setupForm(){
   $('fPick').innerHTML = BUILTIN_FORMS.map(f =>
     '<option value="' + esc(f.id) + '">' + esc(f.he) + '</option>').join('');
-  $('fPick').onchange = drawFields;
+  $('fPick').onchange = () => { formDirty = true; drawFields(); };
   $('btnSubmit').onclick = submitForm;
+  $('sigAgree').addEventListener('change', () => { formDirty = true; });
   drawFields();
   // טעינת החתימה השמורה. אינה מעכבת את ציור השדות — הטופס
   // ניתן למילוי גם בזמן שהיא בדרך, והכפתור בודק אותה שוב.
@@ -543,6 +548,8 @@ function drawFields(){
               : fl.type === 'number' ? 'number' : 'text';
     }
     el.id = fieldId;
+    el.addEventListener('input', () => { formDirty = true; });
+    el.addEventListener('change', () => { formDirty = true; });
     box.appendChild(el);
 
     if (fl.note) {
@@ -606,7 +613,8 @@ function paintSig(){
   // שהמכל כבר גלוי.
   if (!pad && !$('sigWrap').classList.contains('hide')) {
     pad = attachPad($('sig'), {});
-    $('sigClear').onclick  = () => { pad.clear(); sigMsg(''); };
+    $('sig').addEventListener('pointerdown', () => { signatureDirty = true; });
+    $('sigClear').onclick  = () => { pad.clear(); signatureDirty = true; sigMsg(''); };
     $('sigUpload').onclick = () => $('sigFile').click();
     $('sigFile').onchange  = onSigFile;
     $('sigSave').onclick   = onSigSave;
@@ -622,6 +630,7 @@ async function onSigFile(e){
   try {
     const img = await readImageFile(f, 600);
     await pad.load(img);
+    signatureDirty = true;
     sigMsg('התמונה נטענה. לחץ "שמור חתימה".', 'info');
   } catch (err) {
     sigMsg(err.message || 'טעינת התמונה נכשלה.', 'err');
@@ -630,19 +639,20 @@ async function onSigFile(e){
 
 async function onSigSave(){
   if (!pad || pad.isEmpty()) { sigMsg('הלוח ריק — צייר או העלה תמונה.', 'err'); return; }
-  const b = $('sigSave'); b.disabled = true;
+  const b = $('sigSave'); b.disabled = true; signatureBusy = true;
   try {
     const img = pad.toImage();
     await saveSignature(db, SID, ME.uid, img,
       { full_name: ME.full_name, emp_number: ME.emp });
     MY_SIG = { image: img, full_name: ME.full_name, emp_number: ME.emp };
+    signatureDirty = false;
     paintSig();
     msg('החתימה נשמרה. מכאן והלאה תחתום בלחיצה.', 'ok');
   } catch (err) {
     sigMsg('שמירת החתימה נכשלה. (' + (err.code || '') + ' ' +
            (err.message || '') + ')', 'err');
   }
-  b.disabled = false;
+  signatureBusy = false; b.disabled = false;
 }
 
 // מה שנכנס לטופס בהגשה. ריק = לא נחתם.
@@ -690,7 +700,7 @@ async function submitForm(){
   }
   if (errs.length) { msg(errs.join('\n'), 'err'); return; }
 
-  const b = $('btnSubmit'); b.disabled = true;
+  const b = $('btnSubmit'); b.disabled = true; submitBusy = true;
   try {
     const now = new Date();
     // signatures הוא המבנה שכל המערכת קוראת — signflow.js
@@ -712,12 +722,13 @@ async function submitForm(){
       created_at: serverTimestamp()
     });
     msg('הטופס הוגש. ראש המשמרת יקבל התראה.', 'ok');
+    formDirty = false;
     drawFields();
     await loadAll();
   } catch (e) {
     msg('ההגשה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
   }
-  b.disabled = false;
+  submitBusy = false; b.disabled = false;
 }
 
 // ---------- כרטיס ----------

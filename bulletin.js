@@ -5,6 +5,7 @@
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
 import { subStationAvailable } from './stations.js?v=42h17';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
@@ -694,6 +695,7 @@ async function hideReply(item, reply, button) {
   if (!window.confirm('להסתיר את התגובה? הפעולה תישמר בתיעוד.')) return;
   const owner = state;
   const thread = state.replyThread;
+  state.hidePending++;
   button.disabled = true;
   button.textContent = 'מסתיר…';
   try {
@@ -716,6 +718,8 @@ async function hideReply(item, reply, button) {
     thread.status = 'הסתרת התגובה לא הושלמה.';
     thread.statusKind = 'error';
     renderFeed();
+  } finally {
+    if (state === owner) state.hidePending = Math.max(0, state.hidePending - 1);
   }
 }
 
@@ -1431,6 +1435,7 @@ async function hideMessage(item, button) {
   if (!window.confirm('להסתיר את ההודעה מהלוח? הפעולה תישמר בתיעוד.')) return;
   const boardId = state.activeBoard;
   const owner = state;
+  state.hidePending++;
   button.disabled = true;
   button.textContent = 'מסתיר…';
   try {
@@ -1450,7 +1455,22 @@ async function hideMessage(item, button) {
     button.disabled = false;
     button.textContent = 'הסתר';
     setStatus('ההסתרה לא הושלמה. ההודעה נשארה בלוח.', 'error', false);
+  } finally {
+    if (state === owner) state.hidePending = Math.max(0, state.hidePending - 1);
   }
+}
+
+function bulletinUpdateGuard(owner) {
+  if (!state || state !== owner) return { safe:true };
+  const mainDraft = byId('bulletinText');
+  const replyDirty = Object.values(state.replyDrafts || {}).some(function (draft) {
+    return Boolean(String(draft.text || '').trim() || String(draft.attemptedText || '').trim());
+  });
+  return state.publishing || state.replyPublishing || state.hidePending > 0 || replyDirty
+    || Boolean(mainDraft && String(mainDraft.value || '').trim())
+    || Boolean(state.attemptedFingerprint)
+    ? { safe:false, reason:'יש הודעה, תגובה או פעולת הסתרה שעדיין לא הסתיימו.' }
+    : { safe:true };
 }
 
 function handleVisibility() {
@@ -1590,6 +1610,7 @@ export function initBulletin(options) {
     attemptedFingerprint: '',
     publishing: false,
     replyPublishing: false,
+    hidePending: 0,
     replyThread: null,
     replyDrafts: {},
     replyUnsubscribe: null,
@@ -1604,6 +1625,7 @@ export function initBulletin(options) {
     hideReply: null,
     abort: new AbortController()
   };
+  state.unregisterUpdateGuard = registerPwaUpdateGuard(() => bulletinUpdateGuard(state));
 
   renderIdentity();
   byId('bulletinPrivacy').classList.remove('hide');
@@ -1666,6 +1688,7 @@ export function initBulletin(options) {
 
 export function destroyBulletin() {
   if (!state) return;
+  if (state.unregisterUpdateGuard) state.unregisterUpdateGuard();
   persistDraft();
   stopListener();
   stopReplyListener();
