@@ -72,7 +72,7 @@ const state = {
   importStationMap: null, importDisplay: null, displayRequestIds: {}, displayStatusSequence: 0,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, rangeRequest: 0,
-  tab: null, busy: false
+  tab: null, busy: false, editDrawerOpen: false, editDrawerReturnFocus: null
 };
 
 renderStuckNav('');
@@ -250,7 +250,7 @@ function setMode(status) {
   box.className = 'mode';
   let text = 'לא ניתן לאמת את מצב מנוע הסידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב בדיקה: הסידור הקיים מוצג בקריאה מאובטחת. אפשר להכין טיוטות, אך הן אינן מתפרסמות.';
+    text = 'מצב ניסוי: אפשר לייבא, ליצור, לסקור, לפרסם ולחזור לאחור בדיוק כמו במצב חי. הודעות פוש נשארות חסומות.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
@@ -265,6 +265,7 @@ function setMode(status) {
     text += ' יש ' + status.active.delivery_alerts + ' התראות שלא נמסרו ודורשות טיפול.';
   }
   box.lastElementChild.textContent = text;
+  updateManagerWorkflow();
 }
 
 function hideScheduleViews() {
@@ -301,6 +302,7 @@ function chooseTab(name, replaceUrl = true) {
   if (name === 'manage' && !canManageSchedule()) name = 'station';
   if (name === 'quals' && !canManageSchedule()) name = 'station';   // 42H.2 · אותו שער ללשונית הכשירויות
   if (['manage', 'mine', 'station', 'quals'].indexOf(name) === -1) name = 'station';
+  if (name !== 'manage' && state.editDrawerOpen) closeEditDrawer(true);
   state.tab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.classList.toggle('on', button.dataset.tab === name);
@@ -319,6 +321,92 @@ function chooseTab(name, replaceUrl = true) {
   if (name === 'station') loadStationRange();
   if (name === 'quals') loadQualifications();
 }
+
+function workflowAction(name) {
+  return document.querySelector('[data-workflow-action="' + name + '"]');
+}
+
+function updateManagerWorkflow() {
+  if (!$('managerWorkflow') || !$('publish') || !$('rollback')) return;
+  const mode = state.status && state.status.mode;
+  $('managerWorkflowMode').textContent = mode === 'shadow'
+    ? 'מצב ניסוי' : mode === 'new' ? 'מצב חי' : 'המנוע כבוי';
+  const canRun = canRunSchedule();
+  workflowAction('import').disabled = !canManageSchedule();
+  workflowAction('draft').disabled = state.busy || !canRun;
+  workflowAction('review').disabled = !state.draft || !state.draftPreview;
+  workflowAction('publish').disabled = $('publish').disabled;
+  workflowAction('rollback').disabled = $('rollback').disabled;
+  $('editDrawerOpen').disabled = !canEditSchedule();
+  workflowAction('publish').textContent = mode === 'shadow' ? 'פרסום לניסוי' : 'פרסום לעובדים';
+  $('managerWorkflowHint').textContent = !canRun
+    ? 'המנוע כבוי. ההגדרות נשמרות, אך יצירת טיוטה ופרסום נעולות.'
+    : state.draft && state.draftPreview
+      ? 'הטיוטה מוכנה לסקירה. פרסום יתאפשר רק לאחר סימון האישור המפורש.'
+      : mode === 'shadow'
+        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; הודעות פוש אינן יוצאות לעובדים.'
+        : 'בחרו קובץ או צרו טיוטה. הודעות יישלחו רק אחרי סקירה ואישור.';
+}
+
+function showWorkflowTarget(id) {
+  const target = $(id);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openEditDrawer() {
+  if (!canEditSchedule()) return;
+  state.editDrawerOpen = true;
+  state.editDrawerReturnFocus = document.activeElement;
+  const drawer = $('editDrawer');
+  drawer.hidden = false;
+  drawer.removeAttribute('aria-hidden');
+  drawer.inert = false;
+  document.body.classList.add('drawer-open');
+  if (!(history.state && history.state.scheduleEditDrawer)) {
+    history.pushState(Object.assign({}, history.state || {}, { scheduleEditDrawer: true }), '', location.href);
+  }
+  $('editDrawerClose').focus();
+}
+
+function closeEditDrawer(fromHistory) {
+  if (!state.editDrawerOpen) return;
+  state.editDrawerOpen = false;
+  const drawer = $('editDrawer');
+  drawer.hidden = true;
+  drawer.setAttribute('aria-hidden', 'true');
+  drawer.inert = true;
+  document.body.classList.remove('drawer-open');
+  const focus = state.editDrawerReturnFocus;
+  state.editDrawerReturnFocus = null;
+  if (!fromHistory && history.state && history.state.scheduleEditDrawer) {
+    history.back();
+    return;
+  }
+  if (focus && document.contains(focus)) focus.focus();
+}
+
+workflowAction('import').addEventListener('click', () => {
+  showWorkflowTarget('importCard');
+  $('importFile').click();
+});
+workflowAction('draft').addEventListener('click', () => {
+  if (!$('runPlanner').disabled) $('runPlanner').click();
+  else showWorkflowTarget('runPlanner');
+});
+workflowAction('review').addEventListener('click', () => showWorkflowTarget('draftPreviewCard'));
+workflowAction('publish').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
+workflowAction('rollback').addEventListener('click', () => { if (!$('rollback').disabled) $('rollback').click(); });
+$('editDrawerOpen').addEventListener('click', openEditDrawer);
+$('editDrawerClose').addEventListener('click', () => closeEditDrawer(false));
+$('editDrawer').addEventListener('click', (event) => {
+  if (event.target === $('editDrawer')) closeEditDrawer(false);
+});
+addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.editDrawerOpen) closeEditDrawer(false);
+});
+addEventListener('popstate', () => {
+  if (state.editDrawerOpen) closeEditDrawer(true);
+});
 
 /* ==================================================================
  *  יבוא מקור כוח האדם
@@ -722,7 +810,7 @@ function renderModeCard() {
     ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
       + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
     : (view.current === 'shadow'
-      ? 'מצב בדיקה. אפשר להכין טיוטה ופרסום מוכן לבדיקה בלבד; הסידור הקיים נשאר פעיל ואיש אינו מקבל הודעה.'
+      ? 'מצב ניסוי. הייבוא, הטיוטה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש לעובדים חסום.'
       : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
 
   const box = $('modeTargets');
@@ -1039,7 +1127,7 @@ async function applyModeChange() {
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
     : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
       + (target === 'new' ? 'מרגע זה פרסום יחליף את הסידור הפעיל וישלח עדכונים אישיים.'
-        : 'זהו מצב בדיקה: אפשר להכין טיוטות, ואיש אינו מקבל הודעה.');
+        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ואיש אינו מקבל הודעת פוש.');
   if (!confirm(text)) return;
   state.modeBusy = true;
   updateModeApply();
@@ -2662,6 +2750,7 @@ function updatePublishAvailability() {
   $('publish').textContent = state.status && state.status.mode === 'shadow'
     ? 'פרסום לניסוי' : 'פרסום הסידור';
   $('draftBadge').hidden = !state.draft;
+  updateManagerWorkflow();
 }
 
 /* ⭐ P1-1. מסך הניהול נפתח עכשיו גם ב-`off`, כדי שאפשר יהיה להזין
@@ -2677,6 +2766,7 @@ function updateRunAvailability() {
       'המנוע כבוי. אפשר להזין חוקי תחנה ומקור כוח אדם, '
       + 'והרצה תתאפשר אחרי שהפיקוד יעביר את המנוע למצב צל.', 'info');
   }
+  updateManagerWorkflow();
 }
 
 function renderDraftPreview(preview) {
@@ -2862,6 +2952,7 @@ function setRollbackAvailability() {
     || ['shadow', 'new'].indexOf(state.status.mode) === -1
     || !state.status.manager || !active || active.can_rollback !== true
     || !active.previous_publication_id;
+  updateManagerWorkflow();
 }
 
 async function rollbackSchedule() {
@@ -3019,6 +3110,7 @@ function queueInvalidAssignmentRemoval(entry, date) {
   }
   invalidateEditReport();
   renderEditList();
+  openEditDrawer();
   message('editMessage', exists
     ? 'ההסרה כבר נמצאת ברשימת העריכה.'
     : 'נוספה הסרה של ' + (entry.label || entry.uid) + ' בתאריך ' + dateLabel(date) + '. יש לבדוק את השינויים ולפרסם.',
@@ -3507,10 +3599,19 @@ function updateEditAvailability() {
   if (!card) return;
   const may = canEditSchedule();
   card.hidden = !may;
-  $('gapCard').hidden = card.hidden || !may;
-  if (!card.hidden && !may) message('editMessage', 'אין סידור פעיל לעריכה.', 'info');
+  $('gapCard').hidden = !may;
+  $('editDrawerOpen').disabled = !may;
+  const drawer = $('editDrawer');
+  drawer.hidden = !may || !state.editDrawerOpen;
+  drawer.inert = drawer.hidden;
+  drawer.setAttribute('aria-hidden', drawer.hidden ? 'true' : 'false');
+  if (!may && state.editDrawerOpen) {
+    state.editDrawerOpen = false;
+    document.body.classList.remove('drawer-open');
+  }
   if (may && state.status.active && state.status.active.from && !$('editDate').value) $('editDate').value = localDate() >= state.status.active.from && localDate() <= state.status.active.to ? localDate() : state.status.active.from;
   renderEditControls(); renderEditDates(); renderEditList();
+  updateManagerWorkflow();
 }
 
 $('editSearch').addEventListener('input', renderEditSearch);
@@ -3990,7 +4091,7 @@ function resetScopedWorkspace() {
     editList: [], editPending: null, editPerson: null, editPersonSub: null,
     editReport: null, editRequestIds: {}, role: null, sub_station: null,
     absence: null, quals: null, intentRequestIds: {}, busy: false,
-    month: null, tab: null
+    month: null, tab: null, editDrawerOpen: false, editDrawerReturnFocus: null
   });
 
   document.querySelectorAll('#manageView input,#manageView textarea,#manageView select,'
@@ -4019,6 +4120,10 @@ function resetScopedWorkspace() {
     .forEach((id) => { const element = $(id); if (element) element.hidden = true; });
   $('modeCard').hidden = true;
   $('modeForm').hidden = true;
+  $('editDrawer').hidden = true;
+  $('editDrawer').inert = true;
+  $('editDrawer').setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('drawer-open');
   $('draftPreviewCard').classList.add('hide');
   $('draftSummary').classList.add('hide');
   $('draftBadge').hidden = true;

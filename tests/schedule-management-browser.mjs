@@ -230,6 +230,13 @@ async function prepare(context, role, plans) {
   await context.addInitScript(({ roleName, callablePlans }) => {
     window.__SMOKE_ROLE = roleName;
     window.__CALLABLE_PLAN = callablePlans;
+    // הבדיקה הוותיקה בוחנת את תוכן המדיניות ומקור כוח האדם עצמם.
+    // במעטפת המאוחדת הם נשארו מלאים אך עברו לאזור מתקדם סגור;
+    // פתיחה כאן שומרת את מטרת הבדיקה בלי להחזיר עומס למסך הייצור.
+    document.addEventListener('DOMContentLoaded', () => {
+      const advanced = document.getElementById('managerAdvanced');
+      if (advanced) advanced.open = true;
+    });
   }, { roleName:role, callablePlans:plans });
 }
 
@@ -2321,6 +2328,7 @@ try {
   await editPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await editPage.locator('#appMain:not(.hide)').waitFor();
   await test('edit card: search a person, pick a week, add an assignment, check — the report is bound to the live publication', async () => {
+    await editPage.locator('#editDrawerOpen').click();
     assert.equal(await editPage.locator('#editCard').isVisible(), true);
     assert.equal(await editPage.locator('#editCheck').isEnabled(), false);
     await editPage.fill('#editSearch', 'טל');
@@ -2430,6 +2438,7 @@ try {
   await rebasePage.goto(base + '?tab=manage', { waitUntil:'load' });
   await rebasePage.locator('#appMain:not(.hide)').waitFor();
   await test('edit card: a policy change since the publication is shown with the rebased row count, the foreign-station warning names its station, and apply waits for an explicit acknowledgement', async () => {
+    await rebasePage.locator('#editDrawerOpen').click();
     await rebasePage.fill('#editSearch', 'טל');
     await rebasePage.locator('#editSearchResults button').first().click();
     await rebasePage.selectOption('#editRange', 'day');
@@ -2472,6 +2481,7 @@ try {
   await phoneManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await phoneManagerPage.locator('#appMain:not(.hide)').waitFor();
   await test('phone: the edit card and its report fit the viewport; the page never scrolls sideways', async () => {
+    await phoneManagerPage.locator('#editDrawerOpen').click();
     assert.equal(await phoneManagerPage.locator('#editCard').isVisible(), true);
     assert.equal(await phoneManagerPage.locator('#gapCard').isVisible(), true);
     await phoneManagerPage.fill('#editSearch', 'טל');
@@ -2492,6 +2502,7 @@ try {
     }));
     assert.deepEqual(fit, { page:true, card:true, report:true, gaps:true });
     assert.equal(await phoneManagerPage.locator('#editApply').isVisible(), true);
+    await phoneManagerPage.locator('#editDrawerClose').click();
   });
   await test('phone: the qualifications tab is usable — table scrolls inside its box, person rows stack, no sideways page scroll', async () => {
     await phoneManagerPage.locator('#qualsTab').click();
@@ -2747,6 +2758,7 @@ try {
   await editGapPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await editGapPage.locator('#appMain:not(.hide)').waitFor();
   await test('edit card: gaps after the change need the acknowledgement; the apply carries the digest', async () => {
+    await editGapPage.locator('#editDrawerOpen').click();
     await editGapPage.fill('#editSearch', 'טל');
     await editGapPage.locator('#editSearchResults button').first().click();
     await editGapPage.fill('#editDate', today);

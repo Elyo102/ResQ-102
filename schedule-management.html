@@ -59,6 +59,7 @@
       font-family:"Segoe UI",Arial,sans-serif;padding:18px;overflow-x:hidden;
       font-variant-numeric:tabular-nums}
     button,input,select{font:inherit}button{min-height:44px;cursor:pointer}
+    body.drawer-open{overflow:hidden}
     button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #87b8e4;outline-offset:2px}
     [hidden],.hide{display:none!important}.shell{max-width:1420px;margin:0 auto}
     .head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
@@ -92,6 +93,26 @@
     .mode.bad{background:var(--bad-bg,#fde8e6);color:var(--bad,#9c302b)}
     .dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
     .manage-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:13px}
+    .manager-workflow{position:sticky;top:8px;z-index:18;border-color:var(--sched-blue)}
+    .workflow-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .workflow-head h2{margin:0;flex:1}
+    .workflow-mode{display:inline-flex;align-items:center;min-height:32px;padding:4px 10px;border-radius:999px;
+      background:var(--info-bg,#e7f0fb);color:var(--info-fg,#245d91);font-size:12px;font-weight:900}
+    .workflow-actions{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:12px}
+    .workflow-actions .btn{min-height:48px;padding:8px 10px}
+    .workflow-actions .current{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
+    .workflow-hint{margin-top:8px;font-size:12px;color:var(--muted,#748091);line-height:1.5}
+    .advanced{margin-bottom:13px;border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--card,#fff)}
+    .advanced>summary{min-height:48px;padding:13px 16px;cursor:pointer;font-weight:900;list-style:none}
+    .advanced>summary::-webkit-details-marker{display:none}
+    .advanced>summary::before{content:"＋";display:inline-block;margin-inline-end:8px;color:var(--sched-blue)}
+    .advanced[open]>summary::before{content:"−"}
+    .advanced>.card{margin:0 12px 12px;box-shadow:none}
+    .drawer-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(10,18,30,.52);padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));display:flex;align-items:flex-end;justify-content:center}
+    .editcard.drawer{width:min(760px,100%);max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow:auto;margin:0;border-radius:20px 20px 14px 14px;box-shadow:0 20px 70px rgba(0,0,0,.35)}
+    .drawer-head{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:2;background:var(--card,#fff);padding-bottom:8px}
+    .drawer-head h2{flex:1;margin:0}
+    .iconbtn{width:44px;height:44px;min-height:44px;border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff);color:var(--txt,#1c2532);font-size:22px;font-weight:900}
     .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:13px}
     label{display:block;font-size:12px;font-weight:800;color:var(--muted,#748091);margin-bottom:5px}
     input,select{width:100%;min-height:44px;border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--input,var(--panel,#f8fafc));color:var(--txt,#1c2532);padding:8px 10px}
@@ -383,8 +404,8 @@
 
     @media(max-width:850px){.manage-grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:560px){
-      body{padding:12px}#appNav{margin:-12px -12px 14px!important}.head h1{font-size:23px}
-      .head .who{width:100%;margin:0}.tabs{position:sticky;top:6px;z-index:20}
+      body{padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left))}#appNav{margin-top:calc(-12px - env(safe-area-inset-top))!important;margin-bottom:14px!important}.head h1{font-size:23px}
+      .head .who{width:100%;margin:0}.tabs{position:sticky;top:calc(6px + env(safe-area-inset-top));z-index:20}
       .tabs button{font-size:14px;padding:7px 4px}.fields{grid-template-columns:1fr}
       .override{grid-template-columns:1fr 1fr}.override .wide{grid-column:1/-1}
       .override .remove{grid-column:1/-1}.card{padding:13px}
@@ -394,6 +415,8 @@
       .qualpeople .person button{justify-self:start}
       .qualtable{min-width:520px}
       .editchange{grid-template-columns:1fr}
+      .manager-workflow{position:static}.workflow-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+      input,select,textarea{font-size:16px}
     }
   </style>
 </head>
@@ -449,6 +472,24 @@
   </nav>
 
   <section id="manageView" hidden>
+    <article class="card manager-workflow" id="managerWorkflow" aria-labelledby="managerWorkflowTitle">
+      <div class="workflow-head">
+        <h2 id="managerWorkflowTitle">ניהול הסידור</h2>
+        <span class="workflow-mode" id="managerWorkflowMode">טוען מצב…</span>
+      </div>
+      <div class="workflow-actions" aria-label="פעולות הסידור">
+        <button class="btn primary current" type="button" data-workflow-action="import">ייבוא קובץ</button>
+        <button class="btn" type="button" data-workflow-action="draft">יצירת טיוטה</button>
+        <button class="btn" type="button" data-workflow-action="review" disabled>סקירת טיוטה</button>
+        <button class="btn dark" type="button" data-workflow-action="publish" disabled>פרסום</button>
+        <button class="btn danger" type="button" data-workflow-action="rollback" disabled>חזרה לאחור</button>
+        <button class="btn" type="button" id="editDrawerOpen" aria-haspopup="dialog" aria-controls="editDrawer" disabled>✎ עריכה ידנית</button>
+      </div>
+      <div class="workflow-hint" id="managerWorkflowHint" aria-live="polite">בחרו קובץ או צרו טיוטה חדשה. שום דבר לא נשלח לפני סקירה ואישור.</div>
+    </article>
+
+    <details class="advanced" id="managerAdvanced">
+      <summary>הגדרות מתקדמות · כוח אדם וחוקי שיבוץ</summary>
     <article class="card" id="policyCard">
       <h2>חוקי התחנה</h2>
       <div class="sub" id="sourceSummary">טוען מדיניות ומקור נתונים…</div>
@@ -499,6 +540,7 @@
       </div>
       <div id="sourceMessage" aria-live="polite"></div>
     </article>
+    </details>
 
     <article class="card importcard" id="importCard">
       <h2>קליטת סידור עבודה</h2>
@@ -595,8 +637,12 @@
     </article>
 
     <!-- 42H.2 · חבילה א׳ — עריכת הסידור הפעיל (רק במצב פעיל, רק אחראי סידור) -->
-    <article class="card editcard" id="editCard" hidden>
-      <h2>עריכת הסידור הפעיל</h2>
+    <div class="drawer-backdrop" id="editDrawer" role="dialog" aria-modal="true" aria-labelledby="editDrawerTitle" hidden>
+    <article class="card editcard drawer" id="editCard">
+      <div class="drawer-head">
+        <h2 id="editDrawerTitle">עריכת הסידור הפעיל</h2>
+        <button class="iconbtn" id="editDrawerClose" type="button" aria-label="סגירת העריכה">×</button>
+      </div>
       <div class="sub">איתור עובד, בחירת יום / שבוע / חודש, ושינוי תחנה, תפקיד או היעדרות.
         כל ביצוע יוצר <b>גרסה חדשה</b> של הסידור (הקודמת נשמרת ואפשר לחזור אליה), נרשם ביומן,
         ושולח לכל עובד שהשתנה הודעה מסכמת אחת.</div>
@@ -654,6 +700,7 @@
       </div>
       <div id="editMessage" aria-live="polite"></div>
     </article>
+    </div>
 
     <article class="card hide" id="draftPreviewCard">
       <h2>תצוגה מקדימה של הטיוטה</h2>
