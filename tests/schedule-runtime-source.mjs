@@ -149,19 +149,21 @@ check('publication activation and audit share one transaction', () => {
   assert.ok(body.includes("collection('schedule_audit')"));
   assert.ok(body.includes("status: 'active'"));
 });
-check('live notifications stay blocked until activation commits and trial intent is suppressed at creation', () => {
+check('notifications stay blocked until activation and trial exposes only the fenced control row', () => {
   const start = runtime.indexOf('async function publish');
   const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
-  const staged = publishBody.indexOf("status: trial ? 'suppressed_trial' : 'blocked'");
+  const staged = publishBody.indexOf("status: trial && !control ? 'suppressed_trial' : 'blocked'");
   const transaction = publishBody.lastIndexOf('await db.runTransaction(async (tx) => {');
   const release = publishBody.lastIndexOf('await releaseOutbox(pubRef)');
   assert.ok(staged > -1 && staged < transaction && transaction < release);
-  assert.ok(publishBody.includes("delivery_policy: trial ? 'suppressed_trial' : 'live'"));
-  assert.ok(publishBody.includes('if (!trial) await releaseOutbox(pubRef)'));
+  assert.ok(publishBody.includes("delivery_policy: trial ? (control ? 'trial_control' : 'suppressed_trial') : 'live'"));
+  assert.ok(publishBody.includes('await releaseOutbox(pubRef)'));
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
-  assert.ok(runtime.includes('existingData.request_fingerprint !== fingerprintForExisting'));
+  assert.ok(runtime.includes('request_core_fingerprint: requestCoreFingerprint'));
+  assert.ok(runtime.includes("existingData.status === 'staging' ? requestCoreFingerprint : requestFingerprint"));
+  assert.ok(runtime.includes('storedFingerprintForExisting !== fingerprintForExisting'));
   assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
 });
 check('active publication replay is always activation-bound; legacy prepared replay stays behind the fingerprint', () => {
@@ -170,7 +172,7 @@ check('active publication replay is always activation-bound; legacy prepared rep
   const body = runtime.slice(publishStart, publishEnd);
   const fingerprint = body.indexOf("intent: 'activate'");
   const deliveryPolicy = body.indexOf("delivery_policy: trial ? 'suppressed_trial' : 'live'", fingerprint);
-  const mismatch = body.indexOf('existingData.request_fingerprint !== fingerprintForExisting');
+  const mismatch = body.indexOf('storedFingerprintForExisting !== fingerprintForExisting');
   const activeReplay = body.indexOf('if (pointsToExisting)');
   const replay = body.indexOf("existingData.status === 'prepared'");
   assert.ok(fingerprint > -1 && deliveryPolicy > fingerprint && mismatch > deliveryPolicy && activeReplay > mismatch
@@ -178,8 +180,8 @@ check('active publication replay is always activation-bound; legacy prepared rep
   'publication replay is not ordered behind its intent-bound fingerprint check');
   assert.ok(body.slice(activeReplay, replay).includes('const expectedDeliveryAllowed = !trial;'),
     'active replay does not bind the receipt to the current delivery policy');
-  assert.ok(body.slice(activeReplay, replay).includes('if (existingData.delivery_allowed === true) await releaseOutbox(pubRef);'),
-    'active trial replay can release a suppressed outbox');
+  assert.ok(body.slice(activeReplay, replay).includes('await releaseOutbox(pubRef);'),
+    'active replay does not resume its policy-fenced outbox');
   assert.ok(body.includes('return replayPreparedPublication(ctx'));
 });
 check('prepared replay verifies snapshot, live authority, runtime and predecessor without writes', () => {
@@ -215,8 +217,9 @@ check('prepared replay requires the exact unexpired blocked outbox and returns i
 check('outbox delivery rechecks the active publication', () => {
   assert.ok(runtime.includes('publicationMatches(value, pointer, publication)'));
   assert.ok(runtime.includes("status: 'cancelled'"));
-  assert.ok(runtime.includes('runtime.mode !== MODE.NEW'));
-  assert.ok(runtime.includes("cancelOutbox(tx, ref, 'runtime-not-new')"));
+  assert.ok(runtime.includes("runtime.mode === MODE.NEW && publication.delivery_policy === 'live'"));
+  assert.ok(runtime.includes("runtime.mode === MODE.SHADOW && publication.delivery_policy === 'suppressed_trial'"));
+  assert.ok(runtime.includes("cancelOutbox(tx, ref, 'delivery-forbidden')"));
   assert.ok(integration.includes('off and shadow cancel queued retry and expired sending'));
 });
 check('schedule outbox cancels recipients who left the station at every retry boundary', () => {
@@ -278,13 +281,27 @@ check('outbox expiry and active-pointer are rechecked immediately before send', 
   const validation = runtime.slice(validateStart, start);
   const send = body.indexOf('await sendPush');
   const hook = body.lastIndexOf('await beforeOutboxSend', send);
-  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token)', send);
+  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token, claimed)', send);
   assert.ok(validateStart > -1 && start > validateStart && end > start && send > -1);
   assert.ok(hook > -1 && hook < guard && guard < send);
-  assert.ok(validation.includes('await db.runTransaction(async (tx) => {'));
+  assert.ok(validation.includes('return db.runTransaction(async (tx) => {'));
+  assert.equal(validation.includes('let sendable'), false,
+    'transaction retries must not leak an earlier callback decision');
   assert.ok(validation.includes('outboxExpired(value, now)'));
   assert.ok(validation.includes('publicationMatches(value, pointer, publication)'));
   assert.ok(validation.includes("'publication-not-active'"));
+});
+check('all pre-provider transaction gates return the final callback decision', () => {
+  const activeStart = runtime.indexOf('async function activePublicationGate');
+  const activeEnd = runtime.indexOf('async function releaseOutbox', activeStart);
+  const guardStart = runtime.indexOf('async function validateGuardOutboxForSend');
+  const guardEnd = runtime.indexOf('async function deliverGuardOutbox', guardStart);
+  const active = runtime.slice(activeStart, activeEnd);
+  const guard = runtime.slice(guardStart, guardEnd);
+  assert.ok(active.includes('return db.runTransaction(async (tx) => {'));
+  assert.equal(active.includes('let gate'), false);
+  assert.ok(guard.includes('return db.runTransaction(async (tx) => {'));
+  assert.equal(guard.includes('let sendable'), false);
 });
 check('snapshot completion rechecks live manager access after rows are staged', () => {
   const start = runtime.indexOf('async function stageSnapshot');
@@ -1215,13 +1232,13 @@ check('trial publication activates and audits normally while suppressing only de
     'מצב ניסוי אינו מזיז את המצביע הפעיל');
   assert.ok(body.includes("action: 'publish'"),
     'מצב ניסוי אינו משאיר ביקורת פרסום רגילה');
-  assert.ok(body.includes("status: trial ? 'suppressed_trial' : 'blocked'"),
-    'כוונת מסירה בניסוי אינה נרשמת כ-suppressed_trial');
+  assert.ok(body.includes("status: trial && !control ? 'suppressed_trial' : 'blocked'"),
+    'כוונת מסירה שאינה לחשבון הבקרה אינה נרשמת כ-suppressed_trial');
   assert.ok(body.includes('delivery_allowed: !trial')
     && body.includes("delivery_policy: trial ? 'suppressed_trial' : 'live'"),
   'מדיניות המסירה אינה נחתמת גם בפרסום וגם בשורת המסירה');
-  assert.ok(body.indexOf('if (!trial) await releaseOutbox(pubRef);') > -1,
-    'מצב ניסוי מגיע לשחרור תור המסירה');
+  assert.ok(body.indexOf('await releaseOutbox(pubRef);') > -1,
+    'מצב ניסוי אינו מגיע לשער השחרור שמכריע לפי חשבון הבקרה');
   assert.equal(body.includes("action: 'prepare'"), false,
     'מסלול ההכנה הישן עדיין מחליף את פרסום הניסוי');
 });
@@ -1286,9 +1303,11 @@ check('a prepared publication keeps its notifications while it waits', () => {
   const src = read('functions/schedule-runtime.js');
   // ⭐ בלי שני אלה, תור ההודעות של הפרסום המוכן נמחק בזמן ההמתנה
   // ב-shadow, והמעבר היה קורה בלי שאיש יקבל הודעה.
-  assert.ok(/runtime\.mode === MODE\.SHADOW && status === 'blocked'/.test(src),
-    'שורת המתנה ב-shadow מבוטלת');
-  assert.ok(/publication\.status === 'prepared'/.test(src),
+  assert.ok(src.includes('function isPreparedLiveOutbox(value, runtime, publication)')
+      && src.includes("['staging', 'complete', 'prepared'].indexOf(publication.status) !== -1")
+      && !src.includes("return 'prepared_live'"),
+    'שורת המתנה ב-shadow אינה מבודדת מחוזה השליחה');
+  assert.ok(/publication\.status\) !== -1/.test(src),
     'פרסום מוכן אינו מוכר למתזמן ההודעות');
 });
 
@@ -2099,5 +2118,5 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 128);
-console.log('\n128 schedule runtime source checks passed.');
+assert.equal(passed, 129);
+console.log('\n129 schedule runtime source checks passed.');

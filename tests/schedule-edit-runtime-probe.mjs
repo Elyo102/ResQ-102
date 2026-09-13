@@ -233,11 +233,15 @@ async function publishTrialBase(db, rt, suffix) {
     Object.assign({}, published, { duplicate: true }));
   const liveConfig = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', Object.assign({}, liveConfig, { mode: 'shadow' }));
-  await rejectsCode('2.0ב אותו publish request אינו מחליף בדיעבד חוזה מסירה חי בחוזה ניסוי', () => rt.publish(req({
+  const historicalReplay = await rt.publish(req({
     request_id: 'seed-publish', draft_id: imported.draft_id,
     expected_content_digest: preview.expected_content_digest,
     gap_acknowledgement: preview.gaps && preview.gaps.digest
-  })), 'publication-conflict');
+  }));
+  eq('2.0ב שינוי מצב אינו מוחק קבלה של publish שכבר התחייב', historicalReplay,
+    Object.assign({}, published, { duplicate: true }));
+  eq('2.0ג replay היסטורי אינו משנה את מצב המנוע',
+    db._get(ST + '/schedule_state/runtime').mode, 'shadow');
   db._put(ST + '/schedule_state/runtime', liveConfig);
   const before = await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2'));
   const eilat1 = before.days[0].sub_stations.find((s) => s.sub_station === 'eilat');

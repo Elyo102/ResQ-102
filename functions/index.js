@@ -315,6 +315,9 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   isSuper: function (auth) {
     return !!(auth && auth.token && auth.token.super === true);
   },
+  getAuthUser: function (uid) {
+    return admin.auth().getUser(uid);
+  },
   sendPush: async function (sid, uid, type, title, body, url, important) {
     const result = await pushToOne(sid, uid, type, title, body, url, important);
     if (!result || result.failed || Number(result.sent || 0) < 1) {
@@ -477,16 +480,32 @@ function labDay(ms) {
 
 async function freshLabActor(req) {
   const signed = requireAuth(req);
+  const signedClaims = signed.token || {};
+  if (signedClaims.super !== true || signedClaims.personal_lab_control !== true) {
+    throw new HttpsError('permission-denied', 'המעבדה זמינה רק לחשבון הבקרה המורשה.');
+  }
   const user = await admin.auth().getUser(signed.uid);
-  if (!user || user.disabled) throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  if (!user || user.uid !== signed.uid || user.disabled) {
+    throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  }
   const claims = user.customClaims || {};
-  if (claims.super !== true) throw new HttpsError('permission-denied', 'המעבדה זמינה למנהל המערכת בלבד.');
-  const authMs = Number((signed.token || {}).auth_time || 0) * 1000;
-  const validMs = Date.parse(user.tokensValidAfterTime || '') || 0;
-  if (!authMs || authMs < validMs) throw new HttpsError('unauthenticated', 'יש להתחבר מחדש לפני הפעלת המעבדה.');
+  if (claims.super !== true || claims.personal_lab_control !== true) {
+    throw new HttpsError('permission-denied', 'הרשאת הבקרה האישית אינה פעילה.');
+  }
+  const authSeconds = Number(signedClaims.auth_time);
+  const authMs = authSeconds * 1000;
+  const validMs = Date.parse(String(user.tokensValidAfterTime || ''));
+  if (!Number.isSafeInteger(authSeconds) || authSeconds <= 0 || !Number.isSafeInteger(authMs)
+      || !Number.isFinite(validMs)) {
+    throw new HttpsError('unavailable', 'לא ניתן לאמת את תוקף ההתחברות כעת.');
+  }
+  if (authMs < validMs) throw new HttpsError('unauthenticated', 'יש להתחבר מחדש לפני הפעלת המעבדה.');
   const sid = String(claims.stationId || '');
-  if (!STATION_ID_RE.test(sid)) throw new HttpsError('failed-precondition', 'שיוך התחנה של המעבדה אינו תקין.');
-  return { uid: signed.uid, sid, super: true };
+  if (!STATION_ID_RE.test(sid) || String(signedClaims.stationId || '') !== sid) {
+    throw new HttpsError('failed-precondition', 'שיוך התחנה של המעבדה אינו תקין.');
+  }
+  return { uid: signed.uid, sid, super: true, personal_lab_control: true,
+    activation_auth_time_ms: authMs };
 }
 
 const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
@@ -497,7 +516,7 @@ const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
     const snap = await db.doc('stations/' + sid + '/live_lab_config/current').get();
     return snap.exists ? (snap.data() || {}) : null;
   },
-  activate: async (sid, uid, expires, at) => {
+  activate: async (sid, uid, expires, at, activationAuthTimeMs) => {
     const ref = db.doc('stations/' + sid + '/live_lab_config/current');
     await db.runTransaction(async tx => {
       const snap = await tx.get(ref), before = snap.exists ? (snap.data() || {}) : {};
@@ -505,7 +524,10 @@ const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
           before.allowed_uid && before.allowed_uid !== uid) {
         throw new HttpsError('failed-precondition', 'מעבדה אישית אחרת עדיין פעילה.');
       }
-      tx.set(ref, { enabled: true, allowed_uid: uid, expires_at_ms: expires,
+      const generation = Number.isSafeInteger(Number(before.generation))
+        && Number(before.generation) >= 0 ? Number(before.generation) + 1 : 1;
+      tx.set(ref, { schema: 'personal-live-lab-v2', enabled: true, allowed_uid: uid, generation,
+        activation_auth_time_ms: activationAuthTimeMs, expires_at_ms: expires,
         expires_at: admin.firestore.Timestamp.fromMillis(expires),
         updated_at: FV.serverTimestamp(), updated_by: uid }, { merge: false });
     });
@@ -534,10 +556,17 @@ const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
       if (reads[0].exists) {
         const old = reads[0].data() || {};
         if (old.fingerprint !== input.fingerprint) throw new HttpsError('already-exists', 'מזהה הבדיקה כבר בשימוש.');
+        if (old.state === 'reserved' && (Number(old.generation) !== Number(input.generation)
+            || Number(old.activation_auth_time_ms) !== Number(input.activation_auth_time_ms))) {
+          throw new HttpsError('failed-precondition', 'הפעלת המעבדה השתנתה מאז שמירת הבדיקה.');
+        }
         return { duplicate: true, state: String(old.state || 'unknown') };
       }
       const cfg = reads[1].exists ? (reads[1].data() || {}) : {};
-      if (cfg.enabled !== true || cfg.allowed_uid !== input.uid ||
+      if (cfg.schema !== 'personal-live-lab-v2' || cfg.enabled !== true
+          || cfg.allowed_uid !== input.uid
+          || Number(cfg.generation) !== input.generation
+          || Number(cfg.activation_auth_time_ms) !== input.activation_auth_time_ms ||
           Number(cfg.expires_at_ms || 0) <= input.now_ms) {
         throw new HttpsError('failed-precondition', 'מעבדת המכשיר אינה פעילה.');
       }
@@ -548,6 +577,7 @@ const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
       if (Number(q.count || 0) >= 3) throw new HttpsError('resource-exhausted', 'מכסת שלוש הבדיקות היומית נוצלה.');
       tx.create(probe, { uid: input.uid, fingerprint: input.fingerprint,
         token_hash: input.token_hash, state: 'reserved', requested_at_ms: input.now_ms,
+        generation: input.generation, activation_auth_time_ms: input.activation_auth_time_ms,
         requested_at: FV.serverTimestamp(),
         expires_at: admin.firestore.Timestamp.fromMillis(input.now_ms + 7 * 86400000) });
       tx.set(quota, { uid: input.uid, day: labDay(input.now_ms),

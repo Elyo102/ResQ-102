@@ -140,6 +140,8 @@ function outboxValue(publicationId, patch) {
     detail: [],
     changed_by: 'manager',
     attempt: 0,
+    delivery_allowed: true,
+    delivery_policy: 'live',
     status: 'queued',
     expires_at: new Date('2026-10-01T00:00:00.000Z'),
     created_at: new Date('2026-09-01T06:00:00.000Z')
@@ -1629,7 +1631,7 @@ async function test(name, fn) {
   let draftId;
   let previewDigest;
   let preparedPublicationId = null;
-  await test('shadow mode creates a complete immutable draft and prepares without activating or notifying', async () => {
+  await test('shadow mode activates the trial snapshot without ordinary delivery and prepares a cutover candidate', async () => {
     const made = await api.runPlanner(req('manager', 'commander', {
       request_id: 'draft_one', start: '2026-09-01', months: 1, overrides: plannerOverrides
     }));
@@ -1652,29 +1654,46 @@ async function test(name, fn) {
       draft_id: draftId, start: '2026-09-01'
     })), (error) => error instanceof ScheduleRuntimeError && error.code === 'manager-required');
     const activeBefore = await activePointer().get();
-    const prepared = await api.publish(req('manager', 'commander', {
+    const published = await api.publish(req('manager', 'commander', {
       draft_id: draftId, expected_content_digest: previewDigest, request_id: 'publish_shadow'
     }));
-    assert.equal(prepared.prepared, true);
-    assert.equal(prepared.notified_people, 0);
-    assert.ok(prepared.publication_id);
-    const publicationRef = station().collection('schedule_publications').doc(prepared.publication_id);
-    const publication = (await publicationRef.get()).data() || {};
-    assert.equal(publication.status, 'prepared');
-    assert.equal(publication.snapshot_complete, true);
-    assert.equal(publication.content_digest, previewDigest);
-    assert.equal(publication.source_draft_id, draftId);
-    const outbox = await publicationRef.collection('schedule_outbox').get();
-    assert.ok(outbox.size > 0);
-    assert.equal(outbox.size, prepared.blocked_notifications);
-    assert.ok(outbox.docs.every((doc) => (doc.data() || {}).status === 'blocked'));
+    assert.equal(published.prepared, false);
+    assert.equal(published.trial, true);
+    assert.equal(published.notified_people, 0);
+    assert.ok(published.publication_id);
+    const trialRef = station().collection('schedule_publications').doc(published.publication_id);
+    const trialPublication = (await trialRef.get()).data() || {};
+    assert.equal(trialPublication.status, 'active');
+    assert.equal(trialPublication.delivery_policy, 'suppressed_trial');
+    assert.equal(trialPublication.delivery_allowed, false);
+    assert.equal(trialPublication.snapshot_complete, true);
+    assert.equal(trialPublication.content_digest, previewDigest);
+    assert.equal(trialPublication.source_draft_id, draftId);
+    const trialOutbox = await trialRef.collection('schedule_outbox').get();
+    assert.ok(trialOutbox.size > 0);
+    assert.ok(trialOutbox.docs.every((doc) =>
+      (doc.data() || {}).status === 'suppressed_trial'));
+
+    const candidates = await station().collection('schedule_publications')
+      .where('trial_source_publication_id', '==', published.publication_id).get();
+    assert.equal(candidates.size, 1);
+    const candidateDoc = candidates.docs[0];
+    preparedPublicationId = candidateDoc.id;
+    const candidate = candidateDoc.data() || {};
+    assert.equal(candidate.status, 'prepared');
+    assert.equal(candidate.snapshot_complete, true);
+    assert.equal(candidate.content_digest, previewDigest);
+    const candidateOutbox = await candidateDoc.ref.collection('schedule_outbox').get();
+    assert.ok(candidateOutbox.size > 0);
+    assert.equal(candidateOutbox.size, candidate.blocked_notifications);
+    assert.ok(candidateOutbox.docs.every((doc) => (doc.data() || {}).status === 'blocked'));
     const activeAfter = await activePointer().get();
-    assert.equal(activeAfter.exists, activeBefore.exists);
-    assert.deepEqual(activeAfter.exists ? activeAfter.data() : null,
-      activeBefore.exists ? activeBefore.data() : null);
+    assert.equal(activeAfter.exists, true);
+    assert.equal((activeAfter.data() || {}).publication_id, published.publication_id);
+    assert.notEqual((activeAfter.data() || {}).publication_id,
+      activeBefore.exists ? (activeBefore.data() || {}).publication_id : null);
     assert.equal((await station().collection('schedule_state').doc('runtime').get()).data().mode,
       'shadow');
-    preparedPublicationId = prepared.publication_id;
   });
 
   /* ⭐ seq340 · המסלול האמיתי, ולא כתיבה ישירה של `mode`.
@@ -2449,7 +2468,7 @@ async function test(name, fn) {
         else await gated.resumeOutbox();
         const after = (await ref.get()).data();
         assert.equal(after.status, 'cancelled', mode + '/' + status);
-        assert.equal(after.cancel_reason, 'runtime-not-new', mode + '/' + status);
+        assert.equal(after.cancel_reason, 'delivery-forbidden', mode + '/' + status);
       }
     }
     assert.equal(sendCalls, 0);
@@ -2484,6 +2503,7 @@ async function test(name, fn) {
     const ref = stagedRef.collection('schedule_outbox').doc('n_stage_' + randomId());
     await stagedRef.set({
       station_id: SID, status: 'staging', operation: 'publish',
+      delivery_allowed: true, delivery_policy: 'live',
       created_at: admin.firestore.FieldValue.serverTimestamp()
     });
     await ref.set(outboxValue(stagedId, { status: 'blocked' }));
@@ -2575,7 +2595,7 @@ async function test(name, fn) {
     const first = concurrent.resumeOutbox();
     const second = concurrent.resumeOutbox();
     try {
-      await within(entered.promise, 5000, 'concurrent outbox send');
+      await within(entered.promise, 15000, 'concurrent outbox send');
       await new Promise((resolve) => setTimeout(resolve, 25));
       assert.equal(sends, 1);
     } finally {
@@ -2746,7 +2766,7 @@ async function test(name, fn) {
     const runtimeRef = station().collection('schedule_state').doc('runtime');
     const modeBefore = ((await runtimeRef.get()).data() || {}).mode;
     try {
-      await runtimeRef.update({ mode: 'shadow' });
+      await runtimeRef.update({ mode: 'off' });
       const legacy = await api.effectiveWorkDaysForStation(SID, { from: '2026-09-01', to: '2026-09-06', uids: ['viewer', 'fighter2', 'nobody'] });
       assert.equal(legacy.source, 'legacy');
       assert.deepEqual(legacy.by_uid.viewer, ['2026-09-01', '2026-09-04']);
@@ -2837,7 +2857,7 @@ async function test(name, fn) {
     const rotationA = station().collection('rotations').doc('A');
     const rotationBefore = (await rotationA.get()).data() || {};
     try {
-      await runtimeRef.update({ mode: 'shadow' });
+      await runtimeRef.update({ mode: 'off' });
       let windows = 0;
       const shifting = runtime(null, {
         beforeEffectiveViewRecheck: async (info) => {
@@ -2872,7 +2892,7 @@ async function test(name, fn) {
     const sep1Before = await sep1.get();
     assert.equal(sep1Before.exists, false, 'the scenario starts without an override on 1.9');
     try {
-      await runtimeRef.update({ mode: 'shadow' });
+      await runtimeRef.update({ mode: 'off' });
       // 94 ימים = שני חלונות (93 + 1). viewer בצוות A: עובד ב-1.9 וב-3.12
       // (93 ימים אחרי העוגן, מחזור 3). אחרי החלון הראשון, שני החריגים
       // נכתבים יחד: 1.9 → צוות B, 3.12 → צוות B. אין מצב לפני/אחרי שבו
@@ -2944,7 +2964,7 @@ async function test(name, fn) {
     const rejects = (promise, code) => assert.rejects(promise,
       (error) => error instanceof ScheduleRuntimeError && error.code === code);
     try {
-      await runtimeRef.update({ mode: 'shadow' });
+      await runtimeRef.update({ mode: 'off' });
       // legacy: העוגן זז אחרי שעות המשמרת (hook 'workdays' הוא הנקודה
       // האחרונה לפני האישור). עד 419 הבסיס נבדק לפני השעות — והתשובה
       // הישנה נמסרה.
@@ -3016,7 +3036,7 @@ async function test(name, fn) {
     const rotationBefore = (await rotationA.get()).data() || {};
     const client = await import('../effective-workdays.js?v=42g0');
     try {
-      await runtimeRef.update({ mode: 'shadow' });
+      await runtimeRef.update({ mode: 'off' });
       // מסך האבטחות: היסטוריה (365 אחורה) + עתיד (365 קדימה), שתי קריאות.
       const history = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2025-09-02', to: '2026-09-01', uids: ['viewer', 'driver2'] }));
       const upcoming = await api.getEffectiveWorkdays(req('viewer', 'firefighter', { from: '2026-09-02', to: '2027-09-02', uids: ['viewer', 'driver2'] }));

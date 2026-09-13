@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 
 const REQUEST_RE = /^[A-Za-z0-9_-]{16,96}$/;
+const LAB_SCHEMA = 'personal-live-lab-v2';
 
 function digest(value) {
   return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
@@ -23,7 +24,10 @@ function createPersonalLiveLab(deps) {
 
   async function actor(req) {
     const value = await deps.freshActor(req);
-    if (!value || !value.uid || !value.sid || value.super !== true) {
+    if (!value || !value.uid || !value.sid || value.super !== true
+        || value.personal_lab_control !== true
+        || !Number.isSafeInteger(value.activation_auth_time_ms)
+        || value.activation_auth_time_ms <= 0) {
       fail('permission-denied', 'המעבדה זמינה למנהל המערכת המאומת בלבד.');
     }
     return value;
@@ -31,7 +35,10 @@ function createPersonalLiveLab(deps) {
 
   async function assertActive(a) {
     const cfg = await deps.readConfig(a.sid);
-    if (!cfg || cfg.enabled !== true || cfg.allowed_uid !== a.uid ||
+    if (!cfg || cfg.schema !== LAB_SCHEMA || cfg.enabled !== true || cfg.allowed_uid !== a.uid ||
+        !Number.isSafeInteger(Number(cfg.generation)) || Number(cfg.generation) < 1 ||
+        !Number.isSafeInteger(Number(cfg.activation_auth_time_ms)) ||
+        Number(cfg.activation_auth_time_ms) !== a.activation_auth_time_ms ||
         Number(cfg.expires_at_ms || 0) <= now()) {
       fail('failed-precondition', 'מעבדת המכשיר אינה פעילה לחשבון הזה.');
     }
@@ -41,7 +48,11 @@ function createPersonalLiveLab(deps) {
   async function status(req) {
     const a = await actor(req);
     const cfg = await deps.readConfig(a.sid);
-    const active = !!(cfg && cfg.enabled === true && cfg.allowed_uid === a.uid &&
+    const active = !!(cfg && cfg.schema === LAB_SCHEMA && cfg.enabled === true
+      && cfg.allowed_uid === a.uid
+      && Number.isSafeInteger(Number(cfg.generation)) && Number(cfg.generation) >= 1
+      && Number.isSafeInteger(Number(cfg.activation_auth_time_ms))
+      && Number(cfg.activation_auth_time_ms) === a.activation_auth_time_ms &&
       Number(cfg.expires_at_ms || 0) > now());
     return { active, expires_at_ms: active ? Number(cfg.expires_at_ms) : 0 };
   }
@@ -49,7 +60,7 @@ function createPersonalLiveLab(deps) {
   async function enable(req) {
     const a = await actor(req);
     const expires = now() + 24 * 60 * 60 * 1000;
-    await deps.activate(a.sid, a.uid, expires, now());
+    await deps.activate(a.sid, a.uid, expires, now(), a.activation_auth_time_ms);
     return { active: true, expires_at_ms: expires };
   }
 
@@ -61,7 +72,7 @@ function createPersonalLiveLab(deps) {
     if (token.length < 20 || token.length > 4096) fail('invalid-argument', 'מזהה המכשיר אינו תקין.');
 
     const a = await actor(req);
-    await assertActive(a);
+    const cfg = await assertActive(a);
     if (!(await deps.hasToken(a.sid, a.uid, token))) {
       fail('failed-precondition', 'המכשיר הנוכחי אינו רשום עוד לחשבון.');
     }
@@ -71,19 +82,44 @@ function createPersonalLiveLab(deps) {
 
     const fingerprint = digest([a.sid, a.uid, requestId, digest(token)].join('|'));
     const reserved = await deps.reserve({
-      sid: a.sid, uid: a.uid, requestId, fingerprint, token_hash: digest(token), now_ms: now()
+      sid: a.sid, uid: a.uid, requestId, fingerprint, token_hash: digest(token), now_ms: now(),
+      generation: Number(cfg.generation), activation_auth_time_ms: a.activation_auth_time_ms
     });
-    if (reserved && reserved.duplicate) {
+    if (reserved && reserved.duplicate && String(reserved.state || '') !== 'reserved') {
       return { probe_id: requestId, state: String(reserved.state || 'unknown'), duplicate: true };
     }
 
     const current = await actor(req);
     if (current.uid !== a.uid || current.sid !== a.sid) fail('permission-denied', 'זהות המעבדה השתנתה.');
-    await assertActive(current);
+    if (current.activation_auth_time_ms !== a.activation_auth_time_ms) {
+      fail('permission-denied', 'הפעלת המעבדה השתנתה.');
+    }
+    const currentCfg = await assertActive(current);
+    if (Number(currentCfg.generation) !== Number(cfg.generation)) {
+      fail('failed-precondition', 'הפעלת המעבדה התחלפה לפני השליחה.');
+    }
     if (!(await deps.hasToken(a.sid, a.uid, token))) {
       fail('failed-precondition', 'המכשיר הוסר לפני השליחה.');
     }
     if (await deps.isSilent(a.uid)) fail('failed-precondition', 'מצב שקט הופעל לפני השליחה.');
+
+    // Auth is the last reversible fence before the provider boundary.  The
+    // earlier check protects reservation; this one closes revocation that
+    // happens while token/config/silent state is being re-read.
+    const sendActor = await actor(req);
+    if (sendActor.uid !== a.uid || sendActor.sid !== a.sid
+        || sendActor.activation_auth_time_ms !== a.activation_auth_time_ms) {
+      fail('permission-denied', 'זהות המעבדה השתנתה לפני השליחה.');
+    }
+    const sendCfg = await assertActive(sendActor);
+    if (Number(sendCfg.generation) !== Number(cfg.generation)) {
+      fail('failed-precondition', 'הפעלת המעבדה התחלפה לפני השליחה.');
+    }
+    const finalActor = await actor(req);
+    if (finalActor.uid !== a.uid || finalActor.sid !== a.sid
+        || finalActor.activation_auth_time_ms !== a.activation_auth_time_ms) {
+      fail('permission-denied', 'הרשאת המעבדה השתנתה לפני השליחה.');
+    }
 
     try {
       const messageId = await deps.sendExact({

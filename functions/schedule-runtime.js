@@ -191,6 +191,8 @@ function createScheduleRuntime(deps) {
   const createPublication = d.createPublication;
   const createService = d.createService;
   const isSuper = typeof d.isSuper === 'function' ? d.isSuper : function () { return false; };
+  const getAuthUser = typeof d.getAuthUser === 'function'
+    ? d.getAuthUser : async function () { return null; };
   const sendPush = d.sendPush;
   // Operational telemetry is intentionally code-only.  Never pass the raw
   // exception or request context here: either can contain personal data.
@@ -306,6 +308,10 @@ function createScheduleRuntime(deps) {
 
   function liveUserRef(sid, uid) {
     return stationRef(sid).collection('users').doc(uid);
+  }
+
+  function liveLabRef(sid) {
+    return stationRef(sid).collection('live_lab_config').doc('current');
   }
 
   function reportRuntimeError(code) {
@@ -1343,6 +1349,74 @@ function createScheduleRuntime(deps) {
     // Notifications without a valid, future expiry are fail-closed.  Firestore
     // TTL cleanup is asynchronous and therefore cannot be a delivery guard.
     return !Number.isFinite(expiresAt) || expiresAt <= now;
+  }
+
+  function activeTrialControl(config, uid, generation, now) {
+    return plain(config) && config.schema === 'personal-live-lab-v2' && config.enabled === true
+      && String(config.allowed_uid || '') === String(uid || '')
+      && integer(Number(config.generation)) && Number(config.generation) >= 1
+      && Number(config.generation) === Number(generation)
+      && Number.isSafeInteger(Number(config.activation_auth_time_ms))
+      && Number(config.activation_auth_time_ms) > 0
+      && Number(config.expires_at_ms || 0) > now;
+  }
+
+  function trialAuthValid(user, uid, sid, activationAuthTimeMs) {
+    const claims = user && user.customClaims || {};
+    const validAfter = Date.parse(String(user && user.tokensValidAfterTime || ''));
+    return !!user && user.disabled !== true && user.uid === uid
+      && claims.super === true && claims.personal_lab_control === true
+      && String(claims.stationId || '') === sid
+      && Number.isSafeInteger(Number(activationAuthTimeMs))
+      && Number(activationAuthTimeMs) > 0 && Number.isFinite(validAfter)
+      && Number(activationAuthTimeMs) >= validAfter;
+  }
+
+  function terminalAuthLookupFailure(error) {
+    const code = String(error && error.code || '').toLowerCase();
+    return code === 'auth/user-not-found' || code === 'user-not-found';
+  }
+
+  function deliveryContract(value, runtime, publication, labConfig, now) {
+    if (value.delivery_policy === 'live' && value.delivery_allowed === true
+        && runtime.mode === MODE.NEW && publication.delivery_policy === 'live'
+        && publication.delivery_allowed === true) return 'live';
+    if (value.delivery_policy === 'trial_control' && value.delivery_allowed === true
+        && runtime.mode === MODE.SHADOW && publication.delivery_policy === 'suppressed_trial'
+        && publication.delivery_allowed === false
+        && activeTrialControl(labConfig, value.person, value.control_generation, now)
+        && Number(value.control_auth_time_ms) === Number(labConfig.activation_auth_time_ms)) {
+      return 'trial_control';
+    }
+    return null;
+  }
+
+  function isPreparedLiveOutbox(value, runtime, publication) {
+    return value.delivery_policy === 'live' && value.delivery_allowed === true
+      && runtime.mode === MODE.SHADOW && publication.delivery_policy === 'live'
+      && publication.delivery_allowed === true
+      && ['staging', 'complete', 'prepared'].indexOf(publication.status) !== -1;
+  }
+
+  async function trialControlFor(sid, notifications) {
+    const snap = await liveLabRef(sid).get();
+    const config = snap.exists ? (snap.data() || {}) : {};
+    const now = Date.parse(clock());
+    const uid = String(config.allowed_uid || '');
+    const generation = Number(config.generation);
+    const activationAuthTimeMs = Number(config.activation_auth_time_ms);
+    if (!AUTH_UID_RE.test(uid) || !activeTrialControl(config, uid, generation, now)) return null;
+    let user = null;
+    try { user = await getAuthUser(uid); }
+    catch (error) {
+      if (terminalAuthLookupFailure(error)) return null;
+      const unavailable = new Error('TRIAL_AUTH_TEMPORARY');
+      unavailable.code = 'TRIAL_AUTH_TEMPORARY';
+      throw unavailable;
+    }
+    if (!trialAuthValid(user, uid, sid, activationAuthTimeMs)) return null;
+    return (notifications || []).some((item) => item && item.person === uid)
+      ? { uid, generation, activation_auth_time_ms: activationAuthTimeMs } : null;
   }
 
   function isManagerRevoked(error) {
@@ -5262,37 +5336,50 @@ function createScheduleRuntime(deps) {
   }
 
   async function activePublicationGate(ref) {
-    let active = false;
-    await db.runTransaction(async (tx) => {
+    return db.runTransaction(async (tx) => {
       const publicationSnap = await tx.get(ref);
-      if (!publicationSnap.exists) return;
+      if (!publicationSnap.exists) return null;
       const publication = publicationSnap.data() || {};
       const stationId = String(publication.station_id || '');
       const publicationId = String(ref.id || '');
-      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) return;
+      if (!ID_RE.test(stationId) || !ID_RE.test(publicationId)) return null;
       const refs = [runtimeRef(stationId), activeRef(stationId)];
       const snaps = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const pointer = snaps[1].exists ? (snaps[1].data() || {}) : {};
-      active = runtime.mode === MODE.NEW && publication.status === 'active'
-        && publication.delivery_allowed !== false
-        && pointer.publication_id === publicationId
-        && Number(pointer.revision || 0) === Number(publication.revision || 0);
+      if (publication.status !== 'active' || pointer.publication_id !== publicationId
+          || Number(pointer.revision || 0) !== Number(publication.revision || 0)) return null;
+      if (runtime.mode === MODE.NEW && publication.delivery_policy === 'live'
+          && publication.delivery_allowed === true) return { kind: 'live' };
+      if (runtime.mode === MODE.SHADOW && publication.delivery_policy === 'suppressed_trial'
+          && publication.delivery_allowed === false) {
+        const labSnap = await tx.get(liveLabRef(stationId));
+        const lab = labSnap.exists ? (labSnap.data() || {}) : {};
+        if (activeTrialControl(lab, lab.allowed_uid, lab.generation, Date.parse(clock()))) {
+        return { kind: 'trial_control', allowed_uid: String(lab.allowed_uid),
+          generation: Number(lab.generation),
+          activation_auth_time_ms: Number(lab.activation_auth_time_ms) };
+        }
+      }
+      return null;
     });
-    return active;
   }
 
   async function releaseOutbox(ref) {
     // The active-pointer transaction is the release authority.  It deliberately
     // does not depend on the original actor: a schedule validly activated just
     // before that actor was revoked must still notify its affected people.
-    if (!await activePublicationGate(ref)) return { released: 0 };
-    const snap = await ref.collection('schedule_outbox').where('status', '==', 'blocked').get();
     let released = 0;
-    const now = Date.parse(clock());
-    for (let index = 0; index < snap.docs.length; index += 100) {
-      const refs = snap.docs.slice(index, index + 100).map((doc) => doc.ref);
-      await db.runTransaction(async (tx) => {
+    while (true) {
+      const gate = await activePublicationGate(ref);
+      if (!gate) return { released };
+      const snap = await ref.collection('schedule_outbox')
+        .where('status', '==', 'blocked').limit(100).get();
+      if (snap.empty) return { released };
+      const refs = snap.docs.map((doc) => doc.ref);
+      const now = Date.parse(clock());
+      const pageReleased = await db.runTransaction(async (tx) => {
+        let count = 0;
         const current = await Promise.all(refs.map((item) => tx.get(item)));
         current.forEach((item) => {
           if (!item.exists) return;
@@ -5300,7 +5387,13 @@ function createScheduleRuntime(deps) {
           // A transaction reads the current status so a delayed releaser can
           // never resurrect a sent/cancelled notification from a stale query.
           if (value.status !== 'blocked') return;
-          if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial') {
+          const allowed = gate.kind === 'live'
+            ? value.delivery_allowed === true && value.delivery_policy === 'live'
+            : value.delivery_allowed === true && value.delivery_policy === 'trial_control'
+              && value.person === gate.allowed_uid
+              && Number(value.control_generation) === gate.generation
+              && Number(value.control_auth_time_ms) === gate.activation_auth_time_ms;
+          if (!allowed) {
             cancelOutbox(tx, item.ref, 'delivery-forbidden');
             return;
           }
@@ -5309,11 +5402,12 @@ function createScheduleRuntime(deps) {
             return;
           }
           tx.update(item.ref, { status: 'queued', queued_at: FV.serverTimestamp() });
-          released += 1;
+          count += 1;
         });
+        return count;
       });
+      released += pageReleased;
     }
-    return { released };
   }
 
   function cancelOutbox(tx, ref, reason) {
@@ -5346,13 +5440,17 @@ function createScheduleRuntime(deps) {
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
       const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
         liveUserRef(stationId, person)];
+      if (value.delivery_policy === 'trial_control') refs.push(liveLabRef(stationId));
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
-      if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial'
-          || publication.delivery_allowed === false
-          || publication.delivery_policy === 'suppressed_trial') {
+      const lab = checks[4] && checks[4].exists ? (checks[4].data() || {}) : {};
+      const contract = deliveryContract(value, runtime, publication, lab, now);
+      const preparedLive = isPreparedLiveOutbox(value, runtime, publication);
+      const preActivationLive = (contract === 'live' || preparedLive)
+        && ['staging', 'complete', 'prepared'].indexOf(publication.status) !== -1;
+      if (!contract && !preparedLive) {
         cancelOutbox(tx, ref, 'delivery-forbidden');
         return;
       }
@@ -5361,17 +5459,11 @@ function createScheduleRuntime(deps) {
        * הודעה שאינה ב-`new`, כלומר הייתה מוחקת את תור ההודעות של
        * הפרסום המוכן בזמן שהוא ממתין, והמעבר היה קורה בלי שאיש
        * יקבל הודעה. שורה `blocked` ב-shadow היא המתנה תקינה. */
-      if (runtime.mode !== MODE.NEW
-          && !(runtime.mode === MODE.SHADOW && status === 'blocked')) {
-        cancelOutbox(tx, ref, 'runtime-not-new');
-        return;
-      }
       if (!recipientIsActive(checks[3], stationId)) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
-      if (publication.status === 'staging' || publication.status === 'complete'
-          || publication.status === 'prepared') {
+      if (preActivationLive) {
         // blocked is the intentional pre-activation state.  A scheduler must
         // never cancel it just because the pointer has not committed yet.
         // `prepared` is that same state held deliberately across the cutover.
@@ -6066,13 +6158,57 @@ function createScheduleRuntime(deps) {
   async function publish(req) {
     const ctx = await context(req);
     requireManager(ctx);
-    const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW, MODE.SHADOW]);
-    const trial = config.mode === MODE.SHADOW;
     const data = plain(req.data) ? req.data : {};
     const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const expectedContentDigest = String(data.expected_content_digest || '');
+    const gapAcknowledgement = String(data.gap_acknowledgement || '');
+    const pubId = 'p_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
+    const pubRef = stationRef(ctx.sid).collection('schedule_publications').doc(pubId);
+    const requestCoreFingerprint = digest({
+      contract_version: 3, station_id: ctx.sid, actor_uid: ctx.uid,
+      request_id: requestId, intent: 'publish', draft_id: draftId,
+      expected_content_digest: expectedContentDigest
+    });
+    const requestFingerprint = digest({
+      contract_version: 3, station_id: ctx.sid, actor_uid: ctx.uid,
+      request_id: requestId, intent: 'publish', draft_id: draftId,
+      expected_content_digest: expectedContentDigest,
+      gap_acknowledgement: gapAcknowledgement || null
+    });
+    const completedReplay = await pubRef.get();
+    if (completedReplay.exists) {
+      const completed = completedReplay.data() || {};
+      if (completed.request_contract_version === 3 && completed.status === 'active'
+          && plain(completed.operation_receipt)
+          && completed.request_fingerprint !== requestFingerprint) {
+        throw new ScheduleRuntimeError('publication-conflict',
+          'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
+      }
+      if (completed.request_contract_version === 3 && completed.status === 'active'
+          && completed.station_id === ctx.sid && completed.request_id === requestId
+          && completed.source_draft_id === draftId && completed.published_by === ctx.uid
+          && completed.content_digest === expectedContentDigest
+          && plain(completed.operation_receipt)) {
+        await requireLiveManagerNow(ctx);
+        const replayPair = await Promise.all([runtimeRef(ctx.sid).get(), activeRef(ctx.sid).get()]);
+        const replayRuntime = replayPair[0].exists ? (replayPair[0].data() || {}) : {};
+        const replayPointer = replayPair[1].exists ? (replayPair[1].data() || {}) : {};
+        if ([MODE.NEW, MODE.SHADOW].indexOf(replayRuntime.mode) !== -1
+            && replayPointer.publication_id === pubId
+            && Number(replayPointer.revision) === Number(completed.revision)) {
+          await releaseOutbox(pubRef);
+          if (replayRuntime.mode === MODE.SHADOW
+              && completed.delivery_policy === 'suppressed_trial') {
+            await ensureTrialCandidate(ctx, pubRef, completed);
+          }
+        }
+        return Object.assign({ duplicate: true }, completed.operation_receipt);
+      }
+    }
+    const config = await configuration(ctx.sid);
+    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    const trial = config.mode === MODE.SHADOW;
     const draftRef = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
     const draftSnap = await draftRef.get();
     if (!draftSnap.exists || (draftSnap.data() || {}).status !== 'complete') {
@@ -6099,8 +6235,6 @@ function createScheduleRuntime(deps) {
     const previous = before ? before.plan : null;
     const previousEvents = before ? before.events : [];
     const revision = before ? Number(before.pointer.revision || 0) + 1 : 1;
-    const pubId = 'p_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
-    const pubRef = stationRef(ctx.sid).collection('schedule_publications').doc(pubId);
     const publication = createPublication({
       clock, hash,
       rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] }
@@ -6120,14 +6254,6 @@ function createScheduleRuntime(deps) {
       }
     });
     const expectedPrevious = before ? before.pointer.publication_id : null;
-    const requestFingerprint = digest({
-      station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
-      intent: 'activate',
-      delivery_policy: trial ? 'suppressed_trial' : 'live',
-      draft_id: draftId, revision,
-      previous_publication_id: expectedPrevious,
-      content_hash: planned.publication.content_hash
-    });
     const existing = await pubRef.get();
     if (existing.exists) {
       const existingData = existing.data() || {};
@@ -6137,16 +6263,21 @@ function createScheduleRuntime(deps) {
       /* Active replay must reconstruct the fingerprint of the original
        * activation.  The current active publication is no longer its own
        * predecessor and must not be used to derive that original request. */
-      const fingerprintForExisting = pointsToExisting ? digest({
-        station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
-        intent: 'activate', draft_id: draftId,
-        delivery_policy: trial ? 'suppressed_trial' : 'live',
-        revision: Number(existingData.revision),
-        previous_publication_id: nonEmpty(existingData.previous_publication_id)
-          ? existingData.previous_publication_id : null,
-        content_hash: planned.publication.content_hash
-      }) : requestFingerprint;
-      if (existingData.request_fingerprint !== fingerprintForExisting) {
+      const fingerprintForExisting = existingData.request_contract_version === 3
+        ? (existingData.status === 'staging' ? requestCoreFingerprint : requestFingerprint) : digest({
+          station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
+          intent: 'activate', draft_id: draftId,
+          delivery_policy: trial ? 'suppressed_trial' : 'live',
+          revision: pointsToExisting ? Number(existingData.revision) : revision,
+          previous_publication_id: pointsToExisting
+            ? (nonEmpty(existingData.previous_publication_id)
+              ? existingData.previous_publication_id : null) : expectedPrevious,
+          content_hash: planned.publication.content_hash
+        });
+      const storedFingerprintForExisting = existingData.request_contract_version === 3
+          && existingData.status === 'staging'
+        ? existingData.request_core_fingerprint : existingData.request_fingerprint;
+      if (storedFingerprintForExisting !== fingerprintForExisting) {
         throw new ScheduleRuntimeError('publication-conflict',
           'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
       }
@@ -6168,7 +6299,7 @@ function createScheduleRuntime(deps) {
           preparedReplayInvalid();
         }
         await requireLiveManagerNow(ctx);
-        if (existingData.delivery_allowed === true) await releaseOutbox(pubRef);
+        await releaseOutbox(pubRef);
         if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
         // The receipt is part of idempotency.  Do not recompute it against the
         // publication that is active now: that comparison naturally produces
@@ -6184,6 +6315,8 @@ function createScheduleRuntime(deps) {
         return {
           duplicate: true, prepared: false, trial, publication_id: pubId,
           revision: activeData.revision, notified_people: replayNotified,
+          trial_control_notifications: integer(existingData.trial_control_notifications)
+            ? existingData.trial_control_notifications : 0,
           suppressed_notifications: integer(existingData.suppressed_notifications)
             ? existingData.suppressed_notifications : 0,
           blocked_notifications: existingData.blocked_notifications,
@@ -6211,7 +6344,6 @@ function createScheduleRuntime(deps) {
      * לפרסום שייפסל); הבדיקה **המחייבת** נעשית שוב בתוך עסקת הפרסום, על
      * הקטלוג/המחזיקים/מדיניות הפער כפי שהעסקה קוראת אותם (§1 · TOCTOU),
      * וגם בניסיון חוזר של פרסום שנשאר ב-staging. */
-    const gapAcknowledgement = String(data.gap_acknowledgement || '');
     const gapPeople = currentSource.peopleRaw.filter((person) => person.active === true);
     const gapPolicyValue = projectedPolicyForPlan(
       currentPolicy.value, next.plan, null, draftMeta, 'gap-station-map-missing'
@@ -6224,7 +6356,8 @@ function createScheduleRuntime(deps) {
     if (!existing.exists) await pubRef.create({
       station_id: ctx.sid, status: 'staging', request_id: requestId,
       request_fingerprint: requestFingerprint,
-      request_contract_version: 2,
+      request_core_fingerprint: requestCoreFingerprint,
+      request_contract_version: 3,
       delivery_allowed: !trial, delivery_policy: trial ? 'suppressed_trial' : 'live',
       gap_report: null,
       station_map: importedStationMapOf(null, draftMeta),
@@ -6246,22 +6379,36 @@ function createScheduleRuntime(deps) {
       published_by: ctx.uid, published_by_name: ctx.name
     });
     await stageSnapshot(pubRef, {}, next.plan, next.events, next.roster);
-    const outboxOps = planned.notifications.map((notification) => ({
-      ref: pubRef.collection('schedule_outbox').doc('n_' + hash(notification.dedupe_key).slice(0, 40)),
-      kind: 'set',
-      data: {
-        station_id: ctx.sid, publication_id: pubId, revision,
-        person: notification.person, dedupe_key: notification.dedupe_key,
-        push: notification.push, detail: notification.detail,
-        changed_by: ctx.uid, attempt: 0,
-        delivery_allowed: !trial,
-        delivery_policy: trial ? 'suppressed_trial' : 'live',
-        status: trial ? 'suppressed_trial' : 'blocked',
-        suppressed_at: trial ? FV.serverTimestamp() : null,
-        expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
-        created_at: FV.serverTimestamp()
-      }
-    }));
+    const trialControl = trial ? await trialControlFor(ctx.sid, planned.notifications) : null;
+    const operationReceipt = {
+      prepared: false, trial, publication_id: pubId, revision,
+      notified_people: trial ? 0 : planned.notifications.length,
+      trial_control_notifications: trial && trialControl ? 1 : 0,
+      suppressed_notifications: trial
+        ? planned.notifications.length - (trialControl ? 1 : 0) : 0,
+      blocked_notifications: 0, summary: next.plan.summary
+    };
+    const outboxOps = planned.notifications.map((notification) => {
+      const control = !!(trialControl && notification.person === trialControl.uid);
+      return {
+        ref: pubRef.collection('schedule_outbox').doc('n_' + hash(notification.dedupe_key).slice(0, 40)),
+        kind: 'set',
+        data: {
+          station_id: ctx.sid, publication_id: pubId, revision,
+          person: notification.person, dedupe_key: notification.dedupe_key,
+          push: notification.push, detail: notification.detail,
+          changed_by: ctx.uid, attempt: 0,
+          delivery_allowed: !trial || control,
+          delivery_policy: trial ? (control ? 'trial_control' : 'suppressed_trial') : 'live',
+          control_generation: control ? trialControl.generation : null,
+          control_auth_time_ms: control ? trialControl.activation_auth_time_ms : null,
+          status: trial && !control ? 'suppressed_trial' : 'blocked',
+          suppressed_at: trial && !control ? FV.serverTimestamp() : null,
+          expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
+          created_at: FV.serverTimestamp()
+        }
+      };
+    });
     await commitWrites(outboxOps);
     await beforeSnapshotFinalize({ kind: 'publication', ref: pubRef, ctx });
     try {
@@ -6334,9 +6481,13 @@ function createScheduleRuntime(deps) {
       };
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: gapRecord,
+        request_fingerprint: requestFingerprint,
         notified_people: trial ? 0 : planned.notifications.length,
-        suppressed_notifications: trial ? planned.notifications.length : 0,
-        blocked_notifications: 0
+        trial_control_notifications: trial && trialControl ? 1 : 0,
+        suppressed_notifications: trial
+          ? planned.notifications.length - (trialControl ? 1 : 0) : 0,
+        blocked_notifications: 0,
+        operation_receipt: operationReceipt
       });
       tx.set(activeRef(ctx.sid), {
         publication_id: pubId, revision, previous_publication_id: expectedPrevious,
@@ -6363,30 +6514,17 @@ function createScheduleRuntime(deps) {
     }
     /* ⭐ ה-outbox משתחרר רק כשהפרסום באמת פעיל. הכנה שמודיעה היא
      * הודעה על סידור שאיש עדיין אינו רואה. */
-    if (!trial) await releaseOutbox(pubRef);
-    else {
+    await releaseOutbox(pubRef);
+    if (trial) {
       const activeTrial = await pubRef.get();
       await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
     }
-    return {
-      duplicate: false,
-      prepared: false,
-      trial,
-      publication_id: pubId,
-      revision,
-      notified_people: trial ? 0 : planned.notifications.length,
-      suppressed_notifications: trial ? planned.notifications.length : 0,
-      blocked_notifications: 0,
-      summary: next.plan.summary
-    };
+    return Object.assign({ duplicate: false }, operationReceipt);
   }
 
   async function rollback(req) {
     const ctx = await context(req);
     requireManager(ctx);
-    const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW, MODE.SHADOW]);
-    const trial = config.mode === MODE.SHADOW;
     const data = plain(req.data) ? req.data : {};
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const expectedActive = requireId(data.expected_active_publication_id,
@@ -6403,8 +6541,8 @@ function createScheduleRuntime(deps) {
      * before consulting the now-moved active pointer. In particular, a retry
      * cannot substitute another gap acknowledgement or rollback intent. */
     const requestFingerprint = digest({
-      station_id: ctx.sid, uid: ctx.uid, request_id: requestId, intent: 'rollback',
-      delivery_policy: trial ? 'suppressed_trial' : 'live',
+      contract_version: 3, station_id: ctx.sid, actor_uid: ctx.uid,
+      request_id: requestId, intent: 'rollback',
       expected_active_publication_id: expectedActive,
       target_publication_id: targetId,
       reason_code: reasonCode,
@@ -6414,6 +6552,15 @@ function createScheduleRuntime(deps) {
     const pubId = 'p_rb_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
     const pubRef = stationRef(ctx.sid).collection('schedule_publications').doc(pubId);
     const replayReceipt = (publication, active) => {
+      if (publication.request_contract_version === 3 && plain(publication.operation_receipt)
+          && publication.station_id === ctx.sid && publication.status === 'active'
+          && publication.operation === 'rollback' && publication.request_id === requestId
+          && publication.published_by === ctx.uid
+          && publication.rollback_from_publication_id === expectedActive
+          && publication.rollback_target_publication_id === targetId
+          && publication.rollback_reason_code === reasonCode) {
+        return Object.assign({ duplicate: true }, publication.operation_receipt);
+      }
       if (!plain(publication) || !plain(active)
           || publication.station_id !== ctx.sid || publication.status !== 'active'
           || publication.operation !== 'rollback' || publication.request_id !== requestId
@@ -6432,15 +6579,54 @@ function createScheduleRuntime(deps) {
         duplicate: true, publication_id: pubId, revision: publication.revision,
         rolled_back_to: publication.rollback_target_publication_id,
         notified_people: publication.notified_people,
+        trial_control_notifications: integer(publication.trial_control_notifications)
+          ? publication.trial_control_notifications : 0,
         suppressed_notifications: integer(publication.suppressed_notifications)
           ? publication.suppressed_notifications : 0,
         trial: publication.delivery_policy === 'suppressed_trial'
       };
     };
-    const firstPair = await Promise.all([pubRef.get(), activeRef(ctx.sid).get()]);
-    const firstPub = firstPair[0].exists ? (firstPair[0].data() || {}) : {};
+    const replaySnap = await pubRef.get();
+    const replayPub = replaySnap.exists ? (replaySnap.data() || {}) : {};
+    if (replaySnap.exists && replayPub.request_contract_version === 3) {
+      if (replayPub.request_fingerprint !== requestFingerprint) {
+        throw new ScheduleRuntimeError('rollback-conflict',
+          'מזהה החזרה כבר שימש לפעולה אחרת.', 'already-exists');
+      }
+      if (replayPub.status === 'active' && plain(replayPub.operation_receipt)) {
+        const receipt = replayReceipt(replayPub, {});
+        await requireLiveManagerNow(ctx);
+        const replayPair = await Promise.all([runtimeRef(ctx.sid).get(), activeRef(ctx.sid).get()]);
+        const replayRuntime = replayPair[0].exists ? (replayPair[0].data() || {}) : {};
+        const replayPointer = replayPair[1].exists ? (replayPair[1].data() || {}) : {};
+        if ([MODE.NEW, MODE.SHADOW].indexOf(replayRuntime.mode) !== -1
+            && replayPointer.publication_id === pubId
+            && Number(replayPointer.revision) === Number(replayPub.revision)) {
+          await releaseOutbox(pubRef);
+          if (replayRuntime.mode === MODE.SHADOW
+              && replayPub.delivery_policy === 'suppressed_trial') {
+            await ensureTrialCandidate(ctx, pubRef, replayPub);
+          }
+        }
+        return receipt;
+      }
+    }
+    const config = await configuration(ctx.sid);
+    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    const trial = config.mode === MODE.SHADOW;
+    const firstPair = await Promise.all([Promise.resolve(replaySnap), activeRef(ctx.sid).get()]);
+    const firstPub = replayPub;
     const firstActive = firstPair[1].exists ? (firstPair[1].data() || {}) : {};
-    if (firstPair[0].exists && firstPub.request_fingerprint !== requestFingerprint) {
+    const legacyRollbackFingerprint = digest({
+      station_id: ctx.sid, uid: ctx.uid, request_id: requestId, intent: 'rollback',
+      delivery_policy: trial ? 'suppressed_trial' : 'live',
+      expected_active_publication_id: expectedActive,
+      target_publication_id: targetId, reason_code: reasonCode,
+      gap_acknowledgement: gapAcknowledgement || null
+    });
+    const expectedStoredFingerprint = firstPub.request_contract_version === 3
+      ? requestFingerprint : legacyRollbackFingerprint;
+    if (firstPair[0].exists && firstPub.request_fingerprint !== expectedStoredFingerprint) {
       throw new ScheduleRuntimeError('rollback-conflict',
         'מזהה החזרה כבר שימש לפעולה אחרת.', 'already-exists');
     }
@@ -6493,15 +6679,17 @@ function createScheduleRuntime(deps) {
     if (existing.exists) {
       const existingData = existing.data() || {};
       const active = await activeRef(ctx.sid).get();
+      const expectedExistingFingerprint = existingData.request_contract_version === 3
+        ? requestFingerprint : legacyRollbackFingerprint;
       if (active.exists && (active.data() || {}).publication_id === pubId
-          && existingData.request_fingerprint === requestFingerprint) {
+          && existingData.request_fingerprint === expectedExistingFingerprint) {
         const receipt = replayReceipt(existingData, active.data() || {});
         await requireLiveManagerNow(ctx);
         await releaseOutbox(pubRef);
         if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
         return receipt;
       }
-      if (existingData.request_fingerprint !== requestFingerprint) {
+      if (existingData.request_fingerprint !== expectedExistingFingerprint) {
         throw new ScheduleRuntimeError('rollback-conflict',
           'מזהה החזרה כבר שימש לפעולה אחרת.', 'already-exists');
       }
@@ -6513,7 +6701,7 @@ function createScheduleRuntime(deps) {
       await pubRef.create({
         station_id: ctx.sid, status: 'staging', operation: 'rollback',
         request_id: requestId, request_fingerprint: requestFingerprint,
-        request_contract_version: 2,
+        request_contract_version: 3,
         delivery_allowed: !trial, delivery_policy: trial ? 'suppressed_trial' : 'live',
         revision, source_id: target.meta.source_id || null,
         policy_id: target.meta.policy_id || null,
@@ -6539,7 +6727,18 @@ function createScheduleRuntime(deps) {
       });
     }
     await stageSnapshot(pubRef, {}, target.plan, target.events, target.roster);
-    const outboxOps = planned.notifications.map((notification) => ({
+    const trialControl = trial ? await trialControlFor(ctx.sid, planned.notifications) : null;
+    const operationReceipt = {
+      publication_id: pubId, revision, rolled_back_to: targetId,
+      notified_people: trial ? 0 : planned.notifications.length,
+      trial_control_notifications: trial && trialControl ? 1 : 0,
+      suppressed_notifications: trial
+        ? planned.notifications.length - (trialControl ? 1 : 0) : 0,
+      trial
+    };
+    const outboxOps = planned.notifications.map((notification) => {
+      const control = !!(trialControl && notification.person === trialControl.uid);
+      return ({
       ref: pubRef.collection('schedule_outbox').doc('n_' + hash(notification.dedupe_key).slice(0, 40)),
       kind: 'set',
       data: {
@@ -6547,14 +6746,17 @@ function createScheduleRuntime(deps) {
         person: notification.person, dedupe_key: notification.dedupe_key,
         push: notification.push, detail: notification.detail,
         changed_by: ctx.uid, attempt: 0,
-        delivery_allowed: !trial,
-        delivery_policy: trial ? 'suppressed_trial' : 'live',
-        status: trial ? 'suppressed_trial' : 'blocked',
-        suppressed_at: trial ? FV.serverTimestamp() : null,
+        delivery_allowed: !trial || control,
+        delivery_policy: trial ? (control ? 'trial_control' : 'suppressed_trial') : 'live',
+        control_generation: control ? trialControl.generation : null,
+        control_auth_time_ms: control ? trialControl.activation_auth_time_ms : null,
+        status: trial ? (control ? 'blocked' : 'suppressed_trial') : 'blocked',
+        suppressed_at: trial && !control ? FV.serverTimestamp() : null,
         expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
         created_at: FV.serverTimestamp()
       }
-    }));
+    });
+    });
     await commitWrites(outboxOps);
     await beforeSnapshotFinalize({ kind: 'rollback', ref: pubRef, ctx });
     try {
@@ -6615,8 +6817,11 @@ function createScheduleRuntime(deps) {
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: rollbackGapRecord,
         notified_people: trial ? 0 : planned.notifications.length,
-        suppressed_notifications: trial ? planned.notifications.length : 0,
-        blocked_notifications: 0
+        trial_control_notifications: trial && trialControl ? 1 : 0,
+        suppressed_notifications: trial
+          ? planned.notifications.length - (trialControl ? 1 : 0) : 0,
+        blocked_notifications: 0,
+        operation_receipt: operationReceipt
       });
       tx.set(activeRef(ctx.sid), {
         publication_id: pubId, revision,
@@ -6639,18 +6844,12 @@ function createScheduleRuntime(deps) {
       if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
       throw error;
     }
-    if (!trial) await releaseOutbox(pubRef);
-    else {
+    await releaseOutbox(pubRef);
+    if (trial) {
       const activeTrial = await pubRef.get();
       await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
     }
-    return {
-      duplicate: false, publication_id: pubId, revision,
-      rolled_back_to: targetId,
-      notified_people: trial ? 0 : planned.notifications.length,
-      suppressed_notifications: trial ? planned.notifications.length : 0,
-      trial
-    };
+    return Object.assign({ duplicate: false }, operationReceipt);
   }
 
   function requestedViewDate(req, fallback) {
@@ -8477,53 +8676,79 @@ function createScheduleRuntime(deps) {
       && Number(pointer.revision || 0) === Number(value.revision || 0);
   }
 
-  async function validateOutboxForSend(ref, leaseToken) {
-    let sendable = false;
+  async function cancelLeasedOutbox(ref, leaseToken, reason) {
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      if (!snap.exists) return;
+      const value = snap.exists ? (snap.data() || {}) : {};
+      if (value.status === 'sending' && value.lease_token === leaseToken) {
+        cancelOutbox(tx, ref, reason);
+      }
+    });
+  }
+
+  async function validateOutboxForSend(ref, leaseToken, claimed) {
+    const candidateValue = plain(claimed) ? claimed : {};
+    let trialAuth = null;
+    let trialAuthTerminal = false;
+    if (candidateValue.delivery_policy === 'trial_control') {
+      try { trialAuth = await getAuthUser(String(candidateValue.person || '')); }
+      catch (error) {
+        if (!terminalAuthLookupFailure(error)) {
+          const unavailable = new Error('TRIAL_AUTH_TEMPORARY');
+          unavailable.code = 'TRIAL_AUTH_TEMPORARY';
+          throw unavailable;
+        }
+        trialAuthTerminal = true;
+      }
+    }
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false;
       const value = snap.data() || {};
-      if (value.status !== 'sending' || value.lease_token !== leaseToken) return;
+      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
       const stationId = String(value.station_id || '');
       const publicationId = String(value.publication_id || '');
       const person = String(value.person || '');
       const now = Date.parse(clock());
       if (!ID_RE.test(stationId) || !ID_RE.test(publicationId) || !AUTH_UID_RE.test(person)) {
         cancelOutbox(tx, ref, 'outbox-invalid');
-        return;
+        return false;
       }
       if (outboxExpired(value, now)) {
         cancelOutbox(tx, ref, 'outbox-expired');
-        return;
+        return false;
       }
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
       const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
         liveUserRef(stationId, person)];
+      if (value.delivery_policy === 'trial_control') refs.push(liveLabRef(stationId));
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
-      if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial'
-          || publication.delivery_allowed === false
-          || publication.delivery_policy === 'suppressed_trial') {
+      const lab = checks[4] && checks[4].exists ? (checks[4].data() || {}) : {};
+      const contract = deliveryContract(value, runtime, publication, lab, now);
+      if (!contract) {
         cancelOutbox(tx, ref, 'delivery-forbidden');
-        return;
+        return false;
       }
-      if (runtime.mode !== MODE.NEW) {
-        cancelOutbox(tx, ref, 'runtime-not-new');
-        return;
+      if (contract === 'trial_control') {
+        if (trialAuthTerminal || !trialAuthValid(trialAuth, person, stationId,
+          Number(value.control_auth_time_ms))) {
+          cancelOutbox(tx, ref, 'trial-control-inactive');
+          return false;
+        }
       }
       if (!publicationMatches(value, pointer, publication)) {
         cancelOutbox(tx, ref, 'publication-not-active');
-        return;
+        return false;
       }
       if (!recipientIsActive(checks[3], stationId)) {
         cancelOutbox(tx, ref, 'recipient-inactive');
-        return;
+        return false;
       }
-      sendable = true;
+      return true;
     });
-    return sendable;
   }
 
   async function deliverOutbox(ref) {
@@ -8549,12 +8774,14 @@ function createScheduleRuntime(deps) {
       const publicationRef = stationRef(stationId).collection('schedule_publications').doc(publicationId);
       const refs = [runtimeRef(stationId), activeRef(stationId), publicationRef,
         liveUserRef(stationId, person)];
+      if (data.delivery_policy === 'trial_control') refs.push(liveLabRef(stationId));
       const checks = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
-      if (runtime.mode !== MODE.NEW) {
-        cancelOutbox(tx, ref, 'runtime-not-new');
+      const lab = checks[4] && checks[4].exists ? (checks[4].data() || {}) : {};
+      if (!deliveryContract(data, runtime, publication, lab, now)) {
+        cancelOutbox(tx, ref, 'delivery-forbidden');
         return;
       }
       if (!publicationMatches(data, pointer, publication)) {
@@ -8577,7 +8804,27 @@ function createScheduleRuntime(deps) {
       await beforeOutboxSend(claimed);
       // The second transaction is as close as possible to the external call.
       // It closes pointer/mode/expiry changes that happened after the claim.
-      if (!await validateOutboxForSend(ref, claimed.lease_token)) return { skipped: true };
+      if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+      if (claimed.delivery_policy === 'trial_control') {
+        let currentAuth = null;
+        try { currentAuth = await getAuthUser(String(claimed.person || '')); }
+        catch (error) {
+          if (!terminalAuthLookupFailure(error)) {
+            const unavailable = new Error('TRIAL_AUTH_TEMPORARY');
+            unavailable.code = 'TRIAL_AUTH_TEMPORARY';
+            throw unavailable;
+          }
+        }
+        if (!trialAuthValid(currentAuth, String(claimed.person || ''),
+          String(claimed.station_id || ''), Number(claimed.control_auth_time_ms))) {
+          await cancelLeasedOutbox(ref, claimed.lease_token, 'trial-control-inactive');
+          return { skipped: true };
+        }
+        // Auth and Firestore cannot share one transaction.  Re-run the leased
+        // Firestore fence after the final Auth lookup so a config/mode/pointer
+        // change during that lookup is still observed before the provider.
+        if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+      }
       const push = claimed.push || {};
       const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
         push.title || 'ResQ · הסידור שלך', push.body || 'הסידור שלך עודכן',
@@ -8934,23 +9181,22 @@ function createScheduleRuntime(deps) {
   }
 
   async function validateGuardOutboxForSend(ref, leaseToken) {
-    let sendable = false;
-    await db.runTransaction(async (tx) => {
+    return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      if (!snap.exists) return;
+      if (!snap.exists) return false;
       const value = snap.data() || {};
-      if (value.status !== 'sending' || value.lease_token !== leaseToken) return;
+      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
       const now = Date.parse(clock());
       if (outboxExpired(value, now)) {
         cancelGuardOutbox(tx, ref, 'outbox-expired');
-        return;
+        return false;
       }
       const sid = String(value.station_id || '');
       const guardId = String(value.guard_id || '');
       const recipient = String(value.recipient_uid || '');
       if (!ID_RE.test(sid) || !ID_RE.test(guardId) || !AUTH_UID_RE.test(recipient)) {
         cancelGuardOutbox(tx, ref, 'outbox-invalid');
-        return;
+        return false;
       }
       const related = await Promise.all([
         tx.get(guardRef(sid, guardId)),
@@ -8959,15 +9205,14 @@ function createScheduleRuntime(deps) {
       const guard = related[0];
       if (!guardOutboxCurrent(value, guard)) {
         cancelGuardOutbox(tx, ref, 'guard-revision-stale');
-        return;
+        return false;
       }
       if (!recipientIsActive(related[1], sid)) {
         cancelGuardOutbox(tx, ref, 'recipient-inactive');
-        return;
+        return false;
       }
-      sendable = true;
+      return true;
     });
-    return sendable;
   }
 
   async function deliverGuardOutbox(ref) {
