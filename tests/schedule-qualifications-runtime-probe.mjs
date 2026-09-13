@@ -70,7 +70,7 @@ function auditOf(db) { return db._paths(ST + '/schedule_qualification_audit/').m
   ok('3.12 הכשירויות אינן תלויות בתפקיד ההרשאה', view.people.find((p) => p.uid === 'u2').roles.indexOf('driver') === -1);
 
   db._put(ST + '/schedule_person_qualifications/departed-user', {
-    station_id: SID, uid: 'departed-user', qualifications: ['driver'], revision: 1
+    station_id: SID, uid: 'departed-user', qualifications: ['driver'], revision: 1, cleared: false
   });
   db._put(ST + '/schedule_state/qualifications', { station_id: SID, holdings_revision: 3 });
   const withDeparted = await rt.getQualificationCatalog(req({}));

@@ -75,7 +75,7 @@ function buildRuntime(runtimeModule, db) {
 function capacityObservedDb(raw) {
   const reads = [];
   const rawRef = Symbol('raw-ref');
-  const protectedCollection = (path) => /\/(users|schedule_person_qualifications)$/.test(String(path || ''));
+  const protectedCollection = (path) => /\/(users|schedule_person_qualifications|member_quals)$/.test(String(path || ''));
   const unwrap = (ref) => ref && ref[rawRef] ? ref[rawRef] : ref;
 
   function wrapSnapshot(snapshot) {
@@ -86,7 +86,7 @@ function capacityObservedDb(raw) {
     return {
       [rawRef]: query,
       path: query.path,
-      where(...args) { return wrapQuery(query.where(...args), targeted || args[1] === 'array-contains'); },
+      where(...args) { return wrapQuery(query.where(...args), targeted || args[1] === 'array-contains' || (args[0] === 'cleared' && args[1] === '==' && args[2] === false)); },
       limit(value) { return wrapQuery(query.limit(value), targeted); },
       orderBy(...args) { return wrapQuery(query.orderBy(...args), targeted); },
       doc(id) { return wrapDoc(query.doc(id)); },
@@ -275,6 +275,19 @@ async function verifyThreeThousand(runtimeModule, observed) {
   }
 }
 
+async function verifyMergedHolderCeiling(runtimeModule) {
+  const { db, rt, people } = await fixture(runtimeModule, false);
+  const legacyUid = people[people.length - 1].id;
+  const legacyPath = ST + '/schedule_person_qualifications/' + legacyUid;
+  const legacy = db._get(legacyPath);
+  delete legacy.cleared;
+  db._put(legacyPath, legacy);
+  db._put(ST + '/schedule_person_qualifications/departed-capacity-extra', {
+    station_id:SID, uid:'departed-capacity-extra', qualifications:['driver'], revision:1, cleared:false
+  });
+  return rt.getQualificationCatalog(req({}));
+}
+
 // Mutation proof: restoring either audited ceiling to 1,500 must be caught.
 const raisedForMutation = raisedCapacitySource(runtimeSource);
 const qualificationMutation = replaceExactly(raisedForMutation, QUAL_3000, QUAL_1500);
@@ -300,6 +313,19 @@ await assert.rejects(
   verifyThreeThousand(loadRuntimeModule(deleteScanMutation), true),
   (error) => error && error.code === 'capacity-full-scan'
 );
+
+// The indexed query and the bounded source compatibility read are merged.
+// Their union, not merely either half, remains capped at 3,000 people.
+await assert.rejects(
+  verifyMergedHolderCeiling(loadRuntimeModule(runtimeSource)),
+  (error) => error && error.code === 'qualifications-too-many'
+);
+const unionGuardMutation = replaceExactly(
+  runtimeSource,
+  'if (holdings.size > MAX_QUALIFICATION_PEOPLE) {',
+  'if (false) {'
+);
+await assert.doesNotReject(verifyMergedHolderCeiling(loadRuntimeModule(unionGuardMutation)));
 
 // Oracle mutation: a regression to a full users/holdings collection query is
 // rejected before it can masquerade as a successful capacity read.

@@ -4330,29 +4330,35 @@ function createScheduleRuntime(deps) {
     return out;
   }
 
-  async function loadAllQualificationHolders(ctx, catalog) {
-    const keys = (Array.isArray(catalog) ? catalog : [])
-      .map((entry) => entry && entry.key).filter(nonEmpty);
-    const groups = await Promise.all(keys.map((key) => loadQualificationHolders(ctx, key)));
+  async function loadAllQualificationHolders(ctx) {
+    const snap = await stationRef(ctx.sid).collection('schedule_person_qualifications')
+      .where('cleared', '==', false).limit(MAX_QUALIFICATION_PEOPLE + 1).get();
+    if (snap.size > MAX_QUALIFICATION_PEOPLE) {
+      throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
+    }
     const out = new Map();
-    groups.forEach((group) => group.forEach((held, uid) => {
-      const prior = out.get(uid);
-      if (!prior || held.revision >= prior.revision) out.set(uid, held);
-    }));
+    snap.docs.forEach((doc) => {
+      const value = doc.data() || {};
+      const held = Array.isArray(value.qualifications) ? value.qualifications.slice() : [];
+      if (held.length) out.set(doc.id, {
+        qualifications:held,
+        revision:Number.isInteger(value.revision) ? value.revision : 0
+      });
+    });
     return out;
   }
 
   /* הכשירויות של המערכת הישנה (quals/member_quals) — רמז לאחראי הסידור
    * בזמן ההעברה. קריאה בלבד; לא מיובא אוטומטית ולא מנוחש. */
-  async function legacyQualificationHints(ctx) {
+  async function legacyQualificationHints(ctx, people) {
     const out = new Map();
     try {
       const pair = await Promise.all([
         stationRef(ctx.sid).collection('quals').limit(100).get(),
-        stationRef(ctx.sid).collection('member_quals').limit(MAX_QUALIFICATION_PEOPLE).get()
+        readPeopleById(stationRef(ctx.sid).collection('member_quals'), people || [], null, ['quals'])
       ]);
       const names = new Map(pair[0].docs.map((doc) => [doc.id, String((doc.data() || {}).name || doc.id).slice(0, 40)]));
-      pair[1].docs.forEach((doc) => {
+      pair[1].forEach((doc) => {
         const list = (doc.data() || {}).quals;
         if (Array.isArray(list) && list.length) out.set(doc.id, list.map((id) => names.get(String(id)) || String(id)).slice(0, 20));
       });
@@ -4371,14 +4377,22 @@ function createScheduleRuntime(deps) {
       people = source.peopleRaw.filter((person) => person.active === true);
     }
     const metaBefore = await qualificationsMetaRef(ctx.sid).get();
-    const holdings = await loadAllQualificationHolders(ctx, catalog);
+    const holdings = await loadAllQualificationHolders(ctx);
+    // A pre-index holding from an older release may not yet carry `cleared`.
+    // Read only current source people by id and merge them; departed holdings
+    // written by the current runtime are covered by the indexed query above.
+    const sourceHoldings = await loadPersonQualifications(ctx, null, people);
+    sourceHoldings.forEach((held, uid) => holdings.set(uid, held));
+    if (holdings.size > MAX_QUALIFICATION_PEOPLE) {
+      throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
+    }
     const metaAfter = await qualificationsMetaRef(ctx.sid).get();
     const beforeRevision = metaBefore.exists ? Number((metaBefore.data() || {}).holdings_revision || 0) : 0;
     const afterRevision = metaAfter.exists ? Number((metaAfter.data() || {}).holdings_revision || 0) : 0;
     if (beforeRevision !== afterRevision) {
       throw new ScheduleRuntimeError('qualification-holders-changed', 'רשימת המחזיקים השתנתה בזמן הטעינה. יש לרענן.', 'aborted');
     }
-    const legacy = await legacyQualificationHints(ctx);
+    const legacy = await legacyQualificationHints(ctx, people);
     const known = new Set(people.map((person) => person.id));
     const gapPolicy = await loadGapPolicy(ctx);
     await requireLiveManagerNow(ctx);
