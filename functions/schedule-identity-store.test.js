@@ -90,14 +90,17 @@ const userPath = root + '/users/' + UID;
 
 function person(extra = {}) {
   return { schema_version:1, person_id:PID, station_id:SID, kind:'external', linked_uid:null,
-    display_name:'אלדד יונה', active:true, revision:4, ...extra };
+    display_name:'אלדד יונה', active:true, revision:4,
+    source_ref:{ station_id:SID, source_namespace:'station-workbook-v1',
+      source_key:{ kind:'employee', value:'00123' } }, ...extra };
 }
 function state(extra = {}) { return { schema_version:1, generation:'gen_001', revision:3, ...extra }; }
 function manager() {
   return { schema_version:1, station_id:SID, uid:ACTOR, roles:['schedule_manager'], active:true, revision:1 };
 }
 function member(uid) { return { uid, station_id:SID, role:'firefighter', active:true }; }
-function identity(db) {
+function identity(db, options = {}) {
+  const targetResults = Array.isArray(options.targetResults) ? options.targetResults.slice() : null;
   return {
     context(req) {
       if (!req || !req.auth || !access.validUid(req.auth.uid)) throw new HttpsError('unauthenticated', 'login');
@@ -111,15 +114,22 @@ function identity(db) {
       const value = snap.exists ? snap.data() : null;
       if (!access.activeMember(value, ctx.sid) || value.role !== ctx.role) throw new HttpsError('permission-denied', 'revoked');
       return ctx;
+    },
+    async requireLinkTarget(ctx, uid) {
+      const next = targetResults && targetResults.length
+        ? targetResults.shift()
+        : { uid, station_id:ctx.sid, disabled:false };
+      if (next instanceof Error) throw next;
+      return clone(next);
     }
   };
 }
-function fixture(extra = {}) {
+function fixture(extra = {}, options = {}) {
   const db = fakeDb({
     [personPath]:person(), [statePath]:state(), [accessPath]:manager(),
     [actorPath]:member(ACTOR), [userPath]:member(UID), ...extra
   });
-  const api = subject.createScheduleIdentityStore({ db, identity:identity(db), HttpsError,
+  const api = subject.createScheduleIdentityStore({ db, identity:identity(db, options), HttpsError,
     serverTimestamp:() => 'SERVER_TIME' });
   const auth = { uid:ACTOR, token:{ stationId:SID, role:'firefighter' } };
   return { db, api, auth };
@@ -135,18 +145,22 @@ function linkReq(auth, extra = {}) {
   {
     const f = fixture();
     const result = await f.api.link(linkReq(f.auth));
-    assert.deepEqual(Object.keys(result.person).sort(), ['active','display_name','person_id','station_id'].sort());
+    assert.deepEqual(Object.keys(result.person).sort(),
+      ['active','display_name','kind','linked','person_id','revision','station_id'].sort());
     assert.equal(result.person.person_id, PID);
-    assert.equal(result.state_revision, 4);
+    assert.equal(result.person.linked, true);
+    assert.equal(result.state.revision, 4);
     assert.equal(result.bindings_invalidated, true);
     const linkId = contract.linkIndexDocumentId(UID);
     const globalPath = subject.GLOBAL_LINK_COLLECTION + '/' + linkId;
-    assert.deepEqual(f.db.read(globalPath), { schema_version:1, station_id:SID, person_id:PID, revision:1 });
+    assert.deepEqual(f.db.read(globalPath),
+      { schema_version:1, station_id:SID, person_id:PID, revision:1, status:'bound' });
     assert.equal(globalPath.includes(UID), false);
     assert.equal(JSON.stringify(f.db.read(globalPath)).includes(UID), false);
     const auditPath = f.db.keys().find((key) => key.includes('/schedule_identity_audit/'));
     assert.equal(JSON.stringify(f.db.read(auditPath)).includes(UID), false);
     assert.equal(f.db.read(personPath).linked_uid, UID);
+    assert.equal(f.db.read(personPath).source_ref.source_key.value, '00123');
 
     const count = f.db.writes.length;
     const replay = await f.api.link(linkReq(f.auth));
@@ -185,6 +199,27 @@ function linkReq(auth, extra = {}) {
   }
 
   {
+    for (const target of [
+      null,
+      { uid:UID, station_id:SID, disabled:true },
+      { uid:UID, station_id:'other_102', disabled:false },
+      { uid:'OtherUser', station_id:SID, disabled:false }
+    ]) {
+      const f = fixture({}, { targetResults:[target] });
+      await assert.rejects(() => f.api.link(linkReq(f.auth)),
+        (error) => error.code === 'failed-precondition');
+      assert.equal(f.db.writes.length, 0);
+    }
+    const changed = fixture({}, { targetResults:[
+      { uid:UID, station_id:SID, disabled:false },
+      { uid:UID, station_id:SID, disabled:true }
+    ] });
+    await assert.rejects(() => changed.api.link(linkReq(changed.auth)),
+      (error) => error.code === 'failed-precondition');
+    assert.equal(changed.db.writes.length, 0);
+  }
+
+  {
     const f = fixture();
     f.db.failNextCommit();
     const before = f.db.keys();
@@ -193,20 +228,7 @@ function linkReq(auth, extra = {}) {
     assert.equal(f.db.read(personPath).kind, 'external');
   }
 
-  {
-    const f = fixture();
-    await f.api.link(linkReq(f.auth));
-    const unlink = { auth:f.auth, data:{ request_id:'unlink_req_001', person_id:PID,
-      expected_person_revision:5, expected_state_revision:4, expected_link_revision:1 } };
-    const result = await f.api.unlink(unlink);
-    assert.equal(result.person.person_id, PID);
-    assert.equal(f.db.read(personPath).kind, 'external');
-    assert.equal(f.db.read(personPath).linked_uid, null);
-    assert.equal(f.db.read(subject.GLOBAL_LINK_COLLECTION + '/' + contract.linkIndexDocumentId(UID)), null);
-    const count = f.db.writes.length;
-    assert.equal((await f.api.unlink(unlink)).replayed, true);
-    assert.equal(f.db.writes.length, count);
-  }
+  assert.equal(fixture().api.unlink, undefined);
 
   {
     const f = fixture({ [statePath]:state({ revision:Number.MAX_SAFE_INTEGER }) });
@@ -223,23 +245,6 @@ function linkReq(auth, extra = {}) {
       (error) => error.code === 'aborted');
   }
 
-  {
-    const f = fixture();
-    await f.api.link(linkReq(f.auth));
-    const globalPath = subject.GLOBAL_LINK_COLLECTION + '/' + contract.linkIndexDocumentId(UID);
-    f.db.read(globalPath);
-    const broken = { ...f.db.read(globalPath), person_id:'sp_other_001' };
-    const replacement = fixture({
-      [personPath]:f.db.read(personPath), [statePath]:f.db.read(statePath),
-      [root + '/schedule_person_link_index/' + contract.linkIndexDocumentId(UID)]:f.db.read(root + '/schedule_person_link_index/' + contract.linkIndexDocumentId(UID)),
-      [globalPath]:broken
-    });
-    await assert.rejects(() => replacement.api.unlink({ auth:replacement.auth, data:{ request_id:'unlink_bad_001',
-      person_id:PID, expected_person_revision:5, expected_state_revision:4, expected_link_revision:1 } }),
-      (error) => error.code === 'aborted');
-    assert.deepEqual(replacement.db.read(globalPath), broken);
-  }
-
   assert.equal(contract.linkIndexDocumentId('  ' + UID + '  '), contract.linkIndexDocumentId(UID));
   assert.notEqual(contract.linkIndexDocumentId(UID.toLowerCase()), contract.linkIndexDocumentId(UID));
 
@@ -253,7 +258,7 @@ function linkReq(auth, extra = {}) {
     assert.equal(saved.binding.person_id, PID);
     assert.equal(saved.binding.expected_person_revision, 4);
     assert.equal(saved.binding.revision, 1);
-    assert.equal(saved.state_revision, 4);
+    assert.equal(saved.state.revision, 4);
     const count = f.db.writes.length;
     assert.equal((await f.api.setSourceBinding(request)).replayed, true);
     assert.equal(f.db.writes.length, count);
@@ -267,7 +272,7 @@ function linkReq(auth, extra = {}) {
     const updated = await f.api.setSourceBinding({ auth:f.auth, data:{ ...request.data,
       request_id:'binding_req_004', expected_state_revision:4, expected_binding_revision:1 } });
     assert.equal(updated.binding.revision, 2);
-    assert.equal(updated.state_revision, 5);
+    assert.equal(updated.state.revision, 5);
     await assert.rejects(() => f.api.setSourceBinding({ auth:f.auth, data:{ ...request.data,
       request_id:'binding_req_005', expected_state_revision:5, expected_binding_revision:1 } }),
       (error) => error.code === 'aborted');
@@ -323,6 +328,9 @@ function linkReq(auth, extra = {}) {
     const f = fixture({ [root + '/schedule_people/' + second]:person({ person_id:second, display_name:'שרה כהן' }) });
     const first = await f.api.listPeople({ auth:f.auth, data:{ limit:1 } });
     assert.equal(first.people.length, 1);
+    assert.equal(first.state.revision, 3);
+    assert.equal(first.people[0].linked, false);
+    assert.equal(Object.hasOwn(first.people[0], 'linked_uid'), false);
     assert.ok(first.next_cursor);
     const next = await f.api.listPeople({ auth:f.auth, data:{ limit:1, cursor:first.next_cursor } });
     assert.equal(next.people.length, 1);

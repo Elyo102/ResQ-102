@@ -3,8 +3,11 @@ const assert = require('node:assert/strict');
 const subject = require('./schedule-recipient-contract');
 
 function person(id, extra) {
-  return Object.assign({ person_id:id, station_id:'eilat_102', kind:'external', linked_uid:null,
-    display_name:'שם זהה', active:true, revision:1 }, extra || {});
+  const stationId = extra && extra.station_id || 'eilat_102';
+  return Object.assign({ schema_version:1, person_id:id, station_id:stationId, kind:'external', linked_uid:null,
+    display_name:'שם זהה', active:true, revision:1,
+    source_ref:{ station_id:stationId, source_namespace:'station-workbook-v1',
+      source_key:{ kind:'name', value:id } } }, extra || {});
 }
 const people = [
   person('sp_external_01'),

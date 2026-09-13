@@ -2,11 +2,20 @@
 const assert = require('node:assert/strict');
 const subject = require('./schedule-person-contract');
 
-const external = { person_id:'sp_person_001', station_id:'eilat_102', kind:'external',
+const sourceRef = { station_id:'eilat_102', source_namespace:'station-workbook-v1',
+  source_key:{ kind:'employee', value:'00123' } };
+const external = { schema_version:1, person_id:'sp_person_001', station_id:'eilat_102', kind:'external',
   linked_uid:null, display_name:'יוסי כהן', active:true, revision:1 };
+external.source_ref = sourceRef;
 const registered = Object.assign({}, external, { kind:'registered', linked_uid:'uid_1' });
-assert.deepEqual(subject.normalizeSchedulePerson(external), Object.assign({ schema_version:1 }, external));
-assert.deepEqual(subject.normalizeSchedulePerson(registered), Object.assign({ schema_version:1 }, registered));
+assert.deepEqual(subject.normalizeSchedulePerson(external), external);
+assert.deepEqual(subject.normalizeSchedulePerson(registered), registered);
+{
+  const decomposed = 'Jose\u0301'.normalize('NFD');
+  const normalized = subject.normalizeSchedulePerson({ ...external,
+    source_ref:{ ...sourceRef, source_key:{ kind:'name', value:decomposed } } });
+  assert.equal(normalized.source_ref.source_key.value, decomposed.normalize('NFC'));
+}
 assert.throws(() => subject.normalizeSchedulePerson(Object.assign({}, external, { linked_uid:'uid_1' })), /חיצוני/);
 assert.throws(() => subject.normalizeSchedulePerson(Object.assign({}, registered, { linked_uid:null })), /רשום/);
 assert.throws(() => subject.normalizeSchedulePerson(Object.assign({}, external, { station_id:'' })), /תחנה/);
@@ -17,8 +26,18 @@ assert.throws(() => subject.normalizeSchedulePerson(Object.assign({}, registered
 assert.deepEqual(subject.publicSchedulePerson(registered), {
   person_id:'sp_person_001', station_id:'eilat_102', display_name:'יוסי כהן', active:true
 });
+assert.deepEqual(subject.managementSchedulePerson(registered), {
+  person_id:'sp_person_001', station_id:'eilat_102', display_name:'יוסי כהן', active:true,
+  kind:'registered', linked:true, revision:1
+});
+assert.throws(() => subject.normalizeSchedulePerson({ ...external, extra:true }),
+  (error) => error.code === 'person-shape');
+assert.throws(() => subject.normalizeSchedulePerson({ ...external, source_ref:null }),
+  (error) => error.code === 'external-source-required');
+assert.throws(() => subject.normalizeSchedulePerson({ ...external, revision:Number.MAX_SAFE_INTEGER }),
+  (error) => error.code === 'person-revision');
 assert.equal(Object.prototype.hasOwnProperty.call(subject.publicSchedulePerson(registered), 'linked_uid'), false);
-console.log('9 schedule-person contract checks passed.');
+console.log('10 schedule-person contract checks passed.');
 
 const imports = require('./schedule-import-identity');
 const stationId = 'eilat_102';

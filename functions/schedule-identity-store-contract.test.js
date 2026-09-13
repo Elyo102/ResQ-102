@@ -29,8 +29,10 @@ assert.match(operation, /^so_[a-f0-9]{48}$/);
 assert.throws(() => subject.operationDocumentId('../request'), (error) => error.code === 'request-id');
 
 const projected = subject.publicPerson({
-  person_id:'sp_person_001', station_id:'eilat_102', kind:'registered',
-  linked_uid:'secret-uid', display_name:'יוסי כהן', active:true, revision:3
+  schema_version:1, person_id:'sp_person_001', station_id:'eilat_102', kind:'registered',
+  linked_uid:'secret-uid', display_name:'יוסי כהן', active:true, revision:3,
+  source_ref:{ station_id:'eilat_102', source_namespace:'station-workbook-v1',
+    source_key:{ kind:'employee', value:'00123' } }
 });
 assert.deepEqual(projected, {
   person_id:'sp_person_001', station_id:'eilat_102', display_name:'יוסי כהן',
@@ -40,6 +42,16 @@ assert.equal(Object.hasOwn(projected, 'linked_uid'), false);
 assert.equal(Object.hasOwn(projected, 'revision'), false);
 assert.equal(Object.hasOwn(projected, 'kind'), false);
 assert.equal(Object.hasOwn(projected, 'linked'), false);
+
+const managed = subject.managementPerson({
+  schema_version:1, person_id:'sp_person_001', station_id:'eilat_102', kind:'registered',
+  linked_uid:'secret-uid', display_name:'יוסי כהן', active:true, revision:3,
+  source_ref:{ station_id:'eilat_102', source_namespace:'station-workbook-v1',
+    source_key:{ kind:'employee', value:'00123' } }
+});
+assert.deepEqual(managed, { person_id:'sp_person_001', station_id:'eilat_102', display_name:'יוסי כהן',
+  active:true, kind:'registered', linked:true, revision:3 });
+assert.equal(Object.hasOwn(managed, 'linked_uid'), false);
 
 assert.deepEqual(subject.normalizeState({ schema_version:1, generation:'gen_001', revision:0 }),
   { schema_version:1, generation:'gen_001', revision:0 });

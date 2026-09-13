@@ -29,20 +29,6 @@ function requireActor(value, stationId) {
   }
 }
 
-function requireLinkIndex(value, uid, personId) {
-  const index = value && value.link_index;
-  const expected = value && value.expected_link_revision;
-  if (!index || text(index.uid) !== uid || !Number.isInteger(index.revision) || index.revision < 0
-      || !Number.isInteger(expected) || expected < 0 || index.revision !== expected) {
-    throw new SchedulePersonServiceError('link-index-stale', 'אינדקס הקישור חסר או השתנה.');
-  }
-  const linkedPerson = index.person_id === null ? null : text(index.person_id);
-  if (linkedPerson !== personId) {
-    throw new SchedulePersonServiceError('uid-already-linked', 'החשבון כבר מקושר לאדם אחר.');
-  }
-  return Object.freeze({ uid, person_id: linkedPerson, revision:index.revision });
-}
-
 function planLink(input) {
   const value = input || {};
   const person = contract.normalizeSchedulePerson(value.person);
@@ -56,41 +42,25 @@ function planLink(input) {
   if (person.kind !== 'external' || person.linked_uid !== null) {
     throw new SchedulePersonServiceError('link-state', 'רק אדם חיצוני שאינו מקושר ניתן לקישור.');
   }
-  const index = requireLinkIndex(value, uid, null);
+  if (person.active !== true) {
+    throw new SchedulePersonServiceError('link-inactive', 'אדם לא פעיל אינו ניתן לקישור.');
+  }
+  if (value.station_link !== null || value.global_link !== null) {
+    throw new SchedulePersonServiceError('uid-already-linked', 'החשבון כבר קושר בעבר לאדם בסידור.');
+  }
   if (user.exists !== true || user.active !== true || text(user.station_id) !== person.station_id || text(user.uid) !== uid) {
     throw new SchedulePersonServiceError('link-user-ineligible', 'החשבון אינו פעיל באותה תחנה.');
   }
   const next = contract.normalizeSchedulePerson(Object.assign({}, person, {
     kind: 'registered', linked_uid: uid, revision: person.revision + 1
   }));
-  return Object.freeze({ expected_revision: expected, expected_link_revision:index.revision,
+  const reservation = Object.freeze({ schema_version:1, station_id:person.station_id,
+    person_id:person.person_id, revision:1, status:'bound' });
+  return Object.freeze({ expected_revision: expected,
     before: person, after: next,
-    link_index_after:Object.freeze({ uid, person_id:person.person_id, revision:index.revision + 1 }),
+    reservation,
     audit: Object.freeze({ action: 'schedule-person-link', actor_uid: actorUid,
-      person_id: person.person_id, station_id: person.station_id, linked_uid: uid }) });
+      person_id: person.person_id, station_id: person.station_id }) });
 }
 
-function planUnlink(input) {
-  const value = input || {};
-  const person = contract.normalizeSchedulePerson(value.person);
-  const expected = requireExpectedRevision(value.expected_revision);
-  const actorUid = text(value.actor_uid);
-  if (!actorUid) throw new SchedulePersonServiceError('uid-required', 'חובה למסור מבצע.');
-  requireActor(value, person.station_id);
-  if (person.revision !== expected) throw new SchedulePersonServiceError('unlink-stale', 'האדם השתנה מאז פתיחת המסך.');
-  if (person.kind !== 'registered' || !person.linked_uid) {
-    throw new SchedulePersonServiceError('unlink-state', 'האדם אינו מקושר.');
-  }
-  const index = requireLinkIndex(value, person.linked_uid, person.person_id);
-  const oldUid = person.linked_uid;
-  const next = contract.normalizeSchedulePerson(Object.assign({}, person, {
-    kind: 'external', linked_uid: null, revision: person.revision + 1
-  }));
-  return Object.freeze({ expected_revision: expected, expected_link_revision:index.revision,
-    before: person, after: next,
-    link_index_after:Object.freeze({ uid:oldUid, person_id:null, revision:index.revision + 1 }),
-    audit: Object.freeze({ action: 'schedule-person-unlink', actor_uid: actorUid,
-      person_id: person.person_id, station_id: person.station_id, linked_uid: oldUid }) });
-}
-
-module.exports = Object.freeze({ SchedulePersonServiceError, planLink, planUnlink });
+module.exports = Object.freeze({ SchedulePersonServiceError, planLink });

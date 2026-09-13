@@ -68,6 +68,10 @@ function publicPerson(value) {
   });
 }
 
+function managementPerson(value) {
+  return people.managementSchedulePerson(value);
+}
+
 function normalizeState(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail('state-shape', 'מצב הזהויות אינו תקין.');
@@ -92,5 +96,6 @@ module.exports = Object.freeze({
   linkIndexDocumentId,
   operationDocumentId,
   publicPerson,
+  managementPerson,
   normalizeState
 });

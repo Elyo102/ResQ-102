@@ -5,6 +5,7 @@ const access = require('./schedule-access');
 const personContract = require('./schedule-person-contract');
 const storeContract = require('./schedule-identity-store-contract');
 const importContract = require('./schedule-import-identity');
+const personService = require('./schedule-person-service');
 
 const GLOBAL_LINK_COLLECTION = 'schedule_person_link_reservations';
 const PAGE_SIZE = 50;
@@ -32,6 +33,7 @@ function digest(value) {
 function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp }) {
   if (!db || typeof db.collection !== 'function' || typeof db.runTransaction !== 'function'
       || !identity || typeof identity.context !== 'function' || typeof identity.requireLive !== 'function'
+      || typeof identity.requireLinkTarget !== 'function'
       || typeof HttpsError !== 'function' || typeof serverTimestamp !== 'function') {
     throw new TypeError('db, identity, HttpsError and serverTimestamp are required');
   }
@@ -56,19 +58,21 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
 
   function replayResult(value, intent) {
     if (!plain(value)) fail('data-loss', 'תוצאת הפעולה השמורה פגומה.');
-    if (intent.action === 'link' || intent.action === 'unlink') {
-      if (!exactKeys(value, ['person', 'state_revision', 'bindings_invalidated', 'replayed'])
+    if (intent.action === 'link') {
+      if (!exactKeys(value, ['person', 'state', 'bindings_invalidated', 'replayed'])
           || value.replayed !== false || value.bindings_invalidated !== true
-          || !Number.isSafeInteger(value.state_revision) || value.state_revision < 1
-          || !exactKeys(value.person, ['person_id', 'station_id', 'display_name', 'active'])
+          || !exactKeys(value.person, ['person_id', 'station_id', 'display_name', 'active',
+            'kind', 'linked', 'revision'])
           || value.person.station_id !== intent.station_id || typeof value.person.person_id !== 'string'
-          || typeof value.person.display_name !== 'string' || typeof value.person.active !== 'boolean') {
+          || typeof value.person.display_name !== 'string' || typeof value.person.active !== 'boolean'
+          || value.person.kind !== 'registered' || value.person.linked !== true
+          || !Number.isSafeInteger(value.person.revision) || value.person.revision < 2) {
         fail('data-loss', 'תוצאת הפעולה השמורה פגומה.');
       }
+      state(value.state);
     } else if (intent.action === 'set-binding') {
       const binding = value.binding;
-      if (!exactKeys(value, ['binding', 'state_revision', 'replayed']) || value.replayed !== false
-          || !Number.isSafeInteger(value.state_revision) || value.state_revision < 1
+      if (!exactKeys(value, ['binding', 'state', 'replayed']) || value.replayed !== false
           || !exactKeys(binding, ['binding_id', 'source_namespace', 'source_key', 'person_id',
             'expected_person_revision', 'revision'])
           || binding.source_namespace !== importContract.SOURCE_NAMESPACE
@@ -79,6 +83,7 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
           || binding.revision >= Number.MAX_SAFE_INTEGER) {
         fail('data-loss', 'תוצאת הפעולה השמורה פגומה.');
       }
+      state(value.state);
       const sourceKey = importContract.sourceKey(binding.source_key);
       if (stable(sourceKey) !== stable(binding.source_key)
           || storeContract.bindingDocumentId(binding.source_namespace, sourceKey) !== binding.binding_id) {
@@ -131,6 +136,15 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
       fail('permission-denied', 'מינוי אחראי/ת הסידור אינו פעיל.');
     }
     return live;
+  }
+
+  async function requireLinkTarget(ctx, uid) {
+    const target = await identity.requireLinkTarget(ctx, uid);
+    if (!exactKeys(target, ['uid', 'station_id', 'disabled'])
+        || target.uid !== uid || target.station_id !== ctx.sid || target.disabled !== false) {
+      fail('failed-precondition', 'חשבון היעד אינו פעיל ומאומת באותה תחנה.');
+    }
+    return target;
   }
 
   function refs(ctx, input, uid) {
@@ -187,81 +201,41 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
       const current = personContract.normalizeSchedulePerson(dataOf(personSnap));
       const currentState = state(dataOf(stateSnap));
       const user = dataOf(userSnap);
-      if (current.station_id !== ctx.sid || current.kind !== 'external' || current.linked_uid !== null || current.active !== true) {
-        fail('failed-precondition', 'האדם אינו זמין לקישור.');
-      }
       if (current.revision !== expectedPersonRevision || currentState.revision !== expectedStateRevision) {
         fail('aborted', 'הנתונים השתנו; יש לרענן ולנסות שוב.');
       }
-      if (!access.activeMember(user, ctx.sid)) fail('failed-precondition', 'החשבון אינו פעיל בתחנה הזאת.');
-      if (dataOf(stationLinkSnap) || dataOf(globalLinkSnap)) fail('already-exists', 'החשבון כבר מקושר לאדם בסידור.');
-      const personRevision = incrementable(current.revision, 'גרסת האדם');
+      await requireLinkTarget(ctx, uid);
+      let planned;
+      try {
+        planned = personService.planLink({
+          person:current, expected_revision:expectedPersonRevision,
+          actor_uid:ctx.uid, uid,
+          actor:{ uid:ctx.uid, station_id:ctx.sid, authorized:true },
+          user:{ exists:!!user, active:access.activeMember(user, ctx.sid), station_id:ctx.sid, uid },
+          station_link:dataOf(stationLinkSnap), global_link:dataOf(globalLinkSnap)
+        });
+      } catch (error) {
+        if (error && error.name === 'SchedulePersonServiceError') {
+          fail(error.code === 'uid-already-linked' ? 'already-exists' : 'failed-precondition', error.message);
+        }
+        throw error;
+      }
       const stateRevision = incrementable(currentState.revision, 'גרסת המצב');
-      const after = personContract.normalizeSchedulePerson({ ...current, kind:'registered', linked_uid:uid, revision:personRevision });
-      const reservation = Object.freeze({ schema_version:1, station_id:ctx.sid, person_id:current.person_id, revision:1 });
-      const result = Object.freeze({ person:storeContract.publicPerson(after), state_revision:stateRevision,
+      const after = planned.after;
+      const reservation = planned.reservation;
+      const nextState = Object.freeze({ ...currentState, revision:stateRevision });
+      const result = Object.freeze({ person:storeContract.managementPerson(after), state:nextState,
         bindings_invalidated:true, replayed:false });
       const common = { schema_version:1, station_id:ctx.sid, actor_uid:ctx.uid, action:'link',
         person_id:current.person_id, created_at:serverTimestamp() };
+      // Firebase Auth and Firestore are separate systems. Recheck the live Auth
+      // account immediately before the irreversible reservations are written.
+      await requireLinkTarget(ctx, uid);
       tx.set(r.person, after);
       tx.create(r.stationLink, reservation);
       tx.create(r.globalLink, reservation);
-      tx.set(r.state, { ...currentState, revision:stateRevision });
+      tx.set(r.state, nextState);
       tx.create(r.audit, common);
-      tx.create(r.operation, { ...intent, schema_version:1, result, created_at:serverTimestamp() });
-      return result;
-    });
-  }
-
-  async function unlink(req) {
-    const ctx = identity.context(req);
-    const input = plain(req && req.data) ? req.data : {};
-    const expectedPersonRevision = input.expected_person_revision;
-    const expectedStateRevision = input.expected_state_revision;
-    const expectedLinkRevision = input.expected_link_revision;
-    const personId = String(input.person_id || '').trim();
-    const intent = operationIntent(ctx, 'unlink', input, {
-      person_id:personId, expected_person_revision:expectedPersonRevision,
-      expected_state_revision:expectedStateRevision, expected_link_revision:expectedLinkRevision
-    });
-    const initialPersonRef = childRef(ctx.sid, storeContract.COLLECTIONS.people, personId);
-    const initialOperationRef = childRef(ctx.sid, storeContract.COLLECTIONS.operations,
-      storeContract.operationDocumentId(intent.request_id));
-
-    return db.runTransaction(async (tx) => {
-      await requireManager(tx, ctx);
-      const [personSnap, operationSnap] = await Promise.all([tx.get(initialPersonRef), tx.get(initialOperationRef)]);
-      const replay = replayOrFail(dataOf(operationSnap), intent);
-      if (replay) return replay;
-      const current = personContract.normalizeSchedulePerson(dataOf(personSnap));
-      if (current.station_id !== ctx.sid || current.kind !== 'registered' || !current.linked_uid) {
-        fail('failed-precondition', 'האדם אינו מקושר.');
-      }
-      const r = refs(ctx, input, current.linked_uid);
-      const [stateSnap, stationLinkSnap, globalLinkSnap] = await Promise.all([
-        tx.get(r.state), tx.get(r.stationLink), tx.get(r.globalLink)
-      ]);
-      const currentState = state(dataOf(stateSnap));
-      const stationLink = dataOf(stationLinkSnap);
-      const globalLink = dataOf(globalLinkSnap);
-      if (current.revision !== expectedPersonRevision || currentState.revision !== expectedStateRevision) {
-        fail('aborted', 'הנתונים השתנו; יש לרענן ולנסות שוב.');
-      }
-      const exact = (value) => plain(value) && value.schema_version === 1 && value.station_id === ctx.sid
-        && value.person_id === current.person_id && value.revision === expectedLinkRevision;
-      if (!exact(stationLink) || !exact(globalLink)) fail('aborted', 'קישור החשבון השתנה או אינו עקבי.');
-      const personRevision = incrementable(current.revision, 'גרסת האדם');
-      const stateRevision = incrementable(currentState.revision, 'גרסת המצב');
-      incrementable(expectedLinkRevision, 'גרסת הקישור');
-      const after = personContract.normalizeSchedulePerson({ ...current, kind:'external', linked_uid:null, revision:personRevision });
-      const result = Object.freeze({ person:storeContract.publicPerson(after), state_revision:stateRevision,
-        bindings_invalidated:true, replayed:false });
-      tx.set(r.person, after);
-      tx.delete(r.stationLink);
-      tx.delete(r.globalLink);
-      tx.set(r.state, { ...currentState, revision:stateRevision });
-      tx.create(r.audit, { schema_version:1, station_id:ctx.sid, actor_uid:ctx.uid, action:'unlink',
-        person_id:current.person_id, created_at:serverTimestamp() });
       tx.create(r.operation, { ...intent, schema_version:1, result, created_at:serverTimestamp() });
       return result;
     });
@@ -321,9 +295,10 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
       const publicBinding = Object.freeze({ binding_id:bindingId, source_namespace:binding.source_namespace,
         source_key:binding.source_key, person_id:binding.person_id,
         expected_person_revision:binding.expected_person_revision, revision:binding.revision });
-      const result = Object.freeze({ binding:publicBinding, state_revision:stateRevision, replayed:false });
+      const nextState = Object.freeze({ ...currentState, revision:stateRevision });
+      const result = Object.freeze({ binding:publicBinding, state:nextState, replayed:false });
       tx.set(bindingRef, binding);
-      tx.set(stateRef, { ...currentState, revision:stateRevision });
+      tx.set(stateRef, nextState);
       tx.create(audit, { schema_version:1, station_id:ctx.sid, actor_uid:ctx.uid, action:'set-binding',
         person_id:person.person_id, binding_id:bindingId, created_at:serverTimestamp() });
       tx.create(operation, { ...intent, schema_version:1, result, created_at:serverTimestamp() });
@@ -361,13 +336,16 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
     const cursor = decodeCursor(input.cursor, ctx.sid);
     return db.runTransaction(async (tx) => {
       await requireManager(tx, ctx);
+      const stateSnap = await tx.get(childRef(ctx.sid, storeContract.COLLECTIONS.state,
+        storeContract.STATE_DOCUMENT));
+      const currentState = state(dataOf(stateSnap));
       let query = stationRef(ctx.sid).collection(storeContract.COLLECTIONS.people).orderBy('person_id').limit(limit + 1);
       if (cursor) query = query.startAfter(cursor);
       const snap = await tx.get(query);
-      const rows = snap.docs.map((doc) => storeContract.publicPerson(doc.data()));
+      const rows = snap.docs.map((doc) => storeContract.managementPerson(doc.data()));
       const hasMore = rows.length > limit;
       const page = rows.slice(0, limit);
-      return Object.freeze({ people:Object.freeze(page),
+      return Object.freeze({ people:Object.freeze(page), state:currentState,
         next_cursor:hasMore ? encodeCursor(ctx.sid, page[page.length - 1].person_id) : null });
     });
   }
@@ -382,6 +360,9 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
     const cursor = decodeBindingCursor(input.cursor, ctx.sid);
     return db.runTransaction(async (tx) => {
       await requireManager(tx, ctx);
+      const stateSnap = await tx.get(childRef(ctx.sid, storeContract.COLLECTIONS.state,
+        storeContract.STATE_DOCUMENT));
+      const currentState = state(dataOf(stateSnap));
       let query = stationRef(ctx.sid).collection(storeContract.COLLECTIONS.bindings).orderBy('binding_id').limit(limit + 1);
       if (cursor) query = query.startAfter(cursor);
       const snap = await tx.get(query);
@@ -393,7 +374,7 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
       });
       const hasMore = rows.length > limit;
       const page = rows.slice(0, limit);
-      return Object.freeze({ bindings:Object.freeze(page),
+      return Object.freeze({ bindings:Object.freeze(page), state:currentState,
         next_cursor:hasMore ? encodeBindingCursor(ctx.sid, page[page.length - 1].binding_id) : null });
     });
   }
@@ -417,7 +398,7 @@ function createScheduleIdentityStore({ db, identity, HttpsError, serverTimestamp
     return parsed.binding_id;
   }
 
-  return Object.freeze({ link, unlink, setSourceBinding, listPeople, listBindings });
+  return Object.freeze({ link, setSourceBinding, listPeople, listBindings });
 }
 
 module.exports = Object.freeze({ createScheduleIdentityStore, GLOBAL_LINK_COLLECTION, PAGE_SIZE, MAX_PAGE_SIZE });

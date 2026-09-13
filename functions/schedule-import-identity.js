@@ -107,7 +107,7 @@ function planImportIdentities(input) {
     cleanText(person.display_name, 120, 'inventory-display-name');
     if (inventory.has(person.person_id)) fail('inventory-duplicate', 'מזהה אדם מופיע פעמיים במלאי.');
     let ref = null;
-    if (own(raw, 'source_ref')) {
+    if (own(raw, 'source_ref') && raw.source_ref !== null) {
       if (!exactKeys(raw.source_ref, ['station_id', 'source_namespace', 'source_key'])
           || raw.source_ref.station_id !== stationId
           || raw.source_ref.source_namespace !== SOURCE_NAMESPACE) {
