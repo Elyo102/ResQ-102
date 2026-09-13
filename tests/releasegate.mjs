@@ -281,6 +281,20 @@ ok('5.1 יש predeploy', predeploy.length > 0);
 ok('5.2 ⭐ הוא מריץ את השער המלא ולא רק static',
   /npm\s+--prefix\s+tests\s+run\s+all\b/.test(predeploy),
   'predeploy הוא „' + predeploy + '"; פריסה שעוקפת את שער הדפדפן לא נבדקה');
+const hostingPredeploy = ((cfg.hosting && cfg.hosting.predeploy) || []).join(' ; ');
+const gateScripts = JSON.parse(read('tests/package.json')).scripts || {};
+ok('5.3 Hosting מריץ מלאי מקור לפני יצירת ארטיפקט',
+  /npm\s+--prefix\s+tests\s+run\s+pages:source\b/.test(hostingPredeploy),
+  'Hosting predeploy הוא „' + hostingPredeploy + '"');
+ok('5.4 השער המלא כולל מלאי מקור לפני בדיקות המוצר',
+  /^npm run test:inventory && npm run pages:source &&/.test(gateScripts.all || ''),
+  'all אינו fail-closed מול מלאי Hosting');
+
+const workflow = read('.github/workflows/tests.yml');
+ok('5.5 CI מריץ את שער השחרור הקנוני ולא רשימה חלקית',
+  /working-directory:\s*tests[\s\S]{0,180}run:\s*npm run all/.test(workflow) &&
+  !/run:\s*npm run static\b/.test(workflow),
+  'CI אינו זהה לשער שמופעל בפריסה');
 
 /* ==================================================================
  * 6 · הוראות הפריסה · שלושת השלבים, ופרויקט מפורש בכל אחד
@@ -298,7 +312,7 @@ function between(src, start, end) {
 const expectedDeployLines = [
   'npx --yes firebase-tools@15.28.1 deploy --only firestore:rules,firestore:indexes --project station-102',
   'npx --yes firebase-tools@15.28.1 deploy --only functions --project station-102',
-  'npx --yes firebase-tools@15.28.1 deploy --only hosting --project station-102',
+  'npx --yes firebase-tools@15.28.1 hosting:clone ("station-102@" + $resqPreviewVersionId) station-102:live --project station-102',
 ];
 const expectedEmulatorLines = [
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"',
@@ -345,7 +359,7 @@ function analyseReleaseDoc(src) {
   const approvalSection = between(src, "## 4 ·", "## 5 ·");
   const versionSection = between(src, "## 6 ·", "\n---");
   const deploys = commandLines(deploySection,
-    /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+deploy\b/);
+    /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+(?:deploy\b|hosting:clone\b)/);
   const emulators = commandLines(gateSection,
     /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+emulators:exec\b/);
   const installs = commandLines(setupSection, /^(?:npm\s+ci\s+--prefix|npm\s+--prefix\s+tests\s+exec\b)/);
@@ -367,6 +381,10 @@ function analyseReleaseDoc(src) {
       /candidate SHA is not the remote branch head/.test(src) &&
       /candidate changed during validation/.test(src),
     liveHeaderGate: /npm\s+--prefix\s+tests\s+run\s+live:headers\b/.test(deploySection),
+    previewPromotionGate:
+      /hosting:channel:deploy\s+\$resqPreviewChannel[\s\S]*\$resqPreviewVersionName[\s\S]*npm\s+--prefix\s+tests\s+run\s+pages:preview[\s\S]*re-read hosting preview before promotion[\s\S]*preview channel changed after verification[\s\S]*hosting:clone\s+\("station-102@"\s*\+\s*\$resqPreviewVersionId\)\s+station-102:live/.test(deploySection) &&
+      deploySection.indexOf('hosting:channel:deploy $resqPreviewChannel') < deploySection.indexOf(expectedDeployLines[0]) &&
+      commandLines(deploySection, /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+deploy\s+--only\s+hosting\b/).length === 0,
     rootAppGate: /npm\s+--prefix\s+tests\s+run\s+all\b/.test(gateSection) &&
       !/^\s*cd\s+tests\s*$/im.test(gateSection),
     installsInsideReleaseTree: JSON.stringify(installs) === JSON.stringify(expectedInstallLines) &&
@@ -447,7 +465,7 @@ for (const l of deployLines) {
 
 /* ארבעת היעדים. אינדקסים היו חסרים בגרסה הקודמת של המסמך — אינדקס
  * חסר אינו שגיאת פריסה אלא שאילתה שנופלת למשתמש בשדה. */
-for (const target of ['firestore:rules', 'firestore:indexes', 'functions', 'hosting']) {
+for (const target of ['firestore:rules', 'firestore:indexes', 'functions', 'hosting:clone']) {
   ok('6.2 „' + target + '" נפרס',
     deployLines.some((l) => l.indexOf(target) !== -1));
 }
@@ -462,6 +480,8 @@ for (const l of releaseDoc.emulators) {
 
 ok('6.4 חזרה לאחור נלכדת לפני האימות עם SHA, עץ ומזהי Hosting',
   releaseDoc.rollbackCapturedBeforeValidation);
+ok('6.4ב Hosting נבדק ב-Preview ומקודם ללא בנייה חוזרת',
+  releaseDoc.previewPromotionGate);
 ok('6.4א נקודת החזרה קוהרנטית ונשמרת ב-ledger מחוץ לעץ',
   releaseDoc.rollbackSetCoherent);
 ok('6.4ב עץ חזרה מוכן מראש ואינדקסים קדימה אינם מוחקים קיים',
@@ -497,6 +517,10 @@ const scripts = JSON.parse(readFileSync(join(ROOT, 'tests', 'package.json'), 'ut
 ok('6.11 live:headers מחווט לסקריפט החי המדויק',
   scripts['live:headers'] === 'node live-header-smoke.mjs');
 const liveHeaderSmoke = read('tests/live-header-smoke.mjs');
+const liveParitySource = read('tests/pages-live-parity.mjs');
+ok('6.11ד שער Preview נכשל-סגור ואינו מדפיס PASS על ok:false',
+  /if\s*\(!preview\.ok\)\s*throw\s+new\s+Error\('Preview parity failed:/.test(liveParitySource) &&
+  /console\.log\('Preview parity PASS '[^\n]*preview/.test(liveParitySource));
 ok('6.11א בדיקת ה-live מקובעת ל-Production ואינה ניתנת להסטה ב-env',
   /const\s+base\s*=\s*'https:\/\/station-102\.web\.app'/.test(liveHeaderSmoke) &&
   !/RESQ_LIVE_BASE|process\.env/.test(liveHeaderSmoke));
@@ -572,6 +596,8 @@ ok('6.30 rollback של Pages הוא commit קדימה ללא force-push',
   /אין force-push/.test(doc));
 ok('6.31 סקריפטי parity מחווטים לפקודות המדויקות',
   scripts['pages:artifact'] === 'node pages-parity-gate.mjs' &&
+  scripts['pages:source'] === 'node pages-parity-gate.mjs ..' &&
+  scripts['pages:preview'] === 'node pages-live-parity.mjs' &&
   scripts['pages:live'] === 'node pages-live-parity.mjs');
 
 /* ==================================================================

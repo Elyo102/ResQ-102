@@ -25,7 +25,7 @@ jobs:
   app:
     name: קוד ומסכים
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
@@ -40,27 +40,11 @@ jobs:
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
-      # בדיקות סטטיות. מהירות, ותופסות את מחלקת הבאגים
-      # שנושכת ביום הפריסה: שם שדה בכלל שלא תואם לשם בקוד,
-      # קריאה לפונקציה שלא קיימת, נתיב שנשבר.
-      - name: בדיקות סטטיות
+      # זה אותו שער מלא שמופעל לפני פריסת Functions. כך אין מסלול שבו
+      # CI ירוק למרות שבדיקת שחרור חדשה לא נכללה ברשימה הידנית הישנה.
+      - name: שער שחרור מלא — קוד, מסכים, נייד, עומס ומלאי Hosting
         working-directory: tests
-        run: npm run static
-
-      # מריצות דפדפן אמיתי מול Firebase מזויף, בשישה תפקידים.
-      - name: מסכים, תפקידים, חוקיות עסקית וניגודיות
-        working-directory: tests
-        run: npm run browser
-
-      - name: היסטוריית צי ורכב שהורד משירות
-        working-directory: tests
-        run: npm run fleet:history
-
-      # סריקה נפרדת של כל דפי ה-HTML ברוחב טלפון. בדיקות הדפדפן
-      # הרגילות מכסות מסכים ממוקדים בלבד ואינן מחליפות שער overflow מלא.
-      - name: כל המסכים ברוחב טלפון
-        working-directory: tests
-        run: npm run browser:mobile
+        run: npm run all
 
   # ---------- כללי האבטחה ----------
   rules:

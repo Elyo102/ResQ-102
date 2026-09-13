@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPublicParity, comparePublicTrees, hostingManifest } from './pages-parity-gate.mjs';
+import {
+  assertPublicParity, comparePublicTrees, hostingManifest, sourcePublicManifest
+} from './pages-parity-gate.mjs';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-pages-parity-'));
 const source = path.join(temp, 'source');
@@ -29,6 +31,17 @@ try {
 
   const baseline = assertPublicParity(source, pages, APPROVED);
   assert.equal(baseline.expected_count, 3);
+  assert.deepEqual(sourcePublicManifest(source, APPROVED), APPROVED);
+
+  write(source, 'unapproved-release.js', 'export default true;');
+  assert.throws(() => sourcePublicManifest(source, APPROVED),
+    /Hosting source differs from approved public asset inventory/);
+  fs.rmSync(path.join(source, 'unapproved-release.js'));
+
+  write(source, 'vehicle-41/rear.jpg', 'not approved');
+  assert.throws(() => sourcePublicManifest(source, APPROVED),
+    /Hosting source differs from approved public asset inventory/);
+  fs.rmSync(path.join(source, 'vehicle-41/rear.jpg'));
 
   fs.rmSync(path.join(pages, 'app.js'));
   assert.deepEqual(comparePublicTrees(source, pages, APPROVED).missing, ['app.js']);

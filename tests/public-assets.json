@@ -76,6 +76,7 @@
   "schedule-file-import.js",
   "schedule-management.html",
   "schedule-management.js",
+  "schedule-update-guard.js",
   "schedule.html",
   "seed.js",
   "shiftlog.js",

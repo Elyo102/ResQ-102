@@ -241,6 +241,7 @@ $resqMergeTree = (git rev-parse ($resqMergeSha + '^{tree}')).Trim()
 Assert-ResQNative 'resolve merged tree'
 if ($resqMergeTree -ne $resqValidatedTree) { throw 'origin/main tree differs from the approved candidate' }
 $resqDeployDir = Join-Path $env:TEMP ("resq-deploy-" + $resqMergeSha.Substring(0, 12) + '-' + [guid]::NewGuid().ToString('N'))
+$resqPreviewChannel = "candidate-" + $resqMergeSha.Substring(0, 12)
 git worktree add --detach $resqDeployDir $resqMergeSha
 Assert-ResQNative 'create deploy worktree'
 Set-Location -LiteralPath $resqDeployDir
@@ -261,11 +262,37 @@ if ((git rev-parse 'HEAD^{tree}').Trim() -ne $resqValidatedTree) { throw 'deploy
 Assert-ResQNative 'predeploy tree'
 ```
 
-**לא פקודה אחת.** הסדר אינו שרירותי: כללים ואינדקסים חייבים להיות
-במקום לפני שקוד חדש מתחיל לכתוב, וה-hosting אחרון כדי שהדפדפן לא
-יקבל מסך חדש שמדבר עם שרת ישן.
+**לא פקודה אחת.** הסדר אינו שרירותי: קודם יוצרים ובודקים Preview סטטי
+בלי לשנות את ערוץ ה-live או את ה-Backend. אחר כך כללים ואינדקסים חייבים
+להיות במקום לפני שקוד חדש מתחיל לכתוב, וה-hosting מקודם אחרון.
 
-### 2.1 · כללים ואינדקסים
+### 2.1 · Preview של האתר — לפני כל שינוי ייצור
+
+```powershell
+npx --yes firebase-tools@15.28.1 hosting:channel:deploy $resqPreviewChannel --project station-102 --expires 1d
+Assert-ResQNative 'deploy hosting preview'
+$resqPreviewListRaw = (npx --yes firebase-tools@15.28.1 hosting:channel:list --site station-102 --project station-102 --json | Out-String)
+Assert-ResQNative 'read hosting preview'
+$resqPreviewList = $resqPreviewListRaw | ConvertFrom-Json
+$resqPreviewRows = @($resqPreviewList.result.channels | Where-Object { $_.name -eq ("projects/station-102/sites/station-102/channels/" + $resqPreviewChannel) })
+if ($resqPreviewList.status -ne 'success' -or $resqPreviewRows.Count -ne 1 -or $resqPreviewRows[0].release.version.status -ne 'FINALIZED') {
+  throw 'preview channel is missing or not finalized'
+}
+$resqPreviewOrigin = [string]$resqPreviewRows[0].url
+$resqPreviewVersionName = [string]$resqPreviewRows[0].release.version.name
+$resqPreviewVersionId = ($resqPreviewVersionName -split '/')[-1]
+if (-not $resqPreviewVersionId) { throw 'preview version id is missing' }
+$resqPreviewCache = Join-Path $resqDeployDir '.firebase/hosting..cache'
+if (-not (Test-Path -LiteralPath $resqPreviewCache -PathType Leaf)) { throw 'Firebase did not create a Hosting artifact manifest' }
+$resqPreviewCacheSha = (Get-FileHash -LiteralPath $resqPreviewCache -Algorithm SHA256).Hash
+npm --prefix tests run pages:preview -- "$resqDeployDir" $resqPreviewOrigin
+Assert-ResQNative 'preview HTTP bytes, MIME, cache headers and private paths'
+if ((Get-FileHash -LiteralPath $resqPreviewCache -Algorithm SHA256).Hash -ne $resqPreviewCacheSha) {
+  throw 'Hosting artifact changed after preview verification'
+}
+```
+
+### 2.2 · כללים ואינדקסים
 
 ```powershell
 $resqRulesAttempted = $true
@@ -278,7 +305,7 @@ Assert-ResQNative 'deploy rules and indexes'
 
 עצור וּודא שהפקודה הסתיימה בהצלחה לפני שאתה ממשיך.
 
-### 2.2 · פונקציות
+### 2.3 · פונקציות
 
 ```powershell
 $resqFunctionsAttempted = $true
@@ -293,16 +320,28 @@ Assert-ResQNative 'deploy functions'
 
 בפריסה הראשונה של שירות חדש גוגל מבקשת אישור להפעלת API. אשר.
 
-### 2.3 · אתר
+### 2.4 · קידום Preview נעול ל-live
+
+קוראים שוב את הערוץ ומוודאים שהוא עדיין מצביע ל-Version ID שנבדק.
+ה-clone משתמש ב-Version ID הקפוא, לא בשם הערוץ המשתנה.
 
 ```powershell
+$resqPreviewListRaw = (npx --yes firebase-tools@15.28.1 hosting:channel:list --site station-102 --project station-102 --json | Out-String)
+Assert-ResQNative 're-read hosting preview before promotion'
+$resqPreviewList = $resqPreviewListRaw | ConvertFrom-Json
+$resqPreviewRows = @($resqPreviewList.result.channels | Where-Object { $_.name -eq ("projects/station-102/sites/station-102/channels/" + $resqPreviewChannel) })
+if ($resqPreviewList.status -ne 'success' -or $resqPreviewRows.Count -ne 1 -or
+    [string]$resqPreviewRows[0].release.version.name -ne $resqPreviewVersionName -or
+    $resqPreviewRows[0].release.version.status -ne 'FINALIZED') {
+  throw 'preview channel changed after verification'
+}
 $resqHostingAttempted = $true
-npx --yes firebase-tools@15.28.1 deploy --only hosting --project station-102
-Assert-ResQNative 'deploy hosting'
+npx --yes firebase-tools@15.28.1 hosting:clone ("station-102@" + $resqPreviewVersionId) station-102:live --project station-102
+Assert-ResQNative 'promote verified preview to live'
 ```
 
-מיד אחרי הצלחת Hosting מודדים את הכותרות שה-CDN החי מחזיר. אמולטור
-Hosting אינו מחזיר אותן ולכן אינו תחליף לבדיקה הזאת:
+אין להריץ `deploy --only hosting` על live במסלול שחרור: הוא יוצר
+ארטיפקט שני שלא נבדק. מיד אחרי הקידום מודדים שוב את ה-CDN החי:
 
 ```powershell
 npm --prefix tests run live:headers

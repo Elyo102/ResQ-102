@@ -14,6 +14,44 @@ const PRIVATE_PROBES = Object.freeze([
   'rules-test/package.json', '.git/HEAD', '.firebase/hosting..cache'
 ]);
 const SAMPLE_LIMIT = 20;
+const CONTENT_TYPES = Object.freeze({
+  '.css':Object.freeze(['text/css']), '.html':Object.freeze(['text/html']),
+  '.ico':Object.freeze(['image/x-icon']), '.jpg':Object.freeze(['image/jpeg']),
+  '.js':Object.freeze(['text/javascript', 'application/javascript']),
+  '.json':Object.freeze(['application/json']), '.png':Object.freeze(['image/png'])
+});
+
+function headerValue(response, name) {
+  return String(response && response.headers && typeof response.headers.get === 'function'
+    ? response.headers.get(name) || '' : '').toLowerCase();
+}
+
+function mediaType(response) {
+  return headerValue(response, 'content-type').split(';', 1)[0].trim();
+}
+
+function cacheDirectives(response) {
+  return new Set(headerValue(response, 'cache-control').split(',')
+    .map((part) => part.trim().split('=', 1)[0]).filter(Boolean));
+}
+
+function validateHeaders(relative, response, firebaseHosted) {
+  const failures = [];
+  const extension = path.extname(relative).toLowerCase();
+  const expectedTypes = CONTENT_TYPES[extension];
+  const actualType = mediaType(response);
+  if (!expectedTypes || !expectedTypes.includes(actualType)) failures.push('content-type');
+  if (!firebaseHosted) return failures;
+  const cache = cacheDirectives(response);
+  if (relative === 'version.json' || relative === 'firebase-messaging-sw.js') {
+    for (const directive of ['no-cache', 'no-store', 'must-revalidate']) {
+      if (!cache.has(directive)) failures.push('cache-control-' + directive);
+    }
+  } else if (['.html', '.js', '.css'].includes(extension) && !cache.has('no-cache')) {
+    failures.push('cache-control-no-cache');
+  }
+  return failures;
+}
 
 function sha(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -33,6 +71,8 @@ export async function inspectLiveOrigin(sourceRoot, origin, options = {}) {
   const deadlineMs = Number.isFinite(options.deadlineMs) ? options.deadlineMs : now() + 10 * 60_000;
   const perRequestMaxMs = Number.isSafeInteger(options.perRequestMaxMs) ? options.perRequestMaxMs : 15_000;
   const assets = hostingManifest(sourceRoot, options.approvedAssets);
+  const firebaseHosted = options.firebaseHosted !== undefined
+    ? options.firebaseHosted : !origin.startsWith(PAGES_ORIGIN);
   const failures = [];
   const checks = [
     ...assets.map((relative) => ({ relative, privateProbe:false })),
@@ -56,6 +96,9 @@ export async function inspectLiveOrigin(sourceRoot, origin, options = {}) {
           return;
         }
         if (!privateProbe) {
+          for (const headerFailure of validateHeaders(relative, response, firebaseHosted)) {
+            failures.push(relative + ':' + headerFailure);
+          }
           const live = new Uint8Array(await response.arrayBuffer());
           const local = fs.readFileSync(path.join(sourceRoot, ...relative.split('/')));
           if (sha(live) !== sha(local)) failures.push(relative + ':hash');
@@ -82,12 +125,14 @@ export async function verifyLiveDualHost(sourceRoot, options = {}) {
     perRequestMaxMs:options.perRequestMaxMs,
     approvedAssets:options.approvedAssets
   };
-  const firebase = await inspectLiveOrigin(sourceRoot, FIREBASE_ORIGIN, inspectOptions);
+  const firebase = await inspectLiveOrigin(sourceRoot, FIREBASE_ORIGIN,
+    { ...inspectOptions, firebaseHosted:true });
   if (!firebase.ok) throw new Error('Firebase live parity failed: ' + JSON.stringify(firebase));
   let pages;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (now() >= deadlineMs) break;
-    pages = await inspectLiveOrigin(sourceRoot, PAGES_ORIGIN, inspectOptions);
+    pages = await inspectLiveOrigin(sourceRoot, PAGES_ORIGIN,
+      { ...inspectOptions, firebaseHosted:false });
     if (pages.ok) return Object.freeze({ firebase, pages, pages_attempts:attempt });
     if (attempt < attempts) {
       const remaining = deadlineMs - now();
@@ -101,8 +146,15 @@ export async function verifyLiveDualHost(sourceRoot, options = {}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const sourceRoot = process.argv[2];
-  if (!sourceRoot) throw new Error('usage: node pages-live-parity.mjs <firebase-release-root>');
-  console.log('Dual-host live parity PASS ' + JSON.stringify(await verifyLiveDualHost(sourceRoot)));
+  const previewOrigin = process.argv[3];
+  if (!sourceRoot) throw new Error('usage: node pages-live-parity.mjs <firebase-release-root> [preview-origin]');
+  if (previewOrigin) {
+    const preview = await inspectLiveOrigin(sourceRoot, previewOrigin, { firebaseHosted:true });
+    if (!preview.ok) throw new Error('Preview parity failed: ' + JSON.stringify(preview));
+    console.log('Preview parity PASS ' + JSON.stringify(preview));
+  } else {
+    console.log('Dual-host live parity PASS ' + JSON.stringify(await verifyLiveDualHost(sourceRoot)));
+  }
 }
 
 export { FIREBASE_ORIGIN, PAGES_ORIGIN, PRIVATE_PROBES };

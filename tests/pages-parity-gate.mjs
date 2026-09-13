@@ -46,6 +46,31 @@ function approvedInventory(approvedAssets) {
   return normalized.sort();
 }
 
+export function sourcePublicManifest(sourceRoot, approvedAssets = PUBLIC_ASSETS) {
+  const root = path.resolve(sourceRoot);
+  const entries = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes:true })) {
+    const absolute = path.join(root, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isFile() && safePublicPath(entry.name)) entries.push(entry.name);
+    if (entry.isDirectory() && /^vehicle-[A-Za-z0-9_-]+$/i.test(entry.name)) {
+      for (const asset of fs.readdirSync(absolute, { withFileTypes:true })) {
+        const relative = normalizedRelative(entry.name + '/' + asset.name);
+        if (asset.isFile() && safePublicPath(relative)) entries.push(relative);
+      }
+    }
+  }
+  const sorted = entries.sort();
+  const approved = approvedInventory(approvedAssets);
+  if (sorted.length !== approved.length || sorted.some((item, index) => item !== approved[index])) {
+    const missing = approved.filter((item) => !sorted.includes(item)).slice(0, DIAGNOSTIC_LIMIT);
+    const extra = sorted.filter((item) => !approved.includes(item)).slice(0, DIAGNOSTIC_LIMIT);
+    throw new Error('Hosting source differs from approved public asset inventory: '
+      + JSON.stringify({ missing, extra }));
+  }
+  return sorted;
+}
+
 export function hostingManifest(sourceRoot, approvedAssets = PUBLIC_ASSETS) {
   const cachePath = path.join(sourceRoot, '.firebase', 'hosting..cache');
   if (!fs.existsSync(cachePath)) throw new Error('Firebase Hosting manifest is missing: ' + cachePath);
@@ -140,9 +165,13 @@ export function assertPublicParity(sourceRoot, pagesRoot, approvedAssets = PUBLI
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const sourceRoot = process.argv[2];
   const pagesRoot = process.argv[3];
-  if (!sourceRoot || !pagesRoot) {
+  if (!sourceRoot) {
     throw new Error('usage: node pages-parity-gate.mjs <firebase-release-root> <curated-pages-root>');
   }
+  console.log('Hosting source inventory PASS ' + JSON.stringify({
+    asset_count:sourcePublicManifest(sourceRoot).length
+  }));
+  if (!pagesRoot) process.exit(0);
   console.log('Public release parity PASS ' + JSON.stringify(assertPublicParity(sourceRoot, pagesRoot)));
 }
 
