@@ -111,8 +111,24 @@ await check('actual module parses and imports in Chromium', async () => {
   const f = await fixture();
   try {
     assert.deepEqual(f.pageErrors, []);
-    assert.match(fs.readFileSync(path.join(root, 'hr.html'), 'utf8'),
-      /התזכורות שלי[\s\S]*מעקבי כוח האדם שבאחריותך/);
+    const productHtml = fs.readFileSync(path.join(root, 'hr.html'), 'utf8');
+    assert.match(productHtml, /התזכורות שלי[\s\S]*מעקבי כוח האדם שבאחריותך/);
+    assert.doesNotMatch(productHtml, /חשודים בחריגת שעות/,
+      'the superseded and accusatory title must not return');
+    const product = await f.page.evaluate(htmlText => {
+      const parsed = new DOMParser().parseFromString(htmlText, 'text/html');
+      const hours = parsed.querySelector('a.hr-kpi[href="#hours"] span');
+      const due = parsed.querySelector('[data-w="tab-due"]');
+      return {
+        hours: hours?.textContent?.trim() || '',
+        dueTitle: due?.querySelector('span')?.textContent?.trim() || '',
+        dueHelp: due?.querySelector('small')?.textContent?.trim() || ''
+      };
+    }, productHtml);
+    assert.deepEqual(product, {
+      hours: 'חריגות שעות', dueTitle: 'התזכורות שלי',
+      dueHelp: 'מעקבי כוח האדם שבאחריותך'
+    });
   }
   finally { await f.browser.close(); }
 });
