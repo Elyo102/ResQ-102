@@ -82,16 +82,16 @@ function capacityObservedDb(raw) {
     if (!snapshot || typeof snapshot !== 'object') return snapshot;
     return Object.assign({}, snapshot, { ref: snapshot.ref ? wrapDoc(snapshot.ref) : snapshot.ref });
   }
-  function wrapQuery(query) {
+  function wrapQuery(query, targeted) {
     return {
       [rawRef]: query,
       path: query.path,
-      where(...args) { return wrapQuery(query.where(...args)); },
-      limit(value) { return wrapQuery(query.limit(value)); },
-      orderBy(...args) { return wrapQuery(query.orderBy(...args)); },
+      where(...args) { return wrapQuery(query.where(...args), targeted || args[1] === 'array-contains'); },
+      limit(value) { return wrapQuery(query.limit(value), targeted); },
+      orderBy(...args) { return wrapQuery(query.orderBy(...args), targeted); },
       doc(id) { return wrapDoc(query.doc(id)); },
       async get() {
-        if (protectedCollection(query.path)) {
+        if (protectedCollection(query.path) && !targeted) {
           const error = new Error('full collection scan is forbidden for 3,000-person capacity: ' + query.path);
           error.code = 'capacity-full-scan';
           throw error;
@@ -106,7 +106,7 @@ function capacityObservedDb(raw) {
       [rawRef]: ref,
       path: ref.path,
       id: ref.id,
-      collection(name) { return wrapQuery(ref.collection(name)); },
+      collection(name) { return wrapQuery(ref.collection(name), false); },
       async get() { return wrapSnapshot(await ref.get()); },
       set: (...args) => ref.set(...args),
       update: (...args) => ref.update(...args),
@@ -134,7 +134,7 @@ function capacityObservedDb(raw) {
   }
 
   const db = {
-    collection(name) { return wrapQuery(raw.collection(name)); },
+    collection(name) { return wrapQuery(raw.collection(name), false); },
     doc(path) { return wrapDoc(raw.doc(path)); },
     batch: () => raw.batch(),
     _put: (...args) => raw._put(...args),
@@ -247,6 +247,12 @@ async function verifyThreeThousand(runtimeModule, observed) {
   const qualifications = await rt.getQualificationCatalog(req({}));
   assert.equal(qualifications.people.length, 3000, 'qualification view truncated the active roster');
   assert.equal(qualifications.holders.shift_lead, 3000, 'qualification holders were not counted exactly');
+  const temporary = await rt.saveQualification(req({
+    request_id:'capacity-temp-qualification', key:'capacity_temp', label:'בדיקת קיבולת זמנית'
+  }));
+  await rt.deleteQualification(req({
+    request_id:'capacity-delete-qualification', key:'capacity_temp', expected_revision:temporary.revision
+  }));
 
   const planned = await rt.runPlanner(req({
     request_id: 'capacity-plan', start: '2026-10-01', months: 1, overrides: []
@@ -280,6 +286,19 @@ const gapMutation = replaceExactly(raisedForMutation, GAP_3000, GAP_1500);
 await assert.rejects(
   verifyThreeThousand(loadRuntimeModule(gapMutation)),
   (error) => error && error.code === 'gap-live-roster-too-many'
+);
+
+// Mutation proof: deletion must query the requested qualification only. A
+// regression to the former station-wide holdings scan is blocked by the same
+// observed database used by the 3,000-person release assertion.
+const deleteScanMutation = replaceExactly(
+  raisedForMutation,
+  'const holdings = await loadQualificationHolders(ctx, key);',
+  'const holdings = await loadPersonQualifications(ctx);'
+);
+await assert.rejects(
+  verifyThreeThousand(loadRuntimeModule(deleteScanMutation), true),
+  (error) => error && error.code === 'capacity-full-scan'
 );
 
 // Oracle mutation: a regression to a full users/holdings collection query is

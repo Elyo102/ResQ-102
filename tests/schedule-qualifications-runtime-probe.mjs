@@ -69,6 +69,16 @@ function auditOf(db) { return db._paths(ST + '/schedule_qualification_audit/').m
   eq('3.11 האדם בקטלוג עם כשירויותיו ו-revision', [view.people.find((p) => p.uid === 'u2').qualifications, view.people.find((p) => p.uid === 'u2').revision], [['driver', 'diver'], 2]);
   ok('3.12 הכשירויות אינן תלויות בתפקיד ההרשאה', view.people.find((p) => p.uid === 'u2').roles.indexOf('driver') === -1);
 
+  db._put(ST + '/schedule_person_qualifications/departed-user', {
+    station_id: SID, uid: 'departed-user', qualifications: ['driver'], revision: 1
+  });
+  db._put(ST + '/schedule_state/qualifications', { station_id: SID, holdings_revision: 3 });
+  const withDeparted = await rt.getQualificationCatalog(req({}));
+  eq('3.13 departed holder remains visible for count and cleanup',
+    [withDeparted.holders.driver, withDeparted.unknown_holders], [2, ['departed-user']]);
+  db._del(ST + '/schedule_person_qualifications/departed-user');
+  db._put(ST + '/schedule_state/qualifications', { station_id: SID, holdings_revision: 2 });
+
   /* 4 · מחיקה: לא מובנית, לא בשימוש, ולא אחרי הוספה מקבילה */
   await rejectsCode('4.1 מחיקת מובנית → סירוב', () => rt.deleteQualification(req({ request_id: 'd-builtin', key: 'driver', expected_revision: 1 })), 'qualification-builtin');
   await rejectsCode('4.2 מחיקת כשירות בשימוש → סירוב עם מספר המחזיקים', () => rt.deleteQualification(req({ request_id: 'd-inuse', key: 'diver', expected_revision: 2 })), 'qualification-in-use');

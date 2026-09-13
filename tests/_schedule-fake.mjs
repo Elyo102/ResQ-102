@@ -47,6 +47,7 @@ function createFakeDb() {
               : (value ? value[f.field] : undefined);
             if (f.op === '==') return actual === f.value;
             if (f.op === 'in') return Array.isArray(f.value) && f.value.indexOf(actual) !== -1;
+            if (f.op === 'array-contains') return Array.isArray(actual) && actual.indexOf(f.value) !== -1;
             throw new Error('אופרטור לא נתמך במסד המזויף: ' + f.op);
           });
           if (hit) out.push(snapshot(key));

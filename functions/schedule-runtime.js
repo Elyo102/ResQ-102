@@ -4309,6 +4309,39 @@ function createScheduleRuntime(deps) {
     return out;
   }
 
+  async function loadQualificationHolders(ctx, key) {
+    const snap = await stationRef(ctx.sid).collection('schedule_person_qualifications')
+      .where('qualifications', 'array-contains', key)
+      .limit(MAX_QUALIFICATION_PEOPLE + 1).get();
+    if (snap.size > MAX_QUALIFICATION_PEOPLE) {
+      throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
+    }
+    const out = new Map();
+    snap.docs.forEach((doc) => {
+      const value = doc.data() || {};
+      const held = Array.isArray(value.qualifications) ? value.qualifications.slice() : [];
+      if (held.indexOf(key) !== -1) {
+        out.set(doc.id, {
+          qualifications: held,
+          revision: Number.isInteger(value.revision) ? value.revision : 0
+        });
+      }
+    });
+    return out;
+  }
+
+  async function loadAllQualificationHolders(ctx, catalog) {
+    const keys = (Array.isArray(catalog) ? catalog : [])
+      .map((entry) => entry && entry.key).filter(nonEmpty);
+    const groups = await Promise.all(keys.map((key) => loadQualificationHolders(ctx, key)));
+    const out = new Map();
+    groups.forEach((group) => group.forEach((held, uid) => {
+      const prior = out.get(uid);
+      if (!prior || held.revision >= prior.revision) out.set(uid, held);
+    }));
+    return out;
+  }
+
   /* הכשירויות של המערכת הישנה (quals/member_quals) — רמז לאחראי הסידור
    * בזמן ההעברה. קריאה בלבד; לא מיובא אוטומטית ולא מנוחש. */
   async function legacyQualificationHints(ctx) {
@@ -4337,17 +4370,22 @@ function createScheduleRuntime(deps) {
       const source = await loadSource(ctx, config.active_source_id);
       people = source.peopleRaw.filter((person) => person.active === true);
     }
-    const holdings = await loadPersonQualifications(ctx, null,
-      nonEmpty(config.active_source_id) ? people : undefined);
+    const metaBefore = await qualificationsMetaRef(ctx.sid).get();
+    const holdings = await loadAllQualificationHolders(ctx, catalog);
+    const metaAfter = await qualificationsMetaRef(ctx.sid).get();
+    const beforeRevision = metaBefore.exists ? Number((metaBefore.data() || {}).holdings_revision || 0) : 0;
+    const afterRevision = metaAfter.exists ? Number((metaAfter.data() || {}).holdings_revision || 0) : 0;
+    if (beforeRevision !== afterRevision) {
+      throw new ScheduleRuntimeError('qualification-holders-changed', 'רשימת המחזיקים השתנתה בזמן הטעינה. יש לרענן.', 'aborted');
+    }
     const legacy = await legacyQualificationHints(ctx);
     const known = new Set(people.map((person) => person.id));
-    const meta = await qualificationsMetaRef(ctx.sid).get();
     const gapPolicy = await loadGapPolicy(ctx);
     await requireLiveManagerNow(ctx);
     return {
       catalog,
       holders: qualifications.holdersByKey(Array.from(holdings.values())),
-      holdings_revision: meta.exists ? Number((meta.data() || {}).holdings_revision || 0) : 0,
+      holdings_revision: afterRevision,
       gap_policy: gapPolicy,
       people: people.map((person) => {
         const held = holdings.get(person.id) || { qualifications: [], revision: 0 };
@@ -4456,7 +4494,7 @@ function createScheduleRuntime(deps) {
     // while remaining absent from the already-returned query result.
     const metaBefore = await qualificationsMetaRef(ctx.sid).get();
     const holdingsRevision = metaBefore.exists ? Number((metaBefore.data() || {}).holdings_revision || 0) : 0;
-    const holdings = await loadPersonQualifications(ctx);
+    const holdings = await loadQualificationHolders(ctx, key);
     const holders = Array.from(holdings.entries()).filter(([, held]) => held.qualifications.indexOf(key) !== -1).map(([uid]) => uid);
     const blocker = qualifications.deleteBlocker(entry, holders);
     if (blocker) {
