@@ -838,13 +838,35 @@ async function test(name, fn) {
   // Existing publication coverage below starts from shadow mode and no display.
   await runtimeDoc().set({ mode: 'shadow' }, { merge: true });
 
-  await test('publish in shadow prepares only — no active pointer', async () => {
-    const prepared = await api.publish(req(MGR, {
+  await test('publish in trial activates the imported board and suppresses delivery', async () => {
+    const trial = await api.publish(req(MGR, {
       request_id: 'sheet_pub_shadow', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps && preview.gaps.digest
     }));
-    assert.ok(prepared && prepared.publication_id);
+    assert.ok(trial && trial.publication_id);
+    assert.equal(trial.prepared, false);
+    assert.equal(trial.trial, true);
+    assert.equal(trial.notified_people, 0);
+    assert.equal(trial.trial_control_notifications, 0);
     const pointer = await station().collection('schedule_state').doc('active').get();
-    assert.equal(pointer.exists && !!(pointer.data() || {}).publication_id, false, 'ב-shadow אסור להזיז את המצביע');
+    assert.equal(pointer.exists, true, 'פרסום ניסוי לא יצר מצביע פעיל');
+    assert.equal((pointer.data() || {}).publication_id, trial.publication_id);
+    const publicationRef = station().collection('schedule_publications').doc(trial.publication_id);
+    const publication = (await publicationRef.get()).data() || {};
+    assert.equal(publication.status, 'active');
+    assert.equal(publication.imported, true);
+    assert.equal(publication.delivery_policy, 'suppressed_trial');
+    assert.equal(publication.delivery_allowed, false);
+    assert.equal((pointer.data() || {}).revision, publication.revision);
+    assert.equal((pointer.data() || {}).content_digest, publication.content_digest);
+    const outbox = await publicationRef.collection('schedule_outbox').get();
+    assert.ok(outbox.size > 0, 'פרסום ניסוי מיובא לא יצר תיעוד משלוחים');
+    assert.equal(trial.suppressed_notifications, outbox.size);
+    assert.ok(outbox.docs.every((doc) => {
+      const row = doc.data() || {};
+      return row.status === 'suppressed_trial'
+        && row.delivery_policy === 'suppressed_trial'
+        && row.delivery_allowed === false;
+    }), 'פרסום ניסוי מיובא השאיר משלוח שאינו מדוכא');
   });
 
   /* ⭐ המעבר ל-new הוא של אלדד בלבד (promoteToNew). הבדיקה כותבת את מסמך
