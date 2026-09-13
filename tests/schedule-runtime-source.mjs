@@ -149,32 +149,37 @@ check('publication activation and audit share one transaction', () => {
   assert.ok(body.includes("collection('schedule_audit')"));
   assert.ok(body.includes("status: 'active'"));
 });
-check('notifications are blocked until activation commits', () => {
+check('live notifications stay blocked until activation commits and trial intent is suppressed at creation', () => {
   const start = runtime.indexOf('async function publish');
   const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
-  const blocked = publishBody.indexOf("status: 'blocked'");
+  const staged = publishBody.indexOf("status: trial ? 'suppressed_trial' : 'blocked'");
   const transaction = publishBody.lastIndexOf('await db.runTransaction(async (tx) => {');
   const release = publishBody.lastIndexOf('await releaseOutbox(pubRef)');
-  assert.ok(blocked > -1 && blocked < transaction && transaction < release);
+  assert.ok(staged > -1 && staged < transaction && transaction < release);
+  assert.ok(publishBody.includes("delivery_policy: trial ? 'suppressed_trial' : 'live'"));
+  assert.ok(publishBody.includes('if (!trial) await releaseOutbox(pubRef)'));
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
   assert.ok(runtime.includes('existingData.request_fingerprint !== fingerprintForExisting'));
   assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
 });
-check('prepared replay is bound to intent and starts only after the fingerprint matches', () => {
+check('active publication replay is always activation-bound; legacy prepared replay stays behind the fingerprint', () => {
   const publishStart = runtime.indexOf('async function publish(req)');
   const publishEnd = runtime.indexOf('\n  async function rollback(req)', publishStart);
   const body = runtime.slice(publishStart, publishEnd);
-  const fingerprint = body.indexOf("intent: preparing ? 'prepare' : 'activate'");
+  const fingerprint = body.indexOf("intent: 'activate'");
+  const deliveryPolicy = body.indexOf("delivery_policy: trial ? 'suppressed_trial' : 'live'", fingerprint);
   const mismatch = body.indexOf('existingData.request_fingerprint !== fingerprintForExisting');
   const activeReplay = body.indexOf('if (pointsToExisting)');
   const replay = body.indexOf("existingData.status === 'prepared'");
-  assert.ok(fingerprint > -1 && mismatch > fingerprint && activeReplay > mismatch
+  assert.ok(fingerprint > -1 && deliveryPolicy > fingerprint && mismatch > deliveryPolicy && activeReplay > mismatch
     && replay > activeReplay,
   'publication replay is not ordered behind its intent-bound fingerprint check');
-  assert.ok(body.slice(activeReplay, replay).includes('if (preparing || config.mode !== MODE.NEW'),
-    'active replay can release an outbox from shadow');
+  assert.ok(body.slice(activeReplay, replay).includes('const expectedDeliveryAllowed = !trial;'),
+    'active replay does not bind the receipt to the current delivery policy');
+  assert.ok(body.slice(activeReplay, replay).includes('if (existingData.delivery_allowed === true) await releaseOutbox(pubRef);'),
+    'active trial replay can release a suppressed outbox');
   assert.ok(body.includes('return replayPreparedPublication(ctx'));
 });
 check('prepared replay verifies snapshot, live authority, runtime and predecessor without writes', () => {
@@ -549,10 +554,23 @@ check('management visibility is driven by server status', () => {
   assert.ok(ui.includes("name === 'manage' && !canManageSchedule()"));
   assert.ok(ui.includes("['shadow', 'new'].indexOf(state.status.mode) !== -1"));
 });
-check('off and shadow schedule views use only the server-side compatibility reader', () => {
+check('off uses compatibility, while shadow prefers an active publication and only then falls back', () => {
   assert.ok(runtime.includes("const effectiveReaderModule = require('./schedule-effective-reader')"));
   assert.ok(runtime.includes('async function legacyProjectionInput(ctx, range, readerArg, pinnedBasis)'));
-  assert.ok(runtime.includes("if (config.mode !== MODE.NEW)"));
+  for (const fn of ['async function getMy(req)', 'async function getStationRange(req)',
+    'async function getStation(req)']) {
+    const at = runtime.indexOf(fn);
+    const body = runtime.slice(at, runtime.indexOf('\n  async function ', at + 10));
+    assert.ok(body.includes('if (config.mode === MODE.OFF)'), fn + ' does not isolate off mode');
+    assert.ok(body.indexOf('checkedActiveSnapshot(ctx, config') > body.indexOf('if (config.mode === MODE.OFF)'),
+      fn + ' does not try the active trial publication before fallback');
+    assert.ok(body.indexOf('legacyFallbackWindow(ctx, config') > body.indexOf('checkedActiveSnapshot(ctx, config'),
+      fn + ' reaches legacy before checking the active trial publication');
+  }
+  const workdays = runtime.slice(runtime.indexOf('async function effectiveWorkDaysFor(ctx, config, input)'),
+    runtime.indexOf('\n  function workdaysResponse', runtime.indexOf('async function effectiveWorkDaysFor(ctx, config, input)')));
+  assert.ok(workdays.includes('config.mode === MODE.NEW || config.mode === MODE.SHADOW'));
+  assert.ok(workdays.includes("source: 'publication'"));
   assert.ok(ui.includes("['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1"));
   assert.ok(integration.includes('off and shadow safely expose the current station and personal legacy schedules'));
 });
@@ -1180,25 +1198,32 @@ check('every view without an active snapshot falls back to legacy', () => {
   }
 });
 
-/* ⭐ P0-2 · חוזה המעבר. אלה הטענות שמונעות מהמעבר לחזור להיות
- * „החלף מצב ותקווה". */
-check('preparing in shadow never activates, notifies or moves the pointer', () => {
+/* מצב ניסוי מריץ את אותו lifecycle של פרסום חי. ההבדל היחיד הוא
+ * גבול המסירה החיצוני: כוונת המסירה נשמרת כ-suppressed_trial סופי. */
+check('trial publication activates and audits normally while suppressing only delivery', () => {
   const src = read('functions/schedule-runtime.js');
   const at = src.indexOf('async function publish(req)');
   assert.ok(at > -1);
   const body = src.slice(at, src.indexOf('\n  async function ', at + 10));
-  assert.ok(body.indexOf('const preparing = config.mode === MODE.SHADOW;') > -1,
-    'הכוונה אינה נגזרת מהמצב');
+  assert.ok(body.indexOf('const trial = config.mode === MODE.SHADOW;') > -1,
+    'מדיניות המסירה אינה נגזרת ממצב השרת');
   assert.ok(/requireMode\(config, \[MODE\.NEW, MODE\.SHADOW\]\)/.test(body),
-    'publish אינו מותר ב-shadow, ולכן חלון הלוח הריק נשאר פתוח');
-  assert.ok(/tx\.update\(pubRef, \{\s*status: 'prepared'/.test(body),
-    'הכנה אינה מסמנת prepared');
-  // ⭐ B (seq379) · המניפסט של התור נכתב באותה עסקה עם הסימון.
-  assert.ok(/status: 'prepared',[\s\S]{0,200}outbox_manifest: outboxManifestFor\(planned\.notifications\)/.test(body),
-    'הכנה אינה כותבת מניפסט תור באותה עסקה');
-  // ⭐ הליבה: ההודעות משתחררות רק כשהפרסום באמת פעיל.
-  assert.ok(body.indexOf('if (!preparing) await releaseOutbox(pubRef);') > -1,
-    'הכנה משחררת הודעות על סידור שאיש אינו רואה');
+    'publish אינו מותר במצב ניסוי');
+  assert.ok(/tx\.update\(pubRef, \{\s*status: 'active'/.test(body),
+    'מצב ניסוי אינו מפעיל את תמונת הפרסום');
+  assert.ok(body.includes('tx.set(activeRef(ctx.sid)'),
+    'מצב ניסוי אינו מזיז את המצביע הפעיל');
+  assert.ok(body.includes("action: 'publish'"),
+    'מצב ניסוי אינו משאיר ביקורת פרסום רגילה');
+  assert.ok(body.includes("status: trial ? 'suppressed_trial' : 'blocked'"),
+    'כוונת מסירה בניסוי אינה נרשמת כ-suppressed_trial');
+  assert.ok(body.includes('delivery_allowed: !trial')
+    && body.includes("delivery_policy: trial ? 'suppressed_trial' : 'live'"),
+  'מדיניות המסירה אינה נחתמת גם בפרסום וגם בשורת המסירה');
+  assert.ok(body.indexOf('if (!trial) await releaseOutbox(pubRef);') > -1,
+    'מצב ניסוי מגיע לשחרור תור המסירה');
+  assert.equal(body.includes("action: 'prepare'"), false,
+    'מסלול ההכנה הישן עדיין מחליף את פרסום הניסוי');
 });
 
 check('the only road into new mode is the signed cutover, and it ships', () => {
@@ -1427,12 +1452,12 @@ check('the screen actually calls the cutover it was given', () => {
   assert.ok(ui.indexOf('call.cutoverPreview(') > -1
     && ui.indexOf('call.cutoverPromote(') > -1,
     'זרימת prepare→preflight→promote אינה במסך');
-  // ⭐ ההכנה ב-shadow אינה no-op שקט.
+  // פרסום במצב ניסוי אינו no-op שקט.
   const pub = ui.slice(ui.indexOf('async function publishDraft('));
   assert.ok(!/state\.status\.mode !== 'new'/.test(pub.slice(0, 400)),
-    'publishDraft עדיין חוזר מיד כשהמצב אינו new — כפתור ההכנה שקט');
-  assert.ok(pub.indexOf('const preparing = state.status.mode === ') > -1,
-    'publishDraft אינו מבחין בין הכנה לפרסום');
+    'publishDraft עדיין חוזר מיד כשהמצב אינו new — פרסום ניסוי אינו פועל');
+  assert.ok(pub.indexOf("const trial = state.status.mode === 'shadow';") > -1,
+    'publishDraft אינו מבחין בין פרסום ניסוי לפרסום חי');
   // ומזהה הבקשה נשמר לניסיון חוזר.
   assert.ok(ui.indexOf('state.cutoverRequestId') > -1,
     'אין request_id שנשמר לניסיון חוזר אחרי כשל רשת');

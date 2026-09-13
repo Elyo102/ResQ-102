@@ -57,6 +57,9 @@ const state = {
   // חוזר על אותה טיוטה חתומה ובאותה כוונה (הכנה/פרסום) חייב להשתמש
   // באותו מזהה, גם אם תשובת השרת אבדה אחרי שהכתיבה כבר הושלמה.
   publishRequestId: null, publishRequestKey: null,
+  // טיוטה וחזרה הן פעולות שרת אידמפוטנטיות. אם התשובה אבדה אחרי
+  // ה-commit, ניסיון חוזר חייב לשדר את אותו payload ולא ליצור פעולה חדשה.
+  plannerPending: null, rollbackPending: null,
   // חוקי התחנה, כפי שהמסך אוסף אותם
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
@@ -2648,8 +2651,8 @@ function renderSummary(summary) {
 
 function updatePublishAvailability() {
   const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
-  /* ⭐ P0-2. ב-`shadow` פרסום הוא **הכנה**, ולכן הוא מותר שם — זה
-   * כל מה שסוגר את חלון הלוח הריק. ב-`off` הוא חסום כמו קודם. */
+  /* במצב ניסוי עוברים באותו מסלול פרסום פעיל; רק גבול המשלוח החיצוני
+   * חסום בשרת. ב-`off` ההרצה והפרסום חסומים כמו קודם. */
   const gapReport = state.draftPreview && state.draftPreview.gaps;
   const critical = !!gapReport && (gapReport.blocking || []).length > 0;
   const needsAck = !!gapReport && !critical && (gapReport.acknowledgeable || []).length > 0;
@@ -2657,7 +2660,7 @@ function updatePublishAvailability() {
     && canRunSchedule() && gaps === 0 && !critical && (!needsAck || $('draftGapAck').checked);
   $('publish').disabled = state.busy || !ready;
   $('publish').textContent = state.status && state.status.mode === 'shadow'
-    ? 'הכן את הסידור' : 'פרסום הסידור';
+    ? 'פרסום לניסוי' : 'פרסום הסידור';
   $('draftBadge').hidden = !state.draft;
 }
 
@@ -2732,15 +2735,28 @@ async function runPlanner() {
   resetPublishRequest();
   $('publish').disabled = true; $('reviewDraft').checked = false; $('reviewDraft').disabled = true;
   $('draftPreviewCard').classList.add('hide');
-  message('runMessage', 'המנוע בונה טיוטה ובודק את כל החוקים…', 'info');
+  const pending = state.plannerPending;
+  message('runMessage', pending
+    ? 'שולח שוב את אותה בקשת טיוטה…'
+    : 'המנוע בונה טיוטה ובודק את כל החוקים…', 'info');
   try {
-    const startMonth = $('startMonth').value;
-    if (!/^\d{4}-\d{2}$/.test(startMonth)) throw new Error('יש לבחור חודש התחלה.');
-    const result = (await call.run({
-      request_id: requestId('draft'), start: startMonth + '-01',
-      months: Number($('months').value), overrides: overrides()
-    })).data;
+    let payload;
+    if (pending) payload = pending.payload;
+    else {
+      const startMonth = $('startMonth').value;
+      if (!/^\d{4}-\d{2}$/.test(startMonth)) throw new Error('יש לבחור חודש התחלה.');
+      payload = {
+        request_id: requestId('draft'), start: startMonth + '-01',
+        months: Number($('months').value), overrides: overrides()
+      };
+      state.plannerPending = { payload };
+      updatePlannerPendingLock();
+    }
+    const result = (await call.run(payload)).data;
     if (!authTaskCurrent(task)) return;
+    if (!receiptOk(result, ['draft_id', 'from', 'to'])) throw malformedReceipt();
+    state.plannerPending = null;
+    updatePlannerPendingLock();
     state.draft = result;
     renderSummary(result.summary || {});
     message('runMessage', 'הטיוטה הושלמה. היא עדיין לא פורסמה ולא נשלחה שום הודעה.', 'ok');
@@ -2748,11 +2764,16 @@ async function runPlanner() {
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
+    // schedule_code מוכיח שהשרת דחה את הפעולה. כשל רשת או קבלה חסרה
+    // אינם מוכיחים שלא בוצע commit, ולכן משאירים את אותה בקשה לניסיון חוזר.
+    if (errorCode(error)) state.plannerPending = null;
+    updatePlannerPendingLock();
     message('runMessage', errorText(error), 'err');
   } finally {
     if (authTaskCurrent(task)) {
       state.busy = false;
       $('runPlanner').disabled = false;
+      updatePlannerPendingLock();
       updatePublishAvailability();
     }
   }
@@ -2762,24 +2783,24 @@ async function publishDraft() {
   if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
   const task = authTask();
-  const preparing = state.status.mode === 'shadow';
+  const trial = state.status.mode === 'shadow';
   const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
   if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
   const gapReport = state.draftPreview.gaps;
   if (gapReport && (gapReport.blocking || []).length) { message('publishMessage', 'אי אפשר לפרסם: פער בכשירות קריטית.', 'err'); return; }
   const acknowledgement = gapAcknowledgement(gapReport, 'draftGapAck');
   if (acknowledgement === '') { message('publishMessage', 'יש פערים שדורשים אישור מפורש לפני הפרסום.', 'err'); return; }
-  const confirmation = preparing
-    ? 'להכין את הטיוטה לבדיקה? הסידור הקיים יישאר פעיל ולא תישלח הודעה לאיש.'
+  const confirmation = trial
+    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בתוך סביבת הניסוי, ולא תישלח הודעה לאיש.'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
   if (!confirm(confirmation)) return;
   state.busy = true; $('publish').disabled = true;
-  message('publishMessage', preparing
-    ? 'מכין את הסידור לבדיקה בלבד…' : 'מפרסם את הסידור בפעולה אחת…', 'info');
+  message('publishMessage', trial
+    ? 'מפרסם את הסידור בסביבת הניסוי…' : 'מפרסם את הסידור בפעולה אחת…', 'info');
   try {
     const draftId = state.draft.draft_id;
     const expectedContentDigest = state.draftPreview.expected_content_digest;
-    const intent = preparing ? 'prepare' : 'publish';
+    const intent = trial ? 'publish-trial' : 'publish-live';
     const publishPayload = {
       draft_id: draftId,
       expected_content_digest: expectedContentDigest,
@@ -2788,11 +2809,12 @@ async function publishDraft() {
     if (acknowledgement) publishPayload.gap_acknowledgement = acknowledgement;
     const result = (await call.publish(publishPayload)).data;
     if (!authTaskCurrent(task)) return;
-    if (preparing && (result.prepared !== true || result.notified_people !== 0)) {
-      throw new Error('השרת לא אישר שהסידור הוכן בלבד וללא הודעות. יש לרענן לפני ניסיון נוסף.');
+    if (trial && (result.prepared !== false || result.trial !== true
+        || result.notified_people !== 0)) {
+      throw new Error('השרת לא אישר פרסום ניסוי פעיל עם חסימת הודעות. יש לרענן לפני ניסיון נוסף.');
     }
-    const successText = preparing
-      ? 'הסידור הוכן לבדיקה בלבד. הוא לא הופעל, הסידור הקיים נשאר פעיל ולא נשלחו הודעות.'
+    const successText = trial
+      ? 'הסידור פורסם ופועל בסביבת הניסוי. לא נשלחו הודעות, ואפשר לבדוק או לחזור לגרסה הקודמת.'
       : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.';
     message('publishMessage', successText, 'ok');
     resetPublishRequest();
@@ -2814,7 +2836,7 @@ async function publishDraft() {
       if (!authTaskCurrent(task)) return;
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
-      if (preparing && state.modeView && state.modeView.may_change === true) await loadModeOptions();
+      if (trial && state.modeView && state.modeView.may_change === true) await loadModeOptions();
     } catch (_) {
       if (!authTaskCurrent(task)) return;
       // The write already succeeded. Never invite a second write by presenting
@@ -2836,7 +2858,8 @@ async function publishDraft() {
 
 function setRollbackAvailability() {
   const active = state.status && state.status.active;
-  $('rollback').disabled = state.busy || !state.status || state.status.mode !== 'new'
+  $('rollback').disabled = state.busy || !state.status
+    || ['shadow', 'new'].indexOf(state.status.mode) === -1
     || !state.status.manager || !active || active.can_rollback !== true
     || !active.previous_publication_id;
 }
@@ -2844,19 +2867,27 @@ function setRollbackAvailability() {
 async function rollbackSchedule() {
   if (state.busy || $('rollback').disabled) return;
   const task = authTask();
+  const pending = state.rollbackPending;
   const active = state.status.active;
-  const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
-    + 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.';
-  if (!confirm(text)) return;
+  if (!pending) {
+    const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
+      + (state.status.mode === 'shadow'
+        ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי לא תשלח הודעה לאיש.'
+        : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
+    if (!confirm(text)) return;
+  }
   state.busy = true; setRollbackAvailability();
-  message('rollbackMessage', 'מחזיר לגרסה הקודמת בפעולה בטוחה…', 'info');
+  message('rollbackMessage', pending
+    ? 'שולח שוב את אותה בקשת חזרה…'
+    : 'מחזיר לגרסה הקודמת בפעולה בטוחה…', 'info');
   try {
-    const payload = {
+    const payload = pending ? pending.payload : {
       request_id: requestId('rollback'),
       expected_active_publication_id: active.publication_id,
       target_publication_id: active.previous_publication_id,
       reason_code: 'operational_safety'
     };
+    if (!pending) state.rollbackPending = { payload };
     let result;
     try {
       result = (await call.rollback(payload)).data;
@@ -2881,6 +2912,8 @@ async function rollbackSchedule() {
       result = (await call.rollback(payload)).data;
       if (!authTaskCurrent(task)) return;
     }
+    if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
+    state.rollbackPending = null;
     message('rollbackMessage', 'החזרה הושלמה כגרסה ' + result.revision + '.', 'ok');
     const status = (await call.status({})).data;
     if (!authTaskCurrent(task)) return;
@@ -2891,6 +2924,7 @@ async function rollbackSchedule() {
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
+    if (errorCode(error)) state.rollbackPending = null;
     message('rollbackMessage', errorText(error), 'err');
   } finally {
     if (authTaskCurrent(task)) {
@@ -3134,7 +3168,7 @@ function editBase() {
 }
 
 function canEditSchedule() {
-  return canManageSchedule() && state.status.mode === 'new' && !!editBase();
+  return canManageSchedule() && ['shadow', 'new'].indexOf(state.status.mode) !== -1 && !!editBase();
 }
 
 function editStations() {
@@ -3435,8 +3469,11 @@ async function applyEdit() {
     if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
+    const deliveryText = state.status && state.status.mode === 'shadow'
+      ? 'השינוי פעיל בסביבת הניסוי ולא נשלחה הודעה לאיש.'
+      : (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת.';
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
-      + (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת. אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
+      + deliveryText + ' אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
     await refreshStatusAfterEdit(task);
     if (!authTaskCurrent(task)) return;
     invalidateRange();
@@ -3469,7 +3506,7 @@ function updateEditAvailability() {
   const card = $('editCard');
   if (!card) return;
   const may = canEditSchedule();
-  card.hidden = !canManageSchedule() || !state.status || state.status.mode !== 'new';
+  card.hidden = !may;
   $('gapCard').hidden = card.hidden || !may;
   if (!card.hidden && !may) message('editMessage', 'אין סידור פעיל לעריכה.', 'info');
   if (may && state.status.active && state.status.active.from && !$('editDate').value) $('editDate').value = localDate() >= state.status.active.from && localDate() <= state.status.active.to ? localDate() : state.status.active.from;
@@ -3842,6 +3879,16 @@ async function loadImportFile(file) {
     return false;
   }
 }
+
+function updatePlannerPendingLock() {
+  const locked = !!state.plannerPending;
+  ['startMonth', 'months', 'addOverride'].forEach((id) => {
+    const field = $(id);
+    if (field) field.disabled = locked;
+  });
+  document.querySelectorAll('#overrideList input,#overrideList select,#overrideList button')
+    .forEach((field) => { field.disabled = locked; });
+}
 $('importFile').addEventListener('change', async () => {
   const file = $('importFile').files && $('importFile').files[0];
   const loaded = await loadImportFile(file);
@@ -3929,6 +3976,7 @@ function resetScopedWorkspace() {
     authContextVersion: state.authContextVersion + 1,
     setup: null, draft: null, draftPreview: null, previewStart: null,
     publishRequestId: null, publishRequestKey: null,
+    plannerPending: null, rollbackPending: null,
     policy: null, policySub: null, policyDirty: false, policyBusy: false,
     modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
     pendingCutover: null,
@@ -3979,6 +4027,7 @@ function resetScopedWorkspace() {
   $('policyVersion').textContent = '';
   $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
   $('importDisplayStatus').textContent = 'הייבוא אינו מפעיל את המנוע ואינו שולח התראות.';
+  updatePlannerPendingLock();
 }
 
 async function handleIdToken(user) {

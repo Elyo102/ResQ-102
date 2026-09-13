@@ -2,7 +2,7 @@
  *  schedule-edit-runtime-probe · 42H.2 חבילה א׳ — עריכת סידור שפורסם,
  *  על ה-runtime האמיתי מול Firestore בזיכרון (לא אמולטור).
  *
- *  מסלול: גיליון סינתטי → ייבוא → פרסום ב-new (revision 1) →
+ *  מסלול: גיליון סינתטי → ייבוא → פרסום פעיל (חי או ניסוי) →
  *  previewScheduleEdit (דוח בלי כתיבה) → applyScheduleEdit (טיוטה נגזרת
  *  → publish → revision 2, CAS, יומן, outbox — פוש אחד לאדם) → הלוח
  *  מציג את השינוי → rollback הקיים מחזיר את revision 1.
@@ -133,14 +133,36 @@ async function proveSnapshotBatchRecovery(failChunk, requestId, label) {
   ], [1, done.notified_people, 1]);
 }
 
+async function publishTrialBase(db, rt, suffix) {
+  const aliases = { 'רועי': 'u1', 'אבטחה': null, 'גיא': 'u5' };
+  const preview = await rt.previewScheduleImport(req({
+    month: '2026-09', paste: SHEET, aliases, accept: {}
+  }));
+  const imported = await rt.importScheduleSheet(req({
+    request_id: 'trial-import-' + suffix,
+    month: '2026-09', paste: SHEET, aliases, accept: {},
+    expected_report_digest: preview.report_digest
+  }));
+  const draft = await rt.getDraftPreview(req({
+    draft_id: imported.draft_id, start: '2026-09-01'
+  }));
+  const published = await rt.publish(req({
+    request_id: 'trial-publish-' + suffix,
+    draft_id: imported.draft_id,
+    expected_content_digest: draft.expected_content_digest,
+    gap_acknowledgement: draft.gaps && draft.gaps.digest
+  }));
+  return { published, pointer: db._get(ST + '/schedule_state/active') };
+}
+
 /* 1 · שערים */
 {
   const db = createFakeDb();
   const { rt } = await seed(db);
-  // עדיין shadow, אין פרסום פעיל
+  // עדיין shadow, אבל מסלול העריכה פתוח; בלי פרסום פעיל הוא נכשל על הבסיס עצמו.
   await rejectsCode('1.1 previewScheduleEdit דורש אחראי סידור', () => rt.previewScheduleEdit(req({ expected: { publication_id: 'p_x', revision: 1, content_digest: 'd' }, edits: [] }, 'u1')), 'manager-required');
   await rejectsCode('1.2 applyScheduleEdit דורש אחראי סידור', () => rt.applyScheduleEdit(req({ request_id: 'e1', expected: { publication_id: 'p_x', revision: 1, content_digest: 'd' }, edits: [] }, 'u1')), 'manager-required');
-  await rejectsCode('1.3 ב-shadow אין עריכת פרסום (אין פרסום פעיל)', () => rt.previewScheduleEdit(req({ expected: { publication_id: 'p_x', revision: 1, content_digest: 'd' }, edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] })), 'schedule-mode-blocked');
+  await rejectsCode('1.3 במצב ניסוי בלי פרסום פעיל מתקבלת edit-no-active, לא חסימת מצב', () => rt.previewScheduleEdit(req({ expected: { publication_id: 'p_x', revision: 1, content_digest: 'd' }, edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] })), 'edit-no-active');
   const { pointer } = await publishImportedSchedule(db, rt);
   ok('1.4 יש פרסום פעיל revision 1', pointer && pointer.revision === 1, JSON.stringify(pointer));
   await rejectsCode('1.5 בלי בסיס (expected) — נדחה', () => rt.previewScheduleEdit(req({ edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] })), 'edit-base-required');
@@ -148,6 +170,53 @@ async function proveSnapshotBatchRecovery(failChunk, requestId, label) {
   await rejectsCode('1.7 בלי עריכות — נדחה', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [] })), 'edits-required');
   await rejectsCode('1.8 תאריך מחוץ לפרסום', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-10-01'] }] })), 'edit-date-outside');
   await rejectsCode('1.9 אדם שאינו במקור', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'assign', uid: 'ghost', dates: ['2026-09-01'], sub_station: 'eilat' }] })), 'edit-person-unknown');
+}
+
+/* 1ב · עריכה מלאה במצב ניסוי: אותו lifecycle, בלי provider. */
+{
+  const db = createFakeDb();
+  let providerCalls = 0;
+  await seed(db);
+  const rt = buildRuntime(db, {
+    sendPush: async () => { providerCalls += 1; return { sent: 1 }; }
+  });
+  const base = await publishTrialBase(db, rt, 'edit');
+  ok('1ב.1 פרסום ניסוי ראשון פעיל',
+    base.pointer && base.pointer.publication_id === base.published.publication_id
+      && base.pointer.revision === 1,
+    JSON.stringify(base));
+
+  const edits = [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }];
+  const report = await rt.previewScheduleEdit(req({
+    expected: expectedOf(base.pointer), edits
+  }));
+  eq('1ב.2 preview במצב ניסוי מחשב revision הבא', report.next_revision, 2);
+  const payload = {
+    request_id: 'trial-edit-1', expected: expectedOf(base.pointer), edits,
+    expected_edit_digest: report.edit_digest,
+    gap_acknowledgement: report.gaps.digest
+  };
+  const applied = await rt.applyScheduleEdit(req(payload));
+  const active = db._get(ST + '/schedule_state/active');
+  eq('1ב.3 העריכה מפעילה revision ניסוי חדש', [
+    applied.duplicate, applied.revision, active.publication_id,
+    active.previous_publication_id, applied.notified_people
+  ], [false, 2, applied.publication_id, base.published.publication_id, 0]);
+
+  const outbox = outboxOf(db, applied.publication_id);
+  ok('1ב.4 כל כוונות המסירה נשמרות suppressed_trial סופיות', outbox.length > 0
+    && outbox.every((item) => item.status === 'suppressed_trial'
+      && item.delivery_allowed === false && item.delivery_policy === 'suppressed_trial'
+      && item.attempt === 0), JSON.stringify(outbox.map((item) => item.status)));
+  eq('1ב.5 עריכת ניסוי אינה קוראת לספק', providerCalls, 0);
+
+  const replay = await rt.applyScheduleEdit(req(payload));
+  eq('1ב.6 ניסיון חוזר מחזיר את אותו revision בלי כפילות מסירה', [
+    replay.duplicate, replay.publication_id, replay.revision,
+    db._get(ST + '/schedule_state/active').revision,
+    outboxOf(db, applied.publication_id).length,
+    providerCalls
+  ], [true, applied.publication_id, 2, 2, outbox.length, 0]);
 }
 
 /* 2 · דוח → ביצוע → revision חדש, יומן, outbox, לוח, rollback */
@@ -164,11 +233,11 @@ async function proveSnapshotBatchRecovery(failChunk, requestId, label) {
     Object.assign({}, published, { duplicate: true }));
   const liveConfig = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', Object.assign({}, liveConfig, { mode: 'shadow' }));
-  await rejectsCode('2.0ב אותו publish request אינו מוחלף בכוונת prepare', () => rt.publish(req({
+  await rejectsCode('2.0ב אותו publish request אינו מחליף בדיעבד חוזה מסירה חי בחוזה ניסוי', () => rt.publish(req({
     request_id: 'seed-publish', draft_id: imported.draft_id,
     expected_content_digest: preview.expected_content_digest,
     gap_acknowledgement: preview.gaps && preview.gaps.digest
-  })), 'publication-prepared-replay-invalid');
+  })), 'publication-conflict');
   db._put(ST + '/schedule_state/runtime', liveConfig);
   const before = await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-03' }, 'u2'));
   const eilat1 = before.days[0].sub_stations.find((s) => s.sub_station === 'eilat');

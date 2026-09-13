@@ -194,6 +194,12 @@ const statusOff = { mode:'off', configured:false, manager:false, active:null };
 const statusOffManager = { mode:'off', configured:false, manager:true, active:null };
 const statusShadowMember = { mode:'shadow', configured:true, manager:false, active:null };
 const statusShadowManager = { mode:'shadow', configured:true, manager:true, active:null };
+const statusShadowManagerActive = { mode:'shadow', configured:true, manager:true,
+  active:{ publication_id:'p_trial_live', revision:4, previous_publication_id:null, can_rollback:false } };
+const statusShadowAfterPublish = { mode:'shadow', configured:true, manager:true,
+  active:{ publication_id:'p_trial_new', revision:5, previous_publication_id:'p_trial_live', can_rollback:true } };
+const statusShadowAfterRollback = { mode:'shadow', configured:true, manager:true,
+  active:{ publication_id:'p_trial_rollback', revision:6, previous_publication_id:'p_trial_new', can_rollback:true } };
 const setup = {
   mode:'new', configured:true,
   policy:{ id:'policy_1', active_policy_id:'policy_1', version:'v1', digest:'abc',
@@ -461,9 +467,9 @@ try {
     getScheduleDraftPreview:[{ data:retryPreviewOne }, { data:retryPreviewTwo }],
     publishSchedule:[
       { reject:true, code:'functions/unavailable', message:'response lost' },
-      { data:{ prepared:true, publication_id:'p_retry_1', revision:1,
+      { data:{ prepared:false, trial:true, publication_id:'p_retry_1', revision:1,
         notified_people:0, blocked_notifications:2 } },
-      { data:{ prepared:true, publication_id:'p_retry_2', revision:2,
+      { data:{ prepared:false, trial:true, publication_id:'p_retry_2', revision:2,
         notified_people:0, blocked_notifications:1 } }
     ]
   });
@@ -488,7 +494,7 @@ try {
 
     await retryManagerPage.locator('#publish').click();
     await retryManagerPage.locator('#publishMessage .ok').waitFor();
-    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /פורסם ופועל בסביבת הניסוי/);
     publishCalls = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
       .filter((entry) => entry.name === 'publishSchedule');
     assert.equal(publishCalls.length, 2);
@@ -518,7 +524,7 @@ try {
     await retryManagerPage.locator('#reviewDraft').check();
     await retryManagerPage.locator('#publish').click();
     await retryManagerPage.locator('#publishMessage .ok').waitFor();
-    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    assert.match(await retryManagerPage.locator('#publishMessage').textContent(), /פורסם ופועל בסביבת הניסוי/);
     const publishCalls = (await retryManagerPage.evaluate(() => window.__CALLABLE_CALLS || []))
       .filter((entry) => entry.name === 'publishSchedule');
     assert.equal(publishCalls.length, 3);
@@ -555,6 +561,67 @@ try {
   });
   await retryManager.close();
 
+  /* A planner response can be lost after the server has accepted the draft.
+   * Until a terminal receipt arrives, the form is the identity of that pending
+   * operation: month, horizon and every manual override must stay immutable. */
+  const plannerRetryManager = await browser.newContext({
+    viewport:{ width:1440, height:1000 }, locale:'he-IL'
+  });
+  const plannerRetryDraft = {
+    draft_id:'draft_planner_retry', from:today, to:shiftDay(today, 60),
+    summary:{ filled:90, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 }
+  };
+  await prepare(plannerRetryManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusShadowManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    runSchedulePlanner:[
+      { reject:true, code:'functions/unavailable', message:'response lost' },
+      { data:plannerRetryDraft }
+    ],
+    getScheduleDraftPreview:[{ data:Object.assign({}, draftPreview, {
+      draft_id:'draft_planner_retry', expected_content_digest:'digest_planner_retry'
+    }) }]
+  });
+  const plannerRetryPage = await plannerRetryManager.newPage();
+  await plannerRetryPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await plannerRetryPage.locator('#appMain:not(.hide)').waitFor();
+  await test('lost planner response locks its full intent until the exact retry succeeds', async () => {
+    await plannerRetryPage.locator('#months').selectOption('2');
+    await plannerRetryPage.locator('#addOverride').click();
+    const override = plannerRetryPage.locator('#overrideList .override').first();
+    await override.locator('[data-field="date"]').fill(today);
+    await override.locator('[data-field="sub_station"]').selectOption('main');
+    await override.locator('[data-field="person"]').selectOption('crew_1');
+    await override.locator('[data-field="role"]').selectOption('driver');
+
+    await plannerRetryPage.locator('#runPlanner').click();
+    await plannerRetryPage.locator('#runMessage .err').waitFor();
+    assert.equal(await plannerRetryPage.locator('#runPlanner').isEnabled(), true,
+      'כשל עמום חסם את כפתור הניסיון החוזר');
+    assert.equal(await plannerRetryPage.locator('#startMonth').isDisabled(), true);
+    assert.equal(await plannerRetryPage.locator('#months').isDisabled(), true);
+    assert.equal(await plannerRetryPage.locator('#addOverride').isDisabled(), true);
+    assert.equal(await override.locator('input,select,button').evaluateAll((fields) =>
+      fields.every((field) => field.disabled)), true,
+    'אפשר לשנות חלק משיבוץ ידני בזמן שבקשת הטיוטה עדיין עמומה');
+
+    await plannerRetryPage.locator('#runPlanner').click();
+    await plannerRetryPage.locator('#previewMessage .ok').waitFor();
+    const runs = (await plannerRetryPage.evaluate(() => window.__CALLABLE_CALLS || []))
+      .filter((entry) => entry.name === 'runSchedulePlanner');
+    assert.equal(runs.length, 2);
+    assert.deepEqual(runs[1].payload, runs[0].payload,
+      'ניסיון חוזר של המנוע שינה את כוונת הטיוטה או את request_id');
+
+    assert.equal(await plannerRetryPage.locator('#startMonth').isEnabled(), true);
+    assert.equal(await plannerRetryPage.locator('#months').isEnabled(), true);
+    assert.equal(await plannerRetryPage.locator('#addOverride').isEnabled(), true);
+    assert.equal(await override.locator('input,select,button').evaluateAll((fields) =>
+      fields.every((field) => !field.disabled)), true,
+    'קבלה תקינה לא שחררה את פקדי כוונת הטיוטה');
+  });
+  await plannerRetryManager.close();
+
   const refreshFailureManager = await browser.newContext({
     viewport:{ width:1440, height:1000 }, locale:'he-IL'
   });
@@ -570,7 +637,7 @@ try {
     getScheduleDraftPreview:[{ data:Object.assign({}, draftPreview, {
       draft_id:'draft_refresh_failure', expected_content_digest:'digest_refresh_failure'
     }) }],
-    publishSchedule:[{ data:{ prepared:true, publication_id:'p_refresh_failure', revision:1,
+    publishSchedule:[{ data:{ prepared:false, trial:true, publication_id:'p_refresh_failure', revision:1,
       notified_people:0, blocked_notifications:2 } }]
   });
   const refreshFailurePage = await refreshFailureManager.newPage();
@@ -584,7 +651,7 @@ try {
     await refreshFailurePage.locator('#publish').click();
     await refreshFailurePage.locator('#publishMessage .warn').waitFor();
     assert.match(await refreshFailurePage.locator('#publishMessage').textContent(), /לא התרענן/);
-    assert.match(await refreshFailurePage.locator('#publishMessage').textContent(), /הוכן לבדיקה בלבד/);
+    assert.match(await refreshFailurePage.locator('#publishMessage').textContent(), /פורסם ופועל בסביבת הניסוי/);
     let publishCalls = (await refreshFailurePage.evaluate(() => window.__CALLABLE_CALLS || []))
       .filter((entry) => entry.name === 'publishSchedule');
     assert.equal(publishCalls.length, 1, 'כשל הרענון שלח publish פעם נוספת');
@@ -976,15 +1043,19 @@ try {
 
   const shadowManager = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
   await prepare(shadowManager, 'firefighter', {
-    getScheduleRuntimeStatus:[{ data:statusShadowManager }, { data:statusShadowManager }],
+    getScheduleRuntimeStatus:[
+      { data:statusShadowManagerActive }, { data:statusShadowAfterPublish }, { data:statusShadowAfterRollback }
+    ],
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:legacyMine('shadow') }, { data:legacyMine('shadow') }],
     getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('shadow') }, { data:legacyRange('shadow') }],
     runSchedulePlanner:[{ data:{ draft_id:'draft_shadow', from:today, to:shiftDay(today, 30),
       summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
     getScheduleDraftPreview:[{ data:Object.assign({}, draftPreview, { draft_id:'draft_shadow' }) }],
-    publishSchedule:[{ data:{ prepared:true, publication_id:'p_prepared', revision:1,
-      notified_people:0, blocked_notifications:2 } }]
+    publishSchedule:[{ data:{ prepared:false, trial:true, publication_id:'p_trial_new', revision:5,
+      notified_people:0, blocked_notifications:2 } }],
+    rollbackSchedule:[{ data:{ publication_id:'p_trial_rollback', revision:6,
+      rolled_back_to:'p_trial_live', notified_people:0 } }]
   });
   const shadowManagerPage = await shadowManager.newPage();
   shadowManagerPage.on('dialog', (dialog) => dialog.accept());
@@ -1005,25 +1076,24 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1);
   });
 
-  await test('shadow manager prepares a reviewed draft without activating it or notifying anyone', async () => {
+  await test('shadow manager publishes a reviewed trial schedule as active without notifying anyone', async () => {
     await shadowManagerPage.locator('#runPlanner').click();
     await shadowManagerPage.locator('#previewMessage .ok').waitFor();
     await shadowManagerPage.locator('#reviewDraft').check();
-    assert.equal(await shadowManagerPage.locator('#publish').textContent(), 'הכן את הסידור');
+    assert.equal(await shadowManagerPage.locator('#publish').textContent(), 'פרסום לניסוי');
     assert.equal(await shadowManagerPage.locator('#publish').isEnabled(), true);
     await shadowManagerPage.locator('#publish').click();
     await shadowManagerPage.locator('#publishMessage .ok').waitFor();
     const text = await shadowManagerPage.locator('#publishMessage').textContent();
-    assert.match(text, /הוכן לבדיקה בלבד/);
-    assert.match(text, /לא הופעל/);
-    assert.match(text, /הסידור הקיים נשאר פעיל/);
+    assert.match(text, /פורסם ופועל בסביבת הניסוי/);
     assert.match(text, /לא נשלחו הודעות/);
+    assert.match(text, /לחזור לגרסה הקודמת/);
 
     const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
     const publishCalls = calls.filter((entry) => entry.name === 'publishSchedule');
     assert.equal(publishCalls.length, 1, 'happy path ב-shadow שלח publish יותר מפעם אחת');
     const publish = publishCalls[0];
-    assert.ok(publish, 'הכנה ב-shadow לא קראה publishSchedule');
+    assert.ok(publish, 'פרסום ניסוי ב-shadow לא קרא publishSchedule');
     assert.equal(publish.payload.draft_id, 'draft_shadow');
     assert.equal(publish.payload.expected_content_digest, 'digest_preview_1');
     assert.equal(Object.hasOwn(publish.payload, 'stationId'), false);
@@ -1032,6 +1102,17 @@ try {
       && entry.payload && entry.payload.target === 'new'), false);
     assert.equal(calls.some((entry) => entry.name === 'promoteScheduleToNew'), false);
     assert.equal(await shadowManagerPage.locator('#draftPreviewCard').isVisible(), false);
+    assert.equal(await shadowManagerPage.locator('#rollback').isEnabled(), true,
+      'פרסום ניסוי פעיל לא אפשר חזרה לגרסה הקודמת');
+
+    await shadowManagerPage.locator('#rollback').click();
+    await shadowManagerPage.locator('#rollbackMessage .ok').waitFor();
+    const afterRollbackCalls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const rollback = afterRollbackCalls.find((entry) => entry.name === 'rollbackSchedule');
+    assert.ok(rollback, 'rollback במצב ניסוי לא הגיע לשרת');
+    assert.equal(rollback.payload.expected_active_publication_id, 'p_trial_new');
+    assert.equal(rollback.payload.target_publication_id, 'p_trial_live');
+    assert.equal(Object.hasOwn(rollback.payload, 'station_id'), false);
 
     await shadowManagerPage.locator('[data-tab="station"]').click();
     assert.match(await shadowManagerPage.locator('#stationNote').textContent(), /הסידור הקיים/);
@@ -3066,5 +3147,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 78);
+assert.equal(passed, 79);
 console.log('\n' + passed + ' schedule management browser checks passed.');

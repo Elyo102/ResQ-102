@@ -2984,6 +2984,50 @@ function createScheduleRuntime(deps) {
    * אף אחד**, ומדווחים כמה יש ואילו. המסך אומר „בטלו את הישנים",
    * והמעבר ממתין. פחות נוח, ועדיף על אישור עיוור. */
   async function preparedCandidate(ctx) {
+    /* Trial publications are active inside shadow mode.  Their delivery rows
+     * are terminal audit evidence and must never be promoted.  The publisher
+     * therefore materializes a distinct live candidate whose snapshot is the
+     * latest active trial and whose outbox is recomputed from the last live
+     * ancestor.  Discover that exact candidate from the active pointer first;
+     * an older prepared document must never displace newer trial work. */
+    const activeSnap = await activeRef(ctx.sid).get();
+    const active = activeSnap.exists ? (activeSnap.data() || {}) : {};
+    if (nonEmpty(active.publication_id)) {
+      const trialRef = stationRef(ctx.sid).collection('schedule_publications')
+        .doc(active.publication_id);
+      const trialSnap = await trialRef.get();
+      const trial = trialSnap.exists ? (trialSnap.data() || {}) : {};
+      if (trial.station_id === ctx.sid && trial.status === 'active'
+          && trial.snapshot_complete === true
+          && trial.delivery_policy === 'suppressed_trial'
+          && trial.delivery_allowed === false) {
+        const candidateId = trialCandidateId(trialRef.id);
+        const candidateSnap = await stationRef(ctx.sid).collection('schedule_publications')
+          .doc(candidateId).get();
+        const candidate = candidateSnap.exists ? (candidateSnap.data() || {}) : {};
+        if (candidate.status !== 'prepared' || candidate.snapshot_complete !== true
+            || candidate.station_id !== ctx.sid
+            || candidate.trial_source_publication_id !== trialRef.id
+            || candidate.content_digest !== trial.content_digest) return null;
+        const preflight = await stationRef(ctx.sid).collection('schedule_preflight')
+          .doc(candidateId).get();
+        const report = preflight.exists ? (preflight.data() || {}) : null;
+        return {
+          publication_id: candidateId,
+          revision: Number(candidate.revision || 0),
+          from: candidate.from || null, to: candidate.to || null,
+          content_hash: candidate.content_hash || null,
+          prepared_count: 1,
+          preflight: report ? {
+            signature: report.signature || null,
+            blocked: report.blocked === true,
+            by_reason: report.by_reason || null,
+            generated_at: report.generated_at || null,
+            expires_at: report.expires_at || null
+          } : null
+        };
+      }
+    }
     const CAP = 20;
     const snap = await stationRef(ctx.sid).collection('schedule_publications')
       .where('status', '==', 'prepared').limit(CAP + 1).get();
@@ -3022,6 +3066,145 @@ function createScheduleRuntime(deps) {
         expires_at: report.expires_at || null
       } : null
     };
+  }
+
+  function trialCandidateId(trialPublicationId) {
+    return 'c_' + hash('trial-cutover|' + String(trialPublicationId)).slice(0, 40);
+  }
+
+  async function lastLiveAncestor(ctx, trialMeta) {
+    let id = nonEmpty(trialMeta.previous_publication_id)
+      ? trialMeta.previous_publication_id : null;
+    const seen = new Set();
+    for (let depth = 0; id && depth < 100; depth += 1) {
+      if (seen.has(id)) {
+        throw new ScheduleRuntimeError('trial-lineage-cycle',
+          'שרשרת גרסאות הניסוי אינה תקינה.', 'failed-precondition');
+      }
+      seen.add(id);
+      const ref = stationRef(ctx.sid).collection('schedule_publications').doc(id);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        throw new ScheduleRuntimeError('trial-baseline-missing',
+          'גרסת הבסיס של הניסוי אינה זמינה.', 'failed-precondition');
+      }
+      const meta = snap.data() || {};
+      if (meta.station_id !== ctx.sid || meta.snapshot_complete !== true) {
+        throw new ScheduleRuntimeError('trial-baseline-invalid',
+          'גרסת הבסיס של הניסוי אינה תקינה.', 'failed-precondition');
+      }
+      if (meta.delivery_policy === 'live' && meta.delivery_allowed === true) {
+        const snapshot = await readSnapshot(ref, meta, null);
+        return { id, ref, meta, snapshot };
+      }
+      id = nonEmpty(meta.previous_publication_id) ? meta.previous_publication_id : null;
+    }
+    if (id) {
+      throw new ScheduleRuntimeError('trial-lineage-too-deep',
+        'שרשרת גרסאות הניסוי ארוכה מדי לבדיקה בטוחה.', 'failed-precondition');
+    }
+    return null;
+  }
+
+  async function ensureTrialCandidate(ctx, trialRef, trialMeta) {
+    if (!trialMeta || trialMeta.status !== 'active'
+        || trialMeta.delivery_policy !== 'suppressed_trial'
+        || trialMeta.delivery_allowed !== false || trialMeta.snapshot_complete !== true) {
+      throw new ScheduleRuntimeError('trial-candidate-source-invalid',
+        'פרסום הניסוי אינו כשיר להכנת מעבר לחי.', 'failed-precondition');
+    }
+    const candidateId = trialCandidateId(trialRef.id);
+    const candidateRef = stationRef(ctx.sid).collection('schedule_publications').doc(candidateId);
+    const existing = await candidateRef.get();
+    const existingValue = existing.exists ? (existing.data() || {}) : null;
+    if (existingValue) {
+      const value = existingValue;
+      if (value.status === 'prepared' && value.station_id === ctx.sid
+          && value.trial_source_publication_id === trialRef.id
+          && value.content_digest === trialMeta.content_digest
+          && value.snapshot_complete === true) return { id: candidateId, meta: value };
+      if (value.status !== 'staging' || value.station_id !== ctx.sid
+          || value.trial_source_publication_id !== trialRef.id) {
+        throw new ScheduleRuntimeError('trial-candidate-conflict',
+          'מועמד המעבר כבר קיים עם תוכן אחר.', 'already-exists');
+      }
+    }
+
+    const latest = await readSnapshot(trialRef, trialMeta, null);
+    const baseline = await lastLiveAncestor(ctx, trialMeta);
+    const revision = Number(trialMeta.revision || 0) + 1;
+    const publication = createPublication({
+      clock, hash, rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] }
+    });
+    const planned = serviceFor(ctx, null, publication).publish({
+      actor: actor(ctx),
+      request: {
+        next: latest.plan,
+        previous: baseline ? baseline.snapshot.plan : null,
+        next_events: latest.events,
+        previous_events: baseline ? baseline.snapshot.events : [],
+        publication_id: candidateId,
+        publication_revision: revision,
+        source_draft_id: trialMeta.source_draft_id || trialRef.id,
+        previous_publication_id: baseline ? baseline.id : null
+      }
+    });
+    if (!existingValue) await candidateRef.create({
+      station_id: ctx.sid, status: 'staging', revision,
+      delivery_allowed: true, delivery_policy: 'live',
+      trial_source_publication_id: trialRef.id,
+      trial_baseline_publication_id: baseline ? baseline.id : null,
+      previous_publication_id: trialRef.id,
+      source_id: trialMeta.source_id, policy_id: trialMeta.policy_id,
+      snapshot_source_id: trialMeta.snapshot_source_id || trialMeta.source_id,
+      source_draft_id: trialMeta.source_draft_id || null,
+      created_at: FV.serverTimestamp(), created_by: ctx.uid,
+      source_snapshot: latest.plan.source_snapshot,
+      source_version: latest.plan.source_version,
+      contract_station_id: latest.plan.contract_station_id,
+      source_revision: latest.plan.source_revision,
+      source_digest: latest.plan.source_digest,
+      source_complete: true,
+      policy_version: latest.plan.policy_version,
+      policy_digest: latest.plan.policy_digest,
+      generated_at: latest.plan.generated_at,
+      from: latest.plan.from, to: latest.plan.to,
+      summary: latest.plan.summary,
+      imported: latest.plan.imported === true,
+      content_hash: planned.publication.content_hash,
+      gap_report: trialMeta.gap_report || null,
+      published_by: ctx.uid, published_by_name: ctx.name
+    });
+    await stageSnapshot(candidateRef, {}, latest.plan, latest.events, latest.roster,
+      trialMeta.content_digest);
+    const outboxRows = planned.notifications.map((notification) => ({
+      id: 'n_' + hash(notification.dedupe_key).slice(0, 40),
+      person: notification.person,
+      notification
+    }));
+    await commitWrites(outboxRows.map((item) => ({
+      ref: candidateRef.collection('schedule_outbox').doc(item.id), kind: 'set',
+      data: {
+        station_id: ctx.sid, publication_id: candidateId, revision,
+        person: item.notification.person, dedupe_key: item.notification.dedupe_key,
+        push: item.notification.push, detail: item.notification.detail,
+        changed_by: ctx.uid, attempt: 0,
+        delivery_allowed: true, delivery_policy: 'live', status: 'blocked',
+        expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
+        created_at: FV.serverTimestamp()
+      }
+    })));
+    const manifest = outboxManifestOfRows(outboxRows.map((item) => ({
+      id: item.id, person: item.person
+    })));
+    await candidateRef.set({
+      status: 'prepared', prepared_at: FV.serverTimestamp(),
+      outbox_manifest: manifest,
+      blocked_notifications: outboxRows.length,
+      notified_people: outboxRows.length,
+      suppressed_notifications: 0
+    }, { merge: true });
+    return { id: candidateId, meta: (await candidateRef.get()).data() || {} };
   }
 
   async function setRuntimeMode(req) {
@@ -3683,7 +3866,7 @@ function createScheduleRuntime(deps) {
 
   async function scheduleEditBasis(ctx, req) {
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW]);
+    requireMode(config, [MODE.NEW, MODE.SHADOW]);
     const data = plain(req.data) ? req.data : {};
     const base = requestedEditBase(data);
     // ⭐ קריאה מלאה של הפרסום הפעיל — החתימה מאומתת — ואז CAS מול מה שהמסך ראה.
@@ -4512,7 +4695,7 @@ function createScheduleRuntime(deps) {
       targetMeta = meta;
       target = { kind: 'draft', draft_id: draftId, from: meta.from, to: meta.to, policy_id: meta.policy_id || null };
     } else {
-      requireMode(config, [MODE.NEW]);
+      requireMode(config, [MODE.NEW, MODE.SHADOW]);
       const active = await activeSnapshot(ctx);
       if (!active) throw new ScheduleRuntimeError('edit-no-active', 'אין סידור פעיל.', 'failed-precondition');
       plan = active.plan;
@@ -4992,6 +5175,7 @@ function createScheduleRuntime(deps) {
       const runtime = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const pointer = snaps[1].exists ? (snaps[1].data() || {}) : {};
       active = runtime.mode === MODE.NEW && publication.status === 'active'
+        && publication.delivery_allowed !== false
         && pointer.publication_id === publicationId
         && Number(pointer.revision || 0) === Number(publication.revision || 0);
     });
@@ -5016,6 +5200,10 @@ function createScheduleRuntime(deps) {
           // A transaction reads the current status so a delayed releaser can
           // never resurrect a sent/cancelled notification from a stale query.
           if (value.status !== 'blocked') return;
+          if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial') {
+            cancelOutbox(tx, item.ref, 'delivery-forbidden');
+            return;
+          }
           if (outboxExpired(value, now)) {
             cancelOutbox(tx, item.ref, 'outbox-expired');
             return;
@@ -5062,6 +5250,12 @@ function createScheduleRuntime(deps) {
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
+      if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial'
+          || publication.delivery_allowed === false
+          || publication.delivery_policy === 'suppressed_trial') {
+        cancelOutbox(tx, ref, 'delivery-forbidden');
+        return;
+      }
       /* ⭐ P0-2. הודעה שממתינה לפרסום מוכן חיה דווקא ב-shadow — זה
        * כל הרעיון: להכין הכול לפני המעבר. הגרסה הקודמת ביטלה כאן כל
        * הודעה שאינה ב-`new`, כלומר הייתה מוחקת את תור ההודעות של
@@ -5175,6 +5369,30 @@ function createScheduleRuntime(deps) {
     return { legacy, days, digest: String(hash(stable(days))) };
   }
 
+  async function cutoverBaselineComparison(ctx, config, candidateMeta, from, to) {
+    const baselineId = nonEmpty(candidateMeta.trial_baseline_publication_id)
+      ? candidateMeta.trial_baseline_publication_id : null;
+    if (!baselineId) return legacyComparisonDigest(ctx, config, from, to);
+    const ref = stationRef(ctx.sid).collection('schedule_publications').doc(baselineId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new ScheduleRuntimeError('cutover-baseline-missing',
+        'גרסת הבסיס החיה של הניסוי אינה זמינה.', 'failed-precondition');
+    }
+    const meta = snap.data() || {};
+    if (meta.station_id !== ctx.sid || meta.snapshot_complete !== true
+        || meta.delivery_policy !== 'live' || !nonEmpty(meta.content_digest)) {
+      throw new ScheduleRuntimeError('cutover-baseline-invalid',
+        'גרסת הבסיס החיה של הניסוי אינה תקינה.', 'failed-precondition');
+    }
+    const snapshot = await readSnapshot(ref, meta, null);
+    return {
+      publication: { id: baselineId, meta },
+      days: cutoverDaysFromRows(snapshot.plan.rows),
+      digest: 'publication:' + baselineId + ':' + meta.content_digest
+    };
+  }
+
   /* ⭐ A (seq379) · אותו digest, **בתוך** העסקה של המעבר. כל קלט legacy
    * שהדוח נחתם עליו (roster, rotations, overrides, swaps, guards בחלון)
    * נקרא דרך `tx`, ולכן כתיבה לאחד מהם בין ה-preflight ל-commit מפילה
@@ -5239,7 +5457,7 @@ function createScheduleRuntime(deps) {
     }
 
     const snapshot = await readSnapshot(candidate.ref, candidate.meta, null);
-    const legacy = await legacyComparisonDigest(ctx, config, from, to);
+    const legacy = await cutoverBaselineComparison(ctx, config, candidate.meta, from, to);
     const source = await loadSource(ctx, config.active_source_id);
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const predecessor = await activeRef(ctx.sid).get();
@@ -5439,8 +5657,26 @@ function createScheduleRuntime(deps) {
       /* ⭐ A · טביעת האצבע של הסידור הישן — **בתוך** העסקה, מאותם
        * מסמכים שהדוח נחתם עליהם. כתיבה ל-legacy בין ה-preview ל-commit
        * מפילה את העסקה או משנה את ה-digest; שניהם אינם עוברים. */
-      const legacyNow = liveMode === MODE.SHADOW
-        ? await legacyComparisonDigestInTx(tx, ctx, from, to) : null;
+      let legacyNow = null;
+      if (liveMode === MODE.SHADOW) {
+        if (nonEmpty(livePub.trial_baseline_publication_id)) {
+          const baselineId = livePub.trial_baseline_publication_id;
+          const baselineSnap = await tx.get(stationRef(ctx.sid)
+            .collection('schedule_publications').doc(baselineId));
+          const baselineMeta = baselineSnap.exists ? (baselineSnap.data() || {}) : {};
+          if (baselineMeta.station_id !== ctx.sid || baselineMeta.snapshot_complete !== true
+              || baselineMeta.delivery_policy !== 'live'
+              || !nonEmpty(baselineMeta.content_digest)) {
+            throw new ScheduleRuntimeError('cutover-baseline-invalid',
+              'גרסת הבסיס החיה של הניסוי השתנתה או חסרה.', 'aborted');
+          }
+          legacyNow = {
+            digest: 'publication:' + baselineId + ':' + baselineMeta.content_digest
+          };
+        } else {
+          legacyNow = await legacyComparisonDigestInTx(tx, ctx, from, to);
+        }
+      }
 
       /* ⭐ B · תור ההודעות של המועמד, כפי שהוא ברגע ה-commit: שלם,
        * חסום, לא פג, ותואם למניפסט שנכתב בהכנה. תור ישן מפנה להכנה
@@ -5732,7 +5968,7 @@ function createScheduleRuntime(deps) {
     requireManager(ctx);
     const config = await configuration(ctx.sid);
     requireMode(config, [MODE.NEW, MODE.SHADOW]);
-    const preparing = config.mode === MODE.SHADOW;
+    const trial = config.mode === MODE.SHADOW;
     const data = plain(req.data) ? req.data : {};
     const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
@@ -5786,7 +6022,8 @@ function createScheduleRuntime(deps) {
     const expectedPrevious = before ? before.pointer.publication_id : null;
     const requestFingerprint = digest({
       station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
-      intent: preparing ? 'prepare' : 'activate',
+      intent: 'activate',
+      delivery_policy: trial ? 'suppressed_trial' : 'live',
       draft_id: draftId, revision,
       previous_publication_id: expectedPrevious,
       content_hash: planned.publication.content_hash
@@ -5803,6 +6040,7 @@ function createScheduleRuntime(deps) {
       const fingerprintForExisting = pointsToExisting ? digest({
         station_id: ctx.sid, uid: ctx.uid, request_id: requestId,
         intent: 'activate', draft_id: draftId,
+        delivery_policy: trial ? 'suppressed_trial' : 'live',
         revision: Number(existingData.revision),
         previous_publication_id: nonEmpty(existingData.previous_publication_id)
           ? existingData.previous_publication_id : null,
@@ -5813,7 +6051,8 @@ function createScheduleRuntime(deps) {
           'מזהה הפרסום כבר קיים עם תוכן אחר.', 'already-exists');
       }
       if (pointsToExisting) {
-        if (preparing || config.mode !== MODE.NEW || existingData.status !== 'active'
+        const expectedDeliveryAllowed = !trial;
+        if (existingData.status !== 'active'
             || existingData.station_id !== ctx.sid || existingData.snapshot_complete !== true
             || existingData.request_id !== requestId || existingData.source_draft_id !== draftId
             || existingData.published_by !== ctx.uid
@@ -5823,11 +6062,14 @@ function createScheduleRuntime(deps) {
             || existingData.content_digest !== activeData.content_digest
             || !integer(existingData.notified_people) || existingData.notified_people < 0
             || existingData.blocked_notifications !== 0
+            || existingData.delivery_allowed !== expectedDeliveryAllowed
+            || existingData.delivery_policy !== (trial ? 'suppressed_trial' : 'live')
             || stable(existingData.summary) !== stable(next.plan.summary)) {
           preparedReplayInvalid();
         }
         await requireLiveManagerNow(ctx);
-        await releaseOutbox(pubRef);
+        if (existingData.delivery_allowed === true) await releaseOutbox(pubRef);
+        if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
         // The receipt is part of idempotency.  Do not recompute it against the
         // publication that is active now: that comparison naturally produces
         // zero changes.  New publications persist the exact value atomically;
@@ -5840,8 +6082,10 @@ function createScheduleRuntime(deps) {
               && draftMeta.edit_report.notifications >= 0
             ? draftMeta.edit_report.notifications : 0);
         return {
-          duplicate: true, prepared: false, publication_id: pubId,
+          duplicate: true, prepared: false, trial, publication_id: pubId,
           revision: activeData.revision, notified_people: replayNotified,
+          suppressed_notifications: integer(existingData.suppressed_notifications)
+            ? existingData.suppressed_notifications : 0,
           blocked_notifications: existingData.blocked_notifications,
           summary: existingData.summary
         };
@@ -5880,6 +6124,8 @@ function createScheduleRuntime(deps) {
     if (!existing.exists) await pubRef.create({
       station_id: ctx.sid, status: 'staging', request_id: requestId,
       request_fingerprint: requestFingerprint,
+      request_contract_version: 2,
+      delivery_allowed: !trial, delivery_policy: trial ? 'suppressed_trial' : 'live',
       gap_report: null,
       station_map: importedStationMapOf(null, draftMeta),
       revision, source_id: draftMeta.source_id, policy_id: draftMeta.policy_id,
@@ -5907,7 +6153,11 @@ function createScheduleRuntime(deps) {
         station_id: ctx.sid, publication_id: pubId, revision,
         person: notification.person, dedupe_key: notification.dedupe_key,
         push: notification.push, detail: notification.detail,
-        changed_by: ctx.uid, attempt: 0, status: 'blocked',
+        changed_by: ctx.uid, attempt: 0,
+        delivery_allowed: !trial,
+        delivery_policy: trial ? 'suppressed_trial' : 'live',
+        status: trial ? 'suppressed_trial' : 'blocked',
+        suppressed_at: trial ? FV.serverTimestamp() : null,
         expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
         created_at: FV.serverTimestamp()
       }
@@ -5982,27 +6232,11 @@ function createScheduleRuntime(deps) {
         acknowledged_by: gapReport.acknowledgeable.length > 0 ? ctx.uid : null,
         checked_in_transaction: true
       };
-      if (preparing) {
-        /* ⭐ מוכן, ולא פעיל. המצביע אינו זז, ה-outbox נשאר `blocked`,
-         * ואיש אינו מקבל הודעה. כל אלה קורים יחד ב-`promoteToNew`. */
-        tx.update(pubRef, {
-          status: 'prepared', prepared_at: FV.serverTimestamp(), gap_report: gapRecord,
-          // ⭐ B · המניפסט של התור, באותה עסקה עם הסימון „מוכן".
-          outbox_manifest: outboxManifestFor(planned.notifications),
-          notified_people: 0, blocked_notifications: planned.notifications.length
-        });
-        tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
-          action: 'prepare', publication_id: pubId, revision,
-          previous_publication_id: expectedPrevious, by: ctx.uid,
-          at: FV.serverTimestamp(),
-          gaps_acknowledged: gapReport && gapReport.acknowledgeable.length ? gapReport.digest : null,
-          gaps_other: gapReport ? gapReport.acknowledgeable.length : 0
-        });
-        return;
-      }
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: gapRecord,
-        notified_people: planned.notifications.length, blocked_notifications: 0
+        notified_people: trial ? 0 : planned.notifications.length,
+        suppressed_notifications: trial ? planned.notifications.length : 0,
+        blocked_notifications: 0
       });
       tx.set(activeRef(ctx.sid), {
         publication_id: pubId, revision, previous_publication_id: expectedPrevious,
@@ -6029,14 +6263,20 @@ function createScheduleRuntime(deps) {
     }
     /* ⭐ ה-outbox משתחרר רק כשהפרסום באמת פעיל. הכנה שמודיעה היא
      * הודעה על סידור שאיש עדיין אינו רואה. */
-    if (!preparing) await releaseOutbox(pubRef);
+    if (!trial) await releaseOutbox(pubRef);
+    else {
+      const activeTrial = await pubRef.get();
+      await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
+    }
     return {
       duplicate: false,
-      prepared: preparing,
+      prepared: false,
+      trial,
       publication_id: pubId,
       revision,
-      notified_people: preparing ? 0 : planned.notifications.length,
-      blocked_notifications: preparing ? planned.notifications.length : 0,
+      notified_people: trial ? 0 : planned.notifications.length,
+      suppressed_notifications: trial ? planned.notifications.length : 0,
+      blocked_notifications: 0,
       summary: next.plan.summary
     };
   }
@@ -6045,7 +6285,8 @@ function createScheduleRuntime(deps) {
     const ctx = await context(req);
     requireManager(ctx);
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW]);
+    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    const trial = config.mode === MODE.SHADOW;
     const data = plain(req.data) ? req.data : {};
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const expectedActive = requireId(data.expected_active_publication_id,
@@ -6063,6 +6304,7 @@ function createScheduleRuntime(deps) {
      * cannot substitute another gap acknowledgement or rollback intent. */
     const requestFingerprint = digest({
       station_id: ctx.sid, uid: ctx.uid, request_id: requestId, intent: 'rollback',
+      delivery_policy: trial ? 'suppressed_trial' : 'live',
       expected_active_publication_id: expectedActive,
       target_publication_id: targetId,
       reason_code: reasonCode,
@@ -6089,7 +6331,10 @@ function createScheduleRuntime(deps) {
       return {
         duplicate: true, publication_id: pubId, revision: publication.revision,
         rolled_back_to: publication.rollback_target_publication_id,
-        notified_people: publication.notified_people
+        notified_people: publication.notified_people,
+        suppressed_notifications: integer(publication.suppressed_notifications)
+          ? publication.suppressed_notifications : 0,
+        trial: publication.delivery_policy === 'suppressed_trial'
       };
     };
     const firstPair = await Promise.all([pubRef.get(), activeRef(ctx.sid).get()]);
@@ -6103,6 +6348,7 @@ function createScheduleRuntime(deps) {
       const receipt = replayReceipt(firstPub, firstActive);
       await requireLiveManagerNow(ctx);
       await releaseOutbox(pubRef);
+      if (trial) await ensureTrialCandidate(ctx, pubRef, firstPub);
       return receipt;
     }
 
@@ -6152,6 +6398,7 @@ function createScheduleRuntime(deps) {
         const receipt = replayReceipt(existingData, active.data() || {});
         await requireLiveManagerNow(ctx);
         await releaseOutbox(pubRef);
+        if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
         return receipt;
       }
       if (existingData.request_fingerprint !== requestFingerprint) {
@@ -6166,6 +6413,8 @@ function createScheduleRuntime(deps) {
       await pubRef.create({
         station_id: ctx.sid, status: 'staging', operation: 'rollback',
         request_id: requestId, request_fingerprint: requestFingerprint,
+        request_contract_version: 2,
+        delivery_allowed: !trial, delivery_policy: trial ? 'suppressed_trial' : 'live',
         revision, source_id: target.meta.source_id || null,
         policy_id: target.meta.policy_id || null,
         source_draft_id: 'rollback_' + targetId,
@@ -6197,7 +6446,11 @@ function createScheduleRuntime(deps) {
         station_id: ctx.sid, publication_id: pubId, revision,
         person: notification.person, dedupe_key: notification.dedupe_key,
         push: notification.push, detail: notification.detail,
-        changed_by: ctx.uid, attempt: 0, status: 'blocked',
+        changed_by: ctx.uid, attempt: 0,
+        delivery_allowed: !trial,
+        delivery_policy: trial ? 'suppressed_trial' : 'live',
+        status: trial ? 'suppressed_trial' : 'blocked',
+        suppressed_at: trial ? FV.serverTimestamp() : null,
         expires_at: new Date(Date.parse(clock()) + OUTBOX_TTL_MS),
         created_at: FV.serverTimestamp()
       }
@@ -6224,7 +6477,7 @@ function createScheduleRuntime(deps) {
       const livePolicy = snaps[5].exists ? (snaps[5].data() || {}) : {};
       const liveSource = snaps[6].exists ? (snaps[6].data() || {}) : {};
       requireLiveManager(snaps[7], snaps[8], ctx);
-      if (liveConfig.mode !== MODE.NEW) {
+      if (liveConfig.mode !== config.mode) {
         throw new ScheduleRuntimeError('rollback-mode-changed',
           'מצב המנוע השתנה בזמן החזרה.', 'aborted');
       }
@@ -6261,7 +6514,9 @@ function createScheduleRuntime(deps) {
       };
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: rollbackGapRecord,
-        notified_people: planned.notifications.length, blocked_notifications: 0
+        notified_people: trial ? 0 : planned.notifications.length,
+        suppressed_notifications: trial ? planned.notifications.length : 0,
+        blocked_notifications: 0
       });
       tx.set(activeRef(ctx.sid), {
         publication_id: pubId, revision,
@@ -6284,10 +6539,17 @@ function createScheduleRuntime(deps) {
       if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
       throw error;
     }
-    await releaseOutbox(pubRef);
+    if (!trial) await releaseOutbox(pubRef);
+    else {
+      const activeTrial = await pubRef.get();
+      await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
+    }
     return {
       duplicate: false, publication_id: pubId, revision,
-      rolled_back_to: targetId, notified_people: planned.notifications.length
+      rolled_back_to: targetId,
+      notified_people: trial ? 0 : planned.notifications.length,
+      suppressed_notifications: trial ? planned.notifications.length : 0,
+      trial
     };
   }
 
@@ -6839,6 +7101,10 @@ function createScheduleRuntime(deps) {
       },
       readRuntime: async function () {
         if (legacyOnly) return { mode: MODE.SHADOW };
+        // A pinned active snapshot is the read source in both trial and live.
+        // The pure reader uses MODE.NEW as its "publication" selector; the
+        // caller still verifies the real runtime mode before returning.
+        if (pinned) return { mode: MODE.NEW };
         if (inTx) {
           const snap = await inTx.get(runtimeRef(ctx.sid));
           const data = snap.exists ? (snap.data() || {}) : {};
@@ -7338,7 +7604,7 @@ function createScheduleRuntime(deps) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
     const date = requestedViewDate(req, clock().slice(0, 10));
-    if (config.mode !== MODE.NEW) {
+    if (config.mode === MODE.OFF) {
       const window = await checkedLegacyWindow(ctx, config, date, date);
       if (window.source !== 'legacy') {
         throw new ScheduleRuntimeError('schedule-mode-changed',
@@ -7501,8 +7767,9 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('effective-schedule-invalid',
           'לא ניתן לאמת את הסידור להצגה ולכן הוא לא מוצג.', 'failed-precondition');
       }
-      if ((config.mode === MODE.NEW && window.source !== 'v2')
-          || (config.mode !== MODE.NEW && window.source !== 'legacy')) {
+      if ((pinned && window.source !== 'v2')
+          || (!pinned && config.mode === MODE.NEW && window.source !== 'v2')
+          || (!pinned && config.mode !== MODE.NEW && window.source !== 'legacy')) {
         throw new ScheduleRuntimeError('schedule-mode-changed',
           'מצב הסידור השתנה בזמן הקריאה. יש לרענן.', 'aborted');
       }
@@ -7651,7 +7918,7 @@ function createScheduleRuntime(deps) {
     } catch (error) { workdaysError(error); }
     const uids = Array.isArray(value.uids) ? value.uids : [];
 
-    if (config.mode === MODE.NEW) {
+    if (config.mode === MODE.NEW || config.mode === MODE.SHADOW) {
       const active = await checkedActiveSnapshot(ctx, config, null);
       if (active) {
         const coverage = { from: String(active.plan.from || ''), to: String(active.plan.to || '') };
@@ -7818,7 +8085,7 @@ function createScheduleRuntime(deps) {
     const config = await configuration(ctx.sid);
     const range = requestedStationRange(req);
 
-    if (config.mode !== MODE.NEW) {
+    if (config.mode === MODE.OFF) {
       const displayState = range.displayImported
         && range.from.slice(0, 7) === range.to.slice(0, 7)
         ? await readDisplayState(ctx, range.from.slice(0, 7)) : null;
@@ -7924,7 +8191,7 @@ function createScheduleRuntime(deps) {
     const config = await configuration(ctx.sid);
     const date = requestedViewDate(req, clock().slice(0, 10));
     const dates = [isoDayOffset(date, -1), date, isoDayOffset(date, 1)];
-    if (config.mode !== MODE.NEW) {
+    if (config.mode === MODE.OFF) {
       const displayCrews = await legacyDisplayCrews(ctx, dates[0], dates[2]);
       const window = await checkedLegacyWindow(ctx, config, dates[0], dates[2]);
       if (window.source !== 'legacy') {
@@ -8136,6 +8403,12 @@ function createScheduleRuntime(deps) {
       const runtime = checks[0].exists ? (checks[0].data() || {}) : {};
       const pointer = checks[1].exists ? (checks[1].data() || {}) : {};
       const publication = checks[2].exists ? (checks[2].data() || {}) : {};
+      if (value.delivery_allowed === false || value.delivery_policy === 'suppressed_trial'
+          || publication.delivery_allowed === false
+          || publication.delivery_policy === 'suppressed_trial') {
+        cancelOutbox(tx, ref, 'delivery-forbidden');
+        return;
+      }
       if (runtime.mode !== MODE.NEW) {
         cancelOutbox(tx, ref, 'runtime-not-new');
         return;
