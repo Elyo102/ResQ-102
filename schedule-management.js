@@ -63,17 +63,19 @@ const state = {
   plannerPending: null, rollbackPending: null,
   // חוקי התחנה, כפי שהמסך אוסף אותם
   policy: null, policySub: null, policyDirty: false, policyBusy: false,
+  plannerFormDirty: false,
   // מצב המנוע — הרשאה נפרדת לגמרי מאחראי הסידור
-  modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
+  modeView: null, modeTarget: null, modeBusy: false, modeFormDirty: false, cutoverRequestId: null,
   pendingCutover: null,
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
-  sourcePlan: null, sourceBusy: false,
+  sourcePlan: null, sourceBusy: false, sourceDirty: false,
   importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
-  importStationMap: null, importDisplay: null, displayRequestIds: {}, displayStatusSequence: 0,
+  importStationMap: null, importDisplay: null, displayRequestIds: {}, displayPending: null, displayStatusSequence: 0,
   // הלוח
   month: null, range: null, rangeMonth: null, rangePending: null, rangeRequest: 0,
-  tab: null, busy: false, editDrawerOpen: false, editDrawerReturnFocus: null
+  tab: null, busy: false, editDrawerOpen: false, editDrawerReturnFocus: null,
+  editFormDirty: false, qualificationsDirty: false, gapPolicyDirty: false
 };
 
 renderStuckNav('');
@@ -483,6 +485,7 @@ function renderSourceMap() {
       select.value = String(state.sourceMap[field.key]);
     }
     select.addEventListener('change', () => {
+      state.sourceDirty = true;
       state.sourceMap = state.sourceMap || {};
       state.sourceMap[field.key] = select.value === '' ? null : Number(select.value);
       state.sourcePlan = null;
@@ -525,6 +528,7 @@ function renderSourceActive() {
     input.type = 'checkbox';
     input.checked = state.sourceActive[value] === true;
     input.addEventListener('change', () => {
+      state.sourceDirty = true;
       state.sourceActive[value] = input.checked;
       state.sourcePlan = null;
       renderActiveSummary();
@@ -745,6 +749,7 @@ async function saveSource() {
         + (result.activated ? ' הוא המקור הפעיל.' : '')
       : 'המקור לא השתנה.', 'ok');
     state.sourcePlan = null;
+    state.sourceDirty = false;
     $('sourceAccept').checked = false;
     renderSourceReport(null);
     await loadSetup();
@@ -832,7 +837,9 @@ function renderModeCard() {
     }
     button.addEventListener('click', () => {
       state.modeTarget = state.modeTarget === target.to ? null : target.to;
+      state.modeFormDirty = true;
       $('modeConfirm').value = '';
+      if (!state.modeTarget && !$('modeReason').value) state.modeFormDirty = false;
       clear($('modeMessage'));
       renderModeCard();
     });
@@ -1149,6 +1156,7 @@ async function applyModeChange() {
         + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '')
       : 'המנוע כבר היה במצב הזה. שום דבר לא השתנה.', 'ok');
     state.modeTarget = null;
+    state.modeFormDirty = false;
     $('modeConfirm').value = '';
     $('modeReason').value = '';
     // המצב השתנה — כל מה שנגזר ממנו נטען מחדש מהשרת.
@@ -2655,17 +2663,26 @@ async function showImportedSchedule() {
   state.busy = true;
   updateImportDisplayAvailability();
   message('importMessage', 'מחבר את הסידור המיובא ללוח החודש…', 'info');
+  const pending = state.displayPending;
+  if (pending && (pending.action !== 'show' || pending.month !== month)) {
+    state.busy = false;
+    updateImportDisplayAvailability();
+    return;
+  }
+  const payload = pending ? pending.payload : {
+    action: 'show', month,
+    request_id: displayRequestId('show', month, generation, draft.draft_id, draft.content_digest),
+    expected_generation: generation,
+    draft_id: draft.draft_id,
+    expected_content_digest: draft.content_digest
+  };
+  state.displayPending = { action:'show', month, payload };
   try {
-    const result = (await call.displaySet({
-      action: 'show', month,
-      request_id: displayRequestId('show', month, generation, draft.draft_id, draft.content_digest),
-      expected_generation: generation,
-      draft_id: draft.draft_id,
-      expected_content_digest: draft.content_digest
-    })).data;
+    const result = (await call.displaySet(payload)).data;
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month
         || !result || result.month !== month) return;
     state.importDisplay = result;
+    state.displayPending = null;
     renderImportDisplayStatus();
     message('importMessage', 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר '
       + state.status.mode + ' ולא נשלחה שום התראה.', 'ok');
@@ -2696,15 +2713,24 @@ async function clearImportedSchedule() {
   state.busy = true;
   updateImportDisplayAvailability();
   message('importMessage', 'מסיר את הסידור המיובא מתצוגת הלוח…', 'info');
+  const pending = state.displayPending;
+  if (pending && (pending.action !== 'clear' || pending.month !== month)) {
+    state.busy = false;
+    updateImportDisplayAvailability();
+    return;
+  }
+  const payload = pending ? pending.payload : {
+    action: 'clear', month,
+    request_id: displayRequestId('clear', month, generation, null, null),
+    expected_generation: generation
+  };
+  state.displayPending = { action:'clear', month, payload };
   try {
-    const result = (await call.displaySet({
-      action: 'clear', month,
-      request_id: displayRequestId('clear', month, generation, null, null),
-      expected_generation: generation
-    })).data;
+    const result = (await call.displaySet(payload)).data;
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month
         || !result || result.month !== month) return;
     state.importDisplay = result;
+    state.displayPending = null;
     renderImportDisplayStatus();
     message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
     invalidateRange();
@@ -2848,6 +2874,7 @@ async function runPlanner() {
     if (!authTaskCurrent(task)) return;
     if (!receiptOk(result, ['draft_id', 'from', 'to'])) throw malformedReceipt();
     state.plannerPending = null;
+    state.plannerFormDirty = false;
     updatePlannerPendingLock();
     state.draft = result;
     renderSummary(result.summary || {});
@@ -3227,6 +3254,7 @@ $('draftGapsDetail').addEventListener('click', managerAction(loadDraftGapDays));
 $('draftGapAck').addEventListener('change', updatePublishAvailability);
 $('gapLoad').addEventListener('click', managerAction(loadActiveGaps));
 $('gapStationMinimumSave').addEventListener('click', managerAction(saveStationMinimum));
+$('gapStationMinimum').addEventListener('input', () => { state.gapPolicyDirty = true; });
 $('editGapAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
 $('editPolicyAck').addEventListener('change', () => { if (state.editReport) $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed(); });
 
@@ -3352,6 +3380,7 @@ function renderEditSearch() {
     button.setAttribute('aria-pressed', state.editPerson && state.editPerson.id === person.id ? 'true' : 'false');
     button.addEventListener('click', () => {
       state.editPerson = person; state.editPersonSub = person.sub_station || null;
+      state.editFormDirty = true;
       $('editPerson').textContent = 'נבחר: ' + person.name;
       if (person.sub_station && $('editStation').querySelector('option[value="' + person.sub_station + '"]')) $('editStation').value = person.sub_station;
       renderEditSearch(); renderEditControls();
@@ -3432,6 +3461,7 @@ function addEditItem() {
   }
   state.editList = state.editList || [];
   state.editList.push(item);
+  state.editFormDirty = false;
   message('editMessage', '', 'info');
   invalidateEditReport();
   renderEditList();
@@ -3617,11 +3647,12 @@ function updateEditAvailability() {
 }
 
 $('editSearch').addEventListener('input', renderEditSearch);
-$('editRange').addEventListener('change', renderEditDates);
-$('editDate').addEventListener('change', renderEditDates);
-$('editAction').addEventListener('change', renderEditControls);
-$('editStation').addEventListener('change', renderEditControls);
-$('editAbsence').addEventListener('change', renderEditControls);
+$('editRange').addEventListener('change', () => { state.editFormDirty = true; renderEditDates(); });
+$('editDate').addEventListener('change', () => { state.editFormDirty = true; renderEditDates(); });
+$('editAction').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editStation').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editRole').addEventListener('change', () => { state.editFormDirty = true; });
+$('editAbsence').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
 $('editAdd').addEventListener('click', managerAction(addEditItem));
 $('editCheck').addEventListener('click', managerAction(checkEdit));
 $('editApply').addEventListener('click', managerAction(applyEdit));
@@ -3640,6 +3671,8 @@ async function loadQualifications(quiet) {
     const quals = (await call.qualCatalog({})).data;
     if (!authTaskCurrent(task)) return false;
     state.quals = quals;
+    state.qualificationsDirty = false;
+    state.gapPolicyDirty = false;
     if (!quiet) message('qualMessage', '', 'info');
     $('gapStationMinimum').value = String((state.quals.gap_policy && state.quals.gap_policy.station_minimum) || 0);
     renderQualCatalog();
@@ -3661,6 +3694,7 @@ function renderQualCatalog() {
     tr.appendChild(node('td', '', String(index + 1)));
     const labelCell = node('td', '');
     const labelInput = node('input', ''); labelInput.type = 'text'; labelInput.value = entry.label; labelInput.dataset.field = 'label';
+    labelInput.addEventListener('input', () => { state.qualificationsDirty = true; });
     labelInput.setAttribute('aria-label', 'תווית ' + entry.key);
     labelCell.appendChild(labelInput);
     labelCell.appendChild(node('div', 'sub', entry.key + (entry.builtin ? ' · מובנית' : ' · מותאמת')));
@@ -3668,12 +3702,14 @@ function renderQualCatalog() {
     tr.appendChild(node('td', entry.critical ? 'critical' : '', entry.critical ? 'קריטית' : '—'));
     const minCell = node('td', '');
     const minInput = node('input', ''); minInput.type = 'number'; minInput.min = '0'; minInput.max = '200'; minInput.value = String(entry.minimum || 0); minInput.dataset.field = 'minimum';
+    minInput.addEventListener('input', () => { state.qualificationsDirty = true; });
     minInput.setAttribute('aria-label', 'מינימום ' + entry.key);
     minCell.appendChild(minInput);
     tr.appendChild(minCell);
     tr.appendChild(node('td', '', String((view.holders || {})[entry.key] || 0)));
     const activeCell = node('td', '');
     const activeInput = node('input', ''); activeInput.type = 'checkbox'; activeInput.checked = entry.active !== false; activeInput.dataset.field = 'active';
+    activeInput.addEventListener('change', () => { state.qualificationsDirty = true; });
     activeInput.setAttribute('aria-label', 'פעילה ' + entry.key);
     activeCell.appendChild(activeInput);
     tr.appendChild(activeCell);
@@ -3792,7 +3828,10 @@ function renderQualPeople() {
     active.forEach((entry) => {
       const label = node('label', chosen.has(entry.key) ? 'on' : '');
       const input = node('input', ''); input.type = 'checkbox'; input.value = entry.key; input.checked = chosen.has(entry.key);
-      input.addEventListener('change', () => label.classList.toggle('on', input.checked));
+      input.addEventListener('change', () => {
+        state.qualificationsDirty = true;
+        label.classList.toggle('on', input.checked);
+      });
       label.appendChild(input); label.appendChild(node('span', '', entry.label));
       held.appendChild(label);
     });
@@ -3832,6 +3871,9 @@ async function savePersonQualifications(person, row) {
 
 $('qualAdd').addEventListener('click', managerAction(addQualification));
 $('qualSearch').addEventListener('input', renderQualPeople);
+['qualNewKey', 'qualNewLabel', 'qualNewMinimum'].forEach((id) => {
+  $(id).addEventListener('input', () => { state.qualificationsDirty = true; });
+});
 
 async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration) return;
@@ -3930,6 +3972,9 @@ function commandAction(fn) {
 }
 
 $('runPlanner').addEventListener('click', runAction(runPlanner));
+['startMonth', 'months'].forEach((id) => {
+  $(id).addEventListener('change', () => { state.plannerFormDirty = true; });
+});
 $('importCheck').addEventListener('click', managerAction(checkImport));
 $('importPaste').addEventListener('input', () => {
   state.importAliases = {};
@@ -4047,6 +4092,8 @@ $('rollback').addEventListener('click', runAction(rollbackSchedule));
 $('savePolicy').addEventListener('click', managerAction(savePolicy));
 $('modeConfirm').addEventListener('input', updateModeApply);
 $('modeReason').addEventListener('change', updateModeApply);
+$('modeConfirm').addEventListener('input', () => { state.modeFormDirty = true; });
+$('modeReason').addEventListener('change', () => { state.modeFormDirty = true; });
 $('modeApply').addEventListener('click', commandAction(applyModeChange));
 $('sourceParse').addEventListener('click', () => {
   const table = parsePaste($('sourcePaste').value);
@@ -4055,6 +4102,7 @@ $('sourceParse').addEventListener('click', () => {
     return;
   }
   state.sourceTable = table;
+  state.sourceDirty = true;
   state.sourceMap = null;
   state.sourceActive = null;
   state.sourcePlan = null;
@@ -4081,19 +4129,21 @@ function resetScopedWorkspace() {
     publishRequestId: null, publishRequestKey: null,
     plannerPending: null, rollbackPending: null,
     policy: null, policySub: null, policyDirty: false, policyBusy: false,
-    modeView: null, modeTarget: null, modeBusy: false, cutoverRequestId: null,
+    plannerFormDirty: false,
+    modeView: null, modeTarget: null, modeBusy: false, modeFormDirty: false, cutoverRequestId: null,
     pendingCutover: null,
     sourceTable: null, sourceMap: null, sourceActive: null,
-    sourcePlan: null, sourceBusy: false,
+    sourcePlan: null, sourceBusy: false, sourceDirty: false,
     importAliases: {}, importMatrix: null, importLabelSpans: null,
     importFileName: null, importSelectedFile: null, importedDraft: null,
     importStationMap: null, importDisplay: null, importReport: null,
-    importPending: null, importRequestIds: {}, displayRequestIds: {},
+    importPending: null, importRequestIds: {}, displayRequestIds: {}, displayPending: null,
     displayStatusSequence: state.displayStatusSequence + 1,
     editList: [], editPending: null, editPerson: null, editPersonSub: null,
     editReport: null, editRequestIds: {}, role: null, sub_station: null,
     absence: null, quals: null, intentRequestIds: {}, busy: false,
-    month: null, tab: null, editDrawerOpen: false, editDrawerReturnFocus: null
+    month: null, tab: null, editDrawerOpen: false, editDrawerReturnFocus: null,
+    editFormDirty: false, qualificationsDirty: false, gapPolicyDirty: false
   });
 
   document.querySelectorAll('#manageView input,#manageView textarea,#manageView select,'

@@ -10,6 +10,12 @@ function hasText(doc, id) {
   return Boolean(input && String(input.value || '').trim());
 }
 
+function hasChecked(doc, id) {
+  if (!doc || typeof doc.getElementById !== 'function') return false;
+  const input = doc.getElementById(id);
+  return Boolean(input && input.checked);
+}
+
 export function scheduleUpdateBlockReason(state, doc) {
   const s = state || {};
   if (s.busy || s.policyBusy || s.sourceBusy || s.modeBusy) return 'schedule-operation';
@@ -19,7 +25,8 @@ export function scheduleUpdateBlockReason(state, doc) {
   }
   if (s.importSelectedFile || s.importMatrix || s.importedDraft || s.importReport ||
       s.importStationMap || hasText(doc, 'importPaste')) return 'schedule-import';
-  if (s.draft || s.draftPreview || s.previewStart || s.reviewDraft || s.draftGapAck) {
+  if (s.draft || s.draftPreview || s.previewStart || hasChecked(doc, 'reviewDraft')
+      || hasChecked(doc, 'draftGapAck')) {
     return 'schedule-draft';
   }
   if (s.policyDirty || s.sourceDirty || s.sourcePlan) return 'schedule-settings';
