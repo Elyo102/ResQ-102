@@ -70,7 +70,11 @@ export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
       if (worker.state === 'activated') finish(true);
       else if (worker.state === 'redundant') finish(false);
     }
-    function onController() { finish(true); }
+    function onController() {
+      // A different tab can activate a different worker. Ownership changes are
+      // evidence only when this exact candidate reached activated.
+      if (worker.state === 'activated') finish(true);
+    }
 
     if (worker.addEventListener) worker.addEventListener('statechange', onState);
     if (serviceWorker && serviceWorker.addEventListener) {
@@ -129,7 +133,7 @@ export async function refreshInstalledApp(options) {
     } catch (ignore) {}
   }
 
-  if (locationLike && typeof locationLike.replace === 'function') {
+  if (workerActivated && locationLike && typeof locationLike.replace === 'function') {
     const next = new URL(locationLike.href);
     next.searchParams.set('updated', String(o.version) + '-' + now());
     locationLike.replace(next.toString());

@@ -59,14 +59,25 @@ const SHELL = [
   './manifest.json', './resq-192.png', './favicon.ico'
 ];
 
+// A release must not become installable unless its minimal navigation shell is
+// complete. The remaining files improve offline coverage but may be retried by
+// the network-first fetch path.
+const CORE_SHELL = [
+  './login.html', './pwa.js', './version.js', './theme.css'
+];
+
 self.addEventListener('install', function (e) {
-  // addAll נכשל כולו אם קובץ אחד חסר. כאן כל קובץ נשמר
-  // בנפרד, כדי שקובץ שהוסר לא ישבור את ההתקנה כולה.
+  // קבצי הליבה אטומיים. עדכון קיים נשאר waiting עד שהמשתמש
+  // מאשר; רק התקנה ראשונה מופעלת אוטומטית על ידי הדפדפן.
   e.waitUntil(caches.open(CACHE).then(function (c) {
-    return Promise.all(SHELL.map(function (u) {
+    return Promise.all(CORE_SHELL.map(function (u) { return c.add(u); })).then(function () {
+      return Promise.all(SHELL.filter(function (u) {
+        return !CORE_SHELL.includes(u);
+      }).map(function (u) {
       return c.add(u).catch(function () {});
-    }));
-  }).then(function () { return self.skipWaiting(); }));
+      }));
+    });
+  }));
 });
 
 self.addEventListener('activate', function (e) {

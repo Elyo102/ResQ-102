@@ -93,11 +93,32 @@ for (const kind of ['waiting', 'installing', 'active']) {
 const timedOut = await scenario('installing', false);
 assert.equal(timedOut.result.workerActivated, false, 'timeout is reported');
 assert.deepEqual(timedOut.deleted, [], 'timeout preserves every cache');
-assert.equal(timedOut.replaced.length, 1, 'timeout still performs one online refresh');
+assert.equal(timedOut.replaced.length, 0, 'timeout never refreshes away an unsaved operation');
 
 const updateFailed = await scenario('active', true, true);
 assert.equal(updateFailed.result.workerActivated, false, 'failed update is reported');
 assert.deepEqual(updateFailed.deleted, [], 'failed update preserves offline caches');
-assert.equal(updateFailed.replaced.length, 1, 'failed update still performs one refresh');
+assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes away an unsaved operation');
 
-console.log('PWA update lifecycle: 5/5 PASS');
+{
+  const sw = new Events();
+  const worker = makeWorker('installing', sw, false);
+  const activation = (await import('../pwa.js')).activateAvailableWorker(worker, sw, 1);
+  sw.emit('controllerchange');
+  assert.equal(await activation, false,
+    'controllerchange from another tab does not activate the wrong candidate');
+}
+
+{
+  const source = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
+  const installBody = source.slice(source.indexOf("self.addEventListener('install'"),
+    source.indexOf("self.addEventListener('activate'"));
+  assert.equal(installBody.includes('skipWaiting'), false,
+    'install never forces an update over a live page');
+  assert.equal(source.includes('Promise.all(CORE_SHELL.map(function (u) { return c.add(u); }))'), true,
+    'the minimal release shell is cached atomically');
+  assert.equal(source.includes("event.data.type === 'RESQ_SKIP_WAITING'"), true,
+    'only an explicit user-approved message activates a waiting update');
+}
+
+console.log('PWA update lifecycle: 8/8 PASS');
