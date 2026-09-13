@@ -1970,13 +1970,20 @@ check('§1 the publish gap gate is recomputed inside the publish transaction fro
   // הבדיקה המוקדמת רצה גם לניסיון חוזר של פרסום ב-staging (אינה מותנית ב-!existing.exists).
   assert.ok(publishBody.includes('const earlyCtx = await gapContext(ctx, config, gapPeople);'));
   assert.equal(publishBody.includes('if (!existing.exists) {\n      const gapCtx'), false, 'the gate must not be skipped on a staging retry');
-  // הקוראים מקבלים `read` ומשתמשים בו — אחרת tx.get אינו אלא קישוט.
+  // הקוראים מקבלים `read` ומשתמשים בו — אחרת tx.get/getAll אינם אלא קישוט.
   assert.ok(runtime.includes('async function loadQualificationCatalog(ctx, read)') && runtime.includes('(read || directRead)(qualificationCatalogRef(ctx.sid)'));
-  assert.ok(runtime.includes('async function loadPersonQualifications(ctx, read)') && runtime.includes("(read || directRead)(stationRef(ctx.sid).collection('schedule_person_qualifications')"));
+  assert.ok(runtime.includes('async function loadPersonQualifications(ctx, read, sourcePeople)')
+    && runtime.includes("stationRef(ctx.sid).collection('schedule_person_qualifications'), sourcePeople, read")
+    && runtime.includes("['qualifications', 'revision']"),
+  'qualification holdings must be read by the signed source identities with an explicit field mask');
   assert.ok(runtime.includes('async function loadGapPolicy(ctx, read)') && runtime.includes('(read || directRead)(gapPolicyRef(ctx.sid))'));
   assert.ok(runtime.includes('async function loadLiveGapPeople(ctx, sourcePeople, read)')
-    && runtime.includes("(read || directRead)(stationRef(ctx.sid).collection('users')"),
-  'the canonical live roster must use the same tx reader');
+    && runtime.includes("readPeopleById(stationRef(ctx.sid).collection('users'), known, read")
+    && runtime.includes("['stationId', 'station_id', 'station', 'is_active', 'active', 'role']"),
+  'the canonical live roster must use the same bounded tx reader and field mask');
+  assert.ok(runtime.includes('const txRead = transactionRead(tx);')
+    && runtime.includes("if (typeof tx.getAll === 'function') return tx.getAll(...items);"),
+  'transactional gap reads must preserve getAll on the transaction');
   assert.ok(runtime.includes('person.active !== false && activeOperationalMember(live.get(person.id), ctx.sid)'),
     'source activity and canonical live membership are both required');
   assert.ok(runtime.includes("report.digest = digest({ gap_digest: report.digest, basis_digest: gapBasisDigest(gapCtx) });"),

@@ -42,7 +42,9 @@ function createFakeDb() {
           if (key.indexOf(prefix) !== 0 || key.slice(prefix.length).indexOf('/') !== -1) continue;
           const value = docs.get(key);
           const hit = filters.every((f) => {
-            const actual = value ? value[f.field] : undefined;
+            const actual = f.field === '__name__'
+              ? key.slice(key.lastIndexOf('/') + 1)
+              : (value ? value[f.field] : undefined);
             if (f.op === '==') return actual === f.value;
             if (f.op === 'in') return Array.isArray(f.value) && f.value.indexOf(actual) !== -1;
             throw new Error('אופרטור לא נתמך במסד המזויף: ' + f.op);
@@ -81,11 +83,11 @@ function createFakeDb() {
   return {
     collection: (name) => query(name, [], null),
     doc: (path) => docRef(path),
-    async getAll(...refs) { return Promise.all(refs.map((r) => r.get())); },
+    async getAll(...refs) { return Promise.all(refs.filter((r) => r && r.path).map((r) => r.get())); },
     batch() { return writer(); },
     async runTransaction(fn) {
       const w = writer();
-      const tx = { get: (ref) => ref.get(), set: (r, v, o) => w.set(r, v, o), update: (r, v) => w.update(r, v), create: (r, v) => w.create(r, v), delete: (r) => w.delete(r) };
+      const tx = { get: (ref) => ref.get(), getAll: (...refs) => Promise.all(refs.filter((r) => r && r.path).map((r) => r.get())), set: (r, v, o) => w.set(r, v, o), update: (r, v) => w.update(r, v), create: (r, v) => w.create(r, v), delete: (r) => w.delete(r) };
       const out = await fn(tx);
       await w.commit();
       return out;

@@ -110,7 +110,7 @@ function createFakeDb() {
   return {
     collection: (name) => query(name, [], null),
     doc: (path) => docRef(path),
-    async getAll(...refs) { return Promise.all(refs.map((r) => r.get())); },
+    async getAll(...refs) { return Promise.all(refs.filter((r) => r && r.path).map((r) => r.get())); },
     batch() { return writer(); },
     async runTransaction(fn) {
       const w = writer();

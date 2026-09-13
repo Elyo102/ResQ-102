@@ -4219,7 +4219,11 @@ function createScheduleRuntime(deps) {
    * ומחיקה רק לכשירות מותאמת שאיש אינו מחזיק — נבדק בעסקה מול מונה
    * המחזיקים, כך שהוספה מקבילה מפילה את המחיקה ולא להפך.
    * ================================================================ */
-  const MAX_QUALIFICATION_PEOPLE = 1500;
+  const MAX_QUALIFICATION_PEOPLE = 3000;
+  // Read only the people in the signed schedule source, in bounded getAll
+  // batches. This avoids a station-wide scan in every preview, publication
+  // and rollback transaction.
+  const SCHEDULE_PERSON_READ_CHUNK = 250;
 
   function qualificationCatalogRef(sid) { return stationRef(sid).collection('schedule_qualifications'); }
   function personQualificationsRef(sid, uid) { return stationRef(sid).collection('schedule_person_qualifications').doc(uid); }
@@ -4239,13 +4243,60 @@ function createScheduleRuntime(deps) {
 
   /* `read` — קריאה רגילה, או `tx.get` כשהקריאה חייבת להיות חלק מעסקה. */
   const directRead = (ref) => ref.get();
+  directRead.getAll = (...refs) => db.getAll(...refs);
+
+  function transactionRead(tx) {
+    const read = (ref) => tx.get(ref);
+    read.getAll = (...items) => {
+      if (typeof tx.getAll === 'function') return tx.getAll(...items);
+      // Minimal test doubles from older runtime probes do not expose getAll.
+      // Production Firestore does; the fallback keeps those doubles honest
+      // without changing the production reader or accepting whole scans.
+      return Promise.all(items.filter((item) => item && item.path).map((item) => tx.get(item)));
+    };
+    return read;
+  }
 
   async function loadQualificationCatalog(ctx, read) {
     const snap = await (read || directRead)(qualificationCatalogRef(ctx.sid).limit(qualifications.MAX_CUSTOM + qualifications.CANONICAL.length + 1));
     return qualifications.mergeCatalog(snap.docs.map((doc) => Object.assign({}, doc.data() || {}, { key: doc.id })));
   }
 
-  async function loadPersonQualifications(ctx, read) {
+  async function readPeopleById(collectionRef, people, read, fieldMask) {
+    const ids = Array.from(new Set((Array.isArray(people) ? people : [])
+      .map((person) => typeof person === 'string' ? person : person && person.id)
+      .filter(nonEmpty))).sort(compareCanonical);
+    const docs = [];
+    const reader = read || directRead;
+    if (typeof reader.getAll !== 'function') {
+      throw new ScheduleRuntimeError('capacity-reader-missing',
+        'קורא הנתונים אינו תומך בקריאה ממוקדת של הסגל.', 'internal');
+    }
+    for (let offset = 0; offset < ids.length; offset += SCHEDULE_PERSON_READ_CHUNK) {
+      const refs = ids.slice(offset, offset + SCHEDULE_PERSON_READ_CHUNK)
+        .map((id) => collectionRef.doc(id));
+      const snapshots = await reader.getAll(...refs, { fieldMask });
+      docs.push(...snapshots.filter((snap) => snap.exists));
+    }
+    return docs;
+  }
+
+  async function loadPersonQualifications(ctx, read, sourcePeople) {
+    if (Array.isArray(sourcePeople)) {
+      if (sourcePeople.length > MAX_QUALIFICATION_PEOPLE) {
+        throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
+      }
+      const docs = await readPeopleById(
+        stationRef(ctx.sid).collection('schedule_person_qualifications'), sourcePeople, read,
+        ['qualifications', 'revision']
+      );
+      const selected = new Map();
+      docs.forEach((doc) => {
+        const value = doc.data() || {};
+        selected.set(doc.id, { qualifications: Array.isArray(value.qualifications) ? value.qualifications.slice() : [], revision: Number.isInteger(value.revision) ? value.revision : 0 });
+      });
+      return selected;
+    }
     const snap = await (read || directRead)(stationRef(ctx.sid).collection('schedule_person_qualifications').limit(MAX_QUALIFICATION_PEOPLE + 1));
     if (snap.size > MAX_QUALIFICATION_PEOPLE) {
       throw new ScheduleRuntimeError('qualifications-too-many', 'רשימת המחזיקים גדולה מהתקרה.', 'resource-exhausted');
@@ -4281,12 +4332,13 @@ function createScheduleRuntime(deps) {
     requireManager(ctx);
     const config = await configuration(ctx.sid);
     const catalog = await loadQualificationCatalog(ctx);
-    const holdings = await loadPersonQualifications(ctx);
     let people = [];
     if (nonEmpty(config.active_source_id)) {
       const source = await loadSource(ctx, config.active_source_id);
       people = source.peopleRaw.filter((person) => person.active === true);
     }
+    const holdings = await loadPersonQualifications(ctx, null,
+      nonEmpty(config.active_source_id) ? people : undefined);
     const legacy = await legacyQualificationHints(ctx);
     const known = new Set(people.map((person) => person.id));
     const meta = await qualificationsMetaRef(ctx.sid).get();
@@ -4542,7 +4594,7 @@ function createScheduleRuntime(deps) {
   // source is not enough to establish current membership. Bound the live
   // roster read explicitly; larger stations fail closed instead of silently
   // counting a partial query.
-  const MAX_GAP_LIVE_ROSTER = 1500;
+  const MAX_GAP_LIVE_ROSTER = 3000;
 
   function gapPolicyRef(sid) { return stationRef(sid).collection('schedule_state').doc('gap_policy'); }
 
@@ -4561,14 +4613,10 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('gap-live-roster-too-many',
         'הסגל הפעיל גדול מהתקרה המאושרת לבקרת פערים.', 'resource-exhausted');
     }
-    const snap = await (read || directRead)(stationRef(ctx.sid).collection('users')
-      .limit(MAX_GAP_LIVE_ROSTER + 1));
-    if (snap.size > MAX_GAP_LIVE_ROSTER) {
-      throw new ScheduleRuntimeError('gap-live-roster-too-many',
-        'הסגל החי גדול מהתקרה המאושרת לבקרת פערים.', 'resource-exhausted');
-    }
+    const docs = await readPeopleById(stationRef(ctx.sid).collection('users'), known, read,
+      ['stationId', 'station_id', 'station', 'is_active', 'active', 'role']);
     const live = new Map();
-    snap.docs.forEach((doc) => live.set(doc.id, doc.data() || {}));
+    docs.forEach((doc) => live.set(doc.id, doc.data() || {}));
     // Preserve source names only for display/audit, but derive the active bit
     // exclusively from the canonical live station profile. A removed or
     // transferred source member therefore remains visible as an invalid slot
@@ -4588,7 +4636,7 @@ function createScheduleRuntime(deps) {
       sourcePeople = source.peopleRaw.filter((person) => person.active === true);
     }
     const [catalog, holdings, gapPolicy, people] = await Promise.all([
-      loadQualificationCatalog(ctx, read), loadPersonQualifications(ctx, read), loadGapPolicy(ctx, read),
+      loadQualificationCatalog(ctx, read), loadPersonQualifications(ctx, read, sourcePeople), loadGapPolicy(ctx, read),
       loadLiveGapPeople(ctx, sourcePeople, read)
     ]);
     return { catalog, holdings, people, station_minimum: gapPolicy.station_minimum, gap_policy_revision: gapPolicy.revision };
@@ -5609,7 +5657,7 @@ function createScheduleRuntime(deps) {
      * המצביע הפעיל נקרא בתוך העסקה עצמה. */
     let result = null;
     const outcome = await db.runTransaction(async (tx) => {
-      const txRead = (ref) => tx.get(ref);
+      const txRead = transactionRead(tx);
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), pubRef, preflightRef,
         liveUserRef(ctx.sid, ctx.uid), opRef];
       const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
@@ -6170,7 +6218,7 @@ function createScheduleRuntime(deps) {
       const sourceRef = stationRef(ctx.sid).collection('schedule_sources').doc(draftMeta.source_id);
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid), draftRef, pubRef, policyRef, sourceRef,
         liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
-      const txRead = (ref) => tx.get(ref);
+      const txRead = transactionRead(tx);
       const [snaps, txGapCtx] = await Promise.all([
         Promise.all(refs.map(txRead)),
         gapContext(ctx, config, gapPeople, txRead)
@@ -6464,7 +6512,7 @@ function createScheduleRuntime(deps) {
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid),
         current.ref, target.ref, pubRef, policyRef, sourceRef,
         liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
-      const txRead = (ref) => tx.get(ref);
+      const txRead = transactionRead(tx);
       const [snaps, txRollbackGapCtx] = await Promise.all([
         Promise.all(refs.map(txRead)),
         gapContext(ctx, config, rollbackGapPeople, txRead)
