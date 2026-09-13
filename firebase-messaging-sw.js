@@ -27,13 +27,13 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h16-release1';
+const CACHE = 'resq-v42h17-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
   './login.html', './schedule.html', './schedule-management.html',
-  './schedule-management.js', './schedule-file-import.js', './board.html', './attendance.html',
+  './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
   './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css',
@@ -52,21 +52,32 @@ const SHELL = [
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.
   './signature.js', './signflow.js', './docpdf.js',
-  './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './appcheck.js',
+  './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
   './manifest.json', './resq-192.png', './favicon.ico'
 ];
 
+// A release must not become installable unless its minimal navigation shell is
+// complete. The remaining files improve offline coverage but may be retried by
+// the network-first fetch path.
+const CORE_SHELL = [
+  './login.html', './pwa.js', './version.js', './theme.css'
+];
+
 self.addEventListener('install', function (e) {
-  // addAll נכשל כולו אם קובץ אחד חסר. כאן כל קובץ נשמר
-  // בנפרד, כדי שקובץ שהוסר לא ישבור את ההתקנה כולה.
+  // קבצי הליבה אטומיים. עדכון קיים נשאר waiting עד שהמשתמש
+  // מאשר; רק התקנה ראשונה מופעלת אוטומטית על ידי הדפדפן.
   e.waitUntil(caches.open(CACHE).then(function (c) {
-    return Promise.all(SHELL.map(function (u) {
+    return Promise.all(CORE_SHELL.map(function (u) { return c.add(u); })).then(function () {
+      return Promise.all(SHELL.filter(function (u) {
+        return !CORE_SHELL.includes(u);
+      }).map(function (u) {
       return c.add(u).catch(function () {});
-    }));
-  }).then(function () { return self.skipWaiting(); }));
+      }));
+    });
+  }));
 });
 
 self.addEventListener('activate', function (e) {

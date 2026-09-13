@@ -1,3 +1,5 @@
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
+
 const disconnected = { currentSession: () => null, subscribeIdentity: () => () => {} };
 const KEY = /^[a-f0-9]{64}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -60,6 +62,12 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
   let owner = null, generation = 0, items = [], cursor = null, busy = false;
   let chosen = null, editing = null, filter = 'long_absence', disposed = false;
   const attempts = new Map();
+  const formDirty = () => Boolean(chosen || editing || q('start').value || q('end').value
+    || q('reason').value || q('followup').value);
+  const unregisterUpdateGuard = registerPwaUpdateGuard(() =>
+    busy || attempts.size > 0 || formDirty()
+      ? { safe:false, reason:'יש מעקב כוח אדם או פעולה שעדיין לא נשמרו.' }
+      : { safe:true });
   const alive = (g, key) => !disposed && g === generation && key === owner && key === sessionKey(adapter);
   const message = value => { q('message').textContent = value; };
   const due = item => item.status === 'active' && item.followup_date <= today();
@@ -245,5 +253,5 @@ export function createHrWorkforceUI(root, adapter = disconnected) {
   });
   owner = sessionKey(adapter); resetForm(); render();
   if (owner) void load(); else message('ממתין לחיבור מאובטח עם הרשאת משאבי אנוש.');
-  return { destroy() { disposed = true; ++generation; attempts.clear(); unsubscribe(); } };
+  return { destroy() { disposed = true; unregisterUpdateGuard(); ++generation; attempts.clear(); unsubscribe(); } };
 }

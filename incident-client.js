@@ -12,7 +12,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'maintenance.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.17']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -32,6 +32,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'closeCallout', 'createStationTransfer', 'decideStationTransfer', 'deleteQualification',
   'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
   'getGuardManagementStatus', 'getJoinCode',
+  'getHomeCommandCenter', 'getStationFormSubmissionStatus',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',
   'getQualificationCatalog', 'getScheduleDisplayStatus', 'getScheduleDraftPreview',
   'getScheduleGapReport', 'getScheduleGuardBoard', 'getScheduleGuardManagerBoard',
@@ -48,7 +49,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'runSchedulePlanner', 'saveQualification', 'saveScheduleGapPolicy', 'saveSchedulePolicy', 'saveScheduleSource',
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
-  'setUserRole', 'submitFeedback', 'unlockAccount',
+  'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport',
   'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
   'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',

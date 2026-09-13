@@ -1,3 +1,5 @@
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
+
 // DOM-only controller. The injected adapter owns authenticated transport;
 // no personal data is persisted or embedded into URLs.
 const labels = { missing:'לא הוגש דוח', draft:'ממתין לאישור העובד', submitted:'ממתין לאישור פיקודי', approved:'מאושר', unavailable:'נדרשת בדיקת נתונים' };
@@ -84,6 +86,8 @@ export function createHrHoursUI(root, adapter=disconnected) {
   reviewFeedback.dataset.hr='review-feedback';reviewMessage.dataset.hr='review-message';reviewMessage.setAttribute('role','status');
   reviewRetry.type='button';reviewRetry.dataset.hr='review-retry';reviewFeedback.append(reviewMessage,reviewRetry);q('detail').after(reviewFeedback);
   const locked=()=>busy||!!pending||reviewBusy||!!reviewPending||!!reviewRefresh;
+  const unregisterUpdateGuard=registerPwaUpdateGuard(()=>locked()||!!confirmation
+    ?{safe:false,reason:'יש פעולת דוח שעות או אישור שעדיין לא הסתיימו.'}:{safe:true});
   const lockedMonth=()=>pending?.data.month||reviewPending?.data.month||reviewRefresh?.data.month||loadedDetail?.month;
   const sid=()=>JSON.parse(owner)[1];
   const suspected=p=>typeof p.stored_total_hours==='number'&&p.stored_total_hours>265;
@@ -446,7 +450,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   reviewRetry.addEventListener('click',submitReview);window.addEventListener('pagehide',pagehide);window.addEventListener('pageshow',pageshow);
   const unsubscribe=adapter.subscribeIdentity(resetIdentity);resetIdentity();
   return { refresh, destroy(){disposed=true;owner=null;++generation;++detailGeneration;unsubscribe();adapter.clearReportCache?.();resetActions();controls();q('people').replaceChildren();clearDetail('המסך נסגר.');root.removeEventListener('keydown',keydown);
-    for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
+    unregisterUpdateGuard();for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
     reviewRetry.removeEventListener('click',submitReview);reviewFeedback.remove();window.removeEventListener('pagehide',pagehide);window.removeEventListener('pageshow',pageshow);
     q('month').removeEventListener('change',refresh);q('refresh').removeEventListener('click',refresh);q('next').removeEventListener('click',next);q('previous').removeEventListener('click',previous);q('more').removeEventListener('click',more);} };
 }

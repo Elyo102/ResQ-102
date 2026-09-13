@@ -1,4 +1,5 @@
-import { MEMBER_ROLES } from './roles.js?v=42h16';
+import { MEMBER_ROLES } from './roles.js?v=42h17';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 const KEY = /^[a-f0-9]{64}$/;
@@ -39,6 +40,10 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   function dirty() { return !!(q('subject').value || q('body').value || q('reply').value); }
   function clearDrafts() { q('subject').value = ''; q('body').value = ''; q('reply').value = ''; q('send-now').checked = false; }
   const childLocked = () => attachmentLocked || attachmentRefresh;
+  const unregisterUpdateGuard = registerPwaUpdateGuard(() =>
+    pending || busy || creating || childLocked() || dirty()
+      ? { safe:false, reason:'יש טיוטת פנייה או צירוף שעדיין לא נשמרו.' }
+      : { safe:true });
   function clearAttachments() {
     attachmentOrigin = null;
     if (attachmentHost) attachmentHost.hidden = true;
@@ -270,6 +275,6 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     });
   }
   resetIdentity();
-  return { destroy() { disposed = true; clearAttachments(); attachments?.destroy(); attachments = null; attachmentLocked = false; attachmentRefresh = false;
+  return { destroy() { disposed = true; unregisterUpdateGuard(); clearAttachments(); attachments?.destroy(); attachments = null; attachmentLocked = false; attachmentRefresh = false;
     unsubscribe(); for (const remove of removers) remove(); owner = null; ++generation; ++detailGeneration; ++listGeneration; pending = null; clearDrafts(); items = []; selected = null; events = []; renderList(); renderDetail(); controls(); } };
 }

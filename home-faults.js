@@ -1,4 +1,5 @@
 const OPEN_LIMIT = 24;
+const OPEN_QUERY_LIMIT = OPEN_LIMIT + 1;
 const GROUPS = Object.freeze(['operational', 'building']);
 let active = null;
 
@@ -11,17 +12,25 @@ function groupOf(row) {
 }
 
 function normalize(doc) {
-  const row = doc && typeof doc.data === 'function' ? doc.data() : null;
-  if (!row || row.status !== 'open') return null;
+  let row = null;
+  try {
+    row = doc && typeof doc.data === 'function' ? doc.data() : null;
+  } catch (_) {
+    return null;
+  }
+  if (!row || !['open','in_repair'].includes(row.status)) return null;
   const title = text(row.title).slice(0, 80);
   if (!title) return null;
+  const severity = row.severity === 'critical' || row.severity === 'blocking'
+    ? 'blocking' : row.severity === 'major' || row.severity === 'limiting'
+      ? 'limiting' : row.severity === 'minor' ? 'minor' : 'unset';
   return Object.freeze({
     id: text(doc.id),
     group: groupOf(row),
     title,
     subject: text(row.vehicle_name).slice(0, 80),
     date: text(row.date).slice(0, 10),
-    severity: ['critical', 'major', 'minor'].includes(row.severity) ? row.severity : 'unset'
+    severity
   });
 }
 
@@ -92,15 +101,15 @@ export function initHomeFaults(options) {
   elements.status.textContent = 'טוען תקלות פתוחות…';
   const source = sdk.query(
     sdk.collection(db, 'stations', stationId, 'faults'),
-    sdk.where('status', '==', 'open'),
+    sdk.where('status', 'in', ['open','in_repair']),
     sdk.orderBy('created_key', 'desc'),
-    sdk.limit(OPEN_LIMIT)
+    sdk.limit(OPEN_QUERY_LIMIT)
   );
   session.unsubscribe = sdk.onSnapshot(source, (snapshot) => {
     if (active !== session) return;
     const docs = snapshot && Array.isArray(snapshot.docs) ? snapshot.docs : [];
-    session.rows = docs.map(normalize).filter(Boolean);
-    session.partial = docs.length === OPEN_LIMIT;
+    session.rows = docs.slice(0, OPEN_LIMIT).map(normalize).filter(Boolean);
+    session.partial = docs.length > OPEN_LIMIT;
     render(session);
   }, () => {
     if (active !== session) return;

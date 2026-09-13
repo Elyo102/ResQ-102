@@ -1,4 +1,5 @@
-import { MEMBER_ROLES } from './roles.js?v=42h16';
+import { MEMBER_ROLES } from './roles.js?v=42h17';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
 
 const KEY = /^[a-f0-9]{64}$/;
 const uid = v => typeof v === 'string' && /^[^\u0000-\u001f\u007f/]{1,128}$/.test(v);
@@ -85,7 +86,13 @@ export function createHrDocumentsUI(root, adapter = empty) {
   }
   function clearTarget() { target = null; ++sg; searchLoading = false; q('candidates').replaceChildren(); q('chosen').textContent = ''; q('search-message').textContent = ''; }
   function clearEditor() { editor = null; editBase = null; q('title').value = ''; q('text').value = ''; q('requires-ack').checked = false; q('send-now').checked = false; }
-  function dirty() { return !!editor && !!(q('title').value || q('text').value); }
+  function dirty() { return !!editor && !!(q('title').value || q('text').value
+    || q('requires-ack').checked || q('send-now').checked || q('kind').value !== 'document'
+    || target || q('search').value); }
+  const unregisterUpdateGuard = registerPwaUpdateGuard(() =>
+    pending || busy || attachmentHolds() || dirty()
+      ? { safe:false, reason:'יש טיוטת מסמך, פרסום או צירוף שעדיין לא נשמרו.' }
+      : { safe:true });
   function mayLeave() {
     if (!alive(generation, owner) || busy || pending || attachmentHolds()) return false;
     if (dirty() && !window.confirm('הטיוטה טרם נשמרה. לעבור ולמחוק אותה?')) return false;
@@ -355,7 +362,7 @@ export function createHrDocumentsUI(root, adapter = empty) {
     });
   }
   resetIdentity();
-  return { destroy() { disposed = true; unsubscribe(); removers.forEach(fn => fn()); owner = null; ++generation; ++dg; ++rg; ++lg;
+  return { destroy() { disposed = true; unregisterUpdateGuard(); unsubscribe(); removers.forEach(fn => fn()); owner = null; ++generation; ++dg; ++rg; ++lg;
     clearAttachments(); attachments?.destroy(); attachments = null; attachmentRefresh = null;
     pending = null; selected = null; list = []; receiptRows = []; receiptCursor = null; receiptVisible = false; clearEditor(); clearTarget();
     q('search').value = ''; q('receipts').replaceChildren(); renderList(); renderDetail(); controls(); } };

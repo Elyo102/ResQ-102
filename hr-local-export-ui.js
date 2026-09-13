@@ -1,4 +1,5 @@
-import { exportLocalFiles } from './hr-local-export.js?v=42h16';
+import { exportLocalFiles } from './hr-local-export.js?v=42h17';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
 
 // Deliberately not mounted by any existing page. Adapter must provide freshly
 // authorized bytes; this UI is not a server authorization boundary.
@@ -10,6 +11,8 @@ export function createLocalExportUI(root, adapter, { monthElement } = {}) {
   note.textContent = 'ייצוא ידני לתיקיית ריצה חדשה. אין לערוך את התיקייה בזמן הכתיבה. קבצים שנשמרו אינם נמחקים ביציאה ואינם ניתנים לביטול מרחוק. הורדת ZIP הקיימת נשארת זמינה.';
   root.append(button, cancel, status, note);
   let generation = 0, busy = false, dead = false, suspended = false;
+  const unregisterUpdateGuard = registerPwaUpdateGuard(() => busy
+    ? { safe:false, reason:'ייצוא דוחות לתיקייה עדיין מתבצע.' } : { safe:true });
   const supported = typeof window.showDirectoryPicker === 'function';
   const key = () => {
     const s = adapter.currentSession();
@@ -44,6 +47,6 @@ export function createLocalExportUI(root, adapter, { monthElement } = {}) {
   };
   if (!supported) status.textContent = 'הדפדפן אינו תומך בבחירת תיקייה. אפשר להשתמש בהורדת ZIP הקיימת.';
   render();
-  return { destroy() { dead = true; invalidate(); unsubscribe(); monthElement?.removeEventListener('change', invalidate);
+  return { destroy() { dead = true; unregisterUpdateGuard(); invalidate(); unsubscribe(); monthElement?.removeEventListener('change', invalidate);
     window.removeEventListener('pagehide', hide); window.removeEventListener('pageshow', show); button.remove(); cancel.remove(); status.remove(); note.remove(); } };
 }

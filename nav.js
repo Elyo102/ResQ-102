@@ -52,7 +52,7 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h16';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h17';
 
 function allowed(who, claims) {
   const isSuper = claims.super === true;
@@ -179,7 +179,7 @@ function styleOnce() {
   st.textContent = [
     // align-self:stretch נחוץ כי בדף הכניסה הגוף הוא flex ממורכז,
     // ובלעדיו הסרגל היה מתכווץ לרוחב התוכן שלו.
-    '#appNav{--resq-safe-top:env(safe-area-inset-top,0px);',
+    '#appNav{--resq-safe-top:var(--resq-safe-top-override,env(safe-area-inset-top,0px));',
     '  --resq-safe-right:env(safe-area-inset-right,0px);',
     '  --resq-safe-left:env(safe-area-inset-left,0px);',
     '  position:sticky;top:0;z-index:900;display:flex;gap:8px;',
@@ -232,6 +232,9 @@ function styleOnce() {
     '#appNav .navPanel[hidden]{display:none}',
     '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
+    // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
+    // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
+    'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
     // במסך רחב המכולה שקופה: הקישורים נשארים ילדים ישירים של
     // הסרגל, ומתנהגים בדיוק כמו קודם. שום שינוי במחשב.
     '#navLinks{display:contents}',
@@ -265,6 +268,7 @@ function styleOnce() {
     '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
     '    calc(10px + var(--resq-safe-right)) 8px',
     '    calc(10px + var(--resq-safe-left))}',
+    '  body.has-mode-bar #appNav{padding-top:8px}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',
@@ -293,7 +297,35 @@ function styleOnce() {
     // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
     // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
     '@media (min-width:421px) and (max-width:560px){',
-    '  #appNav .navPanel{grid-template-columns:repeat(4,1fr)}}'
+    '  #appNav .navPanel{grid-template-columns:repeat(4,1fr)}}',
+    '#resqDock,#resqDockPanel{display:none}',
+    'body.dock-modal-open{overflow:hidden}',
+    '@media (max-width:620px){',
+    'body.has-resq-dock{padding-bottom:calc(82px + env(safe-area-inset-bottom,0px))!important}',
+    '#resqDock{position:fixed;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;',
+    'inset:auto 0 0;z-index:970;padding:8px',
+    ' calc(10px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
+    ' calc(8px + env(safe-area-inset-bottom,0px))',
+    ' calc(10px + var(--resq-safe-left-override,env(safe-area-inset-left,0px)));',
+    'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);direction:rtl}',
+    '#resqDock a,#resqDock button{display:flex;align-items:center;justify-content:center;min-width:0;',
+    'min-height:52px;margin:0;padding:6px 4px;border:0;border-radius:12px;background:transparent;',
+    'color:var(--dim);font:700 12px/1.2 "Segoe UI",Arial,sans-serif;text-decoration:none}',
+    '#resqDock .on{background:var(--accent-soft);color:var(--accent-txt)}',
+    '#resqDockPanel{position:fixed;display:flex;inset:0;z-index:980;align-items:flex-end;',
+    'background:rgba(7,12,20,.46);padding:14px',
+    ' calc(14px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
+    ' calc(76px + env(safe-area-inset-bottom,0px))',
+    ' calc(14px + var(--resq-safe-left-override,env(safe-area-inset-left,0px)))}',
+    '#resqDockPanel[hidden]{display:none}',
+    '#resqDockSheet{width:min(100%,520px);max-height:62vh;overflow:auto;margin:0 auto;',
+    'background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;direction:rtl}',
+    '#resqDockSheet h2{margin:0 0 10px;font-size:18px;color:var(--txt)}',
+    '#resqDockSheet .dockGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}',
+    '#resqDockSheet a,#resqDockSheet button{display:flex;align-items:center;justify-content:center;',
+    'min-height:46px;width:100%;box-sizing:border-box;margin:0;padding:9px;border:1px solid var(--line);',
+    'border-radius:11px;background:var(--chip);color:var(--txt);font:700 14px "Segoe UI",Arial,sans-serif;text-decoration:none}',
+    '#resqDockSheet .dockTheme{grid-column:1/-1}}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -306,6 +338,11 @@ export function renderNav(claims, current, who) {
 
   const old = document.getElementById('appNav');
   if (old) old.remove();
+  const oldDock = document.getElementById('resqDock');
+  const oldDockPanel = document.getElementById('resqDockPanel');
+  if (oldDock) oldDock.remove();
+  if (oldDockPanel) oldDockPanel.remove();
+  document.body.classList.remove('has-resq-dock', 'dock-modal-open');
 
   const nav = document.createElement('nav');
   nav.id = 'appNav';
@@ -446,6 +483,121 @@ export function renderNav(claims, current, who) {
   });
 
   document.body.insertBefore(nav, document.body.firstChild);
+
+  const dock = document.createElement('nav');
+  dock.id = 'resqDock';
+  dock.setAttribute('aria-label', 'ניווט מהיר');
+  const dockPanel = document.createElement('div');
+  dockPanel.id = 'resqDockPanel';
+  dockPanel.hidden = true;
+  const dockSheet = document.createElement('div');
+  dockSheet.id = 'resqDockSheet';
+  dockSheet.setAttribute('role', 'dialog');
+  dockSheet.setAttribute('aria-modal', 'true');
+  dockSheet.setAttribute('aria-labelledby', 'resqDockTitle');
+  dockPanel.appendChild(dockSheet);
+  let dockTrigger = null;
+
+  function closeDockPanel(){
+    dockPanel.hidden = true;
+    document.body.classList.remove('dock-modal-open');
+    if (dockTrigger) dockTrigger.setAttribute('aria-expanded', 'false');
+    const restore = dockTrigger;
+    dockTrigger = null;
+    if (restore) restore.focus();
+  }
+
+  function openDockPanel(groupId, trigger){
+    const group = GROUPS.find(function (item) { return item.id === groupId; });
+    const items = ITEMS.filter(function (item) {
+      return item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims);
+    });
+    dockSheet.replaceChildren();
+    const title = document.createElement('h2');
+    title.id = 'resqDockTitle';
+    title.textContent = group ? group.label : 'עוד';
+    dockSheet.appendChild(title);
+    const grid = document.createElement('div');
+    grid.className = 'dockGrid';
+    items.forEach(function (item) { grid.appendChild(linkFor(item)); });
+    if (groupId === 'admin') {
+      const theme = themeButton('dockThemeBtn');
+      theme.classList.add('dockTheme');
+      grid.appendChild(theme);
+    }
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'סגור';
+    close.onclick = closeDockPanel;
+    grid.appendChild(close);
+    dockSheet.appendChild(grid);
+    dockTrigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    dockPanel.hidden = false;
+    document.body.classList.add('dock-modal-open');
+    const first = grid.querySelector('a,button');
+    if (first) first.focus();
+  }
+
+  const home = document.createElement('a');
+  home.href = './login.html';
+  home.textContent = 'בית';
+  if (current === 'login.html') {
+    home.className = 'on';
+    home.setAttribute('aria-current', 'page');
+  }
+  dock.appendChild(home);
+
+  [
+    { id:'mine', label:'המשמרת' },
+    { id:'station', label:'התחנה' },
+    { id:'admin', label:'עוד' }
+  ].forEach(function (entry) {
+    const permitted = ITEMS.filter(function (item) {
+      return item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims);
+    });
+    if (!permitted.length && entry.id !== 'admin') return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = entry.label;
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'resqDockPanel');
+    if (permitted.some(function (item) { return item.href === current; })) {
+      button.className = 'on';
+    }
+    button.onclick = function () {
+      if (!dockPanel.hidden && dockTrigger === button) closeDockPanel();
+      else openDockPanel(entry.id, button);
+    };
+    dock.appendChild(button);
+  });
+
+  dockPanel.onclick = function (event) {
+    if (event.target === dockPanel) closeDockPanel();
+  };
+  dockPanel.onkeydown = function (event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeDockPanel();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(dockSheet.querySelectorAll('a,button'))
+      .filter(function (item) { return !item.disabled && item.offsetParent !== null; });
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  document.body.appendChild(dockPanel);
+  document.body.appendChild(dock);
+  document.body.classList.add('has-resq-dock');
 }
 
 // ---------- בהיר / כהה ----------
@@ -479,13 +631,13 @@ export function applyTheme(mode) {
   try { localStorage.setItem('resq_theme', mode); } catch (e) {}
 }
 
-function themeButton() {
+function themeButton(id) {
   const cur = readTheme();
   const m = MODES.filter(function (x) { return x.id === cur; })[0] || MODES[0];
 
   const b = document.createElement('button');
   b.type = 'button';
-  b.id = 'themeBtn';
+  b.id = id || 'themeBtn';
   b.textContent = m.label;
   b.title = 'תצוגה: ' + m.he + ' — לחץ להחלפה';
   b.setAttribute('aria-label', b.title);
@@ -502,7 +654,12 @@ function themeButton() {
 
 export function clearNav() {
   const old = document.getElementById('appNav');
+  const dock = document.getElementById('resqDock');
+  const panel = document.getElementById('resqDockPanel');
   if (old) old.remove();
+  if (dock) dock.remove();
+  if (panel) panel.remove();
+  document.body.classList.remove('has-resq-dock', 'dock-modal-open');
 }
 
 // סרגל מינימלי למסכי "אין הרשאה". בלעדיו המשתמש תקוע עם
