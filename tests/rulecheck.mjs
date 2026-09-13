@@ -234,8 +234,16 @@ head('שדות — מה שהכלל דורש מול מה שהקוד כותב');
   // באוסף, ובשרת. אזהרה יוצאת רק כששם השדה לא מופיע בשום
   // מקום — וזה כבר ממצא אמיתי.
   const problems = [];
-  const SERVER = fs.existsSync(path.join(ROOT, 'functions/index.js'))
-    ? fs.readFileSync(path.join(ROOT, 'functions/index.js'), 'utf8') : '';
+  // Cloud Functions are split into factory modules. Looking only at index.js
+  // reports real server-owned fields as missing whenever the callable is
+  // wired through a required module.
+  const functionsDir = path.join(ROOT, 'functions');
+  const SERVER = fs.existsSync(functionsDir)
+    ? fs.readdirSync(functionsDir)
+        .filter(name => name.endsWith('.js') && !name.endsWith('.test.js'))
+        .map(name => fs.readFileSync(path.join(functionsDir, name), 'utf8'))
+        .join('\n')
+    : '';
 
   const keysIn = src => new Set(
     [...src.matchAll(/[{,]\s*['"]?([\w_]+)['"]?\s*:/g)].map(m => m[1])

@@ -1243,6 +1243,12 @@ head('15 · טפסים — שרשרת האישורים');
 const CSIG = { image: 'data:image/png;base64,' + 'B'.repeat(400),
                uid: 'u_cmda', name: 'מפקד א', emp: '201',
                role: 'commander', at: '2026-08-22T08:00:00.000Z' };
+const STSIG = { image: 'data:image/png;base64,' + 'C'.repeat(400),
+                uid: 'u_st', name: 'מפקד תחנה', emp: '301',
+                role: 'station_commander', at: '2026-08-22T09:00:00.000Z' };
+const EMPSIG = { image: 'data:image/png;base64,' + 'A'.repeat(400),
+                 uid: 'u_ff', name: 'כבאי א', emp: '101',
+                 role: 'firefighter', at: '2026-08-20T08:00:00.000Z' };
 
 await ok('ראש משמרת מאשר חופשה בארץ של כבאי במשמרתו',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_home`), {
@@ -1263,7 +1269,8 @@ await blocked('🔒 ראש משמרת מאשר בקשה שהוא עצמו הגי
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), { status: 'approved' }));
 
 await ok('מפקד התחנה מאשר בקשה שראש המשמרת הגיש',
-  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_by_cmd`), { status: 'approved' }));
+  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', signatures: { employee: EMPSIG, commander: STSIG } }));
 
 // ---- החריג של חו"ל ----
 
@@ -1279,10 +1286,6 @@ await blocked('🔓 🔒 ראש משמרת סוגר לבדו חופשה בחו״
 // בזמן שזה היה בדיוק ההגנה עובדת.
 //
 // forms.html עושה את זה נכון: Object.assign על המפה הקיימת.
-const EMPSIG = { image: 'data:image/png;base64,' + 'A'.repeat(400),
-                 uid: 'u_ff', name: 'כבאי א', emp: '101',
-                 role: 'firefighter', at: '2026-08-20T08:00:00.000Z' };
-
 await ok('ראש משמרת חותם ומעביר חופשת חו״ל למפקד התחנה',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_abroad`), {
     status: 'pending_station',
@@ -1299,7 +1302,9 @@ await blocked('🔒 סגן ראש משמרת מאשר בקשה שאצל מפקד
   updateDoc(doc(deputyA, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
 
 await ok('מפקד התחנה מאשר חופשת חו״ל שהועברה אליו',
-  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_at_station`), { status: 'approved' }));
+  updateDoc(doc(stCmd, `stations/${SID}/submissions/sub_at_station`), {
+    status: 'approved', signatures: { employee: EMPSIG, commander: CSIG,
+      station_commander: STSIG } }));
 
 // ---- מה שנעול בזמן האישור ----
 
@@ -1325,9 +1330,20 @@ await blocked('🔒 חתימת מפקד כבדה מהמותר',
   updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
     status: 'approved', signatures: { commander: { image: 'z'.repeat(500000) } } }));
 
+await blocked('🔒 מאשר אינו משנה פרטיות או מטא־נתוני שרת',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', is_private: true, kind: 'form', form_he: 'מסמך אחר',
+    created_key: '1900-01-01T00:00:00.000Z',
+    signatures: { employee: EMPSIG, commander: CSIG } }));
+
+await blocked('🔒 מאשר אינו מייחס את חתימתו למפקד אחר',
+  updateDoc(doc(cmdA, `stations/${SID}/submissions/sub_by_cmd`), {
+    status: 'approved', signatures: { employee: EMPSIG,
+      commander: { ...CSIG, uid: 'u_cmdb', emp: '202' } } }));
+
 // ---- הגשה ----
 
-await ok('כבאי מגיש טופס חתום בשמו',
+await blocked('🔒 לקוח אינו יוצר טופס ישירות — ההגשה עוברת בשרת',
   setDoc(doc(ff, `stations/${SID}/submissions/sub_new_ok`), {
     form_id: 'noclock', kind: 'missed_punch', values: { date: '2026-09-01' },
     signature: 'data:image/png;base64,' + 'A'.repeat(400),
@@ -1335,6 +1351,13 @@ await ok('כבאי מגיש טופס חתום בשמו',
                               uid: 'u_ff', name: 'כבאי א' } },
     status: 'submitted', by_uid: 'u_ff', by_name: 'כבאי א',
     by_emp: '101', crew: 'א', is_private: false }));
+
+await blocked('🔒 לקוח אינו קורא קבלת idempotency פרטית',
+  getDoc(doc(ff, `stations/${SID}/form_submission_operations/op1`)));
+
+await blocked('🔒 לקוח אינו כותב קבלת idempotency פרטית',
+  setDoc(doc(ff, `stations/${SID}/form_submission_operations/op1`), {
+    actor_uid: 'u_ff', status: 'committed' }));
 
 await blocked('🔒 כבאי מגיש טופס בשם כבאי אחר',
   setDoc(doc(ff, `stations/${SID}/submissions/sub_new_bad`), {

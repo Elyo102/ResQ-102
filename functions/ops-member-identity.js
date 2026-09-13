@@ -41,7 +41,8 @@ function createOpsMemberIdentity({ db, HttpsError }) {
     // station-scoped paths are still enforced by the calling service.
     if (ctx && ctx.super === true) {
       return Object.freeze({
-        uid: ctx.uid, sid: ctx.sid, role: SUPER_ROLE, employee_number: ''
+        uid: ctx.uid, sid: ctx.sid, role: SUPER_ROLE, employee_number: '',
+        full_name:'', crew:''
       });
     }
     const ref = db.collection('stations').doc(ctx.sid).collection('users').doc(ctx.uid);
@@ -52,9 +53,14 @@ function createOpsMemberIdentity({ db, HttpsError }) {
       throw new HttpsError('permission-denied', 'השיוך או התפקיד הפעיל בתחנה השתנו.');
     }
     const emp = user.employee_number;
+    const fullName = typeof user.full_name === 'string'
+      ? user.full_name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 160) : '';
+    const crew = typeof user.crew === 'string' ? user.crew.trim().slice(0, 16)
+      : typeof user.shift === 'string' ? user.shift.trim().slice(0, 16) : '';
     return Object.freeze({
       uid: ctx.uid, sid: ctx.sid, role: user.role,
-      employee_number: typeof emp === 'string' || typeof emp === 'number' ? String(emp).slice(0, 20) : ''
+      employee_number: typeof emp === 'string' || typeof emp === 'number' ? String(emp).slice(0, 20) : '',
+      full_name:fullName, crew
     });
   }
   return Object.freeze({ context, requireLive });

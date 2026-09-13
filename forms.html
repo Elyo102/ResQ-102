@@ -319,9 +319,10 @@ import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h17';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h17';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -329,6 +330,9 @@ import { initAppCheck } from './appcheck.js?v=42h17';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const functions = getFunctions(app, 'europe-west1');
+const submitStationForm = httpsCallable(functions, 'submitStationForm');
+const getStationFormSubmissionStatus = httpsCallable(functions, 'getStationFormSubmissionStatus');
 const $ = id => document.getElementById(id);
 renderStuckNav('');
 
@@ -347,6 +351,8 @@ function msg(text, kind, box){
 let SID = '', ME = null, CAN_APPROVE = false, IS_WIDE = false;
 let subs = [], people = [];
 let formDirty = false, signatureDirty = false, signatureBusy = false, submitBusy = false;
+let submissionIntent = null;
+let submissionIdentity = '';
 registerPwaUpdateGuard(() => formDirty || signatureDirty || signatureBusy || submitBusy
   ? { safe:false, reason:'יש טופס או חתימה שעדיין לא נשמרו.' }
   : { safe:true });
@@ -355,7 +361,10 @@ initPWA({ offer: false });
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
-  if (!user) { location.replace('./login.html?next=forms.html'); return; }
+  if (!user) {
+    submissionIntent = null; submissionIdentity = '';
+    location.replace('./login.html?next=forms.html'); return;
+  }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
@@ -365,6 +374,9 @@ onAuthStateChanged(auth, async user => {
     MEMBER_ROLES.indexOf(c.role) !== -1;
 
   SID = c.stationId || (isSuper ? STATION_ID : '');
+  const nextIdentity = user.uid + '|' + SID;
+  if (submissionIdentity && submissionIdentity !== nextIdentity) submissionIntent = null;
+  submissionIdentity = nextIdentity;
   if (!isMember || !SID) {
     $('denyCard').classList.remove('hide');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
@@ -681,6 +693,7 @@ function stampAs(){
 // ---------- הגשה ----------
 
 async function submitForm(){
+  if (submitBusy) return;
   const f = curForm();
   if (!f) return;
   const values = readValues(f);
@@ -700,33 +713,49 @@ async function submitForm(){
   }
   if (errs.length) { msg(errs.join('\n'), 'err'); return; }
 
+  // מרגע שהכוונה נוצרה היא נשארת קפואה בזיכרון בלבד. ניסיון
+  // חוזר משדר בדיוק את אותו request_id, אותם שדות ואותם בייטים.
+  // אין שמירת תוכן רגיש באחסון הדפדפן.
+  if (!submissionIntent) {
+    const requestId = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(24)),
+          n => n.toString(16).padStart(2, '0')).join('');
+    submissionIntent = Object.freeze({
+      request_id:requestId, form_id:f.id,
+      values:Object.freeze(JSON.parse(JSON.stringify(values))),
+      signature_image:stamp ? stamp.image : ''
+    });
+  }
+
   const b = $('btnSubmit'); b.disabled = true; submitBusy = true;
   try {
-    const now = new Date();
-    // signatures הוא המבנה שכל המערכת קוראת — signflow.js
-    // יודע לקרוא ממנו מי חתם ומי הבא בתור. signature השטוח
-    // נשמר לצידו כי כרטיסים קיימים, כללי האבטחה וייצוא ה-PDF
-    // כבר מסתמכים עליו, ואין סיבה לשבור אותם בשביל שדה כפול
-    // ששוקל אותו דבר.
-    await addDoc(collection(db, 'stations', SID, 'submissions'), {
-      form_id: f.id, form_he: f.he,
-      kind: signKind(f),
-      values: values,
-      signature: stamp ? stamp.image : '',
-      signatures: stamp ? { employee: stamp } : {},
-      is_private: !!f.private,
-      status: 'submitted',
-      by_uid: ME.uid, by_name: ME.full_name || '',
-      by_emp: ME.emp, crew: ME.crew || '',
-      created_key: now.toISOString(),
-      created_at: serverTimestamp()
-    });
+    await submitStationForm(submissionIntent);
     msg('הטופס הוגש. ראש המשמרת יקבל התראה.', 'ok');
+    submissionIntent = null;
     formDirty = false;
     drawFields();
     await loadAll();
   } catch (e) {
-    msg('ההגשה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+    const code = String(e && e.code || '').replace(/^functions\//, '');
+    const uncertain = ['unknown','internal','aborted','unavailable','deadline-exceeded','resource-exhausted']
+      .includes(code);
+    if (uncertain && submissionIntent) {
+      try {
+        const result = await getStationFormSubmissionStatus({ request_id:submissionIntent.request_id });
+        if (result && result.data && result.data.status === 'committed') {
+          msg('הטופס הוגש ואומת לאחר ניתוק התשובה.', 'ok');
+          submissionIntent = null; formDirty = false; drawFields(); await loadAll();
+        } else {
+          msg('לא התקבל אישור מהשרת. לחץ שוב כדי לשלוח בדיוק את אותה בקשה.', 'err');
+        }
+      } catch (statusError) {
+        msg('מצב ההגשה אינו ידוע. לחץ שוב — לא תיווצר הגשה כפולה.', 'err');
+      }
+    } else {
+      submissionIntent = null;
+      msg('ההגשה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+    }
   }
   submitBusy = false; b.disabled = false;
 }

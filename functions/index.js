@@ -51,6 +51,7 @@ const attendanceCorrectionConfigModule = require('./attendance-correction-config
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
 const personalLiveLabModule = require('./personal-live-lab');
 const homeCommandCenterModule = require('./home-command-center');
+const formSubmissionsModule = require('./form-submissions');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -136,6 +137,18 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+const formSubmissions = formSubmissionsModule.createFormSubmissions({
+  db, auth:admin.auth(), HttpsError,
+  serverTimestamp:() => FV.serverTimestamp(), clock:() => Date.now()
+});
+const FORM_SUBMISSION_OPTIONS = Object.freeze({
+  region:'europe-west1', enforceAppCheck:true, timeoutSeconds:60,
+  memory:'256MiB', maxInstances:5, concurrency:20
+});
+exports.submitStationForm = onCall(FORM_SUBMISSION_OPTIONS,
+  req => formSubmissions.submit(req));
+exports.getStationFormSubmissionStatus = onCall(FORM_SUBMISSION_OPTIONS,
+  req => formSubmissions.status(req));
 const homeCommandCenter = homeCommandCenterModule.createHomeCommandCenter({
   db, HttpsError, clock:() => Date.now()
 });

@@ -85,6 +85,8 @@ const domainGroups = [...jobGroups,intentGroup];
 const productGroups = ['faults'];
 const expectedProductIndexes = [{ collectionGroup: 'faults', queryScope: 'COLLECTION', fields: [
   { fieldPath: 'status', order: 'ASCENDING' }, { fieldPath: 'created_key', order: 'DESCENDING' }
+] }, { collectionGroup: 'faults', queryScope: 'COLLECTION', fields: [
+  { fieldPath: 'status', order: 'ASCENDING' }, { fieldPath: 'severity', order: 'ASCENDING' }
 ] }];
 const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
 const healthShadowGroups = ['system_health_cycles', 'system_health_reports', 'health_shadow'];
@@ -94,7 +96,7 @@ const expectedIndexes = pairs.map(([collectionGroup, fieldPath]) => ({ collectio
   fields: [{ fieldPath: 'status', order: 'ASCENDING' }, { fieldPath, order: 'ASCENDING' }] }));
 const ordered = indexes => indexes.map(value => JSON.stringify(value)).sort();
 function validateIndexes(value) {
-  assert.deepEqual(Object.keys(value).sort(), ['fieldOverrides', 'indexes']); assert.equal(value.indexes.length, 47);
+  assert.deepEqual(Object.keys(value).sort(), ['fieldOverrides', 'indexes']); assert.equal(value.indexes.length, 48);
   assert.deepEqual(ordered(value.indexes.filter(i => domainGroups.includes(i.collectionGroup))), ordered(expectedIndexes));
   assert.deepEqual(ordered(value.indexes.filter(i => productGroups.includes(i.collectionGroup))), ordered(expectedProductIndexes));
   const old = value.indexes.filter(i => !domainGroups.includes(i.collectionGroup) && !productGroups.includes(i.collectionGroup));
@@ -108,7 +110,7 @@ function validateIndexes(value) {
   assert.equal(sha(JSON.stringify(old)), 'b09f65a0d72538129360363c51dbc79ef702289c22b310753d9175171dbe713c');
   assert.equal(sha(JSON.stringify(oldOverrides)), '41571b75f7605882500137b420a1664964d2efd0cee6f3a6ef885c44399c9939');
 }
-await check('exact25 domain and one home-fault query index preserve21 existing indexes and32 baseline overrides', () => validateIndexes(config));
+await check('exact25 domain and two home-fault query indexes preserve21 existing indexes and32 baseline overrides', () => validateIndexes(config));
 await check('in-memory omitted, changed-scope and additional indexes fail the closed gate', () => {
   for (const mutate of [value => value.indexes.splice(value.indexes.findIndex(i => domainGroups.includes(i.collectionGroup)), 1),
     value => { value.indexes.find(i => domainGroups.includes(i.collectionGroup)).queryScope = 'COLLECTION'; },
