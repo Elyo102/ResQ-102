@@ -34,19 +34,20 @@ try {
       operationalCount:el('oc'), buildingCount:el('bc'), status:el('status'), list:el('list'), empty:el('empty') };
     window.start = (uid='u1') => window.initHomeFaults({ db:{}, user:{ uid }, stationId:'station-102', sdk, elements });
   });
-  await check('renders finite open fields and separates building from operational faults', async () => {
+  await check('renders open and in-repair faults with the live severity vocabulary', async () => {
     await page.evaluate(() => {
       window.start();
       window.snapshots.at(-1).ok({ docs:[
         { id:'a', data:() => ({ status:'open', kind:'vehicle', title:'נזילת שמן', vehicle_name:'רכב 7', date:'2026-09-11', severity:'critical' }) },
+        { id:'repair', data:() => ({ status:'in_repair', kind:'vehicle', title:'בטיפול', vehicle_name:'רכב 8', date:'2026-09-12', severity:'limiting' }) },
         { id:'b', data:() => ({ status:'open', kind:'building', title:'נזילה במטבח', date:'2026-09-10', severity:'major' }) },
         { id:'closed', data:() => ({ status:'fixed', kind:'vehicle', title:'סגור' }) }
       ] });
     });
-    assert.equal(await page.locator('#oc').textContent(), '1');
+    assert.equal(await page.locator('#oc').textContent(), '2');
     assert.equal(await page.locator('#bc').textContent(), '1');
-    assert.equal(await page.locator('.home-fault-title').textContent(), 'נזילת שמן');
-    assert.equal(await page.locator('.home-fault-card').getAttribute('data-severity'), 'critical');
+    assert.equal(await page.locator('.home-fault-title').first().textContent(), 'נזילת שמן');
+    assert.equal(await page.locator('.home-fault-card').first().getAttribute('data-severity'), 'blocking');
     await page.locator('[data-fault-group="building"]').click();
     assert.equal(await page.locator('.home-fault-title').textContent(), 'נזילה במטבח');
   });

@@ -50,6 +50,7 @@ const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
 const personalLiveLabModule = require('./personal-live-lab');
+const homeCommandCenterModule = require('./home-command-center');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -135,6 +136,9 @@ const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
+const homeCommandCenter = homeCommandCenterModule.createHomeCommandCenter({
+  db, HttpsError, clock:() => Date.now()
+});
 const opsDependencies = {
   db, FieldValue: FV, HttpsError,
   hash: (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest('hex'),
@@ -5490,6 +5494,60 @@ async function invokeSchedule(method, req) {
     throw error;
   }
 }
+
+function jerusalemDayKey(milliseconds) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(new Date(milliseconds));
+  const value = Object.fromEntries(parts.filter(part => part.type !== 'literal')
+    .map(part => [part.type, part.value]));
+  return value.year + '-' + value.month + '-' + value.day;
+}
+
+function homeShiftProjection(response, fallbackShift) {
+  const day = response && Array.isArray(response.days) ? response.days[0] : null;
+  const stations = day && Array.isArray(day.sub_stations) ? day.sub_stations : [];
+  const people = new Set();
+  let missing = 0;
+  stations.forEach((station) => {
+    const rows = Array.isArray(station.people) ? station.people : [];
+    rows.forEach((person) => {
+      const uid = String(person && (person.uid || person.person || '') || '');
+      if (uid) people.add(uid);
+    });
+    if (Number.isSafeInteger(station.minimum) && station.minimum > rows.length) {
+      missing += station.minimum - rows.length;
+    }
+  });
+  const crew = String(day && day.crew || fallbackShift || '');
+  return Object.freeze({
+    label:crew ? 'משמרת ' + crew : 'המשמרת הנוכחית',
+    on_duty:people.size, missing, available:!!day
+  });
+}
+
+exports.getHomeCommandCenter = onCall({
+  enforceAppCheck:true, timeoutSeconds:60, memory:'256MiB', maxInstances:10
+}, async (req) => {
+  const base = await homeCommandCenter.get(req);
+  const date = jerusalemDayKey(Date.now());
+  let shift;
+  try {
+    const schedule = await invokeSchedule('getStationRange', {
+      auth:req.auth, data:{ from:date, to:date }
+    });
+    shift = homeShiftProjection(schedule, req.auth && req.auth.token && req.auth.token.shift);
+  } catch (error) {
+    console.warn('home-command-shift-unavailable', error && (error.code || error.message));
+    shift = Object.freeze({
+      label:'נתוני הסידור אינם זמינים כרגע', on_duty:0, missing:0, available:false
+    });
+  }
+  return Object.freeze({
+    ...base,
+    shift:Object.freeze({ ...base.shift, ...shift })
+  });
+});
 
 exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStatus', req));

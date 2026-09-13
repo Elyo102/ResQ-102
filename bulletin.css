@@ -93,7 +93,7 @@
 .home-updates,.home-faults{position:relative;padding-inline-end:clamp(21px,4vw,34px)}
 .home-updates::before,.home-faults::before{
   position:absolute;
-  inset-inline-end:-14px;
+  inset-inline-end:10px;
   top:24px;
   display:grid;
   place-items:center;
@@ -280,7 +280,9 @@
 .home-fault-tab.is-active b{background:transparent;color:inherit;border:1px solid currentColor}
 .home-fault-list{display:grid;gap:8px}
 .home-fault-card{display:grid;gap:4px;padding:12px 13px;border:1px solid var(--line);border-inline-start:5px solid var(--warn);border-radius:12px;background:var(--panel);color:var(--txt);text-decoration:none}
-.home-fault-card[data-severity="critical"]{border-inline-start-color:var(--bad)}
+.home-fault-card[data-severity="blocking"]{border-inline-start-color:var(--bad)}
+.home-fault-card[data-severity="limiting"]{border-inline-start-color:var(--warn)}
+.home-fault-card[data-severity="unset"]{border-inline-start-color:var(--pick)}
 .home-fault-card[data-severity="minor"]{border-inline-start-color:var(--good)}
 .home-fault-title{font-size:14px;line-height:1.45}
 .home-fault-meta,.home-fault-status,.home-fault-empty{color:var(--muted);font-size:12px;line-height:1.5}
@@ -649,6 +651,40 @@
   box-shadow:none;
 }
 
+.home-urgent{
+  display:grid;
+  grid-template-columns:48px minmax(0,1fr) auto;
+  align-items:center;
+  gap:14px;
+  padding:18px;
+  border:1px solid color-mix(in srgb,var(--err-fg) 45%,var(--line));
+  border-radius:18px;
+  background:color-mix(in srgb,var(--err-bg) 88%,var(--panel));
+  color:var(--err-fg);
+}
+.home-urgent.hide{display:none}
+.home-urgent-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;background:var(--err-fg);color:#fff;font-size:28px;font-weight:900}
+.home-urgent p{margin:0 0 3px;font-size:12px;font-weight:800}
+.home-urgent h2{margin:0;font-size:17px;line-height:1.35;overflow-wrap:anywhere}
+.home-urgent span{display:block;margin-top:4px;color:var(--dim);font-size:13px;line-height:1.45}
+.home-urgent a{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:44px;padding:8px 14px;border-radius:12px;background:var(--err-fg);color:#fff;text-decoration:none;font-weight:800}
+
+.home-task-card{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:72px;padding:14px 16px;border:1px solid var(--line);border-radius:15px;background:var(--card);color:var(--txt);text-decoration:none}
+.home-task-card[data-priority="high"]{border-inline-start:4px solid var(--accent)}
+.home-task-card span{display:grid;gap:4px;min-width:0}
+.home-task-card strong{font-size:15px;overflow-wrap:anywhere}
+.home-task-card small{color:var(--muted);font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
+.home-task-arrow{color:var(--accent-txt);font-size:26px}
+.home-task-list{display:grid;gap:10px}
+.home-task-empty,.home-command-status{min-height:20px;color:var(--muted);font-size:13px}
+.home-task-empty{padding:20px;border:1px dashed var(--line-hover);border-radius:13px;text-align:center}
+.home-task-empty.hide{display:none}
+
+.home-shift-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.home-shift-metrics>div{display:grid;gap:3px;min-width:0;padding:13px 8px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:center}
+.home-shift-metrics b{color:var(--txt);font-size:24px}
+.home-shift-metrics span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+
 .bulletin-account{
   border-top:1px solid var(--line);
   padding-top:5px;
@@ -688,10 +724,15 @@
   .home-command-brand small{margin-top:4px}
   .home-command-header h2{font-size:21px}
   .home-command-header p{font-size:13px}
+  .home-urgent{grid-template-columns:42px minmax(0,1fr);padding:15px}
+  .home-urgent-icon{width:40px;height:40px}
+  .home-urgent a{grid-column:1/-1;width:100%}
+  .home-shift-metrics{gap:7px}
+  .home-shift-metrics>div{padding-inline:5px}
   .bulletin-board{gap:12px}
   .home-panel{padding:17px 16px;border-radius:19px}
   .home-updates,.home-faults{padding-inline-end:20px}
-  .home-updates::before,.home-faults::before{inset-inline-end:-11px;top:20px;width:29px;height:29px;border-width:3px;font-size:13px}
+  .home-updates::before,.home-faults::before{inset-inline-end:8px;top:20px;width:29px;height:29px;border-width:3px;font-size:13px}
   .bulletin-toolbar{align-items:flex-start}
   .bulletin-compose{min-width:104px;padding-inline:11px}
   .bulletin-board-tabs{

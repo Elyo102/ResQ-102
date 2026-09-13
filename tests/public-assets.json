@@ -26,6 +26,7 @@
   "guards.js",
   "histimport.js",
   "home-faults.js",
+  "home-command.js",
   "hours.js",
   "hr-attachments-ui.css",
   "hr-attachments-ui.js",

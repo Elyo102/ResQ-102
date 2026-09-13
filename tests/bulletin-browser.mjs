@@ -153,7 +153,8 @@ try {
     'מסך הבית נפתח בברכה אישית מהפרופיל המאומת');
   check(/משמרת ג['׳]/.test(await loginPage.locator('#pageSub').textContent()),
     'הקשר המשמרת מוצג מתחת לברכה');
-  check(await loginPage.locator('.home-panel').count() === 2,
+  check(await loginPage.locator('#bulletinBoard').count() === 1 &&
+        await loginPage.locator('#homeFaults.home-panel').count() === 1,
     'הודעות ותקלות מוצגות כשני אזורי מידע נפרדים');
   check((await loginPage.locator('#homeUpdatesTitle').textContent()).trim() === 'עדכוני התחנה',
     'אזור ההודעות מתאר במדויק את המידע שהשאילתה מחזירה');

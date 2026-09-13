@@ -351,6 +351,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </header>
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
+      <section id="homeUrgent" class="home-urgent hide" role="alert" aria-labelledby="homeUrgentTitle">
+        <div class="home-urgent-icon" aria-hidden="true">!</div>
+        <div><p>דורש תשומת לב</p><h2 id="homeUrgentTitle"></h2><span id="homeUrgentText"></span></div>
+        <a id="homeUrgentLink">פתח</a>
+      </section>
+
+      <section id="homeTasks" class="home-panel home-tasks" aria-labelledby="homeTasksTitle">
+        <header class="home-panel-head"><div>
+          <p class="home-eyebrow">לפני תחילת המשמרת</p>
+          <h2 id="homeTasksTitle">דורש ממני</h2>
+          <p>משימות ופעולות שממתינות לטיפול שלך.</p>
+        </div></header>
+        <div id="homeCommandStatus" class="home-command-status" aria-live="polite"></div>
+        <div id="homeTaskList" class="home-task-list"></div>
+        <div id="homeTaskEmpty" class="home-task-empty hide">אין כרגע פעולות שממתינות לך.</div>
+      </section>
+
       <section class="home-panel home-updates" aria-labelledby="homeUpdatesTitle">
         <header class="home-panel-head">
           <div>
@@ -448,6 +465,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <div id="homeFaultEmpty" class="home-fault-empty hide">אין תקלות פתוחות בקטגוריה הזאת.</div>
       </section>
 
+      <section id="homeShiftStatus" class="home-panel home-shift" aria-labelledby="homeShiftTitle">
+        <header class="home-panel-head"><div>
+          <p class="home-eyebrow">תמונה מהירה</p>
+          <h2 id="homeShiftTitle">מצב המשמרת</h2>
+          <p id="homeShiftLabel">המשמרת הנוכחית</p>
+        </div></header>
+        <div class="home-shift-metrics">
+          <div data-shift-metric="on_duty"><b>0</b><span>במשמרת</span></div>
+          <div data-shift-metric="open_faults"><b>0</b><span>תקלות פתוחות</span></div>
+          <div data-shift-metric="missing"><b>0</b><span>חסרים</span></div>
+        </div>
+      </section>
+
       <details id="accountDetails" class="bulletin-account">
         <summary>החשבון שלי ועדכוני האפליקציה</summary>
         <div class="profile">
@@ -511,6 +541,7 @@ import { APP_VERSION, APP_DATE } from './version.js?v=42h17';
 import { watchCallouts } from './callout.js?v=42h17';
 import { initBulletin, destroyBulletin } from './bulletin.js?v=42h17';
 import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h17';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h17';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -537,6 +568,7 @@ function destroyHomeRuntime(){
   try { stopCallouts(); } catch (ignore) {}
   stopCallouts = function () {};
   destroyHomeFaults();
+  destroyHomeCommand();
   destroyBulletin();
 }
 
@@ -1289,6 +1321,21 @@ async function loadProfile(user, claims, epoch){
   });
   $('pageTitle').textContent = profileName ? ('שלום, ' + profileName) : 'לוח מודעות';
   $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
+
+  initHomeCommand({
+    functions:fns, user:user, claims:claims,
+    sdk:{ httpsCallable:httpsCallable },
+    elements:{
+      urgent:$('homeUrgent'), urgentTitle:$('homeUrgentTitle'), urgentText:$('homeUrgentText'), urgentLink:$('homeUrgentLink'),
+      status:$('homeCommandStatus'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
+      shiftLabel:$('homeShiftLabel'),
+      shiftMetrics:{
+        on_duty:document.querySelector('[data-shift-metric="on_duty"] b'),
+        open_faults:document.querySelector('[data-shift-metric="open_faults"] b'),
+        missing:document.querySelector('[data-shift-metric="missing"] b')
+      }
+    }
+  });
 
   initBulletin({
     db: db,
