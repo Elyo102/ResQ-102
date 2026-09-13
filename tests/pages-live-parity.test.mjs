@@ -107,6 +107,24 @@ try {
     fs.rmSync(jsTemp, { recursive:true, force:true });
   }
 
+  const iconTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-live-icon-mime-'));
+  try {
+    fs.writeFileSync(path.join(iconTemp, 'favicon.ico'), 'icon-bytes');
+    fs.mkdirSync(path.join(iconTemp, '.firebase'));
+    fs.writeFileSync(path.join(iconTemp, '.firebase', 'hosting..cache'), 'favicon.ico,0,test\n');
+    const pagesIcon = await inspectLiveOrigin(iconTemp, PAGES_ORIGIN, {
+      approvedAssets:['favicon.ico'], firebaseHosted:false,
+      fetchImpl:async (url) => {
+        const relative = new URL(url).pathname.replace(/^\/ResQ-102\//, '').replace(/^\//, '');
+        if (PRIVATE_PROBES.includes(relative)) return response(404);
+        return response(200, 'icon-bytes', { 'content-type':'image/vnd.microsoft.icon' });
+      }
+    });
+    assert.equal(pagesIcon.ok, true, 'GitHub Pages image/vnd.microsoft.icon is a valid exact MIME');
+  } finally {
+    fs.rmSync(iconTemp, { recursive:true, force:true });
+  }
+
   await assert.rejects(() => verifyLiveDualHost(temp, {
     approvedAssets:APPROVED, pagesAttempts:1, waitMs:0, wait:async () => {},
     fetchImpl:async (url) => {

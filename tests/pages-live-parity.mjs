@@ -16,7 +16,7 @@ const PRIVATE_PROBES = Object.freeze([
 const SAMPLE_LIMIT = 20;
 const CONTENT_TYPES = Object.freeze({
   '.css':Object.freeze(['text/css']), '.html':Object.freeze(['text/html']),
-  '.ico':Object.freeze(['image/x-icon']), '.jpg':Object.freeze(['image/jpeg']),
+  '.ico':Object.freeze(['image/x-icon', 'image/vnd.microsoft.icon']), '.jpg':Object.freeze(['image/jpeg']),
   '.js':Object.freeze(['text/javascript', 'application/javascript']),
   '.json':Object.freeze(['application/json']), '.png':Object.freeze(['image/png'])
 });
