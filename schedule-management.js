@@ -378,11 +378,11 @@ function closeEditDrawer(fromHistory) {
   document.body.classList.remove('drawer-open');
   const focus = state.editDrawerReturnFocus;
   state.editDrawerReturnFocus = null;
+  if (focus && document.contains(focus)) focus.focus();
   if (!fromHistory && history.state && history.state.scheduleEditDrawer) {
     history.back();
     return;
   }
-  if (focus && document.contains(focus)) focus.focus();
 }
 
 workflowAction('import').addEventListener('click', () => {

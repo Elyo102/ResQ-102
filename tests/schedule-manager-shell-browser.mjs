@@ -118,6 +118,20 @@ try {
     assert.equal(await opener.evaluate((node) => document.activeElement === node), true,
       'closing the drawer did not restore focus to the pencil');
   });
+
+  await test('close button and Escape restore focus to the pencil', async () => {
+    const opener = desktop.page.locator('#editDrawerOpen');
+    const drawer = desktop.page.locator('#editDrawer');
+    for (const closeWith of ['button', 'escape']) {
+      await opener.click();
+      await drawer.waitFor({ state:'visible' });
+      if (closeWith === 'button') await desktop.page.locator('#editDrawerClose').click();
+      else await desktop.page.keyboard.press('Escape');
+      await drawer.waitFor({ state:'hidden' });
+      assert.equal(await opener.evaluate((node) => document.activeElement === node), true,
+        `${closeWith} did not restore focus to the pencil`);
+    }
+  });
   await desktop.context.close();
 
   const html = fs.readFileSync(path.join(root, 'schedule-management.html'), 'utf8');
@@ -174,4 +188,4 @@ try {
   server.close();
 }
 
-console.log(`schedule manager shell browser: ${passed}/7 passed`);
+console.log(`schedule manager shell browser: ${passed}/8 passed`);
