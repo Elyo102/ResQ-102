@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refreshInstalledApp } from '../pwa.js';
+import { applyReadyUpdate, fetchLatestReleaseVersion, refreshInstalledApp } from '../pwa.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
@@ -69,7 +69,8 @@ async function scenario(kind, activate = true, updateFails = false) {
   };
 
   const result = await refreshInstalledApp({
-    version: release.v, serviceWorker: sw, cacheStorage, location,
+    version: release.v, runningVersion: release.v,
+    serviceWorker: sw, cacheStorage, location,
     timeoutMs: activate ? 50 : 1, now: () => 12345
   });
   return { result, worker, updates, deleted, replaced };
@@ -121,4 +122,111 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     'only an explicit user-approved message activates a waiting update');
 }
 
-console.log('PWA update lifecycle: 8/8 PASS');
+{
+  const calls = [];
+  const version = await fetchLatestReleaseVersion({
+    now: () => 777,
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ v: '42H.18' }) };
+    }
+  });
+  assert.equal(version, '42H.18', 'the update flow reads the newly deployed release version');
+  assert.deepEqual(calls, [{
+    url: './version.json?update_check=777',
+    options: { cache: 'no-store' }
+  }], 'the release manifest is fetched without a stale browser cache');
+}
+
+{
+  const refreshed = [];
+  const result = await applyReadyUpdate({
+    document: { querySelector: () => null },
+    fetch: async () => ({ ok: true, json: async () => ({ v: '42H.18' }) }),
+    refresh: async (options) => { refreshed.push(options); return { workerActivated: true }; }
+  });
+  assert.equal(result.updated, true, 'a verified release can be applied');
+  assert.equal(refreshed[0].version, '42H.18', 'cache cleanup keeps the new release cache');
+}
+
+{
+  let refreshes = 0;
+  const result = await applyReadyUpdate({
+    document: { querySelector: () => null },
+    fetch: async () => { throw new Error('offline'); },
+    refresh: async () => { refreshes += 1; }
+  });
+  assert.equal(result.updated, false, 'manifest failure is reported');
+  assert.equal(refreshes, 0, 'manifest failure cannot activate, delete caches, or reload');
+}
+
+{
+  let fetches = 0;
+  const result = await applyReadyUpdate({
+    document: { querySelectorAll: () => [{ files: [{}] }], querySelector: () => null },
+    fetch: async () => { fetches += 1; }
+  });
+  assert.equal(result.updated, false, 'a selected file blocks the update');
+  assert.equal(result.reason, 'blocked', 'the caller receives a stable block reason');
+  assert.equal(fetches, 0, 'a blocked update performs no network or lifecycle side effect');
+}
+
+{
+  const doc = {
+    dirty: false,
+    querySelectorAll() { return this.dirty ? [{ files: [{}] }] : []; },
+    querySelector: () => null
+  };
+  let refreshes = 0;
+  const result = await applyReadyUpdate({
+    document: doc,
+    fetch: async () => {
+      doc.dirty = true;
+      return { ok: true, json: async () => ({ v: '42H.18' }) };
+    },
+    refresh: async () => { refreshes += 1; }
+  });
+  assert.equal(result.reason, 'blocked',
+    'a form that becomes dirty during the version fetch blocks activation');
+  assert.equal(refreshes, 0, 'the guard is checked again immediately before activation');
+}
+
+{
+  const result = await applyReadyUpdate({
+    document: { querySelectorAll: () => [], querySelector: () => null },
+    fetch: async () => ({ ok: true, json: async () => ({ v: '42H.18' }) }),
+    refresh: async () => { throw new Error('boom'); }
+  });
+  assert.equal(result.reason, 'activation-failed', 'an unexpected refresh failure is contained');
+  assert.equal(result.updated, false, 'a thrown refresh is never reported as updated');
+}
+
+{
+  const sw = new Events();
+  sw.getRegistration = async () => ({
+    waiting: null,
+    installing: null,
+    active: {},
+    update: async () => {}
+  });
+  const deleted = [];
+  const replaced = [];
+  const result = await refreshInstalledApp({
+    version: '42H.18', runningVersion: release.v, requireCandidate: true,
+    serviceWorker: sw,
+    cacheStorage: {
+      keys: async () => ['resq-v42h17-release1'],
+      delete: async (key) => { deleted.push(key); return true; }
+    },
+    location: {
+      href: 'https://station-102.web.app/login.html',
+      replace: (url) => replaced.push(url)
+    }
+  });
+  assert.equal(result.workerActivated, false,
+    'a newer manifest without an exact worker candidate is not activation proof');
+  assert.deepEqual(deleted, [], 'an unproven update cannot delete the current offline cache');
+  assert.deepEqual(replaced, [], 'an unproven update cannot reload the page');
+}
+
+console.log('PWA update lifecycle: 15/15 PASS');

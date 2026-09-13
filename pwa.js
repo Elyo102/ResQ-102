@@ -1,3 +1,5 @@
+import { APP_VERSION } from './version.js?v=42h17';
+
 // התקנה על מסך הבית.
 //
 // שני עולמות, ורק אחד מהם משתף פעולה:
@@ -14,6 +16,234 @@
 // בין מערכת שנכנסים אליה לבין קישור ששולחים בוואטסאפ.
 
 let deferred = null;
+let updateCoordinator = null;
+let updateReadyInfo = null;
+const updateGuards = new Set();
+
+export function registerPwaUpdateGuard(guard) {
+  if (typeof guard !== 'function') throw new TypeError('update guard must be a function');
+  updateGuards.add(guard);
+  return function () { updateGuards.delete(guard); };
+}
+
+function updateBlockReason(documentLike) {
+  const doc = documentLike || (typeof document !== 'undefined' ? document : null);
+  if (doc && typeof doc.querySelectorAll === 'function') {
+    const files = doc.querySelectorAll('input[type="file"]');
+    for (const input of files) {
+      if (input && input.files && input.files.length) return 'יש קובץ שנבחר ועדיין לא נשמר.';
+    }
+    if (doc.querySelector('[data-pwa-update-blocked="true"]')) {
+      return 'יש פעולה או טיוטה שעדיין לא הסתיימה.';
+    }
+  }
+  for (const guard of updateGuards) {
+    let result;
+    try { result = guard(); }
+    catch (_) { return 'לא ניתן לוודא שהמסך מוכן לעדכון.'; }
+    if (result === false) return 'יש פעולה או טיוטה שעדיין לא הסתיימה.';
+    if (typeof result === 'string' && result.trim()) return result.trim();
+    if (result && result.safe === false) {
+      return String(result.reason || 'יש פעולה או טיוטה שעדיין לא הסתיימה.');
+    }
+  }
+  return '';
+}
+
+export async function fetchLatestReleaseVersion(options) {
+  const o = options || {};
+  const fetchLike = o.fetch || (typeof fetch === 'function' ? fetch : null);
+  const now = typeof o.now === 'function' ? o.now : Date.now;
+  if (!fetchLike) throw new Error('version-fetch-unavailable');
+  const response = await fetchLike('./version.json?update_check=' + now(), { cache:'no-store' });
+  if (!response || response.ok !== true || typeof response.json !== 'function') {
+    throw new Error('version-fetch-failed');
+  }
+  const body = await response.json();
+  const version = body && typeof body.v === 'string' ? body.v.trim() : '';
+  if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,31}$/.test(version)) {
+    throw new Error('version-invalid');
+  }
+  return version;
+}
+
+export async function applyReadyUpdate(options) {
+  const o = options || {};
+  const blocked = updateBlockReason(o.document);
+  if (blocked) return { updated:false, blocked, reason:'blocked' };
+  let version;
+  try {
+    version = await fetchLatestReleaseVersion({ fetch:o.fetch, now:o.now });
+  } catch (_) {
+    return { updated:false, blocked:'', reason:'version-unavailable' };
+  }
+  const blockedAfterFetch = updateBlockReason(o.document);
+  if (blockedAfterFetch) return { updated:false, blocked:blockedAfterFetch, reason:'blocked' };
+  const runningVersion = String(o.runningVersion || APP_VERSION);
+  if (version === runningVersion) {
+    return { updated:false, blocked:'', reason:'version-not-advanced', version };
+  }
+  const refresh = typeof o.refresh === 'function' ? o.refresh : refreshInstalledApp;
+  let result;
+  try {
+    result = await refresh(Object.assign({}, o.refreshOptions, {
+      version,
+      runningVersion,
+      candidate:o.candidate || null,
+      requireCandidate:true
+    }));
+  } catch (_) {
+    return { updated:false, blocked:'', reason:'activation-failed', version };
+  }
+  return { updated:result && result.workerActivated === true, blocked:'',
+    reason:result && result.workerActivated === true ? 'updated' : 'activation-failed',
+    version, result };
+}
+
+export function createPwaUpdateCoordinator(options) {
+  const o = options || {};
+  const serviceWorker = o.serviceWorker ||
+    (typeof navigator !== 'undefined' ? navigator.serviceWorker : null);
+  const windowLike = o.window || (typeof window !== 'undefined' ? window : null);
+  const documentLike = o.document || (typeof document !== 'undefined' ? document : null);
+  const now = typeof o.now === 'function' ? o.now : Date.now;
+  const interval = Number.isFinite(o.intervalMs) ? Math.max(1000, o.intervalMs) : 300000;
+  const retry = Number.isFinite(o.retryMs) ? Math.max(1000, o.retryMs) : 30000;
+  const onReady = typeof o.onReady === 'function' ? o.onReady : function () {};
+  let registration = null;
+  let started = false;
+  let stopped = false;
+  let hadController = Boolean(serviceWorker && serviceWorker.controller);
+  let lastSuccess = -Infinity;
+  let lastFailure = -Infinity;
+  let inFlight = null;
+  let watchedWorker = null;
+  let lastReadyWorker = null;
+
+  function ready(reason, worker) {
+    if (stopped || !hadController || !registration) return;
+    const candidate = worker || registration.waiting || watchedWorker || null;
+    if (candidate && candidate === lastReadyWorker) return;
+    lastReadyWorker = candidate;
+    onReady({ reason, registration, worker:candidate });
+  }
+  function inspectWorker() {
+    if (!watchedWorker) return;
+    if (watchedWorker.state === 'installed') ready('installed', watchedWorker);
+  }
+  function watch(worker) {
+    if (!worker || worker === watchedWorker) return;
+    if (watchedWorker && watchedWorker.removeEventListener) {
+      watchedWorker.removeEventListener('statechange', inspectWorker);
+    }
+    watchedWorker = worker;
+    if (worker.addEventListener) worker.addEventListener('statechange', inspectWorker);
+    inspectWorker();
+  }
+  function detect() {
+    if (!registration) return;
+    if (registration.waiting) ready('waiting', registration.waiting);
+    watch(registration.installing);
+  }
+  function onUpdateFound() { detect(); }
+  function onControllerChange() {
+    if (hadController) {
+      const candidate = watchedWorker && watchedWorker.state === 'activated'
+        ? watchedWorker
+        : (serviceWorker && serviceWorker.controller);
+      ready('controllerchange', candidate);
+    }
+    else hadController = true;
+  }
+  async function check() {
+    if (stopped || !registration || typeof registration.update !== 'function') return false;
+    if (inFlight) return inFlight;
+    const t = now();
+    if (t - lastSuccess < interval || t - lastFailure < retry) return false;
+    inFlight = Promise.resolve().then(() => registration.update()).then(function () {
+      lastSuccess = now();
+      detect();
+      return true;
+    }, function () {
+      lastFailure = now();
+      return false;
+    }).finally(function () { inFlight = null; });
+    return inFlight;
+  }
+  function onPageShow() { void check(); }
+  function onVisibility() {
+    if (!documentLike || documentLike.visibilityState === 'visible') void check();
+  }
+  function start(nextRegistration) {
+    if (started || stopped) return api;
+    registration = nextRegistration || null;
+    started = true;
+    if (!registration) return api;
+    if (registration.addEventListener) registration.addEventListener('updatefound', onUpdateFound);
+    if (serviceWorker && serviceWorker.addEventListener) {
+      serviceWorker.addEventListener('controllerchange', onControllerChange);
+    }
+    if (windowLike && windowLike.addEventListener) windowLike.addEventListener('pageshow', onPageShow);
+    if (documentLike && documentLike.addEventListener) {
+      documentLike.addEventListener('visibilitychange', onVisibility);
+    }
+    detect();
+    void check();
+    return api;
+  }
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    if (registration && registration.removeEventListener) registration.removeEventListener('updatefound', onUpdateFound);
+    if (serviceWorker && serviceWorker.removeEventListener) serviceWorker.removeEventListener('controllerchange', onControllerChange);
+    if (windowLike && windowLike.removeEventListener) windowLike.removeEventListener('pageshow', onPageShow);
+    if (documentLike && documentLike.removeEventListener) documentLike.removeEventListener('visibilitychange', onVisibility);
+    if (watchedWorker && watchedWorker.removeEventListener) watchedWorker.removeEventListener('statechange', inspectWorker);
+  }
+  const api = Object.freeze({ start, stop, check });
+  return api;
+}
+
+function showUpdateReady(info) {
+  updateReadyInfo = info || updateReadyInfo;
+  if (typeof document === 'undefined' || document.getElementById('pwaUpdateBar')) return;
+  style();
+  const bar = document.createElement('div');
+  bar.id = 'pwaUpdateBar';
+  bar.setAttribute('role', 'status');
+  const text = document.createElement('div');
+  text.className = 'tx';
+  const title = document.createElement('b');
+  title.textContent = 'גרסה חדשה של ResQ מוכנה';
+  const note = document.createElement('span');
+  note.textContent = 'רענון יתבצע רק לאחר אישור מפורש שלך.';
+  const button = document.createElement('button');
+  button.className = 'go';
+  button.type = 'button';
+  button.textContent = 'עדכן עכשיו';
+  text.append(title, note);
+  bar.append(text, button);
+  document.body.appendChild(bar);
+  button.addEventListener('click', async function () {
+    const blocked = updateBlockReason(document);
+    if (blocked) {
+      note.textContent = blocked + ' שמור או סיים אותה ואז נסה שוב.';
+      return;
+    }
+    button.disabled = true;
+    note.textContent = 'מעדכן את האפליקציה…';
+    const outcome = await applyReadyUpdate({
+      document,
+      candidate:updateReadyInfo && updateReadyInfo.worker
+    });
+    if (!outcome.updated) {
+      button.disabled = false;
+      note.textContent = outcome.blocked
+        ? outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.'
+        : 'העדכון לא הושלם. אפשר לנסות שוב כשיש חיבור יציב.';
+    }
+  });
+}
 
 export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches ||
@@ -99,9 +329,15 @@ export async function refreshInstalledApp(options) {
   const locationLike = o.location ||
     (typeof window !== 'undefined' ? window.location : null);
   const now = typeof o.now === 'function' ? o.now : Date.now;
-  let workerActivated = true;
+  let workerActivated = false;
 
-  if (serviceWorker && typeof serviceWorker.getRegistration === 'function') {
+  if (o.candidate) {
+    workerActivated = await activateAvailableWorker(
+      o.candidate, serviceWorker, o.timeoutMs
+    );
+  }
+
+  if (!o.candidate && serviceWorker && typeof serviceWorker.getRegistration === 'function') {
     let registration = null;
     try { registration = await serviceWorker.getRegistration(); }
     catch (ignore) { workerActivated = false; }
@@ -115,7 +351,9 @@ export async function refreshInstalledApp(options) {
         workerActivated = await activateAvailableWorker(
           candidate, serviceWorker, o.timeoutMs
         );
-      } else if (!updateOk) workerActivated = false;
+      } else if (!o.requireCandidate && updateOk && String(o.version || '') === String(o.runningVersion || '')) {
+        workerActivated = true;
+      }
     }
   }
 
@@ -195,28 +433,30 @@ function style() {
   const st = document.createElement('style');
   st.id = 'pwaStyle';
   st.textContent = [
-    '#pwaBar{position:fixed;inset-inline:12px;bottom:12px;z-index:9000;',
+    '#pwaBar,#pwaUpdateBar{position:fixed;inset-inline:12px;',
+    '  bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:9000;',
     '  display:flex;align-items:center;gap:12px;direction:rtl;',
     '  background:#1e2126;border:1px solid #2c3036;border-radius:13px;',
     '  padding:13px 15px;box-shadow:0 10px 34px rgba(0,0,0,.45);',
     '  font-family:"Segoe UI",Arial,sans-serif;max-width:520px;',
     '  margin-inline:auto}',
     '#pwaBar .ic{font-size:26px;flex:none;line-height:1}',
-    '#pwaBar .tx{flex:1;min-width:0}',
-    '#pwaBar .tx b{display:block;color:#e8eaed;font-size:14.5px;',
+    '#pwaBar .tx,#pwaUpdateBar .tx{flex:1;min-width:0}',
+    '#pwaBar .tx b,#pwaUpdateBar .tx b{display:block;color:#e8eaed;font-size:14.5px;',
     '  font-weight:700;margin-bottom:2px}',
-    '#pwaBar .tx span{display:block;color:#9aa0a6;font-size:12.5px;',
+    '#pwaBar .tx span,#pwaUpdateBar .tx span{display:block;color:#9aa0a6;font-size:12.5px;',
     '  line-height:1.6}',
-    '#pwaBar .go{flex:none;width:auto;margin:0;background:#e8590c;',
+    '#pwaBar .go,#pwaUpdateBar .go{flex:none;width:auto;margin:0;background:#e8590c;',
     '  border:1px solid #e8590c;color:#fff;border-radius:9px;',
     '  padding:10px 18px;font-family:inherit;font-size:14px;',
-    '  font-weight:700;cursor:pointer}',
+    '  font-weight:700;cursor:pointer;min-height:44px}',
+    '#pwaUpdateBar .go:disabled{opacity:.62;cursor:wait}',
     '#pwaBar .x{flex:none;width:auto;margin:0;background:transparent;',
     '  border:0;color:#9aa0a6;font-size:22px;cursor:pointer;',
     '  padding:0 4px;line-height:1}',
     '#pwaBar .x:hover{color:#e8eaed}',
     '@media (max-width:420px){',
-    '  #pwaBar{gap:9px;padding:11px 12px}',
+    '  #pwaBar,#pwaUpdateBar{gap:9px;padding:11px 12px}',
     '  #pwaBar .ic{font-size:21px}}'
   ].join('');
   document.head.appendChild(st);
@@ -229,7 +469,11 @@ export function initPWA(opts) {
     e.preventDefault();
     deferred = e;
   });
-  registerSW();
+  registerSW().then(function (registration) {
+    if (!registration || updateCoordinator) return;
+    updateCoordinator = createPwaUpdateCoordinator({ onReady:showUpdateReady });
+    updateCoordinator.start(registration);
+  });
 
   // ההצעה מחכה לרגע שהמשתמש כבר בפנים. שורה שקופצת על מסך
   // הכניסה מפריעה למי שרק רוצה להתחבר.

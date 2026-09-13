@@ -1,6 +1,7 @@
 import { firebaseConfig } from './firebase-config.js?v=42h17';
 import { renderNav, renderStuckNav } from './nav.js?v=42h17';
-import { initPWA } from './pwa.js?v=42h17';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h17';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h17';
 import { initAppCheck } from './appcheck.js?v=42h17';
 import { readScheduleFile } from './schedule-file-import.js?v=42h17';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -76,6 +77,7 @@ const state = {
 };
 
 renderStuckNav('');
+registerPwaUpdateGuard(() => schedulePwaUpdateGuard(state, document));
 initPWA({ offer: false });
 
 const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',

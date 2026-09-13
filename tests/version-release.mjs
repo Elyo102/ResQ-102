@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.17';
 const EXPECTED_DATE = '13.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 253; // 42H.17 refreshes the role-aware home experience and PWA shell.
+const EXPECTED_VERSIONED_REFERENCES = 255; // 42H.17 refreshes the role-aware home experience and PWA shell.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
@@ -166,8 +166,8 @@ mustFail('vehicle business query mutation', replaceExactlyOne(files, 'faults.htm
   "location.href = './vehicle.html?v=' + encodeURIComponent(v.id);",
   "location.href = './vehicle.html?v=" + key + "';"));
 mustFail('offline module closure mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  "'./schedule-management.js', './schedule-file-import.js', './board.html'",
-  "'./schedule-management.js', './board.html'"));
+  "'./schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html'",
+  "'./schedule-management.js', './schedule-update-guard.js', './board.html'"));
 const missingFleet = replaceExactlyOne(files, 'firebase-messaging-sw.js',
   "'./faults.js', './fleet.js',", "'./faults.js',");
 for (const entry of ['board.html', 'faults.html']) {

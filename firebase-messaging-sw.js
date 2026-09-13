@@ -33,7 +33,7 @@ const CACHE = 'resq-v42h17-release1';
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
   './login.html', './schedule.html', './schedule-management.html',
-  './schedule-management.js', './schedule-file-import.js', './board.html', './attendance.html',
+  './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
   './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css',
