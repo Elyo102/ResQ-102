@@ -95,7 +95,7 @@ try {
   const page = await browser.newPage();
   await page.route('**/*', route => {
     const name = new URL(route.request().url()).pathname.slice(1);
-    return route.fulfill({ contentType: name.endsWith('.js') ? 'text/javascript' : 'text/html', body: ['hr-local-export.js','hr-local-export-ui.js'].includes(name) ? fs.readFileSync(path.join(root,name),'utf8') : '<div id="root"></div><input id="month" value="2026-09">' });
+    return route.fulfill({ contentType: name.endsWith('.js') ? 'text/javascript' : 'text/html', body: ['hr-local-export.js','hr-local-export-ui.js','pwa.js','version.js'].includes(name) ? fs.readFileSync(path.join(root,name),'utf8') : '<div id="root"></div><input id="month" value="2026-09">' });
   });
   await page.goto('http://localhost:41999/');
   await check('actual UI unsupported keeps ZIP fallback and has no storage', async () => {

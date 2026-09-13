@@ -38,6 +38,9 @@ async function fixture({ record = null } = {}) {
     if (pathname === '/hr-workforce-ui.css') return route.fulfill({
       contentType: 'text/css; charset=utf-8', body: fs.readFileSync(path.join(root, 'hr-workforce-ui.css'))
     });
+    if (pathname === '/pwa.js' || pathname === '/version.js') return route.fulfill({
+      contentType: 'text/javascript; charset=utf-8', body: fs.readFileSync(path.join(root, pathname.slice(1)))
+    });
     return route.fulfill({ contentType: 'text/html; charset=utf-8', body: html });
   });
   await context.addInitScript(({ initial }) => {

@@ -1,3 +1,5 @@
+import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
+
 // Isolated private-attachment UI. It owns no transport, no callable name and
 // no Firebase import: the host adapter carries all five service methods and
 // verifies the server epoch against token identity before returning. The
@@ -168,6 +170,10 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
   let owner = usableSession(safeSession()), disposed = false;
   let fence = 0, ticket = 0, context = null, locked = false;
   let pick = null, selecting = false, pickProblem = null;
+  const unregisterUpdateGuard = registerPwaUpdateGuard(() =>
+    selecting || (pick && !['ready', 'failed'].includes(pick.phase))
+      ? { safe:false, reason:'יש קובץ שנבחר או העלאה שעדיין לא הסתיימה.' }
+      : { safe:true });
   let rows = [], cursor = null, listRun = 0, listActive = 0, listProblem = null;
   // id -> the run token that owns this download. A completion that no longer
   // owns the id must not clear the busy state of the request that replaced it.
@@ -858,6 +864,7 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
     },
     isLocked() { return locked; },
     destroy() {
+      unregisterUpdateGuard();
       if (disposed) return;
       // Invalidate first, so the host is told the lock is released while the
       // callback is still allowed to run.

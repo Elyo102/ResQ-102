@@ -7,7 +7,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.resolve(root,'../reports/hr-workspace-20260907/archive-validation');fs.mkdirSync(output,{recursive:true});
 const browser=await chromium.launch();let passed=0;
 try{
-const page=await browser.newPage();await page.route('**/*',r=>{const name=new URL(r.request().url()).pathname.slice(1);return r.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,['hr-month-archive.js','hr-month-archive-ui.js'].includes(name)?name:'hr-month-archive.js'),'utf8')});});
+const page=await browser.newPage();await page.route('**/*',r=>{const name=new URL(r.request().url()).pathname.slice(1);return r.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,['hr-month-archive.js','hr-month-archive-ui.js','pwa.js','version.js'].includes(name)?name:'hr-month-archive.js'),'utf8')});});
 await page.goto('http://127.0.0.1:41993/hr-month-archive.js');
 const results=await page.evaluate(async()=>{
   const {buildMonthArchive,buildLocalMonthFiles,renderPdf,zipFiles,safeName}=await import('/hr-month-archive.js');
