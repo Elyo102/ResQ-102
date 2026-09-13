@@ -1185,6 +1185,11 @@ service cloud.firestore {
                       && request.resource.data.get('title', '').size() > 0
                       && request.resource.data.get('title', '').size() <= 80
                       && request.resource.data.get('desc', '').size() <= 600
+                      && request.resource.data.get('created_key', '') is string
+                      && request.resource.data.get('created_key', '')
+                           .matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$')
+                      && request.resource.data.get('severity', '') in
+                           ['unset', 'minor', 'limiting', 'major', 'blocking', 'critical']
                       && request.resource.data.get('status', '') == 'open';
 
         allow update: if (staff(sid) || resource.data.get('by_uid', '') == request.auth.uid)

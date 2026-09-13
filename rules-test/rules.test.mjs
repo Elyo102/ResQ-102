@@ -1043,7 +1043,19 @@ head('10 · תקלות וחפיפת משמרת');
 await ok('כבאי מדווח תקלה',
   setDoc(doc(ff, `stations/${SID}/faults/new_f`), {
     by_uid: 'u_ff', by_name: 'כבאי א', title: 'ברז דולף',
-    desc: 'תיאור', status: 'open', kind: 'general' }));
+    desc: 'תיאור', status: 'open', kind: 'general', severity: 'unset',
+    created_key: '2026-09-13T08:00:00.000Z' }));
+
+await blocked('🔒 תקלה בלי מפתח זמן אינה יכולה להיעלם מרשימות הבית',
+  setDoc(doc(ff, `stations/${SID}/faults/missing_created_key`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'ברז דולף',
+    desc: 'תיאור', status: 'open', kind: 'general', severity: 'unset' }));
+
+await blocked('🔒 תקלה בלי חומרה אינה יכולה להיעלם מהערכת הבית',
+  setDoc(doc(ff, `stations/${SID}/faults/missing_severity`), {
+    by_uid: 'u_ff', by_name: 'כבאי א', title: 'ברז דולף',
+    desc: 'תיאור', status: 'open', kind: 'general',
+    created_key: '2026-09-13T08:00:00.000Z' }));
 
 await blocked('🔒 כבאי מדווח תקלה בשם מישהו אחר',
   setDoc(doc(ff, `stations/${SID}/faults/forge_f`), {
