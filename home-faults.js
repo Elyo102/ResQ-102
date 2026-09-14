@@ -65,7 +65,13 @@ function render(session) {
     const on = tab.dataset.faultGroup === selected;
     tab.classList.toggle('is-active', on);
     tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.tabIndex = on ? 0 : -1;
   });
+  const selectedTab = session.elements.tabs.find((tab) =>
+    tab.dataset.faultGroup === selected);
+  if (selectedTab && selectedTab.id) {
+    session.elements.list.setAttribute('aria-labelledby', selectedTab.id);
+  }
   session.elements.status.textContent = session.partial
     ? 'מוצגות התקלות האחרונות. הרשימה המלאה זמינה במסך התקלות.' : '';
 }
@@ -75,6 +81,10 @@ export function destroyHomeFaults() {
   active = null;
   if (prior && typeof prior.unsubscribe === 'function') prior.unsubscribe();
   if (prior) {
+    prior.elements.tabs.forEach((tab) => {
+      tab.onclick = null;
+      tab.onkeydown = null;
+    });
     prior.rows = [];
     prior.elements.list.replaceChildren();
     prior.elements.status.textContent = '';
@@ -96,6 +106,23 @@ export function initHomeFaults(options) {
       if (active !== session || !GROUPS.includes(tab.dataset.faultGroup)) return;
       session.selected = tab.dataset.faultGroup;
       render(session);
+    };
+    tab.onkeydown = (event) => {
+      if (active !== session || !event) return;
+      let target = null;
+      if (event.key === 'Home') target = GROUPS[0];
+      else if (event.key === 'End') target = GROUPS[GROUPS.length - 1];
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const current = GROUPS.indexOf(session.selected);
+        target = GROUPS[(current + 1) % GROUPS.length];
+      }
+      if (!target) return;
+      event.preventDefault();
+      session.selected = target;
+      render(session);
+      const next = elements.tabs.find((candidate) =>
+        candidate.dataset.faultGroup === target);
+      if (next) next.focus();
     };
   });
   elements.status.textContent = 'טוען תקלות פתוחות…';

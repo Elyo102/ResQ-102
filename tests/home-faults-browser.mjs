@@ -18,7 +18,7 @@ async function check(name, run) { await run(); passed += 1; console.log('PASS ' 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
-  await page.setContent(`<button data-fault-group="operational"></button><button data-fault-group="building"></button><b id="oc"></b><b id="bc"></b><div id="status"></div><div id="list"></div><div id="empty" class="hide"></div>`);
+  await page.setContent(`<button id="tab-op" role="tab" data-fault-group="operational"></button><button id="tab-building" role="tab" data-fault-group="building"></button><b id="oc"></b><b id="bc"></b><div id="status"></div><div id="list" role="tabpanel"></div><div id="empty" class="hide"></div>`);
   await page.addScriptTag({ content:source });
   await page.evaluate(() => {
     const el = (id) => document.getElementById(id);
@@ -77,6 +77,26 @@ try {
       window.snapshots[newIndex].ok({ docs:[{ id:'new', data:() => ({ status:'open', title:'חדש' }) }] });
     }, indexes);
     assert.equal(await page.locator('.home-fault-title').textContent(), 'חדש');
+  });
+  await check('fault tabs expose roving keyboard navigation and panel ownership', async () => {
+    const operational = page.locator('[data-fault-group="operational"]');
+    const building = page.locator('[data-fault-group="building"]');
+    await operational.click();
+    assert.equal(await operational.getAttribute('tabindex'), '0');
+    assert.equal(await building.getAttribute('tabindex'), '-1');
+    assert.equal(await page.locator('#list').getAttribute('aria-labelledby'), 'tab-op');
+    await operational.press('End');
+    assert.equal(await building.getAttribute('aria-selected'), 'true');
+    assert.equal(await building.getAttribute('tabindex'), '0');
+    assert.equal(await page.locator('#list').getAttribute('aria-labelledby'), 'tab-building');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-building');
+    await building.press('Home');
+    assert.equal(await operational.getAttribute('aria-selected'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-op');
+    await operational.press('ArrowLeft');
+    assert.equal(await building.getAttribute('aria-selected'), 'true');
+    await building.press('ArrowRight');
+    assert.equal(await operational.getAttribute('aria-selected'), 'true');
   });
   console.log('home faults browser: ' + passed + ' passed');
 } finally { await browser.close(); }

@@ -467,11 +467,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <a href="./faults.html">לכל התקלות ←</a>
         </div>
         <div class="home-fault-tabs" role="tablist" aria-label="סוג התקלה">
-          <button type="button" role="tab" class="home-fault-tab is-active" data-fault-group="operational" aria-selected="true">רכב ומבצעי <b id="homeOperationalCount">0</b></button>
-          <button type="button" role="tab" class="home-fault-tab" data-fault-group="building" aria-selected="false">בינוי ותחזוקה <b id="homeBuildingCount">0</b></button>
+          <button type="button" role="tab" id="homeFaultTabOperational"
+                  class="home-fault-tab is-active" data-fault-group="operational"
+                  aria-selected="true" aria-controls="homeFaultList" tabindex="0">
+            רכב ומבצעי <b id="homeOperationalCount">0</b>
+          </button>
+          <button type="button" role="tab" id="homeFaultTabBuilding"
+                  class="home-fault-tab" data-fault-group="building"
+                  aria-selected="false" aria-controls="homeFaultList" tabindex="-1">
+            בינוי ותחזוקה <b id="homeBuildingCount">0</b>
+          </button>
         </div>
         <div id="homeFaultStatus" class="home-fault-status" aria-live="polite"></div>
-        <div id="homeFaultList" class="home-fault-list"></div>
+        <div id="homeFaultList" class="home-fault-list" role="tabpanel"
+             aria-labelledby="homeFaultTabOperational" tabindex="0"></div>
         <div id="homeFaultEmpty" class="home-fault-empty hide">אין תקלות פתוחות בקטגוריה הזאת.</div>
       </section>
 
