@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.18';
+const EXPECTED_VERSION = '42H.18.1';
 const EXPECTED_DATE = '14.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.18 mobile home and automatic bulletin display receipts.
+const EXPECTED_ASSET_KEY = '42h181';
+const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.18.1 PWA lifecycle hotfix.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
@@ -67,7 +68,8 @@ function audit(files) {
   if (release.v !== EXPECTED_VERSION) errors.push('version.json version is ' + EXPECTED_VERSION);
   if (release.d !== EXPECTED_DATE) errors.push('version.json date is ' + EXPECTED_DATE);
 
-  const key = releaseKey(release.v);
+  const key = EXPECTED_ASSET_KEY;
+  if (key !== releaseKey(release.v)) errors.push('asset key belongs exactly to the visible release');
   const versionSource = files.get('version.js') || '';
   const versionMatches = [...versionSource.matchAll(/export\s+const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   const dateMatches = [...versionSource.matchAll(/export\s+const\s+APP_DATE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
@@ -75,7 +77,7 @@ function audit(files) {
   if (dateMatches.length !== 1 || dateMatches[0]?.[1] !== release.d) errors.push('version.js date matches version.json exactly');
 
   const worker = files.get('firebase-messaging-sw.js') || '';
-  const expectedCache = 'resq-v' + key + '-release2';
+  const expectedCache = 'resq-v' + key + '-release1';
   const cacheMatches = [...worker.matchAll(/const\s+CACHE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (cacheMatches.length !== 1 || cacheMatches[0]?.[1] !== expectedCache) {
     errors.push('service-worker cache is exactly ' + expectedCache);
@@ -148,12 +150,12 @@ if (baseline.errors.length) {
   process.exit(1);
 }
 
-const key = releaseKey(EXPECTED_VERSION);
+const key = EXPECTED_ASSET_KEY;
 mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
 mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
 mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
 mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  'resq-v' + key + '-release2', 'resq-vstale-release2'));
+  'resq-v' + key + '-release1', 'resq-vstale-release1'));
 mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
   './firebase-config.js?v=' + key, './firebase-config.js?v=stale'));
 mustFail('stale CSS query', replaceExactlyOne(files, 'schedule-management.html',

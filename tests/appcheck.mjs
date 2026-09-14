@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
-const releaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const visibleReleaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+const releaseKey = loginSource.match(/\.\/pwa\.js\?v=([a-z0-9]+)/i)?.[1] || '';
 let failed = 0;
 
 function check(ok, label) {
@@ -15,6 +17,8 @@ function check(ok, label) {
 
 const source = fs.readFileSync(path.join(root, 'appcheck.js'), 'utf8');
 const key = source.match(/RECAPTCHA_SITE_KEY\s*=\s*'([^']+)'/)?.[1] || '';
+
+check(releaseKey === visibleReleaseKey, 'asset build key belongs exactly to the visible release');
 
 check(key.length >= 30, 'App Check has a configured public site key');
 check(source.includes('new m.ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY)'),
@@ -65,7 +69,7 @@ for (const item of imports) {
 }
 
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
-check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release2'"),
+check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the PWA cache is rotated for the privacy fix');
 
 if (failed) {

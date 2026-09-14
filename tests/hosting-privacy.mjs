@@ -5,13 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
-const releaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const visibleReleaseKey = String(release.v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+const releaseKey = loginSource.match(/\.\/pwa\.js\?v=([a-z0-9]+)/i)?.[1] || '';
 let failed = 0;
 
 function check(ok, label) {
   console.log((ok ? '✓ ' : '✗ ') + label);
   if (!ok) failed += 1;
 }
+
+check(releaseKey === visibleReleaseKey, 'asset build key belongs exactly to the visible release');
 
 const privateRoster = path.join(root, 'roster-import.js');
 const importHtml = fs.readFileSync(path.join(root, 'import.html'), 'utf8');
@@ -45,7 +49,7 @@ for (const name of ['firebase.attendance-test.json', 'firebase.emulator.42h11.js
 for (const name of fs.readdirSync(root).filter((entry) => /^firebase\..+\.json$/.test(entry))) {
   check(ignoredSensitiveConfig(name), 'every Firebase sidecar config is excluded: ' + name);
 }
-check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release2'"),
+check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
       'the service-worker cache is rotated away from the exposed copy');
 
 const server = http.createServer((req, res) => {

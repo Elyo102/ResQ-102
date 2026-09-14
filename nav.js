@@ -52,9 +52,9 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h18';
-import { assertPresentationOnly } from './role-view.js?v=42h18';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h18';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h181';
+import { assertPresentationOnly } from './role-view.js?v=42h181';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h181';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);

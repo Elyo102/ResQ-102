@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h18">
-<link rel="stylesheet" href="./bulletin.css?v=42h18">
+<link rel="stylesheet" href="./theme.css?v=42h181">
+<link rel="stylesheet" href="./bulletin.css?v=42h181">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -549,20 +549,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h18';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h181';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h18';
+         subStationsForStation } from './stations.js?v=42h181';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h18';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h18';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h18';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h18';
-import { watchCallouts } from './callout.js?v=42h18';
-import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h18';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h18';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h18';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h18';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h18';
+  from './nav.js?v=42h181';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h181';
+import {
+  initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
+} from './pwa.js?v=42h181';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h181';
+import { watchCallouts } from './callout.js?v=42h181';
+import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h181';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h181';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h181';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h181';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h181';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -573,11 +575,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h18';
+  from './monitored-functions.js?v=42h181';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h18';
+import { initAppCheck } from './appcheck.js?v=42h181';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -631,7 +633,6 @@ const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 setPersistence(auth, browserLocalPersistence).catch(function(){});
 
 const $ = id => document.getElementById(id);
-initPWA({ offer: true });
 
 function newRequestId(){
   const bytes = new Uint8Array(16);
@@ -740,6 +741,16 @@ function showView(name){
 // רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
 // מול "רגע..." לנצח. אחרי שש שניות נופלים חזרה לטופס הכניסה.
 let authSettled = false;
+registerPwaUpdateGuard(function () {
+  if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
+  if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
+  const home = $('homeView');
+  if (!home || home.classList.contains('hide')) {
+    return 'השלם את הכניסה לפני הפעלת העדכון.';
+  }
+  return true;
+});
+initPWA({ offer: true });
 setTimeout(function(){ if (!authSettled) showView('auth'); }, 6000);
 
 function esc(s){
@@ -1481,6 +1492,7 @@ async function loadProfile(user, claims, epoch){
     $('homeView').classList.remove('bulletin-enter', 'bulletin-enter-active');
   }
   loginTransitionPending = false;
+  void retryPendingPwaUpdate();
   try { $('pageTitle').focus({ preventScroll: true }); }
   catch (ignore) { $('pageTitle').focus(); }
 }
@@ -1502,34 +1514,36 @@ $('btnUpdate').onclick = async function () {
   b.disabled = true;
   m.className = 'note';
   m.textContent = 'בודק מול השרת…';
-
-  let server = null;
   try {
-    // no-store, ו-t=… כדי שגם מטמון ביניים לא יחזיר עותק ישן.
-    const r = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
-    server = await r.json();
+    const outcome = await applyReadyUpdate({ document, runningVersion:APP_VERSION });
+    if (outcome.updated) {
+      m.className = 'note new';
+      m.textContent = 'העדכון הופעל. האפליקציה נפתחת מחדש…';
+      return;
+    }
+    if (outcome.reason === 'version-not-advanced') {
+      m.textContent = 'אתה על הגרסה האחרונה.';
+    } else if (outcome.blocked) {
+      m.textContent = outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
+    } else if (outcome.reason === 'version-unavailable') {
+      m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+    } else {
+      m.textContent = 'הגרסה החדשה נמצאה אך עדיין לא הופעלה. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+    }
   } catch (e) {
-    m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
-    b.disabled = false;
-    return;
+    m.textContent = 'העדכון לא הושלם. בדוק חיבור לאינטרנט ונסה שוב.';
   }
-
-  if (!server || String(server.v) === String(APP_VERSION)) {
-    m.textContent = 'אתה על הגרסה האחרונה.';
-    b.disabled = false;
-    return;
-  }
-
-  m.className = 'note new';
-  m.textContent = 'יש גרסה חדשה (' + server.v + '). מעדכן…';
-
-  await refreshInstalledApp({ version: server.v });
+  b.disabled = false;
 };
 
 // ---------- שינוי סיסמה ----------
 
 $('btnChangePw').onclick = () => { $('pwMsg').className = 'msg'; showView('pw'); };
-$('btnPwBack').onclick   = () => { showView('home'); $('pageTitle').focus(); };
+$('btnPwBack').onclick   = () => {
+  showView('home');
+  void retryPendingPwaUpdate();
+  $('pageTitle').focus();
+};
 
 $('btnSavePw').onclick = async () => {
   const btn = $('btnSavePw');

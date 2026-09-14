@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyReadyUpdate, fetchLatestReleaseVersion, refreshInstalledApp } from '../pwa.js';
+import {
+  applyDetectedUpdate,
+  applyReadyUpdate,
+  createUpdateReadyHandler,
+  fetchLatestReleaseVersion,
+  refreshInstalledApp,
+  registerPwaUpdateGuard
+} from '../pwa.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
@@ -59,9 +66,10 @@ async function scenario(kind, activate = true, updateFails = false) {
     'resq-v42f1-release1',
     'shared-non-resq-cache'
   ];
+  let cacheReads = 0;
   const deleted = [];
   const cacheStorage = {
-    keys: async () => existing.slice(),
+    keys: async () => { cacheReads += 1; return existing.slice(); },
     delete: async (key) => { deleted.push(key); return true; }
   };
   const replaced = [];
@@ -75,15 +83,17 @@ async function scenario(kind, activate = true, updateFails = false) {
     serviceWorker: sw, cacheStorage, location,
     timeoutMs: activate ? 50 : 1, now: () => 12345
   });
-  return { result, worker, updates, deleted, replaced };
+  return { result, worker, updates, cacheReads, deleted, replaced };
 }
 
 for (const kind of ['waiting', 'installing', 'active']) {
   const got = await scenario(kind);
   assert.equal(got.updates, 1, kind + ': update runs once');
   assert.equal(got.result.workerActivated, true, kind + ': worker is active');
-  assert.deepEqual(got.deleted, ['resq-v41e-release1', 'resq-v42f1-release1'],
-    kind + ': every old ResQ cache is deleted after the new worker activates');
+  assert.equal(got.cacheReads, 0,
+    kind + ': the page never owns service-worker cache cleanup');
+  assert.deepEqual(got.deleted, [],
+    kind + ': the page cannot delete the newly activated release cache');
   assert.equal(got.replaced.length, 1, kind + ': reload runs once');
   assert.ok(got.replaced[0].includes('updated=' + encodeURIComponent(release.v + '-12345')),
     kind + ': reload URL is fresh');
@@ -114,6 +124,13 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
 
 {
   const source = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
+  const normalizedVersion = String(release.v).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+  const assetKey = loginSource.match(/\.\/pwa\.js\?v=([a-z0-9]+)/i)?.[1] || '';
+  assert.equal(assetKey, normalizedVersion,
+    'the asset build key belongs exactly to the visible release');
+  assert.equal(source.includes("const CACHE = 'resq-v" + assetKey + "-release1'"), true,
+    'the service-worker cache identity matches the visible release exactly');
   const installBody = source.slice(source.indexOf("self.addEventListener('install'"),
     source.indexOf("self.addEventListener('activate'"));
   assert.equal(installBody.includes('skipWaiting'), false,
@@ -121,7 +138,10 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   assert.equal(source.includes('Promise.all(CORE_SHELL.map(function (u) { return c.add(u); }))'), true,
     'the minimal release shell is cached atomically');
   assert.equal(source.includes("event.data.type === 'RESQ_SKIP_WAITING'"), true,
-    'only an explicit user-approved message activates a waiting update');
+    'a lifecycle message can activate a waiting update');
+  const pageSource = fs.readFileSync(path.join(root, 'pwa.js'), 'utf8');
+  assert.equal(pageSource.includes('cacheStorage.keys'), false,
+    'page code cannot regress into deleting service-worker caches');
 }
 
 {
@@ -148,7 +168,125 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     refresh: async (options) => { refreshed.push(options); return { workerActivated: true }; }
   });
   assert.equal(result.updated, true, 'a verified release can be applied');
-  assert.equal(refreshed[0].version, futureVersion, 'cache cleanup keeps the new release cache');
+  assert.equal(refreshed[0].version, futureVersion, 'activation receives the verified release version');
+}
+
+{
+  let refreshes = 0;
+  const result = await applyReadyUpdate({
+    runningVersion:'42H.18',
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    fetch:async () => ({ ok:true, json:async () => ({ v:release.v }) }),
+    refresh:async () => { refreshes += 1; return { workerActivated:true }; }
+  });
+  assert.equal(release.v, '42H.18.1', 'the hotfix has a genuinely advanced visible version');
+  assert.equal(result.updated, true, 'a client already on 42H.18 applies the hotfix');
+  assert.equal(refreshes, 1, 'the 42H.18 client activates the candidate exactly once');
+}
+
+{
+  const sw = new Events();
+  const doc = {
+    dirty:false,
+    querySelectorAll() { return this.dirty ? [{ files:[{}] }] : []; },
+    querySelector:() => null
+  };
+  const worker = makeWorker('installed', sw, false);
+  worker.postMessage = function (message) {
+    worker.messages.push(message);
+    doc.dirty = true;
+    worker.state = 'activated';
+    worker.emit('statechange');
+    sw.emit('controllerchange');
+  };
+  const replaced = [];
+  const result = await refreshInstalledApp({
+    document:doc, candidate:worker, version:release.v, runningVersion:'42H.18',
+    serviceWorker:sw, timeoutMs:50,
+    location:{ href:'https://station-102.web.app/login.html', replace:url => replaced.push(url) }
+  });
+  assert.equal(result.workerActivated, true, 'the exact worker may finish activation');
+  assert.equal(result.reloadDeferred, true,
+    'work started during activation defers the destructive reload');
+  assert.equal(replaced.length, 0, 'a late dirty transition cannot lose user input');
+}
+
+{
+  let safe = false;
+  let applies = 0;
+  const unregister = registerPwaUpdateGuard(() => safe || 'הכניסה עדיין לא הסתיימה.');
+  const candidate = { state:'installed' };
+  const handler = createUpdateReadyHandler({
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    apply:async () => { applies += 1; return { updated:true }; },
+    show:() => {}
+  });
+  const blocked = await handler({ worker:candidate });
+  assert.equal(blocked.reason, 'blocked', 'an unresolved login lifecycle blocks auto activation');
+  safe = true;
+  const retried = await handler({ worker:candidate });
+  unregister();
+  assert.equal(retried.updated, true, 'the same candidate can retry after home becomes stable');
+  assert.equal(applies, 1, 'the safe retry activates once');
+}
+
+{
+  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+  const guardAt = loginSource.indexOf('registerPwaUpdateGuard(function ()');
+  const initAt = loginSource.indexOf('initPWA({ offer: true })');
+  assert.ok(guardAt !== -1 && initAt > guardAt,
+    'login installs its lifecycle guard before service-worker discovery');
+  assert.ok(loginSource.includes('void retryPendingPwaUpdate();'),
+    'the stable home lifecycle retries a previously blocked candidate');
+}
+
+{
+  const candidate = { state:'installed' };
+  let refreshes = 0;
+  const result = await applyDetectedUpdate({ worker:candidate }, {
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    fetch:async () => ({ ok:true, json:async () => ({ v:futureVersion }) }),
+    refresh:async (options) => {
+      refreshes += 1;
+      assert.equal(options.candidate, candidate, 'automatic activation owns the exact detected worker');
+      return { workerActivated:true };
+    }
+  });
+  assert.equal(result.updated, true, 'a clean page automatically applies the ready release');
+  assert.equal(refreshes, 1, 'automatic activation runs exactly once');
+}
+
+{
+  let applies = 0;
+  const shown = [];
+  const handler = createUpdateReadyHandler({
+    document:{ querySelectorAll:() => [{ files:[{}] }], querySelector:() => null },
+    apply:async () => { applies += 1; return { updated:true }; },
+    show:(info, message) => shown.push({ info, message })
+  });
+  const result = await handler({ worker:{ state:'installed' } });
+  assert.equal(result.reason, 'blocked', 'dirty work blocks automatic activation');
+  assert.equal(applies, 0, 'a blocked update has no activation side effect');
+  assert.equal(shown.length, 1, 'a blocked update remains visible for manual retry');
+}
+
+{
+  let resolveApply;
+  let applies = 0;
+  const gate = new Promise((resolve) => { resolveApply = resolve; });
+  const candidate = { state:'installed' };
+  const handler = createUpdateReadyHandler({
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    apply:async () => { applies += 1; await gate; return { updated:true }; },
+    show:() => { throw new Error('successful activation must not show fallback'); }
+  });
+  const first = handler({ worker:candidate });
+  const duplicate = handler({ worker:candidate });
+  await Promise.resolve();
+  assert.equal(first, duplicate, 'duplicate lifecycle events share one activation promise');
+  assert.equal(applies, 1, 'duplicate lifecycle events start one activation');
+  resolveApply();
+  assert.equal((await first).updated, true, 'the shared activation completes successfully');
 }
 
 {
@@ -231,4 +369,4 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   assert.deepEqual(replaced, [], 'an unproven update cannot reload the page');
 }
 
-console.log('PWA update lifecycle: 15/15 PASS');
+console.log('PWA update lifecycle: 24/24 PASS');

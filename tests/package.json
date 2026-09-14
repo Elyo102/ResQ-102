@@ -30,7 +30,7 @@
     "pages:source": "node pages-parity-gate.mjs ..",
     "pages:preview": "node pages-live-parity.mjs",
     "pages:live": "node pages-live-parity.mjs",
-    "pwa:coordinator": "node pwa-coordinator.mjs",
+    "pwa:coordinator": "node pwa-coordinator.mjs && node pwa-update.mjs",
     "forms:submit": "node ../functions/form-submissions.test.js && node form-submission-wiring.mjs && node forms-submit-browser.mjs"
   },
   "dependencies": {

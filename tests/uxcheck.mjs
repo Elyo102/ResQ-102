@@ -31,26 +31,30 @@ const pwaRuntime = read('pwa.js');
 const visibleVersion = read('version.js').match(/APP_VERSION\s*=\s*'([^']+)'/)?.[1];
 const visibleDate = read('version.js').match(/APP_DATE\s*=\s*'([^']+)'/)?.[1];
 const serverVersion = JSON.parse(read('version.json'));
-const versionKey = String(visibleVersion || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const loginPage = read('login.html');
+const visibleVersionKey = String(visibleVersion || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const versionKey = loginPage.match(/\.\/pwa\.js\?v=([a-z0-9]+)/i)?.[1] || '';
 check(visibleVersion === serverVersion.v && visibleDate === serverVersion.d,
       'visible and server release versions stay synchronized');
+check(versionKey === visibleVersionKey,
+      'asset build key belongs exactly to the visible release');
 check(loginPage.includes("./version.js?v=" + versionKey),
       'login imports the release-specific version module');
 check(loginPage.includes("./pwa.js?v=" + versionKey),
       'login imports the release-specific PWA update runtime');
-check(serviceWorker.includes("const CACHE = 'resq-v" + versionKey + "-release2'"),
+check(serviceWorker.includes("const CACHE = 'resq-v" + versionKey + "-release1'"),
       'service worker cache belongs to the visible release');
 check(serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
       'service worker activation preserves non-ResQ caches');
 check(pwaRuntime.includes("updateViaCache: 'none'"),
       'service worker update bypasses the browser HTTP cache');
-check(loginPage.includes("refreshInstalledApp({ version: server.v })") &&
+check(loginPage.includes("applyReadyUpdate({ document, runningVersion:APP_VERSION })") &&
       pwaRuntime.includes("RESQ_SKIP_WAITING") &&
       pwaRuntime.includes("searchParams.set('updated'"),
       'update action activates the waiting worker and reloads with a fresh URL');
-check(pwaRuntime.includes("startsWith('resq-')") && pwaRuntime.includes("key !== keep"),
-      'update cleanup preserves the new and non-ResQ caches');
+check(!pwaRuntime.includes('cacheStorage.keys') &&
+      serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
+      'service worker exclusively owns release-cache cleanup');
 check(/caches\.match\(req\s*,\s*\{\s*ignoreSearch\s*:\s*true\s*\}\s*\)/.test(serviceWorker),
       'service worker offline fallback ignores asset version query strings');
 for (const asset of ['./bulletin.js', './bulletin.css']) {
