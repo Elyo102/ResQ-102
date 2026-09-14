@@ -1,3 +1,5 @@
+import { assertPresentationOnly } from './role-view.js?v=42h17';
+
 const ACTION_HREF = Object.freeze({
   open_document:'./hr.html', open_schedule_review:'./schedule-management.html',
   open_hr_reports:'./hr.html', open_maintenance:'./maintenance.html', open_fault:'./faults.html'
@@ -27,9 +29,13 @@ function taskOf(value) {
     id, title, action, roles, summary:text(value.summary, 240), priority:value.priority === 'high' ? 'high' : 'normal'
   } : null;
 }
-function makeTask(task) {
+function makeTask(task, readOnly) {
   const link = document.createElement('a');
-  link.className = 'home-task-card'; link.href = task.action.href;
+  link.className = 'home-task-card';
+  if (readOnly) {
+    link.setAttribute('aria-disabled', 'true');
+    link.title = 'תצוגה בלבד';
+  } else link.href = task.action.href;
   link.dataset.homeTaskId = task.id; link.dataset.priority = task.priority;
   const copy = document.createElement('span');
   const title = document.createElement('strong'); title.textContent = task.title;
@@ -45,13 +51,13 @@ function renderUrgent(session, value) {
   session.elements.urgentTitle.textContent = urgent ? (text(urgent.title, 160) || 'תקלה קריטית פתוחה') : '';
   session.elements.urgentText.textContent = urgent ? text(urgent.summary, 240) : '';
   const action = urgent ? actionOf(urgent.action) : null;
-  if (action && action.type === 'open_fault') session.elements.urgentLink.href = action.href;
+  if (action && action.type === 'open_fault' && !session.readOnly) session.elements.urgentLink.href = action.href;
   else session.elements.urgentLink.removeAttribute('href');
 }
 function renderTasks(session, values) {
   const tasks = (Array.isArray(values) ? values : []).map(taskOf).filter(Boolean)
     .filter((task) => session.role === 'super_admin' || task.roles.includes(session.role));
-  session.elements.taskList.replaceChildren(...tasks.map(makeTask));
+  session.elements.taskList.replaceChildren(...tasks.map((task) => makeTask(task, session.readOnly)));
   session.elements.taskEmpty.classList.toggle('hide', tasks.length !== 0);
 }
 function renderShift(session, value) {
@@ -74,9 +80,11 @@ export function destroyHomeCommand() {
 }
 export function initHomeCommand(options) {
   destroyHomeCommand();
-  const { functions, user, claims, sdk, elements } = options || {};
+  const { functions, user, claims, presentation, sdk, elements } = options || {};
   if (!functions || !user || !text(user.uid, 128) || !sdk || typeof sdk.httpsCallable !== 'function' || !elements) throw new Error('home-command-invalid-options');
-  const session = { uid:user.uid, role:roleOf(claims), elements }; active = session;
+  const displayRole = claims && claims.super === true && assertPresentationOnly(presentation)
+    ? presentation.role_id : roleOf(claims);
+  const session = { uid:user.uid, role:displayRole, readOnly:assertPresentationOnly(presentation), elements }; active = session;
   elements.status.textContent = 'טוען את תמונת המשמרת…';
   const call = sdk.httpsCallable(functions, 'getHomeCommandCenter');
   Promise.resolve(call({})).then((response) => {

@@ -603,7 +603,7 @@ function toggleReplyThread(item) {
 }
 
 function openReplyComposer(item) {
-  if (!state || !state.canShiftCommand) return;
+  if (!state || state.readOnly || !state.canShiftCommand) return;
   openReplyThread(item, true);
   requestAnimationFrame(function () {
     const article = Array.from(document.querySelectorAll('[data-message-id]'))
@@ -615,7 +615,7 @@ function openReplyComposer(item) {
 
 async function publishReply(event, item) {
   event.preventDefault();
-  if (!state || !state.canShiftCommand || state.replyPublishing ||
+  if (!state || state.readOnly || !state.canShiftCommand || state.replyPublishing ||
       !state.replyThread || state.replyThread.messageId !== item.id) return;
   const thread = state.replyThread;
   const draft = replyDraft(thread.boardId, item.id);
@@ -691,7 +691,7 @@ async function publishReply(event, item) {
 }
 
 async function hideReply(item, reply, button) {
-  if (!state || !state.isSuper || button.disabled) return;
+  if (!state || state.readOnly || !state.isSuper || button.disabled) return;
   if (!window.confirm('להסתיר את התגובה? הפעולה תישמר בתיעוד.')) return;
   const owner = state;
   const thread = state.replyThread;
@@ -764,7 +764,7 @@ function renderReplyThread(item) {
     body.className = 'bulletin-reply-text';
     body.textContent = typeof data.text === 'string' ? data.text : '';
     card.appendChild(body);
-    if (state.isSuper) {
+    if (state.isSuper && !state.readOnly) {
       const footer = document.createElement('div');
       footer.className = 'bulletin-reply-footer';
       const hide = document.createElement('button');
@@ -794,7 +794,7 @@ function renderReplyThread(item) {
     section.appendChild(more);
   }
 
-  if (state.canShiftCommand && thread.composing) {
+  if (state.canShiftCommand && !state.readOnly && thread.composing) {
     const draft = replyDraft(thread.boardId, item.id);
     const form = document.createElement('form');
     form.className = 'bulletin-reply-form';
@@ -953,7 +953,7 @@ function renderMessage(item) {
     actions.appendChild(toggle);
   }
 
-  if (state.canShiftCommand) {
+  if (state.canShiftCommand && !state.readOnly) {
     const reply = document.createElement('button');
     reply.type = 'button';
     reply.className = 'bulletin-reply-action';
@@ -970,7 +970,7 @@ function renderMessage(item) {
     actions.appendChild(reply);
   }
 
-  if (state.isSuper) {
+  if (state.isSuper && !state.readOnly) {
     const hide = document.createElement('button');
     hide.type = 'button';
     hide.className = 'bulletin-hide-message';
@@ -1254,7 +1254,7 @@ async function loadBoards() {
     return;
   }
 
-  byId('bulletinCompose').disabled = false;
+  byId('bulletinCompose').disabled = state.readOnly;
   const remembered = safeRead(selectedBoardKey(), '');
   const first = boards.some(function (b) { return b.id === remembered; })
     ? remembered : boards[0].id;
@@ -1303,7 +1303,7 @@ async function loadOlder() {
 }
 
 function showComposer(moveFocus) {
-  if (!state || !state.activeBoard) return;
+  if (!state || state.readOnly || !state.activeBoard) return;
   const form = byId('bulletinForm');
   form.classList.remove('hide');
   byId('bulletinCompose').setAttribute('aria-expanded', 'true');
@@ -1318,7 +1318,7 @@ function hideComposer() {
 
 async function publishMessage(event) {
   event.preventDefault();
-  if (!state || state.publishing || !state.activeBoard) return;
+  if (!state || state.readOnly || state.publishing || !state.activeBoard) return;
 
   const checked = validateBulletinText(byId('bulletinText').value);
   const text = checked.text;
@@ -1431,7 +1431,7 @@ async function publishMessage(event) {
 }
 
 async function hideMessage(item, button) {
-  if (!state || !state.isSuper || button.disabled) return;
+  if (!state || state.readOnly || !state.isSuper || button.disabled) return;
   if (!window.confirm('להסתיר את ההודעה מהלוח? הפעולה תישמר בתיעוד.')) return;
   const boardId = state.activeBoard;
   const owner = state;
@@ -1499,6 +1499,7 @@ function handleOnline() {
 function wireEvents() {
   const signal = state.abort.signal;
   byId('bulletinCompose').addEventListener('click', function () {
+    if (!state || state.readOnly) return;
     const hidden = byId('bulletinForm').classList.contains('hide');
     if (hidden) showComposer(true);
     else hideComposer();
@@ -1571,7 +1572,7 @@ function renderIdentity() {
 }
 
 // options: { db, functions, user, claims, stationId, profile,
-//            sdk, roleLabels, fallbackBoards, canAccess }
+//            sdk, roleLabels, fallbackBoards, canAccess, readOnly }
 export function initBulletin(options) {
   destroyBulletin();
   if (!byId('bulletinBoard')) return null;
@@ -1616,6 +1617,7 @@ export function initBulletin(options) {
     replyUnsubscribe: null,
     replyGeneration: 0,
     canAccess: opts.canAccess !== false,
+    readOnly: opts.readOnly === true,
     isSuper: isSuper,
     canShiftCommand: canShiftCommand,
     postMessage: null,
@@ -1631,7 +1633,7 @@ export function initBulletin(options) {
   byId('bulletinPrivacy').classList.remove('hide');
   byId('boardTabs').classList.remove('hide');
   byId('bulletinFeed').classList.remove('hide');
-  byId('bulletinCompose').classList.remove('hide');
+  byId('bulletinCompose').classList.toggle('hide', state.readOnly);
   byId('bulletinForm').classList.add('hide');
   byId('bulletinCompose').setAttribute('aria-expanded', 'false');
   byId('bulletinCompose').disabled = true;
@@ -1659,7 +1661,7 @@ export function initBulletin(options) {
     byId('bulletinEmpty').textContent = 'לוח המודעות זמין לחברי התחנה בלבד.';
     byId('bulletinEmpty').classList.remove('hide');
     setStatus('', '', false);
-    return { destroy: destroyBulletin };
+    return { destroy: destroyBulletin, setReadOnly: setBulletinReadOnly };
   }
 
   state.postMessage = opts.sdk.httpsCallable(opts.functions, 'postBulletinMessage');
@@ -1683,7 +1685,20 @@ export function initBulletin(options) {
   loadBoards().catch(function () {
     if (state === owner) setStatus('לא הצלחנו לטעון את תחנות המשנה.', 'error', true);
   });
-  return { destroy: destroyBulletin };
+  return { destroy: destroyBulletin, setReadOnly: setBulletinReadOnly };
+}
+
+export function setBulletinReadOnly(value) {
+  if (!state) return;
+  state.readOnly = value === true;
+  if (state.readOnly) {
+    byId('bulletinForm').classList.add('hide');
+    byId('bulletinCompose').setAttribute('aria-expanded', 'false');
+    if (state.replyThread) state.replyThread.composing = false;
+  }
+  byId('bulletinCompose').classList.toggle('hide', state.readOnly || !state.canAccess);
+  byId('bulletinCompose').disabled = state.readOnly || !state.canAccess || !state.activeBoard;
+  renderFeed();
 }
 
 export function destroyBulletin() {

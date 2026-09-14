@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.17';
 const EXPECTED_DATE = '13.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 265; // 42H.17 also routes form creation through monitored callables.
+const EXPECTED_VERSIONED_REFERENCES = 268; // 42H.17 includes role-view imports in home, nav and command center.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

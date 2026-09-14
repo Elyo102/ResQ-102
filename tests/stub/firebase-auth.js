@@ -68,7 +68,8 @@ function makeUser(roleName, uid, extraClaims){
 }
 
 let USER = makeUser(WHO,
-  (typeof window !== 'undefined' && window.__SMOKE_UID) || 'stub-uid');
+  (typeof window !== 'undefined' && window.__SMOKE_UID) || 'stub-uid',
+  (typeof window !== 'undefined' && window.__SMOKE_EXTRA_CLAIMS) || null);
 
 const observers = new Set();
 const idTokenObservers = new Set();
