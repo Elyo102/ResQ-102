@@ -97,8 +97,8 @@ await check('client technical vocabularies agree with server vocabularies', () =
 });
 await check('current release incidents retain their exact version on client and server', () => {
   const current = read('version.js').match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1];
-  assert.equal(current, '42H.17');
-  for (const supported of ['42H.16', '42H.17']) {
+  assert.equal(current, '42H.18');
+  for (const supported of ['42H.16', '42H.18']) {
     assert.ok(client.TELEMETRY_VERSIONS.includes(supported), supported + ' client rollout support');
     assert.ok(contract.VERSIONS.includes(supported), supported + ' server rollout support');
     assert.equal(client.buildReport('manual', { code:'Error' }, {
@@ -298,7 +298,7 @@ await check('feedback page permits verified super without fixed-email or role fa
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
   assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===|c\.role\s*===\s*['"]super_admin['"]/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
-  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h17['"]/);
+  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h18['"]/);
   assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,
     'feedback must share the page reporter, not install an independent quota/listener');
   assert.match(read('nav.js'), /href:\s*'feedback\.html',\s*label:\s*'חוות דעת',\s*who:\s*'member'/);

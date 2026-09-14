@@ -83,6 +83,7 @@ const jobGroups = ['hr_request_notification_jobs', 'hr_document_notification_job
 const intentGroup = 'hr_domain_notification_intents';
 const domainGroups = [...jobGroups,intentGroup];
 const productGroups = ['faults'];
+const productOverrideGroups = ['bulletin_view_recipients'];
 const expectedProductIndexes = [{ collectionGroup: 'faults', queryScope: 'COLLECTION', fields: [
   { fieldPath: 'status', order: 'ASCENDING' }, { fieldPath: 'created_key', order: 'DESCENDING' }
 ] }, { collectionGroup: 'faults', queryScope: 'COLLECTION', fields: [
@@ -101,7 +102,8 @@ function validateIndexes(value) {
   assert.deepEqual(ordered(value.indexes.filter(i => productGroups.includes(i.collectionGroup))), ordered(expectedProductIndexes));
   const old = value.indexes.filter(i => !domainGroups.includes(i.collectionGroup) && !productGroups.includes(i.collectionGroup));
   const oldOverrides = value.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup)
-    && !healthShadowGroups.includes(i.collectionGroup));
+    && !healthShadowGroups.includes(i.collectionGroup)
+    && !productOverrideGroups.includes(i.collectionGroup));
   const liveLabOverrides = value.fieldOverrides.filter(i => liveLabGroups.includes(i.collectionGroup));
   assert.equal(old.length, 21); assert.equal(oldOverrides.length, 32);
   assert.deepEqual(liveLabOverrides.map(i => i.collectionGroup).sort(), liveLabGroups.slice().sort());

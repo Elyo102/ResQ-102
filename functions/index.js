@@ -19,6 +19,7 @@ const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bulletin = require('./bulletin');
+const bulletinReceiptsModule = require('./bulletin-receipts');
 const attendanceShadow = require('./attendance-shadow-runner');
 const bulkImportDisabled = require('./bulk-import-disabled');
 const registrationSafety = require('./registration-safety');
@@ -1884,6 +1885,21 @@ function verifiedBulletinActor(identity, userSnap) {
   }
   return { user: user, byName: byName };
 }
+
+const bulletinReceipts = bulletinReceiptsModule.createBulletinReceipts({
+  db: db,
+  auth: admin.auth(),
+  HttpsError: HttpsError,
+  clock: function () { return Date.now(); }
+});
+const BULLETIN_RECEIPT_OPTIONS = Object.freeze({
+  region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60,
+  memory: '256MiB', maxInstances: 5, concurrency: 20
+});
+exports.markBulletinMessageViewed = onCall(BULLETIN_RECEIPT_OPTIONS,
+  async req => bulletinReceipts.markViewed(req));
+exports.listBulletinMessageViewers = onCall(BULLETIN_RECEIPT_OPTIONS,
+  async req => bulletinReceipts.listViewers(req));
 
 exports.postBulletinMessage = onCall(async (req) => {
   const parsed = parseBulletinPost(req);
@@ -5447,7 +5463,7 @@ exports.systemHealth = onSchedule({
 });
 
 // =======================================================================
-//  כלב שמירה רב-תחנתי · 42H.17 · OBSERVE בלבד
+//  כלב שמירה רב-תחנתי · 42H.18 · OBSERVE בלבד
 // =======================================================================
 // המנגנון הישן נשאר פעיל. הגרסה הזו כותבת רק ל-health_shadow ואינה
 // שולחת הודעות או משנה נתוני מוצר. הפעלה דורשת במפורש:
@@ -5498,7 +5514,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.17', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.18', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

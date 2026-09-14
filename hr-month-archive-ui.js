@@ -1,5 +1,5 @@
-import { buildMonthArchive } from './hr-month-archive.js?v=42h17';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
+import { buildMonthArchive } from './hr-month-archive.js?v=42h18';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h18';
 export function createMonthArchiveUI(root,adapter){
   const button=document.createElement('button');button.type='button';button.textContent='הורדת כל דוחות החודש';
   const status=document.createElement('p');status.setAttribute('role','status');

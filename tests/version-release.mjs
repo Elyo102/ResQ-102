@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.17';
-const EXPECTED_DATE = '13.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.17 release2 adds the shared cross-screen role-view resolver.
+const EXPECTED_VERSION = '42H.18';
+const EXPECTED_DATE = '14.9.2026';
+const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.18 mobile home and automatic bulletin display receipts.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

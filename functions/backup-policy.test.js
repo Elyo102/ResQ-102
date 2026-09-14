@@ -26,6 +26,19 @@ test('root config and station config are distinct policies', () => {
   assert.equal(station.scope, 'station');
 });
 
+test('bulletin display receipts expire and are never restored from backup', () => {
+  const receipt = backupPolicy.getPolicy(
+    'stations/{sid}/bulletin_view_receipts/{messageId}/bulletin_view_recipients/{uid}'
+  );
+  assert.ok(receipt);
+  assert.equal(receipt.classification, 'temporary');
+  assert.equal(receipt.backupPolicy, 'exclude');
+  assert.equal(receipt.restorePolicy, 'do_not_restore');
+  assert.equal(receipt.sensitivity, 'restricted_identity');
+  assert.equal(receipt.retention, 'ttl_400_days');
+  assert.equal(receipt.humanReadable, 'forbidden');
+});
+
 test('schedule qualification state is backed up, restorable, and retained by its data class', () => {
   const catalog = backupPolicy.getPolicy('stations/{sid}/schedule_qualifications/{qualificationId}');
   const holdings = backupPolicy.getPolicy('stations/{sid}/schedule_person_qualifications/{uid}');

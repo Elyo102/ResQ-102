@@ -624,6 +624,12 @@
       "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "bulletin_view_recipients",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

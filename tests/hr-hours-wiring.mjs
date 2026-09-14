@@ -112,6 +112,7 @@ const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_
 // Product features outside the HR nudge contract own their indexes and are
 // pinned by their own focused gates. Do not turn adding one into an HR failure.
 const productGroups = ['faults'];
+const productOverrideGroups = ['bulletin_view_recipients'];
 const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
 const healthShadowGroups = ['system_health_cycles', 'system_health_reports', 'health_shadow'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
@@ -128,7 +129,8 @@ await check('all13 original indexes and32 field overrides match immutable b1451e
     && !domainGroups.includes(i.collectionGroup)
     && !productGroups.includes(i.collectionGroup));
   const oldOverrides = config.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup)
-    && !healthShadowGroups.includes(i.collectionGroup));
+    && !healthShadowGroups.includes(i.collectionGroup)
+    && !productOverrideGroups.includes(i.collectionGroup));
   assert.equal(old.length, 13); assert.equal(oldOverrides.length, 32);
   // Canonical JSON hashes from read-only git show b1451e9. Runtime test needs
   // no Git installation/history and ignores only insignificant JSON whitespace.

@@ -471,7 +471,7 @@
 
 .bulletin-message-actions a,.bulletin-hide-message,
 .bulletin-reply-toggle,.bulletin-reply-action,.bulletin-hide-reply,
-.bulletin-reply-more{
+.bulletin-reply-more,.bulletin-viewers-action,.bulletin-viewer-more{
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -625,6 +625,20 @@
   color:var(--dim);
 }
 
+.bulletin-viewers{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+  padding:11px 12px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--card);
+}
+.bulletin-viewer-status{margin:0;color:var(--muted);font-size:12.5px;font-weight:700}
+.bulletin-viewer-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.bulletin-viewer-list li{color:var(--txt);font-size:13px;overflow-wrap:anywhere}
+.bulletin-viewer-more{justify-self:start}
+
 .bulletin-feed-toggle{
   width:100%;
   min-height:44px;
@@ -732,7 +746,7 @@
   .bulletin-form-actions .bulletin-cancel{width:100%}
   .bulletin-message-actions{justify-content:stretch}
   .bulletin-message-actions a,.bulletin-hide-message,
-  .bulletin-reply-toggle,.bulletin-reply-action{flex:1 1 130px}
+  .bulletin-reply-toggle,.bulletin-reply-action,.bulletin-viewers-action{flex:1 1 130px}
   .bulletin-reply-form-actions{flex-direction:column}
   .bulletin-reply-form-actions .bulletin-reply-cancel{width:100%}
 }

@@ -6,6 +6,8 @@ import { applyReadyUpdate, fetchLatestReleaseVersion, refreshInstalledApp } from
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, ''));
+const futureVersion = String(release.v || '').replace(/(\d+)$/, value => String(Number(value) + 1));
+assert.notEqual(futureVersion, release.v, 'release version must end with a numeric revision');
 
 class Events {
   constructor() { this.listeners = new Map(); }
@@ -128,10 +130,10 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     now: () => 777,
     fetch: async (url, options) => {
       calls.push({ url, options });
-      return { ok: true, json: async () => ({ v: '42H.18' }) };
+      return { ok: true, json: async () => ({ v: futureVersion }) };
     }
   });
-  assert.equal(version, '42H.18', 'the update flow reads the newly deployed release version');
+  assert.equal(version, futureVersion, 'the update flow reads the newly deployed release version');
   assert.deepEqual(calls, [{
     url: './version.json?update_check=777',
     options: { cache: 'no-store' }
@@ -142,11 +144,11 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   const refreshed = [];
   const result = await applyReadyUpdate({
     document: { querySelector: () => null },
-    fetch: async () => ({ ok: true, json: async () => ({ v: '42H.18' }) }),
+    fetch: async () => ({ ok: true, json: async () => ({ v: futureVersion }) }),
     refresh: async (options) => { refreshed.push(options); return { workerActivated: true }; }
   });
   assert.equal(result.updated, true, 'a verified release can be applied');
-  assert.equal(refreshed[0].version, '42H.18', 'cache cleanup keeps the new release cache');
+  assert.equal(refreshed[0].version, futureVersion, 'cache cleanup keeps the new release cache');
 }
 
 {
@@ -182,7 +184,7 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     document: doc,
     fetch: async () => {
       doc.dirty = true;
-      return { ok: true, json: async () => ({ v: '42H.18' }) };
+      return { ok: true, json: async () => ({ v: futureVersion }) };
     },
     refresh: async () => { refreshes += 1; }
   });
@@ -194,7 +196,7 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
 {
   const result = await applyReadyUpdate({
     document: { querySelectorAll: () => [], querySelector: () => null },
-    fetch: async () => ({ ok: true, json: async () => ({ v: '42H.18' }) }),
+    fetch: async () => ({ ok: true, json: async () => ({ v: futureVersion }) }),
     refresh: async () => { throw new Error('boom'); }
   });
   assert.equal(result.reason, 'activation-failed', 'an unexpected refresh failure is contained');
@@ -212,10 +214,10 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   const deleted = [];
   const replaced = [];
   const result = await refreshInstalledApp({
-    version: '42H.18', runningVersion: release.v, requireCandidate: true,
+    version: futureVersion, runningVersion: release.v, requireCandidate: true,
     serviceWorker: sw,
     cacheStorage: {
-      keys: async () => ['resq-v42h17-release1'],
+      keys: async () => ['resq-v42h18-release1'],
       delete: async (key) => { deleted.push(key); return true; }
     },
     location: {

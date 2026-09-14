@@ -14,7 +14,7 @@ function response(status, body = '', headers = {}) {
 }
 const HTML_HEADERS = Object.freeze({ 'content-type':'text/html; charset=utf-8', 'cache-control':'no-cache' });
 try {
-  for (const version of ['42h16', '42h17']) {
+  for (const version of ['42h16', '42h18']) {
     assert.ok(PRIVATE_PROBES.includes('firebase.emulator.' + version + '.json'),
       'private probe retains ' + version);
   }

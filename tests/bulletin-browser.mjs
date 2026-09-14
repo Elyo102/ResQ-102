@@ -110,6 +110,43 @@ function browserDraftKey(uid, stationId, boardId) {
     .map(value => encodeURIComponent(String(value || ''))).join(':');
 }
 
+const controlledIntersectionInit = `(() => {
+  window.__TEST_INTERSECTION_OBSERVERS = [];
+  window.__TEST_VISIBILITY = 'visible';
+  Object.defineProperty(document, 'visibilityState', {
+    configurable:true,
+    get:() => window.__TEST_VISIBILITY
+  });
+  class ControlledIntersectionObserver {
+    constructor(callback, options) {
+      this.callback = callback;
+      this.options = options;
+      this.nodes = new Set();
+      this.active = true;
+      window.__TEST_INTERSECTION_OBSERVERS.push(this);
+    }
+    observe(node) { this.nodes.add(node); }
+    unobserve(node) { this.nodes.delete(node); }
+    disconnect() { this.active = false; this.nodes.clear(); }
+  }
+  window.IntersectionObserver = ControlledIntersectionObserver;
+  window.__EMIT_INTERSECTION = (selector, ratio) => {
+    const node = document.querySelector(selector);
+    if (!node) return 0;
+    let count = 0;
+    for (const observer of window.__TEST_INTERSECTION_OBSERVERS) {
+      if (!observer.active || !observer.nodes.has(node)) continue;
+      observer.callback([{ target:node, isIntersecting:ratio > 0, intersectionRatio:ratio }], observer);
+      count++;
+    }
+    return count;
+  };
+  window.__SET_TEST_VISIBILITY = value => {
+    window.__TEST_VISIBILITY = value;
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+})();`;
+
 try {
   // ----------------------------------------------------------
   head('1 · כניסה, fade ועליית הלוח');
@@ -335,13 +372,80 @@ try {
   // ----------------------------------------------------------
   head('4 · ראש משמרת: הפצה לכל התחנות ותגובה');
   // ----------------------------------------------------------
-  const commanderContext = await makeContext({ role:'commander' });
+  const commanderContext = await makeContext({ role:'commander', init:controlledIntersectionInit });
   const commanderBoard = await openBoard(commanderContext);
   const commanderPage = commanderBoard.page;
   await commanderPage.locator('#bulletinFeed [data-message-id="br2"]')
     .waitFor({ state:'visible', timeout:8000 });
+  await commanderPage.evaluate(() => { window.__CALLABLE_CALLS = []; });
+  const br2Selector = '#bulletinFeed [data-message-id="br2"]';
+  check(await commanderPage.evaluate(selector => window.__EMIT_INTERSECTION(selector, 0.59), br2Selector) > 0,
+        'בדיקת הצפייה שולטת בפועל ב-IntersectionObserver');
+  await commanderPage.waitForTimeout(1100);
+  check((await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'markBulletinMessageViewed').length)) === 0,
+    '59% מההודעה אינם נרשמים כצפייה');
+  await commanderPage.evaluate(selector => window.__EMIT_INTERSECTION(selector, 0.6), br2Selector);
+  await commanderPage.waitForTimeout(700);
+  check((await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'markBulletinMessageViewed').length)) === 0,
+    '60% למשך פחות משנייה עדיין אינם נרשמים');
+  await commanderPage.waitForTimeout(450);
+  const displayedCalls = await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'markBulletinMessageViewed'));
+  check(displayedCalls.length === 1 && displayedCalls[0].payload.message_id === 'br2' &&
+        Object.keys(displayedCalls[0].payload || {}).sort().join(',') === 'message_id,sub_station_id' &&
+        displayedCalls[0].payload.sub_station_id === 'rashit',
+        'אישור הוצגה נשלח פעם אחת רק לאחר 60% למשך שנייה וביעד הלוח הפעיל');
+  await commanderPage.evaluate(() => { window.__CALLABLE_CALLS = []; });
+  const br1Selector = '#bulletinFeed [data-message-id="br1"]';
+  await commanderPage.evaluate(selector => window.__EMIT_INTERSECTION(selector, 0.6), br1Selector);
+  await commanderPage.waitForTimeout(250);
+  await commanderPage.evaluate(selector => window.__EMIT_INTERSECTION(selector, 0.2), br1Selector);
+  await commanderPage.waitForTimeout(900);
+  check((await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'markBulletinMessageViewed').length)) === 0,
+    'יציאה מהמסך לפני תום השנייה מבטלת את רישום הצפייה');
+  await commanderPage.evaluate(selector => window.__EMIT_INTERSECTION(selector, 0.6), br1Selector);
+  await commanderPage.waitForTimeout(200);
+  await commanderPage.evaluate(async () => {
+    window.__SET_TEST_VISIBILITY('hidden');
+    const module = await import('./bulletin.js?v=42h18');
+    module.setBulletinReadOnly(true);
+  });
+  await commanderPage.waitForTimeout(900);
+  check((await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'markBulletinMessageViewed').length)) === 0,
+    'מצב hidden/read-only מבטל צפייה ממתינה ואינו שולח קבלה');
+  await commanderPage.evaluate(async () => {
+    window.__SET_TEST_VISIBILITY('visible');
+    const module = await import('./bulletin.js?v=42h18');
+    module.setBulletinReadOnly(false);
+  });
   check(await commanderPage.locator('[data-message-id="br1"] .bulletin-broadcast-chip').isVisible(),
         'הודעה רחבה מסומנת בבירור בכל לוח');
+  const viewerAction = commanderPage.locator('[data-message-id="br2"] .bulletin-viewers-action');
+  check(await viewerAction.isVisible(), 'ראש משמרת יכול לפתוח רשימת צופים לפי דרישה');
+  const viewerPanelId = await viewerAction.getAttribute('aria-controls');
+  check(Boolean(viewerPanelId), 'כפתור מי צפה מקושר לפאנל באמצעות aria-controls');
+  await commanderPage.evaluate(() => {
+    window.__CALLABLE_PLAN = { listBulletinMessageViewers:[{ data:{
+      items:[{ recipient_uid:'viewer-1', recipient_name_snapshot:'קורא ראשון', viewed_at_ms:1789372800000 }],
+      next_cursor:null
+    } }] };
+    window.__CALLABLE_CALLS = [];
+  });
+  await viewerAction.click();
+  await commanderPage.getByText(/קורא ראשון/).waitFor({ state:'visible', timeout:3000 });
+  check(await commanderPage.locator('#' + viewerPanelId).count() === 1,
+    'פאנל הצופים משתמש במזהה שאליו aria-controls מצביע');
+  const viewerCalls = await commanderPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .filter(call => call.name === 'listBulletinMessageViewers'));
+  check(viewerCalls.length === 1 && viewerCalls[0].payload.sub_station_id === 'rashit' &&
+        viewerCalls[0].payload.message_id === 'br2',
+        'רשימת הצופים נטענת רק בלחיצה וללא מזהה משתמש מהלקוח');
+  check((await commanderPage.locator('[data-message-id="br2"] .bulletin-viewer-list').innerText())
+    .includes('קורא ראשון'), 'רשימת הצופים מציגה שם בלבד וללא פרטי חשבון');
   await commanderPage.locator('#bulletinCompose').click();
   check(await commanderPage.locator('#bulletinAudience').isVisible(),
         'ראש משמרת רואה את בחירת קהל היעד');

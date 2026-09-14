@@ -4,8 +4,8 @@
 // ובחלון של 30 הודעות. כתיבה והסתרה אינן נעשות מהדפדפן: הן
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
-import { subStationAvailable } from './stations.js?v=42h17';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h17';
+import { subStationAvailable } from './stations.js?v=42h18';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h18';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
@@ -388,6 +388,10 @@ function domToken(value) {
 
 function replyThreadDomId(boardId, messageId) {
   return 'bulletinThread-' + domToken(boardId) + '-' + domToken(messageId);
+}
+
+function viewerPanelDomId(boardId, messageId) {
+  return 'bulletinViewers-' + domToken(boardId) + '-' + domToken(messageId);
 }
 
 function replyFocusKey(kind, messageId) {
@@ -872,6 +876,118 @@ function addText(parent, className, text) {
   return node;
 }
 
+function stopDisplayTracking() {
+  if (!state) return;
+  if (state.displayObserver) state.displayObserver.disconnect();
+  state.displayObserver = null;
+  state.displayTimers.forEach(function (timer) { clearTimeout(timer); });
+  state.displayTimers.clear();
+}
+
+function observeDisplayedMessages(feed) {
+  stopDisplayTracking();
+  if (!state || state.readOnly || !state.markViewed ||
+      document.visibilityState === 'hidden' || typeof IntersectionObserver !== 'function') return;
+  const owner = state;
+  const boardId = state.activeBoard;
+  state.displayObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      const id = entry.target && entry.target.dataset.messageId;
+      if (!id || owner !== state || owner.displayConfirmed.has(id) || owner.displayPending.has(id)) return;
+      if (!entry.isIntersecting || entry.intersectionRatio < 0.6 || document.visibilityState === 'hidden') {
+        clearTimeout(owner.displayTimers.get(id));
+        owner.displayTimers.delete(id);
+        return;
+      }
+      if (owner.displayTimers.has(id)) return;
+      owner.displayTimers.set(id, setTimeout(async function () {
+        owner.displayTimers.delete(id);
+        if (owner !== state || owner.readOnly || owner.activeBoard !== boardId ||
+            document.visibilityState === 'hidden' || !entry.target.isConnected) return;
+        owner.displayPending.add(id);
+        try {
+          await owner.markViewed({ sub_station_id: boardId, message_id: id });
+          if (owner === state) owner.displayConfirmed.add(id);
+        } catch (ignore) {
+          // Receipt telemetry must never prevent the bulletin itself from loading.
+        } finally {
+          if (owner === state) owner.displayPending.delete(id);
+        }
+      }, 1000));
+    });
+  }, { root: null, threshold: [0.6] });
+  feed.querySelectorAll('[data-testid="bulletin-message"]').forEach(function (node) {
+    state.displayObserver.observe(node);
+  });
+}
+
+function viewedTimeText(milliseconds) {
+  const date = new Date(Number(milliseconds));
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('he-IL', {
+    dateStyle: 'short', timeStyle: 'short'
+  }).format(date);
+}
+
+async function loadViewerPage(item, panel, cursor) {
+  if (!state || !state.listViewers || state.readOnly) return;
+  const owner = state;
+  const list = panel.querySelector('.bulletin-viewer-list');
+  const status = panel.querySelector('.bulletin-viewer-status');
+  const more = panel.querySelector('.bulletin-viewer-more');
+  more.disabled = true;
+  status.textContent = cursor ? 'טוען צופים נוספים…' : 'טוען רשימת צופים…';
+  try {
+    const payload = { sub_station_id: owner.activeBoard, message_id: item.id };
+    if (cursor) payload.cursor = cursor;
+    const response = await owner.listViewers(payload);
+    if (owner !== state || owner.activeBoard !== payload.sub_station_id || !panel.isConnected) return;
+    const data = response && response.data ? response.data : (response || {});
+    const viewers = Array.isArray(data.items) ? data.items : [];
+    viewers.forEach(function (viewer) {
+      const row = document.createElement('li');
+      row.textContent = '✓ ' + String(viewer.recipient_name_snapshot || 'חבר צוות') +
+        (viewedTimeText(viewer.viewed_at_ms) ? ' · ' + viewedTimeText(viewer.viewed_at_ms) : '');
+      list.appendChild(row);
+    });
+    status.textContent = list.childElementCount ?
+      'ההודעה הוצגה לאנשים הבאים:' : 'עדיין אין צפיות מתועדות.';
+    const next = typeof data.next_cursor === 'string' ? data.next_cursor : '';
+    more.classList.toggle('hide', !next);
+    more.disabled = false;
+    more.onclick = function () { loadViewerPage(item, panel, next); };
+  } catch (ignore) {
+    if (owner === state && panel.isConnected) {
+      status.textContent = 'לא הצלחנו לטעון את רשימת הצופים.';
+      more.disabled = false;
+    }
+  }
+}
+
+function toggleViewers(item, article, button) {
+  let panel = article.querySelector('.bulletin-viewers');
+  if (panel) {
+    const opening = panel.classList.contains('hide');
+    panel.classList.toggle('hide', !opening);
+    button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    return;
+  }
+  panel = document.createElement('section');
+  panel.className = 'bulletin-viewers';
+  panel.id = viewerPanelDomId(state.activeBoard, item.id);
+  panel.setAttribute('aria-label', 'רשימת אנשים שההודעה הוצגה להם');
+  const status = document.createElement('p');
+  status.className = 'bulletin-viewer-status';
+  const list = document.createElement('ul');
+  list.className = 'bulletin-viewer-list';
+  const more = document.createElement('button');
+  more.type = 'button'; more.className = 'bulletin-viewer-more hide'; more.textContent = 'הצג עוד';
+  panel.append(status, list, more);
+  article.appendChild(panel);
+  button.setAttribute('aria-expanded', 'true');
+  loadViewerPage(item, panel, '');
+}
+
 function renderMessage(item) {
   const data = item.data || {};
   const category = categoryOf(data.category);
@@ -954,6 +1070,15 @@ function renderMessage(item) {
   }
 
   if (state.canShiftCommand && !state.readOnly) {
+    const viewers = document.createElement('button');
+    viewers.type = 'button';
+    viewers.className = 'bulletin-viewers-action';
+    viewers.textContent = 'מי צפה';
+    viewers.setAttribute('aria-expanded', 'false');
+    viewers.setAttribute('aria-controls', viewerPanelDomId(state.activeBoard, item.id));
+    viewers.onclick = function () { toggleViewers(item, article, viewers); };
+    actions.appendChild(viewers);
+
     const reply = document.createElement('button');
     reply.type = 'button';
     reply.className = 'bulletin-reply-action';
@@ -995,6 +1120,7 @@ function renderFeed(preferredFocus) {
     ? messages : messages.slice(0, HOME_VISIBLE_MESSAGES);
   feed.replaceChildren();
   visibleMessages.forEach(function (item) { feed.appendChild(renderMessage(item)); });
+  observeDisplayedMessages(feed);
   feed.setAttribute('aria-busy', 'false');
 
   const empty = byId('bulletinEmpty');
@@ -1194,6 +1320,7 @@ function selectBoard(boardId, force) {
   if (!force && state.activeBoard === boardId) return;
   if (state.activeBoard) persistDraft();
   stopReplyListener();
+  stopDisplayTracking();
   state.replyThread = null;
   stopListener();
   clearTimeout(state.readTimer);
@@ -1476,12 +1603,14 @@ function bulletinUpdateGuard(owner) {
 function handleVisibility() {
   if (!state) return;
   if (document.visibilityState === 'hidden') {
+    stopDisplayTracking();
     stopListener();
     stopReplyListener();
     clearTimeout(state.readTimer);
   } else {
     if (state.activeBoard && !state.unsubscribe) subscribeToActive(true);
     if (state.replyThread && !state.replyUnsubscribe) subscribeReplies();
+    observeDisplayedMessages(byId('bulletinFeed'));
   }
 }
 
@@ -1616,6 +1745,10 @@ export function initBulletin(options) {
     replyDrafts: {},
     replyUnsubscribe: null,
     replyGeneration: 0,
+    displayObserver: null,
+    displayTimers: new Map(),
+    displayConfirmed: new Set(),
+    displayPending: new Set(),
     canAccess: opts.canAccess !== false,
     readOnly: opts.readOnly === true,
     isSuper: isSuper,
@@ -1625,6 +1758,8 @@ export function initBulletin(options) {
     replyMessage: null,
     hideMessage: null,
     hideReply: null,
+    markViewed: null,
+    listViewers: null,
     abort: new AbortController()
   };
   state.unregisterUpdateGuard = registerPwaUpdateGuard(() => bulletinUpdateGuard(state));
@@ -1665,12 +1800,16 @@ export function initBulletin(options) {
   }
 
   state.postMessage = opts.sdk.httpsCallable(opts.functions, 'postBulletinMessage');
+  state.markViewed = opts.sdk.httpsCallable(opts.functions, 'markBulletinMessageViewed');
   if (state.canShiftCommand) {
     state.broadcastMessage = opts.sdk.httpsCallable(
       opts.functions, 'broadcastBulletinMessage'
     );
     state.replyMessage = opts.sdk.httpsCallable(
       opts.functions, 'replyToBulletinMessage'
+    );
+    state.listViewers = opts.sdk.httpsCallable(
+      opts.functions, 'listBulletinMessageViewers'
     );
   }
   if (state.isSuper) {
@@ -1692,6 +1831,7 @@ export function setBulletinReadOnly(value) {
   if (!state) return;
   state.readOnly = value === true;
   if (state.readOnly) {
+    stopDisplayTracking();
     byId('bulletinForm').classList.add('hide');
     byId('bulletinCompose').setAttribute('aria-expanded', 'false');
     if (state.replyThread) state.replyThread.composing = false;
@@ -1707,6 +1847,7 @@ export function destroyBulletin() {
   persistDraft();
   stopListener();
   stopReplyListener();
+  stopDisplayTracking();
   clearTimeout(state.readTimer);
   state.generation++;
   state.abort.abort();
