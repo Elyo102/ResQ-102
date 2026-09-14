@@ -5,9 +5,12 @@ import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h17';
 import { initAppCheck } from './appcheck.js?v=42h17';
 import { MEMBER_ROLES } from './roles.js?v=42h17';
 import { createHrRequestsUI } from './hr-requests-ui.js?v=42h17';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h17';
 
 import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h17';
 
+const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
+if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app), functions = getFunctions(app, 'europe-west1');

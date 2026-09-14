@@ -372,7 +372,8 @@ check('rollback creates a new audited revision and never repoints an old documen
   assert.ok(body.includes("action: 'rollback'"));
   assert.ok(body.includes('rollback_target_publication_id'));
   assert.ok(body.includes("status: 'active'"));
-  assert.ok(ui.includes("httpsCallable(functions, 'rollbackSchedule')"));
+  assert.ok(ui.includes("mutationCallable('rollbackSchedule')"));
+  assert.ok(ui.includes('const invoke = httpsCallable(functions, name)'));
   assert.ok(html.includes('חזור לגרסה הקודמת'));
 });
 check('clients cannot directly read or write schedule storage', () => {
@@ -1461,10 +1462,10 @@ check('the cutover is the only road into new mode', () => {
 
 check('the screen actually calls the cutover it was given', () => {
   const ui = read('schedule-management.js');
-  for (const name of ['previewScheduleCutover', 'promoteScheduleToNew']) {
-    assert.ok(ui.indexOf("httpsCallable(functions, '" + name + "')") > -1,
-      'המסך אינו יוצר callable עבור ' + name);
-  }
+  assert.ok(ui.includes("httpsCallable(functions, 'previewScheduleCutover')"),
+    'המסך אינו יוצר callable לקריאת התצוגה המקדימה');
+  assert.ok(ui.includes("mutationCallable('promoteScheduleToNew')"),
+    'המסך אינו יוצר callable מוגן לקידום הסידור');
   // ומעבר ל-new עובר דרכו, ולא דרך החלפת מצב.
   assert.ok(/if \(target === 'new'\) \{ await promoteToNew\(\); return; \}/.test(ui),
     'המסך עדיין שולח מעבר ל-new דרך setScheduleRuntimeMode');

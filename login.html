@@ -553,6 +553,7 @@ import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.j
 import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h17';
 import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h17';
 import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h17';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h17';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -575,6 +576,8 @@ let stopCallouts = function () {};
 let routeEpoch = 0;
 let routeUid = '';
 const ROLE_VIEW_STORAGE = 'resq_role_view_v1';
+const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
+if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
 let activeHomeContext = null;
 
 function destroyHomeRuntime(){

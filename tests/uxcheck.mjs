@@ -39,7 +39,7 @@ check(loginPage.includes("./version.js?v=" + versionKey),
       'login imports the release-specific version module');
 check(loginPage.includes("./pwa.js?v=" + versionKey),
       'login imports the release-specific PWA update runtime');
-check(serviceWorker.includes("const CACHE = 'resq-v" + versionKey + "-release1'"),
+check(serviceWorker.includes("const CACHE = 'resq-v" + versionKey + "-release2'"),
       'service worker cache belongs to the visible release');
 check(serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
       'service worker activation preserves non-ResQ caches');

@@ -7,49 +7,71 @@ import { readScheduleFile } from './schedule-file-import.js?v=42h17';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h17';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h17';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app);
 const functions = getFunctions(app, 'europe-west1');
+const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
+if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
+
+function mutationCallable(name) {
+  const invoke = httpsCallable(functions, name);
+  return function (payload) {
+    if (!scheduleMutationAllowed()) {
+      const error = new Error('תצוגת תפקיד היא לקריאה בלבד.');
+      error.code = 'failed-precondition';
+      return Promise.reject(error);
+    }
+    return invoke(payload);
+  };
+}
+
+function scheduleMutationAllowed() {
+  return state.authResolving !== true
+    && !(state.roleView && state.roleView.readOnly);
+}
 const call = Object.freeze({
   status: httpsCallable(functions, 'getScheduleRuntimeStatus'),
   setup: httpsCallable(functions, 'getScheduleManagerSetup'),
   modeOptions: httpsCallable(functions, 'getScheduleModeOptions'),
-  modeSet: httpsCallable(functions, 'setScheduleRuntimeMode'),
+  modeSet: mutationCallable('setScheduleRuntimeMode'),
   /* ⭐ שתי אלה היו מיוצאות בשרת ולא נוצרו כאן, ולכן כל מחזור החיים
    * של המעבר — הכנה, בדיקה מול הסידור הקיים, ומעבר אטומי — פשוט לא
    * היה על המסלול של המסך. המסך המשיך להזיז mode ישירות. */
   cutoverPreview: httpsCallable(functions, 'previewScheduleCutover'),
-  cutoverPromote: httpsCallable(functions, 'promoteScheduleToNew'),
+  cutoverPromote: mutationCallable('promoteScheduleToNew'),
   sourcePreview: httpsCallable(functions, 'previewScheduleSource'),
-  sourceSave: httpsCallable(functions, 'saveScheduleSource'),
+  sourceSave: mutationCallable('saveScheduleSource'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
-  policySave: httpsCallable(functions, 'saveSchedulePolicy'),
-  run: httpsCallable(functions, 'runSchedulePlanner'),
+  policySave: mutationCallable('saveSchedulePolicy'),
+  run: mutationCallable('runSchedulePlanner'),
   importPreview: httpsCallable(functions, 'previewScheduleImport'),
-  importSheet: httpsCallable(functions, 'importScheduleSheet'),
+  importSheet: mutationCallable('importScheduleSheet'),
   displayStatus: httpsCallable(functions, 'getScheduleDisplayStatus'),
-  displaySet: httpsCallable(functions, 'setScheduleDisplay'),
+  displaySet: mutationCallable('setScheduleDisplay'),
   editPreview: httpsCallable(functions, 'previewScheduleEdit'),
-  editApply: httpsCallable(functions, 'applyScheduleEdit'),
+  editApply: mutationCallable('applyScheduleEdit'),
   qualCatalog: httpsCallable(functions, 'getQualificationCatalog'),
-  qualSave: httpsCallable(functions, 'saveQualification'),
-  qualDelete: httpsCallable(functions, 'deleteQualification'),
-  qualPerson: httpsCallable(functions, 'setPersonQualifications'),
+  qualSave: mutationCallable('saveQualification'),
+  qualDelete: mutationCallable('deleteQualification'),
+  qualPerson: mutationCallable('setPersonQualifications'),
   gapReport: httpsCallable(functions, 'getScheduleGapReport'),
-  gapPolicy: httpsCallable(functions, 'saveScheduleGapPolicy'),
+  gapPolicy: mutationCallable('saveScheduleGapPolicy'),
   preview: httpsCallable(functions, 'getScheduleDraftPreview'),
-  publish: httpsCallable(functions, 'publishSchedule'),
-  rollback: httpsCallable(functions, 'rollbackSchedule'),
+  publish: mutationCallable('publishSchedule'),
+  rollback: mutationCallable('rollbackSchedule'),
   mine: httpsCallable(functions, 'getMyScheduleV2'),
   range: httpsCallable(functions, 'getStationScheduleRange'),
-  respond: httpsCallable(functions, 'respondToSchedule')
+  respond: mutationCallable('respondToSchedule')
 });
 
 const $ = (id) => document.getElementById(id);
 const state = {
   user: null, claims: {}, status: null, setup: null, draft: null,
+  roleView: Object.freeze({ selected:'actual', preview:false, presentation:null, readOnly:false }),
+  authResolving: true,
   // כל אירוע התחברות מקבל דור חדש. כך תשובה שהתחילה עבור משתמש
   // קודם אינה יכולה להיכנס למטמון או להיצבע במסך של המשתמש הבא.
   authGeneration: 0, authScope: null, authContextVersion: 0,
@@ -220,6 +242,21 @@ function canViewSchedule() {
   return !!state.status && ['off', 'shadow', 'new'].indexOf(state.status.mode) !== -1;
 }
 
+function applyPageRoleView(user, claims) {
+  state.roleView = resolvePageRoleView({
+    pageId:'schedule-management.html', user, claims, storage:sessionStorage
+  });
+  const banner = $('scheduleRoleViewBanner');
+  banner.hidden = !state.roleView.preview;
+  banner.lastElementChild.textContent = state.roleView.preview
+    ? 'תצוגת תפקיד: ' + state.roleView.presentation.label + ' · קריאה בלבד'
+    : '';
+  ['manageView', 'qualsView', 'mineView'].forEach((id) => {
+    const view = $(id);
+    if (view) view.inert = state.roleView.readOnly;
+  });
+}
+
 /* עריכה אינה נגזרת מהתפקיד הראשי. גם מפקד/ת או רכז/ת משאבי אנוש
  * צריכים מינוי חי ונפרד של אחראי/ת סידור.
  *
@@ -241,11 +278,13 @@ function canViewSchedule() {
  * מסך שהשרת ממילא מרשה.
  */
 function canManageSchedule() {
-  return !!state.status && state.status.manager === true;
+  return !!state.status && (state.roleView.preview
+    ? state.roleView.showScheduleManagement === true
+    : state.status.manager === true);
 }
 
 function canRunSchedule() {
-  return canManageSchedule()
+  return !state.roleView.readOnly && canManageSchedule()
     && ['shadow', 'new'].indexOf(state.status.mode) !== -1;
 }
 
@@ -710,6 +749,7 @@ function droppedCount(plan) {
 }
 
 async function saveSource() {
+  if (!scheduleMutationAllowed()) return;
   if (state.sourceBusy || !state.sourcePlan || state.sourcePlan.blocked) return;
   const task = authTask();
   const rows = sourceRowsForServer();
@@ -990,6 +1030,7 @@ function verifiedCutoverResult(pending, raw) {
 }
 
 async function promotePending(task = authTask()) {
+  if (!scheduleMutationAllowed()) return;
   const pending = state.pendingCutover;
   const result = verifiedCutoverResult(pending, (await call.cutoverPromote(pending)).data);
   if (!authTaskCurrent(task)) return null;
@@ -1126,6 +1167,7 @@ async function refreshAfterModeChange(task = authTask()) {
 }
 
 async function applyModeChange() {
+  if (!scheduleMutationAllowed()) return;
   if (state.modeBusy || !state.modeTarget || !state.modeView) return;
   const task = authTask();
   const target = state.modeTarget;
@@ -1812,6 +1854,7 @@ function renderMineToday() {
 }
 
 async function respond(itemId, answer, reasonCode) {
+  if (!scheduleMutationAllowed()) return;
   if (!state.status || state.status.mode !== 'new' || state.busy ||
       !state.mine || !state.mine.publication_id) return;
   const task = authTask();
@@ -2140,6 +2183,7 @@ function policyDraftPayload() {
 }
 
 async function savePolicy() {
+  if (!scheduleMutationAllowed()) return;
   if (state.policyBusy || !state.policy || !policyComplete()) return;
   const task = authTask();
   state.policyBusy = true;
@@ -2529,6 +2573,7 @@ async function checkImport() {
 }
 
 async function importSheet() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const pending = state.importPending;
@@ -2647,6 +2692,7 @@ async function loadImportDisplayStatus(month, generation = state.authGeneration)
 }
 
 async function showImportedSchedule() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy || $('importShow').disabled || !state.importedDraft) return;
   const task = authTask();
   const draft = state.importedDraft;
@@ -2703,6 +2749,7 @@ async function showImportedSchedule() {
 }
 
 async function clearImportedSchedule() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy || $('importClear').disabled || !state.importDisplay) return;
   const task = authTask();
   const month = $('importMonth').value;
@@ -2847,6 +2894,7 @@ async function loadDraftPreview(start, resetApproval) {
 }
 
 async function runPlanner() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   state.busy = true; $('runPlanner').disabled = true; state.draft = null; state.draftPreview = null;
@@ -2899,6 +2947,7 @@ async function runPlanner() {
 }
 
 async function publishDraft() {
+  if (!scheduleMutationAllowed()) return;
   if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
   const task = authTask();
@@ -2985,6 +3034,7 @@ function setRollbackAvailability() {
 }
 
 async function rollbackSchedule() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy || $('rollback').disabled) return;
   const task = authTask();
   const pending = state.rollbackPending;
@@ -3227,6 +3277,7 @@ async function loadActiveGaps() {
 }
 
 async function saveStationMinimum() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const minimum = Number($('gapStationMinimum').value || 0);
@@ -3565,6 +3616,7 @@ async function refreshStatusAfterEdit(task = authTask()) {
 }
 
 async function applyEdit() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const pending = state.editPending;
@@ -3731,6 +3783,7 @@ function renderQualCatalog() {
 }
 
 async function saveQualificationRow(entry, tr) {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const label = tr.querySelector('input[data-field="label"]').value;
@@ -3761,6 +3814,7 @@ async function saveQualificationRow(entry, tr) {
 }
 
 async function deleteQualificationRow(entry) {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   if (!confirm('למחוק את הכשירות „' + entry.label + '"? הפעולה נרשמת ביומן.')) return;
@@ -3784,6 +3838,7 @@ async function deleteQualificationRow(entry) {
 }
 
 async function addQualification() {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const key = $('qualNewKey').value.trim();
@@ -3847,6 +3902,7 @@ function renderQualPeople() {
 }
 
 async function savePersonQualifications(person, row) {
+  if (!scheduleMutationAllowed()) return;
   if (state.busy) return;
   const task = authTask();
   const keys = Array.from(row.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
@@ -3883,9 +3939,10 @@ async function boot(user, generation, knownClaims, knownStatus) {
     try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
   }
   if (generation !== state.authGeneration || state.user !== user) return;
+  applyPageRoleView(user, claims);
   state.claims = claims;
   state.authScope = authScopeKey(user, claims);
-  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
   try {
     const status = knownStatus === undefined ? (await call.status({})).data : knownStatus;
@@ -3900,6 +3957,7 @@ async function boot(user, generation, knownClaims, knownStatus) {
       return;
     }
 
+    state.authResolving = false;
     setRollbackAvailability();
     $('startMonth').value = monthStart();
     if (!$('importMonth').value) $('importMonth').value = monthStart();
@@ -4194,6 +4252,7 @@ async function handleIdToken(user) {
   // הטוקן הקודם. בלי דור המשימה, preview ישן יכול היה לחזור בזמן
   // ההמתנה ל-claims ולשלוח את ה-save הבא תחת המשתמש החדש.
   const interruptedOperation = scopedOperationInFlight();
+  state.authResolving = true;
   state.authGeneration += 1;
   const generation = state.authGeneration;
   invalidateRange();
@@ -4218,6 +4277,7 @@ async function handleIdToken(user) {
   let claims = {};
   try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
   if (generation !== state.authGeneration) return;
+  applyPageRoleView(user, claims);
   const nextScope = authScopeKey(user, claims);
 
   // זהות או תחום הרשאה השתנו: אתחול מלא הוא מכוון. המסך כבר הוסתר
@@ -4259,7 +4319,7 @@ async function handleIdToken(user) {
     state.claims = claims;
     state.authScope = nextScope;
     state.status = status;
-    renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+    renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
     $('who').textContent = user.displayName || user.email || '';
     showUnavailable('נדרש אימות מחדש לפני פעולה נוספת',
       'זהות המשתמש התרעננה בזמן פעולה. כדי לבדוק אם הפעולה הושלמה בלי לשלוח אותה שוב, יש לרענן את המסך.');
@@ -4271,7 +4331,8 @@ async function handleIdToken(user) {
   state.claims = claims;
   state.authScope = nextScope;
   state.status = status;
-  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '');
+  state.authResolving = false;
+  renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
   setMode(status || {});
   if (!canViewSchedule()) {

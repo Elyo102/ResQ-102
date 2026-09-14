@@ -87,7 +87,7 @@ await test('planner retries a lost response with the same request_id and release
     'state', 'globalThis', 'call', '$', 'authTask', 'authTaskCurrent',
     'resetPublishRequest', 'message', 'overrides', 'renderSummary', 'loadDraftPreview',
     'errorText', 'errorCode', 'receiptOk', 'malformedReceipt', 'updatePublishAvailability',
-    'updatePlannerPendingLock',
+    'updatePlannerPendingLock', 'scheduleMutationAllowed',
     `${requestIdSource}\n${plannerSource}\nreturn runPlanner;`
   );
   const planner = factory(
@@ -96,7 +96,7 @@ await test('planner retries a lost response with the same request_id and release
     () => {}, async () => {}, (error) => String(error && error.message || error),
     (error) => String(error && error.details && error.details.schedule_code || ''),
     (result, fields) => !!result && fields.every((field) => typeof result[field] === 'string' && result[field]),
-    () => new Error('malformed receipt'), () => {}, () => {}
+    () => new Error('malformed receipt'), () => {}, () => {}, () => true
   );
 
   await planner(); // The operation may have committed, but the response was lost.
@@ -161,7 +161,7 @@ await test('rollback retries a lost response with the same request_id and releas
     'setRollbackAvailability', 'message', 'errorCode', 'gapText', 'errorText',
     'receiptOk', 'malformedReceipt',
     'setMode', 'updateEditAvailability', 'invalidateRange', 'loadMine', 'loadMineRange',
-    'loadStationRange',
+    'loadStationRange', 'scheduleMutationAllowed',
     `${requestIdSource}\n${rollbackSource}\nreturn rollbackSchedule;`
   );
   const rollback = factory(
@@ -172,7 +172,7 @@ await test('rollback retries a lost response with the same request_id and releas
       const value = result[field];
       return typeof value === 'string' ? value.length > 0 : Number.isInteger(value);
     }), () => new Error('malformed receipt'), () => {}, () => {},
-    () => {}, async () => {}, async () => {}, async () => {}
+    () => {}, async () => {}, async () => {}, async () => {}, () => true
   );
 
   await rollback(); // The server committed or may have committed, but its reply was lost.

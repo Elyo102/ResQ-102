@@ -54,6 +54,14 @@ const GROUPS = [
 // מקומות ונשכח בחמישי.
 import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h17';
 import { assertPresentationOnly } from './role-view.js?v=42h17';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h17';
+
+if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
+  const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
+  if (cleanRoleViewUrl && typeof history !== 'undefined') {
+    history.replaceState(history.state, '', cleanRoleViewUrl);
+  }
+}
 
 function displayIdentity(claims, presentation) {
   if (claims && claims.super === true && assertPresentationOnly(presentation)) {
@@ -393,9 +401,11 @@ export function renderNav(claims, current, who, presentation) {
 
   function linkFor(it) {
     const a = document.createElement('a');
-    a.href = './' + it.href;
-    if (assertPresentationOnly(presentation)) {
+    const previewBlocked = assertPresentationOnly(presentation) && !isPreviewSafePage(it.href);
+    if (!previewBlocked) a.href = './' + it.href;
+    if (previewBlocked) {
       a.setAttribute('aria-disabled', 'true');
+      a.tabIndex = -1;
       a.title = 'מעבר בין מסכים ייפתח לאחר יציאה מתצוגת התפקיד';
       a.addEventListener('click', function (event) { event.preventDefault(); });
     }

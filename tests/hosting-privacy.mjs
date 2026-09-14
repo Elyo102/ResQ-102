@@ -45,7 +45,7 @@ for (const name of ['firebase.attendance-test.json', 'firebase.emulator.42h11.js
 for (const name of fs.readdirSync(root).filter((entry) => /^firebase\..+\.json$/.test(entry))) {
   check(ignoredSensitiveConfig(name), 'every Firebase sidecar config is excluded: ' + name);
 }
-check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release1'"),
+check(worker.includes("const CACHE = 'resq-v" + releaseKey + "-release2'"),
       'the service-worker cache is rotated away from the exposed copy');
 
 const server = http.createServer((req, res) => {

@@ -7,7 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const EXPECTED_VERSION = '42H.17';
 const EXPECTED_DATE = '13.9.2026';
-const EXPECTED_VERSIONED_REFERENCES = 268; // 42H.17 includes role-view imports in home, nav and command center.
+const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.17 release2 adds the shared cross-screen role-view resolver.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
@@ -75,7 +75,7 @@ function audit(files) {
   if (dateMatches.length !== 1 || dateMatches[0]?.[1] !== release.d) errors.push('version.js date matches version.json exactly');
 
   const worker = files.get('firebase-messaging-sw.js') || '';
-  const expectedCache = 'resq-v' + key + '-release1';
+  const expectedCache = 'resq-v' + key + '-release2';
   const cacheMatches = [...worker.matchAll(/const\s+CACHE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (cacheMatches.length !== 1 || cacheMatches[0]?.[1] !== expectedCache) {
     errors.push('service-worker cache is exactly ' + expectedCache);
@@ -153,7 +153,7 @@ mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPEC
 mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
 mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
 mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  'resq-v' + key + '-release1', 'resq-vstale-release1'));
+  'resq-v' + key + '-release2', 'resq-vstale-release2'));
 mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
   './firebase-config.js?v=' + key, './firebase-config.js?v=stale'));
 mustFail('stale CSS query', replaceExactlyOne(files, 'schedule-management.html',
