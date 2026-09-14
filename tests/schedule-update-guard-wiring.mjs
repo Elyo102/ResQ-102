@@ -7,9 +7,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const managementPath = path.join(root, 'schedule-management.js');
 const guardPath = path.join(root, 'schedule-update-guard.js');
 const htmlPath = path.join(root, 'schedule-management.html');
-const management = fs.readFileSync(managementPath, 'utf8');
-const guard = fs.readFileSync(guardPath, 'utf8');
-const html = fs.readFileSync(htmlPath, 'utf8');
+function readSource(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
+}
+
+const management = readSource(managementPath);
+const guard = readSource(guardPath);
+const html = readSource(htmlPath);
 
 function escape(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

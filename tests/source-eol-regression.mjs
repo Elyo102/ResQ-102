@@ -54,7 +54,8 @@ const PROBES = [
   'schedule-source-author-probe.mjs',
   'schedule-notice-text-probe.mjs',
   'schedule-hidden-authority-probe.mjs',
-  'schedule-runtime-source.mjs'
+  'schedule-runtime-source.mjs',
+  'schedule-update-guard-wiring.mjs'
 ];
 
 /* המקורות שה-probes קוראים. אלה הקבצים שיומרו ל-CRLF. */
@@ -66,6 +67,7 @@ const SOURCES = [
   'functions/schedule-publication.js',
   'functions/index.js',
   'schedule-management.js',
+  'schedule-update-guard.js',
   'schedule-management.html',
   'firestore.rules'
 ];
@@ -87,6 +89,7 @@ function runProbe(cwd, name) {
 /* מחלץ את מספר הטענות מתוך פלט ה-probe. */
 function assertionCount(text) {
   const m = text.match(/(\d+)\s*\/\s*\d+\s*עברו/)
+    || text.match(/(\d+)\s*\/\s*\d+\s*PASS/)
     || text.match(/(\d+)\s+עברו/)
     || text.match(/^(\d+)\s+\w[\w\s-]*checks passed/m)
     || text.match(/(\d+)\s+schedule[\w\s-]*checks passed/);
