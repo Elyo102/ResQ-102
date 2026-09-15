@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h17">
+<link rel="stylesheet" href="./theme.css?v=42h19">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -67,8 +67,6 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .rotstate{font-size:13px;color:var(--muted);background:var(--panel);border:1px solid var(--line);
         border-radius:6px;padding:11px;line-height:1.8;margin-bottom:6px}
   .rotstate b{color:var(--txt)}
-  .schedule-link{display:inline-block;margin-top:12px;color:var(--accent);font-weight:600}
-  .schedule-link.hide{display:none}
   .transfer-choice{display:block;width:100%;text-align:right;background:var(--panel);
     color:var(--txt);border:1px solid var(--line);margin-top:8px}
   .transfer-choice.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--chip)}
@@ -309,34 +307,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div id="transferIncoming"><div class="empty">אין בקשות טעונות.</div></div>
     </div>
 
-    <div class="card" id="scheduleManagementCard">
-      <h2>ניהול סידור עבודה</h2>
-      <div class="rotstate">
-        הסידור התחנתי והאישי נמצאים במסך הסידור. כאשר המנוע החדש פעיל,
-        עריכה זמינה שם רק לאדם שמונה במפורש כאחראי/ת סידור עבודה.
-        נתוני המחזור הישן אינם נגישים עוד ממסך הניהול.
-      </div>
-      <a class="schedule-link hide" id="scheduleManagementLink"
-         href="./schedule-management.html">פתח ניהול סידור עבודה</a>
-    </div>
-
-    <!-- מסך המעבר אינו קורא עוד את collections הסידור הישנות. כך שיוך
-         שהוסר או טוקן ישן לא מקבלים נתוני סידור מחוץ למנוע החדש. -->
-    <div class="card hide" id="legacyRotationCard">
-      <h2>הסידור הישן נסגר</h2>
-      <div class="rotstate">
-        הסידור התחנתי, הסידור האישי וכל שינויי השיבוץ עברו למנוע החדש.
-        מסך זה אינו קורא ואינו מציג עוד את נתוני הסידור הישנים.
-      </div>
-      <a class="schedule-link hide" id="legacyRotationManageLink"
-         href="./schedule-management.html">פתח ניהול סידור עבודה</a>
-    </div>
   </div>
 
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h17';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -345,18 +321,18 @@ import { getFirestore, doc, getDoc, collection,
          getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h17';
-import { CREW_HE } from './rotation.js?v=42h17';
+  from './monitored-functions.js?v=42h19';
+import { CREW_HE } from './rotation.js?v=42h19';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=42h17';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h17';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h17';
-import { initPWA } from './pwa.js?v=42h17';
-import { watchCallouts } from './callout.js?v=42h17';
+  from './stations.js?v=42h19';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h19';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h19';
+import { initPWA } from './pwa.js?v=42h19';
+import { watchCallouts } from './callout.js?v=42h19';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h17';
+import { initAppCheck } from './appcheck.js?v=42h19';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -1087,9 +1063,6 @@ onAuthStateChanged(auth, async user => {
   msg('transferIncomingMsg', '', '');
   $('scheduleAccessCard').classList.add('hide');
   $('stationTransferCard').classList.add('hide');
-  $('legacyRotationCard').classList.add('hide');
-  $('scheduleManagementLink').classList.add('hide');
-  $('legacyRotationManageLink').classList.add('hide');
 
   // התפקיד נקרא מהטוקן, לא ממסמך ב-Firestore.
   // זו אותה מקור אמת שכללי האבטחה קוראים ממנו, ולכן אי אפשר
@@ -1175,11 +1148,6 @@ onAuthStateChanged(auth, async user => {
   if (canManageScheduleAccess) loadScheduleAccess(isSuper ? $('rPick').value : '');
   if (canApproveStationTransfer) loadIncomingTransfers();
   if (canListOutgoingStationTransfer) loadOutgoingTransfers();
-  // אין טעינת collections סידור ישנות. המינוי החי נותן רק נתיב
-  // למנוע החדש; כל השאר מקבלים הודעת מעבר נטולת נתונים.
-  $('legacyRotationCard').classList.remove('hide');
-  $('scheduleManagementLink').classList.toggle('hide', !isScheduleManager);
-  $('legacyRotationManageLink').classList.toggle('hide', !isScheduleManager);
 });
 
 // ---------- טעינת בקשות ----------

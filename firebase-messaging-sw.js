@@ -27,7 +27,7 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h17-release1';
+const CACHE = 'resq-v42h19-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -43,7 +43,7 @@ const SHELL = [
   './hr-attachments-ui.js', './hr-attachments-ui.css',
   './maintenance.html', './maintenance-client.js', './maintenance.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
-  './quals.html', './alerts.html', './stats.html', './people.html',
+  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-siren.mp3', './stats.html', './people.html',
   './vehicle.html', './sign.html',
   './index.html',
   './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
@@ -52,7 +52,7 @@ const SHELL = [
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.
   './signature.js', './signflow.js', './docpdf.js',
-  './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './home-command.js', './appcheck.js',
+  './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
@@ -178,7 +178,7 @@ messaging.onBackgroundMessage(function (payload) {
     // התראה דחופה נשארת על המסך עד שנוגעים בה, ומרטיטה.
     // קריאת פתע היא המקרה שבשבילו זה קיים.
     requireInteraction: d.important === '1',
-    renotify: d.important === '1',
+    renotify: d.important === '1' && !String(d.tag || '').startsWith('callout-'),
     vibrate: d.important === '1'
       ? [300, 120, 300, 120, 500] : undefined
   });
@@ -188,7 +188,10 @@ messaging.onBackgroundMessage(function (payload) {
 // פתוחה בלשונית — מתמקדים בה במקום לפתוח עוד אחת.
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || './login.html';
+  const rawUrl = (event.notification.data && event.notification.data.url) || './login.html';
+  const target = new URL(rawUrl, self.registration.scope);
+  target.searchParams.set('resq_actual', 'notification');
+  const url = target.href;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true })

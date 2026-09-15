@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h17">
-<link rel="stylesheet" href="./bulletin.css?v=42h17">
+<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./bulletin.css?v=42h19">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -75,6 +75,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .hide{display:none !important}
   .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
   .login-credit{margin:18px 0 0;text-align:center;color:var(--muted);font-size:12px;font-weight:400;line-height:1.5}
+  .role-view-control{margin:0 0 16px;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+  .role-view-control label{margin:0 0 7px;color:var(--txt);font-weight:800}
+  .role-view-control p{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+  .role-view-banner{margin:0 0 14px;padding:10px 13px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--txt);font-size:13px;font-weight:800}
   .profile{text-align:center;line-height:2}
   .profile .big{font-size:19px;font-weight:600}
   .profile .row{color:var(--muted);font-size:14px}
@@ -349,6 +353,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <p>הודעות ועדכונים לפני תחילת המשמרת, ואחריהם התקלות הפתוחות שחשוב להכיר.</p>
       </div>
     </header>
+    <section id="roleViewControl" class="role-view-control hide" aria-labelledby="roleViewLabel">
+      <label id="roleViewLabel" for="roleViewSelect">תצוגה לפי תפקיד</label>
+      <select id="roleViewSelect"></select>
+      <p>כלי תצוגה למנהל־על בלבד. ההרשאות האמיתיות אינן משתנות.</p>
+    </section>
+    <div id="roleViewBanner" class="role-view-banner hide" role="status"></div>
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
       <section id="homeUrgent" class="home-urgent hide" role="alert" aria-labelledby="homeUrgentTitle">
@@ -457,11 +467,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <a href="./faults.html">לכל התקלות ←</a>
         </div>
         <div class="home-fault-tabs" role="tablist" aria-label="סוג התקלה">
-          <button type="button" role="tab" class="home-fault-tab is-active" data-fault-group="operational" aria-selected="true">רכב ומבצעי <b id="homeOperationalCount">0</b></button>
-          <button type="button" role="tab" class="home-fault-tab" data-fault-group="building" aria-selected="false">בינוי ותחזוקה <b id="homeBuildingCount">0</b></button>
+          <button type="button" role="tab" id="homeFaultTabOperational"
+                  class="home-fault-tab is-active" data-fault-group="operational"
+                  aria-selected="true" aria-controls="homeFaultList" tabindex="0">
+            רכב ומבצעי <b id="homeOperationalCount">0</b>
+          </button>
+          <button type="button" role="tab" id="homeFaultTabBuilding"
+                  class="home-fault-tab" data-fault-group="building"
+                  aria-selected="false" aria-controls="homeFaultList" tabindex="-1">
+            בינוי ותחזוקה <b id="homeBuildingCount">0</b>
+          </button>
         </div>
         <div id="homeFaultStatus" class="home-fault-status" aria-live="polite"></div>
-        <div id="homeFaultList" class="home-fault-list"></div>
+        <div id="homeFaultList" class="home-fault-list" role="tabpanel"
+             aria-labelledby="homeFaultTabOperational" tabindex="0"></div>
         <div id="homeFaultEmpty" class="home-fault-empty hide">אין תקלות פתוחות בקטגוריה הזאת.</div>
       </section>
 
@@ -530,21 +549,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h17';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h17';
+         subStationsForStation } from './stations.js?v=42h19';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h17';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h17';
-import { initPWA, refreshInstalledApp } from './pwa.js?v=42h17';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h17';
-import { watchCallouts } from './callout.js?v=42h17';
-import { initBulletin, destroyBulletin } from './bulletin.js?v=42h17';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h17';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h17';
+  from './nav.js?v=42h19';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h19';
+import {
+  initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
+} from './pwa.js?v=42h19';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h19';
+import { watchCallouts } from './callout.js?v=42h19';
+import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h19';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h19';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h19';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h19';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h19';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
-         createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+         createUserWithEmailAndPassword, signOut, onIdTokenChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
          EmailAuthProvider, setPersistence, browserLocalPersistence }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -552,24 +575,33 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h17';
+  from './monitored-functions.js?v=42h19';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h17';
+import { initAppCheck } from './appcheck.js?v=42h19';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 let stopCallouts = function () {};
 let routeEpoch = 0;
 let routeUid = '';
+const ROLE_VIEW_STORAGE = 'resq_role_view_v1';
+const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
+if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
+let activeHomeContext = null;
 
 function destroyHomeRuntime(){
   try { stopCallouts(); } catch (ignore) {}
   stopCallouts = function () {};
   destroyHomeFaults();
   destroyHomeCommand();
+  activeHomeContext = null;
   destroyBulletin();
+  $('roleViewControl').classList.add('hide');
+  $('roleViewBanner').classList.add('hide');
+  $('roleViewBanner').textContent = '';
+  $('bulletinForm').classList.add('hide');
 }
 
 function routeIsCurrent(user, epoch){
@@ -601,7 +633,6 @@ const SUPER_ADMIN_EMAIL = 'fire102.shits@gmail.com';
 setPersistence(auth, browserLocalPersistence).catch(function(){});
 
 const $ = id => document.getElementById(id);
-initPWA({ offer: true });
 
 function newRequestId(){
   const bytes = new Uint8Array(16);
@@ -710,6 +741,16 @@ function showView(name){
 // רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
 // מול "רגע..." לנצח. אחרי שש שניות נופלים חזרה לטופס הכניסה.
 let authSettled = false;
+registerPwaUpdateGuard(function () {
+  if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
+  if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
+  const home = $('homeView');
+  if (!home || home.classList.contains('hide')) {
+    return 'השלם את הכניסה לפני הפעלת העדכון.';
+  }
+  return true;
+});
+initPWA({ offer: true });
 setTimeout(function(){ if (!authSettled) showView('auth'); }, 6000);
 
 function esc(s){
@@ -1003,6 +1044,7 @@ function returnToCaller(){
 
 function logout(){
   destroyHomeRuntime();
+  try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}
   clearNavigationTrail();
   return signOut(auth);
 }
@@ -1018,8 +1060,11 @@ let nativeBackArrival = (function () {
 })();
 let nativeBackRecoveryAttempted = false;
 
-onAuthStateChanged(auth, user => {
+onIdTokenChanged(auth, user => {
   authSettled = true;
+  if (!user) {
+    try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}
+  }
   if (onboarding) return;
   if (!user) {
     startRoute(null);
@@ -1112,7 +1157,7 @@ function showWho(user){
 function claims0(){ return {}; }
 
 // הסרגל מופיע רק אחרי כניסה. במסך הכניסה עצמו אין לאן לנווט.
-function navFor(claims, user, name){
+function navFor(claims, user, name, presentation){
   // האיור שייך למסך הכניסה בלבד. מכאן והלאה קוראים טבלאות
   // ולוחות, ורקע מצויר רק מפריע.
   document.body.classList.remove('art');
@@ -1122,8 +1167,75 @@ function navFor(claims, user, name){
   // למי שמסתכל על המסך; «אלדד יונה · מס׳ 1» כן.
   const who = (name || (user && user.email) || '') +
               (claims.emp ? ' · מס׳ ' + claims.emp : '');
-  renderNav(claims, 'login.html', who);
+  renderNav(claims, 'login.html', who, presentation || null);
 }
+
+function readRoleViewStorage(){
+  try { return sessionStorage.getItem(ROLE_VIEW_STORAGE) || ''; }
+  catch (ignore) { return ''; }
+}
+
+function writeRoleViewStorage(record){
+  try {
+    if (record) sessionStorage.setItem(ROLE_VIEW_STORAGE, JSON.stringify(record));
+    else sessionStorage.removeItem(ROLE_VIEW_STORAGE);
+  } catch (ignore) {}
+}
+
+function homeCommandElements(){
+  return {
+    urgent:$('homeUrgent'), urgentTitle:$('homeUrgentTitle'), urgentText:$('homeUrgentText'), urgentLink:$('homeUrgentLink'),
+    status:$('homeCommandStatus'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
+    shiftLabel:$('homeShiftLabel'),
+    shiftMetrics:{
+      on_duty:document.querySelector('[data-shift-metric="on_duty"] b'),
+      open_faults:document.querySelector('[data-shift-metric="open_faults"] b'),
+      missing:document.querySelector('[data-shift-metric="missing"] b')
+    }
+  };
+}
+
+function renderHomeCommandFor(context, view){
+  initHomeCommand({
+    functions:fns, user:context.user, claims:context.claims,
+    presentation:view && view.preview ? view.presentation : null,
+    sdk:{ httpsCallable:httpsCallable }, elements:homeCommandElements()
+  });
+}
+
+function renderRoleViewChrome(context, view){
+  const enabled = context.claims && context.claims.super === true;
+  $('roleViewControl').classList.toggle('hide', !enabled);
+  $('roleViewSelect').value = enabled ? view.selected : 'actual';
+  $('roleViewBanner').classList.toggle('hide', !view.preview);
+  $('roleViewBanner').textContent = view.preview
+    ? 'תצוגת תפקיד: ' + view.presentation.label + ' · תצוגה בלבד, ללא שינוי הרשאות'
+    : '';
+  setBulletinReadOnly(view.preview);
+}
+
+function selectRoleView(requested){
+  const context = activeHomeContext;
+  if (!context || !routeIsCurrent(context.user, context.epoch)) return;
+  const view = resolveRoleView({
+    uid:context.user.uid, claims:context.claims, requested:requested,
+    stored:readRoleViewStorage()
+  });
+  writeRoleViewStorage(view.storageRecord);
+  context.view = view;
+  renderRoleViewChrome(context, view);
+  navFor(context.claims, context.user, context.name, view.presentation);
+  renderHomeCommandFor(context, view);
+}
+
+ROLE_VIEW_OPTIONS.forEach(function (option) {
+  const node = document.createElement('option');
+  node.value = option.id; node.textContent = option.label;
+  $('roleViewSelect').appendChild(node);
+});
+$('roleViewSelect').addEventListener('change', function () {
+  selectRoleView(this.value);
+});
 
 function showNotLinked(user){
   loginTransitionPending = false;
@@ -1314,7 +1426,15 @@ async function loadProfile(user, claims, epoch){
   }
   if (!routeIsCurrent(user, epoch)) return;
 
-  navFor(claims, user, u ? u.full_name : '');
+  const initialView = resolveRoleView({
+    uid:user.uid, claims:claims, stored:readRoleViewStorage()
+  });
+  writeRoleViewStorage(initialView.storageRecord);
+  activeHomeContext = {
+    user:user, claims:claims, epoch:epoch,
+    name:u ? u.full_name : '', view:initialView
+  };
+  navFor(claims, user, u ? u.full_name : '', initialView.presentation);
   try { stopCallouts(); } catch (ignore) {}
   stopCallouts = watchCallouts(db, sid, user.uid, {
     name: (u && u.full_name) || user.email || ''
@@ -1322,20 +1442,7 @@ async function loadProfile(user, claims, epoch){
   $('pageTitle').textContent = profileName ? ('שלום, ' + profileName) : 'לוח מודעות';
   $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
 
-  initHomeCommand({
-    functions:fns, user:user, claims:claims,
-    sdk:{ httpsCallable:httpsCallable },
-    elements:{
-      urgent:$('homeUrgent'), urgentTitle:$('homeUrgentTitle'), urgentText:$('homeUrgentText'), urgentLink:$('homeUrgentLink'),
-      status:$('homeCommandStatus'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
-      shiftLabel:$('homeShiftLabel'),
-      shiftMetrics:{
-        on_duty:document.querySelector('[data-shift-metric="on_duty"] b'),
-        open_faults:document.querySelector('[data-shift-metric="open_faults"] b'),
-        missing:document.querySelector('[data-shift-metric="missing"] b')
-      }
-    }
-  });
+  renderHomeCommandFor(activeHomeContext, initialView);
 
   initBulletin({
     db: db,
@@ -1347,12 +1454,14 @@ async function loadProfile(user, claims, epoch){
     roleLabels: ROLE_HE,
     fallbackBoards: subStationsForStation(sid),
     canAccess: isMember(claims),
+    readOnly: initialView.preview,
     sdk: {
       collection: collection, getDocs: getDocs, query: query, where: where,
       orderBy: orderBy, limit: limit, onSnapshot: onSnapshot,
       startAfter: startAfter, httpsCallable: httpsCallable
     }
   });
+  renderRoleViewChrome(activeHomeContext, initialView);
   const canSeeFaults = isMember(claims);
   $('homeFaults').classList.toggle('hide', !canSeeFaults);
   if (canSeeFaults) {
@@ -1383,6 +1492,7 @@ async function loadProfile(user, claims, epoch){
     $('homeView').classList.remove('bulletin-enter', 'bulletin-enter-active');
   }
   loginTransitionPending = false;
+  void retryPendingPwaUpdate();
   try { $('pageTitle').focus({ preventScroll: true }); }
   catch (ignore) { $('pageTitle').focus(); }
 }
@@ -1404,34 +1514,36 @@ $('btnUpdate').onclick = async function () {
   b.disabled = true;
   m.className = 'note';
   m.textContent = 'בודק מול השרת…';
-
-  let server = null;
   try {
-    // no-store, ו-t=… כדי שגם מטמון ביניים לא יחזיר עותק ישן.
-    const r = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
-    server = await r.json();
+    const outcome = await applyReadyUpdate({ document, runningVersion:APP_VERSION });
+    if (outcome.updated) {
+      m.className = 'note new';
+      m.textContent = 'העדכון הופעל. האפליקציה נפתחת מחדש…';
+      return;
+    }
+    if (outcome.reason === 'version-not-advanced') {
+      m.textContent = 'אתה על הגרסה האחרונה.';
+    } else if (outcome.blocked) {
+      m.textContent = outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
+    } else if (outcome.reason === 'version-unavailable') {
+      m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+    } else {
+      m.textContent = 'הגרסה החדשה נמצאה אך עדיין לא הופעלה. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+    }
   } catch (e) {
-    m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
-    b.disabled = false;
-    return;
+    m.textContent = 'העדכון לא הושלם. בדוק חיבור לאינטרנט ונסה שוב.';
   }
-
-  if (!server || String(server.v) === String(APP_VERSION)) {
-    m.textContent = 'אתה על הגרסה האחרונה.';
-    b.disabled = false;
-    return;
-  }
-
-  m.className = 'note new';
-  m.textContent = 'יש גרסה חדשה (' + server.v + '). מעדכן…';
-
-  await refreshInstalledApp({ version: server.v });
+  b.disabled = false;
 };
 
 // ---------- שינוי סיסמה ----------
 
 $('btnChangePw').onclick = () => { $('pwMsg').className = 'msg'; showView('pw'); };
-$('btnPwBack').onclick   = () => { showView('home'); $('pageTitle').focus(); };
+$('btnPwBack').onclick   = () => {
+  showView('home');
+  void retryPendingPwaUpdate();
+  $('pageTitle').focus();
+};
 
 $('btnSavePw').onclick = async () => {
   const btn = $('btnSavePw');

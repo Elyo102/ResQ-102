@@ -12,7 +12,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'maintenance.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.17']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -39,7 +39,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'getScheduleManagerAccess', 'getScheduleManagerSetup', 'getScheduleModeOptions',
   'getScheduleRuntimeStatus', 'getSilentMode', 'getStationScheduleRange',
   'getStationScheduleV2', 'guardSignup', 'hideBulletinMessage',
-  'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listStationTransfers',
+  'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listBulletinMessageViewers', 'listStationTransfers',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
   'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleEdit', 'previewScheduleImport', 'previewSchedulePolicy',
   'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
@@ -58,7 +58,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest',
   'publishHrDocument', 'reviseHrDocument', 'listMyHrDocuments', 'listHrProcedures',
   'listManagedHrDocuments', 'getHrDocument', 'markHrDocumentOpened', 'acknowledgeHrDocument',
-  'listHrDocumentReceipts', 'nudgeHrDocument',
+  'listHrDocumentReceipts', 'markBulletinMessageViewed', 'nudgeHrDocument',
   'reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment',
   'requestHrHoursNudge', 'getHrHoursNudgeStatus', 'listHrHoursNudges',
   'createHrWorkforceCase', 'updateHrWorkforceCase', 'listHrWorkforceCases', 'queueHrWorkforceReminder',

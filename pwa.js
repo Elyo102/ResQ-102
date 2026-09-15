@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=42h17';
+import { APP_VERSION } from './version.js?v=42h19';
 
 // התקנה על מסך הבית.
 //
@@ -87,6 +87,7 @@ export async function applyReadyUpdate(options) {
   let result;
   try {
     result = await refresh(Object.assign({}, o.refreshOptions, {
+      document:o.document,
       version,
       runningVersion,
       candidate:o.candidate || null,
@@ -95,8 +96,9 @@ export async function applyReadyUpdate(options) {
   } catch (_) {
     return { updated:false, blocked:'', reason:'activation-failed', version };
   }
-  return { updated:result && result.workerActivated === true, blocked:'',
-    reason:result && result.workerActivated === true ? 'updated' : 'activation-failed',
+  const updated = !!(result && result.workerActivated === true && result.reloadDeferred !== true);
+  return { updated, blocked:result && result.blocked ? result.blocked : '',
+    reason:updated ? 'updated' : (result && result.reloadDeferred === true ? 'reload-deferred' : 'activation-failed'),
     version, result };
 }
 
@@ -204,9 +206,24 @@ export function createPwaUpdateCoordinator(options) {
   return api;
 }
 
-function showUpdateReady(info) {
+function updateOutcomeMessage(outcome) {
+  if (outcome && outcome.blocked) {
+    return outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
+  }
+  return 'העדכון לא הושלם. אפשר לנסות שוב כשיש חיבור יציב.';
+}
+
+function showUpdateReady(info, message) {
   updateReadyInfo = info || updateReadyInfo;
-  if (typeof document === 'undefined' || document.getElementById('pwaUpdateBar')) return;
+  if (typeof document === 'undefined') return;
+  const existing = document.getElementById('pwaUpdateBar');
+  if (existing) {
+    const existingNote = existing.querySelector('.tx span');
+    const existingButton = existing.querySelector('.go');
+    if (existingNote && message) existingNote.textContent = message;
+    if (existingButton) existingButton.disabled = false;
+    return;
+  }
   style();
   const bar = document.createElement('div');
   bar.id = 'pwaUpdateBar';
@@ -216,7 +233,7 @@ function showUpdateReady(info) {
   const title = document.createElement('b');
   title.textContent = 'גרסה חדשה של ResQ מוכנה';
   const note = document.createElement('span');
-  note.textContent = 'רענון יתבצע רק לאחר אישור מפורש שלך.';
+  note.textContent = message || 'אפשר לעדכן עכשיו בלי לאבד פעולה שלא נשמרה.';
   const button = document.createElement('button');
   button.className = 'go';
   button.type = 'button';
@@ -238,12 +255,92 @@ function showUpdateReady(info) {
     });
     if (!outcome.updated) {
       button.disabled = false;
-      note.textContent = outcome.blocked
-        ? outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.'
-        : 'העדכון לא הושלם. אפשר לנסות שוב כשיש חיבור יציב.';
+      note.textContent = updateOutcomeMessage(outcome);
     }
   });
 }
+
+// עדכון מוכן מופעל אוטומטית רק כשהמסך נקי. אם יש קובץ, טיוטה
+// או פעולה בתהליך, משאירים למשתמש כפתור מפורש במקום לרענן.
+// Promise יחיד מונע מכמה אירועי updatefound/controllerchange להפעיל
+// את אותו עדכון פעמיים.
+export function applyDetectedUpdate(info, options) {
+  const o = options || {};
+  const documentLike = o.document || (typeof document !== 'undefined' ? document : null);
+  const candidate = info && info.worker;
+  if (!candidate) {
+    return Promise.resolve({ updated:false, blocked:'', reason:'candidate-missing' });
+  }
+  const blocked = updateBlockReason(documentLike);
+  if (blocked) {
+    return Promise.resolve({ updated:false, blocked, reason:'blocked' });
+  }
+  return applyReadyUpdate({
+    document:documentLike,
+    candidate,
+    fetch:o.fetch,
+    now:o.now,
+    runningVersion:o.runningVersion,
+    refresh:o.refresh,
+    refreshOptions:o.refreshOptions
+  });
+}
+
+export function createUpdateReadyHandler(options) {
+  const o = options || {};
+  let inFlight = null;
+  return function handleUpdateReady(info) {
+    updateReadyInfo = info || updateReadyInfo;
+    const documentLike = o.document || (typeof document !== 'undefined' ? document : null);
+    const show = typeof o.show === 'function' ? o.show : showUpdateReady;
+    const apply = typeof o.apply === 'function' ? o.apply : applyDetectedUpdate;
+    const blocked = updateBlockReason(documentLike);
+    if (!info || !info.worker || blocked) {
+      const message = blocked
+        ? blocked + ' שמור או סיים אותה ואז עדכן.'
+        : 'העדכון מוכן להפעלה.';
+      show(info, message);
+      return Promise.resolve({ updated:false, blocked, reason:blocked ? 'blocked' : 'candidate-missing' });
+    }
+    if (inFlight) return inFlight;
+    const operation = Promise.resolve().then(function () {
+      return apply(info, {
+        document:documentLike,
+        fetch:o.fetch,
+        now:o.now,
+        runningVersion:o.runningVersion,
+        refresh:o.refresh,
+        refreshOptions:o.refreshOptions
+      });
+    }).then(function (outcome) {
+      if (!outcome.updated && outcome.reason !== 'version-not-advanced') {
+        show(info, updateOutcomeMessage(outcome));
+      }
+      return outcome;
+    }).catch(function () {
+      const outcome = { updated:false, blocked:'', reason:'activation-failed' };
+      show(info, updateOutcomeMessage(outcome));
+      return outcome;
+    });
+    const finalized = operation.finally(function () {
+      if (inFlight === finalized) inFlight = null;
+    });
+    inFlight = finalized;
+    return finalized;
+  };
+}
+
+// A waiting worker may first be discovered while login, registration or another
+// protected operation is active. The coordinator deliberately reports each
+// candidate once, so the host page calls this after it reaches a stable view.
+export function retryPendingPwaUpdate() {
+  if (!updateReadyInfo || !updateReadyInfo.worker) {
+    return Promise.resolve({ updated:false, blocked:'', reason:'candidate-missing' });
+  }
+  return handleUpdateReady(updateReadyInfo);
+}
+
+const handleUpdateReady = createUpdateReadyHandler();
 
 export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches ||
@@ -266,11 +363,6 @@ export function registerSW() {
       console.warn('SW registration: ' + (e && e.message));
       return null;
     });
-}
-
-function releaseCacheName(version) {
-  const key = String(version || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  return 'resq-v' + key + '-release1';
 }
 
 // מבקש מעובד חדש להפוך לפעיל, אבל לא מחכה לנצח. ההאזנה
@@ -318,14 +410,13 @@ export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
   });
 }
 
-// רענון יזום מהפרופיל. מוחקים רק מטמוני ResQ ישנים ורק אחרי
-// שהעובד החדש הופעל; מטמון חדש או מטמון של רכיב אחר לעולם לא נמחק.
+// רענון יזום מהפרופיל. ניקוי מטמוני ResQ שייך ל-Service Worker
+// בלבד, בזמן activate. כך הדף לעולם אינו מוחק בטעות את המטמון
+// של העובד החדש בגלל שם גרסה שאינו מסונכרן.
 export async function refreshInstalledApp(options) {
   const o = options || {};
   const serviceWorker = o.serviceWorker ||
     (typeof navigator !== 'undefined' ? navigator.serviceWorker : null);
-  const cacheStorage = o.cacheStorage ||
-    (typeof caches !== 'undefined' ? caches : null);
   const locationLike = o.location ||
     (typeof window !== 'undefined' ? window.location : null);
   const now = typeof o.now === 'function' ? o.now : Date.now;
@@ -357,26 +448,21 @@ export async function refreshInstalledApp(options) {
     }
   }
 
-  const keep = releaseCacheName(o.version);
-  const deleted = [];
-  if (workerActivated && cacheStorage && typeof cacheStorage.keys === 'function') {
-    try {
-      const keys = await cacheStorage.keys();
-      const old = keys.filter(function (key) {
-        return String(key).startsWith('resq-') && key !== keep;
-      });
-      await Promise.all(old.map(async function (key) {
-        if (await cacheStorage.delete(key)) deleted.push(key);
-      }));
-    } catch (ignore) {}
-  }
-
-  if (workerActivated && locationLike && typeof locationLike.replace === 'function') {
+  const blockedBeforeReload = workerActivated ? updateBlockReason(o.document) : '';
+  const reloadDeferred = Boolean(workerActivated && blockedBeforeReload);
+  if (workerActivated && !reloadDeferred && locationLike && typeof locationLike.replace === 'function') {
     const next = new URL(locationLike.href);
     next.searchParams.set('updated', String(o.version) + '-' + now());
     locationLike.replace(next.toString());
   }
-  return { workerActivated, keptCache: keep, deletedCaches: deleted };
+  return {
+    workerActivated,
+    reloadDeferred,
+    blocked:blockedBeforeReload,
+    keptCache:null,
+    deletedCaches:[],
+    cacheCleanup:'service-worker-owned'
+  };
 }
 
 // מציג שורת הזמנה להתקנה. מחזיר true אם הוצגה.
@@ -471,7 +557,7 @@ export function initPWA(opts) {
   });
   registerSW().then(function (registration) {
     if (!registration || updateCoordinator) return;
-    updateCoordinator = createPwaUpdateCoordinator({ onReady:showUpdateReady });
+    updateCoordinator = createPwaUpdateCoordinator({ onReady:handleUpdateReady });
     updateCoordinator.start(registration);
   });
 
