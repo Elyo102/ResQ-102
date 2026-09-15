@@ -41,7 +41,9 @@ function validateHeaders(relative, response, firebaseHosted) {
   const extension = path.extname(relative).toLowerCase();
   const expectedTypes = CONTENT_TYPES[extension];
   const actualType = mediaType(response);
-  if (!expectedTypes || !expectedTypes.includes(actualType)) failures.push('content-type');
+  // GitHub Pages serves MP3 as audio/mp3; Firebase must retain audio/mpeg.
+  const pagesMp3 = !firebaseHosted && extension === '.mp3' && actualType === 'audio/mp3';
+  if (!pagesMp3 && (!expectedTypes || !expectedTypes.includes(actualType))) failures.push('content-type');
   if (!firebaseHosted) return failures;
   const cache = cacheDirectives(response);
   if (relative === 'version.json' || relative === 'firebase-messaging-sw.js') {

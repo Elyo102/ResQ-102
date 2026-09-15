@@ -130,12 +130,13 @@ try {
     fs.writeFileSync(path.join(audioTemp, 'callout-siren.mp3'), 'audio-bytes');
     fs.mkdirSync(path.join(audioTemp, '.firebase'));
     fs.writeFileSync(path.join(audioTemp, '.firebase', 'hosting..cache'), 'callout-siren.mp3,0,test\n');
-    const inspectAudio = (type) => inspectLiveOrigin(audioTemp, FIREBASE_ORIGIN, {
-      approvedAssets:['callout-siren.mp3'], firebaseHosted:true,
+    const inspectAudio = (type, firebaseHosted = true, body = 'audio-bytes', privateStatus = 404) => inspectLiveOrigin(audioTemp,
+      firebaseHosted ? FIREBASE_ORIGIN : PAGES_ORIGIN, {
+      approvedAssets:['callout-siren.mp3'], firebaseHosted,
       fetchImpl:async (url) => {
-        const relative = new URL(url).pathname.replace(/^\//, '');
-        if (PRIVATE_PROBES.includes(relative)) return response(404);
-        return response(200, 'audio-bytes', { 'content-type':type });
+        const relative = new URL(url).pathname.replace(/^\/ResQ-102\//, '').replace(/^\//, '');
+        if (PRIVATE_PROBES.includes(relative)) return response(privateStatus);
+        return response(200, body, { 'content-type':type });
       }
     });
     assert.equal((await inspectAudio('audio/mpeg')).ok, true,
@@ -143,6 +144,26 @@ try {
     const invalidAudio = await inspectAudio('application/octet-stream');
     assert.equal(invalidAudio.ok, false, 'MP3 preview rejects a generic binary MIME');
     assert.ok(invalidAudio.failures.includes('callout-siren.mp3:content-type'));
+    assert.equal((await inspectAudio('audio/mp3', false)).ok, true, 'Pages exact audio/mp3 is supported');
+    assert.equal((await inspectAudio('audio/mpeg', false)).ok, true, 'Pages audio/mpeg remains supported');
+    for (const [type, firebaseHosted] of [['audio/mp3', true], ['application/octet-stream', false], ['audio/mp3-malicious', false]]) {
+      const rejected = await inspectAudio(type, firebaseHosted);
+      assert.equal(rejected.ok, false);
+      assert.ok(rejected.failures.includes('callout-siren.mp3:content-type'));
+    }
+    const changedAudio = await inspectAudio('audio/mp3', false, 'wrong-bytes');
+    assert.equal(changedAudio.ok, false);
+    assert.ok(changedAudio.failures.includes('callout-siren.mp3:hash'));
+    const exposedPrivate = await inspectAudio('audio/mp3', false, 'audio-bytes', 200);
+    assert.equal(exposedPrivate.ok, false);
+    assert.ok(exposedPrivate.failures.some((item) => item.endsWith(':private-http-200')));
+    const wrongExtension = await inspectLiveOrigin(temp, PAGES_ORIGIN, {
+      approvedAssets:APPROVED, firebaseHosted:false,
+      fetchImpl:async (url) => PRIVATE_PROBES.some((item) => url.includes('/' + item + '?'))
+        ? response(404) : response(200, 'release-body', { 'content-type':'audio/mp3' })
+    });
+    assert.equal(wrongExtension.ok, false);
+    assert.ok(wrongExtension.failures.includes('index.html:content-type'));
   } finally {
     fs.rmSync(audioTemp, { recursive:true, force:true });
   }
