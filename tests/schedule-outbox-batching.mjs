@@ -13,11 +13,14 @@ function instrument(db, options = {}) {
     nonemptyOutboxPages: 0,
     outboxLimits: [],
     outboxTransactionCallbacks: 0,
-    committedOutboxPages: 0
+    committedOutboxPages: 0,
+    recipientUserReadBatches: [],
+    recipientPersonReadBatches: []
   };
   const rawCollection = db.collection.bind(db);
   const rawDoc = db.doc.bind(db);
   const rawTransaction = db.runTransaction.bind(db);
+  const rawGetAll = db.getAll.bind(db);
   let retried = false;
   let failed = false;
 
@@ -74,6 +77,14 @@ function instrument(db, options = {}) {
 
   db.collection = (name) => wrapQuery(rawCollection(name));
   db.doc = (path) => wrapRef(rawDoc(path));
+  db.getAll = async (...items) => {
+    const refs = items.filter((item) => item && item.path);
+    const userRefs = refs.filter((ref) => ref.path.includes('/users/'));
+    const personRefs = refs.filter((ref) => ref.path.includes('/schedule_people/'));
+    if (userRefs.length) counts.recipientUserReadBatches.push(userRefs.length);
+    if (personRefs.length) counts.recipientPersonReadBatches.push(personRefs.length);
+    return rawGetAll(...items);
+  };
   db.runTransaction = async (fn) => {
     if (options.retryActiveGateInvalid && !retried) {
       const marker = new Error('synthetic-active-gate-retry');
@@ -160,7 +171,12 @@ function addCollectionGroup(db) {
   return db;
 }
 
-function bulkServiceFactory(count) {
+function bulkPerson(index, directOnly) {
+  const suffix = String(index).padStart(5, '0');
+  return directOnly || index % 2 === 1 ? 'bulk_' + suffix : 'sp_bulk_' + suffix;
+}
+
+function bulkServiceFactory(count, directOnly) {
   return function createBulkService(deps) {
     const service = serviceMod.createScheduleService(deps);
     return Object.assign({}, service, {
@@ -170,7 +186,7 @@ function bulkServiceFactory(count) {
         assert.ok(template, 'fixture must produce at least one real notification');
         const notifications = Array.from({ length: count }, (_, index) => Object.freeze({
           ...template,
-          person: 'bulk_' + String(index).padStart(5, '0'),
+          person: bulkPerson(index, directOnly),
           dedupe_key: 'bulk-notice-' + String(index).padStart(5, '0')
         }));
         return Object.freeze({ ...planned, notifications: Object.freeze(notifications) });
@@ -199,8 +215,25 @@ async function bulkScenario(options = {}) {
   const db = createFakeDb();
   await seed(db);
   const counts = instrument(db, options.instrument);
-  const rt = buildRuntime(db, { createService: bulkServiceFactory(3000) });
+  const recipientCount = Number.isInteger(options.recipientCount) ? options.recipientCount : 3000;
+  const rt = buildRuntime(db, { createService: bulkServiceFactory(recipientCount, options.directOnly === true) });
   const draft = await importedDraft(rt, options.suffix || 'one');
+  for (let index = 0; index < recipientCount; index += 1) {
+    const person = bulkPerson(index, options.directOnly === true);
+    const suffix = String(index).padStart(5, '0');
+    const uid = person.startsWith('sp_') ? 'linked_' + suffix : person;
+    if (person.startsWith('sp_')) {
+      db._put(ST + '/schedule_people/' + person, {
+        schema_version: 1, person_id: person, station_id: 'station_102', kind: 'registered',
+        linked_uid: uid, display_name: 'עובד ' + suffix, active: true, revision: 1, source_ref: null
+      });
+    }
+    db._put(ST + '/users/' + uid, {
+      stationId: 'station_102', station_id: 'station_102', station: 'station_102',
+      active: true, is_active: true, role: 'firefighter'
+    });
+  }
+  if (typeof options.mutateRecipients === 'function') options.mutateRecipients(db);
   const config = db._get(ST + '/schedule_state/runtime');
   db._put(ST + '/schedule_state/runtime', { ...config, mode: 'new' });
   const request = req({
@@ -223,7 +256,32 @@ test('3,000 blocked deliveries are released in exactly 30 bounded pages', async 
   assert.equal(value.counts.outboxQueries, 31, 'the final bounded query proves exhaustion');
   assert.ok(value.counts.outboxLimits.length >= 31);
   assert.ok(value.counts.outboxLimits.every((limit) => limit === 100));
+  assert.equal(value.counts.recipientPersonReadBatches.reduce((a, b) => a + b, 0), 1500);
+  assert.equal(value.counts.recipientUserReadBatches.filter((size) => size === 250).length, 12,
+    'the 3,000 publication recipients must be read in twelve bounded batches');
+  assert.ok(value.counts.recipientUserReadBatches.reduce((a, b) => a + b, 0) >= 3000,
+    'other bounded runtime checks may read a few additional live users');
+  assert.ok(value.counts.recipientPersonReadBatches.every((size) => size <= 250));
+  assert.ok(value.counts.recipientUserReadBatches.every((size) => size <= 250));
   assert.equal(value.counts.liveLabReads, 0, 'live release must not read personal lab config');
+});
+
+test('inactive and station-conflicting live users are omitted from the outbox', async () => {
+  const value = await bulkScenario({
+    suffix: 'recipient-gates', recipientCount: 4, directOnly: true,
+    mutateRecipients(db) {
+      db._put(ST + '/users/bulk_00001', { station_id: 'station_102', active: false, is_active: true });
+      db._put(ST + '/users/bulk_00002', { station_id: 'station_102', active: true, is_active: false });
+      db._put(ST + '/users/bulk_00003', {
+        stationId: 'station_102', station_id: 'other_station', station: 'station_102',
+        active: true, is_active: true
+      });
+    }
+  });
+  const published = await value.rt.publish(value.request);
+  const prefix = ST + '/schedule_publications/' + published.publication_id + '/schedule_outbox/';
+  const rows = value.db._paths(prefix).map((path) => value.db._get(path));
+  assert.deepEqual(rows.map((row) => row.person), ['bulk_00000']);
 });
 
 test('a retried release transaction callback does not duplicate or skip a page', async () => {

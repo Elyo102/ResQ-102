@@ -8,7 +8,7 @@
 > **הגרסה הקודמת של המסמך הזה הייתה שגויה בשלושה מובנים** והוחלפה:
 > היא טענה שדבר אינו פרוס (המערכת פרוסה); היא פרסה
 > `firestore:rules,functions` בפקודה אחת **בלי `firestore:indexes`
-> ובלי `hosting`**; והיא מנתה חמש פונקציות במקום 85.
+> ובלי `hosting`**; והיא הסתמכה על ספירת Functions חלקית במקום על מצב הייצור בפועל.
 
 ---
 
@@ -76,6 +76,34 @@ $resqLedgerPath = Join-Path $env:TEMP ("resq-release-ledger-" + $resqCandidateSh
   hosting_release_name = $resqPrevHostingReleaseName
   hosting_version_name = $resqPrevHostingVersionName
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resqLedgerPath -Encoding utf8
+$resqAttemptLedgerPath = Join-Path $env:TEMP ("resq-release-attempts-" + $resqCandidateSha.Substring(0, 12) + '.json')
+$resqAttemptCounts = [ordered]@{ rules_indexes = 0; functions = 0; hosting_clone = 0 }
+$resqAttemptCounts | ConvertTo-Json | Set-Content -LiteralPath $resqAttemptLedgerPath -Encoding utf8
+
+function Invoke-ResQDeployWith429Backoff([string]$only, [string]$step, [string]$attemptKey) {
+  $delays = @(0, 60, 180)
+  for ($attempt = 0; $attempt -lt $delays.Count; $attempt++) {
+    if ($delays[$attempt] -gt 0) { Start-Sleep -Seconds $delays[$attempt] }
+    $resqAttemptCounts[$attemptKey] = [int]$resqAttemptCounts[$attemptKey] + 1
+    $resqAttemptCounts | ConvertTo-Json | Set-Content -LiteralPath $resqAttemptLedgerPath -Encoding utf8
+    $resqNativeErrorsBeforeDeploy = $PSNativeCommandUseErrorActionPreference
+    try {
+      # A non-zero native exit is data here: it must be classified as 429 or
+      # terminal before Stop semantics are restored.
+      $PSNativeCommandUseErrorActionPreference = $false
+      $output = (& npx --yes firebase-tools@15.28.1 deploy --only $only --project station-102 2>&1 | Out-String)
+      $exitCode = $LASTEXITCODE
+    } finally {
+      $PSNativeCommandUseErrorActionPreference = $resqNativeErrorsBeforeDeploy
+    }
+    Write-Host $output
+    if ($exitCode -eq 0) { return }
+    $rateLimited = $output -match '(?i)(?:\b429\b|too many requests|rate.?limit|quota exceeded)'
+    if (-not $rateLimited -or $attempt -eq $delays.Count - 1) {
+      throw "$step failed with exit $exitCode after $($attempt + 1) attempt(s)"
+    }
+  }
+}
 
 gh --version
 Assert-ResQNative 'GitHub CLI availability'
@@ -178,6 +206,8 @@ npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-
 Assert-ResQNative 'schedule qualifications integration'
 npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js"
 Assert-ResQNative 'schedule gaps integration'
+npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node callout-delivery.integration.test.js"
+Assert-ResQNative 'callout delivery security integration'
 ```
 
 מיד אחרי השערים מודדים שוב את אותו עץ. אסור להכין אישור מתוך מצב
@@ -221,6 +251,14 @@ foreach ($resqOldIndex in $resqOldIndexes) {
 git fetch origin --prune
 Assert-ResQNative 'pre-merge fetch'
 if ((git rev-parse origin/main).Trim() -ne $resqRollbackSha) { throw 'origin/main changed after approval; approval is void' }
+$resqPrHeadBeforeChecks = (gh pr view $resqPrNumber --json headRefOid --jq '.headRefOid').Trim()
+Assert-ResQNative 'read PR head before checks'
+if ($resqPrHeadBeforeChecks -ne $resqCandidateSha) { throw 'PR head differs from the approved candidate' }
+gh pr checks $resqPrNumber --watch --fail-fast
+Assert-ResQNative 'wait for required PR checks'
+$resqPrHeadAfterChecks = (gh pr view $resqPrNumber --json headRefOid --jq '.headRefOid').Trim()
+Assert-ResQNative 're-read PR head after checks'
+if ($resqPrHeadAfterChecks -ne $resqCandidateSha) { throw 'PR head changed while checks were running' }
 $resqHostingNowRaw = (npx --yes firebase-tools@15.28.1 hosting:channel:list --site station-102 --project station-102 --json | Out-String)
 Assert-ResQNative 'pre-merge Hosting recheck'
 $resqHostingNow = $resqHostingNowRaw | ConvertFrom-Json
@@ -296,24 +334,35 @@ if ((Get-FileHash -LiteralPath $resqPreviewCache -Algorithm SHA256).Hash -ne $re
 
 ```powershell
 $resqRulesAttempted = $true
-npx --yes firebase-tools@15.28.1 deploy --only firestore:rules,firestore:indexes --project station-102
-Assert-ResQNative 'deploy rules and indexes'
+Invoke-ResQDeployWith429Backoff 'firestore:rules,firestore:indexes' 'deploy rules and indexes' 'rules_indexes'
 ```
 
 **⚠ `firestore:indexes` הייתה חסרה בגרסה הקודמת של המסמך.** אינדקס
 חסר אינו שגיאת פריסה — הוא שאילתה שנופלת בזמן אמת, למשתמש, בשדה.
 
-עצור וּודא שהפקודה הסתיימה בהצלחה לפני שאתה ממשיך.
+עצור וּודא שהפקודה הסתיימה בהצלחה לפני שאתה ממשיך. לאחר מכן המתן
+בצורה חסומה לשלושת האינדקסים החדשים של קריאת הפתע. הצלחת פקודת
+הפריסה אינה אומרת שבניית האינדקס הסתיימה:
+
+```powershell
+node tests/firebase-release-state.mjs indexes station-102 1800000 15000 `
+  'callouts|COLLECTION|by_uid:ASCENDING,created_key:DESCENDING' `
+  'callouts|COLLECTION|uids:ARRAY_CONTAINS,created_key:DESCENDING' `
+  'callouts|COLLECTION|uids:ARRAY_CONTAINS,active:ASCENDING,created_key:DESCENDING'
+Assert-ResQNative 'wait for raw Firestore callout index states'
+```
 
 ### 2.3 · פונקציות
 
 ```powershell
+node tests/firebase-release-state.mjs functions station-102
+Assert-ResQNative 'assert no active Cloud Functions rollout'
 $resqFunctionsAttempted = $true
-npx --yes firebase-tools@15.28.1 deploy --only functions --project station-102
-Assert-ResQNative 'deploy functions'
+Invoke-ResQDeployWith429Backoff 'functions' 'deploy functions' 'functions'
 ```
 
-85 פונקציות · `europe-west1` · Node 22.
+מספר ה־Functions אינו מקובע במסמך: שער המצב הגולמי שלמעלה מונה את כולן
+ודורש שכל אחת תהיה `ACTIVE` לפני הפריסה. סביבת הריצה הנתמכת היא Node 22.
 
 הפקודה מריצה קודם את שער האפליקציה (`predeploy`). אם השער נכשל —
 **הפריסה לא יוצאת לדרך.** זה תקין, ואין לעקוף אותו.
@@ -336,6 +385,8 @@ if ($resqPreviewList.status -ne 'success' -or $resqPreviewRows.Count -ne 1 -or
   throw 'preview channel changed after verification'
 }
 $resqHostingAttempted = $true
+$resqAttemptCounts.hosting_clone = [int]$resqAttemptCounts.hosting_clone + 1
+$resqAttemptCounts | ConvertTo-Json | Set-Content -LiteralPath $resqAttemptLedgerPath -Encoding utf8
 npx --yes firebase-tools@15.28.1 hosting:clone ("station-102@" + $resqPreviewVersionId) station-102:live --project station-102
 Assert-ResQNative 'promote verified preview to live'
 ```

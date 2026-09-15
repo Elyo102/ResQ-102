@@ -18,7 +18,8 @@ const CONTENT_TYPES = Object.freeze({
   '.css':Object.freeze(['text/css']), '.html':Object.freeze(['text/html']),
   '.ico':Object.freeze(['image/x-icon', 'image/vnd.microsoft.icon']), '.jpg':Object.freeze(['image/jpeg']),
   '.js':Object.freeze(['text/javascript', 'application/javascript']),
-  '.json':Object.freeze(['application/json']), '.png':Object.freeze(['image/png'])
+  '.json':Object.freeze(['application/json']), '.png':Object.freeze(['image/png']),
+  '.mp3':Object.freeze(['audio/mpeg'])
 });
 
 function headerValue(response, name) {

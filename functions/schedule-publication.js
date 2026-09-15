@@ -169,17 +169,16 @@ function createPublication(deps) {
     if (!isPlainObject(summary)) {
       throw new PublicationError('plan-summary', 'לתוכנית החדשה חסר סיכום כשירות לפרסום');
     }
-    const blocking = ['blocking_gaps', 'days_below_minimum', 'rejected_manual'];
-    for (const key of blocking) {
+    const counters = ['blocking_gaps', 'days_below_minimum', 'rejected_manual'];
+    for (const key of counters) {
       if (!isInt(summary[key]) || summary[key] < 0) {
         throw new PublicationError('plan-summary', 'סיכום התוכנית אינו תקין: ' + key);
       }
-      if (summary[key] > 0) {
-        throw new PublicationError('plan-not-publishable', 'התוכנית כוללת חוסרים או שיבוצים שנדחו');
-      }
     }
-    if (plan.rows.some((row) => row.complete !== true)) {
-      throw new PublicationError('plan-not-publishable', 'יש שורות שלא הושלמו ולכן אי אפשר לפרסם');
+    // Staffing and qualification gaps are manager-facing warnings. A manual
+    // assignment the engine could not represent remains a hard integrity gate.
+    if (summary.rejected_manual > 0) {
+      throw new PublicationError('plan-not-publishable', 'התוכנית כוללת שיבוצים ידניים שנדחו');
     }
   }
 
@@ -731,6 +730,15 @@ function createPublication(deps) {
       published_at: at,
       published_by: inp.actor,
       first_publication: !inp.previous,
+      warnings: Object.freeze({
+        blocking_gaps: next.summary.blocking_gaps,
+        days_below_minimum: next.summary.days_below_minimum,
+        manual_warning_assignments: isInt(next.summary.manual_warning_assignments)
+          ? next.summary.manual_warning_assignments : 0,
+        manual_warnings: isInt(next.summary.manual_warnings) ? next.summary.manual_warnings : 0,
+        manual_warning_counts: isPlainObject(next.summary.manual_warning_counts)
+          ? next.summary.manual_warning_counts : Object.freeze({})
+      }),
       notified_people: notifications.length
     });
 
@@ -745,6 +753,7 @@ function createPublication(deps) {
         actor: inp.actor,
         at,
         content_hash: contentHash,
+        warnings: publication.warnings,
         notified_people: notifications.length
       })
     });

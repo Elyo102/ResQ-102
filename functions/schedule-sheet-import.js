@@ -509,7 +509,18 @@ function resolveSheet(parsed, options) {
 
   // שיבוצים: ארבע תחנות הקצה הקנוניות ובאותו סדר בכל יום. תחנה שלא
   // הופיעה בקלט מקבלת coverage=missing — לא תא ריק שנראה מאומת.
-  const subKeys = CANONICAL_STATIONS.slice();
+  const policyKeys = Object.keys(policy.sub_stations);
+  const canonical = CANONICAL_STATIONS.every((key) =>
+    Object.prototype.hasOwnProperty.call(policy.sub_stations, key));
+  const subKeys = canonical && policyKeys.length === CANONICAL_STATIONS.length
+    ? CANONICAL_STATIONS.slice()
+    : policyKeys.slice().sort((left, right) => {
+      const a = policy.sub_stations[left] || {};
+      const b = policy.sub_stations[right] || {};
+      const ao = Number.isInteger(a.order) ? a.order : Number.MAX_SAFE_INTEGER;
+      const bo = Number.isInteger(b.order) ? b.order : Number.MAX_SAFE_INTEGER;
+      return ao - bo || left.localeCompare(right, 'en');
+    });
   if (Object.keys(policy.sub_stations).length !== subKeys.length
       || subKeys.some((key) => !Object.prototype.hasOwnProperty.call(policy.sub_stations, key))) {
     fail('station-contract', 'חוקי התחנה חייבים לכלול את אילת, שחמון, תמנע ויטבתה');

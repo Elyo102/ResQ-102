@@ -405,6 +405,35 @@ t('„הסידור שלי" מציג רק את שלו, עם הצוות והכשי
   assert.deepStrictEqual(mine.days[0].qualifications, ['ראש משמרת', 'חובש']);
 });
 
+t('אזהרות שיבוץ ידני עוברות מהשרת לתצוגה האישית והתחנתית בסדר בטוח', () => {
+  const { service, engine } = build();
+  const plan = JSON.parse(JSON.stringify(engine.planPeriod(REQ)));
+  const row = plan.rows.find((candidate) => candidate.slots.some((slot) => slot.person === 'גדי'));
+  const slot = row.slots.find((candidate) => candidate.person === 'גדי');
+  slot.manual_warning_codes = [
+    'over_limit', 'unknown_private_value', 'rest', 'over_limit',
+    'out_of_sub_station', 'no_qualified', 'not_available', 'out_of_rotation', 17
+  ];
+  const expected = [
+    'not_available', 'rest', 'out_of_rotation',
+    'no_qualified', 'out_of_sub_station', 'over_limit'
+  ];
+
+  const mine = service.buildMySchedule({ actor: FIREFIGHTER, plan, roster: ROSTER });
+  const mineDay = mine.days.find((day) => day.date === row.date);
+  assert.deepStrictEqual(mineDay.manual_warning_codes, expected);
+
+  const station = service.buildStationSchedule({ actor: FIREFIGHTER, plan, date: row.date, roster: ROSTER });
+  const stationSlot = station.day.sub_stations
+    .reduce((all, sub) => all.concat(sub.people), [])
+    .find((personEntry) => personEntry.uid === 'גדי');
+  assert.deepStrictEqual(stationSlot.manual_warning_codes, expected);
+
+  const rendered = JSON.stringify({ mineDay, stationSlot });
+  assert.strictEqual(rendered.includes('unknown_private_value'), false);
+  assert.strictEqual(rendered.includes('manual_warning_codes'), true);
+});
+
 t('„הסידור שלי" מסמן מה דורש תשובה', () => {
   const { service, engine } = build();
   const plan = engine.planPeriod(REQ);

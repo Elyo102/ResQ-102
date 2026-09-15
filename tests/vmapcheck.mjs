@@ -38,7 +38,14 @@ for (const role of ['commander','firefighter']) {
 
   await pg.goto('http://localhost:'+PORT+'/vehicle.html?v=v2&side=right',{waitUntil:'load'});
   await pg.waitForTimeout(1800);
-  await pg.click('#coNo').catch(()=>{}); await pg.waitForTimeout(300);
+  // קריאת פתע מחייבת נימוק בדחייה. סוגרים אותה דרך הזרימה
+  // האמיתית כדי שה-overlay לא יסתיר את בדיקות מפת הרכב.
+  if (await pg.isVisible('#coNo').catch(()=>false)) {
+    await pg.click('#coNo');
+    await pg.fill('#coReason', 'בדיקת דפדפן אוטומטית');
+    await pg.click('#coNo');
+    await pg.waitForTimeout(300);
+  }
 
   console.log('--- '+role);
   ck('תמונת רקע מוצגת', await pg.isVisible('.stage img.base').catch(()=>false), 'true');

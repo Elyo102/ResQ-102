@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h181">
+  <link rel="stylesheet" href="./theme.css?v=42h19">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -108,6 +108,7 @@
     .advanced>summary::before{content:"＋";display:inline-block;margin-inline-end:8px;color:var(--sched-blue)}
     .advanced[open]>summary::before{content:"−"}
     .advanced>.card{margin:0 12px 12px;box-shadow:none}
+    .legacy-import-display{display:none!important}
     .drawer-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(10,18,30,.52);padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));display:flex;align-items:flex-end;justify-content:center}
     .editcard.drawer{width:min(760px,100%);max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow:auto;margin:0;border-radius:20px 20px 14px 14px;box-shadow:0 20px 70px rgba(0,0,0,.35)}
     .drawer-head{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:2;background:var(--card,#fff);padding-bottom:8px}
@@ -334,6 +335,9 @@
       border:1px solid var(--warn,#e0a23c);display:block;margin-top:5px;white-space:normal}
     .flag.guard{background:var(--info-bg,#eaf3ff);border:1px solid var(--sched-blue);
       color:var(--txt,#1c2532);display:block;margin-top:5px;white-space:normal}
+    .manual-warning-slot{border-color:var(--warn,#e0a23c);background:var(--warn-bg,#fff7df)}
+    .flag.manual-warning{color:var(--warn,#765500);background:var(--warn-bg,#fff7df);
+      border:1px solid var(--warn,#e0a23c);display:inline-block;margin-inline-start:5px;white-space:normal}
     .stub.notes{background:var(--warn-bg,#fff7df);border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
     .notes-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
     .notes-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
@@ -478,31 +482,31 @@
   <section id="manageView" hidden>
     <article class="card manager-workflow" id="managerWorkflow" aria-labelledby="managerWorkflowTitle">
       <div class="workflow-head">
-        <h2 id="managerWorkflowTitle">ניהול הסידור</h2>
+        <h2 id="managerWorkflowTitle">ניהול סידור עבודה</h2>
         <span class="workflow-mode" id="managerWorkflowMode">טוען מצב…</span>
       </div>
       <div class="workflow-actions" aria-label="פעולות הסידור">
         <button class="btn primary current" type="button" data-workflow-action="import">ייבוא קובץ</button>
         <button class="btn" type="button" data-workflow-action="draft">יצירת טיוטה</button>
-        <button class="btn" type="button" data-workflow-action="review" disabled>סקירת טיוטה</button>
+        <button class="btn" type="button" data-workflow-action="review" disabled>סקירה לפני פרסום</button>
         <button class="btn dark" type="button" data-workflow-action="publish" disabled>פרסום</button>
         <button class="btn danger" type="button" data-workflow-action="rollback" disabled>חזרה לאחור</button>
-        <button class="btn" type="button" id="editDrawerOpen" aria-haspopup="dialog" aria-controls="editDrawer" disabled>✎ עריכה ידנית</button>
+        <button class="btn" type="button" id="editDrawerOpen" aria-haspopup="dialog" aria-controls="editDrawer" disabled>✎ עריכה בעיפרון</button>
       </div>
       <div class="workflow-hint" id="managerWorkflowHint" aria-live="polite">בחרו קובץ או צרו טיוטה חדשה. שום דבר לא נשלח לפני סקירה ואישור.</div>
     </article>
 
     <details class="advanced" id="managerAdvanced">
-      <summary>הגדרות מתקדמות · כוח אדם וחוקי שיבוץ</summary>
+      <summary>הגדרות אופציונליות ליצירת טיוטה אוטומטית</summary>
     <article class="card" id="policyCard">
-      <h2>חוקי התחנה</h2>
+      <h2>תקינה ותפקידים לטיוטה אוטומטית</h2>
       <div class="sub" id="sourceSummary">טוען מדיניות ומקור נתונים…</div>
-      <div class="sub">כמה אנשים בכל תפקיד דרושים ביום, וקו המינימום של תחנת הקצה.
-        אלה החלטות של התחנה — המנוע אינו מניח אותן, וערך שלא נקבע הוא שגיאה ולא אפס.</div>
+      <div class="sub">הגדירו רק אם רוצים שהמערכת תציע טיוטה אוטומטית: כמה אנשים ובעלי תפקידים רצויים בכל משמרת.
+        ההגדרות מציגות אזהרות ואינן תנאי לייבוא סידור מקובץ.</div>
       <div class="pills" id="policySubs"></div>
       <div class="steps" id="policySteps"></div>
       <div class="actions">
-        <button class="btn primary" id="savePolicy" type="button" disabled>שמור את חוקי התחנה</button>
+        <button class="btn primary" id="savePolicy" type="button" disabled>שמור הגדרות טיוטה</button>
         <label class="req-flag" for="confirmWeakening">
           <input id="confirmWeakening" type="checkbox"> מאשר/ת הקלה בתקן
         </label>
@@ -513,7 +517,7 @@
     </article>
 
     <article class="card" id="sourceCard">
-      <h2>מקור כוח אדם</h2>
+      <h2>רשימת עובדים לטיוטה אוטומטית</h2>
       <div class="sub" id="sourceSummaryLine">—</div>
       <div class="sub">העתיקו את הטווח מהגיליון והדביקו כאן, כולל שורת הכותרות.
         המערכת אינה ניגשת לגיליון ואינה שומרת ממנו דבר מלבד מה שנשמר במקור.
@@ -529,7 +533,7 @@
       </div>
       <div class="btns">
         <button class="btn" id="sourceParse" type="button">קרא את ההדבקה</button>
-        <button class="btn primary" id="sourceCheck" type="button" disabled>בדוק מול חוקי התחנה</button>
+        <button class="btn primary" id="sourceCheck" type="button" disabled>בדוק את הרשימה</button>
         <button class="btn dark" id="sourceSave" type="button" disabled>שמור את המקור</button>
       </div>
       <div class="counts" id="sourceCounts" hidden></div>
@@ -548,11 +552,8 @@
 
     <article class="card importcard" id="importCard">
       <h2>קליטת סידור עבודה</h2>
-      <div class="sub">אפשר לבחור קובץ XLSX של Excel, קובץ CSV/TSV שהורד מ-Google Sheets, או להדביק את הגיליון. בקובץ שנתי המערכת קוראת רק את החודש שנבחר. הקובץ נקרא בדפדפן בלבד;
-        הקובץ הגולמי אינו נשמר ואינו נשלח. המערכת
-        קוראת את התוויות שבעמודה הימנית — אילת, שחמון, תמנע, יטבתה, מחלה, מילואים, קורסים, חופש —
-        ומייבאת את החודש כמות שהוא, בלי שהמנוע ישנה בו דבר. הקו האדום מוצג ואינו חוסם.
-        שם שלא זוהה מוצג להתאמה פעם אחת, והמערכת זוכרת.</div>
+      <div class="sub">בחרו קובץ Excel/CSV או הדביקו גיליון. מיד לאחר הבחירה המערכת תציג תצוגה מקדימה ותיצור טיוטה לאישור.
+        שמות של עובדים שעדיין אינם מקושרים לחשבון נשארים גלויים; חוסרים וכשירויות מוצגים כאזהרות לטיפול מנהל הסידור.</div>
       <div class="filepick">
         <input id="importFile" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values">
         <label class="btn primary" for="importFile" style="margin:0">1. בחר קובץ סידור (Excel / CSV)</label>
@@ -574,11 +575,11 @@
       </div>
       <div class="btns">
         <button class="btn" id="importCheck" type="button">2. בדוק תצוגה מקדימה</button>
-        <button class="btn dark" id="importRun" type="button" disabled>3. ייבא את הסידור</button>
-        <button class="btn primary" id="importShow" type="button" disabled>4. הצג בלוח — המנוע נשאר כבוי</button>
-        <button class="btn" id="importClear" type="button" hidden>הסר את הסידור המיובא מהלוח</button>
+        <button class="btn dark" id="importRun" type="button" disabled>3. צור טיוטה מהקובץ</button>
+        <button class="btn primary legacy-import-display" id="importShow" type="button" disabled tabindex="-1" aria-hidden="true">הצג בלוח</button>
+        <button class="btn legacy-import-display" id="importClear" type="button" hidden tabindex="-1" aria-hidden="true">הסר מהלוח</button>
       </div>
-      <div class="sub" id="importDisplayStatus">הייבוא אינו מפעיל את המנוע ואינו שולח התראות.</div>
+      <div class="sub legacy-import-display" id="importDisplayStatus" aria-hidden="true">אין מסלול תצוגה נפרד.</div>
       <div id="importReport" hidden>
         <div class="importcounts" id="importCounts"></div>
         <div class="blocklist" id="importBlocks"></div>
@@ -600,14 +601,14 @@
     <div class="manage-grid">
       <article class="card">
         <h2>יצירת טיוטה</h2>
-        <div class="sub">הרצה יוצרת טיוטה בלבד. איש אינו מקבל הודעה עד לפרסום נפרד.</div>
+        <div class="sub">המערכת יוצרת טיוטה בלבד. לאחר מכן אפשר לערוך בעיפרון ולסקור לפני הפרסום.</div>
         <div class="fields">
           <div><label for="startMonth">חודש התחלה</label><input id="startMonth" type="month"></div>
-          <div><label for="months">אורך התכנון</label><select id="months"><option value="1">חודש</option><option value="2">חודשיים</option><option value="3">שלושה חודשים</option></select></div>
+          <div><label for="months">אורך התכנון</label><select id="months"><option value="1">חודש</option><option value="2">חודשיים</option><option value="3">שלושה חודשים</option><option value="12">שנה</option></select></div>
         </div>
         <div class="overrides">
-          <div class="sub"><b>שיבוץ ידני לפני ההרצה</b> — איתור עובד והצבתו בתחנת קצה ליום מסוים.
-            גם שיבוץ ידני עובר את כל בדיקות הכשירות והמנוחה.</div>
+          <div class="sub"><b>שיבוץ ידני לפני ההרצה</b> — איתור עובד והצבתו ביום ובתחנה הרצויים.
+            חוסרים וכשירויות יוצגו כאזהרות בסקירה.</div>
           <div id="overrideList"></div>
           <button class="btn" id="addOverride" type="button">+ הוסף שיבוץ ידני</button>
         </div>
@@ -618,7 +619,7 @@
 
       <article class="card">
         <h2>פרסום</h2>
-        <div class="sub">הפרסום מחליף את הסידור הפעיל בפעולה אחת. רק לאחר מכן משתחררות הודעות הפוש.</div>
+        <div class="sub">הפרסום מחליף את הסידור הפעיל בפעולה אחת ושולח עדכון רק לעובדים שהשיבוץ שלהם השתנה.</div>
         <div class="pubrow">
           <button class="btn dark" id="publish" type="button" disabled>פרסום הסידור</button>
           <span class="draft-badge" id="draftBadge" hidden>טיוטה</span>
@@ -718,6 +719,11 @@
         </div>
       </div>
       <div id="draftPreview"><div class="loader"></div></div>
+      <div class="gapbox" id="draftManualWarnings" hidden>
+        <div class="gaphead"><b>אזהרות בשיבוצים ידניים — בשבוע המוצג</b></div>
+        <div class="sub">השיבוצים נשמרו בטיוטה. האזהרות מוצגות לבדיקה ואינן חוסמות פרסום.</div>
+        <div id="draftManualWarningsList"></div>
+      </div>
       <!-- 42H.2 ג׳ · בקרת פערים על הטיוטה כולה -->
       <div class="gapbox" id="draftGaps" hidden>
         <div class="gaphead"><b id="draftGapsTitle">בקרת פערים</b><button class="btn" id="draftGapsDetail" type="button">פירוט לפי יום</button></div>
@@ -740,7 +746,7 @@
     <article class="card">
       <h2>קטלוג הכשירויות</h2>
       <div class="sub">כשירות היא יכולת מבצעית — לא תפקיד הרשאה. תשע הכשירויות המובנות בסדר קבוע; שלוש הראשונות
-        <b>קריטיות</b>: פער בהן חוסם פרסום. אפשר לשנות תווית, להשבית, לקבוע מינימום ליום, ולהוסיף כשירויות מותאמות.
+        <b>קריטיות</b>: פער בהן מוצג כאזהרה בולטת אך אינו חוסם פרסום. אפשר לשנות תווית, להשבית, לקבוע מינימום ליום, ולהוסיף כשירויות מותאמות.
         מחיקה — רק לכשירות מותאמת שאיש אינו מחזיק בה.</div>
       <div style="overflow-x:auto"><table class="qualtable" id="qualTable"><thead><tr>
         <th>#</th><th>כשירות</th><th>קריטית</th><th>מינימום ליום</th><th>מחזיקים</th><th>פעילה</th><th></th>
@@ -786,6 +792,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h181"></script>
+<script type="module" src="./schedule-management.js?v=42h19"></script>
 </body>
 </html>

@@ -27,7 +27,7 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h181-release1';
+const CACHE = 'resq-v42h19-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -43,7 +43,7 @@ const SHELL = [
   './hr-attachments-ui.js', './hr-attachments-ui.css',
   './maintenance.html', './maintenance-client.js', './maintenance.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
-  './quals.html', './alerts.html', './stats.html', './people.html',
+  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-siren.mp3', './stats.html', './people.html',
   './vehicle.html', './sign.html',
   './index.html',
   './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
@@ -178,7 +178,7 @@ messaging.onBackgroundMessage(function (payload) {
     // התראה דחופה נשארת על המסך עד שנוגעים בה, ומרטיטה.
     // קריאת פתע היא המקרה שבשבילו זה קיים.
     requireInteraction: d.important === '1',
-    renotify: d.important === '1',
+    renotify: d.important === '1' && !String(d.tag || '').startsWith('callout-'),
     vibrate: d.important === '1'
       ? [300, 120, 300, 120, 500] : undefined
   });

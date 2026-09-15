@@ -653,6 +653,10 @@ export async function runTransaction(dbRef, updateFunction){
 
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
+  if (/\/callouts\/[^/]+\/responses\/[^/]+$/.test(p)) {
+    return Promise.resolve({ exists:() => false, data:() => undefined,
+      id:p.split('/').pop() || 'response' });
+  }
   if (/\/attendance_shadow_reports\/[^/]+$/.test(p) &&
       typeof window !== 'undefined' &&
       (Object.prototype.hasOwnProperty.call(window, '__SHADOW_REPORT') ||
@@ -884,7 +888,15 @@ export function getDocs(q){
   return delayed(EMPTY_QUERY);
 }
 
-export function updateDoc(){
+export function updateDoc(ref, fieldPath, value){
+  if (typeof window !== 'undefined') {
+    window.__FIRESTORE_UPDATES = window.__FIRESTORE_UPDATES || [];
+    window.__FIRESTORE_UPDATES.push({
+      path:(ref && ref.path) || '',
+      segments:fieldPath && Array.isArray(fieldPath.segments) ? fieldPath.segments.slice() : [],
+      value:value && typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : value
+    });
+  }
   if (typeof window !== 'undefined' && window.__FIRESTORE_HOLD_UPDATES === true) {
     return new Promise((resolve, reject) => {
       window.__FIRESTORE_PENDING_UPDATES = window.__FIRESTORE_PENDING_UPDATES || [];
@@ -942,7 +954,7 @@ export function onSnapshot(q, next, err){
       ? delayedRead(docSnap({
           mode:(typeof window !== 'undefined' && window.__SMOKE_MODE) || 'live'
         }, 'mode'), p).then(result => corruptRead(result, p))
-      : getDocs(q);
+      : (q && q.id ? getDoc(q) : getDocs(q));
     initial.then(s => {
       try { if (listener.live) fn(s); } catch (e) {}
     }, readError => {
@@ -979,8 +991,10 @@ export function onSnapshot(q, next, err){
 
 if (typeof window !== 'undefined') {
   window.__FIRESTORE_DELIVER_CAPTURED = function (pathPart, rows, options) {
-    const matches = ALL_SNAPSHOT_LISTENERS.filter(item =>
-      item.path.indexOf(String(pathPart || '')) !== -1);
+    const requested = String(pathPart || '');
+    const matches = ALL_SNAPSHOT_LISTENERS.filter(item => requested === '/callouts'
+      ? item.path.endsWith('/callouts')
+      : item.path.indexOf(requested) !== -1);
     const item = options && options.oldest ? matches[0] : matches[matches.length - 1];
     if (!item) return false;
     if (options && options.error) {
@@ -1019,6 +1033,12 @@ export function setDoc(ref, value, options){
   if (typeof window !== 'undefined') {
     window.__FIRESTORE_WRITES = window.__FIRESTORE_WRITES || [];
     window.__FIRESTORE_WRITES.push({ path:path, value:value, options:options || null });
+    if (window.__FIRESTORE_HOLD_UPDATES === true && /\/callouts\/[^/]+\/responses\//.test(path)) {
+      return new Promise((resolve, reject) => {
+        window.__FIRESTORE_PENDING_UPDATES = window.__FIRESTORE_PENDING_UPDATES || [];
+        window.__FIRESTORE_PENDING_UPDATES.push({ resolve, reject });
+      });
+    }
     const failures = Array.isArray(window.__FIRESTORE_WRITE_FAIL_PATHS) ?
       window.__FIRESTORE_WRITE_FAIL_PATHS : [];
     const committedFailures = Array.isArray(window.__FIRESTORE_WRITE_FAIL_AFTER_COMMIT_PATHS) ?

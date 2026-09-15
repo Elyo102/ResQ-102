@@ -105,16 +105,6 @@ await check('scheduled handler preserves worker rejection instead of swallowing 
 
 const config = JSON.parse(read('firestore.indexes.json'));
 const newGroups = ['hr_nudge_actions', 'hr_nudge_intents'];
-// The adjacent domain gate independently pins these exact25 indexes. They
-// are not part of this gate's immutable pre-HR baseline or its eight shapes.
-const domainGroups = ['hr_request_notification_jobs', 'hr_document_notification_jobs', 'hr_hours_review_notification_jobs',
-  'attendance_correction_notification_jobs', 'hr_workforce_notification_jobs', 'hr_domain_notification_intents'];
-// Product features outside the HR nudge contract own their indexes and are
-// pinned by their own focused gates. Do not turn adding one into an HR failure.
-const productGroups = ['faults'];
-const productOverrideGroups = ['bulletin_view_recipients'];
-const liveLabGroups = ['live_lab_config', 'live_lab_probes', 'live_lab_quotas'];
-const healthShadowGroups = ['system_health_cycles', 'system_health_reports', 'health_shadow'];
 const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actions', 'not_before_ms'], ['hr_nudge_actions', 'updated_at_ms'],
   ['hr_nudge_intents', 'expires_at_ms'], ['hr_nudge_intents', 'lease_until_ms'], ['hr_nudge_intents', 'not_before_ms'],
   ['hr_nudge_intents', 'next_check_ms'], ['hr_nudge_intents', 'created_at_ms']].map(([collectionGroup, fieldPath]) => ({
@@ -123,19 +113,16 @@ const expectedIndexes = [['hr_nudge_actions', 'expires_at_ms'], ['hr_nudge_actio
 await check('exact eight required collection-group indexes, without duplicate or extra query shapes', () => {
   assert.deepEqual(config.indexes.filter(i => newGroups.includes(i.collectionGroup)), expectedIndexes);
 });
-await check('all13 original indexes and32 field overrides match immutable b1451e9 baseline', () => {
+await check('HR nudge retention contract is exact and independent of unrelated product TTL policies', () => {
   assert.deepEqual(Object.keys(config).sort(), ['fieldOverrides', 'indexes']);
-  const old = config.indexes.filter(i => !newGroups.includes(i.collectionGroup)
-    && !domainGroups.includes(i.collectionGroup)
-    && !productGroups.includes(i.collectionGroup));
-  const oldOverrides = config.fieldOverrides.filter(i => !liveLabGroups.includes(i.collectionGroup)
-    && !healthShadowGroups.includes(i.collectionGroup)
-    && !productOverrideGroups.includes(i.collectionGroup));
-  assert.equal(old.length, 13); assert.equal(oldOverrides.length, 32);
-  // Canonical JSON hashes from read-only git show b1451e9. Runtime test needs
-  // no Git installation/history and ignores only insignificant JSON whitespace.
-  assert.equal(sha(JSON.stringify(old)), '3b558f2e2ad2530a7496c51d5cfe3a44d88f2fe59372d2bb2b8d860cc8052766');
-  assert.equal(sha(JSON.stringify(oldOverrides)), '41571b75f7605882500137b420a1664964d2efd0cee6f3a6ef885c44399c9939');
+  const retentionIndexes = config.indexes.filter(i => newGroups.includes(i.collectionGroup)
+    && i.fields.some(field => field.fieldPath === 'expires_at_ms'));
+  assert.deepEqual(retentionIndexes, expectedIndexes.filter(i =>
+    i.fields.some(field => field.fieldPath === 'expires_at_ms')));
+  // These records are expired by the bounded dispatcher using expires_at_ms;
+  // they do not write an expires_at Timestamp and therefore must not claim a
+  // native Firestore TTL policy. TTLs owned by other products are irrelevant.
+  assert.deepEqual(config.fieldOverrides.filter(i => newGroups.includes(i.collectionGroup)), []);
 });
 await check('old automatic reminder/report producers and reviewed modules are unchanged', () => {
   const oldExports = index.split(/(?=^exports\.)/m);

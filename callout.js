@@ -9,12 +9,12 @@
 //   watchCallouts  מאזין ומקפיץ. יושב בכל מסך.
 //   ackCallout     התשובה — מגיע או לא זמין.
 //
-// התשובה נשמרת על מסמך הקריאה עצמו, בשדה acks, ולא באוסף
-// נפרד. כך המפקד רואה את כל התשובות בקריאה אחת, בזמן אמת,
-// בלי לשאול את השרת על כל אדם בנפרד.
+// כל תשובה נשמרת במסמך פרטי משלה מתחת לקריאה. כך נמען יכול
+// לקרוא ולשנות רק את התשובה שלו, בעוד יוצר הקריאה רואה את
+// התמונה המלאה במסוף הניהול.
 
 import { collection, query, where, orderBy, limit, onSnapshot,
-         doc, updateDoc, FieldPath }
+         doc, setDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
@@ -26,6 +26,8 @@ export const ACKS = [
   { id: 'coming', he: 'מגיע',    color: 'var(--good)' },
   { id: 'no',     he: 'לא זמין', color: 'var(--muted)' }
 ];
+
+const seenWrites = new Map();
 
 export function ackHe(id) {
   const a = ACKS.filter(function (x) { return x.id === id; })[0];
@@ -77,6 +79,12 @@ function styleOnce() {
     '#coBox button.go{background:#2e7d32;border-color:#2e7d32;color:#fff}',
     '#coBox button:disabled{opacity:.55;cursor:not-allowed}',
     '#coBox .more{color:#9aa0a6;font-size:12px;margin-top:12px}',
+    '#coBox .reason{margin-top:12px}',
+    '#coBox .reason[hidden]{display:none!important}',
+    '#coBox .reason label{display:block;color:#ffccbc;font-size:13px;margin-bottom:6px}',
+    '#coBox .reason textarea{box-sizing:border-box;width:100%;min-height:78px;',
+    '  resize:vertical;border:1px solid #6d4548;border-radius:9px;padding:10px;',
+    '  background:#1a0e10;color:#fff;font:inherit}',
     '#coBox .err{color:#ef9a9a;font-size:13px;margin-top:10px;display:none}'
   ].join('');
   document.head.appendChild(st);
@@ -98,6 +106,10 @@ function box() {
       '<div class="btns">' +
         '<button class="go" id="coYes">מגיע</button>' +
         '<button id="coNo">לא זמין</button>' +
+      '</div>' +
+      '<div class="reason" id="coReasonWrap" hidden>' +
+        '<label for="coReason">נימוק הדחייה (חובה)</label>' +
+        '<textarea id="coReason" maxlength="200" placeholder="כתוב בקצרה מדוע אינך יכול להגיע"></textarea>' +
       '</div>' +
       '<div class="more" id="coMore"></div>' +
       '<div class="err" id="coErr"></div>' +
@@ -121,34 +133,67 @@ function alarm() {
   if (!canRing()) return;
   try { if (navigator.vibrate) navigator.vibrate([300, 120, 300, 120, 500]); }
   catch (ignore) {}
+  const fallback = function () {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      [0, 0.45].forEach(function (at) {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(880, ctx.currentTime + at);
+        g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+        g.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + at + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.32);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(ctx.currentTime + at);
+        o.stop(ctx.currentTime + at + 0.35);
+      });
+      setTimeout(function () { try { ctx.close(); } catch (ignore) {} }, 1500);
+    } catch (ignore) {}
+  };
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    [0, 0.45].forEach(function (at) {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'square';
-      o.frequency.setValueAtTime(880, ctx.currentTime + at);
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
-      g.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + at + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.32);
-      o.connect(g); g.connect(ctx.destination);
-      o.start(ctx.currentTime + at);
-      o.stop(ctx.currentTime + at + 0.35);
-    });
-    setTimeout(function () { try { ctx.close(); } catch (ignore) {} }, 1500);
-  } catch (ignore) {}
+    const selected = new Audio('./callout-siren.mp3?v=42h19');
+    selected.preload = 'auto';
+    selected.volume = 1;
+    const playback = selected.play();
+    if (playback && typeof playback.catch === 'function') playback.catch(fallback);
+    return;
+  } catch (ignore) { fallback(); }
 }
 
-export function ackCallout(db, sid, calloutId, uid, name, answer) {
-  // Firestore treats dots in string keys as path separators.  A FieldPath
-  // keeps every valid Firebase Auth UID, including a dotted UID, as one
-  // literal key below `acks`, matching the flat `acks[uid]` reader.
-  return updateDoc(
-    doc(db, 'stations', sid, 'callouts', calloutId),
-    new FieldPath('acks', uid),
-    { resp: answer, name: name || '', at: new Date().toISOString() }
+export async function ackCallout(db, sid, calloutId, uid, name, answer, reason) {
+  const cleanReason = answer === 'no' ? String(reason || '').trim().slice(0, 200) : '';
+  if (answer === 'no' && !cleanReason) {
+    return Promise.reject(new Error('callout-rejection-reason-required'));
+  }
+  // רשת איטית יכולה להביא את הלחיצה לפני שסימון הצפייה הראשון
+  // הושלם. נסיון נוסף מבטיח שהרשומה קיימת; אם היא כבר קיימת
+  // הכללים ידחו שינוי של חותמת הצפייה המקורית ואפשר להמשיך.
+  await markCalloutSeen(db, sid, calloutId, uid).catch(function () {});
+  return setDoc(
+    doc(db, 'stations', sid, 'callouts', calloutId, 'responses', uid),
+    { resp: answer, name: name || '', at: new Date().toISOString(), reason:cleanReason },
+    { merge:true }
   );
+}
+
+// עצם הצגת הקריאה היא מידע תפעולי נפרד מהתשובה. הרשומה
+// נשמרת במיזוג כדי שתשובה מקבילה או חוזרת לא תאבד את seen_at,
+// וכדי שסימון הצפייה לעולם לא ימחק תשובה שכבר נכתבה.
+export function markCalloutSeen(db, sid, calloutId, uid) {
+  const key = [sid, calloutId, uid].join('/');
+  if (seenWrites.has(key)) return seenWrites.get(key);
+  const pending = setDoc(
+    doc(db, 'stations', sid, 'callouts', calloutId, 'responses', uid),
+    { seen_at:new Date().toISOString() },
+    { merge:true }
+  ).catch(function (error) {
+    seenWrites.delete(key);
+    throw error;
+  });
+  seenWrites.set(key, pending);
+  return pending;
 }
 
 // מאזין לקריאות שנוגעות למשתמש הזה ומקפיץ את הראשונה שעדיין
@@ -201,12 +246,16 @@ function clearCalloutUi() {
   const w = document.getElementById('coWrap');
   if (!w) return;
   w.classList.remove('on');
-  ['coText', 'coFrom', 'coMore', 'coErr'].forEach(function (id) {
+  ['coText', 'coFrom', 'coMore', 'coErr', 'coReason'].forEach(function (id) {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
   const err = document.getElementById('coErr');
   if (err) err.style.display = 'none';
+  const reasonWrap = document.getElementById('coReasonWrap');
+  if (reasonWrap) reasonWrap.hidden = true;
+  const no = document.getElementById('coNo');
+  if (no) no.textContent = 'לא זמין';
   ['coYes', 'coNo'].forEach(function (id) {
     const btn = document.getElementById(id);
     if (!btn) return;
@@ -276,12 +325,20 @@ export function watchCallouts(db, sid, uid, opts) {
     id: ++ownerSerial,
     disposed: false,
     stop: function () {},
-    dispose: null
+    dispose: null,
+    answered: new Set(),
+    legacyAnswered: new Set(),
+    responseStops: new Map(),
+    latest: []
   };
   owner.dispose = function () {
     if (owner.disposed) return;
     owner.disposed = true;
     try { owner.stop(); } catch (ignore) {}
+    owner.responseStops.forEach(function (responseStop) {
+      try { responseStop(); } catch (ignore) {}
+    });
+    owner.responseStops.clear();
     if (activeOwner !== owner) return;
     if (modeStop) {
       try { modeStop(); } catch (ignore) {}
@@ -296,9 +353,41 @@ export function watchCallouts(db, sid, uid, opts) {
   const o = opts || {};
   let shownId = '';
 
+  function renderLatest() {
+    if (activeOwner !== owner || owner.disposed) return;
+    const list = owner.latest.filter(function (row) {
+      return row.v.active !== false && fresh(row.v) &&
+        !owner.answered.has(row.id) && !owner.legacyAnswered.has(row.id);
+    });
+    if (!list.length) {
+      const w = document.getElementById('coWrap');
+      if (w) w.classList.remove('on');
+      shownId = '';
+      return;
+    }
+    const cur = list[0];
+    if (cur.id === shownId) return;
+    shownId = cur.id;
+    show(owner, db, sid, uid, cur.id, cur.v, o, list.length);
+  }
+
+  function watchOwnResponse(calloutId) {
+    if (owner.responseStops.has(calloutId)) return;
+    const responseRef = doc(db, 'stations', sid, 'callouts', calloutId, 'responses', uid);
+    const responseStop = onSnapshot(responseRef, function (snap) {
+      if (activeOwner !== owner || owner.disposed) return;
+      const value = snap.exists() ? (snap.data() || {}) : {};
+      if (value.resp === 'coming' || value.resp === 'no') owner.answered.add(calloutId);
+      else owner.answered.delete(calloutId);
+      renderLatest();
+    }, function () {});
+    owner.responseStops.set(calloutId, responseStop);
+  }
+
   const q = query(
     collection(db, 'stations', sid, 'callouts'),
     where('uids', 'array-contains', uid),
+    where('active', '==', true),
     orderBy('created_key', 'desc'),
     limit(5)
   );
@@ -308,25 +397,25 @@ export function watchCallouts(db, sid, uid, opts) {
     stop = onSnapshot(q, function (snap) {
       if (activeOwner !== owner || owner.disposed) return;
       const list = [];
+      const ids = new Set();
       snap.forEach(function (d) {
         const v = d.data() || {};
-        if (v.active === false) return;
-        if (!fresh(v)) return;
-        if (v.acks && v.acks[uid]) return;        // כבר עניתי
+        ids.add(d.id);
+        const legacy = v.acks && typeof v.acks === 'object' ? v.acks : {};
+        if (Object.prototype.hasOwnProperty.call(legacy, uid)) owner.legacyAnswered.add(d.id);
+        else owner.legacyAnswered.delete(d.id);
+        watchOwnResponse(d.id);
         list.push({ id: d.id, v: v });
       });
-
-      if (!list.length) {
-        const w = document.getElementById('coWrap');
-        if (w) w.classList.remove('on');
-        shownId = '';
-        return;
-      }
-
-      const cur = list[0];
-      if (cur.id === shownId) return;             // כבר על המסך
-      shownId = cur.id;
-      show(owner, db, sid, uid, cur.id, cur.v, o, list.length);
+      owner.responseStops.forEach(function (responseStop, id) {
+        if (ids.has(id)) return;
+        try { responseStop(); } catch (ignore) {}
+        owner.responseStops.delete(id);
+        owner.answered.delete(id);
+        owner.legacyAnswered.delete(id);
+      });
+      owner.latest = list;
+      renderLatest();
     }, function (err) {
       if (activeOwner !== owner || owner.disposed) return;
       // מאזין שנפל לא אמור להפיל את המסך שמתחתיו.
@@ -356,11 +445,16 @@ function show(owner, db, sid, uid, id, v, o, count) {
 
   const yes = document.getElementById('coYes');
   const no  = document.getElementById('coNo');
+  const reasonWrap = document.getElementById('coReasonWrap');
+  const reason = document.getElementById('coReason');
+  reasonWrap.hidden = true;
+  reason.value = '';
+  no.textContent = 'לא זמין';
 
-  function answer(which) {
+  function answer(which, why) {
     if (activeOwner !== owner || owner.disposed) return;
     yes.disabled = true; no.disabled = true;
-    ackCallout(db, sid, id, uid, o.name || '', which)
+    ackCallout(db, sid, id, uid, o.name || '', which, why)
       .then(function () {
         if (activeOwner !== owner || owner.disposed) return;
         yes.disabled = false; no.disabled = false;
@@ -377,9 +471,30 @@ function show(owner, db, sid, uid, id, v, o, count) {
       });
   }
 
-  yes.onclick = function () { answer('coming'); };
-  no.onclick  = function () { answer('no'); };
+  yes.onclick = function () { answer('coming', ''); };
+  no.onclick  = function () {
+    if (reasonWrap.hidden) {
+      reasonWrap.hidden = false;
+      no.textContent = 'שלח דחייה';
+      reason.focus();
+      return;
+    }
+    const why = String(reason.value || '').trim();
+    if (!why) {
+      e.textContent = 'כדי לדחות את הקריאה צריך לכתוב נימוק.';
+      e.style.display = 'block';
+      reason.focus();
+      return;
+    }
+    answer('no', why);
+  };
 
   w.classList.add('on');
+  // הצפייה אינה תשובה ולכן אינה סוגרת או מסתירה את הקריאה.
+  // אם הכתיבה נכשלת, הקריאה נשארת פתוחה והמשתמש עדיין יכול
+  // לענות; מאזין עתידי ינסה שוב בעת ההצגה הבאה.
+  markCalloutSeen(db, sid, id, uid).catch(function (err) {
+    console.warn('callout seen: ' + (err && (err.code || err.message) || 'error'));
+  });
   alarm();
 }

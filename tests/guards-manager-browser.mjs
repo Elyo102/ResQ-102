@@ -84,8 +84,10 @@ async function open(page) {
   // בדל הנתונים כולל קריאת פתע כדי לבחון רכיב אחר. היא אמורה
   // לחסום שימוש אמיתי במסך, ולכן סוגרים אותה במפורש לפני כל
   // פעולה תפעולית בבדיקה זו.
-  const no = page.locator('#coNo');
-  if (await no.isVisible().catch(() => false)) await no.click();
+  const yes = page.locator('#coYes');
+  await yes.waitFor({ state:'visible' });
+  await yes.click();
+  await page.locator('#coWrap').waitFor({ state:'hidden' });
 }
 
 function managementCalls(calls) {

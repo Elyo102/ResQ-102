@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.18.1';
+const EXPECTED_VERSION = '42H.19';
 const EXPECTED_DATE = '14.9.2026';
-const EXPECTED_ASSET_KEY = '42h181';
-const EXPECTED_VERSIONED_REFERENCES = 275; // 42H.18.1 PWA lifecycle hotfix.
+const EXPECTED_ASSET_KEY = '42h19';
+const EXPECTED_VERSIONED_REFERENCES = 285; // Adds the isolated shift-callout surface.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
@@ -25,6 +25,9 @@ function loadSnapshot() {
   for (const name of fs.readdirSync(root)) {
     if (!/\.(?:html|js|json)$/.test(name)) continue;
     files.set(name, clean(fs.readFileSync(path.join(root, name), 'utf8')));
+  }
+  for (const relative of ['functions/index.js', 'functions/maintenance-service.js']) {
+    files.set(relative, clean(fs.readFileSync(path.join(root, relative), 'utf8')));
   }
   return files;
 }
@@ -75,6 +78,14 @@ function audit(files) {
   const dateMatches = [...versionSource.matchAll(/export\s+const\s+APP_DATE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (versionMatches.length !== 1 || versionMatches[0]?.[1] !== release.v) errors.push('version.js matches version.json exactly');
   if (dateMatches.length !== 1 || dateMatches[0]?.[1] !== release.d) errors.push('version.js date matches version.json exactly');
+  const functionsIndex = files.get('functions/index.js') || '';
+  if (!functionsIndex.includes("state: 'ok', version: '" + EXPECTED_VERSION + "'")) {
+    errors.push('system heartbeat reports the visible release');
+  }
+  const maintenanceService = files.get('functions/maintenance-service.js') || '';
+  if (!maintenanceService.includes("version:'" + EXPECTED_VERSION + "', ai_state:")) {
+    errors.push('maintenance health row reports the visible release');
+  }
 
   const worker = files.get('firebase-messaging-sw.js') || '';
   const expectedCache = 'resq-v' + key + '-release1';
@@ -154,6 +165,10 @@ const key = EXPECTED_ASSET_KEY;
 mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
 mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
 mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
+mustFail('heartbeat version mutation', replaceExactlyOne(files, 'functions/index.js',
+  "state: 'ok', version: '" + EXPECTED_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
+mustFail('maintenance version mutation', replaceExactlyOne(files, 'functions/maintenance-service.js',
+  "version:'" + EXPECTED_VERSION + "', ai_state:", "version:'42G.invalid', ai_state:"));
 mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
   'resq-v' + key + '-release1', 'resq-vstale-release1'));
 mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
@@ -186,4 +201,4 @@ for (const target of ['hr-client.js', 'hr-hours-ui.js']) {
   assert.ok(audit(missing).errors.some(error => error.includes('offline dependency missing from SHELL: ./' + target)),
     'HR HTML/module startup requires ' + target + ' offline');
 }
-console.log('Release version contract: ' + baseline.count + ' references; 14/14 mutations caught.');
+console.log('Release version contract: ' + baseline.count + ' references; 16/16 mutations caught.');

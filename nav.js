@@ -14,6 +14,7 @@
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
   { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  { href: 'callout.html',  label: 'קריאת פתע',   who: 'shift_command', dot: '#f0523f', group: 'mine' },
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
@@ -52,9 +53,9 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h181';
-import { assertPresentationOnly } from './role-view.js?v=42h181';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h181';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h19';
+import { assertPresentationOnly } from './role-view.js?v=42h19';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h19';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -77,6 +78,9 @@ function allowed(who, claims, presentation) {
   if (who === 'super')  return isSuper;
   if (who === 'hr') return isSuper || display.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
+  if (who === 'shift_command') {
+    return display.role === 'commander' || display.role === 'deputy';
+  }
   // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
   // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.
   if (who === 'attendance_audit') {

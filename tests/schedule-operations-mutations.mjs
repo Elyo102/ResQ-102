@@ -1,8 +1,8 @@
 /* ====================================================================
  *  schedule-operations-mutations · 42H.2 — מוטציות על שלוש החבילות
  *
- *  כל מוטציה מסירה שער אחד (CAS, אימות חי, חסימת פער, מניעת מחיקה,
- *  אי-שינוי snapshot) ומצפה שלפחות אחת מהבדיקות תיפול. מוטציה ששורדת =
+ *  כל מוטציה מסירה אינווריאנט אחד (CAS, אימות חי, תיעוד אזהרות,
+ *  מניעת מחיקה, אי-שינוי snapshot) ומצפה שלפחות אחת מהבדיקות תיפול. מוטציה ששורדת =
  *  שער בלי בדיקה. הקבצים משוחזרים תמיד (finally).
  * ==================================================================== */
 
@@ -75,10 +75,12 @@ const MUTATIONS = [
   ['כשירויות: אדם שאינו חבר תחנה מקבל כשירות', 'runtime',
     "      if (!activePerson && (next.length > 0 || !live)) {\n        throw new ScheduleRuntimeError('person-not-member'", "      if (false) {\n        throw new ScheduleRuntimeError('person-not-member'", ['qualsProbe']],
   // --- חבילה ג׳ · פערים ---
-  ['פערים: פער קריטי אינו חוסם', 'runtime',
-    "    if (report.blocking.length) {\n      const error = new ScheduleRuntimeError('gaps-critical',", "    if (false) {\n      const error = new ScheduleRuntimeError('gaps-critical',", ['editProbe']],
-  ['פערים: אישור לא נבדק', 'runtime',
-    "    if (!scheduleGaps.acknowledgementValid(report, acknowledgement)) {", "    if (false) {", ['editProbe']],
+  ['פערים: הפרסום מציג בטעות כאילו האזהרות אושרו', 'runtime',
+    "        acknowledged: false,\n        acknowledgement: null,\n        acknowledged_by: null,\n        warning_count: gapReport.blocking.length + gapReport.acknowledgeable.length,",
+    "        acknowledged: true,\n        acknowledgement: null,\n        acknowledged_by: null,\n        warning_count: gapReport.blocking.length + gapReport.acknowledgeable.length,", ['editProbe']],
+  ['פערים: מונה האזהרות בפרסום מתאפס', 'runtime',
+    "        warning_count: gapReport.blocking.length + gapReport.acknowledgeable.length,",
+    "        warning_count: 0,", ['editProbe']],
   ['פערים: כל אישור מתקבל (לא בדיוק הרשימה)', 'gaps',
     "  return nonEmpty(acknowledgement) && acknowledgement === report.digest;", "  return nonEmpty(acknowledgement);", ['gapsUnit', 'editProbe']],
   ['פערים: מועמד שאינו פנוי (משובץ באותו יום) מוצע', 'gaps',
@@ -87,15 +89,15 @@ const MUTATIONS = [
     "    const effectiveAssigned = new Set(Array.from(assigned).filter((uid) => people.has(uid) && !absent.has(uid)));", "    const effectiveAssigned = assigned;", ['gapsUnit']],
   ['פערים: יום שלם שחסר בין from ל-to אינו נבדק', 'gaps',
     "  const dates = planDates(plan);", "  const dates = Array.from(new Set(plan.rows.map((r) => r.date))).sort();", ['gapsUnit']],
-  ['פערים: אישור אינו קשור לחתימת הסגל החי', 'runtime',
-    "        report.digest = digest({ gap_digest: report.digest, basis_digest: gapBasisDigest(gapCtx) });",
-    "        report.digest = String(report.digest);", ['editProbe']],
+  ['פערים: דוח העסקה אינו מתעד את revision מדיניות האזהרות', 'runtime',
+    "        gap_policy_revision: txGapCtx.gap_policy_revision,",
+    "        gap_policy_revision: 0,", ['editProbe']],
   ['פערים: כשירות קריטית נספרת כפער אחר', 'gaps',
     "      (q.critical ? blocking : acknowledgeable).push(entry);", "      acknowledgeable.push(entry);", ['gapsUnit', 'editProbe']],
   // --- ביקורת Codex על 0e9a8dc (seq453) ---
-  ['§1 TOCTOU: השער בעסקת הפרסום מבוטל (נשאר רק המוקדם)', 'runtime',
-    "      gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);\n      requireGapClearance(gapReport, gapAcknowledgement);",
-    "      gapReport = gapReportFor(txGapCtx, gapPolicyValue, next.plan);", ['editProbe']],
+  ['§1 TOCTOU: יומן הפרסום מאבד את מספר אזהרות כוח האדם', 'runtime',
+    "        gaps_other: gapReport ? gapReport.acknowledgeable.length : 0,",
+    "        gaps_other: 0,", ['editProbe']],
   // Firestore בזיכרון אינו מבחין בין tx.get לקריאה רגילה — כאן הפין במקור הוא הבדיקה.
   ['§1 TOCTOU: השער בעסקה קורא מחוץ לעסקה (לא tx.get)', 'runtime',
     "        gapContext(ctx, config, gapPeople, txRead)", "        gapContext(ctx, config, gapPeople)", ['runtimeSource']],

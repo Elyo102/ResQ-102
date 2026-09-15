@@ -89,13 +89,26 @@ try {
     assert.equal(await advanced.evaluate((node) => node.tagName), 'DETAILS');
     assert.equal(await advanced.getAttribute('open'), null);
     const summary = advanced.locator(':scope > summary');
-    assert.ok((await summary.textContent()).trim());
+    assert.match((await summary.textContent()).trim(), /הגדרות אופציונליות.*טיוטה אוטומטית/);
     await summary.click();
     assert.equal(await advanced.getAttribute('open'), '');
     assert.equal(await advanced.locator('#policyCard').count(), 1);
     assert.equal(await advanced.locator('#sourceCard').count(), 1);
+    assert.match(await advanced.locator('#policyCard h2').textContent(), /תקינה ותפקידים לטיוטה אוטומטית/);
+    assert.match(await advanced.locator('#sourceCard h2').textContent(), /רשימת עובדים לטיוטה אוטומטית/);
     await summary.click();
     assert.equal(await advanced.getAttribute('open'), null);
+  });
+
+  await test('import is one draft workflow and legacy display-only controls stay hidden', async () => {
+    assert.equal(await desktop.page.locator('#importShow').isVisible(), false);
+    assert.equal(await desktop.page.locator('#importClear').isVisible(), false);
+    assert.equal(await desktop.page.locator('#importDisplayStatus').isVisible(), false);
+    assert.match(await desktop.page.locator('#importRun').textContent(), /צור טיוטה מהקובץ/);
+    const annual = desktop.page.locator('#months option[value="12"]');
+    assert.equal(await annual.count(), 1);
+    assert.equal(await annual.isEnabled(), true);
+    assert.equal((await annual.textContent()).trim(), 'שנה');
   });
 
   await test('pencil opens one accessible edit drawer and browser back closes only the drawer', async () => {
@@ -188,4 +201,4 @@ try {
   server.close();
 }
 
-console.log(`schedule manager shell browser: ${passed}/8 passed`);
+console.log(`schedule manager shell browser: ${passed}/9 passed`);

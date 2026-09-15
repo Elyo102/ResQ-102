@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ResQ — קריאת פתע</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="stylesheet" href="./theme.css?v=42h19">
+<style>
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:18px 14px 70px}
+  h1{margin:0 0 4px;font-size:25px}.sub{color:var(--muted);margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px;margin-bottom:14px}
+  .danger{border-color:var(--bad-bd);background:var(--bad-bg)}
+  .sound-note{margin:10px 0;padding:10px;border-radius:10px;background:var(--chip);color:var(--dim);font-size:13px;line-height:1.6}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
+  textarea{box-sizing:border-box;width:100%;min-height:120px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
+  button{margin-top:12px;padding:12px 18px;border:0;border-radius:10px;background:var(--bad);color:#fff;font:inherit;font-weight:800;cursor:pointer}
+  button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--txt);border:1px solid var(--line);padding:8px 12px}
+  .msg{display:none;margin-top:10px;border-radius:9px;padding:10px}.msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}.msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}.msg.info{display:block;background:var(--chip);color:var(--dim)}
+  .hide{display:none!important}.callout-row{border-top:1px solid var(--line);padding:13px 0}.callout-row:first-child{border-top:0}.callout-row p{white-space:pre-wrap;word-break:break-word}.callout-row small{display:block;color:var(--muted);margin-top:5px}.tally{font-weight:700;color:var(--accent-txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>קריאת פתע</h1>
+  <div class="sub" id="whoSub">מאמת הרשאה…</div>
+  <section class="card hide" id="denyCard" role="alert">
+    <h2>אין הרשאה לשליחת קריאת פתע</h2>
+    <p id="denyText">הפעולה זמינה רק למפקד משמרת או לסגן מפקד משמרת.</p>
+  </section>
+  <main id="work" class="hide">
+    <section class="card danger" aria-labelledby="composeTitle">
+      <h2 id="composeTitle">הזעקת <span id="calloutCrew">המשמרת שלי</span></h2>
+      <p>הקריאה תישלח לכל אנשי המשמרת ותדרוש מהם להשיב.</p>
+      <p class="sound-note">🔔 כשהאפליקציה פתוחה יושמע צליל קריאת הפתע שנבחר. כשהיא ברקע, הצליל והעוצמה כפופים להגדרות ההתראות של המכשיר.</p>
+      <label for="calloutText">הודעת הקריאה</label>
+      <textarea id="calloutText" maxlength="300" placeholder="התייצבות מיידית בתחנה."></textarea>
+      <button type="button" id="calloutSend">הזעק</button>
+      <div class="msg" id="calloutMessage" aria-live="polite"></div>
+    </section>
+    <section class="card hide" id="calloutLiveCard" aria-labelledby="liveTitle">
+      <h2 id="liveTitle">קריאות שפתחתי</h2>
+      <p>התשובות מתעדכנות בזמן אמת.</p>
+      <div id="calloutLive"></div>
+    </section>
+  </main>
+</div>
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h19';
+import { renderNav, renderStuckNav } from './nav.js?v=42h19';
+import { initPWA } from './pwa.js?v=42h19';
+import { watchCallouts } from './callout.js?v=42h19';
+import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h19';
+import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h19';
+
+const app = initializeApp(firebaseConfig);
+await initAppCheck(app);
+const auth = getAuth(app), db = getFirestore(app), functions = getFunctions(app, 'europe-west1');
+const $ = id => document.getElementById(id);
+let stopIncoming = null, generation = 0;
+renderStuckNav(''); initPWA({ offer:false });
+
+function previewActive() {
+  try { return !!sessionStorage.getItem(ROLE_VIEW_STORAGE_KEY); } catch (_) { return true; }
+}
+function deny(user, message) {
+  destroyCalloutConsole();
+  if (stopIncoming) { try { stopIncoming(); } catch (_) {} stopIncoming = null; }
+  $('work').classList.add('hide'); $('denyCard').classList.remove('hide');
+  $('denyText').textContent = message;
+  $('whoSub').textContent = user && user.email ? user.email : '';
+}
+function elements() {
+  return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'),
+    message:$('calloutMessage'), liveCard:$('calloutLiveCard'), live:$('calloutLive') };
+}
+
+onIdTokenChanged(auth, async user => {
+  const turn = ++generation;
+  destroyCalloutConsole();
+  if (stopIncoming) { try { stopIncoming(); } catch (_) {} stopIncoming = null; }
+  $('work').classList.add('hide'); $('denyCard').classList.add('hide');
+  if (!user) { location.replace('./login.html'); return; }
+  let claims = {};
+  try { claims = (await user.getIdTokenResult()).claims || {}; }
+  catch (_) { if (turn === generation) deny(user, 'לא ניתן לאמת את ההרשאה כרגע.'); return; }
+  if (turn !== generation) return;
+  const role = String(claims.role || ''), sid = String(claims.stationId || ''), crew = String(claims.shift || '');
+  if (previewActive()) { deny(user, 'קריאת פתע חסומה בזמן תצוגה לפי תפקיד. חזור לתצוגה בפועל.'); return; }
+  if (!['commander','deputy'].includes(role) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(sid) || !['A','B','C'].includes(crew)) {
+    deny(user, 'הפעולה זמינה רק למפקד משמרת או לסגן מפקד משמרת המשויכים למשמרת.'); return;
+  }
+  let name = '';
+  try {
+    const profile = await getDoc(doc(db, 'stations', sid, 'users', user.uid));
+    if (profile.exists()) name = String((profile.data() || {}).full_name || '').trim();
+  } catch (_) {}
+  if (turn !== generation) return;
+  renderNav(claims, 'callout.html', name || user.email || '');
+  $('whoSub').textContent = name || user.email || '';
+  let controller;
+  try {
+    controller = await initCalloutConsole({ db, functions, user, claims, rolePreview:false, readOnly:false,
+      sdk:{ httpsCallable }, elements:elements() });
+  } catch (_) {
+    if (turn === generation) deny(user, 'הרשאת קריאת הפתע אינה תקינה.');
+    return;
+  }
+  if (turn !== generation) { controller.destroy(); return; }
+  stopIncoming = watchCallouts(db, sid, user.uid, { name:name || user.email || '' });
+  $('work').classList.remove('hide');
+});
+</script>
+</body>
+</html>

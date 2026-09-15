@@ -125,6 +125,28 @@ try {
     fs.rmSync(iconTemp, { recursive:true, force:true });
   }
 
+  const audioTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-live-mp3-mime-'));
+  try {
+    fs.writeFileSync(path.join(audioTemp, 'callout-siren.mp3'), 'audio-bytes');
+    fs.mkdirSync(path.join(audioTemp, '.firebase'));
+    fs.writeFileSync(path.join(audioTemp, '.firebase', 'hosting..cache'), 'callout-siren.mp3,0,test\n');
+    const inspectAudio = (type) => inspectLiveOrigin(audioTemp, FIREBASE_ORIGIN, {
+      approvedAssets:['callout-siren.mp3'], firebaseHosted:true,
+      fetchImpl:async (url) => {
+        const relative = new URL(url).pathname.replace(/^\//, '');
+        if (PRIVATE_PROBES.includes(relative)) return response(404);
+        return response(200, 'audio-bytes', { 'content-type':type });
+      }
+    });
+    assert.equal((await inspectAudio('audio/mpeg')).ok, true,
+      'MP3 preview accepts the exact audio/mpeg MIME');
+    const invalidAudio = await inspectAudio('application/octet-stream');
+    assert.equal(invalidAudio.ok, false, 'MP3 preview rejects a generic binary MIME');
+    assert.ok(invalidAudio.failures.includes('callout-siren.mp3:content-type'));
+  } finally {
+    fs.rmSync(audioTemp, { recursive:true, force:true });
+  }
+
   await assert.rejects(() => verifyLiveDualHost(temp, {
     approvedAssets:APPROVED, pagesAttempts:1, waitMs:0, wait:async () => {},
     fetchImpl:async (url) => {

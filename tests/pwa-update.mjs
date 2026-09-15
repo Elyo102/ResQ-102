@@ -179,7 +179,7 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     fetch:async () => ({ ok:true, json:async () => ({ v:release.v }) }),
     refresh:async () => { refreshes += 1; return { workerActivated:true }; }
   });
-  assert.equal(release.v, '42H.18.1', 'the hotfix has a genuinely advanced visible version');
+  assert.equal(release.v, '42H.19', 'the hotfix has a genuinely advanced visible version');
   assert.equal(result.updated, true, 'a client already on 42H.18 applies the hotfix');
   assert.equal(refreshes, 1, 'the 42H.18 client activates the candidate exactly once');
 }

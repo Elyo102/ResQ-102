@@ -57,7 +57,7 @@ test('assign moves a person within the day and never duplicates', () => {
   assert.equal(JSON.stringify(plan), frozen, 'the input plan was mutated');
   const day = out.plan.rows.filter((r) => r.date === '2026-09-01');
   assert.deepEqual(day.map((r) => r.sub_station + ':' + r.slots.map((s) => s.person).join(',')), ['eilat:u2', 'shahmon:u3,u1']);
-  assert.equal(day[1].slots[1].source, 'edited');
+  assert.equal(day[1].slots[1].source, 'manual');
   assert.deepEqual(out.changes, [{ uid: 'u1', date: '2026-09-01', before: { sub_station: 'eilat', role: 'ff', absence: null }, after: { sub_station: 'shahmon', role: null, absence: null } }]);
   assert.deepEqual(out.people_changed, ['u1']);
   assert.equal(day[0].below_minimum, true, 'eilat dropped below its line — shown, not blocking');
@@ -70,7 +70,7 @@ test('a week: assign over several dates creates rows and marks a missing station
   const r2 = out.plan.rows.find((r) => r.date === '2026-09-02' && r.sub_station === 'shahmon');
   const r3 = out.plan.rows.find((r) => r.date === '2026-09-03' && r.sub_station === 'shahmon');
   assert.equal(r2.coverage, 'ready');
-  assert.deepEqual(r2.slots, [{ person: 'u2', role: 'ff', label: 'ff', source: 'edited' }]);
+  assert.deepEqual(r2.slots, [{ person: 'u2', role: 'ff', label: 'ff', source: 'manual', manual_warning_codes: ['out_of_sub_station'] }]);
   assert.ok(r3 && r3.slots.length === 1 && r3.label === 'שחמון' && r3.complete === true);
   assert.equal(out.changes.length, 2, 'duplicate date collapsed');
   assert.equal(out.counts.dates, 2);
@@ -94,7 +94,7 @@ test('a person who left the source can still be removed, but not added', () => {
 test('role: label from the policy; refusing a role for someone not assigned', () => {
   const out = edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'role', uid: 'u2', dates: ['2026-09-01'], role: 'driver' }] });
   const slot = out.plan.rows[0].slots.find((s) => s.person === 'u2');
-  assert.deepEqual([slot.role, slot.label, slot.source], ['driver', 'נהג', 'edited']);
+  assert.deepEqual([slot.role, slot.label, slot.source], ['driver', 'נהג', 'manual']);
   assert.deepEqual(out.changes[0].after, { sub_station: 'eilat', role: 'driver', absence: null });
   throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy, edits: [{ kind: 'role', uid: 'u3', dates: ['2026-09-02'], role: 'ff' }] }), 'edit-role-not-assigned');
 });
@@ -121,7 +121,9 @@ test('assigning an absent person or marking an assigned person absent warns, doe
     { kind: 'assign', uid: 'u3', dates: ['2026-09-02'], sub_station: 'eilat' },
     { kind: 'absence', uid: 'u1', dates: ['2026-09-01'], absence: { kind: 'course' } }
   ] });
-  assert.deepEqual(out.warnings.map((w) => w.code), ['assigned-while-absent', 'absent-while-assigned']);
+  assert.deepEqual(out.warnings.map((w) => w.code), [
+    'not_available', 'out_of_sub_station', 'assigned-while-absent', 'absent-while-assigned'
+  ]);
 });
 
 test('validation: dates outside the publication, unknown station, bad kinds and limits', () => {
@@ -189,6 +191,68 @@ test('§6 role must be one the policy defines for that sub-station (assign and r
   assert.equal(out.plan.rows.find((r) => r.date === '2026-09-01' && r.sub_station === 'eilat').slots.find((s) => s.person === 'u1').label, 'נהג');
   assert.deepEqual(edit.allowedRoles(policy, 'eilat'), ['ff', 'driver']);
   assert.deepEqual(edit.allowedRoles(policy, 'nowhere'), []);
+});
+
+test('manual assignment keeps business exceptions as sorted private-safe warnings', () => {
+  const warnedPolicy = JSON.parse(JSON.stringify(policy));
+  warnedPolicy.sub_stations.shahmon.requirements.push({ role: 'driver', label: 'נהג', count: 1, required: false });
+  warnedPolicy.rest = { min_gap_days: 1 };
+  warnedPolicy.rotation = { groups: ['g1', 'g2'], anchor: '2026-09-01', days_per_group: 1, strict: true };
+  warnedPolicy.max_shifts_per_month = 1;
+  const warnedPeople = people.map((p) => p.id === 'u1' ? Object.assign({}, p, { group: 'g1' }) : p);
+  const input = basePlan();
+  input.absences.push({ date: '2026-09-02', uid: 'u1', kind: 'sick', note: 'must never leak' });
+  const out = edit.applyEdits({ plan: input, people: warnedPeople, policy: warnedPolicy, edits: [
+    { kind: 'assign', uid: 'u1', dates: ['2026-09-02'], sub_station: 'shahmon', role: 'driver' }
+  ] });
+  const slot = out.plan.rows.find((r) => r.date === '2026-09-02' && r.sub_station === 'shahmon')
+    .slots.find((s) => s.person === 'u1');
+  assert.deepEqual(slot.manual_warning_codes, [
+    'not_available', 'rest', 'out_of_rotation', 'no_qualified', 'out_of_sub_station', 'over_limit'
+  ]);
+  assert.equal(out.plan.summary.manual_warning_assignments, 1);
+  assert.equal(out.plan.summary.manual_warnings, 6);
+  assert.deepEqual(out.plan.summary.manual_warning_counts, {
+    not_available: 1, rest: 1, out_of_rotation: 1, no_qualified: 1,
+    out_of_sub_station: 1, over_limit: 1
+  });
+  assert.equal(JSON.stringify({ slot, warnings: out.warnings, summary: out.plan.summary })
+    .includes('must never leak'), false);
+});
+
+test('duplicate manual assign request for one person/date is a structural error', () => {
+  throwsCode(() => edit.applyEdits({ plan: basePlan(), people, policy, edits: [
+    { kind: 'assign', uid: 'u1', dates: ['2026-09-02'], sub_station: 'eilat' },
+    { kind: 'assign', uid: 'u1', dates: ['2026-09-02'], sub_station: 'shahmon' }
+  ] }), 'edit-person-date-duplicate');
+});
+
+test('role:null stays allowed and warns when the person holds no policy role', () => {
+  const noRole = { id: 'u4', full_name: 'אדם ללא תפקיד', sub_station: 'eilat', roles: [], active: true };
+  const out = edit.applyEdits({ plan: basePlan(), people: people.concat([noRole]), policy, edits: [
+    { kind: 'assign', uid: 'u4', dates: ['2026-09-03'], sub_station: 'eilat', role: null }
+  ] });
+  const slot = out.plan.rows.find((r) => r.date === '2026-09-03' && r.sub_station === 'eilat')
+    .slots.find((s) => s.person === 'u4');
+  assert.equal(slot.role, null);
+  assert.deepEqual(slot.manual_warning_codes, ['no_qualified']);
+});
+
+test('role edit at 11 of 11 shifts does not count the existing assignment twice', () => {
+  const cappedPolicy = JSON.parse(JSON.stringify(policy));
+  cappedPolicy.max_shifts_per_month = 11;
+  const plan = basePlan();
+  plan.from = '2026-09-01'; plan.to = '2026-09-11';
+  plan.rows = Array.from({ length: 11 }, (_, index) => row(
+    '2026-09-' + String(index + 1).padStart(2, '0'), 'eilat',
+    [{ person: 'u2', role: 'ff', label: 'לוחם', source: 'imported' }]
+  ));
+  const out = edit.applyEdits({ plan, people, policy: cappedPolicy, edits: [
+    { kind: 'role', uid: 'u2', dates: ['2026-09-01'], role: 'driver' }
+  ] });
+  const slot = out.plan.rows[0].slots[0];
+  assert.ok(!slot.manual_warning_codes || !slot.manual_warning_codes.includes('over_limit'));
+  assert.equal(out.plan.summary.manual_warning_counts.over_limit || 0, 0);
 });
 
 test('§3 sub-station must be an own property of the effective policy (no prototype keys, no foreign keys)', () => {

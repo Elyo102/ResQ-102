@@ -134,13 +134,13 @@ try {
   await hrPage.goto(base, { waitUntil:'load' });
   await hrPage.locator('#scheduleAccessCard:not(.hide)').waitFor();
 
-  await test('HR sees the separate appointment card and a data-free legacy transition', async () => {
+  await test('HR sees the separate appointment card without redundant schedule cards', async () => {
     assert.equal(await hrPage.locator('#scheduleAccessCard').isVisible(), true);
-    assert.equal(await hrPage.locator('#legacyRotationCard').isVisible(), true);
     assert.equal(await hrPage.locator('#btnRot').count(), 0);
-    assert.match(await hrPage.locator('#legacyRotationCard').textContent(), /אינו קורא ואינו מציג/);
-    assert.equal(await hrPage.locator('#scheduleManagementLink').isVisible(), false);
-    assert.equal(await hrPage.locator('#legacyRotationManageLink').isVisible(), false);
+    assert.equal(await hrPage.locator('#legacyRotationCard').count(), 0);
+    assert.equal(await hrPage.locator('#scheduleManagementCard').count(), 0);
+    assert.equal(await hrPage.locator('#scheduleManagementLink').count(), 0);
+    assert.equal(await hrPage.locator('#legacyRotationManageLink').count(), 0);
   });
 
   await test('the appointment card shows only its minimal safe fields with text nodes', async () => {
@@ -194,11 +194,11 @@ try {
   const commanderPage = await commander.newPage();
   await commanderPage.goto(base, { waitUntil:'load' });
   await commanderPage.locator('#work:not(.hide)').waitFor();
-  await test('a commander sees only the legacy transition and no appointment or edit control', async () => {
+  await test('a commander sees no appointment or redundant schedule controls', async () => {
     assert.equal(await commanderPage.locator('#scheduleAccessCard').isVisible(), false);
-    assert.equal(await commanderPage.locator('#legacyRotationCard').isVisible(), true);
     assert.equal(await commanderPage.locator('#btnRot').count(), 0);
-    assert.equal(await commanderPage.locator('#scheduleManagementLink').isVisible(), false);
+    assert.equal(await commanderPage.locator('#legacyRotationCard').count(), 0);
+    assert.equal(await commanderPage.locator('#scheduleManagementCard').count(), 0);
     const calls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerAccess'), false);
     assert.equal(calls.some((entry) => entry.name === 'setScheduleManagerAccess'), false);
@@ -272,18 +272,27 @@ try {
   const appointedPage = await appointed.newPage();
   await appointedPage.goto(base, { waitUntil:'load' });
   await appointedPage.locator('#work:not(.hide)').waitFor();
-  await test('a live appointment, not rank, gets only the new-management link', async () => {
-    assert.equal(await appointedPage.locator('#legacyRotationCard').isVisible(), true);
+  await test('a live appointment keeps access without redundant schedule cards', async () => {
     assert.equal(await appointedPage.locator('#scheduleAccessCard').isVisible(), false);
     assert.equal(await appointedPage.locator('#btnRot').count(), 0);
-    assert.equal(await appointedPage.locator('#scheduleManagementLink').isVisible(), true);
-    assert.equal(await appointedPage.locator('#legacyRotationManageLink').isVisible(), true);
-    assert.equal(await appointedPage.locator('#legacyRotationManageLink').getAttribute('href'), './schedule-management.html');
+    assert.equal(await appointedPage.locator('#legacyRotationCard').count(), 0);
+    assert.equal(await appointedPage.locator('#scheduleManagementCard').count(), 0);
+    assert.equal(await appointedPage.locator('#scheduleManagementLink').count(), 0);
+    assert.equal(await appointedPage.locator('#legacyRotationManageLink').count(), 0);
     const calls = await appointedPage.evaluate(() => window.__CALLABLE_CALLS || []);
     const status = calls.find((entry) => entry.name === 'getScheduleRuntimeStatus');
     assert.deepEqual(status && status.payload, {});
     const firestoreWrites = await appointedPage.evaluate(() => window.__FIRESTORE_WRITES || []);
-    assert.equal(firestoreWrites.length, 0);
+    // קריאת פתע פתוחה ב-fixture נרשמת כ"נצפתה" בכל מסך. זו כתיבה
+    // תפעולית צפויה שאינה קשורה למינוי הסידור; מה שאסור כאן הוא
+    // שמסך הניהול יעקוף את ה-callable ויכתוב הרשאת סידור ישירות.
+    const unrelatedWrites = firestoreWrites.filter((entry) =>
+      !/^stations\/[^/]+\/callouts\/[^/]+\/responses\/[^/]+$/.test(String(entry.path || '')));
+    assert.equal(unrelatedWrites.length, 0);
+    const calloutWrites = firestoreWrites.filter((entry) =>
+      /^stations\/[^/]+\/callouts\/[^/]+\/responses\/[^/]+$/.test(String(entry.path || '')));
+    assert.ok(calloutWrites.every((entry) =>
+      Object.keys(entry.value || {}).join(',') === 'seen_at' && entry.options?.merge === true));
   });
   await appointed.close();
 

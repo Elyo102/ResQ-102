@@ -1477,19 +1477,94 @@ service cloud.firestore {
       //              לכתוב כל דבר תחת המפתח שלך
 
       match /callouts/{coId} {
-        allow read: if member(sid);
+        // נוסח הקריאה, רשימת הנמענים והתשובות גלויים רק למי
+        // שפתח את הקריאה או למי שנכלל בה. שאילתת המסוף של
+        // המפקד חייבת לכן להיות מסוננת ב-by_uid שלו.
+        // 42H.19 is a bounded compatibility release. Cached 42H.18 clients
+        // query by uids without the new active filter, so recipients retain
+        // the same parent visibility they had in 42H.18. Remove this bridge
+        // in 42H.20 after legacy-write telemetry reaches zero.
+        allow read: if member(sid)
+                    && (request.auth.uid == resource.data.get('by_uid', '')
+                        || request.auth.uid in resource.data.get('uids', []));
         allow create, delete: if false;
 
+        function validLegacyAck() {
+          let ack = request.resource.data.get('acks', {}).get(request.auth.uid, {});
+          return ack.keys().hasOnly(['resp', 'name', 'at'])
+            && ack.get('resp', '') in ['coming', 'no']
+            && ack.get('name', '') is string
+            && ack.get('name', '').size() <= 120
+            && ack.get('at', '') is string
+            && ack.get('at', '').size() <= 40
+            && ack.get('at', '').matches('^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])[T]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$');
+        }
+        function legacyAckOnlyChangesOwnKey() {
+          return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acks'])
+            && request.resource.data.get('acks', {}).diff(resource.data.get('acks', {}))
+                 .affectedKeys().hasOnly([request.auth.uid]);
+        }
+
+        // Temporary 42H.18 bridge, with a hard stop. It permits only the
+        // caller's legacy acknowledgement on an active callout; all modern
+        // responses use the private subcollection below.
         allow update: if member(sid)
+                      && request.time < timestamp.date(2026, 10, 15)
+                      && resource.data.get('active', false) == true
+                      && resource.data.get('legacy_ack_compat', true) == true
                       && request.auth.uid in resource.data.get('uids', [])
-                      && request.resource.data.diff(resource.data)
-                           .affectedKeys().hasOnly(['acks'])
-                      && request.resource.data.get('acks', {})
-                           .diff(resource.data.get('acks', {}))
-                           .affectedKeys().hasOnly([request.auth.uid])
-                      && request.resource.data.get('acks', {})
-                           .get(request.auth.uid, {})
-                           .get('resp', '') in ['coming', 'no'];
+                      && legacyAckOnlyChangesOwnKey()
+                      && validLegacyAck();
+
+        match /responses/{responseUid} {
+          function parentCallout() {
+            return get(/databases/$(database)/documents/stations/$(sid)/callouts/$(coId)).data;
+          }
+          function validResponseTimestamp(value) {
+            return value is string
+              && value.size() <= 40
+              && value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])[T]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$');
+          }
+          function validResponse() {
+            let hasAnswer = request.resource.data.keys().hasAll(['resp', 'name', 'at', 'reason']);
+            return request.resource.data.keys().hasOnly(['seen_at', 'resp', 'name', 'at', 'reason'])
+              && request.resource.data.keys().hasAll(['seen_at'])
+              && validResponseTimestamp(request.resource.data.get('seen_at', ''))
+              && ((!hasAnswer && request.resource.data.keys().hasOnly(['seen_at']))
+                  || (hasAnswer && request.resource.data.get('resp', '') in ['coming', 'no']
+              && request.resource.data.get('name', '') is string
+              && request.resource.data.get('name', '').size() <= 120
+              && validResponseTimestamp(request.resource.data.get('at', ''))
+              && request.resource.data.get('reason', '') is string
+              && request.resource.data.get('reason', '').size() <= 200
+              && (request.resource.data.get('resp', '') == 'coming'
+                  || request.resource.data.get('reason', '').matches('.*[^\\s].*'))));
+          }
+          function preservesFirstSeenAt() {
+            return resource.data.get('seen_at', '') == ''
+              || request.resource.data.get('seen_at', '') == resource.data.get('seen_at', '');
+          }
+          function cannotEraseFinalAnswer() {
+            return !resource.data.keys().hasAll(['resp', 'name', 'at', 'reason'])
+              || request.resource.data.keys().hasAll(['resp', 'name', 'at', 'reason']);
+          }
+          allow read: if member(sid)
+                      && (request.auth.uid == responseUid
+                          || request.auth.uid == parentCallout().get('by_uid', ''));
+          allow create: if member(sid)
+                        && request.auth.uid == responseUid
+                        && request.auth.uid in parentCallout().get('uids', [])
+                        && parentCallout().get('active', false) == true
+                        && validResponse();
+          allow update: if member(sid)
+                        && request.auth.uid == responseUid
+                        && request.auth.uid in parentCallout().get('uids', [])
+                        && parentCallout().get('active', false) == true
+                        && preservesFirstSeenAt()
+                        && cannotEraseFinalAnswer()
+                        && validResponse();
+          allow delete: if false;
+        }
       }
 
 

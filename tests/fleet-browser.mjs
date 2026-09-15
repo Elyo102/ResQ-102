@@ -422,7 +422,18 @@ try {
             await document.getElementById('vehSave').onclick();
           }
         });
-        assert.deepEqual(await writes(p), [], 'old rendered record must not mint a new station write fence');
+        const identityRaceWrites = await writes(p);
+        // החלפת ה-auth מפעילה מאזין חדש לקריאת הפתע של הזהות החיה.
+        // קבלת seen_at בתחנה החדשה תקינה; callback הרכב הישן עדיין
+        // אינו רשאי לכתוב רכב, לוח או מסמך כלשהו מהתחנה הישנה.
+        const calloutPath = 'stations/other_station/callouts/co1/responses/new-user';
+        const unrelatedWrites = identityRaceWrites.filter(write => write.path !== calloutPath);
+        assert.deepEqual(unrelatedWrites, [],
+          'old rendered record must not mint a new station write fence');
+        const calloutWrites = identityRaceWrites.filter(write => write.path === calloutPath);
+        assert.ok(calloutWrites.every(write =>
+          Object.keys(write.value || {}).join(',') === 'seen_at' && write.options?.merge === true),
+        'the new identity may write only its exact seen-only callout receipt');
         assert.equal(await p.locator('#veh.on').count(), 0);
         assert.equal(await p.locator('#mainMsg').isVisible(), true);
         assert.match(await p.locator('#mainMsg').textContent(), /identity-changed/);
@@ -432,7 +443,9 @@ try {
         } else if (action === 'restore') {
           // Resetting the UI must not disable a freshly rendered authorized action.
           await p.locator('[data-veh-restore="a3"]').evaluate(async el => el.onclick());
-          assert.equal((await writes(p))[0].path, 'stations/other_station/vehicles/a3');
+          const freshRestore = (await writes(p)).filter(write =>
+            write.path === 'stations/other_station/vehicles/a3');
+          assert.equal(freshRestore.length, 1);
         }
       });
       await item.context.close();
@@ -513,7 +526,13 @@ try {
     await staleBoard.page.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'new-reader'));
     await staleBoard.page.waitForFunction(() => !document.getElementById('ov').classList.contains('on'));
     assert.equal(await staleBoard.page.locator('#vsave').count(), 0);
-    assert.deepEqual(await writes(staleBoard.page), []);
+    const tokenChangeWrites = await writes(staleBoard.page);
+    const calloutPath = 'stations/eilat_102/callouts/co1/responses/new-reader';
+    assert.deepEqual(tokenChangeWrites.filter(write => write.path !== calloutPath), [],
+      'identity-token change must not persist the stale board editor');
+    assert.ok(tokenChangeWrites.filter(write => write.path === calloutPath).every(write =>
+      Object.keys(write.value || {}).join(',') === 'seen_at' && write.options?.merge === true),
+    'the new identity may write only its exact seen-only callout receipt');
   });
   await staleBoard.context.close();
 

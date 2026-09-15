@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const runtime = read('functions/schedule-runtime.js');
 const integration = read('functions/schedule-runtime.integration.test.js');
+const serviceIntegration = read('functions/schedule-service.integration.test.js');
 const editIntegration = read('functions/schedule-edit.integration.test.js');
 const publication = read('functions/schedule-publication.js');
 const service = read('functions/schedule-service.js');
@@ -41,6 +42,18 @@ check('missing runtime configuration is fail-closed off', () => {
 });
 check('the only runtime modes are off, shadow and new', () => {
   assert.ok(runtime.includes("const MODE = Object.freeze({ OFF: 'off', SHADOW: 'shadow', NEW: 'new' })"));
+});
+check('manual warning projection is server-owned, allowlisted and shared by personal and station views', () => {
+  for (const code of [
+    'not_available', 'rest', 'out_of_rotation',
+    'no_qualified', 'out_of_sub_station', 'over_limit'
+  ]) assert.ok(service.includes("'" + code + "'"), code);
+  assert.ok(service.includes('function projectedManualWarningCodes(slot)'));
+  assert.ok(service.includes('return MANUAL_WARNING_CODES.filter((code) => present.has(code))'));
+  assert.ok(service.includes('days.push(projectSlot({'));
+  assert.ok(service.includes('people: row.slots.map((s) => projectSlot({'));
+  assert.ok(serviceIntegration.includes('אזהרות שיבוץ ידני עוברות מהשרת לתצוגה האישית והתחנתית בסדר בטוח'));
+  assert.ok(serviceIntegration.includes("rendered.includes('unknown_private_value')"));
 });
 check('client station fields are rejected', () => {
   assert.ok(runtime.includes("hasOwnProperty.call(data, 'stationId')"));
@@ -1743,18 +1756,24 @@ check('the inversion did not take any other gate with it', () => {
   }
 });
 
-/* התנאי שאסור היה לגעת בו: חוסר כוח אדם הוא שער נפרד של המדיניות
- * והמנוע, ולא חלק מהשוואת ה-preflight. */
-check('a staffing shortfall is still its own separate blocker', () => {
+/* הכרעת מוצר 15.9.2026: מינימום, כשירות ועומס הם אזהרות מקצועיות
+ * לאחראי הסידור. הם נשארים בדוח, אבל אינם נועלים פרסום ואינם
+ * מייצרים acknowledgement מלאכותי בצד הלקוח. */
+check('staffing and qualification shortfalls remain warnings without a UI publish lock', () => {
   const ui = read('schedule-management.js');
-  assert.ok(/blocking_gaps \|\| 0\);\s*\n\s*if \(gaps > 0\)/.test(ui),
-    'שער החוסרים בפרסום נעלם');
-  assert.ok(ui.indexOf('אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים') > -1,
-    'הודעת החוסרים נעלמה — השער אולי נשאר, אבל המשתמש לא יידע למה');
-  /* והוא חי בשכבה אחרת לגמרי מה-preflight — נבדק על **הקוד**, כי
-   * ההערה במודול מסבירה בדיוק למה `blocking_gaps` אינו שם. זו
-   * הפעם השלישית בסדרה הזאת שהערה מספקת גלאי; המסקנה קבועה: כל
-   * טענה על קוד נקראת מהמקור חסר-ההערות. */
+  const availability = ui.slice(ui.indexOf('function updatePublishAvailability()'),
+    ui.indexOf('function updateRunAvailability()'));
+  assert.ok(availability.indexOf('blocking_gaps') === -1,
+    'חוסר כוח אדם חזר לנעול את כפתור הפרסום');
+  assert.ok(availability.indexOf('draftGapAck') === -1,
+    'אזהרה עסקית חזרה לדרוש checkbox לפני פרסום');
+  const publish = ui.slice(ui.indexOf('async function publishDraft()'),
+    ui.indexOf('async function rollbackDraft()'));
+  const publishPayload = publish.slice(publish.indexOf('const publishPayload'),
+    publish.indexOf('const result ='));
+  assert.ok(publishPayload.indexOf('gap_acknowledgement') === -1,
+    'בקשת הפרסום חזרה להוסיף acknowledgement לאזהרת כוח אדם');
+  /* preflight נשאר שכבה נפרדת ואינו אמור לקבל את מדדי כוח האדם. */
   const cutCode = read('functions/schedule-cutover.js').split('\n')
     .filter((line) => {
       const t = line.trim();
@@ -2119,5 +2138,5 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 129);
-console.log('\n129 schedule runtime source checks passed.');
+assert.equal(passed, 130);
+console.log('\n130 schedule runtime source checks passed.');

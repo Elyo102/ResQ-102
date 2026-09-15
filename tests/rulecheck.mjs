@@ -116,18 +116,21 @@ head('אילוץ ארכיטקטוני');
   const approvedLeaveReads = [...CODE.matchAll(
     /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/submissions\/\$\(formId\)\s*\)/g
   )];
+  const calloutParentReads = [...CODE.matchAll(
+    /(?<![.\w])get\s*\(\s*\/databases\/\$\(database\)\/documents\/stations\/\$\(sid\)\/callouts\/\$\(coId\)\s*\)/g
+  )];
   const historicalUserReads = CODE.split(
     'get(/databases/$(database)/documents/stations/$(sid)/users/$(uid))'
   ).length - 1;
   const historicalReportReads =
     CODE.split('exists(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1 +
     CODE.split('get(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1;
-  if (gets.length === 12 &&
+  if (gets.length === 13 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
       liveUserReads.length === 2 && identityOperationReads.length === 3 &&
-      approvedLeaveReads.length === 1 && historicalUserReads === 2 &&
+      approvedLeaveReads.length === 1 && calloutParentReads.length === 1 && historicalUserReads === 2 &&
       historicalReportReads === 2) {
-    ok('קריאות מוגבלות: תגובה, Shadow, חברות חיה, פעולת זהות, חופשה וייבוא היסטורי');
+    ok('קריאות מוגבלות: תגובה, תשובת קריאת פתע, Shadow, חברות חיה, פעולת זהות, חופשה וייבוא היסטורי');
   } else if (gets.length) {
     fail(gets.length + ' קריאות get()/exists() — רק הנתיבים והכמויות המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');
@@ -250,7 +253,10 @@ head('שדות — מה שהכלל דורש מול מה שהקוד כותב');
       .concat([...src.matchAll(/\[['"]([\w_.]+)['"]\s*\]\s*=/g)].map(m => m[1]))
       .concat([...src.matchAll(/['"]([\w_]+)\.['"]?\s*\+/g)].map(m => m[1]))
   );
-  const serverKeys = keysIn(SERVER);
+  const CLIENT_MODULES = fs.readdirSync(ROOT)
+    .filter(name => name.endsWith('.js'))
+    .map(name => fs.readFileSync(path.join(ROOT, name), 'utf8')).join('\n');
+  const serverKeys = new Set([...keysIn(SERVER), ...keysIn(CLIENT_MODULES)]);
 
   const blocks = [...CODE.matchAll(
     /match\s+\/([\w_]+)\/\{[\w]*\}\s*\{([\s\S]*?)\n      \}/g)];

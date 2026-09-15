@@ -40,8 +40,14 @@ const REASON = Object.freeze({
   ALREADY_ASSIGNED: 'already_assigned',
   OUT_OF_SUB_STATION: 'out_of_sub_station',
   INACTIVE: 'inactive',
-  OUT_OF_ROTATION: 'out_of_rotation'
+  OUT_OF_ROTATION: 'out_of_rotation',
+  OVER_LIMIT: 'over_limit'
 });
+
+const MANUAL_WARNING_ORDER = Object.freeze([
+  REASON.NOT_AVAILABLE, REASON.REST, REASON.OUT_OF_ROTATION,
+  REASON.NO_QUALIFIED, REASON.OUT_OF_SUB_STATION, REASON.OVER_LIMIT
+]);
 
 const PUBLIC_REASONS = Object.freeze(Object.keys(REASON).map((k) => REASON[k]));
 
@@ -51,7 +57,7 @@ const LIMITS = Object.freeze({
   MAX_SUB_STATIONS: 64,
   MAX_ROLES_PER_SUB: 32,
   MAX_COUNT_PER_ROLE: 500,
-  MAX_MONTHS: 3,
+  MAX_MONTHS: 12,
   MAX_PLANNED_SLOTS: 1000000,
   MAX_CANDIDATE_EDGES: 50000000
 });
@@ -411,6 +417,7 @@ function createCalendarEngine(deps) {
    * לעולם לא קטגוריית היעדרות ולעולם לא טקסט חופשי מהקלט.
    */
   function blockCode(person, role, ctx) {
+    if (ctx.reservedManual && ctx.reservedManual.has(person.id)) return REASON.ALREADY_ASSIGNED;
     if (person.sub_station !== ctx.sub) return REASON.OUT_OF_SUB_STATION;
     if (person.active !== true) return REASON.INACTIVE;
     if (person.roles.indexOf(role) === -1) return REASON.NO_QUALIFIED;
@@ -456,6 +463,40 @@ function createCalendarEngine(deps) {
     const taken = new Set();
     const rows = [];
 
+    /* Reserve and structurally validate every manual placement before the
+     * automatic matcher runs. A later sub-station's explicit placement must
+     * not lose its person to an earlier automatic row. */
+    const reservedManual = new Set();
+    for (const sub of policy.sub_keys) {
+      const spec = policy.sub_stations[sub];
+      const manualRows = (own(ctx.locked, sub) && ctx.locked[sub]
+        && own(ctx.locked[sub], date) && ctx.locked[sub][date]) || [];
+      for (const raw of manualRows) {
+        const manual = isPlainObject(raw) ? raw : { person: raw, role: null };
+        if (!isNonEmptyString(manual.person)) {
+          throw new CalendarError('locked-shape', 'רשומת שיבוץ ידני לא תקינה בתאריך ' + date);
+        }
+        const role = isNonEmptyString(manual.role) ? manual.role : null;
+        if (role !== null && !spec.requirements.some((r) => r.role === role)) {
+          throw new CalendarError('locked-role-unknown',
+            'התפקיד ' + role + ' אינו בתקן של תחנת הקצה ' + sub);
+        }
+        const person = ctx.byId.get(manual.person);
+        if (!person) {
+          throw new CalendarError('locked-person-unknown', 'האדם ' + manual.person + ' אינו במקור כוח האדם');
+        }
+        if (person.active !== true) {
+          throw new CalendarError('locked-person-inactive', 'האדם ' + manual.person + ' אינו פעיל');
+        }
+        if (reservedManual.has(manual.person)) {
+          throw new CalendarError('locked-person-duplicate',
+            'האדם ' + manual.person + ' שובץ ידנית יותר מפעם אחת בתאריך ' + date);
+        }
+        reservedManual.add(manual.person);
+      }
+    }
+    ctx.reservedManual = reservedManual;
+
     for (const sub of policy.sub_keys) {
       const spec = policy.sub_stations[sub];
       const need = Object.create(null);
@@ -473,56 +514,38 @@ function createCalendarEngine(deps) {
       for (const raw of lockedHere) {
         const entry = isPlainObject(raw) ? raw : { person: raw, role: null };
         const id = entry.person;
-        if (!isNonEmptyString(id)) {
-          throw new CalendarError('locked-shape', 'רשומת שיבוץ ידני לא תקינה בתאריך ' + date);
-        }
         const wantedRole = isNonEmptyString(entry.role) ? entry.role : null;
-        if (wantedRole !== null && !spec.requirements.some((r) => r.role === wantedRole)) {
-          throw new CalendarError('locked-role-unknown',
-            'התפקיד ' + wantedRole + ' אינו בתקן של תחנת הקצה ' + sub);
-        }
-
         const person = ctx.byId.get(id);
-        if (!person) {
-          rejected.push({ person: id, code: REASON.NO_QUALIFIED });
-          continue;
-        }
+        const warningSet = new Set();
+        if (isUnavailable(ctx.availability, id, date)) warningSet.add(REASON.NOT_AVAILABLE);
+        const last = ownOr(ctx.state.lastDay, id, undefined);
+        if (last !== undefined && day > last && day - last <= policy.min_gap_days) warningSet.add(REASON.REST);
+        if (policy.rotation && policy.rotation.strict && person.group && group
+            && person.group !== group) warningSet.add(REASON.OUT_OF_ROTATION);
+        if (wantedRole !== null && person.roles.indexOf(wantedRole) === -1) warningSet.add(REASON.NO_QUALIFIED);
+        if (person.sub_station !== sub) warningSet.add(REASON.OUT_OF_SUB_STATION);
+        if (policy.max_shifts_per_month !== null
+            && ownOr(ctx.state.load, id, 0) + 1 > policy.max_shifts_per_month) warningSet.add(REASON.OVER_LIMIT);
         const roleCandidates = person.roles.filter((rk) => need[rk] > 0);
-        const probeRole = wantedRole !== null
-          ? wantedRole
-          : (roleCandidates.length ? roleCandidates[0] : (person.roles[0] || null));
-        const code = probeRole === null
-          ? REASON.NO_QUALIFIED
-          : blockCode(person, probeRole, {
-            sub, day, group, taken, state: ctx.state,
-            unavailable: isUnavailable(ctx.availability, id, date)
-          });
-        if (code) {
-          // ידני שאינו חוקי אינו משובץ ואינו נמחק בשקט — הוא מדווח.
-          rejected.push({ person: id, code });
-          continue;
-        }
+        if (wantedRole === null && !roleCandidates.length) warningSet.add(REASON.NO_QUALIFIED);
+        const manualWarnings = MANUAL_WARNING_ORDER.filter((code) => warningSet.has(code));
         taken.add(id);
         ctx.state.load[id] = ownOr(ctx.state.load, id, 0) + 1;
         ctx.state.lastDay[id] = day;
         if (!own(ctx.state.byRole, id)) ctx.state.byRole[id] = Object.create(null);
-        let assignedRole = null;
-        if (wantedRole !== null) {
-          assignedRole = wantedRole;
-          if (need[assignedRole] > 0) need[assignedRole] -= 1;
-        } else if (roleCandidates.length) {
-          assignedRole = roleCandidates[0];
-          need[assignedRole] -= 1;
-        }
+        const assignedRole = wantedRole !== null ? wantedRole : (roleCandidates[0] || null);
+        if (assignedRole !== null && need[assignedRole] > 0) need[assignedRole] -= 1;
         if (assignedRole) {
           ctx.state.byRole[id][assignedRole] = ownOr(ctx.state.byRole[id], assignedRole, 0) + 1;
         }
-        slots.push({
+        const slot = {
           person: id,
           role: assignedRole,
           label: assignedRole ? labelOf(spec, assignedRole) : null,
           source: 'manual'
-        });
+        };
+        if (manualWarnings.length) slot.manual_warning_codes = manualWarnings;
+        slots.push(slot);
       }
 
       /* --- מילוי אוטומטי: התאמה מלאה ודטרמיניסטית --- *
@@ -778,11 +801,22 @@ function createCalendarEngine(deps) {
     let blocking = 0;
     let belowMin = 0;
     let rejectedManual = 0;
+    let manualWarningAssignments = 0;
+    let manualWarnings = 0;
+    const manualWarningCounts = Object.create(null);
     for (const r of rows) {
       filled += r.slots.length;
       blocking += r.gaps.filter((g) => g.required).length;
       if (r.below_minimum) belowMin += 1;
       rejectedManual += r.rejected_manual.length;
+      for (const slot of r.slots) {
+        if (!Array.isArray(slot.manual_warning_codes) || !slot.manual_warning_codes.length) continue;
+        manualWarningAssignments += 1;
+        manualWarnings += slot.manual_warning_codes.length;
+        slot.manual_warning_codes.forEach((code) => {
+          manualWarningCounts[code] = ownOr(manualWarningCounts, code, 0) + 1;
+        });
+      }
     }
     const loads = Object.keys(state.load).map((k) => state.load[k]);
     const min = loads.length ? Math.min.apply(null, loads) : 0;
@@ -808,6 +842,9 @@ function createCalendarEngine(deps) {
         blocking_gaps: blocking,
         days_below_minimum: belowMin,
         rejected_manual: rejectedManual,
+        manual_warning_assignments: manualWarningAssignments,
+        manual_warnings: manualWarnings,
+        manual_warning_counts: plainMap(manualWarningCounts),
         open_rows: rows.filter((r) => !r.complete).length,
         load: plainMap(state.load),
         fairness: { min, max, spread: max - min }
@@ -833,12 +870,12 @@ function createCalendarEngine(deps) {
     return out;
   }
 
-  /** חודש, חודשיים או שלושה — תקופות נפרדות, עם רצף ביניהן. */
+  /** חודש, חודשיים, שלושה או שנה — תקופות נפרדות, עם רצף ביניהן. */
   function planMonths(input) {
     const inp = isPlainObject(input) ? input : {};
     const months = inp.months;
-    if (!isInt(months) || months < 1 || months > LIMITS.MAX_MONTHS) {
-      throw new CalendarError('months-range', 'אפשר להכין חודש, חודשיים או שלושה');
+    if (!isInt(months) || [1, 2, 3, LIMITS.MAX_MONTHS].indexOf(months) === -1) {
+      throw new CalendarError('months-range', 'אפשר להכין חודש, חודשיים, שלושה או שנה');
     }
     toDayNumber(inp.start, 'תאריך התחלה');
     if (inp.start.slice(8, 10) !== '01') {
