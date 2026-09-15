@@ -42,6 +42,10 @@ jobs:
 
       # זה אותו שער מלא שמופעל לפני פריסת Functions. כך אין מסלול שבו
       # CI ירוק למרות שבדיקת שחרור חדשה לא נכללה ברשימה הידנית הישנה.
+      - name: התקנת תלויות פונקציות
+        working-directory: functions
+        run: npm ci --no-audit --no-fund
+
       - name: שער שחרור מלא — קוד, מסכים, נייד, עומס ומלאי Hosting
         working-directory: tests
         run: npm run all

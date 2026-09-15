@@ -1761,7 +1761,7 @@ async function test(name, fn) {
     assert.equal(again.draft_id, draftId);
   });
 
-  await test('a manual lock rejected after an earlier automatic assignment never stages a draft', async () => {
+  await test('a manual lock after an earlier automatic assignment stages a draft with a rest warning', async () => {
     const policyRef = station().collection('schedule_policies').doc('policy_v1');
     const sourceRef = station().collection('schedule_sources').doc('source_v1');
     const lockedRef = sourceRef.collection('locked').doc('main');
@@ -1775,9 +1775,16 @@ async function test(name, fn) {
     };
     changedSource.counts.availability = 1;
     changedSource.counts.locked = 1;
-    const requestId = 'manual_rest_rejected';
-    const rejectedDraftRef = station().collection('schedule_drafts').doc(
+    const requestId = 'manual_rest_warning';
+    const warnedDraftRef = station().collection('schedule_drafts').doc(
       'd_' + hash(SID + '|manager|' + requestId).slice(0, 40));
+    const pointerBefore = (await activePointer().get()).data();
+    const publicationsBefore = (await station().collection('schedule_publications').get()).size;
+    const outboxSnapshot = async () => (await db.collectionGroup('schedule_outbox').get()).docs
+      .filter((doc) => doc.ref.path.startsWith(station().path + '/'))
+      .map((doc) => ({ path: doc.ref.path, data: doc.data() }))
+      .sort((a, b) => compareCanonical(a.path, b.path));
+    const outboxBefore = await outboxSnapshot();
 
     try {
       await policyRef.set(Object.assign({}, changedPolicy, {
@@ -1799,12 +1806,25 @@ async function test(name, fn) {
         content_key: sourceContentKey(changedSource)
       });
 
-      await assert.rejects(api.runPlanner(req('manager', 'commander', {
+      const planned = await api.runPlanner(req('manager', 'commander', {
         request_id: requestId, start: '2026-09-01', months: 1, overrides: []
-      })), (error) => error instanceof ScheduleRuntimeError
-        && error.code === 'manual-assignment-rejected');
-      assert.equal((await rejectedDraftRef.get()).exists, false,
-        'a rejected manual lock must fail before staging a draft');
+      }));
+      assert.equal(planned.draft_id, warnedDraftRef.id);
+      const draft = (await warnedDraftRef.get()).data();
+      assert.equal(draft.status, 'complete');
+      assert.equal(draft.snapshot_complete, true);
+      assert.equal(draft.summary.rejected_manual, 0);
+      const rows = (await warnedDraftRef.collection('rows').get()).docs.map((doc) => doc.data().row);
+      const first = rows.find((row) => row.date === '2026-09-01' && row.sub_station === 'main');
+      assert.ok(first.slots.some((slot) => slot.person === 'manager' && slot.source === 'auto'),
+        'the fixture must exercise an automatic assignment before the manual lock');
+      const second = rows.find((row) => row.date === '2026-09-02' && row.sub_station === 'main');
+      const manual = second.slots.find((slot) => slot.person === 'manager' && slot.role === 'driver');
+      assert.equal(manual.source, 'manual');
+      assert.ok(manual.manual_warning_codes.includes('rest'));
+      assert.deepEqual((await activePointer().get()).data(), pointerBefore);
+      assert.equal((await station().collection('schedule_publications').get()).size, publicationsBefore);
+      assert.deepEqual(await outboxSnapshot(), outboxBefore);
     } finally {
       await Promise.all([lockedRef.delete(), availabilityRef.delete()]);
       const original = sourceBasis();
@@ -2080,19 +2100,15 @@ async function test(name, fn) {
       station_id: SID, label: 'ראש משמרת', active: true, minimum: 1,
       critical: true, order: 10, revision: 1
     });
-    await assert.rejects(api.rollback(req('manager', 'commander', {
-      request_id: 'rollback_unsafe_gap', expected_active_publication_id: secondPublicationId,
-      target_publication_id: publicationId, reason_code: 'wrong_assignment'
-    })), (error) => error instanceof ScheduleRuntimeError && error.code === 'gaps-critical');
-    await criticalRef.delete();
-    const stillSecond = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
-    assert.equal(stillSecond.publication_id, secondPublicationId,
-      'rollback with a current critical gap moved the active pointer');
-
-    const rolled = await api.rollback(req('manager', 'commander', {
-      request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
-      target_publication_id: publicationId, reason_code: 'wrong_assignment'
-    }));
+    let rolled;
+    try {
+      rolled = await api.rollback(req('manager', 'commander', {
+        request_id: 'rollback_one', expected_active_publication_id: secondPublicationId,
+        target_publication_id: publicationId, reason_code: 'wrong_assignment'
+      }));
+    } finally {
+      await criticalRef.delete();
+    }
     rollbackReceipt = rolled;
     assert.equal(rolled.revision, firstNewRevision + 2);
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
@@ -2101,6 +2117,9 @@ async function test(name, fn) {
     assert.equal(active.rollback_target_publication_id, publicationId);
     const first = (await db.doc('stations/' + SID + '/schedule_publications/' + publicationId).get()).data();
     const third = (await db.doc('stations/' + SID + '/schedule_publications/' + rolled.publication_id).get()).data();
+    assert.ok(third.gap_report.warning_count >= 1);
+    assert.ok(third.gap_report.summary.critical_gaps >= 1);
+    assert.equal(third.gap_report.checked_in_transaction, true);
     assert.equal(third.content_digest, first.content_digest);
     assert.notEqual(rolled.publication_id, publicationId);
   });
