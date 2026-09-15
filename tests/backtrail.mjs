@@ -36,17 +36,23 @@ try {
   const pg=await context.newPage();
   const here = () => pg.url().split('/').pop().split('?')[0];
 
+  async function answerSyntheticCallout(){
+    const yes=pg.locator('#coYes:visible');
+    if(await yes.count()){
+      await yes.click();
+      await pg.locator('#coWrap').waitFor({state:'hidden',timeout:5000});
+    }
+  }
+
   async function go(file){
     await pg.goto(base+'/'+file,{waitUntil:'load'});
     await pg.waitForTimeout(1200);
-    await pg.click('#coNo').catch(()=>{});
-    await pg.waitForTimeout(200);
+    await answerSyntheticCallout();
   }
   async function back(){
     await pg.click('#appNav button.back');
     await pg.waitForTimeout(1300);
-    await pg.click('#coNo').catch(()=>{});
-    await pg.waitForTimeout(150);
+    await answerSyntheticCallout();
   }
   function check(what, got, want){
     const ok = got === want;

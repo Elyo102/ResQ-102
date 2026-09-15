@@ -35,6 +35,14 @@ const ALL_ACTIONS = Object.freeze(Object.keys(ACTION).map((k) => ACTION[k]));
 /** פעולות שאסור שיינתנו לכבאי רגיל. בדיקת מקור אוכפת שהרשימה נשארת. */
 const PRIVILEGED = Object.freeze([ACTION.EDIT_DRAFT, ACTION.RUN_PLANNER, ACTION.PUBLISH]);
 const DECLINE_REASONS = Object.freeze(['unavailable', 'conflict', 'incorrect_assignment', 'other']);
+const MANUAL_WARNING_CODES = Object.freeze([
+  'not_available',
+  'rest',
+  'out_of_rotation',
+  'no_qualified',
+  'out_of_sub_station',
+  'over_limit'
+]);
 
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -42,6 +50,18 @@ function isPlainObject(v) {
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+function projectedManualWarningCodes(slot) {
+  const source = slot && Array.isArray(slot.manual_warning_codes) ? slot.manual_warning_codes : [];
+  const present = new Set(source.filter((code) => typeof code === 'string'));
+  return MANUAL_WARNING_CODES.filter((code) => present.has(code));
+}
+
+function projectSlot(base, slot) {
+  const warnings = projectedManualWarningCodes(slot);
+  if (warnings.length > 0) base.manual_warning_codes = warnings;
+  return base;
 }
 
 function createScheduleService(deps) {
@@ -201,7 +221,7 @@ function createScheduleService(deps) {
     for (const row of plan.rows) {
       for (const s of row.slots) {
         if (s.person !== person) continue;
-        days.push({
+        days.push(projectSlot({
           date: row.date,
           station_id: row.station_id,
           sub_station: row.sub_station,
@@ -220,7 +240,7 @@ function createScheduleService(deps) {
           answer: answers[row.date] || null,
           /** חובה לענות: אישור או „לא יכול" עם נימוק. */
           requires_answer: !!changes[row.date] && !answers[row.date]
-        });
+        }, s));
       }
     }
 
@@ -268,7 +288,7 @@ function createScheduleService(deps) {
         minimum: row.minimum === undefined ? null : row.minimum,
         coverage: row.coverage === 'missing' ? 'missing' : 'ready',
         below_minimum: row.below_minimum === true,
-        people: row.slots.map((s) => ({
+        people: row.slots.map((s) => projectSlot({
           uid: s.person,
           person: personName(roster, s.person),
           role_label: s.label || null,
@@ -276,7 +296,7 @@ function createScheduleService(deps) {
           cancelled: s.cancelled === true,
           /** ההדגשה של המשתמש המחובר. */
           is_me: s.person === viewer
-        }))
+        }, s))
       });
     }
     const dayEvents = (events || []).filter((e) => isPlainObject(e) && e.date === date)

@@ -245,7 +245,18 @@ try {
     assert.equal(calls.some((entry) => entry.name === 'decideStationTransfer'), false);
     assert.equal(calls.some((entry) => entry.name === 'setUserRole'), false);
     const writes = await hrPage.evaluate(() => window.__FIRESTORE_WRITES || []);
-    assert.equal(writes.length, 0, 'creating a request must not write identity data in the browser');
+    // admin.html מאזין לקריאות פתע, וה-fixture המשותף כולל קריאה
+    // פתוחה למשתמש הבדיקה. סימון seen_at הוא כתיבה תפעולית צפויה;
+    // מסלול העברת התחנה עצמו עדיין חייב להישאר ללא כתיבת זהות בדפדפן.
+    const unrelatedWrites = writes.filter((entry) =>
+      !/^stations\/[^/]+\/callouts\/[^/]+\/responses\/[^/]+$/.test(String(entry.path || '')));
+    assert.equal(unrelatedWrites.length, 0,
+      'creating a request must not write identity data in the browser');
+    const calloutWrites = writes.filter((entry) =>
+      /^stations\/[^/]+\/callouts\/[^/]+\/responses\/[^/]+$/.test(String(entry.path || '')));
+    assert.ok(calloutWrites.every((entry) =>
+      Object.keys(entry.value || {}).join(',') === 'seen_at' && entry.options?.merge === true),
+    'only a seen-only callout receipt may be written by this page');
   });
 
   await test('the transfer controls fit a 390px phone without horizontal overflow', async () => {

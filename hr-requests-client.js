@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h181';
+import { firebaseConfig } from './firebase-config.js?v=42h19';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h181';
-import { initAppCheck } from './appcheck.js?v=42h181';
-import { MEMBER_ROLES } from './roles.js?v=42h181';
-import { createHrRequestsUI } from './hr-requests-ui.js?v=42h181';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h181';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h19';
+import { MEMBER_ROLES } from './roles.js?v=42h19';
+import { createHrRequestsUI } from './hr-requests-ui.js?v=42h19';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h19';
 
-import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h181';
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h19';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);

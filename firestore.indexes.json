@@ -1,5 +1,6 @@
 {
   "indexes": [
+    { "collectionGroup": "callouts", "queryScope": "COLLECTION", "fields": [{"fieldPath":"by_uid","order":"ASCENDING"},{"fieldPath":"created_key","order":"DESCENDING"}] },
     { "collectionGroup": "faults", "queryScope": "COLLECTION", "fields": [{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"created_key","order":"DESCENDING"}] },
     { "collectionGroup": "faults", "queryScope": "COLLECTION", "fields": [{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"severity","order":"ASCENDING"}] },
     { "collectionGroup": "attendance_correction_notification_jobs", "queryScope": "COLLECTION_GROUP", "fields": [{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"created_at_ms","order":"ASCENDING"}] },
@@ -225,6 +226,24 @@
         {
           "fieldPath": "uids",
           "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "created_key",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "callouts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "uids",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
         },
         {
           "fieldPath": "created_key",

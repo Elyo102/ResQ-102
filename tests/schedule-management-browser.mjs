@@ -170,6 +170,9 @@ const draftPreview = {
     return day(value.toISOString().slice(0, 10), index === 2 ? 'תרגיל תחנתי' : '', index === 0);
   })
 };
+draftPreview.days[0].sub_stations[0].people[1].manual_warning_codes = [
+  'rest', 'no_qualified', 'rest'
+];
 // תוצאות נתיב הכתיבה של חוקי התחנה. הצורה היא בדיוק זו שהשרת
 // מחזיר: הפרשים, החלשות ואזהרות — ולעולם לא מסמך המדיניות עצמו,
 // שהוא הדבר שעליו חותמים.
@@ -258,7 +261,8 @@ try {
     getMyScheduleV2:[{ data:mine }, { data:mine }],
     getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
     runSchedulePlanner:[{ data:{ draft_id:'draft_1', from:today, to:shiftDay(today, 30),
-      summary:{ filled:60, blocking_gaps:0, days_below_minimum:0, rejected_manual:0 } } }],
+      summary:{ filled:60, blocking_gaps:0, days_below_minimum:0,
+        manual_warning_assignments:1, manual_warnings:2, rejected_manual:0 } } }],
     getScheduleDraftPreview:[{ data:draftPreview }],
     publishSchedule:[{ data:{ publication_id:'p_new', revision:5, notified_people:2 } }],
     rollbackSchedule:[{ data:{ publication_id:'p_rollback', revision:6, rolled_back_to:'p_live', notified_people:2 } }]
@@ -337,21 +341,48 @@ try {
   });
 
   await test('planner creates a draft without publishing it', async () => {
+    await managerPage.locator('#addOverride').click();
+    const override = managerPage.locator('#overrideList .override').first();
+    await override.locator('[data-field="person"]').selectOption('stub-uid');
+    assert.deepEqual(await override.locator('[data-field="role"] option').evaluateAll((items) =>
+      items.map((item) => item.value)), ['', 'driver', 'firefighter'],
+    'בורר התפקידים אינו מציג את כל תקן התחנה');
+    await override.locator('[data-field="role"]').selectOption('driver');
     await managerPage.locator('#runPlanner').click();
     await managerPage.locator('#runMessage .ok').waitFor();
     assert.match(await managerPage.locator('#runMessage').textContent(), /עדיין לא פורסמה/);
-    assert.equal(await managerPage.locator('#draftSummary .metric').count(), 4);
+    assert.equal(await managerPage.locator('#draftSummary .metric').count(), 6);
+    assert.deepEqual(await managerPage.locator('#draftSummary .metric b').allTextContents(),
+      ['60', '0', '0', '1', '2', '0']);
     await managerPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await managerPage.locator('#draftBoard .hcell').count(), 7);
     // אותה שבלונה כמו הלוח: הערות ולאחריהן ארבע שורות ההיעדרות.
     assert.equal(await managerPage.locator('#draftBoard .cell[data-board-row]').count(), 7 * 5);
     assert.match(await managerPage.locator('#draftPreview').textContent(), /טל חודרה/);
+    assert.equal(await managerPage.locator('#draftBoard .manual-warning-slot').count(), 1);
+    assert.match(await managerPage.locator('#draftBoard .manual-warning').getAttribute('title'),
+      /חריגה מזמן המנוחה/);
+    assert.match(await managerPage.locator('#draftManualWarnings').textContent(),
+      /טל חודרה.*הכשירות אינה תואמת לתפקיד.*חריגה מזמן המנוחה/);
+    assert.equal(await managerPage.locator('#draftManualWarnings input').count(), 0,
+      'אזהרת שיבוץ ידני דורשת checkbox');
+    for (const width of [320, 360, 390]) {
+      await managerPage.setViewportSize({ width, height:844 });
+      assert.equal(await managerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,
+        width + 'px manual warning review overflows the page');
+      assert.equal(await managerPage.locator('#draftManualWarnings').isVisible(), true);
+    }
+    await managerPage.setViewportSize({ width:1440, height:1000 });
     assert.equal(await managerPage.locator('#publish').isEnabled(), false);
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
     const run = calls.find((entry) => entry.name === 'runSchedulePlanner');
     assert.ok(run);
     assert.equal(Object.hasOwn(run.payload, 'stationId'), false);
     assert.equal(Object.hasOwn(run.payload, 'station_id'), false);
+    assert.equal(run.payload.overrides[0].role, 'driver');
+    assert.deepEqual(Object.keys(run.payload.overrides[0]).sort(),
+      ['date', 'person', 'role', 'sub_station'],
+      'הלקוח שלח קודי אזהרה או שדות שרתיים בתוך override');
   });
   await test('separate confirmed publish refreshes the live views', async () => {
     await managerPage.locator('#reviewDraft').check();
@@ -593,7 +624,7 @@ try {
   await plannerRetryPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await plannerRetryPage.locator('#appMain:not(.hide)').waitFor();
   await test('lost planner response locks its full intent until the exact retry succeeds', async () => {
-    await plannerRetryPage.locator('#months').selectOption('2');
+    await plannerRetryPage.locator('#months').selectOption('12');
     await plannerRetryPage.locator('#addOverride').click();
     const override = plannerRetryPage.locator('#overrideList .override').first();
     await override.locator('[data-field="date"]').fill(today);
@@ -617,8 +648,10 @@ try {
     const runs = (await plannerRetryPage.evaluate(() => window.__CALLABLE_CALLS || []))
       .filter((entry) => entry.name === 'runSchedulePlanner');
     assert.equal(runs.length, 2);
+    assert.equal(runs[0].payload.months, 12, 'annual planning must send the explicit 12-month contract');
     assert.deepEqual(runs[1].payload, runs[0].payload,
       'ניסיון חוזר של המנוע שינה את כוונת הטיוטה או את request_id');
+    assert.equal(runs[1].payload.months, 12, 'annual retry silently changed the requested range');
 
     assert.equal(await plannerRetryPage.locator('#startMonth').isEnabled(), true);
     assert.equal(await plannerRetryPage.locator('#months').isEnabled(), true);
@@ -1083,7 +1116,7 @@ try {
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleManagerSetup').length, 1);
   });
 
-  await test('shadow manager publishes a reviewed trial schedule as active without notifying anyone', async () => {
+  await test('shadow manager publishes a reviewed trial schedule with delivery fenced to Eldad', async () => {
     await shadowManagerPage.locator('#runPlanner').click();
     await shadowManagerPage.locator('#previewMessage .ok').waitFor();
     await shadowManagerPage.locator('#reviewDraft').check();
@@ -1093,7 +1126,7 @@ try {
     await shadowManagerPage.locator('#publishMessage .ok').waitFor();
     const text = await shadowManagerPage.locator('#publishMessage').textContent();
     assert.match(text, /פורסם ופועל בסביבת הניסוי/);
-    assert.match(text, /לא נשלחו הודעות/);
+    assert.match(text, /הפוש הוגבל לחשבון הבדיקה של אלדד/);
     assert.match(text, /לחזור לגרסה הקודמת/);
 
     const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
@@ -1959,6 +1992,7 @@ try {
     await partialPage.locator('#importRun').click();
     await partialPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await partialPage.locator('#importShow').isDisabled(), true);
+    assert.equal(await partialPage.locator('#importShow').isVisible(), false);
     assert.equal((await partialPage.evaluate(() => window.__CALLABLE_CALLS))
       .some((entry) => entry.name === 'setScheduleDisplay'), false);
   });
@@ -1995,7 +2029,8 @@ try {
     assert.equal(await offImportPage.locator('#importRun').isEnabled(), true);
     await offImportPage.locator('#importRun').click();
     await offImportPage.locator('#previewMessage .ok').waitFor();
-    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true);
+    assert.equal(await offImportPage.locator('#importShow').isVisible(), false,
+      'the retired display-only action must not be interactive');
     const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
     const preview = calls.find((entry) => entry.name === 'previewScheduleImport');
     assert.equal(preview.payload.month, offMonth);
@@ -2003,11 +2038,13 @@ try {
     const imported = calls.find((entry) => entry.name === 'importScheduleSheet');
     assert.equal(imported.payload.expected_report_digest, offImportReport.report_digest);
     assert.match(imported.payload.request_id, /^import_/);
-    assert.match(await offImportPage.locator('#importMessage').textContent(), /לא הופעל מנוע ולא נשלחה הודעה/);
+    assert.match(await offImportPage.locator('#importMessage').textContent(), /ערכו בעיפרון.*סקירה ולפרסום/);
   });
 
-  await test('showing the imported draft sends its signed identity and renders the four stations without changing mode', async () => {
-    await offImportPage.locator('#importShow').click();
+  await test('retired display bridge stays hidden while its signed compatibility path remains testable', async () => {
+    assert.equal(await offImportPage.locator('#importShow').isVisible(), false);
+    assert.equal(await offImportPage.locator('#importShow').getAttribute('aria-hidden'), 'true');
+    await offImportPage.locator('#importShow').evaluate((button) => button.click());
     await offImportPage.locator('#importMessage .ok').waitFor();
     const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
     const shown = calls.filter((entry) => entry.name === 'setScheduleDisplay')[0];
@@ -2131,10 +2168,11 @@ try {
     await offImportPage.setViewportSize({ width:1440, height:1000 });
   });
 
-  await test('clearing the imported display restores the legacy board and leaves the imported draft intact', async () => {
+  await test('retired clear bridge stays hidden and its compatibility path leaves the imported draft intact', async () => {
     await offImportPage.locator('[data-tab="manage"]').click();
-    assert.equal(await offImportPage.locator('#importClear').isVisible(), true);
-    await offImportPage.locator('#importClear').click();
+    assert.equal(await offImportPage.locator('#importClear').isVisible(), false);
+    assert.equal(await offImportPage.locator('#importClear').getAttribute('aria-hidden'), 'true');
+    await offImportPage.locator('#importClear').evaluate((button) => button.click());
     await offImportPage.locator('#importMessage .ok').waitFor();
     const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
     const cleared = calls.filter((entry) => entry.name === 'setScheduleDisplay')[1];
@@ -2145,15 +2183,15 @@ try {
     assert.match(cleared.payload.request_id, /^display_/);
     assert.equal(Object.hasOwn(cleared.payload, 'draft_id'), false);
     assert.match(await offImportPage.locator('#importMessage').textContent(), /נתוני הייבוא עצמם נשמרו ולא נמחקו/);
-    assert.equal(await offImportPage.locator('#importShow').isEnabled(), true,
-      'the imported draft remains available to show again');
+    assert.equal(await offImportPage.locator('#importShow').isVisible(), false,
+      'the retired display-only action must remain hidden after clear');
     await offImportPage.locator('[data-tab="station"]').click();
     await offImportPage.locator('#stationBoard').waitFor();
     assert.match(await offImportPage.locator('#stationNote').textContent(), /מהסידור הקיים/);
     assert.equal(await offImportPage.locator('#stationBoard .cell.unknown').count() > 0, true);
   });
 
-  await test('the off-mode import display flow has no engine, publication, delivery or notification side effect', async () => {
+  await test('the hidden compatibility bridge has no engine, publication, delivery or notification side effect', async () => {
     const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS);
     const forbidden = ['setScheduleRuntimeMode', 'promoteScheduleToNew', 'runSchedulePlanner',
       'publishSchedule', 'rollbackSchedule', 'respondToSchedule', 'deliverScheduleOutbox'];
@@ -2214,9 +2252,9 @@ try {
   const clearRacePage = await clearRace.newPage();
   await clearRacePage.goto(base + '?tab=manage', { waitUntil:'load' });
   await clearRacePage.locator('#appMain:not(.hide)').waitFor();
-  await test('clear is bound to the visible month and generation; its late response cannot clear a later month', async () => {
-    assert.equal(await clearRacePage.locator('#importClear').isVisible(), true);
-    await clearRacePage.locator('#importClear').click();
+  await test('hidden compatibility clear stays bound to its month and generation', async () => {
+    assert.equal(await clearRacePage.locator('#importClear').isVisible(), false);
+    await clearRacePage.locator('#importClear').evaluate((button) => button.click());
     await clearRacePage.locator('#importMonth').evaluate((input, value) => { input.value = value; }, finalMonth);
     await clearRacePage.locator('#importMonth').dispatchEvent('change');
     await clearRacePage.waitForTimeout(180);
@@ -2687,15 +2725,15 @@ try {
   gapPage.on('dialog', (dialog) => dialog.accept());
   await gapPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await gapPage.locator('#appMain:not(.hide)').waitFor();
-  await test('gap control: other gaps lock publishing until an explicit acknowledgement, which travels as the exact digest', async () => {
+  await test('gap control: staffing and qualification gaps warn without locking publication', async () => {
     await gapPage.locator('#runPlanner').click();
     await gapPage.locator('#previewMessage .ok').waitFor();
     assert.equal(await gapPage.locator('#draftGaps').isVisible(), true);
     assert.equal(await gapPage.locator('#draftGapsList .gap.other').count(), 2);
     assert.equal(await gapPage.locator('#draftGapsList .gap.critical').count(), 0);
-    assert.equal(await gapPage.locator('#draftGapAckWrap').isVisible(), true);
+    assert.equal(await gapPage.locator('#draftGapAckWrap').isVisible(), false);
     await gapPage.locator('#reviewDraft').check();
-    assert.equal(await gapPage.locator('#publish').isEnabled(), false, 'no publish before the acknowledgement');
+    assert.equal(await gapPage.locator('#publish').isEnabled(), true, 'business warnings must not lock publish');
     // פירוט לפי יום — מועמדים בלבד.
     await gapPage.locator('#draftGapsDetail').click();
     await gapPage.locator('#draftGapsDays .gapday').waitFor();
@@ -2706,12 +2744,10 @@ try {
     assert.equal(await gapPage.locator('#draftGapsDays button').count(), 0, 'no auto-apply control for candidates');
     const detail = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'getScheduleGapReport');
     assert.deepEqual(detail.payload, { draft_id:'draft_1' });
-    await gapPage.locator('#draftGapAck').check();
-    assert.equal(await gapPage.locator('#publish').isEnabled(), true);
     await gapPage.locator('#publish').click();
     await gapPage.locator('#publishMessage .ok').waitFor();
     const published = (await gapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'publishSchedule');
-    assert.equal(published.payload.gap_acknowledgement, 'gapdigest_other');
+    assert.equal(Object.hasOwn(published.payload, 'gap_acknowledgement'), false);
     assert.equal(published.payload.expected_content_digest, 'digest_preview_1');
   });
   await gapCtx.close();
@@ -2730,20 +2766,20 @@ try {
   gapCriticalPage.on('dialog', (dialog) => dialog.accept());
   await gapCriticalPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await gapCriticalPage.locator('#appMain:not(.hide)').waitFor();
-  await test('gap control: a critical gap locks publishing with no acknowledgement offered', async () => {
+  await test('gap control: a critical qualification gap remains visible but does not lock publication', async () => {
     await gapCriticalPage.locator('#runPlanner').click();
     await gapCriticalPage.locator('#previewMessage .ok').waitFor();
-    assert.equal(await gapCriticalPage.locator('#draftGapsList .gap.critical').count(), 1);
-    assert.match(await gapCriticalPage.locator('#draftGapsTitle').textContent(), /חוסם/);
+    assert.equal(await gapCriticalPage.locator('#draftGapsList .gap.warn').count(), 1);
+    assert.doesNotMatch(await gapCriticalPage.locator('#draftGapsTitle').textContent(), /חוסם/);
     assert.equal(await gapCriticalPage.locator('#draftGapAckWrap').isVisible(), false);
     await gapCriticalPage.locator('#reviewDraft').check();
-    assert.equal(await gapCriticalPage.locator('#publish').isEnabled(), false);
+    assert.equal(await gapCriticalPage.locator('#publish').isEnabled(), true);
     const calls = await gapCriticalPage.evaluate(() => window.__CALLABLE_CALLS);
     assert.equal(calls.some((entry) => entry.name === 'publishSchedule'), false);
   });
   await gapCriticalCtx.close();
 
-  /* עריכה עם פערים: הדוח מציג אותם; אישור נשלח עם הביצוע. */
+  /* עריכה עם פערים: הדוח מציג אותם כאזהרות, בלי תיבת אישור. */
   const editReportGaps = Object.assign(JSON.parse(JSON.stringify(editReport)), { gaps: gapsOther });
   const editGapCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
   await prepare(editGapCtx, 'firefighter', {
@@ -2757,7 +2793,7 @@ try {
   const editGapPage = await editGapCtx.newPage();
   await editGapPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await editGapPage.locator('#appMain:not(.hide)').waitFor();
-  await test('edit card: gaps after the change need the acknowledgement; the apply carries the digest', async () => {
+  await test('edit card: gaps after the change warn without locking apply', async () => {
     await editGapPage.locator('#editDrawerOpen').click();
     await editGapPage.fill('#editSearch', 'טל');
     await editGapPage.locator('#editSearchResults button').first().click();
@@ -2769,15 +2805,11 @@ try {
     await editGapPage.locator('#editMessage .ok').waitFor();
     assert.equal(await editGapPage.locator('#editGaps').isVisible(), true);
     assert.equal(await editGapPage.locator('#editGapsList .gap.other').count(), 2);
-    await editGapPage.locator('#editApply').click();
-    await editGapPage.locator('#editMessage .err').waitFor();
-    assert.match(await editGapPage.locator('#editMessage').textContent(), /אישור מפורש/);
-    assert.equal((await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).some((entry) => entry.name === 'applyScheduleEdit'), false);
-    await editGapPage.locator('#editGapAck').check();
+    assert.equal(await editGapPage.locator('#editGapAckWrap').isVisible(), false);
     await editGapPage.locator('#editApply').click();
     await editGapPage.locator('#editMessage .ok').waitFor();
     const applied = (await editGapPage.evaluate(() => window.__CALLABLE_CALLS)).find((entry) => entry.name === 'applyScheduleEdit');
-    assert.equal(applied.payload.gap_acknowledgement, 'gapdigest_other');
+    assert.equal(Object.hasOwn(applied.payload, 'gap_acknowledgement'), false);
   });
   await editGapCtx.close();
 

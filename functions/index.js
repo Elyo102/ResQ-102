@@ -453,13 +453,41 @@ async function runtime() {
   return _rt;
 }
 
+async function runtimeFresh() {
+  // Critical dispatches must not inherit the 30-second cache. A callout retry
+  // can otherwise cross a live/trial cutover and notify the former audience.
+  const d = await db.doc(RUNTIME_DOC).get();
+  if (!d.exists) throw new Error('runtime-config-missing');
+  const value = d.data() || {};
+  if (typeof value.silent !== 'boolean') throw new Error('runtime-silent-invalid');
+  if (value.silent === true && !Array.isArray(value.silent_allow)) {
+    throw new Error('runtime-silent-allow-invalid');
+  }
+  return value;
+}
+
+async function allowedByRuntime(rt, who, extraKeys) {
+  const allow = Array.isArray((rt || {}).silent_allow)
+    ? rt.silent_allow.map(x => String(x || '').toLowerCase()) : [];
+  const keys = [who].concat(Array.isArray(extraKeys) ? extraKeys : [])
+    .map(x => String(x || '').toLowerCase()).filter(Boolean);
+  if (keys.some(key => allow.indexOf(key) !== -1)) return true;
+  if (!allow.some(key => key.indexOf('@') !== -1)) return false;
+  const uid = String(who || '');
+  if (!uid || uid.indexOf('@') !== -1) return false;
+  try {
+    const user = await admin.auth().getUser(uid);
+    return allow.indexOf(String((user && user.email) || '').toLowerCase()) !== -1;
+  } catch (error) {
+    return false;
+  }
+}
+
 // uid או אימייל שפטורים מהשקט.
 async function silentFor(who) {
   const rt = await runtime();
   if (rt.silent !== true) return false;
-  const allow = Array.isArray(rt.silent_allow) ? rt.silent_allow : [];
-  const key = String(who || '').toLowerCase();
-  return allow.indexOf(key) === -1;
+  return !(await allowedByRuntime(rt, who));
 }
 
 // ---------- מעבדת מכשיר אישית ----------
@@ -3618,35 +3646,40 @@ const PUSH_STATION = 'eilat_102';
 
 const PUSH_CONCURRENCY = 25;
 
-async function pushToUsers(sid, uids, type, title, body, url, important) {
+async function pushToUsers(sid, uids, type, title, body, url, important, deliveryTag, runtimePolicy) {
   const unique = Array.from(new Set((uids || []).filter(Boolean)));
-  if (!unique.length) return { people: 0, devices: 0 };
+  if (!unique.length) return { people: 0, devices: 0, failed: 0, failed_uids: [] };
 
-  let people = 0, devices = 0;
+  let people = 0, devices = 0, failed = 0;
+  const failedUids = [];
 
   for (let i = 0; i < unique.length; i += PUSH_CONCURRENCY) {
     const group = unique.slice(i, i + PUSH_CONCURRENCY);
     const res = await Promise.all(group.map(function (uid) {
-      return pushToOne(sid, uid, type, title, body, url, important)
+      return pushToOne(sid, uid, type, title, body, url, important, deliveryTag, runtimePolicy)
         .catch(function (e) {
           // נמען אחד שנכשל לא מפיל את השאר. זו הזעקה.
           console.error('push failed for ' + uid + ': ' + (e && e.message));
-          return { sent: 0 };
+          return { sent: 0, failed: true };
         });
     }));
-    res.forEach(function (r) {
+    res.forEach(function (r, index) {
       if (r && r.sent) { people++; devices += r.sent; }
+      if (r && r.failed) { failed++; failedUids.push(group[index]); }
     });
   }
 
-  return { people, devices };
+  return { people, devices, failed, failed_uids: failedUids };
 }
 
-async function pushToOne(sid, uid, type, title, body, url, important) {
+async function pushToOne(sid, uid, type, title, body, url, important, deliveryTag, runtimePolicy) {
   {
     // הבדיקה לכל נמען בנפרד, ולא פעם אחת לכל הקבוצה: קריאת פתע
     // לכל המשמרת צריכה להגיע לאלדד ולהיחסם לשאר, באותה שליחה.
-    if (await silentFor(uid)) { await logSilenced('push', uid, title); return { sent: 0 }; }
+    const isSilent = runtimePolicy
+      ? runtimePolicy.silent === true && !(await allowedByRuntime(runtimePolicy, uid))
+      : await silentFor(uid);
+    if (isSilent) { await logSilenced('push', uid, title); return { sent: 0 }; }
 
     let snap;
     try {
@@ -3654,7 +3687,7 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     } catch (e) {
       return { sent: 0, failed: true, error_code: String((e && e.code) || 'TOKEN_READ_FAILED') };
     }
-    if (!snap.exists) return { sent: 0 };
+    if (!snap.exists) return { sent: 0, failed: true, error_code:'NO_PUSH_TOKEN_DOCUMENT' };
 
     const v = snap.data() || {};
     const prefs = v.prefs || {};
@@ -3668,10 +3701,10 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     if (!must && prefs[type] === false) return { sent: 0 };
 
     const list = Array.isArray(v.tokens) ? v.tokens : [];
-    if (!list.length) return { sent: 0 };
+    if (!list.length) return { sent: 0, failed: true, error_code:'NO_ACTIVE_PUSH_TOKEN' };
 
     const toks = list.map(t => t && t.token).filter(Boolean);
-    if (!toks.length) return { sent: 0 };
+    if (!toks.length) return { sent: 0, failed: true, error_code:'NO_ACTIVE_PUSH_TOKEN' };
 
     let res;
     try {
@@ -3681,7 +3714,7 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
           title: String(title || 'ResQ'),
           body: String(body || ''),
           url: String(url || './login.html'),
-          tag: String(type || 'resq'),
+          tag: String(deliveryTag || type || 'resq'),
           important: important ? '1' : '0'
         },
         webpush: { headers: { Urgency: important ? 'high' : 'normal' } }
@@ -3692,6 +3725,7 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
     }
 
     let sent = 0;
+    let transientFailure = false;
     const dead = [];
     res.responses.forEach(function (r, i) {
       if (r.success) { sent++; return; }
@@ -3701,6 +3735,11 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
       if (code.indexOf('registration-token-not-registered') !== -1 ||
           code.indexOf('invalid-argument') !== -1) {
         dead.push(toks[i]);
+      } else {
+        // A multicast call can resolve successfully while an individual token
+        // fails transiently. Treat that person as failed so the callout retry
+        // targets them again instead of falsely declaring delivery complete.
+        transientFailure = true;
       }
     });
 
@@ -3711,7 +3750,10 @@ async function pushToOne(sid, uid, type, title, body, url, important) {
         .catch(() => {});
     }
 
-    return { sent: sent };
+    // A provider response containing only dead tokens is not delivery. The
+    // tokens are cleaned above, but the callout remains partial so the console
+    // never reports a person as notified when no device received anything.
+    return { sent: sent, failed: transientFailure || sent === 0 };
   }
 }
 
@@ -4205,15 +4247,14 @@ exports.sendBroadcast = onCall(
 // ברשימה, גם למי שכיבה התראות, וקופצת על המסך במקום להמתין
 // בשורת ההתראות. זה כלי הזעקה, לא כלי הודעות — ולכן:
 //
-//   * מי ששולח            מפקד משמרת, רכז כוח אדם, מנהל מערכת
-//   * מי שמקבל            משמרת שלמה, או רשימת אנשים נבחרת
+//   * מי ששולח            מפקד משמרת או סגן מפקד משמרת
+//   * מי שמקבל            המשמרת החתומה של השולח בלבד
 //   * אי אפשר לכבות       הסוג 'callout' עוקף את ההעדפות
 //   * חייב תשובה          מגיע או לא זמין, נשמר על המסמך
 //
-// מפקד משמרת מזעיק את המשמרת שלו, ובבחירה ידנית — כל אדם
-// בתחנה. הבחירה הידנית פתוחה לכל התחנה במכוון: אירוע שמצריך
-// הזעקה לא עוצר בגבול המשמרת. השם של מי שהזעיק נשמר על כל
-// קריאה, וזו הבקרה — לא הצרה של הרשימה.
+// מפקד משמרת או סגנו מזעיקים את המשמרת שלהם בלבד. היעד נגזר
+// מה-claims ונבדק מחדש בשרת; אין יעד תחנה ואין רשימת נמענים
+// שמגיעה מהלקוח. השם של מי שהזעיק נשמר על כל קריאה לבקרה.
 
 // שמות סוגי התקלה בעברית. משוכפל מ-faults.js כי השרת אינו
 // מייבא מודולים של הדפדפן — שינוי בשם צריך להיעשות בשניהם.
@@ -4226,10 +4267,75 @@ function kindHeS(k) { return FAULT_KIND_HE[k] || 'תקלה'; }
 
 const CALLOUT_ROLE_HE = {
   commander: 'מפקד משמרת',
+  deputy: 'סגן מפקד משמרת',
   hr_coordinator: 'רכז כוח אדם',
   super_admin: 'מנהל מערכת',
   firefighter: 'כבאי'
 };
+
+const CALLOUT_OPTIONS = Object.freeze({
+  region:'europe-west1', enforceAppCheck:true, timeoutSeconds:300,
+  memory:'256MiB', maxInstances:5, concurrency:20
+});
+
+function verifyCalloutProfile(actor, userSnap) {
+  if (!userSnap.exists) {
+    throw new HttpsError('failed-precondition', 'כרטיס המשתמש בתחנה לא נמצא.');
+  }
+  const profile = userSnap.data() || {};
+  if (profile.is_active !== true || profile.disabled === true) {
+    throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  }
+  if (String(profile.role || '') !== actor.role || String(profile.crew || '') !== actor.crew) {
+    throw new HttpsError('permission-denied', 'התפקיד או המשמרת השתנו. יש להתחבר מחדש.');
+  }
+  if (profile.station_id != null && String(profile.station_id) !== actor.sid) {
+    throw new HttpsError('permission-denied', 'שיוך התחנה השתנה. יש להתחבר מחדש.');
+  }
+  const name = String(profile.full_name || '').trim();
+  if (!name || name.length > 120) {
+    throw new HttpsError('failed-precondition', 'חסר שם מלא תקין בכרטיס המשתמש.');
+  }
+  return { profile, name };
+}
+
+async function freshCalloutActor(req) {
+  const signed = req.auth;
+  if (!signed) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+  const signedClaims = signed.token || {};
+  const sid = callerStation(req, signed);
+  const user = await admin.auth().getUser(signed.uid);
+  if (!user || user.uid !== signed.uid || user.disabled === true) {
+    throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
+  }
+  const claims = user.customClaims || {};
+  const role = String(claims.role || '');
+  const crew = String(claims.shift || '');
+  if (String(claims.stationId || '') !== sid || String(signedClaims.stationId || '') !== sid ||
+      String(signedClaims.role || '') !== role || String(signedClaims.shift || '') !== crew) {
+    throw new HttpsError('permission-denied', 'הרשאות החשבון השתנו. יש להתחבר מחדש.');
+  }
+  if (['commander','deputy'].indexOf(role) === -1) {
+    throw new HttpsError('permission-denied', 'קריאת פתע שמורה למפקד המשמרת ולסגנו.');
+  }
+  if (['A','B','C'].indexOf(crew) === -1) {
+    throw new HttpsError('failed-precondition', 'לשולח אין שיוך למשמרת פעילה.');
+  }
+  const actor = { uid:signed.uid, sid, role, crew, claims };
+  const userSnap = await db.doc('stations/' + sid + '/users/' + signed.uid).get();
+  const verified = verifyCalloutProfile(actor, userSnap);
+  return Object.assign(actor, { name:verified.name, email:String(user.email || '') });
+}
+
+async function releaseCalloutLease(ref, attemptId, retryUids) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const value = snap.exists ? (snap.data() || {}) : {};
+    if (value.delivery_attempt_id !== attemptId) return;
+    tx.set(ref, { delivery_state:'partial', delivery_lease_until:null,
+      delivery_failed_uids:Array.isArray(retryUids) ? retryUids : [] }, { merge:true });
+  });
+}
 
 function hhmmIL(d) {
   try {
@@ -4240,22 +4346,13 @@ function hhmmIL(d) {
 }
 
 exports.sendCallout = onCall(
-  { timeoutSeconds: 300 },
+  CALLOUT_OPTIONS,
   async (req) => {
+  const actor = await freshCalloutActor(req);
   const auth = req.auth;
-  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
-
-  const t = auth.token || {};
-  const sid = callerStation(req, auth);
-  const isSuper = isSuperAdmin(auth);
-  const role = t.role || '';
-  const myCrew = t.shift || '';
-
-  if (!isSuper && ['commander','deputy','station_commander',
-                   'hr_coordinator'].indexOf(role) === -1) {
-    throw new HttpsError('permission-denied',
-      'קריאת פתע שמורה למפקד משמרת ולרכז כוח אדם.');
-  }
+  const sid = actor.sid;
+  const role = actor.role;
+  const myCrew = actor.crew;
 
   const d = req.data || {};
   const text = String(d.text || '').trim();
@@ -4265,9 +4362,11 @@ exports.sendCallout = onCall(
       'קריאת פתע קצרה מ-300 תווים. מה שארוך מזה לא נקרא בריצה.');
   }
 
-  const wide = isSuper || role === 'hr_coordinator' ||
-               role === 'station_commander';
   const target = String(d.target || '').trim();
+  const requestId = String(d.request_id || '').trim();
+  if (!/^[A-Za-z0-9_-]{16,80}$/.test(requestId)) {
+    throw new HttpsError('invalid-argument', 'מזהה השליחה אינו תקין. יש לרענן ולנסות שוב.');
+  }
   let uids = [], targetHe = '', crew = '';
 
   if (target.indexOf('crew:') === 0) {
@@ -4275,45 +4374,47 @@ exports.sendCallout = onCall(
     if (['A', 'B', 'C'].indexOf(crew) === -1) {
       throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
     }
-    // הזעקת משמרת שלמה שאינה שלך היא החלטה של רכז כוח אדם או
-    // של מנהל המערכת. מפקד שצריך אנשים ממשמרת אחרת בוחר אותם
-    // בשמם — כך יש לו כוונה, ולא לחיצה אחת שמעירה תשעים איש.
-    if (!wide && crew !== myCrew) {
+    // יעד המשמרת מגיע מהלקוח לצורך חוזה הקריאה, אך חייב להתאים
+    // למשמרת החתומה בטוקן. אין בחירה של משמרת אחרת או של התחנה.
+    if (crew !== myCrew) {
       throw new HttpsError('permission-denied',
-        'אפשר להזעיק את המשמרת שלך. לאנשים ממשמרת אחרת — בחר אותם בשמם.');
+        'אפשר להזעיק רק את המשמרת שלך.');
     }
     uids = await uidsInCrew(sid, crew);
     targetHe = 'משמרת ' + (CREW_HE_S[crew] || crew);
 
-  } else if (target === 'people') {
-    const raw = Array.isArray(d.uids) ? d.uids : [];
-    const want = Array.from(new Set(raw.map(String).filter(Boolean)));
-    if (!want.length) throw new HttpsError('invalid-argument', 'לא נבחרו אנשים.');
-    if (want.length > 120) {
-      throw new HttpsError('invalid-argument', 'יותר מדי אנשים בבחירה אחת.');
-    }
-    // מסננים מול הסגל בפועל: uid שאינו בתחנה או שאינו פעיל
-    // לא נכנס לרשימה, גם אם נשלח מהדפדפן.
-    const live = await uidsInCrew(sid, '');
-    uids = want.filter(u => live.indexOf(u) !== -1);
-    if (!uids.length) {
-      throw new HttpsError('invalid-argument',
-        'אף אחד מהנבחרים אינו סגל פעיל בתחנה.');
-    }
-    targetHe = uids.length + ' אנשים בבחירה ידנית';
-
-  } else if (target === 'station') {
-    if (!wide) throw new HttpsError('permission-denied',
-      'הזעקת כל התחנה שמורה לרכז כוח אדם ולמנהל המערכת.');
-    uids = await uidsInCrew(sid, '');
-    targetHe = 'כל התחנה';
-
+  } else if (target === 'people' || target === 'station') {
+    throw new HttpsError('permission-denied', 'קריאת פתע נשלחת למשמרת שלך בלבד.');
   } else {
     throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
   }
 
-  // המזעיק לא מזעיק את עצמו.
-  uids = uids.filter(u => u !== auth.uid);
+  // במצב חי המזעיק אינו מזעיק את עצמו. במצב ניסוי משאירים
+  // רק את החשבונות שהוגדרו במפורש ב-silent_allow. כך מסמך
+  // הקריאה עצמו — ולא רק ה-Push — מבודד לחשבון הבדיקה, והוא
+  // יכול לקבל את הקריאה גם כשהוא השולח היחיד במערכת הניסוי.
+  let trial = false;
+  try {
+    const runtimeValue = await runtimeFresh();
+    trial = runtimeValue.silent === true;
+    if (trial) {
+      if (actor.claims.personal_lab_control !== true ||
+          !(await allowedByRuntime(runtimeValue, auth.uid, [actor.email]))) {
+        throw new HttpsError('permission-denied',
+          'במצב ניסוי רק חשבון הבקרה האישי רשאי להפעיל קריאת פתע.');
+      }
+      const allowedFlags = await Promise.all(uids.map(uid => allowedByRuntime(runtimeValue, uid)));
+      const blocked = uids.filter((uid, index) => !allowedFlags[index]);
+      // אין לשכפל את תוכן הקריאה ליומן ההשתקה. די בתווית קבועה
+      // כדי לתעד שהנמען נחסם בלי להרחיב את חשיפת המלל המבצעי.
+      await Promise.all(blocked.map(uid => logSilenced('callout', uid, 'קריאת פתע')));
+      uids = uids.filter((uid, index) => allowedFlags[index]);
+    } else {
+      uids = uids.filter(uid => uid !== auth.uid);
+    }
+  } catch (error) {
+    throw new HttpsError('unavailable', 'לא ניתן לאמת את מצב המערכת. הקריאה לא נשלחה.');
+  }
 
   // מי שבחופשה מאושרת מחוץ לאילת אינו ניתן להזעקה. זו כל
   // הסיבה שטופס החופשה שואל איפה הכבאי נמצא — בלי השימוש
@@ -4356,70 +4457,216 @@ exports.sendCallout = onCall(
     throw new HttpsError('invalid-argument', 'אין למי לשלוח.');
   }
 
-  let name = '';
-  try {
-    const u = await db.doc('stations/' + sid + '/users/' + auth.uid).get();
-    if (u.exists) name = (u.data() || {}).full_name || '';
-  } catch (e) {}
+  const name = actor.name;
 
   const now = new Date();
-  const roleHe = isSuper ? CALLOUT_ROLE_HE.super_admin
-                         : (CALLOUT_ROLE_HE[role] || '');
+  const roleHe = CALLOUT_ROLE_HE[role] || '';
   const whenHe = hhmmIL(now);
+  const intentFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+    sid, uid:auth.uid, crew:myCrew, target, text
+  })).digest('hex');
+  const calloutId = 'co_' + crypto.createHash('sha256')
+    .update(sid + '\0' + auth.uid + '\0' + requestId).digest('hex').slice(0, 40);
 
   // כותבים קודם, שולחים אחר כך. אם השליחה תיפול, הקריאה עדיין
   // תקפוץ למי שהאפליקציה פתוחה אצלו — וזה עדיף על כלום.
-  const ref = db.collection('stations/' + sid + '/callouts').doc();
-  await ref.set({
-    by_uid: auth.uid, by_name: name, by_role: role,
-    by_role_he: roleHe, by_crew: myCrew,
-    target: target, target_he: targetHe, crew: crew,
-    text: text, uids: uids, acks: {}, active: true,
-    when_he: whenHe,
-    created_key: now.toISOString(),
-    created_at: FV.serverTimestamp()
+  const ref = db.doc('stations/' + sid + '/callouts/' + calloutId);
+  const reservation = await db.runTransaction(async tx => {
+    const prior = await tx.get(ref);
+    if (prior.exists) {
+      const value = prior.data() || {};
+      if (value.by_uid !== auth.uid || value.request_id !== requestId ||
+          value.intent_fingerprint !== intentFingerprint) {
+        throw new HttpsError('already-exists', 'מזהה השליחה כבר שימש לקריאה אחרת.');
+      }
+      return { duplicate:true, value };
+    }
+    tx.set(ref, {
+      request_id:requestId, intent_fingerprint:intentFingerprint,
+      by_uid: auth.uid, by_name: name, by_role: role,
+      by_role_he: roleHe, by_crew: myCrew,
+      target: target, target_he: targetHe, crew: crew,
+      text: text, uids: uids, active: true, trial,
+      legacy_ack_compat:true, acks:{},
+      delivery_state:'reserved', delivery_failed_uids:[],
+      when_he:whenHe,
+      created_key: now.toISOString(), created_at: FV.serverTimestamp()
+    });
+    return { duplicate:false };
   });
 
-  const res = await pushToUsers(sid, uids, 'callout',
+  if (reservation.duplicate) {
+    // ריטריי ממשיך את הכוונה המקורית; שינוי בסגל בזמן שהתגובה
+    // אבדה אינו רשאי לשנות בדיעבד את רשימת הנמענים.
+    uids = Array.isArray(reservation.value.uids) ? reservation.value.uids.slice() : [];
+  }
+
+  // רכישת lease נפרדת הופכת קריסה אחרי השמירה לניתנת לחידוש. ניסיון
+  // מקביל אינו שולח פעמיים, וניסיון לאחר פקיעת ה-lease ממשיך מאותו
+  // מסמך. המסירה היא במפורש at-least-once: אם FCM קיבל והתגובה
+  // אבדה, ננסה שוב. תג FCM יציב מצמצם כפילות תצוגה אך אינו הבטחת
+  // exactly-once; רשימת failed_uids מגבילה retry לכשל ידוע בלבד.
+  const attemptId = crypto.randomBytes(16).toString('hex');
+  const leaseMs = 2 * 60 * 1000;
+  const acquired = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'שמירת הקריאה נכשלה.');
+    const value = snap.data() || {};
+    if (value.active !== true) return { closed:true, value };
+    if (value.delivery_state === 'completed') return { completed:true, value };
+    const leaseUntil = Date.parse(String(value.delivery_lease_until || ''));
+    if (value.delivery_state === 'delivering' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) {
+      return { busy:true, value };
+    }
+    const retryUids = value.delivery_state === 'partial' && Array.isArray(value.delivery_failed_uids)
+      ? value.delivery_failed_uids.filter(uid => value.uids.indexOf(uid) !== -1)
+      : value.uids;
+    tx.set(ref, { delivery_state:'delivering', delivery_attempt_id:attemptId,
+      delivery_attempts:Number(value.delivery_attempts || 0) + 1,
+      delivery_lease_until:new Date(Date.now() + leaseMs).toISOString() }, { merge:true });
+    return { acquired:true, value, retry_uids:retryUids };
+  });
+
+  if (acquired.completed) {
+    const value = acquired.value || {};
+    return { ok:true, id:ref.id, duplicate:true, in_progress:false,
+      trial:value.trial === true, sent:Array.isArray(value.uids) ? value.uids.length : 0,
+      people:Number(value.people || 0), devices:Number(value.devices || 0),
+      skipped_away:Array.isArray(value.skipped_away) ? value.skipped_away : [] };
+  }
+  if (acquired.closed) {
+    const value = acquired.value || {};
+    return { ok:false, id:ref.id, duplicate:true, closed:true, retryable:false,
+      trial:value.trial === true, sent:0, people:Number(value.people || 0),
+      devices:Number(value.devices || 0) };
+  }
+  if (acquired.busy) {
+    const value = acquired.value || {};
+    const leaseUntil = Date.parse(String(value.delivery_lease_until || ''));
+    const retryAfter = Number.isFinite(leaseUntil)
+      ? Math.max(500, Math.min(120000, leaseUntil - Date.now() + 250)) : 1000;
+    return { ok:false, id:ref.id, duplicate:true, in_progress:true, retryable:true,
+      retry_after_ms:retryAfter, trial:value.trial === true,
+      sent:Array.isArray(value.uids) ? value.uids.length : 0,
+      people:Number(value.people || 0), devices:Number(value.devices || 0) };
+  }
+
+  const retryUids = Array.isArray(acquired.retry_uids) ? acquired.retry_uids : uids;
+  // Refresh the actor first, then read the runtime policy. This ordering is
+  // deliberate: a fresh personal_lab_control claim must be evaluated against
+  // the newest silent_allow immediately before the external FCM side effect.
+  let dispatchActor;
+  try {
+    dispatchActor = await freshCalloutActor(req);
+  } catch (error) {
+    await releaseCalloutLease(ref, attemptId, retryUids);
+    throw error;
+  }
+
+  let dispatchRuntime;
+  try {
+    dispatchRuntime = await runtimeFresh();
+  } catch (error) {
+    await releaseCalloutLease(ref, attemptId, retryUids);
+    throw new HttpsError('unavailable',
+      'לא ניתן לאמת את מצב המערכת לפני המשלוח. הקריאה לא נשלחה.');
+  }
+
+  const dispatchTrial = dispatchRuntime.silent === true;
+  const reservedTrial = (acquired.value || {}).trial === true;
+  if (reservedTrial !== dispatchTrial) {
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const value = snap.exists ? (snap.data() || {}) : {};
+      if (value.delivery_attempt_id !== attemptId) return;
+      tx.set(ref, { active:false, delivery_state:'cancelled_mode_change',
+        delivery_lease_until:null, delivery_failed_uids:[],
+        closed_at:FV.serverTimestamp(), closed_by:'runtime_mode_change' }, { merge:true });
+    });
+    return { ok:false, id:ref.id, duplicate:reservation.duplicate,
+      mode_changed:true, retryable:false, sent:0, people:0, devices:0,
+      trial:reservedTrial };
+  }
+
+  let deliveryUids = retryUids.filter(uid => dispatchTrial || uid !== dispatchActor.uid);
+  if (dispatchTrial) {
+    if (dispatchActor.claims.personal_lab_control !== true ||
+        !(await allowedByRuntime(dispatchRuntime, dispatchActor.uid, [dispatchActor.email]))) {
+      await releaseCalloutLease(ref, attemptId, retryUids);
+      throw new HttpsError('permission-denied',
+        'הרשאת חשבון הבקרה בוטלה לפני המשלוח. הקריאה לא נשלחה.');
+    }
+    const allowedFlags = await Promise.all(deliveryUids.map(uid => allowedByRuntime(dispatchRuntime, uid)));
+    deliveryUids = deliveryUids.filter((uid, index) => allowedFlags[index]);
+  }
+  if (!deliveryUids.length) {
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const value = snap.exists ? (snap.data() || {}) : {};
+      if (value.delivery_attempt_id !== attemptId) return;
+      tx.set(ref, { active:false, delivery_state:'policy_blocked',
+        delivery_lease_until:null, delivery_failed_uids:[],
+        closed_at:FV.serverTimestamp(), closed_by:'runtime_policy' }, { merge:true });
+    });
+    return { ok:false, id:ref.id, duplicate:reservation.duplicate,
+      policy_blocked:true, retryable:false, sent:0, people:0, devices:0,
+      trial:dispatchTrial };
+  }
+
+  const res = await pushToUsers(sid, deliveryUids, 'callout',
     'קריאת פתע · ' + (name || 'מפקד'),
-    text, './login.html', true);
+    text, './login.html', true, 'callout-' + calloutId, dispatchRuntime);
 
-  await ref.set({ people: res.people, devices: res.devices },
-                { merge: true }).catch(() => {});
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const value = snap.exists ? (snap.data() || {}) : {};
+    if (value.delivery_attempt_id !== attemptId) return;
+    if (value.active !== true) {
+      tx.set(ref, { delivery_state:'cancelled', delivery_lease_until:null,
+        delivery_failed_uids:[] }, { merge:true });
+      return;
+    }
+    const priorPeople = Number(value.people || 0);
+    const priorDevices = Number(value.devices || 0);
+    tx.set(ref, { people:priorPeople + res.people, devices:priorDevices + res.devices,
+      delivery_state:res.failed ? 'partial' : 'completed', delivery_failed:Number(res.failed || 0),
+      delivery_failed_uids:Array.isArray(res.failed_uids) ? res.failed_uids : [],
+      delivery_lease_until:null, skipped_away:awayNames, delivered_at:FV.serverTimestamp() },
+    { merge:true });
+  });
 
-  return { ok: true, id: ref.id, sent: uids.length,
+  return { ok: !res.failed, retryable:res.failed > 0,
+           retry_after_ms:res.failed > 0 ? 1500 : 0,
+           id: ref.id, sent: res.people,
            people: res.people, devices: res.devices,
-           skipped_away: awayNames };
+           failed:Number(res.failed || 0),
+           skipped_away: awayNames, trial };
 });
 
 
 // סוגר קריאה. הקריאה מפסיקה לקפוץ למי שעוד לא ענה, וההיסטוריה
 // נשארת עם התשובות שכן התקבלו.
-exports.closeCallout = onCall(async (req) => {
+exports.closeCallout = onCall(CALLOUT_OPTIONS, async (req) => {
+  const actor = await freshCalloutActor(req);
   const auth = req.auth;
-  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
-
-  const t = auth.token || {};
-  const sid = callerStation(req, auth);
-  const isSuper = isSuperAdmin(auth);
-  const role = t.role || '';
+  const sid = actor.sid;
 
   const id = String((req.data || {}).id || '').trim();
   if (!id) throw new HttpsError('invalid-argument', 'חסר מזהה קריאה.');
 
   const ref = db.doc('stations/' + sid + '/callouts/' + id);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', 'הקריאה לא נמצאה.');
-
-  const v = snap.data() || {};
-  const mine = v.by_uid === auth.uid;
-  if (!mine && !isSuper && role !== 'hr_coordinator') {
-    throw new HttpsError('permission-denied',
-      'רק מי שפתח את הקריאה יכול לסגור אותה.');
-  }
-
-  await ref.set({ active: false, closed_at: FV.serverTimestamp(),
-                  closed_by: auth.uid }, { merge: true });
+  await db.runTransaction(async tx => {
+    const userRef = db.doc('stations/' + sid + '/users/' + auth.uid);
+    const snaps = await Promise.all([tx.get(ref), tx.get(userRef)]);
+    if (!snaps[0].exists) throw new HttpsError('not-found', 'הקריאה לא נמצאה.');
+    verifyCalloutProfile(actor, snaps[1]);
+    const value = snaps[0].data() || {};
+    if (value.by_uid !== auth.uid) {
+      throw new HttpsError('permission-denied', 'רק מי שפתח את הקריאה יכול לסגור אותה.');
+    }
+    tx.set(ref, { active:false, delivery_state:'cancelled', delivery_lease_until:null,
+      delivery_failed_uids:[], closed_at:FV.serverTimestamp(), closed_by:auth.uid }, { merge:true });
+  });
   return { ok: true };
 });
 
@@ -5463,7 +5710,7 @@ exports.systemHealth = onSchedule({
 });
 
 // =======================================================================
-//  כלב שמירה רב-תחנתי · 42H.18 · OBSERVE בלבד
+//  כלב שמירה רב-תחנתי · 42H.19 · OBSERVE בלבד
 // =======================================================================
 // המנגנון הישן נשאר פעיל. הגרסה הזו כותבת רק ל-health_shadow ואינה
 // שולחת הודעות או משנה נתוני מוצר. הפעלה דורשת במפורש:
@@ -5514,7 +5761,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.18', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.19', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

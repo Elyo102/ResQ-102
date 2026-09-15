@@ -41,20 +41,20 @@ check('the old string update nests a dotted uid', () => {
   assert.equal(doc.acks.user.name.resp, 'coming');
 });
 
-check('callout imports FieldPath from the Firestore SDK', () => {
-  assert.match(callout, /import\s*\{[^}]*\bFieldPath\b[^}]*\}/);
+check('callout imports setDoc from the Firestore SDK', () => {
+  assert.match(callout, /import\s*\{[^}]*\bsetDoc\b[^}]*\}/);
 });
 
 check('callout never constructs an acks dotted string path', () => {
   assert.doesNotMatch(callout, /['"]acks\.['"]\s*\+/);
 });
 
-check('callout writes the answer through a literal FieldPath', () => {
-  assert.match(callout, /new FieldPath\(\s*['"]acks['"]\s*,\s*uid\s*\)/);
+check('callout writes the answer to a private response document', () => {
+  assert.match(callout, /doc\([^)]*['"]responses['"]\s*,\s*uid\s*\)/);
 });
 
-check('callout reader remains a flat uid lookup', () => {
-  assert.match(callout, /acks\s*\[\s*uid\s*\]/);
+check('callout no longer reads a shared acknowledgement map', () => {
+  assert.doesNotMatch(callout, /acks\s*\[\s*uid\s*\]/);
 });
 
 check('guard signup is delegated by index to the schedule runtime', () => {

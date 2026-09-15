@@ -391,7 +391,7 @@ async function test(name, fn) {
     assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, 3);
   });
 
-  await test('§1 the gap gate is decided inside the publish transaction: a gap-policy change after the early check refuses the publication', async () => {
+  await test('§1 a gap-policy change is recomputed inside the transaction and stored as a warning', async () => {
     const current = (await station().collection('schedule_state').doc('active').get()).data();
     await api.saveGapPolicy(req(MGR, { request_id: 'edit_gp1', station_minimum: 20 }));
     const mine = [{ kind: 'unassign', uid: 'u8', dates: ['2026-09-02'] }];
@@ -405,17 +405,11 @@ async function test(name, fn) {
         }
       }
     });
-    const refused = await caught(() => racing.applyScheduleEdit(req(MGR, { request_id: 'edit_toctou', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })));
-    assert.equal(refused && refused.code, 'gaps-acknowledgement-required', refused && refused.message);
-    assert.equal(((await station().collection('schedule_state').doc('active').get()).data() || {}).revision, current.revision, 'the pointer must not move');
-    // ניסיון חוזר של אותה בקשה (הפרסום נשאר ב-staging) עם אישור על הרשימה הנוכחית — משלים.
-    const fresh = await api.getGapReport(req(MGR, {}));
-    const stagingReport = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
-    const done = await api.applyScheduleEdit(req(MGR, { request_id: 'edit_toctou', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: stagingReport.gaps.digest }));
+    const done = await racing.applyScheduleEdit(req(MGR, { request_id: 'edit_toctou', expected: expectedOf(current), edits: mine, expected_edit_digest: report.edit_digest }));
     assert.equal(done.revision, current.revision + 1);
     const pub = (await station().collection('schedule_publications').doc(done.publication_id).get()).data();
     assert.equal(pub.gap_report && pub.gap_report.checked_in_transaction, true);
-    assert.ok(fresh && fresh.summary);
+    assert.ok(pub.gap_report.warning_count >= 1);
     await station().collection('schedule_state').doc('gap_policy').delete();
   });
 
@@ -527,21 +521,21 @@ async function test(name, fn) {
     await proveSnapshotRecovery(1, 'edit_recover_middle', { kind: 'sick' });
   });
 
-  await test('rollback returns only to the immediate previous publication and obeys the gap gate', async () => {
+  await test('rollback returns only to the immediate previous publication and records gap warnings', async () => {
     const current = (await station().collection('schedule_state').doc('active').get()).data();
     const rollbackRequest = { request_id: 'edit_rb', target_publication_id: current.previous_publication_id, expected_active_publication_id: current.publication_id, reason_code: 'wrong_assignment' };
-    const needsAck = await caught(() => api.rollback(req(MGR, rollbackRequest)));
-    assert.equal(needsAck && needsAck.code, 'gaps-acknowledgement-required');
-    const rolled = await api.rollback(req(MGR, Object.assign({}, rollbackRequest, { gap_acknowledgement: needsAck.detail.digest })));
+    const rolled = await api.rollback(req(MGR, rollbackRequest));
     assert.ok(rolled && rolled.publication_id);
-    const replayed = await api.rollback(req(MGR, Object.assign({}, rollbackRequest, { gap_acknowledgement: needsAck.detail.digest })));
+    const rollbackPub = (await station().collection('schedule_publications').doc(rolled.publication_id).get()).data();
+    assert.ok(rollbackPub.gap_report.warning_count >= 0);
+    const replayed = await api.rollback(req(MGR, rollbackRequest));
     assert.deepEqual(replayed, Object.assign({}, rolled, { duplicate: true }));
     const changedAck = await caught(() => api.rollback(req(MGR, Object.assign({}, rollbackRequest, {
       gap_acknowledgement: 'different-gap-acknowledgement'
     }))));
     assert.equal(changedAck && changedAck.code, 'rollback-conflict');
     const changedIntent = await caught(() => api.rollback(req(MGR, Object.assign({}, rollbackRequest, {
-      reason_code: 'operational_safety', gap_acknowledgement: needsAck.detail.digest
+      reason_code: 'operational_safety'
     }))));
     assert.equal(changedIntent && changedIntent.code, 'rollback-conflict');
     const back = await api.getStationRange(req('viewer', { from: '2026-09-02', to: '2026-09-02' }));

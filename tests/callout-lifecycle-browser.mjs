@@ -65,7 +65,7 @@ await page.waitForTimeout(80);
 
 function active(pathPart) {
   return page.evaluate(part => Object.entries(window.__FIRESTORE_ACTIVE_PATHS || {})
-    .filter(([key]) => key.includes(part))
+    .filter(([key]) => part === '/callouts' ? key.endsWith('/callouts') : key.includes(part))
     .reduce((sum, [, value]) => sum + Number(value || 0), 0), pathPart);
 }
 
@@ -151,6 +151,41 @@ check(await active('/callouts') === 1,
       'identity replacement survives a throwing callout unsubscribe');
 check(await active('config/mode') === 1,
       'identity replacement survives a throwing mode unsubscribe');
+
+const reasonCallout = {
+  id:'reason-callout',
+  data:{ active:true, uids:['identity-a'], text:'קריאה לבדיקת נימוק',
+    by_name:'מפקד', created_key:new Date().toISOString(), acks:{} }
+};
+await page.evaluate(row => {
+  window.__FIRESTORE_WRITES = [];
+  window.__FIRESTORE_DELIVER_CAPTURED('/callouts', [row]);
+}, reasonCallout);
+await page.locator('#coWrap.on').waitFor({ state:'visible' });
+await page.waitForFunction(() => (window.__FIRESTORE_WRITES || []).length === 1);
+const seenWrite = await page.evaluate(() => window.__FIRESTORE_WRITES[0]);
+check(Boolean(seenWrite.value.seen_at) && seenWrite.options?.merge === true,
+      'displaying a callout records a merge-only seen timestamp without answering',
+      JSON.stringify(seenWrite));
+check(await page.locator('#coWrap').evaluate(el => el.classList.contains('on')),
+      'recording seen does not hide the unanswered callout');
+await page.locator('#coNo').click();
+check(await page.locator('#coReasonWrap').isVisible(),
+      'rejecting a callout opens a mandatory reason field');
+await page.locator('#coNo').click();
+check((await page.evaluate(() => window.__FIRESTORE_WRITES || [])).length === 1,
+      'an empty rejection reason writes nothing');
+await page.locator('#coReason').fill('מחלה מאושרת');
+await page.locator('#coNo').click();
+await page.waitForFunction(() => (window.__FIRESTORE_WRITES || []).length === 2);
+const rejection = await page.evaluate(() => window.__FIRESTORE_WRITES[1]);
+check(rejection.value.resp === 'no' && rejection.value.reason === 'מחלה מאושרת',
+      'a rejection stores the required bounded reason', JSON.stringify(rejection));
+check(rejection.options?.merge === true,
+      'the final answer merges into and preserves the original seen receipt');
+check(rejection.path.endsWith('/callouts/reason-callout/responses/identity-a'),
+      'a response is isolated in its own recipient document', rejection.path);
+await page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []));
 
 const callout = {
   id:'held-callout',

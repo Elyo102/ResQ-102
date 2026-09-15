@@ -36,7 +36,11 @@ function check(ok, message) {
 
 const expectedPaths = ['/users/stub-uid','config/mode','/callouts','/faults',
   '/redline_waivers','/quals','/roster','/member_quals','/sub_stations',
-  '/config/board','/shifts/C'];
+  '/config/board','/shifts/C','/callouts/co1/responses/stub-uid'];
+
+function matchesPath(actual, expected) {
+  return String(actual || '').endsWith(expected);
+}
 
 const browser = await chromium.launch();
 
@@ -116,11 +120,15 @@ try {
   console.log('data paths:', JSON.stringify(result.dataPaths));
   check(result.interactiveMs <= maxInteractiveMs && result.dataSpanMs <= maxDataSpanMs,
         'board data sources load without a serial request waterfall');
-  check(result.dataRequests === 11, 'benchmark keeps the expected 11 data requests');
+  check(result.dataRequests === expectedPaths.length,
+        'benchmark keeps the expected ' + expectedPaths.length + ' data requests');
   expectedPaths.forEach(suffix => {
-    check(result.dataPaths.filter(p => p.includes(suffix)).length === 1,
+    check(result.dataPaths.filter(p => matchesPath(p, suffix)).length === 1,
           'benchmark reads ' + suffix + ' exactly once');
   });
+  check(result.dataPaths.filter(p => p.includes('/responses/'))
+    .every(p => matchesPath(p, '/callouts/co1/responses/stub-uid')),
+    'benchmark reads no other user response and never scans the responses collection');
   const staticPaths = ['/faults','/redline_waivers','/quals','/roster',
     '/member_quals','/sub_stations','/config/board'];
   const staticEvents = result.dataEvents.filter(event =>
@@ -152,7 +160,7 @@ try {
     const optionalFailure = await scenario({ lag:20, failPaths:[failedPath] });
     check(optionalFailure.commandNodes === 4 && optionalFailure.vehicleCards === 3,
           failedPath + ' failure does not block the independent board structure');
-    check(optionalFailure.dataRequests === 11 && optionalFailure.pageErrors.length === 0,
+    check(optionalFailure.dataRequests === expectedPaths.length && optionalFailure.pageErrors.length === 0,
           failedPath + ' failure keeps every independent read and does not throw');
   }
 
@@ -171,7 +179,7 @@ try {
         'a board-config read failure keeps the existing visible error');
   check(boardFailure.sitesText && !boardFailure.sitesText.includes('ישנה בארכיון'),
         'a board-config failure still processes active sub-stations only');
-  check(boardFailure.dataRequests === 11 && boardFailure.pageErrors.length === 0,
+  check(boardFailure.dataRequests === expectedPaths.length && boardFailure.pageErrors.length === 0,
         'a board-config failure does not cancel independent reads or throw');
 } finally {
   await browser.close();

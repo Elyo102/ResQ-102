@@ -315,16 +315,11 @@ async function publishTrialBase(db, rt, suffix) {
   // עריכה נוספת על הבסיס הישן (revision 1) — נדחית: הבסיס כבר לא פעיל.
   await rejectsCode('2.28 עריכה על בסיס ישן → edit-base-stale', () => rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits: [{ kind: 'unassign', uid: 'u1', dates: ['2026-09-01'] }] })), 'edit-base-stale');
 
-  // rollback מחזיר את revision 1 כ-revision 3, אך אינו עוקף את שער הפערים.
-  let rollbackGap;
-  try {
-    await rt.rollback(req({ request_id: 'rb1', target_publication_id: pointer.publication_id, expected_active_publication_id: applied.publication_id, reason_code: ROLLBACK_REASON }));
-  } catch (error) {
-    rollbackGap = error;
-  }
-  eq('2.29 rollback עם פער לא-קריטי דורש אישור חתום', rollbackGap && rollbackGap.code, 'gaps-acknowledgement-required');
-  const rolled = await rt.rollback(req({ request_id: 'rb1', target_publication_id: pointer.publication_id, expected_active_publication_id: applied.publication_id, reason_code: ROLLBACK_REASON, gap_acknowledgement: rollbackGap.detail.digest }));
-  ok('2.29ב rollback עובד על פרסום ערוך אחרי אישור', rolled && rolled.publication_id, JSON.stringify(rolled));
+  // rollback מחזיר את revision 1 כ-revision 3. במקרה הזה אין פער
+  // acknowledgeable בפרסום היעד, ולכן אסור להמציא חסם או לדרוש digest.
+  const rolled = await rt.rollback(req({ request_id: 'rb1', target_publication_id: pointer.publication_id, expected_active_publication_id: applied.publication_id, reason_code: ROLLBACK_REASON }));
+  ok('2.29 rollback עובד על פרסום ערוך בלי להמציא חסם כשאין פער',
+    rolled && rolled.publication_id, JSON.stringify(rolled));
   const back = await rt.getStationRange(req({ from: '2026-09-01', to: '2026-09-01' }, 'u2'));
   eq('2.30 אחרי rollback: u1 חזר לאילת', back.days[0].sub_stations.find((s) => s.sub_station === 'eilat').people.some((p) => p.uid === 'u1'), true);
 }
@@ -401,7 +396,7 @@ async function publishTrialBase(db, rt, suffix) {
   eq('3.13 היעדרות u5 מוצגת', view.day.absences.some((a) => a.uid === 'u5' && a.kind === 'sick'), true);
 }
 
-/* 4 · 42H.2 ג׳ — שער הפערים בעריכה: פער קריטי חוסם; פער אחר דורש אישור חתום. */
+/* 4 · פערי כוח אדם וכשירות: מוצגים ונחתמים כאזהרות, בלי לחסום עריכה/פרסום/rollback. */
 {
   const db = createFakeDb();
   const { rt } = await seed(db);
@@ -410,10 +405,8 @@ async function publishTrialBase(db, rt, suffix) {
   await rt.saveQualification(req({ request_id: 'g-lead', key: 'shift_lead', minimum: 1 }));
   const edits = [{ kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }];
   const report = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
-  ok('4.1 הדוח מציג פערים קריטיים', report.gaps.summary.critical_gaps >= 3 && report.gaps.blocking.every((g) => g.key === 'shift_lead'), JSON.stringify(report.gaps.summary));
-  await rejectsCode('4.2 עריכה עם פער קריטי → gaps-critical, בלי גרסה חדשה', () => rt.applyScheduleEdit(req({ request_id: 'g1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-critical');
-  eq('4.3 revision נשאר 1', db._get(ST + '/schedule_state/active').revision, 1);
-  // u1 מקבל ראש משמרת → נסגר הפער ביום שהוא עובד; נשארים פערים בימים אחרים → עדיין חוסם.
+  ok('4.1 הדוח מציג פערי כשירות כאזהרה', report.gaps.summary.critical_gaps >= 3 && report.gaps.blocking.every((g) => g.key === 'shift_lead'), JSON.stringify(report.gaps.summary));
+  // u9 מקבל כשירות ראש משמרת → מספר האזהרות קטן, אך המערכת אינה משבצת אותו אוטומטית.
   await rt.setPersonQualifications(req({ request_id: 'g-hold', person: 'u9', qualifications: ['shift_lead'] }));
   const report2 = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
   ok('4.4 המועמד לפער מוצע, לא משובץ', report2.gaps.blocking.length < report.gaps.blocking.length, JSON.stringify(report2.gaps.summary));
@@ -431,41 +424,33 @@ async function publishTrialBase(db, rt, suffix) {
   await rejectsCode('4.7 revision ישן של מינימום התחנה', () => rt.saveGapPolicy(req({ request_id: 'gp2', station_minimum: 5, expected_revision: 0 })), 'gap-policy-revision-stale');
   const report3 = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
   ok('4.8 פערי תחנה (אחרים) עם חתימה', report3.gaps.blocking.length === 0 && report3.gaps.acknowledgeable.some((g) => g.kind === 'station') && typeof report3.gaps.digest === 'string', JSON.stringify(report3.gaps.summary));
-  await rejectsCode('4.9 בלי אישור → gaps-acknowledgement-required', () => rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest })), 'gaps-acknowledgement-required');
-  await rejectsCode('4.10 אישור על רשימה אחרת → סירוב', () => rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
-  eq('4.11 לא נוצרה גרסה', db._get(ST + '/schedule_state/active').revision, 1);
-  const done = await rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest, gap_acknowledgement: report3.gaps.digest }));
-  eq('4.12 עם אישור חתום — פורסם', done.revision, 2);
+  const done = await rt.applyScheduleEdit(req({ request_id: 'g2', expected: expectedOf(pointer), edits, expected_edit_digest: report3.edit_digest }));
+  eq('4.9 פערי כוח אדם וכשירות אינם דורשים אישור — פורסם', done.revision, 2);
   const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
-  ok('4.13 האישור נשמר בפרסום וביומן', pub.gap_report.acknowledged === true && pub.gap_report.digest === report3.gaps.digest && auditOf(db).some((a) => a.action === 'publish' && a.revision === 2 && a.gaps_acknowledged === report3.gaps.digest), JSON.stringify(pub.gap_report));
-  // rollback כפוף לאותו שער: פער לא-קריטי דורש אישור מפורש על הרשימה המדויקת.
-  let rollbackGap;
-  try {
-    await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON }));
-  } catch (error) {
-    rollbackGap = error;
-  }
-  eq('4.14 rollback בלי אישור אינו עוקף את שער הפערים', rollbackGap && rollbackGap.code, 'gaps-acknowledgement-required');
-  const rolled = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON, gap_acknowledgement: rollbackGap.detail.digest }));
-  ok('4.14ב rollback עם אישור חתום עובד', rolled && rolled.publication_id, JSON.stringify(rolled));
-  const replayed = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON, gap_acknowledgement: rollbackGap.detail.digest }));
-  eq('4.14ג rollback זהה מחזיר את הקבלה המקורית במלואה', replayed,
+  const publishAudit = auditOf(db).find((a) => a.action === 'publish' && a.revision === 2);
+  ok('4.10 האזהרות נשמרות בפרסום וביומן בלי מצג שווא של אישור',
+    pub.gap_report.acknowledged === false
+      && pub.gap_report.digest === report3.gaps.digest
+      && pub.gap_report.checked_in_transaction === true
+      && pub.gap_report.warning_count > 0
+      && publishAudit && publishAudit.gaps_other > 0,
+    JSON.stringify([pub.gap_report, publishAudit]));
+  // rollback נשאר אידמפוטנטי ומוגן בכוונת בקשה, אך אזהרות עסקיות אינן חוסמות אותו.
+  const rolled = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON }));
+  ok('4.11 rollback בלי אישור אזהרות עובד', rolled && rolled.publication_id, JSON.stringify(rolled));
+  const replayed = await rt.rollback(req({ request_id: 'g-rb', target_publication_id: pointer.publication_id, expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON }));
+  eq('4.12 rollback זהה מחזיר את הקבלה המקורית במלואה', replayed,
     Object.assign({}, rolled, { duplicate: true }));
-  await rejectsCode('4.14ד אותו rollback עם acknowledgement אחר נדחה', () => rt.rollback(req({
+  await rejectsCode('4.13 אותו request_id עם כוונת rollback אחרת נדחה', () => rt.rollback(req({
     request_id: 'g-rb', target_publication_id: pointer.publication_id,
-    expected_active_publication_id: done.publication_id, reason_code: ROLLBACK_REASON,
-    gap_acknowledgement: 'different-gap-acknowledgement'
-  })), 'rollback-conflict');
-  await rejectsCode('4.14ה אותו request_id עם כוונת rollback אחרת נדחה', () => rt.rollback(req({
-    request_id: 'g-rb', target_publication_id: pointer.publication_id,
-    expected_active_publication_id: done.publication_id, reason_code: 'operational_safety',
-    gap_acknowledgement: rollbackGap.detail.digest
+    expected_active_publication_id: done.publication_id, reason_code: 'operational_safety'
   })), 'rollback-conflict');
 }
 
 /* 5 · ביקורת Codex על 0e9a8dc (seq453) — כל סעיף עם בדיקה שנופלת על הקוד הישן. */
 
-/* 5.1 §1 · TOCTOU: הנתונים משתנים בין השער המוקדם לעסקת הפרסום. */
+/* 5.1 §1 · TOCTOU: הנתונים משתנים בין הדוח לעסקת הפרסום.
+ * העסקה חייבת לתעד את האזהרות העדכניות, אך אסור לה לחסום בגללם. */
 {
   const db = createFakeDb();
   const { rt } = await seed(db);
@@ -482,57 +467,82 @@ async function publishTrialBase(db, rt, suffix) {
     if (txCount === 3) db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 25, revision: 2 });
     return originalTx.call(db, fn);
   };
-  await rejectsCode('5.1.1 מדיניות הפער השתנתה לפני עסקת הפרסום → האישור אינו תקף (gaps-acknowledgement-required)', () => rt.applyScheduleEdit(req({ request_id: 't1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
+  const changedPolicy = await rt.applyScheduleEdit(req({ request_id: 't1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest }));
   db.runTransaction = originalTx;
-  eq('5.1.2 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, 1);
-  db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 20, revision: 2 });
+  eq('5.1.1 מדיניות הפער השתנתה לפני עסקת הפרסום → הפרסום אינו נחסם', db._get(ST + '/schedule_state/active').revision, 2);
+  const changedPolicyPub = db._get(ST + '/schedule_publications/' + changedPolicy.publication_id);
+  ok('5.1.2 הפרסום מתעד את דוח האזהרות העדכני מתוך העסקה',
+    changedPolicyPub.gap_report.checked_in_transaction === true
+      && changedPolicyPub.gap_report.gap_policy_revision === 2
+      && changedPolicyPub.gap_report.digest !== report.gaps.digest
+      && changedPolicyPub.gap_report.acknowledged === false,
+    JSON.stringify(changedPolicyPub.gap_report));
+
+  // תרחיש נפרד: כשירויות משתנות ממש לפני עסקת הפרסום.
+  const db2 = createFakeDb();
+  const { rt: rt2 } = await seed(db2);
+  const { pointer: pointer2 } = await publishImportedSchedule(db2, rt2);
 
   // פער קריטי שנוצר בין השער המוקדם לעסקה: u1 מחזיק ראש משמרת; המינימום 1 מתקיים
   // רק בימים שהוא עובד, ולכן קודם מורידים אותו לימים שבהם הוא לא משובץ.
-  await rt.saveQualification(req({ request_id: 'q-lead', key: 'shift_lead', minimum: 1 }));
-  await rt.setPersonQualifications(req({ request_id: 'q-u1', person: 'u1', qualifications: ['shift_lead'] }));
-  await rt.setPersonQualifications(req({ request_id: 'q-u3', person: 'u3', qualifications: ['shift_lead'] }));
-  await rt.setPersonQualifications(req({ request_id: 'q-u4', person: 'u4', qualifications: ['shift_lead'] }));
+  await rt2.saveQualification(req({ request_id: 'q-lead', key: 'shift_lead', minimum: 1 }));
+  await rt2.setPersonQualifications(req({ request_id: 'q-u1', person: 'u1', qualifications: ['shift_lead'] }));
+  await rt2.setPersonQualifications(req({ request_id: 'q-u3', person: 'u3', qualifications: ['shift_lead'] }));
+  await rt2.setPersonQualifications(req({ request_id: 'q-u4', person: 'u4', qualifications: ['shift_lead'] }));
   const edits2 = [{ kind: 'assign', uid: 'u9', dates: ['2026-09-02'], sub_station: 'timna', role: 'ff' }];
-  const base2 = db._get(ST + '/schedule_state/active');   // נקרא מחדש — כדי שכשל ב-5.1.1 לא יפיל את ההמשך
-  const report2 = await rt.previewScheduleEdit(req({ expected: expectedOf(base2), edits: edits2 }));
+  const base2 = db2._get(ST + '/schedule_state/active');
+  const report2 = await rt2.previewScheduleEdit(req({ expected: expectedOf(base2), edits: edits2 }));
   eq('5.1.3 אין פער קריטי כשהמחזיקים משובצים', report2.gaps.blocking.length, 0);
   txCount = 0;
-  db.runTransaction = async (fn) => {
+  const originalTx2 = db2.runTransaction;
+  db2.runTransaction = async (fn) => {
     txCount += 1;
-    if (txCount === 3) ['u1', 'u3', 'u4'].forEach((uid) => db._put(ST + '/schedule_person_qualifications/' + uid, { station_id: SID, uid, qualifications: [], revision: 2 }));
-    return originalTx.call(db, fn);
+    if (txCount === 3) ['u1', 'u3', 'u4'].forEach((uid) => db2._put(ST + '/schedule_person_qualifications/' + uid, { station_id: SID, uid, qualifications: [], revision: 2 }));
+    return originalTx2.call(db2, fn);
   };
-  await rejectsCode('5.1.4 המחזיקים הוסרו לפני עסקת הפרסום → gaps-critical בתוך העסקה', () => rt.applyScheduleEdit(req({ request_id: 't2', expected: expectedOf(base2), edits: edits2, expected_edit_digest: report2.edit_digest, gap_acknowledgement: report2.gaps.digest })), 'gaps-critical');
-  db.runTransaction = originalTx;
-  eq('5.1.5 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, base2.revision);
+  const changedQualifications = await rt2.applyScheduleEdit(req({ request_id: 't2', expected: expectedOf(base2), edits: edits2, expected_edit_digest: report2.edit_digest }));
+  db2.runTransaction = originalTx2;
+  eq('5.1.4 מחזיקי הכשירות הוסרו לפני העסקה → הפרסום עדיין מתקדם', changedQualifications.revision, 2);
+  const changedQualificationsPub = db2._get(ST + '/schedule_publications/' + changedQualifications.publication_id);
+  ok('5.1.5 פער הכשירות החדש נשמר כאזהרה שנבדקה בעסקה',
+    changedQualificationsPub.gap_report.checked_in_transaction === true
+      && changedQualificationsPub.gap_report.warning_count > 0
+      && changedQualificationsPub.gap_report.acknowledged === false,
+    JSON.stringify(changedQualificationsPub.gap_report));
 }
 
-/* 5.1b · גם שינוי חברות שאינו משנה את מספר הפערים מבטל אישור ישן.
- * u9 קיים במקור אך אינו משובץ; לכן השבתתו משנה את בסיס הסגל החי בלבד. */
+/* 5.1b · שינוי חברות בין הדוח לעסקה משנה את בסיס האזהרות,
+ * אך אינו הופך אזהרת סגל לחסם פרסום. */
 {
   const db = createFakeDb();
   const { rt } = await seed(db);
   const { pointer } = await publishImportedSchedule(db, rt);
   await rt.saveGapPolicy(req({ request_id: 'gp-live-basis', station_minimum: 20 }));
-  const edits = [{ kind: 'unassign', uid: 'u9', dates: ['2026-09-01'] }];
+  const edits = [{ kind: 'unassign', uid: 'u3', dates: ['2026-09-01'] }];
   const before = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
   const u9Path = ST + '/users/u9';
   db._put(u9Path, Object.assign({}, db._get(u9Path), { active: false, is_active: false }));
   const after = await rt.previewScheduleEdit(req({ expected: expectedOf(pointer), edits }));
-  eq('5.1b.1 שינוי חברות לא-משובצת אינו יוצר פער קריטי חדש',
-    [before.gaps.blocking.length, after.gaps.blocking.length], [0, 0]);
-  ok('5.1b.2 חתימת האישור קשורה לסגל החי ומשתנה גם כשהמספרים זהים',
+  ok('5.1b.1 שינוי חברות נרשם כאזהרת סגל חדשה',
+    after.gaps.blocking.length > before.gaps.blocking.length,
+    JSON.stringify([before.gaps.blocking, after.gaps.blocking]));
+  ok('5.1b.2 חתימת האזהרות קשורה לסגל החי ומשתנה',
     before.gaps.digest !== after.gaps.digest,
     JSON.stringify([before.gaps.digest, after.gaps.digest]));
-  await rejectsCode('5.1b.3 אישור מלפני שינוי החברות נדחה', () => rt.applyScheduleEdit(req({
+  const done = await rt.applyScheduleEdit(req({
     request_id: 'live-basis-old-ack', expected: expectedOf(pointer), edits,
     expected_edit_digest: before.edit_digest, gap_acknowledgement: before.gaps.digest
-  })), 'gaps-acknowledgement-required');
-  eq('5.1b.4 המצביע לא זז אחרי האישור הישן', db._get(ST + '/schedule_state/active').revision, pointer.revision);
+  }));
+  eq('5.1b.3 שינוי חברות לא-משובצת אינו חוסם עריכה', done.revision, 2);
+  const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
+  ok('5.1b.4 העסקה שומרת את בסיס הסגל העדכני ואת האזהרות, לא את האישור הישן',
+    pub.gap_report.checked_in_transaction === true
+      && pub.gap_report.digest === after.gaps.digest
+      && pub.gap_report.acknowledged === false,
+    JSON.stringify(pub.gap_report));
 }
 
-/* 5.2 §1 · ניסיון חוזר של פרסום שנשאר ב-staging אינו מדלג על השער. */
+/* 5.2 §1 · ניסיון חוזר של פרסום שנשאר ב-staging מחשב אזהרות מחדש ואינו נחסם. */
 {
   const db = createFakeDb();
   const { rt } = await seed(db);
@@ -553,16 +563,17 @@ async function publishTrialBase(db, rt, suffix) {
   db.runTransaction = originalTx;
   const staging = db._paths(ST + '/schedule_publications/').map((k) => db._get(k)).find((p) => p && p.status === 'staging');
   ok('5.2.1 נשארה רשומת פרסום ב-staging', !!crashed && !!staging, String(crashed && crashed.message));
-  // בינתיים מדיניות הפער השתנתה — האישור הישן אינו על הרשימה הנוכחית.
+  // בינתיים מדיניות הפער השתנתה — הניסיון החוזר צריך לפרסם ולתעד את הרשימה הנוכחית.
   db._put(ST + '/schedule_state/gap_policy', { station_id: SID, station_minimum: 25, revision: 2 });
-  await rejectsCode('5.2.2 ניסיון חוזר עם אישור ישן → gaps-acknowledgement-required (לא מדלג על השער)', () => rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })), 'gaps-acknowledgement-required');
-  eq('5.2.3 המצביע לא זז', db._get(ST + '/schedule_state/active').revision, 1);
-  // עם האישור על הרשימה **הנוכחית** — הניסיון החוזר משלים את הפרסום.
-  const fresh = await rt.getGapReport(req({ draft_id: staging.source_draft_id }));
-  const done = await rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: fresh.digest }));
-  eq('5.2.4 ניסיון חוזר עם אישור עדכני → revision 2', done.revision, 2);
+  const done = await rt.applyScheduleEdit(req({ request_id: 'r1', expected: expectedOf(pointer), edits, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest }));
+  eq('5.2.2 ניסיון חוזר עם אזהרות שהשתנו → revision 2', done.revision, 2);
   const pub = db._get(ST + '/schedule_publications/' + done.publication_id);
-  ok('5.2.5 הפרסום נושא את דוח הפערים שנבדק בעסקה', pub.gap_report && pub.gap_report.checked_in_transaction === true && pub.gap_report.digest === fresh.digest, JSON.stringify(pub.gap_report));
+  ok('5.2.3 הפרסום נושא את דוח האזהרות העדכני שנבדק בעסקה',
+    pub.gap_report && pub.gap_report.checked_in_transaction === true
+      && pub.gap_report.gap_policy_revision === 2
+      && pub.gap_report.digest !== report.gaps.digest
+      && pub.gap_report.acknowledged === false,
+    JSON.stringify(pub.gap_report));
 }
 
 /* 5.3 §2 · עריכת היעדרות בלבד → הודעה לאדם, בלי הסיבה; תוכן שונה = חתימה שונה. */

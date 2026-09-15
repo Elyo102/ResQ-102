@@ -31,7 +31,7 @@ const EXPECT = {
                  board:{ work:true, edit:true },
                  swaps:{ work:true, appr:true, pend:2 },
                  alerts:{ work:true, send:true, key:true, lab:true, opts:4 },
-                 callout:{ card:true, opts:5, pick:false },
+                 callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
@@ -48,14 +48,14 @@ const EXPECT = {
                  forms:{ work:true, appr:false, count:4 }, stats:false,
                  // כבאי רואה שהמשמרת מתחת לקו, ואין לו מה ללחוץ.
                  waiver:{ shown:true, btns:0 } },
-  commander:   { nav:['לוח מודעות','סידור','נוכחות','תקלות','טפסים','החלפות','חוות דעת','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  commander:   { nav:['לוח מודעות','סידור','קריאת פתע','נוכחות','תקלות','טפסים','החלפות','חוות דעת','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  shadow:false,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
                  swaps:{ work:true, appr:true, pend:1 },
                  alerts:{ work:true, send:true, key:false, opts:1 },
-                 callout:{ card:true, opts:2, pick:false },
+                 callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
@@ -66,7 +66,7 @@ const EXPECT = {
                  board:{ work:true, edit:true }, crews:['A','B','C'],
                  swaps:{ work:true, appr:true, pend:2 },
                  alerts:{ work:true, send:true, key:false, opts:4 },
-                 callout:{ card:true, opts:5, pick:false },
+                 callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  // 6.9 · עריכת הצי צרה מ-staff: מפקד משמרת, סגן, מפקד תחנה
                  // ומנהל-על. רכזת כוח אדם רואה את הצי ואינה עורכת אותו —
@@ -74,13 +74,13 @@ const EXPECT = {
                  faults:{ work:true, anchor:false, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true },
   // סגן מפקד משמרת: אותן סמכויות כמו מפקד, נעול למשמרת ב'.
-  deputy:      { nav:['לוח מודעות','סידור','נוכחות','תקלות','טפסים','החלפות','חוות דעת','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
+  deputy:      { nav:['לוח מודעות','סידור','קריאת פתע','נוכחות','תקלות','טפסים','החלפות','חוות דעת','ציוות','אבטחות','חתימות','כשירויות','התראות','עובדים','גישה','ניהול','נתונים'],
                  adminSees:[],
                  shadow:false,
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['B'],
                  swaps:{ work:true, appr:true, pend:1 },
-                 callout:{ card:true, opts:2, pick:false },
+                 callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
@@ -93,7 +93,7 @@ const EXPECT = {
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true }, crews:['A','B','C'],
                  swaps:{ work:true, appr:true, pend:2 },
-                 callout:{ card:true, opts:5, pick:false },
+                 callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
                  forms:{ work:true, appr:true, count:4 }, stats:true,
@@ -136,6 +136,14 @@ for (const role of Object.keys(EXPECT)) {
   // להמתנה ארוכה, ולכן משתמש pending נראה כמו בדיקה תקועה.
   pg.setDefaultTimeout(2_000);
   pg.setDefaultNavigationTimeout(10_000);
+
+  const dismissCallout = async () => {
+    if (!(await pg.isVisible('#coNo').catch(()=>false))) return;
+    await pg.click('#coNo');
+    await pg.fill('#coReason', 'בדיקת הרשאות אוטומטית');
+    await pg.click('#coNo');
+    await pg.waitForTimeout(250);
+  };
 
   await pg.goto('http://localhost:'+PORT+'/login.html', {waitUntil:'load'});
 
@@ -313,8 +321,7 @@ for (const role of Object.keys(EXPECT)) {
   //
   // וקודם עונים לקריאת הפתע: היא חוסמת כל לחיצה בדף עד שעונים,
   // וזה בדיוק מה שהיא אמורה לעשות. גילינו את זה כאן.
-  await pg.click('#coNo').catch(()=>{});
-  await pg.waitForTimeout(300);
+  await dismissCallout();
   await pg.click('#tabFleet').catch(()=>{});
   await pg.waitForTimeout(350);
   const xAnch = await pg.isVisible('#anchorCard').catch(()=>false);
@@ -355,8 +362,7 @@ for (const role of Object.keys(EXPECT)) {
   // מכריע — ולכן כפתורי ההכרעה קיימים רק אצלו.
   await pg.goto('http://localhost:'+PORT+'/board.html', {waitUntil:'load'});
   await pg.waitForTimeout(1600);
-  await pg.click('#coNo').catch(()=>{});
-  await pg.waitForTimeout(250);
+  await dismissCallout();
   const wShown = await pg.isVisible('#waiver').catch(()=>false);
   const wBtns  = await pg.$$eval('#waiver button', e=>e.length).catch(()=>0);
   const wantW  = EXPECT[role].waiver;
@@ -370,8 +376,7 @@ for (const role of Object.keys(EXPECT)) {
   // טפסים. כל כבאי ממלא; רק סגל רואה את לשונית האישורים.
   await pg.goto('http://localhost:'+PORT+'/forms.html', {waitUntil:'load'});
   await pg.waitForTimeout(1600);
-  await pg.click('#coNo').catch(()=>{});
-  await pg.waitForTimeout(250);
+  await dismissCallout();
   const mWork = await pg.isVisible('#work').catch(()=>false);
   const mAppr = await pg.isVisible('#tabAppr').catch(()=>false);
   const mForms= await pg.$$eval('#fPick option', e=>e.length).catch(()=>0);
@@ -387,8 +392,7 @@ for (const role of Object.keys(EXPECT)) {
   // אנליטיקה. כלי ניהול — כבאי רגיל לא נכנס.
   await pg.goto('http://localhost:'+PORT+'/stats.html', {waitUntil:'load'});
   await pg.waitForTimeout(1600);
-  await pg.click('#coNo').catch(()=>{});
-  await pg.waitForTimeout(250);
+  await dismissCallout();
   const zWork = await pg.isVisible('#work').catch(()=>false);
   const zRows = await pg.$$eval('#vTbl tbody tr', e=>e.length).catch(()=>0);
   const wantZ = EXPECT[role].stats;

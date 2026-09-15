@@ -8,12 +8,80 @@
  * המקור מוחזר תמיד, גם בכשל, דרך finally.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// Deliberate mutations must never touch the active checkout.  A previous hard
+// interruption proved that `finally` is not a sufficient recovery boundary.
+// The controller mirrors only the pure calendar modules and their suites into
+// a random temp root, then this same file runs there as the guarded worker.
+const sandboxFlag = process.env.RESQ_SCHEDULE_MUTATION_SANDBOX === '1';
+if (!sandboxFlag) {
+  const activeRoot = resolve(here, '..');
+  const activeTargets = [
+    'functions/schedule-calendar-engine.js',
+    'functions/schedule-publication.js',
+    'functions/schedule-service.js'
+  ];
+  const copied = [
+    ...activeTargets,
+    'functions/schedule-calendar-engine.test.js',
+    'functions/schedule-publication.test.js',
+    'functions/schedule-service.integration.test.js',
+    'tests/schedule-calendar-source.mjs',
+    'tests/schedule-calendar-mutations.mjs'
+  ];
+  const before = new Map(activeTargets.map(name => [name, readFileSync(join(activeRoot, name))]));
+  const tempRoot = mkdtempSync(join(tmpdir(), 'resq-schedule-mutations-'));
+  const marker = randomUUID();
+  let status = 1;
+  try {
+    mkdirSync(join(tempRoot, 'functions'), { recursive:true });
+    mkdirSync(join(tempRoot, 'tests'), { recursive:true });
+    for (const name of copied) copyFileSync(join(activeRoot, name), join(tempRoot, name));
+    writeFileSync(join(tempRoot, '.resq-mutation-sandbox'), marker, { encoding:'utf8', flag:'wx' });
+    const child = spawnSync(process.execPath, [join(tempRoot, 'tests', 'schedule-calendar-mutations.mjs')], {
+      cwd:tempRoot,
+      stdio:'inherit',
+      timeout:10 * 60 * 1000,
+      env:{
+        ...process.env,
+        RESQ_SCHEDULE_MUTATION_SANDBOX:'1',
+        RESQ_SCHEDULE_MUTATION_ROOT:tempRoot,
+        RESQ_SCHEDULE_MUTATION_MARKER:marker
+      }
+    });
+    if (child.error) throw child.error;
+    if (!Number.isInteger(child.status)) throw new Error('mutation worker ended without an exit status');
+    status = child.status;
+  } finally {
+    for (const [name, bytes] of before) {
+      const after = readFileSync(join(activeRoot, name));
+      if (!after.equals(bytes)) throw new Error('active source changed during isolated mutation run: ' + name);
+    }
+    rmSync(tempRoot, { recursive:true, force:true, maxRetries:3 });
+  }
+  process.exit(status);
+}
+
+const declaredRoot = resolve(String(process.env.RESQ_SCHEDULE_MUTATION_ROOT || ''));
+const realTemp = realpathSync(tmpdir());
+const realRoot = realpathSync(declaredRoot);
+const relativeToTemp = relative(realTemp, realRoot);
+const markerPath = join(realRoot, '.resq-mutation-sandbox');
+if (!relativeToTemp || relativeToTemp.startsWith('..' + sep) || relativeToTemp === '..'
+    || !existsSync(markerPath)
+    || readFileSync(markerPath, 'utf8') !== process.env.RESQ_SCHEDULE_MUTATION_MARKER
+    || resolve(here, '..') !== realRoot) {
+  throw new Error('mutation worker refused a non-temporary or unmarked root');
+}
+
 const FN = (n) => join(here, '..', 'functions', n);
 const TS = (n) => join(here, n);
 
@@ -48,6 +116,11 @@ const MUTATIONS = [
     "if (typeof p.active !== 'boolean') {", "if (false) {", ['engine', 'source']],
   ['תכנון חודשי שמתחיל באמצע חודש', 'engine',
     "if (inp.start.slice(8, 10) !== '01') {", "if (false) {", ['engine', 'source']],
+  ['תכנון שנתי שמצטמצם שוב לשלושה חודשים', 'engine',
+    'MAX_MONTHS: 12,', 'MAX_MONTHS: 3,', ['engine']],
+  ['טווח ביניים לא נתמך שמתקבל', 'engine',
+    "if (!isInt(months) || [1, 2, 3, LIMITS.MAX_MONTHS].indexOf(months) === -1) {",
+    "if (!isInt(months) || months < 1 || months > LIMITS.MAX_MONTHS) {", ['engine']],
 
   // ---- מקור אחד ----
   ['תחנה זרה שמתקבלת', 'engine',
@@ -75,9 +148,11 @@ const MUTATIONS = [
   ['חציית תחנות קצה שמותרת', 'engine',
     "if (person.sub_station !== ctx.sub) return REASON.OUT_OF_SUB_STATION;", "", ['engine', 'source']],
   ['אדם לא פעיל שמשובץ', 'engine',
-    "if (person.active !== true) return REASON.INACTIVE;", "", ['engine']],
+    "        if (person.active !== true) {\n          throw new CalendarError('locked-person-inactive', 'האדם ' + manual.person + ' אינו פעיל');\n        }",
+    "        if (false) {\n          throw new CalendarError('locked-person-inactive', 'האדם ' + manual.person + ' אינו פעיל');\n        }", ['engine']],
   ['כשירות שאינה נבדקת', 'engine',
-    "if (person.roles.indexOf(role) === -1) return REASON.NO_QUALIFIED;", "", ['engine']],
+    "        if (wantedRole !== null && person.roles.indexOf(wantedRole) === -1) warningSet.add(REASON.NO_QUALIFIED);",
+    "", ['engine']],
   ['אי-זמינות שאינה נבדקת', 'engine',
     "if (ctx.unavailable) return REASON.NOT_AVAILABLE;", "", ['engine']],
   ['כפילות ביום שאינה נחסמת', 'engine',
@@ -99,14 +174,15 @@ const MUTATIONS = [
 
   // ---- שיבוץ ידני ----
   ['ידני שעוקף את הבדיקות', 'publication', 'NO-OP-PLACEHOLDER', 'NO-OP-PLACEHOLDER', []],
-  ['ידני פסול שמשובץ בכל זאת', 'engine',
-    "        if (code) {\n          // ידני שאינו חוקי אינו משובץ ואינו נמחק בשקט — הוא מדווח.\n          rejected.push({ person: id, code });\n          continue;\n        }",
-    "        if (code) { rejected.push({ person: id, code }); }", ['engine']],
-  ['ידני שנדחה בשקט בלי דיווח', 'engine',
-    "rejected.push({ person: id, code });", "", ['engine']],
-  ['יום עם ידני שנדחה מסומן שלם', 'engine',
-    "complete: blocking === 0 && slots.length >= spec.minimum && rejected.length === 0",
-    "complete: blocking === 0 && slots.length >= spec.minimum", ['engine']],
+  ['אדם ידני לא מוכר שאינו נחסם', 'engine',
+    "        if (!person) {\n          throw new CalendarError('locked-person-unknown', 'האדם ' + manual.person + ' אינו במקור כוח האדם');\n        }",
+    "        if (false) {\n          throw new CalendarError('locked-person-unknown', 'האדם ' + manual.person + ' אינו במקור כוח האדם');\n        }", ['engine']],
+  ['כפילות ידנית באותו יום שאינה נחסמת', 'engine',
+    "        if (reservedManual.has(manual.person)) {",
+    "        if (false) {", ['engine']],
+  ['אזהרת מעבר תחנת קצה שאובדת', 'engine',
+    "        if (person.sub_station !== sub) warningSet.add(REASON.OUT_OF_SUB_STATION);",
+    "", ['engine']],
 
   // ---- קו מינימום ----
   ['מתחת לקו שאינו מסומן', 'engine',
@@ -121,6 +197,10 @@ const MUTATIONS = [
     ['publication', 'source']],
   ['פרסום עם חוסרים שמותר', 'publication',
     "    assertPublishable(next);", "", ['publication']],
+  ['פערי כוח אדם חוזרים להיות חסם', 'publication',
+    'if (summary.rejected_manual > 0) {',
+    'if (summary.rejected_manual > 0 || summary.blocking_gaps > 0 || summary.days_below_minimum > 0) {',
+    ['publication']],
   ['הודעה לכל שינוי במקום לכל אדם', 'publication',
     "      if (!changes.length) continue;\n      if (changes.length > LIMITS.MAX_CHANGES_PER_PERSON) {",
     "      if (!changes.length) continue;\n      out.set(person + ':' + changes.length, changes);\n      if (changes.length > LIMITS.MAX_CHANGES_PER_PERSON) {",
@@ -175,6 +255,13 @@ function runSuite(key) {
   const [cmd, args] = SUITES[key];
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
   return r.status === 0;
+}
+
+for (const suite of ['engine', 'publication', 'service', 'source']) {
+  if (!runSuite(suite)) {
+    console.error('✗ isolated baseline suite failed before mutations: ' + suite);
+    process.exit(1);
+  }
 }
 
 const originals = {};

@@ -247,14 +247,8 @@ async function test(name, fn) {
     assert.equal(typeof preview.gaps.digest, 'string');
   });
 
-  await test('publish without the acknowledgement is refused; the exact digest activates trial with delivery suppressed', async () => {
-    const missing = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest })));
-    assert.equal(missing && missing.code, 'gaps-acknowledgement-required', missing && missing.message);
-    assert.ok(missing.detail && missing.detail.digest === preview.gaps.digest);
-    const wrong = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: 'nope' })));
-    assert.equal(wrong && wrong.code, 'gaps-acknowledgement-required');
-    assert.equal((await station().collection('schedule_publications').get()).size, 0, 'nothing written for a refused publish');
-    const published = await api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest, gap_acknowledgement: preview.gaps.digest }));
+  await test('publish needs no acknowledgement; warnings are signed while trial delivery stays suppressed', async () => {
+    const published = await api.publish(req(MGR, { request_id: 'gap_pub', draft_id: imported.draft_id, expected_content_digest: preview.expected_content_digest }));
     assert.equal(published.prepared, false);
     assert.equal(published.trial, true);
     assert.equal(published.notified_people, 0);
@@ -263,7 +257,8 @@ async function test(name, fn) {
     assert.equal(pub.status, 'active');
     assert.equal(pub.delivery_policy, 'suppressed_trial');
     assert.equal(pub.delivery_allowed, false);
-    assert.deepEqual([pub.gap_report.acknowledged, pub.gap_report.digest, pub.gap_report.acknowledged_by], [true, preview.gaps.digest, MGR]);
+    assert.deepEqual([pub.gap_report.acknowledged, pub.gap_report.digest, pub.gap_report.acknowledged_by], [false, preview.gaps.digest, null]);
+    assert.ok(pub.gap_report.warning_count >= 1);
     const pointer = (await station().collection('schedule_state').doc('active').get()).data() || {};
     assert.deepEqual([pointer.publication_id, pointer.revision, pointer.content_digest],
       [published.publication_id, pub.revision, pub.content_digest]);
@@ -276,7 +271,8 @@ async function test(name, fn) {
         && row.delivery_allowed === false;
     }), 'trial gap publication left a deliverable outbox row');
     const audit = (await station().collection('schedule_audit').get()).docs.map((d) => d.data()).find((a) => a.action === 'publish');
-    assert.equal(audit.gaps_acknowledged, preview.gaps.digest);
+    assert.equal(audit.gaps_warning_digest, preview.gaps.digest);
+    assert.ok(audit.gaps_other >= 1);
   });
 
   await test('the canonical live roster, including the in-transaction fence, excludes a departed source member', async () => {
@@ -303,27 +299,27 @@ async function test(name, fn) {
         }
       }
     });
-    const blocked = await caught(() => fenced.publish(req(MGR, {
+    const warned = await fenced.publish(req(MGR, {
       request_id: 'gap_live_roster_publish', draft_id: next.draft_id,
-      expected_content_digest: nextPreview.expected_content_digest,
-      gap_acknowledgement: nextPreview.gaps.digest
-    })));
+      expected_content_digest: nextPreview.expected_content_digest
+    }));
     assert.equal(changed, true);
-    assert.equal(blocked && blocked.code, 'gaps-critical', blocked && blocked.message);
-    assert.ok(blocked.detail && blocked.detail.blocking.some((gap) =>
-      gap.kind === 'assignment' && gap.uid === 'u1'), JSON.stringify(blocked && blocked.detail));
+    const warnedPub = (await station().collection('schedule_publications').doc(warned.publication_id).get()).data();
+    assert.ok(warnedPub.gap_report.warning_count >= 1);
+    assert.ok(warnedPub.gap_report.summary.critical_gaps >= 1);
     await userRef.set({ active: true }, { merge: true });
   });
 
-  await test('a critical qualification minimum with no holder blocks a new draft publish; a candidate is offered, never assigned', async () => {
+  await test('a qualification minimum with no holder warns but does not block; a candidate is offered, never assigned', async () => {
     await api.saveQualification(req(MGR, { request_id: 'gap_lead', key: 'shift_lead', minimum: 1 }));
     await api.setPersonQualifications(req(MGR, { request_id: 'gap_hold', person: 'u6', qualifications: ['shift_lead'] }));
     const ready = await api.previewScheduleImport(req(MGR, { month: '2026-09', paste: SHEET, aliases }));
     const second = await api.importScheduleSheet(req(MGR, { request_id: 'gap_import2', month: '2026-09', paste: SHEET, aliases, expected_report_digest: ready.report_digest }));
     const preview2 = await api.getDraftPreview(req(MGR, { draft_id: second.draft_id, start: '2026-09-01' }));
     assert.ok(preview2.gaps.blocking.length >= 1 && preview2.gaps.blocking.every((g) => g.key === 'shift_lead'), JSON.stringify(preview2.gaps.blocking));
-    const blocked = await caught(() => api.publish(req(MGR, { request_id: 'gap_pub2', draft_id: second.draft_id, expected_content_digest: preview2.expected_content_digest, gap_acknowledgement: preview2.gaps.digest || '' })));
-    assert.equal(blocked && blocked.code, 'gaps-critical', blocked && blocked.message);
+    const warned = await api.publish(req(MGR, { request_id: 'gap_pub2', draft_id: second.draft_id, expected_content_digest: preview2.expected_content_digest }));
+    const warnedPub = (await station().collection('schedule_publications').doc(warned.publication_id).get()).data();
+    assert.ok(warnedPub.gap_report.warning_count >= 1);
     const report = await api.getGapReport(req(MGR, { draft_id: second.draft_id }));
     const dayGap = report.days.find((d) => d.has_critical_gap);
     assert.ok(dayGap, 'a day with a critical gap');

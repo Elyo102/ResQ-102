@@ -74,6 +74,7 @@ function buildRuntime(runtimeModule, db) {
 
 function capacityObservedDb(raw) {
   const reads = [];
+  const batchCommits = [];
   const rawRef = Symbol('raw-ref');
   const protectedCollection = (path) => /\/(users|schedule_person_qualifications|member_quals)$/.test(String(path || ''));
   const unwrap = (ref) => ref && ref[rawRef] ? ref[rawRef] : ref;
@@ -136,7 +137,17 @@ function capacityObservedDb(raw) {
   const db = {
     collection(name) { return wrapQuery(raw.collection(name), false); },
     doc(path) { return wrapDoc(raw.doc(path)); },
-    batch: () => raw.batch(),
+    batch() {
+      const batch = raw.batch();
+      let writes = 0;
+      return {
+        set(ref, ...args) { writes += 1; batch.set(unwrap(ref), ...args); return this; },
+        update(ref, ...args) { writes += 1; batch.update(unwrap(ref), ...args); return this; },
+        create(ref, ...args) { writes += 1; batch.create(unwrap(ref), ...args); return this; },
+        delete(ref) { writes += 1; batch.delete(unwrap(ref)); return this; },
+        async commit() { batchCommits.push(writes); return batch.commit(); }
+      };
+    },
     _put: (...args) => raw._put(...args),
     _del: (...args) => raw._del(...args),
     _get: (...args) => raw._get(...args),
@@ -153,7 +164,7 @@ function capacityObservedDb(raw) {
       }));
     }
   };
-  return { db, reads };
+  return { db, reads, batchCommits };
 }
 
 function people3000() {
@@ -239,11 +250,12 @@ async function fixture(runtimeModule, observed) {
   db._put(ST + '/schedule_state/runtime', {
     mode: 'shadow', active_policy_id: policy.policy_id, active_source_id: sourceId
   });
-  return { db, rt, people, reads: wrapped ? wrapped.reads : [] };
+  return { db, rt, people, reads: wrapped ? wrapped.reads : [],
+    batchCommits: wrapped ? wrapped.batchCommits : [] };
 }
 
 async function verifyThreeThousand(runtimeModule, observed) {
-  const { rt, people, reads } = await fixture(runtimeModule, observed);
+  const { rt, people, reads, batchCommits } = await fixture(runtimeModule, observed);
   const qualifications = await rt.getQualificationCatalog(req({}));
   assert.equal(qualifications.people.length, 3000, 'qualification view truncated the active roster');
   assert.equal(qualifications.holders.shift_lead, 3000, 'qualification holders were not counted exactly');
@@ -254,16 +266,24 @@ async function verifyThreeThousand(runtimeModule, observed) {
     request_id:'capacity-delete-qualification', key:'capacity_temp', expected_revision:temporary.revision
   }));
 
+  const commitsBeforePlan = batchCommits.length;
   const planned = await rt.runPlanner(req({
-    request_id: 'capacity-plan', start: '2026-10-01', months: 1, overrides: []
+    request_id: 'capacity-plan', start: '2026-10-01', months: 12, overrides: []
   }));
   const preview = await rt.getDraftPreview(req({
     draft_id: planned.draft_id, start: '2026-10-01'
   }));
   assert.equal(preview.gaps.summary.critical_gaps, 0, 'qualified 3,000-person roster produced a critical gap');
   assert.equal(preview.gaps.summary.other_gaps, 0, 'qualified 3,000-person roster produced a staffing gap');
-  assert.equal(planned.summary.filled, 31 * 6, 'planner did not fill the constrained monthly minimum');
+  assert.equal(planned.summary.filled, 365 * 6, 'annual planner did not fill the constrained daily minimum');
   if (observed) {
+    const annualSnapshotCommits = batchCommits.slice(commitsBeforePlan);
+    assert.ok(annualSnapshotCommits.length >= 7,
+      'annual 3,000-person snapshot did not span multiple batches');
+    assert.ok(annualSnapshotCommits.every((writes) => writes > 0 && writes <= 350),
+      'annual snapshot batch exceeded the runtime 350-write safety boundary');
+    assert.ok(annualSnapshotCommits.filter((writes) => writes === 350).length >= 9,
+      'annual snapshot did not exercise repeated full-size runtime write batches');
     assert.ok(reads.length >= 24, '3,000 records were not read in bounded chunks');
     assert.ok(reads.every((read) => read.size <= 250), 'a capacity chunk exceeded 250 documents');
     const expectedIds = people.map((person) => person.id).sort();

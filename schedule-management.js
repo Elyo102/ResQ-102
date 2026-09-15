@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h181';
-import { renderNav, renderStuckNav } from './nav.js?v=42h181';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h181';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h181';
-import { initAppCheck } from './appcheck.js?v=42h181';
-import { readScheduleFile } from './schedule-file-import.js?v=42h181';
+import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { renderNav, renderStuckNav } from './nav.js?v=42h19';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h19';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h19';
+import { readScheduleFile } from './schedule-file-import.js?v=42h19';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h181';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h181';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h19';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -293,7 +293,7 @@ function setMode(status) {
   box.className = 'mode';
   let text = 'לא ניתן לאמת את מצב מנוע הסידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב ניסוי: אפשר לייבא, ליצור, לסקור, לפרסם ולחזור לאחור בדיוק כמו במצב חי. הודעות פוש נשארות חסומות.';
+    text = 'מצב ניסוי: הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים בדיוק כמו במצב חי. פוש נשלח רק לחשבון הבדיקה של אלדד.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
@@ -387,7 +387,7 @@ function updateManagerWorkflow() {
     : state.draft && state.draftPreview
       ? 'הטיוטה מוכנה לסקירה. פרסום יתאפשר רק לאחר סימון האישור המפורש.'
       : mode === 'shadow'
-        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; הודעות פוש אינן יוצאות לעובדים.'
+        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; פוש נשלח רק לחשבון הבדיקה של אלדד.'
         : 'בחרו קובץ או צרו טיוטה. הודעות יישלחו רק אחרי סקירה ואישור.';
 }
 
@@ -841,6 +841,27 @@ const REASON_TEXT = Object.freeze({
   'preflight-out-of-range': 'יש שיבוץ מחוץ לטווח שנבדק'
 });
 
+/* קודי אזהרה שמגיעים מהשרת בלבד על שיבוץ ידני שנשמר. המסך אינו
+ * מחשב אותם ואינו מחזיר אותם ב-payload; הוא רק מתרגם ומציג. */
+const MANUAL_WARNING_TEXT = Object.freeze({
+  out_of_sub_station: 'מחוץ לתחנת השיוך',
+  rest: 'חריגה מזמן המנוחה',
+  out_of_rotation: 'חריגה מסבב המשמרות',
+  no_qualified: 'הכשירות אינה תואמת לתפקיד',
+  not_available: 'העובד מסומן כלא זמין',
+  over_limit: 'חריגה מעומס המשמרות'
+});
+
+function manualWarningCodes(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.filter((code) =>
+    typeof code === 'string' && Object.hasOwn(MANUAL_WARNING_TEXT, code)))).sort();
+}
+
+function manualWarningLabel(codes) {
+  return codes.map((code) => MANUAL_WARNING_TEXT[code]).join(' · ');
+}
+
 function renderModeCard() {
   const view = state.modeView;
   const card = $('modeCard');
@@ -857,7 +878,7 @@ function renderModeCard() {
     ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
       + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
     : (view.current === 'shadow'
-      ? 'מצב ניסוי. הייבוא, הטיוטה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש לעובדים חסום.'
+      ? 'מצב ניסוי. הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש נשלח רק לחשבון הבדיקה של אלדד.'
       : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
 
   const box = $('modeTargets');
@@ -1178,7 +1199,7 @@ async function applyModeChange() {
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
     : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
       + (target === 'new' ? 'מרגע זה פרסום יחליף את הסידור הפעיל וישלח עדכונים אישיים.'
-        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ואיש אינו מקבל הודעת פוש.');
+        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ופוש נשלח רק לחשבון הבדיקה של אלדד.');
   if (!confirm(text)) return;
   state.modeBusy = true;
   updateModeApply();
@@ -1529,16 +1550,28 @@ function cellContent(cell, block, minVisualSlots) {
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
     row.dataset.slotIndex = String(index + 1);
+    const warningCodes = manualWarningCodes(person.manual_warning_codes);
+    const warningLabel = manualWarningLabel(warningCodes);
     if (person.is_me) {
       row.dataset.isMe = 'true';
-      row.setAttribute('aria-label', (person.person || person.uid || '—') + ' · אני');
     }
     if (['A', 'B', 'C'].includes(person.crew)) {
       row.classList.add('crew-' + person.crew);
       row.title = 'משמרת ' + ({ A: 'א', B: 'ב', C: 'ג' })[person.crew];
     }
-    row.textContent = person.person || person.uid || '—';
+    const personLabel = person.person || person.uid || '—';
+    row.textContent = personLabel;
     if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
+    if (warningCodes.length) {
+      row.classList.add('manual-warning-slot');
+      const badge = node('span', 'flag manual-warning', '⚠ אזהרה');
+      badge.title = warningLabel;
+      row.appendChild(badge);
+    }
+    const ariaParts = [personLabel];
+    if (person.is_me) ariaParts.push('אני');
+    if (warningLabel) ariaParts.push('שיבוץ ידני עם אזהרה', warningLabel);
+    row.setAttribute('aria-label', ariaParts.join(' · '));
     cell.appendChild(row);
   });
 
@@ -2287,12 +2320,14 @@ function addOverride(initial = {}) {
   roleWrap.appendChild(node('label', '', 'תפקיד בשיבוץ'));
   const role = node('select'); role.dataset.field = 'role';
   const updateRoles = () => {
-    const selected = (state.setup.people || []).find((value) => value.id === person.value);
+    const station = state.policy.sub_stations[sub.value];
+    const selectedRole = role.value || initial.role || '';
     clear(role); option(role, '', 'לפי צורכי המנוע');
-    ((selected && selected.roles) || []).forEach((value) => option(role, value, value));
-    if (initial.role) role.value = initial.role;
+    ((station && station.requirements) || []).forEach((value) =>
+      option(role, value.role, value.label || value.role));
+    if (Array.from(role.options).some((item) => item.value === selectedRole)) role.value = selectedRole;
   };
-  person.addEventListener('change', updateRoles); updateRoles();
+  sub.addEventListener('change', updateRoles); updateRoles();
   roleWrap.appendChild(role);
 
   const remove = node('button', 'btn danger remove', 'הסר');
@@ -2607,7 +2642,7 @@ async function importSheet() {
     state.importedDraft = result;
     renderSummary(result.summary || {});
     message('importMessage', 'הגיליון יובא כטיוטה (' + dateLabel(result.from) + ' — ' + dateLabel(result.to)
-      + '). לא הופעל מנוע ולא נשלחה הודעה. בדוק אותה למטה ואז לחץ „הצג בלוח”.', 'ok');
+      + '). בדקו אותה למטה, ערכו בעיפרון אם צריך, ואז עברו לסקירה ולפרסום.', 'ok');
     message('runMessage', 'הטיוטה שלמטה יובאה מהגיליון.', 'info');
     await loadDraftPreview(result.from, true);
     if (!authTaskCurrent(task)) return;
@@ -2804,7 +2839,10 @@ function renderSummary(summary) {
     ['ימים מתחת לקו', summary.imported_below_minimum || 0], ['יובא מהגיליון', 'כמות שהוא']
   ] : [
     ['שובצו', summary.filled || 0], ['חוסרים חוסמים', summary.blocking_gaps || 0],
-    ['ימים מתחת למינימום', summary.days_below_minimum || 0], ['שינויים שנדחו', summary.rejected_manual || 0]
+    ['ימים מתחת למינימום', summary.days_below_minimum || 0],
+    ['שיבוצים ידניים עם אזהרה', summary.manual_warning_assignments || 0],
+    ['סה״כ אזהרות ידניות', summary.manual_warnings || 0],
+    ['שיבוצים שלא נשמרו (חסם)', summary.rejected_manual || 0]
   ];
   values.forEach(([label, value]) => {
     const metric = node('div', 'metric');
@@ -2813,14 +2851,10 @@ function renderSummary(summary) {
 }
 
 function updatePublishAvailability() {
-  const gaps = Number((state.draft && state.draft.summary || {}).blocking_gaps || 0);
-  /* במצב ניסוי עוברים באותו מסלול פרסום פעיל; רק גבול המשלוח החיצוני
-   * חסום בשרת. ב-`off` ההרצה והפרסום חסומים כמו קודם. */
-  const gapReport = state.draftPreview && state.draftPreview.gaps;
-  const critical = !!gapReport && (gapReport.blocking || []).length > 0;
-  const needsAck = !!gapReport && !critical && (gapReport.acknowledgeable || []).length > 0;
+  /* מינימום, כשירות ועומס הם אזהרות מקצועיות לאחראי הסידור, לא
+   * מחסומי פרסום. חסמי קלט וזהות מבניים נשארים באחריות השרת. */
   const ready = !!state.draft && !!state.draftPreview && $('reviewDraft').checked
-    && canRunSchedule() && gaps === 0 && !critical && (!needsAck || $('draftGapAck').checked);
+    && canRunSchedule();
   $('publish').disabled = state.busy || !ready;
   $('publish').textContent = state.status && state.status.mode === 'shadow'
     ? 'פרסום לניסוי' : 'פרסום הסידור';
@@ -2850,6 +2884,7 @@ function renderDraftPreview(preview) {
   card.classList.remove('hide');
   renderBoard(box, preview.days || [], { id: 'draftBoard', showAbsences: true,
     empty: 'אין שיבוצים בשבוע הזה.' });
+  renderDraftManualWarnings(preview);
   const first = (preview.days || [])[0];
   const last = (preview.days || [])[(preview.days || []).length - 1];
   $('previewRange').textContent = first && last
@@ -2879,11 +2914,11 @@ async function loadDraftPreview(start, resetApproval) {
     state.draftPreview = preview;
     state.previewStart = preview.week_start;
     renderDraftPreview(preview);
-    // 42H.2 ג׳ · פערים על הטיוטה כולה: קריטי נועל את הפרסום; אחר — אישור חתום.
+    // פערים על הטיוטה כולה מוצגים כאזהרות מקצועיות ואינם נועלים פרסום.
     clear($('draftGapsDays'));
     if (resetApproval !== false) $('draftGapAck').checked = false;
     const blocked = renderGapSummary(preview.gaps, { box: 'draftGaps', list: 'draftGapsList', ackWrap: 'draftGapAckWrap', ackText: 'draftGapAckText' });
-    $('draftGapsTitle').textContent = blocked ? 'בקרת פערים — פער קריטי חוסם פרסום' : 'בקרת פערים';
+    $('draftGapsTitle').textContent = blocked ? 'אזהרות כוח אדם וכשירות' : 'אזהרות כוח אדם וכשירות';
     $('reviewDraft').disabled = false;
     message('previewMessage', 'הטיוטה מוצגת לבדיקה. היא עדיין לא פורסמה.', 'ok');
   } catch (error) {
@@ -2952,14 +2987,9 @@ async function publishDraft() {
       !state.draft || !state.draftPreview || !$('reviewDraft').checked) return;
   const task = authTask();
   const trial = state.status.mode === 'shadow';
-  const gaps = Number((state.draft.summary || {}).blocking_gaps || 0);
-  if (gaps > 0) { message('publishMessage', 'אי אפשר לפרסם: בטיוטה יש חוסרים חוסמים.', 'err'); return; }
   const gapReport = state.draftPreview.gaps;
-  if (gapReport && (gapReport.blocking || []).length) { message('publishMessage', 'אי אפשר לפרסם: פער בכשירות קריטית.', 'err'); return; }
-  const acknowledgement = gapAcknowledgement(gapReport, 'draftGapAck');
-  if (acknowledgement === '') { message('publishMessage', 'יש פערים שדורשים אישור מפורש לפני הפרסום.', 'err'); return; }
   const confirmation = trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בתוך סביבת הניסוי, ולא תישלח הודעה לאיש.'
+    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
   if (!confirm(confirmation)) return;
   state.busy = true; $('publish').disabled = true;
@@ -2974,15 +3004,13 @@ async function publishDraft() {
       expected_content_digest: expectedContentDigest,
       request_id: requestIdForPublication(draftId, expectedContentDigest, intent)
     };
-    if (acknowledgement) publishPayload.gap_acknowledgement = acknowledgement;
     const result = (await call.publish(publishPayload)).data;
     if (!authTaskCurrent(task)) return;
-    if (trial && (result.prepared !== false || result.trial !== true
-        || result.notified_people !== 0)) {
-      throw new Error('השרת לא אישר פרסום ניסוי פעיל עם חסימת הודעות. יש לרענן לפני ניסיון נוסף.');
+    if (trial && (result.prepared !== false || result.trial !== true)) {
+      throw new Error('השרת לא אישר פרסום ניסוי פעיל. יש לרענן לפני ניסיון נוסף.');
     }
     const successText = trial
-      ? 'הסידור פורסם ופועל בסביבת הניסוי. לא נשלחו הודעות, ואפשר לבדוק או לחזור לגרסה הקודמת.'
+      ? 'הסידור פורסם ופועל בסביבת הניסוי. הפוש הוגבל לחשבון הבדיקה של אלדד, ואפשר לבדוק או לחזור לגרסה הקודמת.'
       : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.';
     message('publishMessage', successText, 'ok');
     resetPublishRequest();
@@ -3042,7 +3070,7 @@ async function rollbackSchedule() {
   if (!pending) {
     const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
       + (state.status.mode === 'shadow'
-        ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי לא תשלח הודעה לאיש.'
+        ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
         : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
     if (!confirm(text)) return;
   }
@@ -3136,9 +3164,9 @@ async function loadSetup(generation = state.authGeneration) {
 /* ==================================================================
  *  42H.2 · חבילה ג׳ — בקרת פערים (תצוגה משותפת)
  * ------------------------------------------------------------------
- *  פער קריטי — הכפתור נעול והסיבה כתובה. פער אחר — רשימה + תיבת אישור
- *  שמצרפת לבקשה את חתימת הרשימה המדויקת (gap_acknowledgement). המסך
- *  מציג מועמדים; הוא לעולם אינו משבץ.
+ *  פערי מינימום, כשירות ועומס מוצגים כאזהרות מקצועיות. הם אינם
+ *  נועלים פרסום ואינם דורשים תיבת אישור. המסך מציג מועמדים בלבד;
+ *  הוא לעולם אינו משבץ אוטומטית.
  * ================================================================== */
 const GAP_KIND_HE = {
   qualification: 'כשירות', station: 'מינימום תחנה', sub_station: 'קו תחנת קצה',
@@ -3150,30 +3178,46 @@ function gapText(gap) {
   return dateLabel(gap.date) + ' · ' + GAP_KIND_HE[gap.kind] + ': ' + what + ' — ' + gap.present + ' מתוך ' + gap.minimum + ' (חסרים ' + gap.gap + ')';
 }
 
-/** מצייר סיכום פערים לתוך קופסה: רשימת חוסמים/אחרים + תיבת אישור. מחזיר האם חוסם. */
+/** מצייר אזהרות פערים לתוך קופסה. מחזיר false כי אזהרה עסקית אינה חוסמת. */
 function renderGapSummary(gaps, ids) {
   const box = $(ids.box);
   if (!gaps) { box.hidden = true; return false; }
   const blocking = gaps.blocking || [];
   const other = gaps.acknowledgeable || [];
   box.hidden = !blocking.length && !other.length;
-  box.classList.toggle('critical', blocking.length > 0);
+  box.classList.remove('critical');
   const list = $(ids.list); clear(list);
-  blocking.forEach((gap) => list.appendChild(node('div', 'gap critical', 'חוסם · ' + gapText(gap))));
+  blocking.forEach((gap) => list.appendChild(node('div', 'gap warn', 'אזהרה · ' + gapText(gap))));
   other.forEach((gap) => list.appendChild(node('div', 'gap other', gapText(gap))));
   if (gaps.truncated) list.appendChild(node('div', 'gap other', 'מוצגים רק הפערים הראשונים; הרשימה המלאה בפירוט לפי יום.'));
   const ackWrap = $(ids.ackWrap);
-  ackWrap.hidden = blocking.length > 0 || !other.length;
-  if (!ackWrap.hidden) {
-    $(ids.ackText).textContent = 'ראיתי ' + other.length + ' פערים (מינימום תחנה / קו תחנת קצה / כשירות לא-קריטית) ואני מאשר/ת לפרסם למרות זאת. האישור נרשם ביומן על שמי.';
-  }
-  return blocking.length > 0;
+  ackWrap.hidden = true;
+  return false;
 }
 
-function gapAcknowledgement(gaps, ackId) {
-  if (!gaps || !(gaps.acknowledgeable || []).length) return undefined;
-  return $(ackId).checked ? gaps.digest : '';
+function renderDraftManualWarnings(preview) {
+  const panel = $('draftManualWarnings');
+  const list = $('draftManualWarningsList');
+  clear(list);
+  const findings = [];
+  (preview.days || []).forEach((day) => (day.sub_stations || []).forEach((sub) =>
+    (sub.people || []).forEach((person) => {
+      const codes = manualWarningCodes(person.manual_warning_codes);
+      if (!codes.length) return;
+      findings.push({
+        date: day.date,
+        station: sub.label || sub.sub_station,
+        person: person.person || person.uid || '—',
+        codes
+      });
+    })));
+  panel.hidden = findings.length === 0;
+  findings.forEach((finding) => list.appendChild(node('div', 'change warn',
+    finding.person + ' · ' + dateLabel(finding.date) + ' · ' + finding.station
+      + ' — ' + manualWarningLabel(finding.codes))));
 }
+
+function gapAcknowledgement() { return undefined; }
 
 const CANDIDATES_NOTE = 'מועמדים לפי כשירות ופניות ביום בלבד — לא נבדקו זמינות, נעילות, סבב ומנוחה. אין שיבוץ אוטומטי: שיבוץ נעשה ידנית דרך עריכת הסידור.';
 function queueInvalidAssignmentRemoval(entry, date) {
@@ -3265,9 +3309,9 @@ async function loadActiveGaps() {
     });
     renderGapDays(report.days, $('gapDays'), { allowRemediation: true });
     message('gapMessage', report.summary.critical_gaps
-      ? 'יש פערים בכשירויות קריטיות. עריכה שמשאירה אותם לא תתפרסם — שבצו מהמועמדים דרך „עריכת הסידור הפעיל".'
-      : (report.summary.other_gaps ? 'יש פערים שאינם קריטיים. הם מוצגים; פרסום עם פערים כאלה דורש אישור מפורש.' : 'אין פערים בסידור הפעיל.'),
-      report.summary.critical_gaps ? 'err' : (report.summary.other_gaps ? 'warn' : 'ok'));
+      ? 'יש פערים בכשירויות קריטיות. הם מוצגים כאזהרה ואינם חוסמים פרסום; אפשר להיעזר ברשימת המועמדים.'
+      : (report.summary.other_gaps ? 'יש פערי כוח אדם או כשירות. הם מוצגים כאזהרה ואינם חוסמים פרסום.' : 'אין פערים בסידור הפעיל.'),
+      (report.summary.critical_gaps || report.summary.other_gaps) ? 'warn' : 'ok');
   } catch (error) {
     if (!authTaskCurrent(task)) return;
     message('gapMessage', errorText(error), 'err');
@@ -3557,8 +3601,7 @@ function renderEditReport(report) {
 }
 
 function editGapsBlock() {
-  const gaps = state.editReport && state.editReport.gaps;
-  return !!gaps && (gaps.blocking || []).length > 0;
+  return false;
 }
 /* האישור על שינוי החוקים — חתימת החוקים הפעילים, או '' כשלא אושר, או null כשאין צורך. */
 function editPolicyAcknowledgement() {
@@ -3581,7 +3624,7 @@ async function checkEdit() {
     state.editReport = report;
     renderEditReport(report);
     if (!report.counts.changes) message('editMessage', 'השינויים ברשימה אינם משנים דבר בסידור הפעיל.', 'warn');
-    else if (editGapsBlock()) message('editMessage', 'השינוי משאיר פער בכשירות קריטית — אי אפשר לפרסם אותו. שבצו מהמועמדים או בטלו את ההסרה.', 'err');
+    else if (editGapsBlock()) message('editMessage', 'השינוי כולל אזהרת כוח אדם או כשירות. אפשר להמשיך לפרסום לאחר הסקירה.', 'warn');
     else message('editMessage', report.counts.changes + ' שינויים ל-' + report.counts.people + ' עובדים. ' + report.notifications + ' עובדים יקבלו הודעה אחת. אפשר לבצע.', 'ok');
     if (report.policy_changed && report.counts.changes && !editGapsBlock()) message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — ' + report.policy_changed.rows_rebased + ' שורות יושרו. יש לאשר בתיבה לפני הביצוע.', 'warn');
     $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed();
@@ -3620,19 +3663,16 @@ async function applyEdit() {
   if (state.busy) return;
   const task = authTask();
   const pending = state.editPending;
-  if (!pending && (!state.editReport || !state.editReport.counts.changes || editGapsBlock())) return;
+  if (!pending && (!state.editReport || !state.editReport.counts.changes)) return;
   let payload;
   if (pending) payload = pending.payload;
   else {
-    const acknowledgement = gapAcknowledgement(state.editReport.gaps, 'editGapAck');
-    if (acknowledgement === '') { message('editMessage', 'יש פערים שדורשים אישור מפורש לפני הביצוע.', 'err'); return; }
     const policyAck = editPolicyAcknowledgement();
     if (policyAck === '') { message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — יש לאשר זאת במפורש לפני הביצוע.', 'err'); return; }
     const digestValue = state.editReport.edit_digest;
     state.editRequestIds = state.editRequestIds || {};
     if (!state.editRequestIds[digestValue]) state.editRequestIds[digestValue] = requestId('edit');
     payload = Object.assign({ request_id: state.editRequestIds[digestValue], expected_edit_digest: digestValue }, editPayload());
-    if (acknowledgement) payload.gap_acknowledgement = acknowledgement;
     if (policyAck) payload.policy_acknowledgement = policyAck;
   }
   state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
@@ -3646,7 +3686,7 @@ async function applyEdit() {
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     const deliveryText = state.status && state.status.mode === 'shadow'
-      ? 'השינוי פעיל בסביבת הניסוי ולא נשלחה הודעה לאיש.'
+      ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של אלדד.'
       : (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת.';
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
       + deliveryText + ' אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');

@@ -150,7 +150,7 @@ is('שער מנהל-העל דורש token.super חתום',
 is('🔒 שער מנהל-העל אינו מעניק סמכות לפי אימייל',
    /email|SUPER_ADMIN_EMAIL/.test(superAdminBody), false);
 
-['runReportNow', 'sendBroadcast', 'sendCallout', 'closeCallout']
+['runReportNow', 'sendBroadcast']
   .forEach(function (name) {
     const body = exportBody(name);
     is(name + ' משתמש בשער מנהל-העל המרכזי',
@@ -158,6 +158,22 @@ is('🔒 שער מנהל-העל אינו מעניק סמכות לפי אימיי
     is('🔒 ' + name + ' אינו מחזיר הרשאת אימייל מקומית',
        body.indexOf('SUPER_ADMIN_EMAIL') !== -1, false);
   });
+
+const freshCalloutActorMatch = SERVER.match(
+  /async function freshCalloutActor\(req\) \{([\s\S]*?)\n\}/
+);
+const freshCalloutActorBody = freshCalloutActorMatch ? freshCalloutActorMatch[1] : '';
+is('שער קריאת הפתע החי קיים', !!freshCalloutActorMatch, true);
+is('שער קריאת הפתע החי מוגבל לתפקידי מפקד משמרת וסגן בלבד',
+   /\['commander','deputy'\]\.indexOf\(role\) === -1/.test(freshCalloutActorBody), true);
+
+['sendCallout', 'closeCallout'].forEach(function (name) {
+  const body = exportBody(name);
+  is(name + ' אינו עוקף את סמכות מפקד/סגן באמצעות מנהל-על',
+     /isSuperAdmin\(auth\)/.test(body), false);
+  is(name + ' עובר דרך שער קריאת הפתע החי',
+     /freshCalloutActor\(req\)/.test(body), true);
+});
 
 const superEmailComparisons = SERVER.match(
   /(?:[=!]==?\s*SUPER_ADMIN_EMAIL|SUPER_ADMIN_EMAIL\s*[=!]==?)/g

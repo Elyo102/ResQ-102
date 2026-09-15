@@ -107,12 +107,18 @@ t('פרסום ראשון כולל גם אירוע אישי לאדם שאין ל�
   assert.deepStrictEqual(mine.detail.map((x) => x.kind), [CHANGE.EVENT_ASSIGNED]);
 });
 
-t('אי אפשר לפרסם תוכנית עם חוסר חוסם', () => {
+t('חוסר כוח אדם הוא אזהרה ואינו חוסם פרסום', () => {
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.summary.blocking_gaps = 1;
-  throwsCode(() => mk().planPublication(publicationInput({
+  bad.summary.days_below_minimum = 1;
+  bad.rows[0].complete = false;
+  const result = mk().planPublication(publicationInput({
     next: bad, previous: null, publication_id: 'blocked', actor: 'רמי'
-  })), 'plan-not-publishable');
+  }));
+  assert.deepStrictEqual(result.publication.warnings,
+    { blocking_gaps: 1, days_below_minimum: 1,
+      manual_warning_assignments: 0, manual_warnings: 0, manual_warning_counts: {} });
+  assert.deepStrictEqual(result.audit.warnings, result.publication.warnings);
 });
 
 t('אי אפשר לפרסם תוכנית עם שיבוץ ידני שנדחה', () => {
@@ -123,12 +129,14 @@ t('אי אפשר לפרסם תוכנית עם שיבוץ ידני שנדחה', (
   })), 'plan-not-publishable');
 });
 
-t('אי אפשר לפרסם שורה שלא הושלמה', () => {
+t('שורה לא מלאה בשל פער נשמרת כאזהרה ואינה נחסמת', () => {
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.rows[0].complete = false;
-  throwsCode(() => mk().planPublication(publicationInput({
+  bad.summary.blocking_gaps = 1;
+  const result = mk().planPublication(publicationInput({
     next: bad, previous: null, publication_id: 'open-row', actor: 'רמי'
-  })), 'plan-not-publishable');
+  }));
+  assert.equal(result.publication.warnings.blocking_gaps, 1);
 });
 
 t('אין שינוי — אין התראות', () => {
@@ -548,6 +556,31 @@ t('אירוע מתמונת מקור אחרת — סירוב', () =>
 t('התוצאה קפואה', () => {
   const r = mk().planPublication(publicationInput({ next: P1, previous: null, publication_id: 'p', actor: 'a' }));
   assert.ok(Object.isFrozen(r) && Object.isFrozen(r.publication) && Object.isFrozen(r.notifications));
+});
+
+t('שינוי metadata של אזהרה ידנית נחתם ונרשם אך אינו יוצר push', () => {
+  const previous = plan([row('2026-09-01', 'eilat', 'אילת', [
+    slot('דן', 'driver', 'נהג', { source: 'manual' })
+  ])]);
+  const next = plan([row('2026-09-01', 'eilat', 'אילת', [
+    slot('דן', 'driver', 'נהג', { source: 'manual', manual_warning_codes: ['rest', 'over_limit'] })
+  ])]);
+  next.summary.manual_warning_assignments = 1;
+  next.summary.manual_warnings = 2;
+  next.summary.manual_warning_counts = { rest: 1, over_limit: 1 };
+  const result = mk().planPublication(publicationInput({
+    next, previous, publication_id: 'pub_manual_warning', actor: 'manager'
+  }));
+  assert.equal(result.notifications.length, 0);
+  assert.deepEqual(result.publication.warnings, {
+    blocking_gaps: 0, days_below_minimum: 0,
+    manual_warning_assignments: 1, manual_warnings: 2,
+    manual_warning_counts: { rest: 1, over_limit: 1 }
+  });
+  const before = mk().planPublication(publicationInput({
+    next: previous, previous: null, publication_id: 'digest_before', actor: 'manager'
+  }));
+  assert.notEqual(result.publication.content_hash, before.publication.content_hash);
 });
 
 /* ---- 42H.2 · ביקורת Codex §2: היעדרות היא שינוי בסידור של האדם ---- */

@@ -381,30 +381,42 @@ t('שיבוץ ידני אינו נדרס בהרצה אוטומטית', () => {
   assert.ok(eilat.slots.some((s) => s.person === 'F8' && s.source === 'manual'));
 });
 
-t('שיבוץ ידני של אדם מתחנת קצה אחרת נדחה ומדווח', () => {
+t('שיבוץ ידני של אדם מתחנת קצה אחרת נשמר עם אזהרה', () => {
   const p = run(mk(), { locked: { eilat: { '2026-09-01': ['TD1'] } } });
   const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.ok(!eilat.slots.some((s) => s.person === 'TD1'), 'ידני פסול שובץ');
-  assert.deepStrictEqual(eilat.rejected_manual, [{ person: 'TD1', code: REASON.OUT_OF_SUB_STATION }]);
+  const slot = eilat.slots.find((s) => s.person === 'TD1');
+  assert.ok(slot && slot.source === 'manual');
+  assert.deepStrictEqual(slot.manual_warning_codes, [REASON.OUT_OF_SUB_STATION]);
+  assert.strictEqual(p.summary.manual_warning_assignments, 1);
+  assert.strictEqual(p.summary.manual_warnings, 1);
+  assert.deepStrictEqual(p.summary.manual_warning_counts, { out_of_sub_station: 1 });
 });
 
-t('שיבוץ ידני של אדם לא פעיל נדחה', () => {
+t('role:null מותר וכשאין עוד תפקיד מתאים הוא נשמר עם no_qualified', () => {
+  const p = run(mk(), {
+    roster: roster().concat([person('N1', 'eilat', [])]),
+    locked: { eilat: { '2026-09-01': ['N1'] } }
+  });
+  const slot = p.rows.find((x) => x.sub_station === 'eilat').slots.find((s) => s.person === 'N1');
+  assert.strictEqual(slot.role, null);
+  assert.deepStrictEqual(slot.manual_warning_codes, [REASON.NO_QUALIFIED]);
+});
+
+t('שיבוץ ידני של אדם לא פעיל הוא שגיאה מבנית', () => {
   const r = roster().map((x) => (x.id === 'D7' ? Object.assign({}, x, { active: false }) : x));
-  const p = run(mk(), { roster: r, locked: { eilat: { '2026-09-01': ['D7'] } } });
-  const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.strictEqual(eilat.rejected_manual[0].code, REASON.INACTIVE);
+  throwsCode(() => run(mk(), { roster: r, locked: { eilat: { '2026-09-01': ['D7'] } } }), 'locked-person-inactive');
 });
 
-t('שיבוץ ידני של אדם לא זמין נדחה', () => {
+t('שיבוץ ידני של אדם לא זמין נשמר עם אזהרה', () => {
   const p = run(mk(), {
     locked: { eilat: { '2026-09-01': ['D7'] } },
     availability: { D7: { '2026-09-01': { kind: 'sick' } } }
   });
   const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.strictEqual(eilat.rejected_manual[0].code, REASON.NOT_AVAILABLE);
+  assert.deepStrictEqual(eilat.slots.find((s) => s.person === 'D7').manual_warning_codes, [REASON.NOT_AVAILABLE]);
 });
 
-t('שיבוץ ידני שמפר מנוחה נדחה', () => {
+t('שיבוץ ידני שמפר מנוחה נשמר עם אזהרה', () => {
   const p = run(mk(), {
     days: ['2026-09-01', '2026-09-02'],
     locked: { eilat: { '2026-09-02': ['L1'] } },
@@ -413,17 +425,19 @@ t('שיבוץ ידני שמפר מנוחה נדחה', () => {
   const day2 = p.rows.filter((x) => x.date === '2026-09-02' && x.sub_station === 'eilat')[0];
   const day1 = p.rows.filter((x) => x.date === '2026-09-01' && x.sub_station === 'eilat')[0];
   if (day1.slots.some((s) => s.person === 'L1')) {
-    assert.strictEqual(day2.rejected_manual.filter((x) => x.person === 'L1')[0].code, REASON.REST);
+    assert.ok(day2.slots.some((x) => x.person === 'L1'));
+    assert.ok(day2.slots.find((x) => x.person === 'L1').manual_warning_codes.includes(REASON.REST));
   }
 });
 
-t('שיבוץ ידני לתפקיד שהאדם אינו מחזיק נדחה', () => {
+t('שיבוץ ידני לתפקיד שהאדם אינו מחזיק נשמר עם אזהרה', () => {
   // F1 הוא לוחם בלבד. גרירה שלו למשבצת „נהג" אינה חוקית,
   // גם כשאחראי הסידור עשה אותה ביד.
   const p = run(mk(), { locked: { eilat: { '2026-09-01': [{ person: 'F1', role: 'driver' }] } } });
   const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.ok(!eilat.slots.some((s) => s.person === 'F1' && s.role === 'driver'), 'לוחם שובץ כנהג');
-  assert.deepStrictEqual(eilat.rejected_manual, [{ person: 'F1', code: REASON.NO_QUALIFIED }]);
+  const slot = eilat.slots.find((s) => s.person === 'F1' && s.role === 'driver');
+  assert.ok(slot, 'השיבוץ הידני נשמר');
+  assert.deepStrictEqual(slot.manual_warning_codes, [REASON.NO_QUALIFIED]);
 });
 
 t('שיבוץ ידני לתפקיד שהאדם כן מחזיק מתקבל בתפקיד שנקבע', () => {
@@ -443,19 +457,13 @@ t('שיבוץ ידני לתפקיד שאינו בתקן תחנת הקצה — ס
 t('רשומת שיבוץ ידני פגומה — סירוב', () =>
   throwsCode(() => run(mk(), { locked: { eilat: { '2026-09-01': [{ role: 'driver' }] } } }), 'locked-shape'));
 
-t('שיבוץ ידני של מזהה שאינו בסגל נדחה', () => {
-  const p = run(mk(), { locked: { eilat: { '2026-09-01': ['רוח_רפאים'] } } });
-  const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.strictEqual(eilat.rejected_manual[0].person, 'רוח_רפאים');
-  assert.ok(!eilat.slots.some((s) => s.person === 'רוח_רפאים'));
-});
+t('שיבוץ ידני של מזהה שאינו בסגל הוא שגיאה מבנית', () =>
+  throwsCode(() => run(mk(), { locked: { eilat: { '2026-09-01': ['רוח_רפאים'] } } }), 'locked-person-unknown'));
 
-t('שיבוץ ידני שנדחה משאיר את היום לא שלם גם אם התקן מולא אוטומטית', () => {
-  const p = run(mk(), { locked: { eilat: { '2026-09-01': ['רוח_רפאים'] } } });
-  const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
-  assert.strictEqual(eilat.slots.length, 7);
-  assert.strictEqual(eilat.complete, false);
-});
+t('אותו אדם בשני source.locked באותו יום הוא שגיאה מבנית', () =>
+  throwsCode(() => run(mk(), { locked: {
+    eilat: { '2026-09-01': ['F1'] }, timna: { '2026-09-01': ['F1'] }
+  } }), 'locked-person-duplicate'));
 
 /* ================= 8. קו מינימום ================= */
 
@@ -558,6 +566,20 @@ t('שלושה חודשים — שלוש תקופות', () => {
 t('ארבעה חודשים — סירוב', () =>
   throwsCode(() => mk().planMonths(Object.assign({}, BASE, {
     months: 4, start: '2026-09-01', roster: roster() })), 'months-range'));
+
+t('שנה — 12 תקופות ורצף מלא גם מעבר לשנה קלנדרית', () => {
+  const r = mk().planMonths(Object.assign({}, BASE, {
+    months: 12, start: '2026-09-01', roster: roster() }));
+  assert.strictEqual(r.periods.length, 12);
+  assert.strictEqual(r.periods[0].from, '2026-09-01');
+  assert.strictEqual(r.periods[11].to, '2027-08-31');
+  assert.strictEqual(r.periods.reduce((sum, period) => sum + period.rows.length, 0),
+    365 * Object.keys(policy().sub_stations).length);
+});
+
+t('11 חודשים — סירוב; רק מסלולי 1/2/3/12 נתמכים', () =>
+  throwsCode(() => mk().planMonths(Object.assign({}, BASE, {
+    months: 11, start: '2026-09-01', roster: roster() })), 'months-range'));
 
 t('המנוחה נשמרת בגבול החודש', () => {
   const eng = mk();

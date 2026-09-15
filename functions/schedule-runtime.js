@@ -16,6 +16,9 @@ const sheetImport = require('./schedule-sheet-import');
 const scheduleEdit = require('./schedule-edit');
 const qualifications = require('./schedule-qualifications');
 const scheduleGaps = require('./schedule-gaps');
+const importPipeline = require('./schedule-import-pipeline');
+const identityStoreContract = require('./schedule-identity-store-contract');
+const publicationRecipients = require('./schedule-publication-recipients');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -3429,9 +3432,11 @@ function createScheduleRuntime(deps) {
         'תכנון חודשי חייב להתחיל ביום הראשון בחודש.', 'invalid-argument');
     }
     const months = Number(data.months);
-    if (!integer(months) || months < 1 || months > 3) {
-      throw new ScheduleRuntimeError('months-invalid', 'אפשר לתכנן חודש עד שלושה.', 'invalid-argument');
+    if (!integer(months) || [1, 2, 3, 12].indexOf(months) === -1) {
+      throw new ScheduleRuntimeError('months-invalid', 'אפשר לתכנן חודש, חודשיים, שלושה או שנה.', 'invalid-argument');
     }
+    // Automatic planning always uses the configured planner basis. Imported
+    // workbook drafts own their basis and must never replace these pointers.
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const source = await loadSource(ctx, config.active_source_id);
     const overrides = normalizeOverrides(data.overrides, policy.value);
@@ -3526,6 +3531,7 @@ function createScheduleRuntime(deps) {
   const MAX_SHEET_PASTE_BYTES = 2 * 1024 * 1024;
   const MAX_SHEET_ALIASES = 500;
   const MAX_SHEET_REPORT_PEOPLE = 1000;
+  const MAX_WORKBOOK_IDENTITY_WRITES = 200;
 
   function sheetAliasesRef(sid) {
     return stationRef(sid).collection('schedule_state').doc('sheet_aliases');
@@ -3612,15 +3618,174 @@ function createScheduleRuntime(deps) {
     throw error;
   }
 
+  async function resolveScheduleNotificationRecipients(ctx, notifications) {
+    const notices = Array.isArray(notifications) ? notifications : [];
+    const personIds = Array.from(new Set(notices.map((notice) => String(notice && notice.person || ''))
+      .filter((id) => id.startsWith('sp_')))).sort(compareCanonical);
+    const personDocs = await readPeopleById(
+      stationRef(ctx.sid).collection(identityStoreContract.COLLECTIONS.people),
+      personIds, directRead,
+      ['schema_version', 'person_id', 'station_id', 'kind', 'linked_uid',
+        'display_name', 'active', 'revision', 'source_ref']
+    );
+    const people = personDocs.map((snap) => snap.data() || {});
+    const byPerson = new Map(people.map((person) => [person.person_id, person]));
+    const wanted = new Set();
+    notices.forEach((notice) => {
+      const id = String(notice && notice.person || '');
+      if (id.startsWith('sp_')) {
+        const person = byPerson.get(id);
+        if (person && person.kind === 'registered' && person.active === true && person.linked_uid) {
+          wanted.add(person.linked_uid);
+        }
+      } else if (AUTH_UID_RE.test(id)) wanted.add(id);
+    });
+    const wantedUids = Array.from(wanted).sort(compareCanonical);
+    const userSnaps = await readPeopleById(
+      stationRef(ctx.sid).collection('users'), wantedUids, directRead,
+      ['stationId', 'station_id', 'station', 'active', 'is_active']
+    );
+    const verified = [];
+    userSnaps.forEach((snap) => {
+      const uid = snap.id;
+      const value = snap.exists ? (snap.data() || {}) : {};
+      if (!snap.exists || !scheduleAccess.activeMember(value, ctx.sid)) return;
+      const station = scheduleAccess.liveStation(value);
+      verified.push({ uid, station_id:station.stationId, active:true });
+    });
+    try {
+      return publicationRecipients.resolvePublicationNotifications({
+        station_id:ctx.sid,
+        notifications:notices,
+        people,
+        verified_users:verified
+      });
+    } catch (error) {
+      throw new ScheduleRuntimeError('publication-recipient-' + String(error && error.code || 'invalid'),
+        String(error && error.message || 'נמעני הפרסום אינם תקינים.'), 'failed-precondition');
+    }
+  }
+
+  async function loadWorkbookIdentityBasis(ctx) {
+    const root = stationRef(ctx.sid);
+    const [peopleSnap, bindingsSnap] = await Promise.all([
+      root.collection(identityStoreContract.COLLECTIONS.people).limit(MAX_SHEET_REPORT_PEOPLE + 1).get(),
+      root.collection(identityStoreContract.COLLECTIONS.bindings).limit(6001).get()
+    ]);
+    if (peopleSnap.size > MAX_SHEET_REPORT_PEOPLE || bindingsSnap.size > 6000) {
+      throw new ScheduleRuntimeError('import-identity-inventory-too-large',
+        'מלאי זהויות הסידור גדול מדי לייבוא אחד.', 'resource-exhausted');
+    }
+    return {
+      inventory: peopleSnap.docs.map((doc) => doc.data() || {}),
+      bindings: bindingsSnap.docs.map((doc) => {
+        const value = doc.data() || {};
+        return {
+          station_id:value.station_id,
+          source_namespace:value.source_namespace,
+          source_key:value.source_key,
+          person_id:value.person_id,
+          expected_person_revision:value.expected_person_revision
+        };
+      })
+    };
+  }
+
+  function workbookSource(ctx, pipeline) {
+    const peopleRaw = pipeline.people;
+    const revision = 'workbook-' + pipeline.digest.slice(0, 20);
+    const id = 'si_' + pipeline.digest.slice(0, 40);
+    const basis = {
+      station_id:ctx.sid, version:'workbook-import-v1', revision, carry:{},
+      counts:{ people:peopleRaw.length, availability:0, locked:0, events:0 },
+      people:peopleRaw, availability:{}, locked:{}, events:[]
+    };
+    return {
+      id, version:basis.version, revision, digest:digest(basis),
+      contentKey:String(hash(stable({ station_id:ctx.sid, people:peopleRaw }))),
+      carry:{}, peopleRaw, availability:{}, locked:{}, eventsRaw:[]
+    };
+  }
+
+  function materializeWorkbookBasis(tx, ctx, basis, identityState) {
+    const policy = basis.policy;
+    const source = basis.source;
+    const policyRef = stationRef(ctx.sid).collection('schedule_policies').doc(policy.id);
+    const sourceRef = stationRef(ctx.sid).collection('schedule_sources').doc(source.id);
+    if (source.peopleRaw.length > MAX_WORKBOOK_IDENTITY_WRITES
+        || basis.pipeline.identities.proposed_people.length > MAX_WORKBOOK_IDENTITY_WRITES) {
+      throw new ScheduleRuntimeError('import-identity-write-limit',
+        'הקובץ כולל יותר מדי אנשים לייבוא אטומי אחד.', 'resource-exhausted');
+    }
+    tx.set(policyRef, { station_id:ctx.sid, version:policy.value.version,
+      sub_stations:policy.value.sub_stations, rest:policy.value.rest,
+      rotation:policy.value.rotation, max_shifts_per_month:policy.value.max_shifts_per_month,
+      complete:true, content_digest:policy.digest, generated_from:'workbook' });
+    tx.set(sourceRef, { station_id:ctx.sid, version:source.version, revision:source.revision,
+      carry:{}, person_count:source.peopleRaw.length, availability_count:0,
+      locked_count:0, event_count:0, complete:true, content_digest:source.digest,
+      content_key:source.contentKey, generated_from:'workbook' });
+    source.peopleRaw.forEach((person) => tx.set(sourceRef.collection('people').doc(person.id), person));
+    basis.pipeline.identities.proposed_people.forEach((person) => tx.create(
+      stationRef(ctx.sid).collection(identityStoreContract.COLLECTIONS.people).doc(person.person_id), person));
+    if (basis.pipeline.identities.proposed_people.length) {
+      const current = identityState || null;
+      const revision = current && Number.isSafeInteger(current.revision) ? current.revision + 1 : 1;
+      if (revision >= Number.MAX_SAFE_INTEGER) throw new ScheduleRuntimeError('import-identity-state-limit',
+        'גרסת מלאי הזהויות הגיעה למגבלה.', 'failed-precondition');
+      tx.set(stationRef(ctx.sid).collection(identityStoreContract.COLLECTIONS.state)
+        .doc(identityStoreContract.STATE_DOCUMENT), { schema_version:1,
+          generation:current && nonEmpty(current.generation) ? current.generation : 'workbook_v1', revision });
+    }
+  }
+
   async function sheetImportBasis(ctx, req) {
     const config = await configuration(ctx.sid);
     // Importing is authoring, not activation.  It is deliberately available
     // while the engine is off so a station can load and inspect its existing
     // workbook without changing the effective schedule or sending a push.
-    requireMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
+    if ([MODE.OFF, MODE.SHADOW, MODE.NEW].indexOf(config.mode) === -1) {
+      throw new ScheduleRuntimeError('schedule-mode-blocked',
+        'מנוע הסידור אינו מופעל לפעולת הייבוא. מצב נוכחי: ' + config.mode);
+    }
     const data = plain(req.data) ? req.data : {};
     const month = requestedSheetMonth(data);
     const sheet = requestedSheetInput(data);
+    const workbookManaged = !config.active_policy_id || !config.active_source_id
+      || (String(config.active_policy_id).startsWith('ip_')
+        && String(config.active_source_id).startsWith('si_'));
+    if (workbookManaged) {
+      const identityBasis = await loadWorkbookIdentityBasis(ctx);
+      let pipeline;
+      try {
+        pipeline = importPipeline.buildWorkbookImport({
+          station_id:ctx.sid, month, input:sheet.input,
+          label_spans:sheet.labelSpans,
+          inventory:identityBasis.inventory, bindings:identityBasis.bindings
+        });
+      } catch (error) {
+        throw new ScheduleRuntimeError('import-' + String(error && error.code || 'invalid'),
+          String(error && error.message || 'קובץ הסידור אינו תקין.'), 'invalid-argument');
+      }
+      const policy = {
+        id:'ip_' + pipeline.layout.digest.slice(0, 40),
+        digest:pipeline.policy.digest,
+        value:pipeline.policy
+      };
+      const source = workbookSource(ctx, pipeline);
+      const reportDigest = digest({
+        sheet:digest({ input:sheet.digest, month }),
+        layout:pipeline.layout.digest,
+        identity:pipeline.identities.inventory_digest,
+        bindings:pipeline.identities.bindings_digest,
+        resolved:digest(pipeline.resolved)
+      });
+      return { ctx, config, data, month, sheet, policy, source,
+        people:source.peopleRaw, aliases:{}, effectiveAliases:{},
+        accept:{ missing_stations:true, ignored_blocks:true },
+        parsed:pipeline.parsed, resolved:pipeline.resolved,
+        stationMapping:null, reportDigest, pipeline };
+    }
     const policy = await loadPolicy(ctx, config.active_policy_id);
     const source = await loadSource(ctx, config.active_source_id);
     const people = source.peopleRaw.filter((person) => person.active === true);
@@ -3660,11 +3825,17 @@ function createScheduleRuntime(deps) {
 
   function sheetImportReport(basis) {
     const names = new Map(basis.source.peopleRaw.map((person) => [person.id, String(person.full_name || person.name || person.id)]));
+    const reportCounts = basis.pipeline
+      ? Object.assign({}, basis.resolved.counts, {
+        unlinked: basis.pipeline.identities.assignments
+          .filter((assignment) => assignment.person.kind === 'external').length
+      })
+      : basis.resolved.counts;
     return {
       month: basis.month,
       dates: basis.parsed.dates,
       from: basis.parsed.dates[0], to: basis.parsed.dates[basis.parsed.dates.length - 1],
-      counts: basis.resolved.counts,
+      counts: reportCounts,
       blocks: basis.parsed.blocks.map((block) => ({
         label: block.label, kind: block.kind, sub_station: block.sub_station,
         absence: block.absence, rows: block.rows, names: block.names
@@ -3682,7 +3853,7 @@ function createScheduleRuntime(deps) {
       })),
       ignored: basis.resolved.ignored,
       missing_stations: basis.resolved.missing_stations,
-      warnings: basis.parsed.warnings,
+      warnings: basis.pipeline ? basis.pipeline.warnings : basis.parsed.warnings,
       accept: basis.accept,
       station_map: basis.stationMapping,
       report_digest: basis.reportDigest,
@@ -3697,6 +3868,7 @@ function createScheduleRuntime(deps) {
    * מתקנים בגיליון או מתאימים; תחנה חסרה / בלוק שלא יובא — אחראי הסידור
    * חייב לאשר במפורש (`accept`) שראה ושזה בכוונה. חסר אינו ריק. */
   function sheetImportBlockers(basis) {
+    if (basis.pipeline) return basis.pipeline.blockers.slice();
     const counts = basis.resolved.counts;
     const out = [];
     if (counts.assignments === 0) out.push('no-assignments');
@@ -3723,7 +3895,7 @@ function createScheduleRuntime(deps) {
     const ctx = await context(req);
     requireManager(ctx);
     const basis = await sheetImportBasis(ctx, req);
-    const { data, policy, source, resolved } = basis;
+    const { config, data, policy, source, resolved } = basis;
     const report = Object.assign(sheetImportReport(basis), { blocked: false });
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const expectedReport = String(data.expected_report_digest || '');
@@ -3797,9 +3969,17 @@ function createScheduleRuntime(deps) {
     };
     await db.runTransaction(async (tx) => {
       const aliasRef = sheetAliasesRef(ctx.sid);
-      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref, aliasRef];
+      const refs = [liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid), ref, aliasRef,
+        runtimeRef(ctx.sid), stationRef(ctx.sid).collection(identityStoreContract.COLLECTIONS.state)
+          .doc(identityStoreContract.STATE_DOCUMENT)];
       const snaps = await Promise.all(refs.map((item) => tx.get(item)));
       requireLiveManager(snaps[0], snaps[1], ctx);
+      const liveRuntime = snaps[4].exists ? (snaps[4].data() || {}) : {};
+      const liveMode = MODES.indexOf(liveRuntime.mode) !== -1 ? liveRuntime.mode : MODE.OFF;
+      if (liveMode !== config.mode) {
+        throw new ScheduleRuntimeError('import-mode-changed',
+          'מצב הסידור השתנה בזמן הייבוא. יש לבדוק את הקובץ מחדש.', 'aborted');
+      }
       if (snaps[2].exists) {
         throw new ScheduleRuntimeError('draft-race', 'טיוטה עם אותו מזהה נוצרה במקביל. רענן ונסה שוב.', 'aborted');
       }
@@ -3813,6 +3993,9 @@ function createScheduleRuntime(deps) {
           updated_at: FV.serverTimestamp(), updated_by: ctx.uid
         });
       }
+      if (basis.pipeline) {
+        materializeWorkbookBasis(tx, ctx, basis, snaps[5].exists ? (snaps[5].data() || {}) : null);
+      }
       tx.create(ref, {
         station_id: ctx.sid, status: 'staging', request_id: requestId,
         request_fingerprint: fingerprint, source_id: source.id, policy_id: policy.id,
@@ -3823,7 +4006,8 @@ function createScheduleRuntime(deps) {
         source_digest: plan.source_digest, source_complete: true,
         policy_version: plan.policy_version, policy_digest: plan.policy_digest,
         generated_at: plan.generated_at, from: plan.from, to: plan.to,
-        summary, months: 1, imported: true, sheet_digest: sheetDigest, import_month: basis.month,
+        summary, months: 1, imported: true, workbook_managed:basis.pipeline ? true : false,
+        sheet_digest: sheetDigest, import_month: basis.month,
         report_digest: basis.reportDigest, import_report: report
       });
     });
@@ -3886,6 +4070,10 @@ function createScheduleRuntime(deps) {
    * green preview that the publish gate rejects. */
   function projectedPolicyForPlan(policyValue, plan, meta, draftMeta, errorCode) {
     if (!plan || plan.imported !== true) return { value: policyValue, station_map: null };
+    if ((plain(draftMeta) && draftMeta.workbook_managed === true)
+        || (plain(meta) && meta.workbook_managed === true)) {
+      return { value:policyValue, station_map:null };
+    }
     const map = importedStationMapOf(meta, draftMeta);
     try {
       const projected = sheetImport.projectCanonicalPolicy(policyValue, map);
@@ -4239,6 +4427,7 @@ function createScheduleRuntime(deps) {
         policy_version: plan.policy_version, policy_digest: plan.policy_digest,
         generated_at: plan.generated_at, from: plan.from, to: plan.to,
         summary: plan.summary, months: 1, imported: plan.imported === true,
+        workbook_managed:basis.active.meta.workbook_managed === true,
         station_map: basis.editPolicy.station_map,
         snapshot_source_id: basis.snapshotSourceId,
         edited: true, edit_base: basis.base, edit_digest: basis.editDigest,
@@ -4833,20 +5022,11 @@ function createScheduleRuntime(deps) {
     }));
   }
 
-  /* השער בפרסום: קריטי — עוצר; אחר — רק עם אישור חתום על הרשימה המדויקת. */
+  /* פערי כוח אדם וכשירות מוצגים ונחתמים כאזהרות, אך אינם חוסמים פרסום.
+   * שלמות מבנית, הרשאות ושיבוץ ידני שנדחה נשארים בשערים הנפרדים שלהם. */
   function requireGapClearance(report, acknowledgement) {
-    if (report.blocking.length) {
-      const error = new ScheduleRuntimeError('gaps-critical',
-        'יש פער חוסם (' + report.blocking.length + '). אי אפשר לפרסם עד שהפער ייסגר.', 'failed-precondition');
-      error.detail = gapSummaryFor(report);
-      throw error;
-    }
-    if (!scheduleGaps.acknowledgementValid(report, acknowledgement)) {
-      const error = new ScheduleRuntimeError('gaps-acknowledgement-required',
-        'יש ' + report.acknowledgeable.length + ' פערים שדורשים אישור מפורש של אחראי הסידור לפני הפרסום.', 'failed-precondition');
-      error.detail = gapSummaryFor(report);
-      throw error;
-    }
+    void acknowledgement;
+    return gapSummaryFor(report);
   }
 
   async function getGapReport(req) {
@@ -6219,12 +6399,14 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('draft-preview-required',
         'יש לפתוח ולבדוק את התצוגה המקדימה העדכנית לפני הפרסום.', 'failed-precondition');
     }
-    if (draftMeta.station_id !== ctx.sid || draftMeta.source_id !== config.active_source_id
-        || draftMeta.policy_id !== config.active_policy_id) {
+    const workbookManagedDraft = draftMeta.workbook_managed === true;
+    if (draftMeta.station_id !== ctx.sid || (!workbookManagedDraft
+        && (draftMeta.source_id !== config.active_source_id
+          || draftMeta.policy_id !== config.active_policy_id))) {
       throw new ScheduleRuntimeError('draft-stale', 'הטיוטה אינה מבוססת על המקור והמדיניות הפעילים.');
     }
-    const currentPolicy = await loadPolicy(ctx, config.active_policy_id);
-    const currentSource = await loadSource(ctx, config.active_source_id);
+    const currentPolicy = await loadPolicy(ctx, workbookManagedDraft ? draftMeta.policy_id : config.active_policy_id);
+    const currentSource = await loadSource(ctx, workbookManagedDraft ? draftMeta.source_id : config.active_source_id);
     if (draftMeta.base_policy_digest !== currentPolicy.digest
         || draftMeta.base_source_digest !== currentSource.digest) {
       throw new ScheduleRuntimeError('draft-source-changed',
@@ -6240,7 +6422,7 @@ function createScheduleRuntime(deps) {
       rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] }
     });
     const service = serviceFor(ctx, null, publication);
-    const planned = service.publish({
+    let planned = service.publish({
       actor: actor(ctx),
       request: {
         next: next.plan,
@@ -6252,6 +6434,9 @@ function createScheduleRuntime(deps) {
         source_draft_id: draftId,
         previous_publication_id: before ? before.pointer.publication_id : null
       }
+    });
+    planned = Object.assign({}, planned, {
+      notifications:await resolveScheduleNotificationRecipients(ctx, planned.notifications)
     });
     const expectedPrevious = before ? before.pointer.publication_id : null;
     const existing = await pubRef.get();
@@ -6339,11 +6524,9 @@ function createScheduleRuntime(deps) {
       }
       if (existingData.status !== 'staging') preparedReplayInvalid();
     }
-    /* ⭐ 42H.2 ג׳ · בקרת פערים. קריטי עוצר; אחר — רק עם אישור חתום על
-     * הרשימה המדויקת. הבדיקה כאן היא **מוקדמת** (כדי לא להעלות snapshot
-     * לפרסום שייפסל); הבדיקה **המחייבת** נעשית שוב בתוך עסקת הפרסום, על
-     * הקטלוג/המחזיקים/מדיניות הפער כפי שהעסקה קוראת אותם (§1 · TOCTOU),
-     * וגם בניסיון חוזר של פרסום שנשאר ב-staging. */
+  /* פערי כוח אדם וכשירות הם אזהרות בלבד. הם מחושבים כאן ושוב בתוך
+   * עסקת הפרסום כדי שהדוח והיומן ישקפו את מצב המקור העדכני, אך אינם
+   * עוצרים את אחראי הסידור. שערי מבנה, זהות והרשאה נשארים fail-closed. */
     const gapPeople = currentSource.peopleRaw.filter((person) => person.active === true);
     const gapPolicyValue = projectedPolicyForPlan(
       currentPolicy.value, next.plan, null, draftMeta, 'gap-station-map-missing'
@@ -6374,6 +6557,7 @@ function createScheduleRuntime(deps) {
       policy_digest: next.plan.policy_digest, generated_at: next.plan.generated_at,
       from: next.plan.from, to: next.plan.to, summary: next.plan.summary,
       imported: next.plan.imported === true,
+      workbook_managed: workbookManagedDraft,
       edited: draftMeta.edited === true, edit_base: draftMeta.edited === true ? draftMeta.edit_base : null,
       content_hash: planned.publication.content_hash,
       published_by: ctx.uid, published_by_name: ctx.name
@@ -6432,8 +6616,9 @@ function createScheduleRuntime(deps) {
       /* ⭐ המצב נבדק מול מה שתוכנן, ולא מול „אחד משניים". תחנה
        * שעברה ל-new באמצע הכנה תקבל פרסום מוכן שנכתב עבור shadow —
        * ולהפך. שניהם שגויים, ושניהם נחסמים כאן. */
-      if (liveConfig.mode !== config.mode || liveConfig.active_source_id !== draftMeta.source_id
-          || liveConfig.active_policy_id !== draftMeta.policy_id) {
+      if (liveConfig.mode !== config.mode || (!workbookManagedDraft
+          && (liveConfig.active_source_id !== draftMeta.source_id
+            || liveConfig.active_policy_id !== draftMeta.policy_id))) {
         throw new ScheduleRuntimeError('publish-config-changed', 'הגדרות הסידור השתנו בזמן הפרסום.', 'aborted');
       }
       const actualPrevious = nonEmpty(liveActive.publication_id) ? liveActive.publication_id : null;
@@ -6474,9 +6659,10 @@ function createScheduleRuntime(deps) {
         summary: gapReport.summary, digest: gapReport.digest,
         basis_digest: gapBasisDigest(txGapCtx),
         gap_policy_revision: txGapCtx.gap_policy_revision,
-        acknowledged: gapReport.acknowledgeable.length > 0,
-        acknowledgement: gapReport.acknowledgeable.length > 0 ? gapAcknowledgement : null,
-        acknowledged_by: gapReport.acknowledgeable.length > 0 ? ctx.uid : null,
+        acknowledged: false,
+        acknowledgement: null,
+        acknowledged_by: null,
+        warning_count: gapReport.blocking.length + gapReport.acknowledgeable.length,
         checked_in_transaction: true
       };
       tx.update(pubRef, {
@@ -6499,8 +6685,13 @@ function createScheduleRuntime(deps) {
         previous_publication_id: expectedPrevious, by: ctx.uid,
         at: FV.serverTimestamp()
       }, {
-        gaps_acknowledged: gapReport && gapReport.acknowledgeable.length ? gapReport.digest : null,
-        gaps_other: gapReport ? gapReport.acknowledgeable.length : 0
+        gaps_warning_digest: gapReport ? gapReport.digest : null,
+        gaps_blocking: gapReport ? gapReport.blocking.length : 0,
+        gaps_other: gapReport ? gapReport.acknowledgeable.length : 0,
+        manual_warning_assignments: Number(next.plan.summary.manual_warning_assignments || 0),
+        manual_warnings: Number(next.plan.summary.manual_warnings || 0),
+        manual_warning_counts: plain(next.plan.summary.manual_warning_counts)
+          ? next.plan.summary.manual_warning_counts : {}
       }, liveDraft.edited === true ? {
         edited_from: liveDraft.edit_base, edit_digest: liveDraft.edit_digest || null,
         edit_people: plain(liveDraft.edit_summary) && Array.isArray(liveDraft.edit_summary.people) ? liveDraft.edit_summary.people : [],
@@ -6648,8 +6839,11 @@ function createScheduleRuntime(deps) {
         'אפשר לחזור רק לגרסה הקודמת המיידית.', 'failed-precondition');
     }
     const target = await publishedSnapshot(ctx, targetId);
-    const rollbackPolicy = await loadPolicy(ctx, config.active_policy_id);
-    const rollbackSource = await loadSource(ctx, config.active_source_id);
+    const workbookManagedTarget = target.meta.workbook_managed === true;
+    const rollbackPolicy = await loadPolicy(ctx, workbookManagedTarget
+      ? target.meta.policy_id : config.active_policy_id);
+    const rollbackSource = await loadSource(ctx, workbookManagedTarget
+      ? target.meta.source_id : config.active_source_id);
     const rollbackGapPeople = rollbackSource.peopleRaw.filter((person) => person.active === true);
     const rollbackEffectivePolicy = projectedPolicyForPlan(
       rollbackPolicy.value, target.plan, target.meta, null, 'gap-station-map-missing'
@@ -6662,7 +6856,7 @@ function createScheduleRuntime(deps) {
       clock, hash, rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] }
     });
     const service = serviceFor(ctx, null, publication);
-    const planned = service.publish({
+    let planned = service.publish({
       actor: actor(ctx),
       request: {
         next: target.plan,
@@ -6674,6 +6868,9 @@ function createScheduleRuntime(deps) {
         source_draft_id: 'rollback_' + targetId,
         previous_publication_id: expectedActive
       }
+    });
+    planned = Object.assign({}, planned, {
+      notifications:await resolveScheduleNotificationRecipients(ctx, planned.notifications)
     });
     const existing = await pubRef.get();
     if (existing.exists) {
@@ -6712,6 +6909,7 @@ function createScheduleRuntime(deps) {
         rollback_reason_code: reasonCode,
         created_at: FV.serverTimestamp(),
         source_snapshot: target.plan.source_snapshot,
+        workbook_managed: workbookManagedTarget,
         source_version: target.plan.source_version,
         contract_station_id: target.plan.contract_station_id,
         source_revision: target.plan.source_revision,
@@ -6761,8 +6959,8 @@ function createScheduleRuntime(deps) {
     await beforeSnapshotFinalize({ kind: 'rollback', ref: pubRef, ctx });
     try {
       await db.runTransaction(async (tx) => {
-      const policyRef = stationRef(ctx.sid).collection('schedule_policies').doc(config.active_policy_id);
-      const sourceRef = stationRef(ctx.sid).collection('schedule_sources').doc(config.active_source_id);
+      const policyRef = stationRef(ctx.sid).collection('schedule_policies').doc(rollbackPolicy.id);
+      const sourceRef = stationRef(ctx.sid).collection('schedule_sources').doc(rollbackSource.id);
       const refs = [runtimeRef(ctx.sid), activeRef(ctx.sid),
         current.ref, target.ref, pubRef, policyRef, sourceRef,
         liveUserRef(ctx.sid, ctx.uid), scheduleAccessRef(ctx.sid, ctx.uid)];
@@ -6783,9 +6981,10 @@ function createScheduleRuntime(deps) {
         throw new ScheduleRuntimeError('rollback-mode-changed',
           'מצב המנוע השתנה בזמן החזרה.', 'aborted');
       }
-      if (liveConfig.active_policy_id !== config.active_policy_id
-          || liveConfig.active_source_id !== config.active_source_id
-          || livePolicy.content_digest !== rollbackPolicy.digest
+       if ((!workbookManagedTarget
+             && (liveConfig.active_policy_id !== config.active_policy_id
+               || liveConfig.active_source_id !== config.active_source_id))
+           || livePolicy.content_digest !== rollbackPolicy.digest
           || liveSource.content_digest !== rollbackSource.digest) {
         throw new ScheduleRuntimeError('rollback-config-changed',
           'המדיניות או מקור הסידור השתנו בזמן החזרה. יש לרענן.', 'aborted');
@@ -6809,9 +7008,10 @@ function createScheduleRuntime(deps) {
         digest: rollbackGapReport.digest,
         basis_digest: gapBasisDigest(txRollbackGapCtx),
         gap_policy_revision: txRollbackGapCtx.gap_policy_revision,
-        acknowledged: rollbackGapReport.acknowledgeable.length > 0,
-        acknowledgement: rollbackGapReport.acknowledgeable.length > 0 ? gapAcknowledgement : null,
-        acknowledged_by: rollbackGapReport.acknowledgeable.length > 0 ? ctx.uid : null,
+        acknowledged: false,
+        acknowledgement: null,
+        acknowledged_by: null,
+        warning_count: rollbackGapReport.blocking.length + rollbackGapReport.acknowledgeable.length,
         checked_in_transaction: true
       };
       tx.update(pubRef, {
@@ -6835,8 +7035,13 @@ function createScheduleRuntime(deps) {
         from_publication_id: expectedActive,
         target_publication_id: targetId,
         reason_code: reasonCode,
-        gaps_acknowledged: rollbackGapReport.acknowledgeable.length ? rollbackGapReport.digest : null,
+        gaps_warning_digest: rollbackGapReport.digest,
+        gaps_blocking: rollbackGapReport.blocking.length,
         gaps_other: rollbackGapReport.acknowledgeable.length,
+        manual_warning_assignments: Number(target.plan.summary.manual_warning_assignments || 0),
+        manual_warnings: Number(target.plan.summary.manual_warnings || 0),
+        manual_warning_counts: plain(target.plan.summary.manual_warning_counts)
+          ? target.plan.summary.manual_warning_counts : {},
         by: ctx.uid, at: FV.serverTimestamp()
       });
       });

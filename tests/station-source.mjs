@@ -47,8 +47,6 @@ for (const stationId of ['', 'eilat_102', 'other_station']) {
 
 const exportsToCheck = [
   'sendBroadcast',
-  'sendCallout',
-  'closeCallout',
   'claimPushToken'
 ];
 
@@ -64,6 +62,44 @@ for (let i = 0; i < exportsToCheck.length; i += 1) {
     `${name} must source station from callerStation`);
   assert.doesNotMatch(block, /stationId\s*\|\|\s*PUSH_STATION/,
     `${name} must not fall back to the pilot station`);
+}
+
+function calloutStationErrors(candidate) {
+  const errors = [];
+  const actorStart = candidate.indexOf('async function freshCalloutActor(req) {');
+  const actorEnd = candidate.indexOf('\n}', actorStart);
+  const actorBlock = actorStart === -1 || actorEnd === -1 ? '' : candidate.slice(actorStart, actorEnd + 2);
+  if (!/const sid\s*=\s*callerStation\(req, signed\);/.test(actorBlock)) {
+    errors.push('fresh actor derives station from the verified token boundary');
+  }
+  if (!/admin\.auth\(\)\.getUser\(signed\.uid\)/.test(actorBlock)
+      || !/String\(claims\.stationId \|\| ''\) !== sid/.test(actorBlock)) {
+    errors.push('fresh Auth claims must match the signed station');
+  }
+  if (/req\.data[\s\S]*station(?:Id|_id)/.test(actorBlock)) {
+    errors.push('fresh actor must not accept a station from request data');
+  }
+  for (const name of ['sendCallout', 'closeCallout']) {
+    const start = candidate.indexOf(`exports.${name} =`);
+    const next = candidate.indexOf('\nexports.', start + 1);
+    const block = start === -1 ? '' : candidate.slice(start, next === -1 ? candidate.length : next);
+    if (!/const actor\s*=\s*await freshCalloutActor\(req\);/.test(block)
+        || !/const sid\s*=\s*actor\.sid;/.test(block)) {
+      errors.push(name + ' uses only the freshly verified actor station');
+    }
+  }
+  return errors;
+}
+
+assert.deepEqual(calloutStationErrors(source), [],
+  'callout station authority is derived from live Auth claims, not client data or stale claims');
+for (const [label, mutant] of [
+  ['request-data station', source.replace('const sid = callerStation(req, signed);',
+    "const sid = String((req.data || {}).stationId || '');")],
+  ['fresh-claim comparison removed', source.replace("String(claims.stationId || '') !== sid ||", 'false ||')],
+  ['send reverts to stale claims', source.replace('const sid = actor.sid;', 'const sid = callerStation(req, auth);')]
+]) {
+  assert.ok(calloutStationErrors(mutant).length > 0, label + ' mutation is rejected');
 }
 
 assert.equal((source.match(/stationId\s*\|\|\s*PUSH_STATION/g) || []).length, 0,

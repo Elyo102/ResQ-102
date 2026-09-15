@@ -30,6 +30,16 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const browser = await chromium.launch();
 
+function assertOnlyCalloutSeenWrites(writes) {
+  const list = Array.isArray(writes) ? writes : [];
+  const unrelated = list.filter((entry) =>
+    !/^stations\/[^/]+\/callouts\/[^/]+\/responses\/[^/]+$/.test(String(entry.path || '')));
+  assert.equal(unrelated.length, 0, 'failure path must not write attendance or schedule data');
+  assert.ok(list.every((entry) =>
+    Object.keys(entry.value || {}).join(',') === 'seen_at' && entry.options?.merge === true),
+  'only the global callout seen receipt may be written');
+}
+
 async function contextWithPlan(plan) {
   const context = await browser.newContext({
     viewport:{ width:390, height:844 }, locale:'he-IL', timezoneId:'Asia/Jerusalem'
@@ -65,11 +75,17 @@ try {
     }, failReload);
     await page.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false');
     assert.equal(await page.locator('#ov').getAttribute('aria-hidden'), 'true');
-    const before = await page.evaluate(() => ({message:document.querySelector('#msg').textContent, writes:(window.__FIRESTORE_WRITES || []).length}));
+    const before = await page.evaluate(() => ({
+      message:document.querySelector('#msg').textContent,
+      writes:window.__FIRESTORE_WRITES || []
+    }));
     await page.evaluate(async () => { await window.__retainedSave(); });
-    const after = await page.evaluate(() => ({message:document.querySelector('#msg').textContent, writes:(window.__FIRESTORE_WRITES || []).length}));
+    const after = await page.evaluate(() => ({
+      message:document.querySelector('#msg').textContent,
+      writes:window.__FIRESTORE_WRITES || []
+    }));
     assert.deepEqual(after, before, 'retained edit callback cannot write or paint into a new month');
-    assert.equal(before.writes, 0);
+    assertOnlyCalloutSeenWrites(before.writes);
     await context.close();
     console.log('✓ retained edit callback rejected after month navigation; failed reload='+failReload);
   }
@@ -84,7 +100,7 @@ try {
     for (const id of ['btnFill','btnSync','btnSubmit','btnStart','btnManual']) {
       assert.equal(await page.locator('#'+id).isDisabled(), true);
     }
-    assert.equal(await page.evaluate(() => (window.__FIRESTORE_WRITES || []).length), 0);
+    assertOnlyCalloutSeenWrites(await page.evaluate(() => window.__FIRESTORE_WRITES || []));
     await page.evaluate(() => { window.__SMOKE_FAIL_PATHS = []; });
     await page.addStyleTag({content:'#coWrap{display:none!important}'});
     await page.locator('#next').click();

@@ -982,6 +982,104 @@ const CONFLICT_SHEET = [
   })), 'import-station-mapping-duplicate');
 }
 
+/* 10 · בסיס קובץ בבעלות הטיוטה אינו מחליף את בסיס המתכנן. */
+{
+  const db = createFakeDb();
+  const { rt, policyId, sourceId } = await seed(db);
+  const aliases = { 'רועי': 'ux', 'גיא': 'u5', 'אבטחה': null };
+  const report = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET, aliases }));
+  await rt.importScheduleSheet(req({
+    request_id: 'basis_configured_import', month: '2026-09', paste: SHEET,
+    aliases, expected_report_digest: report.report_digest
+  }));
+  const runtimeAfterImport = db._get(ST + '/schedule_state/runtime');
+  eq('10.1 ייבוא אינו מחליף את מצביעי המתכנן הפעילים',
+    [runtimeAfterImport.active_policy_id, runtimeAfterImport.active_source_id],
+    [policyId, sourceId]);
+  const planned = await rt.runPlanner(req({
+    request_id: 'basis_configured_plan', start: '2026-10-01', months: 1
+  }));
+  const plannedMeta = db._get(ST + '/schedule_drafts/' + planned.draft_id);
+  eq('10.2 המתכנן האוטומטי ממשיך להשתמש בבסיס הפעיל שהוגדר',
+    [plannedMeta.policy_id, plannedMeta.source_id], [policyId, sourceId]);
+}
+
+/* 11 · תחנה לא מוגדרת: ייבוא אטומי, חיצוניים יציבים, בלי זיהום runtime. */
+{
+  const db = createFakeDb();
+  db._put(ST + '/users/' + MGR, {
+    station_id: SID, station: SID, is_active: true, active: true,
+    role: 'firefighter', full_name: 'מ'
+  });
+  db._put(ST + '/schedule_access/' + MGR, {
+    schema_version: 1, station_id: SID, uid: MGR,
+    roles: ['schedule_manager'], active: true, revision: 1
+  });
+  db._put(ST + '/schedule_state/runtime', { mode: 'shadow' });
+  const rt = buildRuntime(db);
+  const report = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }));
+  eq('11.1 שמות ייחודיים ללא חשבון הם אזהרה ולא חסם',
+    [report.blocked, report.counts.unlinked > 0], [false, true]);
+  const imported = await rt.importScheduleSheet(req({
+    request_id: 'basis_unconfigured_import', month: '2026-09', paste: SHEET,
+    expected_report_digest: report.report_digest
+  }));
+  const runtimeAfter = db._get(ST + '/schedule_state/runtime');
+  eq('11.2 ייבוא ללא הגדרה מצליח ומשאיר runtime לא מוגדר',
+    [imported.duplicate, runtimeAfter.active_policy_id || null, runtimeAfter.active_source_id || null],
+    [false, null, null]);
+  const externalPaths = db._paths(ST + '/schedule_people/');
+  ok('11.3 אנשים חיצוניים נשמרים ב-person_id יציב',
+    externalPaths.length > 0 && externalPaths.every((path) => /\/sp_[a-f0-9]{48}$/.test(path)));
+  const basisCounts = [
+    db._paths(ST + '/schedule_people/').length,
+    db._paths(ST + '/schedule_policies/').length,
+    db._paths(ST + '/schedule_sources/').length,
+    db._paths(ST + '/schedule_drafts/').length
+  ];
+  const replay = await rt.importScheduleSheet(req({
+    request_id: 'basis_unconfigured_import', month: '2026-09', paste: SHEET,
+    expected_report_digest: report.report_digest
+  }));
+  eq('11.4 ניסיון חוזר אידמפוטנטי ואינו מוסיף חומר', [replay.duplicate, [
+    db._paths(ST + '/schedule_people/').length,
+    db._paths(ST + '/schedule_policies/').length,
+    db._paths(ST + '/schedule_sources/').length,
+    db._paths(ST + '/schedule_drafts/').length
+  ]], [true, basisCounts]);
+}
+
+/* 12 · כשל בשער העסקה אינו משאיר basis או טיוטה חלקיים. */
+{
+  const db = createFakeDb();
+  db._put(ST + '/users/' + MGR, {
+    station_id: SID, station: SID, is_active: true, active: true,
+    role: 'firefighter', full_name: 'מ'
+  });
+  db._put(ST + '/schedule_access/' + MGR, {
+    schema_version: 1, station_id: SID, uid: MGR,
+    roles: ['schedule_manager'], active: true, revision: 1
+  });
+  db._put(ST + '/schedule_state/runtime', { mode: 'shadow' });
+  const rt = buildRuntime(db);
+  const report = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }));
+  const originalTx = db.runTransaction;
+  db.runTransaction = async (fn) => {
+    db._del(ST + '/schedule_access/' + MGR);
+    return originalTx.call(db, fn);
+  };
+  await rejectsCode('12.1 ביטול מינוי בגבול הכתיבה עוצר את הייבוא', () => rt.importScheduleSheet(req({
+    request_id: 'basis_failed_import', month: '2026-09', paste: SHEET,
+    expected_report_digest: report.report_digest
+  })), 'manager-revoked');
+  eq('12.2 ייבוא שנכשל לא משאיר אנשים, policy, source או draft', [
+    db._paths(ST + '/schedule_people/').length,
+    db._paths(ST + '/schedule_policies/').length,
+    db._paths(ST + '/schedule_sources/').length,
+    db._paths(ST + '/schedule_drafts/').length
+  ], [0, 0, 0, 0]);
+}
+
 if (fails.length) {
   console.error('✗ ' + fails.length + ' כשלים:');
   fails.forEach((f) => console.error('  ' + f));

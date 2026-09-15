@@ -310,8 +310,8 @@ function between(src, start, end) {
 }
 
 const expectedDeployLines = [
-  'npx --yes firebase-tools@15.28.1 deploy --only firestore:rules,firestore:indexes --project station-102',
-  'npx --yes firebase-tools@15.28.1 deploy --only functions --project station-102',
+  "Invoke-ResQDeployWith429Backoff 'firestore:rules,firestore:indexes' 'deploy rules and indexes' 'rules_indexes'",
+  "Invoke-ResQDeployWith429Backoff 'functions' 'deploy functions' 'functions'",
   'npx --yes firebase-tools@15.28.1 hosting:clone ("station-102@" + $resqPreviewVersionId) station-102:live --project station-102',
 ];
 const expectedEmulatorLines = [
@@ -327,6 +327,7 @@ const expectedEmulatorLines = [
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-edit.integration.test.js"',
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-qualifications.integration.test.js"',
   'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js"',
+  'npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project demo-resq "cd functions && node callout-delivery.integration.test.js"',
 ];
 const expectedInstallLines = [
   'npm ci --prefix functions',
@@ -359,7 +360,7 @@ function analyseReleaseDoc(src) {
   const approvalSection = between(src, "## 4 ·", "## 5 ·");
   const versionSection = between(src, "## 6 ·", "\n---");
   const deploys = commandLines(deploySection,
-    /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+(?:deploy\b|hosting:clone\b)/);
+    /^(?:Invoke-ResQDeployWith429Backoff\b|npx\s+--yes\s+firebase-tools@15\.28\.1\s+hosting:clone\b)/);
   const emulators = commandLines(gateSection,
     /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+emulators:exec\b/);
   const installs = commandLines(setupSection, /^(?:npm\s+ci\s+--prefix|npm\s+--prefix\s+tests\s+exec\b)/);
@@ -374,6 +375,14 @@ function analyseReleaseDoc(src) {
     rollbacks,
     exactDeployOrder: JSON.stringify(deploys) === JSON.stringify(expectedDeployLines),
     exactEmulators: JSON.stringify(emulators) === JSON.stringify(expectedEmulatorLines),
+    deployHelperPinned:
+      setupSection.includes('function Invoke-ResQDeployWith429Backoff([string]$only, [string]$step, [string]$attemptKey)') &&
+      setupSection.includes('& npx --yes firebase-tools@15.28.1 deploy --only $only --project station-102') &&
+      setupSection.includes('$delays = @(0, 60, 180)') &&
+      setupSection.includes("$rateLimited = $output -match '(?i)(?:\\b429\\b|too many requests|rate.?limit|quota exceeded)'") &&
+      setupSection.includes('if ($exitCode -eq 0) { return }') &&
+      setupSection.includes('if (-not $rateLimited -or $attempt -eq $delays.Count - 1)') &&
+      setupSection.includes('throw "$step failed with exit $exitCode after $($attempt + 1) attempt(s)"'),
     cleanWorktree: /git\s+worktree\s+add\s+--detach\b/.test(src) &&
       /git\s+status\s+--porcelain=v1\s+--untracked-files=all\b/.test(src) &&
       /git\s+rev-parse\s+HEAD\b/.test(src) &&
@@ -457,9 +466,13 @@ const releaseDoc = analyseReleaseDoc(doc);
 const deployLines = releaseDoc.deploys;
 ok('6.0 יש בדיוק שלוש פקודות פריסה ובסדר הבטוח', releaseDoc.exactDeployOrder,
   'נמצאו: ' + JSON.stringify(deployLines));
+ok('6.0א עטיפת ה-retry מקובעת ל-station-102 ונכשלת-סגור',
+  releaseDoc.deployHelperPinned);
 for (const l of deployLines) {
   ok('6.1 „' + l.slice(0, 46) + '…" נוקב בפרויקט',
-    /--project\s+station-102\b/.test(l),
+    /^Invoke-ResQDeployWith429Backoff\b/.test(l)
+      ? releaseDoc.deployHelperPinned
+      : /--project\s+station-102\b/.test(l),
     'פריסה בלי --project נשענת על ברירת המחדל של המחשב');
 }
 
@@ -471,7 +484,7 @@ for (const target of ['firestore:rules', 'firestore:indexes', 'functions', 'host
 }
 
 /* כל פקודות האמולטור של CI חייבות להופיע במלואן. לולאה ריקה אינה PASS. */
-ok('6.3 יש בדיוק שתים-עשרה פקודות אמולטור מלאות', releaseDoc.exactEmulators,
+ok('6.3 יש בדיוק שלוש-עשרה פקודות אמולטור מלאות', releaseDoc.exactEmulators,
   'נמצאו: ' + JSON.stringify(releaseDoc.emulators));
 for (const l of releaseDoc.emulators) {
   ok('6.3 שורת אמולטור במסמך אינה נוגעת בייצור',

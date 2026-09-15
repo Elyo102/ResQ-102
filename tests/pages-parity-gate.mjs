@@ -12,7 +12,7 @@ const PRIVATE_PATTERNS = Object.freeze([
   /(?:^|\/).*?(?:adminsdk|service[-_]?account).*$/i,
   /\.(?:mjs|md|txt|bat|ps1|log|rules|key|pem|zip|bundle|mbox|patch)$/i
 ]);
-const PUBLIC_ROOT = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:html|js|css|json|png|jpe?g|ico|svg|webp)$/i;
+const PUBLIC_ROOT = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:html|js|css|json|png|jpe?g|ico|svg|webp|mp3)$/i;
 const PUBLIC_VEHICLE_ASSET = /^vehicle-[A-Za-z0-9_-]+\/(?:front|rear|left|right)\.jpg$/i;
 const DIAGNOSTIC_LIMIT = 20;
 const PUBLIC_ASSETS = Object.freeze(JSON.parse(

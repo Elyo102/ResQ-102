@@ -35,7 +35,11 @@ const MAX_WARNINGS = 200;
 const KINDS = Object.freeze(['assign', 'unassign', 'role', 'absence']);
 const ABSENCE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave']);
 const LOCATIONS = Object.freeze(['abroad', 'north', 'eilat']);
-const SLOT_SOURCE = 'edited';
+const SLOT_SOURCE = 'manual';
+const MANUAL_WARNING_ORDER = Object.freeze([
+  'not_available', 'rest', 'out_of_rotation', 'no_qualified',
+  'out_of_sub_station', 'over_limit'
+]);
 
 class ScheduleEditError extends Error {
   constructor(code, message) {
@@ -52,6 +56,42 @@ function clone(v) { return JSON.parse(JSON.stringify(v)); }
 function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 
 function compareText(a, b) { return a < b ? -1 : (a > b ? 1 : 0); }
+
+function dayNumber(date) { return Math.floor(Date.parse(date + 'T00:00:00.000Z') / 86400000); }
+
+function rotationGroup(policy, date) {
+  const rotation = plain(policy.rotation) ? policy.rotation : null;
+  if (!rotation || rotation.strict !== true || !Array.isArray(rotation.groups)
+      || !rotation.groups.length || !validIsoDate(String(rotation.anchor || ''))
+      || !Number.isInteger(rotation.days_per_group) || rotation.days_per_group <= 0) return null;
+  const cycle = rotation.groups.length * rotation.days_per_group;
+  const delta = dayNumber(date) - dayNumber(rotation.anchor);
+  return rotation.groups[Math.floor((((delta % cycle) + cycle) % cycle) / rotation.days_per_group)];
+}
+
+function manualWarningCodes(person, sub, role, date, rows, absences, policy, addsAssignment) {
+  const codes = new Set();
+  if (absences.some((a) => a && a.uid === person.id && a.date === date)) codes.add('not_available');
+  const minGap = plain(policy.rest) && Number.isInteger(policy.rest.min_gap_days)
+    ? policy.rest.min_gap_days : 0;
+  if (minGap > 0 && rows.some((row) => row && row.date !== date
+      && Math.abs(dayNumber(row.date) - dayNumber(date)) <= minGap
+      && (row.slots || []).some((slot) => slot && slot.person === person.id))) codes.add('rest');
+  const group = rotationGroup(policy, date);
+  if (group && nonEmpty(person.group) && person.group !== group) codes.add('out_of_rotation');
+  if (role !== null && (!Array.isArray(person.roles) || person.roles.indexOf(role) === -1)) codes.add('no_qualified');
+  if (role === null && !allowedRoles(policy, sub).some((candidate) =>
+    Array.isArray(person.roles) && person.roles.indexOf(candidate) !== -1)) codes.add('no_qualified');
+  if (person.sub_station !== sub) codes.add('out_of_sub_station');
+  if (Number.isInteger(policy.max_shifts_per_month) && policy.max_shifts_per_month > 0) {
+    const month = date.slice(0, 7);
+    const load = rows.reduce((count, row) => count + ((row.date || '').slice(0, 7) === month
+      && (row.slots || []).some((slot) => slot && slot.person === person.id) ? 1 : 0), 0)
+      + (addsAssignment === true ? 1 : 0);
+    if (load > policy.max_shifts_per_month) codes.add('over_limit');
+  }
+  return MANUAL_WARNING_ORDER.filter((code) => codes.has(code));
+}
 
 function validIsoDate(value) {
   if (!DATE_RE.test(value)) return false;
@@ -215,6 +255,17 @@ function applyEdits(input) {
     if (plain(person) && nonEmpty(person.id) && person.active !== false) people.set(person.id, person);
   });
   const edits = normalizeEdits(inp.edits, { from: plan.from, to: plan.to });
+  const manualKeys = new Set();
+  edits.forEach((entry, index) => {
+    if (entry.kind !== 'assign') return;
+    entry.dates.forEach((date) => {
+      const key = entry.uid + '\u0000' + date;
+      if (manualKeys.has(key)) {
+        fail('edit-person-date-duplicate', 'עריכה ' + (index + 1) + ': האדם שובץ יותר מפעם אחת באותו תאריך.');
+      }
+      manualKeys.add(key);
+    });
+  });
 
   const rows = clone(plan.rows);
   /* ⭐ עריכה ידנית תמיד אפשרית (הכרעת אלדד, 5.9). כשחוקי התחנה השתנו מאז
@@ -307,7 +358,13 @@ function applyEdits(input) {
       if (edit.kind === 'assign') {
         removeFromDay(edit.uid, date);          // העברה: פעם אחת ביום
         const row = rowFor(date, edit.sub_station);
-        row.slots.push({ person: edit.uid, role: edit.role, label: roleLabelFor(policy, edit.sub_station, edit.role), source: SLOT_SOURCE });
+        const warningCodes = manualWarningCodes(people.get(edit.uid), edit.sub_station,
+          edit.role, date, rows, absences, policy, true);
+        const slot = { person: edit.uid, role: edit.role,
+          label: roleLabelFor(policy, edit.sub_station, edit.role), source: SLOT_SOURCE };
+        if (warningCodes.length) slot.manual_warning_codes = warningCodes;
+        row.slots.push(slot);
+        warningCodes.forEach((code) => warn({ code, uid: edit.uid, date, sub_station: edit.sub_station }));
         if (row.coverage === 'missing') row.coverage = 'ready';   // אדם הזין — הנתון ידוע
         if (absences.some((a) => a.uid === edit.uid && a.date === date)) {
           warn({ code: 'assigned-while-absent', uid: edit.uid, date });
@@ -321,6 +378,11 @@ function applyEdits(input) {
         hit.row.slots[hit.idx].role = edit.role;
         hit.row.slots[hit.idx].label = roleLabelFor(policy, hit.row.sub_station, edit.role);
         hit.row.slots[hit.idx].source = SLOT_SOURCE;
+        const warningCodes = manualWarningCodes(people.get(edit.uid), hit.row.sub_station,
+          edit.role, date, rows, absences, policy, false);
+        if (warningCodes.length) hit.row.slots[hit.idx].manual_warning_codes = warningCodes;
+        else delete hit.row.slots[hit.idx].manual_warning_codes;
+        warningCodes.forEach((code) => warn({ code, uid: edit.uid, date, sub_station: hit.row.sub_station }));
       } else if (edit.kind === 'absence') {
         for (let k = absences.length - 1; k >= 0; k -= 1) {
           if (absences[k].uid === edit.uid && absences[k].date === date) absences.splice(k, 1);
@@ -346,6 +408,18 @@ function applyEdits(input) {
   kept.sort((a, b) => compareText(a.date + '|' + a.sub_station, b.date + '|' + b.sub_station));
   absences.sort((a, b) => compareText(a.date, b.date) || compareText(a.uid, b.uid));
 
+  let manualWarningAssignments = 0;
+  let manualWarnings = 0;
+  const manualWarningCounts = Object.create(null);
+  kept.forEach((row) => (row.slots || []).forEach((slot) => {
+    if (!Array.isArray(slot.manual_warning_codes) || !slot.manual_warning_codes.length) return;
+    manualWarningAssignments += 1;
+    manualWarnings += slot.manual_warning_codes.length;
+    slot.manual_warning_codes.forEach((code) => {
+      manualWarningCounts[code] = (manualWarningCounts[code] || 0) + 1;
+    });
+  }));
+
   const changes = [];
   Array.from(touched.keys()).sort(compareText).forEach((uid) => {
     const byDate = touched.get(uid);
@@ -362,6 +436,9 @@ function applyEdits(input) {
     summary: Object.assign({}, plain(plan.summary) ? plan.summary : {}, {
       filled: kept.reduce((n, row) => n + row.slots.length, 0),
       blocking_gaps: 0, days_below_minimum: 0, rejected_manual: 0, open_rows: 0,
+      manual_warning_assignments: manualWarningAssignments,
+      manual_warnings: manualWarnings,
+      manual_warning_counts: Object.assign({}, manualWarningCounts),
       edited_below_minimum: kept.filter((row) => row.below_minimum === true).length,
       edited_absences: absences.length
     }),
@@ -382,7 +459,9 @@ function applyEdits(input) {
       dates: Array.from(new Set(changes.map((c) => c.date))).length,
       no_ops: edits.reduce((n, e) => n + e.dates.length, 0) - changes.length,
       below_minimum: nextPlan.summary.edited_below_minimum,
-      warnings: warningsTotal
+      warnings: warningsTotal,
+      manual_warning_assignments: manualWarningAssignments,
+      manual_warnings: manualWarnings
     },
     people_changed
   };

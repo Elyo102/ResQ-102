@@ -62,6 +62,8 @@ for (const asset of ['./bulletin.js', './bulletin.css']) {
 }
 
 const systemCheck = read('check.html');
+check(/where\('uids',\s*'array-contains',\s*uid\),\s*where\('active',\s*'==',\s*true\),\s*orderBy\('created_key',\s*'desc'\)/.test(systemCheck),
+      'deployment check probes the active-recipient callout index with the authorized query shape');
 const subStationProbe = systemCheck.indexOf("if (col.name === 'sub_stations')");
 const genericProbe = systemCheck.indexOf("const id = MARK + '_' + Date.now();");
 check(systemCheck.includes("const SUB_STATION_PROBE_ID = '__selfcheck_archived_site'"),

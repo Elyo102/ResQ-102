@@ -85,8 +85,8 @@ const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
   ['team_leader', { role:'team_leader' }, member, 2],
-  ['deputy', { role:'deputy' }, staff, 3],
-  ['commander', { role:'commander' }, staff, 3],
+  ['deputy', { role:'deputy' }, staff.concat(['callout.html']), 3],
+  ['commander', { role:'commander' }, staff.concat(['callout.html']), 3],
   ['station_commander', { role:'station_commander' }, audit, 3],
   ['hr_coordinator', { role:'hr_coordinator' }, audit.concat(['hr.html']), 3],
   ['string_super', { role:'firefighter', super:'true' }, member, 2],
@@ -117,6 +117,20 @@ try {
     });
   }
   await matrixContext.close();
+
+  const commandContext = await browser.newContext({ viewport:{ width:1280, height:800 }, locale:'he-IL' });
+  const commandPage = await open(commandContext, { role:'commander' });
+  await test('callout is placed under my shift for shift command only', async () => {
+    const mine = await commandPage.locator('#panel-mine a').evaluateAll(nodes =>
+      nodes.map(node => new URL(node.href).pathname.split('/').pop()));
+    const station = await commandPage.locator('#panel-station a').evaluateAll(nodes =>
+      nodes.map(node => new URL(node.href).pathname.split('/').pop()));
+    if (!mine.includes('callout.html')) throw new Error('callout is missing from my shift');
+    if (station.includes('callout.html')) throw new Error('callout remained under station');
+    if (!station.includes('alerts.html')) throw new Error('member alert settings were removed');
+  });
+  await commandPage.close();
+  await commandContext.close();
 
   const mobile = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   const mobilePage = await open(mobile, { role:'firefighter' });
