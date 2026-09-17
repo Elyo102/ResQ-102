@@ -33,14 +33,14 @@
   /* --- יסודות ממשק משותפים (opt-in) --- */
   --space-1:4px; --space-2:8px; --space-3:12px;
   --space-4:16px; --space-5:24px; --space-6:32px;
-  --radius-sm:8px; --radius-md:12px; --radius-lg:16px;
+  --radius-sm:8px; --radius-md:12px; --radius-lg:14px; /* 42H.20 Scope 10: approved card radius is 14px, was 16px */
   --touch-min:44px;
   --text-xs:12px; --text-sm:14px; --text-md:16px;
   --text-lg:20px; --text-xl:28px;
 
   color-scheme: light;
 
-  --bg:#eef1f5;
+  --bg:#eef2f6;
   --card:#ffffff;
   --panel:#f5f7fa;
   --input:#ffffff;
@@ -51,19 +51,19 @@
   --line-soft:#e6eaf0;
   --line-hover:#adb8c6;
 
-  --txt:#131820;
+  --txt:#1c3d5a;
   --muted:#5d6675;
   --dim:#414b59;
   --on-accent:#ffffff;
-  --on-soft:#131820;
+  --on-soft:#1c3d5a;
 
-  --accent:#c1440e;
+  --accent:#c1440e; /* 42H.20 Scope 10: kept at prior value, NOT the approved #d9531e - see note below */
   --pick:#7b3fa8;
   --in:#00707d;
   --note:#1d4ed8;
   --accent-txt:#963109;
 
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 Scope 10: kept at prior value, NOT the approved #dc2626 - see note below */
   --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
   --warn:#8a5a00;  --warn-bg:#fbf0d9;
 
@@ -84,6 +84,37 @@
   --shadow:0 10px 30px rgba(19,24,32,.12);
 }
 
+/* 42H.20 Scope 10 (closure batch item 5): [hidden] must actually hide,
+   everywhere, with no per-page override needed. Before this rule each
+   screen relied on the attribute's weak user-agent-stylesheet default
+   (display:none with no !important), which a more specific selector
+   elsewhere in the same page's own CSS could silently defeat. */
+[hidden]{ display:none !important; }
+
+/* 42H.20 Scope 10 (closure batch item 5) — approved tokens applied,
+   with one documented exception:
+
+   Applied: --bg #eef2f6, --txt/--on-soft #1c3d5a (dark-blue hierarchy),
+   card radius 14px (--radius-lg), field/button radius 8px (--radius-sm
+   now used by .ui-control/.ui-btn instead of --radius-md). Verified with
+   contrast.mjs after applying — 0 failures for these three tokens.
+
+   NOT applied: --accent #d9531e and --bad #dc2626, the exact approved
+   primary-orange and danger-red. Both measure ~4.03:1 white-on-color (and
+   dc2626 measures ~4.03:1 on its own --bad-bg tint), below the WCAG AA
+   4.5:1 this repo's own tests/contrast.mjs already enforces across every
+   real screen (confirmed: applying them produced 117 new failures across
+   ~15 pages, all at exactly this ratio, all traced to these two tokens).
+   The prior values (--accent #c1440e, --bad #b3261e) both clear 4.5:1
+   comfortably and are kept. This is a real conflict between two of
+   Eldad's own binding decisions - the exact hex values and the existing
+   accessibility gate - not a decision Claude is making unilaterally by
+   picking a side; it needs Eldad or Codex to pick a resolution (e.g. a
+   darker shade of the same hue that still reads as "the approved
+   orange/red" but clears 4.5:1, or an explicit call to relax the
+   contrast bar for large/bold UI text specifically). Left exactly as
+   found until that call is made. */
+
 /* ===================================================================
    בהיר — בחירה ידנית מפורשת ב"בהיר תמיד"
    ===================================================================
@@ -97,7 +128,7 @@
 :root[data-theme="light"]{
   color-scheme: light;
 
-  --bg:#eef1f5;
+  --bg:#eef2f6;
   --card:#ffffff;
   --panel:#f5f7fa;
   --input:#ffffff;
@@ -108,19 +139,19 @@
   --line-soft:#e6eaf0;
   --line-hover:#adb8c6;
 
-  --txt:#131820;
+  --txt:#1c3d5a;
   --muted:#5d6675;
   --dim:#414b59;
   --on-accent:#ffffff;
-  --on-soft:#131820;
+  --on-soft:#1c3d5a;
 
-  --accent:#c1440e;
+  --accent:#c1440e; /* 42H.20 Scope 10: kept at prior value, NOT the approved #d9531e - see note below */
   --pick:#7b3fa8;
   --in:#00707d;
   --note:#1d4ed8;
   --accent-txt:#963109;
 
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 Scope 10: kept at prior value, NOT the approved #dc2626 - see note below */
   --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
   --warn:#8a5a00;  --warn-bg:#fbf0d9;
 
@@ -259,8 +290,8 @@
 .ui-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
 .ui-field{display:flex;flex-direction:column;gap:var(--space-2)}
 .ui-field>label{color:var(--dim);font-size:var(--text-sm);font-weight:700}
-.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
-.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
+.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
+.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
 .ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
 .ui-btn:disabled,.ui-control:disabled{opacity:.58;cursor:not-allowed}

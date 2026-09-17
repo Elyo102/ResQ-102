@@ -51,7 +51,11 @@ await t('a plain page with only theme.css ignores device dark/light with no expl
   const bgLight = await computedVar(pageLight, '--bg');
   const bgDark = await computedVar(pageDark, '--bg');
   ok(bgLight === bgDark, 'device scheme changed --bg with no explicit choice: ' + bgLight + ' vs ' + bgDark);
-  ok(bgLight === '#eef1f5', 'default --bg is not the light value: ' + bgLight);
+  // 42H.20 Scope 10 (closure batch item 5): theme.css's shared --bg moved
+  // to the same approved #eef2f6 that schedule-management.html and
+  // callout.html's own local overrides already used below - the exact
+  // divergence this file's own docstring used to document is now closed.
+  ok(bgLight === '#eef2f6', 'default --bg is not the approved light value: ' + bgLight);
   await ctxLight.close(); await ctxDark.close();
 });
 
