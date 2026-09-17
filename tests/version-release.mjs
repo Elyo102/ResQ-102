@@ -12,13 +12,11 @@ const root = path.resolve(here, '..');
 // bump it too. `release-manifest.json` is now the one file a release
 // actually edits first; every other file (including these expectations) is
 // checked against it, not against a value re-typed in each place.
-const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
-const EXPECTED_VERSION = MANIFEST.version;
-const EXPECTED_DATE = MANIFEST.date;
-const EXPECTED_ASSET_KEY = MANIFEST.asset_query;
-const EXPECTED_VERSIONED_REFERENCES = 289; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html (2); §5.5's home-bell fix adds one new import of alerts-feed.js in login.html (1) — it reuses bulletin.js's existing ?v= import for messageTimeMs, so no second reference there.
-const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
-const LEGITIMATE_UNVERSIONED = new Set([
+export const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
+
+export const EXPECTED_VERSIONED_REFERENCES = 289; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html (2); §5.5's home-bell fix adds one new import of alerts-feed.js in login.html (1) — it reuses bulletin.js's existing ?v= import for messageTimeMs, so no second reference there.
+export const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
+export const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
   'push.js\0./firebase-messaging-sw.js',
   'signature.js\0./signflow.js'
@@ -28,7 +26,7 @@ function clean(text) {
   return String(text).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 }
 
-function loadSnapshot() {
+export function loadSnapshot() {
   const files = new Map();
   for (const name of fs.readdirSync(root)) {
     if (!/\.(?:html|js|json)$/.test(name)) continue;
@@ -40,7 +38,7 @@ function loadSnapshot() {
   return files;
 }
 
-function releaseKey(version) {
+export function releaseKey(version) {
   return String(version || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
@@ -66,7 +64,10 @@ function localModuleImports(source) {
   return found;
 }
 
-function audit(files) {
+export function audit(files, manifest = MANIFEST) {
+  const EXPECTED_VERSION = manifest.version;
+  const EXPECTED_DATE = manifest.date;
+  const EXPECTED_ASSET_KEY = manifest.asset_query;
   const errors = [];
   let release;
   try {
@@ -98,7 +99,7 @@ function audit(files) {
   const worker = files.get('firebase-messaging-sw.js') || '';
   // 42H.20 §12.1 · consumed directly from the manifest, not re-derived by
   // formula here - the manifest is what a release actually edits.
-  const expectedCache = MANIFEST.sw_cache_key;
+  const expectedCache = manifest.sw_cache_key;
   const cacheMatches = [...worker.matchAll(/const\s+CACHE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (cacheMatches.length !== 1 || cacheMatches[0]?.[1] !== expectedCache) {
     errors.push('service-worker cache is exactly ' + expectedCache);
@@ -164,51 +165,60 @@ function mustFail(label, files) {
   assert.ok(audit(files).errors.length > 0, label + ' is rejected');
 }
 
-const files = loadSnapshot();
-const baseline = audit(files);
-if (baseline.errors.length) {
-  for (const error of baseline.errors) console.error('✗ ' + error);
-  process.exit(1);
-}
+// מיובא מ-release-stamp.mjs כדי לחלוק את אותו מקור אמת (אילו קבצים
+// נסרקים, אילו החרגות לגיטימיות, המבנה של audit()) — בלי ייבוא
+// שמריץ את כל בדיקות ה-mutation האלה כתופעת לוואי. רק כשהקובץ רץ
+// ישירות (node version-release.mjs) מתבצעת הריצה המלאה למטה.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  const files = loadSnapshot();
+  const baseline = audit(files);
+  if (baseline.errors.length) {
+    for (const error of baseline.errors) console.error('✗ ' + error);
+    process.exit(1);
+  }
 
-const key = EXPECTED_ASSET_KEY;
-mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
-mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
-mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
-mustFail('heartbeat version mutation', replaceExactlyOne(files, 'functions/index.js',
-  "state: 'ok', version: '" + EXPECTED_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
-mustFail('maintenance version mutation', replaceExactlyOne(files, 'functions/maintenance-service.js',
-  "version:'" + EXPECTED_VERSION + "', ai_state:", "version:'42G.invalid', ai_state:"));
-mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  'resq-v' + key + '-release1', 'resq-vstale-release1'));
-mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
-  './firebase-config.js?v=' + key, './firebase-config.js?v=stale'));
-mustFail('stale CSS query', replaceExactlyOne(files, 'schedule-management.html',
-  './theme.css?v=' + key, './theme.css?v=stale'));
-mustFail('missing query', replaceExactlyOne(files, 'schedule-management.html',
-  './schedule-management.js?v=' + key, './schedule-management.js'));
-mustFail('missing target', replaceExactlyOne(files, 'schedule-management.html',
-  './schedule-management.js?v=' + key, './__missing-version-release__.js?v=' + key));
-mustFail('vehicle business query mutation', replaceExactlyOne(files, 'faults.html',
-  "location.href = './vehicle.html?v=' + encodeURIComponent(v.id);",
-  "location.href = './vehicle.html?v=" + key + "';"));
-mustFail('offline module closure mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  "'./schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html'",
-  "'./schedule-management.js', './schedule-update-guard.js', './board.html'"));
-const missingFleet = replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  "'./faults.js', './fleet.js',", "'./faults.js',");
-for (const entry of ['board.html', 'faults.html']) {
-  assert.ok(audit(missingFleet).errors.includes('./' + entry + ': offline dependency missing from SHELL: ./fleet.js'),
-    entry + ' catches the missing fleet module through its real HTML import');
-}
-const missingScriptSource = replaceExactlyOne(files, 'firebase-messaging-sw.js',
-  "'./schedule-management.js',", '');
-assert.ok(audit(missingScriptSource).errors.includes('./schedule-management.html: offline dependency missing from SHELL: ./schedule-management.js'),
-  'HTML script src participates in the offline closure');
+  const EXPECTED_VERSION = MANIFEST.version;
+  const EXPECTED_DATE = MANIFEST.date;
+  const key = MANIFEST.asset_query;
+  mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
+  mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
+  mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
+  mustFail('heartbeat version mutation', replaceExactlyOne(files, 'functions/index.js',
+    "state: 'ok', version: '" + EXPECTED_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
+  mustFail('maintenance version mutation', replaceExactlyOne(files, 'functions/maintenance-service.js',
+    "version:'" + EXPECTED_VERSION + "', ai_state:", "version:'42G.invalid', ai_state:"));
+  mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
+    'resq-v' + key + '-release1', 'resq-vstale-release1'));
+  mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
+    './firebase-config.js?v=' + key, './firebase-config.js?v=stale'));
+  mustFail('stale CSS query', replaceExactlyOne(files, 'schedule-management.html',
+    './theme.css?v=' + key, './theme.css?v=stale'));
+  mustFail('missing query', replaceExactlyOne(files, 'schedule-management.html',
+    './schedule-management.js?v=' + key, './schedule-management.js'));
+  mustFail('missing target', replaceExactlyOne(files, 'schedule-management.html',
+    './schedule-management.js?v=' + key, './__missing-version-release__.js?v=' + key));
+  mustFail('vehicle business query mutation', replaceExactlyOne(files, 'faults.html',
+    "location.href = './vehicle.html?v=' + encodeURIComponent(v.id);",
+    "location.href = './vehicle.html?v=" + key + "';"));
+  mustFail('offline module closure mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
+    "'./schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html'",
+    "'./schedule-management.js', './schedule-update-guard.js', './board.html'"));
+  const missingFleet = replaceExactlyOne(files, 'firebase-messaging-sw.js',
+    "'./faults.js', './fleet.js',", "'./faults.js',");
+  for (const entry of ['board.html', 'faults.html']) {
+    assert.ok(audit(missingFleet).errors.includes('./' + entry + ': offline dependency missing from SHELL: ./fleet.js'),
+      entry + ' catches the missing fleet module through its real HTML import');
+  }
+  const missingScriptSource = replaceExactlyOne(files, 'firebase-messaging-sw.js',
+    "'./schedule-management.js',", '');
+  assert.ok(audit(missingScriptSource).errors.includes('./schedule-management.html: offline dependency missing from SHELL: ./schedule-management.js'),
+    'HTML script src participates in the offline closure');
 
-for (const target of ['hr-client.js', 'hr-hours-ui.js']) {
-  const missing = replaceExactlyOne(files, 'firebase-messaging-sw.js', "'./" + target + "',", '');
-  assert.ok(audit(missing).errors.some(error => error.includes('offline dependency missing from SHELL: ./' + target)),
-    'HR HTML/module startup requires ' + target + ' offline');
+  for (const target of ['hr-client.js', 'hr-hours-ui.js']) {
+    const missing = replaceExactlyOne(files, 'firebase-messaging-sw.js', "'./" + target + "',", '');
+    assert.ok(audit(missing).errors.some(error => error.includes('offline dependency missing from SHELL: ./' + target)),
+      'HR HTML/module startup requires ' + target + ' offline');
+  }
+  console.log('Release version contract: ' + baseline.count + ' references; 16/16 mutations caught.');
 }
-console.log('Release version contract: ' + baseline.count + ' references; 16/16 mutations caught.');
