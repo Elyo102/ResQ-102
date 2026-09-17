@@ -353,6 +353,25 @@ await env.withSecurityRulesDisabled(async (c) => {
   await setDoc(doc(d, `stations/${SID}/broadcasts/b1`),
     { by_uid: 'u_cmda', text: 'הודעה' });
 
+  // ---- קריאות פתע (42H.20 closure batch item 4) ----
+  // u_ff נמען; u_ffb אינו נמען ואינו הפותח - בדיוק המקרה שבודק
+  // שהיקף ה-uids הוא מה שקובע, לא רק התחנה.
+  await setDoc(doc(d, `stations/${SID}/callouts/co_seed`), {
+    by_uid: 'u_cmda', text: 'שריפה בתעשייה', uids: ['u_ff', 'u_cmda'],
+    active: true, created_key: '2026-09-17T06:00:00.000Z' });
+  await setDoc(doc(d, `stations/${SID}/callouts/co_closed_seed`), {
+    by_uid: 'u_cmda', text: 'קריאה שנסגרה', uids: ['u_ff', 'u_cmda'],
+    active: false, created_key: '2026-09-16T06:00:00.000Z' });
+  await setDoc(doc(d, `stations/${SID}/callouts/co_closed_seed/responses/u_ff`), {
+    seen_at: '2026-09-16T06:05:00.000Z' });
+
+  // ---- קבלות צפייה בלוח מודעות (42H.20 closure batch item 4) ----
+  // תת-אוסף פרטי לחלוטין - אין לאף לקוח, כולל הבעלים, גישה ישירה.
+  await setDoc(doc(d,
+    `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`), {
+    schema: 'bulletin-view-receipt-v1', station_id: SID, recipient_uid: 'u_ff',
+    viewed_at_ms: 1000 });
+
   // ---- החלפות בשלבי המפקדים ----
   await setDoc(doc(d, `stations/${SID}/swaps/sw_cmdfrom`), {
     from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
@@ -1194,6 +1213,82 @@ await blocked('🔒 שליחת הודעה בשם מישהו אחר',
 
 await blocked('🔒 כבאי מתחנה אחרת קורא הודעות',
   getDoc(doc(outside, `stations/${SID}/broadcasts/b1`)));
+
+// ============================================================
+head('13ב · קריאות פתע — בדיקת זליגה בין תחנות (42H.20 closure batch item 4)');
+// ============================================================
+// זו הקבוצה שאיפשרה את הרחבת alerts-feed.js השבוע (הסרת תנאי
+// active מהשאילתה) - בדיוק לכן היא זו שצריכה בדיקת Rules ישירה
+// ולא רק תלות בכך ש"ככה זה תמיד עבד". שני הכיוונים נבדקים: מסמך
+// יחיד (get) ושאילתת אוסף (query), כי alerts-feed.js משתמש בשאילתה.
+
+await ok('נמען קורא קריאת פתע פעילה שהוא רשום בה',
+  getDoc(doc(ff, `stations/${SID}/callouts/co_seed`)));
+
+await ok('פותח הקריאה קורא אותה',
+  getDoc(doc(cmdA, `stations/${SID}/callouts/co_seed`)));
+
+await blocked('🔒 חבר תחנה שאינו נמען ואינו הפותח אינו קורא את הקריאה',
+  getDoc(doc(ffB, `stations/${SID}/callouts/co_seed`)));
+
+await blocked('🔒 כבאי מתחנה אחרת אינו קורא קריאת פתע, גם כשהוא רשום ב-uids באותו מזהה',
+  getDoc(doc(outside, `stations/${SID}/callouts/co_seed`)));
+
+await ok('נמען קורא גם קריאת פתע שנסגרה (42H.20 §5.4 מרחיב את הפילטר, לא את ההרשאה)',
+  getDoc(doc(ff, `stations/${SID}/callouts/co_closed_seed`)));
+
+await blocked('🔒 כבאי מתחנה אחרת אינו קורא קריאת פתע שנסגרה',
+  getDoc(doc(outside, `stations/${SID}/callouts/co_closed_seed`)));
+
+await ok('מנהל-על קורא כל קריאת פתע, גם ללא שיוך',
+  getDoc(doc(superA, `stations/${SID}/callouts/co_seed`)));
+
+// שאילתת אוסף - הצורה המדויקת שבה alerts-feed.js קורא כיום (בלי
+// תנאי active, עם uids array-contains). זו הבדיקה שמוכיחה בפועל
+// שהרחבת השאילתה בקוד הלקוח לא פתחה זליגה: Rules חוסמות ברמת
+// המסמך את מי שאינו member(sid) בכלל, בלי קשר למה שהלקוח מבקש.
+await ok('נמען מריץ את שאילתת alerts-feed.js המדויקת ומקבל את שתי הקריאות שלו',
+  getDocs(query(collection(ff, `stations/${SID}/callouts`),
+    where('uids', 'array-contains', 'u_ff'),
+    orderBy('created_key', 'desc'), limit(30))));
+
+await blocked('🔒 כבאי מתחנה אחרת מריץ את אותה שאילתה נגד תחנת אילת ונחסם, לא מקבל רשימה ריקה בשקט',
+  getDocs(query(collection(outside, `stations/${SID}/callouts`),
+    where('uids', 'array-contains', 'u_out'),
+    orderBy('created_key', 'desc'), limit(30))));
+
+await ok('נמען קורא את תגובתו הפרטית לקריאה שנסגרה (seen_at)',
+  getDoc(doc(ff, `stations/${SID}/callouts/co_closed_seed/responses/u_ff`)));
+
+await blocked('🔒 כבאי מתחנה אחרת אינו קורא תגובת seen_at של קריאה בתחנת אילת',
+  getDoc(doc(outside, `stations/${SID}/callouts/co_closed_seed/responses/u_ff`)));
+
+await blocked('🔒 חבר תחנה אחר (לא הנמען עצמו) אינו קורא את תגובת ה-seen_at של מישהו אחר',
+  getDoc(doc(ffB, `stations/${SID}/callouts/co_closed_seed/responses/u_ff`)));
+
+// ============================================================
+head('13ג · קבלות צפייה בלוח מודעות — אין גישה ישירה, גם לא לבעלים (42H.20 closure batch item 4)');
+// ============================================================
+// stations/{sid}/bulletin_view_receipts/... הוא יומן שרת בלבד
+// (functions/bulletin-receipts.js). "allow read, write: if false"
+// חייב לחסום גם את בעל הקבלה עצמו, גם מפקד וגם מנהל-על - אין
+// אף נתיב לקוח לגיטימי לקובץ הזה.
+
+await blocked('🔒 בעל הקבלה עצמו אינו קורא את קבלת הצפייה שלו ישירות',
+  getDoc(doc(ff, `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`)));
+
+await blocked('🔒 מפקד אינו קורא קבלת צפייה ישירות (חייב לעבור את listBulletinMessageViewers)',
+  getDoc(doc(cmdA, `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`)));
+
+await blocked('🔒 מנהל-על אינו קורא קבלת צפייה ישירות',
+  getDoc(doc(superA, `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`)));
+
+await blocked('🔒 בעל הקבלה אינו יכול לכתוב קבלת צפייה מזויפת לעצמו ישירות',
+  setDoc(doc(ff, `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`),
+    { schema: 'bulletin-view-receipt-v1', station_id: SID, recipient_uid: 'u_ff', viewed_at_ms: 9999999 }));
+
+await blocked('🔒 כבאי מתחנה אחרת אינו קורא קבלת צפייה של תחנת אילת',
+  getDoc(doc(outside, `stations/${SID}/bulletin_view_receipts/b1/bulletin_view_recipients/u_ff`)));
 
 // ============================================================
 head('14 · חתימה שמורה');
