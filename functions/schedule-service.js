@@ -300,15 +300,17 @@ function createScheduleService(deps) {
         minimum: row.minimum === undefined ? null : row.minimum,
         coverage: row.coverage === 'missing' ? 'missing' : 'ready',
         below_minimum: row.below_minimum === true,
-        people: row.slots.map((s) => projectSlot(Object.assign({
+        people: row.slots.map((s) => projectSlot({
           uid: s.person,
           person: personName(roster, s.person),
           role_label: s.label || null,
           hours: s.hours || null,
           cancelled: s.cancelled === true,
           /** ההדגשה של המשתמש המחובר. */
-          is_me: s.person === viewer
-        }, personUnlinked(roster, s.person) ? { unlinked: true } : {}), s))
+          is_me: s.person === viewer,
+          /** 42H.20 §2 · אדם שאין לו חשבון מקושר לא יקבל התראת פוש. */
+          unlinked: personUnlinked(roster, s.person) === true ? true : undefined
+        }, s))
       });
     }
     const dayEvents = (events || []).filter((e) => isPlainObject(e) && e.date === date)

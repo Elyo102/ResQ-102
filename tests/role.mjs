@@ -154,7 +154,10 @@ for (const role of Object.keys(EXPECT)) {
   if (flash) bad++;
 
   await pg.waitForTimeout(1500);
-  const nav = await pg.$$eval('#appNav a', els => els.map(e => e.textContent.trim()));
+  // 42H.20 §3 · הפעמון (`.bell`) הוא קישור קבוע ולא-תלוי-תפקיד ליד השם,
+  // לא יעד ניווט מתוך ITEMS/allowed() - הרשימה הזאת בודקת בדיוק את
+  // יעדי הניווט לפי תפקיד, ולכן מחריגה אותו במפורש.
+  const nav = await pg.$$eval('#appNav a:not(.bell)', els => els.map(e => e.textContent.trim()));
   const want = EXPECT[role].nav;
   const same = nav.length === want.length && nav.every((v,i) => v === want[i]);
   console.log((same?'✓':'✗') + ' [' + role + '] תפריט: ' + JSON.stringify(nav));
