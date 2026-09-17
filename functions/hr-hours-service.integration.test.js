@@ -393,6 +393,29 @@ const rejectsCode = (fn, code) => assert.rejects(fn, e => e.code === code);
         resetAuth();
       });
     }
+    await check('42H.20 \u00a78.1: over-hours alert reads bounded, informational report data only, never scans employees', async () => {
+      await rejectsCode(() => service().overHoursAlert({ data: {} }), 'unauthenticated');
+      for (const role of ['firefighter', 'commander', 'deputy', 'station_commander']) {
+        await rejectsCode(() => service().overHoursAlert(req({}, { stationId: sid, role })), 'permission-denied');
+      }
+      await rejectsCode(() => service().overHoursAlert(req({ month })), 'invalid-argument');
+      const empty = await service().overHoursAlert(req({}));
+      assert.deepEqual(empty, { month: null, hour_limit: null, over_employees: [] });
+      const overEmployees = Array.from({ length: 205 }, (_, i) => ({
+        uid: 'over_' + i, employee_number: 'e' + i, full_name: '\u05e2\u05d5\u05d1\u05d3 ' + i, total_hours: 300 + i
+      }));
+      const reportRefOverHours = root.collection('hr_reports').doc(month);
+      await reportRefOverHours.set({ month, over_limit: overEmployees.length, hour_limit: 265, over_employees: overEmployees });
+      const alert = await service().overHoursAlert(req({}));
+      assert.equal(alert.month, month); assert.equal(alert.hour_limit, 265);
+      assert.equal(alert.over_employees.length, 200, 'never surfaces more than the bounded 200');
+      assert.deepEqual(alert.over_employees[0], { uid: 'over_0', employee_number: 'e0', full_name: '\u05e2\u05d5\u05d1\u05d3 0', total_hours: 300 });
+      const superReq = req({}, { stationId: sid, super: true }); superReq.auth.uid = 'super.' + suffix;
+      assert.equal((await service().overHoursAlert(superReq)).month, month);
+      await rejectsCode(() => service({ beforeFinalize: () => actorRef.update({ active: false }) }).overHoursAlert(req({})), 'permission-denied');
+      await seed();
+      await reportRefOverHours.delete();
+    });
     console.log(passed + ' HR hours emulator scenarios passed. No production contacted.');
   } finally {
     // Unique test namespace and explicitly tracked global fixture references.

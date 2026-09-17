@@ -23,7 +23,11 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
     if (!ctx.super && ctx.role !== 'hr_coordinator') throw error('permission-denied', 'נדרשת הרשאת משאבי אנוש.');
     const data = req.data;
     if (!plain(data) || Object.keys(data).some(k => !keys.includes(k))) throw error('invalid-argument', 'בקשה לא תקינה.');
-    try { monthKey(data.month); } catch (_) { throw error('invalid-argument', 'חודש לא תקין.'); }
+    // 42H.20 §8.1 · overHoursAlert takes no input (always the latest report),
+    // so month validation only applies to callers that actually declare it.
+    if (keys.includes('month')) {
+      try { monthKey(data.month); } catch (_) { throw error('invalid-argument', 'חודש לא תקין.'); }
+    }
     const authTime = req.auth.token.auth_time;
     if (!Number.isSafeInteger(authTime) || authTime < 0 || !Number.isSafeInteger(authTime * 1000)) throw error('unauthenticated', 'Refresh your sign-in.');
     return { ctx, data, authTime };
@@ -190,6 +194,38 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
     await finalize(requestContext, fences);
     return response;
   }
+  // 42H.20 §8.1 · HR 265-hour visibility, information/follow-up only.
+  //
+  // Reads only the latest already-built stations/{sid}/hr_reports/{month}
+  // document (written monthly by the existing report job) - never scans the
+  // roster or attendance itself, so this never grows with employee count.
+  // over_employees on that document is already bounded to at most 200
+  // entries at write time. No approve/reject, no per-person decision, no
+  // schedule/publication effect: this only returns what to show HR.
+  async function overHoursAlert(req) {
+    const requestContext = request(req, []);
+    const root = db.collection('stations').doc(requestContext.ctx.sid);
+    return db.runTransaction(async tx => {
+      await live(tx, requestContext);
+      const snap = await tx.get(root.collection('hr_reports').orderBy('month', 'desc').limit(1));
+      if (snap.empty) return { month: null, hour_limit: null, over_employees: [] };
+      const v = snap.docs[0].data() || {};
+      const employees = Array.isArray(v.over_employees)
+        ? v.over_employees.slice(0, 200).map(e => ({
+            uid: text(e && e.uid),
+            employee_number: text(e && e.employee_number),
+            full_name: text(e && e.full_name),
+            total_hours: typeof (e && e.total_hours) === 'number' && Number.isFinite(e.total_hours) ? e.total_hours : 0
+          }))
+        : [];
+      return {
+        month: typeof v.month === 'string' ? v.month : snap.docs[0].id,
+        hour_limit: typeof v.hour_limit === 'number' && Number.isFinite(v.hour_limit) ? v.hour_limit : null,
+        over_employees: employees
+      };
+    });
+  }
+
   // Inert until explicitly wired to a callable with notification/quota gates.
   // Records inspection only; never modifies employee or command approval.
   async function reviewEmployeeMonth(req) {
@@ -268,6 +304,6 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
       return {review_id:eventId,reviewed_revision:revision,current:true,duplicate:false};
     });
   }
-  return Object.freeze({ listMonth, getEmployeeMonth, reviewEmployeeMonth });
+  return Object.freeze({ listMonth, getEmployeeMonth, reviewEmployeeMonth, overHoursAlert });
 }
 module.exports = Object.freeze({ createHrHoursService, PAGE_SIZE });

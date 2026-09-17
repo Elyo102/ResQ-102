@@ -42,7 +42,7 @@ const SHELL = [
   './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
-  './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css',
+  './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css', './hr-over-hours-alert-ui.js',
   './hr-local-export.js', './hr-local-export-ui.js',
   './hr-requests.html', './hr-requests-client.js', './hr-requests-ui.js', './hr-requests-ui.css',
   './hr-documents.html', './hr-documents-client.js', './hr-documents-ui.js', './hr-documents-ui.css',

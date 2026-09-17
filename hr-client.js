@@ -9,6 +9,7 @@ import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h191';
 import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h191';
 import { createLocalExportUI } from './hr-local-export-ui.js?v=42h191';
 import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h191';
+import { createHrOverHoursAlertUI } from './hr-over-hours-alert-ui.js?v=42h191';
 import { MEMBER_ROLES } from './roles.js?v=42h191';
 import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h191';
 
@@ -26,6 +27,7 @@ const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
 const listWorkforce = httpsCallable(functions, 'listHrWorkforceCases');
+const overHoursCallable = httpsCallable(functions, 'getHrOverHoursAlert');
 const createWorkforce = httpsCallable(functions, 'createHrWorkforceCase');
 const updateWorkforce = httpsCallable(functions, 'updateHrWorkforceCase');
 const remindWorkforce = httpsCallable(functions, 'queueHrWorkforceReminder');
@@ -148,6 +150,10 @@ createHrWorkforceUI(document.querySelector('[data-hr-workforce]'), {
   currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);}, searchPeople,
   listCases:data=>call(listWorkforce,data), createCase:data=>call(createWorkforce,data), updateCase:data=>call(updateWorkforce,data),
   queueReminder:data=>call(remindWorkforce,data)
+});
+createHrOverHoursAlertUI(document.querySelector('[data-hr-workforce]'), {
+  currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+  overHoursAlert: () => call(overHoursCallable, {})
 });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;

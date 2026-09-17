@@ -52,7 +52,7 @@ const CALLABLES = Object.freeze([
   'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
-  'getHrMonthReports', 'getHrEmployeeReport',
+  'getHrMonthReports', 'getHrEmployeeReport', 'getHrOverHoursAlert',
   'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
   'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',
   'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',

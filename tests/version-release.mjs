@@ -16,7 +16,7 @@ const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.js
 const EXPECTED_VERSION = MANIFEST.version;
 const EXPECTED_DATE = MANIFEST.date;
 const EXPECTED_ASSET_KEY = MANIFEST.asset_query;
-const EXPECTED_VERSIONED_REFERENCES = 285; // Adds the isolated shift-callout surface.
+const EXPECTED_VERSIONED_REFERENCES = 286; // 42H.20 §8.1 adds hr-over-hours-alert-ui.js's own ?v= import in hr-client.js.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

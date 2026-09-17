@@ -199,6 +199,7 @@ exports.runMaintenanceAnalysis = onCall(MAINTENANCE_OPTIONS, req => maintenanceS
 const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
+exports.getHrOverHoursAlert = onCall({ enforceAppCheck: true }, async (req) => hrHours.overHoursAlert(req));
 exports.saveHrEmployeeReview = onCall({ region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60, memory: '256MiB', maxInstances: 3, concurrency: 1 }, async (req) => hrHours.reviewEmployeeMonth(req));
 const hrWorkforce = hrWorkforceModule.createHrWorkforce({ db, auth: admin.auth(), HttpsError });
 const HR_WORKFORCE_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
@@ -3738,11 +3739,23 @@ async function buildAndSendMonthly(mk) {
   });
   if (cur.length) parts.push(cur);
 
+  // 42H.20 §8.1 · בונה רשימה קצרה ומוגבלת (לכל היותר 200 עובדים, שמות עד 160
+  // תווים) של מי שחורג — זה אינו הדוח המלא, רק הרשימה שמפעילה את
+  // ההתראה הפנימית ל-HR ב-`getHrOverHoursAlert`. לידיעה בלבד: אין אישור/דחייה,
+  // אין חסימת סידור/פרסום נוצרת מכאן.
+  const overEmployees = over.slice(0, 200).map(r => ({
+    uid: String(r.person.uid || '').slice(0, 128),
+    employee_number: String(r.person.emp || '').slice(0, 64),
+    full_name: String(r.person.full_name || '').slice(0, 160),
+    total_hours: Number(r.total) || 0
+  }));
+
   await db.doc('stations/' + STATION_ID + '/hr_reports/' + mk).set({
     month: mk,
     built_at: FV.serverTimestamp(),
     people: results.length,
     over_limit: over.length,
+    over_employees: overEmployees,
     flagged: flagged.length,
     hour_limit: cfg.limit,
     parts: parts.length

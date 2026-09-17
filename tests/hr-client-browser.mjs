@@ -30,7 +30,7 @@ vm.runInNewContext(registration, { db, HttpsError, exports, FV:{serverTimestamp(
     assert.equal(deps.auth, injectedAuth);
     assert.equal(deps.db, db); assert.equal(deps.HttpsError, HttpsError);
     received.push(deps);
-    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }), reviewEmployeeMonth: req => reviewCall(req) };
+    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }), overHoursAlert: req => ({ method: 'overHours', req }), reviewEmployeeMonth: req => reviewCall(req) };
   } },
   onCall(options, handler) { registered.push(options); return handler; }
 });
@@ -40,18 +40,18 @@ await check('actual export block creates one service with exact db Auth and Http
   assert.equal(timestampCalls.length,0,'timestamp must not be evaluated at factory construction');
   assert.equal(received[0].serverTimestamp(),timestampValue);assert.equal(timestampCalls.length,1);
 });
-await check('both actual read-only callables enforce AppCheck and forward original request', async () => {
-  assert.equal(registered.length, 3);
-  registered.slice(0,2).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
+await check('three actual read-only callables enforce AppCheck and forward original request', async () => {
+  assert.equal(registered.length, 4);
+  registered.slice(0,3).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
   const request = { auth: { uid: 'synthetic-reviewer' }, data: { month: '2026-09' } };
-  const list = await exports.getHrMonthReports(request), detail = await exports.getHrEmployeeReport(request);
-  assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail');
-  assert.equal(list.req, request); assert.equal(detail.req, request);
+  const list = await exports.getHrMonthReports(request), detail = await exports.getHrEmployeeReport(request), overHours = await exports.getHrOverHoursAlert(request);
+  assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail'); assert.equal(overHours.method, 'overHours');
+  assert.equal(list.req, request); assert.equal(detail.req, request); assert.equal(overHours.req, request);
 });
 await check('review callable has exact bounded options and preserves completion and rejection',async()=>{
-  assert.deepEqual(Object.keys(exports).sort(),['getHrEmployeeReport','getHrMonthReports','saveHrEmployeeReview']);
+  assert.deepEqual(Object.keys(exports).sort(),['getHrEmployeeReport','getHrMonthReports','getHrOverHoursAlert','saveHrEmployeeReview']);
   assert.equal((index.match(/exports\.saveHrEmployeeReview\s*=/g)||[]).length,1);
-  assert.deepEqual(JSON.parse(JSON.stringify(registered[2])),{region:'europe-west1',enforceAppCheck:true,timeoutSeconds:60,memory:'256MiB',maxInstances:3,concurrency:1});
+  assert.deepEqual(JSON.parse(JSON.stringify(registered[3])),{region:'europe-west1',enforceAppCheck:true,timeoutSeconds:60,memory:'256MiB',maxInstances:3,concurrency:1});
   const request=Object.freeze({data:{month:'2026-09',uid:'employee',expected_revision:'a'.repeat(64),request_id:'request_001'}});
   const result=Object.freeze({review_id:'b'.repeat(64),reviewed_revision:'a'.repeat(64),current:true,duplicate:false});
   let release,settled=false;reviewCall=req=>{assert.equal(req,request);return new Promise(resolve=>{release=resolve;});};
@@ -115,6 +115,7 @@ async function fixture(options = {}) {
         value=Object.fromEntries(Object.entries(record).filter(([key])=>!['recipient_uid','updated_at_ms','status_scope','actor','request_id'].includes(key)));
       }else if(name==='listHrHoursNudges')value={month:data.month,items:h.nudgeActions.filter(r=>r.actor===identity.uid&&r.station_id===identity.stationId&&r.month===data.month),next_cursor:null};
       else if(name==='getHrHoursNudgeStatus')value={action:h.nudgeActions.find(r=>r.action_id===data.action_id&&r.actor===identity.uid&&r.station_id===identity.stationId),items:[],next_cursor:null,outcomes_scope:'this_page_only'};
+      else if(name==='getHrOverHoursAlert')value={month:null,hour_limit:null,over_employees:[]};
       else if(name==='saveHrEmployeeReview')value={review_id:'b'.repeat(64),reviewed_revision:data.expected_revision,current:true,duplicate:false};
       else throw new Error('Unexpected callable '+name);
       const result={data:value};
@@ -191,11 +192,12 @@ try {
   await check('HR list/detail use SDK region and implicit token station, never station data', async () => {
     const f = await fixture(); await openDetail(f.page);
     const state = await f.page.evaluate(() => ({ calls: __HR.calls, region: __HR.region, storage: [localStorage.length, sessionStorage.length], url: location.href }));
-    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 4);
+    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 5);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthReports').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrHoursNudges').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrEmployeeReport').data).sort(), ['month', 'uid']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrWorkforceCases').data), []);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrOverHoursAlert').data), []);
     state.calls.forEach(c => assert.equal(c.identity.stationId, 'fixture_station'));
     assert.deepEqual(state.storage, [0, 0]); assert.equal(state.url, origin + '/hr.html'); await f.close();
   });
@@ -244,7 +246,7 @@ try {
     await f.page.locator('.hr-person').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
     await f.page.evaluate(code => { __HR.rejectNext = { name: 'getHrEmployeeReport', code }; }, code);
     await f.page.locator('[data-hr="detail-fresh"]').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 5); await f.close();
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 6); await f.close();
   });
   await check('old permission denial cannot clear a newer valid session and report', async () => {
     const f = await fixture(); await person(f.page);
@@ -266,7 +268,7 @@ try {
       __HR.heldCalls.shift().resolve();
     });
     await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 4);
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 5);
     await f.page.evaluate(() => __HR.dispatch(__HR.auth.currentUser)); await person(f.page);
     assert.ok((await f.page.locator('.hr-person').innerText()).includes('second_station')); await f.close();
   });
