@@ -2692,10 +2692,21 @@ function renderImportReport(report) {
         ? ' — שני הרישומים נשמרים לבדיקה של אחראי הסידור; האזהרה אינה חוסמת פרסום.'
         : ' — יש לבחור אחד מהם בגיליון.')));
   });
+  /* ⭐ 42H.20 Scope 2.5 · קודים גולמיים כמו unlinked-people/ignored-content
+   * אינם קריאים למנהל תחנה. מה שכבר מוצג במפורש במקום אחר (כפילויות,
+   * התנגשות שיבוץ/היעדרות, בלוק שנדחה, ימים מתחת למינימום, שמות שהודחו)
+   * מוסתר כאן כדי לא לכפול; מה שאין לו תצוגה ייעודית מתורגם לעברית ברורה. */
+  const WARNING_HE = {
+    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא חשבון" ולא יקבלו התראות פוש; הם אינם חוסמים פרסום.'
+  };
   (report.warnings || []).forEach((warning) => {
     if (warning.code === 'assignment-absence-conflict') return; // Named findings above.
-    if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
-    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
+    if (warning.code === 'block-ignored') return;              // כבר מוצג כתגית מחוקה
+    if (warning.code === 'duplicate-assignment') return;        // כבר מוצג לפי אדם למעלה
+    if (warning.code === 'ignored-content') return;             // כבר מוצג כאישור נפרד למטה
+    if (warning.code === 'below-minimum') return;                // כבר מוצג בטבלת הסיכום
+    const text = warning.detail || (WARNING_HE[warning.code] ? WARNING_HE[warning.code](warning) : warning.code);
+    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), text));
   });
   // חסר אינו ריק: תחנה בלי בלוק, ובלוק עם שמות שלא יובא — דורשים אישור מפורש.
   const missing = report.missing_stations || [];
