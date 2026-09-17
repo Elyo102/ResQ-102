@@ -41,13 +41,13 @@ const srv=http.createServer((q,s)=>{const f=path.join(ROOT,decodeURIComponent(q.
   s.writeHead(200,{'Content-Type':/\.js$/.test(f)?'text/javascript':/\.css$/.test(f)?'text/css':'text/html; charset=utf-8'});s.end(d);});});
 const PAGES=fs.readdirSync(ROOT).filter(f=>f.endsWith('.html')).sort();
 let bad=0;
+let touchBad=0;
 let browser;
 try {
   // פורט אקראי מאפשר להריץ בדיקות דפדפן במקביל בלי להתנגש בתהליך קודם.
   await new Promise(resolve=>srv.listen(0,'127.0.0.1',resolve));
   const base='http://127.0.0.1:'+srv.address().port;
   browser=await chromium.launch();
-  let touchBad=0;
   for (const width of [320, 360, 390]) {
   for (const p of PAGES) {
     const source=fs.readFileSync(path.join(ROOT,p),'utf8');
@@ -182,10 +182,10 @@ try {
                   (!r.safeOk?'  · אזור המכשיר אינו מוגן':''));
       if (r.touch.length) {
         touchBad += r.touch.length;
-        for (const t of r.touch.slice(0, 10)) {
+        for (const t of r.touch) {
           console.log('    44x44: '+p+' · '+t.tag+t.sel+' "'+t.text+'" · '+t.w+'x'+t.h+'px');
         }
-        if (r.touch.length > 10) console.log('    ועוד '+(r.touch.length-10)+'.');
+        
       }
       if (r.bogusExempt.length) {
         touchBad += r.bogusExempt.length;

@@ -33,7 +33,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:11px 18px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:12px; width:auto }
+        font-family:inherit; font-weight:600; margin-top:12px; width:auto;
+        min-height:44px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }

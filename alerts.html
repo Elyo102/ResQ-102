@@ -38,16 +38,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:14px }
+        font-family:inherit; font-weight:600; margin-top:14px; min-height:44px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0; min-height:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+        font-size:15px; font-family:inherit; min-height:44px }
   textarea{ min-height:84px; resize:vertical }
 
   .state{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
@@ -62,10 +62,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .state.no .big{ color:var(--bad-txt) }
   .state .why{ font-size:12.5px; color:var(--muted); line-height:1.7; flex:1 1 220px }
 
-  .pref{ display:flex; align-items:flex-start; gap:11px; padding:11px 0;
+  .pref{ display:flex; align-items:center; gap:11px; padding:11px 0;
          border-bottom:1px solid var(--line-soft) }
   .pref:last-child{ border-bottom:0 }
-  .pref input{ width:auto; margin:2px 0 0 }
+  .pref input{ width:44px; height:44px; min-width:44px; min-height:44px; margin:0; flex-shrink:0 }
   .pref .t{ flex:1 }
   .pref .n{ font-size:14.5px; font-weight:600 }
   .pref .d{ font-size:12px; color:var(--muted); line-height:1.6; margin-top:2px }
@@ -122,7 +122,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   .feed-tab{ border:1px solid var(--line); background:var(--panel); color:var(--muted);
              border-radius:20px; padding:8px 14px; font-size:13px; cursor:pointer;
-             font-family:inherit; min-height:36px }
+             font-family:inherit; min-height:44px }
   .feed-tab[aria-pressed="true"]{ border-color:var(--accent); color:var(--txt); background:var(--chip) }
   .feed-item{ border:1px solid var(--line); border-radius:10px; padding:11px;
               margin-bottom:8px; background:var(--panel) }

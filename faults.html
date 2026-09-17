@@ -43,23 +43,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+        font-size:15px; font-family:inherit; min-height:44px; box-sizing:border-box }
   textarea{ min-height:74px; resize:vertical }
   input[type=file]{ padding:8px; font-size:13px }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:14px }
+        font-family:inherit; font-weight:600; margin-top:14px; min-height:44px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0; min-height:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
   .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
-                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; min-height:44px; box-sizing:border-box }
   .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   /* ---------- תקלה ---------- */

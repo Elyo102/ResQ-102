@@ -133,7 +133,7 @@
 .bulletin-compose{
   width:auto;
   min-width:112px;
-  min-height:44px;
+  min-height:46px;
   margin:0 0 0 auto;
   flex:none;
   border-radius:13px;
@@ -248,7 +248,7 @@
 
 .home-faults{display:grid;gap:11px;margin:0}
 .home-faults-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.home-faults-head a{flex:none;color:var(--accent-txt);font-size:13px;font-weight:750;text-underline-offset:3px}
+.home-faults-head a{flex:none;color:var(--accent-txt);font-size:13px;font-weight:750;text-underline-offset:3px;display:inline-flex;align-items:center;min-height:46px;box-sizing:border-box}
 .home-fault-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .home-fault-tab{width:100%;min-height:46px;margin:0;padding:9px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--dim);box-shadow:none}
 .home-fault-tab b{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-inline-start:5px;padding:0 6px;border-radius:999px;background:var(--chip);font-size:11px}
@@ -285,7 +285,7 @@
   display:flex;
   align-items:flex-start;
   gap:9px;
-  min-height:44px;
+  min-height:46px;
   margin:0;
   padding:9px 10px;
   border-radius:10px;
@@ -323,7 +323,7 @@
 }
 
 .bulletin-broadcast-confirm label{
-  min-height:44px;
+  min-height:46px;
   padding:9px 10px;
   font-size:12.5px;
   font-weight:700;
@@ -345,7 +345,7 @@
 .bulletin-char-count{margin-inline-start:auto;font-variant-numeric:tabular-nums}
 
 .bulletin-form-actions{display:flex;gap:9px}
-.bulletin-form-actions button{min-height:44px;margin:0}
+.bulletin-form-actions button{min-height:46px;margin:0}
 .bulletin-form-actions .bulletin-cancel{
   width:auto;
   min-width:92px;
@@ -371,7 +371,7 @@
 
 .bulletin-retry{
   width:100%;
-  min-height:44px;
+  min-height:46px;
   margin:0;
   background:transparent;
   border:1px solid var(--line-hover);
@@ -468,7 +468,7 @@
   align-items:center;
   justify-content:center;
   width:auto;
-  min-height:44px;
+  min-height:46px;
   margin:0;
   padding:8px 11px;
   border:1px solid var(--line-hover);
@@ -582,7 +582,7 @@
 }
 
 .bulletin-reply-form-actions{display:flex;gap:8px}
-.bulletin-reply-form-actions button{min-height:44px;margin:0}
+.bulletin-reply-form-actions button{min-height:46px;margin:0}
 .bulletin-reply-cancel{
   width:auto;
   min-width:88px;
@@ -610,7 +610,7 @@
 
 .bulletin-load-more{
   width:100%;
-  min-height:44px;
+  min-height:46px;
   margin:0;
   border:1px solid var(--line-hover);
   background:var(--chip);
@@ -633,7 +633,7 @@
 
 .bulletin-feed-toggle{
   width:100%;
-  min-height:44px;
+  min-height:46px;
   margin:0;
   border:1px solid var(--line-hover);
   background:transparent;
@@ -657,7 +657,7 @@
 .home-urgent p{margin:0 0 3px;font-size:12px;font-weight:800}
 .home-urgent h2{margin:0;font-size:17px;line-height:1.35;overflow-wrap:anywhere}
 .home-urgent span{display:block;margin-top:4px;color:var(--dim);font-size:13px;line-height:1.45}
-.home-urgent a{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:44px;padding:8px 14px;border-radius:12px;background:var(--err-fg);color:#fff;text-decoration:none;font-weight:800}
+.home-urgent a{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:46px;padding:8px 14px;border-radius:12px;background:var(--err-fg);color:#fff;text-decoration:none;font-weight:800}
 
 .home-task-card{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:72px;padding:14px 16px;border:1px solid var(--line);border-radius:15px;background:var(--card);color:var(--txt);text-decoration:none}
 .home-task-card[data-priority="high"]{border-inline-start:4px solid var(--accent)}
@@ -681,7 +681,7 @@
 }
 
 .bulletin-account > summary{
-  min-height:44px;
+  min-height:46px;
   padding:11px 4px;
   color:var(--muted);
   font-size:13px;

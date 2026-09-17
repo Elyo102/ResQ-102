@@ -46,13 +46,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .chip[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   .stars{ display:flex; gap:6px; direction:ltr; justify-content:flex-end }
-  .star{ width:44px; height:44px; border:1px solid var(--line); background:var(--chip);
+  .star{ width:46px; height:46px; flex:none; box-sizing:border-box; border:1px solid var(--line); background:var(--chip);
          border-radius:10px; font-size:18px; font-weight:700; color:var(--muted);
          cursor:pointer; font-family:inherit }
   .star[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   .row{ display:flex; align-items:center; gap:10px; margin-top:14px; font-size:14px }
-  .row input[type="checkbox"]{ width:22px; height:22px; margin:0 }
+  .row input[type="checkbox"]{ width:44px; height:44px; margin:0; flex-shrink:0 }
   .count{ font-size:11.5px; color:var(--muted); text-align:start; margin-top:4px }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);

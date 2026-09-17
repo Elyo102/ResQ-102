@@ -39,9 +39,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .icon{ font-size:42px; margin-bottom:12px }
   .ttl{ font-size:18px; font-weight:600; margin-bottom:10px }
   .txt{ color:var(--muted); font-size:14px; line-height:1.8 }
-  a.btn{ display:inline-block; background:var(--accent); color:var(--accent-on);
+  a.btn{ display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:var(--accent-on);
          text-decoration:none; padding:12px 24px; border-radius:8px;
-         font-size:15px; margin-top:22px }
+         font-size:15px; margin-top:22px; min-height:44px; box-sizing:border-box }
 </style>
 </head>
 <body>

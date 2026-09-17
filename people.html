@@ -38,13 +38,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   input{ width:100%; padding:11px; background:var(--input); color:var(--txt);
          border:1px solid var(--line); border-radius:7px; font-size:16px;
-         font-family:inherit }
+         font-family:inherit; min-height:44px; box-sizing:border-box }
   input:focus{ outline:2px solid var(--accent); outline-offset:1px }
 
   button{ width:100%; margin-top:14px; padding:12px; border-radius:8px;
           border:1px solid var(--accent); background:var(--accent);
           color:var(--accent-on); font-size:15px; font-weight:700;
-          font-family:inherit; cursor:pointer }
+          font-family:inherit; cursor:pointer; min-height:44px; box-sizing:border-box }
   button:disabled{ opacity:.55; cursor:not-allowed }
   button.ghost{ background:transparent; border-color:var(--line);
                 color:var(--muted); font-weight:600 }

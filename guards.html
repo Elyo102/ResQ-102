@@ -123,7 +123,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
   .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
-                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
+                min-height:44px; box-sizing:border-box }
   .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   .hide{ display:none !important }

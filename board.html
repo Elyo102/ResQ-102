@@ -37,7 +37,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs{ display:flex; gap:4px; flex-wrap:wrap }
   .tabs a{ padding:9px 16px; font-size:14px; color:var(--muted);
            text-decoration:none; border-bottom:2px solid transparent;
-           white-space:nowrap }
+           white-space:nowrap; display:inline-flex; align-items:center; min-height:44px }
   .tabs a.on{ color:var(--txt); border-bottom-color:var(--accent); font-weight:600 }
 
   .bar{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
@@ -46,7 +46,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .lbl{ font-size:12.5px; color:var(--muted) }
   .sw{ border:1px solid var(--line); background:transparent; color:var(--muted);
        border-radius:8px; padding:7px 17px; font-size:15px; font-weight:700;
-       cursor:pointer; font-family:inherit }
+       cursor:pointer; font-family:inherit; min-height:44px }
   .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:var(--crewA-on) }
   .sw.on.B{ background:var(--crewB); border-color:var(--crewB); color:var(--crewB-on) }
   .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:var(--crewC-on) }
@@ -62,7 +62,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .spacer{ flex:1 }
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
-        font-family:inherit; white-space:nowrap }
+        font-family:inherit; white-space:nowrap; min-height:44px; min-width:44px; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
