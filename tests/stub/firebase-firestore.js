@@ -814,6 +814,14 @@ function constrainedRows(source, constraints) {
   list.forEach(c => {
     if (!c || c.kind !== 'where') return;
     if (c.op === '==') rows = rows.filter(pair => pair[1] && pair[1][c.field] === c.value);
+    // 42H.20 closure batch item 2 (3,000-employee harness) · directory
+    // search (people.html) uses array-contains on a precomputed
+    // name_prefixes array, not '=='. Without this the stub silently
+    // ignored the constraint and returned every row regardless of the
+    // search term — which would have hidden exactly the over-fetch bug
+    // the harness exists to catch.
+    if (c.op === 'array-contains') rows = rows.filter(pair =>
+      Array.isArray(pair[1] && pair[1][c.field]) && pair[1][c.field].includes(c.value));
   });
   const order = list.find(c => c && c.kind === 'orderBy');
   if (order) {
@@ -879,6 +887,20 @@ export function getDocs(q){
     const boardId = decodeURIComponent(boardMatch[1]);
     const rows = constrainedRows(
       BULLETIN_MESSAGES[boardId],
+      (q && q.constraints) || []
+    );
+    return delayed(listSnap(rows));
+  }
+  // 42H.20 closure batch item 2 (3,000-employee harness) · cross-station
+  // directory search (people.html). Real data only when a test supplies
+  // it via window.__DIRECTORY_PLAN — empty by default so no existing test
+  // is affected. Not station-scoped: this collection is deliberately
+  // organization-wide, and its own limit()/array-contains query is the
+  // only thing standing between it and "load everyone into the browser."
+  if (p === 'directory') {
+    const rows = constrainedRows(
+      (typeof window !== 'undefined' && Array.isArray(window.__DIRECTORY_PLAN))
+        ? window.__DIRECTORY_PLAN : [],
       (q && q.constraints) || []
     );
     return delayed(listSnap(rows));

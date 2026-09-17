@@ -27,7 +27,7 @@
     "browser:mobile": "node phonesweep.mjs",
     "fleet:history": "node fleet-history-browser.mjs",
     "faults:building": "node faults-building-browser.mjs",
-    "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs",
+    "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs && node scale-3000-employees.mjs",
     "live:headers": "node live-header-smoke.mjs",
     "all": "npm run test:inventory && npm run pages:source && npm run bulletin:receipts && npm run pwa:coordinator && npm run home:command && npm run forms:submit && npm run schedule:contract && npm run schedule:trial && npm run schedule:month-authority && npm run attendance:corrections && npm run hr:attachments:core && npm run hr:month:boundaries && npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run faults:building && npm run browser:mobile && npm run hr:archive && npm run hr:ui && npm run maintenance && npm run saas:capacity",
     "home:command": "node role-view.mjs && node role-view-mutations.mjs && node role-view-page-contract.mjs && node role-view-cross-screen-source.mjs && node role-view-schedule-write-source.mjs && node ../functions/home-command-center.test.js && node home-command-wiring.mjs && node home-command-dashboard-browser.mjs && node role-view-mobile-browser.mjs && node role-view-schedule-browser.mjs",
