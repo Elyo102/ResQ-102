@@ -28,28 +28,30 @@
  *   - one assignment/absence conflict                        -> exact match
  *   - 118 absences                                           -> exact match
  *
- * Two figures in the brief do not reproduce literally, and this test
- * documents why instead of forcing a false match:
+ * 42H.20 · Codex review, blocker 1: an earlier version of this test ran the
+ * pipeline WITHOUT the workbook's merged label cells and then pinned the
+ * wrong result it produced (יטבתה 93 / ignored 54 / total 643) as if it were
+ * the ground truth. It was not. The real file merges A28:A29 for יטבתה, and
+ * the real XLSX path (schedule-file-import.js readScheduleFile ->
+ * label_spans -> parseSheet) always passes those merges; the engine's own
+ * rule is that a merged station label is the block's authoritative lower
+ * boundary. The fixture now carries the real file's six column-A merges
+ * exactly as readScheduleFile extracts them (verified against the actual
+ * schedule-eilat-source.xlsx: same 6 spans, same 293/138/119/60/118/87/610
+ * on the real names), so this test asserts EVERY figure separately and
+ * fails on the old behaviour.
  *
- *   - "יטבתה rows 28-29: 60" / "rows 30-43 ignored: 87 values": the real,
- *     unmodified schedule-sheet-import.js cuts a station block at the
- *     FIRST row where a date cell contains a time pattern (its own
- *     documented rule, unrelated to the Scope 1 station-id fix). On the
- *     real sheet that first time-bearing row is row 32, not row 30 - so
- *     the code places rows 30-31 inside יטבתה (93 names total) and rows
- *     32-43 in the ignored block (54 names), rather than the brief's
- *     assumed 28-29 / 30-43 split. The COMBINED total for that region is
- *     identical either way (93 + 54 = 147 = 60 + 87), which this test
- *     asserts directly, and the exact boundary is asserted too so a
- *     future change to that heuristic is caught.
- *   - "75 unlinked people": that count depends on how many of the
- *     workbook's people already exist in the live inventory. This test
- *     passes an empty inventory/bindings on purpose (a clean-room
- *     fixture, not a copy of live Firestore data), so every one of the
- *     99 distinct people in the fixture is necessarily external/unlinked.
- *     That is a property of the empty inventory, not of the parser, so
- *     the test asserts the real number for THIS fixture (99) rather than
- *     copying the 75 that depended on unavailable live data.
+ *   - יטבתה rows 28-29: 60 assignments                      -> exact match
+ *   - rows 30-43: 87 names in one ignored block, not station -> exact match
+ *   - total station assignments: 610                        -> exact match
+ *   - 75 unlinked people                                     -> exact match
+ *     (with an empty inventory every person is external; 75 = the distinct
+ *     people in the four station blocks + absences, now that the 24 names
+ *     that only appear in the ignored rows 30-43 are correctly excluded.)
+ *
+ * A second run of the same grid WITHOUT label_spans (the paste path) is
+ * asserted too: it must report the inferred boundary as an explicit
+ * 'station-boundary-inferred' warning rather than silently producing 93.
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -58,10 +60,23 @@ const P = require('./schedule-import-pipeline');
 let passed = 0;
 function test(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
 
-const grid = require(path.join(__dirname, 'schedule-workbook-fixture.json'));
+const fixture = require(path.join(__dirname, 'schedule-workbook-fixture.json'));
+const grid = fixture.grid;
+const spans = fixture.label_spans;
+
+test('the fixture carries the real file\'s six column-A merged label spans (A3:A17, A18:A22, A23:A27, A28:A29, A44:A46, A47:A49)', () => {
+  assert.equal(fixture.schema_version, 1);
+  assert.deepEqual(spans, [
+    { column: 0, start_row: 2, end_row: 16 }, { column: 0, start_row: 17, end_row: 21 },
+    { column: 0, start_row: 22, end_row: 26 }, { column: 0, start_row: 27, end_row: 28 },
+    { column: 0, start_row: 43, end_row: 45 }, { column: 0, start_row: 46, end_row: 48 }
+  ]);
+  assert.equal(grid[27][0], 'יטבתה');
+  assert.equal(grid[28][0], '');
+});
 
 const result = P.buildWorkbookImport({
-  input: grid, month: '2026-09', station_id: 'eilat', inventory: [], bindings: []
+  input: grid, month: '2026-09', station_id: 'eilat', inventory: [], bindings: [], label_spans: spans
 });
 
 test('30 September date columns are recognized', () => {
@@ -97,19 +112,41 @@ test('station block totals match the ground truth exactly for אילת, שחמו
   assert.equal(byLabel['תמנע'], 119);
 });
 
-test('יטבתה + the free-form area below it together total the ground truth combined figure (147)', () => {
-  const byLabel = {};
-  result.parsed.blocks.filter((b) => b.kind === 'station').forEach((b) => {
-    byLabel[result.policy.sub_stations[b.sub_station].label] = b.names;
-  });
-  const ignored = result.parsed.blocks.filter((b) => b.kind === 'ignored').reduce((n, b) => n + b.names, 0);
-  assert.equal(byLabel['יטבתה'] + ignored, 60 + 87);
-  // the real, pre-existing time-cut rule places the boundary at row 32, not row 30 -
-  // documented above. Assert the exact rows so a change to that rule is caught here.
+test('יטבתה rows 28-29 total exactly 60 — the merged label is the boundary, rows 30-31 are not station personnel', () => {
   const yotvata = result.parsed.blocks.find((b) => b.kind === 'station' && result.policy.sub_stations[b.sub_station].label === 'יטבתה');
-  assert.deepEqual(yotvata.rows, [28, 31]);
-  assert.equal(yotvata.names, 93);
-  assert.equal(ignored, 54);
+  assert.ok(yotvata, 'expected a יטבתה station block');
+  assert.deepEqual(yotvata.rows, [28, 29]);
+  assert.equal(yotvata.names, 60);
+});
+
+test('rows 30-43 form exactly one ignored block of 87 names after יטבתה — reported, never imported as station assignments', () => {
+  const ignoredBlocks = result.parsed.blocks.filter((b) => b.kind === 'ignored' && b.names > 0);
+  assert.equal(ignoredBlocks.length, 1);
+  assert.deepEqual(ignoredBlocks[0].rows, [30, 43]);
+  assert.equal(ignoredBlocks[0].after, 'יטבתה');
+  assert.equal(ignoredBlocks[0].names, 87);
+  assert.equal(result.resolved.counts.ignored_names, 87);
+  const w = result.warnings.find((x) => x.code === 'ignored-content');
+  assert.ok(w); assert.equal(w.count, 87);
+});
+
+test('with the merged spans no station boundary is inferred — no station-boundary-inferred warning', () => {
+  assert.equal(result.parsed.warnings.some((w) => w.code === 'station-boundary-inferred'), false);
+  assert.equal(result.warnings.some((w) => w.code === 'station-boundary-inferred'), false);
+});
+
+test('the paste path (same grid, no merge metadata) cannot see the A28:A29 boundary and must say so explicitly instead of silently reporting 93', () => {
+  const pasted = P.buildWorkbookImport({ input: grid, month: '2026-09', station_id: 'eilat', inventory: [], bindings: [] });
+  const w = pasted.warnings.find((x) => x.code === 'station-boundary-inferred');
+  assert.ok(w, 'paste path must flag the inferred boundary');
+  assert.equal(w.label, 'יטבתה');
+  assert.deepEqual(w.rows, [28, 31]);
+  assert.match(w.detail, /ניחוש/);
+  assert.match(w.detail, /Excel/);
+  // and the flagged figure is exactly the wrong one the merged spans correct
+  const y = pasted.parsed.blocks.find((b) => b.kind === 'station' && pasted.policy.sub_stations[b.sub_station].label === 'יטבתה');
+  assert.equal(y.names, 93);
+  assert.notEqual(y.names, 60);
 });
 
 test('first-day (2026-09-01) counts by station match the ground truth order: 9, 4, 4, 2', () => {
@@ -135,16 +172,18 @@ test('exactly one assignment/absence conflict is reported, matching the ground t
   assert.equal(w.count, 1);
 });
 
-test('with an empty inventory every one of the fixture people is external (unlinked) - a property of the empty inventory, not a re-derivation of the 75 figure from unavailable live data', () => {
+test('75 unlinked people — every fixture person is external with an empty inventory, and 75 is the ground-truth figure now that the ignored rows 30-43 no longer contribute phantom names', () => {
   const w = result.warnings.find((x) => x.code === 'unlinked-people');
   assert.ok(w);
+  assert.equal(w.count, 75);
   assert.equal(w.count, result.people.length);
   assert.equal(result.people.every((p) => p.kind === 'external'), true);
 });
 
-test('total station assignments (293+138+119+93) matches resolved.counts.assignments', () => {
-  assert.equal(result.resolved.counts.assignments, 293 + 138 + 119 + 93);
-  assert.equal(result.resolved.counts.assignments, 643);
+test('total station assignments is exactly 610 (293+138+119+60) — never 643', () => {
+  assert.equal(result.resolved.counts.assignments, 293 + 138 + 119 + 60);
+  assert.equal(result.resolved.counts.assignments, 610);
+  assert.equal(result.resolved.counts.duplicates, 0);
 });
 
 console.log('');

@@ -277,7 +277,7 @@ function parseSheet(input, options) {
       const exact = spanByStart.get(item.row);
       const nextStart = i + 1 < labeled.length ? labeled[i + 1].row : grid.length;
       const end = exact ? exact.end_row : nextStart - 1;
-      blocks.push({ label: item.label, first: item.row, last: end });
+      blocks.push({ label: item.label, first: item.row, last: end, exact: !!exact });
       // A merged station label is also its authoritative lower boundary.
       // Rows between that boundary and the next labelled block are a separate
       // free-form area (events/guards/notes), never station personnel.
@@ -320,6 +320,18 @@ function parseSheet(input, options) {
       kind: absence ? 'absence' : isStation ? 'station' : 'ignored', after: block.after || null }); return; }
     if (cut > block.first) split.push({ label: block.label, first: block.first, last: cut - 1, absence, station, kind: isStation ? 'station' : 'ignored' });
     split.push({ label: '', first: cut, last: block.last, absence: null, station: null, kind: 'ignored', after: block.label });
+    /* 42H.20 · ביקורת Codex, חוסם 1: בקובץ אילת האמיתי אזור האירועים מתחת
+     * ליטבתה מתחיל בשורה 30, אבל השעה הראשונה מופיעה רק בשורה 32 — כלומר
+     * הכלל "עד השורה הראשונה עם שעה" לבדו מכניס לתחנה שתי שורות שאינן
+     * סגל (יטבתה 93 במקום 60). הגבול האמין היחיד הוא התא הממוזג של
+     * התווית (A28:A29), שמגיע כ-label_spans מקובץ Excel; בהדבקת טקסט אין
+     * מידע מיזוג. לכן: כשבלוק תחנה נחתך לפי ניחוש ולא לפי תא ממוזג — זו
+     * אזהרה מפורשת, לא תוצאה שקטה. */
+    if (!block.exact) {
+      warnings.push({ code: 'station-boundary-inferred', label: block.label, rows: [block.first + 1, cut],
+        detail: 'הגבול התחתון של בלוק ' + block.label + ' (שורות ' + (block.first + 1) + '–' + cut
+          + ') נקבע לפי ניחוש — השורה הראשונה עם שעה — ולא לפי תא תווית ממוזג. בהדבקת טקסט אין מידע מיזוג; יש להעלות את קובץ ה-Excel עצמו או לאמת את מספרי התחנה ידנית.' });
+    }
   });
 
   const out = split.map((block) => {
