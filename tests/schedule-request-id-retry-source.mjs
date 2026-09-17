@@ -124,6 +124,7 @@ await test('planner retries a lost response with the same request_id and release
 await test('rollback retries a lost response with the same request_id and releases it after success', async () => {
   const requestIdSource = section('function requestId(prefix)', '\n/* ⭐ 42H.2');
   const rollbackSource = section('async function rollbackSchedule()', '\nasync function loadSetup(');
+  const rollbackConfirmTextSource = section('function rollbackConfirmText(active, mode)', '\nif (typeof module');
   const calls = [];
   const replies = [
     { reject:Object.assign(new Error('response lost'), { code:'functions/unavailable' }) },
@@ -162,7 +163,7 @@ await test('rollback retries a lost response with the same request_id and releas
     'receiptOk', 'malformedReceipt',
     'setMode', 'updateEditAvailability', 'invalidateRange', 'loadMine', 'loadMineRange',
     'loadStationRange', 'scheduleMutationAllowed',
-    `${requestIdSource}\n${rollbackSource}\nreturn rollbackSchedule;`
+    `${requestIdSource}\n${rollbackConfirmTextSource}\n${rollbackSource}\nreturn rollbackSchedule;`
   );
   const rollback = factory(
     state, ids(), call, () => rollbackButton, () => ({}), () => true, () => true,
