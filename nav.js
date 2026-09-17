@@ -253,6 +253,15 @@ function styleOnce() {
     '#appNav .navPanel[hidden]{display:none}',
     '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
+    '#appNav .bell{margin-inline-start:auto;display:inline-flex;align-items:center;',
+    '  justify-content:center;width:44px;height:44px;min-width:44px;min-height:44px;',
+    '  border-radius:10px;border:1px solid var(--line);background:var(--chip);',
+    '  color:var(--txt);text-decoration:none;flex:none}',
+    '#appNav .bell svg{width:20px;height:20px;fill:none;stroke:currentColor;',
+    '  stroke-width:2;stroke-linecap:round;stroke-linejoin:round}',
+    '#appNav .bell[aria-disabled="true"]{opacity:.5;cursor:not-allowed}',
+    '#appNav .bell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+    '@media (max-width:620px){#appNav .bell{margin-inline-start:6px}}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
     'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
@@ -374,6 +383,26 @@ export function renderNav(claims, current, who, presentation) {
   brand.className = 'brand';
   brand.innerHTML = '<b>ResQ</b> \u00b7 102';
   nav.appendChild(brand);
+
+  // 42H.20 §3 · פעמון התראות ליד השם, לכל תפקיד פעיל. מקשר
+  // למסך ההתראות הקיים בלבד — לא בונה מחדש מנגנון התראות,
+  // ולא ממציא מונה שאין לו מקור אמת מחובר.
+  const bell = document.createElement('a');
+  bell.className = 'bell';
+  bell.setAttribute('aria-label', 'התראות');
+  const bellPreviewBlocked = assertPresentationOnly(presentation) && !isPreviewSafePage('alerts.html');
+  if (!bellPreviewBlocked) bell.href = './alerts.html';
+  if (bellPreviewBlocked) {
+    bell.setAttribute('aria-disabled', 'true');
+    bell.tabIndex = -1;
+    bell.title = 'מעבר בין מסכים ייפתח לאחר יציאה מתצוגת התפקיד';
+    bell.addEventListener('click', function (event) { event.preventDefault(); });
+  }
+  if (current === 'alerts.html') bell.setAttribute('aria-current', 'page');
+  bell.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+  nav.appendChild(bell);
 
   // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע
   // מכפתור שלא קיים.
