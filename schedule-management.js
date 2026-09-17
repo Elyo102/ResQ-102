@@ -3148,6 +3148,28 @@ async function runPlanner() {
   }
 }
 
+/* ⭐ 42H.20 §1 · CLAUDE-TASK Scope 2.2 · דיאלוג האישור לפני פרסום חייב
+ * לומר כמה שיבוצים מתפרסמים, כמה מהם לא יקבלו פוש (ללא חשבון) וכמה
+ * אזהרות לא-חוסמות ממתינות — לא רק "לפרסם?" גנרי. כל מספר כאן מגיע
+ * ממה שכבר נטען למסך; אין ניחוש — מספר שאין לו מקור פשוט לא מוצג. */
+function publishConfirmationText(trial) {
+  const lines = [trial
+    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
+    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.'];
+  const filled = state.draft && state.draft.summary && Number.isFinite(state.draft.summary.filled)
+    ? state.draft.summary.filled : null;
+  if (filled !== null) lines.push('שיבוצים בטיוטה: ' + filled + '.');
+  const unlinked = state.importReport && state.importReport.counts
+    && Number.isFinite(state.importReport.counts.unlinked) ? state.importReport.counts.unlinked : null;
+  if (unlinked) lines.push(unlinked + ' מהם ללא חשבון מקושר — לא יקבלו התראת פוש.');
+  const gaps = state.draftPreview && state.draftPreview.gaps;
+  const warningCount = gaps ? (gaps.blocking || []).length + (gaps.acknowledgeable || []).length : 0;
+  lines.push(warningCount
+    ? warningCount + ' אזהרות מקצועיות (מינימום/כשירות) ממתינות לבדיקה — הן אינן חוסמות פרסום.'
+    : 'אין אזהרות מינימום או כשירות פתוחות.');
+  return lines.join('\n');
+}
+
 async function publishDraft() {
   if (!scheduleMutationAllowed()) return;
   if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
@@ -3155,9 +3177,7 @@ async function publishDraft() {
   const task = authTask();
   const trial = state.status.mode === 'shadow';
   const gapReport = state.draftPreview.gaps;
-  const confirmation = trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
-    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
+  const confirmation = publishConfirmationText(trial);
   if (!confirm(confirmation)) return;
   state.busy = true; $('publish').disabled = true;
   message('publishMessage', trial

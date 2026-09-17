@@ -433,6 +433,14 @@
       .editchange{grid-template-columns:1fr}
       .manager-workflow{position:static}.workflow-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
       input,select,textarea{font-size:16px}
+      /* 42H.20 §1 · CLAUDE-TASK Scope 2.6: אחרי ייבוא, כפתור האישור
+       * חייב להישאר גלוי בלי לגלול חזרה מעל הלוח. בטלפון הלוח עצמו
+       * יכול להיות ארוך — מדביקים את שורת הכפתור של כרטיס הסקירה
+       * לתחתית המסך, מעל Safe Area, כדי שהאישור והפרסום תמיד בהישג יד. */
+      #draftPreviewCard .btns{position:sticky;bottom:0;z-index:15;
+        margin:10px -13px -13px;padding:10px 13px calc(10px + env(safe-area-inset-bottom));
+        background:var(--card,#fff);border-top:1px solid var(--line,#cbd5e1);
+        box-shadow:0 -6px 14px rgba(0,0,0,.06)}
     }
     /* Approved Gemini surface styling; board colors, controls and behavior remain unchanged. */
     :root{--manager-heading:var(--txt);--manager-shadow:0 2px 8px rgba(0,0,0,.04)}
