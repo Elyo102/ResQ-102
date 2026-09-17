@@ -171,6 +171,59 @@ try {
       'התג על הפעמון שווה בדיוק למספר בלשונית "לא נצפו": ' + badgeText + ' === ' + (unreadTabCount && unreadTabCount[1]));
     await page.close(); await ctx.close();
   }
+  head('42H.20 · ביקורת Codex, חוסם 3 · קריאה שרתית אחת, בלי קריאת קבלות מהדפדפן; מונה הפעמון מהשרת');
+  {
+    const ctx = await makeContext();
+    const { page } = await openAlerts(ctx);
+    const calls = await page.evaluate(() => (window.__CALLABLE_CALLS || []).map(c => c.name));
+    check(calls.filter(n => n === 'getAlertsFeed').length === 1, 'טעינת המסך = קריאת getAlertsFeed אחת בדיוק', calls.join(','));
+    check(!calls.includes('markBulletinMessageViewed'), 'רינדור הרשימה לבדו לא שולח שום קבלת צפייה', calls.join(','));
+    const receiptReads = await page.evaluate(() => (window.__FIRESTORE_GETDOC_PATHS || []).filter(p => p.includes('bulletin_view_receipts')).length);
+    check(receiptReads === 0, 'הדפדפן לא קרא אף מסמך קבלה ישירות (הנתיב חסום ב-Rules)');
+    await page.close(); await ctx.close();
+  }
+
+  head('42H.20 · ביקורת Codex, חוסם 3.4 · לא מוצג → לא מסומן; מוצג → מסומן פעם אחת; רענון אינו מכפיל');
+  {
+    const ctx = await makeContext();
+    const { page } = await openAlerts(ctx);
+    const items = page.locator('#feedList .feed-item');
+    const count = await items.count();
+    const ids = await items.evaluateAll(nodes => nodes.map(n => n.dataset.feedId));
+    const bulletinFull = ids.filter(id => id.includes('/'));
+    const bulletinIds = bulletinFull.map(id => id.split('/')[1]);
+    const lastBulletin = bulletinIds[bulletinIds.length - 1];
+    const firstBulletin = bulletinIds[0];
+    const firstBulletinIndex = ids.indexOf(bulletinFull[0]);
+    const marksNow = () => page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(c => c.name === 'markBulletinMessageViewed').map(c => c.payload.message_id));
+    await page.waitForTimeout(1500);
+    let marks = await marksNow();
+    check(!marks.includes(lastBulletin), 'הודעה מחוץ למסך (האחרונה ברשימה) לא סומנה כנצפתה גם אחרי 1.5 שניות', marks.join(','));
+    check(marks.includes(firstBulletin), 'ההודעה הראשונה, שנראתה במלואה ≥1 שנייה, סומנה', marks.join(','));
+    check(marks.every((m, i) => marks.indexOf(m) === i), 'כל הודעה שהוצגה סומנה בדיוק פעם אחת', marks.join(','));
+    check((await items.nth(firstBulletinIndex).getAttribute('data-viewed')) === 'true', 'ההודעה שסומנה עברה ל-data-viewed=true בלי רענון');
+    // רענון הרשימה בתוך המסך (רינדור מחדש דרך הלשוניות) אינו שולח שוב
+    const before = (await marksNow()).length;
+    await page.getByRole('button', { name: /קריאות פתע/ }).click();
+    await page.getByRole('button', { name: /^הכל/ }).click();
+    await page.waitForTimeout(1500);
+    check((await marksNow()).length === before, 'רינדור מחדש של אותה רשימה אינו מכפיל קבלה');
+    // גלילה: ההודעה האחרונה נכנסת למסך → מסומנת פעם אחת
+    await items.nth(count - 1).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1500);
+    marks = await marksNow();
+    check(marks.filter(m => m === lastBulletin).length === 1, 'אחרי גלילה ההודעה האחרונה סומנה — פעם אחת', marks.join(','));
+    await page.close(); await ctx.close();
+
+    // טעינה מחדש כשהשרת כבר מחזיק קבלות להודעות שסומנו: אף אחת מהן לא נשלחת שוב
+    const seenKeys = marks.map(m => m + '/stub-uid');
+    const ctx2 = await makeContext('window.__BULLETIN_RECEIPTS_SEEN = new Set(' + JSON.stringify(seenKeys) + ');');
+    const { page: page2 } = await openAlerts(ctx2);
+    await page2.waitForTimeout(1500);
+    const again = await page2.evaluate(() => (window.__CALLABLE_CALLS || []).filter(c => c.name === 'markBulletinMessageViewed').map(c => c.payload.message_id));
+    check(again.every(m => !marks.includes(m)), 'אחרי טעינה מחדש, הודעה שהשרת כבר מחזיק לה קבלה אינה נשלחת שוב', again.join(','));
+    await page2.close(); await ctx2.close();
+  }
 } finally {
   await browser.close();
   server.close();

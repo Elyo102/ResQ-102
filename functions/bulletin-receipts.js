@@ -7,6 +7,14 @@ const MEMBER_ROLES = Object.freeze(['firefighter', 'deputy_team_leader', 'team_l
 const VIEWER_ROLES = Object.freeze(['deputy', 'commander']);
 const PAGE_SIZE = 25;
 const RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
+// 42H.20 · ביקורת Codex, חוסם 3 · חלון הפיד המאוחד (לוח מודעות + קריאות
+// פתע) שהשרת מחשב עבור המשתמש הנוכחי. אותם גבולות שהלקוח השתמש בהם
+// כשקרא בעצמו (alerts-feed.js), עכשיו במקום אחד ובלי N+1 מהדפדפן.
+const FEED_BOARDS_LIMIT = 64;
+const FEED_MESSAGES_PER_BOARD = 10;
+const FEED_CALLOUTS_LIMIT = 25;
+const FEED_ITEMS_LIMIT = 30;
+const FEED_TEXT_MAX = 2000;
 
 function createBulletinReceipts({ db, auth, HttpsError, clock } = {}) {
   if (!db || !auth || typeof HttpsError !== 'function' || typeof clock !== 'function') {
@@ -223,7 +231,99 @@ function createBulletinReceipts({ db, auth, HttpsError, clock } = {}) {
     return { items, next_cursor: docs.length > PAGE_SIZE ? pageDocs[pageDocs.length - 1].id : null };
   }
 
-  return { markViewed, listViewers };
+  /* 42H.20 · ביקורת Codex, חוסם 3 · הפיד המאוחד ומונה ה-unread של המשתמש
+   * הנוכחי, מחושבים בשרת:
+   *   - קבלות הצפייה נשארות חסומות לקריאת דפדפן ישירה (firestore.rules:
+   *     allow read, write: if false). הדפדפן מקבל רק את מצב הצפייה
+   *     **שלו**, אחרי אימות schema ותוקף (validReceipt), לעולם לא של אחר.
+   *   - אין קריאה אחת לכל הודעה: ההודעות נקראות בשאילתה חסומה אחת לכל
+   *     לוח (אותה צורה ואינדקס כמו bulletin.js), הקבלות והתגובות
+   *     ב-getAll אחד כל אחת (RPC יחיד, חסום במספר המועמדים).
+   *   - unread_count נספר על כל המועמדים בחלון (לוחות × 10 + 25 קריאות),
+   *     לא רק על 30 הפריטים שמוחזרים לתצוגה — כדי שהפעמון לא יציג
+   *     מונה חסר.
+   *   - כשל אינו נבלע ל-"unread": שגיאה = HttpsError ללקוח.
+   * זו קריאה בלבד; אין כאן כתיבת קבלה. */
+  function textMs(value) {
+    if (value && typeof value.toMillis === 'function') return Number(value.toMillis());
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  async function alertsFeed(req) {
+    const ctx = context(req);
+    exact(req && req.data !== undefined ? req.data : {}, []);
+    await verifyAuth(ctx);
+    const now = Number(clock());
+    if (!Number.isSafeInteger(now) || now < 0) fail('unavailable', 'זמן השרת אינו זמין.');
+    const profileSnap = await profileRef(ctx).get();
+    verifyProfile(ctx, profileSnap);
+
+    const boardsSnap = await station(ctx).collection('sub_stations').limit(FEED_BOARDS_LIMIT).get();
+    const boards = (boardsSnap.docs || []).map(doc => ({ id: doc.id, value: doc.data() || {} }))
+      .filter(board => active(board.value))
+      .map(board => ({ id: board.id, name: String(board.value.name || board.id).slice(0, 120) }));
+
+    const messageSnaps = await Promise.all(boards.map(board =>
+      station(ctx).collection('sub_stations').doc(board.id).collection('bulletin_messages')
+        .where('hidden', '==', false).orderBy('created_at', 'desc').limit(FEED_MESSAGES_PER_BOARD).get()));
+    const messages = [];
+    boards.forEach((board, index) => {
+      (messageSnaps[index].docs || []).forEach(doc => {
+        const value = doc.data() || {};
+        if (value.hidden === true) return;
+        messages.push({ board, id: doc.id, value });
+      });
+    });
+
+    const calloutSnap = await station(ctx).collection('callouts')
+      .where('uids', 'array-contains', ctx.uid).orderBy('created_key', 'desc').limit(FEED_CALLOUTS_LIMIT).get();
+    const callouts = (calloutSnap.docs || []).map(doc => ({ id: doc.id, value: doc.data() || {} }));
+
+    const receiptRefs = messages.map(message => station(ctx).collection('bulletin_view_receipts')
+      .doc(message.id).collection('bulletin_view_recipients').doc(ctx.uid));
+    const responseRefs = callouts.map(callout => station(ctx).collection('callouts')
+      .doc(callout.id).collection('responses').doc(ctx.uid));
+    const [receiptSnaps, responseSnaps] = await Promise.all([
+      receiptRefs.length ? db.getAll(...receiptRefs) : [],
+      responseRefs.length ? db.getAll(...responseRefs) : []
+    ]);
+    // Re-verify live Auth after every private read, before the private
+    // result leaves the server (same discipline as listViewers).
+    await verifyAuth(ctx);
+
+    const bulletinItems = messages.map((message, index) => {
+      const value = message.value;
+      const receiptSnap = receiptSnaps[index];
+      const receipt = receiptSnap && receiptSnap.exists ? (receiptSnap.data() || null) : null;
+      const validOwn = !!receipt && validReceipt(receipt, ctx.sid, message.id, ctx.uid)
+        && timeMs(receipt.expires_at) > now;
+      const viewed = value.by_uid === ctx.uid || validOwn;
+      return { kind: 'bulletin', id: message.board.id + '/' + message.id, board_id: message.board.id,
+        board_name: message.board.name, text: String(value.text || '').slice(0, FEED_TEXT_MAX),
+        by_name: String(value.by_name || value.author_name || 'חבר צוות').slice(0, 120),
+        time_ms: textMs(value.created_at) || textMs(value.created_key), viewed };
+    });
+    const calloutItems = callouts.map((callout, index) => {
+      const value = callout.value;
+      const responseSnap = responseSnaps[index];
+      const response = responseSnap && responseSnap.exists ? (responseSnap.data() || {}) : null;
+      const viewed = !!(response && typeof response.seen_at === 'string' && response.seen_at);
+      return { kind: 'callout', id: callout.id, text: String(value.text || '').slice(0, FEED_TEXT_MAX),
+        active: value.active !== false, by_name: String(value.by_name || '').slice(0, 120),
+        time_ms: textMs(value.created_at) || textMs(value.created_key), viewed };
+    });
+    const candidates = bulletinItems.concat(calloutItems).sort((a, b) => b.time_ms - a.time_ms);
+    return {
+      schema: 'alerts-feed-v1', generated_at_ms: now,
+      unread_count: candidates.filter(item => !item.viewed).length,
+      items: candidates.slice(0, FEED_ITEMS_LIMIT),
+      window: { boards: boards.length, messages_per_board: FEED_MESSAGES_PER_BOARD,
+        callouts: FEED_CALLOUTS_LIMIT, feed_limit: FEED_ITEMS_LIMIT, candidates: candidates.length }
+    };
+  }
+
+  return { markViewed, listViewers, alertsFeed };
 }
 
-module.exports = { createBulletinReceipts, MEMBER_ROLES, VIEWER_ROLES, PAGE_SIZE, RETENTION_MS };
+module.exports = { createBulletinReceipts, MEMBER_ROLES, VIEWER_ROLES, PAGE_SIZE, RETENTION_MS,
+  FEED_BOARDS_LIMIT, FEED_MESSAGES_PER_BOARD, FEED_CALLOUTS_LIMIT, FEED_ITEMS_LIMIT };

@@ -653,6 +653,7 @@ export async function runTransaction(dbRef, updateFunction){
 
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
+  if (typeof window !== 'undefined') { (window.__FIRESTORE_GETDOC_PATHS = window.__FIRESTORE_GETDOC_PATHS || []).push(p); }
   if (/\/callouts\/[^/]+\/responses\/[^/]+$/.test(p)) {
     // 42H.20 §5.4 · alerts-feed.js reads `seen_at` here for the trusted
     // callout-viewed state. window.__CALLOUT_SEEN_EXTRA (a Set/array of

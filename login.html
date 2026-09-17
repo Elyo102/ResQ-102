@@ -586,7 +586,7 @@ import {
 import { APP_VERSION, APP_DATE } from './version.js?v=42h191';
 import { watchCallouts } from './callout.js?v=42h191';
 import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h191';
-import { loadAlertsFeed, unreadFeedCount } from './alerts-feed.js?v=42h191';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h191';
 import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h191';
 import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h191';
 import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h191';
@@ -1286,17 +1286,20 @@ function navFor(claims, user, name, presentation){
   renderNav(claims, 'login.html', who, presentation || null, homeUnreadCount);
 }
 
-// 42H.20 §5.5 · פעמון הבית — unread אמיתי, בלי שאילתה מקבילה על
-// bulletin_messages. bulletin.js מריץ ממילא מנוי חי אחד ללוח הפעיל
-// (§5.5's onMessages hook, ראה bulletin.js); את הודעותיו-שלו אנחנו
-// מקבלים כאן ישירות בלי לפתוח מנוי/שאילתה שנייה על אותו נתיב —
-// alerts-feed.js's activeBoardOverride קיים בדיוק בשביל זה, ונבדק
-// (alerts-feed.test.mjs) שהוא באמת לא חוזר לשאול את הלוח הפעיל.
-// שאר הלוחות והקריאות נספרים בקריאה חד-פעמית (getDocs, לא מנוי),
-// באותה צורה בדיוק כמו alerts.html עצמו.
+// 42H.20 · ביקורת Codex, חוסם 3 · פעמון הבית. עד כאן: כל 90 שניות
+// שרשרת קריאות מסמכים מהדפדפן (הודעה-הודעה, קריאה-קריאה — N+1), קריאת
+// קבלות בנתיב שה-Rules חוסמים (השגיאה נבלעה ל"לא נצפה"), ומונה שנגזר
+// מ-30 פריטים בלבד. עכשיו: קריאה שרתית אחת (getAlertsFeed) שמחזירה
+// unread_count שנספר בשרת על כל חלון המועמדים, מול הקבלה שלי בלבד.
+// הודעת לוח חדשה (onMessages של bulletin.js, מנוי חי שכבר קיים) מבקשת
+// רענון — מרוסן לקריאה אחת לכל HOME_UNREAD_MIN_GAP_MS לכל היותר.
+const HOME_UNREAD_MIN_GAP_MS = 15000;
+const HOME_UNREAD_PERIOD_MS = 90000;
+let homeUnreadLastAt = 0;
 function onHomeBulletinMessages(boardId, messages){
   homeActiveBoard = { id: boardId, messages: messages };
-  scheduleHomeUnreadRefresh(0);
+  const wait = Math.max(0, homeUnreadLastAt + HOME_UNREAD_MIN_GAP_MS - Date.now());
+  scheduleHomeUnreadRefresh(wait);
 }
 
 function scheduleHomeUnreadRefresh(delayMs){
@@ -1308,20 +1311,24 @@ async function refreshHomeUnread(){
   const context = activeHomeContext;
   if (!context || !routeIsCurrent(context.user, context.epoch)) return;
   const generation = ++homeUnreadGeneration;
-  let items;
+  homeUnreadLastAt = Date.now();
+  let feed;
   try {
-    items = await loadAlertsFeed(
-      { collection, doc, getDoc, getDocs, query, where, orderBy, limit },
-      db, context.sid, context.user.uid, messageTimeMs,
-      homeActiveBoard.id ? homeActiveBoard : null
-    );
-  } catch (ignore) { return; /* a failed count must never crash the home screen */ }
+    feed = await loadAlertsFeed(httpsCallable(fns, 'getAlertsFeed'));
+  } catch (ignore) {
+    // כשל אינו מומר ל-"0 לא נצפו" ואינו מפיל את מסך הבית: התג הקודם
+    // נשאר, והרענון הבא ינסה שוב.
+    if (generation === homeUnreadGeneration && activeHomeContext === context) {
+      homeUnreadTimer = setTimeout(refreshHomeUnread, HOME_UNREAD_PERIOD_MS);
+    }
+    return;
+  }
   if (generation !== homeUnreadGeneration || activeHomeContext !== context) return;
-  homeUnreadCount = unreadFeedCount(items);
+  homeUnreadCount = feed.unread_count;
   navFor(context.claims, context.user, context.name, context.view && context.view.preview ? context.view.presentation : null);
   // רשת ביטחון: גם בלי הודעת לוח חדשה, מצב "נצפה" יכול להשתנות
-  // (המשתמש קרא במסך ההתראות במקום כאן) — רענון תקופתי שקט.
-  homeUnreadTimer = setTimeout(refreshHomeUnread, 90000);
+  // (המשתמש קרא במסך ההתראות במקום כאן) — רענון תקופתי שקט, אחד.
+  homeUnreadTimer = setTimeout(refreshHomeUnread, HOME_UNREAD_PERIOD_MS);
 }
 
 function readRoleViewStorage(){

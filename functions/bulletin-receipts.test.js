@@ -89,6 +89,7 @@ class FakeDb {
   doc(path) { return new DocRef(this, path); }
   collection(path) { return new Query(this, path); }
   snapshot(ref) { return new Snapshot(ref, this.values.get(ref.path)); }
+  async getAll(...refs) { this.getAllCalls = (this.getAllCalls || 0) + 1; return refs.map(ref => this.snapshot(ref)); }
   runTransaction(work) {
     // Firestore retries/serializes a conflicting transaction.  Serializing the
     // fake preserves the externally relevant guarantee for the concurrency
@@ -121,14 +122,18 @@ class FakeDb {
       .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
       .map(([path, value]) => new Snapshot(new DocRef(this, path), value));
     for (const [field, op, expected] of query.options.filters || []) {
-      assert.equal(op, '==', 'fake supports equality filters only');
-      docs = docs.filter(doc => doc.data()[field] === expected);
+      assert.ok(op === '==' || op === 'array-contains', 'fake supports == and array-contains filters only');
+      docs = docs.filter(doc => op === '=='
+        ? doc.data()[field] === expected
+        : Array.isArray(doc.data()[field]) && doc.data()[field].includes(expected));
     }
     const [field = '__name__', direction = 'asc'] = query.options.order || [];
+    const sortKey = value => (value && typeof value.toMillis === 'function')
+      ? String(value.toMillis()).padStart(20, '0') : String(value);
     docs.sort((a, b) => {
       const av = field === '__name__' ? a.id : a.data()[field];
       const bv = field === '__name__' ? b.id : b.data()[field];
-      const result = String(av).localeCompare(String(bv));
+      const result = sortKey(av).localeCompare(sortKey(bv));
       return direction === 'desc' ? -result : result;
     });
     if (query.options.cursor !== undefined) {
@@ -407,6 +412,121 @@ async function check(name, body) {
     const entry = [...f.db.values.entries()].find(([, value]) => value && value.schema === 'bulletin-view-receipt-v1');
     entry[1].recipient_uid = f.people.other.uid;
     await rejects(f.service.listViewers(f.req('commander', f.input())), 'failed-precondition');
+  });
+
+  // ---- 42H.20 · Codex blocker 3 · getAlertsFeed / alertsFeed ----
+  const feedFixture = () => {
+    const f = fixture();
+    const ms = iso => Date.parse(iso);
+    const put = (board, id, iso, extra = {}) => f.db.values.set(
+      `stations/${f.sid}/sub_stations/${board}/bulletin_messages/${id}`,
+      { kind: 'bulletin', audience: 'board', hidden: false, text: 'הודעה ' + id, by_name: 'כותב',
+        created_key: iso, created_at: Timestamp.fromMillis(ms(iso)), ...extra });
+    const receipt = (id, uid, extra = {}) => f.db.values.set(
+      `stations/${f.sid}/bulletin_view_receipts/${id}/bulletin_view_recipients/${uid}`,
+      { schema: 'bulletin-view-receipt-v1', station_id: f.sid, sub_station_id: 'board_a', message_id: id,
+        broadcast_id: '', recipient_uid: uid, recipient_name_snapshot: 'קורא', viewed_at_ms: NOW - 1000,
+        viewed_at: new Date(NOW - 1000), message_created_key: '', expires_at: new Date(NOW + 1000), ...extra });
+    const callout = (id, iso, uids, extra = {}) => f.db.values.set(`stations/${f.sid}/callouts/${id}`,
+      { text: 'קריאה ' + id, by_name: 'מפקד', active: true, uids, created_key: iso, ...extra });
+    f.db.values.delete(`stations/${f.sid}/sub_stations/board_a/bulletin_messages/${MESSAGE_ID}`);
+    return { ...f, put, receipt, callout };
+  };
+
+  await check('feed: input is closed and needs a live member — the failure is an error, never "unread"', async () => {
+    const f = feedFixture();
+    await rejects(f.service.alertsFeed({ data: {} }), 'unauthenticated');
+    await rejects(f.service.alertsFeed(f.req('reader', { station_id: 'other' })), 'invalid-argument');
+    f.records.get(f.people.reader.uid).disabled = true;
+    await rejects(f.service.alertsFeed(f.req('reader', {})), 'permission-denied');
+  });
+
+  await check('feed: only the caller\'s own valid receipt marks viewed; another user\'s receipt and an expired one never do', async () => {
+    const f = feedFixture();
+    f.put('board_a', 'm1', '2026-09-14T07:50:00.000Z');
+    f.put('board_a', 'm2', '2026-09-14T07:51:00.000Z');
+    f.put('board_a', 'm3', '2026-09-14T07:52:00.000Z');
+    f.put('board_a', 'm4', '2026-09-14T07:53:00.000Z', { by_uid: f.people.reader.uid });
+    f.receipt('m1', f.people.reader.uid);
+    f.receipt('m2', f.people.other.uid);
+    f.receipt('m3', f.people.reader.uid, { expires_at: new Date(NOW - 1) });
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.equal(out.schema, 'alerts-feed-v1');
+    const viewed = Object.fromEntries(out.items.map(item => [item.id, item.viewed]));
+    assert.deepEqual(viewed, { 'board_a/m1': true, 'board_a/m2': false, 'board_a/m3': false, 'board_a/m4': true });
+    assert.equal(out.unread_count, 2);
+    assert.equal(out.items[0].id, 'board_a/m4', 'newest first');
+    assert.ok(out.items.every(item => !('recipient_uid' in item) && !('recipient_name_snapshot' in item)));
+  });
+
+  await check('feed: a malformed own receipt is not viewed (schema is verified, not just existence)', async () => {
+    const f = feedFixture();
+    f.put('board_a', 'm1', '2026-09-14T07:50:00.000Z');
+    f.receipt('m1', f.people.reader.uid, { station_id: 'another_station' });
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.equal(out.items[0].viewed, false);
+    assert.equal(out.unread_count, 1);
+  });
+
+  await check('feed: one batched receipt read and one batched response read — never a read per item', async () => {
+    const f = feedFixture();
+    for (let i = 0; i < 8; i++) f.put('board_a', 'a' + i, '2026-09-14T07:0' + i + ':00.000Z');
+    for (let i = 0; i < 6; i++) f.put('board_b', 'b' + i, '2026-09-14T06:0' + i + ':00.000Z');
+    for (let i = 0; i < 5; i++) f.callout('c' + i, '2026-09-13T0' + i + ':00:00.000Z', [f.people.reader.uid]);
+    f.db.getAllCalls = 0;
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.equal(f.db.getAllCalls, 2);
+    assert.equal(out.window.candidates, 19);
+    assert.equal(out.items.length, 19);
+  });
+
+  await check('feed: unread_count counts every candidate in the window, not only the 30 returned items', async () => {
+    const f = feedFixture();
+    for (let i = 0; i < 10; i++) f.put('board_a', 'a' + String(i).padStart(2, '0'), '2026-09-14T07:' + String(10 + i) + ':00.000Z');
+    for (let i = 0; i < 10; i++) f.put('board_b', 'b' + String(i).padStart(2, '0'), '2026-09-14T06:' + String(10 + i) + ':00.000Z');
+    for (let i = 0; i < 25; i++) f.callout('c' + String(i).padStart(2, '0'), '2026-09-13T' + String(i).padStart(2, '0') + ':00:00.000Z', [f.people.reader.uid]);
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.equal(out.items.length, 30);
+    assert.equal(out.window.candidates, 45);
+    assert.equal(out.unread_count, 45);
+  });
+
+  await check('feed: a per-board limit of 10 newest and a callout limit of 25 bound the server work', async () => {
+    const f = feedFixture();
+    for (let i = 0; i < 14; i++) f.put('board_a', 'a' + String(i).padStart(2, '0'), '2026-09-14T07:' + String(10 + i) + ':00.000Z');
+    for (let i = 0; i < 30; i++) f.callout('c' + String(i).padStart(2, '0'), '2026-09-13T' + String(i).padStart(2, '0') + ':00:00.000Z', [f.people.reader.uid]);
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.equal(out.window.candidates, 35);
+    assert.equal(out.items.filter(item => item.kind === 'bulletin').length, 10);
+    assert.ok(out.items.filter(item => item.kind === 'bulletin').every(item => Number(item.id.slice(-2)) >= 4), 'the 10 newest, not the oldest');
+  });
+
+  await check('feed: callouts include closed ones for the recipient only, and seen_at on the own response marks viewed', async () => {
+    const f = feedFixture();
+    f.callout('open', '2026-09-13T10:00:00.000Z', [f.people.reader.uid]);
+    f.callout('closed', '2026-09-13T09:00:00.000Z', [f.people.reader.uid], { active: false });
+    f.callout('foreign', '2026-09-13T11:00:00.000Z', [f.people.other.uid]);
+    f.db.values.set(`stations/${f.sid}/callouts/closed/responses/${f.people.reader.uid}`, { seen_at: '2026-09-13T09:01:00.000Z' });
+    f.db.values.set(`stations/${f.sid}/callouts/open/responses/${f.people.other.uid}`, { seen_at: '2026-09-13T10:01:00.000Z' });
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.deepEqual(out.items.map(item => [item.id, item.active, item.viewed]),
+      [['open', true, false], ['closed', false, true]]);
+    assert.equal(out.unread_count, 1);
+  });
+
+  await check('feed: hidden messages and inactive boards are excluded; a revoked token after the private reads is refused', async () => {
+    const f = feedFixture();
+    f.put('board_a', 'shown', '2026-09-14T07:50:00.000Z');
+    f.put('board_a', 'gone', '2026-09-14T07:51:00.000Z', { hidden: true });
+    f.db.values.set(`stations/${f.sid}/sub_stations/board_c`, { name: 'ארכיון', active: false });
+    f.put('board_c', 'archived', '2026-09-14T07:52:00.000Z');
+    const out = await f.service.alertsFeed(f.req('reader', {}));
+    assert.deepEqual(out.items.map(item => item.id), ['board_a/shown']);
+    f.authState.hook = async ({ read, records }) => {
+      if (read === 2) records.get(f.people.reader.uid).tokensValidAfterTime = new Date((AUTH_TIME + 60) * 1000).toUTCString();
+    };
+    f.authState.reads = 0;
+    await rejects(f.service.alertsFeed(f.req('reader', {})), 'permission-denied');
   });
 
   await check('retention is explicit and bounded', async () => {

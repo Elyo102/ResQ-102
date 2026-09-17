@@ -2164,6 +2164,10 @@ exports.markBulletinMessageViewed = onCall(BULLETIN_RECEIPT_OPTIONS,
   async req => bulletinReceipts.markViewed(req));
 exports.listBulletinMessageViewers = onCall(BULLETIN_RECEIPT_OPTIONS,
   async req => bulletinReceipts.listViewers(req));
+// 42H.20 · ביקורת Codex, חוסם 3 · הפיד המאוחד + unread לפעמון: קריאה
+// שרתית אחת, בלי קריאת קבלות מהדפדפן ובלי N+1.
+exports.getAlertsFeed = onCall(BULLETIN_RECEIPT_OPTIONS,
+  async req => bulletinReceipts.alertsFeed(req));
 
 exports.postBulletinMessage = onCall(async (req) => {
   const parsed = parseBulletinPost(req);

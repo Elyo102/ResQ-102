@@ -276,8 +276,8 @@ import { getAuth, onAuthStateChanged }
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, unreadFeedCount } from './alerts-feed.js?v=42h191';
-import { messageTimeMs } from './bulletin.js?v=42h191';
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h191';
+import { markCalloutSeen } from './callout.js?v=42h191';
 import { getFunctions, httpsCallable }
   from './monitored-functions.js?v=42h191';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
@@ -308,6 +308,10 @@ let SID = '', ME = null, ROLE = '', IS_SUPER = false;
 let feedItems = [], feedFilter = 'all';
 let feedEverLoaded = false;
 let lastFeedClaims = null;
+// 42H.20 · ביקורת Codex, חוסם 3 · המונה מגיע מהשרת (נספר על כל החלון,
+// לא על 30 הפריטים המוצגים), והצפייה נרשמת רק אחרי הצגה מוכחת.
+let feedUnreadCount = 0;
+let feedTracker = null;
 let prefs = defaultPrefs(), tokens = [], vapid = DEFAULT_VAPID, myToken = '';
 let messaging = null;
 
@@ -776,14 +780,50 @@ function renderFeedList() {
     const el = document.createElement('div');
     el.className = 'feed-item';
     el.dataset.viewed = String(!!item.viewed);
+    el.dataset.feedId = item.id;
+    el.dataset.feedKind = item.kind;
+    if (item.kind === 'bulletin') {
+      el.dataset.feedBoard = item.board_id;
+      el.dataset.feedMessage = item.id.slice(item.board_id.length + 1);
+    }
     el.innerHTML = '<div class="fi-head"><span class="fi-kind">' + esc(feedItemKindHe(item.kind)) + '</span>' +
       (item.by_name ? '<span>' + esc(item.by_name) + '</span>' : '') +
       '<span>' + esc(feedTimeText(item.time_ms)) + '</span>' +
-      (!item.viewed ? '<span>· טרם נצפה</span>' : '') + '</div>' +
+      (!item.viewed ? '<span class="fi-unviewed">· טרם נצפה</span>' : '') + '</div>' +
       '<div class="fi-text">' + esc(item.text || '') + '</div>';
     box.appendChild(el);
   });
+  // הקבלה נשלחת רק לפריט שהוצג בפועל (≥60% נראות, שנייה ברצף, לשונית
+  // גלויה) — לא לכל מה שרונדר. פעם אחת לכל פריט; רענון אינו מכפיל.
+  if (!feedTracker) {
+    feedTracker = createDisplayTracker({
+      markViewed: function (target) {
+        if (target.kind === 'bulletin') {
+          return httpsCallable(fns, 'markBulletinMessageViewed')({
+            sub_station_id: target.board_id, message_id: target.message_id
+          });
+        }
+        return markCalloutSeen(db, SID, target.id, ME.uid);
+      },
+      onConfirmed: function (key) {
+        const item = feedItems.find(function (entry) { return entry.id === key; });
+        if (item && !item.viewed) {
+          item.viewed = true;
+          feedUnreadCount = Math.max(0, feedUnreadCount - 1);
+          renderFeedTabs();
+          renderNav(lastFeedClaims, 'alerts.html', ME.full_name || ME.email || '', null, feedUnreadCount);
+        }
+      }
+    });
+  }
+  feedTracker.observe(box);
 }
+
+document.addEventListener('visibilitychange', function () {
+  // חזרה ללשונית: מה שהיה מוסתר לא נספר כמוצג; מתחילים לצפות מחדש.
+  if (feedTracker && document.visibilityState === 'visible') feedTracker.observe($('feedList'));
+  if (feedTracker && document.visibilityState === 'hidden') feedTracker.stop();
+});
 
 async function loadFeed(claims) {
   lastFeedClaims = claims;
@@ -794,10 +834,11 @@ async function loadFeed(claims) {
     msg('', '', 'feedMsg');
   }
   try {
-    feedItems = await loadAlertsFeed(
-      { collection, doc, getDoc, getDocs, query, where, orderBy, limit },
-      db, SID, ME.uid, messageTimeMs
-    );
+    // קריאה שרתית אחת. מצב הצפייה מאומת בשרת מול הקבלה שלי בלבד;
+    // הדפדפן אינו קורא קבלות (firestore.rules חוסם, ובצדק).
+    const feed = await loadAlertsFeed(httpsCallable(fns, 'getAlertsFeed'));
+    feedItems = feed.items;
+    feedUnreadCount = feed.unread_count;
     feedEverLoaded = true;
     msg('', '', 'feedMsg');
   } catch (e) {
@@ -814,8 +855,9 @@ async function loadFeed(claims) {
   }
   renderFeedTabs();
   renderFeedList();
-  // 42H.20 §5.4 · נקודת הפעמון מרנדרת מחדש עם המספר האמית הזה בלבד — אותו מקור שמניע את ציאת "לא נצפו" עצמה.
-  renderNav(claims, 'alerts.html', ME.full_name || ME.email || '', null, unreadFeedCount(feedItems));
+  // הפעמון מציג את unread_count של השרת — נספר על כל חלון המועמדים,
+  // לא על 30 הפריטים המוצגים; לשונית "לא נצפו" מסננת את מה שמוצג.
+  renderNav(claims, 'alerts.html', ME.full_name || ME.email || '', null, feedUnreadCount);
 }
 
 // ---------- מפתח ----------

@@ -17,8 +17,9 @@
 // — אינדקס שכבר קיים ב-firestore.indexes.json (בשימוש גם היום, בלי
 // תנאי active, למקורות אחרים) — כך שאין צורך באינדקס מורכב חדש.
 //
-// כל השאילתות מוגבלות (limit) ובתחום התחנה בלבד. אין כאן כתיבה,
-// ואין שינוי במנגנון הצפייה הקיים — הקובץ הזה רק קורא ומאחד.
+// 42H.20 · ביקורת Codex, חוסם 3: הקריאה עצמה עברה לשרת (getAlertsFeed).
+// הקובץ הזה מחזיק את העזרים הטהורים, את הלואדר החד-קריאה ואת מעקב
+// ההצגה שמזין את קבלת הצפייה — ראה למטה.
 
 export const ALERT_FEED_FILTERS = Object.freeze([
   { id: 'all', he: 'הכל' },
@@ -71,83 +72,125 @@ export function unreadFeedCount(items) {
   return applyFeedFilter(items, 'unread').length;
 }
 
-// --- Firestore-touching loader. `sdk` is dependency-injected (collection,
-// doc, getDoc, getDocs, query, where, orderBy, limit) so this stays
-// unit-testable, matching bulletin.js's own injectable-SDK convention.
+// --- Server-backed loader (42H.20 · Codex review, blocker 3) ---
 //
-// `activeBoardOverride` (optional, {id, messages}) lets a caller that
-// already holds a *live* bulletin.js subscription for one board (the home
-// screen's bell, via bulletin.js's onMessages hook — see §5.5) hand its
-// already-fetched messages in directly instead of this function issuing
-// its own query for that board — the whole reason that override exists is
-// to guarantee this never opens a second query/listener on a path
-// bulletin.js already subscribes to live. Every other board is still
-// fetched normally with a bounded one-time getDocs. ---
+// עד כאן הקובץ הזה קרא בעצמו, מהדפדפן, את `bulletin_view_receipts/…/{uid}`
+// — נתיב ש-firestore.rules חוסם לחלוטין (allow read, write: if false).
+// השגיאה נבלעה, וכל הודעה שנצפתה הוצגה כ"לא נצפתה"; ובנוסף כל רענון
+// (login.html, כל 90 שניות) הריץ קריאת מסמך אחת לכל הודעה ולכל קריאת
+// פתע (N+1), ומונה שנגזר מ-30 פריטים בלבד.
+//
+// עכשיו: קריאה שרתית אחת (`getAlertsFeed`, functions/bulletin-receipts.js
+// alertsFeed) מחזירה את הפיד עם מצב הצפייה **שלי** בלבד, אחרי אימות
+// schema/תוקף של הקבלה בשרת, ו-unread_count שנספר על כל חלון המועמדים.
+// הקבלות עצמן נשארות חסומות לדפדפן. כשל = שגיאה ללקוח, לא "unread".
 
-export async function resolveBulletinViewed(sdk, db, sid, uid, messageDoc, data) {
-  const { doc, getDoc } = sdk;
-  if (data.by_uid === uid) return true;
-  try {
-    const receipt = await getDoc(doc(db, 'stations', sid, 'bulletin_view_receipts',
-      messageDoc.id, 'bulletin_view_recipients', uid));
-    return receipt.exists();
-  } catch (ignore) { return false; /* unreadable receipt = not-yet-viewed */ }
+export const FEED_SCHEMA = 'alerts-feed-v1';
+const MAX_ITEMS = 30;
+
+function finiteInt(value, min, max) {
+  return Number.isSafeInteger(value) && value >= min && value <= max;
 }
 
-export async function loadAlertsFeed(sdk, db, sid, uid, messageTimeMs, activeBoardOverride) {
-  const { collection, doc, getDoc, getDocs, query, where, orderBy, limit } = sdk;
-  const override = activeBoardOverride && activeBoardOverride.id ? activeBoardOverride : null;
-
-  const boardsSnap = await getDocs(collection(db, 'stations', sid, 'sub_stations'));
-  const boards = boardsSnap.docs.map(function (d) {
-    return { id: d.id, name: (d.data() || {}).name || d.id };
-  });
-
-  const bulletinItems = [];
-  for (const board of boards) {
-    if (override && board.id === override.id) {
-      for (const messageDoc of override.messages || []) {
-        const data = messageDoc.data ? (messageDoc.data() || {}) : (messageDoc.value || {});
-        const id = messageDoc.id;
-        const timeMs = messageTimeMs(data.created_at) || messageTimeMs(data.created_key);
-        const viewed = await resolveBulletinViewed(sdk, db, sid, uid, { id }, data);
-        bulletinItems.push(bulletinFeedItem(board.id, board.name, id, data, viewed, timeMs));
+// אימות צורת התשובה מהשרת — לא סומכים על JSON כפי שהגיע. תשובה לא
+// תקינה זורקת, כדי שהמסך יציג שגיאה ולא "0 לא נצפו" מזויף.
+export function normalizeFeedResponse(raw) {
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  if (!value || value.schema !== FEED_SCHEMA) throw new Error('alerts-feed: unexpected response schema');
+  if (!Array.isArray(value.items) || value.items.length > MAX_ITEMS) throw new Error('alerts-feed: items invalid');
+  if (!finiteInt(value.unread_count, 0, 100000)) throw new Error('alerts-feed: unread_count invalid');
+  const items = value.items.map(function (item) {
+    if (!item || typeof item !== 'object') throw new Error('alerts-feed: item invalid');
+    if (item.kind === 'bulletin') {
+      if (typeof item.board_id !== 'string' || typeof item.id !== 'string' || item.id.indexOf('/') < 1) {
+        throw new Error('alerts-feed: bulletin item invalid');
       }
-      continue;
+      return bulletinFeedItem(item.board_id, item.board_name, item.id.slice(item.board_id.length + 1),
+        { text: item.text, by_name: item.by_name }, item.viewed === true, item.time_ms);
     }
-    const q = query(
-      collection(db, 'stations', sid, 'sub_stations', board.id, 'bulletin_messages'),
-      where('hidden', '==', false), orderBy('created_at', 'desc'), limit(BOARD_MESSAGE_LIMIT)
-    );
-    let snap;
-    try { snap = await getDocs(q); } catch (ignore) { continue; }
-    for (const messageDoc of snap.docs) {
-      const data = messageDoc.data() || {};
-      const timeMs = messageTimeMs(data.created_at) || messageTimeMs(data.created_key);
-      const viewed = await resolveBulletinViewed(sdk, db, sid, uid, messageDoc, data);
-      bulletinItems.push(bulletinFeedItem(board.id, board.name, messageDoc.id, data, viewed, timeMs));
+    if (item.kind === 'callout') {
+      if (typeof item.id !== 'string' || !item.id) throw new Error('alerts-feed: callout item invalid');
+      return calloutFeedItem(item.id, { text: item.text, by_name: item.by_name, active: item.active !== false },
+        item.viewed === true, item.time_ms);
     }
+    throw new Error('alerts-feed: unknown item kind');
+  });
+  return { items: items, unread_count: value.unread_count };
+}
+
+// `callable` הוא httpsCallable(fns, 'getAlertsFeed') שכבר נבנה על ידי
+// הקורא (הזרקה, כדי שהקובץ יישאר נבדק בלי Firebase). קריאה אחת בלבד;
+// שום getDoc/getDocs מהדפדפן.
+export async function loadAlertsFeed(callable) {
+  if (typeof callable !== 'function') throw new TypeError('alerts-feed: callable is required');
+  const response = await callable({});
+  return normalizeFeedResponse(response && response.data);
+}
+
+// --- Display tracking (blocker 3.4 / 8) ---
+//
+// "הוצג" הוא מה שמסך ההתראות מוכיח, לא מה שהוא מרנדר: פריט נחשב
+// כמוצג רק אחרי ≥60% נראות ברצף במשך dwellMs (ברירת מחדל 1000ms) בזמן
+// שהלשונית גלויה — אותו כלל בדיוק שכבר אוכף bulletin.js על לוח
+// המודעות (observeDisplayedMessages). הקבלה נשלחת פעם אחת לכל פריט
+// לכל טעינת מסך; רענון של הרשימה אינו שולח שוב פריט שכבר אושר.
+export function createDisplayTracker(options) {
+  const opts = options || {};
+  const doc = opts.document || (typeof document !== 'undefined' ? document : null);
+  const dwellMs = Number.isFinite(opts.dwellMs) ? opts.dwellMs : 1000;
+  const threshold = Number.isFinite(opts.threshold) ? opts.threshold : 0.6;
+  const markViewed = typeof opts.markViewed === 'function' ? opts.markViewed : null;
+  const ObserverCtor = opts.IntersectionObserver
+    || (typeof IntersectionObserver === 'function' ? IntersectionObserver : null);
+  const confirmed = new Set();
+  const pending = new Set();
+  const timers = new Map();
+  let observer = null;
+  const hidden = function () { return !doc || doc.visibilityState === 'hidden'; };
+
+  function stop() {
+    if (observer) observer.disconnect();
+    observer = null;
+    timers.forEach(function (timer) { clearTimeout(timer); });
+    timers.clear();
   }
-
-  const calloutItems = [];
-  try {
-    // כולל active וגם היסטוריות (סגורות) — לא רק פעילות, כדי שהפילטר
-    // "קריאות פתע" יציג את כל הקריאות שהמשתמש נמען שלהן, לא רק פתוחות.
-    const calloutQuery = query(collection(db, 'stations', sid, 'callouts'),
-      where('uids', 'array-contains', uid),
-      orderBy('created_key', 'desc'), limit(CALLOUT_LIMIT));
-    const calloutSnap = await getDocs(calloutQuery);
-    for (const calloutDoc of calloutSnap.docs) {
-      const data = calloutDoc.data() || {};
-      const timeMs = messageTimeMs(data.created_at) || messageTimeMs(data.created_key);
-      let viewed = false;
-      try {
-        const responseSnap = await getDoc(doc(db, 'stations', sid, 'callouts', calloutDoc.id, 'responses', uid));
-        viewed = responseSnap.exists() && !!(responseSnap.data() || {}).seen_at;
-      } catch (ignore) { /* unreadable response is treated as not-yet-viewed */ }
-      calloutItems.push(calloutFeedItem(calloutDoc.id, data, viewed, timeMs));
-    }
-  } catch (ignore) { /* callouts are an addition to the feed, never block bulletin items */ }
-
-  return mergeFeedItems(bulletinItems, calloutItems, FEED_LIMIT);
+  function onEntries(entries) {
+    entries.forEach(function (entry) {
+      const node = entry.target;
+      const key = node && node.dataset ? node.dataset.feedId : '';
+      if (!key || confirmed.has(key) || pending.has(key)) return;
+      if (!entry.isIntersecting || entry.intersectionRatio < threshold || hidden()) {
+        clearTimeout(timers.get(key));
+        timers.delete(key);
+        return;
+      }
+      if (timers.has(key)) return;
+      timers.set(key, setTimeout(async function () {
+        timers.delete(key);
+        if (hidden() || !node.isConnected) return;
+        pending.add(key);
+        try {
+          await markViewed({ kind: node.dataset.feedKind, id: key, board_id: node.dataset.feedBoard || '',
+            message_id: node.dataset.feedMessage || '' });
+          confirmed.add(key);
+          node.dataset.viewed = 'true';
+          if (typeof opts.onConfirmed === 'function') opts.onConfirmed(key);
+        } catch (ignore) {
+          // הקבלה היא טלמטריה; כשל בה לעולם לא שובר את המסך. הפריט
+          // יישאר "טרם נצפה" — ואפשר לנסות שוב בהצגה הבאה.
+        } finally {
+          pending.delete(key);
+        }
+      }, dwellMs));
+    });
+  }
+  function observe(container) {
+    stop();
+    if (!markViewed || !ObserverCtor || hidden() || !container) return;
+    observer = new ObserverCtor(onEntries, { root: null, threshold: [threshold] });
+    container.querySelectorAll('[data-feed-id][data-viewed="false"]').forEach(function (node) {
+      observer.observe(node);
+    });
+  }
+  return { observe: observe, stop: stop, confirmed: confirmed, _onEntries: onEntries };
 }

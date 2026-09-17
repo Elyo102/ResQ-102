@@ -1,4 +1,51 @@
-import { STUB_SWAPS } from './firebase-firestore.js';
+import { STUB_SWAPS, collection, getDocs, query, where, orderBy, limit } from './firebase-firestore.js';
+
+// 42H.20 · ביקורת Codex, חוסם 3 · getAlertsFeed בסטאב: אותה לוגיקה כמו
+// functions/bulletin-receipts.js alertsFeed, מעל נתוני הסטאב של Firestore
+// (הודעות, קריאות, __BULLETIN_RECEIPTS_SEEN / __CALLOUT_SEEN_EXTRA) — כדי
+// שבדיקות הדפדפן של מסך ההתראות ופעמון הבית ירוצו מול אותה תשובה
+// שהשרת מחזיר, בלי שהדפדפן יקרא קבלות בעצמו.
+async function stubAlertsFeed(){
+  const uid = (typeof window !== 'undefined' && window.__SMOKE_UID) || 'stub-uid';
+  const sid = 'eilat_102';
+  const db = {};
+  const ms = value => {
+    if (value && typeof value.toMillis === 'function') return Number(value.toMillis());
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const boards = (await getDocs(collection(db, 'stations', sid, 'sub_stations'))).docs
+    .map(d => ({ id:d.id, name:(d.data() || {}).name || d.id }));
+  const items = [];
+  for (const board of boards) {
+    const snap = await getDocs(query(collection(db, 'stations', sid, 'sub_stations', board.id, 'bulletin_messages'),
+      where('hidden', '==', false), orderBy('created_at', 'desc'), limit(10)));
+    for (const m of snap.docs) {
+      const data = m.data() || {};
+      // "השרת" רואה את הקבלות שלו ישירות — לא דרך getDoc של הדפדפן
+      // (הנתיב חסום ל-client, ובדיקת הדפדפן מוודאת שאין קריאה כזו).
+      const seenSet = typeof window !== 'undefined' && window.__BULLETIN_RECEIPTS_SEEN;
+      const key = m.id + '/' + uid;
+      const receiptSeen = !!seenSet && (seenSet.has ? seenSet.has(key) : seenSet.indexOf(key) !== -1);
+      items.push({ kind:'bulletin', id:board.id + '/' + m.id, board_id:board.id, board_name:board.name,
+        text:String(data.text || ''), by_name:String(data.by_name || 'חבר צוות'),
+        time_ms:ms(data.created_at) || ms(data.created_key), viewed:data.by_uid === uid || receiptSeen });
+    }
+  }
+  const callouts = await getDocs(query(collection(db, 'stations', sid, 'callouts'),
+    where('uids', 'array-contains', uid), orderBy('created_key', 'desc'), limit(25)));
+  for (const c of callouts.docs) {
+    const data = c.data() || {};
+    const calloutSeen = typeof window !== 'undefined' && window.__CALLOUT_SEEN_EXTRA;
+    const seen = !!calloutSeen && (calloutSeen.has ? calloutSeen.has(c.id) : calloutSeen.indexOf(c.id) !== -1);
+    items.push({ kind:'callout', id:c.id, text:String(data.text || ''), active:data.active !== false,
+      by_name:String(data.by_name || ''), time_ms:ms(data.created_at) || ms(data.created_key), viewed:seen });
+  }
+  items.sort((a, b) => b.time_ms - a.time_ms);
+  return { data:{ schema:'alerts-feed-v1', generated_at_ms:Date.now(),
+    unread_count:items.filter(i => !i.viewed).length, items:items.slice(0, 30),
+    window:{ boards:boards.length, messages_per_board:10, callouts:25, feed_limit:30, candidates:items.length } } };
+}
 
 export function getFunctions(){ return {}; }
 
@@ -66,6 +113,7 @@ function stubWorkdays(payload){
 }
 
 function defaultCallableStep(name, payload){
+  if (name === 'getAlertsFeed') return { data:{ __async:stubAlertsFeed } };
   if (name === 'getPersonalLiveLabStatus') return { data:{ active:false, expires_at_ms:0 } };
   if (name === 'enablePersonalLiveLab') return { data:{ active:true, expires_at_ms:Date.now()+86400000 } };
   if (name === 'sendPersonalLiveLabPush') return { data:{ probe_id:String((payload || {}).request_id || ''), state:'accepted', duplicate:false } };
@@ -148,7 +196,9 @@ export function httpsCallable(_functions, name){
         });
         return;
       }
-      resolve({ data:(step && step.data) || defaultCallableStep(name, payload).data });
+      const data = (step && step.data) || defaultCallableStep(name, payload).data;
+      if (data && typeof data.__async === 'function') { data.__async().then(resolve, reject); return; }
+      resolve({ data });
     }, delay));
   };
 }
