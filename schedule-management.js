@@ -1926,6 +1926,10 @@ async function loadStationRange(ym) {
         || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
+    const retry = node('button', 'btn sm', 'נסה שוב');
+    retry.type = 'button';
+    retry.addEventListener('click', () => loadStationRange(requestedMonth));
+    box.appendChild(retry);
   }
 }
 
@@ -2115,6 +2119,10 @@ async function loadMineRange(ym) {
         || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
+    const retry = node('button', 'btn sm', 'נסה שוב');
+    retry.type = 'button';
+    retry.addEventListener('click', () => loadMineRange(requestedMonth));
+    box.appendChild(retry);
   }
 }
 

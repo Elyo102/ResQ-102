@@ -348,10 +348,16 @@ async function load(){
     return;
   }
 
+  let presenceFailed = false;
   try {
     const ps = await getDocs(collection(db, 'stations', sid, 'presence'));
     ps.forEach(d => { presence[d.id] = d.data(); });
-  } catch (ignore) {}
+  } catch (e) {
+    // בלי הדגל, כשל כאן נראה בדיוק כמו שכולם "מעולם לא נכנסו" —
+    // וזה בדיוק ההפך: זו בקרת גישה, וטענה כזו כשגויה מסוכנת.
+    presenceFailed = true;
+    console.error('presence load failed', e);
+  }
 
   if (!users.length) {
     msg('msg', 'אין כבאים רשומים בתחנה הזו.', 'info');
@@ -367,11 +373,13 @@ async function load(){
     const p  = presence[u.uid] || {};
     const ts = p.last_login;
 
-    if (!ts) never++;
+    if (!ts && !presenceFailed) never++;
 
-    const when = ts
-      ? '<span class="num">' + fmt(ts) + '</span>'
-      : '<span class="never">מעולם לא</span>';
+    const when = presenceFailed
+      ? '<span class="num">לא ידוע כרגע</span>'
+      : (ts
+          ? '<span class="num">' + fmt(ts) + '</span>'
+          : '<span class="never">מעולם לא</span>');
 
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -385,12 +393,15 @@ async function load(){
     $('rows').appendChild(tr);
   });
 
-  $('summary').innerHTML =
-    '<div><b>' + users.length + '</b>רשומים</div>' +
-    '<div><b>' + never + '</b>מעולם לא נכנסו</div>';
+  $('summary').innerHTML = presenceFailed
+    ? '<div><b>' + users.length + '</b>רשומים</div>'
+    : ('<div><b>' + users.length + '</b>רשומים</div>' +
+       '<div><b>' + never + '</b>מעולם לא נכנסו</div>');
 
   $('tbl').classList.remove('hide');
-  msg('msg', '', '');
+  msg('msg', presenceFailed
+    ? 'הרשימה נטענה, אבל נתוני הכניסה האחרונה לא זמינים כרגע — עמודת "כניסה אחרונה" אינה מהימנה בטעינה הזו.'
+    : '', presenceFailed ? 'err' : '');
   btn.disabled = false;
 }
 </script>

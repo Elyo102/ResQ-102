@@ -306,6 +306,8 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
 let feedItems = [], feedFilter = 'all';
+let feedEverLoaded = false;
+let lastFeedClaims = null;
 let prefs = defaultPrefs(), tokens = [], vapid = DEFAULT_VAPID, myToken = '';
 let messaging = null;
 
@@ -784,14 +786,31 @@ function renderFeedList() {
 }
 
 async function loadFeed(claims) {
+  lastFeedClaims = claims;
+  if (!feedEverLoaded) {
+    // רק בטעינה הראשונה — ברענון יש כבר מה להראות, ואין טעם
+    // להחליף אותו ב"טוען" ולגרום להבזק ריק.
+    $('feedList').innerHTML = '<div class="note" style="padding-top:4px">טוען עדכונים…</div>';
+    msg('', '', 'feedMsg');
+  }
   try {
     feedItems = await loadAlertsFeed(
       { collection, doc, getDoc, getDocs, query, where, orderBy, limit },
       db, SID, ME.uid, messageTimeMs
     );
-  } catch (ignore) {
-    feedItems = [];
-    msg('טעינת העדכונים נכשלה כרגע.', 'err', 'feedMsg');
+    feedEverLoaded = true;
+    msg('', '', 'feedMsg');
+  } catch (e) {
+    console.error('feed load failed', e);
+    // כשל בריענון לא מוחק עדכונים שכבר נטענו בהצלחה — רק כשל
+    // בטעינה הראשונה משאיר רשימה ריקה, כי אין עדיין מה להראות.
+    if (!feedEverLoaded) feedItems = [];
+    $('feedMsg').innerHTML = 'טעינת העדכונים נכשלה כרגע' +
+      (feedEverLoaded ? '. הרשימה שמוצגת היא מהטעינה האחרונה שהצליחה.' : '.') +
+      ' <button type="button" class="btn sm" id="feedRetryBtn">נסה שוב</button>';
+    $('feedMsg').className = 'msg err';
+    const rb = document.getElementById('feedRetryBtn');
+    if (rb) rb.onclick = function () { rb.disabled = true; loadFeed(lastFeedClaims); };
   }
   renderFeedTabs();
   renderFeedList();

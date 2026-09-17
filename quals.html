@@ -262,6 +262,11 @@ let quals   = [];   // [{id,name,order}]
 let people  = [];   // [{uid,full_name,crew}]
 let held    = {};   // uid -> [qid]
 let redline = { min_headcount: 0, min_quals: {} };
+// דגלי כשל שקט: שתי שאילתות אלה קריטיות לחישוב הקו האדום. כשל
+// שקט בהן לא יביא ל'אין כשירויות' אמיתי אלא לתמונה כוזבת של
+// 'כולם לא כשירים' — ולכן הן חייבות באזהרה גלויה, לא ב-catch(ignore).
+let memberQualsFailed = false;
+let redlineFailed = false;
 
 // ---------- הרשאה ----------
 
@@ -364,14 +369,21 @@ async function loadAll(){
         (e.code || e.message) + ')', 'err');
   }
 
+  memberQualsFailed = false;
   try {
     const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
     ms.forEach(d => {
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
-  } catch (ignore) {}
+  } catch (e) {
+    // כשל כאן משאיר held ריק — בלי הדגל, שאר המסך ממשיך כאילו
+    // באמת אין לאף אחד כשירות, וזו טעות בטיחותית שקטה.
+    memberQualsFailed = true;
+    console.error('member_quals load failed', e);
+  }
 
+  redlineFailed = false;
   try {
     const rl = await getDoc(doc(db, 'stations', SID, 'config', 'redline'));
     if (rl.exists()) {
@@ -381,7 +393,17 @@ async function loadAll(){
         min_quals: (v.min_quals && typeof v.min_quals === 'object') ? v.min_quals : {}
       };
     }
-  } catch (ignore) {}
+  } catch (e) {
+    redlineFailed = true;
+    console.error('redline load failed', e);
+  }
+
+  if (memberQualsFailed) {
+    // עמודת הכשירויות בטבלת האנשים תיראה ריקה לגמרי בלי האזהרה
+    // הזו — ריק אמיתי ו'לא הצלחנו לטעון' נראים אותו הדבר בלעדיה.
+    $('peopleNote').textContent = 'לא ניתן היה לטעון את הכשירויות שכל אדם מחזיק כרגע. ' +
+      'העמודה למטה עלולה להיראות ריקה גם אצל מי שכן כשיר.';
+  }
 
   renderCatalog();
   renderRedlineForm();
@@ -741,6 +763,19 @@ function refreshChips(p){
 function renderStatus(){
   const box = $('rlBoxes');
   box.innerHTML = '';
+
+  // כשל בקריאת מי-מחזיק-מה או הקו האדום עצמו הופך כל חישוב
+  // כאן לספרות שנראות תקינות אך אינן — הצגתן כ'הצלחה' מלאה
+  // מסוכנת ממש כמו לוח ריק. עוצרים כאן, לא מחשבים על נתונים חסרים.
+  if (memberQualsFailed || redlineFailed) {
+    box.innerHTML = '<div class="msg err" style="display:block">לא ניתן היה לטעון את ' +
+      (memberQualsFailed ? 'נתוני הכשירויות שכל אדם מחזיק' : 'הקו האדום') +
+      '. מצב המשמרות מול הקו האדום אינו מוצג כדי לא להראות תמונה שגויה. ' +
+      '<button type="button" class="link" id="rlRetryBtn">נסה שוב</button></div>';
+    const rb = document.getElementById('rlRetryBtn');
+    if (rb) rb.onclick = function () { rb.disabled = true; loadAll(); };
+    return;
+  }
 
   const minHead = Number(redline.min_headcount || 0);
   const mins    = redline.min_quals || {};

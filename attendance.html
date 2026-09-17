@@ -687,7 +687,11 @@ function showLegacyCompatibilityFailure(){
   $('tDays').textContent = '—';
   $('tSug').textContent = '—';
   setMonthUnavailable();
-  msg('לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. רענן את הדף ונסה שוב.', 'err');
+  $('msg').innerHTML = 'לא הצלחנו לטעון את נתוני סידור העבודה. החישוב נעצר כדי לא להציג ימי עבודה שגויים. ' +
+    '<button type="button" class="btn sm" id="staticRetryBtn">נסה שוב</button>';
+  $('msg').className = 'msg err';
+  const rb = document.getElementById('staticRetryBtn');
+  if (rb) rb.onclick = function () { rb.disabled = true; loadStatic(); };
 }
 
 // ---------- הרשאה ----------
@@ -1079,7 +1083,11 @@ async function loadMonth(){
     $('tDays').textContent = '—';
     $('tSug').textContent = '—';
     $('state').textContent = 'הדוח לא נטען';
-    msg('לא ניתן לטעון את הדוח במלואו. הנתונים לא שונו; יש לנסות לטעון שוב לפני עריכה.', 'err');
+    $('msg').innerHTML = 'לא ניתן לטעון את הדוח במלואו. הנתונים לא שונו; יש לנסות לטעון שוב לפני עריכה. ' +
+      '<button type="button" class="btn sm" id="monthRetryBtn">נסה שוב</button>';
+    $('msg').className = 'msg err';
+    const rb = document.getElementById('monthRetryBtn');
+    if (rb) rb.onclick = function () { rb.disabled = true; loadMonth(); };
     setMonthUnavailable();
     return false;
   }
