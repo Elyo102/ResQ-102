@@ -122,6 +122,44 @@ const FIXED_STATIONS = Object.freeze([
   Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null, minVisualSlots:2 })
 ]);
 
+/* ⭐ 42H.20 · ביקורת Codex, חוסם 2 · ארבעה חריצי תצוגה, לא שמונה שורות.
+ * הסידור המיובא מהגיליון חתום בשרת עם מזהי ישות דינמיים
+ * (is_<sha256(station_id, label)>, ראה stationKey() ב-
+ * functions/schedule-import-layout.js). הלוח הציג את ארבע השורות הקבועות
+ * (eilat/shahmon/timna/yotvata) ריקות, ואז עוד ארבע שורות is_… מאוכלסות.
+ *
+ * ההפרדה כאן: **מזהה הישות** נשאר מה שהשרת חתם (אין שינוי בנתונים, אין
+ * מיזוג לפי שם), ו**חריץ התצוגה** הוא אחד מארבעת הקבועים. חריץ מקבל
+ * בדיוק שני מזהים: המזהה הוותיק שלו, והמזהה שהייבוא מפיק עבור השם
+ * הקנוני שלו בטווח התחנה הזו — מחושב כאן באותה נוסחה בדיוק (sha256 של
+ * JSON יציב של [station_id, label מנורמל], 40 hex). זו השוואת מפתחות
+ * חתומים, לא התאמת תוויות: שם תצוגה שהשרת החזיר אינו משמש להתאמה כלל.
+ * מזהה is_… שאינו אחד מארבעת המפתחות האלה הוא תחנה נוספת באמת, ומוצג
+ * כשורה נוספת — בלי למחוק תמיכה בזהויות דינמיות. */
+function importIdentityLabel(label) {
+  return String(label).normalize('NFC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('he-IL');
+}
+async function importStationKey(stationId, label) {
+  const stable = '[' + JSON.stringify(String(stationId)) + ',' + JSON.stringify(importIdentityLabel(label)) + ']';
+  const bytes = new TextEncoder().encode(stable);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return 'is_' + Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
+async function computeBoardSlotKeys(stationId) {
+  const scoped = typeof stationId === 'string' ? stationId.trim() : '';
+  if (!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(scoped)) return new Map();
+  const entries = await Promise.all(FIXED_STATIONS.map(async (station) =>
+    [station.id, await importStationKey(scoped, station.label)]));
+  return new Map(entries);
+}
+async function refreshBoardSlotKeys(claims) {
+  const stationId = claims && (claims.stationId || claims.station_id);
+  const scoped = typeof stationId === 'string' ? stationId.trim() : '';
+  if (state.boardSlotStation === scoped && state.boardSlotKeys) return;
+  state.boardSlotKeys = await computeBoardSlotKeys(scoped);
+  state.boardSlotStation = scoped;
+}
+
 function localDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -1635,15 +1673,40 @@ function subOrder(days) {
   // תחנת קצה, „off mode") אינו תחנה קיימת — הצגתו כעמודה תמציא שיבוץ
   // שלא היה בגיליון, בניגוד מפורש לחוזה „תבנית ריקה בלי המצאות".
   const IMPORT_STATION_ID_RE = /^is_[0-9a-f]{40}$/;
+  // חריץ תצוגה ← המזהים החתומים שהוא מקבל: הוותיק שלו והמזהה שהייבוא
+  // מפיק לשם הקנוני שלו (ראה computeBoardSlotKeys). השוואה לפי מפתח בלבד.
+  const slotKeys = state.boardSlotKeys instanceof Map ? state.boardSlotKeys : new Map();
+  const slotOf = new Map();
+  FIXED_STATIONS.forEach((station) => {
+    slotOf.set(station.id, station.id);
+    const imported = slotKeys.get(station.id);
+    if (imported) slotOf.set(imported, station.id);
+  });
+  const slotIds = (slot) => {
+    const imported = slotKeys.get(slot);
+    // המזהה החתום מהייבוא קודם: כשיש לאותו יום גם שורה ותיקה וגם שורה
+    // מיובאת, מוצגת המיובאת — לא מיזוג אנשים משתי ישויות.
+    return imported ? [imported, slot] : [slot];
+  };
   const legacy = FIXED_STATIONS.map((station) => station.id);
-  const rest = seen.filter((id) => !fixedById.has(id) && IMPORT_STATION_ID_RE.test(id));
-  const orderedIds = legacy.concat(rest);
-  return orderedIds.map((id) => ({
+  const rest = seen.filter((id) => !slotOf.has(id) && IMPORT_STATION_ID_RE.test(id));
+  const lineOfAny = (ids) => {
+    for (const id of ids) { const line = lineOf(id); if (line !== null) return line; }
+    return null;
+  };
+  return legacy.map((slot) => ({
+    id: slot,
+    ids: slotIds(slot),
+    label: labelOf(slot),
+    minimum: lineOfAny(slotIds(slot)),
+    minVisualSlots: slotsOf(slot)
+  })).concat(rest.map((id) => ({
     id,
+    ids: [id],
     label: labelOf(id),
     minimum: lineOf(id),
     minVisualSlots: slotsOf(id)
-  }));
+  })));
 }
 
 function cellContent(cell, block, minVisualSlots) {
@@ -1754,7 +1817,7 @@ function renderBoard(target, days, options) {
     return;
   }
   const subs = (opts.subs || subOrder(days)).filter((sub) =>
-    !opts.onlySub || sub.id === opts.onlySub);
+    !opts.onlySub || sub.id === opts.onlySub || (Array.isArray(sub.ids) && sub.ids.includes(opts.onlySub)));
   if (!subs.length && opts.showAbsences !== true) {
     target.appendChild(node('div', 'empty', 'אין תחנות קצה להצגה.'));
     return;
@@ -1812,7 +1875,12 @@ function renderBoard(target, days, options) {
       cell.setAttribute('role', 'gridcell');
       cell.dataset.station = sub.id;
       cell.dataset.date = day.date;
-      const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
+      const ids = Array.isArray(sub.ids) && sub.ids.length ? sub.ids : [sub.id];
+      let block = null;
+      for (const id of ids) {
+        block = (day.sub_stations || []).find((item) => item.sub_station === id) || null;
+        if (block) break;
+      }
       cellContent(cell, block, sub.minVisualSlots);
       ariaRow.appendChild(cell);
     });
@@ -4197,6 +4265,7 @@ async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration || state.user !== user) return;
   applyPageRoleView(user, claims);
   state.claims = claims;
+  await refreshBoardSlotKeys(claims);
   state.authScope = authScopeKey(user, claims);
   renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
@@ -4573,6 +4642,7 @@ async function handleIdToken(user) {
   if (interruptedOperation) {
     state.user = user;
     state.claims = claims;
+    await refreshBoardSlotKeys(claims);
     state.authScope = nextScope;
     state.status = status;
     renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);

@@ -4,6 +4,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
+const requireCjs = createRequire(import.meta.url);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
@@ -3330,10 +3332,85 @@ try {
     assert.equal(await qualRacePage.locator('#qualPeople').textContent(), '');
   });
   await qualRaceCtx.close();
+
+  /* ==================================================================
+   * 42H.20 · ביקורת Codex, חוסם 2 · הלוח אחרי ייבוא אמיתי: בדיוק ארבע
+   * תחנות, כולן מאוכלסות. השורות כאן נושאות את מזהי הישות **הדינמיים**
+   * שהשרת חותם אחרי ייבוא (is_<hash>, מחושבים כאן עם stationKey() האמיתי
+   * מ-functions/schedule-import-layout.js, לא מחרוזות שהבדיקה המציאה),
+   * והמספרים הם של קובץ אילת האמיתי דרך המנוע האמיתי: 293/138/119/60.
+   * לפני התיקון הלוח הציג שמונה שורות — ארבע קבועות ריקות ועוד ארבע
+   * is_… מאוכלסות. הבדיקה נכשלת על תחנה חמישית, שורה כפולה, או שורת
+   * legacy ריקה.
+   * ================================================================== */
+  const layoutMod = requireCjs('../functions/schedule-import-layout.js');
+  const pipelineMod = requireCjs('../functions/schedule-import-pipeline.js');
+  const fixture = requireCjs('../functions/schedule-workbook-fixture.json');
+  const importScope = 'eilat_102'; // stationId של הטוקן בבדיקות האלה (tests/stub/firebase-auth.js)
+  const importResult = pipelineMod.buildWorkbookImport({
+    input:fixture.grid, month:'2026-09', station_id:importScope, inventory:[], bindings:[], label_spans:fixture.label_spans
+  });
+  const importedIds = {};
+  Object.entries(importResult.policy.sub_stations).forEach(([id, spec]) => { importedIds[spec.label] = id; });
+  const canonical = [['אילת', 7], ['שחמון', null], ['תמנע', null], ['יטבתה', null]];
+  canonical.forEach(([label]) => assert.equal(importedIds[label], layoutMod.stationKey(importScope, label)));
+  const importedPeopleByDate = {};
+  importResult.parsed.blocks.filter((b) => b.kind === 'station').forEach((block) => {
+    Object.keys(block.cells).forEach((date) => {
+      importedPeopleByDate[date] = importedPeopleByDate[date] || {};
+      importedPeopleByDate[date][block.sub_station] = block.cells[date].map((name, index) => ({
+        uid:'ext_' + name, person:name, crew:['A', 'B', 'C'][index % 3], unlinked:true
+      }));
+    });
+  });
+  const realImportDays = importResult.parsed.dates.map((date, index) => ({
+    date, crew:['A', 'B', 'C'][index % 3], events:[], guards_status:'ready', guards:[],
+    absences_status:'ready', absence_coverage:readyAbsences, absences:[],
+    sub_stations:canonical.map(([label, minimum]) => ({
+      sub_station:importedIds[label], label, minimum, coverage:'ready', below_minimum:false,
+      people:(importedPeopleByDate[date] || {})[importedIds[label]] || []
+    }))
+  }));
+  const realImportRange = {
+    mode:'new', active:true, source:'publication', display_only:false,
+    publication_id:'p_real_import', revision:1, from:'2026-09-01', to:'2026-09-30', days:realImportDays
+  };
+  const realImportCtx = await browser.newContext({ viewport:{ width:1440, height:1000 }, locale:'he-IL' });
+  await prepare(realImportCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:realImportRange }]
+  });
+  const realImportPage = await realImportCtx.newPage();
+  await realImportPage.goto(base + '?tab=station&from=2026-09-01&to=2026-09-30', { waitUntil:'load' });
+  await realImportPage.locator('#stationBoard .stub[data-station] b').first().waitFor();
+  await test('after a real workbook import the board shows exactly four stations, each populated with 293/138/119/60 — no fifth row, no duplicate, no empty legacy row', async () => {
+    const stubs = realImportPage.locator('#stationBoard .stub[data-station]');
+    assert.equal(await stubs.count(), 4, 'exactly four station rows');
+    assert.deepEqual(await stubs.locator('b').allTextContents(), ['אילת', 'שחמון', 'תמנע', 'יטבתה']);
+    assert.deepEqual(await stubs.evaluateAll((nodes) => nodes.map((n) => n.dataset.station)),
+      ['eilat', 'shahmon', 'timna', 'yotvata'], 'display slots keep their stable ids');
+    const rowIds = await realImportPage.locator('#stationBoard .board-row[data-station]').evaluateAll((nodes) => nodes.map((n) => n.dataset.station));
+    assert.equal(new Set(rowIds).size, rowIds.length, 'no duplicate station row');
+    assert.equal(rowIds.some((id) => /^is_[0-9a-f]{40}$/.test(id)), false, 'no raw is_ row is rendered as a fifth station');
+    assert.equal(await realImportPage.locator('#stationBoard .cell[data-station].unknown').count(), 0,
+      'no empty legacy row — every slot carries the signed imported data');
+    const totals = await realImportPage.locator('#stationBoard .stub[data-station]').evaluateAll((stubsEl) =>
+      stubsEl.map((stub) => {
+        const id = stub.dataset.station;
+        return Array.from(document.querySelectorAll('#stationBoard .cell[data-station="' + id + '"]'))
+          .reduce((sum, cell) => sum + cell.querySelectorAll(':scope > .name-slot:not(.empty-slot)').length, 0);
+      }));
+    assert.deepEqual(totals, [293, 138, 119, 60]);
+    assert.equal(await realImportPage.locator('#stationBoard .stub[data-station="eilat"] small').textContent(), 'קו 7',
+      'the signed minimum of the imported row reaches the slot');
+    assert.equal(await realImportPage.locator('#stationBoard .hcell').count(), 30);
+  });
+  await realImportCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 82);
+assert.equal(passed, 83);
 console.log('\n' + passed + ' schedule management browser checks passed.');
