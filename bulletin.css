@@ -52,7 +52,7 @@
 }
 
 .home-command-brand b{font-size:22px;letter-spacing:-.05em}
-.home-command-brand b span{color:var(--accent)}
+.home-command-brand b span{color:var(--accent-txt)}
 .home-command-brand small{font-size:12px;font-weight:800;letter-spacing:.04em}
 .home-command-header h2{margin:0;color:var(--txt);font-size:20px;line-height:1.35}
 .home-command-header p{max-width:560px;margin:5px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
@@ -252,7 +252,7 @@
 .home-fault-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .home-fault-tab{width:100%;min-height:46px;margin:0;padding:9px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--dim);box-shadow:none}
 .home-fault-tab b{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-inline-start:5px;padding:0 6px;border-radius:999px;background:var(--chip);font-size:11px}
-.home-fault-tab.is-active{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+.home-fault-tab.is-active{border-color:var(--accent);background:var(--accent);color:var(--accent-on)}
 .home-fault-tab.is-active b{background:transparent;color:inherit;border:1px solid currentColor}
 .home-fault-list{display:grid;gap:8px}
 .home-fault-card{display:grid;gap:4px;padding:12px 13px;border:1px solid var(--line);border-inline-start:5px solid var(--warn);border-radius:12px;background:var(--panel);color:var(--txt);text-decoration:none}

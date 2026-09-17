@@ -53,7 +53,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .sep{ width:1px; align-self:stretch; background:var(--line); margin:0 2px }
   .verdict{ font-size:15px; font-weight:800; border-radius:8px; padding:6px 14px;
             white-space:nowrap }
-  .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:var(--bad-bg) }
+  .verdict.bad{ color:var(--bad-txt); border:1px solid var(--bad); background:var(--bad-bg) }
   .verdict.ok{ color:var(--good); border:1px solid var(--good-bd); background:var(--good-bg) }
   .why{ font-size:13px; color:var(--soft-bad); line-height:1.7 }
   .why b{ color:var(--on-soft) }
@@ -64,7 +64,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
         font-family:inherit; white-space:nowrap }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   .chain{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
@@ -129,7 +129,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .veh .role{ font-size:11.5px; color:var(--muted); border:1px solid var(--line);
               border-radius:20px; padding:1px 9px }
   .veh .cnt{ font-size:11.5px; color:var(--muted) }
-  .veh .cnt.bad{ color:var(--bad) }
+  .veh .cnt.bad{ color:var(--bad-txt) }
   .veh .tools{ margin-inline-start:auto; display:flex; gap:6px }
   .veh .tools .btn{ padding:4px 9px; font-size:11.5px }
 
@@ -154,10 +154,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         white-space:nowrap; flex:none; max-width:150px; overflow:hidden;
         text-overflow:ellipsis }
   .req.hit{ border-color:var(--good-bd); color:var(--good) }
-  .req.miss{ border-color:var(--bad); color:var(--bad) }
+  .req.miss{ border-color:var(--bad); color:var(--bad-txt) }
   .x{ flex:none; color:var(--muted); font-size:15px; cursor:pointer;
       padding:0 4px; line-height:1 }
-  .x:hover{ color:var(--bad) }
+  .x:hover{ color:var(--bad-txt) }
 
   .foot{ color:var(--muted); font-size:12px; margin-top:12px; line-height:1.8 }
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
@@ -197,7 +197,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .pit .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
              padding:1px 9px; color:var(--muted); white-space:nowrap }
   .pit .tag.hit{ border-color:var(--good-bd); color:var(--good) }
-  .pit .tag.miss{ border-color:var(--bad); color:var(--bad) }
+  .pit .tag.miss{ border-color:var(--bad); color:var(--bad-txt) }
   .pit .tag.busy{ border-color:var(--warn); color:var(--warn) }
   .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
 </style>

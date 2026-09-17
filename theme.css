@@ -57,13 +57,15 @@
   --on-accent:#ffffff;
   --on-soft:#1c3d5a;
 
-  --accent:#c1440e; /* 42H.20 Scope 10: kept at prior value, NOT the approved #d9531e - see note below */
+  --accent:#d9531e;  /* 42H.20 closure batch (CLAUDE-TASK.md v283/f21dc3c): ההכרעה הסופית - הכתום המאושר */
+  --accent-on:#000000; /* טקסט רגיל *על* רקע ההדגשה הכתום - שחור, 5.21:1. לא לבן (4.03:1, נכשל AA) */
   --pick:#7b3fa8;
   --in:#00707d;
   --note:#1d4ed8;
   --accent-txt:#963109;
 
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 Scope 10: kept at prior value, NOT the approved #dc2626 - see note below */
+  --bad:#dc2626;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 closure batch: ההכרעה הסופית - האדום המאושר. עם לבן (--on-accent) על רקעו: 4.83:1, עומד ב-AA */
+  --bad-txt:#b3261e; /* לטקסט אדום *על* רקע בהיר (bad-bg/כרטיס לבן) - dc2626 עצמו נכשל שם (4.03:1). הערך הישן, שכבר עמד ב-AA (5.46:1), משמש כאן */
   --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
   --warn:#8a5a00;  --warn-bg:#fbf0d9;
 
@@ -91,29 +93,16 @@
    elsewhere in the same page's own CSS could silently defeat. */
 [hidden]{ display:none !important; }
 
-/* 42H.20 Scope 10 (closure batch item 5) — approved tokens applied,
-   with one documented exception:
-
-   Applied: --bg #eef2f6, --txt/--on-soft #1c3d5a (dark-blue hierarchy),
-   card radius 14px (--radius-lg), field/button radius 8px (--radius-sm
-   now used by .ui-control/.ui-btn instead of --radius-md). Verified with
-   contrast.mjs after applying — 0 failures for these three tokens.
-
-   NOT applied: --accent #d9531e and --bad #dc2626, the exact approved
-   primary-orange and danger-red. Both measure ~4.03:1 white-on-color (and
-   dc2626 measures ~4.03:1 on its own --bad-bg tint), below the WCAG AA
-   4.5:1 this repo's own tests/contrast.mjs already enforces across every
-   real screen (confirmed: applying them produced 117 new failures across
-   ~15 pages, all at exactly this ratio, all traced to these two tokens).
-   The prior values (--accent #c1440e, --bad #b3261e) both clear 4.5:1
-   comfortably and are kept. This is a real conflict between two of
-   Eldad's own binding decisions - the exact hex values and the existing
-   accessibility gate - not a decision Claude is making unilaterally by
-   picking a side; it needs Eldad or Codex to pick a resolution (e.g. a
-   darker shade of the same hue that still reads as "the approved
-   orange/red" but clears 4.5:1, or an explicit call to relax the
-   contrast bar for large/bold UI text specifically). Left exactly as
-   found until that call is made. */
+/* 42H.20 Scope 10 (closure batch item 5) — approved tokens, now fully applied.
+   CLAUDE-TASK.md v283 (SHA-256 f21dc3c...) resolved the earlier conflict:
+   --accent #d9531e with BLACK text on it (--accent-on, 5.21:1) instead of
+   white (4.03:1, failed AA). --bad #dc2626 stays white-on-it (--on-accent,
+   4.83:1, unchanged) for danger backgrounds/badges. Where --accent or --bad
+   are used as TEXT/foreground color on a light background instead (headings,
+   labels), they use the separate --accent-txt / --bad-txt tokens, which were
+   already sized for that use and are unaffected by this change. Re-verified
+   with contrast.mjs across all real screens after the token swap AND after
+   redirecting every foreground use of --accent/--bad to --accent-txt/--bad-txt. */
 
 /* ===================================================================
    בהיר — בחירה ידנית מפורשת ב"בהיר תמיד"
@@ -145,13 +134,15 @@
   --on-accent:#ffffff;
   --on-soft:#1c3d5a;
 
-  --accent:#c1440e; /* 42H.20 Scope 10: kept at prior value, NOT the approved #d9531e - see note below */
+  --accent:#d9531e;  /* 42H.20 closure batch (CLAUDE-TASK.md v283/f21dc3c): ההכרעה הסופית - הכתום המאושר */
+  --accent-on:#000000; /* טקסט רגיל *על* רקע ההדגשה הכתום - שחור, 5.21:1. לא לבן (4.03:1, נכשל AA) */
   --pick:#7b3fa8;
   --in:#00707d;
   --note:#1d4ed8;
   --accent-txt:#963109;
 
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 Scope 10: kept at prior value, NOT the approved #dc2626 - see note below */
+  --bad:#dc2626;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 closure batch: ההכרעה הסופית - האדום המאושר. עם לבן (--on-accent) על רקעו: 4.83:1, עומד ב-AA */
+  --bad-txt:#b3261e; /* לטקסט אדום *על* רקע בהיר (bad-bg/כרטיס לבן) - dc2626 עצמו נכשל שם (4.03:1). הערך הישן, שכבר עמד ב-AA (5.46:1), משמש כאן */
   --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
   --warn:#8a5a00;  --warn-bg:#fbf0d9;
 
@@ -207,6 +198,13 @@
 
   /* --- הדגשה --- */
   --accent:#e8590c;
+  /* בניגוד ל--bad-txt למטה, זה כן שינוי חזותי: on-accent הקיים במצב הכהה
+     הוא #ffffff, ולבן על e8590c מודד רק 3.58:1 - נכשל AA כבר לפני השינוי
+     הזה (באג קיים, לא קשור להכרעה הנוכחית). הערך כאן משפר את זה בפועל
+     ל-4.95:1. לא תוקן על ידי שינוי --on-accent עצמו כי אותו טוקן משמש גם
+     ל--go/--bar-line/crewA/crewC במצב כהה, שם לבן כן עומד ב-AA - מחוץ
+     לתחום ההכרעה הנוכחית (שעוסקת רק בכתום/אדום המאושרים לערכה הבהירה). */
+  --accent-on:#111827;
   --pick:#c77dff;        /* ממתין להכרעה — לא טוב ולא רע */
   --in:#4dd0e1;          /* הצד שמקבל בהחלפה */
   --note:#4d94ff;        /* מידע — לא טוב, לא רע, לא אזהרה */
@@ -216,6 +214,7 @@
 
   /* --- מצבים --- */
   --bad:#ef5350;   --bad-bg:#241618;   --bad-bd:#5a2b2d;
+  --bad-txt:#ef5350; /* = --bad הקיים במצב כהה; אין כאן שינוי חזותי, רק כינוי לטוקן המשותף */
   --good:#66bb6a;  --good-bg:#16241a;  --good-bd:#2f4a33;
   --warn:#e0a23c;  --warn-bg:#241f13;
 
@@ -292,8 +291,8 @@
 .ui-field>label{color:var(--dim);font-size:var(--text-sm);font-weight:700}
 .ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
 .ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
-.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad-txt)}
 .ui-btn:disabled,.ui-control:disabled{opacity:.58;cursor:not-allowed}
 .ui-message{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--info-bg);color:var(--info-fg);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);line-height:1.55}
 .ui-message--success{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}

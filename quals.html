@@ -29,7 +29,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-family:"Segoe UI",Arial,sans-serif; padding:20px }
   .wrap{ max-width:900px; margin:0 auto }
   h1{ font-size:22px; margin:0 0 4px }
-  h2{ font-size:16px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:16px; margin:0 0 4px; color:var(--accent-txt) }
   .sub{ color:var(--muted); font-size:13px; margin-bottom:22px }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7; margin-bottom:14px }
 
@@ -41,7 +41,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         border:1px solid var(--line); border-radius:6px; font-size:15px;
         font-family:inherit }
   input.num{ width:84px; text-align:center; font-variant-numeric:tabular-nums }
-  button{ background:var(--accent); color:var(--on-accent); border:0; border-radius:6px;
+  button{ background:var(--accent); color:var(--accent-on); border:0; border-radius:6px;
         padding:11px 20px; font-size:15px; cursor:pointer; margin-top:16px;
         font-family:inherit }
   button:disabled{ opacity:.5; cursor:not-allowed }
@@ -90,7 +90,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .rl.okline{ border-color:var(--good-bd) }
   .rl h3{ margin:0 0 8px; font-size:15px; display:flex; align-items:center; gap:9px }
   .verdict{ font-size:13px; font-weight:700 }
-  .verdict.below{ color:var(--bad) } .verdict.okline{ color:var(--good) }
+  .verdict.below{ color:var(--bad-txt) } .verdict.okline{ color:var(--good) }
   .lack{ font-size:13px; line-height:1.9; color:var(--soft-bad) }
   .lack b{ color:var(--on-soft) }
   .counts{ font-size:12.5px; color:var(--muted); line-height:1.8 }

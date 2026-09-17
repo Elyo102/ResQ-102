@@ -185,7 +185,7 @@ export function summaryText(rl, bs, qualName) {
 export const WAIVER_STATES = [
   { id: 'pending',  he: 'ממתין לאישור מפקד התחנה', color: 'var(--warn)' },
   { id: 'approved', he: 'מאושר',                    color: 'var(--good)' },
-  { id: 'rejected', he: 'נדחה',                     color: 'var(--bad)' }
+  { id: 'rejected', he: 'נדחה',                     color: 'var(--bad-txt)' }
 ];
 
 export function waiverId(crew, dateKey) {

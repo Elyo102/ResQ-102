@@ -28,7 +28,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
   .wrap{ max-width:760px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
@@ -43,7 +43,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   button{ width:100%; margin-top:14px; padding:12px; border-radius:8px;
           border:1px solid var(--accent); background:var(--accent);
-          color:var(--on-accent); font-size:15px; font-weight:700;
+          color:var(--accent-on); font-size:15px; font-weight:700;
           font-family:inherit; cursor:pointer }
   button:disabled{ opacity:.55; cursor:not-allowed }
   button.ghost{ background:transparent; border-color:var(--line);
@@ -84,7 +84,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .p .rk{ font-size:11px; font-weight:700; border-radius:20px;
           padding:2px 10px; white-space:nowrap; border:1px solid var(--line);
           color:var(--muted) }
-  .p.lead .rk{ border-color:var(--accent); color:var(--accent) }
+  .p.lead .rk{ border-color:var(--accent); color:var(--accent-txt) }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }

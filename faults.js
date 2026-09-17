@@ -99,7 +99,7 @@ export function faultKind(id) {
 // עד שראש המשמרת נוגע, התקלה נמצאת ב-'unset' — ממתינה
 // להערכה, ומוצגת ראשונה כדי שלא תישכח.
 export const SEVERITIES = [
-  { id: 'blocking', he: 'משבית',  color: 'var(--bad)', rank: 1,
+  { id: 'blocking', he: 'משבית',  color: 'var(--bad-txt)', rank: 1,
     note: 'הרכב, הציוד או המקום אינם בטוחים או כשירים לשימוש', staffOnly: true },
   { id: 'limiting', he: 'מגביל',  color: 'var(--warn)', rank: 2,
     note: 'אפשר להשתמש, עם מגבלה', staffOnly: true },
@@ -134,7 +134,7 @@ export function sevRank(id) {
 }
 
 export const FAULT_STATES = [
-  { id: 'open',      he: 'פתוחה',     color: 'var(--bad)' },
+  { id: 'open',      he: 'פתוחה',     color: 'var(--bad-txt)' },
   { id: 'in_repair', he: 'בטיפול',    color: 'var(--warn)' },
   { id: 'fixed',     he: 'טופלה',     color: 'var(--good)' }
 ];
@@ -224,7 +224,7 @@ export function vehicleState(faults, vehicleId) {
              faults: open };
   }
   if (worst.severity === 'blocking') {
-    return { id: 'blocked', he: 'משבית', color: 'var(--bad)', faults: open };
+    return { id: 'blocked', he: 'משבית', color: 'var(--bad-txt)', faults: open };
   }
   if (worst.severity === 'limiting') {
     return { id: 'limited', he: 'מגביל', color: 'var(--warn)', faults: open };

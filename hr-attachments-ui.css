@@ -29,7 +29,7 @@
 .hra-name bdi{unicode-bidi:isolate}
 .hra-state{font-size:14px;font-weight:700;color:var(--dim);border:1px solid var(--line);border-radius:8px;padding:4px 10px;white-space:nowrap}
 .hra-item[data-state=ready] .hra-state{color:var(--good);border-color:var(--good-bd)}
-.hra-item[data-state=failed] .hra-state{color:var(--bad);border-color:var(--bad-bd)}
+.hra-item[data-state=failed] .hra-state{color:var(--bad-txt);border-color:var(--bad-bd)}
 /* Uncertain is its own colour, because it is its own answer: not done and not
    failed, and a screen that paints it as either is lying. */
 .hra-item[data-state=uncertain] .hra-state{color:var(--warn);border-color:var(--warn)}

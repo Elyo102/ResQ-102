@@ -30,7 +30,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .wrap{ max-width:1100px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
@@ -51,7 +51,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
   .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
@@ -60,7 +60,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
                 font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
-  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   /* ---------- תקלה ---------- */
   .f{ border:1px solid var(--line); border-radius:11px; padding:13px;
@@ -117,7 +117,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .subj .ft{ display:flex; gap:10px; align-items:center; flex-wrap:wrap;
             font-size:12px; color:var(--muted); margin-top:9px;
             border-top:1px solid var(--line-soft); padding-top:8px }
-  .subj .more{ margin-inline-start:auto; color:var(--accent); font-weight:700;
+  .subj .more{ margin-inline-start:auto; color:var(--accent-txt); font-weight:700;
               white-space:nowrap }
 
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
@@ -157,7 +157,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
            font-size:26px; cursor:pointer; line-height:1 }
   #veh .x:hover{ color:var(--txt) }
   .vehActs{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
-  .btn.danger{ border-color:var(--bad,#dc2626); color:var(--bad,#dc2626) }
+  .btn.danger{ border-color:var(--bad,#dc2626); color:var(--bad-txt,#dc2626) }
   .v .edit{ flex:none }
   /* רכב שהורד מהצי — שורה שקטה עם דרך אחת בחזרה. */
   .off{ display:flex; align-items:center; gap:10px; padding:9px 11px; margin-top:6px;
@@ -1398,9 +1398,9 @@ function renderShift(){
     el.className = 'v';
     el.innerHTML =
       '<span class="dot" style="background:' +
-        (r.bad ? 'var(--bad)' : 'var(--good)') + '"></span>' +
+        (r.bad ? 'var(--bad-txt)' : 'var(--good)') + '"></span>' +
       '<span class="nm">' + esc(r.he) + '</span>' +
-      '<span class="st" style="color:' + (r.bad ? 'var(--bad)' : 'var(--txt)') + '">' +
+      '<span class="st" style="color:' + (r.bad ? 'var(--bad-txt)' : 'var(--txt)') + '">' +
         esc(String(r.n)) + '</span>';
     sum.appendChild(el);
   });

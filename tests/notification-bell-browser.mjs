@@ -25,7 +25,7 @@ const fixture = `<!doctype html>
 <html lang="he" dir="rtl"><head><meta charset="utf-8">
 <style>
 :root{--card:#fff;--line:#ddd;--line-hover:#ccc;--txt:#182033;--dim:#556070;
---muted:#788291;--accent:#e8590c;--accent-txt:#b64000;--on-accent:#fff;--chip:#f6f7f9}
+--muted:#788291;--accent:#e8590c;--accent-txt:#b64000;--on-accent:#fff;--accent-on:#000;--chip:#f6f7f9}
 body{margin:18px;font-family:Segoe UI,Arial,sans-serif;background:var(--card);color:var(--txt)}
 </style></head><body><main id="content">תוכן בדיקה</main>
 <script type="module">

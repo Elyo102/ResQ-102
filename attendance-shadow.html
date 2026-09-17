@@ -23,8 +23,8 @@
           padding:10px 12px}
     button{border:1px solid var(--line-hover);background:var(--chip);color:var(--txt);
            padding:9px 14px;font-weight:700;cursor:pointer}
-    button.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-    button.stop{border-color:var(--bad-bd);color:var(--bad);background:var(--bad-bg)}
+    button.go{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+    button.stop{border-color:var(--bad-bd);color:var(--bad-txt);background:var(--bad-bg)}
     button:disabled{opacity:.55;cursor:wait}
     button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     .state{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
@@ -33,22 +33,22 @@
     .state.on{color:var(--good);border-color:var(--good-bd);background:var(--good-bg)}
     .state.on:before{background:var(--good)}
     .state.off{color:var(--muted)}
-    .state.bad{color:var(--bad);border-color:var(--bad-bd);background:var(--bad-bg)}
+    .state.bad{color:var(--bad-txt);border-color:var(--bad-bd);background:var(--bad-bg)}
     .state.bad:before{background:var(--bad)}
     .msg{display:none;margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;
          line-height:1.6;border:1px solid var(--line)}
     .msg.on{display:block}.msg.ok{background:var(--good-bg);border-color:var(--good-bd);color:var(--good)}
     .msg.warn{background:var(--warn-bg);border-color:var(--warn);color:var(--warn)}
-    .msg.err{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+    .msg.err{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad-txt)}
     .stats{display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:8px;margin-top:13px}
     .stat{background:var(--panel);border:1px solid var(--line-soft);border-radius:11px;padding:11px}
     .stat .n{font-size:23px;font-weight:850;font-variant-numeric:tabular-nums}
     .stat .k{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35}
-    .stat.good .n{color:var(--good)}.stat.warn .n{color:var(--warn)}.stat.bad .n{color:var(--bad)}
+    .stat.good .n{color:var(--good)}.stat.warn .n{color:var(--warn)}.stat.bad .n{color:var(--bad-txt)}
     .gate{margin-top:12px;border-radius:11px;padding:11px 13px;font-size:13px;font-weight:700;
           border:1px solid var(--line)}
     .gate.good{background:var(--good-bg);border-color:var(--good-bd);color:var(--good)}
-    .gate.bad{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+    .gate.bad{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad-txt)}
     .run-panel,.readiness{margin-top:12px;border:1px solid var(--line-soft);
           border-radius:12px;padding:13px;background:var(--panel)}
     .run-panel h3,.readiness h3{font-size:14px;margin:0 0 9px}
@@ -58,7 +58,7 @@
     .run-metric .n{font-size:21px;font-weight:850;font-variant-numeric:tabular-nums}
     .run-metric .k{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35}
     .run-metric.good .n{color:var(--good)}.run-metric.warn .n{color:var(--warn)}
-    .run-metric.bad .n{color:var(--bad)}
+    .run-metric.bad .n{color:var(--bad-txt)}
     .run-message,.coverage{color:var(--muted);font-size:12.5px;line-height:1.6}
     .coverage{font-weight:750;margin-bottom:8px}
     .readiness.good{background:var(--good-bg);border-color:var(--good-bd)}
@@ -70,7 +70,7 @@
     .person{border:1px solid var(--line);border-radius:12px;margin-top:9px;overflow:hidden}
     .person-head{display:flex;gap:8px;align-items:center;padding:11px 13px;background:var(--panel)}
     .person-head b{font-size:14px}.crew{font-size:11px;color:var(--muted)}
-    .badge{margin-inline-start:auto;border-radius:999px;background:var(--bad-bg);color:var(--bad);
+    .badge{margin-inline-start:auto;border-radius:999px;background:var(--bad-bg);color:var(--bad-txt);
            border:1px solid var(--bad-bd);padding:3px 8px;font-size:11px;font-weight:800}
     .issue{display:grid;grid-template-columns:92px 130px 1fr;gap:8px;padding:10px 13px;
            border-top:1px solid var(--line-soft);font-size:12.5px;align-items:start}

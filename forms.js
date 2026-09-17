@@ -130,7 +130,7 @@ export const SUB_STATES = [
   { id: 'submitted',      he: 'הוגשה',  color: 'var(--warn)' },
   { id: 'pending_station', he: 'ממתינה למפקד התחנה', color: 'var(--pick)' },
   { id: 'approved',       he: 'אושרה',  color: 'var(--good)' },
-  { id: 'rejected',       he: 'נדחתה',  color: 'var(--bad)' },
+  { id: 'rejected',       he: 'נדחתה',  color: 'var(--bad-txt)' },
   { id: 'cancelled',      he: 'בוטלה',  color: 'var(--muted)' }
 ];
 
