@@ -213,7 +213,7 @@
   border:2px solid var(--card);
   border-radius:999px;
   background:var(--bad);
-  color:#fff;
+  color:var(--bad-on);
   font-size:10px;
   font-variant-numeric:tabular-nums;
 }

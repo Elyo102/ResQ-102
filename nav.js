@@ -265,7 +265,7 @@ function styleOnce() {
     // 42H.20 §5.4 · נקודה על פעמון מונעת רק ממספר אמית שהועבר מבחוץ (alerts-feed.js) — לעולם לא מעצמו.
     '#appNav .bell{position:relative}',
     '#appNav .bell .badge{position:absolute;top:2px;inset-inline-end:2px;min-width:16px;height:16px;',
-    '  border-radius:999px;background:var(--bad);color:#fff;font-size:10px;font-weight:800;',
+    '  border-radius:999px;background:var(--bad);color:var(--bad-on);font-size:10px;font-weight:800;',
     '  line-height:16px;text-align:center;padding:0 3px;pointer-events:none}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
