@@ -1925,6 +1925,35 @@ await blocked('🔒 אף אחד אינו כותב דוח שעות חריגות �
   setDoc(doc(superA, HR_REPORT), { month: '2026-09', people: 999 }));
 
 // ============================================================
+head('18ג · סריקות לילה — מפקד תחנה אינו רוחב-יתר על מטען לא-ממוזער (42H.20 closure batch item 1)');
+// ============================================================
+// עד לקומיט הזה firestore.rules הרשה גם ל-stationCommander לקרוא
+// stations/{sid}/scans/{month} ישירות, בתיאור "תצוגת נוכחות מצומצמת
+// שאפשר לשמר". אבל nightlyScan (functions/index.js) כותב לאותו מסמך
+// full_name, מספר עובד, total_hours מדויק, ומערך findings מלא הכולל
+// kind:'over_limit' ברגע חציית סף 265 השעות — בדיוק אותה קטגוריית
+// מידע שהוחלט להגביל ל-hr(sid) בפריט 7. הבדיקה הסטטית המקבילה
+// (tests/scans-access-source.mjs) מוכיחה את זה מקוד המקור; זו הבדיקה
+// שמוכיחה את זה מול הכללים המהודרים בפועל, כמו סעיף 18ב.
+const SCAN_DOC = `stations/${SID}/scans/2026-09`;
+
+await ok('רכזת כוח אדם קוראת מסמך סריקת לילה', getDoc(doc(hrUser, SCAN_DOC)));
+await ok('מנהל-על קורא מסמך סריקת לילה', getDoc(doc(superA, SCAN_DOC)));
+
+await blocked('🔒 מפקד תחנה אינו קורא מסמך סריקת לילה ישירות (התיקון של הפריט הזה)',
+  getDoc(doc(stCmd, SCAN_DOC)));
+await blocked('🔒 מפקד תחנה אינו מבצע list לסריקות לילה',
+  getDocs(collection(stCmd, `stations/${SID}/scans`)));
+await blocked('🔒 מפקד משמרת אינו קורא מסמך סריקת לילה',
+  getDoc(doc(cmdA, SCAN_DOC)));
+await blocked('🔒 לוחם אש אינו קורא מסמך סריקת לילה',
+  getDoc(doc(ff, SCAN_DOC)));
+await blocked('🔒 רכזת מתחנה אחרת אינה קוראת סריקת לילה של אילת',
+  getDoc(doc(outsideHr, SCAN_DOC)));
+await blocked('🔒 אף אחד אינו כותב מסמך סריקת לילה מהלקוח, כולל מנהל-על',
+  setDoc(doc(superA, SCAN_DOC), { month: '2026-09', people: [] }));
+
+// ============================================================
 head('19 · מפקד צוות — כל השאר נשאר סגור');
 // ============================================================
 // התפתיתי לתת לו סמכויות כי השם נשמע פיקודי. אלדד הגדיר

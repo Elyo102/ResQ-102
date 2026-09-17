@@ -1816,8 +1816,24 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // 42H.20 closure batch item 1 (security scope 11 / binding scans
+      // decision): stationCommander was granted read here alongside hr(sid),
+      // framed as "the existing deliberately reduced attendance scans view" —
+      // but the payload nightlyScan actually writes (functions/index.js,
+      // scanPerson/scanMonth) is not reduced: every flagged person's record
+      // carries full_name, employee number, exact total_hours, and a
+      // findings array that includes a kind:'over_limit' entry with the
+      // person's name and exact hour total once they cross the 265-hour
+      // threshold — the same 265-hour employee-alert data Scope 8.1/11
+      // restrict to hr(sid)/super only. check.html, the one client file
+      // that reads this collection, already gates its whole page to
+      // isSuper (grep-confirmed) — no commander-facing UI reads scans at
+      // all today, so stationCommander here was, like the hr_reports case
+      // fixed in the same closure batch, an unused and unintentionally
+      // wider grant, not a real feature. Removed rather than "proven
+      // minimized", since it is proven NOT minimized.
       match /scans/{monthKey} {
-        allow read:  if hr(sid) || stationCommander(sid);
+        allow read:  if hr(sid);
         allow write: if false;
       }
 
