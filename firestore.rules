@@ -1821,8 +1821,20 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // 42H.20 Scope 11 (closure batch item 7): hr_reports holds the same
+      // per-employee 265-hour data (uid, employee_number, full_name,
+      // total_hours) that getHrOverHoursAlert (functions/hr-hours-service.js)
+      // gates to hr(sid) only - super or hr_coordinator, never
+      // stationCommander. Before this fix these Rules were WIDER than the
+      // callable: a station commander could not call the callable, but could
+      // read the raw document directly through the client SDK and get the
+      // exact same names/hours anyway, unsanitized (the callable also caps
+      // to 200 rows / 160-char names; a direct Rules-level read has no such
+      // cap). No client code was found reading this collection directly as
+      // a commander (grep-confirmed) - stationCommander here was an unused,
+      // unintentionally-wider grant, not a documented feature.
       match /hr_reports/{monthKey} {
-        allow read:  if hr(sid) || stationCommander(sid);
+        allow read:  if hr(sid);
         allow write: if false;
       }
 

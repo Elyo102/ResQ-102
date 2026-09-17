@@ -372,6 +372,19 @@ await env.withSecurityRulesDisabled(async (c) => {
     schema: 'bulletin-view-receipt-v1', station_id: SID, recipient_uid: 'u_ff',
     viewed_at_ms: 1000 });
 
+  // ---- דוח שעות חריגות · hr_reports (42H.20 closure batch item 7) ----
+  // אותה קטגוריית מידע אישי כמו bulletin_view_receipts למעלה - שמות
+  // ושעות של עובדים ספציפיים - ולכן אותה בדיקת גישה: hr(sid) בלבד,
+  // לא stationCommander. functions/hr-hours-service.js's overHoursAlert
+  // כבר אכף את זה בצד השרת; firestore.rules תוקן בקומיט הזה כדי
+  // שלא יהיה רחב ממנו.
+  await setDoc(doc(d, `stations/${SID}/hr_reports/2026-09`), {
+    month: '2026-09', people: 12, over_limit: 1, hour_limit: 265,
+    over_employees: [
+      { uid: 'u_ff', employee_number: '101', full_name: 'כבאי בדיקה', total_hours: 271 }
+    ]
+  });
+
   // ---- החלפות בשלבי המפקדים ----
   await setDoc(doc(d, `stations/${SID}/swaps/sw_cmdfrom`), {
     from_uid: 'u_ff', from_crew: 'א', from_date: '2026-09-01',
@@ -1882,6 +1895,34 @@ for (const [roleName, client] of SHADOW_WRITERS) {
   await blocked(`🔒 ${roleName} אינו מוחק תוצאת אדם ב-Shadow`,
     deleteDoc(doc(client, SHADOW_PERSON)));
 }
+
+// ============================================================
+head('18ב · דוח שעות חריגות — מפקד תחנה אינו רוחב-יתר על הקריאה (42H.20 closure batch item 7)');
+// ============================================================
+// עד לקומיט הזה firestore.rules הרשה גם ל-stationCommander לקרוא
+// hr_reports ישירות, בזמן ש-getHrOverHoursAlert
+// (functions/hr-hours-service.js) חוסם את אותו תפקיד בדיוק. מפקד
+// תחנה יכול היה לעקוף את ה-callable ולקרוא את המסמך הגולמי -
+// בלי הגבלת 200 השורות/160 התווים שה-callable מטיל, ובלי לעבור
+// את שכבת ה-sanitization שלו בכלל. הבדיקות כאן מוכיחות שהתיקון
+// תפס: מפקד תחנה חסום עכשיו בדיוק כמו כל תפקיד אחר שאינו hr/super.
+const HR_REPORT = `stations/${SID}/hr_reports/2026-09`;
+
+await ok('רכזת כוח אדם קוראת דוח שעות חריגות', getDoc(doc(hrUser, HR_REPORT)));
+await ok('מנהל-על קורא דוח שעות חריגות', getDoc(doc(superA, HR_REPORT)));
+
+await blocked('🔒 מפקד תחנה אינו קורא דוח שעות חריגות ישירות (התיקון של הפריט הזה)',
+  getDoc(doc(stCmd, HR_REPORT)));
+await blocked('🔒 מפקד תחנה אינו מבצע list לדוחות שעות חריגות',
+  getDocs(collection(stCmd, `stations/${SID}/hr_reports`)));
+await blocked('🔒 מפקד משמרת אינו קורא דוח שעות חריגות',
+  getDoc(doc(cmdA, HR_REPORT)));
+await blocked('🔒 לוחם אש אינו קורא דוח שעות חריגות',
+  getDoc(doc(ff, HR_REPORT)));
+await blocked('🔒 רכזת מתחנה אחרת אינה קוראת דוח שעות חריגות של אילת',
+  getDoc(doc(outsideHr, HR_REPORT)));
+await blocked('🔒 אף אחד אינו כותב דוח שעות חריגות מהלקוח, כולל מנהל-על',
+  setDoc(doc(superA, HR_REPORT), { month: '2026-09', people: 999 }));
 
 // ============================================================
 head('19 · מפקד צוות — כל השאר נשאר סגור');
