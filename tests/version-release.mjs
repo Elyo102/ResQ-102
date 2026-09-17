@@ -16,7 +16,7 @@ const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.js
 const EXPECTED_VERSION = MANIFEST.version;
 const EXPECTED_DATE = MANIFEST.date;
 const EXPECTED_ASSET_KEY = MANIFEST.asset_query;
-const EXPECTED_VERSIONED_REFERENCES = 286; // 42H.20 §8.1 adds hr-over-hours-alert-ui.js's own ?v= import in hr-client.js.
+const EXPECTED_VERSIONED_REFERENCES = 290; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html and login.html (4 new ?v= references).
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

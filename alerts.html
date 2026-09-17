@@ -119,6 +119,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .lab-metric b{ display:block; font-size:18px; color:var(--accent); direction:ltr; text-align:right }
   .lab-metric span{ font-size:11.5px; color:var(--muted) }
   @media(max-width:430px){ .lab-grid{ grid-template-columns:1fr } }
+
+  .feed-tab{ border:1px solid var(--line); background:var(--panel); color:var(--muted);
+             border-radius:20px; padding:8px 14px; font-size:13px; cursor:pointer;
+             font-family:inherit; min-height:36px }
+  .feed-tab[aria-pressed="true"]{ border-color:var(--accent); color:var(--txt); background:var(--chip) }
+  .feed-item{ border:1px solid var(--line); border-radius:10px; padding:11px;
+              margin-bottom:8px; background:var(--panel) }
+  .feed-item[data-viewed="false"]{ border-inline-start:4px solid var(--accent) }
+  .feed-item .fi-head{ display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted) }
+  .feed-item .fi-kind{ border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px }
+  .feed-item .fi-text{ margin-top:6px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word }
 </style>
 </head>
 <body>
@@ -159,6 +170,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div id="work" class="hide">
+
+    <div class="card" id="feedCard">
+      <h2>עדכונים</h2>
+      <div class="note" style="margin-bottom:10px">
+        לוח המודעות וקריאות הפתע שלך במקום אחד. "נצפה" כאן הוא אמיתי —
+        אותה קבלה שכבר נשמרת בלוח המודעות ובקריאת הפתע עצמה, לא סימון נפרד.
+      </div>
+      <div id="feedTabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <div id="feedList"></div>
+      <div class="msg" id="feedMsg"></div>
+    </div>
 
     <div class="card">
       <h2>המכשיר הזה</h2>
@@ -252,8 +274,10 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
-         query, orderBy, limit, serverTimestamp, onSnapshot }
+         query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, unreadFeedCount } from './alerts-feed.js?v=42h191';
+import { messageTimeMs } from './bulletin.js?v=42h191';
 import { getFunctions, httpsCallable }
   from './monitored-functions.js?v=42h191';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
@@ -281,6 +305,7 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
+let feedItems = [], feedFilter = 'all';
 let prefs = defaultPrefs(), tokens = [], vapid = DEFAULT_VAPID, myToken = '';
 let messaging = null;
 
@@ -336,6 +361,7 @@ onAuthStateChanged(auth, async user => {
   renderPrefs();
   renderState();
   await loadBroadcasts();
+  await loadFeed(c);
   if (IS_SUPER) await loadLab();
 
   // התראה שמגיעה בזמן שהמסך פתוח.
@@ -707,6 +733,70 @@ async function loadBroadcasts(){
       (when ? ' · ' + esc(when) : '') + '</div>' + esc(m.text || '');
     box.appendChild(el);
   });
+}
+
+// ---------- עדכונים (42H.20 §5.4) ----------
+//
+// מאחד את הודעות לוח המודעות וקריאות פתע, דרך alerts-feed.js.
+// הקובץ הזה רק קורא ומציג; אין כאן מנגנון התראות מקביל, והסימון
+// "נצפה" הוא אותה הקבלה אמיתית שכבר נשמרת על ידי לוח המודעות/קריאת פתע עצמם.
+
+function feedItemKindHe(kind) { return kind === 'callout' ? 'קריאת פתע' : 'לוח מודעות'; }
+
+function feedTimeText(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  return new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms));
+}
+
+function renderFeedTabs() {
+  const box = $('feedTabs');
+  box.innerHTML = '';
+  ALERT_FEED_FILTERS.forEach(function (f) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'feed-tab';
+    button.setAttribute('aria-pressed', String(f.id === feedFilter));
+    const count = f.id === 'all' ? feedItems.length : applyFeedFilter(feedItems, f.id).length;
+    button.textContent = f.he + ' (' + count + ')';
+    button.onclick = function () { feedFilter = f.id; renderFeedTabs(); renderFeedList(); };
+    box.appendChild(button);
+  });
+}
+
+function renderFeedList() {
+  const box = $('feedList');
+  box.innerHTML = '';
+  const shown = applyFeedFilter(feedItems, feedFilter);
+  if (!shown.length) {
+    box.innerHTML = '<div class="note" style="padding-top:4px">אין פריטים להצגה בפילטר הזה.</div>';
+    return;
+  }
+  shown.forEach(function (item) {
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.dataset.viewed = String(!!item.viewed);
+    el.innerHTML = '<div class="fi-head"><span class="fi-kind">' + esc(feedItemKindHe(item.kind)) + '</span>' +
+      (item.by_name ? '<span>' + esc(item.by_name) + '</span>' : '') +
+      '<span>' + esc(feedTimeText(item.time_ms)) + '</span>' +
+      (!item.viewed ? '<span>· טרם נצפה</span>' : '') + '</div>' +
+      '<div class="fi-text">' + esc(item.text || '') + '</div>';
+    box.appendChild(el);
+  });
+}
+
+async function loadFeed(claims) {
+  try {
+    feedItems = await loadAlertsFeed(
+      { collection, doc, getDoc, getDocs, query, where, orderBy, limit },
+      db, SID, ME.uid, messageTimeMs
+    );
+  } catch (ignore) {
+    feedItems = [];
+    msg('טעינת העדכונים נכשלה כרגע.', 'err', 'feedMsg');
+  }
+  renderFeedTabs();
+  renderFeedList();
+  // 42H.20 §5.4 · נקודת הפעמון מרנדרת מחדש עם המספר האמית הזה בלבד — אותו מקור שמניע את ציאת "לא נצפו" עצמה.
+  renderNav(claims, 'alerts.html', ME.full_name || ME.email || '', null, unreadFeedCount(feedItems));
 }
 
 // ---------- מפתח ----------

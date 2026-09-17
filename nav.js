@@ -262,6 +262,11 @@ function styleOnce() {
     '#appNav .bell[aria-disabled="true"]{opacity:.5;cursor:not-allowed}',
     '#appNav .bell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
     '@media (max-width:620px){#appNav .bell{margin-inline-start:6px}}',
+    // 42H.20 §5.4 · נקודה על פעמון מונעת רק ממספר אמית שהועבר מבחוץ (alerts-feed.js) — לעולם לא מעצמו.
+    '#appNav .bell{position:relative}',
+    '#appNav .bell .badge{position:absolute;top:2px;inset-inline-end:2px;min-width:16px;height:16px;',
+    '  border-radius:999px;background:var(--bad);color:#fff;font-size:10px;font-weight:800;',
+    '  line-height:16px;text-align:center;padding:0 3px;pointer-events:none}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
     'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
@@ -363,7 +368,7 @@ function styleOnce() {
 
 // current — שם הקובץ הנוכחי, למשל 'admin.html'.
 // who     — טקסט קצר שמזהה את המשתמש, מוצג בקצה הסרגל.
-export function renderNav(claims, current, who, presentation) {
+export function renderNav(claims, current, who, presentation, unreadCount) {
   styleOnce();
   claims = claims || {};
 
@@ -402,6 +407,17 @@ export function renderNav(claims, current, who, presentation) {
   bell.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
     '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
     '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+  // 42H.20 §5.4 · הנקודה מוצגת רק כשהמספר האמית עובר מהעמוד עצמו (alerts-feed.js's unreadFeedCount) —
+  // אף עמוד לא מנחש כאן מספר מומצא.
+  const count = Number(unreadCount);
+  if (Number.isFinite(count) && count > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.textContent = count > 99 ? '99+' : String(count);
+    bell.appendChild(badge);
+    bell.setAttribute('aria-label', 'התראות ויש ' + count + ' שלא נצפו');
+  }
   nav.appendChild(bell);
 
   // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע

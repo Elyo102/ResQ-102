@@ -1274,6 +1274,15 @@ function navFor(claims, user, name, presentation){
   renderNav(claims, 'login.html', who, presentation || null);
 }
 
+// 42H.20 §5.4 · הפעמון עם המספר האמיתי נמצא כרגע רק ב-alerts.html.
+// לא חובר גם למסך הבית כאן: למסך הבית כבר יש ווידג'ט לוח-מודעות
+// חי משלו (home-command.js, שאילתה bulletin_messages עם limit(30)),
+// ושאילתה נוספת מאותו מקור על אותו נתיב הייתה מתחרה איתה על
+// "השאילתה הראשונה שנרשמה" בבדיקות הקיימות (bulletin-browser.mjs) —
+// בדיוק סוג מנגנון-הצפיה-המקביל שההחלטה המחייבת אוסרת. חיבור אמיתי
+// למסך הבית דורש שיתוף הנתון הקיים של home-command.js, לא שאילתה
+// שנייה, ונשאר לביקורת/יישום נפרד.
+
 function readRoleViewStorage(){
   try { return sessionStorage.getItem(ROLE_VIEW_STORAGE) || ''; }
   catch (ignore) { return ''; }

@@ -58,7 +58,7 @@ const SHELL = [
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.
   './signature.js', './signflow.js', './docpdf.js',
-  './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './home-command.js', './appcheck.js',
+  './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './alerts-feed.js', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
