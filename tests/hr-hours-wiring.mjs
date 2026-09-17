@@ -134,7 +134,7 @@ await check('old automatic reminder/report producers and reviewed modules are un
     assert.equal(sha(block.slice(0, boundary >= 0 ? boundary : block.length).trim()), digest, name + ' baseline source changed');
   }
   assert.equal(sha(read('functions/hr-hours-nudges.js')), 'fd572de3dae6563bb8f63dd2e7a7baf8699598ad80dcafc47d244f89029724d7');
-  assert.equal(sha(read('functions/hr-hours-dispatch.js')), 'e071a6fce6e398522198f5c0aa75afd61000a138ebaeb416c02b2e21e27bd462');
+  assert.equal(sha(read('functions/hr-hours-dispatch.js')), '612cc9453f914e13538ea80b8f447c6b61e7ffc17ad16a03322883a74253f4ed');
 });
 const client = await import('data:text/javascript;base64,' + Buffer.from(read('incident-client.js')).toString('base64'));
 const server = createRequire(import.meta.url)(path.join(root, 'functions/ops-telemetry-contract.js'));

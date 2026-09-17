@@ -4,6 +4,7 @@
 // credentials, scheduler or logging. FCM is always outside retryable DB work.
 const { createHash, randomBytes } = require('node:crypto');
 const access = require('./schedule-access');
+const { createStationDeliveryFence } = require('./station-delivery-fence');
 const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { projectEmployeeHours, HrHoursInputError } = require('./hr-hours-model');
 const { decideNotification, notificationIntent } = require('./hr-notification-policy');
@@ -24,6 +25,8 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
   if (!db || typeof auth?.getUser !== 'function' || typeof messaging?.sendEachForMulticast !== 'function'
     || typeof HttpsError !== 'function' || typeof processJob !== 'function') throw new TypeError('Dispatcher dependencies are required.');
   const identity = createOpsMemberIdentity({ db, HttpsError });
+  const stationFence = createStationDeliveryFence({ db });
+  const terminalPolicy = reason => ['global-silence', 'station-silence', 'station-not-ready', 'station-inactive'].includes(reason);
   const now = () => { const value = clock(); if (!safeTime(value)) throw new TypeError('Invalid clock.'); return value; };
   const fault = (reason, terminal = false) => Object.assign(new Error(reason), { dispatchReason: reason, terminal });
   const hook = async (name, value) => { if (typeof hooks[name] === 'function') await hooks[name](value); };
@@ -125,6 +128,10 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
       const decision = decideNotification({ now_ms: at, mode: 'manual', silent: rt.silent ? 'on' : 'off',
         silent_allow: (rt.silent_allow || []).some(x => x.toLowerCase() === v.recipient_uid.toLowerCase()),
         send_now: a.send_now === true && at < a.confirmation_expires_at_ms });
+      if (decision.decision === 'queue') {
+        const fence = await stationFence.check({ stationId: loc.sid, globalSuppressed: false, tx });
+        if (fence.allowed !== true) throw fault(fence.reason, terminalPolicy(fence.reason));
+      }
       if (decision.decision === 'suppressed') { tx.update(ref, { status: 'suppressed', reason: decision.reason, updated_at_ms: at }); return null; }
       if (decision.decision !== 'queue') { tx.update(ref, { status: 'deferred', reason: decision.reason, not_before_ms: decision.not_before_ms, updated_at_ms: at }); return null; }
       if (!tokens.length) { tx.update(ref, { status: 'no_device', reason: 'no-current-token', updated_at_ms: at }); return null; }
@@ -133,10 +140,41 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
       const note = notificationIntent({ station_id: loc.sid, recipient_uid: v.recipient_uid, type: dispatchType, event_id: v.event_id });
       tx.update(ref, { status: 'attempting', reason: null, attempt_id: attempt, lease_until_ms: at + LIMITS.leaseMs,
         dispatch_started_at_ms: at, dispatch_type: dispatchType, token_count: tokens.length, updated_at_ms: at });
-      return { attempt, tokens, expires: a.expires_at_ms, sendNow: a.send_now === true,
+      return { attempt, tokens, stationId: loc.sid, recipientUid: v.recipient_uid, expires: a.expires_at_ms, sendNow: a.send_now === true,
         confirmationExpires: a.confirmation_expires_at_ms, payload: { tokens, data: { title: note.title, body: note.body,
         url: './attendance.html', tag: 'hr-' + v.id, important: '0' }, webpush: { headers: { Urgency: 'normal' } } } };
     });
+  }
+  // Only this bounded pre-SDK check may release an unsent attempt for retry.
+  // Hook crashes and all errors after SDK entry retain unknown-outcome recovery.
+  async function preSendPolicy(ref, sent) {
+    try {
+      return await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.data().status !== 'attempting' || snap.data().attempt_id !== sent.attempt) return false;
+        const v = snap.data();
+        if (locate(ref, 'hr_nudge_intents').sid !== sent.stationId || v.station_id !== sent.stationId
+          || v.recipient_uid !== sent.recipientUid) throw fault('attempt-scope-changed', true);
+        const runtime = await tx.get(db.doc('config/runtime'));
+        const rt = runtime.exists ? runtime.data() : null;
+        if (!plain(rt) || typeof rt.silent !== 'boolean' || (rt.silent_allow !== undefined && (!Array.isArray(rt.silent_allow)
+          || rt.silent_allow.some(x => typeof x !== 'string' || !x || x.length > 320)))) throw fault('silent-state-unavailable');
+        const suppressed = rt.silent && !(rt.silent_allow || []).some(x => x.toLowerCase() === sent.recipientUid.toLowerCase());
+        const fence = await stationFence.check({ stationId: sent.stationId, globalSuppressed: suppressed, tx });
+        if (fence.allowed === true) return true;
+        throw fault(fence.reason, terminalPolicy(fence.reason));
+      });
+    } catch (e) {
+      await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.data().status !== 'attempting' || snap.data().attempt_id !== sent.attempt) return;
+        const v = snap.data(), at = now(), n = Number.isSafeInteger(v.dispatch_check_count) ? v.dispatch_check_count + 1 : 1;
+        tx.update(ref, { status: e.terminal === true ? 'cancelled' : 'blocked', reason: e.dispatchReason || 'preflight-unavailable',
+          dispatch_check_count: n, next_check_ms: e.terminal === true ? null : Math.min(at + backoff(n), v.expires_at_ms),
+          attempt_id: null, lease_until_ms: null, updated_at_ms: at });
+      });
+      return false;
+    }
   }
   function outcomes(result, tokens) {
     const valid = result && Array.isArray(result.responses) && result.responses.length === tokens.length;
@@ -247,6 +285,7 @@ function createHrHoursDispatch({ db, auth, messaging, HttpsError, processJob, cl
         // leave it for unknown recovery, never create a new send attempt.
         try {
           await hook('afterClaim', { path: d.ref.path, attempt_id: sent.attempt });
+          if (!await preSendPolicy(d.ref, sent)) { reserved -= held; continue; }
           // A still-owned attempt that never entered the SDK can be cancelled
           // explicitly. Do not start a late call after a hook/clock boundary.
           const start = now(), policy = decideNotification({ now_ms: start, mode: 'manual', silent: 'off',

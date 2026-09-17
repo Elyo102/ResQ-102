@@ -53,9 +53,9 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h19';
-import { assertPresentationOnly } from './role-view.js?v=42h19';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h19';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h191';
+import { assertPresentationOnly } from './role-view.js?v=42h191';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h191';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -79,7 +79,7 @@ function allowed(who, claims, presentation) {
   if (who === 'hr') return isSuper || display.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
   if (who === 'shift_command') {
-    return display.role === 'commander' || display.role === 'deputy';
+    return isSuper || display.role === 'commander' || display.role === 'deputy';
   }
   // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
   // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.
@@ -285,7 +285,7 @@ function styleOnce() {
     //   2. **סגור כברירת מחדל.** בשורה אחת רואים איפה אתה
     //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
     //      על הניווט
-    '@media (max-width:560px){',
+    '@media (max-width:620px){',
     '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
     '    calc(10px + var(--resq-safe-right)) 8px',
     '    calc(10px + var(--resq-safe-left))}',
@@ -303,7 +303,8 @@ function styleOnce() {
     // הקריאוּת. זו התווית שאומרת באיזה מסך אתה נמצא.
     '  #navToggle b{color:var(--accent-txt);font-weight:700}',
     '  #navLinks{display:flex;flex-direction:column;gap:6px;',
-    '    width:100%;order:5;padding-top:2px}',
+    '    width:100%;order:5;padding-top:2px;max-height:55vh;max-height:55dvh;',
+    '    overflow-y:auto;overscroll-behavior:contain}',
     '  #appNav button.door{width:100%;justify-content:flex-start;',
     '    font-size:14.5px;padding:10px 12px}',
     '  #appNav .navPanel{display:grid;grid-template-columns:repeat(3,1fr);',
@@ -317,7 +318,7 @@ function styleOnce() {
     '  #appNav .me.closed{display:none}}',
     // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
     // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
-    '@media (min-width:421px) and (max-width:560px){',
+    '@media (min-width:421px) and (max-width:620px){',
     '  #appNav .navPanel{grid-template-columns:repeat(4,1fr)}}',
     '#resqDock,#resqDockPanel{display:none}',
     'body.dock-modal-open{overflow:hidden}',

@@ -93,6 +93,18 @@ assert.ok(rootConfig && stationConfig);
 assert.notEqual(rootConfig.scope, stationConfig.scope,
   'root and station config must never collapse into one short collection name');
 
+for (const requiredMonthlyPath of [
+  'stations/{sid}/schedule_publication_months/{month}',
+  'stations/{sid}/schedule_publication_authority_operations/{operationId}'
+]) {
+  const entry = policy.getPolicy(requiredMonthlyPath);
+  assert.ok(entry, requiredMonthlyPath);
+  assert.equal(entry.classification, 'source_of_truth', requiredMonthlyPath);
+  assert.equal(entry.backupPolicy, 'managed_export', requiredMonthlyPath);
+  assert.equal(entry.restorePolicy, 'restore', requiredMonthlyPath);
+  assert.equal(entry.humanReadable, 'forbidden', requiredMonthlyPath);
+}
+
 for (const forbidden of [
   'unlock_tokens/{token}', 'stations/{sid}/push_tokens/{uid}',
   'stations/{sid}/signatures/{uid}',

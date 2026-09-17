@@ -69,15 +69,27 @@ function calloutStationErrors(candidate) {
   const actorStart = candidate.indexOf('async function freshCalloutActor(req) {');
   const actorEnd = candidate.indexOf('\n}', actorStart);
   const actorBlock = actorStart === -1 || actorEnd === -1 ? '' : candidate.slice(actorStart, actorEnd + 2);
-  if (!/const sid\s*=\s*callerStation\(req, signed\);/.test(actorBlock)) {
+  if (!/const homeSid\s*=\s*callerStation\(req, signed\);/.test(actorBlock)) {
     errors.push('fresh actor derives station from the verified token boundary');
   }
   if (!/admin\.auth\(\)\.getUser\(signed\.uid\)/.test(actorBlock)
-      || !/String\(claims\.stationId \|\| ''\) !== sid/.test(actorBlock)) {
+      || !/String\(claims\.stationId \|\| ''\) !== homeSid/.test(actorBlock)
+      || !/String\(signedClaims\.stationId \|\| ''\) !== homeSid/.test(actorBlock)) {
     errors.push('fresh Auth claims must match the signed station');
   }
-  if (/req\.data[\s\S]*station(?:Id|_id)/.test(actorBlock)) {
-    errors.push('fresh actor must not accept a station from request data');
+  if (!/const isSuper = claims\.super === true;/.test(actorBlock)
+      || !/\(signedClaims\.super === true\) !== isSuper/.test(actorBlock)) {
+    errors.push('super targeting requires strict matching signed and fresh privilege');
+  }
+  if (!/const targetSid = \(req\.data \|\| \{\}\)\.target_station_id;/.test(actorBlock)
+      || !/if \(!isSuper && targetSid !== undefined\) \{\s*throw new HttpsError\('permission-denied'/.test(actorBlock)
+      || !/const sid = isSuper \? String\(targetSid \|\| ''\) : homeSid;/.test(actorBlock)
+      || !/if \(!STATION_ID_RE\.test\(sid\)\) \{\s*throw new HttpsError\('invalid-argument'/.test(actorBlock)) {
+    errors.push('ordinary callers stay token-bound and super must explicitly select a valid target');
+  }
+  if (!/if \(isSuper && sid !== homeSid && !\(await db\.doc\('stations\/' \+ sid\)\.get\(\)\)\.exists\)/.test(actorBlock)
+      || !/db\.doc\('stations\/' \+ homeSid \+ '\/users\/' \+ signed\.uid\)\.get\(\)/.test(actorBlock)) {
+    errors.push('target station must exist while actor profile stays bound to home station');
   }
   for (const name of ['sendCallout', 'closeCallout']) {
     const start = candidate.indexOf(`exports.${name} =`);
@@ -94,11 +106,18 @@ function calloutStationErrors(candidate) {
 assert.deepEqual(calloutStationErrors(source), [],
   'callout station authority is derived from live Auth claims, not client data or stale claims');
 for (const [label, mutant] of [
-  ['request-data station', source.replace('const sid = callerStation(req, signed);',
-    "const sid = String((req.data || {}).stationId || '');")],
-  ['fresh-claim comparison removed', source.replace("String(claims.stationId || '') !== sid ||", 'false ||')],
+  ['request-data home station', source.replace('const homeSid = callerStation(req, signed);',
+    "const homeSid = String((req.data || {}).stationId || '');")],
+  ['fresh-claim comparison removed', source.replace("String(claims.stationId || '') !== homeSid ||", 'false ||')],
+  ['truthy super', source.replace('const isSuper = claims.super === true;', 'const isSuper = Boolean(claims.super);')],
+  ['signed super comparison removed', source.replace('(signedClaims.super === true) !== isSuper ||', 'false ||')],
+  ['ordinary target allowed', source.replace('!isSuper && targetSid !== undefined', 'false && targetSid !== undefined')],
+  ['super target defaults to home', source.replace("isSuper ? String(targetSid || '') : homeSid", 'isSuper ? String(targetSid || homeSid) : homeSid')],
+  ['target existence skipped', source.replace('isSuper && sid !== homeSid && !(await', 'false && sid !== homeSid && !(await')],
+  ['actor profile read from target', source.replace("db.doc('stations/' + homeSid + '/users/' + signed.uid)", "db.doc('stations/' + sid + '/users/' + signed.uid)")],
   ['send reverts to stale claims', source.replace('const sid = actor.sid;', 'const sid = callerStation(req, auth);')]
 ]) {
+  assert.notEqual(mutant, source, label + ' mutation must actually alter source');
   assert.ok(calloutStationErrors(mutant).length > 0, label + ' mutation is rejected');
 }
 

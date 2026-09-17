@@ -24,6 +24,17 @@ const attendanceShadow = require('./attendance-shadow-runner');
 const bulkImportDisabled = require('./bulk-import-disabled');
 const registrationSafety = require('./registration-safety');
 const identityCoordinatorModule = require('./identity-coordinator');
+const invitationsModule = require('./invitations');
+const onboardingContract = require('./invitation-onboarding-contract');
+const onboardingServiceModule = require('./invitation-onboarding-service');
+const scheduleIdentityStoreContract = require('./schedule-identity-store-contract');
+const onboardingApprovalModule = require('./onboarding-approval-authority');
+const onboardingPhaseModule = require('./onboarding-phase-authority');
+const onboardingStationModule = require('./onboarding-station-gates');
+const schedulePersonContract = require('./schedule-person-contract');
+const stationProvisionContract = require('./station-provision-contract');
+const stationProvisionModule = require('./station-provision-service');
+const stationFirstAdminModule = require('./station-first-admin-invitation-service');
 const scheduleCalendar = require('./schedule-calendar-engine');
 const schedulePublication = require('./schedule-publication');
 const scheduleService = require('./schedule-service');
@@ -31,6 +42,7 @@ const scheduleRuntimeModule = require('./schedule-runtime');
 const scheduleAccessModule = require('./schedule-access');
 const scheduleAccessAdminModule = require('./schedule-access-admin');
 const stationTransferModule = require('./station-transfer');
+const stationDeliveryFenceModule = require('./station-delivery-fence');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
 const maintenanceServiceModule = require('./maintenance-service');
@@ -117,6 +129,11 @@ function rankOf(role) {
 // המחוזות מאומתים בשרת. עד עכשיו הרשימה חיה רק בקוד הדפדפן,
 // כלומר כל מחרוזת שהגיעה מהטופס נכנסה כמות שהיא להרשאות.
 const KNOWN_DISTRICTS = ['south', 'center', 'north', 'jerusalem', 'haifa', 'dan'];
+const BUILTIN_TRANSFER_STATIONS = Object.freeze({
+  eilat_102: Object.freeze({
+    id: 'eilat_102', name: 'תחנת כיבוי אילת', districtId: 'south', active: true
+  })
+});
 
 // המפתח הציבורי של אפליקציית הווב. מופיע ממילא ב-firebase-config.js
 // ונשלח לכל דפדפן — הוא מזהה את הפרויקט, לא מעניק גישה.
@@ -137,6 +154,16 @@ const SITE_URL = 'https://elyo102.github.io/ResQ-102';
 const UNLOCK_TOKEN_MINUTES = 60;
 
 const db = admin.firestore();
+const stationDeliveryFence = stationDeliveryFenceModule.createStationDeliveryFence({ db });
+const mailDeliveryGuard = require('./mail-delivery-guard').createMailDeliveryGuard({
+  runtimeFresh, stationFence: stationDeliveryFence, normalizeRecipients: asList
+});
+const PUSH_SUPPRESSION_REASONS = new Set(['global-silence','station-silence','station-not-ready','station-inactive']);
+function isPolicySuppressedPush(value) {
+  return !!value && value.sent === 0 && value.suppressed === true && PUSH_SUPPRESSION_REASONS.has(value.reason)
+    && Object.keys(value).every(key => ['sent','suppressed','reason','failed'].includes(key))
+    && (!Object.hasOwn(value, 'failed') || value.failed === false);
+}
 const FV = admin.firestore.FieldValue;
 const formSubmissions = formSubmissionsModule.createFormSubmissions({
   db, auth:admin.auth(), HttpsError,
@@ -282,7 +309,78 @@ exports.listHrHoursNudges = onCall({ enforceAppCheck: true }, async (req) => hrH
 exports.reportIncident = onCall({ enforceAppCheck: true }, async (req) => incidentLog.report(req));
 exports.submitFeedback = onCall({ enforceAppCheck: true }, async (req) => feedback.submit(req));
 
+const invitationEngine = invitationsModule.createInvitations({
+  clock: Date.now,
+  randomBytes: crypto.randomBytes,
+  createHash: value => crypto.createHash('sha256').update(String(value)).digest('hex'),
+  timingSafeEqual: crypto.timingSafeEqual,
+  assertMayAssign,
+  withinRoleSetterScope: registrationSafety.withinRoleSetterScope
+});
+let stationBackupCapabilityReader;
+const providerWiringReceipt = require('./provider-wiring-attestation').verifyProviderWiringAttestation();
+async function readReadinessBackupCapability() {
+  // Demo validation must never query the production control plane.
+  if (process.env.FIRESTORE_EMULATOR_HOST) return false;
+  const projectId = admin.app().options.projectId || process.env.GCLOUD_PROJECT;
+  if (projectId !== 'station-102') return false;
+  if (!stationBackupCapabilityReader) {
+    const { google } = require('googleapis');
+    const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/datastore'] });
+    stationBackupCapabilityReader = require('./station-backup-capability').createStationBackupCapability({
+      firestoreApi: google.firestore({ version: 'v1', auth }), projectId
+    });
+  }
+  return (await stationBackupCapabilityReader.readBackupCapability()).ready === true;
+}
+const onboardingStationGates = onboardingStationModule.createOnboardingStationGates({
+  db, auth: admin.auth(), personContract: schedulePersonContract,
+  invitations: invitationEngine, knownDistricts: KNOWN_DISTRICTS,
+  builtins: BUILTIN_TRANSFER_STATIONS,
+  readBackupCapability: readReadinessBackupCapability,
+  readHealthCapability: async ({ tx, station_id }) => {
+    const config = await tx.get(db.doc('config/system_health_v2'));
+    if (!config.exists || config.data().mode !== 'OBSERVE') return false;
+    const inventory = await systemHealthV2Ports.listStations({ tx, deadline_ms: Date.now() + 20000 });
+    return inventory.complete === true && inventory.stations.some(row => row.station_id === station_id);
+  },
+  readSilenceCapability: async ({ tx, station }) => {
+    if (providerWiringReceipt.valid !== true || typeof station.silent !== 'boolean') return false;
+    const current = await tx.get(db.doc(RUNTIME_DOC));
+    if (!current.exists) return false;
+    const runtime = current.data() || {};
+    return typeof runtime.silent === 'boolean' &&
+      (runtime.silent !== true || Array.isArray(runtime.silent_allow));
+  }
+});
+const onboardingInitialReader = onboardingApprovalModule.createOnboardingApprovalAuthority({
+  db, invitations: invitationEngine, contract: onboardingContract
+});
+const onboardingAuthority = onboardingPhaseModule.createOnboardingPhaseAuthority({
+  db, auth: admin.auth(), initialReader: onboardingInitialReader,
+  contract: onboardingContract, invitations: invitationEngine,
+  serverTimestamp: () => FV.serverTimestamp(),
+  requireStationPerson: onboardingStationGates.requireStationPerson
+});
+const stationProvisionService = stationProvisionModule.createStationProvisionService({
+  db, contract: stationProvisionContract, serverTimestamp: () => FV.serverTimestamp(),
+  requireSuperAdmin: requireFreshOnboardingSuper,
+  verifyReadiness: onboardingStationGates.verifyReadiness,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); }
+});
+const stationFirstAdminService = stationFirstAdminModule.createStationFirstAdminInvitationService({
+  db, invitations: invitationEngine, provisionContract: stationProvisionContract,
+  requireSuperAdmin: requireFreshOnboardingSuper,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); }
+});
+exports.provisionStation = onCall({ enforceAppCheck: true }, req => stationProvisionService.provisionStation(req));
+exports.markStationReady = onCall({ enforceAppCheck: true }, req => stationProvisionService.markStationReady(req));
+exports.issueFirstAdminInvitation = onCall({ enforceAppCheck: true }, req => stationFirstAdminService.issueFirstAdminInvitation(req));
+exports.redeemInvitation = onCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).redeemInvitation(req));
+exports.resumeOnboarding = onCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).resumeOnboarding(req));
+
 const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator({
+  onboardingAuthority,
   db: db,
   auth: admin.auth(),
   FieldValue: FV,
@@ -300,6 +398,11 @@ const attendanceShadowService = attendanceShadow.createAttendanceShadowService({
 });
 const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   db: db,
+  // Capability only: each station remains on compatibility until the explicit,
+  // fresh-super activation atomically creates its authority and control record.
+  monthAuthorityEnabled: true,
+  monthAuthorityControlEnabled: true,
+  monthAuthorityReleaseId: '42H.19.1',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -321,6 +424,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   },
   sendPush: async function (sid, uid, type, title, body, url, important) {
     const result = await pushToOne(sid, uid, type, title, body, url, important);
+    if (isPolicySuppressedPush(result)) return result;
     if (!result || result.failed || Number(result.sent || 0) < 1) {
       const code = result && result.error_code
         ? result.error_code : 'NO_ACTIVE_PUSH_TOKEN';
@@ -344,12 +448,6 @@ const scheduleAccessAdmin = scheduleAccessAdminModule.createScheduleAccessAdmin(
 // The browser catalogue currently contains one regional station.  Future
 // stations can be activated without trusting a client value by creating a
 // server-owned stations/{sid} document with districtId and active=true.
-const BUILTIN_TRANSFER_STATIONS = Object.freeze({
-  eilat_102: Object.freeze({
-    id: 'eilat_102', name: 'תחנת כיבוי אילת', districtId: 'south', active: true
-  })
-});
-
 async function resolveTransferStation(stationId, tx) {
   const sid = String(stationId || '');
   if (!STATION_ID_RE.test(sid)) return null;
@@ -541,6 +639,19 @@ const personalLiveLab = personalLiveLabModule.createPersonalLiveLab({
   HttpsError,
   now: () => Date.now(),
   freshActor: freshLabActor,
+  assertStationDelivery: async ({ sid, uid }) => {
+    let value;
+    try { value = await runtimeFresh(); }
+    catch (_) { throw new HttpsError('unavailable', 'לא ניתן לאמת את הגדרות השליחה כרגע.'); }
+    const allow = Array.isArray(value.silent_allow) ? value.silent_allow : [];
+    const globalSuppressed = value.silent === true &&
+      allow.indexOf(String(uid || '').toLowerCase()) === -1;
+    const verdict = await stationDeliveryFence.check({ stationId: sid, globalSuppressed });
+    if (verdict.allowed !== true) {
+      throw new HttpsError(verdict.reason === 'station-state-unavailable' ? 'unavailable' : 'failed-precondition',
+        'שליחת הבדיקה אינה מותרת כרגע לפי הגדרות התחנה.');
+    }
+  },
   readConfig: async sid => {
     const snap = await db.doc('stations/' + sid + '/live_lab_config/current').get();
     return snap.exists ? (snap.data() || {}) : null;
@@ -663,7 +774,7 @@ const MAIL_MAX_HTML = 900000;
 // שגיאה ו-console.error בלבד, והקורא — buildAndSendMonthly —
 // רשם ב-hr_reports ש"הדוח נשלח" בלי לבדוק כלום. כלומר ביום
 // שבו הדוח ייכשל, רישום הביקורת יטען שהוא הצליח.
-async function sendMail(to, subject, html) {
+async function sendMail(to, subject, html, stationId) {
   if (!to) return false;
   if (await silentFor(to)) { await logSilenced('mail', to, subject); return true; }
 
@@ -677,6 +788,7 @@ async function sendMail(to, subject, html) {
     await db.collection('mail').add({
       to: [to],
       message: { subject: subject, html: html },
+      ...(stationId === undefined ? {} : { station_id: stationId }),
       created_at: FV.serverTimestamp()
     });
     return true;
@@ -734,6 +846,123 @@ function requireSuperAdmin(req) {
     throw new HttpsError('permission-denied', 'הפעולה מותרת למנהל המערכת בלבד.');
   }
   return auth;
+}
+
+async function requireFreshOnboardingSuper(req) {
+  const signed = requireSuperAdmin(req);
+  const current = await admin.auth().getUser(signed.uid);
+  if (!current || current.uid !== signed.uid || current.disabled !== false ||
+      !current.customClaims || current.customClaims.super !== true) {
+    throw new HttpsError('permission-denied', 'הרשאת מנהל המערכת אינה פעילה.');
+  }
+  return { ...signed, token: { ...current.customClaims, email: current.email || '' } };
+}
+
+async function freshOnboardingIdentity(req, superRequired) {
+  const signed = superRequired ? requireSuperAdmin(req) : requireAuth(req);
+  const current = await admin.auth().getUser(signed.uid);
+  const email = value => typeof value === 'string' ? value.normalize('NFC').trim().toLowerCase() : '';
+  if (!current || current.uid !== signed.uid || current.disabled !== false || current.emailVerified !== true
+      || signed.token?.email_verified !== true || !email(current.email) || email(signed.token?.email) !== email(current.email)
+      || (superRequired && current.customClaims?.super !== true)) {
+    throw new HttpsError('permission-denied', 'נדרש חשבון פעיל עם כתובת דוא״ל מאומתת והרשאה עדכנית.');
+  }
+  return Object.freeze({ uid: signed.uid, email: email(current.email), email_verified: true });
+}
+
+// Per-request adapters capture only this signed request, never mutable global
+// actor state. Resume reports evidence; it never approves or links a person.
+function createOnboardingRequestService(req) {
+  const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+  const exact = (v, keys) => plain(v) && keys.every(k => Object.prototype.hasOwnProperty.call(v, k))
+    && Object.keys(v).every(k => keys.includes(k));
+  const fail = reason => { throw new HttpsError('failed-precondition', 'לא ניתן לאמת את מצב הקליטה.', { reason }); };
+  const read = async (tx, path) => { const s = await tx.get(db.doc(path)); return s.exists ? s.data() : null; };
+  const validUid = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v);
+  const validSid = v => typeof v === 'string' && /^[a-z0-9][a-z0-9_-]{1,63}$/.test(v);
+  async function liveAssignment(tx, uid, sid, assignment) {
+    const current = await admin.auth().getUser(uid), c = current?.customClaims;
+    if (!current || current.uid !== uid || current.disabled !== false || current.emailVerified !== true || !plain(c)
+        || ['stationId', 'districtId', 'role', 'shift'].some(k => c[k] !== assignment[k]) || !validEmp(String(c.emp || ''))) fail('live-assignment');
+    const p = await read(tx, 'stations/' + sid + '/users/' + uid);
+    const d = await read(tx, 'directory/' + uid);
+    const i = await read(tx, 'emp_index/' + c.emp);
+    if (!plain(p) || p.stationId !== sid || p.districtId !== assignment.districtId || p.role !== assignment.role
+        || p.crew !== assignment.shift || p.active !== true || p.is_active !== true || String(p.employee_number) !== String(c.emp)
+        || !plain(d) || d.station !== sid || d.district !== assignment.districtId || d.role !== assignment.role
+        || d.crew !== assignment.shift || d.active !== true || d.is_active !== true || d.retired === true
+        || !plain(i) || i.uid !== uid || i.stationId !== sid || i.active !== true || i.retired === true) fail('live-profile-binding');
+  }
+  const registration = {
+    async assignmentState({ uid, station_id: sid, request_id: requestId }) {
+      if (!validUid(uid) || !validSid(sid) || !/^[A-Za-z0-9_-]{16,100}$/.test(requestId || '')) fail('assignment-input');
+      return db.runTransaction(async tx => {
+        const actor = await freshOnboardingIdentity(req, true);
+        const registry = await read(tx, 'onboarding_assignment_links/' + uid);
+        if (!exact(registry, ['schema_version', 'uid', 'station_id', 'request_id', 'invite_id', 'operation_fingerprint'])
+            || registry.schema_version !== 1 || registry.uid !== uid || registry.station_id !== sid || registry.request_id !== requestId
+            || !validUid(registry.invite_id) || !/^[a-f0-9]{64}$/.test(registry.operation_fingerprint || '')) fail('assignment-registry');
+        const sourceOp = await read(tx, 'stations/' + sid + '/onboarding_operations/' + requestId);
+        if (!plain(sourceOp) || sourceOp.schema_version !== 1
+            || ['uid', 'station_id', 'request_id', 'invite_id', 'operation_fingerprint'].some(k => sourceOp[k] !== registry[k])) fail('assignment-source');
+        const operation = await read(tx, 'identity_operations/' + uid);
+        const request = await read(tx, 'registration_requests/' + uid);
+        let completed = false;
+        if (operation && Object.prototype.hasOwnProperty.call(operation, 'onboarding_authority')) {
+          const source = operation.onboarding_authority?.source;
+          if (operation.target_uid !== uid || operation.request_id !== requestId || source?.request_id !== requestId
+              || source?.operation_path !== 'stations/' + sid + '/onboarding_operations/' + requestId) fail('assignment-operation');
+          await onboardingAuthority.validatePhase(tx, { operation, request, phase: 'onboarding-state', actor });
+          completed = operation.status === 'completed';
+          if (completed) await liveAssignment(tx, uid, sid, operation.onboarding_authority.assignment);
+        } else {
+          // A replaced/missing completed identity receipt is not inferred from
+          // a profile or absent request; an explicit recovery is required.
+          if (sourceOp.stage !== 'request_created') fail('assignment-receipt-unavailable');
+          const authority = await onboardingInitialReader.readForApproval(tx, { uid, request,
+            authUser: await admin.auth().getUser(uid), existingOp: operation });
+          if (!authority || authority.source.request_id !== requestId || authority.assignment.stationId !== sid) fail('assignment-pending-source');
+          await onboardingStationGates.requireStationPerson({ tx, uid, assignment: authority.assignment, actor, phase: 'onboarding-state' });
+        }
+        await freshOnboardingIdentity(req, true);
+        return Object.freeze({ completed });
+      });
+    }
+  };
+  const identityStore = {
+    async linkState({ station_id: sid, person_id: personId, uid }) {
+      if (!validUid(uid) || !validSid(sid) || typeof personId !== 'string' || !/^sp_[a-z0-9][a-z0-9_-]{7,63}$/.test(personId)) fail('link-input');
+      return db.runTransaction(async tx => {
+        await freshOnboardingIdentity(req, true);
+        const person = schedulePersonContract.normalizeSchedulePerson(await read(tx, 'stations/' + sid + '/schedule_people/' + personId));
+        if (person.person_id !== personId || person.station_id !== sid || person.active !== true) fail('link-person');
+        const linkId = scheduleIdentityStoreContract.linkIndexDocumentId(uid);
+        const local = await read(tx, 'stations/' + sid + '/schedule_person_link_index/' + linkId);
+        const global = await read(tx, 'schedule_person_link_reservations/' + linkId);
+        const current = await admin.auth().getUser(uid), c = current?.customClaims;
+        if (!current || current.uid !== uid || current.disabled !== false || current.emailVerified !== true) fail('link-target');
+        let linked = false;
+        if (person.kind === 'external' && person.linked_uid === null && local === null && global === null) {
+          linked = false;
+        } else {
+          const valid = r => exact(r, ['schema_version', 'station_id', 'person_id', 'revision', 'status'])
+            && r.schema_version === 1 && r.station_id === sid && r.person_id === personId && r.revision === 1 && r.status === 'bound';
+          if (person.kind !== 'registered' || person.linked_uid !== uid || !valid(local) || !valid(global)) fail('link-reservation');
+          if (!plain(c) || c.stationId !== sid) fail('link-target');
+          await liveAssignment(tx, uid, sid, c);
+          linked = true;
+        }
+        await freshOnboardingIdentity(req, true);
+        return Object.freeze({ linked });
+      });
+    }
+  };
+  return onboardingServiceModule.createInvitationOnboardingService({ db, invitations: invitationEngine,
+    contract: onboardingContract, registration, identityStore, serverTimestamp: () => FV.serverTimestamp(),
+    fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+    requireAuth: value => freshOnboardingIdentity(value, false),
+    requireSuperAdmin: value => freshOnboardingIdentity(value, true) });
 }
 
 // מזהה התחנה לפעולות שהמשתמש מפעיל נקבע רק מההרשאות
@@ -987,7 +1216,7 @@ exports.bootstrapSuperAdmin = onCall({ timeoutSeconds: 120 }, async (req) => {
 // ---------------------------------------------------------------------
 
 exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
-  const auth = requireSuperAdmin(req);
+  const auth = await requireFreshOnboardingSuper(req);
   const d = req.data || {};
 
   const uid = String(d.uid || '');
@@ -1039,14 +1268,19 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
     employeeStart: EMP_START,
     auditAction: 'approve_registration',
     auditDetails: { email: String(user.email || '').toLowerCase() },
-    makePlan: function (emp, r) {
-      const stationId = String(d.stationId || r.stationId || '');
-      const districtId = String(d.districtId || r.districtId || '');
-      const role = roleInput;
-      const shift = shiftInput;
-      const fullName = String(d.full_name || r.full_name || '').trim();
-      const liveEmail = String(user.email || '').toLowerCase();
+    makePlan: function (emp, r, authority) {
+      const assignment = authority && authority.assignment;
+      const stationId = assignment ? assignment.stationId : String(d.stationId || r.stationId || '');
+      const districtId = assignment ? assignment.districtId : String(d.districtId || r.districtId || '');
+      const role = assignment ? assignment.role : roleInput;
+      const shift = assignment ? assignment.shift : shiftInput;
+      const fullName = assignment ? String(r.full_name || '').normalize('NFC').trim() : String(d.full_name || r.full_name || '').trim();
+      const liveEmail = assignment ? String(r.email || '').trim().toLowerCase() : String(user.email || '').toLowerCase();
       const requestEmail = String(r.email || '').toLowerCase();
+
+      if (assignment && (VALID_ROLES.indexOf(role) === -1 || VALID_SHIFTS.indexOf(shift) === -1)) {
+        throw new HttpsError('failed-precondition', 'השיוך בהזמנה אינו תקין.');
+      }
 
       if (!stationId) throw new HttpsError('invalid-argument', 'חסרה תחנה.');
       if (!districtId) throw new HttpsError('invalid-argument', 'חסר מחוז.');
@@ -1075,7 +1309,7 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
           full_name: fullName,
           name_prefixes: namePrefixes(fullName),
           email: liveEmail,
-          phone: String(r.phone || ''),
+          phone: assignment ? String(r.phone || '').normalize('NFC').trim() : String(r.phone || ''),
           role: role,
           shift: shift,
           stationId: stationId,
@@ -1110,7 +1344,8 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
              '. הכבאי צריך להתנתק ולהתחבר מחדש.'
   };
   if (acquired.type === 'completed') return operation.result;
-  return identityCoordinator.runAssignment(uid, operation.op_id, result, uid === auth.uid);
+  return identityCoordinator.runAssignment(uid, operation.op_id, result, uid === auth.uid,
+    { uid: auth.uid, email: auth.token.email });
 });
 
 // דחייה עוברת בשרת ונקשרת למזהה הבקשה שהמנהל ראה. מחיקה
@@ -1407,14 +1642,14 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   };
   if (acquired.type === 'completed') return operation.result;
   return identityCoordinator.runAssignment(user.uid, operation.op_id, result,
-    user.uid === auth.uid);
+    user.uid === auth.uid, { uid: auth.uid, email: auth.token.email });
 });
 
 // ממשיך רק תוכנית זהות שכבר ננעלה בשרת. הלקוח אינו שולח כאן
 // תפקיד, תחנה, מספר עובד או תוצאה חדשה — ולכן רענון מסך לא יכול
 // להחליף בשקט את מה שהמנהל אישר קודם.
 exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) => {
-  const auth = requireSuperAdmin(req);
+  const auth = await requireFreshOnboardingSuper(req);
   const d = req.data || {};
   const uid = String(d.uid || '');
   const opId = String(d.operation_id || '');
@@ -1479,7 +1714,7 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
     message: operation.kind === 'approve' ?
       'האישור השמור הושלם. מספר העובד: ' + String(summary.emp || '') + '.' :
       'שינוי התפקיד השמור הושלם. המשתמש צריך להתחבר מחדש.'
-  }, uid === auth.uid);
+  }, uid === auth.uid, { uid: auth.uid, email: auth.token.email });
 });
 
 // ---------------------------------------------------------------------
@@ -3522,7 +3757,7 @@ async function buildAndSendMonthly(mk) {
         parts[i].map(t => t.html).join('');
       const ok = await sendMail(cfg.email,
         'ResQ — דוח נוכחות ' + heMonth(mk) + ' · ' + STATION_NAME + label,
-        mailShell('דוח נוכחות · ' + heMonth(mk) + label, body));
+        mailShell('דוח נוכחות · ' + heMonth(mk) + label, body), STATION_ID);
       if (!ok) sentAll = false;
     }
 
@@ -3544,7 +3779,7 @@ async function buildAndSendMonthly(mk) {
             '<p>הדוח לחודש ' + esc(heMonth(mk)) + ' נבנה מ-' +
             parts.length + ' חלקים, ולפחות אחד מהם לא נכנס לתור ' +
             'הדואר. ליסה <b>לא</b> קיבלה דוח מלא.</p>' +
-            '<p>הרץ אותו ידנית ממסך הבדיקה.</p>'));
+            '<p>הרץ אותו ידנית ממסך הבדיקה.</p>'), STATION_ID);
       } catch (e) {}
     }
   }
@@ -3650,8 +3885,9 @@ async function pushToUsers(sid, uids, type, title, body, url, important, deliver
   const unique = Array.from(new Set((uids || []).filter(Boolean)));
   if (!unique.length) return { people: 0, devices: 0, failed: 0, failed_uids: [] };
 
-  let people = 0, devices = 0, failed = 0;
+  let people = 0, devices = 0, failed = 0, suppressed = 0;
   const failedUids = [];
+  const suppressedUids = [];
 
   for (let i = 0; i < unique.length; i += PUSH_CONCURRENCY) {
     const group = unique.slice(i, i + PUSH_CONCURRENCY);
@@ -3664,12 +3900,13 @@ async function pushToUsers(sid, uids, type, title, body, url, important, deliver
         });
     }));
     res.forEach(function (r, index) {
+      if (isPolicySuppressedPush(r)) { suppressed++; suppressedUids.push(group[index]); return; }
       if (r && r.sent) { people++; devices += r.sent; }
       if (r && r.failed) { failed++; failedUids.push(group[index]); }
     });
   }
 
-  return { people, devices, failed, failed_uids: failedUids };
+  return { people, devices, failed, failed_uids: failedUids, suppressed, suppressed_uids: suppressedUids };
 }
 
 async function pushToOne(sid, uid, type, title, body, url, important, deliveryTag, runtimePolicy) {
@@ -3679,7 +3916,7 @@ async function pushToOne(sid, uid, type, title, body, url, important, deliveryTa
     const isSilent = runtimePolicy
       ? runtimePolicy.silent === true && !(await allowedByRuntime(runtimePolicy, uid))
       : await silentFor(uid);
-    if (isSilent) { await logSilenced('push', uid, title); return { sent: 0 }; }
+    if (isSilent) { await logSilenced('push', uid, title); return { sent:0, suppressed:true, reason:'global-silence' }; }
 
     let snap;
     try {
@@ -3705,6 +3942,19 @@ async function pushToOne(sid, uid, type, title, body, url, important, deliveryTa
 
     const toks = list.map(t => t && t.token).filter(Boolean);
     if (!toks.length) return { sent: 0, failed: true, error_code:'NO_ACTIVE_PUSH_TOKEN' };
+
+    // Recheck after token reads: a previous runtime snapshot cannot bypass
+    // current global or station silence. Read failures remain retryable.
+    try {
+      const currentRuntime = await runtimeFresh();
+      const currentSuppressed = currentRuntime.silent === true && !(await allowedByRuntime(currentRuntime, uid));
+      const snapshotSuppressed = !!runtimePolicy && runtimePolicy.silent === true && !(await allowedByRuntime(runtimePolicy, uid));
+      const fence = await stationDeliveryFence.check({ stationId:sid, globalSuppressed:currentSuppressed || snapshotSuppressed });
+      if (!fence.allowed) {
+        if (PUSH_SUPPRESSION_REASONS.has(fence.reason)) return { sent:0, suppressed:true, reason:fence.reason };
+        return { sent:0, failed:true, error_code:'STATION_POLICY_UNAVAILABLE' };
+      }
+    } catch (_) { return { sent:0, failed:true, error_code:'DELIVERY_POLICY_UNAVAILABLE' }; }
 
     let res;
     try {
@@ -4289,7 +4539,7 @@ function verifyCalloutProfile(actor, userSnap) {
   if (String(profile.role || '') !== actor.role || String(profile.crew || '') !== actor.crew) {
     throw new HttpsError('permission-denied', 'התפקיד או המשמרת השתנו. יש להתחבר מחדש.');
   }
-  if (profile.station_id != null && String(profile.station_id) !== actor.sid) {
+  if (profile.station_id != null && String(profile.station_id) !== (actor.homeSid || actor.sid)) {
     throw new HttpsError('permission-denied', 'שיוך התחנה השתנה. יש להתחבר מחדש.');
   }
   const name = String(profile.full_name || '').trim();
@@ -4303,7 +4553,7 @@ async function freshCalloutActor(req) {
   const signed = req.auth;
   if (!signed) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
   const signedClaims = signed.token || {};
-  const sid = callerStation(req, signed);
+  const homeSid = callerStation(req, signed);
   const user = await admin.auth().getUser(signed.uid);
   if (!user || user.uid !== signed.uid || user.disabled === true) {
     throw new HttpsError('permission-denied', 'החשבון אינו פעיל.');
@@ -4311,18 +4561,31 @@ async function freshCalloutActor(req) {
   const claims = user.customClaims || {};
   const role = String(claims.role || '');
   const crew = String(claims.shift || '');
-  if (String(claims.stationId || '') !== sid || String(signedClaims.stationId || '') !== sid ||
+  const isSuper = claims.super === true;
+  if ((signedClaims.super === true) !== isSuper ||
+      String(claims.stationId || '') !== homeSid || String(signedClaims.stationId || '') !== homeSid ||
       String(signedClaims.role || '') !== role || String(signedClaims.shift || '') !== crew) {
     throw new HttpsError('permission-denied', 'הרשאות החשבון השתנו. יש להתחבר מחדש.');
   }
-  if (['commander','deputy'].indexOf(role) === -1) {
+  if (!isSuper && ['commander','deputy'].indexOf(role) === -1) {
     throw new HttpsError('permission-denied', 'קריאת פתע שמורה למפקד המשמרת ולסגנו.');
   }
-  if (['A','B','C'].indexOf(crew) === -1) {
+  if (!isSuper && ['A','B','C'].indexOf(crew) === -1) {
     throw new HttpsError('failed-precondition', 'לשולח אין שיוך למשמרת פעילה.');
   }
-  const actor = { uid:signed.uid, sid, role, crew, claims };
-  const userSnap = await db.doc('stations/' + sid + '/users/' + signed.uid).get();
+  const targetSid = (req.data || {}).target_station_id;
+  if (!isSuper && targetSid !== undefined) {
+    throw new HttpsError('permission-denied', 'בחירת תחנה מיועדת למנהל־על בלבד.');
+  }
+  const sid = isSuper ? String(targetSid || '') : homeSid;
+  if (!STATION_ID_RE.test(sid)) {
+    throw new HttpsError('invalid-argument', 'יש לבחור תחנת יעד תקינה במפורש.');
+  }
+  if (isSuper && sid !== homeSid && !(await db.doc('stations/' + sid).get()).exists) {
+    throw new HttpsError('not-found', 'תחנת היעד לא נמצאה.');
+  }
+  const actor = { uid:signed.uid, sid, homeSid, role, crew, claims, isSuper };
+  const userSnap = await db.doc('stations/' + homeSid + '/users/' + signed.uid).get();
   const verified = verifyCalloutProfile(actor, userSnap);
   return Object.assign(actor, { name:verified.name, email:String(user.email || '') });
 }
@@ -4376,7 +4639,7 @@ exports.sendCallout = onCall(
     }
     // יעד המשמרת מגיע מהלקוח לצורך חוזה הקריאה, אך חייב להתאים
     // למשמרת החתומה בטוקן. אין בחירה של משמרת אחרת או של התחנה.
-    if (crew !== myCrew) {
+    if (!actor.isSuper && crew !== myCrew) {
       throw new HttpsError('permission-denied',
         'אפשר להזעיק רק את המשמרת שלך.');
     }
@@ -4514,6 +4777,7 @@ exports.sendCallout = onCall(
     const value = snap.data() || {};
     if (value.active !== true) return { closed:true, value };
     if (value.delivery_state === 'completed') return { completed:true, value };
+    if (value.delivery_state === 'policy_blocked') return { policyBlocked:true, value };
     const leaseUntil = Date.parse(String(value.delivery_lease_until || ''));
     if (value.delivery_state === 'delivering' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) {
       return { busy:true, value };
@@ -4527,6 +4791,16 @@ exports.sendCallout = onCall(
     return { acquired:true, value, retry_uids:retryUids };
   });
 
+  if (acquired.policyBlocked) {
+    const value = acquired.value || {};
+    return { ok:false, id:ref.id, duplicate:true, in_progress:false,
+      policy_blocked:true, retryable:false, retry_after_ms:0,
+      trial:value.trial === true, sent:Number(value.people || 0),
+      people:Number(value.people || 0), devices:Number(value.devices || 0),
+      suppressed:Number(value.delivery_suppressed || 0),
+      failed:Number(value.delivery_failed || 0),
+      skipped_away:Array.isArray(value.skipped_away) ? value.skipped_away : [] };
+  }
   if (acquired.completed) {
     const value = acquired.value || {};
     return { ok:true, id:ref.id, duplicate:true, in_progress:false,
@@ -4629,14 +4903,18 @@ exports.sendCallout = onCall(
     const priorPeople = Number(value.people || 0);
     const priorDevices = Number(value.devices || 0);
     tx.set(ref, { people:priorPeople + res.people, devices:priorDevices + res.devices,
-      delivery_state:res.failed ? 'partial' : 'completed', delivery_failed:Number(res.failed || 0),
+      delivery_state:res.suppressed ? 'policy_blocked' : res.failed ? 'partial' : 'completed', delivery_failed:Number(res.failed || 0),
+      delivery_suppressed:Number(res.suppressed || 0),
+      delivery_suppressed_uids:Array.isArray(res.suppressed_uids) ? res.suppressed_uids : [],
       delivery_failed_uids:Array.isArray(res.failed_uids) ? res.failed_uids : [],
-      delivery_lease_until:null, skipped_away:awayNames, delivered_at:FV.serverTimestamp() },
+      delivery_lease_until:null, skipped_away:awayNames,
+      ...(res.suppressed ? {} : { delivered_at:FV.serverTimestamp() }) },
     { merge:true });
   });
 
-  return { ok: !res.failed, retryable:res.failed > 0,
-           retry_after_ms:res.failed > 0 ? 1500 : 0,
+  return { ok: !res.failed && !res.suppressed, retryable:!res.suppressed && res.failed > 0,
+           policy_blocked:Number(res.suppressed || 0) > 0, suppressed:Number(res.suppressed || 0),
+           retry_after_ms:!res.suppressed && res.failed > 0 ? 1500 : 0,
            id: ref.id, sent: res.people,
            people: res.people, devices: res.devices,
            failed:Number(res.failed || 0),
@@ -4656,12 +4934,12 @@ exports.closeCallout = onCall(CALLOUT_OPTIONS, async (req) => {
 
   const ref = db.doc('stations/' + sid + '/callouts/' + id);
   await db.runTransaction(async tx => {
-    const userRef = db.doc('stations/' + sid + '/users/' + auth.uid);
+    const userRef = db.doc('stations/' + actor.homeSid + '/users/' + auth.uid);
     const snaps = await Promise.all([tx.get(ref), tx.get(userRef)]);
     if (!snaps[0].exists) throw new HttpsError('not-found', 'הקריאה לא נמצאה.');
     verifyCalloutProfile(actor, snaps[1]);
     const value = snaps[0].data() || {};
-    if (value.by_uid !== auth.uid) {
+    if (!actor.isSuper && value.by_uid !== auth.uid) {
       throw new HttpsError('permission-denied', 'רק מי שפתח את הקריאה יכול לסגור אותה.');
     }
     tx.set(ref, { active:false, delivery_state:'cancelled', delivery_lease_until:null,
@@ -5071,18 +5349,27 @@ exports.deliverMail = onDocumentCreated(
     const bcc = asList(d.bcc);
     const msg = d.message || {};
 
-    if (to.length === 0) {
-      await ref.set({ delivery: {
-        state: 'ERROR', attempts: 0,
-        error: 'אין נמען תקין בשדה to',
-        endTime: FV.serverTimestamp()
-      } }, { merge: true });
-      return;
-    }
-
-    await ref.set({ delivery: {
-      state: 'PROCESSING', attempts: 0, startTime: FV.serverTimestamp()
-    } }, { merge: true });
+    const original = mailDeliveryGuard.capture(d);
+    const prepared = await db.runTransaction(async tx => {
+      const current = await tx.get(ref);
+      if (!current.exists) return false;
+      const row = current.data() || {};
+      if (['SUCCESS', 'SUPPRESSED', 'ERROR'].includes(row.delivery && row.delivery.state)) return false;
+      if (to.length === 0) {
+        tx.set(ref, { delivery: { state: 'ERROR', attempts: 0,
+          error: 'אין נמען תקין בשדה to', endTime: FV.serverTimestamp() } }, { merge: true });
+        return false;
+      }
+      if (mailDeliveryGuard.capture(row).digest !== original.digest) {
+        tx.set(ref, { delivery: { state: 'ERROR', attempts: 0,
+          error: 'mail-envelope-changed', endTime: FV.serverTimestamp() } }, { merge: true });
+        return false;
+      }
+      tx.set(ref, { delivery: { state: 'PROCESSING', attempts: 0,
+        startTime: FV.serverTimestamp() } }, { merge: true });
+      return true;
+    });
+    if (!prepared) return;
 
     const mail = {
       from: MAIL_FROM_NAME + ' <' + MAIL_FROM_ADDR + '>',
@@ -5095,12 +5382,36 @@ exports.deliverMail = onDocumentCreated(
     if (msg.text) mail.text = String(msg.text);
     if (!mail.html && !mail.text) mail.text = '(ללא תוכן)';
 
-    let lastErr = '';
+    let lastErr = '', sdkAttempts = 0;
     for (let attempt = 1; attempt <= MAIL_ATTEMPTS; attempt++) {
+      let gate;
       try {
-        const info = await getMailer(GMAIL_APP_PASSWORD.value()).sendMail(mail);
+        const current = await ref.get();
+        gate = await mailDeliveryGuard.check({ original,
+          current: current.exists ? current.data() : null });
+      } catch (_) {
+        gate = { allowed: false, retryable: true, reason: 'mail-policy-unavailable' };
+      }
+      if (gate.terminal) return;
+      if (gate.allowed !== true) {
+        lastErr = gate.reason;
+        if (!gate.retryable) {
+          await ref.set({ delivery: {
+            state: gate.reason === 'mail-policy-suppressed' ? 'SUPPRESSED' : 'ERROR',
+            attempts: sdkAttempts, check_attempts: attempt, error: gate.reason,
+            endTime: FV.serverTimestamp()
+          } }, { merge: true });
+          return;
+        }
+        if (attempt < MAIL_ATTEMPTS) await new Promise(r => setTimeout(r, attempt * 2000));
+        continue;
+      }
+      try {
+        const smtp = getMailer(GMAIL_APP_PASSWORD.value());
+        sdkAttempts++;
+        const info = await smtp.sendMail(mail);
         await ref.set({ delivery: {
-          state: 'SUCCESS', attempts: attempt, error: '',
+          state: 'SUCCESS', attempts: sdkAttempts, check_attempts: attempt, error: '',
           info: {
             messageId: String(info.messageId || ''),
             accepted: (info.accepted || []).length,
@@ -5126,7 +5437,7 @@ exports.deliverMail = onDocumentCreated(
     }
 
     await ref.set({ delivery: {
-      state: 'ERROR', attempts: MAIL_ATTEMPTS, error: lastErr.slice(0, 500),
+      state: 'ERROR', attempts: sdkAttempts, check_attempts: MAIL_ATTEMPTS, error: lastErr.slice(0, 500),
       endTime: FV.serverTimestamp()
     } }, { merge: true });
 
@@ -5288,7 +5599,7 @@ async function runSheetBackup_() {
     try {
       await sendMail(SUPER_ADMIN_EMAIL, '⚠️ גיבוי לשיטס — ' + failed.length + ' אוספים נכשלו',
         mailShell('גיבוי לשיטס',
-          '<p>' + failed.join('<br>') + '</p>'));
+          '<p>' + failed.join('<br>') + '</p>'), STATION_ID);
     } catch (e) {}
   }
 
@@ -5761,7 +6072,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.19', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.19.1', at: FV.serverTimestamp()
   }, { merge: false });
 });
 
@@ -5857,6 +6168,9 @@ exports.getHomeCommandCenter = onCall({
 
 exports.getScheduleRuntimeStatus = onCall({ enforceAppCheck: true }, async (req) =>
   invokeSchedule('getStatus', req));
+
+exports.activateScheduleMonthAuthority = onCall({ enforceAppCheck: true }, async (req) =>
+  invokeSchedule('activateMonthAuthority', req));
 
 // Guard staffing is deliberately independent from the schedule-manager
 // appointment.  The server derives this narrow capability from the live

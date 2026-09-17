@@ -155,33 +155,44 @@ check('publishing requires the exact digest returned by draft preview', () => {
   assert.ok(html.includes('id="reviewDraft"'));
 });
 check('publication activation and audit share one transaction', () => {
-  const start = runtime.indexOf('async function publish');
-  const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
+  const start = runtime.indexOf('async function publish(req)');
+  const end = runtime.indexOf('function monthOutboxManifest', start);
+  assert.ok(start > -1 && end > start);
+  const publishBody = runtime.slice(start, end);
   const body = publishBody.slice(publishBody.lastIndexOf('await db.runTransaction(async (tx) => {'));
   assert.ok(body.includes('tx.set(activeRef(ctx.sid)'));
   assert.ok(body.includes("collection('schedule_audit')"));
   assert.ok(body.includes("status: 'active'"));
 });
 check('notifications stay blocked until activation and trial exposes only the fenced control row', () => {
-  const start = runtime.indexOf('async function publish');
-  const publishBody = runtime.slice(start, runtime.indexOf('async function rollback', start));
+  const start = runtime.indexOf('async function publish(req)');
+  const end = runtime.indexOf('function monthOutboxManifest', start);
+  assert.ok(start > -1 && end > start);
+  const publishBody = runtime.slice(start, end);
   const staged = publishBody.indexOf("status: trial && !control ? 'suppressed_trial' : 'blocked'");
   const transaction = publishBody.lastIndexOf('await db.runTransaction(async (tx) => {');
-  const release = publishBody.lastIndexOf('await releaseOutbox(pubRef)');
-  assert.ok(staged > -1 && staged < transaction && transaction < release);
+  const finish = publishBody.lastIndexOf('await finishCommittedPublication(ctx,pubRef,trial)');
+  assert.ok(staged > -1 && transaction > -1 && finish > -1
+    && staged < transaction && transaction < finish);
+  const helperStart = runtime.indexOf('async function finishCommittedPublication');
+  const helperEnd = runtime.indexOf('async function publish(req)', helperStart);
+  assert.ok(helperStart > -1 && helperEnd > helperStart);
+  const helper = runtime.slice(helperStart, helperEnd);
+  assert.ok(helper.includes('await releaseOutbox(ref)'));
+  assert.ok(helper.includes("error.code!=='authority-selection-changed'"));
   assert.ok(publishBody.includes("delivery_policy: trial ? (control ? 'trial_control' : 'suppressed_trial') : 'live'"));
-  assert.ok(publishBody.includes('await releaseOutbox(pubRef)'));
+  assert.ok(publishBody.includes('await finishCommittedPublication(ctx,pubRef,trial)'));
 });
 check('publication retry resumes the same request rather than duplicating it', () => {
   assert.ok(runtime.includes('request_fingerprint: requestFingerprint'));
   assert.ok(runtime.includes('request_core_fingerprint: requestCoreFingerprint'));
   assert.ok(runtime.includes("existingData.status === 'staging' ? requestCoreFingerprint : requestFingerprint"));
   assert.ok(runtime.includes('storedFingerprintForExisting !== fingerprintForExisting'));
-  assert.ok(runtime.includes('await releaseOutbox(pubRef)'));
+  assert.ok(runtime.includes('await finishCommittedPublication(ctx,pubRef,trial)'));
 });
 check('active publication replay is always activation-bound; legacy prepared replay stays behind the fingerprint', () => {
   const publishStart = runtime.indexOf('async function publish(req)');
-  const publishEnd = runtime.indexOf('\n  async function rollback(req)', publishStart);
+  const publishEnd = runtime.indexOf('\n  async function rollbackMonthAuthority(req)', publishStart);
   const body = runtime.slice(publishStart, publishEnd);
   const fingerprint = body.indexOf("intent: 'activate'");
   const deliveryPolicy = body.indexOf("delivery_policy: trial ? 'suppressed_trial' : 'live'", fingerprint);
@@ -193,7 +204,7 @@ check('active publication replay is always activation-bound; legacy prepared rep
   'publication replay is not ordered behind its intent-bound fingerprint check');
   assert.ok(body.slice(activeReplay, replay).includes('const expectedDeliveryAllowed = !trial;'),
     'active replay does not bind the receipt to the current delivery policy');
-  assert.ok(body.slice(activeReplay, replay).includes('await releaseOutbox(pubRef);'),
+  assert.ok(body.slice(activeReplay, replay).includes('await finishCommittedPublication(ctx,pubRef,trial);'),
     'active replay does not resume its policy-fenced outbox');
   assert.ok(body.includes('return replayPreparedPublication(ctx'));
 });
@@ -1251,7 +1262,7 @@ check('trial publication activates and audits normally while suppressing only de
   assert.ok(body.includes('delivery_allowed: !trial')
     && body.includes("delivery_policy: trial ? 'suppressed_trial' : 'live'"),
   'מדיניות המסירה אינה נחתמת גם בפרסום וגם בשורת המסירה');
-  assert.ok(body.indexOf('await releaseOutbox(pubRef);') > -1,
+  assert.ok(body.indexOf('await finishCommittedPublication(ctx,pubRef,trial);') > -1,
     'מצב ניסוי אינו מגיע לשער השחרור שמכריע לפי חשבון הבקרה');
   assert.equal(body.includes("action: 'prepare'"), false,
     'מסלול ההכנה הישן עדיין מחליף את פרסום הניסוי');
@@ -1304,7 +1315,7 @@ check('the cutover is one transaction, decided on live values', () => {
     assert.ok(body.indexOf(write) > tx, write + ' נכתב מחוץ לטרנזקציה');
   }
   // ⭐ ההודעות אחרי ה-commit, לעולם לא בתוכו.
-  const release = body.indexOf('await releaseOutbox(pubRef);');
+  const release = body.indexOf('await finishCommittedPublication(ctx,pubRef,false);');
   assert.ok(release > body.lastIndexOf('});'),
     'ה-outbox משתחרר בתוך הטרנזקציה');
   // ושער הפיקוד, לא שער המנהל.

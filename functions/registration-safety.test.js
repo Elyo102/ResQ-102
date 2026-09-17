@@ -168,20 +168,46 @@ async function rejectsWith(label, promise, code) {
                        "status: 'retired'", 'retired: true']) {
     assert.ok(coordinatorSource.includes(token), 'coordinator must contain ' + token);
   }
-  assert.ok(coordinatorSource.indexOf('applyAssignmentProfile(uid, opId)') <
-            coordinatorSource.indexOf("applyAuth(uid, opId, ['profile_applied'])"));
+  const assignmentFlow = coordinatorSource.match(
+    /async function runAssignment[\s\S]*?\r?\n  }\r?\n\r?\n  async function runClear/
+  );
   const clearFlow = coordinatorSource.match(
     /async function runClear[\s\S]*?\r?\n  }\r?\n\r?\n  async function runBootstrap/
   );
-  assert.ok(clearFlow && clearFlow[0].indexOf("applyAuth(uid, opId, ['prepared'])") <
-            clearFlow[0].indexOf('applyDeactivation(uid, opId)'));
+  function assertCallOrder(flow, first, second) {
+    const firstIndex = flow.indexOf(first);
+    const secondIndex = flow.indexOf(second);
+    assert.ok(firstIndex >= 0, 'flow must contain ' + first);
+    assert.ok(secondIndex >= 0, 'flow must contain ' + second);
+    assert.ok(firstIndex < secondIndex, first + ' must precede ' + second);
+  }
+  for (const [flow, first, second] of [
+    [assignmentFlow, 'await applyAssignmentProfile(uid, opId, actor);',
+      "await applyAuth(uid, opId, ['profile_applied'], actor);"],
+    [clearFlow, "await applyAuth(uid, opId, ['prepared']);",
+      'await applyDeactivation(uid, opId);']
+  ]) {
+    assert.ok(flow, 'coordinator flow section must exist');
+    assertCallOrder(flow[0], first, second);
+    assert.throws(() => assertCallOrder(flow[0].replace(first, ''), first, second),
+      assert.AssertionError, 'removing the first call must fail');
+    assert.throws(() => assertCallOrder(flow[0].replace(second, ''), first, second),
+      assert.AssertionError, 'removing the second call must fail');
+    const reversed = flow[0].replace(first, '__FIRST_CALL__')
+      .replace(second, first).replace('__FIRST_CALL__', second);
+    assert.throws(() => assertCallOrder(reversed, first, second),
+      assert.AssertionError, 'reversing the calls must fail');
+  }
   console.log('✓ assignment grants after profile; removal revokes before deactivation');
 
   const resume = indexSource.match(
     /exports\.resumeIdentityOperation[\s\S]*?\/\/ ---------------------------------------------------------------------\r?\n\/\/  4\. כניסה/
   );
-  assert.ok(resume && resume[0].includes('requireSuperAdmin(req)'));
-  assert.ok(resume[0].includes('identityCoordinator.resumeOperation'));
+  assert.ok(resume, 'recovery export section must exist');
+  assertCallOrder(resume[0], 'await requireFreshOnboardingSuper(req)',
+    'await identityCoordinator.getOperation(uid)');
+  assertCallOrder(resume[0], 'await requireFreshOnboardingSuper(req)',
+    'await identityCoordinator.resumeOperation({');
   assert.equal(resume[0].includes('d.role'), false);
   assert.equal(resume[0].includes('d.emp'), false);
   console.log('✓ recovery is super-only and accepts no replacement identity plan');

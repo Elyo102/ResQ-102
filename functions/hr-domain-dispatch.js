@@ -4,6 +4,7 @@
 // scheduler, logging or browser work. All transport is outside retryable DB work.
 const { createHash, randomBytes } = require('node:crypto');
 const access = require('./schedule-access');
+const { createStationDeliveryFence } = require('./station-delivery-fence');
 const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { decideNotification, notificationIntent } = require('./hr-notification-policy');
 const { validReview } = require('./hr-hours-review-contract');
@@ -37,6 +38,8 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
   if (!db || typeof auth?.getUser !== 'function' || typeof messaging?.sendEachForMulticast !== 'function'
     || typeof HttpsError !== 'function') throw new TypeError('Dispatcher dependencies are required.');
   const identity = createOpsMemberIdentity({ db, HttpsError });
+  const stationFence = createStationDeliveryFence({ db });
+  const terminalPolicy = reason => ['global-silence', 'station-silence', 'station-not-ready', 'station-inactive'].includes(reason);
   const now = () => { const value = clock(); if (!safeTime(value)) throw new TypeError('Invalid clock.'); return value; };
   const fault = (reason, terminal = false) => Object.assign(new Error(reason), { dispatchReason: reason, terminal });
   const hook = async (name, value) => { if (typeof hooks[name] === 'function') await hooks[name](value); };
@@ -421,6 +424,10 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       if (at >= j.expires_at_ms) { tx.update(ref, { status: 'cancelled', reason: 'expired', updated_at_ms: at }); return null; }
       if ((v.status === 'blocked' && v.next_check_ms > at) || (v.status === 'deferred' && v.not_before_ms > at)) return null;
       const decision = policy(j, rt, at);
+      if (decision.decision === 'queue') {
+        const fence = await stationFence.check({ stationId: loc.sid, globalSuppressed: false, tx });
+        if (fence.allowed !== true) throw fault(fence.reason, terminalPolicy(fence.reason));
+      }
       if (decision.decision === 'suppressed') { tx.update(ref, { status: 'suppressed', reason: decision.reason, updated_at_ms: at }); return null; }
       if (decision.decision !== 'queue') { tx.update(ref, { status: 'deferred', reason: decision.reason, not_before_ms: decision.not_before_ms, updated_at_ms: at }); return null; }
       if (!tokens.length) { tx.update(ref, { status: 'no_device', reason: 'no-current-token', updated_at_ms: at }); return null; }
@@ -429,13 +436,38 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       const n = note(j, v.family, v.recipient_uid);
       tx.update(ref, { status: 'attempting', reason: null, attempt_id: attempt, lease_until_ms: at + LIMITS.leaseMs,
         dispatch_started_at_ms: at, token_count: tokens.length, updated_at_ms: at });
-      return { attempt, tokens, expires: j.expires_at_ms, sendNow: j.send_now, consentExpires: j.consent_expires_at_ms,
+      return { attempt, tokens, stationId: loc.sid, recipientUid: v.recipient_uid, expires: j.expires_at_ms, sendNow: j.send_now, consentExpires: j.consent_expires_at_ms,
         payload: { tokens, data: { title: TITLES[j.type], body: n.body,
           url: ['review','correction'].includes(v.family) ? './attendance.html'
             : v.family === 'request' ? './hr-requests.html' : v.family === 'workforce' ? './hr.html' : './hr-documents.html',
           tag: 'hr-domain-' + v.id, important: '0' },
         webpush: { headers: { Urgency: 'normal' } } } };
     });
+  }
+  async function preSendPolicy(ref, sent) {
+    try {
+      return await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.data().status !== 'attempting' || snap.data().attempt_id !== sent.attempt) return false;
+        const v = snap.data();
+        if (locate(ref, INTENTS).sid !== sent.stationId || v.station_id !== sent.stationId
+          || v.recipient_uid !== sent.recipientUid) throw fault('attempt-scope-changed', true);
+        const rt = await runtime(tx);
+        const fence = await stationFence.check({ stationId: sent.stationId, globalSuppressed: rt.silent, tx });
+        if (fence.allowed === true) return true;
+        throw fault(fence.reason, terminalPolicy(fence.reason));
+      });
+    } catch (e) {
+      await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.data().status !== 'attempting' || snap.data().attempt_id !== sent.attempt) return;
+        const v = snap.data(), at = now(), n = integer(v.dispatch_check_count) ? v.dispatch_check_count + 1 : 1;
+        tx.update(ref, { status: e.terminal === true ? 'cancelled' : 'blocked', reason: e.dispatchReason || 'preflight-unavailable',
+          dispatch_check_count: n, next_check_ms: e.terminal === true ? null : Math.min(at + backoff(n), v.expires_at_ms),
+          attempt_id: null, lease_until_ms: null, updated_at_ms: at });
+      });
+      return false;
+    }
   }
   function outcomes(result, tokens) {
     const valid = result && Array.isArray(result.responses) && result.responses.length === tokens.length;
@@ -524,6 +556,7 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         }
         try {
           await hook('afterClaim', { path: d.ref.path, attempt_id: sent.attempt });
+          if (!await preSendPolicy(d.ref, sent)) { reserved -= held; continue; }
           const start = now(), decision = decideNotification({ now_ms: start, mode: 'manual', silent: 'off', send_now: sent.sendNow && start < sent.consentExpires });
           if (!within() || start >= sent.expires || decision.decision !== 'queue') {
             const defer = within() && start < sent.expires && decision.decision !== 'queue';

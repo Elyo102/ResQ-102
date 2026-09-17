@@ -19,6 +19,8 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 }
 
 const scenarios = [
+  'super-cross-station', 'super-missing-target', 'super-string', 'super-revoked-after-lease',
+  'super-close-other', 'commander-target-spoof',
   'no-token-document',
   'empty-token-list',
   'all-tokens-dead',
@@ -75,6 +77,7 @@ const db = admin.firestore();
 const SID = 'callout_delivery_' + String(process.env.RESQ_CALLOUT_TEST_RUN_ID || 'single')
   + '_' + scenario.replace(/[^a-z0-9]+/g, '_');
 const sender = 'sender_' + scenario.replace(/[^a-z0-9]+/g, '_');
+const superScenario = scenario.startsWith('super-');
 const sentTokenGroups = [];
 const sentPayloads = [];
 let authReads = 0;
@@ -93,7 +96,8 @@ admin.auth().getUser = async uid => {
   }
   return {
     uid, email:uid + '@example.com', disabled,
-    customClaims:{ stationId:SID, role:demoted ? 'firefighter' : 'commander', shift:'A',
+    customClaims:{ stationId:SID, role:demoted ? 'firefighter' : (superScenario ? 'super_admin' : 'commander'), shift:'A',
+      super:scenario === 'super-string' ? 'true' : (superScenario && !(scenario === 'super-revoked-after-lease' && authReads >= 2)),
       personal_lab_control:scenario !== 'trial-missing-control' &&
         !(scenario === 'personal-control-revoked-after-lease' && authReads >= 2) }
   };
@@ -120,7 +124,8 @@ function auth(options = {}) {
     uid: sender,
     token: {
       email: sender + '@example.com',
-      role: 'commander',
+      role: superScenario ? 'super_admin' : 'commander',
+      super:scenario === 'super-string' ? 'true' : superScenario,
       stationId: SID,
       shift: 'A',
       personal_lab_control: options.personal === true
@@ -142,8 +147,11 @@ function request(label, options = {}) {
 async function seed(runtime, recipients) {
   await db.doc('config/runtime').set(runtime);
   const batch = db.batch();
+  batch.set(db.doc(`stations/${SID}`), {
+    station_id:SID, active:true, status:'ready', silent:false
+  });
   batch.set(db.doc(`stations/${SID}/users/${sender}`), {
-    station_id:SID, full_name: 'מפקד בדיקה', role: 'commander', crew: 'A', is_active: true
+    station_id:SID, full_name: 'מפקד בדיקה', role: superScenario ? 'super_admin' : 'commander', crew: 'A', is_active: true
   });
   for (const item of recipients) {
     batch.set(db.doc(`stations/${SID}/roster/${item.uid}`), {
@@ -173,6 +181,34 @@ async function expectRejected(promise) {
 }
 
 async function main() {
+  if (superScenario || scenario === 'commander-target-spoof') {
+    await seed({ silent:false, silent_allow:[] }, []);
+    const targetSid = SID + '_target';
+    await db.doc(`stations/${targetSid}`).set({
+      station_id:targetSid, name:'Target test station', active:true, status:'ready', silent:false
+    });
+    await db.doc(`stations/${targetSid}/roster/target_person`).set({ full_name:'Target', role:'firefighter', crew:'B', is_active:true });
+    await db.doc(`stations/${targetSid}/push_tokens/target_person`).set({ tokens:[{ token:'target-good-token' }] });
+    const req = request('super-target');
+    req.data.target = 'crew:B';
+    if (scenario !== 'super-missing-target') req.data.target_station_id = targetSid;
+    if (['super-missing-target','super-string','super-revoked-after-lease','commander-target-spoof'].includes(scenario)) {
+      await assert.rejects(functions.sendCallout.run(req), e => /invalid-argument|permission-denied/.test(String(e.code)));
+      assert.equal(sentTokenGroups.length, 0, 'unauthorized or incomplete target cannot send');
+      console.log('✓ ' + scenario);
+      return;
+    }
+    const result = await functions.sendCallout.run(req);
+    assert.equal(result.ok, true);
+    assert.deepEqual(sentTokenGroups, [['target-good-token']]);
+    assert.equal((await db.collection(`stations/${SID}/callouts`).get()).empty, true, 'no callout written in actor home');
+    const ref = db.doc(`stations/${targetSid}/callouts/${result.id}`);
+    if (scenario === 'super-close-other') await ref.update({ by_uid:'other_commander' });
+    await functions.closeCallout.run({ auth:auth(), data:{ id:result.id, target_station_id:targetSid } });
+    assert.equal((await ref.get()).data().active, false);
+    console.log('✓ ' + scenario);
+    return;
+  }
   if (scenario === 'auth-disabled-initial' || scenario === 'auth-demoted-initial') {
     await seed({ silent:false, silent_allow:[] }, [
       { uid:sender }, { uid:'crew_member', tokens:['must-not-send-token'] }

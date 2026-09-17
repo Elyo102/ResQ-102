@@ -184,7 +184,12 @@ function isoDayOffset(iso, offset) {
 
 function createScheduleRuntime(deps) {
   const d = plain(deps) ? deps : {};
+  // Internal integration capability only; production index does not enable it.
+  const monthAuthorityEnabled = d.monthAuthorityControlEnabled!==true && d.monthAuthorityEnabled === true;
+  const monthContract = monthAuthorityEnabled ? require('./schedule-month-authority') : null;
+  const monthOutbox = monthAuthorityEnabled ? require('./schedule-month-outbox-authority') : null;
   const db = d.db;
+  const outcomeTransaction=typeof d.monthAuthorityOutcomeTransaction==='function'?d.monthAuthorityOutcomeTransaction:callback=>db.runTransaction(callback);
   const FV = d.FieldValue;
   const FieldPath = d.FieldPath;
   const clock = d.clock;
@@ -193,6 +198,14 @@ function createScheduleRuntime(deps) {
   const createEngine = d.createEngine;
   const createPublication = d.createPublication;
   const createService = d.createService;
+  const monthAuthority = monthAuthorityEnabled ? require('./schedule-month-authority-store').createMonthAuthorityStore({db,
+    verifySnapshot: async ({station_id,publication_id}) => {
+      const ref=db.doc('stations/'+station_id+'/schedule_publications/'+publication_id), snap=await ref.get();
+      const meta=snap.exists?snap.data():null;
+      if(!meta || meta.station_id!==station_id || !['staging','active'].includes(meta.status) || meta.snapshot_complete!==true)throw new ScheduleRuntimeError('month-snapshot-invalid','תמונת החודש אינה שלמה.');
+      const value=await readSnapshot(ref,meta);
+      return {station_id,publication_id,revision:meta.revision,content_digest:meta.content_digest,from:meta.from,to:meta.to,...value};
+    }}) : null;
   const isSuper = typeof d.isSuper === 'function' ? d.isSuper : function () { return false; };
   const getAuthUser = typeof d.getAuthUser === 'function'
     ? d.getAuthUser : async function () { return null; };
@@ -1013,11 +1026,15 @@ function createScheduleRuntime(deps) {
     });
   }
 
-  function requireMode(config, allowed) {
+  function requireRuntimeMode(config, allowed) {
     if (allowed.indexOf(config.mode) === -1) {
       throw new ScheduleRuntimeError('schedule-mode-blocked',
         'מנוע הסידור אינו מופעל לפעולה הזאת. מצב נוכחי: ' + config.mode);
     }
+  }
+
+  function requireMode(config, allowed) {
+    requireRuntimeMode(config, allowed);
     if (!config.active_policy_id || !config.active_source_id) {
       throw new ScheduleRuntimeError('schedule-config-incomplete',
         'לא הוגדרו מדיניות ומקור נתונים פעילים.');
@@ -1513,7 +1530,12 @@ function createScheduleRuntime(deps) {
       content_digest: contentDigest, snapshot_completed_at: FV.serverTimestamp()
     });
     if (absenceCoverage) snapshotMeta.absence_coverage = absenceCoverage;
-    await ref.set(snapshotMeta, { merge: true });
+    if(plan.affected_months){snapshotMeta.affected_months=plan.affected_months;snapshotMeta.month_edit_base=plan.month_edit_base;}
+    if(d.monthAuthorityTransitionFence===true)await db.runTransaction(async tx=>{
+      const parent=await tx.get(ref);
+      if(!parent.exists || parent.data().status!=='staging')throw new ScheduleRuntimeError('snapshot-staging-changed','מצב הכנת התמונה השתנה.','aborted');
+      tx.set(ref,snapshotMeta,{merge:true});
+    });else await ref.set(snapshotMeta,{merge:true});
     return contentDigest;
   }
 
@@ -1587,6 +1609,7 @@ function createScheduleRuntime(deps) {
     };
     if (absences.length) basis.absences = absences;
     if (absenceCoverage) basis.absence_coverage = absenceCoverage;
+    if(plan.affected_months){basis.affected_months=plan.affected_months;basis.month_edit_base=plan.month_edit_base;}
     return digest(basis);
   }
 
@@ -1598,6 +1621,7 @@ function createScheduleRuntime(deps) {
         const snaps = await Promise.all(refs.map((item) => tx.get(item)));
         requireLiveManager(snaps[0], snaps[1], ctx);
         const draft = snaps[2].exists ? (snaps[2].data() || {}) : {};
+        if(monthAuthorityEnabled && draft.edited===true)await requireMonthEditBaseTx(tx,ctx,draft.month_edit_base);
         // Two exact retries may finish the same deterministic child snapshot
         // concurrently.  Completion is idempotent only for the same station
         // and digest; every other state remains fail-closed.
@@ -1690,6 +1714,7 @@ function createScheduleRuntime(deps) {
     };
     const absenceCoverage = normalizeSnapshotAbsenceCoverage(meta.absence_coverage);
     if (absenceCoverage) plan.absence_coverage = absenceCoverage;
+    if(meta.affected_months){plan.affected_months=meta.affected_months;plan.month_edit_base=meta.month_edit_base;}
     if (!dates) {
       const orderedPeople = roster.slice().sort((a, b) => compareCanonical(a.id, b.id));
       const actualDigest = snapshotDigest(plan, rows, events, orderedPeople, absences, absenceCoverage);
@@ -1724,6 +1749,7 @@ function createScheduleRuntime(deps) {
   async function getStatus(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
+    if(monthAuthorityEnabled)return monthStatus(ctx,config,req);
     const active = await activeRef(ctx.sid).get();
     const activeData = active.exists ? (active.data() || {}) : null;
     const activeView = activeData ? {
@@ -3017,6 +3043,14 @@ function createScheduleRuntime(deps) {
   async function getModeOptions(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
+    if(monthAuthorityEnabled){
+      const state=await monthAuthority.readBaseline(ctx.sid,[]);
+      const options=modeAuthority.options({current:config.mode,actor:modeActor(ctx),readiness:await modeReadiness(ctx,config)});
+      const targets=options.targets.filter(target=>target.to!==MODE.NEW || config.mode===MODE.SHADOW)
+        .map(target=>target.to===MODE.NEW?{...target,available:ctx.super===true,blocked_by:ctx.super?null:'forbidden'}:target);
+      return {...options,current:config.mode,ready:config.mode===MODE.SHADOW,targets,candidate:null,
+        authority_mode:'monthly',expected_authority_generation:state.root.generation};
+    }
     const actor = modeActor(ctx);
     if (!modeAuthority.mayChangeMode(actor)) {
       // מי שאינו רשאי מקבל תשובה קצרה ואמיתית, בלי מפת מצבים
@@ -3196,6 +3230,10 @@ function createScheduleRuntime(deps) {
     const existingValue = existing.exists ? (existing.data() || {}) : null;
     if (existingValue) {
       const value = existingValue;
+      if (trialMeta.workbook_managed === true && value.workbook_managed !== true) {
+        throw new ScheduleRuntimeError('trial-candidate-stale',
+          'מועמד המעבר נוצר בחוזה ייבוא קודם. יש ליצור ולפרסם טיוטה חדשה; המועמד הישן נשמר ללא שינוי.', 'failed-precondition');
+      }
       if (value.status === 'prepared' && value.station_id === ctx.sid
           && value.trial_source_publication_id === trialRef.id
           && value.content_digest === trialMeta.content_digest
@@ -3226,6 +3264,7 @@ function createScheduleRuntime(deps) {
         previous_publication_id: baseline ? baseline.id : null
       }
     });
+    const candidateNotifications = await resolveScheduleNotificationRecipients(ctx, planned.notifications);
     if (!existingValue) await candidateRef.create({
       station_id: ctx.sid, status: 'staging', revision,
       delivery_allowed: true, delivery_policy: 'live',
@@ -3233,6 +3272,7 @@ function createScheduleRuntime(deps) {
       trial_baseline_publication_id: baseline ? baseline.id : null,
       previous_publication_id: trialRef.id,
       source_id: trialMeta.source_id, policy_id: trialMeta.policy_id,
+      workbook_managed: trialMeta.workbook_managed === true,
       snapshot_source_id: trialMeta.snapshot_source_id || trialMeta.source_id,
       source_draft_id: trialMeta.source_draft_id || null,
       created_at: FV.serverTimestamp(), created_by: ctx.uid,
@@ -3254,7 +3294,7 @@ function createScheduleRuntime(deps) {
     });
     await stageSnapshot(candidateRef, {}, latest.plan, latest.events, latest.roster,
       trialMeta.content_digest);
-    const outboxRows = planned.notifications.map((notification) => ({
+    const outboxRows = candidateNotifications.map((notification) => ({
       id: 'n_' + hash(notification.dedupe_key).slice(0, 40),
       person: notification.person,
       notification
@@ -3274,13 +3314,15 @@ function createScheduleRuntime(deps) {
     const manifest = outboxManifestOfRows(outboxRows.map((item) => ({
       id: item.id, person: item.person
     })));
-    await candidateRef.set({
-      status: 'prepared', prepared_at: FV.serverTimestamp(),
-      outbox_manifest: manifest,
-      blocked_notifications: outboxRows.length,
-      notified_people: outboxRows.length,
-      suppressed_notifications: 0
-    }, { merge: true });
+    if(d.monthAuthorityTransitionFence===true)await db.runTransaction(async tx=>{
+      const snapshot=await tx.get(candidateRef),value=snapshot.exists?snapshot.data():{};
+      if(value.status!=='staging' || value.snapshot_complete!==true || value.content_digest!==trialMeta.content_digest)throw new ScheduleRuntimeError('candidate-stale','מועמד הפרסום השתנה.','aborted');
+      tx.update(candidateRef,{
+        status: 'prepared', prepared_at: FV.serverTimestamp(),outbox_manifest:manifest,
+        blocked_notifications:outboxRows.length,notified_people:outboxRows.length,suppressed_notifications:0
+      });
+    });else await candidateRef.set({status:'prepared',prepared_at:FV.serverTimestamp(),outbox_manifest:manifest,
+      blocked_notifications:outboxRows.length,notified_people:outboxRows.length,suppressed_notifications:0},{merge:true});
     return { id: candidateId, meta: (await candidateRef.get()).data() || {} };
   }
 
@@ -3692,16 +3734,17 @@ function createScheduleRuntime(deps) {
   }
 
   function workbookSource(ctx, pipeline) {
-    const peopleRaw = pipeline.people;
+    // Firestore reconstructs this source in document-ID order. Sign that same
+    // canonical order and use its digest as a new immutable source address.
+    const peopleRaw = pipeline.people.slice().sort((a, b) => compareCanonical(a.id, b.id));
     const revision = 'workbook-' + pipeline.digest.slice(0, 20);
-    const id = 'si_' + pipeline.digest.slice(0, 40);
     const basis = {
       station_id:ctx.sid, version:'workbook-import-v1', revision, carry:{},
       counts:{ people:peopleRaw.length, availability:0, locked:0, events:0 },
       people:peopleRaw, availability:{}, locked:{}, events:[]
     };
     return {
-      id, version:basis.version, revision, digest:digest(basis),
+      id:'si_' + digest(basis).slice(0, 40), version:basis.version, revision, digest:digest(basis),
       contentKey:String(hash(stable({ station_id:ctx.sid, people:peopleRaw }))),
       carry:{}, peopleRaw, availability:{}, locked:{}, eventsRaw:[]
     };
@@ -4090,7 +4133,7 @@ function createScheduleRuntime(deps) {
       const draft = await stationRef(ctx.sid).collection('schedule_drafts').doc(active.meta.source_draft_id).get();
       map = importedStationMapOf(null, draft.exists ? (draft.data() || {}) : null);
     }
-    return projectedPolicyForPlan(policy.value, active.plan, { station_map: map }, null,
+    return projectedPolicyForPlan(policy.value, active.plan, Object.assign({}, active.meta, { station_map: map }), null,
       'edit-station-map-missing');
   }
 
@@ -4126,13 +4169,63 @@ function createScheduleRuntime(deps) {
     return plain(meta) && nonEmpty(meta.source_id) ? meta.source_id : null;
   }
 
+  async function requireMonthEditBaseTx(tx,ctx,base){
+    if(!base || !plain(base.owners))throw new ScheduleRuntimeError('edit-base-stale','חסר בסיס בעלות חתום.','aborted');
+    monthContract.generation(base.generation);const owners=monthContract.patch(base.owners,ctx.sid);
+    const root=await tx.get(stationRef(ctx.sid).collection('schedule_state').doc('publication_authority'));
+    if(!root.exists && base.initialize===true && base.generation===0){
+      const pointer=await tx.get(activeRef(ctx.sid)),orphans=await tx.get(stationRef(ctx.sid).collection('schedule_publication_months').limit(1));
+      if(!orphans.empty || Object.values(owners).some(owner=>!editBaseMatches(pointer.exists?pointer.data():null,owner)))throw new ScheduleRuntimeError('edit-base-stale','בעלות הסידור השתנתה.','aborted');
+      return;
+    }
+    if(!root.exists || root.data().generation!==base.generation)throw new ScheduleRuntimeError('edit-base-stale','בעלות הסידור השתנתה.','aborted');
+    for(const [month,owner] of Object.entries(owners)){
+      const current=await tx.get(stationRef(ctx.sid).collection('schedule_publication_months').doc(month));
+      if(stable(current.exists?current.data():null)!==stable(owner))throw new ScheduleRuntimeError('edit-base-stale','בעלות החודש השתנתה.','aborted');
+    }
+  }
+
+  async function monthStatus(ctx,config,req){
+      const date=requestedViewDate(req,clock().slice(0,10)),{reader,resolved}=await monthReaderFor(ctx,config,date,date);
+      const result=await reader.projectRange(resolved,async segment=>{
+        const value={publication_id:segment.owner.publication_id,revision:segment.owner.revision,month:segment.owner.month,activation_id:segment.owner.activation_id};
+        if(ctx.manager){
+          const operation=await monthOperationFor(ctx,segment.owner);
+          const alerts=await stationRef(ctx.sid).collection('schedule_publications').doc(operation.operationId).collection('schedule_outbox').where('status','in',['retry','dead_letter']).limit(101).get();
+          let canRollback=false;
+          if(operation.receipt){const current=await monthAuthority.readBaseline(ctx.sid,Object.keys(operation.receipt.after));canRollback=stable(current.owners)===stable(operation.receipt.after);}
+          Object.assign(value,{content_digest:segment.owner.content_digest,from:segment.snapshot.from,to:segment.snapshot.to,edited:segment.snapshot.meta.edited===true,
+            can_rollback:canRollback,rollback_operation_id:canRollback?operation.receipt.operation_id:null,
+            previous_publication_id:operation.receipt && operation.receipt.before[segment.owner.month] && operation.receipt.before[segment.owner.month].publication_id || null,
+            delivery_alerts:alerts.size,delivery_alerts_capped:alerts.size>100});
+        }
+        return value;
+      });
+      return {mode:config.mode,configured:Boolean(config.active_policy_id && config.active_source_id),manager:ctx.manager,
+        authority_mode:'monthly',expected_authority_generation:resolved.generation,
+        authority_generation:resolved.generation,active:result.segments[0].value,available:result.segments[0].available};
+  }
+
   async function scheduleEditBasis(ctx, req) {
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    requireRuntimeMode(config, [MODE.NEW, MODE.SHADOW]);
     const data = plain(req.data) ? req.data : {};
     const base = requestedEditBase(data);
     // ⭐ קריאה מלאה של הפרסום הפעיל — החתימה מאומתת — ואז CAS מול מה שהמסך ראה.
-    const active = await activeSnapshot(ctx);
+    let active,monthEditBase=null,affectedMonths=null;
+    if(monthAuthorityEnabled){
+      const ref=stationRef(ctx.sid).collection('schedule_publications').doc(base.publication_id),snap=await ref.get(),meta=snap.exists?snap.data():null;
+      if(!meta || meta.station_id!==ctx.sid || meta.status!=='active' || meta.snapshot_complete!==true)throw new ScheduleRuntimeError('edit-no-active','אין בסיס חתום לעריכה.');
+      active={ref,meta,pointer:base,...await readSnapshot(ref,meta)};
+      let normalized;try{normalized=scheduleEdit.normalizeEdits(data.edits,{from:active.plan.from,to:active.plan.to});}catch(error){scheduleEditError(error);}
+      affectedMonths=Array.from(new Set(normalized.flatMap(edit=>edit.dates.map(date=>date.slice(0,7))))).sort();
+      const baseline=await monthAuthority.readBaseline(ctx.sid,affectedMonths);
+      for(const month of affectedMonths){const owner=baseline.owners[month];
+        if(!owner || owner.state==='unowned' || !editBaseMatches(owner,base))throw new ScheduleRuntimeError('edit-owner-mixed','העריכה כוללת חודש מבסיס אחר. יש לערוך כל בסיס בנפרד.','failed-precondition');
+        if(normalized.flatMap(edit=>edit.dates).some(date=>date.slice(0,7)===month && (date<owner.coverage_from || date>owner.coverage_to)))throw new ScheduleRuntimeError('edit-date-unavailable','תאריך העריכה אינו מכוסה.');
+      }
+      monthEditBase={generation:baseline.root.generation,owners:baseline.owners,initialize:baseline.initialize===true};
+    }else active = await activeSnapshot(ctx);
     if (!active) {
       throw new ScheduleRuntimeError('edit-no-active', 'אין סידור פעיל לעריכה.', 'failed-precondition');
     }
@@ -4140,8 +4233,10 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('edit-base-stale',
         'הסידור הפעיל השתנה מאז שנטען למסך. יש לרענן ולערוך שוב.', 'failed-precondition');
     }
-    const policy = await loadPolicy(ctx, config.active_policy_id);
-    const source = await loadSource(ctx, config.active_source_id);
+    const workbookManaged = active.meta.workbook_managed === true;
+    if (!workbookManaged) requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    const policy = await loadPolicy(ctx, workbookManaged || monthAuthorityEnabled ? active.meta.policy_id : config.active_policy_id);
+    const source = await loadSource(ctx, workbookManaged || monthAuthorityEnabled ? active.meta.source_id : config.active_source_id);
     /* ⭐ §3 · העריכה נעשית תמיד מול המדיניות **הפעילה** (זו שהפרסום הנגזר
      * ייבדק מולה ב-publish). עריכה ידנית תמיד אפשרית — הכרעת אלדד (5.9):
      * כשחוקי התחנה השתנו מאז הפרסום, השורות הקיימות מיושרות למדיניות
@@ -4196,6 +4291,7 @@ function createScheduleRuntime(deps) {
       policy_version: policy.value.version, policy_digest: policy.digest, source_complete: true,
       generated_at: clock(), edited: true
     });
+    if(monthAuthorityEnabled){plan.affected_months=affectedMonths;plan.month_edit_base=monthEditBase;}
     // תכנון הפרסום „על יבש" — כמה אנשים יקבלו הודעה, בלי לכתוב דבר.
     const publication = createPublication({ clock, hash, rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] } });
     let planned;
@@ -4216,6 +4312,7 @@ function createScheduleRuntime(deps) {
      * הביצוע מקבל את החתימה שהמסך ראה — או סירוב. */
     const editDigest = digest({
       station_id: ctx.sid, base, edits,
+      ...(monthAuthorityEnabled?{affected_months:affectedMonths,month_edit_base:monthEditBase}:{}),
       source: { snapshot_id: snapshotSourceId, snapshot_digest: active.plan.source_digest,
         current_id: source.id, current_digest: source.digest },
       policy: policy.digest,
@@ -4228,7 +4325,7 @@ function createScheduleRuntime(deps) {
       ctx, config, data, base: Object.assign({}, base, { policy_digest: policy.digest }),
       policyChanged: policyChanged ? { from: active.plan.policy_digest, to: policy.digest, rows_rebased: applied.rows_rebased } : null,
       sourceChanged, snapshotSourceId,
-      active, policy, editPolicy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport
+      active, policy, editPolicy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport,monthEditBase,affectedMonths
     };
   }
 
@@ -4259,6 +4356,7 @@ function createScheduleRuntime(deps) {
       below_minimum_total: belowMinimum.length,
       next_revision: basis.base.revision + 1,
       edit_digest: basis.editDigest,
+      ...(basis.affectedMonths?{affected_months:basis.affectedMonths,month_edit_base:basis.monthEditBase}:{}),
       station_map: basis.editPolicy.station_map,
       policy_changed: basis.policyChanged,
       source_changed: basis.sourceChanged,
@@ -4387,7 +4485,8 @@ function createScheduleRuntime(deps) {
       const snaps = await Promise.all(refs.map((item) => tx.get(item)));
       requireLiveManager(snaps[0], snaps[1], ctx);
       // CAS חי על הבסיס גם ברגע יצירת הטיוטה או שחזורה — לא רק בפרסום.
-      if (!editBaseMatches(snaps[3].exists ? (snaps[3].data() || {}) : null, base)) {
+      if(monthAuthorityEnabled)await requireMonthEditBaseTx(tx,ctx,basis.monthEditBase);
+      if (!monthAuthorityEnabled && !editBaseMatches(snaps[3].exists ? (snaps[3].data() || {}) : null, base)) {
         const error = new ScheduleRuntimeError('edit-base-stale',
           'הסידור הפעיל השתנה מאז שנטען למסך. יש לרענן ולערוך שוב.', 'aborted');
         if (!stagedDraft) throw error;
@@ -4431,6 +4530,7 @@ function createScheduleRuntime(deps) {
         station_map: basis.editPolicy.station_map,
         snapshot_source_id: basis.snapshotSourceId,
         edited: true, edit_base: basis.base, edit_digest: basis.editDigest,
+        ...(monthAuthorityEnabled?{affected_months:basis.affectedMonths,month_edit_base:basis.monthEditBase}:{}),
         expected_snapshot_digest: expectedSnapshotDigest,
         edit_summary: {
           edits: edits.length, changes: basis.applied.changes.length,
@@ -5037,6 +5137,7 @@ function createScheduleRuntime(deps) {
     let plan;
     let target;
     let targetMeta = null;
+    let monthRead=null;
     if (nonEmpty(data.draft_id)) {
       const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
       const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
@@ -5049,22 +5150,37 @@ function createScheduleRuntime(deps) {
       targetMeta = meta;
       target = { kind: 'draft', draft_id: draftId, from: meta.from, to: meta.to, policy_id: meta.policy_id || null };
     } else {
-      requireMode(config, [MODE.NEW, MODE.SHADOW]);
-      const active = await activeSnapshot(ctx);
+      requireRuntimeMode(config, [MODE.NEW, MODE.SHADOW]);
+      let active;
+      if(monthAuthorityEnabled){
+        if(!data.from || !data.to)throw new ScheduleRuntimeError('month-gap-range-required','יש לבחור טווח חודשים לדוח הפערים.','invalid-argument');
+        const range=requestedStationRange({data:{from:data.from,to:data.to}});
+        monthRead=await monthReaderFor(ctx,config,range.from,range.to);
+        const segments=monthRead.resolved.segments,first=segments[0];
+        if(!first.available || segments.some(s=>!s.available || s.owner.publication_id!==first.owner.publication_id || s.owner.content_digest!==first.owner.content_digest))throw new ScheduleRuntimeError('month-gap-ambiguous','יש לבדוק כל בסיס פרסום בנפרד.','failed-precondition');
+        active=segmentActive(ctx,first);
+        active.plan={...active.plan,rows:active.plan.rows.filter(row=>row.date>=range.from && row.date<=range.to),absences:(active.plan.absences||[]).filter(a=>a.date>=range.from && a.date<=range.to)};
+      }else active = await activeSnapshot(ctx);
       if (!active) throw new ScheduleRuntimeError('edit-no-active', 'אין סידור פעיל.', 'failed-precondition');
+      if (active.meta.workbook_managed !== true) requireMode(config, [MODE.NEW, MODE.SHADOW]);
       plan = active.plan;
       targetMeta = active.meta;
       target = { kind: 'publication', publication_id: active.pointer.publication_id, revision: active.pointer.revision, from: plan.from, to: plan.to };
     }
-    const policyId = target.kind === 'draft' && nonEmpty(target.policy_id) ? target.policy_id : config.active_policy_id;
+    const policyId = targetMeta && (targetMeta.workbook_managed === true || monthRead) ? targetMeta.policy_id
+      : target.kind === 'draft' && nonEmpty(target.policy_id) ? target.policy_id : config.active_policy_id;
     const policy = nonEmpty(policyId) ? await loadPolicy(ctx, policyId) : null;
-    const gapCtx = await gapContext(ctx, config);
+    const workbookSource = targetMeta && (targetMeta.workbook_managed === true || monthRead)
+      ? await loadSource(ctx, targetMeta.source_id) : null;
+    const gapCtx = await gapContext(ctx, config, workbookSource
+      ? workbookSource.peopleRaw.filter((person) => person.active === true) : undefined);
     const effectivePolicy = projectedPolicyForPlan(
       policy ? policy.value : { sub_stations: {} }, plan, targetMeta, targetMeta,
       'gap-station-map-missing'
     );
     const report = gapReportFor(gapCtx, effectivePolicy.value, plan);
     await requireLiveManagerNow(ctx);
+    if(monthRead)await monthRead.reader.projectRange(monthRead.resolved,()=>null);
     return Object.assign({
       target,
       station_minimum: gapCtx.station_minimum,
@@ -5126,7 +5242,7 @@ function createScheduleRuntime(deps) {
     const config = await configuration(ctx.sid);
     // A completed imported draft may be inspected in off mode.  Publishing
     // and running the planner remain blocked there by their own server gates.
-    requireMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
+    requireRuntimeMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
     const data = plain(req.data) ? req.data : {};
     const draftId = requireId(data.draft_id, 'draft-id', 'מזהה הטיוטה');
     const start = String(data.start || '');
@@ -5137,7 +5253,9 @@ function createScheduleRuntime(deps) {
     if (!snap.exists || meta.status !== 'complete' || meta.station_id !== ctx.sid) {
       throw new ScheduleRuntimeError('draft-not-ready', 'הטיוטה אינה קיימת או טרם הושלמה.');
     }
-    if (meta.source_id !== config.active_source_id || meta.policy_id !== config.active_policy_id) {
+    const workbookManaged = meta.workbook_managed === true;
+    if (!workbookManaged) requireMode(config, [MODE.OFF, MODE.SHADOW, MODE.NEW]);
+    if (!workbookManaged && (meta.source_id !== config.active_source_id || meta.policy_id !== config.active_policy_id)) {
       throw new ScheduleRuntimeError('draft-stale', 'הטיוטה אינה מבוססת על המקור והמדיניות הפעילים.');
     }
     const current = await Promise.all([
@@ -5182,7 +5300,9 @@ function createScheduleRuntime(deps) {
      * ההחזרה — סירוב אינו מחזיר שמות ולא היעדרויות. אותם תפקידים, בלי הרחבה. */
     await displayCrews.verify();
     // 42H.2 ג׳ · בקרת פערים על הטיוטה כולה (לא רק על השבוע המוצג).
-    const gapCtx = await gapContext(ctx, config);
+    const workbookSource = workbookManaged ? await loadSource(ctx, meta.source_id) : null;
+    const gapCtx = await gapContext(ctx, config, workbookSource
+      ? workbookSource.peopleRaw.filter((person) => person.active === true) : undefined);
     const previewPolicy = projectedPolicyForPlan(
       { sub_stations: plain(livePolicy.sub_stations) ? livePolicy.sub_stations : {} },
       fullSnapshot.plan, meta, meta, 'gap-station-map-missing'
@@ -5194,6 +5314,9 @@ function createScheduleRuntime(deps) {
       gaps: gapSummaryFor(gapReport),
       expected_content_digest: meta.content_digest,
       imported: meta.imported === true,
+      import_conflicts: workbookManaged && plain(meta.import_report)
+        && Array.isArray(meta.import_report.assignment_absence_conflicts)
+        ? meta.import_report.assignment_absence_conflicts : [],
       from: meta.from,
       to: meta.to,
       week_start: start,
@@ -5515,6 +5638,75 @@ function createScheduleRuntime(deps) {
     return { ref, meta, plan: value.plan, events: value.events, roster: value.roster };
   }
 
+  async function monthSnapshot(ctx,owner) {
+    if(!owner || owner.state==='unowned')return null;
+    const ref=stationRef(ctx.sid).collection('schedule_publications').doc(owner.publication_id),snap=await ref.get();
+    const meta=snap.exists?snap.data():null;
+    if(!meta || meta.status!=='active' || meta.revision!==owner.revision || meta.content_digest!==owner.content_digest)throw new ScheduleRuntimeError('month-owner-changed','החודש השתנה.','aborted');
+    return {meta,...await readSnapshot(ref,meta)};
+  }
+  async function monthNotifications(ctx,before,after,pubId,revision,nextSnapshot,kind) {
+    const notifications=[];
+    for(const month of Object.keys(after).sort()) {
+      const previous=await monthSnapshot(ctx,before[month]);
+      const target=nextSnapshot || await monthSnapshot(ctx,after[month]);
+      const template=target || previous;
+      if(!template)continue;
+      const clip=snapshot=>({plan:{...(snapshot || template).plan,rows:snapshot?snapshot.plan.rows.filter(r=>r.date.slice(0,7)===month):[],
+        absences:snapshot?(snapshot.plan.absences || []).filter(r=>r.date.slice(0,7)===month):[]},
+        events:snapshot?snapshot.events.filter(e=>e.date.slice(0,7)===month):[]});
+      const prev=clip(previous),next=clip(target);
+      const planner=createPublication({clock,hash,rules:{max_attempts:3,retry_backoff_ms:[60000,300000]}});
+      const planned=serviceFor(ctx,null,planner).publish({actor:actor(ctx),request:{next:next.plan,previous:previous?prev.plan:null,
+        next_events:next.events,previous_events:prev.events,publication_id:pubId,publication_revision:revision,
+        source_draft_id:'month_'+month.replace('-','_'),previous_publication_id:previous?before[month].publication_id:null}});
+      const value=after[month], activation_id=monthContract.activationId(ctx.sid,kind,pubId,month);
+      for(const notice of planned.notifications){
+        if(notice.detail.some(item=>!DATE_RE.test(item.date) || item.date.slice(0,7)!==month))throw new ScheduleRuntimeError('month-notice-date','תאריך התראה אינו תקין.');
+        const binding={month,activation_id,operation_id:pubId,operation_publication_id:pubId,
+          ...(value && value.state!=='unowned'?{owner_publication_id:value.publication_id,owner_revision:value.revision,owner_content_digest:value.content_digest}:
+            {authority_state:'unowned',removed_dates:[...new Set(notice.detail.map(item=>item.date))].sort()})};
+        notifications.push({...notice,dedupe_key:notice.dedupe_key+':'+month+':'+activation_id,month_binding:binding});
+      }
+    }
+    return resolveScheduleNotificationRecipients(ctx,notifications);
+  }
+  async function monthJobOwned(tx,value,publication,phase) {
+    const sid=value.station_id;
+    if(publication.status!=='active')return false;
+    if(value.operation_publication_id && value.operation_publication_id!==value.publication_id)return false;
+    if(value.month){
+      if(!/^\d{4}-\d{2}$/.test(value.month))return false;
+      if(!Array.isArray(value.detail) || !value.detail.length)return false;
+      try {if(value.detail.some(item=>isoDayOffset(item.date,0).slice(0,7)!==value.month))return false;}catch(_){return false;}
+      const snap=await tx.get(stationRef(sid).collection('schedule_publication_months').doc(value.month));
+      const owner=snap.exists?snap.data():null;
+      let receipt=null;
+      if(value.authority_state==='unowned'){
+        const receiptSnap=await tx.get(stationRef(sid).collection('schedule_publication_authority_operations').doc(value.operation_id));
+        receipt=receiptSnap.exists?receiptSnap.data():null;
+      }
+      return monthOutbox.eligibility({station_id:sid,owner,phase,receipt,
+        operationEnvelope:publication.month_operation_envelope,
+        job:value.authority_state==='unowned'?value:{...value,publication_id:value.owner_publication_id,revision:value.owner_revision,content_digest:value.owner_content_digest}}).eligible;
+    }
+    // Legacy aggregate must prove every represented month, not just one match.
+    const dates=(value.detail || []).map(item=>item.date);
+    try {dates.forEach(date=>isoDayOffset(date,0));}catch(_){return false;}
+    let months;
+    try {months=dates.length && dates.every(date=>DATE_RE.test(date))?[...new Set(dates.map(date=>date.slice(0,7)))]:Object.keys(monthContract.publicationOwners({station_id:sid,publication_id:value.publication_id,revision:publication.revision,content_digest:publication.content_digest,from:publication.from,to:publication.to},sid));}
+    catch(_){return false;}
+    if(!months.length)return false;
+    const rootSnap=await tx.get(stationRef(sid).collection('schedule_state').doc('publication_authority'));
+    const root=rootSnap.exists?rootSnap.data():null;
+    if(!root || root.seed_publication_id!==value.publication_id)return false;
+    for(const month of months){
+      const snap=await tx.get(stationRef(sid).collection('schedule_publication_months').doc(month)),owner=snap.exists?snap.data():null;
+      const job={month,publication_id:value.publication_id,revision:value.revision,content_digest:publication.content_digest};
+      if(!monthOutbox.eligibility({station_id:sid,job,owner,phase,legacyMigration:owner?{enabled:true,station_id:sid,...job,activation_id:owner.activation_id}:null}).eligible)return false;
+    }
+    return true;
+  }
   async function activePublicationGate(ref) {
     return db.runTransaction(async (tx) => {
       const publicationSnap = await tx.get(ref);
@@ -5527,8 +5719,8 @@ function createScheduleRuntime(deps) {
       const snaps = await Promise.all(refs.map((item) => tx.get(item)));
       const runtime = snaps[0].exists ? (snaps[0].data() || {}) : {};
       const pointer = snaps[1].exists ? (snaps[1].data() || {}) : {};
-      if (publication.status !== 'active' || pointer.publication_id !== publicationId
-          || Number(pointer.revision || 0) !== Number(publication.revision || 0)) return null;
+      if (publication.status !== 'active' || (!monthAuthorityEnabled && (pointer.publication_id !== publicationId
+          || Number(pointer.revision || 0) !== Number(publication.revision || 0)))) return null;
       if (runtime.mode === MODE.NEW && publication.delivery_policy === 'live'
           && publication.delivery_allowed === true) return { kind: 'live' };
       if (runtime.mode === MODE.SHADOW && publication.delivery_policy === 'suppressed_trial'
@@ -5561,12 +5753,18 @@ function createScheduleRuntime(deps) {
       const pageReleased = await db.runTransaction(async (tx) => {
         let count = 0;
         const current = await Promise.all(refs.map((item) => tx.get(item)));
-        current.forEach((item) => {
+        let monthAllowed=[];
+        if(monthAuthorityEnabled){
+          const operationSnap=await tx.get(ref),operation=operationSnap.exists?operationSnap.data():{};
+          monthAllowed=await Promise.all(current.map(item=>item.exists?monthJobOwned(tx,item.data(),operation,'claim'):false));
+        }
+        current.forEach((item,index) => {
           if (!item.exists) return;
           const value = item.data() || {};
           // A transaction reads the current status so a delayed releaser can
           // never resurrect a sent/cancelled notification from a stale query.
           if (value.status !== 'blocked') return;
+          if(monthAuthorityEnabled && !monthAllowed[index]){cancelOutbox(tx,item.ref,'month-owner-changed');return;}
           const allowed = gate.kind === 'live'
             ? value.delivery_allowed === true && value.delivery_policy === 'live'
             : value.delivery_allowed === true && value.delivery_policy === 'trial_control'
@@ -5650,9 +5848,9 @@ function createScheduleRuntime(deps) {
         if (status !== 'blocked') cancelOutbox(tx, ref, 'publication-not-active');
         return;
       }
-      if (publication.status !== 'active'
+      if (monthAuthorityEnabled ? !await monthJobOwned(tx,value,publication,'claim') : (publication.status !== 'active'
           || pointer.publication_id !== publicationId
-          || Number(pointer.revision || 0) !== Number(value.revision || 0)) {
+          || Number(pointer.revision || 0) !== Number(value.revision || 0))) {
         cancelOutbox(tx, ref, 'publication-not-active');
         return;
       }
@@ -5798,7 +5996,7 @@ function createScheduleRuntime(deps) {
         'בדיקת המעבר למנוע החדש שמורה לפיקוד התחנה.', 'permission-denied');
     }
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.SHADOW]);
+    requireRuntimeMode(config, [MODE.SHADOW]);
     const data = plain(req.data) ? req.data : {};
     const candidateId = requireId(data.candidate_publication_id,
       'publication-id', 'מזהה הפרסום המוכן');
@@ -5821,8 +6019,10 @@ function createScheduleRuntime(deps) {
     /* ⭐ מועמד שנבנה על מקור או מדיניות אחרים מאלה שפעילים עכשיו
      * אינו בר-בדיקה: הדוח היה מתאר השוואה מול תצורה שהמועמד כלל
      * לא נבנה עליה. עוצרים כאן, ולא מייצרים דוח חתום שמטעה. */
-    if (candidate.meta.source_id !== config.active_source_id
-        || candidate.meta.policy_id !== config.active_policy_id) {
+    const workbookManaged = candidate.meta.workbook_managed === true;
+    if (!workbookManaged) requireMode(config, [MODE.SHADOW]);
+    if (!workbookManaged && (candidate.meta.source_id !== config.active_source_id
+        || candidate.meta.policy_id !== config.active_policy_id)) {
       throw new ScheduleRuntimeError('cutover-candidate-config',
         'הפרסום המוכן נבנה על מקור או חוקי תחנה אחרים מאלה הפעילים. '
         + 'יש לבנות טיוטה חדשה.', 'failed-precondition');
@@ -5830,8 +6030,8 @@ function createScheduleRuntime(deps) {
 
     const snapshot = await readSnapshot(candidate.ref, candidate.meta, null);
     const legacy = await cutoverBaselineComparison(ctx, config, candidate.meta, from, to);
-    const source = await loadSource(ctx, config.active_source_id);
-    const policy = await loadPolicy(ctx, config.active_policy_id);
+    const source = await loadSource(ctx, workbookManaged ? candidate.meta.source_id : config.active_source_id);
+    const policy = await loadPolicy(ctx, workbookManaged ? candidate.meta.policy_id : config.active_policy_id);
     const predecessor = await activeRef(ctx.sid).get();
     const predecessorId = predecessor.exists
       ? ((predecessor.data() || {}).publication_id || null) : null;
@@ -6007,10 +6207,18 @@ function createScheduleRuntime(deps) {
       requireLiveModeAuthority(snaps[4], ctx, 'cutover-actor-inactive');
 
       const liveMode = MODES.indexOf(liveRuntime.mode) !== -1 ? liveRuntime.mode : MODE.OFF;
+      const workbookManaged = candidate.meta.workbook_managed === true;
+      if ((livePub.workbook_managed === true) !== workbookManaged
+          || livePub.policy_id !== candidate.meta.policy_id
+          || livePub.source_id !== candidate.meta.source_id
+          || livePub.content_digest !== candidate.meta.content_digest) {
+        throw new ScheduleRuntimeError('cutover-candidate-changed',
+          'מועמד המעבר השתנה בזמן האישור. יש לבדוק מחדש.', 'aborted');
+      }
       const livePolicy = await tx.get(stationRef(ctx.sid).collection('schedule_policies')
-        .doc(String(liveRuntime.active_policy_id || '_none')));
+        .doc(String((workbookManaged ? livePub.policy_id : liveRuntime.active_policy_id) || '_none')));
       const liveSource = await tx.get(stationRef(ctx.sid).collection('schedule_sources')
-        .doc(String(liveRuntime.active_source_id || '_none')));
+        .doc(String((workbookManaged ? livePub.source_id : liveRuntime.active_source_id) || '_none')));
 
       const liveGapCtx = await gapContext(ctx, liveRuntime, candidateGapPeople, txRead);
       const liveGapReport = gapReportFor(liveGapCtx, candidateGapPolicy, candidateSnapshot.plan);
@@ -6139,7 +6347,7 @@ function createScheduleRuntime(deps) {
     /* ⭐ ההודעות משתחררות **רק אחרי** ש-commit הצליח. שחרור שנכשל
      * כאן אינו מאבד דבר: השורות נשארות `blocked`, הפרסום כבר פעיל,
      * ו-`resumeOutbox` משחרר אותן בריצה הבאה בלי כפילות. */
-    await releaseOutbox(pubRef);
+    await finishCommittedPublication(ctx,pubRef,false);
     return Object.assign({ duplicate: false }, result);
   }
 
@@ -6335,6 +6543,17 @@ function createScheduleRuntime(deps) {
     });
   }
 
+  async function finishCommittedPublication(ctx,ref,trial){
+    try{
+      await releaseOutbox(ref);
+      if(trial){const current=await ref.get();await ensureTrialCandidate(ctx,ref,current.data()||{});}
+    }catch(error){
+      // The durable receipt already exists. A station cutover may defer only
+      // auxiliary queue/candidate work; it cannot undo the committed result.
+      if(typeof d.monthAuthorityOutcomeTransaction!=='function' || !error || error.code!=='authority-selection-changed')throw error;
+    }
+  }
+
   async function publish(req) {
     const ctx = await context(req);
     requireManager(ctx);
@@ -6375,19 +6594,15 @@ function createScheduleRuntime(deps) {
         const replayRuntime = replayPair[0].exists ? (replayPair[0].data() || {}) : {};
         const replayPointer = replayPair[1].exists ? (replayPair[1].data() || {}) : {};
         if ([MODE.NEW, MODE.SHADOW].indexOf(replayRuntime.mode) !== -1
-            && replayPointer.publication_id === pubId
-            && Number(replayPointer.revision) === Number(completed.revision)) {
-          await releaseOutbox(pubRef);
-          if (replayRuntime.mode === MODE.SHADOW
-              && completed.delivery_policy === 'suppressed_trial') {
-            await ensureTrialCandidate(ctx, pubRef, completed);
-          }
+            && (monthAuthorityEnabled || (replayPointer.publication_id === pubId
+            && Number(replayPointer.revision) === Number(completed.revision)))) {
+          await finishCommittedPublication(ctx,pubRef,replayRuntime.mode===MODE.SHADOW && completed.delivery_policy==='suppressed_trial');
         }
         return Object.assign({ duplicate: true }, completed.operation_receipt);
       }
     }
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    requireRuntimeMode(config, [MODE.NEW, MODE.SHADOW]);
     const trial = config.mode === MODE.SHADOW;
     const draftRef = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
     const draftSnap = await draftRef.get();
@@ -6400,13 +6615,15 @@ function createScheduleRuntime(deps) {
         'יש לפתוח ולבדוק את התצוגה המקדימה העדכנית לפני הפרסום.', 'failed-precondition');
     }
     const workbookManagedDraft = draftMeta.workbook_managed === true;
-    if (draftMeta.station_id !== ctx.sid || (!workbookManagedDraft
+    const ownerManagedDraft=workbookManagedDraft || (monthAuthorityEnabled && draftMeta.edited===true);
+    if (!workbookManagedDraft) requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    if (draftMeta.station_id !== ctx.sid || (!ownerManagedDraft
         && (draftMeta.source_id !== config.active_source_id
           || draftMeta.policy_id !== config.active_policy_id))) {
       throw new ScheduleRuntimeError('draft-stale', 'הטיוטה אינה מבוססת על המקור והמדיניות הפעילים.');
     }
-    const currentPolicy = await loadPolicy(ctx, workbookManagedDraft ? draftMeta.policy_id : config.active_policy_id);
-    const currentSource = await loadSource(ctx, workbookManagedDraft ? draftMeta.source_id : config.active_source_id);
+    const currentPolicy = await loadPolicy(ctx, ownerManagedDraft ? draftMeta.policy_id : config.active_policy_id);
+    const currentSource = await loadSource(ctx, ownerManagedDraft ? draftMeta.source_id : config.active_source_id);
     if (draftMeta.base_policy_digest !== currentPolicy.digest
         || draftMeta.base_source_digest !== currentSource.digest) {
       throw new ScheduleRuntimeError('draft-source-changed',
@@ -6414,15 +6631,25 @@ function createScheduleRuntime(deps) {
     }
     const next = await readSnapshot(draftRef, draftMeta);
     const before = await activeSnapshot(ctx);
+    const monthOwners=monthAuthorityEnabled?monthContract.publicationOwners({station_id:ctx.sid,publication_id:pubId,revision:1,content_digest:draftMeta.content_digest,from:next.plan.from,to:next.plan.to},ctx.sid):null;
+    if(monthAuthorityEnabled && draftMeta.edited===true){
+      const months=next.plan.affected_months;
+      if(!Array.isArray(months) || !months.length || stable(months)!==stable(Array.from(new Set(months)).sort()) || months.some(m=>!monthOwners[m]) || !plain(next.plan.month_edit_base)
+        || stable(Object.keys(next.plan.month_edit_base.owners).sort())!==stable(months))throw new ScheduleRuntimeError('edit-months-invalid','חסרים חודשים חתומים לעריכה.','failed-precondition');
+      for(const month of Object.keys(monthOwners))if(!months.includes(month))delete monthOwners[month];
+    }
+    const monthBaseline=monthAuthorityEnabled?await monthAuthority.readBaseline(ctx.sid,Object.keys(monthOwners)):null;
+    if(monthAuthorityEnabled && draftMeta.edited===true && (monthBaseline.root.generation!==next.plan.month_edit_base.generation || stable(monthBaseline.owners)!==stable(next.plan.month_edit_base.owners)))throw new ScheduleRuntimeError('edit-base-stale','בעלות הסידור השתנתה.','aborted');
     const previous = before ? before.plan : null;
     const previousEvents = before ? before.events : [];
-    const revision = before ? Number(before.pointer.revision || 0) + 1 : 1;
+    const revision = monthAuthorityEnabled?monthBaseline.root.generation+1:(before ? Number(before.pointer.revision || 0) + 1 : 1);
+    if(monthOwners)for(const value of Object.values(monthOwners))value.revision=revision;
     const publication = createPublication({
       clock, hash,
       rules: { max_attempts: 3, retry_backoff_ms: [60000, 300000] }
     });
     const service = serviceFor(ctx, null, publication);
-    let planned = service.publish({
+    let planned = monthAuthorityEnabled ? {publication:{content_hash:draftMeta.content_digest},notifications:[]} : service.publish({
       actor: actor(ctx),
       request: {
         next: next.plan,
@@ -6436,7 +6663,7 @@ function createScheduleRuntime(deps) {
       }
     });
     planned = Object.assign({}, planned, {
-      notifications:await resolveScheduleNotificationRecipients(ctx, planned.notifications)
+      notifications:monthAuthorityEnabled?await monthNotifications(ctx,monthBaseline.owners,monthOwners,pubId,revision,next,'publish'):await resolveScheduleNotificationRecipients(ctx, planned.notifications)
     });
     const expectedPrevious = before ? before.pointer.publication_id : null;
     const existing = await pubRef.get();
@@ -6484,8 +6711,7 @@ function createScheduleRuntime(deps) {
           preparedReplayInvalid();
         }
         await requireLiveManagerNow(ctx);
-        await releaseOutbox(pubRef);
-        if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
+        await finishCommittedPublication(ctx,pubRef,trial);
         // The receipt is part of idempotency.  Do not recompute it against the
         // publication that is active now: that comparison naturally produces
         // zero changes.  New publications persist the exact value atomically;
@@ -6563,6 +6789,8 @@ function createScheduleRuntime(deps) {
       published_by: ctx.uid, published_by_name: ctx.name
     });
     await stageSnapshot(pubRef, {}, next.plan, next.events, next.roster);
+    const monthPrepared=monthAuthorityEnabled?await monthAuthority.prepareVerifiedOperation({station_id:ctx.sid,operation_id:pubId,publication_id:pubId,
+      kind:'publish',lifecycle:'staging-to-active',expected_generation:monthBaseline.root.generation,expected_owners:monthBaseline.owners,initialize:monthBaseline.initialize===true}):null;
     const trialControl = trial ? await trialControlFor(ctx.sid, planned.notifications) : null;
     const operationReceipt = {
       prepared: false, trial, publication_id: pubId, revision,
@@ -6579,6 +6807,7 @@ function createScheduleRuntime(deps) {
         kind: 'set',
         data: {
           station_id: ctx.sid, publication_id: pubId, revision,
+          ...(monthAuthorityEnabled?notification.month_binding:{}),
           person: notification.person, dedupe_key: notification.dedupe_key,
           push: notification.push, detail: notification.detail,
           changed_by: ctx.uid, attempt: 0,
@@ -6616,19 +6845,23 @@ function createScheduleRuntime(deps) {
       /* ⭐ המצב נבדק מול מה שתוכנן, ולא מול „אחד משניים". תחנה
        * שעברה ל-new באמצע הכנה תקבל פרסום מוכן שנכתב עבור shadow —
        * ולהפך. שניהם שגויים, ושניהם נחסמים כאן. */
-      if (liveConfig.mode !== config.mode || (!workbookManagedDraft
+      if (liveConfig.mode !== config.mode || (!ownerManagedDraft
           && (liveConfig.active_source_id !== draftMeta.source_id
             || liveConfig.active_policy_id !== draftMeta.policy_id))) {
         throw new ScheduleRuntimeError('publish-config-changed', 'הגדרות הסידור השתנו בזמן הפרסום.', 'aborted');
       }
       const actualPrevious = nonEmpty(liveActive.publication_id) ? liveActive.publication_id : null;
-      if (actualPrevious !== expectedPrevious || Number(liveActive.revision || 0) !== revision - 1) {
+      if (!monthAuthorityEnabled && (actualPrevious !== expectedPrevious || Number(liveActive.revision || 0) !== revision - 1)) {
         throw new ScheduleRuntimeError('publish-race', 'פורסם סידור אחר במקביל. יש לרענן.', 'aborted');
       }
       /* ⭐ 42H.2 · טיוטה נגזרת מעריכה: הפרסום שנערך חייב להיות **עדיין** הפעיל —
        * publication_id + revision + content_digest — אחרת העריכה נעשתה על לוח
        * שכבר הוחלף (פרסום אחר, עריכה אחרת או rollback באמצע). */
-      if (liveDraft.edited === true && !editBaseMatches(liveActive, liveDraft.edit_base)) {
+      if(monthAuthorityEnabled && liveDraft.edited===true){
+        if(stable(liveDraft.affected_months)!==stable(next.plan.affected_months) || stable(liveDraft.month_edit_base)!==stable(next.plan.month_edit_base))throw new ScheduleRuntimeError('edit-months-invalid','החודשים החתומים השתנו.','aborted');
+        await requireMonthEditBaseTx(tx,ctx,next.plan.month_edit_base);
+      }
+      if (!monthAuthorityEnabled && liveDraft.edited === true && !editBaseMatches(liveActive, liveDraft.edit_base)) {
         throw new ScheduleRuntimeError('edit-base-stale',
           'הסידור הפעיל השתנה מאז שנערך. יש לרענן ולערוך שוב.', 'aborted');
       }
@@ -6665,6 +6898,13 @@ function createScheduleRuntime(deps) {
         warning_count: gapReport.blocking.length + gapReport.acknowledgeable.length,
         checked_in_transaction: true
       };
+      if(monthAuthorityEnabled){
+        const queue=await tx.get(pubRef.collection('schedule_outbox'));
+        if(monthOutboxManifest(queue.docs.map(doc=>({id:doc.id,...doc.data()})))!==monthOutboxManifest(outboxOps.map(job=>({id:job.ref.id,...job.data}))))throw new ScheduleRuntimeError('month-outbox-changed','תור ההתראות השתנה.','aborted');
+      }
+      const monthPlan=monthAuthorityEnabled?await monthAuthority.readAndValidate(tx,monthPrepared):null;
+      if(monthPlan && monthPlan.replay)return;
+      if(monthPlan)monthAuthority.applyWrites(tx,monthPlan);
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: gapRecord,
         request_fingerprint: requestFingerprint,
@@ -6673,7 +6913,8 @@ function createScheduleRuntime(deps) {
         suppressed_notifications: trial
           ? planned.notifications.length - (trialControl ? 1 : 0) : 0,
         blocked_notifications: 0,
-        operation_receipt: operationReceipt
+        operation_receipt: operationReceipt,
+        ...(monthPlan?{month_operation_envelope:{station_id:ctx.sid,operation_id:pubId,operation_publication_id:pubId,status:'completed',receipt_digest:monthPlan.receipt.receipt_digest}}:{})
       });
       tx.set(activeRef(ctx.sid), {
         publication_id: pubId, revision, previous_publication_id: expectedPrevious,
@@ -6705,15 +6946,75 @@ function createScheduleRuntime(deps) {
     }
     /* ⭐ ה-outbox משתחרר רק כשהפרסום באמת פעיל. הכנה שמודיעה היא
      * הודעה על סידור שאיש עדיין אינו רואה. */
-    await releaseOutbox(pubRef);
-    if (trial) {
-      const activeTrial = await pubRef.get();
-      await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
-    }
+    await finishCommittedPublication(ctx,pubRef,trial);
     return Object.assign({ duplicate: false }, operationReceipt);
   }
 
+  function monthOutboxManifest(rows) {
+    const keys=['station_id','publication_id','revision','status','attempt','changed_by','person','dedupe_key','push','detail','month','activation_id','operation_id','operation_publication_id','owner_publication_id','owner_revision','owner_content_digest','authority_state','removed_dates','delivery_allowed','delivery_policy','control_generation','control_auth_time_ms'];
+    return digest(rows.map(row=>({...Object.fromEntries(['id',...keys].map(k=>[k,row[k]===undefined?null:row[k]])),expires_at:timeMillis(row.expires_at)})).sort((a,b)=>compareCanonical(a.id,b.id)));
+  }
+  async function rollbackMonthAuthority(req) {
+    const ctx=await context(req);requireManager(ctx);
+    const data=plain(req.data)?req.data:{},requestId=requireId(data.request_id,'request-id','מזהה הפעולה');
+    const targetId=requireId(data.target_operation_id || data.expected_active_publication_id,'target-operation','פעולת היעד');
+    if(data.target_operation_id && data.expected_active_publication_id && data.target_operation_id!==data.expected_active_publication_id)throw new ScheduleRuntimeError('rollback-target-conflict','מזהי פעולת היעד אינם תואמים.','invalid-argument');
+    if(!ROLLBACK_REASONS.includes(data.reason_code))throw new ScheduleRuntimeError('rollback-reason-invalid','נדרשת סיבה תקינה.','invalid-argument');
+    const pubId='p_rb_'+hash(ctx.sid+'|'+ctx.uid+'|'+requestId).slice(0,40),pubRef=stationRef(ctx.sid).collection('schedule_publications').doc(pubId);
+    const fingerprint=digest({station_id:ctx.sid,actor:ctx.uid,request_id:requestId,target_operation_id:targetId,target_publication_id:data.target_publication_id || null,reason:data.reason_code});
+    const replay=await pubRef.get();
+    if(replay.exists){const old=replay.data();if(old.request_fingerprint!==fingerprint)throw new ScheduleRuntimeError('rollback-conflict','בקשה שונה.','already-exists');
+      if(old.status==='active' && old.operation_receipt){await requireLiveManagerNow(ctx);await finishCommittedPublication(ctx,pubRef,false);return {...old.operation_receipt,duplicate:true};}}
+    const config=await configuration(ctx.sid);requireRuntimeMode(config,[MODE.NEW,MODE.SHADOW]);const trial=config.mode===MODE.SHADOW;
+    const targetSnap=await stationRef(ctx.sid).collection('schedule_publication_authority_operations').doc(targetId).get();
+    const target=monthContract.receipt(targetSnap.exists?targetSnap.data():null);
+    if(data.target_publication_id){
+      const restoredIds=[...new Set(Object.values(target.before).filter(v=>v && v.state!=='unowned').map(v=>v.publication_id))];
+      if(restoredIds.length!==1 || restoredIds[0]!==data.target_publication_id)throw new ScheduleRuntimeError('rollback-target-conflict','גרסת היעד אינה ההיפוך של הפעולה שנבחרה.','invalid-argument');
+    }
+    const baseline=await monthAuthority.read(ctx.sid,Object.keys(target.after));
+    const after=JSON.parse(JSON.stringify(target.before));
+    for(const [month,value]of Object.entries(after))if(!value || value.state==='unowned')after[month]={schema_version:2,state:'unowned',station_id:ctx.sid,month,activation_id:monthContract.activationId(ctx.sid,'rollback',pubId,month),operation_id:pubId,operation_publication_id:pubId};
+    const gapBases=[];
+    for(const owner of Object.values(after)){
+      const snapshot=await monthSnapshot(ctx,owner);if(!snapshot)continue;
+      const policy=await loadPolicy(ctx,snapshot.meta.policy_id),source=await loadSource(ctx,snapshot.meta.source_id);
+      const effective=projectedPolicyForPlan(policy.value,snapshot.plan,snapshot.meta,null,'gap-station-map-missing').value;
+      const people=source.peopleRaw.filter(p=>p.active===true);
+      requireGapClearance(gapReportFor(await gapContext(ctx,config,people),effective,snapshot.plan),String(data.gap_acknowledgement||''));
+      gapBases.push({snapshot,policy,source,effective,people});
+    }
+    const revision=baseline.root.generation+1;
+    const notices=await monthNotifications(ctx,baseline.owners,after,pubId,revision,null,'rollback');
+    const control=trial?await trialControlFor(ctx.sid,notices):null;
+    const result={publication_id:pubId,revision,rolled_back_operation:targetId,notified_people:trial?0:notices.length,trial};
+    if(!replay.exists)await pubRef.create({station_id:ctx.sid,status:'staging',operation:'rollback',request_id:requestId,request_fingerprint:fingerprint,
+      published_by:ctx.uid,revision,delivery_policy:trial?'suppressed_trial':'live',delivery_allowed:!trial,created_at:FV.serverTimestamp()});
+    const prepared=await monthAuthority.prepareVerifiedOperation({station_id:ctx.sid,operation_id:pubId,operation_publication_id:pubId,kind:'rollback',target_operation_id:targetId,expected_generation:baseline.root.generation,expected_owners:baseline.owners});
+    const jobs=notices.map(notice=>{const selected=!!(control && notice.person===control.uid);return {ref:pubRef.collection('schedule_outbox').doc('n_'+hash(notice.dedupe_key).slice(0,40)),kind:'set',data:{station_id:ctx.sid,publication_id:pubId,revision,person:notice.person,dedupe_key:notice.dedupe_key,push:notice.push,detail:notice.detail,...notice.month_binding,changed_by:ctx.uid,attempt:0,
+      delivery_allowed:!trial||selected,delivery_policy:trial?(selected?'trial_control':'suppressed_trial'):'live',control_generation:selected?control.generation:null,control_auth_time_ms:selected?control.activation_auth_time_ms:null,status:trial&&!selected?'suppressed_trial':'blocked',expires_at:new Date(Date.parse(clock())+OUTBOX_TTL_MS),created_at:FV.serverTimestamp()}};});
+    const manifest=monthOutboxManifest(jobs.map(job=>({id:job.ref.id,...job.data})));
+    await commitWrites(jobs);await beforeSnapshotFinalize({kind:'rollback',ref:pubRef,ctx});
+    await db.runTransaction(async tx=>{
+      const [runtime,user,access,envelope,outbox]=await Promise.all([runtimeRef(ctx.sid),liveUserRef(ctx.sid,ctx.uid),scheduleAccessRef(ctx.sid,ctx.uid),pubRef,pubRef.collection('schedule_outbox')].map(ref=>tx.get(ref)));
+      requireLiveManager(user,access,ctx);
+      if((runtime.data()||{}).mode!==config.mode || !envelope.exists || envelope.data().status!=='staging' || envelope.data().request_fingerprint!==fingerprint)throw new ScheduleRuntimeError('rollback-race','הפעולה השתנתה.','aborted');
+      if(monthOutboxManifest(outbox.docs.map(doc=>({id:doc.id,...doc.data()})))!==manifest)throw new ScheduleRuntimeError('month-outbox-changed','תור ההתראות השתנה.','aborted');
+      for(const basis of gapBases){
+        const read=transactionRead(tx),[policy,source]=await Promise.all([stationRef(ctx.sid).collection('schedule_policies').doc(basis.policy.id),stationRef(ctx.sid).collection('schedule_sources').doc(basis.source.id)].map(read));
+        if(policy.data().content_digest!==basis.policy.digest || source.data().content_digest!==basis.source.digest)throw new ScheduleRuntimeError('rollback-source-changed','המקור השתנה.','aborted');
+        requireGapClearance(gapReportFor(await gapContext(ctx,config,basis.people,read),basis.effective,basis.snapshot.plan),String(data.gap_acknowledgement||''));
+      }
+      const plan=await monthAuthority.readAndValidate(tx,prepared);if(plan.replay)return;
+      monthAuthority.applyWrites(tx,plan);
+      tx.update(pubRef,{status:'active',operation_receipt:result,month_outbox_manifest:manifest,month_operation_envelope:{station_id:ctx.sid,operation_id:pubId,operation_publication_id:pubId,status:'completed',receipt_digest:plan.receipt.receipt_digest},activated_at:FV.serverTimestamp()});
+      tx.set(stationRef(ctx.sid).collection('schedule_state').doc('last_month_operation'),{publication_id:pubId,revision,kind:'rollback'});
+      tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('month_'+pubId),{action:'rollback',publication_id:pubId,target_operation_id:targetId,by:ctx.uid,at:FV.serverTimestamp()});
+    });
+    await finishCommittedPublication(ctx,pubRef,false);return {...result,duplicate:false};
+  }
   async function rollback(req) {
+    if(monthAuthorityEnabled)return rollbackMonthAuthority(req);
     const ctx = await context(req);
     requireManager(ctx);
     const data = plain(req.data) ? req.data : {};
@@ -6793,17 +7094,13 @@ function createScheduleRuntime(deps) {
         if ([MODE.NEW, MODE.SHADOW].indexOf(replayRuntime.mode) !== -1
             && replayPointer.publication_id === pubId
             && Number(replayPointer.revision) === Number(replayPub.revision)) {
-          await releaseOutbox(pubRef);
-          if (replayRuntime.mode === MODE.SHADOW
-              && replayPub.delivery_policy === 'suppressed_trial') {
-            await ensureTrialCandidate(ctx, pubRef, replayPub);
-          }
+          await finishCommittedPublication(ctx,pubRef,replayRuntime.mode===MODE.SHADOW && replayPub.delivery_policy==='suppressed_trial');
         }
         return receipt;
       }
     }
     const config = await configuration(ctx.sid);
-    requireMode(config, [MODE.NEW, MODE.SHADOW]);
+    requireRuntimeMode(config, [MODE.NEW, MODE.SHADOW]);
     const trial = config.mode === MODE.SHADOW;
     const firstPair = await Promise.all([Promise.resolve(replaySnap), activeRef(ctx.sid).get()]);
     const firstPub = replayPub;
@@ -6824,8 +7121,7 @@ function createScheduleRuntime(deps) {
     if (firstPair[0].exists && firstActive.publication_id === pubId) {
       const receipt = replayReceipt(firstPub, firstActive);
       await requireLiveManagerNow(ctx);
-      await releaseOutbox(pubRef);
-      if (trial) await ensureTrialCandidate(ctx, pubRef, firstPub);
+      await finishCommittedPublication(ctx,pubRef,trial);
       return receipt;
     }
 
@@ -6840,6 +7136,7 @@ function createScheduleRuntime(deps) {
     }
     const target = await publishedSnapshot(ctx, targetId);
     const workbookManagedTarget = target.meta.workbook_managed === true;
+    if (!workbookManagedTarget) requireMode(config, [MODE.NEW, MODE.SHADOW]);
     const rollbackPolicy = await loadPolicy(ctx, workbookManagedTarget
       ? target.meta.policy_id : config.active_policy_id);
     const rollbackSource = await loadSource(ctx, workbookManagedTarget
@@ -6882,8 +7179,7 @@ function createScheduleRuntime(deps) {
           && existingData.request_fingerprint === expectedExistingFingerprint) {
         const receipt = replayReceipt(existingData, active.data() || {});
         await requireLiveManagerNow(ctx);
-        await releaseOutbox(pubRef);
-        if (trial) await ensureTrialCandidate(ctx, pubRef, existingData);
+        await finishCommittedPublication(ctx,pubRef,trial);
         return receipt;
       }
       if (existingData.request_fingerprint !== expectedExistingFingerprint) {
@@ -7049,11 +7345,7 @@ function createScheduleRuntime(deps) {
       if (isManagerRevoked(error)) await cancelStagedSnapshot(pubRef, 'manager-revoked');
       throw error;
     }
-    await releaseOutbox(pubRef);
-    if (trial) {
-      const activeTrial = await pubRef.get();
-      await ensureTrialCandidate(ctx, pubRef, activeTrial.data() || {});
-    }
+    await finishCommittedPublication(ctx,pubRef,trial);
     return Object.assign({ duplicate: false }, operationReceipt);
   }
 
@@ -8104,10 +8396,108 @@ function createScheduleRuntime(deps) {
     }));
   }
 
+  async function monthReaderFor(ctx,config,from,to) {
+    let firstRoot=null;
+    const reader=require('./schedule-month-authority-reader').createMonthAuthorityReader({
+      authorityStore:{read:async(sid,months)=>{const value=await monthAuthority.readBaseline(sid,months);
+        if(firstRoot && firstRoot.generation===value.root.generation && stable(firstRoot)!==stable(value.root))throw new ScheduleRuntimeError('authority-stale','בעלות הסידור השתנתה.','aborted');
+        if(!firstRoot)firstRoot=value.root;return value;}},
+      verifyContext:async()=>{
+        await requireModeUnchanged(ctx,config);
+        if(ctx.system!==true)await requireLiveBoardViewer(ctx);
+        return {mode:config.mode,uid:ctx.uid};
+      },
+      verifySnapshot:async({publication_id})=>{
+        const ref=stationRef(ctx.sid).collection('schedule_publications').doc(publication_id),snap=await ref.get(),meta=snap.exists?snap.data():null;
+        if(!meta || meta.station_id!==ctx.sid || meta.status!=='active' || meta.snapshot_complete!==true)throw new ScheduleRuntimeError('month-snapshot-invalid','תמונת החודש אינה זמינה.');
+        return {station_id:ctx.sid,publication_id,revision:meta.revision,content_digest:meta.content_digest,from:meta.from,to:meta.to,meta,...await readSnapshot(ref,meta)};
+      }
+    });
+    const resolved=await reader.readRange({station_id:ctx.sid,from,to});
+    return {reader,resolved};
+  }
+
+  function segmentActive(ctx,segment){
+    return {...segment.snapshot,meta:segment.snapshot.meta,pointer:segment.owner,
+      ref:stationRef(ctx.sid).collection('schedule_publications').doc(segment.owner.publication_id)};
+  }
+
+  async function monthStationView(ctx,config,range){
+    const {reader,resolved}=await monthReaderFor(ctx,config,range.from,range.to);
+    const sidecar=await readLiveGuardProjection(ctx,range.dates);
+    const crews=await legacyDisplayCrews(ctx,range.from,range.to);
+    await beforeLiveGuardViewRecheck({kind:'v2-guards',ctx,mode:config.mode});
+    await crews.verify();
+    const projected=await reader.projectRange(resolved,segment=>{
+      const snapshot=segment.snapshot,extras={absences:snapshot.plan.absences||[],absenceCoverage:snapshot.plan.absence_coverage||null,
+        roster:snapshot.roster,viewer:ctx.uid,rosterCrew:crews.rosterCrew,dayCrews:crews.dayCrews};
+      return range.dates.filter(date=>date>=segment.from && date<=segment.to).map(date=>({
+        ...decoratePublishedDay(stationViewWithGuards(serviceFor(ctx).buildStationSchedule({actor:actor(ctx),plan:snapshot.plan,events:snapshot.events,roster:snapshot.roster,date}),sidecar,date,ctx.uid).day,extras),
+        available:true,provenance:segment.provenance
+      }));
+    });
+    const days=range.dates.map(date=>{
+      const segment=projected.segments.find(s=>date>=s.from && date<=s.to);
+      return segment.available?segment.value.find(day=>day.date===date):{date,available:false,status:'unavailable',sub_stations:[],events:[],absences:[],provenance:null};
+    });
+    return {mode:config.mode,active:days.some(day=>day.available),source:'v2',authority_generation:resolved.generation,
+      from:range.from,to:range.to,days,provenance:{source:'v2',generation:resolved.generation,segments:projected.segments.map(({from,to,available,provenance})=>({from,to,available,provenance}))}};
+  }
+
+  async function monthOperationFor(ctx,owner){
+      const receipts=await stationRef(ctx.sid).collection('schedule_publication_authority_operations')
+        .where('after.'+owner.month+'.activation_id','==',owner.activation_id).limit(2).get();
+      let operationId=owner.publication_id,migration=false,receipt=null;
+      if(receipts.empty){
+        const state=await monthAuthority.readBaseline(ctx.sid,[]);
+        migration=state.root.seed_publication_id===owner.publication_id && owner.activation_id===monthContract.migrationActivation(ctx.sid,owner);
+        if(!migration)throw new ScheduleRuntimeError('month-operation-missing','פעולת הבעלות אינה זמינה.');
+      }else{
+        if(receipts.size!==1)throw new ScheduleRuntimeError('month-operation-invalid','פעולת הבעלות אינה חד־משמעית.');
+        receipt=monthContract.receipt(receipts.docs[0].data());
+        if(receipt.station_id!==ctx.sid || stable(receipt.after[owner.month])!==stable(owner))throw new ScheduleRuntimeError('month-operation-invalid','פעולת הבעלות אינה תואמת.');
+        operationId=receipt.operation_publication_id;
+        const op=await stationRef(ctx.sid).collection('schedule_publications').doc(operationId).get(),envelope=op.exists?op.data().month_operation_envelope:null;
+        if(!envelope || op.data().status!=='active' || envelope.status!=='completed' || envelope.station_id!==ctx.sid || envelope.operation_id!==receipt.operation_id
+          || envelope.operation_publication_id!==operationId || envelope.receipt_digest!==receipt.receipt_digest)throw new ScheduleRuntimeError('month-operation-invalid','מעטפת הפעולה אינה תואמת.');
+      }
+      return {operationId,migration,receipt};
+  }
+
+  async function monthMyView(ctx,config,date){
+    const {reader,resolved}=await monthReaderFor(ctx,config,date,date),segment=resolved.segments[0];
+    const guards=await readLiveGuardProjection(ctx,[date]);
+    let responses=[],changes=[];
+    if(segment.available){
+      const owner=segment.owner,{operationId,migration}=await monthOperationFor(ctx,owner);
+      const pair=await Promise.all([stationRef(ctx.sid).collection('schedule_responses').where('publication_id','==',segment.owner.publication_id).where('person','==',ctx.uid).get(),
+        stationRef(ctx.sid).collection('schedule_publications').doc(operationId).collection('schedule_outbox').where('person','==',ctx.uid).get()]);
+      responses=pair[0].docs.map(doc=>doc.data()).map(value=>{
+        const itemDate=DATE_RE.test(String(value.item_id||''))?value.item_id:(segment.snapshot.events.find(e=>e.id===value.item_id)||{}).date;
+        return migration && !value.activation_id && value.publication_id===owner.publication_id && value.person===ctx.uid
+          && itemDate>=owner.coverage_from && itemDate<=owner.coverage_to?{...value,activation_id:owner.activation_id,month:owner.month}:value;
+      });
+      changes=pair[1].docs.map(doc=>doc.data()).map(value=>migration && !value.activation_id?{...value,activation_id:owner.activation_id,month:owner.month}:value);
+    }
+    await beforeLiveGuardViewRecheck({kind:'v2-guards',ctx,mode:config.mode});
+    const result=await reader.projectRange(resolved,s=>{
+      const answers={},details={};
+      responses.filter(v=>v.activation_id===s.owner.activation_id && v.month===s.owner.month).forEach(v=>{answers[v.item_id]={status:v.answer==='confirm'?'confirmed':'declined'};});
+      changes.filter(v=>v.activation_id===s.owner.activation_id && v.month===s.owner.month).forEach(v=>(v.detail||[]).filter(x=>x.date===date).forEach(x=>{details[x.item_id||x.date]=x;}));
+      const value=serviceFor(ctx).buildMySchedule({actor:actor(ctx),...s.snapshot,answers_by_date:answers,changes_by_date:details});
+      const days=value.days.filter(v=>v.date===date).map(v=>({...v,provenance:s.provenance}));
+      const events=value.events.filter(v=>v.date===date).map(v=>({...v,provenance:s.provenance}));
+      return {...value,days,events,pending_answers:days.concat(events).filter(v=>v.requires_answer).length};
+    });
+    return {...myViewWithGuards(result.segments[0].value||{days:[],events:[],pending_answers:0},guards,date,ctx.uid),mode:config.mode,
+      active:segment.available,available:segment.available,authority_generation:resolved.generation,...(segment.provenance||{}),provenance:segment.provenance};
+  }
+
   async function getMy(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
     const date = requestedViewDate(req, clock().slice(0, 10));
+    if(monthAuthorityEnabled && config.mode!==MODE.OFF)return monthMyView(ctx,config,date);
     if (config.mode === MODE.OFF) {
       const window = await checkedLegacyWindow(ctx, config, date, date);
       if (window.source !== 'legacy') {
@@ -8421,6 +8811,31 @@ function createScheduleRuntime(deps) {
       effectiveWorkdays.normalizeUids(Array.isArray(value.uids) ? value.uids : []);
     } catch (error) { workdaysError(error); }
     const uids = Array.isArray(value.uids) ? value.uids : [];
+    if(monthAuthorityEnabled && config.mode!==MODE.OFF){
+      const {reader,resolved}=await monthReaderFor(ctx,config,range.from,range.to);
+      const by_uid={},unknown_dates=[],unknown_dates_by_uid={},working={},segments=[];
+      for(const uid of effectiveWorkdays.normalizeUids(uids).uids){by_uid[uid]=[];unknown_dates_by_uid[uid]=[];}
+      for(const segment of resolved.segments){
+        const dates=range.dates.filter(date=>date>=segment.from && date<=segment.to);
+        if(!segment.available){unknown_dates.push(...dates);for(const uid of Object.keys(by_uid))unknown_dates_by_uid[uid].push(...dates);continue;}
+        const coverage={from:segment.from,to:segment.to};
+        const windows=await effectiveWindows(ctx,config,effectiveWorkdays.windowsFor(coverage,coverage),segmentActive(ctx,segment));
+        const part=effectiveWorkdays.assemble({source:'publication',range:coverage,coverage,windows,uids,roster:segment.snapshot.roster.map(p=>p.id)});
+        Object.assign(working,part.working);unknown_dates.push(...part.unknown_dates);
+        for(const uid of Object.keys(by_uid)){by_uid[uid].push(...(part.by_uid[uid]||[]));if(part.unknown_uids[uid]){unknown_dates_by_uid[uid].push(...dates);unknown_dates.push(...dates);}}
+        segments.push({from:segment.from,to:segment.to,...segment.provenance});
+      }
+      const invalid=effectiveWorkdays.normalizeUids(uids).invalid,unknown_uids={};
+      for(const uid of invalid)unknown_uids[uid]='invalid';
+      const shift_hours=await stationShiftHours(ctx);
+      return {result:{mode:config.mode,fallback:null,source:'publication',range:{from:range.from,to:range.to},coverage:null,
+        unknown_dates:Array.from(new Set(unknown_dates)).sort(),unknown_dates_by_uid,unknown_uids,by_uid,working,shift_hours,
+        provenance:{source:'v2',mode:config.mode,generation:resolved.generation,segments}},verify:async()=>{
+          if(digest(await stationShiftHours(ctx))!==digest(shift_hours))throw new ScheduleRuntimeError('legacy-schedule-changed','שעות המשמרת השתנו.','aborted');
+          await beforeEffectiveViewRecheck({kind:'workdays-verify',ctx,mode:config.mode});
+          await reader.projectRange(resolved,()=>null);
+        }};
+    }
 
     if (config.mode === MODE.NEW || config.mode === MODE.SHADOW) {
       const active = await checkedActiveSnapshot(ctx, config, null);
@@ -8534,6 +8949,7 @@ function createScheduleRuntime(deps) {
       to: result.range.to,
       coverage: result.coverage,
       unknown_dates: result.unknown_dates,
+      ...(result.unknown_dates_by_uid?{unknown_dates_by_uid:result.unknown_dates_by_uid}:{}),
       unknown_uids: result.unknown_uids,
       by_uid: result.by_uid,
       shift_hours: result.shift_hours,
@@ -8588,6 +9004,7 @@ function createScheduleRuntime(deps) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
     const range = requestedStationRange(req);
+    if(monthAuthorityEnabled && config.mode!==MODE.OFF)return monthStationView(ctx,config,range);
 
     if (config.mode === MODE.OFF) {
       const displayState = range.displayImported
@@ -8695,6 +9112,10 @@ function createScheduleRuntime(deps) {
     const config = await configuration(ctx.sid);
     const date = requestedViewDate(req, clock().slice(0, 10));
     const dates = [isoDayOffset(date, -1), date, isoDayOffset(date, 1)];
+    if(monthAuthorityEnabled && config.mode!==MODE.OFF){
+      const result=await monthStationView(ctx,config,{from:dates[0],to:dates[2],dates});
+      return {...result,previous_day:result.days[0],day:result.days[1],next_day:result.days[2]};
+    }
     if (config.mode === MODE.OFF) {
       const displayCrews = await legacyDisplayCrews(ctx, dates[0], dates[2]);
       const window = await checkedLegacyWindow(ctx, config, dates[0], dates[2]);
@@ -8807,12 +9228,48 @@ function createScheduleRuntime(deps) {
     });
   }
 
+  async function respondMonth(ctx,config,req){
+    const data=plain(req.data)?req.data:{},requestId=requireId(data.request_id,'request-id','מזהה הפעולה');
+    const publicationId=requireId(data.publication_id,'publication-id','מזהה הפרסום'),itemId=String(data.item_id||'');
+    const pubRef=stationRef(ctx.sid).collection('schedule_publications').doc(publicationId),metaSnap=await pubRef.get(),meta=metaSnap.exists?metaSnap.data():null;
+    if(!meta || meta.station_id!==ctx.sid || meta.status!=='active' || !meta.snapshot_complete)throw new ScheduleRuntimeError('publication-not-active','הפרסום אינו זמין.','aborted');
+    const snapshot=await readSnapshot(pubRef,meta);
+    const event=DATE_RE.test(itemId)?null:snapshot.events.find(e=>e.id===itemId);
+    const date=isoDayOffset(DATE_RE.test(itemId)?itemId:String(event && event.date||''),0),month=date.slice(0,7);
+    const assigned=[];
+    if(event)(event.people||[]).forEach(person=>assigned.push({id:itemId,person}));
+    else snapshot.plan.rows.filter(row=>row.date===date).forEach(row=>(row.slots||[]).forEach(slot=>assigned.push({id:itemId,person:slot.person})));
+    const baseline=await monthAuthority.readBaseline(ctx.sid,[month]),owner=baseline.owners[month];
+    if(!owner || owner.state==='unowned' || owner.publication_id!==publicationId || owner.content_digest!==meta.content_digest || owner.revision!==meta.revision
+      || data.activation_id!==owner.activation_id || date<owner.coverage_from || date>owner.coverage_to)throw new ScheduleRuntimeError('publication-not-active','בעלות השיבוץ השתנתה.','aborted');
+    const responseId='r_'+hash(ctx.sid+'|'+ctx.uid+'|'+requestId).slice(0,40),ref=stationRef(ctx.sid).collection('schedule_responses').doc(responseId);
+    const fingerprint=digest({publicationId,itemId,answer:data.answer,reason:data.reason_code||null,month,activation_id:owner.activation_id});
+    return db.runTransaction(async tx=>{
+      const snaps=await Promise.all([runtimeRef(ctx.sid),liveUserRef(ctx.sid,ctx.uid),stationRef(ctx.sid).collection('schedule_state').doc('publication_authority'),
+        stationRef(ctx.sid).collection('schedule_publication_months').doc(month),pubRef,ref].map(r=>tx.get(r)));
+      const live=snaps[1].exists?snaps[1].data():null;
+      if(!ctx.super && (!scheduleAccess.activeMember(live,ctx.sid) || live.role!==ctx.role))throw new ScheduleRuntimeError('board-viewer-changed','השיוך לתחנה השתנה.','permission-denied');
+      if((snaps[0].data()||{}).mode!==config.mode || !snaps[2].exists || snaps[2].data().generation!==baseline.root.generation
+        || stable(snaps[3].exists?snaps[3].data():null)!==stable(owner) || !snaps[4].exists || snaps[4].data().status!=='active'
+        || snaps[4].data().content_digest!==meta.content_digest)throw new ScheduleRuntimeError('publication-not-active','בעלות השיבוץ השתנתה.','aborted');
+      if(snaps[5].exists){const prior=snaps[5].data();if(prior.request_fingerprint!==fingerprint)throw new ScheduleRuntimeError('response-conflict','מזהה תגובה חוזר עם תוכן שונה.','already-exists');return {duplicate:true,response_id:responseId,answer:prior.answer};}
+      const result=serviceFor(ctx).respond({actor:actor(ctx),answer:data.answer,reason_code:data.reason_code,
+        request:{person:ctx.uid,request_id:requestId,publication_id:publicationId,publication_revision:owner.revision,item_id:itemId},
+        active_publication:{id:publicationId,revision:owner.revision,station_id:ctx.sid,assigned_items:assigned}});
+      tx.create(ref,{station_id:ctx.sid,publication_id:publicationId,publication_revision:owner.revision,content_digest:owner.content_digest,
+        month,activation_id:owner.activation_id,person:ctx.uid,item_id:itemId,answer:result.answer,reason_code:result.reason_code||null,
+        request_id:requestId,request_fingerprint:fingerprint,created_at:FV.serverTimestamp()});
+      return {duplicate:false,response_id:responseId,answer:result.answer};
+    });
+  }
+
   async function respond(req) {
     const ctx = await context(req);
     const config = await configuration(ctx.sid);
     if (config.mode === MODE.OFF) {
       throw new ScheduleRuntimeError('schedule-mode-blocked', 'הסידור החדש כבוי.');
     }
+    if(monthAuthorityEnabled)return respondMonth(ctx,config,req);
     const data = plain(req.data) ? req.data : {};
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const publicationId = requireId(data.publication_id, 'publication-id', 'מזהה הפרסום');
@@ -8881,13 +9338,38 @@ function createScheduleRuntime(deps) {
       && Number(pointer.revision || 0) === Number(value.revision || 0);
   }
 
-  async function cancelLeasedOutbox(ref, leaseToken, reason) {
-    await db.runTransaction(async (tx) => {
+  // Only an explicit, pre-provider policy decision is terminal. Mixed or
+  // malformed suppression results must use the normal retry path.
+  function pushPolicySuppression(delivery) {
+    if (!delivery || (typeof delivery !== 'object' && typeof delivery !== 'function')
+        || !('suppressed' in delivery)) return null;
+    const proto = Object.getPrototypeOf(delivery);
+    const keys = Reflect.ownKeys(delivery);
+    const reasons = ['global-silence', 'station-silence', 'station-not-ready', 'station-inactive'];
+    const own = (key) => Object.prototype.hasOwnProperty.call(delivery, key);
+    if ((proto === Object.prototype || proto === null)
+        && own('sent') && own('suppressed') && own('reason')
+        && delivery.sent === 0 && delivery.suppressed === true
+        && reasons.indexOf(delivery.reason) !== -1
+        && (!own('failed') || delivery.failed === false)
+        && keys.every((key) => ['sent', 'suppressed', 'reason', 'failed'].indexOf(key) !== -1)) {
+      return delivery.reason;
+    }
+    const error = new Error('INVALID_PUSH_SUPPRESSION');
+    error.code = 'INVALID_PUSH_SUPPRESSION';
+    throw error;
+  }
+
+  async function cancelLeasedOutbox(ref, leaseToken, reason, policyReason, providerOutcome) {
+    return (providerOutcome===true?outcomeTransaction:callback=>db.runTransaction(callback))(async (tx) => {
       const snap = await tx.get(ref);
       const value = snap.exists ? (snap.data() || {}) : {};
       if (value.status === 'sending' && value.lease_token === leaseToken) {
         cancelOutbox(tx, ref, reason);
+        if (policyReason) tx.update(ref, { policy_reason: policyReason });
+        return true;
       }
+      return false;
     });
   }
 
@@ -8944,7 +9426,7 @@ function createScheduleRuntime(deps) {
           return false;
         }
       }
-      if (!publicationMatches(value, pointer, publication)) {
+      if (monthAuthorityEnabled ? !await monthJobOwned(tx,value,publication,'pre_sdk') : !publicationMatches(value, pointer, publication)) {
         cancelOutbox(tx, ref, 'publication-not-active');
         return false;
       }
@@ -8989,7 +9471,7 @@ function createScheduleRuntime(deps) {
         cancelOutbox(tx, ref, 'delivery-forbidden');
         return;
       }
-      if (!publicationMatches(data, pointer, publication)) {
+      if (monthAuthorityEnabled ? !await monthJobOwned(tx,data,publication,'claim') : !publicationMatches(data, pointer, publication)) {
         cancelOutbox(tx, ref, 'publication-not-active');
         return;
       }
@@ -9005,6 +9487,7 @@ function createScheduleRuntime(deps) {
       claimed = Object.assign({}, data, { lease_token: leaseToken });
     });
     if (!claimed) return { skipped: true };
+    let providerEntered=false;
     try {
       await beforeOutboxSend(claimed);
       // The second transaction is as close as possible to the external call.
@@ -9031,15 +9514,21 @@ function createScheduleRuntime(deps) {
         if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
       }
       const push = claimed.push || {};
+      providerEntered=true;
       const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
         push.title || 'ResQ · הסידור שלך', push.body || 'הסידור שלך עודכן',
         './schedule-management.html?tab=mine', true);
+      const policyReason = pushPolicySuppression(delivery);
+      if (policyReason) {
+        const cancelled = await cancelLeasedOutbox(ref, claimed.lease_token, 'station-policy', policyReason,true);
+        return cancelled ? { skipped: true, suppressed: true } : { skipped: true };
+      }
       if (!delivery || Number(delivery.sent || 0) < 1) {
         const error = new Error('NO_ACTIVE_PUSH_TOKEN');
         error.code = 'NO_ACTIVE_PUSH_TOKEN';
         throw error;
       }
-      await db.runTransaction(async (tx) => {
+      await outcomeTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
         if (live.status === 'sending' && live.lease_token === claimed.lease_token) {
@@ -9059,7 +9548,7 @@ function createScheduleRuntime(deps) {
         notification: Object.assign({}, claimed, { attempt: Number(claimed.attempt || 0) }),
         error_code: String((error && error.code) || 'SEND_FAILED')
       });
-      await db.runTransaction(async (tx) => {
+      await (providerEntered?outcomeTransaction:callback=>db.runTransaction(callback))(async (tx) => {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
         if (live.status !== 'sending' || live.lease_token !== claimed.lease_token) return;
@@ -9385,6 +9874,17 @@ function createScheduleRuntime(deps) {
     };
   }
 
+  async function cancelLeasedGuardOutbox(ref, leaseToken, policyReason) {
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const value = snap.exists ? (snap.data() || {}) : {};
+      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
+      cancelGuardOutbox(tx, ref, 'station-policy');
+      tx.update(ref, { policy_reason: policyReason });
+      return true;
+    });
+  }
+
   async function validateGuardOutboxForSend(ref, leaseToken) {
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
@@ -9482,6 +9982,11 @@ function createScheduleRuntime(deps) {
         deliveryTarget.url,
         deliveryTarget.important
       );
+      const policyReason = pushPolicySuppression(delivery);
+      if (policyReason) {
+        const cancelled = await cancelLeasedGuardOutbox(ref, claimed.lease_token, policyReason);
+        return cancelled ? { skipped: true, suppressed: true } : { skipped: true };
+      }
       if (!delivery || Number(delivery.sent || 0) < 1) {
         const error = new Error('NO_ACTIVE_PUSH_TOKEN');
         error.code = 'NO_ACTIVE_PUSH_TOKEN';
@@ -9597,7 +10102,7 @@ function createScheduleRuntime(deps) {
     return { scanned: collected.size, queued, jobs };
   }
 
-  return Object.freeze({
+  const api=Object.freeze({
     getStatus,
     getGuardManagementStatus,
     getManagerSetup,
@@ -9648,6 +10153,31 @@ function createScheduleRuntime(deps) {
     resumeGuardOutbox,
     MODE
   });
+  if(d.monthAuthorityControlEnabled===true){
+    return require('./schedule-month-control-runtime').createControlledRuntime({deps:d,api,createRuntime:createScheduleRuntime,resolveContext:context,
+      translateError:error=>error instanceof ScheduleRuntimeError || !error || typeof error.code!=='string'?error:new ScheduleRuntimeError(error.code,String(error.message||error.code),/changed|stale/.test(error.code)?'aborted':'failed-precondition'),
+      verifySingleton:async sid=>{const active=await activeSnapshot({sid});return active?{pointer:active.pointer,snapshot:{station_id:sid,publication_id:active.ref.id,
+        revision:active.meta.revision,content_digest:active.meta.content_digest,from:active.meta.from,to:active.meta.to}}:null;},
+      verifyOwners:async(sid,owners)=>{
+        const contract=require('./schedule-month-authority'),cache=new Map();
+        for(const owner of Object.values(owners)){
+          if(owner.state==='unowned')continue;
+          let snapshot=cache.get(owner.publication_id);
+          if(!snapshot){snapshot=await monthSnapshot({sid},owner);cache.set(owner.publication_id,snapshot);}
+          const expected=contract.publicationOwners({station_id:sid,publication_id:owner.publication_id,revision:snapshot.meta.revision,
+            content_digest:snapshot.meta.content_digest,from:snapshot.meta.from,to:snapshot.meta.to},sid)[owner.month];
+          if(expected)expected.activation_id=owner.activation_id;
+          if(contract.stable(expected)!==contract.stable(owner))throw new ScheduleRuntimeError('monthly-cutover-snapshot','בעלות החודש אינה תואמת לתמונה החתומה.','failed-precondition');
+        }
+      },
+      verifySuper:async req=>{
+        if(!req || !req.auth || !isSuper(req.auth))throw new ScheduleRuntimeError('super-required','נדרשת הרשאת מנהל־על.','permission-denied');
+        const user=await getAuthUser(req.auth.uid),validAfter=Date.parse(String(user && user.tokensValidAfterTime||'')),authTime=Number(req.auth.token && req.auth.token.auth_time)*1000;
+        if(!user || user.uid!==req.auth.uid || user.disabled===true || !user.customClaims || user.customClaims.super!==true || !Number.isFinite(authTime)
+          || !Number.isFinite(validAfter) || authTime<validAfter)throw new ScheduleRuntimeError('super-required','הרשאת מנהל־על אינה עדכנית.','permission-denied');
+      }});
+  }
+  return d.monthAuthorityOutcomeTransaction?Object.freeze({...api,reconcileMonthControlledOutbox:reconcileOutbox}):api;
 }
 
 module.exports = {

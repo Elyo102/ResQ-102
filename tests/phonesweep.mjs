@@ -47,7 +47,11 @@ try {
       const pg=await ctx.newPage();
       await pg.goto(base+'/'+p,{waitUntil:'load'});
       await pg.waitForTimeout(1600);
-      await pg.click('#coNo').catch(()=>{}); await pg.waitForTimeout(250);
+      // The optional callout dialog is absent on most pages. Do not spend the
+      // default action timeout waiting for an element that is not displayed.
+      const decline = pg.locator('#coNo');
+      if (await decline.isVisible()) await decline.click({timeout:1000}).catch(()=>{});
+      await pg.waitForTimeout(250);
       const r = await pg.evaluate(()=>{
         const de=document.documentElement;
         const nav=document.getElementById('appNav');

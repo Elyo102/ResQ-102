@@ -66,6 +66,10 @@ await env.withSecurityRulesDisabled(async (context) => {
     revision: 1
   });
   await setDoc(doc(db, `stations/${SID}/schedule_state/runtime`), { mode: 'shadow' });
+  await setDoc(doc(db, `stations/${SID}/schedule_state/publication_authority`), { station_id: SID, generation: 1 });
+  await setDoc(doc(db, `stations/${SID}/schedule_state/publication_authority_control`), { station_id: SID, enabled: false });
+  await setDoc(doc(db, `stations/${SID}/schedule_publication_months/2026-09`), { station_id: SID, month: '2026-09' });
+  await setDoc(doc(db, `stations/${SID}/schedule_publication_authority_operations/op_1`), { station_id: SID, operation_id: 'op_1' });
   await setDoc(doc(db, `stations/${SID}/schedule_policies/policy_1`), { station_id: SID });
   await setDoc(doc(db, `stations/${SID}/schedule_sources/source_1/people/manager_1`), { uid: 'manager_1' });
   await setDoc(doc(db, `stations/${SID}/schedule_drafts/draft_1/rows/row_1`), { date: '2026-09-01' });
@@ -88,6 +92,10 @@ await env.withSecurityRulesDisabled(async (context) => {
 
 const protectedPaths = [
   ['runtime state', `stations/${SID}/schedule_state/runtime`],
+  ['publication authority root', `stations/${SID}/schedule_state/publication_authority`],
+  ['publication authority control', `stations/${SID}/schedule_state/publication_authority_control`],
+  ['monthly publication owner', `stations/${SID}/schedule_publication_months/2026-09`],
+  ['publication authority operation', `stations/${SID}/schedule_publication_authority_operations/op_1`],
   ['appointment', `stations/${SID}/schedule_access/manager_1`],
   ['policy', `stations/${SID}/schedule_policies/policy_1`],
   ['source child', `stations/${SID}/schedule_sources/source_1/people/manager_1`],
@@ -133,12 +141,42 @@ for (const [name, actor] of [
     getDocs(collection(actor, `stations/${SID}/schedule_qualifications`)));
   await blocked(name + ' cannot list person qualifications directly',
     getDocs(collection(actor, `stations/${SID}/schedule_person_qualifications`)));
+  await blocked(name + ' cannot list monthly publication owners directly',
+    getDocs(collection(actor, `stations/${SID}/schedule_publication_months`)));
+  await blocked(name + ' cannot list publication authority operations directly',
+    getDocs(collection(actor, `stations/${SID}/schedule_publication_authority_operations`)));
   await blocked(name + ' cannot create an appointment directly',
     setDoc(doc(actor, `stations/${SID}/schedule_access/new_manager`), { active: true }));
   await blocked(name + ' cannot update an appointment directly',
     updateDoc(doc(actor, `stations/${SID}/schedule_access/manager_1`), { active: false }));
   await blocked(name + ' cannot delete an appointment directly',
     deleteDoc(doc(actor, `stations/${SID}/schedule_access/manager_1`)));
+}
+
+// Newly connected onboarding authorities remain server-only even for a super
+// administrator. Seed real documents so update/delete failures cannot merely
+// be NOT_FOUND rather than rules denials.
+const onboardingPaths = [
+  'invitations/invite_fixture',
+  'onboarding_assignment_links/member_fixture',
+  `stations/${SID}/onboarding_operations/request_fixture`,
+  `stations/${SID}/provision_operations/provision_fixture`
+];
+await env.withSecurityRulesDisabled(async context => {
+  for (const path of onboardingPaths) {
+    await setDoc(doc(context.firestore(), path), { schema_version: 1, station_id: SID });
+  }
+});
+for (const [name, actor] of [
+  ['schedule manager', manager], ['HR', hr], ['super', superUser],
+  ['unauthenticated', env.unauthenticatedContext().firestore()]
+]) {
+  for (const path of onboardingPaths) {
+    await blocked(name + ' onboarding read denied ' + path, getDoc(doc(actor, path)));
+    await blocked(name + ' onboarding create/replace denied ' + path, setDoc(doc(actor, path), { forged: true }));
+    await blocked(name + ' onboarding update denied ' + path, updateDoc(doc(actor, path), { forged: true }));
+    await blocked(name + ' onboarding delete denied ' + path, deleteDoc(doc(actor, path)));
+  }
 }
 
 await env.cleanup();

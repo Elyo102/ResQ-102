@@ -10,11 +10,16 @@ const env = await initializeTestEnvironment({
   projectId:'resq-callout-privacy',
   firestore:{ rules:readFileSync('../firestore.rules', 'utf8'), host, port:Number(portText) }
 });
+// This dedicated loopback-only test project must start empty: replacing a
+// parent document does not remove responses left by a previous test run.
+await env.clearFirestore();
 
 const actor = (uid, role) => env.authenticatedContext(uid, {
   email:uid + '@example.test', emp:'9' + uid.length, role, stationId:SID, shift:'A'
 }).firestore();
 const commander = actor('commander_1', 'commander');
+const superAdmin = env.authenticatedContext('super_1', { super:true, stationId:'other_station', role:'super_admin' }).firestore();
+const fakeSuper = env.authenticatedContext('fake_super', { super:'true', stationId:'other_station', role:'super_admin' }).firestore();
 const recipient = actor('recipient_1', 'firefighter');
 const recipient2 = actor('recipient_2', 'firefighter');
 const unrelated = actor('unrelated_1', 'firefighter');
@@ -41,6 +46,11 @@ async function pass(name, promise) {
 }
 
 await pass('creator reads own callout', assertSucceeds(getDoc(doc(commander, calloutPath))));
+await pass('super reads another station callout', assertSucceeds(getDoc(doc(superAdmin, calloutPath))));
+await pass('super can list target station callouts', assertSucceeds(getDocs(query(collection(superAdmin, `stations/${SID}/callouts`), orderBy('created_key', 'desc'), limit(10)))));
+await pass('super can inspect responses without becoming a recipient', assertSucceeds(getDocs(collection(superAdmin, `${calloutPath}/responses`))));
+await pass('string super grants no access', assertFails(getDoc(doc(fakeSuper, calloutPath))));
+await pass('super still cannot directly mutate callout state', assertFails(updateDoc(doc(superAdmin, calloutPath), { active:false })));
 await pass('recipient reads only a callout addressed to them', assertSucceeds(getDoc(doc(recipient, calloutPath))));
 await pass('unrelated station member cannot read the callout', assertFails(getDoc(doc(unrelated, calloutPath))));
 await pass('unrelated station member cannot list callouts', assertFails(getDocs(collection(unrelated, `stations/${SID}/callouts`))));
@@ -157,4 +167,4 @@ await pass('recipient cannot add a late answer after the creator closes the call
 )));
 
 await env.cleanup();
-console.log(`\n${passed}/35 callout privacy rules checks passed.`);
+console.log(`\n${passed}/${passed} callout privacy rules checks passed.`);

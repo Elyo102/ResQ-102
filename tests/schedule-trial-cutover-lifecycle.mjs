@@ -19,7 +19,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  createFakeDb, seed, req, SHEET, ST, buildRuntime
+  createFakeDb, seed, req, SHEET, ST, MGR, buildRuntime
 } from './_schedule-fake.mjs';
 
 const ALIASES = Object.freeze({ 'רועי': 'u1', 'אבטחה': null, 'גיא': 'u5' });
@@ -167,6 +167,72 @@ async function draftAndPublish(rt, label, paste) {
 async function deliverRows(rt, rows) {
   for (const row of rows) await rt.deliverOutbox(row.ref);
 }
+
+async function unconfiguredWorkbookTrial(label) {
+  const db = createFakeDb();
+  for (const [uid, role] of [[MGR, 'firefighter'], ['uid-commander', 'commander']]) {
+    db._put(ST + '/users/' + uid, { station_id:'station_102', station:'station_102',
+      is_active:true, active:true, role, full_name:uid });
+  }
+  db._put(ST + '/schedule_access/' + MGR, { schema_version:1, station_id:'station_102',
+    uid:MGR, roles:['schedule_manager'], active:true, revision:1 });
+  db._put(ST + '/schedule_state/runtime', { mode:'shadow' });
+  ['A','B','C'].forEach((crew, position) => db._put(ST + '/rotations/' + crew,
+    { anchor_date:'2026-09-01', cycle_days:3, position_in_cycle:position, crew, is_active:true }));
+  const deliveries = [];
+  const rt = buildRuntime(db, { sendPush:async (...args) => {
+    deliveries.push(args); return { sent:1 };
+  } });
+  const result = await draftAndPublish(rt, label, SHEET);
+  const candidates = directChildren(db, ST, 'schedule_publications')
+    .filter(row => row.value.status === 'prepared'
+      && row.value.trial_source_publication_id === result.published.publication_id);
+  assert.equal(candidates.length, 1);
+  return { db, rt, deliveries, result, candidate:candidates[0] };
+}
+
+test('unconfigured workbook trial promotes its own signed basis without notifying external people', async () => {
+  const { db, rt, deliveries, result, candidate } = await unconfiguredWorkbookTrial('workbook-cutover');
+  assert.equal(candidate.value.workbook_managed, true);
+  assert.equal(rowsFor(db, candidate.ref.id).length, 0,
+    'external person IDs must never become live push recipients');
+  assert.ok(db._paths(ST + '/schedule_people/').length > 1);
+  const report = await rt.previewCutover(command({ candidate_publication_id:candidate.ref.id }));
+  assert.equal(report.blocked, false);
+  const promoted = await rt.promoteToNew(command({ request_id:'promote-workbook-cutover',
+    candidate_publication_id:candidate.ref.id, expected_mode:'shadow',
+    expected_preflight_signature:report.signature,
+    accept_changes:report.changes && report.changes.count > 0 ? report.signature : null }));
+  assert.equal(promoted.mode, 'new');
+  assert.equal(db._get(ST + '/schedule_state/active').publication_id, candidate.ref.id);
+  assert.equal(db._get(candidate.path).content_digest,
+    db._get(ST + '/schedule_publications/' + result.published.publication_id).content_digest);
+  const config = db._get(ST + '/schedule_state/runtime');
+  assert.equal(config.active_policy_id || null, null);
+  assert.equal(config.active_source_id || null, null);
+  const range = await rt.getStationRange(req({ from:result.imported.from, to:result.imported.to }));
+  assert.ok(range.days.some(day => day.sub_stations.some(station =>
+    station.people.some(person => person.person === 'יוסי מזרחי'))));
+  await deliverRows(rt, rowsFor(db, candidate.ref.id));
+  assert.equal(deliveries.length, 0);
+});
+
+test('old workbook candidate without basis marker is rejected without rewriting evidence', async () => {
+  const { db, rt, result, candidate } = await unconfiguredWorkbookTrial('workbook-old-candidate');
+  const old = { ...db._get(candidate.path) };
+  delete old.workbook_managed;
+  db._put(candidate.path, old);
+  const evidence = directChildren(db, ST, 'schedule_publications').map(row => ({
+    path:row.path, value:canonical(row.value), outbox:frozenRows(rowsFor(db, row.ref.id))
+  }));
+  await assert.rejects(rt.publish(req({ request_id:'publish-workbook-old-candidate',
+    draft_id:result.imported.draft_id, expected_content_digest:result.draft.expected_content_digest,
+    gap_acknowledgement:result.draft.gaps && result.draft.gaps.digest })),
+  error => error.code === 'trial-candidate-stale');
+  assert.deepEqual(directChildren(db, ST, 'schedule_publications').map(row => ({
+    path:row.path, value:canonical(row.value), outbox:frozenRows(rowsFor(db, row.ref.id))
+  })), evidence);
+});
 
 test('latest trial revision is the sole promotable candidate and cutover delivers the full live delta', async () => {
   const db = createFakeDb();

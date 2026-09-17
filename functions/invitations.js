@@ -108,7 +108,7 @@ function createInvitations(deps) {
       max_uses: 1
     };
     assertSecretAbsent(doc, secret);
-    return { invite_id:inviteId, secret:secret, doc:doc };
+    return { invite_id:inviteId, secret:secret, doc:doc, invite_fingerprint:inviteFingerprint(doc) };
   }
 
   function inspect(invite, secret, at) {
@@ -133,6 +133,26 @@ function createInvitations(deps) {
   function redeem(invite, secret, authValue, clientInput, at) {
     const when = nowMillis(at);
     assertRedeemable(invite, secret, when);
+    return redemptionPlan(invite, authValue, when, clientInput);
+  }
+
+  // Only validates an already completed redemption; never makes a spent
+  // invitation redeemable again. The caller must also match its stored intent.
+  function verifyRedemptionReplay(invite, secret, authValue, requestId, at) {
+    const when = nowMillis(at);
+    if (!invite || invite.max_uses !== 1 || invite.revoked_at ||
+        !Number.isFinite(toMillis(invite.expires_at)) || toMillis(invite.expires_at) <= when ||
+        !Number.isFinite(toMillis(invite.redeemed_at)) ||
+        !authValue || invite.redeemed_by !== authValue.uid ||
+        typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{16,100}$/.test(requestId) ||
+        invite.redeemed_request_id !== requestId ||
+        !constantTimeEquals(hashSecret(String(secret || '')), String(invite.secret_hash || ''))) {
+      throw new InvitationError('invalid-invitation', 'invitation replay is invalid');
+    }
+    return redemptionPlan(invite, authValue, toMillis(invite.redeemed_at), null);
+  }
+
+  function redemptionPlan(invite, authValue, when, clientInput) {
     const auth = authValue && typeof authValue === 'object' ? authValue : {};
     const uid = cleanRequired(auth.uid, 'uid', 128);
     if (auth.email_verified !== true) {
@@ -327,7 +347,20 @@ function createInvitations(deps) {
     }));
   }
 
-  return Object.freeze({ issue, inspect, redeem, verifyPlan, revoke, assertApprovable, approve });
+  // Supplemental consistency guard, NOT authorization or an approvability
+  // verdict. The existing digest excludes name/phone/person binding; callers
+  // must validate those through the protected onboarding contract separately.
+  function verifyStoredFingerprint(invite, expected) {
+    if (!invite || typeof invite !== 'object' || Array.isArray(invite) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(invite)) ||
+        typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected) ||
+        !constantTimeEquals(inviteFingerprint(invite), expected)) {
+      throw new InvitationError('invalid-invitation', 'stored invitation fingerprint is invalid');
+    }
+    return true;
+  }
+
+  return Object.freeze({ issue, inspect, redeem, verifyPlan, verifyRedemptionReplay, verifyStoredFingerprint, revoke, assertApprovable, approve });
 }
 
 function inputFrom(value, path) {

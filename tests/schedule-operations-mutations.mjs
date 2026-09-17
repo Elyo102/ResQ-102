@@ -28,7 +28,8 @@ const SUITES = {
   gapsUnit: [process.execPath, [resolve(FN, 'schedule-gaps.test.js')]],
   publicationUnit: [process.execPath, [resolve(FN, 'schedule-publication.test.js')]],
   runtimeSource: [process.execPath, [resolve(HERE, 'schedule-runtime-source.mjs')]],
-  authority: [process.execPath, [resolve(HERE, 'schedule-hidden-authority-probe.mjs')]]
+  authority: [process.execPath, [resolve(HERE, 'schedule-hidden-authority-probe.mjs')]],
+  monthConsumers: [process.execPath, ['--test', resolve(FN, 'schedule-month-consumers.integration.test.mjs')]]
 };
 
 const MUTATIONS = [
@@ -46,9 +47,15 @@ const MUTATIONS = [
   ['עריכה: הבסיס לא נבדק בדוח (CAS)', 'runtime',
     "    if (!editBaseMatches(active.pointer, base)) {", "    if (false) {", ['editProbe']],
   ['עריכה: הבסיס לא נבדק בעסקת הטיוטה', 'runtime',
-    "      if (!editBaseMatches(snaps[3].exists ? (snaps[3].data() || {}) : null, base)) {", "      if (false) {", ['editProbe']],
+    "      if (!monthAuthorityEnabled && !editBaseMatches(snaps[3].exists ? (snaps[3].data() || {}) : null, base)) {", "      if (false) {", ['editProbe']],
   ['עריכה: הבסיס לא נבדק בעסקת הפרסום', 'runtime',
-    "      if (liveDraft.edited === true && !editBaseMatches(liveActive, liveDraft.edit_base)) {", "      if (false) {", ['editProbe']],
+    "      if (!monthAuthorityEnabled && liveDraft.edited === true && !editBaseMatches(liveActive, liveDraft.edit_base)) {", "      if (false) {", ['editProbe']],
+  ['עריכה חודשית: generation שהשתנה אינו נחסם', 'runtime',
+    "    if(!root.exists || root.data().generation!==base.generation)throw new ScheduleRuntimeError('edit-base-stale','בעלות הסידור השתנתה.','aborted');",
+    "    if(!root.exists)throw new ScheduleRuntimeError('edit-base-stale','בעלות הסידור השתנתה.','aborted');", ['monthConsumers']],
+  ['עריכה חודשית: בעלות חודש שהשתנתה אינה נחסמת', 'runtime',
+    "      if(stable(current.exists?current.data():null)!==stable(owner))throw new ScheduleRuntimeError('edit-base-stale','בעלות החודש השתנתה.','aborted');",
+    "      if(false)throw new ScheduleRuntimeError('edit-base-stale','בעלות החודש השתנתה.','aborted');", ['monthConsumers']],
   ['עריכה: חתימת הדוח לא נבדקת בביצוע', 'runtime',
     "    if (!expectedDigest || expectedDigest !== basis.editDigest) {", "    if (false) {", ['editProbe']],
   ['עריכה: ניסיון חוזר בלי השוואת כוונה', 'runtime',

@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
-<link rel="stylesheet" href="./bulletin.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h191">
+<link rel="stylesheet" href="./bulletin.css?v=42h191">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -91,6 +91,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     h1{font-size:28px}
     body.with-nav .card{margin-top:0}
   }
+#invitationPanel{border:1px solid var(--line);border-radius:14px;padding:14px;margin-block:14px;text-align:right}
+#invitationPanel summary{min-height:44px;cursor:pointer;font-weight:700;display:list-item;padding-block:10px}
+#invitationPanel input{font-size:16px;min-height:44px}
+#invitationPanel button{min-height:44px;white-space:normal}
+#invitationPanel p{line-height:1.6;overflow-wrap:anywhere}
 </style>
 <style>
   .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
@@ -241,6 +246,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <!-- ברירת המחדל היא המסך הזה ולא טופס הכניסה. עד עכשיו הטופס
        היה מצויר תמיד ונעלם כשהתברר שהמשתמש כבר מחובר — ולכן כל
        מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
+  <details id="invitationPanel" class="hide">
+    <summary>הצטרפות באמצעות הזמנה</summary>
+    <p>קיבלת הזמנה ממנהל־על? אין צורך למלא בקשת הרשמה רגילה. הזן את שני הפרטים בערוץ פרטי בלבד; הם אינם נשמרים בדפדפן.</p>
+    <label for="invitationId">מזהה הזמנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
+    <label for="invitationSecret">סוד הזמנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    <div id="invitationAccount">
+      <label for="invitationEmail">המייל שאליו נשלחה ההזמנה</label><input id="invitationEmail" type="email" dir="ltr" autocomplete="username">
+      <label for="invitationPassword">סיסמה</label><input id="invitationPassword" type="password" autocomplete="current-password">
+      <p>לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.</p>
+      <button type="button" id="invitationSignIn">כניסה לחשבון קיים</button>
+      <button type="button" id="invitationCreate">יצירת חשבון למימוש הזמנה</button>
+    </div>
+    <div id="invitationVerified" class="hide">
+      <p id="invitationWho"></p>
+      <button type="button" id="invitationVerify">שלח מייל אימות</button>
+      <button type="button" id="invitationRedeem">אימתתי את המייל — ממש הזמנה</button>
+    </div>
+    <button type="button" id="invitationReset">נקה פרטי הזמנה</button>
+    <p id="invitationStatus" class="msg" role="status" aria-live="polite"></p>
+  </details>
   <div id="bootView">
     <div class="wait">
       <div class="icon">⏳</div>
@@ -549,37 +574,37 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h191';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h19';
+         subStationsForStation } from './stations.js?v=42h191';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h19';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h19';
+  from './nav.js?v=42h191';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h191';
 import {
   initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h19';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h19';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h19';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h19';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h19';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h19';
+} from './pwa.js?v=42h191';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h191';
+import { watchCallouts } from './callout.js?v=42h191';
+import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h191';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h191';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h191';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h191';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h191';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
-         EmailAuthProvider, setPersistence, browserLocalPersistence }
+         EmailAuthProvider, setPersistence, browserLocalPersistence, sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h191';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h191';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -623,6 +648,7 @@ const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
 const callWho   = httpsCallable(fns, 'whoAmI');
+const callRedeemInvitation = httpsCallable(fns, 'redeemInvitation');
 
 // חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
 // וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
@@ -701,6 +727,80 @@ $('fDistrict').onchange = function () { fillStations(this.value); };
 let onboarding = false;
 let loginTransitionPending = false;
 let resubmitUser = null;
+let invitationEpoch=0, invitationUid='', invitationBusy=false, invitationIntent=null;
+function invitationMessage(text, bad=false){
+  $('invitationStatus').textContent=text;
+  $('invitationStatus').className='msg '+(bad?'err':'ok');
+}
+function clearInvitation(){
+  invitationEpoch++; invitationIntent=null; invitationBusy=false;
+  $('invitationId').value=''; $('invitationSecret').value=''; $('invitationPassword').value='';
+  $('invitationStatus').textContent=''; $('invitationStatus').className='msg';
+  invitationControls();
+}
+function invitationControls(){
+  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  ['invitationId','invitationSecret'].forEach(id=>$(id).disabled=invitationBusy||!!invitationIntent);
+  $('invitationAccount').classList.toggle('hide',!!auth.currentUser);
+  $('invitationVerified').classList.toggle('hide',!auth.currentUser);
+  $('invitationWho').textContent=auth.currentUser?'מחובר: '+(auth.currentUser.email||''):'';
+}
+async function invitationAction(action){
+  if(invitationBusy)return;
+  const epoch=invitationEpoch, initialUid=auth.currentUser?.uid||'';
+  let expectedUid=initialUid;
+  const current=()=>epoch===invitationEpoch && (auth.currentUser?.uid||'')===expectedUid;
+  invitationBusy=true; invitationControls();
+  try{
+    if(action==='create'||action==='signin'){
+      if(auth.currentUser)throw new Error('כבר מחובר חשבון. התנתק כדי להשתמש בחשבון אחר.');
+      const email=$('invitationEmail').value.trim().toLowerCase(), password=$('invitationPassword').value;
+      if(!email||!password)throw new Error('יש להזין מייל וסיסמה.');
+      if(action==='create'&&!pwOk(password))throw new Error('הסיסמה אינה עומדת בכללים המוצגים.');
+      onboarding=true;
+      const credential=await (action==='create'?createUserWithEmailAndPassword(auth,email,password):signInWithEmailAndPassword(auth,email,password));
+      expectedUid=credential.user.uid;
+      if(!current())return;
+      invitationUid=expectedUid; $('invitationPassword').value='';
+      invitationMessage('החשבון מחובר. יש לאמת את המייל ואז לממש את ההזמנה. לא נשלחה בקשת הרשמה רגילה.');
+    }else{
+      const user=auth.currentUser;
+      if(!user)throw new Error('נדרשת כניסה לחשבון.');
+      if(action==='verify'){
+        await sendEmailVerification(user);
+        if(current())invitationMessage('מייל אימות נשלח. פתח את הקישור וחזור לכפתור מימוש ההזמנה.');
+      }else{
+        await reload(user); await user.getIdToken(true);
+        if(!current())return;
+        if(!user.emailVerified)throw new Error('כתובת המייל עדיין לא אומתה.');
+        const claims=(await user.getIdTokenResult()).claims||{};
+        if(!current())return;
+        if(hasServerAssignment(claims))throw new Error('החשבון כבר משויך למערכת. אין לממש הזמנה נוספת.');
+        if(!invitationIntent){
+          const invite_id=$('invitationId').value.trim(),secret=$('invitationSecret').value.trim();
+          if(!invite_id||!secret)throw new Error('יש להזין מזהה הזמנה וסוד הזמנה.');
+          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret});
+        }
+        const result=(await callRedeemInvitation(invitationIntent)).data;
+        if(!current())return;
+        if(!result||result.ok!==true)throw new Error('לא התקבל אישור מימוש מהשרת.');
+        invitationIntent=null; $('invitationSecret').value=''; $('invitationId').value='';
+        invitationMessage('ההזמנה מומשה והבקשה ממתינה לאישור מנהל־על. עדיין לא הוענקו הרשאות.');
+        await startRoute(user);
+      }
+    }
+  }catch(error){if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
+  finally{
+    if(action==='create'||action==='signin')onboarding=false;
+    if(current()){invitationBusy=false;invitationControls();if(action==='create'||action==='signin'){if(auth.currentUser)await startRoute(auth.currentUser);}}
+  }
+}
+$('invitationSignIn').onclick=()=>invitationAction('signin');
+$('invitationCreate').onclick=()=>invitationAction('create');
+$('invitationVerify').onclick=()=>invitationAction('verify');
+$('invitationRedeem').onclick=()=>invitationAction('redeem');
+$('invitationReset').onclick=()=>{if(!invitationBusy)clearInvitation();};
+window.addEventListener('pagehide',clearInvitation);
 
 function show(text, kind){
   const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
@@ -731,6 +831,8 @@ function hasCompleteServerAssignment(claims){
 }
 
 function showView(name){
+  $('invitationPanel').classList.toggle('hide',name!=='auth'&&name!=='wait');
+  invitationControls();
   ['bootView','authView','waitView','homeView','pwView']
     .forEach(function(v){
       $(v).classList.toggle('hide', v !== name + 'View');
@@ -1061,6 +1163,8 @@ let nativeBackArrival = (function () {
 let nativeBackRecoveryAttempted = false;
 
 onIdTokenChanged(auth, user => {
+  if(invitationUid && invitationUid!==(user?.uid||''))clearInvitation();
+  invitationUid=user?.uid||'';
   authSettled = true;
   if (!user) {
     try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}

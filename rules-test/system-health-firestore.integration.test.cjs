@@ -40,6 +40,10 @@ async function seedStation(sid, silent) {
   env = await initializeTestEnvironment({ projectId, firestore: {
     host, port, rules: fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8')
   } });
+  // This integration owns the final emulator phase. Earlier rule suites seed
+  // deliberately malformed station documents; health inventory must start
+  // from its declared fixture rather than inherit another test's database.
+  await env.clearFirestore();
   await seedStation('health_alpha', false);
   await seedStation('health_beta', true);
   await db.doc('config/runtime').set({ silent: false });

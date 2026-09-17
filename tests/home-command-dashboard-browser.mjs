@@ -213,7 +213,29 @@ try {
       assert.equal(metrics.pageFits, true, 'document overflows horizontally');
       assert.equal(metrics.panelsFit, true, 'a home panel overflows horizontally');
     });
+    if (process.env.HOME_SCREENSHOT_DIR) {
+      fs.mkdirSync(process.env.HOME_SCREENSHOT_DIR, { recursive:true });
+      await home.page.waitForFunction(() => {
+        for (let node = document.querySelector('#homeView'); node; node = node.parentElement) {
+          if (getComputedStyle(node).opacity !== '1') return false;
+        }
+        return true;
+      });
+      await home.page.screenshot({ path:path.join(process.env.HOME_SCREENSHOT_DIR, 'home-' + width + '.png'), fullPage:true });
+    }
     await home.context.close();
+  }
+
+  if (process.env.HOME_SCREENSHOT_DIR) {
+    const desktopHome = await openHome('firefighter', 1280);
+    await desktopHome.page.waitForFunction(() => {
+      for (let node = document.querySelector('#homeView'); node; node = node.parentElement) {
+        if (getComputedStyle(node).opacity !== '1') return false;
+      }
+      return true;
+    });
+    await desktopHome.page.screenshot({ path:path.join(process.env.HOME_SCREENSHOT_DIR, 'home-1280.png'), fullPage:true });
+    await desktopHome.context.close();
   }
 
   await check('source · all four safe-area edges are declared for the home shell', async () => {

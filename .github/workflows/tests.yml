@@ -134,7 +134,9 @@ jobs:
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js"
 
       - name: הזמנות חד-פעמיות מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node invitations.integration.test.js"
+        env:
+          GCLOUD_PROJECT: demo-resq
+        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node invitations.integration.test.js && npm run test:onboarding-callables"
 
       - name: מנוע סידור חודשי מול Firestore מקומי
         run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-runtime.integration.test.js"

@@ -23,6 +23,8 @@
 // הרצה:  node fncheck.mjs
 import fs from 'fs';
 import path from 'path';
+import { collectCallNames } from './fncheck-call-names.mjs';
+import './fncheck-call-names.test.mjs';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
 // (תיקיית העבודה/...), ולכן הבדיקות רצו רק במחשב אחד.
@@ -124,9 +126,11 @@ head('פונקציות');
   ]);
 
   const missing = new Map();
+  const actualCalls = collectCallNames(src);
   // קריאה: שם( שאינו אחרי נקודה, אינו מילת מפתח
   for (const m of code.matchAll(/(?<![.\w$])([a-zA-Z_$][\w$]*)\s*\(/g)) {
     const n = m[1];
+    if (!actualCalls.has(n)) continue;
     if (defined.has(n) || BUILTIN.has(n)) continue;
     if (!missing.has(n)) {
       // מספר השורה בקובץ המקורי, כדי שאפשר יהיה לקפוץ לשם

@@ -13,6 +13,7 @@ function createPersonalLiveLab(deps) {
   if (!deps || typeof deps.freshActor !== 'function' ||
       typeof deps.readConfig !== 'function' || typeof deps.activate !== 'function' ||
       typeof deps.hasToken !== 'function' || typeof deps.isSilent !== 'function' ||
+      typeof deps.assertStationDelivery !== 'function' ||
       typeof deps.reserve !== 'function' || typeof deps.sendExact !== 'function' ||
       typeof deps.finish !== 'function' || typeof deps.ack !== 'function' ||
       !deps.HttpsError) throw new TypeError('personal live lab dependencies are required');
@@ -81,6 +82,7 @@ function createPersonalLiveLab(deps) {
     }
 
     const fingerprint = digest([a.sid, a.uid, requestId, digest(token)].join('|'));
+    await deps.assertStationDelivery({ sid: a.sid, uid: a.uid });
     const reserved = await deps.reserve({
       sid: a.sid, uid: a.uid, requestId, fingerprint, token_hash: digest(token), now_ms: now(),
       generation: Number(cfg.generation), activation_auth_time_ms: a.activation_auth_time_ms
@@ -115,6 +117,9 @@ function createPersonalLiveLab(deps) {
     if (Number(sendCfg.generation) !== Number(cfg.generation)) {
       fail('failed-precondition', 'הפעלת המעבדה התחלפה לפני השליחה.');
     }
+    // Known pre-provider policy/read failures must not become unknown delivery.
+    // Keep the final fresh Auth check after this additional asynchronous read.
+    await deps.assertStationDelivery({ sid: a.sid, uid: a.uid });
     const finalActor = await actor(req);
     if (finalActor.uid !== a.uid || finalActor.sid !== a.sid
         || finalActor.activation_auth_time_ms !== a.activation_auth_time_ms) {

@@ -8,7 +8,7 @@ const NOW = 1788998400000;
 const AUTH_MS = NOW - 60000;
 
 function fixture(overrides) {
-  const calls = { actor:0, config:0, token:0, send:0, finish:[], ack:[], activate:[], reserve:[] };
+  const calls = { actor:0, config:0, token:0, send:0, policy:[], finish:[], ack:[], activate:[], reserve:[] };
   const state = Object.assign({
     actor:{ uid:'owner', sid:'eilat_102', super:true, personal_lab_control:true,
       activation_auth_time_ms:AUTH_MS },
@@ -32,6 +32,12 @@ function fixture(overrides) {
       return typeof state.hasToken === 'function' ? state.hasToken(calls.token, state) : state.token;
     },
     isSilent:async () => state.silent,
+    assertStationDelivery:async scope => {
+      calls.policy.push(scope);
+      if (typeof state.assertStationDelivery === 'function') {
+        await state.assertStationDelivery(calls.policy.length, state, scope);
+      }
+    },
     reserve:async input => {
       calls.reserve.push(input);
       if (typeof state.afterReserve === 'function') state.afterReserve(state, input);
@@ -51,6 +57,50 @@ async function rejects(code, fn) {
 }
 
 async function run() {
+  const otherwiseComplete = { HttpsError:E };
+  for (const name of ['freshActor','readConfig','activate','hasToken','isSilent',
+    'reserve','sendExact','finish','ack']) otherwiseComplete[name] = async () => {};
+  assert.throws(() => createPersonalLiveLab(otherwiseComplete), /dependenc/i,
+    'station delivery gate must be a required dependency');
+  for (const deniedCall of [1, 2]) {
+    const f = fixture({ assertStationDelivery:async call => {
+      if (call === deniedCall) throw new E('failed-precondition', 'station policy');
+    } });
+    await rejects('failed-precondition', () => f.service.send(f.req({
+      token:'x'.repeat(30), request_id:'valid_request_id_01'
+    })));
+    assert.equal(f.calls.reserve.length, deniedCall - 1);
+    assert.equal(f.calls.send, 0);
+    assert.equal(f.calls.finish.length, 0, 'known unsent policy denial must not stamp unknown');
+    for (const scope of f.calls.policy) assert.deepEqual(scope, { sid:'eilat_102',uid:'owner' });
+  }
+  {
+    const f = fixture({
+      assertStationDelivery:async call => {
+        if (call === 2) throw new E('unavailable', 'station read unavailable');
+      },
+      reserved:call => ({ duplicate:call > 1,state:'reserved' })
+    });
+    const request = f.req({ token:'x'.repeat(30),request_id:'valid_request_id_01' });
+    await rejects('unavailable', () => f.service.send(request));
+    assert.equal(f.calls.send, 0);
+    assert.equal(f.calls.finish.length, 0);
+    assert.equal((await f.service.send(request)).state, 'accepted');
+    assert.equal(f.calls.send, 1, 'reserved known-unsent retry sends once after policy recovery');
+  }
+  {
+    const f = fixture({ assertStationDelivery:async (call, state) => {
+      if (call === 2) {
+        await Promise.resolve();
+        state.actor = { ...state.actor,personal_lab_control:false };
+      }
+    } });
+    await rejects('permission-denied', () => f.service.send(f.req({
+      token:'x'.repeat(30),request_id:'valid_request_id_01'
+    })));
+    assert.equal(f.calls.send, 0, 'Auth must remain the final check after asynchronous policy gate');
+    assert.equal(f.calls.finish.length, 0);
+  }
   {
     const f = fixture();
     assert.deepEqual(await f.service.status(f.req()), { active:true, expires_at_ms:NOW + 60000 });

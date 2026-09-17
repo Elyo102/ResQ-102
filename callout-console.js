@@ -1,6 +1,6 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h19';
+import { CREW_HE } from './rotation.js?v=42h191';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 let active = null;
@@ -10,7 +10,7 @@ function text(value, max) {
 }
 
 function validStation(value) {
-  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(String(value || ''));
+  return /^[a-z0-9_-]{2,80}$/.test(String(value || ''));
 }
 
 function validCrew(value) {
@@ -98,7 +98,7 @@ function renderLive(session, list) {
         if (active !== session || !window.confirm('לסגור את הקריאה?')) return;
         close.disabled = true;
         try {
-          await session.closeCallout({ id });
+          await session.closeCallout({ id, ...(session.isSuper ? { target_station_id:session.sid } : {}) });
         } catch (error) {
           close.disabled = false;
           setMessage(session.elements.message,
@@ -125,7 +125,7 @@ async function loadRoster(session) {
 
 function watchOwnCallouts(session) {
   const source = query(collection(session.db, 'stations', session.sid, 'callouts'),
-    where('by_uid', '==', session.uid), orderBy('created_key', 'desc'), limit(10));
+    ...(session.isSuper ? [] : [where('by_uid', '==', session.uid)]), orderBy('created_key', 'desc'), limit(10));
   return onSnapshot(source, snap => {
     if (active !== session) return;
     const rows = [];
@@ -136,7 +136,8 @@ function watchOwnCallouts(session) {
       session.callouts.set(doc.id, value);
       rows.push({ id:doc.id, value:{ ...value, responses:session.responses.get(doc.id) || {} } });
       watchResponses(session, doc.id);
-      if (!session.pendingRequest && value.active !== false &&
+      if (value.by_uid === session.uid && value.target === 'crew:' + session.crew &&
+          !session.pendingRequest && value.active !== false &&
           ['reserved','delivering','partial'].includes(String(value.delivery_state || '')) &&
           /^[A-Za-z0-9_-]{16,80}$/.test(String(value.request_id || '')) && text(value.text, 300)) {
         session.pendingRequest = {
@@ -198,10 +199,11 @@ export async function initCalloutConsole(options = {}) {
   destroyCalloutConsole();
   const claims = options.claims && typeof options.claims === 'object' ? options.claims : {};
   const role = String(claims.role || '');
-  const sid = String(claims.stationId || '');
-  const crew = String(claims.shift || '');
+  const isSuper = claims.super === true;
+  const sid = String(isSuper ? (options.targetStationId || '') : (claims.stationId || ''));
+  const crew = String(isSuper ? (options.targetCrew || '') : (claims.shift || ''));
   if (options.readOnly === true || options.rolePreview === true ||
-      !ALLOWED_ROLES.includes(role) || !validStation(sid) || !validCrew(crew)) {
+      (!isSuper && !ALLOWED_ROLES.includes(role)) || !validStation(sid) || !validCrew(crew)) {
     throw new Error('callout-console-permission-denied');
   }
   if (!options.user || !options.user.uid || !options.db || !options.functions ||
@@ -210,7 +212,7 @@ export async function initCalloutConsole(options = {}) {
   }
 
   const session = {
-    db:options.db, sid, crew, role, uid:String(options.user.uid), elements:options.elements,
+    db:options.db, sid, crew, role, isSuper, uid:String(options.user.uid), elements:options.elements,
     roster:new Map(), callouts:new Map(), responses:new Map(), responseStops:new Map(), stop:() => {},
     pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
     sendCallout:options.sdk.httpsCallable(options.functions, 'sendCallout'),
@@ -227,7 +229,7 @@ export async function initCalloutConsole(options = {}) {
       setMessage(session.elements.message, 'צריך לכתוב את הודעת הקריאה.', 'err');
       return;
     }
-    if (!autoRetry && !window.confirm('להזעיק את ' + (CREW_HE[crew] || crew) + '?\n\n' + message)) return;
+    if (!autoRetry && !window.confirm('להזעיק את ' + (CREW_HE[crew] || crew) + ' בתחנה ' + sid + '?\n\n' + message)) return;
     if (session.pendingRequest && session.pendingRequest.message !== message) {
       session.elements.input.value = session.pendingRequest.message;
       setMessage(session.elements.message,
@@ -244,7 +246,7 @@ export async function initCalloutConsole(options = {}) {
     setMessage(session.elements.message, 'שולח קריאת פתע…', 'info');
     try {
       const response = await session.sendCallout({ target:'crew:' + crew, text:message,
-        request_id:session.pendingRequest.id });
+        request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) });
       if (active !== session) return;
       const data = response && response.data ? response.data : {};
       if (data.ok === false && data.retryable === true) {
@@ -297,7 +299,8 @@ export async function initCalloutConsole(options = {}) {
     if (active === session) setMessage(session.elements.message,
       'רשימת השמות לא נטענה; מוני התגובות ימשיכו להתעדכן.', 'info');
   }
-  return Object.freeze({ destroy:() => { if (active === session) destroyCalloutConsole(); } });
+  return Object.freeze({ hasPending:() => active === session && !!session.pendingRequest,
+    destroy:() => { if (active === session) destroyCalloutConsole(); } });
 }
 
 export const CALLOUT_CONSOLE_ROLES = ALLOWED_ROLES;

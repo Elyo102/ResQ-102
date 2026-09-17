@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.19';
-const EXPECTED_DATE = '14.9.2026';
-const EXPECTED_ASSET_KEY = '42h19';
+const EXPECTED_VERSION = '42H.19.1';
+const EXPECTED_DATE = '15.9.2026';
+const EXPECTED_ASSET_KEY = '42h191';
 const EXPECTED_VERSIONED_REFERENCES = 285; // Adds the isolated shift-callout surface.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([

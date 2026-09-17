@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h19';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h19';
-import { initAppCheck } from './appcheck.js?v=42h19';
-import { readScheduleFile } from './schedule-file-import.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h191';
+import { renderNav, renderStuckNav } from './nav.js?v=42h191';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h191';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h191';
+import { initAppCheck } from './appcheck.js?v=42h191';
+import { readScheduleFile } from './schedule-file-import.js?v=42h191';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h19';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h191';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h191';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -935,13 +935,16 @@ function renderModeCard() {
   /* ⭐ מועמד מוכן — הפיקוד חייב לדעת שהוא קיים. בלי השורה הזאת,
    * מפקד שאינו אחראי סידור לא היה יכול לגלות שיש סידור שמחכה
    * לאישורו; הוא היה תלוי במצב מקומי במסך של מישהו אחר. */
-  const candidate = view && view.candidate;
+  const candidate = view && view.authority_mode !== 'monthly' && view.candidate;
   if (candidate) {
     const line = 'יש סידור מוכן למעבר: מהדורה ' + candidate.revision
       + ' · ' + (candidate.from || '') + ' עד ' + (candidate.to || '')
       + (candidate.preflight && candidate.preflight.blocked
         ? ' · הבדיקה האחרונה מצאה פערים' : '');
     box.appendChild(node('div', 'sub', line));
+  } else if (view.authority_mode === 'monthly' && Number.isInteger(view.expected_authority_generation)) {
+    box.appendChild(node('div', 'sub', 'סמכות חודשית פעילה · דור ' + view.expected_authority_generation
+      + '. המעבר לחי יחול על פרסומים עתידיים בלבד.'));
   }
 
   const form = $('modeForm');
@@ -949,8 +952,10 @@ function renderModeCard() {
   if (state.modeTarget) {
     const toNew = state.modeTarget === 'new';
     $('modeConfirmHint').textContent = toNew
-      ? 'מעבר לסידור המוכן נבדק מול הסידור הקיים לפני האישור. '
-        + 'אם מישהו שמשובץ היום ייעלם — המעבר ייחסם.'
+      ? (view.authority_mode === 'monthly'
+        ? 'השרת יחתום את תמונת הבעלות החודשית המלאה לפני האישור. פרסומים עתידיים יעברו לחי; הודעות ניסוי קודמות לא יישלחו.'
+        : 'מעבר לסידור המוכן נבדק מול הסידור הקיים לפני האישור. '
+          + 'אם מישהו שמשובץ היום ייעלם — המעבר ייחסם.')
       : 'כדי לאשר, הקלד/י בדיוק: ' + state.modeTarget
         + ' — ההקלדה נשמרת ביומן יחד עם מי ביקש/ה, מתי ומאיזה מצב.';
     // שדות האישור וההקלדה אינם רלוונטיים למעבר, שנשען על הבדיקה.
@@ -972,13 +977,16 @@ function updateModeApply() {
    * אומר את זה במקום להיות פעיל ולהיכשל בשרת. */
   if (state.modeTarget === 'new') {
     const candidate = usableCandidate();
+    const monthly = monthlyAuthorityView();
     const raw = state.modeView && state.modeView.candidate;
     const pending = state.pendingCutover;
-    $('modeApply').disabled = state.modeBusy || (!candidate && !pending);
+    $('modeApply').disabled = state.modeBusy || (!monthly && !candidate && !pending);
     if (pending) {
       /* ⭐ 386.3 · הניסיון החוזר מוצג גם כשהמועמד כבר אינו „מוכן" —
        * למשל אחרי commit שהתשובה שלו אבדה. */
       $('modeApply').textContent = 'נסה שוב את המעבר שלא קיבל תשובה';
+    } else if (monthly) {
+      $('modeApply').textContent = 'בדוק ואשר מעבר לפרסום חי';
     } else if (candidate) {
       $('modeApply').textContent = 'בדוק ואשר מעבר לסידור המוכן';
     } else if (raw && raw.ambiguous) {
@@ -1030,6 +1038,31 @@ function usableCandidate() {
   return candidate;
 }
 
+/* בסמכות החודשית אין פרסום singleton שצריך לבחור כמועמד. תמונת
+ * הבעלות המלאה נחתמת בשרת, והמעבר משנה רק את מדיניות המסירה של
+ * פרסומים עתידיים. */
+function monthlyAuthorityView() {
+  return !!(state.modeView && state.modeView.authority_mode === 'monthly');
+}
+
+function verifiedMonthlyPreflight(raw) {
+  const report = raw && typeof raw === 'object' ? raw : null;
+  const summary = report && report.summary;
+  if (!report || report.schema !== 'schedule-month-cutover-preflight-v1'
+      || report.authority_mode !== 'monthly' || report.mode !== 'shadow'
+      || report.target !== 'new' || typeof report.preflight_signature !== 'string'
+      || !report.preflight_signature || !Number.isInteger(report.expected_generation)
+      || report.expected_generation < 0 || !summary || typeof summary !== 'object'
+      || !Number.isInteger(summary.months) || summary.months < 0
+      || !Number.isInteger(summary.publications) || summary.publications < 0
+      || !Number.isInteger(summary.unavailable_months) || summary.unavailable_months < 0) {
+    const error = new Error('השרת החזיר דוח מעבר חודשי שאינו תקין. לא בוצע שינוי.');
+    error.code = 'cutover-preflight-invalid';
+    throw error;
+  }
+  return report;
+}
+
 /* ⭐ 378.1 · ניסיון חוזר אחרי תשובה שאבדה. ה-commit אולי הצליח; המצב
  * כבר `new`; preview חדש ייכשל — ולא יגיע ל-replay. לכן קודם שולחים
  * **בדיוק** את מה שנשלח קודם (אותו request_id, אותה חתימה, אותו
@@ -1039,6 +1072,17 @@ function usableCandidate() {
  * את מה שחוזה ההצלחה מבטיח — ועל **אותו** פרסום שביקשנו. */
 function verifiedCutoverResult(pending, raw) {
   const result = raw && typeof raw === 'object' ? raw : null;
+  if (pending && pending.authority_mode === 'monthly') {
+    if (!result || result.mode !== 'new' || result.authority_mode !== 'monthly'
+        || !Number.isInteger(result.authority_generation)
+        || result.authority_generation !== pending.expected_generation
+        || typeof result.duplicate !== 'boolean') {
+      const error = new Error('השרת החזיר תשובה שאינה תואמת לבקשת המעבר החודשי. הבקשה נשמרה לניסיון חוזר.');
+      error.code = 'cutover-response-invalid';
+      throw error;
+    }
+    return result;
+  }
   if (!result || result.mode !== 'new'
       || result.publication_id !== pending.candidate_publication_id
       || !Number.isInteger(result.revision) || result.revision < 1
@@ -1053,7 +1097,14 @@ function verifiedCutoverResult(pending, raw) {
 async function promotePending(task = authTask()) {
   if (!scheduleMutationAllowed()) return;
   const pending = state.pendingCutover;
-  const result = verifiedCutoverResult(pending, (await call.cutoverPromote(pending)).data);
+  /* authority_mode הוא discriminator מקומי בלבד. חוזה השרת החודשי
+   * מקבל שלושה שדות מדויקים ונכשל סגור על כל שדה נוסף. */
+  const payload = pending && pending.authority_mode === 'monthly' ? {
+    request_id: pending.request_id,
+    preflight_signature: pending.preflight_signature,
+    expected_generation: pending.expected_generation
+  } : pending;
+  const result = verifiedCutoverResult(pending, (await call.cutoverPromote(payload)).data);
   if (!authTaskCurrent(task)) return null;
   state.pendingCutover = null;
   state.cutoverRequestId = null;
@@ -1061,6 +1112,10 @@ async function promotePending(task = authTask()) {
 }
 
 function cutoverSuccessText(result) {
+  if (result && result.authority_mode === 'monthly') {
+    return 'התחנה עברה לפרסום חי. פרסומים עתידיים יישלחו כרגיל; הודעות ניסוי קודמות נשארו מושתקות.'
+      + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '');
+  }
   return 'התחנה עברה לסידור החדש (מהדורה ' + result.revision + ').'
     + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '');
 }
@@ -1069,10 +1124,11 @@ async function promoteToNew() {
   if (state.modeBusy) return;
   const task = authTask();
   const pending = state.pendingCutover;
+  const monthly = monthlyAuthorityView();
   const candidate = usableCandidate();
   /* ⭐ 386.3 · בקשה ממתינה קודמת למועמד: אחרי commit אמיתי הרענון
    * מחזיר `new` בלי מועמד מוכן — והניסיון החוזר חייב להישאר נגיש. */
-  if (!pending && !candidate) return;
+  if (!pending && !monthly && !candidate) return;
   state.modeBusy = true;
   updateModeApply();
   let result = null;
@@ -1082,12 +1138,14 @@ async function promoteToNew() {
       result = await promotePending(task);
       if (!authTaskCurrent(task)) return;
     } else {
-      message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
-      const report = (await call.cutoverPreview({
-        candidate_publication_id: candidate.publication_id
-      })).data;
+      message('modeMessage', monthly
+        ? 'בודק את תמונת הסידור החודשית לפני מעבר לפרסום חי…'
+        : 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
+      const report = monthly
+        ? verifiedMonthlyPreflight((await call.cutoverPreview({})).data)
+        : (await call.cutoverPreview({ candidate_publication_id: candidate.publication_id })).data;
       if (!authTaskCurrent(task)) return;
-      if (report.blocked) {
+      if (!monthly && report.blocked) {
         const why = Object.keys(report.by_reason || {})
           .filter((key) => report.by_reason[key] > 0)
           .map((key) => (REASON_TEXT[key] || key) + ' ' + report.by_reason[key])
@@ -1104,7 +1162,7 @@ async function promoteToNew() {
       const changed = Number(changes.count || 0);
       const missing = Number((report.by_reason || {})['preflight-missing'] || 0);
       let accept = null;
-      if (changed > 0) {
+      if (!monthly && changed > 0) {
         const days = (changes.days || []).length;
         if (!confirm('הסידור החדש משנה ' + changed + ' שיבוצים לעומת הסידור הקיים'
           + (days ? ', על פני ' + days + ' ימים' : '') + '.'
@@ -1113,12 +1171,22 @@ async function promoteToNew() {
           + '\n\nלהמשיך?')) return;
         accept = report.signature;
       }
-      if (!confirm('להעביר את התחנה לסידור המוכן? '
+      if (monthly) {
+        const summary = report.summary;
+        if (!confirm('להעביר את התחנה לפרסום חי? '
+          + 'נבדקו ' + summary.months + ' חודשים ו-' + summary.publications + ' פרסומים. '
+          + 'רק פרסומים עתידיים יישלחו; הודעות שנוצרו במצב ניסוי יישארו מושתקות.')) return;
+      } else if (!confirm('להעביר את התחנה לסידור המוכן? '
         + 'מרגע האישור כל התחנה רואה את הסידור החדש, וההודעות שהמתינו נשלחות.')) return;
 
       /* ⭐ אותו `request_id` נשמר לניסיון חוזר, יחד עם מלוא הכוונה. */
       if (!state.cutoverRequestId) state.cutoverRequestId = requestId('cutover');
-      state.pendingCutover = {
+      state.pendingCutover = monthly ? {
+        request_id: state.cutoverRequestId,
+        authority_mode: 'monthly',
+        preflight_signature: report.preflight_signature,
+        expected_generation: report.expected_generation
+      } : {
         request_id: state.cutoverRequestId,
         candidate_publication_id: candidate.publication_id,
         /* ⭐ החתימה של הדוח ש**הוצג בשורה שלמעלה**, ולא זו שהשרת
@@ -2374,11 +2442,24 @@ function canonicalPolicyReady() {
     Object.prototype.hasOwnProperty.call(state.policy.sub_stations || {}, station.id)));
 }
 
+function workbookManagedImport() {
+  // Mirror sheetImportBasis only after setup was successfully loaded. Missing
+  // optional configuration is supported; a failed setup request is not evidence
+  // of missing configuration. Keep legacy custom station mapping intact.
+  const setup = state.setup;
+  if (!setup) return false;
+  if (setup.configured === false && Array.isArray(setup.missing)
+      && setup.missing.some((key) => key === 'policy' || key === 'source')) return true;
+  return setup.configured === true
+    && String(setup.policy && (setup.policy.active_policy_id || setup.policy.id) || '').startsWith('ip_')
+    && String(setup.source && setup.source.id || '').startsWith('si_');
+}
+
 function renderImportStationMap() {
   const wrap = $('importStationMap');
   const grid = $('importStationMapGrid');
   clear(grid);
-  if (!state.policy || canonicalPolicyReady()) {
+  if (workbookManagedImport() || !state.policy || canonicalPolicyReady()) {
     wrap.hidden = true;
     state.importStationMap = null;
     $('importStationMapConfirm').checked = false;
@@ -2420,7 +2501,7 @@ function renderImportStationMap() {
 }
 
 function importStationMap() {
-  if (canonicalPolicyReady()) return null;
+  if (workbookManagedImport() || canonicalPolicyReady()) return null;
   if (!state.policy) throw new Error('חסרים חוקי תחנה פעילים.');
   const mapping = state.importStationMap || {};
   if (FIXED_STATIONS.some((station) => !Object.prototype.hasOwnProperty.call(mapping, station.id))) {
@@ -2545,9 +2626,13 @@ function renderImportReport(report) {
       return (kind ? kind[1] : absence.kind) + (location ? ' · ' + location : '');
     }).join(', ');
     dups.appendChild(node('div', 'change weak', item.name + ' מופיע ב-' + dateLabel(item.date)
-      + ' גם בשיבוץ (' + stations + ') וגם בהיעדרות (' + absences + ') — יש לבחור אחד מהם בגיליון.'));
+      + ' גם בשיבוץ (' + stations + ') וגם בהיעדרות (' + absences + ')'
+      + ((report.warnings || []).some(w => w.code === 'assignment-absence-conflict')
+        ? ' — שני הרישומים נשמרים לבדיקה של אחראי הסידור; האזהרה אינה חוסמת פרסום.'
+        : ' — יש לבחור אחד מהם בגיליון.')));
   });
   (report.warnings || []).forEach((warning) => {
+    if (warning.code === 'assignment-absence-conflict') return; // Named findings above.
     if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
     dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
   });
@@ -3211,7 +3296,11 @@ function renderDraftManualWarnings(preview) {
         codes
       });
     })));
-  panel.hidden = findings.length === 0;
+  const importConflicts = Array.isArray(preview.import_conflicts) ? preview.import_conflicts : [];
+  panel.hidden = findings.length === 0 && importConflicts.length === 0;
+  importConflicts.forEach((item) => list.appendChild(node('div', 'change warn',
+    item.name + ' · ' + dateLabel(item.date)
+      + ' — מופיע גם בשיבוץ וגם בהיעדרות. שני הרישומים נשמרו; יש לסקור לפני הפרסום.')));
   findings.forEach((finding) => list.appendChild(node('div', 'change warn',
     finding.person + ' · ' + dateLabel(finding.date) + ' · ' + finding.station
       + ' — ' + manualWarningLabel(finding.codes))));

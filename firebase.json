@@ -35,7 +35,8 @@
     "public": ".",
 
     "predeploy": [
-      "npm --prefix tests run pages:source"
+      "npm --prefix tests run pages:source",
+      "node tests/hosting-privacy.mjs"
     ],
 
     "_הערה_ignore": "שלוש השורות .git/** .github/** .firebase/** אינן מיותרות. '**/.*' לבדו אינו גוזם תיקיות מוסתרות — הוא תפס את התיקייה .git עצמה אבל לא את 362 הקבצים שבתוכה, והפריסה הראשונה ב-25.8.2026 העלתה את כל היסטוריית הריפו לכתובת ציבורית. תיקיית .git על שרת אינטרנט היא יעד סריקה מוכר: מבקשים /.git/HEAD ומשם משחזרים את כל הריפו.",
@@ -54,6 +55,7 @@
       "functions/**",
       "tests/**",
       "rules-test/**",
+      "outputs/**",
       "_דיונים/**",
       "_מסירות/**",
       "_מסירה-*/**",

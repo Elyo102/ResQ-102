@@ -14,4 +14,13 @@ const registered={schema_version:1,person_id:'sp_registered_01',station_id:'eila
 test('publication maps person id to active linked uid and omits external',()=>{const out=recipients.resolvePublicationNotifications({station_id:'eilat_102',notifications:[{person:external.person_id,dedupe_key:'a'},{person:registered.person_id,dedupe_key:'b'}],people:[external,registered],verified_users:[{uid:'uid_live',station_id:'eilat_102',active:true}]});assert.equal(out.length,1);assert.equal(out[0].person,'uid_live');});
 test('publication never emits sp namespace',()=>{const out=recipients.resolvePublicationNotifications({station_id:'eilat_102',notifications:[{person:external.person_id}],people:[external],verified_users:[]});assert.deepEqual(out,[]);});
 test('inactive linked account is omitted',()=>{const out=recipients.resolvePublicationNotifications({station_id:'eilat_102',notifications:[{person:registered.person_id}],people:[registered],verified_users:[{uid:'uid_live',station_id:'eilat_102',active:false}]});assert.deepEqual(out,[]);});
+test('workbook overlap warns and preserves assignment and absence',()=>{
+  const out=pipeline.buildWorkbookImport({station_id:'eilat_102',month:'2026-09',
+    input:[['','1/9','2/9','3/9'],['אילת','עובד בדיקה','',''],['מחלה','עובד בדיקה','','']],inventory:[],bindings:[]});
+  assert.deepEqual(out.blockers,[]);
+  assert.ok(out.warnings.some(w=>w.code==='assignment-absence-conflict'&&w.count===1));
+  assert.equal(out.resolved.counts.assignments,1);
+  assert.equal(out.resolved.counts.absences,1);
+  assert.equal(out.resolved.assignment_absence_conflicts.length,1);
+});
 if(!process.exitCode)console.log(`${passed}/${passed} schedule import pipeline tests passed`);

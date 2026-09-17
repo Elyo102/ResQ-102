@@ -1827,6 +1827,8 @@ head('20 · מנוע סידור חודשי — לקוחות אינם עוקפי�
 // התראות. כל הצפייה והעריכה נעשות דרך Callable Functions בלבד.
 const SCHEDULE_PATHS = [
   `stations/${SID}/schedule_state/runtime`,
+  `stations/${SID}/schedule_state/publication_authority`,
+  `stations/${SID}/schedule_state/publication_authority_control`,
   `stations/${SID}/schedule_policies/policy_v1`,
   `stations/${SID}/schedule_sources/source_v1`,
   `stations/${SID}/schedule_sources/source_v1/people/u_ff`,
@@ -1834,6 +1836,8 @@ const SCHEDULE_PATHS = [
   `stations/${SID}/schedule_drafts/draft_v1/rows/row_v1`,
   `stations/${SID}/schedule_publications/pub_v1`,
   `stations/${SID}/schedule_publications/pub_v1/schedule_outbox/out_v1`,
+  `stations/${SID}/schedule_publication_months/2026-09`,
+  `stations/${SID}/schedule_publication_authority_operations/op_v1`,
   `stations/${SID}/schedule_responses/response_v1`,
   `stations/${SID}/schedule_audit/audit_v1`
 ];

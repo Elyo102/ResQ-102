@@ -139,13 +139,14 @@ function stable(value) {
 }
 const digest = (v) => hash(stable(v));
 
+let generatedRuntimeId = 0;
 function buildRuntime(db, hooks) {
   return runtimeMod.createScheduleRuntime({
     db,
     FieldValue: { serverTimestamp: () => ({ __ts: true }) },
     FieldPath: Object.assign(function FieldPath() {}, { documentId: () => '__name__' }),
     clock: () => '2026-08-25T06:00:00.000Z',
-    hash, randomId: () => 'rnd',
+    hash, randomId: () => 'rnd_' + (++generatedRuntimeId),
     createEngine: calendarMod.createCalendarEngine,
     createPublication: publicationMod.createPublication,
     createService: serviceMod.createScheduleService,
@@ -1006,6 +1007,16 @@ const CONFLICT_SHEET = [
 
 /* 11 · תחנה לא מוגדרת: ייבוא אטומי, חיצוניים יציבים, בלי זיהום runtime. */
 {
+  let workbookInput = { paste:SHEET };
+  if (process.env.RESQ_IMPORT_WORKBOOK) {
+    const { readFileSync } = await import('node:fs');
+    const { readScheduleFile } = await import('../schedule-file-import.js');
+    const parsedFile = await readScheduleFile(new File([
+      readFileSync(process.env.RESQ_IMPORT_WORKBOOK)
+    ], 'acceptance.xlsx'), { month:'2026-09' });
+    workbookInput = { matrix:parsedFile.matrix, label_spans:parsedFile.label_spans };
+    console.log('Workbook acceptance uses supplied file, rows=' + parsedFile.matrix.length + '; names are not logged.');
+  }
   const db = createFakeDb();
   db._put(ST + '/users/' + MGR, {
     station_id: SID, station: SID, is_active: true, active: true,
@@ -1017,11 +1028,11 @@ const CONFLICT_SHEET = [
   });
   db._put(ST + '/schedule_state/runtime', { mode: 'shadow' });
   const rt = buildRuntime(db);
-  const report = await rt.previewScheduleImport(req({ month: '2026-09', paste: SHEET }));
+  const report = await rt.previewScheduleImport(req({ month: '2026-09', ...workbookInput }));
   eq('11.1 שמות ייחודיים ללא חשבון הם אזהרה ולא חסם',
     [report.blocked, report.counts.unlinked > 0], [false, true]);
   const imported = await rt.importScheduleSheet(req({
-    request_id: 'basis_unconfigured_import', month: '2026-09', paste: SHEET,
+    request_id: 'basis_unconfigured_import', month: '2026-09', ...workbookInput,
     expected_report_digest: report.report_digest
   }));
   const runtimeAfter = db._get(ST + '/schedule_state/runtime');
@@ -1038,7 +1049,7 @@ const CONFLICT_SHEET = [
     db._paths(ST + '/schedule_drafts/').length
   ];
   const replay = await rt.importScheduleSheet(req({
-    request_id: 'basis_unconfigured_import', month: '2026-09', paste: SHEET,
+    request_id: 'basis_unconfigured_import', month: '2026-09', ...workbookInput,
     expected_report_digest: report.report_digest
   }));
   eq('11.4 ניסיון חוזר אידמפוטנטי ואינו מוסיף חומר', [replay.duplicate, [
@@ -1047,6 +1058,56 @@ const CONFLICT_SHEET = [
     db._paths(ST + '/schedule_sources/').length,
     db._paths(ST + '/schedule_drafts/').length
   ]], [true, basisCounts]);
+  ['A', 'B', 'C'].forEach((crew, position) => db._put(ST + '/rotations/' + crew,
+    { anchor_date:'2026-09-01', cycle_days:3, position_in_cycle:position, crew, is_active:true }));
+  const externalPreview = await rt.getDraftPreview(req({ draft_id:imported.draft_id, start:imported.from }));
+  eq('11.4b אזהרות חפיפה נשארות גלויות בסקירת הטיוטה',
+    externalPreview.import_conflicts, report.assignment_absence_conflicts);
+  const draftPath = ST + '/schedule_drafts/' + imported.draft_id;
+  const originalMeta = db._get(draftPath);
+  db._put(draftPath, { ...originalMeta, workbook_managed:false });
+  await rejectsCode('11.5a מסלול ישן נשאר חסום ללא מקור', () => rt.getDraftPreview(req({ draft_id:imported.draft_id, start:imported.from })), 'schedule-config-incomplete');
+  db._put(draftPath, { ...originalMeta, station_id:'another_station' });
+  await rejectsCode('11.5b טיוטה מתחנה אחרת נשארת חסומה', () => rt.getDraftPreview(req({ draft_id:imported.draft_id, start:imported.from })), 'draft-not-ready');
+  db._put(draftPath, originalMeta);
+  const originalPolicy = db._get(ST + '/schedule_policies/' + originalMeta.policy_id);
+  db._put(ST + '/schedule_policies/' + originalMeta.policy_id, { ...originalPolicy, content_digest:'changed' });
+  await rejectsCode('11.5c בסיס חתום ששונה נשאר חסום', () => rt.getDraftPreview(req({ draft_id:imported.draft_id, start:imported.from })), 'draft-source-changed');
+  db._put(ST + '/schedule_policies/' + originalMeta.policy_id, originalPolicy);
+  const externalPublication = await rt.publish(req({ request_id:'basis_unconfigured_publish',
+    draft_id:imported.draft_id, expected_content_digest:externalPreview.expected_content_digest }));
+  ok('11.5 טיוטה ללא הגדרה מתפרסמת בניסוי', !!externalPublication.publication_id);
+  const activeRuntime = db._get(ST + '/schedule_state/runtime');
+  db._put(ST + '/schedule_state/runtime', { ...activeRuntime, mode:'new' });
+  const externalRange = await rt.getStationRange(req({ from:imported.from, to:imported.to }));
+  eq('11.6a כל השיבוצים וההיעדרויות נשמרו בלוח המפורסם', [
+    externalRange.days.reduce((sum, day) => sum + day.sub_stations.reduce((n, sub) => n + sub.people.length, 0), 0),
+    externalRange.days.reduce((sum, day) => sum + day.absences.length, 0)
+  ], [report.counts.assignments, report.counts.absences]);
+  for (const conflict of report.assignment_absence_conflicts) {
+    const conflictDay = externalRange.days.find(day => day.date === conflict.date);
+    ok('11.6c חפיפה אינה מוחקת אף רישום', conflictDay
+      && conflictDay.sub_stations.some(sub => sub.people.some(person => person.person === conflict.name))
+      && conflictDay.absences.some(person => person.display === conflict.name));
+  }
+  ok('11.6 אנשים ללא חשבון גלויים בלוח שפורסם', externalRange.days.some(day =>
+    day.sub_stations.some(station => station.people.some(person => !!person.person))));
+  const assignedRow = db._paths(draftPath + '/rows/').map(path => db._get(path).row).find(row => row.slots.length);
+  const expectedExternal = db._get(ST + '/schedule_people/' + assignedRow.slots[0].person);
+  ok('11.6b השם החיצוני המדויק נשמר בתצוגה', externalRange.days.some(day =>
+    day.sub_stations.some(station => station.people.some(person => person.person === expectedExternal.display_name))));
+  const expected = db._get(ST + '/schedule_state/active');
+  const edits = [{ kind:'unassign', uid:assignedRow.slots[0].person, dates:[assignedRow.date] }];
+  const editReport = await rt.previewScheduleEdit(req({ expected, edits }));
+  const edited = await rt.applyScheduleEdit(req({ request_id:'basis_external_edit', expected, edits,
+    expected_edit_digest:editReport.edit_digest }));
+  eq('11.7 עריכת אדם ללא חשבון מפרסמת גרסה שנייה', edited.revision, 2);
+  const restored = await rt.rollback(req({ request_id:'basis_external_restore',
+    target_publication_id:externalPublication.publication_id,
+    expected_active_publication_id:edited.publication_id, reason_code:'wrong_assignment' }));
+  eq('11.8 חזרה לגרסה קודמת ללא הגדרה גלובלית', restored.revision, 3);
+  const restoredRange = await rt.getStationRange(req({ from:imported.from, to:imported.to }));
+  eq('11.9 כל השמות והשיבוצים שוחזרו בדיוק', restoredRange.days, externalRange.days);
 }
 
 /* 12 · כשל בשער העסקה אינו משאיר basis או טיוטה חלקיים. */

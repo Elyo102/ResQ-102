@@ -41,7 +41,7 @@ const setup = {
     { id:'crew_1', name:'טל חודרה', sub_station:'main', roles:['driver','firefighter'] }]
 };
 
-async function open(browser, width) {
+async function open(browser, width, overrides = {}) {
   const context = await browser.newContext({ viewport:{ width, height:844 }, locale:'he-IL' });
   await context.route('**/firebasejs/**', (route) => {
     const name = route.request().url().split('/').pop().split('?')[0];
@@ -49,13 +49,14 @@ async function open(browser, width) {
     route.fulfill({ status:200, contentType:'text/javascript',
       body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
-  await context.addInitScript(({ runtime, managerSetup }) => {
+  await context.addInitScript(({ runtime, managerSetup, plan }) => {
     window.__SMOKE_ROLE = 'firefighter';
     window.__CALLABLE_PLAN = {
       getScheduleRuntimeStatus:[{ data:runtime }],
-      getScheduleManagerSetup:[{ data:managerSetup }]
+      getScheduleManagerSetup:[{ data:managerSetup }],
+      ...plan
     };
-  }, { runtime:status, managerSetup:setup });
+  }, { runtime:status, managerSetup:overrides.setup || setup, plan:overrides.plan || {} });
   const page = await context.newPage();
   await page.goto(base, { waitUntil:'load' });
   await page.locator('#appMain:not(.hide)').waitFor();
@@ -69,6 +70,59 @@ async function test(name, fn) {
 
 const browser = await chromium.launch();
 try {
+  for (const [label, managerSetup] of [
+    ['no policy or source', { mode:'shadow', configured:false, policy:null, missing:['policy','source'], people:[] }],
+    ['no source', { mode:'shadow', configured:false, policy:null, missing:['source'], people:[] }],
+    ['generated workbook configuration', { ...setup, policy:{ ...setup.policy, id:'ip_test', active_policy_id:'ip_test' }, source:{ id:'si_test' } }]
+  ]) {
+    await test(`file selection reaches server preview without optional station setup: ${label}`, async () => {
+      const session = await open(browser, 390, { setup:managerSetup, plan:{
+        previewScheduleImport:[{ data:{ month:'2026-09', from:'2026-09-01', to:'2026-09-30',
+          counts:{ days:30, assignments:1 }, blocks:[], unresolved:[], people:[],
+          report_digest:'workbook-preview', blocked:false } }],
+        importScheduleSheet:[{ data:{ draft_id:'workbook_draft', content_digest:'workbook_content',
+          from:'2026-09-01', to:'2026-09-30', summary:{ filled:1, imported_below_minimum:1, imported_absences:0 } } }],
+        getScheduleDraftPreview:[{ data:{ draft_id:'workbook_draft', expected_content_digest:'workbook_content',
+          import_conflicts:[{ name:'עובד ללא חשבון', date:'2026-09-01' }],
+          imported:true, from:'2026-09-01', to:'2026-09-30', week_start:'2026-09-01', days:[{
+            date:'2026-09-01', crew:'A', sub_stations:[{ sub_station:'eilat', label:'אילת', minimum:2,
+              coverage:'ready', below_minimum:true, people:[{ person:'עובד ללא חשבון', uid:null,
+                role_label:'לוחם', hours:'07:00-07:00', is_me:false }] }], guards:[], guards_status:'ready', events:[]
+          }] } }]
+      } });
+      try {
+        await session.page.locator('#importMonth').fill('2026-09');
+        await session.page.locator('#importFile').setInputFiles({ name:'schedule.csv', mimeType:'text/csv',
+          buffer:Buffer.from('תחנה,2026-09-01\nאילת,עובד ללא חשבון\n', 'utf8') });
+        await session.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(c => c.name === 'previewScheduleImport'), null, { timeout:5000 });
+        assert.equal(await session.page.locator('#importStationMap').isVisible(), false);
+        await session.page.locator('#importRun').click();
+        await session.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(c => c.name === 'importScheduleSheet'), null, { timeout:5000 });
+        const calls = await session.page.evaluate(() => window.__CALLABLE_CALLS.filter(c => ['previewScheduleImport','importScheduleSheet'].includes(c.name)));
+        assert.equal(calls.length, 2);
+        for (const call of calls) {
+          assert.ok(Array.isArray(call.payload.matrix));
+          assert.equal(Object.hasOwn(call.payload, 'station_map'), false);
+        }
+        assert.equal(calls[1].payload.expected_report_digest, 'workbook-preview');
+        assert.ok(calls[1].payload.request_id);
+        await session.page.locator('#draftPreviewCard').waitFor({ state:'visible' });
+        await session.page.waitForFunction(() => !document.querySelector('#reviewDraft').disabled, null, { timeout:5000 });
+        assert.match(await session.page.locator('#draftPreview').textContent(), /עובד ללא חשבון/);
+        assert.equal(await session.page.locator('#draftManualWarnings').isVisible(), true);
+        assert.match(await session.page.locator('#draftManualWarningsList').textContent(), /עובד ללא חשבון.*גם בשיבוץ וגם בהיעדרות/);
+        assert.equal(await session.page.locator('#publish').isDisabled(), true, 'review must precede publication');
+        await session.page.locator('#reviewDraft').check();
+        assert.equal(await session.page.locator('#publish').isEnabled(), true, 'optional setup cannot block reviewed imported draft');
+        assert.equal(await session.page.evaluate(() => window.__CALLABLE_CALLS.some(c => c.name === 'publishSchedule')), false);
+        if (process.env.SCHEDULE_SCREENSHOT_DIR && label === 'no policy or source') {
+          fs.mkdirSync(process.env.SCHEDULE_SCREENSHOT_DIR, { recursive:true });
+          await session.page.evaluate(() => window.scrollTo(0, 0));
+          await session.page.screenshot({ path:path.join(process.env.SCHEDULE_SCREENSHOT_DIR, 'schedule-workbook-reviewed-390.png'), fullPage:true });
+        }
+      } finally { await session.context.close(); }
+    });
+  }
   const desktop = await open(browser, 1200);
   await test('unified manager workflow exposes the five actions in operational order', async () => {
     const workflow = desktop.page.locator('#managerWorkflow');
@@ -155,7 +209,7 @@ try {
     }
   });
 
-  for (const width of [320, 360, 390]) {
+  for (const width of [320, 360, 390, 600, 1280]) {
     const mobile = await open(browser, width);
     await test(`${width}px manager shell stays inside the document and keeps actions reachable`, async () => {
       const metrics = await mobile.page.evaluate(() => {
@@ -194,6 +248,29 @@ try {
       await mobile.page.locator('#editDrawerClose').click();
       await drawer.waitFor({ state:'hidden' });
     });
+    await test(`${width}px optional paste opens by keyboard without losing its input`, async () => {
+      const option = mobile.page.locator('#importPasteOption');
+      const summary = option.locator('summary');
+      assert.equal(await option.getAttribute('open'), null);
+      assert.equal(await mobile.page.locator('#importPaste').isVisible(), false);
+      await summary.focus();
+      await mobile.page.keyboard.press('Enter');
+      await mobile.page.locator('#importPaste').fill('בדיקת טקסט שנשמר');
+      await summary.focus();
+      await mobile.page.keyboard.press('Space');
+      assert.equal(await mobile.page.locator('#importPaste').isVisible(), false);
+      await mobile.page.keyboard.press('Enter');
+      assert.equal(await mobile.page.locator('#importPaste').inputValue(), 'בדיקת טקסט שנשמר');
+      assert.ok(await summary.evaluate(node => node.getBoundingClientRect().height >= 44));
+      assert.ok(await mobile.page.locator('#importPaste').evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 16));
+      await summary.focus();
+      await mobile.page.keyboard.press('Enter');
+      if (process.env.SCHEDULE_SCREENSHOT_DIR) {
+        fs.mkdirSync(process.env.SCHEDULE_SCREENSHOT_DIR, { recursive:true });
+        await mobile.page.evaluate(() => window.scrollTo(0, 0));
+        await mobile.page.screenshot({ path:path.join(process.env.SCHEDULE_SCREENSHOT_DIR, `schedule-import-${width}.png`), fullPage:true });
+      }
+    });
     await mobile.context.close();
   }
 } finally {
@@ -201,4 +278,4 @@ try {
   server.close();
 }
 
-console.log(`schedule manager shell browser: ${passed}/9 passed`);
+console.log(`schedule manager shell browser: ${passed} passed`);

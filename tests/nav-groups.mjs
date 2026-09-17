@@ -80,7 +80,7 @@ const member = [
 ];
 const staff = member.concat(['access.html', 'admin.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
-const all = audit.concat(['hr.html', 'import.html', 'check.html', 'maintenance.html']);
+const all = audit.concat(['hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html']);
 const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
@@ -104,6 +104,19 @@ async function open(context, claims, current = 'attendance.html') {
 }
 
 try {
+  const midWidth = await browser.newContext({ viewport:{ width:600, height:844 }, locale:'he-IL' });
+  const midPage = await open(midWidth, { role:'firefighter', super:true });
+  await test('600px uses compact header with dock rather than duplicate expanded navigation', async () => {
+    if (!await midPage.locator('#navToggle').isVisible()) throw new Error('compact toggle missing at 600px');
+    if (await midPage.locator('#navLinks').isVisible()) throw new Error('600px navigation starts expanded');
+    if (!await midPage.locator('#resqDock').isVisible()) throw new Error('600px dock missing');
+    await midPage.locator('#navToggle').click();
+    if (!await midPage.locator('#navLinks').isVisible()) throw new Error('600px menu cannot open');
+    await midPage.keyboard.press('Escape');
+    if (await midPage.locator('#navLinks').isVisible()) throw new Error('600px Escape does not close menu');
+    if (await midPage.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) throw new Error('600px overflow');
+  });
+  await midWidth.close();
   const matrixContext = await browser.newContext({ viewport:{ width:1280, height:800 }, locale:'he-IL' });
   for (const [name, claims, expectedLinks, expectedDoors] of roles) {
     await test(name + ' keeps the exact permitted destinations', async () => {

@@ -54,10 +54,11 @@ function eq(name, actual, expected) {
   ok(name, a === b, 'קיבלתי ' + a + ' במקום ' + b);
 }
 
-let INDEX, RUNTIME, UI, HTML, RULES;
+let INDEX, RUNTIME, CONTROL, UI, HTML, RULES;
 try {
   INDEX = read('functions/index.js');
   RUNTIME = read('functions/schedule-runtime.js');
+  CONTROL = read('functions/schedule-month-authority-control.js');
   UI = read('schedule-management.js');
   HTML = read('schedule-management.html');
   RULES = read('firestore.rules');
@@ -94,6 +95,7 @@ const D = Object.freeze({
     .test(stripComments(body)),
   guardGate: (body) => /requireGuardManager\(ctx\)|requireLiveGuardManagerNow\(ctx\)/
     .test(stripComments(body)),
+  superGate: (body) => /await verifySuper\(req\)/.test(stripComments(body)),
   noClientStation: (body) => !/data\.(station_id|stationId)/.test(stripComments(body)),
   commandGate: (body) => stripComments(body).indexOf('mayChangeMode') !== -1,
   /* ⭐ „נקרא מחדש בתוך הטרנזקציה, מהמסמך החי" — ולא „נקרא פעם אחת
@@ -192,6 +194,7 @@ const GATE = Object.freeze({
   GUARD: 'סמכות ניהול אבטחות חיה',
   COMMAND: 'פיקוד התחנה או מנהל-על',
   HR: 'רכזת כוח אדם או מנהל-על',
+  SUPER: 'מנהל-על בלבד',
   SELF: 'הקורא, על עצמו בלבד',
   VIEW: 'צפייה'
 });
@@ -246,6 +249,7 @@ const CALLABLES = Object.freeze([
   { name: 'getStationScheduleV2', method: 'getStation', gate: GATE.VIEW },
   { name: 'getStationScheduleRange', method: 'getStationRange', gate: GATE.VIEW },
   { name: 'getScheduleRuntimeStatus', method: 'getStatus', gate: GATE.VIEW },
+  { name: 'activateScheduleMonthAuthority', method: 'activate', gate: GATE.SUPER },
   { name: 'getGuardManagementStatus', method: 'getGuardManagementStatus', gate: GATE.VIEW },
   { name: 'getScheduleGuardBoard', method: 'getGuardBoard', gate: GATE.VIEW },
   { name: 'getGuardLoadStatistics', method: 'getGuardLoadStatistics', gate: GATE.GUARD },
@@ -264,6 +268,14 @@ function methodBody(name, src) {
   const stop = text.indexOf('\n  function ', start + 10);
   const cut = [end, stop].filter((x) => x > start).sort((a, b) => a - b)[0];
   return text.slice(start, cut === undefined ? start + 4000 : cut);
+}
+
+function controlMethodBody(name, src) {
+  const text = src === undefined ? CONTROL : src;
+  const start = text.indexOf('async function ' + name + '(req)');
+  if (start === -1) return null;
+  const end = text.indexOf('\n  async function ', start + 10);
+  return text.slice(start, end === -1 ? text.length : end);
 }
 
 // כיסוי הרשימה מול המקור — כפונקציה, כדי שסעיף 8 יוכל להוכיח
@@ -326,6 +338,11 @@ CALLABLES.filter((item) => item.gate === GATE.COMMAND && item.method).forEach((i
   // ⭐ ובמפורש: המינוי התפעולי אינו פותח את השער הזה.
   ok('3.C! ' + item.method + ' אינו נפתח במינוי אחראי סידור',
     !!body && D.commandNotManager(body));
+});
+
+CALLABLES.filter((item) => item.gate === GATE.SUPER && item.method).forEach((item) => {
+  const body = controlMethodBody(item.method);
+  ok('3.SUPER ' + item.method + ' דורש מנהל-על חי', !!body && D.superGate(body));
 });
 
 /* ==================================================================
@@ -515,6 +532,10 @@ mutateIn('8.4 מינוי אחראי סידור פותח את שער המצב', '
   'const actor = modeActor(ctx);',
   'const actor = modeActor(ctx);\n    requireManager(ctx);',
   (src) => D.commandNotManager(methodBody('setRuntimeMode', src)));
+
+mutate('8.4a הפעלת סמכות חודשית בלי מנהל-על חי', CONTROL,
+  /await verifySuper\(req\);/g, '',
+  (src) => D.superGate(controlMethodBody('activate', src)));
 
 // --- זהות אישית ---
 mutateIn('8.5 respond בלי זהות שרת', 'respond',

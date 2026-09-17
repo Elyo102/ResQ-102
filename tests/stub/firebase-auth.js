@@ -165,6 +165,8 @@ export function deleteUser(){
 export function updatePassword(){ return Promise.resolve(); }
 export function reauthenticateWithCredential(){ return Promise.resolve(); }
 export function sendEmailVerification(){ return Promise.resolve(); }
+// Reload does not verify an email or grant claims. Tests must set those facts explicitly.
+export function reload(){ markAuth('reload'); return Promise.resolve(); }
 export function setPersistence(){ return Promise.resolve(); }
 export function signInWithCustomToken(){ return Promise.resolve({ user: USER }); }
 export const EmailAuthProvider = { credential: () => ({}) };

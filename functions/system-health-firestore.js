@@ -28,6 +28,41 @@ function activeStation(doc, knownDistricts) {
   return value.active === true && knownDistricts.includes(String(value.districtId || ''));
 }
 
+function provisioningStation(doc, knownDistricts) {
+  const row = doc.data() || {};
+  return scope.STATION_ID_RE.test(String(doc.id || '')) && row.station_id === doc.id
+    && row.schema_version === 1 && row.active === false && row.status === 'provisioning'
+    && row.silent === true && row.template_id === 'fire-station-v1'
+    && typeof row.provision_request_id === 'string' && /^[A-Za-z0-9_-]{8,120}$/.test(row.provision_request_id)
+    && typeof row.name === 'string' && row.name.trim().length > 0
+    && knownDistricts.includes(String(row.districtId || ''));
+}
+
+// One inventory definition for scanning, readiness enrollment and publication CAS.
+// Enrollment proves coverage only; it is not a healthy scan or activation grant.
+function collectInventory({ activePage, provisionPage, builtinIds, builtinSnaps, builtins, knownDistricts }) {
+  const byId = new Map();
+  let complete = activePage.size <= MAX_STATIONS && provisionPage.size <= MAX_STATIONS;
+  builtinIds.forEach((id, at) => {
+    const snap = builtinSnaps[at];
+    const row = snap.exists ? (snap.data() || {}) : builtins[id];
+    if (!row || row.active !== true) return;
+    if (!scope.STATION_ID_RE.test(id) || !knownDistricts.includes(String(row.districtId || ''))) complete = false;
+    else byId.set(id, row);
+  });
+  for (const doc of activePage.docs || []) {
+    const id = String(doc.id || '');
+    if (!scope.STATION_ID_RE.test(id) || !activeStation(doc, knownDistricts)) complete = false;
+    else byId.set(id, doc.data() || {});
+  }
+  for (const doc of provisionPage.docs || []) {
+    if (!provisioningStation(doc, knownDistricts)) complete = false;
+    else byId.set(doc.id, doc.data() || {});
+  }
+  if (byId.size > MAX_STATIONS) complete = false;
+  return { complete, stations: complete ? [...byId.keys()].sort().map(id => ({ station_id: id, silent: byId.get(id).silent === true })) : [] };
+}
+
 function createFirestoreHealthPorts(deps) {
   const value = deps || {};
   const { db, FieldValue, FieldPath, clock, randomId, builtins, knownDistricts, activeIndex } = value;
@@ -46,31 +81,16 @@ function createFirestoreHealthPorts(deps) {
     }
   }
 
-  async function listStations({ deadline_ms: deadlineMs }) {
-    const byId = new Map();
-    let complete = true;
+  async function listStations({ deadline_ms: deadlineMs, tx } = {}) {
+    const read = ref => tx ? tx.get(ref) : ref.get();
     const builtinIds = Object.keys(builtins);
-    const [page, ...builtinSnaps] = await Promise.all([
-      db.collection('stations').where('active', '==', true).limit(MAX_STATIONS + 1).get(),
-      ...builtinIds.map((id) => db.doc('stations/' + id).get())
+    const [activePage, provisionPage, ...builtinSnaps] = await Promise.all([
+      read(db.collection('stations').where('active', '==', true).limit(MAX_STATIONS + 1)),
+      read(db.collection('stations').where('status', '==', 'provisioning').limit(MAX_STATIONS + 1)),
+      ...builtinIds.map((id) => read(db.doc('stations/' + id)))
     ]);
-    builtinIds.forEach((id, at) => {
-      const snap = builtinSnaps[at];
-      const row = snap.exists ? (snap.data() || {}) : builtins[id];
-      if (!row || row.active !== true) return;
-      if (!scope.STATION_ID_RE.test(id) || !knownDistricts.includes(String(row.districtId || ''))) complete = false;
-      else byId.set(id, row);
-    });
-    if (page.size > MAX_STATIONS) complete = false;
-    for (const doc of page.docs || []) {
-      const id = String(doc.id || '');
-      if (!scope.STATION_ID_RE.test(id) || !activeStation(doc, knownDistricts)) complete = false;
-      else byId.set(id, doc.data() || {});
-    }
-    if (clock() >= deadlineMs - 5000 || byId.size > MAX_STATIONS) complete = false;
-    const ids = [...byId.keys()].sort();
-    if (!complete) return { complete: false, stations: [] };
-    return { complete: true, stations: ids.map((id) => ({ station_id: id, silent: false })) };
+    if (deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || clock() >= deadlineMs - 5000)) return { complete: false, stations: [] };
+    return collectInventory({ activePage, provisionPage, builtinIds, builtinSnaps, builtins, knownDistricts });
   }
 
   async function readGlobalSilent() {
@@ -80,9 +100,12 @@ function createFirestoreHealthPorts(deps) {
 
   async function readStationSilent({ station_id: stationId }) {
     if (!scope.STATION_ID_RE.test(String(stationId || ''))) throw new TypeError('invalid station_id');
-    const snap = await db.doc('stations/' + stationId + '/config/mode').get();
+    const [parent, snap] = await Promise.all([
+      db.doc('stations/' + stationId).get(),
+      db.doc('stations/' + stationId + '/config/mode').get()
+    ]);
     const row = snap.exists ? (snap.data() || {}) : {};
-    return row.mode === 'silent' || row.silent === true;
+    return (parent.exists && (parent.data() || {}).silent === true) || row.mode === 'silent' || row.silent === true;
   }
 
   async function claimCycle({ cycle }) {
@@ -182,26 +205,9 @@ function createFirestoreHealthPorts(deps) {
       const snap = await tx.get(ref); const row = snap.exists ? (snap.data() || {}) : {};
       assertLease(row, token);
       if (row.published === true) return;
-      const activeQuery = db.collection('stations').where('active', '==', true).limit(MAX_STATIONS + 1);
-      const activeSnap = await tx.get(activeQuery);
-      const byId = new Map();
-      let validInventory = activeSnap.size <= MAX_STATIONS;
-      const builtinIds = Object.keys(builtins);
-      const builtinSnaps = await Promise.all(builtinIds.map((id) => tx.get(db.doc('stations/' + id))));
-      builtinIds.forEach((id, at) => {
-        const snapForBuiltin = builtinSnaps[at];
-        const builtin = snapForBuiltin.exists ? (snapForBuiltin.data() || {}) : builtins[id];
-        if (!builtin || builtin.active !== true) return;
-        if (!scope.STATION_ID_RE.test(id) || !knownDistricts.includes(String(builtin.districtId || ''))) validInventory = false;
-        else byId.set(id, builtin);
-      });
-      for (const doc of activeSnap.docs || []) {
-        const id = String(doc.id || '');
-        if (!scope.STATION_ID_RE.test(id) || !activeStation(doc, knownDistricts)) validInventory = false;
-        else byId.set(id, doc.data() || {});
-      }
-      const currentInventory = [...byId.keys()].sort();
-      if (!validInventory || currentInventory.length > MAX_STATIONS
+      const current = await listStations({ tx });
+      const currentInventory = current.stations.map(station => station.station_id);
+      if (!current.complete || currentInventory.length > MAX_STATIONS
           || !scope.sameInventory(cycle.inventory, currentInventory)) {
         const error = new Error('health-cycle-inventory-drift');
         error.code = 'inventory-drift';

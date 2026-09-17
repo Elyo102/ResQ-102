@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ResQ — קריאת פתע</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h191">
 <style>
   body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
   .wrap{max-width:760px;margin:0 auto;padding:18px 14px 70px}
@@ -15,10 +15,28 @@
   .sound-note{margin:10px 0;padding:10px;border-radius:10px;background:var(--chip);color:var(--dim);font-size:13px;line-height:1.6}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
   textarea{box-sizing:border-box;width:100%;min-height:120px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
+  input,select{box-sizing:border-box;width:100%;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
   button{margin-top:12px;padding:12px 18px;border:0;border-radius:10px;background:var(--bad);color:#fff;font:inherit;font-weight:800;cursor:pointer}
   button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--txt);border:1px solid var(--line);padding:8px 12px}
   .msg{display:none;margin-top:10px;border-radius:9px;padding:10px}.msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}.msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}.msg.info{display:block;background:var(--chip);color:var(--dim)}
   .hide{display:none!important}.callout-row{border-top:1px solid var(--line);padding:13px 0}.callout-row:first-child{border-top:0}.callout-row p{white-space:pre-wrap;word-break:break-word}.callout-row small{display:block;color:var(--muted);margin-top:5px}.tally{font-weight:700;color:var(--accent-txt)}
+  /* Approved Gemini visual language; existing console and authorization stay intact. */
+  :root{--callout-heading:var(--txt);--callout-shadow:0 2px 8px rgba(0,0,0,.04)}
+  @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+    --bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--callout-heading:#1c3d5a;
+  }}
+  :root[data-theme="light"]{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--callout-heading:#1c3d5a}
+  .wrap{box-sizing:border-box;padding-left:calc(14px + env(safe-area-inset-left,0px));padding-right:calc(14px + env(safe-area-inset-right,0px));padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+  .wrap h1,.wrap h2{color:var(--callout-heading);overflow-wrap:anywhere}
+  .wrap h2{font-size:18px;line-height:1.4}
+  .wrap .card{padding:14px;border-radius:14px;box-shadow:var(--callout-shadow)}
+  .wrap .card.danger{background:var(--card);border-color:var(--bad-bd);border-top:3px solid #d9531e}
+  .wrap input,.wrap select,.wrap textarea{font-size:16px;min-height:44px}
+  .wrap button{min-width:44px;min-height:44px}
+  .wrap #calloutSend,.wrap #targetApply{background:#c2410c;color:#fff;border:1px solid #d9531e}
+  .wrap #calloutSend{width:100%}
+  .wrap :is(button,input,select,textarea):focus-visible{outline:3px solid #347dbd;outline-offset:3px}
+  .wrap .callout-row{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -30,6 +48,13 @@
     <p id="denyText">הפעולה זמינה רק למפקד משמרת או לסגן מפקד משמרת.</p>
   </section>
   <main id="work" class="hide">
+    <section id="targetCard" class="card hide" aria-labelledby="targetTitle">
+      <h2 id="targetTitle">בחירת יעד — מנהל־על</h2>
+      <label for="targetStation">מזהה תחנה</label><input id="targetStation" maxlength="80" dir="ltr" autocomplete="off">
+      <label for="targetCrew">משמרת יעד</label><select id="targetCrew"><option value="">בחר משמרת</option><option value="A">משמרת א׳</option><option value="B">משמרת ב׳</option><option value="C">משמרת ג׳</option></select>
+      <button id="targetApply" type="button">הצג את תחנת היעד</button>
+      <p id="targetMessage" role="status"></p>
+    </section>
     <section class="card danger" aria-labelledby="composeTitle">
       <h2 id="composeTitle">הזעקת <span id="calloutCrew">המשמרת שלי</span></h2>
       <p>הקריאה תישלח לכל אנשי המשמרת ותדרוש מהם להשיב.</p>
@@ -47,23 +72,23 @@
   </main>
 </div>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h191';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
-import { initAppCheck } from './appcheck.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h19';
-import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h19';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h191';
+import { initAppCheck } from './appcheck.js?v=42h191';
+import { renderNav, renderStuckNav } from './nav.js?v=42h191';
+import { initPWA } from './pwa.js?v=42h191';
+import { watchCallouts } from './callout.js?v=42h191';
+import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h191';
+import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h191';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app), db = getFirestore(app), functions = getFunctions(app, 'europe-west1');
 const $ = id => document.getElementById(id);
-let stopIncoming = null, generation = 0;
+let stopIncoming = null, generation = 0, controller = null;
 renderStuckNav(''); initPWA({ offer:false });
 
 function previewActive() {
@@ -93,9 +118,10 @@ onIdTokenChanged(auth, async user => {
   if (turn !== generation) return;
   const role = String(claims.role || ''), sid = String(claims.stationId || ''), crew = String(claims.shift || '');
   if (previewActive()) { deny(user, 'קריאת פתע חסומה בזמן תצוגה לפי תפקיד. חזור לתצוגה בפועל.'); return; }
-  if (!['commander','deputy'].includes(role) ||
-      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(sid) || !['A','B','C'].includes(crew)) {
-    deny(user, 'הפעולה זמינה רק למפקד משמרת או לסגן מפקד משמרת המשויכים למשמרת.'); return;
+  const isSuper = claims.super === true;
+  if ((!isSuper && !['commander','deputy'].includes(role)) ||
+      !/^[a-z0-9_-]{2,80}$/.test(sid) || (!isSuper && !['A','B','C'].includes(crew))) {
+    deny(user, 'הפעולה זמינה למנהל־על, למפקד משמרת ולסגנו.'); return;
   }
   let name = '';
   try {
@@ -105,15 +131,38 @@ onIdTokenChanged(auth, async user => {
   if (turn !== generation) return;
   renderNav(claims, 'callout.html', name || user.email || '');
   $('whoSub').textContent = name || user.email || '';
-  let controller;
-  try {
-    controller = await initCalloutConsole({ db, functions, user, claims, rolePreview:false, readOnly:false,
-      sdk:{ httpsCallable }, elements:elements() });
-  } catch (_) {
-    if (turn === generation) deny(user, 'הרשאת קריאת הפתע אינה תקינה.');
-    return;
-  }
-  if (turn !== generation) { controller.destroy(); return; }
+  controller = null;
+  $('targetCard').classList.toggle('hide', !isSuper);
+  $('liveTitle').textContent = isSuper ? 'קריאות בתחנת היעד' : 'קריאות שפתחתי';
+  const startConsole = async () => {
+    if (turn !== generation) return;
+    if (controller && controller.hasPending()) {
+      $('targetMessage').textContent = 'שליחה קודמת ממתינה. יש להשלים אותה לפני החלפת יעד.'; return;
+    }
+    const targetStationId = isSuper ? $('targetStation').value.trim() : sid;
+    const targetCrew = isSuper ? $('targetCrew').value : crew;
+    if (!/^[a-z0-9_-]{2,80}$/.test(targetStationId) || !['A','B','C'].includes(targetCrew)) {
+      $('targetMessage').textContent = 'יש לבחור מזהה תחנה ומשמרת יעד תקינים.'; return;
+    }
+    $('targetApply').disabled = true;
+    try {
+      controller = await initCalloutConsole({ db, functions, user, claims, rolePreview:false, readOnly:false,
+        targetStationId, targetCrew, sdk:{ httpsCallable }, elements:elements() });
+      if (turn !== generation) { controller.destroy(); return; }
+      $('targetMessage').textContent = 'יעד נבחר: ' + targetStationId + ' · משמרת ' + targetCrew;
+      $('calloutSend').disabled = false;
+    } catch (_) {
+      $('calloutSend').disabled = true;
+      $('targetMessage').textContent = 'לא ניתן לפתוח את מסוף הקריאה ליעד שנבחר.';
+    } finally { $('targetApply').disabled = false; }
+  };
+  $('targetApply').onclick = startConsole;
+  if (isSuper) {
+    $('targetStation').value = sid; $('targetCrew').value = '';
+    $('calloutSend').disabled = true;
+    $('targetMessage').textContent = 'בחר תחנה ומשמרת ואשר את היעד לפני שליחה.';
+  } else { await startConsole(); }
+  if (turn !== generation) return;
   stopIncoming = watchCallouts(db, sid, user.uid, { name:name || user.email || '' });
   $('work').classList.remove('hide');
 });

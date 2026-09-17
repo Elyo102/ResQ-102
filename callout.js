@@ -153,7 +153,7 @@ function alarm() {
     } catch (ignore) {}
   };
   try {
-    const selected = new Audio('./callout-siren.mp3?v=42h19');
+    const selected = new Audio('./callout-siren.mp3?v=42h191');
     selected.preload = 'auto';
     selected.volume = 1;
     const playback = selected.play();

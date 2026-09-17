@@ -41,6 +41,7 @@ const collections = { request: 'hr_request_notification_jobs', document: 'hr_doc
 const active = ['policy_pending', 'discovering', 'queued', 'processing', 'deferred', 'blocked'];
 async function fixture() {
   const sid = 'hr_domain_it_' + runId + '_' + (++sequence), root = db.doc('stations/' + sid); roots.push(root);
+  await root.set({ station_id: sid, active: true, status: 'ready', silent: false });
   const f = { sid, root, people: {}, at: Date.parse('2026-09-08T09:00:00Z'), calls: [] };
   f.add = async (name, role = 'firefighter', superUser = false, profile = true) => {
     const uid = name + '_' + sid, claims = { stationId: sid, ...(superUser ? { super: true } : { role }) };
@@ -595,6 +596,39 @@ check('throw and malformed final response are unknown with no application resend
     const f = await fixture(); await f.publish(); await f.generate('document'); await f.worker({ send }).run();
     assert.equal((await f.intent()).data().status, 'outcome_unknown'); await f.worker().run(); assert.equal(f.calls.length, 1);
   }
+});
+check('station fence and fresh pre-SDK global policy prevent transport', async () => {
+  for (const mode of ['claim', 'station', 'global', 'invalid', 'lost']) {
+    await runtime.set({ silent: false });
+    const f = await fixture(); await f.publish(); await f.generate('document');
+    if (mode === 'claim') await f.root.update({ silent: true });
+    await f.worker({ hooks: { async afterClaim({ path: p }) {
+      if (mode === 'station') await f.root.update({ active: false });
+      if (mode === 'global') await runtime.set({ silent: true, silent_allow: [f.people.owner.uid] });
+      if (mode === 'invalid') await runtime.set({ silent: 'bad' });
+      if (mode === 'lost') await db.doc(p).update({ attempt_id: 'replacement' });
+    } } }).run();
+    const i = (await f.intent()).data(); assert.equal(f.calls.length, 0);
+    assert.equal(i.status, mode === 'invalid' ? 'blocked' : mode === 'lost' ? 'attempting' : 'cancelled');
+    if (mode === 'invalid') { assert.ok(i.next_check_ms > f.at); assert.equal(i.attempt_id, null); }
+  }
+});
+check('postClaim scope mutation cannot redirect the policy check', async () => {
+  for (const field of ['station_id', 'recipient_uid']) {
+    const f = await fixture(); await f.publish(); await f.generate('document');
+    await f.worker({ hooks: { afterClaim: ({ path: p }) => db.doc(p).update({ [field]: 'foreign_allowed' }) } }).run();
+    assert.equal(f.calls.length, 0); const i = (await f.intent()).data();
+    assert.equal(i.status, 'cancelled'); assert.equal(i.reason, 'attempt-scope-changed');
+  }
+});
+check('postClaim station read failure retries only the known unsent attempt', async () => {
+  const f = await fixture(); await f.publish(); await f.generate('document'); let armed = false;
+  const failing = failedRead(f.root.path);
+  const database = { ...failing, runTransaction: fn => armed ? failing.runTransaction(fn) : db.runTransaction(fn) };
+  await f.worker({ database, hooks: { afterClaim() { armed = true; } } }).run();
+  const i = (await f.intent()).data(); assert.equal(f.calls.length, 0); assert.equal(i.status, 'blocked');
+  assert.equal(i.reason, 'station-state-unavailable'); assert.equal(i.attempt_id, null); assert.ok(i.next_check_ms > f.at);
+  f.at = i.next_check_ms; await f.worker().run(); assert.equal(f.calls.length, 1); assert.equal((await f.intent()).data().status, 'accepted');
 });
 check('crash before SDK and after SDK never turn expired attempting into a fresh send', async () => {
   for (const name of ['afterClaim', 'afterSend']) {

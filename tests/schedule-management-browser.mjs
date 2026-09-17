@@ -1490,6 +1490,57 @@ try {
   });
   await cutoverCtx.close();
 
+  /* 42H.19.1 · בסמכות החודשית אין candidate singleton. המעבר חותם
+   * את תמונת הבעלות המלאה, משנה רק פרסומים עתידיים, ואינו מחיה
+   * הודעות שנוצרו במצב ניסוי. */
+  const monthlyCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+  const monthlyModeView = { may_change:true, current:'shadow', ready:true,
+    authority_mode:'monthly', expected_authority_generation:7, candidate:null,
+    targets:[{ to:'new', kind:'promote', label:'פעיל', available:true, blocked_by:null }] };
+  const monthlyPreflight = { schema:'schedule-month-cutover-preflight-v1', authority_mode:'monthly',
+    preflight_signature:'a'.repeat(64), expected_generation:7, mode:'shadow', target:'new',
+    summary:{ months:3, publications:3, unavailable_months:0 } };
+  await prepare(monthlyCtx, 'super', {
+    getScheduleRuntimeStatus:[
+      { data:{ mode:'shadow', configured:true, manager:false, active:null, authority_mode:'monthly', authority_generation:7 } },
+      { data:{ mode:'new', configured:true, manager:false, active:null, authority_mode:'monthly', authority_generation:7 } }
+    ],
+    getScheduleModeOptions:[
+      { data:monthlyModeView },
+      { data:Object.assign({}, monthlyModeView, { current:'new', targets:[] }) }
+    ],
+    getStationScheduleRange:[{ data:legacyRange('shadow') }, { data:legacyRange('new') }],
+    previewScheduleCutover:[{ data:monthlyPreflight }],
+    promoteScheduleToNew:[{ data:{ mode:'new', authority_mode:'monthly', authority_generation:7, duplicate:false } }]
+  });
+  const monthlyPage = await monthlyCtx.newPage();
+  const monthlyDialogs = [];
+  monthlyPage.on('dialog', (dialog) => { monthlyDialogs.push(dialog.message()); dialog.accept(); });
+  await monthlyPage.goto(base, { waitUntil:'load' });
+  await monthlyPage.locator('#appMain:not(.hide)').waitFor();
+  await test('monthly cutover signs the authority snapshot and keeps prior trial notifications suppressed', async () => {
+    await monthlyPage.locator('#modeTargets .pill', { hasText:'פעיל' }).click();
+    await monthlyPage.locator('#modeApply').click();
+    await monthlyPage.locator('#modeMessage .ok').waitFor();
+    const calls = await monthlyPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    const previews = calls.filter((entry) => entry.name === 'previewScheduleCutover');
+    const promotes = calls.filter((entry) => entry.name === 'promoteScheduleToNew');
+    assert.equal(previews.length, 1);
+    assert.deepEqual(previews[0].payload, {});
+    assert.equal(promotes.length, 1);
+    assert.deepEqual(Object.keys(promotes[0].payload).sort(),
+      ['expected_generation','preflight_signature','request_id'].sort());
+    assert.equal(Object.hasOwn(promotes[0].payload, 'authority_mode'), false);
+    assert.equal(promotes[0].payload.preflight_signature, 'a'.repeat(64));
+    assert.equal(promotes[0].payload.expected_generation, 7);
+    assert.ok(String(promotes[0].payload.request_id || '').startsWith('cutover_'));
+    assert.ok(monthlyDialogs.some((text) => /פרסומים עתידיים/.test(text) && /יישארו מושתקות/.test(text)));
+    const messageText = await monthlyPage.locator('#modeMessage').textContent();
+    assert.match(messageText, /פרסומים עתידיים יישלחו/);
+    assert.match(messageText, /הודעות ניסוי קודמות נשארו מושתקות/);
+  });
+  await monthlyCtx.close();
+
   /* ⭐ 386.1 · דוח חסום וביטול באישור משחררים את המסך; לחיצה נוספת
    * מבצעת preview נוסף — לא נתקעת על modeBusy. */
   const blockedCtx = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
@@ -1705,6 +1756,7 @@ try {
     await sheetPage.locator('#importMessage .msg').waitFor();
     assert.match(await sheetPage.locator('#importMessage').textContent(), /צריך לבחור קובץ|צריך להדביק|יש לבחור חודש/);
     await sheetPage.fill('#importMonth', today.slice(0, 7));
+    await sheetPage.locator('#importPasteOption > summary').click();
     await sheetPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
     await sheetPage.locator('#importCheck').click();
     await sheetPage.locator('#importMessage .warn').waitFor();
@@ -1986,6 +2038,7 @@ try {
   await partialPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await partialPage.locator('#appMain:not(.hide)').waitFor();
   await test('a partial-month imported draft can be reviewed but cannot be selected for the monthly board', async () => {
+    await partialPage.locator('#importPasteOption > summary').click();
     await partialPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
     await partialPage.locator('#importCheck').click();
     await partialPage.locator('#importMessage .ok').waitFor();
@@ -2298,6 +2351,7 @@ try {
     }
     await lostImportPage.locator('#importStationMapConfirm').check();
     await lostImportPage.fill('#importMonth', today.slice(0, 7));
+    await lostImportPage.locator('#importPasteOption > summary').click();
     await lostImportPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
     await lostImportPage.locator('#importCheck').click();
     await lostImportPage.locator('#importMessage .ok').waitFor();
@@ -3191,5 +3245,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 79);
+assert.equal(passed, 80);
 console.log('\n' + passed + ' schedule management browser checks passed.');

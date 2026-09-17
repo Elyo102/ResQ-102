@@ -1484,9 +1484,9 @@ service cloud.firestore {
         // query by uids without the new active filter, so recipients retain
         // the same parent visibility they had in 42H.18. Remove this bridge
         // in 42H.20 after legacy-write telemetry reaches zero.
-        allow read: if member(sid)
+        allow read: if isSuper() || (member(sid)
                     && (request.auth.uid == resource.data.get('by_uid', '')
-                        || request.auth.uid in resource.data.get('uids', []));
+                        || request.auth.uid in resource.data.get('uids', [])));
         allow create, delete: if false;
 
         function validLegacyAck() {
@@ -1548,9 +1548,9 @@ service cloud.firestore {
             return !resource.data.keys().hasAll(['resp', 'name', 'at', 'reason'])
               || request.resource.data.keys().hasAll(['resp', 'name', 'at', 'reason']);
           }
-          allow read: if member(sid)
+          allow read: if isSuper() || (member(sid)
                       && (request.auth.uid == responseUid
-                          || request.auth.uid == parentCallout().get('by_uid', ''));
+                          || request.auth.uid == parentCallout().get('by_uid', '')));
           allow create: if member(sid)
                         && request.auth.uid == responseUid
                         && request.auth.uid in parentCallout().get('uids', [])
@@ -1937,6 +1937,15 @@ service cloud.firestore {
         match /{document=**} {
           allow read, write: if false;
         }
+      }
+      // סמכות הפרסום החודשית וקבלות הפעולה הן מצב שרת חתום. הן
+      // קובעות איזה snapshot רשאי לשרת כל חודש ומונעות מתור ישן
+      // להתעורר אחרי פרסום או rollback. אין להן ממשק SDK ישיר.
+      match /schedule_publication_months/{month} {
+        allow read, write: if false;
+      }
+      match /schedule_publication_authority_operations/{operationId} {
+        allow read, write: if false;
       }
       match /schedule_publications/{publicationId} {
         allow read, write: if false;

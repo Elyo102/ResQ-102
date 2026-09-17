@@ -22,6 +22,7 @@ const accepted = payload => ({ responses: payload.tokens.map((_, i) => ({ succes
 async function fixture(n = 1) {
   const key = runId + '_' + (++count), sid = 'hr_dispatch_it_' + key, actor = 'ha_' + key;
   const root = db.doc('stations/' + sid); owned.push(root);
+  await root.set({ station_id: sid, active: true, status: 'ready', silent: false });
   const claims = { stationId: sid, role: 'hr_coordinator' };
   records.set(actor, { uid: actor, disabled: false, customClaims: claims });
   await root.collection('users').doc(actor).set({ stationId: sid, role: 'hr_coordinator', active: true });
@@ -86,6 +87,46 @@ function failedRead(path) {
     await check('two concurrent workers atomically claim one intent', async () => {
       const f = await fixture(); await f.request(); const w = f.worker();
       await Promise.all([w.run(), w.run()]); assert.equal(f.calls.length, 1); assert.equal((await f.intent()).data().status, 'accepted');
+    });
+    await check('station fence and fresh pre-SDK policy prevent transport', async () => {
+      for (const phase of ['claim', 'afterClaim']) for (const change of [{ silent: true }, { active: false }, { status: 'provisioning' }]) {
+        const f = await fixture(); await f.request();
+        if (phase === 'claim') await f.root.update(change);
+        await f.worker({ hooks: phase === 'afterClaim' ? { afterClaim: () => f.root.update(change) } : {} }).run();
+        assert.equal(f.calls.length, 0); assert.equal((await f.intent()).data().status, 'cancelled');
+      }
+    });
+    await check('pre-SDK global refresh preserves UID allowance and blocks malformed runtime', async () => {
+      for (const mode of ['deny', 'allow', 'invalid', 'lost']) {
+        const f = await fixture(); await runtime.set({ silent: false }); await f.request();
+        await f.worker({ hooks: { async afterClaim({ path }) {
+          if (mode === 'lost') return db.doc(path).update({ attempt_id: 'replacement' });
+          await runtime.set({ silent: mode === 'invalid' ? 'bad' : true, silent_allow: mode === 'allow' ? [f.people[0].uid] : [] });
+        } } }).run();
+        const i = (await f.intent()).data(); assert.equal(f.calls.length, mode === 'allow' ? 1 : 0);
+        assert.equal(i.status, mode === 'allow' ? 'accepted' : mode === 'invalid' ? 'blocked' : mode === 'lost' ? 'attempting' : 'cancelled');
+        if (mode === 'invalid') { assert.ok(i.next_check_ms > f.at); assert.equal(i.attempt_id, null); }
+      }
+    });
+    await check('postClaim scope mutation cannot redirect the policy check', async () => {
+      for (const field of ['station_id', 'recipient_uid']) {
+        await runtime.set({ silent: false }); const f = await fixture(); await f.request();
+        await f.worker({ hooks: { async afterClaim({ path }) {
+          await db.doc(path).update({ [field]: 'foreign_allowed' });
+          if (field === 'recipient_uid') await runtime.set({ silent: true, silent_allow: ['foreign_allowed'] });
+        } } }).run();
+        assert.equal(f.calls.length, 0); const i = (await f.intent()).data();
+        assert.equal(i.status, 'cancelled'); assert.equal(i.reason, 'attempt-scope-changed');
+      }
+    });
+    await check('postClaim station read failure retries only the known unsent attempt', async () => {
+      const f = await fixture(); await f.request(); let armed = false;
+      const failing = failedRead(f.root.path);
+      const database = { ...failing, runTransaction: fn => armed ? failing.runTransaction(fn) : db.runTransaction(fn) };
+      await f.worker({ database, hooks: { afterClaim() { armed = true; } } }).run();
+      const i = (await f.intent()).data(); assert.equal(f.calls.length, 0); assert.equal(i.status, 'blocked');
+      assert.equal(i.reason, 'station-state-unavailable'); assert.equal(i.attempt_id, null); assert.ok(i.next_check_ms > f.at);
+      f.at = i.next_check_ms; await f.worker().run(); assert.equal(f.calls.length, 1); assert.equal((await f.intent()).data().status, 'accepted');
     });
     await check('fresh actor Auth revocation and HR profile removal prevent dispatch', async () => {
       const f = await fixture(); await f.request(); records.get(f.actor).tokensValidAfterTime = new Date((authTime + 1) * 1000).toUTCString();

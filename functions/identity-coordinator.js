@@ -150,6 +150,12 @@ function createIdentityCoordinator(deps) {
   const HttpsError = deps.HttpsError;
   const randomId = deps.randomId;
   const hooks = deps.hooks || {};
+  // Production authority is a dependency, never caller data or test hooks.
+  const onboardingAuthority = deps.onboardingAuthority;
+  if (onboardingAuthority && ['classify', 'readInitial', 'validatePhase', 'commitApproval', 'finalize']
+    .some(key => typeof onboardingAuthority[key] !== 'function')) {
+    throw new TypeError('complete onboarding authority adapter is required');
+  }
   const leaseMs = Number(deps.leaseMs || DEFAULT_LEASE_MS);
   const fenceMs = Number(deps.fenceMs || DEFAULT_FENCE_MS);
 
@@ -171,6 +177,56 @@ function createIdentityCoordinator(deps) {
 
   function requestRef(uid) {
     return db.doc('registration_requests/' + uid);
+  }
+
+  const ownsAuthority = op => !!op && Object.prototype.hasOwnProperty.call(op, 'onboarding_authority');
+  function protectedError(error) {
+    const wrapped = recoveryError('Protected onboarding authority validation failed.');
+    wrapped.onboardingAuthority = true;
+    wrapped.cause = error;
+    return wrapped;
+  }
+  async function authorityCall(method, tx, args) {
+    try {
+      if (!onboardingAuthority) throw new Error('onboarding authority adapter missing');
+      return await onboardingAuthority[method](tx, args);
+    } catch (error) { throw protectedError(error); }
+  }
+  async function classifyAuthority(tx, uid, operation, request, kind) {
+    const snap = await tx.get(db.doc('onboarding_assignment_links/' + uid));
+    if (!snap.exists && !ownsAuthority(operation)) return 'legacy';
+    const mode = await authorityCall('classify', tx, {
+      uid, registry: snap.exists ? snap.data() : null, request, existingOp: operation, kind
+    });
+    if (!['legacy', 'new_onboarding', 'protected_existing'].includes(mode)
+        || (ownsAuthority(operation) && mode !== 'protected_existing')) {
+      throw protectedError(new Error('invalid authority classification'));
+    }
+    return mode;
+  }
+  async function validateAuthority(tx, operation, request, phase, actor, uid) {
+    if (operation.target_uid !== uid) throw protectedError(new Error('operation target changed'));
+    const mode = await classifyAuthority(tx, uid, operation, request, operation.kind);
+    if (mode === 'new_onboarding') throw protectedError(new Error('protected source missing from operation'));
+    if (mode === 'protected_existing') {
+      await authorityCall('validatePhase', tx, { operation, request, phase, actor });
+    }
+    return ownsAuthority(operation) ? operation.onboarding_authority : null;
+  }
+  async function validateAuthorityNow(uid, opId, phase, actor) {
+    return db.runTransaction(async tx => {
+      const snap = await tx.get(controlRef(uid));
+      if (!snap.exists) {
+        const registry = await tx.get(db.doc('onboarding_assignment_links/' + uid));
+        if (registry.exists) throw protectedError(new Error('protected operation missing'));
+        return null; // Preserve legacy callers' original missing-operation errors.
+      }
+      const operation = snap.data();
+      const request = operation.request_id ? await tx.get(requestRef(uid)) : null;
+      await validateAuthority(tx, operation, request && request.exists ? request.data() : null, phase, actor, uid);
+      if (operation.op_id !== opId) throw recoveryError('פעולת הזהות אינה פעילה עוד.');
+      return operation;
+    });
   }
 
   function reservationRef(emp) {
@@ -249,6 +305,24 @@ function createIdentityCoordinator(deps) {
       const opSnap = await tx.get(opRef);
       const existing = opSnap.exists ? (opSnap.data() || {}) : null;
 
+      // Detect protected redemption before any replay or legacy stamping write.
+      const initialRequestSnap = await tx.get(reqRef);
+      const initialRequest = initialRequestSnap.exists ? initialRequestSnap.data() : null;
+      const mode = await classifyAuthority(tx, params.uid, existing, initialRequest, params.kind);
+      const actor = { uid: params.actorUid, email: params.actorEmail };
+      let initialAuthority = null;
+      if (mode === 'protected_existing') {
+        await authorityCall('validatePhase', tx, { operation: existing, request: initialRequest, phase: 'acquire', actor });
+      } else if (mode === 'new_onboarding') {
+        if (params.kind !== 'approve' || !params.requireRequest) throw protectedError(new Error('pending invitation requires approval'));
+        initialAuthority = await authorityCall('readInitial', tx, {
+          uid: params.uid, request: initialRequest, authUser: await auth.getUser(params.uid), existingOp: existing, actor
+        });
+        if (!initialAuthority || !initialAuthority.source || !/^[a-f0-9]{64}$/.test(initialAuthority.fingerprint || '')) {
+          throw protectedError(new Error('missing initial authority'));
+        }
+      }
+
       if (existing) {
         if (existing.status === 'completed' && existing.op_id === params.opId) {
           if (sameIntent(existing, params)) return { type: 'completed', operation: existing };
@@ -279,7 +353,7 @@ function createIdentityCoordinator(deps) {
       let exactRequestFingerprint = '';
 
       if (params.requireRequest || params.attachPendingRequest) {
-        reqSnap = await tx.get(reqRef);
+        reqSnap = initialRequestSnap;
         reqData = reqSnap.exists ? (reqSnap.data() || {}) : null;
       }
 
@@ -446,7 +520,7 @@ function createIdentityCoordinator(deps) {
         }
       }
 
-      const plan = params.makePlan(emp, reqData || {});
+      const plan = params.makePlan(emp, reqData || {}, initialAuthority);
       const summary = lockedPlan(params.kind, emp, plan.desiredProfile);
       const planFingerprint = stableHash({
         fingerprint_version: 1,
@@ -458,7 +532,8 @@ function createIdentityCoordinator(deps) {
         previous_emp: String(params.previousEmp || ''),
         previous_station: String(params.previousStation || ''),
         desired_emp: emp,
-        desired_profile: plan.desiredProfile == null ? null : canonical(plan.desiredProfile)
+        desired_profile: plan.desiredProfile == null ? null : canonical(plan.desiredProfile),
+        ...(initialAuthority ? { onboarding_authority: canonical(initialAuthority) } : {})
       });
       const op = {
         op_id: params.opId,
@@ -486,6 +561,13 @@ function createIdentityCoordinator(deps) {
         lease_until: leaseUntil(now),
         assigned: assignmentFields(params.previousClaims).length > 0
       };
+
+      if (initialAuthority) {
+        op.onboarding_authority = canonical(initialAuthority);
+        // Adapter writes its prepared approval decision after all reads, in
+        // the transaction that creates this immutable identity plan.
+        await authorityCall('commitApproval', tx, { operation: op, authority: initialAuthority, actor });
+      }
 
       tx.set(opRef, op);
       tx.set(auditRef, auditDocument(params, params.auditAction,
@@ -662,7 +744,7 @@ function createIdentityCoordinator(deps) {
     });
   }
 
-  async function applyAssignmentProfile(uid, opId) {
+  async function applyAssignmentProfile(uid, opId, actor) {
     if (typeof hooks.beforeProfile === 'function') await hooks.beforeProfile(uid, opId);
     const now = Date.now();
     return db.runTransaction(async function (tx) {
@@ -670,6 +752,8 @@ function createIdentityCoordinator(deps) {
       const opSnap = await tx.get(opRef);
       if (!opSnap.exists) throw recoveryError('מסמך פעולת הזהות חסר.');
       const op = opSnap.data() || {};
+      const authorityRequest = op.request_id ? await tx.get(requestRef(uid)) : null;
+      await validateAuthority(tx, op, authorityRequest && authorityRequest.exists ? authorityRequest.data() : null, 'profile', actor, uid);
       if (op.op_id === opId && op.status === 'completed') return op;
       if (op.op_id !== opId || op.status !== 'processing') {
         throw recoveryError('פעולת הזהות אינה פעילה עוד.');
@@ -837,8 +921,8 @@ function createIdentityCoordinator(deps) {
     });
   }
 
-  async function applyAuth(uid, opId, allowedStartPhases) {
-    let op = await getOperation(uid);
+  async function applyAuth(uid, opId, allowedStartPhases, actor) {
+    let op = await validateAuthorityNow(uid, opId, 'auth-entry', actor);
     if (!op) throw recoveryError('מסמך פעולת הזהות חסר.');
     if (op.status === 'completed' && op.op_id === opId) return op;
     if (op.op_id !== opId || op.status !== 'processing') {
@@ -865,9 +949,11 @@ function createIdentityCoordinator(deps) {
       }
       try {
         if (typeof hooks.beforeAuthSet === 'function') await hooks.beforeAuthSet(uid, opId);
+        await validateAuthorityNow(uid, opId, 'auth-write', actor);
         await auth.setCustomUserClaims(uid, op.desired_claims == null ? null : op.desired_claims);
         if (typeof hooks.afterAuthSet === 'function') await hooks.afterAuthSet(uid, opId);
       } catch (error) {
+        if (error && error.onboardingAuthority) throw error;
         live = await auth.getUser(uid);
         liveClaims = (live && live.customClaims) || {};
         if (!sameValue(liveClaims, desired)) {
@@ -886,6 +972,7 @@ function createIdentityCoordinator(deps) {
     if (!sameValue((live && live.customClaims) || {}, desired)) {
       throw recoveryError('אימות ההרשאות לאחר הכתיבה נכשל.');
     }
+    await validateAuthorityNow(uid, opId, 'auth-after-write', actor);
     await advancePhase(uid, opId, allowedStartPhases, 'auth_applied');
     return getOperation(uid);
   }
@@ -926,6 +1013,12 @@ function createIdentityCoordinator(deps) {
       plan_fingerprint: op.plan_fingerprint,
       fingerprint_version: 1,
       plan_summary: canonical(op.plan_summary || {}),
+      ...(ownsAuthority(op) ? {
+        onboarding_authority: canonical(op.onboarding_authority),
+        actor_uid: op.actor_uid,
+        request_id: op.request_id,
+        request_generation: op.request_generation
+      } : {}),
       assigned: assigned === true,
       result: canonical(result),
       completed_at: FV.serverTimestamp(),
@@ -934,10 +1027,10 @@ function createIdentityCoordinator(deps) {
     };
   }
 
-  async function finalizeAssignment(uid, opId, result) {
+  async function finalizeAssignment(uid, opId, result, actor) {
     if (typeof hooks.beforeFinalize === 'function') await hooks.beforeFinalize(uid, opId);
     const live = await auth.getUser(uid);
-    let op = await getOperation(uid);
+    let op = await validateAuthorityNow(uid, opId, 'finalize-entry', actor);
     if (!op) throw recoveryError('מסמך פעולת הזהות חסר.');
     if (op.status === 'completed' && op.op_id === opId) return op.result;
     if (!sameValue((live && live.customClaims) || {}, op.desired_claims || {})) {
@@ -954,6 +1047,8 @@ function createIdentityCoordinator(deps) {
       const opSnap = await tx.get(opRef);
       if (!opSnap.exists) throw recoveryError('מסמך פעולת הזהות חסר.');
       op = opSnap.data() || {};
+      const authorityRequest = op.request_id ? await tx.get(requestRef(uid)) : null;
+      await validateAuthority(tx, op, authorityRequest && authorityRequest.exists ? authorityRequest.data() : null, 'finalize', actor, uid);
       if (op.status === 'completed' && op.op_id === opId) return op.result;
       if (op.op_id !== opId || op.status !== 'processing' || op.phase !== 'tokens_revoked') {
         throw recoveryError('פעולת הזהות אינה מוכנה לסיום בטוח.');
@@ -1001,6 +1096,9 @@ function createIdentityCoordinator(deps) {
       if (op.request_id) assertRequestMatches(reqSnap && reqSnap.data(), op.request_id,
         op.request_generation, opId, false);
 
+      if (ownsAuthority(op)) {
+        await authorityCall('finalize', tx, { operation: op, authority: op.onboarding_authority, actor });
+      }
       if (op.request_id) tx.delete(requestRef(uid));
       tx.delete(reservationRef(op.desired_emp));
       tx.set(opRef, completedDocument(op, result, true, now));
@@ -1099,23 +1197,31 @@ function createIdentityCoordinator(deps) {
     });
   }
 
-  async function runAssignment(uid, opId, result, skipRevoke) {
+  async function runAssignment(uid, opId, result, skipRevoke, actor) {
     try {
-      let op = await getOperation(uid);
+      let op = await validateAuthorityNow(uid, opId, 'run', actor);
       if (op && op.status === 'completed' && op.op_id === opId) return op.result;
-      await applyAssignmentProfile(uid, opId);
-      await applyAuth(uid, opId, ['profile_applied']);
+      await applyAssignmentProfile(uid, opId, actor);
+      await applyAuth(uid, opId, ['profile_applied'], actor);
       await revokeTokens(uid, opId, skipRevoke === true);
-      return await finalizeAssignment(uid, opId, result);
+      return await finalizeAssignment(uid, opId, result, actor);
     } catch (error) {
+      if (error && error.onboardingAuthority) {
+        await markNeedsRecovery(uid, opId, error).catch(function () {});
+        throw error;
+      }
       let completed = await getOperation(uid).catch(function () { return null; });
       if (completed && completed.status === 'completed' && completed.op_id === opId) {
-        return completed.result;
+        const checked = await validateAuthorityNow(uid, opId, 'completed-fallback', actor);
+        if (checked && checked.status === 'completed') return checked.result;
+        throw error;
       }
       if (error && error.identityRecovery) await markNeedsRecovery(uid, opId, error);
       completed = await getOperation(uid).catch(function () { return null; });
       if (completed && completed.status === 'completed' && completed.op_id === opId) {
-        return completed.result;
+        const checked = await validateAuthorityNow(uid, opId, 'completed-fallback', actor);
+        if (checked && checked.status === 'completed') return checked.result;
+        throw error;
       }
       throw error;
     }
@@ -1164,7 +1270,8 @@ function createIdentityCoordinator(deps) {
   }
 
   async function resumeOperation(params) {
-    const op = await getOperation(params.uid);
+    const actor = { uid: params.actorUid, email: params.actorEmail };
+    const op = await validateAuthorityNow(params.uid, params.opId, 'resume-entry', actor);
     if (!op) throw httpsError('not-found', 'פעולת הזהות לא נמצאה.');
     if (String(op.op_id || '') !== String(params.opId || '') ||
         String(op.plan_fingerprint || '') !== String(params.planFingerprint || '')) {
@@ -1202,6 +1309,8 @@ function createIdentityCoordinator(deps) {
       const snap = await tx.get(ref);
       if (!snap.exists) throw recoveryError('מסמך פעולת הזהות חסר.');
       const current = snap.data() || {};
+      const authorityRequest = current.request_id ? await tx.get(requestRef(params.uid)) : null;
+      await validateAuthority(tx, current, authorityRequest && authorityRequest.exists ? authorityRequest.data() : null, 'resume', actor, params.uid);
       if (current.status === 'completed' && current.op_id === params.opId) return current;
       if (!activeOperation(current) || current.op_id !== params.opId ||
           current.plan_fingerprint !== params.planFingerprint) {

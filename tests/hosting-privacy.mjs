@@ -22,6 +22,8 @@ const importHtml = fs.readFileSync(path.join(root, 'import.html'), 'utf8');
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(root, 'firebase.json'), 'utf8'));
 const worker = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
 const hostingIgnore = firebaseConfig.hosting.ignore;
+check(hostingIgnore.includes('outputs/**'),
+      'Firebase Hosting excludes generated output screenshots and diagnostic probes');
 function ignoredSensitiveConfig(name) {
   return hostingIgnore.includes(name)
     || (hostingIgnore.includes('firebase.*-test.json') && /^firebase\..*-test\.json$/.test(name))

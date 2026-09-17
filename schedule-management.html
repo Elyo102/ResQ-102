@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h19">
+  <link rel="stylesheet" href="./theme.css?v=42h191">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -295,6 +295,12 @@
     .gapday b.date{display:block;margin-bottom:4px}
     .gapday .ok{color:var(--muted,#748091)}
     .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
+    #importCard .importrow{grid-template-columns:minmax(0,220px)}
+    .import-paste-option{margin-top:12px;border:1px solid var(--line,#cbd5e1);border-radius:12px;padding:0 12px}
+    .import-paste-option>summary{min-height:44px;display:list-item;padding:12px 0;cursor:pointer;font-weight:700}
+    .import-paste-option[open]{padding-bottom:12px}
+    #importMonth,#importPaste{font-size:16px;min-height:44px;width:100%;box-sizing:border-box}
+    .import-paste-option>summary:focus-visible{outline:2px solid var(--sched-blue);outline-offset:3px}
     .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
     .unres{display:grid;gap:7px;margin-top:10px}
     .unres .row{display:grid;grid-template-columns:minmax(120px,1fr) 2fr auto;gap:8px;align-items:center;
@@ -422,6 +428,23 @@
       .manager-workflow{position:static}.workflow-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
       input,select,textarea{font-size:16px}
     }
+    /* Approved Gemini surface styling; board colors, controls and behavior remain unchanged. */
+    :root{--manager-heading:var(--txt);--manager-shadow:0 2px 8px rgba(0,0,0,.04)}
+    @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+      --bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a;
+    }}
+    :root[data-theme="light"]{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a}
+    .shell .card,.shell .advanced{border-radius:14px;box-shadow:var(--manager-shadow)}
+    .shell .card{padding:14px}
+    .shell .head h1,.shell .card h2{color:var(--manager-heading)}
+    .shell .manager-workflow{border-top:3px solid #d9531e}
+    .shell .btn.primary,.shell .workflow-actions .current{background:#c2410c;border-color:#d9531e;color:#fff}
+    .shell .btn.dark{background:#1c3d5a;border-color:#1c3d5a;color:#fff}
+    .shell button{min-height:44px;min-width:44px}
+    .shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+    .shell select,.shell textarea{font-size:16px;min-height:44px}
+    .shell .qualpeople .person .held label{min-height:44px;align-items:center}
+    .shell .filestatus,.shell .head .who{overflow-wrap:anywhere;min-width:0}
   </style>
 </head>
 <body>
@@ -570,9 +593,12 @@
       </div>
       <div class="importrow">
         <div><label for="importMonth">חודש לייבוא</label><input id="importMonth" type="month"></div>
-        <div><label for="importPaste">הדבקה מהגיליון</label>
-          <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea></div>
       </div>
+      <details class="import-paste-option" id="importPasteOption">
+        <summary>הדבקה מגיליון במקום קובץ</summary>
+        <label for="importPaste">הדבקה מהגיליון</label>
+        <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea>
+      </details>
       <div class="btns">
         <button class="btn" id="importCheck" type="button">2. בדוק תצוגה מקדימה</button>
         <button class="btn dark" id="importRun" type="button" disabled>3. צור טיוטה מהקובץ</button>
@@ -720,7 +746,7 @@
       </div>
       <div id="draftPreview"><div class="loader"></div></div>
       <div class="gapbox" id="draftManualWarnings" hidden>
-        <div class="gaphead"><b>אזהרות בשיבוצים ידניים — בשבוע המוצג</b></div>
+        <div class="gaphead"><b>אזהרות לייבוא ולשיבוצים ידניים</b></div>
         <div class="sub">השיבוצים נשמרו בטיוטה. האזהרות מוצגות לבדיקה ואינן חוסמות פרסום.</div>
         <div id="draftManualWarningsList"></div>
       </div>
@@ -792,6 +818,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h19"></script>
+<script type="module" src="./schedule-management.js?v=42h191"></script>
 </body>
 </html>

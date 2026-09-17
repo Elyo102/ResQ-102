@@ -3110,8 +3110,103 @@ async function test(name, fn) {
     assert.ok(Array.isArray(ok.by_uid.viewer));
   });
 
-  assert.equal(passed, 83);
-  console.log('\n83 schedule runtime Firestore integration checks passed.');
+  for (const mode of ['shadow', 'new']) {
+    await test('unconfigured workbook real Firestore lifecycle preserves external names in ' + mode, async () => {
+      const importSid = SID + '_workbook_' + mode;
+      const root = db.collection('stations').doc(importSid);
+      const runtimeRef = root.collection('schedule_state').doc('runtime');
+      const importReq = data => req('manager', 'commander', data, { stationId:importSid });
+      await root.set({ name:'Workbook integration ' + mode });
+      await root.collection('users').doc('manager').set({ station:importSid, station_id:importSid,
+        role:'commander', full_name:'מנהל בדיקה', is_active:true, crew:'A' });
+      await root.collection('schedule_access').doc('manager').set({ schema_version:1,
+        station_id:importSid, uid:'manager', roles:['schedule_manager'], active:true, revision:1 });
+      await runtimeRef.set({ mode });
+      for (const [position, crew] of ['A','B','C'].entries()) {
+        await root.collection('rotations').doc(crew).set({ anchor_date:'2026-09-01',
+          cycle_days:3, position_in_cycle:position, crew, is_active:true });
+      }
+      const pushes = [];
+      const importedApi = runtime(async (...args) => { pushes.push(args); return { sent:1 }; });
+      const input = { month:'2026-09', matrix:[
+        ['', '1/9', '2/9', '3/9'], ['', 'ג', 'ד', 'ה'],
+        ['אילת', 'עובד חיצוני ראשון', 'עובד חיצוני שני', 'עובד חיצוני ראשון']
+      ] };
+      const report = await importedApi.previewScheduleImport(importReq(input));
+      assert.equal(report.blocked, false);
+      assert.equal(report.counts.unlinked, 2);
+      const imported = await importedApi.importScheduleSheet(importReq({ ...input,
+        request_id:'external_import_' + mode, expected_report_digest:report.report_digest }));
+      const draftRef = root.collection('schedule_drafts').doc(imported.draft_id);
+      const meta = (await draftRef.get()).data();
+      assert.equal(meta.workbook_managed, true);
+      const preview = await importedApi.getDraftPreview(importReq({ draft_id:imported.draft_id, start:imported.from }));
+      assert.ok(JSON.stringify(preview.days).includes('עובד חיצוני ראשון'), 'draft shows the external name');
+      const policyRef = root.collection('schedule_policies').doc(meta.policy_id);
+      const policy = (await policyRef.get()).data();
+      await policyRef.update({ content_digest:'tampered' });
+      await assert.rejects(importedApi.getDraftPreview(importReq({ draft_id:imported.draft_id, start:imported.from })),
+        e => e.code === 'draft-source-changed');
+      await policyRef.set(policy);
+      await runtimeRef.set({ mode:'off' });
+      await assert.rejects(importedApi.publish(importReq({ request_id:'off_must_fail_' + mode,
+        draft_id:imported.draft_id, expected_content_digest:preview.expected_content_digest })),
+      e => e.code === 'schedule-mode-blocked');
+      await runtimeRef.set({ mode });
+      const published = await importedApi.publish(importReq({ request_id:'external_publish_' + mode,
+        draft_id:imported.draft_id, expected_content_digest:preview.expected_content_digest }));
+      assert.equal(published.revision, 1);
+      const rangeInput = { from:imported.from, to:imported.to };
+      const before = await importedApi.getStationRange(importReq(rangeInput));
+      assert.ok(JSON.stringify(before.days).includes('עובד חיצוני ראשון'), 'published board shows the actual external name');
+      assert.ok(JSON.stringify(before.days).includes('עובד חיצוני שני'));
+      const rows = await draftRef.collection('rows').get();
+      const assigned = rows.docs.map(doc => doc.data().row).find(row => row.slots.length);
+      const person = assigned.slots[0].person;
+      assert.match(person, /^sp_/);
+      assert.equal((await root.collection('users').doc(person).get()).exists, false);
+      const activeRef = root.collection('schedule_state').doc('active');
+      const expected = (await activeRef.get()).data();
+      const edits = [{ kind:'unassign', uid:person, dates:[assigned.date] }];
+      const editPreview = await importedApi.previewScheduleEdit(importReq({ expected, edits }));
+      const edited = await importedApi.applyScheduleEdit(importReq({ request_id:'external_edit_' + mode,
+        expected, edits, expected_edit_digest:editPreview.edit_digest }));
+      assert.equal(edited.revision, 2);
+      const afterEdit = await importedApi.getStationRange(importReq(rangeInput));
+      assert.notDeepEqual(afterEdit.days, before.days, 'manual edit changes the visible board');
+      const restored = await importedApi.rollback(importReq({ request_id:'external_restore_' + mode,
+        target_publication_id:published.publication_id, expected_active_publication_id:edited.publication_id,
+        reason_code:'wrong_assignment' }));
+      assert.equal(restored.revision, 3);
+      const afterRestore = await importedApi.getStationRange(importReq(rangeInput));
+      assert.deepEqual(afterRestore.days, before.days, 'rollback restores external names and exact assignment rows');
+      const config = (await runtimeRef.get()).data();
+      assert.equal(config.active_policy_id, undefined);
+      assert.equal(config.active_source_id, undefined);
+      assert.equal(pushes.length, 0, 'external people never trigger a push to a fabricated UID');
+      if (mode === 'shadow') {
+        const candidates = await root.collection('schedule_publications')
+          .where('trial_source_publication_id', '==', restored.publication_id).get();
+        assert.equal(candidates.size, 1);
+        const candidate = candidates.docs[0];
+        assert.equal(candidate.data().workbook_managed, true);
+        assert.equal((await candidate.ref.collection('schedule_outbox').get()).size, 0,
+          'trial candidate must not enqueue external person IDs as Auth UIDs');
+        const preflight = await importedApi.previewCutover(importReq({ candidate_publication_id:candidate.id }));
+        assert.equal(preflight.blocked, false, JSON.stringify(preflight.by_reason));
+        await importedApi.promoteToNew(importReq({ request_id:'external_promote_' + mode,
+          candidate_publication_id:candidate.id, expected_mode:'shadow',
+          expected_preflight_signature:preflight.signature,
+          accept_changes:Number((preflight.changes || {}).count || 0) > 0 ? preflight.signature : undefined }));
+        assert.equal((await runtimeRef.get()).data().mode, 'new');
+        const liveRange = await importedApi.getStationRange(importReq(rangeInput));
+        assert.deepEqual(liveRange.days, before.days, 'real cutover preserves the exact external employee board');
+        assert.equal(pushes.length, 0);
+      }
+    });
+  }
+  assert.equal(passed, 85);
+  console.log('\n85 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

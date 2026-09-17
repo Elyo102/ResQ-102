@@ -70,7 +70,7 @@ const browser = await chromium.launch();
 let passed = 0;
 async function check(name, fn) { await fn(); passed += 1; console.log('✓ ' + name); }
 try {
-  for (const role of ['firefighter','hr','stcmd','super']) {
+  for (const role of ['firefighter','hr','stcmd']) {
     const run = await open(browser, role);
     await run.page.locator('#denyCard').waitFor({ state:'visible' });
     await check(role + ' fails closed without roster access', async () => {
@@ -185,7 +185,7 @@ try {
   const delivered = await recovered.page.evaluate(() => {
     window.__CALLABLE_PLAN = { sendCallout:[{ data:{ ok:true, id:'recovered-callout', sent:1 } }] };
     const rows = [{ id:'recovered-callout', data:{
-      by_uid:'commander-callout', target_he:'משמרת ב', crew:'B',
+      by_uid:'commander-callout', target:'crew:B', target_he:'משמרת ב', crew:'B',
       text:'קריאה ששוחזרה לאחר רענון', uids:['u4'], active:true,
       request_id:'resume_request_id_123456', delivery_state:'partial',
       delivery_failed_uids:['u4'], created_key:new Date().toISOString()
@@ -235,6 +235,58 @@ try {
   });
   await statuses.context.close();
 
+  const superRun = await open(browser, 'super');
+  await superRun.page.locator('#work').waitFor({ state:'visible' });
+  await superRun.page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', [], { oldest:true }));
+  await check('super chooses explicit target and sees the callout action', async () => {
+    assert.equal(await superRun.page.locator('#targetCard').isVisible(), true);
+    assert.equal(await superRun.page.locator('#calloutSend').isDisabled(), true);
+    await superRun.page.locator('#targetStation').fill('other_station');
+    await superRun.page.locator('#targetCrew').selectOption('C');
+    await superRun.page.locator('#targetApply').evaluate(button => button.click());
+    await superRun.page.waitForFunction(() => !document.querySelector('#calloutSend').disabled);
+    await superRun.page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', [{ id:'other_call', data:{
+      by_uid:'another_commander', target:'crew:C', crew:'C', text:'Do not resend', active:true,
+      request_id:'other_request_123456789', delivery_state:'partial', uids:[]
+    }}]));
+    assert.match(await superRun.page.locator('#calloutLive').textContent(), /Do not resend/);
+    assert.equal(await superRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(x => x.name === 'sendCallout').length), 0);
+    await superRun.page.locator('#calloutText').fill('בדיקת מנהל־על');
+    await superRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await superRun.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(x => x.name === 'sendCallout'));
+    const sent = await superRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(x => x.name === 'sendCallout'));
+    assert.equal(sent.payload.target_station_id, 'other_station');
+    assert.equal(sent.payload.target, 'crew:C');
+    await superRun.page.waitForFunction(() => !document.querySelector('#calloutText').readOnly);
+    if (process.env.CALLOUT_SCREENSHOT_DIR) {
+      fs.mkdirSync(process.env.CALLOUT_SCREENSHOT_DIR, { recursive:true });
+      await superRun.page.locator('#targetCard').screenshot({ path:path.join(process.env.CALLOUT_SCREENSHOT_DIR, 'callout-super-target-mobile.png') });
+    }
+    await superRun.page.evaluate(() => { window.__CALLABLE_PLAN = { sendCallout:[{ reject:true, code:'functions/unavailable' }] }; });
+    await superRun.page.locator('#calloutText').fill('קריאה ממתינה');
+    await superRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await superRun.page.waitForFunction(() => document.querySelector('#calloutMessage').textContent.includes('נכשלה'));
+    await superRun.page.locator('#targetStation').fill('changed_station');
+    assert.deepEqual(await superRun.page.locator('#targetCrew').evaluate(select => Array.from(select.options, option => option.value)), ['', 'A', 'B', 'C']);
+    await superRun.page.locator('#targetCrew').selectOption('A');
+    await superRun.page.locator('#targetApply').evaluate(button => button.click());
+    assert.match(await superRun.page.locator('#targetMessage').textContent(), /שליחה קודמת ממתינה/);
+    await superRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await superRun.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).filter(x => x.name === 'sendCallout').length === 3);
+    const retries = await superRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(x => x.name === 'sendCallout').slice(1));
+    assert.deepEqual(retries[0].payload, retries[1].payload, 'target and request identity stay frozen during pending send');
+    assert.equal(retries[1].payload.target_station_id, 'other_station');
+    assert.deepEqual(superRun.errors, []);
+  });
+  await superRun.context.close();
+
+  const forged = await open(browser, 'firefighter', { super:'true' });
+  await forged.page.locator('#denyCard').waitFor({ state:'visible' });
+  await check('truthy string super does not grant UI access', async () => {
+    assert.equal(await forged.page.locator('#work').isVisible(), false);
+  });
+  await forged.context.close();
+
   const preview = await open(browser, 'commander');
   await preview.page.evaluate(() => sessionStorage.setItem('resq_role_view_v1', '{"selected":"commander"}'));
   await preview.page.reload({ waitUntil:'load' });
@@ -249,4 +301,4 @@ try {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
-console.log('callout console browser: ' + passed + '/12 PASS');
+console.log('callout console browser: ' + passed + '/' + passed + ' PASS');
