@@ -441,6 +441,21 @@
         margin:10px -13px -13px;padding:10px 13px calc(10px + env(safe-area-inset-bottom));
         background:var(--card,#fff);border-top:1px solid var(--line,#cbd5e1);
         box-shadow:0 -6px 14px rgba(0,0,0,.06)}
+      /* 42H.20 §4/§10 · "no decorative empty schedule slots beyond what
+       * is required to preserve a real minimum line" (mobile only).
+       * schedule-management.js pads every station cell to a fixed
+       * template height (minVisualSlots, up to 15 for אילת) that has
+       * no relation to the real, signed minimum for that day - that
+       * padding is exactly the oversized empty vertical area this
+       * requirement is about. The two kinds of empty slot carry
+       * different classes: one preserves the real minimum-line
+       * position (.line-slot.empty-slot - kept, on every width) and
+       * one is pure template decoration (.empty-slot without
+       * .line-slot - hidden here, mobile only). Desktop keeps the
+       * existing template-height look; nothing server-side changes,
+       * and no real assignment is ever hidden - the JS never counts
+       * these against staffing either way. */
+      .name-slot.empty-slot:not(.line-slot){display:none}
     }
     /* Approved Gemini surface styling; board colors, controls and behavior remain unchanged. */
     /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה

@@ -880,6 +880,46 @@ try {
     assert.equal(Object.hasOwn(range.payload, 'stationId'), false);
   });
 
+  await test('mobile hides decorative template padding beyond the real minimum line; desktop keeps it', async () => {
+    // 42H.20 §4/§10 · the eilat cell here has 2 real people and a real
+    // minimum of 2 (see day()), but FIXED_STATIONS pads אילת to a
+    // template height of 15 rows regardless of real data - that
+    // padding must not create an oversized empty area on mobile.
+    const mobileCell = phonePage.locator('#stationBoard .cell[data-station="eilat"]').first();
+    await mobileCell.locator('.name-slot').first().waitFor();
+    const decorativeMobile = mobileCell.locator('.name-slot.empty-slot:not(.line-slot)');
+    const decorativeCount = await decorativeMobile.count();
+    assert.ok(decorativeCount > 0, 'fixture should still produce decorative padding nodes in the DOM');
+    for (let index = 0; index < decorativeCount; index += 1) {
+      const box = await decorativeMobile.nth(index).boundingBox();
+      assert.ok(!box || box.height === 0, 'a decorative empty slot is visible on mobile: ' + JSON.stringify(box));
+    }
+    // the real-minimum-line slot (.line-slot.empty-slot, if any) must stay visible on mobile -
+    // this fix must never hide the one placeholder that matters.
+    const realLine = mobileCell.locator('.name-slot.line-slot.empty-slot');
+    if (await realLine.count()) {
+      const box = await realLine.first().boundingBox();
+      assert.ok(box && box.height > 0, 'the real minimum-line slot was hidden on mobile - regression');
+    }
+
+    const desktop = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
+    await prepare(desktop, 'firefighter', {
+      getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+      getMyScheduleV2:[{ data:mine }],
+      getStationScheduleRange:[{ data:stationRange }]
+    });
+    const desktopPage = await desktop.newPage();
+    await desktopPage.goto(base, { waitUntil:'load' });
+    await desktopPage.locator('#stationBoard .hcell').first().waitFor();
+    const desktopCell = desktopPage.locator('#stationBoard .cell[data-station="eilat"]').first();
+    const decorativeDesktop = desktopCell.locator('.name-slot.empty-slot:not(.line-slot)');
+    const desktopCount = await decorativeDesktop.count();
+    assert.equal(desktopCount, decorativeCount, 'desktop and mobile should produce the same DOM, only visibility differs');
+    const desktopBox = await decorativeDesktop.first().boundingBox();
+    assert.ok(desktopBox && desktopBox.height > 0, 'desktop template padding regressed - it must stay visible there');
+    await desktop.close();
+  });
+
   const direct = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(direct, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
@@ -3280,5 +3320,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 81);
+assert.equal(passed, 82);
 console.log('\n' + passed + ' schedule management browser checks passed.');
