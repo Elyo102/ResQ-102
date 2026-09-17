@@ -4541,6 +4541,22 @@ const CALLOUT_OPTIONS = Object.freeze({
   memory:'256MiB', maxInstances:5, concurrency:20
 });
 
+// 42H.20 Scope 11 (closure batch item 6) · לפני התוספת הזאת delivery_state
+// 'partial' היה חוזר על עצמו ללא גבול: כל resumeDelivery/sendPending נוסף
+// (מפקד לוחץ שוב, או קורא ל-API ישירות עם אותו request_id) ניסה שוב את
+// אותם delivery_failed_uids לנצח, גם אם הטוקן שלהם מת לצמיתות. אחרי
+// MAX_CALLOUT_DELIVERY_ATTEMPTS ניסיונות מסירה (לא ניסיונות retry אוטומטי
+// בצד הלקוח בתוך קריאה אחת — אלה ממילא מוגבלים ל-3 ב-callout-console.js;
+// זו ספירת delivery_attempts על המסמך עצמו, שמצטברת גם על פני resume
+// ידניים חוזרים) הקריאה עוברת למצב סופי חדש, dead_letter, ומפסיקה
+// להיבדק כברת-retry: היא לא תיכנס יותר ל-acquired.busy/acquired
+// ולא תנסה שוב לשלוח push לנמענים שברשימת delivery_failed_uids. הקריאה
+// עצמה (document, לא ה-push) נשארת פעילה ונראית לכל מי שכבר קיבל אותה;
+// רק ניסיון המסירה החוזר נעצר. dead_letter_uids נשמר בנפרד מ-
+// delivery_failed_uids כדי שיהיה ברור ל-UI/ביקורת מי סופית לא קיבל, לא
+// רק מי נכשל בסבב האחרון.
+const MAX_CALLOUT_DELIVERY_ATTEMPTS = 5;
+
 function verifyCalloutProfile(actor, userSnap) {
   if (!userSnap.exists) {
     throw new HttpsError('failed-precondition', 'כרטיס המשתמש בתחנה לא נמצא.');
@@ -4791,9 +4807,22 @@ exports.sendCallout = onCall(
     if (value.active !== true) return { closed:true, value };
     if (value.delivery_state === 'completed') return { completed:true, value };
     if (value.delivery_state === 'policy_blocked') return { policyBlocked:true, value };
+    if (value.delivery_state === 'dead_letter') return { deadLettered:true, value };
     const leaseUntil = Date.parse(String(value.delivery_lease_until || ''));
     if (value.delivery_state === 'delivering' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) {
       return { busy:true, value };
+    }
+    // 42H.20 Scope 11 (closure batch item 6) · a 'partial' delivery that has
+    // already used up its bounded attempt budget goes to the dead_letter
+    // terminal state here, in the same transaction that would otherwise have
+    // started yet another retry - not on a later read. This is the one place
+    // delivery_attempts is actually consulted; every value before this bound
+    // just accumulates it without acting on it.
+    if (value.delivery_state === 'partial' && Number(value.delivery_attempts || 0) >= MAX_CALLOUT_DELIVERY_ATTEMPTS) {
+      const deadUids = Array.isArray(value.delivery_failed_uids) ? value.delivery_failed_uids.slice() : [];
+      tx.set(ref, { delivery_state:'dead_letter', delivery_lease_until:null,
+        dead_letter_uids:deadUids, dead_lettered_at:FV.serverTimestamp() }, { merge:true });
+      return { deadLettered:true, value: Object.assign({}, value, { delivery_state:'dead_letter', dead_letter_uids:deadUids }) };
     }
     const retryUids = value.delivery_state === 'partial' && Array.isArray(value.delivery_failed_uids)
       ? value.delivery_failed_uids.filter(uid => value.uids.indexOf(uid) !== -1)
@@ -4813,6 +4842,17 @@ exports.sendCallout = onCall(
       suppressed:Number(value.delivery_suppressed || 0),
       failed:Number(value.delivery_failed || 0),
       skipped_away:Array.isArray(value.skipped_away) ? value.skipped_away : [] };
+  }
+  if (acquired.deadLettered) {
+    const value = acquired.value || {};
+    // 42H.20 Scope 11 (closure batch item 6) · terminal, not retryable: the
+    // console must stop offering "resume" for these uids, but this is not a
+    // failure of the send itself - people who DID receive it still have it.
+    return { ok:false, id:ref.id, duplicate:true, dead_letter:true, retryable:false,
+      trial:value.trial === true, sent:Number(value.people || 0),
+      people:Number(value.people || 0), devices:Number(value.devices || 0),
+      dead_letter_uids:Array.isArray(value.dead_letter_uids) ? value.dead_letter_uids : [],
+      delivery_attempts:Number(value.delivery_attempts || 0) };
   }
   if (acquired.completed) {
     const value = acquired.value || {};

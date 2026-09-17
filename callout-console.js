@@ -266,8 +266,18 @@ export async function initCalloutConsole(options = {}) {
         session.elements.input.readOnly = false;
         session.pendingRequest = null;
         session.resumeStarted = false;
+        // 42H.20 Scope 11 (closure batch item 6): dead_letter is terminal on
+        // the server (bounded delivery_attempts, see functions/index.js's
+        // MAX_CALLOUT_DELIVERY_ATTEMPTS) - do not word this like the other
+        // failure cases that invite "try again", since trying again here
+        // does nothing (the server no longer retries these uids at all).
+        const deadCount = Array.isArray(data.dead_letter_uids) ? data.dead_letter_uids.length : 0;
         setMessage(session.elements.message,
-          data.closed === true ? 'הקריאה כבר נסגרה ולא נשלחה שוב.' : 'הקריאה לא נשלחה. נסה שוב.', 'err');
+          data.closed === true ? 'הקריאה כבר נסגרה ולא נשלחה שוב.'
+          : data.dead_letter === true
+            ? 'הקריאה כבר קיבלה מספר ניסיונות מסירה ולא הצליחה להגיע ל-' + deadCount +
+              ' נמענים. המערכת הפסיקה לנסות אוטומטית — צריך לפנות אליהם בדרך אחרת.'
+            : 'הקריאה לא נשלחה. נסה שוב.', 'err');
         return;
       }
       setMessage(session.elements.message,

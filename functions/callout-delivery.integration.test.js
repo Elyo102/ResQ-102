@@ -25,6 +25,8 @@ const scenarios = [
   'empty-token-list',
   'all-tokens-dead',
   'partial-retry',
+  'dead-letter-bound',
+  'dead-letter-resume-after-terminal',
   'live-retry-after-trial-cutover',
   'trial-retry-after-live-cutover',
   'closed-before-retry',
@@ -53,6 +55,8 @@ if (!process.argv.includes('--scenario')) {
     'sendCallout uses the enforced options');
   assert.match(source, /exports\.closeCallout = onCall\(CALLOUT_OPTIONS,/,
     'closeCallout uses the enforced options');
+  assert.match(source, /const MAX_CALLOUT_DELIVERY_ATTEMPTS = 5;/,
+    'closure batch item 6: the dead-letter bound is exactly 5, matching this test\'s scenario');
   const runId = crypto.randomBytes(6).toString('hex');
   for (const scenario of scenarios) {
     const child = spawnSync(process.execPath, [__filename, '--scenario', scenario], {
@@ -365,6 +369,71 @@ async function main() {
     assert.deepEqual(sentPayloads.slice(payloadBefore).map(payload => payload.data && payload.data.tag),
       ['callout-' + first.id], 'retry keeps the exact provider collapse/tag identifier');
     assert.equal((await stored(retry)).delivery_state, 'completed');
+  }
+
+  if (scenario === 'dead-letter-bound') {
+    // 42H.20 Scope 11 (closure batch item 6). A recipient whose token never
+    // succeeds must not be retried forever: after MAX_CALLOUT_DELIVERY_ATTEMPTS
+    // (5) delivery attempts the callout moves to the dead_letter terminal
+    // state and the next call must not attempt delivery again.
+    await seed({ silent: false, silent_allow: [] }, [
+      { uid: sender },
+      { uid: 'dead_user', tokens: ['permanently-dead-token'] }
+    ]);
+    const req = request('dead-bound');
+    let last = null;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      last = await functions.sendCallout.run(req);
+      assert.equal(last.ok, false, 'attempt ' + attempt + ' must not report success');
+      assert.equal(last.dead_letter, undefined, 'attempt ' + attempt + ' must not be terminal yet');
+      const value = await stored(last);
+      assert.equal(value.delivery_state, 'partial', 'attempt ' + attempt + ' stays partial');
+      assert.equal(value.delivery_attempts, attempt, 'delivery_attempts tracks exactly this many attempts');
+    }
+    const before6 = sentTokenGroups.length;
+    const sixth = await functions.sendCallout.run(req);
+    assert.equal(sixth.ok, false);
+    assert.equal(sixth.dead_letter, true, 'the 6th attempt must be reported as dead-lettered');
+    assert.equal(sixth.retryable, false, 'a dead-lettered callout must never be reported retryable');
+    assert.deepEqual(sixth.dead_letter_uids, ['dead_user']);
+    assert.equal(sentTokenGroups.length, before6,
+      'reaching the bound must not attempt one more push - the transition itself is the 6th call, not a 6th send');
+    const value = await stored(sixth);
+    assert.equal(value.delivery_state, 'dead_letter');
+    assert.deepEqual(value.dead_letter_uids, ['dead_user']);
+    assert.equal(value.delivery_lease_until, null);
+    assert.ok(value.dead_lettered_at, 'dead_lettered_at is recorded for audit');
+  }
+
+  if (scenario === 'dead-letter-resume-after-terminal') {
+    // A dead-lettered callout is a terminal delivery state, not a broken
+    // document: closeCallout must still work on it (station-manual cleanup),
+    // and a further sendCallout call must keep returning the same terminal
+    // answer without incrementing delivery_attempts again or sending another
+    // push - it must behave like 'completed'/'policy_blocked', not loop.
+    await seed({ silent: false, silent_allow: [] }, [
+      { uid: sender },
+      { uid: 'dead_user', tokens: ['permanently-dead-token'] }
+    ]);
+    const req = request('dead-resume');
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      await functions.sendCallout.run(req);
+    }
+    const afterFirstTerminal = await stored({ id: (await db.collection(`stations/${SID}/callouts`).get()).docs[0].id });
+    assert.equal(afterFirstTerminal.delivery_state, 'dead_letter');
+    const attemptsAtTerminal = afterFirstTerminal.delivery_attempts;
+    const before = sentTokenGroups.length;
+    const again = await functions.sendCallout.run(req);
+    assert.equal(again.dead_letter, true, 'a repeat call after dead-letter stays terminal');
+    assert.equal(again.retryable, false);
+    assert.equal(sentTokenGroups.length, before, 'a call against an already dead-lettered callout must never push');
+    const value = await stored(again);
+    assert.equal(value.delivery_attempts, attemptsAtTerminal,
+      'delivery_attempts must not keep climbing once the callout is dead-lettered');
+    // Manual cleanup must still work on a dead-lettered callout - it is not
+    // a stuck/broken state, just a terminal one.
+    const closed = await functions.closeCallout.run({ auth: req.auth, data: { id: again.id } });
+    assert.equal(closed && closed.ok !== false, true);
   }
 
   if (scenario === 'live-retry-after-trial-cutover') {
