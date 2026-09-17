@@ -110,6 +110,9 @@ const DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', '
 // ארבעה צבעים, במחזור. תחנה חמישית תקבל שוב את הראשון — וזה
 // מוצהר, ולא תקלה שמישהו יגלה כשתיפתח תחנת קצה נוספת.
 const SUB_CLASS = ['s1', 's2', 's3', 's4'];
+// גובה תצוגה לתחנה שאין לה שורה בתבנית השנתית — למשל תחנה שנוצרה
+// בייבוא ונושאת מזהה דינמי. שם נוסף תמיד מוצג ולעולם אינו נחתך.
+const DEFAULT_MIN_VISUAL_SLOTS = 5;
 const FIXED_STATIONS = Object.freeze([
   // גובה השורות נלקח מתבנית הסידור השנתית של תחנת אילת. זו רצפת
   // תצוגה בלבד, לא תקרת כוח אדם: שם נוסף תמיד מוצג ולעולם אינו נחתך.
@@ -1554,34 +1557,71 @@ function isWeekend(iso) {
   return dow === 5 || dow === 6;
 }
 
-// סדר תחנות הקצה נקבע ממדיניות התחנה כשהיא קיימת, כדי שהצבע של
-// „תמנע" לא יתחלף בין יום ליום רק מפני שביום אחד לא היה שם איש.
+// תחנות הקצה של הלוח מגיעות מהשורות ה**חתומות** שהשרת החזיר — מהטיוטה
+// או מהפרסום — ולא מרשימה קבועה בקוד.
+//
+// עד כאן הפונקציה אספה את המזהים מהשורות ואז זרקה אותם והחזירה תמיד את
+// FIXED_STATIONS. תחנה שנוצרה בייבוא נושאת מזהה דינמי (is_…), ורשימה
+// קבועה לעולם לא תתאים לו — ולכן הלוח הציג ארבע תחנות ריקות ואיבד את
+// כל מה שבאמת נחתם.
+//
+// שלושה כללים שנשמרים כאן במפורש:
+//   * ההתאמה היא לפי **מזהה בלבד**. שם תצוגה אינו מזהה ואינו משמש להתאמה.
+//   * שני מזהים שונים נשארים שתי תחנות נפרדות, גם כששם התצוגה זהה.
+//   * המדיניות ה**חיה** אינה מוסיפה תחנות ללוח — היא עשויה להשתנות אחרי
+//     החתימה. היא משמשת רק כמקור-גיבוי לשם תצוגה של מזהה שכבר חתום.
+//
+// FIXED_STATIONS נשארת בתפקיד אחד בלבד: גובה התצוגה וסדר ההצגה של
+// התחנות הוותיקות, לפי מזהה. היא אינה קובעת עוד מי מוצג.
 function subOrder(days) {
+  const seen = [];
   const labels = new Map();
-  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
-  }));
-  if (state.policy) {
-    Object.keys(state.policy.sub_stations).forEach((id) => {
-      if (!labels.has(id)) labels.set(id, state.policy.sub_stations[id].label || id);
-    });
-  }
-  // הקו של כל תחנה מגיע רק מהשורות שהשרת החזיר. הוא נחתם יחד עם
-  // הטיוטה/הפרסום, ולכן אסור לערבב כאן מדיניות חיה שאולי השתנתה מאז.
-  // קו 0 = אין קו.
   const minimums = new Map();
   (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!minimums.has(sub.sub_station) && Number.isInteger(sub.minimum)) minimums.set(sub.sub_station, sub.minimum);
+    const id = typeof sub.sub_station === 'string' ? sub.sub_station.trim() : '';
+    if (!id) return;
+    const label = typeof sub.label === 'string' ? sub.label.trim() : '';
+    if (!labels.has(id)) {
+      seen.push(id);
+      labels.set(id, label);
+    } else if (!labels.get(id) && label) {
+      labels.set(id, label);
+    }
+    // הקו של כל תחנה מגיע רק מהשורות שהשרת החזיר. הוא נחתם יחד עם
+    // הטיוטה/הפרסום. קו 0 = אין קו.
+    if (!minimums.has(id) && Number.isInteger(sub.minimum)) minimums.set(id, sub.minimum);
   }));
+
+  const fixedById = new Map(FIXED_STATIONS.map((station) => [station.id, station]));
+  const policySubs = state.policy && state.policy.sub_stations ? state.policy.sub_stations : null;
+  const policyLabel = (id) => {
+    if (!policySubs || !Object.prototype.hasOwnProperty.call(policySubs, id)) return '';
+    const entry = policySubs[id];
+    return entry && typeof entry.label === 'string' ? entry.label.trim() : '';
+  };
+
   const lineOf = (id) => {
     const value = minimums.has(id) ? minimums.get(id) : null;
     return Number.isInteger(value) && value > 0 ? value : null;
   };
-  return FIXED_STATIONS.map((station) => ({
-    id: station.id,
-    label: station.label,
-    minimum: lineOf(station.id),
-    minVisualSlots: station.minVisualSlots
+  const labelOf = (id) => labels.get(id)
+    || policyLabel(id)
+    || (fixedById.has(id) ? fixedById.get(id).label : '')
+    || id;
+  const slotsOf = (id) => (fixedById.has(id)
+    ? fixedById.get(id).minVisualSlots : DEFAULT_MIN_VISUAL_SLOTS);
+
+  // סדר יציב בין ימים: התחנות הוותיקות לפי סדרן המוצהר — אך ורק אלו
+  // שבאמת נחתמו — ואחריהן כל מזהה אחר לפי סדר הופעתו הראשון.
+  const legacy = FIXED_STATIONS
+    .map((station) => station.id)
+    .filter((id) => labels.has(id));
+  const rest = seen.filter((id) => !fixedById.has(id));
+  return legacy.concat(rest).map((id) => ({
+    id,
+    label: labelOf(id),
+    minimum: lineOf(id),
+    minVisualSlots: slotsOf(id)
   }));
 }
 
