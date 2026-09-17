@@ -9,9 +9,20 @@
 // זה לא נראה כמו באג. זה נראה כמו טקסט חסר, או כמו מסך
 // "לא מסודר" — וזו בדיוק המילה שבה אלדד תיאר את זה.
 //
-// הבדיקה טוענת כל מסך **בערכה הבהירה**, עוברת על כל צומת
-// טקסט גלוי, ומחשבת את יחס הניגודיות מול הרקע האפקטיבי
-// (ההורה הראשון שיש לו רקע לא שקוף).
+// הבדיקה טוענת כל מסך, בשתי הערכות בזה אחר זה — בהירה
+// (ברירת המחדל, נכפית מראש כמו קודם) וכהה (נבחרת במפורש
+// דרך data-theme="dark", בדיוק כפי שמשתמש שבוחר "כהה תמיד"
+// ב-nav.js היה עושה) — עוברת על כל צומת טקסט גלוי בכל אחת,
+// ומחשבת את יחס הניגודיות מול הרקע האפקטיבי (ההורה הראשון
+// שיש לו רקע לא שקוף).
+//
+// למה שני מעברים ולא רק אחד: 6b103fa תיקן שני כשלי AA
+// אמיתיים במצב הכהה (--accent-on, --bad-on) שהתגלו רק
+// בחישוב ידני, כי עד לרגע זה לא הייתה כאן שום בדיקה
+// אוטומטית שמפעילה בכלל data-theme="dark" ובודקת אותו. זה
+// שער רגרסיה: מטרתו לתפוס את הפעם הבאה שמישהו — אדם או
+// סוכן — משנה טוקן צבע ובודק רק את הבהיר כי זו ברירת
+// המחדל, בדיוק כמו שקרה כאן בהתחלה עם הכהה.
 //
 // הסף הוא WCAG AA: 4.5 לטקסט רגיל, 3.0 לטקסט גדול
 // (18.66px ומעלה מודגש, או 24px ומעלה). לא בגלל תקן —
@@ -70,126 +81,154 @@ function ratio(a, b){
 }
 
 const b = await chromium.launch();
-let bad = 0, checked = 0;
 
-for (const screen of SCREENS) {
-  const ctx = await b.newContext({ viewport:{ width:390, height:900 }, locale:'he-IL' });
-  await ctx.route('**/firebase-*.js', r => {
-    const n = path.basename(new URL(r.request().url()).pathname);
-    const p = path.join(STUB, n);
-    // firebase-messaging-sw.js הוא **קובץ של האפליקציה**, לא
-    // ייבוא מה-CDN — הוא ה-service worker של ההתראות, והוא
-    // יושב בשורש הפרויקט. התבנית firebase-*.js תופסת גם אותו,
-    // ואז readFileSync נפל על קובץ בדל שאינו קיים והפיל את
-    // כל הבדיקה. בדיוק זה הכשיל את ה-CI ב-25.8.2026.
-    //
-    // מה שאין לו בדל — מוגש כמו שהוא. זה גם הכלל הנכון
-    // לעתיד: קובץ חדש בשם דומה לא יפיל את הבדיקה.
-    if (!fs.existsSync(p)) { r.continue(); return; }
-    r.fulfill({ status:200, contentType:'text/javascript',
-                body: fs.readFileSync(p, 'utf8') });
-  });
-  await ctx.route('https://www.gstatic.com/**', r => {
-    const n = path.basename(new URL(r.request().url()).pathname)
-      .replace('-compat','').replace('.js','') + '.js';
-    const p = path.join(STUB, n);
-    r.fulfill({ status:200, contentType:'text/javascript',
-                body: fs.existsSync(p) ? fs.readFileSync(p,'utf8') : '' });
-  });
-  const pg = await ctx.newPage();
-  // super — הוא רואה הכי הרבה מסכים, ולכן הכי הרבה טקסט.
-  // הערכה הבהירה נכפית מראש, לפני הציור הראשון.
-  await pg.addInitScript(() => {
-    window.__SMOKE_ROLE = 'super';
-    try { localStorage.setItem('resq_theme','light'); } catch(e){}
-    document.documentElement.setAttribute('data-theme','light');
-  });
-  await pg.goto('http://localhost:'+PORT+'/'+screen, { waitUntil:'load' });
-  await pg.waitForTimeout(1700);
+// ריצה אחת, לערכה נתונה. מחזירה {bad, checked} כדי שהריצה
+// הכוללת תוכל לדווח על שתי הערכות בנפרד ולהיכשל אם אחת מהן
+// נכשלת, לא רק אם שתיהן נכשלות.
+async function runTheme(theme, themeLabel) {
+  let bad = 0, checked = 0;
 
-  const found = await pg.evaluate(() => {
-    const out = [];
-    const parse = (s) => {
-      const m = String(s).match(/rgba?\(([^)]+)\)/);
-      if (!m) return null;
-      const p = m[1].split(',').map(x => parseFloat(x));
-      return { rgb: [p[0],p[1],p[2]], a: p.length > 3 ? p[3] : 1 };
-    };
-    // הרקע האפקטיבי: ההורה הראשון עם רקע לא שקוף. טקסט על
-    // אלמנט שקוף יורש את מה שמאחוריו, וחישוב מול "שקוף"
-    // היה מחזיר תשובה חסרת משמעות.
-    const bgOf = (el) => {
-      let n = el;
-      while (n && n !== document.documentElement) {
-        const c = parse(getComputedStyle(n).backgroundColor);
-        if (c && c.a >= 0.95) return c.rgb;
-        n = n.parentElement;
+  for (const screen of SCREENS) {
+    const ctx = await b.newContext({ viewport:{ width:390, height:900 }, locale:'he-IL' });
+    await ctx.route('**/firebase-*.js', r => {
+      const n = path.basename(new URL(r.request().url()).pathname);
+      const p = path.join(STUB, n);
+      // firebase-messaging-sw.js הוא **קובץ של האפליקציה**, לא
+      // ייבוא מה-CDN — הוא ה-service worker של ההתראות, והוא
+      // יושב בשורש הפרויקט. התבנית firebase-*.js תופסת גם אותו,
+      // ואז readFileSync נפל על קובץ בדל שאינו קיים והפיל את
+      // כל הבדיקה. בדיוק זה הכשיל את ה-CI ב-25.8.2026.
+      //
+      // מה שאין לו בדל — מוגש כמו שהוא. זה גם הכלל הנכון
+      // לעתיד: קובץ חדש בשם דומה לא יפיל את הבדיקה.
+      if (!fs.existsSync(p)) { r.continue(); return; }
+      r.fulfill({ status:200, contentType:'text/javascript',
+                  body: fs.readFileSync(p, 'utf8') });
+    });
+    await ctx.route('https://www.gstatic.com/**', r => {
+      const n = path.basename(new URL(r.request().url()).pathname)
+        .replace('-compat','').replace('.js','') + '.js';
+      const p = path.join(STUB, n);
+      r.fulfill({ status:200, contentType:'text/javascript',
+                  body: fs.existsSync(p) ? fs.readFileSync(p,'utf8') : '' });
+    });
+    const pg = await ctx.newPage();
+    // super — הוא רואה הכי הרבה מסכים, ולכן הכי הרבה טקסט.
+    // הערכה הנבדקת נכפית מראש, לפני הציור הראשון — בהיר כמו
+    // קודם, או כהה במעבר השני, בדיוק כמו בחירה ידנית אמיתית
+    // ב"כהה תמיד" ב-nav.js (data-theme + localStorage, לא
+    // prefers-color-scheme בלבד — כדי לתפוס גם דפים כמו
+    // schedule-management.html/callout.html שיש להם override
+    // מקומי שתלוי בבחירה המפורשת ולא רק בהעדפת המכשיר).
+    await pg.addInitScript((t) => {
+      window.__SMOKE_ROLE = 'super';
+      try { localStorage.setItem('resq_theme', t); } catch(e){}
+      document.documentElement.setAttribute('data-theme', t);
+    }, theme);
+    await pg.goto('http://localhost:'+PORT+'/'+screen, { waitUntil:'load' });
+    await pg.waitForTimeout(1700);
+
+    const found = await pg.evaluate(() => {
+      const out = [];
+      const parse = (s) => {
+        const m = String(s).match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const p = m[1].split(',').map(x => parseFloat(x));
+        return { rgb: [p[0],p[1],p[2]], a: p.length > 3 ? p[3] : 1 };
+      };
+      // הרקע האפקטיבי: ההורה הראשון עם רקע לא שקוף. טקסט על
+      // אלמנט שקוף יורש את מה שמאחוריו, וחישוב מול "שקוף"
+      // היה מחזיר תשובה חסרת משמעות.
+      const bgOf = (el) => {
+        let n = el;
+        while (n && n !== document.documentElement) {
+          const c = parse(getComputedStyle(n).backgroundColor);
+          if (c && c.a >= 0.95) return c.rgb;
+          n = n.parentElement;
+        }
+        const c = parse(getComputedStyle(document.body).backgroundColor);
+        return c ? c.rgb : [255,255,255];
+      };
+      const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const seen = new Set();
+      let t;
+      while ((t = walk.nextNode())) {
+        const txt = (t.nodeValue || '').trim();
+        if (!txt) continue;
+        const el = t.parentElement;
+        if (!el) continue;
+        const st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden') continue;
+        if (parseFloat(st.opacity) < 0.35) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        // אלמנט שאב שלו מוסתר לא מדווח על עצמו — בדיקת גובה
+        // מול offsetParent תופסת גם את זה.
+        if (!el.offsetParent && st.position !== 'fixed') continue;
+        const key = el.tagName + '|' + st.color + '|' + txt.slice(0,20);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const fg = parse(st.color);
+        if (!fg || fg.a < 0.95) continue;
+        const size = parseFloat(st.fontSize);
+        const weight = parseInt(st.fontWeight, 10) || 400;
+        out.push({
+          txt: txt.slice(0, 34), fg: fg.rgb, bg: bgOf(el), size,
+          big: size >= 24 || (size >= 18.66 && weight >= 700),
+          ph: el.tagName === 'INPUT' || el.tagName === 'TEXTAREA',
+          dis: !!el.closest('[disabled],.disabled,:disabled'),
+          where: el.className || el.tagName.toLowerCase()
+        });
       }
-      const c = parse(getComputedStyle(document.body).backgroundColor);
-      return c ? c.rgb : [255,255,255];
-    };
-    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const seen = new Set();
-    let t;
-    while ((t = walk.nextNode())) {
-      const txt = (t.nodeValue || '').trim();
-      if (!txt) continue;
-      const el = t.parentElement;
-      if (!el) continue;
-      const st = getComputedStyle(el);
-      if (st.display === 'none' || st.visibility === 'hidden') continue;
-      if (parseFloat(st.opacity) < 0.35) continue;
-      const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) continue;
-      // אלמנט שאב שלו מוסתר לא מדווח על עצמו — בדיקת גובה
-      // מול offsetParent תופסת גם את זה.
-      if (!el.offsetParent && st.position !== 'fixed') continue;
-      const key = el.tagName + '|' + st.color + '|' + txt.slice(0,20);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const fg = parse(st.color);
-      if (!fg || fg.a < 0.95) continue;
-      const size = parseFloat(st.fontSize);
-      const weight = parseInt(st.fontWeight, 10) || 400;
-      out.push({
-        txt: txt.slice(0, 34), fg: fg.rgb, bg: bgOf(el), size,
-        big: size >= 24 || (size >= 18.66 && weight >= 700),
-        ph: el.tagName === 'INPUT' || el.tagName === 'TEXTAREA',
-        dis: !!el.closest('[disabled],.disabled,:disabled'),
-        where: el.className || el.tagName.toLowerCase()
-      });
-    }
-    return out;
-  });
+      return out;
+    });
 
-  const hits = [];
-  for (const n of found) {
-    if (ALLOW.some(a => a.test(n))) continue;
-    checked++;
-    const r = ratio(n.fg, n.bg);
-    const need = n.big ? 3.0 : 4.5;
-    if (r < need) hits.push({ ...n, r: Math.round(r*100)/100, need });
+    const hits = [];
+    for (const n of found) {
+      if (ALLOW.some(a => a.test(n))) continue;
+      checked++;
+      const r = ratio(n.fg, n.bg);
+      const need = n.big ? 3.0 : 4.5;
+      if (r < need) hits.push({ ...n, r: Math.round(r*100)/100, need });
+    }
+
+    if (!hits.length) {
+      console.log('✓ [' + themeLabel + '] ' + screen.padEnd(17) + found.length + ' צמתי טקסט');
+    } else {
+      bad += hits.length;
+      console.log('✗ [' + themeLabel + '] ' + screen.padEnd(17) + hits.length + ' מתחת לסף');
+      for (const h of hits.slice(0, 6)) {
+        console.log('    ' + h.r + ':1 (נדרש ' + h.need + ') · ' +
+                    String(h.where).slice(0, 26) + ' · "' + h.txt + '"');
+        console.log('      טקסט rgb(' + h.fg.join(',') + ')  רקע rgb(' + h.bg.join(',') + ')');
+      }
+      if (hits.length > 6) console.log('    ועוד ' + (hits.length - 6) + '.');
+    }
+    await ctx.close();
   }
 
-  if (!hits.length) {
-    console.log('✓ ' + screen.padEnd(17) + found.length + ' צמתי טקסט');
-  } else {
-    bad += hits.length;
-    console.log('✗ ' + screen.padEnd(17) + hits.length + ' מתחת לסף');
-    for (const h of hits.slice(0, 6)) {
-      console.log('    ' + h.r + ':1 (נדרש ' + h.need + ') · ' +
-                  String(h.where).slice(0, 26) + ' · "' + h.txt + '"');
-      console.log('      טקסט rgb(' + h.fg.join(',') + ')  רקע rgb(' + h.bg.join(',') + ')');
-    }
-    if (hits.length > 6) console.log('    ועוד ' + (hits.length - 6) + '.');
-  }
-  await ctx.close();
+  return { bad, checked };
 }
+
+const light = await runTheme('light', 'בהיר');
+console.log('');
+const dark  = await runTheme('dark',  'כהה');
 
 await b.close(); srv.close();
 console.log('');
-if (bad) {
-  console.log('נמצאו ' + bad + ' מקומות שבהם טקסט לא נקרא בערכה הבהירה.');
-  process.exit(1);
+
+let failed = false;
+if (light.bad) {
+  console.log('בהיר: נמצאו ' + light.bad + ' מקומות שבהם טקסט לא נקרא.');
+  failed = true;
+} else {
+  console.log('בהיר: כל הטקסט נקרא · ' + light.checked + ' נבדקו');
 }
-console.log('כל הטקסט במערכת נקרא בערכה הבהירה · ' + checked + ' נבדקו');
+if (dark.bad) {
+  console.log('כהה: נמצאו ' + dark.bad + ' מקומות שבהם טקסט לא נקרא.');
+  failed = true;
+} else {
+  console.log('כהה: כל הטקסט נקרא · ' + dark.checked + ' נבדקו');
+}
+if (failed) process.exit(1);
+console.log('כל הטקסט במערכת נקרא, בשתי הערכות · ' + (light.checked + dark.checked) + ' נבדקו סה\"כ');

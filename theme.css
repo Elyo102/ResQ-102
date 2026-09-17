@@ -82,7 +82,7 @@
   --crewA:#b3261e;  --crewA-bg:#fbe6e4;
   --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
   --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-  --crewB-on:#ffffff;
+  --crewA-on:#ffffff;  --crewB-on:#ffffff;  --crewC-on:#ffffff;
 
   --shadow:0 10px 30px rgba(19,24,32,.12);
 }
@@ -160,7 +160,7 @@
   --crewA:#b3261e;  --crewA-bg:#fbe6e4;
   --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
   --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-  --crewB-on:#ffffff;
+  --crewA-on:#ffffff;  --crewB-on:#ffffff;  --crewC-on:#ffffff;
 
   --shadow:0 10px 30px rgba(19,24,32,.12);
 }
@@ -211,8 +211,12 @@
   --in:#4dd0e1;          /* הצד שמקבל בהחלפה */
   --note:#4d94ff;        /* מידע — לא טוב, לא רע, לא אזהרה */
   /* ההדגשה ככתב. --accent עצמו יושב על צ'יפ אפור בסרגל
-     הניווט, ושם הוא נופל מתחת לסף הקריאוּת בערכה הבהירה. */
-  --accent-txt:#e8590c;
+     הניווט, ושם הוא נופל מתחת לסף הקריאוּת בערכה הבהירה.
+     גם --accent-txt המקורי (e8590c) לא עמד שם: 4.23:1 על
+     --chip (23262c) - נכשל AA. עדיין באותו גוון, מעט בהיר
+     יותר, כדי לעמוד ב-4.5:1 בפועל (5.83:1). נמצא רק כשנוסף
+     המעבר האוטומטי הראשון על ערכה כהה ל-contrast.mjs. */
+  --accent-txt:#ff7a2e;
 
   /* --- מצבים --- */
   --bad:#ef5350;   --bad-bg:#241618;   --bad-bd:#5a2b2d;
@@ -247,7 +251,10 @@
   --crewA:#f0523f;  --crewA-bg:#3a1c19;
   --crewB:#35c46b;  --crewB-bg:#14301f;
   --crewC:#4d94ff;  --crewC-bg:#16263f;
+  --crewA-on:#111827;   /* לבן על f0523f מודד רק 3.51:1 - נכשל AA. אותו כחול-כהה
+                            שכבר עובד ל--accent-on/--bad-on - עובד גם כאן: 5.05:1 */
   --crewB-on:#0d1f12;   /* טקסט כהה על תג ב' מלא */
+  --crewC-on:#111827;   /* לבן על 4d94ff מודד רק 3:1 - נכשל AA. 5.91:1 */
 
   /* --- צל --- */
   --shadow:0 10px 34px rgba(0,0,0,.45);

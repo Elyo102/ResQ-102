@@ -128,6 +128,16 @@ export function sevColor(id) {
   const s = allSeverities().filter(function (x) { return x.id === id; })[0];
   return s ? s.color : UNSET.color;
 }
+// sevColor() נועד לטקסט חזית - --bad-txt לחומרה 'blocking' (בטוח בשתי
+// הערכות; זו הסיבה ש-42H.20 הפנה אליו). כמה קריאות ב-vehicle.html
+// משתמשות באותו ערך כרקע רווי במקום זאת (עיגול המספר על כרטיס תקלה,
+// רקע כלי הרכב עצמו) - שם --bad-txt נכשל במצב כהה (ef5350 עם טקסט
+// לבן, 3.49:1). sevBgColor() הוא הגרסה לרקע: אותם צבעים, חוץ מ-
+// 'blocking' שמקבל בחזרה את --bad הגולמי, הבטוח כרקע בשתי הערכות.
+export function sevBgColor(id) {
+  const c = sevColor(id);
+  return c === 'var(--bad-txt)' ? 'var(--bad)' : c;
+}
 export function sevRank(id) {
   const s = allSeverities().filter(function (x) { return x.id === id; })[0];
   return s ? s.rank : UNSET.rank;

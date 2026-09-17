@@ -199,7 +199,7 @@ import { watchCallouts } from './callout.js?v=42h191';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
   from './vmap.js?v=42h191';
-import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
+import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, sevBgColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
   from './faults.js?v=42h191';
@@ -522,7 +522,7 @@ function renderStage(){
     p.style.insetInlineStart = '';
     p.style.left = (f.x * 100) + '%';
     p.style.top  = (f.y * 100) + '%';
-    p.style.background = isOpen(f) ? sevColor(f.severity) : 'var(--good)';
+    p.style.background = isOpen(f) ? sevBgColor(f.severity) : 'var(--good)';
     p.textContent = String(i + 1);
     p.title = f.title || '';
     p.setAttribute('aria-label', (i + 1) + '. ' + (f.title || ''));
@@ -741,16 +741,25 @@ function openFault(f, n){
 function faultCard(f, n){
   const target = captureFaultTarget(f);
   const open = isOpen(f);
-  const col = open ? sevColor(f.severity) : 'var(--good)';
+  // בג'ר לרקע רווי (עיגול המספר, פס הצבע בצד הכרטיס) לעומת בג'ר
+  // לטקסט חזית (התגית) - לא אותו ערך: --bad-txt (מה ש-sevColor
+  // מחזיר לחומרה חוסמת) בטוח כטקסט בשתי הערכות, אבל לא כרקע רווי
+  // במצב כהה (ef5350, 3.49:1 עם לבן). ראו ההערה על sevBgColor ב-faults.js.
+  const bgCol = open ? sevBgColor(f.severity) : 'var(--good)';
+  const txtCol = open ? sevColor(f.severity) : 'var(--good)';
+  // .num הבסיסי (בקובץ ה-CSS) הוא #fff קבוע - נכון לרוב הרקעים
+  // (warn/note/good), אבל לא ל--bad במצב כהה (ef5350, 3.49:1
+  // עם לבן). דריסה נקודתית רק כשהרקע הוא --bad עצמו.
+  const numTxt = bgCol === 'var(--bad)' ? 'var(--bad-on)' : '#fff';
   const el = document.createElement('div');
   el.className = 'f' + (open ? '' : ' done');
-  el.style.borderInlineStartColor = col;
+  el.style.borderInlineStartColor = bgCol;
 
   el.innerHTML =
     '<div class="top">' +
-      '<span class="num" style="background:' + col + '">' + n + '</span>' +
+      '<span class="num" style="background:' + bgCol + ';color:' + numTxt + '">' + n + '</span>' +
       '<span class="ttl">' + esc(f.title || '') + '</span>' +
-      '<span class="tag" style="color:' + col + ';border-color:' + col + '">' +
+      '<span class="tag" style="color:' + txtCol + ';border-color:' + bgCol + '">' +
         esc(open ? sevHe(f.severity) : 'טופלה') + '</span>' +
     '</div>' +
     (f.desc ? '<div class="desc">' + esc(f.desc) + '</div>' : '') +
