@@ -1691,6 +1691,15 @@ function cellContent(cell, block, minVisualSlots) {
     const personLabel = person.person || person.uid || '—';
     row.textContent = personLabel;
     if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
+    /* ⭐ 42H.20 §1 · עובד ללא חשבון נשאר גלוי ומשובץ בלוח, מסומן
+     * בבירור, ואינו חוסם דבר — הוא לא מקבל פוש (נאכף בשרת, ראה
+     * schedule-publication-recipients.js), וזה כל מה שהתג הזה אומר. */
+    if (person.unlinked === true) {
+      row.classList.add('unlinked-slot');
+      const noAccount = node('span', 'flag unlinked', 'ללא חשבון');
+      noAccount.title = 'אין לאדם הזה חשבון מקושר — הוא לא יקבל התראות פוש. זה לא חוסם את השיבוץ או הפרסום.';
+      row.appendChild(noAccount);
+    }
     if (warningCodes.length) {
       row.classList.add('manual-warning-slot');
       const badge = node('span', 'flag manual-warning', '⚠ אזהרה');
@@ -1699,6 +1708,7 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const ariaParts = [personLabel];
     if (person.is_me) ariaParts.push('אני');
+    if (person.unlinked === true) ariaParts.push('ללא חשבון, לא מקבל פוש');
     if (warningLabel) ariaParts.push('שיבוץ ידני עם אזהרה', warningLabel);
     row.setAttribute('aria-label', ariaParts.join(' · '));
     cell.appendChild(row);

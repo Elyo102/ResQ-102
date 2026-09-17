@@ -434,6 +434,29 @@ t('אזהרות שיבוץ ידני עוברות מהשרת לתצוגה האי�
   assert.strictEqual(rendered.includes('manual_warning_codes'), true);
 });
 
+t('42H.20 §1 · עובד ללא חשבון מסומן בלוח, לא נעלם ולא חוסם', () => {
+  const { service, engine } = build();
+  const plan = JSON.parse(JSON.stringify(engine.planPeriod(REQ)));
+  const row = plan.rows[0];
+  row.slots.push({ person: 'sp_חיצוני1', role: 'firefighter', label: 'כבאי' });
+  const unlinkedRoster = ROSTER.concat([
+    person('sp_חיצוני1', row.sub_station, ['firefighter'], { kind: 'external' })
+  ]);
+
+  const station = service.buildStationSchedule({ actor: FIREFIGHTER, plan, date: row.date, roster: unlinkedRoster });
+  const slot = station.day.sub_stations
+    .reduce((all, sub) => all.concat(sub.people), [])
+    .find((personEntry) => personEntry.uid === 'sp_חיצוני1');
+  assert.ok(slot, 'העובד ללא חשבון נשאר גלוי ומשובץ בלוח');
+  assert.strictEqual(slot.unlinked, true);
+
+  // ותיק בלי kind בכלל (roster ישן, לפני 42D) נשאר מקושר — אין הפתעות אחורה.
+  const legacySlot = station.day.sub_stations
+    .reduce((all, sub) => all.concat(sub.people), [])
+    .find((personEntry) => personEntry.uid === 'גדי');
+  assert.strictEqual(legacySlot.unlinked, undefined);
+});
+
 t('„הסידור שלי" מסמן מה דורש תשובה', () => {
   const { service, engine } = build();
   const plan = engine.planPeriod(REQ);

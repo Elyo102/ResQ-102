@@ -344,6 +344,12 @@
     .manual-warning-slot{border-color:var(--warn,#e0a23c);background:var(--warn-bg,#fff7df)}
     .flag.manual-warning{color:var(--warn,#765500);background:var(--warn-bg,#fff7df);
       border:1px solid var(--warn,#e0a23c);display:inline-block;margin-inline-start:5px;white-space:normal}
+    /* 42H.20 §1 · עובד ללא חשבון — מידע, לא אזהרה: אין להשתמש בצבע
+       החריגה הכתום/אדום; אפור נייטרלי כדי לא לגרום למנהל לפרש את זה
+       כבעיה שצריך לתקן. */
+    .unlinked-slot{border-color:var(--line,#c7d0dc)}
+    .flag.unlinked{color:var(--muted,#5b6675);background:var(--card-2,#eef1f5);
+      border:1px solid var(--line,#c7d0dc);display:inline-block;margin-inline-start:5px;white-space:normal}
     .stub.notes{background:var(--warn-bg,#fff7df);border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
     .notes-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
     .notes-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}

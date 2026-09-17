@@ -199,6 +199,18 @@ function createScheduleService(deps) {
   }
 
   /**
+   * 42H.20 §1 · „עובד ללא חשבון" — אמת מקורה במלאי הזהויות (kind
+   * שמגיע מ-schedule-import-pipeline.js), לא ניחוש בצד המסך. אדם
+   * ותיק שלא עבר דרך ייבוא חוברת (אין לו kind בכלל) נחשב מקושר,
+   * לשמירת התאמה לאחור. false בלבד — לעולם לא true — הופך ל-external.
+   */
+  function personUnlinked(roster, id) {
+    if (!Array.isArray(roster)) return false;
+    const person = roster.filter((entry) => entry && entry.id === id)[0];
+    return !!person && person.kind === 'external';
+  }
+
+  /**
    * „הסידור שלי" — רק שלו, עם מי הוא עובד ומה השתנה.
    * מצב התגובה מגיע מבחוץ; המודול אינו ממציא אישור לאיש.
    */
@@ -288,7 +300,7 @@ function createScheduleService(deps) {
         minimum: row.minimum === undefined ? null : row.minimum,
         coverage: row.coverage === 'missing' ? 'missing' : 'ready',
         below_minimum: row.below_minimum === true,
-        people: row.slots.map((s) => projectSlot({
+        people: row.slots.map((s) => projectSlot(Object.assign({
           uid: s.person,
           person: personName(roster, s.person),
           role_label: s.label || null,
@@ -296,7 +308,7 @@ function createScheduleService(deps) {
           cancelled: s.cancelled === true,
           /** ההדגשה של המשתמש המחובר. */
           is_me: s.person === viewer
-        }, s))
+        }, personUnlinked(roster, s.person) ? { unlinked: true } : {}), s))
       });
     }
     const dayEvents = (events || []).filter((e) => isPlainObject(e) && e.date === date)
