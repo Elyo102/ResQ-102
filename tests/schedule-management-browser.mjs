@@ -820,6 +820,41 @@ try {
     }
   });
 
+  await test('an imported dynamic station id renders as a fifth column, never replacing the four legacy stations', async () => {
+    // 42H.20 · רגרסיה למקרה שהתגלה: schedule-import-layout.js /
+    // schedule-import-pipeline.js מפיקים station_key דינמי בפורמט
+    // is_<40 hex>, אבל subOrder() החזירה תמיד רק FIXED_STATIONS —
+    // כך שתחנה שיובאה בפועל, עם שורה חתומה תקינה, לא הוצגה בלוח כלל.
+    const dynamicId = 'is_' + 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+    const dynamicRange = JSON.parse(JSON.stringify(stationRange));
+    dynamicRange.days.forEach((item) => {
+      item.sub_stations.push({
+        sub_station:dynamicId, label:'תחנה חדשה', minimum:1, coverage:'ready', below_minimum:false,
+        people:[{ uid:'crew_new', person:'עובד תחנה חדשה', role_label:'לוחם', hours:'07:00-07:00', is_me:false }]
+      });
+    });
+    const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+    try {
+      await prepare(context, 'firefighter', {
+        getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+        getMyScheduleV2:[{ data:mine }],
+        getStationScheduleRange:[{ data:dynamicRange }]
+      });
+      const page = await context.newPage();
+      await page.goto(base, { waitUntil:'load' });
+      await page.locator('#stationBoard .stub[data-station] b').first().waitFor();
+      const labels = await page.locator('#stationBoard .stub[data-station] b').allTextContents();
+      assert.deepEqual(labels, ['אילת', 'שחמון', 'תמנע', 'יטבתה', 'תחנה חדשה'],
+        'a genuine imported station id must be appended after the four legacy stations, not dropped');
+      assert.match(await page.locator('#stationBoard').textContent(), /עובד תחנה חדשה/);
+      // מזהה שאינו תואם is_<40 hex> (למשל פורמט legacy) אסור שיתווסף כתחנה —
+      // רק ארבע הוותיקות ואף אחת נוספת שאינה מהייבוא.
+      assert.equal(labels.filter((label) => label === 'תחנה חדשה').length, 1);
+    } finally {
+      await context.close();
+    }
+  });
+
   const phone = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(phone, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }],
@@ -3245,5 +3280,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 80);
+assert.equal(passed, 81);
 console.log('\n' + passed + ' schedule management browser checks passed.');

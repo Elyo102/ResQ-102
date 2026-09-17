@@ -385,6 +385,13 @@ function updateManagerWorkflow() {
   workflowAction('rollback').disabled = $('rollback').disabled;
   $('editDrawerOpen').disabled = !canEditSchedule();
   workflowAction('publish').textContent = mode === 'shadow' ? 'פרסום לניסוי' : 'פרסום לעובדים';
+  // 42H.20 · אותה פעולת פרסום, כפתור נגיש בתוך כרטיס הסקירה עצמו —
+  // בלי לגלול בחזרה למעלה. אין נתיב שרת שני; זה proxy-click בדיוק
+  // כמו workflowAction('publish') למעלה.
+  if ($('publishFromReview')) {
+    $('publishFromReview').disabled = $('publish').disabled;
+    $('publishFromReview').textContent = mode === 'shadow' ? 'אישור ופרסום לניסוי' : 'אישור ופרסום הסידור';
+  }
   $('managerWorkflowHint').textContent = !canRun
     ? 'המנוע כבוי. ההגדרות נשמרות, אך יצירת טיוטה ופרסום נעולות.'
     : state.draft && state.draftPreview
@@ -441,6 +448,7 @@ workflowAction('draft').addEventListener('click', () => {
 });
 workflowAction('review').addEventListener('click', () => showWorkflowTarget('draftPreviewCard'));
 workflowAction('publish').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
+if ($('publishFromReview')) $('publishFromReview').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 workflowAction('rollback').addEventListener('click', () => { if (!$('rollback').disabled) $('rollback').click(); });
 $('editDrawerOpen').addEventListener('click', openEditDrawer);
 $('editDrawerClose').addEventListener('click', () => closeEditDrawer(false));
@@ -1604,20 +1612,33 @@ function subOrder(days) {
     const value = minimums.has(id) ? minimums.get(id) : null;
     return Number.isInteger(value) && value > 0 ? value : null;
   };
-  const labelOf = (id) => labels.get(id)
+  // לתחנה ותיקה מוכרת (מזהה קבוע) יש שם קבוע ומהימן — לעולם לא סומכים
+  // על תווית מהשורה החתומה או מהמדיניות עבורה (יכולה להיות שגויה או
+  // מוזרקת). התווית מהשורה/מהמדיניות משמשת רק למזהה דינמי חדש שאין לו
+  // שם קבוע בקוד.
+  const labelOf = (id) => (fixedById.has(id) ? fixedById.get(id).label : '')
+    || labels.get(id)
     || policyLabel(id)
-    || (fixedById.has(id) ? fixedById.get(id).label : '')
     || id;
   const slotsOf = (id) => (fixedById.has(id)
     ? fixedById.get(id).minVisualSlots : DEFAULT_MIN_VISUAL_SLOTS);
 
-  // סדר יציב בין ימים: התחנות הוותיקות לפי סדרן המוצהר — אך ורק אלו
-  // שבאמת נחתמו — ואחריהן כל מזהה אחר לפי סדר הופעתו הראשון.
-  const legacy = FIXED_STATIONS
-    .map((station) => station.id)
-    .filter((id) => labels.has(id));
-  const rest = seen.filter((id) => !fixedById.has(id));
-  return legacy.concat(rest).map((id) => ({
+  // ארבע התחנות הוותיקות מוצגות תמיד כתבנית קבועה — גם ביום שאין בו
+  // לאף אחת מהן שורה חתומה (חוזה קיים: „בכל יום מוצגות כל ארבע
+  // התחנות"). מה שהבאג הישן פספס לגמרי הוא **תחנה חדשה מייבוא, עם
+  // מזהה דינמי**: היא לא הייתה ברשימה הקבועה אז לא הוצגה בכלל, אף
+  // שהשורה שלה נחתמה כדין. כאן היא מתווספת בסוף, לפי סדר הופעתה
+  // הראשון — בלי להחליף ובלי לדחוק אף אחת מארבע הוותיקות.
+  // רק מזהה תחנה אמיתי מהייבוא (הפורמט שמפיק stationKey() ב-
+  // functions/schedule-import-layout.js: is_ + 40 תווי hex) מתווסף
+  // כתחנה חמישית ומעלה. מזהה היסטורי אחר (למשל legacy_A ממשמרת בלי
+  // תחנת קצה, „off mode") אינו תחנה קיימת — הצגתו כעמודה תמציא שיבוץ
+  // שלא היה בגיליון, בניגוד מפורש לחוזה „תבנית ריקה בלי המצאות".
+  const IMPORT_STATION_ID_RE = /^is_[0-9a-f]{40}$/;
+  const legacy = FIXED_STATIONS.map((station) => station.id);
+  const rest = seen.filter((id) => !fixedById.has(id) && IMPORT_STATION_ID_RE.test(id));
+  const orderedIds = legacy.concat(rest);
+  return orderedIds.map((id) => ({
     id,
     label: labelOf(id),
     minimum: lineOf(id),
