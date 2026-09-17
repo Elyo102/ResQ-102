@@ -654,8 +654,34 @@ export async function runTransaction(dbRef, updateFunction){
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
   if (/\/callouts\/[^/]+\/responses\/[^/]+$/.test(p)) {
+    // 42H.20 §5.4 · alerts-feed.js reads `seen_at` here for the trusted
+    // callout-viewed state. window.__CALLOUT_SEEN_EXTRA (a Set/array of
+    // calloutIds) lets a test mark a specific callout already-seen without
+    // disturbing every other callout test's default "not yet answered".
+    const calloutMatch = p.match(/\/callouts\/([^/]+)\/responses\/([^/]+)$/);
+    const seenSet = typeof window !== 'undefined' && window.__CALLOUT_SEEN_EXTRA;
+    const seen = calloutMatch && seenSet &&
+      (seenSet.has ? seenSet.has(calloutMatch[1]) : seenSet.indexOf(calloutMatch[1]) !== -1);
+    if (seen) return Promise.resolve(docSnap({ seen_at:'2026-01-01T00:00:00.000Z' }, calloutMatch[2]));
     return Promise.resolve({ exists:() => false, data:() => undefined,
       id:p.split('/').pop() || 'response' });
+  }
+  // 42H.20 §5.4/§5.5 · alerts-feed.js's trusted-viewed check reads this
+  // exact path. Not seeded by default (no test wrote a real receipt), so
+  // the honest default is "not viewed", same as an unanswered callout
+  // above — not the generic PROFILE fallback below, which would make
+  // every message look falsely viewed. window.__BULLETIN_RECEIPTS_SEEN
+  // (a Set or array of "messageId/uid" strings) lets a test mark specific
+  // messages as already-viewed without writing a real receipt.
+  const receiptMatch = p.match(/\/bulletin_view_receipts\/([^/]+)\/bulletin_view_recipients\/([^/]+)$/);
+  if (receiptMatch) {
+    const key = receiptMatch[1] + '/' + receiptMatch[2];
+    const seen = typeof window !== 'undefined' && window.__BULLETIN_RECEIPTS_SEEN &&
+      (window.__BULLETIN_RECEIPTS_SEEN.has ? window.__BULLETIN_RECEIPTS_SEEN.has(key)
+        : window.__BULLETIN_RECEIPTS_SEEN.indexOf(key) !== -1);
+    return Promise.resolve(seen
+      ? docSnap({ viewed_at: '2026-01-01T00:00:00.000Z' }, receiptMatch[2])
+      : { exists:() => false, data:() => undefined, id:receiptMatch[2] });
   }
   if (/\/attendance_shadow_reports\/[^/]+$/.test(p) &&
       typeof window !== 'undefined' &&
@@ -867,7 +893,17 @@ export function getDocs(q){
   if (/\/attendance$/.test(p))      return delayed(listSnap(ATTENDANCE));
   if (/\/monthly_reports$/.test(p)) return delayed(listSnap(REPORTS));
   if (/\/swaps$/.test(p))           return delayed(listSnap(STUB_SWAPS));
-  if (/\/callouts$/.test(p))        return delayed(listSnap(CALLOUTS));
+  if (/\/callouts$/.test(p)) {
+    // 42H.20 closure batch item 2 · alerts-feed-browser.mjs needs a closed
+    // (active:false) callout in the fixture to prove the feed now includes
+    // callout history, not just active ones. window.__CALLOUTS_EXTRA lets a
+    // test add rows without touching the shared CALLOUTS fixture every
+    // other callout test also relies on.
+    const extra = typeof window !== 'undefined' && Array.isArray(window.__CALLOUTS_EXTRA)
+      ? window.__CALLOUTS_EXTRA : [];
+    const rows = constrainedRows(CALLOUTS.concat(extra), (q && q.constraints) || []);
+    return delayed(listSnap(rows));
+  }
   if (/\/guards$/.test(p)) {
     // בדיקות קונפליקט אופטימי יכולות להציג גרסה חדשה בקריאה הבאה
     // בלי לשנות את נתוני ברירת המחדל של שאר מסכי הדפדפן.

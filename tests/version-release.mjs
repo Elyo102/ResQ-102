@@ -16,7 +16,7 @@ const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.js
 const EXPECTED_VERSION = MANIFEST.version;
 const EXPECTED_DATE = MANIFEST.date;
 const EXPECTED_ASSET_KEY = MANIFEST.asset_query;
-const EXPECTED_VERSIONED_REFERENCES = 288; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html only (2 new ?v= references; login.html wiring was reverted, see alerts-feed.js's own header).
+const EXPECTED_VERSIONED_REFERENCES = 289; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html (2); §5.5's home-bell fix adds one new import of alerts-feed.js in login.html (1) — it reuses bulletin.js's existing ?v= import for messageTimeMs, so no second reference there.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',

@@ -11,9 +11,11 @@
 //
 // שתי השאילתות כאן זהות בצורתן לשאילתות שכבר קיימות ונבדקות
 // (bulletin.js's messagesQuery, callout.js's watchCallouts) — כדי לא
-// לדרוש אינדקס Firestore חדש שלא נפרס. "קריאות פתע" בפיד מוגבל
-// לקריאות פעילות (active===true) מאותה סיבה: שאילתה על קריאות
-// שנסגרו הייתה דורשת אינדקס מורכב שונה.
+// לדרוש אינדקס Firestore חדש שלא נפרס. "קריאות פתע" בפיד כולל גם
+// קריאות פעילות וגם קריאות שנסגרו (active===false): השאילתה מוותרת
+// על תנאי ה-active ומשתמשת ב-`{uids array-contains, created_key desc}`
+// — אינדקס שכבר קיים ב-firestore.indexes.json (בשימוש גם היום, בלי
+// תנאי active, למקורות אחרים) — כך שאין צורך באינדקס מורכב חדש.
 //
 // כל השאילתות מוגבלות (limit) ובתחום התחנה בלבד. אין כאן כתיבה,
 // ואין שינוי במנגנון הצפייה הקיים — הקובץ הזה רק קורא ומאחד.
@@ -71,10 +73,30 @@ export function unreadFeedCount(items) {
 
 // --- Firestore-touching loader. `sdk` is dependency-injected (collection,
 // doc, getDoc, getDocs, query, where, orderBy, limit) so this stays
-// unit-testable, matching bulletin.js's own injectable-SDK convention. ---
+// unit-testable, matching bulletin.js's own injectable-SDK convention.
+//
+// `activeBoardOverride` (optional, {id, messages}) lets a caller that
+// already holds a *live* bulletin.js subscription for one board (the home
+// screen's bell, via bulletin.js's onMessages hook — see §5.5) hand its
+// already-fetched messages in directly instead of this function issuing
+// its own query for that board — the whole reason that override exists is
+// to guarantee this never opens a second query/listener on a path
+// bulletin.js already subscribes to live. Every other board is still
+// fetched normally with a bounded one-time getDocs. ---
 
-export async function loadAlertsFeed(sdk, db, sid, uid, messageTimeMs) {
+export async function resolveBulletinViewed(sdk, db, sid, uid, messageDoc, data) {
+  const { doc, getDoc } = sdk;
+  if (data.by_uid === uid) return true;
+  try {
+    const receipt = await getDoc(doc(db, 'stations', sid, 'bulletin_view_receipts',
+      messageDoc.id, 'bulletin_view_recipients', uid));
+    return receipt.exists();
+  } catch (ignore) { return false; /* unreadable receipt = not-yet-viewed */ }
+}
+
+export async function loadAlertsFeed(sdk, db, sid, uid, messageTimeMs, activeBoardOverride) {
   const { collection, doc, getDoc, getDocs, query, where, orderBy, limit } = sdk;
+  const override = activeBoardOverride && activeBoardOverride.id ? activeBoardOverride : null;
 
   const boardsSnap = await getDocs(collection(db, 'stations', sid, 'sub_stations'));
   const boards = boardsSnap.docs.map(function (d) {
@@ -83,6 +105,16 @@ export async function loadAlertsFeed(sdk, db, sid, uid, messageTimeMs) {
 
   const bulletinItems = [];
   for (const board of boards) {
+    if (override && board.id === override.id) {
+      for (const messageDoc of override.messages || []) {
+        const data = messageDoc.data ? (messageDoc.data() || {}) : (messageDoc.value || {});
+        const id = messageDoc.id;
+        const timeMs = messageTimeMs(data.created_at) || messageTimeMs(data.created_key);
+        const viewed = await resolveBulletinViewed(sdk, db, sid, uid, { id }, data);
+        bulletinItems.push(bulletinFeedItem(board.id, board.name, id, data, viewed, timeMs));
+      }
+      continue;
+    }
     const q = query(
       collection(db, 'stations', sid, 'sub_stations', board.id, 'bulletin_messages'),
       where('hidden', '==', false), orderBy('created_at', 'desc'), limit(BOARD_MESSAGE_LIMIT)
@@ -92,22 +124,17 @@ export async function loadAlertsFeed(sdk, db, sid, uid, messageTimeMs) {
     for (const messageDoc of snap.docs) {
       const data = messageDoc.data() || {};
       const timeMs = messageTimeMs(data.created_at) || messageTimeMs(data.created_key);
-      let viewed = data.by_uid === uid;
-      if (!viewed) {
-        try {
-          const receipt = await getDoc(doc(db, 'stations', sid, 'bulletin_view_receipts',
-            messageDoc.id, 'bulletin_view_recipients', uid));
-          viewed = receipt.exists();
-        } catch (ignore) { /* an unreadable receipt is treated as not-yet-viewed */ }
-      }
+      const viewed = await resolveBulletinViewed(sdk, db, sid, uid, messageDoc, data);
       bulletinItems.push(bulletinFeedItem(board.id, board.name, messageDoc.id, data, viewed, timeMs));
     }
   }
 
   const calloutItems = [];
   try {
+    // כולל active וגם היסטוריות (סגורות) — לא רק פעילות, כדי שהפילטר
+    // "קריאות פתע" יציג את כל הקריאות שהמשתמש נמען שלהן, לא רק פתוחות.
     const calloutQuery = query(collection(db, 'stations', sid, 'callouts'),
-      where('uids', 'array-contains', uid), where('active', '==', true),
+      where('uids', 'array-contains', uid),
       orderBy('created_key', 'desc'), limit(CALLOUT_LIMIT));
     const calloutSnap = await getDocs(calloutQuery);
     for (const calloutDoc of calloutSnap.docs) {

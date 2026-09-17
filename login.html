@@ -585,7 +585,8 @@ import {
 } from './pwa.js?v=42h191';
 import { APP_VERSION, APP_DATE } from './version.js?v=42h191';
 import { watchCallouts } from './callout.js?v=42h191';
-import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h191';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h191';
+import { loadAlertsFeed, unreadFeedCount } from './alerts-feed.js?v=42h191';
 import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h191';
 import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h191';
 import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h191';
@@ -615,6 +616,12 @@ const ROLE_VIEW_STORAGE = 'resq_role_view_v1';
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
 let activeHomeContext = null;
+// 42H.20 §5.5 · פעמון הבית — unread אמיתי מהזרם הקיים, לא שאילתה
+// מקבילה. ראה refreshHomeUnread למטה.
+let homeUnreadCount = 0;
+let homeUnreadTimer = 0;
+let homeUnreadGeneration = 0;
+let homeActiveBoard = { id: '', messages: [] };
 
 function destroyHomeRuntime(){
   try { stopCallouts(); } catch (ignore) {}
@@ -622,6 +629,11 @@ function destroyHomeRuntime(){
   destroyHomeFaults();
   destroyHomeCommand();
   activeHomeContext = null;
+  clearTimeout(homeUnreadTimer);
+  homeUnreadTimer = 0;
+  homeUnreadGeneration++;
+  homeUnreadCount = 0;
+  homeActiveBoard = { id: '', messages: [] };
   destroyBulletin();
   $('roleViewControl').classList.add('hide');
   $('roleViewBanner').classList.add('hide');
@@ -1271,17 +1283,46 @@ function navFor(claims, user, name, presentation){
   // למי שמסתכל על המסך; «אלדד יונה · מס׳ 1» כן.
   const who = (name || (user && user.email) || '') +
               (claims.emp ? ' · מס׳ ' + claims.emp : '');
-  renderNav(claims, 'login.html', who, presentation || null);
+  renderNav(claims, 'login.html', who, presentation || null, homeUnreadCount);
 }
 
-// 42H.20 §5.4 · הפעמון עם המספר האמיתי נמצא כרגע רק ב-alerts.html.
-// לא חובר גם למסך הבית כאן: למסך הבית כבר יש ווידג'ט לוח-מודעות
-// חי משלו (home-command.js, שאילתה bulletin_messages עם limit(30)),
-// ושאילתה נוספת מאותו מקור על אותו נתיב הייתה מתחרה איתה על
-// "השאילתה הראשונה שנרשמה" בבדיקות הקיימות (bulletin-browser.mjs) —
-// בדיוק סוג מנגנון-הצפיה-המקביל שההחלטה המחייבת אוסרת. חיבור אמיתי
-// למסך הבית דורש שיתוף הנתון הקיים של home-command.js, לא שאילתה
-// שנייה, ונשאר לביקורת/יישום נפרד.
+// 42H.20 §5.5 · פעמון הבית — unread אמיתי, בלי שאילתה מקבילה על
+// bulletin_messages. bulletin.js מריץ ממילא מנוי חי אחד ללוח הפעיל
+// (§5.5's onMessages hook, ראה bulletin.js); את הודעותיו-שלו אנחנו
+// מקבלים כאן ישירות בלי לפתוח מנוי/שאילתה שנייה על אותו נתיב —
+// alerts-feed.js's activeBoardOverride קיים בדיוק בשביל זה, ונבדק
+// (alerts-feed.test.mjs) שהוא באמת לא חוזר לשאול את הלוח הפעיל.
+// שאר הלוחות והקריאות נספרים בקריאה חד-פעמית (getDocs, לא מנוי),
+// באותה צורה בדיוק כמו alerts.html עצמו.
+function onHomeBulletinMessages(boardId, messages){
+  homeActiveBoard = { id: boardId, messages: messages };
+  scheduleHomeUnreadRefresh(0);
+}
+
+function scheduleHomeUnreadRefresh(delayMs){
+  clearTimeout(homeUnreadTimer);
+  homeUnreadTimer = setTimeout(refreshHomeUnread, Number.isFinite(delayMs) ? delayMs : 400);
+}
+
+async function refreshHomeUnread(){
+  const context = activeHomeContext;
+  if (!context || !routeIsCurrent(context.user, context.epoch)) return;
+  const generation = ++homeUnreadGeneration;
+  let items;
+  try {
+    items = await loadAlertsFeed(
+      { collection, doc, getDoc, getDocs, query, where, orderBy, limit },
+      db, context.sid, context.user.uid, messageTimeMs,
+      homeActiveBoard.id ? homeActiveBoard : null
+    );
+  } catch (ignore) { return; /* a failed count must never crash the home screen */ }
+  if (generation !== homeUnreadGeneration || activeHomeContext !== context) return;
+  homeUnreadCount = unreadFeedCount(items);
+  navFor(context.claims, context.user, context.name, context.view && context.view.preview ? context.view.presentation : null);
+  // רשת ביטחון: גם בלי הודעת לוח חדשה, מצב "נצפה" יכול להשתנות
+  // (המשתמש קרא במסך ההתראות במקום כאן) — רענון תקופתי שקט.
+  homeUnreadTimer = setTimeout(refreshHomeUnread, 90000);
+}
 
 function readRoleViewStorage(){
   try { return sessionStorage.getItem(ROLE_VIEW_STORAGE) || ''; }
@@ -1544,7 +1585,7 @@ async function loadProfile(user, claims, epoch){
   });
   writeRoleViewStorage(initialView.storageRecord);
   activeHomeContext = {
-    user:user, claims:claims, epoch:epoch,
+    user:user, claims:claims, epoch:epoch, sid:sid,
     name:u ? u.full_name : '', view:initialView
   };
   navFor(claims, user, u ? u.full_name : '', initialView.presentation);
@@ -1572,9 +1613,11 @@ async function loadProfile(user, claims, epoch){
       collection: collection, getDocs: getDocs, query: query, where: where,
       orderBy: orderBy, limit: limit, onSnapshot: onSnapshot,
       startAfter: startAfter, httpsCallable: httpsCallable
-    }
+    },
+    onMessages: onHomeBulletinMessages
   });
   renderRoleViewChrome(activeHomeContext, initialView);
+  scheduleHomeUnreadRefresh(200);
   const canSeeFaults = isMember(claims);
   $('homeFaults').classList.toggle('hide', !canSeeFaults);
   if (canSeeFaults) {
