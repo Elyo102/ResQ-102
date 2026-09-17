@@ -5,7 +5,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SET = /^resq-\d{8}T\d{9}Z-[a-f0-9]{16}$/;
+export const SET = /^resq-\d{8}T\d{9}Z-[a-f0-9]{16}$/;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const relative = (root, target) => {
   const rel = path.relative(root, target);
@@ -55,7 +55,11 @@ const durable = (file, text) => {
 export function renderManifest(manifest) {
   return `# Private local backup\n\nID: ${manifest.id}\nCommit: ${manifest.head}\nCreated: ${manifest.created_at}\n\nContains private documents and Git history, potentially including secrets. Do not publish.\n`;
 }
-function completedSet(root, out, name) {
+// Exported so ops-restore-drill.mjs can verify a backup set's manifest and
+// per-file SHA-256 signatures with the exact same logic runBackup itself
+// trusts before publishing or pruning a set - never a second, hand-rolled
+// copy of this check that could quietly drift from the real one.
+export function completedSet(root, out, name) {
   try {
     if (!SET.test(name)) return null;
     const dir = path.join(out, name);
