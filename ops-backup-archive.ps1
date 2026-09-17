@@ -2,7 +2,13 @@ param([Parameter(Mandatory=$true)][string]$RootPath, [Parameter(Mandatory=$true)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression
-$entries = @(Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+# 42H.20 · Codex blocker 6 · Windows PowerShell 5.1's ConvertFrom-Json returns a JSON
+# array as ONE Object[] (it does not enumerate it), so @(... | ConvertFrom-Json) was an
+# array holding a single Object[]; $entry.path then became System.Object[] and Join-Path
+# failed. Piping the parsed value through ForEach-Object enumerates it on 5.1 and 7 alike.
+$parsed = Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$entries = @($parsed | ForEach-Object { $_ })
+if ($entries.Count -gt 0 -and ($entries[0] -is [System.Array])) { throw 'Inventory did not enumerate' }
 $rootPrefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\') + '\'
 if (!$VerifyOnly) {
 $archive = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)

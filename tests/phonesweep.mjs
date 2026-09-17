@@ -185,7 +185,7 @@ try {
         for (const t of r.touch) {
           console.log('    44x44: '+p+' · '+t.tag+t.sel+' "'+t.text+'" · '+t.w+'x'+t.h+'px');
         }
-        
+
       }
       if (r.bogusExempt.length) {
         touchBad += r.bogusExempt.length;
