@@ -13,8 +13,8 @@
 //  3. מספר ההתייחסויות המגובות (?v=) לא משתנה בין המניפסטים — קידום
 //     גרסה מחליף את הערך בכל מקום, לא מוסיף ולא מוריד התייחסויות.
 import assert from 'node:assert/strict';
-import { loadSnapshot, audit, MANIFEST, releaseKey } from './version-release.mjs';
-import { stampFiles, validateManifest } from '../release-stamp.mjs';
+import { loadSnapshot, audit, MANIFEST, releaseKey, versionVocabulary } from './version-release.mjs';
+import { stampFiles, validateManifest, stampTestFiles, loadTestSnapshot } from '../release-stamp.mjs';
 
 let passed = 0;
 function test(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
@@ -65,6 +65,21 @@ test('stampFiles genuinely bumps the release: a fake manifest produces files tha
   assert.ok(stamped.get('version.js').includes(fakeVersion));
   assert.ok(stamped.get('firebase-messaging-sw.js').includes(fakeManifest.sw_cache_key));
   assert.ok(!stamped.get('firebase-messaging-sw.js').includes(MANIFEST.sw_cache_key));
+  // 42H.20 · ביקורת Codex, חוסם 4 · הצרכנים הנוספים: מזהה סמכות החודש
+  // עובר לגרסה החדשה; אוצרות המילים של הטלמטריה **מוסיפים** אותה ושומרים
+  // את הגרסאות הישנות (מכשירים ישנים עדיין מדווחים אותן).
+  assert.ok(stamped.get('functions/index.js').includes("monthAuthorityReleaseId: '" + fakeVersion + "'"));
+  assert.ok(!stamped.get('functions/index.js').includes("monthAuthorityReleaseId: '" + MANIFEST.version + "'"));
+  for (const [name, pattern] of [
+    ['functions/ops-telemetry-contract.js', /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/],
+    ['incident-client.js', /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/]
+  ]) {
+    const before = versionVocabulary(files.get(name), pattern);
+    const after = versionVocabulary(stamped.get(name), pattern);
+    assert.deepEqual(after, before.concat([fakeVersion]), name + ' appends the new version and keeps every old one');
+    assert.deepEqual(versionVocabulary(stampFiles(stamped, fakeManifest).files.get(name), pattern), after,
+      name + ' stamping twice is idempotent');
+  }
 });
 
 test('bumping the release does not change how many static references exist, only their value', () => {
@@ -82,6 +97,22 @@ test('bumping the release does not change how many static references exist, only
 
 test('stampFiles throws on an invalid manifest instead of silently writing a mismatched key', () => {
   assert.throws(() => stampFiles(files, { version: '1.0', date: '1.1.2000', asset_query: 'nope', sw_cache_key: 'x' }));
+});
+
+test('test files are stamped too: release-shaped ?v= keys move, deliberate fixtures (?v=stale) and dynamic ?v= do not', () => {
+  const fake = { version: '99Z.99.9', date: '1.1.2099', asset_query: releaseKey('99Z.99.9'), sw_cache_key: 'resq-v' + releaseKey('99Z.99.9') + '-release1' };
+  const files = new Map([
+    ['tests/a.mjs', "import x from './x.js?v=42h191'; const re = /\\.js\\?v=42h191['\"]/; const t = `./${m}?v=42h191`;"],
+    ['tests/b.mjs', "'./theme.css?v=stale' + './x.js?v=' + key"]
+  ]);
+  const { files: out, restamped } = stampTestFiles(files, fake);
+  assert.equal(restamped, 3);
+  assert.equal(out.get('tests/a.mjs'), "import x from './x.js?v=99z999'; const re = /\\.js\\?v=99z999['\"]/; const t = `./${m}?v=99z999`;");
+  assert.equal(out.get('tests/b.mjs'), files.get('tests/b.mjs'));
+  // and the real test tree is clean against the real manifest
+  const real = loadTestSnapshot();
+  assert.equal(stampTestFiles(real, MANIFEST).restamped, 0, 'no test file pins an old release key');
+  assert.equal(real.has('tests/version-release.mjs') || real.has('tests/release-stamp-test.mjs'), false, 'the checker and this test keep their deliberate fixtures');
 });
 
 console.log('');

@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  MANIFEST, loadSnapshot, releaseKey, STATIC_URL, LEGITIMATE_UNVERSIONED
+  MANIFEST, loadSnapshot, releaseKey, STATIC_URL, LEGITIMATE_UNVERSIONED, versionVocabulary
 } from './tests/version-release.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,8 +30,23 @@ const root = here;
 // קבצים שיש להם עדכון ייעודי (לא רק שכתוב ?v= גורף).
 const DEDICATED = new Set([
   'version.json', 'version.js', 'functions/index.js',
-  'functions/maintenance-service.js', 'firebase-messaging-sw.js'
+  'functions/maintenance-service.js', 'firebase-messaging-sw.js',
+  'functions/ops-telemetry-contract.js', 'incident-client.js'
 ]);
+
+// 42H.20 · ביקורת Codex, חוסם 4 · אוצר מילים של גרסאות: רשימה סגורה
+// שהטלמטריה מנרמלת אליה (גרסה שאינה ברשימה → 'unknown'). שחרור חדש
+// **מוסיף** את עצמו לרשימה; גרסאות ישנות נשארות, כי מכשירים ישנים עדיין
+// מדווחים אותן. הפורמט המקורי (מירכאות, פסיק-רווח) נשמר.
+function appendVersion(source, pattern, version, label) {
+  const versions = versionVocabulary(source, pattern);
+  if (!versions.length) throw new Error('release-stamp: could not find ' + label);
+  if (versions.includes(version)) return source;
+  const match = source.match(pattern);
+  const inner = match[1];
+  const rebuilt = inner.replace(/\s*$/, '') + ", '" + version + "'";
+  return source.replace(match[0], match[0].replace(inner, rebuilt));
+}
 
 export function validateManifest(manifest) {
   const errors = [];
@@ -97,6 +112,26 @@ export function stampFiles(files, manifest) {
     'functions/maintenance-service.js version'
   ));
 
+  // functions/index.js — month-authority release id
+  out.set('functions/index.js', replaceOnce(
+    out.get('functions/index.js'),
+    /monthAuthorityReleaseId:\s*'[^']*'/,
+    "monthAuthorityReleaseId: '" + manifest.version + "'",
+    'functions/index.js monthAuthorityReleaseId'
+  ));
+
+  // telemetry version vocabularies — server and client
+  out.set('functions/ops-telemetry-contract.js', appendVersion(
+    out.get('functions/ops-telemetry-contract.js') || '',
+    /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/,
+    manifest.version, 'functions/ops-telemetry-contract.js VERSIONS'
+  ));
+  out.set('incident-client.js', appendVersion(
+    out.get('incident-client.js') || '',
+    /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/,
+    manifest.version, 'incident-client.js TELEMETRY_VERSIONS'
+  ));
+
   // firebase-messaging-sw.js — cache key
   out.set('firebase-messaging-sw.js', replaceOnce(
     out.get('firebase-messaging-sw.js') || '',
@@ -115,7 +150,7 @@ export function stampFiles(files, manifest) {
     STATIC_URL.lastIndex = 0;
     changed = changed.replace(STATIC_URL, (whole, quote, url) => {
       if (LEGITIMATE_UNVERSIONED.has(name + '\0' + url)) return whole;
-      const parsed = url.match(/^(\.\/[^?]+\.(?:js|css))\?v=([a-z0-9]+)$/i);
+      const parsed = url.match(/^(\.\/[^?]+\.(?:js|css|mp3))\?v=([a-z0-9]+)$/i);
       if (!parsed) return whole; // לא URL עם ?v= בכלל — לא נוגעים
       if (parsed[2] === manifest.asset_query) return whole; // כבר מעודכן
       didChange = true;
@@ -128,14 +163,52 @@ export function stampFiles(files, manifest) {
   return { files: out, restamped };
 }
 
+// 42H.20 · ביקורת Codex, חוסם 4 · גם קבצי הבדיקה נושאים מחרוזות ?v=
+// מילוליות (ייבוא מודולים דרך שרת הבדיקה, ציפיות regex). הם אינם חלק
+// מחוזה ה-290 של version-release.mjs (אינם נפרסים), אבל בדיקה שמקבעת
+// מזהה שחרור ישן היא בדיוק מה ש-Codex אסר — לכן המחולל מדביק גם אותם,
+// ו---check מדווח עליהם.
+// רק מפתח בצורת מזהה שחרור (42h191, 42h20) מוחלף — לא ערכי בדיקה מכוונים כמו ?v=stale.
+// כולל גם צורת regex בבדיקות (\?v=…) ותבניות `${module}?v=…`.
+const TEST_ASSET_QUERY = /(\\?\?v=)(\d{2}[a-z]\d+)(?![a-z0-9])/g;
+export function loadTestSnapshot() {
+  const files = new Map();
+  const dir = path.join(root, 'tests');
+  for (const name of fs.readdirSync(dir)) {
+    // הבודק והבדיקה של המחולל מחזיקים פיקסצ'ות מכוונות עם מפתחות ישנים.
+    if (!/\.mjs$/.test(name) || name === 'version-release.mjs' || name === 'release-stamp-test.mjs') continue;
+    files.set('tests/' + name, fs.readFileSync(path.join(dir, name), 'utf8'));
+  }
+  return files;
+}
+export function stampTestFiles(files, manifest) {
+  const out = new Map(files);
+  let restamped = 0;
+  for (const [name, source] of files) {
+    const changed = source.replace(TEST_ASSET_QUERY, (whole, prefix, key) => {
+      if (key === manifest.asset_query) return whole;
+      restamped += 1;
+      return prefix + manifest.asset_query;
+    });
+    if (changed !== source) out.set(name, changed);
+  }
+  return { files: out, restamped };
+}
+
 function main() {
   const checkOnly = process.argv.includes('--check');
   const files = loadSnapshot();
-  const { files: stamped, restamped } = stampFiles(files, MANIFEST);
+  const { files: stamped, restamped: restampedApp } = stampFiles(files, MANIFEST);
+  const testFiles = loadTestSnapshot();
+  const { files: stampedTests, restamped: restampedTests } = stampTestFiles(testFiles, MANIFEST);
+  const restamped = restampedApp + restampedTests;
 
   const changedNames = [];
   for (const [name, content] of stamped) {
     if (files.get(name) !== content) changedNames.push(name);
+  }
+  for (const [name, content] of stampedTests) {
+    if (testFiles.get(name) !== content) { changedNames.push(name); stamped.set(name, content); }
   }
 
   if (checkOnly) {

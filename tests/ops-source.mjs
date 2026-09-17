@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readSource } from './source-text.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => readSource(path.join(root, name));
+// 42H.20 · ביקורת Codex, חוסם 4 · מחרוזת ה-?v= שהבדיקה מצפה לה נגזרת מהמניפסט.
+const manifestAssetQuery = () => JSON.parse(read('release-manifest.json')).asset_query;
 const require = createRequire(import.meta.url);
 const withoutComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, '');
 // Export declarations in index.js are standalone lines. Do not use the
@@ -97,8 +99,11 @@ await check('client technical vocabularies agree with server vocabularies', () =
 });
 await check('current release incidents retain their exact version on client and server', () => {
   const current = read('version.js').match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1];
-  assert.equal(current, '42H.19.1');
-  for (const supported of ['42H.16', '42H.18', '42H.19', '42H.19.1']) {
+  // 42H.20 · ביקורת Codex, חוסם 4 · הציפייה נגזרת מ-release-manifest.json,
+  // לא מקובעת ידנית; release-stamp.mjs מוסיף את הגרסה לשני אוצרות המילים.
+  const manifest = JSON.parse(read('release-manifest.json'));
+  assert.equal(current, manifest.version);
+  for (const supported of [...new Set(['42H.16', '42H.18', '42H.19', '42H.19.1', manifest.version])]) {
     assert.ok(client.TELEMETRY_VERSIONS.includes(supported), supported + ' client rollout support');
     assert.ok(contract.VERSIONS.includes(supported), supported + ' server rollout support');
     assert.equal(client.buildReport('manual', { code:'Error' }, {
@@ -298,7 +303,7 @@ await check('feedback page permits verified super without fixed-email or role fa
   assert.ok(page.includes("location.replace('./login.html?next=feedback.html')"));
   assert.doesNotMatch(page, /SUPER_ADMIN_EMAIL|\.email\s*===|c\.role\s*===\s*['"]super_admin['"]/);
   assert.deepEqual([...page.matchAll(/httpsCallable\(fns,\s*'([^']+)'\)/g)].map((match) => match[1]), ['submitFeedback']);
-  assert.match(page, /from\s+['"]\.\/monitored-functions\.js\?v=42h191['"]/);
+  assert.match(page, new RegExp("from\\s+['\"]\\./monitored-functions\\.js\\?v=" + manifestAssetQuery() + "['\"]"));
   assert.doesNotMatch(page, /installIncidentReporter|createIncidentReporter|\.wrapCallable\(/,
     'feedback must share the page reporter, not install an independent quota/listener');
   assert.match(read('nav.js'), /href:\s*'feedback\.html',\s*label:\s*'חוות דעת',\s*who:\s*'member'/);

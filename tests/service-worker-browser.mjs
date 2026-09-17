@@ -23,6 +23,10 @@
 // המטמון, activate, fetch ו-offline — נשאר בדיוק כפי שהוא בייצור.
 // לוגיקת ה-messaging עצמה אינה הנושא של הבדיקה הזו.
 import { chromium } from 'playwright';
+import { MANIFEST } from './version-release.mjs';
+// 42H.20 · ביקורת Codex, חוסם 4 · מפתח המטמון נגזר מהמניפסט, לא מקובע.
+const CURRENT_CACHE = MANIFEST.sw_cache_key;
+const NEXT_CACHE = CURRENT_CACHE + '-next';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,7 +72,7 @@ const server = http.createServer((req, res) => {
       '<!doctype html><html lang="he"><meta charset="utf-8">' +
       '<body>בדיקת Service Worker' +
       '<script type="module">' +
-      '  import { registerSW } from "./pwa.js?v=42h191";' +
+      '  import { registerSW } from "./pwa.js?v=' + MANIFEST.asset_query + '";' +
       '  window.__swRegistration = null;' +
       '  window.__swRegisterError = null;' +
       '  registerSW().then(function (r) { window.__swRegistration = r; })' +
@@ -128,14 +132,14 @@ try {
     check(controlled, 'הדף נשלט ע"י ה-Service Worker אחרי טעינה קרה (activate + clients.claim הצליחו)');
 
     const cacheNames = await page.evaluate(() => caches.keys());
-    check(cacheNames.includes('resq-v42h191-release1'), 'המטמון הפעיל נוצר עם המפתח האמיתי מ-release-manifest.json',
+    check(cacheNames.includes(CURRENT_CACHE), 'המטמון הפעיל נוצר עם המפתח האמיתי מ-release-manifest.json',
       'cacheNames=' + JSON.stringify(cacheNames));
 
-    const cachedShellCount = await page.evaluate(async () => {
-      const c = await caches.open('resq-v42h191-release1');
+    const cachedShellCount = await page.evaluate(async (cacheName) => {
+      const c = await caches.open(cacheName);
       const keys = await c.keys();
       return keys.length;
-    });
+    }, CURRENT_CACHE);
     check(cachedShellCount > 10, 'המעטפת (SHELL) נשמרה בפועל במטמון — לא רק login.html אחד', 'cachedShellCount=' + cachedShellCount);
 
     await context.close();
@@ -166,7 +170,7 @@ try {
     const namesAfter = await page.evaluate(() => caches.keys());
     check(!namesAfter.includes('resq-vSTALE-release0'), 'מטמון ישן (resq-*) שאינו המפתח הנוכחי נמחק ב-activate',
       'namesAfter=' + JSON.stringify(namesAfter));
-    check(namesAfter.includes('resq-v42h191-release1'), 'המטמון הנוכחי נשאר קיים אחרי הניקוי');
+    check(namesAfter.includes(CURRENT_CACHE), 'המטמון הנוכחי נשאר קיים אחרי הניקוי');
     await context.close();
   }
 
@@ -183,8 +187,8 @@ try {
     // "שחרור חדש": אותו קובץ אמיתי, עם מפתח מטמון אחר — בדיוק מה
     // ש-release-stamp.mjs עצמו היה מייצר בקידום גרסה אמיתי.
     swSourceOverride = realSwSource.replace(
-      "const CACHE = 'resq-v42h191-release1';",
-      "const CACHE = 'resq-v42h192-release1';"
+      "const CACHE = '" + CURRENT_CACHE + "';",
+      "const CACHE = '" + NEXT_CACHE + "';"
     );
     check(swSourceOverride !== realSwSource, 'גרסת ה-SW השנייה לבדיקה שונה בפועל מהמקור (ה-replace תפס)');
 
@@ -222,13 +226,13 @@ try {
     // אחרי ה-controllerchange, בהרצה מקומית. ל-caches.delete() בפועל
     // אין אירוע להאזין לו, אז פוללים במקום לנחש מספר קבוע.
     let cachesAfterUpdate = await page.evaluate(() => caches.keys());
-    for (let i = 0; i < 20 && cachesAfterUpdate.includes('resq-v42h191-release1'); i++) {
+    for (let i = 0; i < 20 && cachesAfterUpdate.includes(CURRENT_CACHE); i++) {
       await page.waitForTimeout(200);
       cachesAfterUpdate = await page.evaluate(() => caches.keys());
     }
-    check(cachesAfterUpdate.includes('resq-v42h192-release1'), 'הגרסה החדשה יצרה מטמון עם המפתח החדש',
+    check(cachesAfterUpdate.includes(NEXT_CACHE), 'הגרסה החדשה יצרה מטמון עם המפתח החדש',
       'cachesAfterUpdate=' + JSON.stringify(cachesAfterUpdate));
-    check(!cachesAfterUpdate.includes('resq-v42h191-release1'), 'הגרסה הישנה נוקתה אחרי שהחדשה השתלטה (activate)',
+    check(!cachesAfterUpdate.includes(CURRENT_CACHE), 'הגרסה הישנה נוקתה אחרי שהחדשה השתלטה (activate)',
       'cachesAfterUpdate=' + JSON.stringify(cachesAfterUpdate));
     await context.close();
   }
@@ -254,19 +258,19 @@ try {
     await page.goto(base + '/__sw_test__.html', { waitUntil: 'load' });
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 15000 });
     // מוודאים שהמעטפת האמיתית (login.html) כבר במטמון לפני שמנתקים רשת.
-    await page.evaluate(() => fetch('./login.html?v=42h191').catch(() => {}));
+    await page.evaluate((asset) => fetch('./login.html?v=' + asset).catch(() => {}), MANIFEST.asset_query);
     await page.waitForTimeout(300);
 
     await new Promise((resolve) => server.close(resolve));
 
-    const offlineResponse = await page.evaluate(async () => {
+    const offlineResponse = await page.evaluate(async (asset) => {
       try {
-        const r = await fetch('./login.html?v=42h191');
+        const r = await fetch('./login.html?v=' + asset);
         return { ok: true, status: r.status, bodyLen: (await r.text()).length };
       } catch (e) {
         return { ok: false, error: String(e) };
       }
-    });
+    }, MANIFEST.asset_query);
     check(offlineResponse.ok && offlineResponse.status === 200 && offlineResponse.bodyLen > 500,
       'דף אמיתי מהמעטפת נטען בהצלחה כשהשרת נותק לגמרי (חיבור מסורב אמיתי), מתוך המטמון',
       'offlineResponse=' + JSON.stringify(offlineResponse));
@@ -287,10 +291,10 @@ try {
       server.once('error', reject);
     });
     await page.goto(base + '/__sw_test__.html', { waitUntil: 'load' });
-    const backOnline = await page.evaluate(async () => {
-      const r = await fetch('./login.html?v=42h191');
+    const backOnline = await page.evaluate(async (asset) => {
+      const r = await fetch('./login.html?v=' + asset);
       return r.status;
-    });
+    }, MANIFEST.asset_query);
     check(backOnline === 200, 'אחרי חזרת השרת, בקשות רגילות חוזרות לעבוד דרך הרשת (לא נשארות תקועות על שגיאה)');
 
     await context.close();

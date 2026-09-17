@@ -12,7 +12,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'people.html', 'quals.html', 'maintenance.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20']);
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -32,7 +32,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'getPersonalLiveLabStatus', 'enablePersonalLiveLab',
   'sendPersonalLiveLabPush', 'ackPersonalLiveLabPush',
   'closeCallout', 'createStationTransfer', 'decideStationTransfer', 'deleteQualification',
-  'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
+  'getAlertsFeed', 'getAttendanceShadowStatus', 'getEffectiveWorkdays', 'getGuardLoadStatistics',
   'getGuardManagementStatus', 'getJoinCode',
   'getHomeCommandCenter', 'getStationFormSubmissionStatus',
   'getLegacyScheduleCompatibilityContext', 'getMyGuardAttendance', 'getMyScheduleV2',

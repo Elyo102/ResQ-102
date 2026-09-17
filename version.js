@@ -27,5 +27,5 @@
 // ערכי הקבועים למטה חייבים להתאים לשדה `version` שלו, לשדה
 // `asset_query` (מחרוזת ה-`?v=` שבכל הקבצים) ולשדה `sw_cache_key` ב-`firebase-messaging-sw.js`.
 // `tests/version-release.mjs` נופל אם השלושה מתפצלים — עדכון כאן ראשון, במניפסט שחרור, ואז בשלושתם.
-export const APP_VERSION = '42H.19.1';
-export const APP_DATE    = '15.9.2026';
+export const APP_VERSION = '42H.20';
+export const APP_DATE    = '17.9.2026';

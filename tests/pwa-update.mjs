@@ -179,7 +179,9 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     fetch:async () => ({ ok:true, json:async () => ({ v:release.v }) }),
     refresh:async () => { refreshes += 1; return { workerActivated:true }; }
   });
-  assert.equal(release.v, '42H.19.1', 'the hotfix has a genuinely advanced visible version');
+  // 42H.20 · Codex blocker 4 · נגזר מ-version.json (שנחתם מהמניפסט), לא מקובע.
+  assert.notEqual(release.v, '42H.18', 'the release has a genuinely advanced visible version');
+  assert.equal(release.v, JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8')).version, 'version.json carries exactly the manifest version');
   assert.equal(result.updated, true, 'a client already on 42H.18 applies the hotfix');
   assert.equal(refreshes, 1, 'the 42H.18 client activates the candidate exactly once');
 }

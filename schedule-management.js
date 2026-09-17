@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h191';
-import { renderNav, renderStuckNav } from './nav.js?v=42h191';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h191';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h191';
-import { initAppCheck } from './appcheck.js?v=42h191';
-import { readScheduleFile } from './schedule-file-import.js?v=42h191';
+import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h20';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { readScheduleFile } from './schedule-file-import.js?v=42h20';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h191';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h191';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h20';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

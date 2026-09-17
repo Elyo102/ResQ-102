@@ -14,8 +14,10 @@ const root = path.resolve(here, '..');
 // checked against it, not against a value re-typed in each place.
 export const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
 
-export const EXPECTED_VERSIONED_REFERENCES = 289; // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html (2); §5.5's home-bell fix adds one new import of alerts-feed.js in login.html (1) — it reuses bulletin.js's existing ?v= import for messageTimeMs, so no second reference there.
-export const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
+export const EXPECTED_VERSIONED_REFERENCES = 290; // 42H.20 Codex blocker 4: +1 for callout.js's './callout-siren.mp3?v=…' now that mp3 is inside the contract. // 42H.20 §5.4 adds alerts-feed.js/messageTimeMs imports in alerts.html (2); §5.5's home-bell fix adds one new import of alerts-feed.js in login.html (1) — it reuses bulletin.js's existing ?v= import for messageTimeMs, so no second reference there.
+// 42H.20 · ביקורת Codex, חוסם 4 · גם מדיה מקומית שמצוינת עם ?v= (callout-siren.mp3)
+// היא צרכן של זהות השחרור — לא רק js/css.
+export const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css|mp3)(?:\?[^'"`\s<>]*)?)\1/g;
 export const LEGITIMATE_UNVERSIONED = new Set([
   'pwa.js\0./firebase-messaging-sw.js',
   'push.js\0./firebase-messaging-sw.js',
@@ -32,10 +34,17 @@ export function loadSnapshot() {
     if (!/\.(?:html|js|json)$/.test(name)) continue;
     files.set(name, clean(fs.readFileSync(path.join(root, name), 'utf8')));
   }
-  for (const relative of ['functions/index.js', 'functions/maintenance-service.js']) {
+  for (const relative of ['functions/index.js', 'functions/maintenance-service.js', 'functions/ops-telemetry-contract.js']) {
     files.set(relative, clean(fs.readFileSync(path.join(root, relative), 'utf8')));
   }
   return files;
+}
+
+// רשימת גרסאות בתוך מקור (Object.freeze([...]) או מחרוזת יחידה) → מערך.
+export function versionVocabulary(source, pattern) {
+  const match = String(source || '').match(pattern);
+  if (!match) return [];
+  return [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map((item) => item[1]);
 }
 
 export function releaseKey(version) {
@@ -95,6 +104,20 @@ export function audit(files, manifest = MANIFEST) {
   if (!maintenanceService.includes("version:'" + EXPECTED_VERSION + "', ai_state:")) {
     errors.push('maintenance health row reports the visible release');
   }
+  // 42H.20 · ביקורת Codex, חוסם 4 · עוד שלושה צרכני זהות שחרור שנשארו
+  // ידניים: אוצר המילים של הטלמטריה (שרת + לקוח — גרסה שאינה ברשימה
+  // מנורמלת ל-'unknown' ונעלמת מהדיווח), ומזהה השחרור של סמכות החודש.
+  if ((functionsIndex.match(/monthAuthorityReleaseId:\s*'([^']*)'/) || [])[1] !== EXPECTED_VERSION) {
+    errors.push('month-authority release id is the visible release');
+  }
+  const telemetryContract = files.get('functions/ops-telemetry-contract.js') || '';
+  if (!versionVocabulary(telemetryContract, /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(EXPECTED_VERSION)) {
+    errors.push('server telemetry vocabulary (ops-telemetry-contract.js VERSIONS) accepts the visible release');
+  }
+  const incidentClient = files.get('incident-client.js') || '';
+  if (!versionVocabulary(incidentClient, /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(EXPECTED_VERSION)) {
+    errors.push('client telemetry vocabulary (incident-client.js TELEMETRY_VERSIONS) accepts the visible release');
+  }
 
   const worker = files.get('firebase-messaging-sw.js') || '';
   // 42H.20 §12.1 · consumed directly from the manifest, not re-derived by
@@ -129,7 +152,7 @@ export function audit(files, manifest = MANIFEST) {
     while ((match = STATIC_URL.exec(source))) {
       const url = match[2];
       if (LEGITIMATE_UNVERSIONED.has(name + '\0' + url)) continue;
-      const parsed = url.match(/^(\.\/[^?]+\.(?:js|css))\?v=([a-z0-9]+)$/i);
+      const parsed = url.match(/^(\.\/[^?]+\.(?:js|css|mp3))\?v=([a-z0-9]+)$/i);
       if (!parsed) {
         errors.push(name + ': local static URL lacks the exact release query: ' + url);
         continue;
@@ -183,7 +206,8 @@ if (isMain) {
   const key = MANIFEST.asset_query;
   mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
   mustFail('release date mutation', replaceExactlyOne(files, 'version.json', EXPECTED_DATE, '1.1.2000'));
-  mustFail('version.js mutation', replaceExactlyOne(files, 'version.js', EXPECTED_VERSION, '42G.invalid'));
+  mustFail('version.js mutation', replaceExactlyOne(files, 'version.js',
+    "APP_VERSION = '" + EXPECTED_VERSION + "'", "APP_VERSION = '42G.invalid'"));
   mustFail('heartbeat version mutation', replaceExactlyOne(files, 'functions/index.js',
     "state: 'ok', version: '" + EXPECTED_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
   mustFail('maintenance version mutation', replaceExactlyOne(files, 'functions/maintenance-service.js',
@@ -220,5 +244,12 @@ if (isMain) {
     assert.ok(audit(missing).errors.some(error => error.includes('offline dependency missing from SHELL: ./' + target)),
       'HR HTML/module startup requires ' + target + ' offline');
   }
-  console.log('Release version contract: ' + baseline.count + ' references; 16/16 mutations caught.');
+  // 42H.20 · ביקורת Codex, חוסם 4 · שלושת הצרכנים שנוספו לחוזה.
+  mustFail('month-authority release id mutation', replaceExactlyOne(files, 'functions/index.js',
+    "monthAuthorityReleaseId: '" + EXPECTED_VERSION + "'", "monthAuthorityReleaseId: '42G.invalid'"));
+  mustFail('server telemetry vocabulary mutation', replaceExactlyOne(files, 'functions/ops-telemetry-contract.js',
+    "'" + EXPECTED_VERSION + "'", "'42G.invalid'"));
+  mustFail('client telemetry vocabulary mutation', replaceExactlyOne(files, 'incident-client.js',
+    "'" + EXPECTED_VERSION + "'", "'42G.invalid'"));
+  console.log('Release version contract: ' + baseline.count + ' references; 19/19 mutations caught.');
 }
