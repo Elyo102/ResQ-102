@@ -50,6 +50,14 @@ async function prepare(context, role, plans) {
   }, { roleName: role, callablePlans: plans });
 }
 
+// קריאת פתע פעילה בנתוני הדמה יכולה להופיע עם עיכוב (אחרי שהעמוד כבר
+// עבר 'load'), ולכסות את המסך שאמורים לצלם — בדיוק כמו שכבר תועד ב-
+// states-audit-browser.mjs. display:none!important חוסם אותה בלי תלות
+// בתזמון שבו ה-JS מוסיף לה את class 'on'.
+async function hideCallout(pg) {
+  await pg.addStyleTag({ content: '#coWrap{display:none!important}' }).catch(() => {});
+}
+
 function day(date, label, me) {
   return {
     date,
@@ -132,10 +140,8 @@ try {
     await prepare(ctx, 'firefighter', {});
     const page = await ctx.newPage();
     await page.goto('http://127.0.0.1:' + port + '/login.html', { waitUntil: 'load' });
+    await hideCallout(page);
     await page.waitForTimeout(900);
-    // dismiss any callout/urgent-call modal so the plain home screen is captured
-    const dismiss = page.locator('button:has-text("לא זמין"), button:has-text("סגור"), [aria-label="סגור"]').first();
-    if (await dismiss.count()) { await dismiss.click().catch(() => {}); await page.waitForTimeout(300); }
     await page.screenshot({ path: path.join(outDir, 'home-' + width + '.png') });
     await ctx.close();
     console.log('captured home-' + width + '.png');
@@ -151,6 +157,7 @@ try {
     });
     const page = await ctx.newPage();
     await page.goto('http://127.0.0.1:' + port + '/schedule-management.html', { waitUntil: 'load' });
+    await hideCallout(page);
     await page.locator('#stationBoard .hcell').first().waitFor({ timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(outDir, 'published-schedule-' + width + '.png') });
@@ -172,6 +179,7 @@ try {
     const page = await ctx.newPage();
     page.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
     await page.goto('http://127.0.0.1:' + port + '/schedule-management.html?tab=manage', { waitUntil: 'load' });
+    await hideCallout(page);
     await page.locator('#appMain:not(.hide)').waitFor({ timeout: 10000 }).catch(() => {});
     await page.locator('#runPlanner').click({ timeout: 10000 }).catch(() => {});
     await page.locator('#draftPreviewCard').waitFor({ timeout: 10000 }).catch(() => {});
