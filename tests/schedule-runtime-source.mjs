@@ -2099,6 +2099,49 @@ check('42H.4: rollback runs the current gap gate inside its activation transacti
   assert.ok(body.includes('gap_report: rollbackGapRecord'));
 });
 
+// 42H.20 closure batch item 5 (CLAUDE-TASK Scope 12.5): "אם נדרש UI
+// rollback, יש להחזיר רק את מה שתואם, לא להחזיר אוטומטית הגנות שרת
+// ישנות" — rollbackMonthAuthority הוא הנתיב הפעיל כש-monthAuthorityEnabled
+// (הבדיקה למעלה, 42H.4, מכסה רק את הנתיב הישן rollback()). מוודאים כאן
+// שהנתיב הפעיל מיישם את אותו עיקרון בפועל: rollback משחזר רק את נתוני
+// הלוח (target.before — שיבוץ בפועל), לא מדיניות/מקור ישנים, ומריץ את
+// שער הפערים (gap gate) פעמיים על המדיניות/המקור הנוכחיים — פעם אחת
+// לפני הטרנזקציה ופעם שנייה בתוכה, עם אימות digest שמונע מדיניות/מקור
+// שהשתנו באמצע מלהתחמק מהבדיקה. ה"הגנות" כאן הן מנוע המדיניות/הפערים
+// החי, לא גרסה קפואה מהעבר.
+check('42H.20/12.5: rollbackMonthAuthority re-validates against the live policy/source, never the target revision\'s own', () => {
+  const start = runtime.indexOf('async function rollbackMonthAuthority(req)');
+  const end = runtime.indexOf('\n  async function rollback(req)', start);
+  assert.ok(start > -1 && end > start, 'rollbackMonthAuthority body must be locatable');
+  const body = runtime.slice(start, end);
+
+  // המדיניות/המקור נטענים מה-snapshot החי (meta.policy_id / meta.source_id
+  // של ה-snapshot הנוכחי), לא ממה ששמור על גבי פעולת היעד הישנה עצמה.
+  assert.ok(body.includes('loadPolicy(ctx,snapshot.meta.policy_id)'));
+  assert.ok(body.includes('loadSource(ctx,snapshot.meta.source_id)'));
+  assert.ok(body.includes('projectedPolicyForPlan(policy.value,snapshot.plan,snapshot.meta,null'),
+    'the effective policy used for the gap gate must be the current projection, not a stored old one');
+
+  // שער הפערים רץ פעם ראשונה לפני הטרנזקציה (הכנה) ופעם שנייה בתוכה,
+  // עם אימות שהמדיניות/המקור לא השתנו בין השתיים (rollback-source-changed).
+  const gateCalls = [...body.matchAll(/requireGapClearance\(/g)].length;
+  assert.ok(gateCalls >= 2, 'the gap gate must run both before and inside the activation transaction, found ' + gateCalls);
+  const txAt = body.indexOf('await db.runTransaction(async tx=>{');
+  assert.ok(txAt > -1, 'rollbackMonthAuthority must activate inside a transaction');
+  const secondGateAt = body.indexOf('requireGapClearance(', body.indexOf('requireGapClearance(') + 1);
+  assert.ok(secondGateAt > txAt, 'the second gap-gate call must run inside the activation transaction');
+  assert.ok(body.includes("throw new ScheduleRuntimeError('rollback-source-changed'"),
+    'a policy/source content_digest mismatch mid-flight must abort the rollback, not silently proceed on stale rules');
+  assert.ok(body.includes('policy.data().content_digest!==basis.policy.digest || source.data().content_digest!==basis.source.digest'));
+
+  // רק נתוני הלוח (target.before) חוזרים — לא מדיניות/מקור מהיעד הישן.
+  assert.ok(body.includes('const after=JSON.parse(JSON.stringify(target.before))'));
+  assert.ok(!/target\.before\.(policy|source)/.test(body), 'rollback must not restore a policy/source id from the old target');
+
+  // לא ניתן לבצע rollback ללא סיבה תקינה — לא פעולה הרסנית בלחיצה אחת.
+  assert.ok(body.includes("if(!ROLLBACK_REASONS.includes(data.reason_code))throw new ScheduleRuntimeError('rollback-reason-invalid'"));
+});
+
 check('42H.5: every asynchronous management path fences late responses to its auth scope', () => {
   const names = [
     'checkSource', 'saveSource', 'promotePending', 'promoteToNew',
@@ -2149,5 +2192,5 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 130);
-console.log('\n130 schedule runtime source checks passed.');
+assert.equal(passed, 131);
+console.log('\n131 schedule runtime source checks passed.');
