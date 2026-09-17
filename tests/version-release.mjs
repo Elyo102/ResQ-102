@@ -5,9 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const EXPECTED_VERSION = '42H.19.1';
-const EXPECTED_DATE = '15.9.2026';
-const EXPECTED_ASSET_KEY = '42h191';
+
+// 42H.20 §12.1 · these three used to be hardcoded here, independently of
+// version.js/version.json/the service-worker CACHE key - four places a real
+// release had to touch by hand, this file being a fifth if anyone forgot to
+// bump it too. `release-manifest.json` is now the one file a release
+// actually edits first; every other file (including these expectations) is
+// checked against it, not against a value re-typed in each place.
+const MANIFEST = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
+const EXPECTED_VERSION = MANIFEST.version;
+const EXPECTED_DATE = MANIFEST.date;
+const EXPECTED_ASSET_KEY = MANIFEST.asset_query;
 const EXPECTED_VERSIONED_REFERENCES = 285; // Adds the isolated shift-callout surface.
 const STATIC_URL = /(['"`])(\.\/[^'"`\s<>?]+\.(?:js|css)(?:\?[^'"`\s<>]*)?)\1/g;
 const LEGITIMATE_UNVERSIONED = new Set([
@@ -88,7 +96,9 @@ function audit(files) {
   }
 
   const worker = files.get('firebase-messaging-sw.js') || '';
-  const expectedCache = 'resq-v' + key + '-release1';
+  // 42H.20 §12.1 · consumed directly from the manifest, not re-derived by
+  // formula here - the manifest is what a release actually edits.
+  const expectedCache = MANIFEST.sw_cache_key;
   const cacheMatches = [...worker.matchAll(/const\s+CACHE\s*=\s*['"]([^'"]+)['"]\s*;/g)];
   if (cacheMatches.length !== 1 || cacheMatches[0]?.[1] !== expectedCache) {
     errors.push('service-worker cache is exactly ' + expectedCache);
