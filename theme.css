@@ -6,27 +6,30 @@
    נשא עותק משלו, וכל שינוי פלטה היה שש-עשרה עריכות שאחת מהן
    נשכחת.
 
-   שני מצבים:
+   42H.20 §2 (אלדד, 17.9.2026): **בהיר הוא ברירת המחדל לכולם.**
+   עד לשינוי הזה כהה היה ברירת המחדל וההגדרה הבהירה נכנסה לפעולה
+   רק כש-`prefers-color-scheme: light` של המכשיר תפס. זה הפוך
+   מהמפורש: "אין Dark Mode אוטומטי לפי הגדרת המכשיר" — מצב המכשיר
+   כשלעצמו כבר לא אמור לשנות שום דבר.
 
-     כהה   ברירת המחדל. זה מה שרץ היום, ולא נגעתי בו — אותם
-           ערכים בדיוק. מי שנמצא במצב כהה לא רואה שום שינוי
-     בהיר  נכנס לפעולה כשהטלפון מוגדר למצב בהיר
+   שני מצבים, לא שלושה:
 
-   למה כהה הוא הבסיס ולא בהיר, בניגוד למקובל: הכהה הוא מה
-   שנבדק בשמונה מודולים לאורך שבוע. אם יש באג בפלטה הבהירה,
-   הוא נשאר אצל מי שבחר בהיר — ולא נוגע במי שכבר עובד.
+     :root                כהה/בהיר של המכשיר לא משנה דבר — בהיר תמיד
+     [data-theme="dark"]  בחירה ידנית מפורשת ב"כהה תמיד" (nav.js),
+                          וגוברת. שאילתת `prefers-color-scheme` הוסרה
+                          לגמרי מהקובץ הזה בכוונה.
+     [data-theme="light"] בחירה ידנית מפורשת ב"בהיר תמיד" — זהה
+                          לברירת המחדל, נשמרת כפי שהייתה.
 
-   שלושה מצבים, לא שניים:
-
-     :root                          כהה — ברירת מחדל
-     prefers-color-scheme: light    הטלפון מוגדר בהיר
-     [data-theme="light"|"dark"]    המשתמש בחר ידנית, וגובר
+   הערכים בכל בלוק לא נגעו בהם מעבר לשינוי המקום: מה שהיה ב-:root
+   עבר ל-[data-theme="dark"] בלי לשנות אף hex, ומה שהיה תחת
+   prefers-color-scheme עבר ל-:root בלי לשנות אף hex. אם ה-hex-ים
+   המדויקים (#eef2f6/#1c3d5a/#d9531e שנמסרו כערכה המאושרת) שונים
+   ממה שכבר היה כאן — זו הכרעת המשך נפרדת, לא בוצעה בשינוי הזה.
 
    =================================================================== */
 
 :root{
-  color-scheme: dark;
-
   /* --- יסודות ממשק משותפים (opt-in) --- */
   --space-1:4px; --space-2:8px; --space-3:12px;
   --space-4:16px; --space-5:24px; --space-6:32px;
@@ -34,6 +37,117 @@
   --touch-min:44px;
   --text-xs:12px; --text-sm:14px; --text-md:16px;
   --text-lg:20px; --text-xl:28px;
+
+  color-scheme: light;
+
+  --bg:#eef1f5;
+  --card:#ffffff;
+  --panel:#f5f7fa;
+  --input:#ffffff;
+  --chip:#e6eaf0;
+  --track:#dde2ea;
+
+  --line:#d3dae3;
+  --line-soft:#e6eaf0;
+  --line-hover:#adb8c6;
+
+  --txt:#131820;
+  --muted:#5d6675;
+  --dim:#414b59;
+  --on-accent:#ffffff;
+  --on-soft:#131820;
+
+  --accent:#c1440e;
+  --pick:#7b3fa8;
+  --in:#00707d;
+  --note:#1d4ed8;
+  --accent-txt:#963109;
+
+  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+  --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+  --ok-bg:#e2f2e9;   --ok-fg:#175236;
+  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+  --info-bg:#e9edf3; --info-fg:#3d4653;
+  --soft-bad:#8c1d17;
+
+  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+  --go:#1f6b45; --go-txt:#ffffff;
+
+  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+  --crewB-on:#ffffff;
+
+  --shadow:0 10px 30px rgba(19,24,32,.12);
+}
+
+/* ===================================================================
+   בהיר — בחירה ידנית מפורשת ב"בהיר תמיד"
+   ===================================================================
+
+   זהה לברירת המחדל ב-:root. הבלוק נשמר בנפרד (ולא רק הוסר) כי
+   "בהיר תמיד" חייב להישאר בהיר גם אם יום אחד תיווסף חזרה תלות
+   כלשהי במצב המכשיר ל-:root — בחירה מפורשת גוברת תמיד.
+
+   =================================================================== */
+
+:root[data-theme="light"]{
+  color-scheme: light;
+
+  --bg:#eef1f5;
+  --card:#ffffff;
+  --panel:#f5f7fa;
+  --input:#ffffff;
+  --chip:#e6eaf0;
+  --track:#dde2ea;
+
+  --line:#d3dae3;
+  --line-soft:#e6eaf0;
+  --line-hover:#adb8c6;
+
+  --txt:#131820;
+  --muted:#5d6675;
+  --dim:#414b59;
+  --on-accent:#ffffff;
+  --on-soft:#131820;
+
+  --accent:#c1440e;
+  --pick:#7b3fa8;
+  --in:#00707d;
+  --note:#1d4ed8;
+  --accent-txt:#963109;
+
+  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
+  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+  --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+  --ok-bg:#e2f2e9;   --ok-fg:#175236;
+  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+  --info-bg:#e9edf3; --info-fg:#3d4653;
+  --soft-bad:#8c1d17;
+
+  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+  --go:#1f6b45; --go-txt:#ffffff;
+
+  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+  --crewB-on:#ffffff;
+
+  --shadow:0 10px 30px rgba(19,24,32,.12);
+}
+
+/* מצב כהה מפורש — הבחירה הידנית היחידה שמציגה כהה. 42H.20 §2:
+   ResQ עוברת לערכה הבהירה כברירת מחדל לכולם, ומצב כהה של המכשיר
+   כשלעצמו כבר אינו משנה את המראה — רק בחירה מפורשת ב"כהה תמיד"
+   (nav.js) מפעילה את הבלוק הזה. הערכים זהים למה שהיה קודם ב-:root
+   כברירת מחדל, לפני ההיפוך. */
+:root[data-theme="dark"]{
+  color-scheme: dark;
 
   /* --- משטחים --- */
   --bg:#15171a;          /* רקע הדף */
@@ -99,123 +213,6 @@
   /* --- צל --- */
   --shadow:0 10px 34px rgba(0,0,0,.45);
 }
-
-/* ===================================================================
-   בהיר
-   ===================================================================
-
-   לא היפוך. כל ערך נבחר מחדש:
-
-   * צבעי המשמרות רוויים וכהים יותר — הגרסה המוארת נועדה
-     לרקע כהה, ועל לבן היא נראית דהויה
-   * ההדגשה יורדת מ-#e8590c לכתום-לבנה עמוק יותר, כי הכתום
-     הבהיר על לבן אינו עומד בניגודיות לטקסט
-   * הרקע אינו לבן טהור אלא אפור-כחלחל קל, שמפחית סנוור
-     ומאפשר לכרטיס הלבן להיראות כמשטח נפרד
-
-   =================================================================== */
-
-@media (prefers-color-scheme: light){
-  :root:not([data-theme="dark"]){
-    color-scheme: light;
-
-    --bg:#eef1f5;
-    --card:#ffffff;
-    --panel:#f5f7fa;
-    --input:#ffffff;
-    --chip:#e6eaf0;
-    --track:#dde2ea;
-
-    --line:#d3dae3;
-    --line-soft:#e6eaf0;
-    --line-hover:#adb8c6;
-
-    --txt:#131820;
-    --muted:#5d6675;
-    --dim:#414b59;
-    --on-accent:#ffffff;
-    --on-soft:#131820;
-
-    --accent:#c1440e;
-    --pick:#7b3fa8;
-    --in:#00707d;
-    --note:#1d4ed8;
-    --accent-txt:#963109;
-
-    --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
-    --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
-    --warn:#8a5a00;  --warn-bg:#fbf0d9;
-
-    --ok-bg:#e2f2e9;   --ok-fg:#175236;
-    --err-bg:#fbe6e4;  --err-fg:#8c1d17;
-    --info-bg:#e9edf3; --info-fg:#3d4653;
-    --soft-bad:#8c1d17;
-
-    --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
-
-    --go:#1f6b45; --go-txt:#ffffff;
-
-    --crewA:#b3261e;  --crewA-bg:#fbe6e4;
-    --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
-    --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-    --crewB-on:#ffffff;
-
-    --shadow:0 10px 30px rgba(19,24,32,.12);
-  }
-}
-
-/* בחירה ידנית גוברת על הטלפון, לשני הכיוונים. */
-:root[data-theme="light"]{
-  color-scheme: light;
-
-  --bg:#eef1f5;
-  --card:#ffffff;
-  --panel:#f5f7fa;
-  --input:#ffffff;
-  --chip:#e6eaf0;
-  --track:#dde2ea;
-
-  --line:#d3dae3;
-  --line-soft:#e6eaf0;
-  --line-hover:#adb8c6;
-
-  --txt:#131820;
-  --muted:#5d6675;
-  --dim:#414b59;
-  --on-accent:#ffffff;
-  --on-soft:#131820;
-
-  --accent:#c1440e;
-  --pick:#7b3fa8;
-  --in:#00707d;
-  --note:#1d4ed8;
-  --accent-txt:#963109;
-
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
-  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
-  --warn:#8a5a00;  --warn-bg:#fbf0d9;
-
-  --ok-bg:#e2f2e9;   --ok-fg:#175236;
-  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
-  --info-bg:#e9edf3; --info-fg:#3d4653;
-  --soft-bad:#8c1d17;
-
-  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
-
-  --go:#1f6b45; --go-txt:#ffffff;
-
-  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
-  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
-  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-  --crewB-on:#ffffff;
-
-  --shadow:0 10px 30px rgba(19,24,32,.12);
-}
-
-/* מצב כהה מפורש — גובר על טלפון שמוגדר בהיר.
-   הערכים זהים ל-:root ולכן אין צורך לחזור עליהם; הבלוק קיים
-   כדי שהבורר הידני ינצח את שאילתת המדיה. */
-:root[data-theme="dark"]{ color-scheme: dark; }
 
 /* ===================================================================
    פס השגיאה — משותף לכל המסכים

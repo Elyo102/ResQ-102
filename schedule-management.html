@@ -443,11 +443,12 @@
         box-shadow:0 -6px 14px rgba(0,0,0,.06)}
     }
     /* Approved Gemini surface styling; board colors, controls and behavior remain unchanged. */
-    :root{--manager-heading:var(--txt);--manager-shadow:0 2px 8px rgba(0,0,0,.04)}
-    @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
-      --bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a;
-    }}
-    :root[data-theme="light"]{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a}
+    /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה
+       בהירה תמיד ב-theme.css. אלה ערכי-על מקומיים לעמוד הזה בלבד
+       (theme.css לא מכיר --manager-heading), ולכן צריך את אותו היפוך פה בנפרד:
+       ברירת המחדל בהירה ללא תלות במצב המכשיר, וכהה רק בבחירה מפורשת. */
+    :root{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a;--manager-shadow:0 2px 8px rgba(0,0,0,.04)}
+    :root[data-theme="dark"]{--manager-heading:var(--txt)}
     .shell .card,.shell .advanced{border-radius:14px;box-shadow:var(--manager-shadow)}
     .shell .card{padding:14px}
     .shell .head h1,.shell .card h2{color:var(--manager-heading)}

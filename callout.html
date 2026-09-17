@@ -21,11 +21,12 @@
   .msg{display:none;margin-top:10px;border-radius:9px;padding:10px}.msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}.msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}.msg.info{display:block;background:var(--chip);color:var(--dim)}
   .hide{display:none!important}.callout-row{border-top:1px solid var(--line);padding:13px 0}.callout-row:first-child{border-top:0}.callout-row p{white-space:pre-wrap;word-break:break-word}.callout-row small{display:block;color:var(--muted);margin-top:5px}.tally{font-weight:700;color:var(--accent-txt)}
   /* Approved Gemini visual language; existing console and authorization stay intact. */
-  :root{--callout-heading:var(--txt);--callout-shadow:0 2px 8px rgba(0,0,0,.04)}
-  @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
-    --bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--callout-heading:#1c3d5a;
-  }}
-  :root[data-theme="light"]{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--callout-heading:#1c3d5a}
+  /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה
+     בהירה תמיד ב-theme.css. אלה ערכי-על מקומיים לעמוד הזה בלבד
+     (theme.css לא מכיר --callout-heading), ולכן צריך את אותו היפוך פה בנפרד:
+     ברירת המחדל בהירה ללא תלות במצב המכשיר, וכהה רק בבחירה מפורשת. */
+  :root{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--callout-heading:#1c3d5a;--callout-shadow:0 2px 8px rgba(0,0,0,.04)}
+  :root[data-theme="dark"]{--callout-heading:var(--txt)}
   .wrap{box-sizing:border-box;padding-left:calc(14px + env(safe-area-inset-left,0px));padding-right:calc(14px + env(safe-area-inset-right,0px));padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
   .wrap h1,.wrap h2{color:var(--callout-heading);overflow-wrap:anywhere}
   .wrap h2{font-size:18px;line-height:1.4}
