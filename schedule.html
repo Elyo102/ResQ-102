@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="./theme.css?v=42h191">
   <style>
     *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;
-      padding:20px;background:var(--bg,#eef2f7);color:var(--txt,#1c2532);
+      padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right))
+              max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+      background:var(--bg,#eef2f7);color:var(--txt,#1c2532);
       font-family:"Segoe UI",Arial,sans-serif} main{width:min(100%,520px);background:var(--card,#fff);
       border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:22px;text-align:center;
       box-shadow:0 5px 18px rgba(25,38,58,.06)} h1{font-size:22px;margin:0 0 10px}
