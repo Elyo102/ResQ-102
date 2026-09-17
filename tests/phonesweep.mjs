@@ -2,8 +2,14 @@
 //
 // כל הבדיקות עד היום רצו ב-1150 פיקסל. אלדד הוא זה שגילה
 // שהסרגל שובר את המסך בטלפון. זו הסריקה שהייתה צריכה
-// לתפוס את זה: כל מסך ברוחב 390, ומחפשים שני דברים
-// שאפשר למדוד — גלישה אופקית, ואלמנט שרחב מהמסך.
+// לתפוס את זה: כל מסך בשלושה רחבי טלפון (320/360/390 - קטן,
+// אמצעי, גדול), ומחפשים שני דברים שאפשר למדוד — גלישה
+// אופקית, ואלמנט שרחב מהמסך.
+//
+// עד 42H.20 (סעיף העיצוב, פריטים 1+6) הסריקה רצה רק ב-390
+// ורק כ-`npm run browser:mobile` נפרד - סקריפט שאיש לא מריץ
+// כברירת מחדל. עכשיו היא חלק מ-`browser`, ורצה בשלושת
+// הרחבים שאלדד ביקש, לא רק באחד.
 import { chromium } from 'playwright';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 
@@ -27,6 +33,7 @@ try {
   await new Promise(resolve=>srv.listen(0,'127.0.0.1',resolve));
   const base='http://127.0.0.1:'+srv.address().port;
   browser=await chromium.launch();
+  for (const width of [320, 360, 390]) {
   for (const p of PAGES) {
     const source=fs.readFileSync(path.join(ROOT,p),'utf8');
     const scripts=[...source.matchAll(/<script[^>]+src=["']\.\/([^"']+\.js)/g)]
@@ -35,11 +42,11 @@ try {
       const full=path.join(ROOT,file);
       return fs.existsSync(full) && fs.readFileSync(full,'utf8').includes("from './nav.js");
     });
-    if(hasNav && !/name=["']viewport["'][^>]+viewport-fit=cover/.test(source)){
+    if(width===320 && hasNav && !/name=["']viewport["'][^>]+viewport-fit=cover/.test(source)){
       bad++;
       console.log('✗ '+p+' טוען ניווט בלי viewport-fit=cover');
     }
-    const ctx=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+    const ctx=await browser.newContext({viewport:{width,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
     try {
       await ctx.route('**/firebasejs/**',r=>{const n=r.request().url().split('/').pop().split('?')[0];
         const q=path.join(STUB,n); r.fulfill({status:200,contentType:'text/javascript',body:fs.existsSync(q)?fs.readFileSync(q,'utf8'):'export default {};'});});
@@ -90,7 +97,7 @@ try {
       });
       const ok = r.over<=0 && !r.wide.length && r.safeOk;
       if (!ok) bad++;
-      console.log((ok?'✓':'✗')+' '+p.padEnd(17)+' סרגל '+String(r.nav).padStart(3)+'px'+
+      console.log((ok?'✓':'✗')+' ['+width+'] '+p.padEnd(17)+' סרגל '+String(r.nav).padStart(3)+'px'+
                   (r.over>0?'  · גלישה '+r.over+'px':'')+
                   (r.wide.length?'  · רחב מדי: '+r.wide.join(' · '):'')+
                   (!r.safeOk?'  · אזור המכשיר אינו מוגן':''));
@@ -98,7 +105,8 @@ try {
       await ctx.close();
     }
   }
-  console.log('\n'+(bad?bad+' מסכים שוברים את רוחב הטלפון':'כל המסכים נכנסים ברוחב טלפון'));
+  }
+  console.log('\n'+(bad?bad+' בדיקות מסך/רוחב שוברות את רוחב הטלפון (320/360/390)':'כל המסכים נכנסים בכל שלושת רחבי הטלפון (320/360/390)'));
 } finally {
   if (browser) await browser.close();
   if (srv.listening) await new Promise(resolve=>srv.close(resolve));
