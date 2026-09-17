@@ -3256,6 +3256,27 @@ function setRollbackAvailability() {
   updateManagerWorkflow();
 }
 
+// סיכום גרסה אמיתי לאישור חזרה לאחור, לא רק "לגרסה הקודמת" — הכרעת
+// אלדד/Gemini: אישור חזרה חייב לכלול פרטים שמאפשרים למשתמש לדעת בדיוק
+// לאן הוא חוזר, כדי שזו לא תהיה פעולה הרסנית בלחיצה אחת בלי מידע. פונקציה
+// טהורה (בלי DOM/confirm) כדי שאפשר לבדוק אותה ישירות ב-node, בלי דפדפן.
+function rollbackConfirmText(active, mode) {
+  const targetLabel = Number.isInteger(active.previous_revision)
+    ? 'לגרסה ' + active.previous_revision
+      + (active.previous_from && active.previous_to
+        ? ' (' + active.previous_from + ' עד ' + active.previous_to + ')'
+        : '')
+      + (active.previous_edited ? ' — נערכה ידנית' : '')
+    : 'לגרסה הקודמת';
+  return 'לחזור מגרסה ' + active.revision
+    + (active.from && active.to ? ' (' + active.from + ' עד ' + active.to + ')' : '')
+    + ' ' + targetLabel + '? '
+    + (mode === 'shadow'
+      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
+      : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
+}
+if (typeof module !== 'undefined' && module.exports) module.exports.rollbackConfirmText = rollbackConfirmText;
+
 async function rollbackSchedule() {
   if (!scheduleMutationAllowed()) return;
   if (state.busy || $('rollback').disabled) return;
@@ -3263,11 +3284,7 @@ async function rollbackSchedule() {
   const pending = state.rollbackPending;
   const active = state.status.active;
   if (!pending) {
-    const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
-      + (state.status.mode === 'shadow'
-        ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
-        : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
-    if (!confirm(text)) return;
+    if (!confirm(rollbackConfirmText(active, state.status.mode))) return;
   }
   state.busy = true; setRollbackAvailability();
   message('rollbackMessage', pending

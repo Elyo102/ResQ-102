@@ -1775,6 +1775,20 @@ function createScheduleRuntime(deps) {
         activeView.delivery_alerts = delivery.size;
         activeView.delivery_alerts_capped = delivery.size > 100;
       }
+      // seq · אישור חזרה לאחור חייב סיכום גרסה אמיתי (הכרעת אלדד/Gemini
+      // מחייבת), לא רק "לגרסה הקודמת" בלי שום פרט. קוראים את מסמך הפרסום
+      // שאליו תפנה החזרה, ולא רק את מזההו, כדי שהמסך יוכל להציג מהדורה
+      // וטווח תאריכים אמיתיים לפני שהמשתמש מאשר פעולה בלתי־הפיכה.
+      if (activeView.can_rollback && nonEmpty(activeView.previous_publication_id)) {
+        const prevMeta = await stationRef(ctx.sid).collection('schedule_publications')
+          .doc(activeView.previous_publication_id).get();
+        const prevData = prevMeta.exists ? (prevMeta.data() || {}) : {};
+        activeView.previous_revision = Number.isInteger(prevData.revision) ? prevData.revision : null;
+        activeView.previous_from = nonEmpty(prevData.from) ? prevData.from : null;
+        activeView.previous_to = nonEmpty(prevData.to) ? prevData.to : null;
+        activeView.previous_edited = prevData.edited === true;
+        activeView.previous_published_at = prevData.created_at ? timeMillis(prevData.created_at) : null;
+      }
     }
     return {
       mode: config.mode,
@@ -4194,10 +4208,22 @@ function createScheduleRuntime(deps) {
           const alerts=await stationRef(ctx.sid).collection('schedule_publications').doc(operation.operationId).collection('schedule_outbox').where('status','in',['retry','dead_letter']).limit(101).get();
           let canRollback=false;
           if(operation.receipt){const current=await monthAuthority.readBaseline(ctx.sid,Object.keys(operation.receipt.after));canRollback=stable(current.owners)===stable(operation.receipt.after);}
+          const previousPublicationId=operation.receipt && operation.receipt.before[segment.owner.month] && operation.receipt.before[segment.owner.month].publication_id || null;
           Object.assign(value,{content_digest:segment.owner.content_digest,from:segment.snapshot.from,to:segment.snapshot.to,edited:segment.snapshot.meta.edited===true,
             can_rollback:canRollback,rollback_operation_id:canRollback?operation.receipt.operation_id:null,
-            previous_publication_id:operation.receipt && operation.receipt.before[segment.owner.month] && operation.receipt.before[segment.owner.month].publication_id || null,
+            previous_publication_id:previousPublicationId,
             delivery_alerts:alerts.size,delivery_alerts_capped:alerts.size>100});
+          // seq · אותה דרישת סיכום־גרסה כמו בנתיב הישן (getStatus): המסך
+          // צריך מהדורה וטווח תאריכים אמיתיים של היעד, לא רק את מזההו.
+          if(canRollback && nonEmpty(previousPublicationId)){
+            const prevMeta=await stationRef(ctx.sid).collection('schedule_publications').doc(previousPublicationId).get();
+            const prevData=prevMeta.exists?(prevMeta.data()||{}):{};
+            value.previous_revision=Number.isInteger(prevData.revision)?prevData.revision:null;
+            value.previous_from=nonEmpty(prevData.from)?prevData.from:null;
+            value.previous_to=nonEmpty(prevData.to)?prevData.to:null;
+            value.previous_edited=prevData.edited===true;
+            value.previous_published_at=prevData.created_at?timeMillis(prevData.created_at):null;
+          }
         }
         return value;
       });

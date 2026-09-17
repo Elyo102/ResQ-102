@@ -189,7 +189,12 @@ const policySaved = Object.assign({}, policyWeakening, {
 const statusManager = { mode:'new', configured:true, manager:true,
   active:{ publication_id:'p_live', revision:4, previous_publication_id:null, can_rollback:false } };
 const statusAfterPublish = { mode:'new', configured:true, manager:true,
-  active:{ publication_id:'p_new', revision:5, previous_publication_id:'p_live', can_rollback:true } };
+  // גרסה 5 (p_new) עם from/to משלה, וחזרה מצביעה לגרסה 4 (p_live) עם
+  // from/to ומהדורה משלה — כדי שבדיקת ה-confirm תוכל להוכיח סיכום גרסה
+  // אמיתי, לא רק "לגרסה הקודמת" גנרי.
+  active:{ publication_id:'p_new', revision:5, previous_publication_id:'p_live', can_rollback:true,
+    from:'2026-09-08', to:'2026-09-21', edited:false,
+    previous_revision:4, previous_from:'2026-08-25', previous_to:'2026-09-07', previous_edited:false } };
 const statusAfterRollback = { mode:'new', configured:true, manager:true,
   active:{ publication_id:'p_rollback', revision:6, previous_publication_id:'p_new', can_rollback:true } };
 const statusFirefighter = { mode:'new', configured:true, manager:false, active:{ publication_id:'p_live', revision:4 } };
@@ -268,7 +273,8 @@ try {
     rollbackSchedule:[{ data:{ publication_id:'p_rollback', revision:6, rolled_back_to:'p_live', notified_people:2 } }]
   });
   const managerPage = await manager.newPage();
-  managerPage.on('dialog', (dialog) => dialog.accept());
+  const managerDialogs = [];
+  managerPage.on('dialog', (dialog) => { managerDialogs.push(dialog.message()); dialog.accept(); });
   await managerPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await managerPage.locator('#appMain:not(.hide)').waitFor();
 
@@ -399,6 +405,7 @@ try {
   });
   await test('rollback is separate, explicit and targets only the immediate previous publication', async () => {
     assert.equal(await managerPage.locator('#rollback').isEnabled(), true);
+    const dialogsBefore = managerDialogs.length;
     await managerPage.locator('#rollback').click();
     await managerPage.locator('#rollbackMessage .ok').waitFor();
     const calls = await managerPage.evaluate(() => window.__CALLABLE_CALLS);
@@ -407,6 +414,14 @@ try {
     assert.equal(rollback.payload.expected_active_publication_id, 'p_new');
     assert.equal(rollback.payload.target_publication_id, 'p_live');
     assert.equal(rollback.payload.stationId, undefined);
+    // אישור החזרה חייב לכלול סיכום גרסה אמיתי — מהדורת המקור, מהדורת
+    // היעד וטווח התאריכים של כל אחת מהן — ולא רק "לגרסה הקודמת" גנרי.
+    const newDialogs = managerDialogs.slice(dialogsBefore);
+    assert.equal(newDialogs.length, 1);
+    assert.match(newDialogs[0], /לחזור מגרסה 5/);
+    assert.match(newDialogs[0], /2026-09-08 עד 2026-09-21/);
+    assert.match(newDialogs[0], /לגרסה 4/);
+    assert.match(newDialogs[0], /2026-08-25 עד 2026-09-07/);
   });
   await manager.close();
 
