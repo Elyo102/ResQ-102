@@ -243,9 +243,9 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
   SID = String(c.stationId || '');
-  if (!SID || !c.role || c.super === true) {
+  // עובד מאושר (תחנה + תפקיד) או מנהל-על (תחנה מה-claim). ההכרעה הסופית בשרת.
+  if (!SID || (!c.role && c.super !== true)) {
     $('denyCard').classList.remove('hide'); $('denyWho').textContent = 'מחובר/ת כ־' + (user.email || '');
-    if (c.super === true) $('denyWhy').textContent = 'חשבון מנהל-על אינו נבדק כאן — הבדיקה מיועדת לעובדי התחנה. מעבדת המכשיר במסך ההתראות זמינה רק לחשבון בקרה מורשה.';
     renderStuckNav(user.email || ''); return;
   }
   ME = { uid: user.uid, email: user.email || '' };

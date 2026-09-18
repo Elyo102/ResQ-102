@@ -6,7 +6,7 @@
 //  לחיצה מנווטת ל-device-readiness.html באותו חלון (גם ב-standalone);
 //  כרטיס המעבדה הישן מוסתר בלי personal_lab_control ומוצג איתו;
 //  44×44 ב-320/360/390 בלי גלילה אופקית; עובד ממתין נשאר חסום;
-//  ואין שינוי בשכבת השרת (Functions / Rules / חוזה הפוש / מצב ניסוי).
+//  השרת הורחב ל-super בלבד (device-readiness-service.js); Rules / חוזה הפוש / מצב ניסוי ללא שינוי.
 //
 //  Firebase מוחלף ב-stubs מקומיים (tests/stub). אין רשת, אין נתוני אמת,
 //  אין כתיבה ל-production. צילומי מסך: RESQ_READINESS_SCREENSHOT_DIR.
@@ -104,6 +104,11 @@ async function shot(page, name, width) {
   await page.screenshot({ path: path.join(SHOT_DIR, name + '-' + width + '.png'), fullPage: true });
 }
 
+// דפדפן הבדיקה בלבד: Chromium headless אינו רושם Service Worker ואינו מעניק הרשאת התראות אמיתית.
+// המוצר עצמו (push.js / device-readiness.html) לא משתנה; הבדל מדמה את סביבת הדפדפן, לא את השרת.
+const SW_STUB = `Object.defineProperty(Navigator.prototype, 'serviceWorker', { get(){ return { register: async () => ({ scope: './' }), ready: Promise.resolve({ scope: './' }) }; }, configurable: true });
+  if (!('PushManager' in window)) window.PushManager = function PushManager(){};
+  window.Notification = { permission: 'granted', requestPermission: async () => 'granted' };`;
 const ROLE_LABEL = { firefighter: 'כבאי מאושר', team: 'ראש משמרת (team_leader)', super: 'מנהל-על' };
 
 try {
@@ -185,21 +190,31 @@ try {
     await page.close(); await ctx.close();
   }
 
-  head('9 · הקישור עובד במצב display-mode: standalone (PWA באייפון נשאר בתוך ResQ)');
+  head('9 · הקישור נשאר בתוך ה-PWA (display-mode: standalone)');
   {
+    // Chromium headless אינו מכבד אמולציית display-mode דרך CDP (נבדק: matchMedia נשאר false),
+    // ולכן ההוכחה היא מה שקובע אם PWA מותקן נשאר בתוך האפליקציה: היעד בתוך scope של
+    // המניפסט, אותו origin, ניווט באותו חלון, בלי target/window.open. אם הדפדפן כן
+    // מדמה standalone — הבדיקה מאמתת גם את זה, אך אינה תלויה בכך.
+    const manifest = JSON.parse(read('manifest.json'));
+    check(manifest.display === 'standalone' && manifest.scope === './', 'המניפסט: display standalone, scope ./ — device-readiness.html בתוך ה-scope', JSON.stringify({ display: manifest.display, scope: manifest.scope }));
     const ctx = await makeContext('firefighter');
     const page = await ctx.newPage();
     const cdp = await ctx.newCDPSession(page);
-    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'display-mode', value: 'standalone' }] });
+    await cdp.send('Emulation.setEmulatedMedia', { media: '', features: [{ name: 'display-mode', value: 'standalone' }] }).catch(() => {});
     await page.goto(origin + '/alerts.html', { waitUntil: 'load' });
     await page.locator('#coNo').click({ timeout: 1200 }).catch(() => {});
     await page.addStyleTag({ content: '#coWrap{display:none!important}' });
     await page.waitForFunction(() => !document.getElementById('work').classList.contains('hide'), null, { timeout: 8000 });
-    check(await page.evaluate(() => matchMedia('(display-mode: standalone)').matches), 'הדף רץ במצב standalone מדומה');
+    const emulated = await page.evaluate(() => matchMedia('(display-mode: standalone)').matches);
+    console.log('    display-mode standalone מדומה בדפדפן הזה: ' + (emulated ? 'כן' : 'לא (Chromium headless) — ההוכחה היא scope + אותו חלון'));
+    const scopeUrl = new URL(manifest.scope, origin + '/alerts.html').href;
+    const targetUrl = new URL(await page.locator('#btnReadiness').getAttribute('href'), origin + '/alerts.html').href;
+    check(targetUrl.startsWith(scopeUrl) && new URL(targetUrl).origin === origin, 'יעד הכפתור נפתר לתוך scope המניפסט ובאותו origin', targetUrl);
     const before = ctx.pages().length;
     await Promise.all([page.waitForURL('**/device-readiness.html'), page.locator('#btnReadiness').click()]);
-    check(new URL(page.url()).pathname === '/device-readiness.html' && new URL(page.url()).origin === origin, 'ב-standalone הניווט נשאר באותו origin ובאותו חלון', page.url());
-    check(ctx.pages().length === before, 'ב-standalone לא נפתח חלון חיצוני');
+    check(new URL(page.url()).pathname === '/device-readiness.html' && new URL(page.url()).origin === origin, 'הניווט נשאר באותו origin ובאותו חלון', page.url());
+    check(ctx.pages().length === before, 'לא נפתח חלון חיצוני');
     await page.close(); await ctx.close();
   }
 
@@ -214,24 +229,83 @@ try {
     check(await page.locator('#btnSend').count() === 1 && !(await page.locator('#btnSend').isVisible()), role + ': כפתור השליחה אינו נגיש');
     await page.close(); await ctx.close();
   }
+
+  head('10ב · מנהל-על: נכנס לאשף, רושם טוקן, שולח בדיקה לעצמו, מאשר nonce — המכשיר מוכן');
   {
-    // הרשאות הדף לא השתנו: גם מנהל-על נשאר מחוץ לאשף (השרת דוחה אותו ב-readiness-not-approved).
+    // הדפדפן: הרשאת התראות + Service Worker מדומה (הארגז אינו רושם SW אמיתי), ספק ההתראות
+    // והשרת מדומים (tests/stub). הלוגיקה השרתית של מנהל-על מוכחת ב-join-campaign-service.test.js.
+    const R = (over) => ({ data: Object.assign({ operational_ready: false, blockers: [], account: { approved: true, email_verified: true }, device: { token_present: false, status: null, token_fresh: false } }, over) });
+    const swStub = SW_STUB;
     const ctx = await makeContext('super');
+    await ctx.grantPermissions(['notifications'], { origin });
+    await ctx.addInitScript(swStub);
+    await ctx.addInitScript('window.__CALLABLE_PLAN = ' + JSON.stringify({ getMyReadiness: [
+      R({ blockers: ['no_push_token', 'device_not_ready'] }),
+      R({ blockers: ['device_not_ready'], device: { token_present: true, status: null, token_fresh: true } }),
+      R({ blockers: ['device_not_ready'], device: { token_present: true, status: 'test_sent', token_fresh: true } })
+    ] }) + ';');
     const page = await ctx.newPage();
+    const errors = []; page.on('pageerror', e => errors.push(e.message));
     await page.goto(origin + '/device-readiness.html', { waitUntil: 'load' });
     await page.waitForFunction(() => !document.getElementById('denyCard').classList.contains('hide') || !document.getElementById('work').classList.contains('hide'), null, { timeout: 8000 });
-    check(await page.locator('#denyCard').isVisible(), 'מנהל-על: שער האשף ללא שינוי — עדיין מחוץ לאשף, כמו בשרת');
+    check(await page.locator('#work').isVisible() && !(await page.locator('#denyCard').isVisible()), 'מנהל-על נכנס לאשף — אין כרטיס חסימה');
+    console.log('    הרשאת התראות בדפדפן הבדיקה: ' + await page.evaluate(() => Notification.permission) + ' (Notification/SW/PushManager מדומים בדפדפן הבדיקה בלבד)');
+    await page.locator('#btnEnable').click();
+    await page.waitForFunction(() => /הופעלו/.test(document.getElementById('pMsg').textContent), null, { timeout: 8000 });
+    const claim = await page.evaluate(() => (window.__CALLABLE_CALLS || []).find(c => c.name === 'claimPushToken'));
+    check(claim && claim.payload && claim.payload.token === 'stub-token-123', 'מנהל-על רשם טוקן משלו (claimPushToken עם הטוקן של המכשיר הזה)', JSON.stringify(claim));
+    await page.waitForFunction(() => !document.getElementById('btnSend').disabled, null, { timeout: 8000 });
+    await page.locator('#btnSend').click();
+    await page.waitForFunction(() => /נשלחה/.test(document.getElementById('pMsg').textContent), null, { timeout: 8000 });
+    const send = await page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(c => c.name === 'sendReadinessTestPush'));
+    check(send.length === 1 && Object.keys(send[0].payload).sort().join(',') === 'request_id,token' && send[0].payload.token === 'stub-token-123' && /^rd_[a-f0-9]{48}$/.test(send[0].payload.request_id),
+      'שליחה אחת לעצמו: הגוף הוא {request_id, token} בלבד — אין station_id, uid או יעד אחר מהלקוח', JSON.stringify(send));
+    check(await page.locator('#step2').evaluate(li => li.classList.contains('done')) && !(await page.locator('#btnAck').isDisabled()), 'אחרי השליחה: שלב 2 הושלם, "אישרתי — בדוק שוב" זמין');
+    check(errors.length === 0, 'אין שגיאת JS בזרימת מנהל-על', errors.join(' | '));
+    await shot(page, 'device-readiness-super-sent', 390);
+    await page.close(); await ctx.close();
+  }
+  {
+    // פתיחת ההתראה: הדף נפתח עם readiness_nonce, מאשר אוטומטית, ומצב המוכנות מתעדכן ל"מוכן".
+    const nonce = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+    const R = (over) => ({ data: Object.assign({ operational_ready: false, blockers: [], account: { approved: true, email_verified: true }, device: { token_present: true, status: 'test_sent', token_fresh: true } }, over) });
+    const ctx = await makeContext('super');
+    await ctx.grantPermissions(['notifications'], { origin });
+    await ctx.addInitScript(SW_STUB);
+    await ctx.addInitScript('window.__CALLABLE_PLAN = ' + JSON.stringify({ getMyReadiness: [
+      R({ blockers: ['device_not_ready'] }),
+      R({ operational_ready: true, blockers: [], device: { token_present: true, status: 'ready', token_fresh: true } })
+    ] }) + ';');
+    const page = await ctx.newPage();
+    await page.goto(origin + '/device-readiness.html?readiness_nonce=' + nonce, { waitUntil: 'load' });
+    await page.waitForFunction(() => /אושרה/.test(document.getElementById('pMsg').textContent), null, { timeout: 8000 });
+    const ack = await page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(c => c.name === 'ackReadinessTestPush'));
+    check(ack.length === 1 && ack[0].payload.nonce === nonce && ack[0].payload.token === 'stub-token-123' && Object.keys(ack[0].payload).length === 2, 'אישור ה-nonce נשלח פעם אחת עם {nonce, token} של המכשיר הזה', JSON.stringify(ack));
+    await page.waitForFunction(() => document.getElementById('overall').classList.contains('ready'), null, { timeout: 8000 });
+    check(await page.locator('#overallTitle').textContent() === 'המכשיר מוכן' && await page.locator('#step3').evaluate(li => li.classList.contains('done')), 'אחרי האישור: "המכשיר מוכן", שלב 3 הושלם');
+    check(!/readiness_nonce/.test(page.url()), 'ה-nonce הוסר מה-URL אחרי האישור');
+    const sends = await page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(c => c.name === 'sendReadinessTestPush').length);
+    check(sends === 0, 'פתיחת ההתראה אינה שולחת בדיקה נוספת');
+    await shot(page, 'device-readiness-super-ready', 390);
+    await page.close(); await ctx.close();
+  }
+  {
+    // ההרחבה היא ל-super בלבד: מפקד תחנה ללא super נשאר במסלול העובד (בלקוח: role → נכנס; בשרת: מסמך חי נדרש —
+    // מוכח בבדיקת השירות). כאן: מנהל-על ללא claim מעבדה נכנס לאשף, והמעבדה ב-alerts.html עדיין מוסתרת לו.
+    const ctx = await makeContext('super');
+    const { page } = await openAlerts(ctx);
+    check(!(await page.locator('#labCard').isVisible()), 'הרחבת מנהל-על באשף אינה מרחיבה את personal_lab_control — המעבדה נשארת מוסתרת בלי ה-claim');
     await page.close(); await ctx.close();
   }
 
-  head('11–12 · אין שינוי בשרת, ב-Rules, בחוזה הפוש, במצב ניסוי ובמנוע הסידור (בדיקת מקור)');
+  head('11–12 · שכבת השרת: רק device-readiness-service.js השתנה (הרחבת super); Rules, חוזה הפוש, מצב ניסוי ומנוע הסידור ללא שינוי (בדיקת מקור)');
   {
     const alerts = read('alerts.html'), readiness = read('device-readiness.html');
     check(/id="btnReadiness" href="\.\/device-readiness\.html"/.test(alerts), 'ה-href קבוע ויחסי, בלי פרמטרים');
     check(!/btnReadiness[\s\S]{0,400}window\.open|window\.open[\s\S]{0,400}btnReadiness/.test(alerts) && !/target="_blank"/.test(alerts), 'אין window.open ואין target=_blank ב-alerts.html');
     check(/LAB_CONTROL = IS_SUPER && c\.personal_lab_control === true;/.test(alerts) && /if \(LAB_CONTROL\) \$\('labCard'\)\.classList\.remove\('hide'\);/.test(alerts), 'המעבדה נפתחת רק עם super וגם personal_lab_control — אותו תנאי כמו בשרת');
     check(/if \(LAB_CONTROL\) await loadLab\(\);/.test(alerts), 'loadLab (ו-getPersonalLiveLabStatus) לא נקראים בלי claim');
-    check(/if \(!SID \|\| !c\.role \|\| c\.super === true\) \{/.test(readiness), 'שער האשף בלקוח ללא שינוי');
+    check(/if \(!SID \|\| \(!c\.role && c\.super !== true\)\) \{/.test(readiness), 'שער האשף בלקוח: עובד מאושר או מנהל-על; בלי תחנה — חסום');
     const alertsCallables = [...alerts.matchAll(/httpsCallable\(fns, '([A-Za-z]+)'\)/g)].map(m => m[1]);
     const wizardCallables = [...readiness.matchAll(/httpsCallable\(fns, '([A-Za-z]+)'\)/g)].map(m => m[1]).sort();
     check(!alertsCallables.some(n => /Readiness/.test(n)), 'alerts.html אינו קורא לשירות המוכנות — הכניסה היא ניווט בלבד', alertsCallables.join(','));
@@ -240,6 +314,8 @@ try {
     const digest = fnFiles.map(f => f + ' ' + crypto.createHash('sha256').update(read(f)).digest('hex').slice(0, 16));
     console.log('    שכבת השרת/הפוש — טביעות לצורך השוואה מול origin/main:\n    ' + digest.join('\n    '));
     check(!/trial|ניסוי/.test(alerts.slice(alerts.indexOf('btnReadiness') - 600, alerts.indexOf('btnReadiness') + 600)), 'הכניסה לאשף אינה נוגעת במצב ניסוי');
+    const service = read('functions/device-readiness-service.js');
+    check(!/personal_lab_control/.test(service) && /if \(liveClaims\.super !== true\) fail\(/.test(service) && /const sid = stationOf\(claims\);/.test(service), 'השרת: הרחבת super נשענת על ה-claim החי ועל תחנה מה-claim בלבד; personal_lab_control אינו מוזכר');
   }
 
   console.log('\nDevice readiness entry browser: ' + pass + ' PASS, ' + fail + ' FAIL');

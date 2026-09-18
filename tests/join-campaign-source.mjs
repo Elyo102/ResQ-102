@@ -66,6 +66,10 @@ check('engine holdings write preserves valid_until for retained keys and reads i
 const readiness = read('functions/device-readiness-service.js');
 check('readiness send is idempotent: replay decision inside the transaction, nothing sent on replay', /readinessSendDecision\(device, input\.request_id/.test(readiness) && readiness.indexOf('if (decision.replay) {') < readiness.indexOf('await sendToToken('));
 check('replay of a verification or a device test is bound to its intent (fingerprint / token hash), same id with other intent conflicts', /priorAudit\.intent_fingerprint !== intent/.test(verifyBody) && (verifyBody.match(/intent_fingerprint: intent/g) || []).length === 2 && /d\.token_hash !== tokenHash\) fail\('request-conflict'/.test(contract));
+check('readiness actor: approved worker OR super, station only from the signed claim, live super claim required', /if \(!sid \|\| \(!isSuper && !claims\.role\)\) \{/.test(readiness) && /const sid = stationOf\(claims\);/.test(readiness) && /if \(liveClaims\.super !== true\) fail\(/.test(readiness) && !/req\.data\.station|input\.station|data\.stationId/.test(readiness));
+check('readiness service never consults personal_lab_control (no lab expansion) and keeps the exact two-field input', !/personal_lab_control/.test(readiness) && /\['request_id', 'token'\]\.indexOf\(k\) === -1/.test(readiness) && /\['nonce', 'token'\]\.indexOf\(k\) === -1/.test(readiness));
+check('super readiness has no qualification blockers and is approved only from live claims', /declarations: \[\], now_ms: nowMs \}\);\n    \}\n    const index/.test(readiness) && /liveClaims\.super === true && liveClaims\.stationId === sid/.test(readiness));
+check('device-readiness.html admits super and still blocks users without a station or role', /if \(!SID \|\| \(!c\.role && c\.super !== true\)\) \{/.test(readinessPage));
 check('no real employee data in fixtures (Hebrew placeholder names only)', !/יונה|אלדד/.test(read('functions/join-campaign-service.test.js') + read('functions/join-campaign.test.js') + read('tests/join-campaign-load.mjs')));
 check('tests/package.json static script runs the new unit, service and load tests', /join-campaign\.test\.js/.test(read('tests/package.json')) && /join-campaign-service\.test\.js/.test(read('tests/package.json')) && /join-campaign-load\.mjs/.test(read('tests/package.json')) && /join-campaign-source\.mjs/.test(read('tests/package.json')));
 check('tests/package.json browser script runs the new browser test', /join-campaign-browser\.mjs/.test(read('tests/package.json')));
@@ -122,9 +126,13 @@ mustFail('unverified qualification no longer blocks readiness',
   mutant('functions/join-campaign.js', "  if (quals.pending + quals.declared > 0) blockers.push('qualifications_unverified');", ""), 'functions/join-campaign.test.js');
 mustFail('readiness ack accepts a stale nonce',
   mutant('functions/join-campaign.js', "if (d.challenge_hash !== nonceHash) fail('readiness-nonce', 'קוד האישור אינו תואם לבדיקה האחרונה.');", ''), 'functions/join-campaign-service.test.js');
+mustFail('super readiness ignores a revoked live super claim',
+  mutant('functions/device-readiness-service.js', "      if (liveClaims.super !== true) fail(", "      if (false) fail("), 'functions/join-campaign-service.test.js');
+mustFail('readiness station taken from the request token even when the live claim differs',
+  mutant('functions/device-readiness-service.js', "    if (liveClaims.stationId !== sid) fail(", "    if (false) fail("), 'functions/join-campaign-service.test.js');
 mustFail('readiness marks ready on provider failure',
   mutant('functions/device-readiness-service.js', "fail('unavailable', 'ספק ההתראות לא קיבל את ההודעה. נסה שוב מאוחר יותר.', 'readiness-provider');", "return Object.freeze({ ok: true, status: 'test_sent' });"), 'functions/join-campaign-service.test.js');
 mustFail('lowercase shifts accepted',
   mutant('functions/join-campaign.js', "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C']);", "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C', 'a', 'b', 'c']);"), 'functions/join-campaign.test.js');
 
-console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 17 mutations caught).');
+console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 19 mutations caught).');

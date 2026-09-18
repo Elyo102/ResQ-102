@@ -387,12 +387,87 @@ await test('readiness: approved worker only, own token only, nonce ack, quota/co
   await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0007', token }));
   const n2 = sent[sent.length - 1].data.nonce; H.setClock(H.getClock() + contract.READINESS_CHALLENGE_MS + 1);
   await rejects(service.ackReadinessTestPush(req('ff1', { nonce: n2, token })), 'readiness-expired');
-  // super is not a worker
-  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_readiness_0008', token })), 'readiness-not-approved');
+  // super with a worker's token (registered under ff1, not under super1) is rejected
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_readiness_0008', token })), 'readiness-token-unknown');
   // station inactive blocks (fence kept)
   db._put('stations/eilat', { name: 'אילת', districtId: 'south', active: false });
   H.setClock(H.getClock() + 61000);
   await rejects(service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0009', token })), 'station-station-inactive');
+  H.setClock(NOW);
+});
+
+await test('readiness for super: own device only, station from signed claims, same quota/fence, live claim revocation, no lab claim involved', async () => {
+  const { db } = build();
+  const { service, sent, audits } = buildReadiness(db);
+  const token = 'super-device-token-' + 's'.repeat(40);
+  const workerToken = 'worker-device-token-' + 'w'.repeat(40);
+  db._put('stations/eilat/users/ff1', { role: 'firefighter', active: true, is_active: true, stationId: 'eilat' });
+  db._put('stations/eilat/push_tokens/ff1', { tokens: [{ token: workerToken, label: 'phone', added: 1 }] });
+  // super1 has super:true + stationId:'eilat' in claims and NO live user document, NO role claim, NO personal_lab_control.
+  assert.equal(db._get('stations/eilat/users/super1'), undefined);
+  assert.equal(AUTH_USERS.get('super1').customClaims.personal_lab_control, undefined);
+  // 1. enters the wizard: approved, blocked only by the missing token
+  let st = await service.getMyReadiness(req('super1', {}));
+  assert.equal(st.account.approved, true);
+  assert.ok(!st.blockers.includes('account_not_approved') && !st.blockers.includes('qualifications_unverified') && !st.blockers.includes('qualifications_expired'));
+  assert.ok(st.blockers.includes('no_push_token'));
+  // 2. a worker's token (registered under another uid) is rejected — own token only
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token: workerToken })), 'readiness-token-unknown');
+  assert.equal(sent.length, 0);
+  // 3. client cannot pick the target station: any extra field is rejected before anything is read
+  db._put('stations/eilat/push_tokens/super1', { tokens: [{ token, label: 'laptop', added: 1 }] });
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token, station_id: 'haifa' })), 'input', 'invalid-argument');
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token, stationId: 'haifa' })), 'input', 'invalid-argument');
+  assert.equal(sent.length, 0);
+  // a claim in the request token that differs from the live claims does not move the station either
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token }, { stationId: 'haifa' })), 'readiness-not-approved');
+  assert.equal(sent.length, 0); assert.equal(db._get('stations/haifa/device_readiness/super1'), undefined);
+  // 4. registers own token and sends to itself — station from the signed claim (eilat)
+  const r1 = await service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token }));
+  assert.equal(r1.status, 'test_sent'); assert.equal(r1.replayed, false);
+  assert.equal(sent.length, 1); assert.equal(sent[0].token, token); assert.equal(sent[0].data.type, 'readiness_test'); assert.equal(sent[0].data.important, '0');
+  assert.equal(db._get('stations/eilat/device_readiness/super1').token_hash, hash(token));
+  assert.equal(db._get('stations/haifa/device_readiness/super1'), undefined);
+  assert.equal(audits.filter((a) => a.action === 'readiness_test_sent').length, 1);
+  // 5. replay of the same request does not send again
+  const r1b = await service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00001', token }));
+  assert.equal(r1b.replayed, true); assert.equal(sent.length, 1); assert.equal(audits.filter((a) => a.action === 'readiness_test_sent').length, 1);
+  // 6. nonce ack marks the device ready; the readiness object says operational_ready with no qualification blockers
+  const nonce = sent[0].data.nonce;
+  const ack = await service.ackReadinessTestPush(req('super1', { nonce, token }));
+  assert.equal(ack.status, 'ready'); assert.equal(ack.already, false);
+  st = await service.getMyReadiness(req('super1', {}));
+  assert.equal(st.operational_ready, true); assert.deepEqual([...st.blockers], []);
+  // 7. quota and cooldown are the same as for a worker (3/day, 60s apart)
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00002', token })), 'readiness-cooldown', 'resource-exhausted');
+  H.setClock(H.getClock() + 61000); await service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00002', token }));
+  H.setClock(H.getClock() + 61000); await service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00003', token }));
+  H.setClock(H.getClock() + 61000); await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00004', token })), 'readiness-quota', 'resource-exhausted');
+  assert.equal(sent.length, 3); assert.ok(sent.every((m) => m.token === token));
+  // 8. station fence still applies to super (no trial/silence bypass beyond the station gate)
+  db._put('stations/eilat', { name: 'אילת', districtId: 'south', active: false });
+  H.setClock(H.getClock() + 86400000);
+  await rejects(service.sendReadinessTestPush(req('super1', { request_id: 'req_super_rd_00005', token })), 'station-station-inactive');
+  db._put('stations/eilat', { name: 'אילת', districtId: 'south', active: true });
+  // 9. a station role without super gets no exception: commander with no live user doc stays blocked
+  authUser('cmd_noliv', { customClaims: { role: 'station_commander', stationId: 'eilat', districtId: 'south' } });
+  db._put('stations/eilat/push_tokens/cmd_noliv', { tokens: [{ token: 'cmd-token-' + 'c'.repeat(40), label: 'x', added: 1 }] });
+  await rejects(service.sendReadinessTestPush(req('cmd_noliv', { request_id: 'req_super_rd_00006', token: 'cmd-token-' + 'c'.repeat(40) })), 'readiness-not-approved');
+  st = await service.getMyReadiness(req('cmd_noliv', {})); assert.equal(st.account.approved, false);
+  // 10. pending user (no station claim) stays blocked
+  await rejects(service.sendReadinessTestPush(req('w1', { request_id: 'req_super_rd_00007', token })), 'readiness-not-approved');
+  st = await service.getMyReadiness(req('w1', {})); assert.equal(st.account.approved, false); assert.ok(st.blockers.includes('account_not_approved'));
+  // 11. live claim revocation takes effect immediately: the signed token still says super, the live claims do not
+  const live = AUTH_USERS.get('super1');
+  const savedClaims = live.customClaims;
+  const staleSigned = (data) => ({ auth: { uid: 'super1', token: Object.assign({ email: live.email, email_verified: true }, savedClaims) }, data });
+  live.customClaims = { stationId: 'eilat', districtId: 'south' };
+  await rejects(service.sendReadinessTestPush(staleSigned({ request_id: 'req_super_rd_00008', token })), 'readiness-not-approved');
+  await rejects(service.ackReadinessTestPush(staleSigned({ nonce, token })), 'readiness-not-approved');
+  st = await service.getMyReadiness(staleSigned({}));
+  assert.equal(st.account.approved, false);
+  live.customClaims = savedClaims;
+  assert.equal(sent.length, 3);
   H.setClock(NOW);
 });
 

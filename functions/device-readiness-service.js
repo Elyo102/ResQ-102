@@ -1,5 +1,5 @@
 'use strict';
-/* מוכנות מכשיר — בדיקת התראה אישית לעובד מאושר.
+/* מוכנות מכשיר — בדיקת התראה אישית לעובד מאושר או למנהל-על (על המכשיר שלו).
  *
  * פעולה אישית יזומה: העובד שולח לעצמו בלבד, לטוקן של המכשיר שממנו
  * הוא לוחץ, ומאשר קבלה עם nonce חד-פעמי. אין כאן שידור תחנתי, אין
@@ -34,21 +34,35 @@ function createDeviceReadinessService(deps) {
     }
   }
 
-  /** עובד מאושר בלבד: claims מלאים + חבר פעיל בתחנה (מסמך חי). */
+  /** התחנה נגזרת מה-claim החתום בלבד. הלקוח אינו יכול לבחור תחנה. */
+  function stationOf(claims) {
+    const sid = String((claims && claims.stationId) || '');
+    return /^[a-z0-9][a-z0-9_-]{1,63}$/.test(sid) ? sid : '';
+  }
+
+  /** עובד מאושר (claims מלאים + מסמך חי פעיל) או מנהל-על (super === true ב-claims
+   *  החיים, עם תחנה ב-claim). מנהל-על נבדק על המכשיר של עצמו בלבד, באותם כללים:
+   *  App Check, טוקן משלו, מכסה יומית והפרש דקה, גדר התחנה. תפקיד תחנתי ללא
+   *  super (מפקד, רכזת) אינו מקבל חריגה — הוא עובר במסלול העובד. */
   async function approvedActor(req) {
     const signed = requireAuth(req);
     const claims = signed.token || {};
-    const sid = String(claims.stationId || '');
-    if (!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(sid) || !claims.role || claims.super === true) {
+    const sid = stationOf(claims);
+    const isSuper = claims.super === true;
+    if (!sid || (!isSuper && !claims.role)) {
       fail('failed-precondition', 'בדיקת המכשיר זמינה לעובד מאושר בלבד.', 'readiness-not-approved');
     }
-    const [current, live] = await Promise.all([getAuthUser(signed.uid), liveUserRef(sid, signed.uid).get().then(dataOf)]);
+    const [current, live] = await Promise.all([getAuthUser(signed.uid), isSuper ? Promise.resolve(null) : liveUserRef(sid, signed.uid).get().then(dataOf)]);
     if (!current || current.uid !== signed.uid || current.disabled !== false) fail('permission-denied', 'החשבון אינו פעיל.', 'readiness-account');
     const liveClaims = plain(current.customClaims) ? current.customClaims : {};
-    if (liveClaims.stationId !== sid || !live || live.active !== true || live.is_active === false) {
+    if (liveClaims.stationId !== sid) fail('failed-precondition', 'בדיקת המכשיר זמינה לעובד מאושר בלבד.', 'readiness-not-approved');
+    if (isSuper) {
+      /* ה-claim החי הוא הקובע: מנהל-על שהוסר — הטוקן הישן אינו מספיק. */
+      if (liveClaims.super !== true) fail('failed-precondition', 'בדיקת המכשיר זמינה לעובד מאושר בלבד.', 'readiness-not-approved');
+    } else if (!live || live.active !== true || live.is_active === false) {
       fail('failed-precondition', 'בדיקת המכשיר זמינה לעובד מאושר בלבד.', 'readiness-not-approved');
     }
-    return Object.freeze({ uid: signed.uid, sid, email_verified: current.emailVerified === true, auth: signed });
+    return Object.freeze({ uid: signed.uid, sid, email_verified: current.emailVerified === true, auth: signed, super: isSuper });
   }
 
   function tokenOf(input) {
@@ -142,12 +156,21 @@ function createDeviceReadinessService(deps) {
   async function getMyReadiness(req) {
     const signed = requireAuth(req);
     const claims = signed.token || {};
-    const sid = String(claims.stationId || '');
+    const sid = stationOf(claims);
+    const isSuper = claims.super === true;
     const nowMs = now();
     const current = await getAuthUser(signed.uid);
     const emailVerified = !!(current && current.emailVerified === true);
-    if (!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(sid) || !claims.role) {
+    if (!sid || (!isSuper && !claims.role)) {
       return contract.computeReadiness({ approved: false, email_verified: emailVerified, device: null, tokens: [], declarations: [], now_ms: nowMs });
+    }
+    if (isSuper) {
+      /* מנהל-על: "מאושר" = החשבון פעיל וה-claims החיים עדיין super באותה תחנה.
+       * אין הצהרות כשירות — הן אינן חסם לבדיקת המכשיר של מנהל-על. */
+      const liveClaims = current && plain(current.customClaims) ? current.customClaims : {};
+      const approved = !!current && current.disabled === false && liveClaims.super === true && liveClaims.stationId === sid;
+      const [tokens, device] = await Promise.all([tokensRef(sid, signed.uid).get().then(dataOf), readinessRef(sid, signed.uid).get().then(dataOf)]);
+      return contract.computeReadiness({ approved, email_verified: emailVerified, device, tokens: tokenHashes(tokens), declarations: [], now_ms: nowMs });
     }
     const index = dataOf(await registrantIndexRef(signed.uid).get());
     const [live, tokens, device, registrant] = await Promise.all([
