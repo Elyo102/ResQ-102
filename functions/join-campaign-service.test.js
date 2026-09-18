@@ -272,6 +272,20 @@ await test('verify qualification: super only, one transaction writes holdings (e
   // דחייה: נימוק חובה, ההחזקות אינן נוגעות
   await rejects(service.verifyQualificationDeclaration(req('super1', { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'reject', reason: 'אין אסמכתא', expected_revision: 3, request_id: 'req_verify_000003' })), 'declaration-missing', 'not-found');
   assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1').revision, 2);
+  // דחייה עם replay: שתי הצהרות ממתינות (driver, hazmat); אותו request_id — אותה כוונה → קבלה כפולה, כשירות אחרת → conflict
+  const r3 = db._get('join_campaigns/' + created.campaign_id + '/registrants/w1');
+  db._put('join_campaigns/' + created.campaign_id + '/registrants/w1', Object.assign({}, r3, { revision: 10, declarations: [
+    { key: 'driver', declared_at_ms: NOW, valid_until_ms: null, reference: null, status: 'pending_verification', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 },
+    { key: 'hazmat', declared_at_ms: NOW, valid_until_ms: null, reference: null, status: 'pending_verification', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 }] }));
+  const rejectBody = { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'reject', reason: 'אין אסמכתא', expected_revision: 10, request_id: 'req_reject_000001' };
+  const rj = await service.verifyQualificationDeclaration(req('super1', rejectBody));
+  assert.equal(rj.action, 'reject'); assert.equal(rj.revision, 11);
+  const rjDup = await service.verifyQualificationDeclaration(req('super1', rejectBody));
+  assert.equal(rjDup.duplicate, true); assert.equal(rjDup.revision, 11);
+  await rejects(service.verifyQualificationDeclaration(req('super1', Object.assign({}, rejectBody, { key: 'hazmat', expected_revision: 11 }))), 'request-conflict', 'already-exists');
+  const after = db._get('join_campaigns/' + created.campaign_id + '/registrants/w1');
+  assert.equal(after.revision, 11); assert.equal(after.declarations[0].status, 'rejected'); assert.equal(after.declarations[1].status, 'pending_verification');
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1').revision, 2, 'reject never touches holdings');
 });
 
 await test('verify: atomic — a failed commit leaves neither holdings nor a verified declaration; stale revision writes nothing', async () => {

@@ -65,7 +65,7 @@ check('every holdings read path in the schedule engine filters expired qualifica
 check('engine holdings write preserves valid_until for retained keys and reads it in the field mask', /valid_until: qualifications\.retainValidUntil\(live, next\)/.test(runtime) && runtime.includes("['qualifications', 'revision', 'valid_until']"));
 const readiness = read('functions/device-readiness-service.js');
 check('readiness send is idempotent: replay decision inside the transaction, nothing sent on replay', /readinessSendDecision\(device, input\.request_id/.test(readiness) && readiness.indexOf('if (decision.replay) {') < readiness.indexOf('await sendToToken('));
-check('replay of a verification or a device test is bound to its intent (fingerprint / token hash), same id with other intent conflicts', /priorAudit\.intent_fingerprint !== intent/.test(verifyBody) && /intent_fingerprint: intent/.test(verifyBody) && /d\.token_hash !== tokenHash\) fail\('request-conflict'/.test(contract));
+check('replay of a verification or a device test is bound to its intent (fingerprint / token hash), same id with other intent conflicts', /priorAudit\.intent_fingerprint !== intent/.test(verifyBody) && (verifyBody.match(/intent_fingerprint: intent/g) || []).length === 2 && /d\.token_hash !== tokenHash\) fail\('request-conflict'/.test(contract));
 check('no real employee data in fixtures (Hebrew placeholder names only)', !/יונה|אלדד/.test(read('functions/join-campaign-service.test.js') + read('functions/join-campaign.test.js') + read('tests/join-campaign-load.mjs')));
 check('tests/package.json static script runs the new unit, service and load tests', /join-campaign\.test\.js/.test(read('tests/package.json')) && /join-campaign-service\.test\.js/.test(read('tests/package.json')) && /join-campaign-load\.mjs/.test(read('tests/package.json')) && /join-campaign-source\.mjs/.test(read('tests/package.json')));
 check('tests/package.json browser script runs the new browser test', /join-campaign-browser\.mjs/.test(read('tests/package.json')));
@@ -116,6 +116,8 @@ mustFail('same request id with a different verification intent accepted as a dup
   mutant('functions/join-campaign-service.js', "if (priorAudit.intent_fingerprint !== intent) fail('already-exists', 'אותו מזהה פעולה כבר שימש לכוונה אחרת.', 'request-conflict');", ""), 'functions/join-campaign-service.test.js');
 mustFail('same request id with another device token accepted as a replay',
   mutant('functions/join-campaign.js', "if (d.token_hash !== tokenHash) fail('request-conflict', 'אותו מזהה פעולה כבר שימש לבדיקה במכשיר אחר.', 'already-exists');", ""), 'functions/join-campaign-service.test.js');
+mustFail('rejection replay not recorded (same request id rejects a second qualification)',
+  mutant('functions/join-campaign-service.js', "        tx.create(holdingsAuditRef(sid, verify.request_id), {\n          action: 'declaration_reject'", "        if (false) tx.create(holdingsAuditRef(sid, verify.request_id), {\n          action: 'declaration_reject'"), 'functions/join-campaign-service.test.js');
 mustFail('unverified qualification no longer blocks readiness',
   mutant('functions/join-campaign.js', "  if (quals.pending + quals.declared > 0) blockers.push('qualifications_unverified');", ""), 'functions/join-campaign.test.js');
 mustFail('readiness ack accepts a stale nonce',
@@ -125,4 +127,4 @@ mustFail('readiness marks ready on provider failure',
 mustFail('lowercase shifts accepted',
   mutant('functions/join-campaign.js', "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C']);", "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C', 'a', 'b', 'c']);"), 'functions/join-campaign.test.js');
 
-console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 16 mutations caught).');
+console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 17 mutations caught).');

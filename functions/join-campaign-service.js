@@ -434,7 +434,7 @@ function createJoinCampaignService(deps) {
       const intent = contract.verificationIntentFingerprint(verify, auth.uid, hash);
       if (priorAudit) {
         if (priorAudit.intent_fingerprint !== intent) fail('already-exists', 'אותו מזהה פעולה כבר שימש לכוונה אחרת.', 'request-conflict');
-        return Object.freeze({ ok: true, duplicate: true, uid: verify.uid, key: verify.key, action: 'verify',
+        return Object.freeze({ ok: true, duplicate: true, uid: verify.uid, key: verify.key, action: verify.action,
           revision: registrant && Number.isInteger(registrant.revision) ? registrant.revision : 0, holdings_written: false, station_id: sid });
       }
       const approved = !!(live && live.active === true && live.is_active !== false);
@@ -442,6 +442,11 @@ function createJoinCampaignService(deps) {
       const change = guard(() => contract.planDeclarationUpdate(Object.assign({}, registrant, { declarations: promoted }), verify, nowMs, auth.uid));
       const patch = { declarations: change.declarations, revision: change.revision, updated_at_ms: change.updated_at_ms, updated_at: serverTimestamp() };
       if (verify.action === 'reject') {
+        /* גם דחייה רושמת רשומת פעולה עם טביעת כוונה — אותו request_id לכשירות אחרת נחסם. */
+        tx.create(holdingsAuditRef(sid, verify.request_id), {
+          action: 'declaration_reject', source: 'join_campaign_verification', campaign_id: campaign.campaign_id, intent_fingerprint: intent,
+          person: verify.uid, request_id: verify.request_id, key: verify.key, reason: verify.reason, by: auth.uid, at: serverTimestamp()
+        });
         tx.update(registrantRef(campaign.campaign_id, verify.uid), patch);
         return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: 'reject', revision: change.revision, holdings_written: false, station_id: sid });
       }
