@@ -10,7 +10,8 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'attendance.html', 'board.html', 'check.html', 'faults.html', 'feedback.html',
   'forms.html', 'guards.html', 'import.html', 'index.html', 'login.html',
   'people.html', 'quals.html', 'maintenance.html', 'schedule-management.html', 'schedule.html',
-  'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html'
+  'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html',
+  'device-readiness.html'
 ]);
 export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20']);
 export const TELEMETRY_CODES = Object.freeze([
@@ -26,6 +27,9 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
   'redeemInvitation', 'resumeOnboarding',
+  'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
+  'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',
+  'verifyQualificationDeclaration', 'sendReadinessTestPush', 'ackReadinessTestPush', 'getMyReadiness',
   'activateScheduleMonthAuthority', 'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',

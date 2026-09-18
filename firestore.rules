@@ -494,6 +494,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------- קליטה בקישור קבוצתי (42H.21) ----------
+    //
+    // הקמפיין מכיל hash של הטוקן, מונים ומזהי יוצר; הנרשמים מכילים
+    // הצהרות כשירות והערות ביקורת. שני האוספים מנוהלים רק דרך
+    // Callables מאומתים (App Check + הרשאה חיה בשרת). הדפדפן לא קורא
+    // ולא כותב אותם ישירות — גם לא הבעלים של הרשומה. מונה הבדיקות
+    // של הקישור והרשומה שמצביעה מנרשם לקמפיין סגורים מאותה סיבה.
+    match /join_campaigns/{campaignId} {
+      allow read, write: if false;
+      match /registrants/{uid} {
+        allow read, write: if false;
+      }
+    }
+    match /join_registrant_index/{uid} {
+      allow read, write: if false;
+    }
+    match /join_campaign_inspect_quota/{quotaId} {
+      allow read, write: if false;
+    }
+
 
     // ---------- חיפוש עובד ----------
     //
@@ -1348,6 +1368,14 @@ service cloud.firestore {
 
       match /push_tokens/{uid} {
         allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+
+      // מוכנות מכשיר (42H.21): hash של הטוקן, hash של קוד האישור ומונה
+      // ניסיונות. המוכנות מחושבת בשרת; כתיבה ישירה הייתה מאפשרת לסמן
+      // "מוכן" בלי שהתראה אחת הגיעה. גם הבעלים אינו קורא — הוא מקבל
+      // את המצב המחושב מ-getMyReadiness.
+      match /device_readiness/{uid} {
+        allow read, write: if false;
       }
 
       // מעבדת המכשיר האישית מנוהלת רק דרך Callables מאומתים.

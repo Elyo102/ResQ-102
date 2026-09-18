@@ -96,6 +96,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 #invitationPanel input{font-size:16px;min-height:44px}
 #invitationPanel button{min-height:44px;white-space:normal}
 #invitationPanel p{line-height:1.6;overflow-wrap:anywhere}
+/* קליטה בקישור קבוצתי (42H.21) */
+#joinPanel{border:1px solid var(--line);border-radius:14px;padding:14px;margin-block:14px;text-align:right}
+#joinPanel .join-head{text-align:center;margin-bottom:8px}
+#joinPanel .join-icon{font-size:40px;line-height:1}
+#joinPanel .join-title{font-size:19px;margin:8px 0 4px}
+#joinPanel .join-text,#joinPanel .join-hint{color:var(--muted);font-size:13px;line-height:1.6;margin:4px 0}
+#joinPanel .join-step{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}
+#joinPanel .join-step h3{font-size:15px;margin:0 0 6px}
+#joinPanel input,#joinPanel textarea{font-size:16px;min-height:44px;width:100%}
+#joinPanel textarea{min-height:64px;resize:vertical}
+#joinPanel button{min-height:44px;white-space:normal;width:100%}
+#joinPanel button.link{background:transparent;border:0;color:var(--accent)}
+#joinPanel button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+#joinPanel .join-row{display:grid;gap:8px;grid-template-columns:1fr}
+@media (min-width:380px){#joinPanel .join-row{grid-template-columns:1fr 1fr}}
+#joinPanel fieldset{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:10px 0}
+#joinPanel legend{font-size:13px;color:var(--muted);padding:0 6px}
+#joinPanel .join-choice{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;font-size:15px}
+#joinPanel .join-choice input{width:44px;height:44px;min-height:44px;margin:0;flex:0 0 auto}
+#joinPanel .join-qual-extra{padding:0 54px 8px 0;display:grid;gap:6px}
+#joinPanel .join-ack{align-items:flex-start;line-height:1.5;padding-top:6px}
+#joinPanel .join-ok{color:var(--ok-fg);font-weight:600}
+#joinStatusBox .join-status{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;font-size:14px;line-height:1.7;text-align:right}
+#joinStatusBox .join-status-title{font-weight:700}
+#joinStatusBox .join-status-returned{background:var(--err-bg);color:var(--err-fg);border-radius:8px;padding:8px;margin-top:6px;overflow-wrap:anywhere}
+#readinessBanner .join-readiness-banner{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 12px;margin:0 0 12px;border-radius:10px;background:var(--info-bg,var(--chip));color:var(--info-fg,var(--txt));text-decoration:none;font-size:14px;line-height:1.5}
+#readinessBanner .join-readiness-icon{font-size:22px}
 </style>
 <style>
   .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
@@ -246,6 +273,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <!-- ברירת המחדל היא המסך הזה ולא טופס הכניסה. עד עכשיו הטופס
        היה מצויר תמיד ונעלם כשהתברר שהמשתמש כבר מחובר — ולכן כל
        מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
+  <section id="joinPanel" class="hide" aria-labelledby="joinTitle"></section>
   <details id="invitationPanel" class="hide">
     <summary>הצטרפות באמצעות הזמנה</summary>
     <p>קיבלת הזמנה ממנהל־על? אין צורך למלא בקשת הרשמה רגילה. הזן את שני הפרטים בערוץ פרטי בלבד; הם אינם נשמרים בדפדפן.</p>
@@ -362,6 +390,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <b>אחרי שתאושר — התנתק והתחבר מחדש.</b>
       </div>
       <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
+      <div id="joinStatusBox" class="hide"></div>
     </div>
     <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
@@ -384,6 +413,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <p>כלי תצוגה למנהל־על בלבד. ההרשאות האמיתיות אינן משתנות.</p>
     </section>
     <div id="roleViewBanner" class="role-view-banner hide" role="status"></div>
+    <div id="readinessBanner" class="hide"></div>
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
       <section id="homeUrgent" class="home-urgent hide" role="alert" aria-labelledby="homeUrgentTitle">
@@ -591,6 +621,7 @@ import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h20';
 import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h20';
 import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h20';
 import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -661,6 +692,45 @@ const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
 const callWho   = httpsCallable(fns, 'whoAmI');
 const callRedeemInvitation = httpsCallable(fns, 'redeemInvitation');
+// קליטה בקישור קבוצתי (42H.21)
+const callInspectJoin = httpsCallable(fns, 'inspectJoinCampaign');
+const callRedeemJoin = httpsCallable(fns, 'redeemJoinCampaign');
+const callMyJoinStatus = httpsCallable(fns, 'getMyJoinStatus');
+const callMyReadiness = httpsCallable(fns, 'getMyReadiness');
+const JOIN_TOKEN = readJoinToken(location.search);
+let joinPanel = null, joinRegistered = false;
+function ensureJoinPanel(){
+  if (!JOIN_TOKEN || joinPanel) return joinPanel;
+  joinPanel = createJoinPanel($('joinPanel'), {
+    token: JOIN_TOKEN,
+    inspect: async data => (await callInspectJoin(data)).data,
+    redeem: async data => (await callRedeemJoin(data)).data,
+    currentUser: () => auth.currentUser,
+    createAccount: async (email, password) => { onboarding = true; try { const c = await createUserWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    signIn: async (email, password) => { onboarding = true; try { const c = await signInWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    sendVerification: () => sendEmailVerification(auth.currentUser),
+    refreshUser: async () => { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } },
+    claims: async () => auth.currentUser ? ((await auth.currentUser.getIdTokenResult()).claims || {}) : {},
+    hasAssignment: hasServerAssignment,
+    pwOk: pwOk,
+    onRedeemed: async () => { joinRegistered = true; if (auth.currentUser) await startRoute(auth.currentUser); }
+  });
+  return joinPanel;
+}
+let readinessCheckedForUid = '';
+async function refreshReadinessBanner(user, claims){
+  // רק לעובד מאושר; פעם אחת לכל כניסה (לא בכל רענון מסך).
+  if (!user || claims.super === true || !claims.stationId || !claims.role) { renderReadinessBanner($('readinessBanner'), null); return; }
+  if (readinessCheckedForUid === user.uid) return;
+  readinessCheckedForUid = user.uid;
+  try { renderReadinessBanner($('readinessBanner'), (await callMyReadiness({})).data || null); }
+  catch (ignore) { renderReadinessBanner($('readinessBanner'), null); }
+}
+async function refreshJoinStatus(user){
+  if (!user) { renderJoinStatus($('joinStatusBox'), null); return; }
+  try { renderJoinStatus($('joinStatusBox'), (await callMyJoinStatus({})).data || null); }
+  catch (ignore) { renderJoinStatus($('joinStatusBox'), null); }
+}
 
 // חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
 // וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
@@ -843,7 +913,13 @@ function hasCompleteServerAssignment(claims){
 }
 
 function showView(name){
-  $('invitationPanel').classList.toggle('hide',name!=='auth'&&name!=='wait');
+  // בקישור קבוצתי הפאנל מחליף את הכניסה הרגילה ואת ההזמנה האישית.
+  const joinMode = !!JOIN_TOKEN && !joinRegistered && (name==='auth'||name==='wait');
+  $('joinPanel').classList.toggle('hide', !joinMode);
+  if (joinMode) { const p = ensureJoinPanel(); if (p && !$('joinPanel').dataset.joinState) p.load(); else if (p) p.rerender(); }
+  $('invitationPanel').classList.toggle('hide',joinMode||(name!=='auth'&&name!=='wait'));
+  $('authTabs').classList.toggle('hide', joinMode && name==='auth');
+  $('paneLogin').classList.toggle('hide', joinMode && name==='auth');
   invitationControls();
   ['bootView','authView','waitView','homeView','pwView']
     .forEach(function(v){
@@ -1411,7 +1487,8 @@ function showNotLinked(user){
   // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
   const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   $('btnBootstrap').classList.toggle('hide', !isBoot);
-  $('btnResubmit').classList.toggle('hide', isBoot);
+  $('btnResubmit').classList.toggle('hide', isBoot || !!JOIN_TOKEN);
+  if (JOIN_TOKEN && !isBoot) $('waitTxt').textContent = 'החשבון מחובר. השלם/י את פרטי ההצטרפות בטופס שלמעלה.';
   if (isBoot) {
     $('waitTxt').innerHTML = 'זהו חשבון ההקמה של המערכת, והוא עדיין לא הופעל.<br>' +
                              'לחץ על הכפתור למטה כדי להפוך אותו למנהל מערכת.';
@@ -1422,6 +1499,7 @@ function showNotLinked(user){
 
 function showWaiting(user, request){
   loginTransitionPending = false;
+  if (request) joinRegistered = true;
   const status = String((request || {}).status || 'pending');
   $('waitIcon').textContent = '⏳';
   if (status === 'processing') {
@@ -1444,6 +1522,7 @@ function showWaiting(user, request){
   $('btnBootstrap').classList.add('hide');
   $('btnResubmit').classList.add('hide');
   showView('wait');
+  void refreshJoinStatus(user);
 }
 
 function showRegistrationRecovery(user){
@@ -1604,6 +1683,7 @@ async function loadProfile(user, claims, epoch){
   $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
 
   renderHomeCommandFor(activeHomeContext, initialView);
+  void refreshReadinessBanner(user, claims);
 
   initBulletin({
     db: db,

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node rules.test.mjs && node callout-privacy.test.mjs && node ../functions/callout-delivery.integration.test.js && node schedule-access-isolation.test.mjs && node station-transfer.test.mjs && node fleet.test.mjs && node hr-private-isolation.test.mjs && node system-health-firestore.integration.test.cjs"
+    "test": "node rules.test.mjs && node callout-privacy.test.mjs && node ../functions/callout-delivery.integration.test.js && node schedule-access-isolation.test.mjs && node station-transfer.test.mjs && node fleet.test.mjs && node hr-private-isolation.test.mjs && node join-campaign-isolation.test.mjs && node system-health-firestore.integration.test.cjs"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",

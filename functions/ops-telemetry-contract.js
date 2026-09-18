@@ -10,7 +10,8 @@ const SCREENS = Object.freeze([
   'unlock.html', 'attendance.html', 'schedule-management.html', 'attendance-shadow.html',
   'alerts.html', 'admin.html', 'access.html', 'faults.html', 'check.html', 'board.html',
   'feedback.html', 'forms.html', 'sign.html', 'schedule.html', 'stats.html',
-  'swaps.html', 'people.html', 'login.html', 'quals.html', 'maintenance.html'
+  'swaps.html', 'people.html', 'login.html', 'quals.html', 'maintenance.html',
+  'device-readiness.html'
 ]);
 const VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20']);
 const CODES = Object.freeze([
@@ -26,6 +27,9 @@ const CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
   'redeemInvitation', 'resumeOnboarding',
+  'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
+  'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',
+  'verifyQualificationDeclaration', 'sendReadinessTestPush', 'ackReadinessTestPush', 'getMyReadiness',
   'activateScheduleMonthAuthority', 'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',

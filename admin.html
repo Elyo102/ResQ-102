@@ -59,6 +59,36 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
   .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
   .msg.info{display:block;background:var(--chip);color:var(--dim)}
+  /* קליטה בקישור קבוצתי (42H.21) */
+  #joinAdminCard select,#joinAdminCard textarea{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  #joinAdminCard .join-row{display:flex;flex-wrap:wrap;gap:8px}
+  #joinAdminCard .join-row button{margin-top:8px;flex:1 1 140px}
+  #joinAdminCard .join-admin-shifts{display:flex;flex-wrap:wrap;gap:12px}
+  #joinAdminCard .join-choice{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+  #joinAdminCard .join-choice input{width:44px;height:44px;min-height:44px;margin:0}
+  #joinAdminCard .join-table input[type=checkbox]{width:44px;height:44px;min-height:44px;margin:0}
+  #joinAdminCard .join-token-box{margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:8px}
+  #joinAdminCard .join-token-box input{direction:ltr;font-size:13px}
+  #joinAdminCard .join-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--chip);color:var(--dim)}
+  #joinAdminCard .join-badge-active{background:var(--ok-bg);color:var(--ok-fg)}
+  #joinAdminCard .join-badge-revoked,#joinAdminCard .join-badge-expired{background:var(--err-bg);color:var(--err-fg)}
+  #joinAdminCard .join-filters{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin:10px 0}
+  @media (min-width:600px){#joinAdminCard .join-filters{grid-template-columns:repeat(4,1fr)}}
+  #joinAdminCard .join-table{width:100%;border-collapse:collapse;font-size:13px}
+  #joinAdminCard .join-table th,#joinAdminCard .join-table td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right;vertical-align:top}
+  #joinAdminCard .join-table tr.join-exception td{background:color-mix(in srgb,var(--err-bg) 35%,transparent)}
+  #joinAdminCard .join-mini{min-height:44px;padding:6px 10px;font-size:12px;margin:4px 4px 0 0}
+  #joinAdminCard .join-warn{color:var(--err-fg);font-size:12px}
+  #joinAdminCard .join-ok{color:var(--ok-fg);font-size:12px}
+  #joinAdminCard .join-decl{margin-bottom:4px}
+  #joinAdminCard .join-actions button{display:inline-block}
+  #joinAdminCard .join-bulk-result{border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;font-size:13px;line-height:1.7}
+  @media (max-width:599px){
+    #joinAdminCard .join-table thead{display:none}
+    #joinAdminCard .join-table tr{display:block;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;padding:6px}
+    #joinAdminCard .join-table td{display:block;border:0;padding:4px 6px}
+    #joinAdminCard .join-table td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}
+  }
   h2{font-size:16px;margin:0 0 12px;color:var(--accent-txt)}
   select{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
@@ -176,6 +206,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <p>בדיקה זו מפעילה את התחנה רק אם כל תנאי המוכנות מתקיימים. מצב שקט אינו מוסר בפעולה זו.</p>
       </div>
     </section>
+    <section class="card hide" id="joinAdminCard" aria-labelledby="joinAdminTitle"></section>
+
     <div class="card" id="reqCard">
       <h2>בקשות הרשמה</h2>
       <div id="list"><div class="empty">טוען...</div></div>
@@ -366,6 +398,7 @@ import { watchCallouts } from './callout.js?v=42h20';
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
 import { initAppCheck } from './appcheck.js?v=42h20';
+import { createJoinAdmin } from './join-admin-ui.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -376,6 +409,52 @@ const fns = getFunctions(app, 'europe-west1');
 
 const callApprove  = httpsCallable(fns, 'approveRegistration');
 const callReject   = httpsCallable(fns, 'rejectRegistration');
+// קליטה בקישור קבוצתי (42H.21) — כרטיס ניהול + אישור מרוכז.
+// האישור עצמו עובר דרך approveRegistration הקיים, בקשה-בקשה, עם אותה
+// לוגיקת request_refreshed (חתימת שרת ואז אישור). אין callable אישור חדש.
+let joinAdmin = null;
+async function approveJoinRow(row, campaign){
+  const call = () => callApprove({
+    uid: row.uid, request_id: String(row.request_id || ''), request_generation: String(row.request_generation || ''),
+    role: 'firefighter', shift: row.shift || '', emp: '', stationId: campaign.station_id, districtId: campaign.district_id
+  });
+  try { return (await call()).data || {}; }
+  catch (e) {
+    if (!(e.details && e.details.request_refreshed === true)) throw e;
+    // השרת חתם את הבקשה (server_generation). קוראים את הדור החדש ומנסים פעם אחת.
+    const page = await httpsCallable(fns, 'getJoinCampaignRegistrants')({ campaign_id: campaign.campaign_id, limit: 50 });
+    const fresh = ((page.data || {}).rows || []).find(r => r.uid === row.uid);
+    if (!fresh || !fresh.request_generation) throw e;
+    return (await callApprove({
+      uid: row.uid, request_id: String(fresh.request_id || ''), request_generation: String(fresh.request_generation || ''),
+      role: 'firefighter', shift: row.shift || '', emp: '', stationId: campaign.station_id, districtId: campaign.district_id
+    })).data || {};
+  }
+}
+async function rejectJoinRow(row){
+  await callReject({ uid: row.uid, request_id: String(row.request_id || ''), request_generation: String(row.request_generation || '') });
+}
+function initJoinAdmin(claims){
+  const isSuper = claims.super === true;
+  const isHr = claims.role === 'hr_coordinator' && !!claims.stationId;
+  if (!isSuper && !isHr) { $('joinAdminCard').classList.add('hide'); return; }
+  $('joinAdminCard').classList.remove('hide');
+  if (joinAdmin) { joinAdmin.loadList(); return; }
+  joinAdmin = createJoinAdmin($('joinAdminCard'), {
+    isSuper, stationId: claims.stationId || '', stations: STATIONS.map(s => ({ id: s.id, name: s.name })),
+    stationName: id => stationName(id) || id, base: location.href,
+    calls: {
+      create: async data => (await httpsCallable(fns, 'createJoinCampaign')(data)).data,
+      setStatus: async data => (await httpsCallable(fns, 'setJoinCampaignStatus')(data)).data,
+      list: async data => (await httpsCallable(fns, 'listJoinCampaigns')(data)).data,
+      registrants: async data => (await httpsCallable(fns, 'getJoinCampaignRegistrants')(data)).data,
+      review: async data => (await httpsCallable(fns, 'reviewJoinRegistrant')(data)).data,
+      verify: async data => (await httpsCallable(fns, 'verifyQualificationDeclaration')(data)).data
+    },
+    approveOne: approveJoinRow, rejectOne: rejectJoinRow
+  });
+  joinAdmin.loadList();
+}
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
@@ -1223,6 +1302,7 @@ onAuthStateChanged(auth, async user => {
   $('denyCard').classList.add('hide');
 
   renderNav(claims, 'admin.html', user.email || '');
+  initJoinAdmin(claims);
   watchCallouts(db, claims.stationId || STATION_ID, user.uid, { name: user.email || '' });
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');

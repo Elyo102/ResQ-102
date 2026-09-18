@@ -63,6 +63,10 @@ const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
 const personalLiveLabModule = require('./personal-live-lab');
+const joinCampaignContract = require('./join-campaign');
+const joinCampaignServiceModule = require('./join-campaign-service');
+const deviceReadinessModule = require('./device-readiness-service');
+const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
 
@@ -357,8 +361,35 @@ const onboardingStationGates = onboardingStationModule.createOnboardingStationGa
 const onboardingInitialReader = onboardingApprovalModule.createOnboardingApprovalAuthority({
   db, invitations: invitationEngine, contract: onboardingContract
 });
+// 42H.21 · קליטה בקישור קבוצתי: עטיפה בלבד סביב קורא הסמכות הקיים. היא
+// מחזירה את תוצאת המקור כמות שהיא (commitApproval משווה אותה בייצוג
+// קנוני), ומוסיפה קריאה — באותה טרנזקציה של identity-coordinator —
+// למסמך הקמפיין שממנו הגיעה הבקשה: קמפיין שבוטל חוסם את האישור ברגע
+// האישור, לא רק בהנפקה. כשל כאן עובר במסלול ההתאוששות הרגיל של
+// המתאם (needs_recovery); זהו מחיר ידוע ומתועד במסירה.
+const JOIN_CAMPAIGN_ID_RE = /^[A-Za-z0-9_-]{16}$/;
+const onboardingInitialReaderWithCampaignGate = Object.freeze({
+  async readForApproval(tx, input) {
+    const authority = await onboardingInitialReader.readForApproval(tx, input);
+    if (!authority || !authority.source || typeof authority.source.operation_path !== 'string') return authority;
+    const opSnap = await tx.get(db.doc(authority.source.operation_path));
+    const provenance = opSnap.exists ? (opSnap.data() || {}).provenance : null;
+    if (provenance && typeof provenance === 'object' && provenance.kind === 'join_campaign') {
+      const campaignId = String(provenance.campaign_id || '');
+      const campaignSnap = JOIN_CAMPAIGN_ID_RE.test(campaignId)
+        ? await tx.get(db.doc('join_campaigns/' + campaignId)) : null;
+      const campaign = campaignSnap && campaignSnap.exists ? (campaignSnap.data() || {}) : null;
+      if (!campaign || campaign.schema !== joinCampaignContract.SCHEMA || campaign.status === 'revoked') {
+        const error = new Error('קמפיין ההצטרפות שממנו הגיעה הבקשה בוטל; האישור נחסם.');
+        error.code = 'campaign-revoked';
+        throw error;
+      }
+    }
+    return authority;
+  }
+});
 const onboardingAuthority = onboardingPhaseModule.createOnboardingPhaseAuthority({
-  db, auth: admin.auth(), initialReader: onboardingInitialReader,
+  db, auth: admin.auth(), initialReader: onboardingInitialReaderWithCampaignGate,
   contract: onboardingContract, invitations: invitationEngine,
   serverTimestamp: () => FV.serverTimestamp(),
   requireStationPerson: onboardingStationGates.requireStationPerson
@@ -445,6 +476,68 @@ const scheduleAccessAdmin = scheduleAccessAdminModule.createScheduleAccessAdmin(
   openAudit: openAudit,
   sealAudit: sealAudit
 });
+
+// ---------- קליטה בקישור קבוצתי (42H.21) ----------
+//
+// כל נרשם מקבל הזמנה אישית חד-פעמית שנוצרת בשרת בשם יוצר הקמפיין,
+// ומשם ממשיך במסלול הקיים: בקשת רישום, פעולת קליטה, אישור מנהל-על,
+// זהות ומספר עובד. אין כאן מנגנון זהות חלופי, ואין הענקת הרשאות.
+const joinCampaignService = joinCampaignServiceModule.createJoinCampaignService({
+  db, contract: joinCampaignContract, invitations: invitationEngine, onboardingContract,
+  qualifications: scheduleQualificationsModule, serverTimestamp: () => FV.serverTimestamp(), FieldValue: FV,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+  requireSuper: requireFreshOnboardingSuper,
+  requireIdentity: value => freshOnboardingIdentity(value, false),
+  requireAuth,
+  getAuthUser: uid => admin.auth().getUser(uid),
+  getAuthUsers: async uids => {
+    const out = [];
+    for (let i = 0; i < uids.length; i += 100) {
+      const page = await admin.auth().getUsers(uids.slice(i, i + 100).map(uid => ({ uid })));
+      out.push(...page.users);
+    }
+    return out;
+  },
+  resolveStation: (sid, tx) => resolveTransferStation(sid, tx),
+  openAudit, sealAudit,
+  now: Date.now, randomBytes: n => crypto.randomBytes(n),
+  hash: value => crypto.createHash('sha256').update(String(value)).digest('hex'),
+  timingSafeEqual: crypto.timingSafeEqual,
+  setPersonQualifications: req => invokeSchedule('setPersonQualifications', req),
+  knownDistricts: KNOWN_DISTRICTS,
+  hrCap: ASSIGN_MAX_RANK.hr_coordinator
+});
+const deviceReadinessService = deviceReadinessModule.createDeviceReadinessService({
+  db, contract: joinCampaignContract,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+  requireAuth,
+  getAuthUser: uid => admin.auth().getUser(uid),
+  // שליחה לטוקן מדויק אחד. data בלבד — כמו כל ההתראות במערכת — כדי
+  // שהדפדפן לא יצייר התראה משלו בנוסף. ללא important, ללא tag של קריאה.
+  sendToToken: payload => admin.messaging().send({
+    token: payload.token,
+    data: payload.data,
+    webpush: { headers: { Urgency: 'normal' } }
+  }),
+  deliveryFence: stationDeliveryFence,
+  openAudit, sealAudit,
+  now: Date.now, randomBytes: n => crypto.randomBytes(n),
+  hash: value => crypto.createHash('sha256').update(String(value)).digest('hex'),
+  dayKey: labDay,
+  serverTimestamp: () => FV.serverTimestamp()
+});
+exports.createJoinCampaign = onCall({ enforceAppCheck: true }, req => joinCampaignService.createJoinCampaign(req));
+exports.setJoinCampaignStatus = onCall({ enforceAppCheck: true }, req => joinCampaignService.setJoinCampaignStatus(req));
+exports.listJoinCampaigns = onCall({ enforceAppCheck: true }, req => joinCampaignService.listJoinCampaigns(req));
+exports.getJoinCampaignRegistrants = onCall({ enforceAppCheck: true, memory: '512MiB' }, req => joinCampaignService.getJoinCampaignRegistrants(req));
+exports.reviewJoinRegistrant = onCall({ enforceAppCheck: true }, req => joinCampaignService.reviewJoinRegistrant(req));
+exports.inspectJoinCampaign = onCall({ enforceAppCheck: true }, req => joinCampaignService.inspectJoinCampaign(req));
+exports.redeemJoinCampaign = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.redeemJoinCampaign(req));
+exports.getMyJoinStatus = onCall({ enforceAppCheck: true }, req => joinCampaignService.getMyJoinStatus(req));
+exports.verifyQualificationDeclaration = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.verifyQualificationDeclaration(req));
+exports.sendReadinessTestPush = onCall({ enforceAppCheck: true, timeoutSeconds: 30 }, req => deviceReadinessService.sendReadinessTestPush(req));
+exports.ackReadinessTestPush = onCall({ enforceAppCheck: true }, req => deviceReadinessService.ackReadinessTestPush(req));
+exports.getMyReadiness = onCall({ enforceAppCheck: true }, req => deviceReadinessService.getMyReadiness(req));
 
 // The browser catalogue currently contains one regional station.  Future
 // stations can be activated without trusting a client value by creating a

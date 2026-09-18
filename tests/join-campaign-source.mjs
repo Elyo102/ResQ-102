@@ -1,0 +1,106 @@
+// קליטה בקישור קבוצתי — בדיקות מקור ומוטציות.
+// חלק א': הצהרות סטטיות על הקוד כפי שהוא (rules סגורים, App Check, אוצר
+// הטלמטריה, SHELL, ללא innerHTML עם נתוני משתמש, ללא סוד גולמי במסמכים).
+// חלק ב': מוטציות — עותק זמני של הקוד עם פגם אחד, והוכחה שהבדיקות נופלות.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+let passed = 0;
+function check(name, value) { assert(value, name); passed++; console.log('PASS ' + name); }
+
+const NEW_CALLABLES = ['createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
+  'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus', 'verifyQualificationDeclaration',
+  'sendReadinessTestPush', 'ackReadinessTestPush', 'getMyReadiness'];
+
+/* ---------- חלק א' ---------- */
+const index = read('functions/index.js');
+for (const name of NEW_CALLABLES) {
+  const line = index.split('\n').find((l) => l.startsWith('exports.' + name + ' ='));
+  check(name + ' is exported with App Check enforced', !!line && /enforceAppCheck: true/.test(line));
+}
+const rules = read('firestore.rules');
+const closed = (block) => /allow read, write: if false;/.test(block);
+const section = (name) => { const i = rules.indexOf('match /' + name); assert(i >= 0, 'rules block ' + name); return rules.slice(i, i + 400); };
+for (const name of ['join_campaigns/{campaignId}', 'join_registrant_index/{uid}', 'join_campaign_inspect_quota/{quotaId}', 'device_readiness/{uid}']) {
+  check('rules: ' + name + ' is closed to clients', closed(section(name)));
+}
+check('rules: registrants subcollection is closed', /match \/registrants\/\{uid\} \{\s*allow read, write: if false;/.test(rules));
+check('rules: registration_requests create still forbids role and requires pending', /match \/registration_requests\/\{uid\}[\s\S]{0,1200}status == 'pending'/.test(rules) && !/hasOnly\([^)]*'role'/.test(section('registration_requests/{uid}')));
+
+const telemetryServer = read('functions/ops-telemetry-contract.js'), telemetryClient = read('incident-client.js');
+for (const name of NEW_CALLABLES) check('telemetry vocabulary lists ' + name + ' on server and client', telemetryServer.includes("'" + name + "'") && telemetryClient.includes("'" + name + "'"));
+
+const sw = read('firebase-messaging-sw.js');
+check('service worker SHELL carries join-ui.js for the login page', /'\.\/join-ui\.js'/.test(sw));
+const login = read('login.html'), admin = read('admin.html'), readinessPage = read('device-readiness.html');
+check('login.html imports join-ui with the release query', login.includes("from './join-ui.js?v=42h20'"));
+check('admin.html imports join-admin-ui with the release query', admin.includes("from './join-admin-ui.js?v=42h20'"));
+check('device-readiness.html initializes App Check once and is RTL Hebrew', (readinessPage.match(/await initAppCheck\(app\);/g) || []).length === 1 && /<html lang="he" dir="rtl">/.test(readinessPage));
+for (const file of ['join-ui.js', 'join-admin-ui.js']) {
+  const src = read(file);
+  check(file + ' never assigns innerHTML/outerHTML or uses insertAdjacentHTML', !/\.(?:innerHTML|outerHTML)\s*[=+]|insertAdjacentHTML\(|document\.write\(/.test(src));
+}
+const service = read('functions/join-campaign-service.js'), contract = read('functions/join-campaign.js');
+check('campaign document stores token_hash only (no raw secret field written)', /token_hash/.test(contract) && !/\bsecret:\s*token\.secret|secret:\s*secret\b/.test(service));
+check('redeem writes the invitation exactly as issued plus redemption fields', /tx\.create\(inviteRef\(candidate\.invite_id\), Object\.assign\(\{\}, candidate\.doc,\s*\{ redeemed_by: uid, redeemed_at: serverTimestamp\(\), redeemed_request_id: requestId \}\)\)/.test(service));
+check('registry document keeps the exact six-key shape', /schema_version: OPERATION_SCHEMA, uid, station_id: sid, request_id: requestId,\s*invite_id: candidate\.invite_id, operation_fingerprint: split\.operation_fingerprint \}/.test(service));
+check('replay is checked before campaign state', service.indexOf("if (operation) {") < service.indexOf("contract.deriveState(campaign, nowMs)"));
+check('shifts are the uppercase engine vocabulary', /VALID_SHIFTS = Object\.freeze\(\['A', 'B', 'C'\]\)/.test(contract));
+check('authority wrapper returns the original authority object untouched', /const authority = await onboardingInitialReader\.readForApproval\(tx, input\);[\s\S]{0,1200}return authority;\s*\}\s*\}\);/.test(index) && /initialReader: onboardingInitialReaderWithCampaignGate/.test(index));
+check('authority wrapper blocks revoked campaigns inside the transaction', /campaign\.status === 'revoked'/.test(index.slice(index.indexOf('onboardingInitialReaderWithCampaignGate'), index.indexOf('onboardingInitialReaderWithCampaignGate') + 2000)));
+check('readiness push bypasses only global silence, keeps the station fence', /deliveryFence\.check\(\{ stationId: actor\.sid, globalSuppressed: false \}\)/.test(read('functions/device-readiness-service.js')));
+check('readiness push is data-only, type readiness_test, not important, not a callout tag', /type: TYPE,[\s\S]{0,300}important: '0'/.test(read('functions/device-readiness-service.js')) && /const TAG = 'readiness-test'/.test(read('functions/device-readiness-service.js')));
+check('no real employee data in fixtures (Hebrew placeholder names only)', !/יונה|אלדד/.test(read('functions/join-campaign-service.test.js') + read('functions/join-campaign.test.js') + read('tests/join-campaign-load.mjs')));
+check('tests/package.json static script runs the new unit, service and load tests', /join-campaign\.test\.js/.test(read('tests/package.json')) && /join-campaign-service\.test\.js/.test(read('tests/package.json')) && /join-campaign-load\.mjs/.test(read('tests/package.json')) && /join-campaign-source\.mjs/.test(read('tests/package.json')));
+check('tests/package.json browser script runs the new browser test', /join-campaign-browser\.mjs/.test(read('tests/package.json')));
+
+/* ---------- חלק ב' — מוטציות ---------- */
+function mutant(file, before, after) {
+  const src = read(file);
+  assert.equal(src.split(before).length, 2, 'mutation anchor must match exactly once: ' + before.slice(0, 60));
+  return { file, src: src.replace(before, after) };
+}
+function runWithMutation(m, testFile) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-join-mut-'));
+  fs.mkdirSync(path.join(dir, 'functions'));
+  for (const f of fs.readdirSync(path.join(root, 'functions'))) {
+    if (!/\.js$/.test(f)) continue;
+    fs.writeFileSync(path.join(dir, 'functions', f), read('functions/' + f));
+  }
+  fs.writeFileSync(path.join(dir, m.file), m.src);
+  const r = spawnSync(process.execPath, [path.join(dir, testFile)], { encoding: 'utf8', timeout: 120000 });
+  fs.rmSync(dir, { recursive: true, force: true });
+  return r;
+}
+function mustFail(name, m, testFile) {
+  const r = runWithMutation(m, testFile);
+  check('mutation caught: ' + name, r.status !== 0);
+}
+mustFail('campaign state gate removed (paused/revoked/expired/full accepted)',
+  mutant('functions/join-campaign-service.js', "if (state !== 'active') {", "if (false) {"), 'functions/join-campaign-service.test.js');
+mustFail('quota counter no longer incremented',
+  mutant('functions/join-campaign-service.js', 'const nextCount = campaign.accepted_count + 1;', 'const nextCount = campaign.accepted_count;'), 'functions/join-campaign-service.test.js');
+mustFail('token hash comparison bypassed',
+  mutant('functions/join-campaign.js', 'return a.length === b.length && deps.timingSafeEqual(a, b);', 'return true;'), 'functions/join-campaign-service.test.js');
+mustFail('client-supplied assignment fields accepted',
+  mutant('functions/join-campaign.js', "for (const k of REDEEM_FORBIDDEN) {", "for (const k of []) {"), 'functions/join-campaign.test.js');
+mustFail('hr coordinator may create for another station',
+  mutant('functions/join-campaign-service.js', "if (actor.role !== 'super' && campaign.station_id !== actor.station_id)", "if (false)"), 'functions/join-campaign-service.test.js');
+mustFail('replay accepted without provenance match',
+  mutant('functions/join-campaign.js', "|| !plain(prov) || prov.kind !== 'join_campaign' || prov.campaign_id !== campaign.campaign_id) return false;", ") return false;"), 'functions/join-campaign-service.test.js');
+mustFail('declaration marked verified even if the holdings write fails (await dropped)',
+  mutant('functions/join-campaign-service.js', "await setPersonQualifications({ auth: req.auth", "void setPersonQualifications({ auth: req.auth"), 'functions/join-campaign-service.test.js');
+mustFail('readiness ack accepts a stale nonce',
+  mutant('functions/join-campaign.js', "if (d.challenge_hash !== nonceHash) fail('readiness-nonce', 'קוד האישור אינו תואם לבדיקה האחרונה.');", ''), 'functions/join-campaign-service.test.js');
+mustFail('readiness marks ready on provider failure',
+  mutant('functions/device-readiness-service.js', "fail('unavailable', 'ספק ההתראות לא קיבל את ההודעה. נסה שוב מאוחר יותר.', 'readiness-provider');", "return Object.freeze({ ok: true, status: 'test_sent' });"), 'functions/join-campaign-service.test.js');
+mustFail('lowercase shifts accepted',
+  mutant('functions/join-campaign.js', "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C']);", "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C', 'a', 'b', 'c']);"), 'functions/join-campaign.test.js');
+
+console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 10 mutations caught).');
