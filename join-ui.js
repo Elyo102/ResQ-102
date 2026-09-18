@@ -344,6 +344,8 @@ export function blockerText(code) {
   return ({
     account_not_approved: 'החשבון עדיין לא אושר', email_not_verified: 'המייל לא אומת',
     no_push_token: 'ההתראות לא הופעלו במכשיר', device_not_ready: 'בדיקת ההתראה לא הושלמה',
-    push_token_changed: 'מזהה המכשיר השתנה — יש לבדוק שוב'
+    push_token_changed: 'מזהה המכשיר השתנה — יש לבדוק שוב',
+    qualifications_unverified: 'כשירות שהצהרת עליה ממתינה לאימות התחנה',
+    qualifications_expired: 'תוקף כשירות שאומתה פג — נדרש חידוש'
   })[code] || 'נדרשת השלמה';
 }

@@ -450,6 +450,10 @@ function computeReadiness(params) {
   if (status !== 'ready') blockers.push('device_not_ready');
   else if (!tokenFresh) blockers.push('push_token_changed');
   const quals = summarizeDeclarations(p.declarations, nowMs);
+  /* כשירות שהעובד הצהיר עליה ועדיין לא אומתה — או שפג תוקפה — חוסמת מוכנות.
+   * הצהרה שנדחתה אינה חוסמת: היא פשוט אינה החזקה. */
+  if (quals.pending + quals.declared > 0) blockers.push('qualifications_unverified');
+  if (quals.expired > 0) blockers.push('qualifications_expired');
   return Object.freeze({
     schema: READINESS_SCHEMA,
     operational_ready: blockers.length === 0,
@@ -462,6 +466,16 @@ function computeReadiness(params) {
     qualifications: quals,
     ready_at_ms: status === 'ready' && tokenFresh && device && Number.isSafeInteger(device.acked_at_ms) ? device.acked_at_ms : null
   });
+}
+
+/** החלטת שליחה אידמפוטנטית: אותו request_id שכבר נשלח (ולא נכשל אצל הספק)
+ *  אינו שולח שוב ואינו מחליף את קוד האישור — התשובה שאבדה משוחזרת מהמסמך. */
+function readinessSendDecision(device, requestId, nowMs, dayKey) {
+  const d = plain(device) ? device : null;
+  if (d && d.request_id === requestId && HEX64_RE.test(String(d.challenge_hash || '')) && d.status !== 'failed') {
+    return Object.freeze({ replay: true, status: d.status, expires_at_ms: Number.isSafeInteger(d.challenge_expires_at_ms) ? d.challenge_expires_at_ms : 0 });
+  }
+  return Object.freeze(Object.assign({ replay: false }, readinessSendGate(d, nowMs, dayKey)));
 }
 
 /** האם מותר לשלוח בדיקה עכשיו — מכסה יומית ו-cooldown. */
@@ -486,6 +500,29 @@ function readinessAckGate(device, nonceHash, tokenHash, nowMs) {
   return Object.freeze({ already: false });
 }
 
+/* ---------- אימות → החזקה (תוכנית כתיבה טהורה) ---------- */
+
+/** מסמך ההחזקות אחרי אימות הצהרה: המפתח נוסף (אם חסר), התוקף נשמר לצדו.
+ *  אותה צורה בדיוק כמו setPersonQualifications של מנוע הסידור + valid_until. */
+function holdingsAfterVerification(params) {
+  const p = params || {};
+  const live = plain(p.holdings) ? p.holdings : null;
+  const before = live && Array.isArray(live.qualifications) ? live.qualifications.filter((k) => typeof k === 'string') : [];
+  const catalog = Array.isArray(p.catalog) ? p.catalog : [];
+  const entry = catalog.find((q) => q && q.key === p.key);
+  if (!entry || entry.active === false) fail('holdings-unknown', 'הכשירות אינה קיימת או מושבתת בקטלוג התחנה.');
+  const order = new Map(catalog.map((q, i) => [q.key, i]));
+  const next = before.indexOf(p.key) === -1 ? before.concat([p.key]) : before.slice();
+  next.sort((a, b) => (order.has(a) ? order.get(a) : 1e9) - (order.has(b) ? order.get(b) : 1e9));
+  const validUntil = {};
+  const prev = plain(live && live.valid_until) ? live.valid_until : {};
+  next.forEach((k) => { if (Number.isSafeInteger(prev[k]) && prev[k] > 0) validUntil[k] = prev[k]; });
+  if (Number.isSafeInteger(p.valid_until_ms) && p.valid_until_ms > 0) validUntil[p.key] = p.valid_until_ms;
+  else delete validUntil[p.key];
+  const revision = (live && Number.isInteger(live.revision) ? live.revision : 0) + 1;
+  return Object.freeze({ before, qualifications: next, valid_until: validUntil, revision, changed: before.indexOf(p.key) === -1 || (prev[p.key] || null) !== (validUntil[p.key] || null) });
+}
+
 /* ---------- WhatsApp ---------- */
 
 /** טקסט קבוע להעתקה. אין כאן API. */
@@ -505,6 +542,7 @@ module.exports = Object.freeze({
   newCampaignToken, parseToken, tokenMatches, normalizeCreateInput, buildCampaignDoc, deriveState, publicView,
   applyStatusAction, adminView, normalizeRedemptionInput, normalizeDeclarations, buildRegistrant, replayMatches,
   normalizeReviewAction, applyReviewAction, normalizeVerifyInput, effectiveDeclarationStatus, planDeclarationUpdate,
-  promoteDeclarations, summarizeDeclarations, computeReadiness, readinessSendGate, readinessAckGate, whatsappMessage,
+  promoteDeclarations, summarizeDeclarations, computeReadiness, readinessSendGate, readinessSendDecision, readinessAckGate,
+  holdingsAfterVerification, whatsappMessage,
   assertNoSecret, toMillis
 });

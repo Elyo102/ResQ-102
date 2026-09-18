@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const approvalModule = require('./onboarding-approval-authority');
 const H = require('./join-campaign-test-harness');
-const { fakeDb, rejects, invitations, AUTH_USERS, authUser, req, build, seedHr, createInput, redeemInput, buildReadiness, hash, NOW, contract, onboardingContract } = H;
+const { fakeDb, rejects, invitations, AUTH_USERS, authUser, req, build, seedHr, createInput, redeemInput, buildReadiness, hash, NOW, contract, onboardingContract, qualifications } = H;
 void fakeDb; void crypto;
 
 let passed = 0; const failed = [];
@@ -227,53 +227,69 @@ await test('registrants page: derived request status, email_verified, no N+1 bey
   void ctx;
 });
 
-await test('verify qualification: super only, station scope, holdings written via existing mechanism before verified; retry idempotent', async () => {
-  const { db, service, created, ctx } = await redeemHappy();
-  const { qualCalls } = ctx;
+await test('verify qualification: super only, one transaction writes holdings (engine shape + valid_until) and the declaration together; super verifies any station', async () => {
+  const { db, service, created } = await redeemHappy();
   const vin = (over) => Object.assign({ campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'verify', expected_revision: 1, request_id: 'req_verify_000001' }, over || {});
   await rejects(service.verifyQualificationDeclaration(req('hr1', vin())), 'super', 'permission-denied');
-  // before approval: declaration is only declared → refused, no holdings write
+  // לפני אישור: ההצהרה רק declared → סירוב, ואין החזקה
   await rejects(service.verifyQualificationDeclaration(req('super1', vin())), 'declaration-not-pending');
-  assert.equal(qualCalls.length, 0);
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1'), undefined);
   db._store.delete('registration_requests/w1');
   db._put('stations/eilat/users/w1', { role: 'firefighter', active: true, is_active: true, stationId: 'eilat' });
-  // station scope: super of haifa cannot verify eilat
+  // מנהל-על של תחנה אחרת (claim haifa) מאמת קמפיין של אילת — התחנה נגזרת מהקמפיין
   authUser('super_h', { customClaims: { super: true, stationId: 'haifa' } });
-  await rejects(service.verifyQualificationDeclaration(req('super_h', vin())), 'station-scope-gap');
-  const ok = await service.verifyQualificationDeclaration(req('super1', vin()));
-  assert.equal(ok.holdings_written, true); assert.equal(qualCalls.length, 1); assert.deepEqual(qualCalls[0].qualifications, ['driver']); assert.equal(qualCalls[0].person, 'w1');
-  assert.deepEqual(db._get('stations/eilat/schedule_person_qualifications/w1').qualifications, ['driver']);
+  const ok = await service.verifyQualificationDeclaration(req('super_h', vin()));
+  assert.equal(ok.holdings_written, true); assert.equal(ok.station_id, 'eilat'); assert.equal(ok.holdings_revision, 1);
+  const holdings = db._get('stations/eilat/schedule_person_qualifications/w1');
+  assert.deepEqual(holdings.qualifications, ['driver']); assert.equal(holdings.revision, 1); assert.equal(holdings.cleared, false); assert.equal(holdings.updated_by, 'super_h');
+  assert.deepEqual(holdings.valid_until, { driver: NOW + 86400000 * 30 });
+  assert.equal(db._get('stations/haifa/schedule_person_qualifications/w1'), undefined, 'never written to the super\'s own station');
+  assert.equal(db._get('stations/eilat/schedule_state/qualifications').holdings_revision, 1);
+  const auditDocs = Array.from(db._store.keys()).filter((k) => k.startsWith('stations/eilat/schedule_qualification_audit/qa_'));
+  assert.equal(auditDocs.length, 1); assert.deepEqual(db._get(auditDocs[0]).added, ['driver']); assert.equal(db._get(auditDocs[0]).source, 'join_campaign_verification');
   const reg = db._get('join_campaigns/' + created.campaign_id + '/registrants/w1');
-  assert.equal(reg.declarations[0].status, 'verified'); assert.equal(reg.declarations[0].verified_by, 'super1'); assert.equal(reg.revision, 2);
-  // second verify of same key: nothing pending
-  await rejects(service.verifyQualificationDeclaration(req('super1', vin({ expected_revision: 2 }))), 'declaration-missing', 'not-found');
-  // holdings written but declaration step failed → retry completes without a second holdings call
-  const { db: db2, service: s2, created: c2, ctx: ctx2 } = await redeemHappy({ ctx: build({ setPersonQualifications: null }) }).catch(() => ({}));
-  void db2; void s2; void c2; void ctx2;
+  assert.equal(reg.declarations[0].status, 'verified'); assert.equal(reg.declarations[0].verified_by, 'super_h'); assert.equal(reg.revision, 2);
+  // המנוע רואה את ההחזקה בתוקף, ומסנן אותה אחרי הפקיעה
+  assert.deepEqual(qualifications.effectiveHoldings(holdings, NOW), ['driver']);
+  assert.deepEqual(qualifications.effectiveHoldings(holdings, NOW + 86400000 * 31), []);
+  // אותו request_id שוב (תשובה שאבדה) → קבלה כפולה, שום כתיבה נוספת
+  const dup = await service.verifyQualificationDeclaration(req('super1', vin({ expected_revision: 2 })));
+  assert.equal(dup.duplicate, true); assert.equal(dup.holdings_written, false);
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1').revision, 1);
+  // כשירות שנייה: נוספת בלי לדרוס את הראשונה ואת תוקפה
+  db._put('join_campaigns/' + created.campaign_id + '/registrants/w1', Object.assign({}, reg, { declarations: reg.declarations.concat([{ key: 'hazmat', declared_at_ms: NOW, valid_until_ms: null, reference: null, status: 'pending_verification', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 }]) }));
+  const second = await service.verifyQualificationDeclaration(req('super1', vin({ key: 'hazmat', expected_revision: 2, request_id: 'req_verify_000002' })));
+  assert.equal(second.holdings_revision, 2);
+  const h2 = db._get('stations/eilat/schedule_person_qualifications/w1');
+  assert.deepEqual(h2.qualifications, ['driver', 'hazmat']); assert.deepEqual(h2.valid_until, { driver: NOW + 86400000 * 30 });
+  // דחייה: נימוק חובה, ההחזקות אינן נוגעות
+  await rejects(service.verifyQualificationDeclaration(req('super1', { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'reject', reason: 'אין אסמכתא', expected_revision: 3, request_id: 'req_verify_000003' })), 'declaration-missing', 'not-found');
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1').revision, 2);
 });
 
-await test('verify: if holdings write fails, declaration stays pending (never verified without holdings); retry after partial completes', async () => {
-  let mode = 'fail';
-  const ctx = build({ setPersonQualifications: async (r) => {
-    if (mode === 'fail') { const e = new Error('engine down'); e.code = 'unavailable'; throw e; }
-    const ref = 'stations/eilat/schedule_person_qualifications/' + r.data.person; ctx.db._put(ref, { qualifications: r.data.qualifications, revision: 1 }); return { ok: true };
-  } });
-  const { db, service, created } = await redeemHappy({ ctx });
+await test('verify: atomic — a failed commit leaves neither holdings nor a verified declaration; stale revision writes nothing', async () => {
+  const { db, service, created } = await redeemHappy();
   db._store.delete('registration_requests/w1');
   db._put('stations/eilat/users/w1', { role: 'firefighter', active: true, is_active: true, stationId: 'eilat' });
-  const vin = { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'verify', expected_revision: 1, request_id: 'req_verify_000002' };
-  await rejects(service.verifyQualificationDeclaration(req('super1', vin)), 'unavailable');
-  assert.equal(db._get('join_campaigns/' + created.campaign_id + '/registrants/w1').declarations[0].status, 'declared');
+  const vin = { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'verify', expected_revision: 1, request_id: 'req_verify_000009' };
+  db._hooks.beforeCommit = async () => { throw new Error('commit failed'); };
+  await assert.rejects(service.verifyQualificationDeclaration(req('super1', vin)), /commit failed/);
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1'), undefined, 'no holdings after a failed commit');
+  assert.equal(db._get('join_campaigns/' + created.campaign_id + '/registrants/w1').declarations[0].status, 'declared', 'no verified declaration after a failed commit');
+  assert.equal(Array.from(db._store.keys()).filter((k) => k.includes('schedule_qualification_audit')).length, 0);
+  await rejects(service.verifyQualificationDeclaration(req('super1', Object.assign({}, vin, { expected_revision: 7 }))), 'revision', 'aborted');
   assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1'), undefined);
-  // partial: holdings already contain the key (written earlier by a manager) → no engine call, declaration verified
-  db._put('stations/eilat/schedule_person_qualifications/w1', { qualifications: ['driver'], revision: 4 });
-  const ok = await service.verifyQualificationDeclaration(req('super1', vin));
-  assert.equal(ok.holdings_written, false);
-  assert.equal(db._get('join_campaigns/' + created.campaign_id + '/registrants/w1').declarations[0].status, 'verified');
-  // reject requires reason, never touches holdings
-  mode = 'ok';
-  const rej = await service.verifyQualificationDeclaration(req('super1', { campaign_id: created.campaign_id, uid: 'w1', key: 'driver', action: 'reject', reason: 'אין אסמכתא', expected_revision: 2, request_id: 'req_verify_000003' })).catch((e) => e);
-  assert.equal(rej.code, 'declaration-missing');
+  // כשירות מושבתת בקטלוג התחנה → אין אימות ואין החזקה
+  db._put('stations/eilat/schedule_qualifications/driver', { active: false, label: 'נהגים', revision: 1 });
+  await rejects(service.verifyQualificationDeclaration(req('super1', vin)), 'holdings-unknown');
+  assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1'), undefined);
+  db._store.delete('stations/eilat/schedule_qualifications/driver');
+  // תוקף שפג בין ההצהרה לאימות → declaration-expired, שום כתיבה
+  H.setClock(NOW + 86400000 * 31);
+  await rejects(service.verifyQualificationDeclaration(req('super1', vin)), 'declaration-expired');
+  H.setClock(NOW);
+  const okNow = await service.verifyQualificationDeclaration(req('super1', vin));
+  assert.equal(okNow.holdings_written, true);
 });
 
 await test('readiness: approved worker only, own token only, nonce ack, quota/cooldown, provider failure is not success', async () => {
@@ -290,21 +306,34 @@ await test('readiness: approved worker only, own token only, nonce ack, quota/co
   // client cannot pick another uid: no uid field accepted
   await rejects(service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0001', token, uid: 'other' })), 'input', 'invalid-argument');
   const r1 = await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0001', token }));
-  assert.equal(r1.status, 'test_sent'); assert.equal(sent.length, 1); assert.equal(sent[0].token, token); assert.equal(sent[0].data.type, 'readiness_test'); assert.equal(sent[0].data.important, '0');
+  assert.equal(r1.status, 'test_sent'); assert.equal(r1.replayed, false); assert.equal(sent.length, 1);
+  // replay של אותו request_id (תשובה שאבדה): לא נשלח שוב, אין audit שני, וקוד האישור המקורי נשאר תקף
+  const r1b = await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0001', token }));
+  assert.equal(r1b.replayed, true); assert.equal(r1b.status, 'test_sent'); assert.equal(sent.length, 1); assert.equal(audits.filter((a) => a.action === 'readiness_test_sent').length, 1);
+  assert.equal(db._get('stations/eilat/device_readiness/ff1').challenge_hash, hash(sent[0].data.nonce)); assert.equal(sent[0].token, token); assert.equal(sent[0].data.type, 'readiness_test'); assert.equal(sent[0].data.important, '0');
   assert.equal(sent[0].data.tag.startsWith('callout'), false);
   const nonce = sent[0].data.nonce;
+  // מוכנות: כשירות ממתינה לאימות חוסמת גם אחרי ack
+  db._put('join_registrant_index/ff1', { uid: 'ff1', campaign_id: 'AAAAAAAAAAAAAAAA', station_id: 'eilat' });
+  db._put('join_campaigns/AAAAAAAAAAAAAAAA/registrants/ff1', { schema: 'join-registrant-v1', uid: 'ff1', declarations: [{ key: 'driver', status: 'declared', valid_until_ms: null }], revision: 1 });
   const dev = db._get('stations/eilat/device_readiness/ff1');
   assert.equal(dev.challenge_hash, hash(nonce)); assert.equal(dev.token_hash, hash(token)); assert.equal(JSON.stringify(dev).includes(token), false); assert.equal(JSON.stringify(dev).includes(nonce), false);
   assert.equal(JSON.stringify(audits).includes(token), false);
   // status before ack
   let st = await service.getMyReadiness(req('ff1', {}));
-  assert.equal(st.operational_ready, false); assert.deepEqual(st.blockers, ['device_not_ready']); assert.equal(st.device.status, 'test_sent');
+  assert.equal(st.operational_ready, false); assert.deepEqual(st.blockers, ['device_not_ready', 'qualifications_unverified']); assert.equal(st.device.status, 'test_sent');
   // wrong nonce, wrong token
   await rejects(service.ackReadinessTestPush(req('ff1', { nonce: 'f'.repeat(32), token })), 'readiness-nonce');
   await rejects(service.ackReadinessTestPush(req('ff1', { nonce, token: token + 'y' })), 'readiness-token');
   const ack = await service.ackReadinessTestPush(req('ff1', { nonce, token }));
   assert.deepEqual(ack, { ok: true, already: false, status: 'ready' });
   assert.deepEqual(await service.ackReadinessTestPush(req('ff1', { nonce, token })), { ok: true, already: true, status: 'ready' });
+  st = await service.getMyReadiness(req('ff1', {}));
+  assert.equal(st.operational_ready, false); assert.deepEqual(st.blockers, ['qualifications_unverified']); assert.equal(st.qualifications.pending, 1);
+  db._put('join_campaigns/AAAAAAAAAAAAAAAA/registrants/ff1', { schema: 'join-registrant-v1', uid: 'ff1', declarations: [{ key: 'driver', status: 'verified', valid_until_ms: NOW - 1 }], revision: 2 });
+  st = await service.getMyReadiness(req('ff1', {}));
+  assert.equal(st.operational_ready, false); assert.deepEqual(st.blockers, ['qualifications_expired']);
+  db._put('join_campaigns/AAAAAAAAAAAAAAAA/registrants/ff1', { schema: 'join-registrant-v1', uid: 'ff1', declarations: [{ key: 'driver', status: 'verified', valid_until_ms: NOW + 1 }, { key: 'hazmat', status: 'rejected' }], revision: 3 });
   st = await service.getMyReadiness(req('ff1', {}));
   assert.equal(st.operational_ready, true); assert.equal(st.ready_at_ms, NOW);
   // token removed → no longer ready (computed)
@@ -322,8 +351,12 @@ await test('readiness: approved worker only, own token only, nonce ack, quota/co
   await rejects(service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0006', token })), 'readiness-provider', 'unavailable');
   assert.equal(db._get('stations/eilat/device_readiness/ff1').status, 'failed');
   assert.equal(audits[audits.length - 1].sealed.outcome, 'failed');
-  // expired challenge cannot be acked
+  // אחרי כשל ספק, אותו request_id מותר לשליחה חוזרת (אין replay של כשל) — אחרי cooldown
   setSendMode('ok'); H.setClock(H.getClock() + 61000);
+  const resend = await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0006', token }));
+  assert.equal(resend.replayed, false); assert.equal(db._get('stations/eilat/device_readiness/ff1').status, 'test_sent');
+  // expired challenge cannot be acked
+  H.setClock(H.getClock() + 61000);
   await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0007', token }));
   const n2 = sent[sent.length - 1].data.nonce; H.setClock(H.getClock() + contract.READINESS_CHALLENGE_MS + 1);
   await rejects(service.ackReadinessTestPush(req('ff1', { nonce: n2, token })), 'readiness-expired');

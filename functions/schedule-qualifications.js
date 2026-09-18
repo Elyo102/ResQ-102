@@ -163,6 +163,34 @@ function diffHoldings(before, after) {
   };
 }
 
+/* 42H.21 · תוקף להחזקה. מסמך ההחזקות נושא (אופציונלית) מפה
+ * `valid_until: { key: ms }`. כשירות שתוקפה עבר אינה החזקה אפקטיבית —
+ * היא נשמרת במסמך (הקצאה, ביקורת) אך אינה נספרת בשום מסלול סידור.
+ * מפתח ללא ערך במפה = ללא תוקף (החזקה קבועה, כמו לפני 42H.21). */
+function validUntilMap(value) {
+  const raw = plain(value) && plain(value.valid_until) ? value.valid_until : {};
+  const out = Object.create(null);
+  Object.keys(raw).forEach((key) => {
+    if (validKey(key) && Number.isSafeInteger(raw[key]) && raw[key] > 0) out[key] = raw[key];
+  });
+  return out;
+}
+/** ההחזקות האפקטיביות של מסמך אדם ברגע `nowMs`: מפתחות שלא פג תוקפם. */
+function effectiveHoldings(value, nowMs) {
+  const held = plain(value) && Array.isArray(value.qualifications) ? value.qualifications : [];
+  const until = validUntilMap(value);
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  return held.filter((key) => typeof key === 'string' && (until[key] === undefined || until[key] > now));
+}
+/** בכתיבת החזקות חדשות: שומרים תוקף רק למפתחות שנשארו. */
+function retainValidUntil(previousValue, nextKeys) {
+  const until = validUntilMap(previousValue);
+  const keep = new Set(Array.isArray(nextKeys) ? nextKeys : []);
+  const out = {};
+  Object.keys(until).forEach((key) => { if (keep.has(key)) out[key] = until[key]; });
+  return out;
+}
+
 /** ספירת מחזיקים לכל כשירות מתוך מסמכי האנשים. */
 function holdersByKey(personDocs) {
   // Object.create(null): אין ירושה מ-Object.prototype, ולכן `constructor`
@@ -182,5 +210,6 @@ function holdersByKey(personDocs) {
 module.exports = Object.freeze({
   QualificationError, CANONICAL, CANONICAL_KEYS, CRITICAL_KEYS, KEY_RE, RESERVED_KEYS, validKey,
   MAX_LABEL, MAX_CUSTOM, MAX_PER_PERSON, MAX_MINIMUM,
-  mergeCatalog, normalizeSave, deleteBlocker, normalizeHoldings, diffHoldings, holdersByKey
+  mergeCatalog, normalizeSave, deleteBlocker, normalizeHoldings, diffHoldings, holdersByKey,
+  validUntilMap, effectiveHoldings, retainValidUntil
 });

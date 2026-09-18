@@ -4616,6 +4616,8 @@ function createScheduleRuntime(deps) {
 
   function qualificationCatalogRef(sid) { return stationRef(sid).collection('schedule_qualifications'); }
   function personQualificationsRef(sid, uid) { return stationRef(sid).collection('schedule_person_qualifications').doc(uid); }
+  // 42H.21 · כל מסלול קריאה של החזקות עובר כאן: כשירות שפג תוקפה (valid_until) אינה אפקטיבית.
+  function heldNow(value) { return qualifications.effectiveHoldings(value, Date.parse(clock())); }
   function qualificationsMetaRef(sid) { return stationRef(sid).collection('schedule_state').doc('qualifications'); }
   function qualificationAuditRef(sid, requestId) {
     return stationRef(sid).collection('schedule_qualification_audit').doc('qa_' + hash(sid + '|' + requestId).slice(0, 40));
@@ -4677,12 +4679,12 @@ function createScheduleRuntime(deps) {
       }
       const docs = await readPeopleById(
         stationRef(ctx.sid).collection('schedule_person_qualifications'), sourcePeople, read,
-        ['qualifications', 'revision']
+        ['qualifications', 'revision', 'valid_until']
       );
       const selected = new Map();
       docs.forEach((doc) => {
         const value = doc.data() || {};
-        selected.set(doc.id, { qualifications: Array.isArray(value.qualifications) ? value.qualifications.slice() : [], revision: Number.isInteger(value.revision) ? value.revision : 0 });
+        selected.set(doc.id, { qualifications: heldNow(value), revision: Number.isInteger(value.revision) ? value.revision : 0 });
       });
       return selected;
     }
@@ -4693,7 +4695,7 @@ function createScheduleRuntime(deps) {
     const out = new Map();
     snap.docs.forEach((doc) => {
       const value = doc.data() || {};
-      out.set(doc.id, { qualifications: Array.isArray(value.qualifications) ? value.qualifications.slice() : [], revision: Number.isInteger(value.revision) ? value.revision : 0 });
+      out.set(doc.id, { qualifications: heldNow(value), revision: Number.isInteger(value.revision) ? value.revision : 0 });
     });
     return out;
   }
@@ -4708,7 +4710,7 @@ function createScheduleRuntime(deps) {
     const out = new Map();
     snap.docs.forEach((doc) => {
       const value = doc.data() || {};
-      const held = Array.isArray(value.qualifications) ? value.qualifications.slice() : [];
+      const held = heldNow(value);
       if (held.indexOf(key) !== -1) {
         out.set(doc.id, {
           qualifications: held,
@@ -4728,7 +4730,7 @@ function createScheduleRuntime(deps) {
     const out = new Map();
     snap.docs.forEach((doc) => {
       const value = doc.data() || {};
-      const held = Array.isArray(value.qualifications) ? value.qualifications.slice() : [];
+      const held = heldNow(value);
       if (held.length) out.set(doc.id, {
         qualifications:held,
         revision:Number.isInteger(value.revision) ? value.revision : 0
@@ -5008,6 +5010,8 @@ function createScheduleRuntime(deps) {
       tx.set(personRef, {
         station_id: ctx.sid, uid, qualifications: next, revision: nextRevision,
         cleared: next.length === 0,
+        // 42H.21 · תוקף שנקבע באימות הצהרת קליטה נשמר למפתחות שנשארו; מפתח שהוסר מאבד גם את תוקפו.
+        valid_until: qualifications.retainValidUntil(live, next),
         updated_by: ctx.uid, updated_at: FV.serverTimestamp()
       });
       tx.set(qualificationsMetaRef(ctx.sid), { station_id: ctx.sid, holdings_revision: liveMeta + 1, updated_at: FV.serverTimestamp() }, { merge: true });

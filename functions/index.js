@@ -503,7 +503,6 @@ const joinCampaignService = joinCampaignServiceModule.createJoinCampaignService(
   now: Date.now, randomBytes: n => crypto.randomBytes(n),
   hash: value => crypto.createHash('sha256').update(String(value)).digest('hex'),
   timingSafeEqual: crypto.timingSafeEqual,
-  setPersonQualifications: req => invokeSchedule('setPersonQualifications', req),
   knownDistricts: KNOWN_DISTRICTS,
   hrCap: ASSIGN_MAX_RANK.hr_coordinator
 });

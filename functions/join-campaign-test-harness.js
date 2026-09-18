@@ -149,7 +149,6 @@ function build(over) {
     openAudit: async (auth, action, target, details) => { const row = { action, target, details, sealed: null }; audits.push(row); return { set: async (x) => { row.sealed = x; } }; },
     sealAudit: async (ref, extra) => ref.set(extra),
     now: () => clock, randomBytes: (n) => crypto.randomBytes(n), hash, timingSafeEqual: crypto.timingSafeEqual,
-    setPersonQualifications: o.setPersonQualifications || (async (r) => { qualCalls.push(r.data); const ref = 'stations/' + r.auth.token.stationId + '/schedule_person_qualifications/' + r.data.person; const prev = db._get(ref) || { qualifications: [], revision: 0 }; if ((prev.revision || 0) !== r.data.expected_revision) { const e = new Error('stale'); e.code = 'failed-precondition'; throw e; } db._put(ref, { qualifications: r.data.qualifications, revision: (prev.revision || 0) + 1 }); return { ok: true }; }),
     knownDistricts: ['south', 'north'], hrCap: 3
   });
   return { db, service, audits, qualCalls };

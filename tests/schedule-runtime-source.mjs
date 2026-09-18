@@ -2024,8 +2024,8 @@ check('§1 the publish gap gate is recomputed inside the publish transaction fro
   assert.ok(runtime.includes('async function loadQualificationCatalog(ctx, read)') && runtime.includes('(read || directRead)(qualificationCatalogRef(ctx.sid)'));
   assert.ok(runtime.includes('async function loadPersonQualifications(ctx, read, sourcePeople)')
     && runtime.includes("stationRef(ctx.sid).collection('schedule_person_qualifications'), sourcePeople, read")
-    && runtime.includes("['qualifications', 'revision']"),
-  'qualification holdings must be read by the signed source identities with an explicit field mask');
+    && runtime.includes("['qualifications', 'revision', 'valid_until']"),
+  'qualification holdings must be read by the signed source identities with an explicit field mask (42H.21: valid_until included so expiry is evaluated)');
   assert.ok(runtime.includes('async function loadGapPolicy(ctx, read)') && runtime.includes('(read || directRead)(gapPolicyRef(ctx.sid))'));
   assert.ok(runtime.includes('async function loadLiveGapPeople(ctx, sourcePeople, read)')
     && runtime.includes("readPeopleById(stationRef(ctx.sid).collection('users'), known, read")

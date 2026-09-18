@@ -73,14 +73,16 @@ function createDeviceReadinessService(deps) {
     const fence = await deliveryFence.check({ stationId: actor.sid, globalSuppressed: false });
     if (!fence || fence.allowed !== true) fail('failed-precondition', 'התחנה אינה במצב שמאפשר משלוח התראות.', 'station-' + String((fence && fence.reason) || 'fence'));
 
+    /* ה-nonce נולד פעם אחת לקריאה; אם הטרנזקציה מזהה replay של אותו request_id
+     * הוא נזרק — שום דבר לא נשלח ו-challenge_hash השמור נשאר בתוקף. כך תשובה
+     * שאבדה משוחזרת מהמסמך במקום להישלח שוב עם קוד אישור שאינו תואם. */
     const nonce = Buffer.from(randomBytes(16)).toString('hex');
     const nonceHash = hash(nonce);
-    const auditRef = auditEnabled ? await openAudit(actor.auth, 'readiness_test_sent', actor.uid, { station_id: actor.sid }) : null;
-    await db.runTransaction(async (tx) => {
+    const decision = await db.runTransaction(async (tx) => {
       const [tokens, device] = await Promise.all([tx.get(tokensRef(actor.sid, actor.uid)).then(dataOf), tx.get(readinessRef(actor.sid, actor.uid)).then(dataOf)]);
       if (!tokenHashes(tokens).some((t) => t.token_hash === tokenHash)) fail('failed-precondition', 'המכשיר הזה עדיין לא רשום להתראות. אשר התראות קודם.', 'readiness-token-unknown');
-      if (device && device.request_id === input.request_id && device.challenge_hash) return; /* replay של אותה שליחה */
-      const gate = guard(() => contract.readinessSendGate(device, nowMs, dayKey(nowMs)));
+      const gate = guard(() => contract.readinessSendDecision(device, input.request_id, nowMs, dayKey(nowMs)));
+      if (gate.replay) return gate;
       tx.set(readinessRef(actor.sid, actor.uid), {
         schema: contract.READINESS_SCHEMA, uid: actor.uid, status: 'test_sent', token_hash: tokenHash,
         challenge_hash: nonceHash, challenge_expires_at_ms: nowMs + contract.READINESS_CHALLENGE_MS,
@@ -89,7 +91,12 @@ function createDeviceReadinessService(deps) {
         request_id: input.request_id, revision: (device && Number.isInteger(device.revision) ? device.revision : 0) + 1,
         updated_at: serverTimestamp()
       }, { merge: true });
+      return gate;
     });
+    if (decision.replay) {
+      return Object.freeze({ ok: true, replayed: true, status: decision.status, expires_at_ms: decision.expires_at_ms });
+    }
+    const auditRef = auditEnabled ? await openAudit(actor.auth, 'readiness_test_sent', actor.uid, { station_id: actor.sid }) : null;
     let messageId = '';
     try {
       messageId = await sendToToken({ token, data: {
@@ -103,7 +110,7 @@ function createDeviceReadinessService(deps) {
       fail('unavailable', 'ספק ההתראות לא קיבל את ההודעה. נסה שוב מאוחר יותר.', 'readiness-provider');
     }
     if (auditRef) await sealAudit(auditRef, { provider_message_id_hash: messageId ? hash(String(messageId)) : '' });
-    return Object.freeze({ ok: true, status: 'test_sent', expires_at_ms: nowMs + contract.READINESS_CHALLENGE_MS });
+    return Object.freeze({ ok: true, replayed: false, status: 'test_sent', expires_at_ms: nowMs + contract.READINESS_CHALLENGE_MS });
   }
 
   async function ackReadinessTestPush(req) {

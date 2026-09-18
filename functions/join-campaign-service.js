@@ -19,13 +19,13 @@ function createJoinCampaignService(deps) {
   for (const name of ['db', 'contract', 'invitations', 'onboardingContract', 'qualifications', 'serverTimestamp',
     'FieldValue', 'fail', 'requireSuper', 'requireIdentity', 'requireAuth', 'getAuthUser', 'getAuthUsers',
     'resolveStation', 'openAudit', 'sealAudit', 'now', 'randomBytes', 'hash', 'timingSafeEqual',
-    'setPersonQualifications', 'knownDistricts']) {
+    'knownDistricts']) {
     if (d[name] === undefined || d[name] === null) throw new TypeError('join campaign dependency is required: ' + name);
   }
   if (!Number.isInteger(d.hrCap) || d.hrCap < 1) throw new TypeError('join campaign dependency is required: hrCap');
   const { db, contract, invitations, onboardingContract, qualifications, serverTimestamp, FieldValue, fail,
     requireSuper, requireIdentity, requireAuth, getAuthUser, getAuthUsers, resolveStation, openAudit, sealAudit,
-    now, randomBytes, hash, timingSafeEqual, setPersonQualifications, knownDistricts, hrCap } = d;
+    now, randomBytes, hash, timingSafeEqual, knownDistricts, hrCap } = d;
   const auditEnabled = d.auditEnabled !== false;
 
   const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -40,7 +40,6 @@ function createJoinCampaignService(deps) {
   const liveUserRef = (sid, uid) => db.doc('stations/' + sid + '/users/' + uid);
   const catalogQuery = (sid) => db.collection('stations/' + sid + '/schedule_qualifications')
     .limit(qualifications.MAX_CUSTOM + qualifications.CANONICAL.length + 1);
-  const holdingsRef = (sid, uid) => db.doc('stations/' + sid + '/schedule_person_qualifications/' + uid);
   const quotaRef = (cid, hourKey) => db.doc('join_campaign_inspect_quota/' + cid + '_' + hourKey);
 
   function contractFail(error) {
@@ -401,56 +400,70 @@ function createJoinCampaignService(deps) {
     });
   }
 
-  /* ---------- אימות כשירות — מנהל-על בלבד ---------- */
+  /* ---------- אימות כשירות — מנהל-על בלבד, טרנזקציה אחת ---------- */
 
+  const holdingsRef = (sid, uid) => db.doc('stations/' + sid + '/schedule_person_qualifications/' + uid);
+  const holdingsMetaRef = (sid) => db.doc('stations/' + sid + '/schedule_state/qualifications');
+  const catalogEntryRef = (sid, key) => db.doc('stations/' + sid + '/schedule_qualifications/' + key);
+  const holdingsAuditRef = (sid, requestId) => db.doc('stations/' + sid + '/schedule_qualification_audit/qa_' + hash(sid + '|' + requestId).slice(0, 40));
+
+  /* ההצהרה וההחזקה בסידור נכתבות באותה טרנזקציה — אין אמת מפוצלת. מסמך
+   * ההחזקות נכתב באותה צורה בדיוק שכותב setPersonQualifications של המנוע
+   * (qualifications, revision, cleared, updated_by/at, מטא-revision, רשומת
+   * ביקורת) ובנוסף `valid_until` — התוקף שהמנוע מסנן לפיו. התחנה נגזרת
+   * מהקמפיין בשרת; מנהל-על מאמת לכל תחנה. */
   async function verifyQualificationDeclaration(req) {
     const auth = await requireSuper(req);
     const verify = guard(() => contract.normalizeVerifyInput(req.data));
     const nowMs = now();
-    const campaign = await loadCampaignForActor({ role: 'super' }, verify.campaign_id, null);
-    const superStation = String((auth.token || {}).stationId || '');
-    if (verify.action === 'verify' && campaign.station_id !== superStation) {
-      fail('failed-precondition', 'אימות כשירות נכתב לתחנת החשבון המאמת בלבד; אימות חוצה-תחנה אינו נתמך בגרסה זו.', 'station-scope-gap');
-    }
     const auditRef = await audit(auth, 'verify_qualification_declaration', verify.uid,
       { campaign_id: verify.campaign_id, key: verify.key, action: verify.action });
-
-    /* שלב א' — ההחזקה, דרך המנגנון הקיים בלבד. רץ לפני סימון verified. */
-    let holdingsWritten = false;
-    if (verify.action === 'verify') {
-      const [registrantBefore, liveBefore, holdings] = await Promise.all([
-        registrantRef(campaign.campaign_id, verify.uid).get().then(dataOf),
-        liveUserRef(campaign.station_id, verify.uid).get().then(dataOf),
-        holdingsRef(campaign.station_id, verify.uid).get().then(dataOf)
-      ]);
-      const approved = !!(liveBefore && liveBefore.active === true && liveBefore.is_active !== false);
-      const promoted = approved ? contract.promoteDeclarations(registrantBefore).declarations : (registrantBefore && registrantBefore.declarations);
-      guard(() => contract.planDeclarationUpdate(Object.assign({}, registrantBefore, { declarations: promoted }), verify, nowMs, auth.uid));
-      const current = Array.isArray(holdings && holdings.qualifications) ? holdings.qualifications.slice() : [];
-      if (current.indexOf(verify.key) === -1) {
-        const derived = hash('join-verify|' + verify.campaign_id + '|' + verify.uid + '|' + verify.key + '|' + verify.request_id);
-        await setPersonQualifications({ auth: req.auth, rawRequest: req.rawRequest, data: {
-          request_id: 'jv_' + derived.slice(0, 40), person: verify.uid, qualifications: current.concat([verify.key]),
-          expected_revision: Number.isInteger(holdings && holdings.revision) ? holdings.revision : 0
-        } });
-        holdingsWritten = true;
-      }
-    }
-
-    /* שלב ב' — ההצהרה, רק אחרי שההחזקה קיימת. */
     const result = await db.runTransaction(async (tx) => {
-      const [registrant, live] = await Promise.all([
+      const campaign = await loadCampaignForActor({ role: 'super' }, verify.campaign_id, tx);
+      const sid = campaign.station_id;
+      const [registrant, live, holdings, meta, catalogEntry, priorAudit] = await Promise.all([
         tx.get(registrantRef(campaign.campaign_id, verify.uid)).then(dataOf),
-        tx.get(liveUserRef(campaign.station_id, verify.uid)).then(dataOf)
+        tx.get(liveUserRef(sid, verify.uid)).then(dataOf),
+        tx.get(holdingsRef(sid, verify.uid)).then(dataOf),
+        tx.get(holdingsMetaRef(sid)).then(dataOf),
+        tx.get(catalogEntryRef(sid, verify.key)).then(dataOf),
+        tx.get(holdingsAuditRef(sid, verify.request_id)).then(dataOf)
       ]);
+      /* אותו request_id שכבר הושלם (תשובה שאבדה): מחזירים את הקבלה, לא כותבים שוב. */
+      if (priorAudit && verify.action === 'verify') {
+        return Object.freeze({ ok: true, duplicate: true, uid: verify.uid, key: verify.key, action: 'verify',
+          revision: registrant && Number.isInteger(registrant.revision) ? registrant.revision : 0, holdings_written: false, station_id: sid });
+      }
       const approved = !!(live && live.active === true && live.is_active !== false);
       const promoted = approved && registrant ? contract.promoteDeclarations(registrant).declarations : (registrant && registrant.declarations);
       const change = guard(() => contract.planDeclarationUpdate(Object.assign({}, registrant, { declarations: promoted }), verify, nowMs, auth.uid));
-      tx.update(registrantRef(campaign.campaign_id, verify.uid), { declarations: change.declarations, revision: change.revision,
-        updated_at_ms: change.updated_at_ms, updated_at: serverTimestamp() });
-      return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: verify.action, revision: change.revision, holdings_written: holdingsWritten });
+      const patch = { declarations: change.declarations, revision: change.revision, updated_at_ms: change.updated_at_ms, updated_at: serverTimestamp() };
+      if (verify.action === 'reject') {
+        tx.update(registrantRef(campaign.campaign_id, verify.uid), patch);
+        return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: 'reject', revision: change.revision, holdings_written: false, station_id: sid });
+      }
+      if (!approved) fail('failed-precondition', 'העובד עדיין לא אושר; ההצהרה אינה ניתנת לאימות.', 'declaration-not-pending');
+      const catalog = qualifications.mergeCatalog(catalogEntry ? [Object.assign({}, catalogEntry, { key: verify.key })] : []);
+      const decl = (promoted || []).find((x) => x && x.key === verify.key) || {};
+      const plan = guard(() => contract.holdingsAfterVerification({ holdings, key: verify.key, valid_until_ms: decl.valid_until_ms || null, catalog }));
+      const fingerprint = hash(JSON.stringify({ station_id: sid, uid: auth.uid, requestId: verify.request_id, person: verify.uid, next: plan.qualifications, valid_until: plan.valid_until }));
+      tx.set(holdingsRef(sid, verify.uid), {
+        station_id: sid, uid: verify.uid, qualifications: plan.qualifications, revision: plan.revision,
+        cleared: plan.qualifications.length === 0, valid_until: plan.valid_until,
+        updated_by: auth.uid, updated_at: serverTimestamp()
+      });
+      tx.set(holdingsMetaRef(sid), { station_id: sid, holdings_revision: Number((meta && meta.holdings_revision) || 0) + 1, updated_at: serverTimestamp() }, { merge: true });
+      tx.create(holdingsAuditRef(sid, verify.request_id), Object.assign({
+        action: 'holdings', source: 'join_campaign_verification', campaign_id: campaign.campaign_id,
+        person: verify.uid, request_id: verify.request_id, fingerprint, before: plan.before, after: plan.qualifications,
+        valid_until: plan.valid_until, result: { qualifications: plan.qualifications, revision: plan.revision },
+        by: auth.uid, at: serverTimestamp()
+      }, qualifications.diffHoldings(plan.before, plan.qualifications)));
+      tx.update(registrantRef(campaign.campaign_id, verify.uid), patch);
+      return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: 'verify', revision: change.revision,
+        holdings_written: true, holdings_revision: plan.revision, station_id: sid });
     });
-    await seal(auditRef, { revision: result.revision, holdings_written: holdingsWritten });
+    await seal(auditRef, { revision: result.revision, holdings_written: result.holdings_written });
     return result;
   }
 

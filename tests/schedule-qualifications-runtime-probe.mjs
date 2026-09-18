@@ -68,6 +68,15 @@ function auditOf(db) { return db._paths(ST + '/schedule_qualification_audit/').m
   eq('3.10 מחזיקים לכל כשירות', view.holders, { driver: 1, diver: 1 });
   eq('3.11 האדם בקטלוג עם כשירויותיו ו-revision', [view.people.find((p) => p.uid === 'u2').qualifications, view.people.find((p) => p.uid === 'u2').revision], [['driver', 'diver'], 2]);
   ok('3.12 הכשירויות אינן תלויות בתפקיד ההרשאה', view.people.find((p) => p.uid === 'u2').roles.indexOf('driver') === -1);
+  /* 42H.21 · תוקף להחזקה: valid_until שעבר מסיר את הכשירות מכל מסלולי הקריאה; מפתח בלי תוקף נשאר קבוע. u9 בלבד, כדי לא לגעת במצב של u2. */
+  const clockMs = Date.parse('2026-08-25T06:00:00.000Z');
+  db._put(ST + '/schedule_person_qualifications/u9', { station_id: SID, uid: 'u9', qualifications: ['driver', 'diver'], revision: 1, cleared: false,
+    valid_until: { driver: clockMs - 1, diver: clockMs + 86400000 } });
+  const expiredView = await rt.getQualificationCatalog(req({}));
+  eq('3.13 כשירות שפג תוקפה אינה נספרת אצל המחזיקים ואינה מוצגת לאדם', [expiredView.holders, expiredView.people.find((p) => p.uid === 'u9').qualifications], [{ driver: 1, diver: 2 }, ['diver']]);
+  const kept = await rt.setPersonQualifications(req({ request_id: 'h-expiry', person: 'u9', qualifications: ['diver', 'hazmat'], expected_revision: 1 }));
+  eq('3.14 כתיבת אחראי סידור שומרת תוקף למפתח שנשאר ומוחקת תוקף של מפתח שהוסר', [kept.qualifications, db._get(ST + '/schedule_person_qualifications/u9').valid_until], [['hazmat', 'diver'], { diver: clockMs + 86400000 }]);
+  db._put(ST + '/schedule_person_qualifications/u9', { station_id: SID, uid: 'u9', qualifications: [], revision: 3, cleared: true, valid_until: {} });
 
   db._put(ST + '/schedule_person_qualifications/departed-user', {
     station_id: SID, uid: 'departed-user', qualifications: ['driver'], revision: 1, cleared: false

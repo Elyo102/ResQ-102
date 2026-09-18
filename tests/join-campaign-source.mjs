@@ -56,6 +56,14 @@ check('authority wrapper returns the original authority object untouched', /cons
 check('authority wrapper blocks revoked campaigns inside the transaction', /campaign\.status === 'revoked'/.test(index.slice(index.indexOf('onboardingInitialReaderWithCampaignGate'), index.indexOf('onboardingInitialReaderWithCampaignGate') + 2000)));
 check('readiness push bypasses only global silence, keeps the station fence', /deliveryFence\.check\(\{ stationId: actor\.sid, globalSuppressed: false \}\)/.test(read('functions/device-readiness-service.js')));
 check('readiness push is data-only, type readiness_test, not important, not a callout tag', /type: TYPE,[\s\S]{0,300}important: '0'/.test(read('functions/device-readiness-service.js')) && /const TAG = 'readiness-test'/.test(read('functions/device-readiness-service.js')));
+const verifyBody = service.slice(service.indexOf('async function verifyQualificationDeclaration'), service.indexOf('return Object.freeze({ createJoinCampaign,'));
+check('verification writes holdings and the declaration in exactly one transaction, without the engine callable', verifyBody.split('db.runTransaction(').length === 2 && !verifyBody.includes('setPersonQualifications') && verifyBody.indexOf('tx.set(holdingsRef(') < verifyBody.indexOf('tx.update(registrantRef(campaign.campaign_id, verify.uid), patch);\n      return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: \'verify\''));
+check('verification derives the station from the campaign, not from the super claim', /const sid = campaign\.station_id;/.test(verifyBody) && !/token\.stationId/.test(verifyBody));
+const runtime = read('functions/schedule-runtime.js');
+check('every holdings read path in the schedule engine filters expired qualifications', (runtime.match(/heldNow\(value\)/g) || []).length >= 4 && /function heldNow\(value\) \{ return qualifications\.effectiveHoldings\(value, Date\.parse\(clock\(\)\)\); \}/.test(runtime));
+check('engine holdings write preserves valid_until for retained keys and reads it in the field mask', /valid_until: qualifications\.retainValidUntil\(live, next\)/.test(runtime) && runtime.includes("['qualifications', 'revision', 'valid_until']"));
+const readiness = read('functions/device-readiness-service.js');
+check('readiness send is idempotent: replay decision inside the transaction, nothing sent on replay', /readinessSendDecision\(device, input\.request_id/.test(readiness) && readiness.indexOf('if (decision.replay) {') < readiness.indexOf('await sendToToken('));
 check('no real employee data in fixtures (Hebrew placeholder names only)', !/יונה|אלדד/.test(read('functions/join-campaign-service.test.js') + read('functions/join-campaign.test.js') + read('tests/join-campaign-load.mjs')));
 check('tests/package.json static script runs the new unit, service and load tests', /join-campaign\.test\.js/.test(read('tests/package.json')) && /join-campaign-service\.test\.js/.test(read('tests/package.json')) && /join-campaign-load\.mjs/.test(read('tests/package.json')) && /join-campaign-source\.mjs/.test(read('tests/package.json')));
 check('tests/package.json browser script runs the new browser test', /join-campaign-browser\.mjs/.test(read('tests/package.json')));
@@ -94,8 +102,16 @@ mustFail('hr coordinator may create for another station',
   mutant('functions/join-campaign-service.js', "if (actor.role !== 'super' && campaign.station_id !== actor.station_id)", "if (false)"), 'functions/join-campaign-service.test.js');
 mustFail('replay accepted without provenance match',
   mutant('functions/join-campaign.js', "|| !plain(prov) || prov.kind !== 'join_campaign' || prov.campaign_id !== campaign.campaign_id) return false;", ") return false;"), 'functions/join-campaign-service.test.js');
-mustFail('declaration marked verified even if the holdings write fails (await dropped)',
-  mutant('functions/join-campaign-service.js', "await setPersonQualifications({ auth: req.auth", "void setPersonQualifications({ auth: req.auth"), 'functions/join-campaign-service.test.js');
+mustFail('declaration verified without the holdings write (holdings set removed from the transaction)',
+  mutant('functions/join-campaign-service.js', "      tx.set(holdingsRef(sid, verify.uid), {", "      if (false) tx.set(holdingsRef(sid, verify.uid), {"), 'functions/join-campaign-service.test.js');
+mustFail('holdings written but declaration left pending (registrant update removed)',
+  mutant('functions/join-campaign-service.js', "      tx.update(registrantRef(campaign.campaign_id, verify.uid), patch);\n      return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: 'verify'", "      return Object.freeze({ ok: true, uid: verify.uid, key: change.key, action: 'verify'"), 'functions/join-campaign-service.test.js');
+mustFail('expired holdings still counted by the engine filter',
+  mutant('functions/schedule-qualifications.js', "(until[key] === undefined || until[key] > now)", "true"), 'functions/join-campaign.test.js');
+mustFail('readiness replay resends a new challenge',
+  mutant('functions/device-readiness-service.js', "      if (gate.replay) return gate;", "      if (false) return gate;"), 'functions/join-campaign-service.test.js');
+mustFail('unverified qualification no longer blocks readiness',
+  mutant('functions/join-campaign.js', "  if (quals.pending + quals.declared > 0) blockers.push('qualifications_unverified');", ""), 'functions/join-campaign.test.js');
 mustFail('readiness ack accepts a stale nonce',
   mutant('functions/join-campaign.js', "if (d.challenge_hash !== nonceHash) fail('readiness-nonce', 'קוד האישור אינו תואם לבדיקה האחרונה.');", ''), 'functions/join-campaign-service.test.js');
 mustFail('readiness marks ready on provider failure',
@@ -103,4 +119,4 @@ mustFail('readiness marks ready on provider failure',
 mustFail('lowercase shifts accepted',
   mutant('functions/join-campaign.js', "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C']);", "const VALID_SHIFTS = Object.freeze(['A', 'B', 'C', 'a', 'b', 'c']);"), 'functions/join-campaign.test.js');
 
-console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 10 mutations caught).');
+console.log('\nJoin campaign source: ' + passed + ' PASS (static contracts + 14 mutations caught).');

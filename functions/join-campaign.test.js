@@ -223,6 +223,38 @@ test('readiness gates: quota, cooldown, nonce/token/expiry, idempotent ack', () 
   assert.deepEqual(c.readinessAckGate({ status: 'ready', challenge_hash: nh, token_hash: th, challenge_expires_at_ms: NOW - 1 }, nh, th, NOW), { already: true });
 });
 
+test('readiness: unverified or expired declarations block; rejected ones do not', () => {
+  const th = hash('tok');
+  const base = { approved: true, email_verified: true, tokens: [{ token_hash: th }], device: { status: 'ready', token_hash: th, acked_at_ms: NOW }, now_ms: NOW };
+  assert.deepEqual(c.computeReadiness(Object.assign({}, base, { declarations: [{ key: 'driver', status: 'pending_verification' }] })).blockers, ['qualifications_unverified']);
+  assert.deepEqual(c.computeReadiness(Object.assign({}, base, { declarations: [{ key: 'driver', status: 'declared' }] })).blockers, ['qualifications_unverified']);
+  assert.deepEqual(c.computeReadiness(Object.assign({}, base, { declarations: [{ key: 'driver', status: 'verified', valid_until_ms: NOW - 1 }] })).blockers, ['qualifications_expired']);
+  assert.equal(c.computeReadiness(Object.assign({}, base, { declarations: [{ key: 'driver', status: 'verified', valid_until_ms: NOW + 1 }, { key: 'x', status: 'rejected' }] })).operational_ready, true);
+});
+
+test('readiness send decision: same request id replays without a new challenge; failed send may be retried', () => {
+  const dev = { request_id: 'req_0123456789abcdef', challenge_hash: 'a'.repeat(64), status: 'test_sent', challenge_expires_at_ms: NOW + 5, attempts_today: 1, day_key: 'd', last_attempt_at_ms: NOW };
+  assert.deepEqual(c.readinessSendDecision(dev, 'req_0123456789abcdef', NOW + 1, 'd'), { replay: true, status: 'test_sent', expires_at_ms: NOW + 5 });
+  throwsCode(() => c.readinessSendDecision(dev, 'req_other_00000000000', NOW + 1, 'd'), 'readiness-cooldown');
+  assert.equal(c.readinessSendDecision(Object.assign({}, dev, { status: 'failed' }), 'req_0123456789abcdef', NOW + 61000, 'd').replay, false);
+  assert.deepEqual(c.readinessSendDecision(null, 'req_0123456789abcdef', NOW, 'd'), { replay: false, attempts_today: 1, day_key: 'd' });
+});
+
+test('holdings after verification: engine order, valid_until kept per key, inactive catalog refused', () => {
+  const cat = qualifications.mergeCatalog([]);
+  const first = c.holdingsAfterVerification({ holdings: null, key: 'driver', valid_until_ms: NOW + 5, catalog: cat });
+  assert.deepEqual(first.qualifications, ['driver']); assert.deepEqual(first.valid_until, { driver: NOW + 5 }); assert.equal(first.revision, 1); assert.equal(first.changed, true);
+  const second = c.holdingsAfterVerification({ holdings: { qualifications: ['driver'], revision: 1, valid_until: { driver: NOW + 5 } }, key: 'shift_lead', valid_until_ms: null, catalog: cat });
+  assert.deepEqual(second.qualifications, ['shift_lead', 'driver']); assert.deepEqual(second.valid_until, { driver: NOW + 5 }); assert.equal(second.revision, 2);
+  const same = c.holdingsAfterVerification({ holdings: { qualifications: ['driver'], revision: 3, valid_until: { driver: NOW + 5 } }, key: 'driver', valid_until_ms: NOW + 5, catalog: cat });
+  assert.equal(same.changed, false); assert.equal(same.revision, 4);
+  throwsCode(() => c.holdingsAfterVerification({ holdings: null, key: 'driver', valid_until_ms: null, catalog: cat.map((q) => q.key === 'driver' ? Object.assign({}, q, { active: false }) : q) }), 'holdings-unknown');
+  throwsCode(() => c.holdingsAfterVerification({ holdings: null, key: 'custom_x', valid_until_ms: null, catalog: cat }), 'holdings-unknown');
+  // engine-side filter
+  assert.deepEqual(qualifications.effectiveHoldings({ qualifications: ['driver', 'hazmat'], valid_until: { driver: NOW - 1 } }, NOW), ['hazmat']);
+  assert.deepEqual(qualifications.retainValidUntil({ valid_until: { driver: 5, hazmat: 6 } }, ['hazmat']), { hazmat: 6 });
+});
+
 test('whatsapp message contains link and expiry, no token elsewhere', () => {
   const m = c.whatsappMessage('אילת', 'https://x/login.html?join=abc', NOW);
   assert.ok(m.includes('https://x/login.html?join=abc')); assert.ok(m.includes('אילת')); assert.ok(m.includes('תקף עד'));
