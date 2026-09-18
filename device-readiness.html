@@ -104,7 +104,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <p><b>אנדרואיד:</b> ודא/י שההתראות של Chrome מותרות בהגדרות המכשיר, ושמצב "נא לא להפריע" כבוי.</p>
       <p>אפשר לשלוח עד 3 בדיקות ביום, בהפרש של דקה. כל בדיקה תקפה 10 דקות.</p>
     </details>
-    <a class="back" href="./login.html">חזרה לדף הבית</a>
+    <a class="back" id="backAlerts" href="./alerts.html">חזרה למסך ההתראות</a>
   </div>
 </div>
 
@@ -245,7 +245,7 @@ onAuthStateChanged(auth, async user => {
   SID = String(c.stationId || '');
   if (!SID || !c.role || c.super === true) {
     $('denyCard').classList.remove('hide'); $('denyWho').textContent = 'מחובר/ת כ־' + (user.email || '');
-    if (c.super === true) $('denyWhy').textContent = 'מנהל המערכת בודק מכשיר דרך מעבדת המכשיר במסך ההתראות.';
+    if (c.super === true) $('denyWhy').textContent = 'חשבון מנהל-על אינו נבדק כאן — הבדיקה מיועדת לעובדי התחנה. מעבדת המכשיר במסך ההתראות זמינה רק לחשבון בקרה מורשה.';
     renderStuckNav(user.email || ''); return;
   }
   ME = { uid: user.uid, email: user.email || '' };

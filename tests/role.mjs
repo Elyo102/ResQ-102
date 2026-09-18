@@ -30,7 +30,9 @@ const EXPECT = {
                  quals:{ work:true, edit:true },
                  board:{ work:true, edit:true },
                  swaps:{ work:true, appr:true, pend:2 },
-                 alerts:{ work:true, send:true, key:true, lab:true, opts:4 },
+                 // המעבדה הישנה נפתחת רק עם personal_lab_control חי; מנהל-על בלי ה-claim
+                 // (משתמש הבדיקה 'super') אינו רואה אותה. הכיסוי עם claim: device-readiness-entry-browser.mjs.
+                 alerts:{ work:true, send:true, key:true, lab:false, opts:4 },
                  callout:{ card:false, opts:0, pick:false },
                  guards:{ work:true, create:false },
                  faults:{ work:true, anchor:true, sev:true, grade:true },
