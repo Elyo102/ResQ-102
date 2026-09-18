@@ -429,8 +429,11 @@ function createJoinCampaignService(deps) {
         tx.get(catalogEntryRef(sid, verify.key)).then(dataOf),
         tx.get(holdingsAuditRef(sid, verify.request_id)).then(dataOf)
       ]);
-      /* אותו request_id שכבר הושלם (תשובה שאבדה): מחזירים את הקבלה, לא כותבים שוב. */
-      if (priorAudit && verify.action === 'verify') {
+      /* אותו request_id שכבר הושלם: רק אם הכוונה זהה (קמפיין, עובד, מפתח, פעולה,
+       * גרסה צפויה, מאמת) זו תשובה שאבדה ומחזירים את הקבלה. כוונה אחרת = התנגשות. */
+      const intent = contract.verificationIntentFingerprint(verify, auth.uid, hash);
+      if (priorAudit) {
+        if (priorAudit.intent_fingerprint !== intent) fail('already-exists', 'אותו מזהה פעולה כבר שימש לכוונה אחרת.', 'request-conflict');
         return Object.freeze({ ok: true, duplicate: true, uid: verify.uid, key: verify.key, action: 'verify',
           revision: registrant && Number.isInteger(registrant.revision) ? registrant.revision : 0, holdings_written: false, station_id: sid });
       }
@@ -454,7 +457,7 @@ function createJoinCampaignService(deps) {
       });
       tx.set(holdingsMetaRef(sid), { station_id: sid, holdings_revision: Number((meta && meta.holdings_revision) || 0) + 1, updated_at: serverTimestamp() }, { merge: true });
       tx.create(holdingsAuditRef(sid, verify.request_id), Object.assign({
-        action: 'holdings', source: 'join_campaign_verification', campaign_id: campaign.campaign_id,
+        action: 'holdings', source: 'join_campaign_verification', campaign_id: campaign.campaign_id, intent_fingerprint: intent,
         person: verify.uid, request_id: verify.request_id, fingerprint, before: plan.before, after: plan.qualifications,
         valid_until: plan.valid_until, result: { qualifications: plan.qualifications, revision: plan.revision },
         by: auth.uid, at: serverTimestamp()

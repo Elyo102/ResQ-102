@@ -81,7 +81,7 @@ function createDeviceReadinessService(deps) {
     const decision = await db.runTransaction(async (tx) => {
       const [tokens, device] = await Promise.all([tx.get(tokensRef(actor.sid, actor.uid)).then(dataOf), tx.get(readinessRef(actor.sid, actor.uid)).then(dataOf)]);
       if (!tokenHashes(tokens).some((t) => t.token_hash === tokenHash)) fail('failed-precondition', 'המכשיר הזה עדיין לא רשום להתראות. אשר התראות קודם.', 'readiness-token-unknown');
-      const gate = guard(() => contract.readinessSendDecision(device, input.request_id, nowMs, dayKey(nowMs)));
+      const gate = guard(() => contract.readinessSendDecision(device, input.request_id, tokenHash, nowMs, dayKey(nowMs)));
       if (gate.replay) return gate;
       tx.set(readinessRef(actor.sid, actor.uid), {
         schema: contract.READINESS_SCHEMA, uid: actor.uid, status: 'test_sent', token_hash: tokenHash,

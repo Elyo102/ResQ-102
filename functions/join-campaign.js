@@ -470,9 +470,11 @@ function computeReadiness(params) {
 
 /** החלטת שליחה אידמפוטנטית: אותו request_id שכבר נשלח (ולא נכשל אצל הספק)
  *  אינו שולח שוב ואינו מחליף את קוד האישור — התשובה שאבדה משוחזרת מהמסמך. */
-function readinessSendDecision(device, requestId, nowMs, dayKey) {
+function readinessSendDecision(device, requestId, tokenHash, nowMs, dayKey) {
   const d = plain(device) ? device : null;
   if (d && d.request_id === requestId && HEX64_RE.test(String(d.challenge_hash || '')) && d.status !== 'failed') {
+    /* אותו מזהה פעולה עם כוונה אחרת (מכשיר/טוקן אחר) אינו replay — הוא התנגשות. */
+    if (d.token_hash !== tokenHash) fail('request-conflict', 'אותו מזהה פעולה כבר שימש לבדיקה במכשיר אחר.', 'already-exists');
     return Object.freeze({ replay: true, status: d.status, expires_at_ms: Number.isSafeInteger(d.challenge_expires_at_ms) ? d.challenge_expires_at_ms : 0 });
   }
   return Object.freeze(Object.assign({ replay: false }, readinessSendGate(d, nowMs, dayKey)));
@@ -498,6 +500,14 @@ function readinessAckGate(device, nonceHash, tokenHash, nowMs) {
   if (d.token_hash !== tokenHash) fail('readiness-token', 'הבדיקה נשלחה למכשיר אחר.');
   if (!Number.isSafeInteger(d.challenge_expires_at_ms) || d.challenge_expires_at_ms <= nowMs) fail('readiness-expired', 'הבדיקה פגה. שלח בדיקה חדשה.');
   return Object.freeze({ already: false });
+}
+
+/** טביעת הכוונה של אימות: קמפיין, עובד, מפתח, פעולה, גרסה צפויה ומאמת.
+ *  replay עם אותה טביעה = קבלה; אותו request_id עם טביעה אחרת = התנגשות. */
+function verificationIntentFingerprint(verify, actorUid, hash) {
+  if (!plain(verify) || typeof hash !== 'function') throw new TypeError('verify and hash are required');
+  return hash(JSON.stringify(['join-verify-intent-v1', verify.campaign_id, verify.uid, verify.key, verify.action,
+    verify.expected_revision, String(actorUid || '')]));
 }
 
 /* ---------- אימות → החזקה (תוכנית כתיבה טהורה) ---------- */
@@ -543,6 +553,6 @@ module.exports = Object.freeze({
   applyStatusAction, adminView, normalizeRedemptionInput, normalizeDeclarations, buildRegistrant, replayMatches,
   normalizeReviewAction, applyReviewAction, normalizeVerifyInput, effectiveDeclarationStatus, planDeclarationUpdate,
   promoteDeclarations, summarizeDeclarations, computeReadiness, readinessSendGate, readinessSendDecision, readinessAckGate,
-  holdingsAfterVerification, whatsappMessage,
+  holdingsAfterVerification, verificationIntentFingerprint, whatsappMessage,
   assertNoSecret, toMillis
 });

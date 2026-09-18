@@ -252,12 +252,19 @@ await test('verify qualification: super only, one transaction writes holdings (e
   // המנוע רואה את ההחזקה בתוקף, ומסנן אותה אחרי הפקיעה
   assert.deepEqual(qualifications.effectiveHoldings(holdings, NOW), ['driver']);
   assert.deepEqual(qualifications.effectiveHoldings(holdings, NOW + 86400000 * 31), []);
-  // אותו request_id שוב (תשובה שאבדה) → קבלה כפולה, שום כתיבה נוספת
-  const dup = await service.verifyQualificationDeclaration(req('super1', vin({ expected_revision: 2 })));
+  // אותו request_id עם אותו גוף בדיוק (תשובה שאבדה) → קבלה כפולה, שום כתיבה נוספת
+  const dup = await service.verifyQualificationDeclaration(req('super_h', vin()));
   assert.equal(dup.duplicate, true); assert.equal(dup.holdings_written, false);
   assert.equal(db._get('stations/eilat/schedule_person_qualifications/w1').revision, 1);
-  // כשירות שנייה: נוספת בלי לדרוס את הראשונה ואת תוקפה
-  db._put('join_campaigns/' + created.campaign_id + '/registrants/w1', Object.assign({}, reg, { declarations: reg.declarations.concat([{ key: 'hazmat', declared_at_ms: NOW, valid_until_ms: null, reference: null, status: 'pending_verification', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 }]) }));
+  // אותו request_id עם כוונה אחרת (מפתח אחר / מאמת אחר / גרסה אחרת) → request-conflict, שום כתיבה
+  const regWithHazmat = db._get('join_campaigns/' + created.campaign_id + '/registrants/w1');
+  db._put('join_campaigns/' + created.campaign_id + '/registrants/w1', Object.assign({}, regWithHazmat, { declarations: regWithHazmat.declarations.concat([{ key: 'hazmat', declared_at_ms: NOW, valid_until_ms: null, reference: null, status: 'pending_verification', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 }]) }));
+  await rejects(service.verifyQualificationDeclaration(req('super_h', vin({ key: 'hazmat', expected_revision: 2 }))), 'request-conflict', 'already-exists');
+  await rejects(service.verifyQualificationDeclaration(req('super1', vin())), 'request-conflict', 'already-exists');
+  await rejects(service.verifyQualificationDeclaration(req('super_h', vin({ expected_revision: 2 }))), 'request-conflict', 'already-exists');
+  assert.deepEqual(db._get('stations/eilat/schedule_person_qualifications/w1').qualifications, ['driver']);
+  assert.equal(db._get('join_campaigns/' + created.campaign_id + '/registrants/w1').declarations[1].status, 'pending_verification');
+  // כשירות שנייה (מזהה פעולה חדש): נוספת בלי לדרוס את הראשונה ואת תוקפה
   const second = await service.verifyQualificationDeclaration(req('super1', vin({ key: 'hazmat', expected_revision: 2, request_id: 'req_verify_000002' })));
   assert.equal(second.holdings_revision, 2);
   const h2 = db._get('stations/eilat/schedule_person_qualifications/w1');
@@ -310,6 +317,12 @@ await test('readiness: approved worker only, own token only, nonce ack, quota/co
   // replay של אותו request_id (תשובה שאבדה): לא נשלח שוב, אין audit שני, וקוד האישור המקורי נשאר תקף
   const r1b = await service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0001', token }));
   assert.equal(r1b.replayed, true); assert.equal(r1b.status, 'test_sent'); assert.equal(sent.length, 1); assert.equal(audits.filter((a) => a.action === 'readiness_test_sent').length, 1);
+  // אותו request_id עם טוקן של מכשיר אחר → התנגשות, לא replay ולא שליחה
+  const token2 = 'device-token-2-' + 'y'.repeat(40);
+  db._put('stations/eilat/push_tokens/ff1', { tokens: [{ token, label: 'phone', added: 1 }, { token: token2, label: 'tablet', added: 2 }] });
+  await rejects(service.sendReadinessTestPush(req('ff1', { request_id: 'req_readiness_0001', token: token2 })), 'request-conflict', 'already-exists');
+  assert.equal(sent.length, 1); assert.equal(db._get('stations/eilat/device_readiness/ff1').token_hash, hash(token));
+  db._put('stations/eilat/push_tokens/ff1', { tokens: [{ token, label: 'phone', added: 1 }] });
   assert.equal(db._get('stations/eilat/device_readiness/ff1').challenge_hash, hash(sent[0].data.nonce)); assert.equal(sent[0].token, token); assert.equal(sent[0].data.type, 'readiness_test'); assert.equal(sent[0].data.important, '0');
   assert.equal(sent[0].data.tag.startsWith('callout'), false);
   const nonce = sent[0].data.nonce;

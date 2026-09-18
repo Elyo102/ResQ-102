@@ -233,11 +233,19 @@ test('readiness: unverified or expired declarations block; rejected ones do not'
 });
 
 test('readiness send decision: same request id replays without a new challenge; failed send may be retried', () => {
-  const dev = { request_id: 'req_0123456789abcdef', challenge_hash: 'a'.repeat(64), status: 'test_sent', challenge_expires_at_ms: NOW + 5, attempts_today: 1, day_key: 'd', last_attempt_at_ms: NOW };
-  assert.deepEqual(c.readinessSendDecision(dev, 'req_0123456789abcdef', NOW + 1, 'd'), { replay: true, status: 'test_sent', expires_at_ms: NOW + 5 });
-  throwsCode(() => c.readinessSendDecision(dev, 'req_other_00000000000', NOW + 1, 'd'), 'readiness-cooldown');
-  assert.equal(c.readinessSendDecision(Object.assign({}, dev, { status: 'failed' }), 'req_0123456789abcdef', NOW + 61000, 'd').replay, false);
-  assert.deepEqual(c.readinessSendDecision(null, 'req_0123456789abcdef', NOW, 'd'), { replay: false, attempts_today: 1, day_key: 'd' });
+  const th = hash('tok');
+  const dev = { request_id: 'req_0123456789abcdef', token_hash: th, challenge_hash: 'a'.repeat(64), status: 'test_sent', challenge_expires_at_ms: NOW + 5, attempts_today: 1, day_key: 'd', last_attempt_at_ms: NOW };
+  assert.deepEqual(c.readinessSendDecision(dev, 'req_0123456789abcdef', th, NOW + 1, 'd'), { replay: true, status: 'test_sent', expires_at_ms: NOW + 5 });
+  throwsCode(() => c.readinessSendDecision(dev, 'req_0123456789abcdef', hash('other-device'), NOW + 1, 'd'), 'request-conflict');
+  throwsCode(() => c.readinessSendDecision(dev, 'req_other_00000000000', th, NOW + 1, 'd'), 'readiness-cooldown');
+  assert.equal(c.readinessSendDecision(Object.assign({}, dev, { status: 'failed' }), 'req_0123456789abcdef', th, NOW + 61000, 'd').replay, false);
+  assert.deepEqual(c.readinessSendDecision(null, 'req_0123456789abcdef', th, NOW, 'd'), { replay: false, attempts_today: 1, day_key: 'd' });
+  const v = { campaign_id: 'AAAAAAAAAAAAAAAA', uid: 'u1', key: 'driver', action: 'verify', expected_revision: 1 };
+  assert.equal(c.verificationIntentFingerprint(v, 'super1', hash), c.verificationIntentFingerprint(Object.assign({}, v), 'super1', hash));
+  for (const over of [{ key: 'hazmat' }, { uid: 'u2' }, { action: 'reject' }, { expected_revision: 2 }, { campaign_id: 'BBBBBBBBBBBBBBBB' }]) {
+    assert.notEqual(c.verificationIntentFingerprint(Object.assign({}, v, over), 'super1', hash), c.verificationIntentFingerprint(v, 'super1', hash));
+  }
+  assert.notEqual(c.verificationIntentFingerprint(v, 'super2', hash), c.verificationIntentFingerprint(v, 'super1', hash));
 });
 
 test('holdings after verification: engine order, valid_until kept per key, inactive catalog refused', () => {
