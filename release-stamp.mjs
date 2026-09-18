@@ -19,7 +19,7 @@
 //                                       exit 1 אם יש סטייה, לא כותב כלום
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   MANIFEST, loadSnapshot, releaseKey, STATIC_URL, LEGITIMATE_UNVERSIONED, versionVocabulary
 } from './tests/version-release.mjs';
@@ -176,7 +176,7 @@ export function loadTestSnapshot() {
   const dir = path.join(root, 'tests');
   for (const name of fs.readdirSync(dir)) {
     // הבודק והבדיקה של המחולל מחזיקים פיקסצ'ות מכוונות עם מפתחות ישנים.
-    if (!/\.mjs$/.test(name) || name === 'version-release.mjs' || name === 'release-stamp-test.mjs') continue;
+    if (!/\.mjs$/.test(name) || ['version-release.mjs', 'release-stamp-test.mjs', 'release-stamp-cli.mjs'].includes(name)) continue;
     files.set('tests/' + name, fs.readFileSync(path.join(dir, name), 'utf8'));
   }
   return files;
@@ -234,5 +234,10 @@ function manifestSummary() {
   return MANIFEST.version + ' (' + MANIFEST.date + ', asset_query=' + MANIFEST.asset_query + ', sw=' + MANIFEST.sw_cache_key + ')';
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// 42H.20 · Codex final blocker · ב-Windows process.argv[1] הוא נתיב
+// (C:\…\release-stamp.mjs), לא URL — ההשוואה הישנה ל-`file://${argv[1]}`
+// נכשלה בשקט ו-main() מעולם לא רץ: `--check` החזיר exit 0 בלי פלט.
+// pathToFileURL מייצר את אותו URL קנוני שב-import.meta.url בכל פלטפורמה.
+const isMain = !!process.argv[1]
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain) main();

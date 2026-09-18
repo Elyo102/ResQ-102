@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -192,7 +192,12 @@ function mustFail(label, files) {
 // נסרקים, אילו החרגות לגיטימיות, המבנה של audit()) — בלי ייבוא
 // שמריץ את כל בדיקות ה-mutation האלה כתופעת לוואי. רק כשהקובץ רץ
 // ישירות (node version-release.mjs) מתבצעת הריצה המלאה למטה.
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// 42H.20 · Codex final blocker · ב-Windows process.argv[1] הוא נתיב
+// (C:\…\release-stamp.mjs), לא URL — ההשוואה הישנה ל-`file://${argv[1]}`
+// נכשלה בשקט ו-main() מעולם לא רץ: `--check` החזיר exit 0 בלי פלט.
+// pathToFileURL מייצר את אותו URL קנוני שב-import.meta.url בכל פלטפורמה.
+const isMain = !!process.argv[1]
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain) {
   const files = loadSnapshot();
   const baseline = audit(files);

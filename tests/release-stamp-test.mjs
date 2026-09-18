@@ -112,7 +112,7 @@ test('test files are stamped too: release-shaped ?v= keys move, deliberate fixtu
   // and the real test tree is clean against the real manifest
   const real = loadTestSnapshot();
   assert.equal(stampTestFiles(real, MANIFEST).restamped, 0, 'no test file pins an old release key');
-  assert.equal(real.has('tests/version-release.mjs') || real.has('tests/release-stamp-test.mjs'), false, 'the checker and this test keep their deliberate fixtures');
+  assert.equal(real.has('tests/version-release.mjs') || real.has('tests/release-stamp-test.mjs') || real.has('tests/release-stamp-cli.mjs'), false, 'the checker and its tests keep their deliberate fixtures');
 });
 
 console.log('');
