@@ -53,9 +53,9 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h19';
-import { assertPresentationOnly } from './role-view.js?v=42h19';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h19';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h20';
+import { assertPresentationOnly } from './role-view.js?v=42h20';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h20';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -79,7 +79,7 @@ function allowed(who, claims, presentation) {
   if (who === 'hr') return isSuper || display.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
   if (who === 'shift_command') {
-    return display.role === 'commander' || display.role === 'deputy';
+    return isSuper || display.role === 'commander' || display.role === 'deputy';
   }
   // דוח הצל כולל השוואה בין סידור לשעות אישיות. הוא אינו מסך
   // סגל כללי: רק רכזת כוח אדם ומפקד התחנה צריכים לראות אותו.
@@ -232,9 +232,9 @@ function styleOnce() {
     '#appNav a:hover{transform:translateY(-1px);background:var(--line);color:var(--txt)}',
     '#appNav a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
     '#appNav a i{width:8px;height:8px;border-radius:50%;flex:none}',
-    '#appNav a.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);',
+    '#appNav a.on{background:var(--accent);border-color:var(--accent);color:var(--accent-on);',
     '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
-    '#appNav a.on i{background:var(--on-accent)}',
+    '#appNav a.on i{background:var(--accent-on)}',
     '#appNav button.door{display:inline-flex;align-items:center;gap:8px;',
     '  width:auto;min-height:44px;margin:0;flex:none;box-sizing:border-box;',
     '  background:var(--chip);border:1px solid var(--line);color:var(--dim);',
@@ -245,14 +245,28 @@ function styleOnce() {
     '#appNav button.door i{width:8px;height:8px;border-radius:50%;flex:none}',
     '#appNav button.door.here{border-color:var(--accent);color:var(--accent-txt)}',
     '#appNav button.door[aria-expanded="true"]{background:var(--accent);',
-    '  border-color:var(--accent);color:var(--on-accent);',
+    '  border-color:var(--accent);color:var(--accent-on);',
     '  box-shadow:0 3px 12px rgba(232,89,12,.32)}',
-    '#appNav button.door[aria-expanded="true"] i{background:var(--on-accent)}',
+    '#appNav button.door[aria-expanded="true"] i{background:var(--accent-on)}',
     '#appNav .navPanel{width:100%;order:5;display:flex;flex-wrap:wrap;gap:6px;',
     '  padding:10px 0 2px;margin:0;box-sizing:border-box}',
     '#appNav .navPanel[hidden]{display:none}',
     '#appNav .me{margin-inline-start:auto;color:var(--muted);font-size:13px;',
     '  white-space:nowrap}',
+    '#appNav .bell{margin-inline-start:auto;display:inline-flex;align-items:center;',
+    '  justify-content:center;width:44px;height:44px;min-width:44px;min-height:44px;',
+    '  border-radius:10px;border:1px solid var(--line);background:var(--chip);',
+    '  color:var(--txt);text-decoration:none;flex:none}',
+    '#appNav .bell svg{width:20px;height:20px;fill:none;stroke:currentColor;',
+    '  stroke-width:2;stroke-linecap:round;stroke-linejoin:round}',
+    '#appNav .bell[aria-disabled="true"]{opacity:.5;cursor:not-allowed}',
+    '#appNav .bell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+    '@media (max-width:620px){#appNav .bell{margin-inline-start:6px}}',
+    // 42H.20 §5.4 · נקודה על פעמון מונעת רק ממספר אמית שהועבר מבחוץ (alerts-feed.js) — לעולם לא מעצמו.
+    '#appNav .bell{position:relative}',
+    '#appNav .bell .badge{position:absolute;top:2px;inset-inline-end:2px;min-width:16px;height:16px;',
+    '  border-radius:999px;background:var(--bad);color:var(--bad-on);font-size:10px;font-weight:800;',
+    '  line-height:16px;text-align:center;padding:0 3px;pointer-events:none}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
     'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
@@ -285,7 +299,7 @@ function styleOnce() {
     //   2. **סגור כברירת מחדל.** בשורה אחת רואים איפה אתה
     //      ולוחצים "תפריט" כדי לעבור. כבאי מסתכל על המסך, לא
     //      על הניווט
-    '@media (max-width:560px){',
+    '@media (max-width:620px){',
     '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
     '    calc(10px + var(--resq-safe-right)) 8px',
     '    calc(10px + var(--resq-safe-left))}',
@@ -303,7 +317,8 @@ function styleOnce() {
     // הקריאוּת. זו התווית שאומרת באיזה מסך אתה נמצא.
     '  #navToggle b{color:var(--accent-txt);font-weight:700}',
     '  #navLinks{display:flex;flex-direction:column;gap:6px;',
-    '    width:100%;order:5;padding-top:2px}',
+    '    width:100%;order:5;padding-top:2px;max-height:55vh;max-height:55dvh;',
+    '    overflow-y:auto;overscroll-behavior:contain}',
     '  #appNav button.door{width:100%;justify-content:flex-start;',
     '    font-size:14.5px;padding:10px 12px}',
     '  #appNav .navPanel{display:grid;grid-template-columns:repeat(3,1fr);',
@@ -317,7 +332,7 @@ function styleOnce() {
     '  #appNav .me.closed{display:none}}',
     // מסך צר במיוחד: שלוש עמודות. ארבע היו דוחסות את
     // "כשירויות" לשתי שורות, והיישור היה נשבר שוב.
-    '@media (min-width:421px) and (max-width:560px){',
+    '@media (min-width:421px) and (max-width:620px){',
     '  #appNav .navPanel{grid-template-columns:repeat(4,1fr)}}',
     '#resqDock,#resqDockPanel{display:none}',
     'body.dock-modal-open{overflow:hidden}',
@@ -353,7 +368,7 @@ function styleOnce() {
 
 // current — שם הקובץ הנוכחי, למשל 'admin.html'.
 // who     — טקסט קצר שמזהה את המשתמש, מוצג בקצה הסרגל.
-export function renderNav(claims, current, who, presentation) {
+export function renderNav(claims, current, who, presentation, unreadCount) {
   styleOnce();
   claims = claims || {};
 
@@ -373,6 +388,37 @@ export function renderNav(claims, current, who, presentation) {
   brand.className = 'brand';
   brand.innerHTML = '<b>ResQ</b> \u00b7 102';
   nav.appendChild(brand);
+
+  // 42H.20 §3 · פעמון התראות ליד השם, לכל תפקיד פעיל. מקשר
+  // למסך ההתראות הקיים בלבד — לא בונה מחדש מנגנון התראות,
+  // ולא ממציא מונה שאין לו מקור אמת מחובר.
+  const bell = document.createElement('a');
+  bell.className = 'bell';
+  bell.setAttribute('aria-label', 'התראות');
+  const bellPreviewBlocked = assertPresentationOnly(presentation) && !isPreviewSafePage('alerts.html');
+  if (!bellPreviewBlocked) bell.href = './alerts.html';
+  if (bellPreviewBlocked) {
+    bell.setAttribute('aria-disabled', 'true');
+    bell.tabIndex = -1;
+    bell.title = 'מעבר בין מסכים ייפתח לאחר יציאה מתצוגת התפקיד';
+    bell.addEventListener('click', function (event) { event.preventDefault(); });
+  }
+  if (current === 'alerts.html') bell.setAttribute('aria-current', 'page');
+  bell.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+  // 42H.20 §5.4 · הנקודה מוצגת רק כשהמספר האמית עובר מהעמוד עצמו (alerts-feed.js's unreadFeedCount) —
+  // אף עמוד לא מנחש כאן מספר מומצא.
+  const count = Number(unreadCount);
+  if (Number.isFinite(count) && count > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.textContent = count > 99 ? '99+' : String(count);
+    bell.appendChild(badge);
+    bell.setAttribute('aria-label', 'התראות ויש ' + count + ' שלא נצפו');
+  }
+  nav.appendChild(bell);
 
   // חזרה. מופיע רק כשיש לאן לחזור — כפתור שלא עושה כלום גרוע
   // מכפתור שלא קיים.

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -35,7 +35,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   input{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
-  button{min-height:44px;background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
+  button{min-height:44px;background:var(--accent);color:var(--accent-on);border:0;border-radius:6px;
         padding:10px 18px;font-size:14px;cursor:pointer;margin-top:14px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
@@ -59,7 +59,37 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
   .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
   .msg.info{display:block;background:var(--chip);color:var(--dim)}
-  h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
+  /* קליטה בקישור קבוצתי (42H.21) */
+  #joinAdminCard select,#joinAdminCard textarea{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  #joinAdminCard .join-row{display:flex;flex-wrap:wrap;gap:8px}
+  #joinAdminCard .join-row button{margin-top:8px;flex:1 1 140px}
+  #joinAdminCard .join-admin-shifts{display:flex;flex-wrap:wrap;gap:12px}
+  #joinAdminCard .join-choice{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+  #joinAdminCard .join-choice input{width:44px;height:44px;min-height:44px;margin:0}
+  #joinAdminCard .join-table input[type=checkbox]{width:44px;height:44px;min-height:44px;margin:0}
+  #joinAdminCard .join-token-box{margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:8px}
+  #joinAdminCard .join-token-box input{direction:ltr;font-size:13px}
+  #joinAdminCard .join-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--chip);color:var(--dim)}
+  #joinAdminCard .join-badge-active{background:var(--ok-bg);color:var(--ok-fg)}
+  #joinAdminCard .join-badge-revoked,#joinAdminCard .join-badge-expired{background:var(--err-bg);color:var(--err-fg)}
+  #joinAdminCard .join-filters{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin:10px 0}
+  @media (min-width:600px){#joinAdminCard .join-filters{grid-template-columns:repeat(4,1fr)}}
+  #joinAdminCard .join-table{width:100%;border-collapse:collapse;font-size:13px}
+  #joinAdminCard .join-table th,#joinAdminCard .join-table td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right;vertical-align:top}
+  #joinAdminCard .join-table tr.join-exception td{background:color-mix(in srgb,var(--err-bg) 35%,transparent)}
+  #joinAdminCard .join-mini{min-height:44px;padding:6px 10px;font-size:12px;margin:4px 4px 0 0}
+  #joinAdminCard .join-warn{color:var(--err-fg);font-size:12px}
+  #joinAdminCard .join-ok{color:var(--ok-fg);font-size:12px}
+  #joinAdminCard .join-decl{margin-bottom:4px}
+  #joinAdminCard .join-actions button{display:inline-block}
+  #joinAdminCard .join-bulk-result{border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;font-size:13px;line-height:1.7}
+  @media (max-width:599px){
+    #joinAdminCard .join-table thead{display:none}
+    #joinAdminCard .join-table tr{display:block;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;padding:6px}
+    #joinAdminCard .join-table td{display:block;border:0;padding:4px 6px}
+    #joinAdminCard .join-table td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}
+  }
+  h2{font-size:16px;margin:0 0 12px;color:var(--accent-txt)}
   select{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
   .two{display:flex;gap:12px}
@@ -75,6 +105,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     body{padding:10px}.card{padding:14px}.two{display:block}.two>div+div{margin-top:8px}
     .acts{display:block}.acts button{width:100%}
   }
+#stationProvisionCard input,#stationProvisionCard select{font-size:16px;min-height:44px}
+#stationProvisionCard{border-radius:14px}
+#stationProvisionCard p{line-height:1.6;overflow-wrap:anywhere}
+#stationProvisionCard button{min-height:44px;white-space:normal}
+#spSecretBox{border:1px solid var(--line);border-radius:14px;padding:12px;margin-block:12px}
 </style>
 </head>
 <body>
@@ -143,6 +178,36 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="who" id="who"></div>
       <button id="btnOut" class="ghost">התנתק</button>
     </div>
+    <section class="card hide" id="stationProvisionCard" aria-labelledby="stationProvisionTitle">
+      <h2 id="stationProvisionTitle">הקמת תחנה מתבנית אחידה</h2>
+      <p>התחנה נוצרת במצב הכנה ושקט, ללא העתקת אנשים או סידור מתחנה אחרת. הפעלה מחייבת בדיקת מוכנות בשרת.</p>
+      <label for="spId">מזהה תחנה באנגלית</label><input id="spId" dir="ltr" maxlength="64">
+      <label for="spName">שם התחנה</label><input id="spName" maxlength="120">
+      <label for="spDistrict">מחוז</label><select id="spDistrict"></select>
+      <button type="button" id="spCreate">צור תחנה במצב הכנה</button>
+      <button type="button" id="spNew" class="ghost">התחל בקשה חדשה</button>
+      <p class="msg" id="spStatus" role="status" aria-live="polite"></p>
+      <div id="spInviteForm" class="hide">
+        <h3>הזמנת מפקד משמרת ראשון</h3>
+        <p>ההרשמה תמתין לאישור מנהל ועדיין אינה מעניקה הרשאות: נדרשים אימות מייל ואישור מנהל־על לפני שהמוזמן/ת יכולים להתחבר.</p>
+        <label for="spFirstName">שם מלא</label><input id="spFirstName" maxlength="120">
+        <label for="spEmail">מייל המוזמן</label><input id="spEmail" type="email" dir="ltr" autocomplete="off">
+        <label for="spPhone">טלפון</label><input id="spPhone" type="tel" dir="ltr" autocomplete="off">
+        <label for="spShift">משמרת</label><select id="spShift"><option value="A">א׳</option><option value="B">ב׳</option><option value="C">ג׳</option></select>
+        <button type="button" id="spIssue">צור ושלח הזמנה</button>
+        <button type="button" id="spIssueEdit" class="ghost">תקן פרטי הזמנה שלא נוצרה</button>
+        <div id="spSecretBox" class="hide">
+          <p>שמור והעבר למוזמן בערוץ פרטי. הסוד מוצג פעם אחת בלבד ואינו ניתן לשחזור כאן.</p>
+          <label for="spInviteId">מזהה הזמנה</label><input id="spInviteId" readonly dir="ltr" autocomplete="off">
+          <label for="spSecret">סוד הזמנה</label><input id="spSecret" readonly dir="ltr" autocomplete="off">
+          <button type="button" id="spCopy">העתק פרטי הזמנה</button><button type="button" id="spHide" class="ghost">הסתר סוד</button>
+        </div>
+        <button type="button" id="spReady" class="ghost">בדיקת מוכנות והפעלה</button>
+        <p>בדיקה זו מפעילה את התחנה רק אם כל תנאי המוכנות מתקיימים. מצב שקט אינו מוסר בפעולה זו.</p>
+      </div>
+    </section>
+    <section class="card hide" id="joinAdminCard" aria-labelledby="joinAdminTitle"></section>
+
     <div class="card" id="reqCard">
       <h2>בקשות הרשמה</h2>
       <div id="list"><div class="empty">טוען...</div></div>
@@ -312,7 +377,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -321,18 +386,19 @@ import { getFirestore, doc, getDoc, collection,
          getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
-import { CREW_HE } from './rotation.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h20';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=42h19';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h19';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
+  from './stations.js?v=42h20';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h20';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { createJoinAdmin } from './join-admin-ui.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -343,6 +409,52 @@ const fns = getFunctions(app, 'europe-west1');
 
 const callApprove  = httpsCallable(fns, 'approveRegistration');
 const callReject   = httpsCallable(fns, 'rejectRegistration');
+// קליטה בקישור קבוצתי (42H.21) — כרטיס ניהול + אישור מרוכז.
+// האישור עצמו עובר דרך approveRegistration הקיים, בקשה-בקשה, עם אותה
+// לוגיקת request_refreshed (חתימת שרת ואז אישור). אין callable אישור חדש.
+let joinAdmin = null;
+async function approveJoinRow(row, campaign){
+  const call = () => callApprove({
+    uid: row.uid, request_id: String(row.request_id || ''), request_generation: String(row.request_generation || ''),
+    role: 'firefighter', shift: row.shift || '', emp: '', stationId: campaign.station_id, districtId: campaign.district_id
+  });
+  try { return (await call()).data || {}; }
+  catch (e) {
+    if (!(e.details && e.details.request_refreshed === true)) throw e;
+    // השרת חתם את הבקשה (server_generation). קוראים את הדור החדש ומנסים פעם אחת.
+    const page = await httpsCallable(fns, 'getJoinCampaignRegistrants')({ campaign_id: campaign.campaign_id, limit: 50 });
+    const fresh = ((page.data || {}).rows || []).find(r => r.uid === row.uid);
+    if (!fresh || !fresh.request_generation) throw e;
+    return (await callApprove({
+      uid: row.uid, request_id: String(fresh.request_id || ''), request_generation: String(fresh.request_generation || ''),
+      role: 'firefighter', shift: row.shift || '', emp: '', stationId: campaign.station_id, districtId: campaign.district_id
+    })).data || {};
+  }
+}
+async function rejectJoinRow(row){
+  await callReject({ uid: row.uid, request_id: String(row.request_id || ''), request_generation: String(row.request_generation || '') });
+}
+function initJoinAdmin(claims){
+  const isSuper = claims.super === true;
+  const isHr = claims.role === 'hr_coordinator' && !!claims.stationId;
+  if (!isSuper && !isHr) { $('joinAdminCard').classList.add('hide'); return; }
+  $('joinAdminCard').classList.remove('hide');
+  if (joinAdmin) { joinAdmin.loadList(); return; }
+  joinAdmin = createJoinAdmin($('joinAdminCard'), {
+    isSuper, stationId: claims.stationId || '', stations: STATIONS.map(s => ({ id: s.id, name: s.name })),
+    stationName: id => stationName(id) || id, base: location.href,
+    calls: {
+      create: async data => (await httpsCallable(fns, 'createJoinCampaign')(data)).data,
+      setStatus: async data => (await httpsCallable(fns, 'setJoinCampaignStatus')(data)).data,
+      list: async data => (await httpsCallable(fns, 'listJoinCampaigns')(data)).data,
+      registrants: async data => (await httpsCallable(fns, 'getJoinCampaignRegistrants')(data)).data,
+      review: async data => (await httpsCallable(fns, 'reviewJoinRegistrant')(data)).data,
+      verify: async data => (await httpsCallable(fns, 'verifyQualificationDeclaration')(data)).data
+    },
+    approveOne: approveJoinRow, rejectOne: rejectJoinRow
+  });
+  joinAdmin.loadList();
+}
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
@@ -392,6 +504,83 @@ function goSignIn(){
 renderStuckNav('');
 
 const $ = id => document.getElementById(id);
+const stationUiCalls = {
+  create: httpsCallable(fns, 'provisionStation'),
+  issue: httpsCallable(fns, 'issueFirstAdminInvitation'),
+  ready: httpsCallable(fns, 'markStationReady')
+};
+let stationUiEpoch = 0, stationUiUid = '', stationUiBusy = false;
+let stationUiIntent = null, stationUiIssueIntent = null, stationUiCreated = false;
+function clearStationSecret(){
+  $('spInviteId').value = ''; $('spSecret').value = '';
+  $('spSecretBox').classList.add('hide');
+}
+function resetStationUi(){
+  stationUiEpoch++; stationUiBusy = false; stationUiIntent = null;
+  stationUiIssueIntent = null; stationUiCreated = false;
+  clearStationSecret(); $('spInviteForm').classList.add('hide');
+  $('spStatus').textContent = ''; $('spStatus').className = 'msg';
+  stationUiControls(false);
+}
+function stationUiControls(busy){
+  ['spCreate','spNew','spIssue','spIssueEdit','spReady'].forEach(id => $(id).disabled = busy);
+  ['spId','spName','spDistrict'].forEach(id => $(id).disabled = busy || !!stationUiIntent);
+  ['spFirstName','spEmail','spPhone','spShift'].forEach(id => $(id).disabled = busy || !!stationUiIssueIntent);
+}
+DISTRICTS.forEach(d => { const o = document.createElement('option'); o.value=d.id; o.textContent=d.name; $('spDistrict').appendChild(o); });
+async function stationUiAction(kind){
+  if (stationUiBusy) return;
+  const user = auth.currentUser, epoch = stationUiEpoch;
+  if (!user) return;
+  const current = () => epoch === stationUiEpoch && auth.currentUser?.uid === user.uid;
+  stationUiBusy = true; stationUiControls(true);
+  try {
+    const token = await user.getIdTokenResult(true);
+    if (!current()) return;
+    if (token.claims.super !== true) throw new Error('הפעולה זמינה למנהל־על בלבד.');
+    let payload;
+    if (kind === 'create') {
+      if (!stationUiIntent) stationUiIntent = Object.freeze({request_id:newOperationId('sp_'), station_id:$('spId').value.trim(), display_name:$('spName').value.trim(), district_id:$('spDistrict').value, timezone:'Asia/Jerusalem', template_id:'fire-station-v1'});
+      payload = stationUiIntent;
+    } else {
+      if (!stationUiCreated || !stationUiIntent) throw new Error('יש ליצור תחנה תחילה.');
+      if (kind === 'issue') {
+        if (!stationUiIssueIntent) stationUiIssueIntent = Object.freeze({station_id:stationUiIntent.station_id, provision_request_id:stationUiIntent.request_id, request_id:newOperationId('si_'), full_name:$('spFirstName').value.trim(), email:$('spEmail').value.trim().toLowerCase(), phone:$('spPhone').value.trim(), shift:$('spShift').value});
+        payload = stationUiIssueIntent;
+      } else payload = {station_id:stationUiIntent.station_id};
+    }
+    const result = (await stationUiCalls[kind](payload)).data;
+    if (!current()) return;
+    if (!result || result.ok !== true) throw new Error('לא התקבל אישור מהשרת.');
+    if (kind === 'create') {
+      stationUiCreated = true; $('spInviteForm').classList.remove('hide');
+      msg('spStatus', 'התחנה נוצרה במצב הכנה ושקט — עדיין אינה פעילה. יש להשלים הזמנה, אישור ומוכנות.', 'info');
+    } else if (kind === 'issue') {
+      clearStationSecret();
+      if (result.secret_available === true && typeof result.secret === 'string') {
+        $('spInviteId').value = result.invite_id; $('spSecret').value = result.secret;
+        $('spSecretBox').classList.remove('hide');
+        msg('spStatus', 'ההזמנה נוצרה. העבר את שני השדות למוזמן; המימוש נמצא במסך הכניסה תחת הצטרפות באמצעות הזמנה.', 'ok');
+      } else msg('spStatus', 'ההזמנה כבר נוצרה. הסוד אינו זמין שוב; אין כאן שחזור או הנפקה חוזרת אוטומטית.', 'info');
+    } else msg('spStatus', 'השרת אישר מוכנות והפעלה. התחנה עדיין במצב שקט.', 'ok');
+  } catch (error) {
+    if (current()) msg('spStatus', 'הפעולה לא אושרה: ' + (error.message || 'נסה שוב עם אותה בקשה.'), 'err');
+  } finally { if (current()) { stationUiBusy=false; stationUiControls(false); } }
+}
+$('spCreate').onclick=()=>stationUiAction('create'); $('spIssue').onclick=()=>stationUiAction('issue'); $('spReady').onclick=()=>stationUiAction('ready');
+$('spNew').onclick=()=>{ if (!stationUiBusy) resetStationUi(); };
+$('spIssueEdit').onclick=()=>{
+  if(stationUiBusy)return;
+  stationUiIssueIntent=null; clearStationSecret(); stationUiControls(false);
+  msg('spStatus','ניתן לתקן פרטים רק אם ההזמנה טרם נוצרה. אם התשובה הקודמת אבדה לאחר יצירה, פעולה זו אינה משחזרת או מחליפה אותה.','info');
+};
+$('spHide').onclick=clearStationSecret;
+$('spCopy').onclick=async()=>{
+  if (!$('spSecret').value) return;
+  try { await navigator.clipboard.writeText('מזהה הזמנה: '+$('spInviteId').value+'\nסוד הזמנה: '+$('spSecret').value); }
+  catch { msg('spStatus', 'העתקה אוטומטית אינה זמינה. ניתן לסמן ולהעתיק את שני השדות ידנית.', 'info'); }
+};
+window.addEventListener('pagehide', clearStationSecret);
 initPWA({ offer: false });
 
 // שמות התפקידים מגיעים מ-roles.js. ראה שם למה — חמישה
@@ -1034,6 +1223,8 @@ $('btnVerify').onclick = async () => {
 $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
+  if (stationUiUid !== (user?.uid || '')) { resetStationUi(); stationUiUid=user?.uid || ''; }
+  $('stationProvisionCard').classList.add('hide');
   scheduleAccessGeneration += 1;
   transferGeneration += 1;
   if (!user) {
@@ -1111,6 +1302,7 @@ onAuthStateChanged(auth, async user => {
   $('denyCard').classList.add('hide');
 
   renderNav(claims, 'admin.html', user.email || '');
+  initJoinAdmin(claims);
   watchCallouts(db, claims.stationId || STATION_ID, user.uid, { name: user.email || '' });
   $('who').textContent = 'מחובר: ' + label;
   $('authCard').classList.add('hide');
@@ -1118,6 +1310,7 @@ onAuthStateChanged(auth, async user => {
 
   // מקטעים למנהל-על בלבד.
   $('reqCard').classList.toggle('hide', !isSuper);
+  $('stationProvisionCard').classList.toggle('hide', !isSuper);
   $('usersCard').classList.toggle('hide', !isSuper);
   // רכז/ת כוח-אדם ומנהל-על יכולים לנהל מינוי נפרד; מפקדים וסגנים
   // נשארים במצב צפייה עד שממונה להם מינוי מפורש. השרת בודק מחדש

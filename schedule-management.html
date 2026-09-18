@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h19">
+  <link rel="stylesheet" href="./theme.css?v=42h20">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -74,7 +74,7 @@
     .qualtable th{font-size:11px;color:var(--muted,#748091);font-weight:700}
     .qualtable input[type="text"]{min-height:30px;font-size:12px;width:100%}
     .qualtable input[type="number"]{min-height:30px;font-size:12px;width:64px}
-    .qualtable .critical{color:var(--bad,#dc2626);font-weight:800;font-size:11px}
+    .qualtable .critical{color:var(--bad-txt,#dc2626);font-weight:800;font-size:11px}
     .qualtable .off{opacity:.55}
     .qualtable button{font-size:11px;border:1px solid var(--line,#dfe5ec);background:transparent;border-radius:7px;padding:4px 8px;cursor:pointer;color:inherit}
     .qualpeople .person{display:grid;grid-template-columns:minmax(140px,1fr) 3fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line,#dfe5ec);border-radius:10px;margin-top:6px}
@@ -90,7 +90,7 @@
     .sub{font-size:13px;color:var(--muted,#748091);line-height:1.55}
     .mode{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:var(--warn-bg,#fff5d7);color:var(--warn,#765500);font-size:13px;font-weight:800;margin-bottom:13px}
     .mode.good{background:var(--good-bg,#e4f4ec);color:var(--good,#176d4e)}
-    .mode.bad{background:var(--bad-bg,#fde8e6);color:var(--bad,#9c302b)}
+    .mode.bad{background:var(--bad-bg,#fde8e6);color:var(--bad-txt,#9c302b)}
     .dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
     .manage-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:13px}
     .manager-workflow{position:sticky;top:8px;z-index:18;border-color:var(--sched-blue)}
@@ -121,7 +121,7 @@
     .btn{border:1px solid var(--line,#dfe5ec);border-radius:10px;background:var(--card,#fff);color:var(--txt,#1c2532);padding:9px 14px;font-weight:800}
     .btn.primary{background:var(--sched-blue);border-color:var(--sched-blue);color:#fff}
     .btn.dark{background:var(--txt,#1c2532);border-color:var(--txt,#1c2532);color:var(--card,#fff)}
-    .btn.danger{background:var(--bad-bg,#fff1f0);border-color:var(--bad-bd,#f0b4b0);color:var(--bad,#a12c27)}
+    .btn.danger{background:var(--bad-bg,#fff1f0);border-color:var(--bad-bd,#f0b4b0);color:var(--bad-txt,#a12c27)}
     .btn:disabled{opacity:.52;cursor:not-allowed}
     .overrides{margin-top:12px}
     .override{display:grid;grid-template-columns:1fr 1fr 1.2fr 1fr auto;gap:7px;align-items:end;padding:8px;border-radius:12px;background:var(--panel,#f7f9fc);margin-top:7px}
@@ -154,8 +154,8 @@
     .step button:hover:not(:disabled){background:var(--sched-blue);color:#fff;border-color:var(--sched-blue)}
     .step button:disabled{opacity:.35;cursor:not-allowed}
     .step.min{border-color:var(--bad-bd,#fca5a5);background:var(--bad-bg,#fef2f2)}
-    .step.min span,.step.min .n{color:var(--bad,#dc2626);font-weight:800}
-    .step.min button{border-color:var(--bad-bd,#fca5a5);color:var(--bad,#dc2626)}
+    .step.min span,.step.min .n{color:var(--bad-txt,#dc2626);font-weight:800}
+    .step.min button{border-color:var(--bad-bd,#fca5a5);color:var(--bad-txt,#dc2626)}
     .step.min button:hover:not(:disabled){background:var(--bad,#dc2626);color:#fff}
     .step .duty{width:auto;padding:0 8px;font-size:11px;font-weight:800}
     .step .duty[aria-pressed="true"]{background:var(--bad,#dc2626);border-color:var(--bad,#dc2626);color:#fff}
@@ -172,7 +172,7 @@
     .changes{display:grid;gap:5px;margin-top:10px}
     .change{display:flex;gap:8px;align-items:center;font-size:12px;padding:7px 10px;
       border-radius:8px;background:var(--panel,#f7f9fc);color:var(--dim,#566273)}
-    .change.weak{background:var(--bad-bg,#fef2f2);color:var(--bad,#dc2626);font-weight:700}
+    .change.weak{background:var(--bad-bg,#fef2f2);color:var(--bad-txt,#dc2626);font-weight:700}
     .change.warn{background:var(--warn-bg,#fff5d7);color:var(--warn,#765500)}
 
     /* ---------------- הלוח ---------------- */
@@ -288,13 +288,19 @@
     .gapbox.critical{border-color:var(--bad,#dc2626)}
     .gaphead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
     .gap{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border-radius:9px;margin-top:5px;background:var(--bg,#fff)}
-    .gap.critical{color:var(--bad,#dc2626);font-weight:700;background:var(--bad-bg,#fef2f2)}
+    .gap.critical{color:var(--bad-txt,#dc2626);font-weight:700;background:var(--bad-bg,#fef2f2)}
     .gap.other{color:var(--warn,#765500);background:var(--warn-bg,#fff5d7)}
     .gap .cands{font-weight:400;color:var(--muted,#748091)}
     .gapday{margin-top:8px;border-top:1px solid var(--line,#dfe5ec);padding-top:6px;font-size:12px}
     .gapday b.date{display:block;margin-bottom:4px}
     .gapday .ok{color:var(--muted,#748091)}
     .importrow{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:10px;align-items:end;margin-top:12px}
+    #importCard .importrow{grid-template-columns:minmax(0,220px)}
+    .import-paste-option{margin-top:12px;border:1px solid var(--line,#cbd5e1);border-radius:12px;padding:0 12px}
+    .import-paste-option>summary{min-height:44px;display:list-item;padding:12px 0;cursor:pointer;font-weight:700}
+    .import-paste-option[open]{padding-bottom:12px}
+    #importMonth,#importPaste{font-size:16px;min-height:44px;width:100%;box-sizing:border-box}
+    .import-paste-option>summary:focus-visible{outline:2px solid var(--sched-blue);outline-offset:3px}
     .importcounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
     .unres{display:grid;gap:7px;margin-top:10px}
     .unres .row{display:grid;grid-template-columns:minmax(120px,1fr) 2fr auto;gap:8px;align-items:center;
@@ -338,6 +344,12 @@
     .manual-warning-slot{border-color:var(--warn,#e0a23c);background:var(--warn-bg,#fff7df)}
     .flag.manual-warning{color:var(--warn,#765500);background:var(--warn-bg,#fff7df);
       border:1px solid var(--warn,#e0a23c);display:inline-block;margin-inline-start:5px;white-space:normal}
+    /* 42H.20 §1 · עובד ללא חשבון — מידע, לא אזהרה: אין להשתמש בצבע
+       החריגה הכתום/אדום; אפור נייטרלי כדי לא לגרום למנהל לפרש את זה
+       כבעיה שצריך לתקן. */
+    .unlinked-slot{border-color:var(--line,#c7d0dc)}
+    .flag.unlinked{color:var(--muted,#5b6675);background:var(--card-2,#eef1f5);
+      border:1px solid var(--line,#c7d0dc);display:inline-block;margin-inline-start:5px;white-space:normal}
     .stub.notes{background:var(--warn-bg,#fff7df);border-color:var(--warn,#e0a23c);color:var(--warn,#765500)}
     .notes-cell{background:var(--card,#fff);border-color:var(--line-soft,#eef2f7);min-height:30px}
     .notes-cell.unknown{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--line-soft,#eef2f7) 6px 7px)}
@@ -380,7 +392,7 @@
     .counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
     .count{background:var(--panel,#f7f9fc);border-radius:9px;padding:8px 12px;font-size:12px;font-weight:700}
     .count b{font-size:18px;display:block;font-variant-numeric:tabular-nums}
-    .count.bad{background:var(--bad-bg,#fef2f2);color:var(--bad,#dc2626)}
+    .count.bad{background:var(--bad-bg,#fef2f2);color:var(--bad-txt,#dc2626)}
     .modegrid .wide{grid-column:1/-1}
     @media(max-width:700px){.modegrid{grid-template-columns:1fr}}
 
@@ -403,7 +415,7 @@
     .answer{display:flex;gap:8px;margin-top:12px}
     .answer button{flex:1;border-radius:10px;font-weight:800;padding:9px 14px}
     .confirm{background:var(--good,#258568);color:#fff;border:1px solid var(--good,#258568)}
-    .decline{background:var(--card,#fff);border:1px solid var(--bad-bd,#dcaaa6);color:var(--bad,#a12c27)}
+    .decline{background:var(--card,#fff);border:1px solid var(--bad-bd,#dcaaa6);color:var(--bad-txt,#a12c27)}
     .guard-card{border:1px solid var(--sched-blue);background:var(--info-bg,#f7fbff)}
 
     @media(max-width:850px){.manage-grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
@@ -421,7 +433,48 @@
       .editchange{grid-template-columns:1fr}
       .manager-workflow{position:static}.workflow-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
       input,select,textarea{font-size:16px}
+      /* 42H.20 §1 · CLAUDE-TASK Scope 2.6: אחרי ייבוא, כפתור האישור
+       * חייב להישאר גלוי בלי לגלול חזרה מעל הלוח. בטלפון הלוח עצמו
+       * יכול להיות ארוך — מדביקים את שורת הכפתור של כרטיס הסקירה
+       * לתחתית המסך, מעל Safe Area, כדי שהאישור והפרסום תמיד בהישג יד. */
+      #draftPreviewCard .btns{position:sticky;bottom:0;z-index:15;
+        margin:10px -13px -13px;padding:10px 13px calc(10px + env(safe-area-inset-bottom));
+        background:var(--card,#fff);border-top:1px solid var(--line,#cbd5e1);
+        box-shadow:0 -6px 14px rgba(0,0,0,.06)}
+      /* 42H.20 §4/§10 · "no decorative empty schedule slots beyond what
+       * is required to preserve a real minimum line" (mobile only).
+       * schedule-management.js pads every station cell to a fixed
+       * template height (minVisualSlots, up to 15 for אילת) that has
+       * no relation to the real, signed minimum for that day - that
+       * padding is exactly the oversized empty vertical area this
+       * requirement is about. The two kinds of empty slot carry
+       * different classes: one preserves the real minimum-line
+       * position (.line-slot.empty-slot - kept, on every width) and
+       * one is pure template decoration (.empty-slot without
+       * .line-slot - hidden here, mobile only). Desktop keeps the
+       * existing template-height look; nothing server-side changes,
+       * and no real assignment is ever hidden - the JS never counts
+       * these against staffing either way. */
+      .name-slot.empty-slot:not(.line-slot){display:none}
     }
+    /* Approved Gemini surface styling; board colors, controls and behavior remain unchanged. */
+    /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה
+       בהירה תמיד ב-theme.css. אלה ערכי-על מקומיים לעמוד הזה בלבד
+       (theme.css לא מכיר --manager-heading), ולכן צריך את אותו היפוך פה בנפרד:
+       ברירת המחדל בהירה ללא תלות במצב המכשיר, וכהה רק בבחירה מפורשת. */
+    :root{--bg:#eef2f6;--card:#fff;--input:#fff;--line:#cbd5e1;--manager-heading:#1c3d5a;--manager-shadow:0 2px 8px rgba(0,0,0,.04)}
+    :root[data-theme="dark"]{--manager-heading:var(--txt)}
+    .shell .card,.shell .advanced{border-radius:14px;box-shadow:var(--manager-shadow)}
+    .shell .card{padding:14px}
+    .shell .head h1,.shell .card h2{color:var(--manager-heading)}
+    .shell .manager-workflow{border-top:3px solid #d9531e}
+    .shell .btn.primary,.shell .workflow-actions .current{background:#c2410c;border-color:#d9531e;color:#fff}
+    .shell .btn.dark{background:#1c3d5a;border-color:#1c3d5a;color:#fff}
+    .shell button{min-height:44px;min-width:44px}
+    .shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+    .shell select,.shell textarea{font-size:16px;min-height:44px}
+    .shell .qualpeople .person .held label{min-height:44px;align-items:center}
+    .shell .filestatus,.shell .head .who{overflow-wrap:anywhere;min-width:0}
   </style>
 </head>
 <body>
@@ -570,9 +623,12 @@
       </div>
       <div class="importrow">
         <div><label for="importMonth">חודש לייבוא</label><input id="importMonth" type="month"></div>
-        <div><label for="importPaste">הדבקה מהגיליון</label>
-          <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea></div>
       </div>
+      <details class="import-paste-option" id="importPasteOption">
+        <summary>הדבקה מגיליון במקום קובץ</summary>
+        <label for="importPaste">הדבקה מהגיליון</label>
+        <textarea id="importPaste" class="paste" spellcheck="false" placeholder="הדבק כאן את הגיליון כולו…"></textarea>
+      </details>
       <div class="btns">
         <button class="btn" id="importCheck" type="button">2. בדוק תצוגה מקדימה</button>
         <button class="btn dark" id="importRun" type="button" disabled>3. צור טיוטה מהקובץ</button>
@@ -720,7 +776,7 @@
       </div>
       <div id="draftPreview"><div class="loader"></div></div>
       <div class="gapbox" id="draftManualWarnings" hidden>
-        <div class="gaphead"><b>אזהרות בשיבוצים ידניים — בשבוע המוצג</b></div>
+        <div class="gaphead"><b>אזהרות לייבוא ולשיבוצים ידניים</b></div>
         <div class="sub">השיבוצים נשמרו בטיוטה. האזהרות מוצגות לבדיקה ואינן חוסמות פרסום.</div>
         <div id="draftManualWarningsList"></div>
       </div>
@@ -737,6 +793,9 @@
         <input id="reviewDraft" type="checkbox" disabled>
         בדקתי את התצוגה המקדימה ואני מאשר/ת לפרסם טיוטה זו
       </label>
+      <div class="btns" style="margin-top:10px">
+        <button class="btn primary" id="publishFromReview" type="button" disabled>אישור ופרסום הסידור</button>
+      </div>
       <div id="previewMessage" aria-live="polite"></div>
     </article>
   </section>
@@ -792,6 +851,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h19"></script>
+<script type="module" src="./schedule-management.js?v=42h20"></script>
 </body>
 </html>

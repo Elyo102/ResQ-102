@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 
 <!-- הפניה אוטומטית למסך הכניסה. בלי הקובץ הזה, הכתובת הראשית
      של האתר מחזירה שגיאת 404, כי אין בריפו קובץ index. -->
@@ -25,8 +25,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body{margin:0;background:var(--bg);color:var(--txt);
        font-family:"Segoe UI",Arial,sans-serif;
        min-height:100vh;display:flex;align-items:center;
-       justify-content:center;text-align:center;padding:16px}
-  a{color:var(--accent)}
+       justify-content:center;text-align:center;
+       padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right))
+               max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+  a{color:var(--accent-txt)}
   .t{font-size:19px;margin-bottom:8px}
   .s{color:var(--muted);font-size:14px}
 </style>

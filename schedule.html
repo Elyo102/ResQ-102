@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h19">
+  <link rel="stylesheet" href="./theme.css?v=42h20">
   <style>
     *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;
-      padding:20px;background:var(--bg,#eef2f7);color:var(--txt,#1c2532);
+      padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right))
+              max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+      background:var(--bg,#eef2f7);color:var(--txt,#1c2532);
       font-family:"Segoe UI",Arial,sans-serif} main{width:min(100%,520px);background:var(--card,#fff);
       border:1px solid var(--line,#dfe5ec);border-radius:16px;padding:22px;text-align:center;
       box-shadow:0 5px 18px rgba(25,38,58,.06)} h1{font-size:22px;margin:0 0 10px}
@@ -25,7 +27,7 @@
   </main>
 
   <script type="module">
-    import { firebaseConfig } from './firebase-config.js?v=42h19';
+    import { firebaseConfig } from './firebase-config.js?v=42h20';
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
     import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 

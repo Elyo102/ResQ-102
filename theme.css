@@ -6,34 +6,172 @@
    נשא עותק משלו, וכל שינוי פלטה היה שש-עשרה עריכות שאחת מהן
    נשכחת.
 
-   שני מצבים:
+   42H.20 §2 (אלדד, 17.9.2026): **בהיר הוא ברירת המחדל לכולם.**
+   עד לשינוי הזה כהה היה ברירת המחדל וההגדרה הבהירה נכנסה לפעולה
+   רק כש-`prefers-color-scheme: light` של המכשיר תפס. זה הפוך
+   מהמפורש: "אין Dark Mode אוטומטי לפי הגדרת המכשיר" — מצב המכשיר
+   כשלעצמו כבר לא אמור לשנות שום דבר.
 
-     כהה   ברירת המחדל. זה מה שרץ היום, ולא נגעתי בו — אותם
-           ערכים בדיוק. מי שנמצא במצב כהה לא רואה שום שינוי
-     בהיר  נכנס לפעולה כשהטלפון מוגדר למצב בהיר
+   שני מצבים, לא שלושה:
 
-   למה כהה הוא הבסיס ולא בהיר, בניגוד למקובל: הכהה הוא מה
-   שנבדק בשמונה מודולים לאורך שבוע. אם יש באג בפלטה הבהירה,
-   הוא נשאר אצל מי שבחר בהיר — ולא נוגע במי שכבר עובד.
+     :root                כהה/בהיר של המכשיר לא משנה דבר — בהיר תמיד
+     [data-theme="dark"]  בחירה ידנית מפורשת ב"כהה תמיד" (nav.js),
+                          וגוברת. שאילתת `prefers-color-scheme` הוסרה
+                          לגמרי מהקובץ הזה בכוונה.
+     [data-theme="light"] בחירה ידנית מפורשת ב"בהיר תמיד" — זהה
+                          לברירת המחדל, נשמרת כפי שהייתה.
 
-   שלושה מצבים, לא שניים:
-
-     :root                          כהה — ברירת מחדל
-     prefers-color-scheme: light    הטלפון מוגדר בהיר
-     [data-theme="light"|"dark"]    המשתמש בחר ידנית, וגובר
+   הערכים בכל בלוק לא נגעו בהם מעבר לשינוי המקום: מה שהיה ב-:root
+   עבר ל-[data-theme="dark"] בלי לשנות אף hex, ומה שהיה תחת
+   prefers-color-scheme עבר ל-:root בלי לשנות אף hex. אם ה-hex-ים
+   המדויקים (#eef2f6/#1c3d5a/#d9531e שנמסרו כערכה המאושרת) שונים
+   ממה שכבר היה כאן — זו הכרעת המשך נפרדת, לא בוצעה בשינוי הזה.
 
    =================================================================== */
 
 :root{
-  color-scheme: dark;
-
   /* --- יסודות ממשק משותפים (opt-in) --- */
   --space-1:4px; --space-2:8px; --space-3:12px;
   --space-4:16px; --space-5:24px; --space-6:32px;
-  --radius-sm:8px; --radius-md:12px; --radius-lg:16px;
+  --radius-sm:8px; --radius-md:12px; --radius-lg:14px; /* 42H.20 Scope 10: approved card radius is 14px, was 16px */
   --touch-min:44px;
   --text-xs:12px; --text-sm:14px; --text-md:16px;
   --text-lg:20px; --text-xl:28px;
+
+  color-scheme: light;
+
+  --bg:#eef2f6;
+  --card:#ffffff;
+  --panel:#f5f7fa;
+  --input:#ffffff;
+  --chip:#e6eaf0;
+  --track:#dde2ea;
+
+  --line:#d3dae3;
+  --line-soft:#e6eaf0;
+  --line-hover:#adb8c6;
+
+  --txt:#1c3d5a;
+  --muted:#5d6675;
+  --dim:#414b59;
+  --on-accent:#ffffff;
+  --on-soft:#1c3d5a;
+
+  --accent:#d9531e;  /* 42H.20 closure batch (CLAUDE-TASK.md v283/f21dc3c): ההכרעה הסופית - הכתום המאושר */
+  --accent-on:#000000; /* טקסט רגיל *על* רקע ההדגשה הכתום - שחור, 5.21:1. לא לבן (4.03:1, נכשל AA) */
+  --pick:#7b3fa8;
+  --in:#00707d;
+  --note:#1d4ed8;
+  --accent-txt:#963109;
+
+  --bad:#dc2626;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 closure batch: ההכרעה הסופית - האדום המאושר. עם לבן (--on-accent) על רקעו: 4.83:1, עומד ב-AA */
+  --bad-txt:#b3261e; /* לטקסט אדום *על* רקע בהיר (bad-bg/כרטיס לבן) - dc2626 עצמו נכשל שם (4.03:1). הערך הישן, שכבר עמד ב-AA (5.46:1), משמש כאן */
+  --bad-on:#ffffff; /* טקסט *על* רקע --bad רווי (תגית/באדג' אדום) - כמו --on-accent הרגיל; שונה רק בערכה הכהה, ראה שם */
+  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+  --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+  --ok-bg:#e2f2e9;   --ok-fg:#175236;
+  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+  --info-bg:#e9edf3; --info-fg:#3d4653;
+  --soft-bad:#8c1d17;
+
+  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+  --go:#1f6b45; --go-txt:#ffffff;
+
+  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+  --crewA-on:#ffffff;  --crewB-on:#ffffff;  --crewC-on:#ffffff;
+
+  --shadow:0 10px 30px rgba(19,24,32,.12);
+}
+
+/* 42H.20 Scope 10 (closure batch item 5): [hidden] must actually hide,
+   everywhere, with no per-page override needed. Before this rule each
+   screen relied on the attribute's weak user-agent-stylesheet default
+   (display:none with no !important), which a more specific selector
+   elsewhere in the same page's own CSS could silently defeat. */
+[hidden]{ display:none !important; }
+
+/* 42H.20 Scope 10 (closure batch item 5) — approved tokens, now fully applied.
+   CLAUDE-TASK.md v283 (SHA-256 f21dc3c...) resolved the earlier conflict:
+   --accent #d9531e with BLACK text on it (--accent-on, 5.21:1) instead of
+   white (4.03:1, failed AA). --bad #dc2626 stays white-on-it (--on-accent,
+   4.83:1, unchanged) for danger backgrounds/badges. Where --accent or --bad
+   are used as TEXT/foreground color on a light background instead (headings,
+   labels), they use the separate --accent-txt / --bad-txt tokens, which were
+   already sized for that use and are unaffected by this change. Re-verified
+   with contrast.mjs across all real screens after the token swap AND after
+   redirecting every foreground use of --accent/--bad to --accent-txt/--bad-txt. */
+
+/* ===================================================================
+   בהיר — בחירה ידנית מפורשת ב"בהיר תמיד"
+   ===================================================================
+
+   זהה לברירת המחדל ב-:root. הבלוק נשמר בנפרד (ולא רק הוסר) כי
+   "בהיר תמיד" חייב להישאר בהיר גם אם יום אחד תיווסף חזרה תלות
+   כלשהי במצב המכשיר ל-:root — בחירה מפורשת גוברת תמיד.
+
+   =================================================================== */
+
+:root[data-theme="light"]{
+  color-scheme: light;
+
+  --bg:#eef2f6;
+  --card:#ffffff;
+  --panel:#f5f7fa;
+  --input:#ffffff;
+  --chip:#e6eaf0;
+  --track:#dde2ea;
+
+  --line:#d3dae3;
+  --line-soft:#e6eaf0;
+  --line-hover:#adb8c6;
+
+  --txt:#1c3d5a;
+  --muted:#5d6675;
+  --dim:#414b59;
+  --on-accent:#ffffff;
+  --on-soft:#1c3d5a;
+
+  --accent:#d9531e;  /* 42H.20 closure batch (CLAUDE-TASK.md v283/f21dc3c): ההכרעה הסופית - הכתום המאושר */
+  --accent-on:#000000; /* טקסט רגיל *על* רקע ההדגשה הכתום - שחור, 5.21:1. לא לבן (4.03:1, נכשל AA) */
+  --pick:#7b3fa8;
+  --in:#00707d;
+  --note:#1d4ed8;
+  --accent-txt:#963109;
+
+  --bad:#dc2626;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae; /* 42H.20 closure batch: ההכרעה הסופית - האדום המאושר. עם לבן (--on-accent) על רקעו: 4.83:1, עומד ב-AA */
+  --bad-txt:#b3261e; /* לטקסט אדום *על* רקע בהיר (bad-bg/כרטיס לבן) - dc2626 עצמו נכשל שם (4.03:1). הערך הישן, שכבר עמד ב-AA (5.46:1), משמש כאן */
+  --bad-on:#ffffff; /* טקסט *על* רקע --bad רווי (תגית/באדג' אדום) - כמו --on-accent הרגיל; שונה רק בערכה הכהה, ראה שם */
+  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
+  --warn:#8a5a00;  --warn-bg:#fbf0d9;
+
+  --ok-bg:#e2f2e9;   --ok-fg:#175236;
+  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
+  --info-bg:#e9edf3; --info-fg:#3d4653;
+  --soft-bad:#8c1d17;
+
+  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
+
+  --go:#1f6b45; --go-txt:#ffffff;
+
+  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
+  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
+  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
+  --crewA-on:#ffffff;  --crewB-on:#ffffff;  --crewC-on:#ffffff;
+
+  --shadow:0 10px 30px rgba(19,24,32,.12);
+}
+
+/* מצב כהה מפורש — הבחירה הידנית היחידה שמציגה כהה. 42H.20 §2:
+   ResQ עוברת לערכה הבהירה כברירת מחדל לכולם, ומצב כהה של המכשיר
+   כשלעצמו כבר אינו משנה את המראה — רק בחירה מפורשת ב"כהה תמיד"
+   (nav.js) מפעילה את הבלוק הזה. הערכים זהים למה שהיה קודם ב-:root
+   כברירת מחדל, לפני ההיפוך. */
+:root[data-theme="dark"]{
+  color-scheme: dark;
 
   /* --- משטחים --- */
   --bg:#15171a;          /* רקע הדף */
@@ -62,15 +200,34 @@
 
   /* --- הדגשה --- */
   --accent:#e8590c;
+  /* בניגוד ל--bad-txt למטה, זה כן שינוי חזותי: on-accent הקיים במצב הכהה
+     הוא #ffffff, ולבן על e8590c מודד רק 3.58:1 - נכשל AA כבר לפני השינוי
+     הזה (באג קיים, לא קשור להכרעה הנוכחית). הערך כאן משפר את זה בפועל
+     ל-4.95:1. לא תוקן על ידי שינוי --on-accent עצמו כי אותו טוקן משמש גם
+     ל--go/--bar-line/crewA/crewC במצב כהה, שם לבן כן עומד ב-AA - מחוץ
+     לתחום ההכרעה הנוכחית (שעוסקת רק בכתום/אדום המאושרים לערכה הבהירה). */
+  --accent-on:#111827;
   --pick:#c77dff;        /* ממתין להכרעה — לא טוב ולא רע */
   --in:#4dd0e1;          /* הצד שמקבל בהחלפה */
   --note:#4d94ff;        /* מידע — לא טוב, לא רע, לא אזהרה */
   /* ההדגשה ככתב. --accent עצמו יושב על צ'יפ אפור בסרגל
-     הניווט, ושם הוא נופל מתחת לסף הקריאוּת בערכה הבהירה. */
-  --accent-txt:#e8590c;
+     הניווט, ושם הוא נופל מתחת לסף הקריאוּת בערכה הבהירה.
+     גם --accent-txt המקורי (e8590c) לא עמד שם: 4.23:1 על
+     --chip (23262c) - נכשל AA. עדיין באותו גוון, מעט בהיר
+     יותר, כדי לעמוד ב-4.5:1 בפועל (5.83:1). נמצא רק כשנוסף
+     המעבר האוטומטי הראשון על ערכה כהה ל-contrast.mjs. */
+  --accent-txt:#ff7a2e;
 
   /* --- מצבים --- */
   --bad:#ef5350;   --bad-bg:#241618;   --bad-bd:#5a2b2d;
+  --bad-txt:#ef5350; /* = --bad הקיים במצב כהה; אין כאן שינוי חזותי, רק כינוי לטוקן המשותף */
+  /* --bad-on, בניגוד ל--bad-txt מעליו, כן שינוי חזותי: לבן (--on-accent) על
+     --bad הרווי כאן (ef5350) מודד רק 3.49:1 - עוד כשל AA קיים וישן
+     (תגית/באדג' "לא נקרא" באדום, כפתור אזעקה). התיקון הזה, כמו --accent-on
+     למעלה, אינו סקירה מלאה של המצב הכהה - רק שני הכשלים שנמצאו תוך כדי
+     עבודה על ההכרעה הנוכחית. אותו ערך כמו --accent-on, כי הוא עובד גם כאן:
+     4.95:1 / 5.09:1. */
+  --bad-on:#111827;
   --good:#66bb6a;  --good-bg:#16241a;  --good-bd:#2f4a33;
   --warn:#e0a23c;  --warn-bg:#241f13;
 
@@ -94,128 +251,14 @@
   --crewA:#f0523f;  --crewA-bg:#3a1c19;
   --crewB:#35c46b;  --crewB-bg:#14301f;
   --crewC:#4d94ff;  --crewC-bg:#16263f;
+  --crewA-on:#111827;   /* לבן על f0523f מודד רק 3.51:1 - נכשל AA. אותו כחול-כהה
+                            שכבר עובד ל--accent-on/--bad-on - עובד גם כאן: 5.05:1 */
   --crewB-on:#0d1f12;   /* טקסט כהה על תג ב' מלא */
+  --crewC-on:#111827;   /* לבן על 4d94ff מודד רק 3:1 - נכשל AA. 5.91:1 */
 
   /* --- צל --- */
   --shadow:0 10px 34px rgba(0,0,0,.45);
 }
-
-/* ===================================================================
-   בהיר
-   ===================================================================
-
-   לא היפוך. כל ערך נבחר מחדש:
-
-   * צבעי המשמרות רוויים וכהים יותר — הגרסה המוארת נועדה
-     לרקע כהה, ועל לבן היא נראית דהויה
-   * ההדגשה יורדת מ-#e8590c לכתום-לבנה עמוק יותר, כי הכתום
-     הבהיר על לבן אינו עומד בניגודיות לטקסט
-   * הרקע אינו לבן טהור אלא אפור-כחלחל קל, שמפחית סנוור
-     ומאפשר לכרטיס הלבן להיראות כמשטח נפרד
-
-   =================================================================== */
-
-@media (prefers-color-scheme: light){
-  :root:not([data-theme="dark"]){
-    color-scheme: light;
-
-    --bg:#eef1f5;
-    --card:#ffffff;
-    --panel:#f5f7fa;
-    --input:#ffffff;
-    --chip:#e6eaf0;
-    --track:#dde2ea;
-
-    --line:#d3dae3;
-    --line-soft:#e6eaf0;
-    --line-hover:#adb8c6;
-
-    --txt:#131820;
-    --muted:#5d6675;
-    --dim:#414b59;
-    --on-accent:#ffffff;
-    --on-soft:#131820;
-
-    --accent:#c1440e;
-    --pick:#7b3fa8;
-    --in:#00707d;
-    --note:#1d4ed8;
-    --accent-txt:#963109;
-
-    --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
-    --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
-    --warn:#8a5a00;  --warn-bg:#fbf0d9;
-
-    --ok-bg:#e2f2e9;   --ok-fg:#175236;
-    --err-bg:#fbe6e4;  --err-fg:#8c1d17;
-    --info-bg:#e9edf3; --info-fg:#3d4653;
-    --soft-bad:#8c1d17;
-
-    --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
-
-    --go:#1f6b45; --go-txt:#ffffff;
-
-    --crewA:#b3261e;  --crewA-bg:#fbe6e4;
-    --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
-    --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-    --crewB-on:#ffffff;
-
-    --shadow:0 10px 30px rgba(19,24,32,.12);
-  }
-}
-
-/* בחירה ידנית גוברת על הטלפון, לשני הכיוונים. */
-:root[data-theme="light"]{
-  color-scheme: light;
-
-  --bg:#eef1f5;
-  --card:#ffffff;
-  --panel:#f5f7fa;
-  --input:#ffffff;
-  --chip:#e6eaf0;
-  --track:#dde2ea;
-
-  --line:#d3dae3;
-  --line-soft:#e6eaf0;
-  --line-hover:#adb8c6;
-
-  --txt:#131820;
-  --muted:#5d6675;
-  --dim:#414b59;
-  --on-accent:#ffffff;
-  --on-soft:#131820;
-
-  --accent:#c1440e;
-  --pick:#7b3fa8;
-  --in:#00707d;
-  --note:#1d4ed8;
-  --accent-txt:#963109;
-
-  --bad:#b3261e;   --bad-bg:#fbe6e4;   --bad-bd:#e8b4ae;
-  --good:#1f6b45;  --good-bg:#e2f2e9;  --good-bd:#a9d3bd;
-  --warn:#8a5a00;  --warn-bg:#fbf0d9;
-
-  --ok-bg:#e2f2e9;   --ok-fg:#175236;
-  --err-bg:#fbe6e4;  --err-fg:#8c1d17;
-  --info-bg:#e9edf3; --info-fg:#3d4653;
-  --soft-bad:#8c1d17;
-
-  --bar-bg:#fbe6e4; --bar-fg:#8c1d17; --bar-line:#b3261e; --bar-strong:#5c110d;
-
-  --go:#1f6b45; --go-txt:#ffffff;
-
-  --crewA:#b3261e;  --crewA-bg:#fbe6e4;
-  --crewB:#1f6b45;  --crewB-bg:#e2f2e9;
-  --crewC:#1d4ed8;  --crewC-bg:#e4ecfd;
-  --crewB-on:#ffffff;
-
-  --shadow:0 10px 30px rgba(19,24,32,.12);
-}
-
-/* מצב כהה מפורש — גובר על טלפון שמוגדר בהיר.
-   הערכים זהים ל-:root ולכן אין צורך לחזור עליהם; הבלוק קיים
-   כדי שהבורר הידני ינצח את שאילתת המדיה. */
-:root[data-theme="dark"]{ color-scheme: dark; }
 
 /* ===================================================================
    פס השגיאה — משותף לכל המסכים
@@ -262,10 +305,10 @@
 .ui-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
 .ui-field{display:flex;flex-direction:column;gap:var(--space-2)}
 .ui-field>label{color:var(--dim);font-size:var(--text-sm);font-weight:700}
-.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
-.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
-.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad)}
+.ui-control{box-sizing:border-box;min-height:var(--touch-min);width:100%;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--input);color:var(--txt);padding:10px 12px;font:inherit;font-size:var(--text-md)}
+.ui-btn{box-sizing:border-box;min-height:var(--touch-min);width:auto;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--chip);color:var(--txt);padding:10px 16px;font:700 var(--text-sm)/1.2 "Segoe UI",Arial,sans-serif;cursor:pointer}
+.ui-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+.ui-btn--danger{background:var(--bad-bg);border-color:var(--bad-bd);color:var(--bad-txt)}
 .ui-btn:disabled,.ui-control:disabled{opacity:.58;cursor:not-allowed}
 .ui-message{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--info-bg);color:var(--info-fg);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);line-height:1.55}
 .ui-message--success{background:var(--ok-bg);color:var(--ok-fg);border-color:var(--good-bd)}

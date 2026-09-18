@@ -27,7 +27,13 @@
 // המטמון קיים בשביל מצב אחר: אין קליטה. אז עדיף מסך ישן עם
 // הודעה ברורה מאשר דף שגיאה של הדפדפן.
 
-const CACHE = 'resq-v42h19-release1';
+// 42H.20 §12.1 · ערך זה חייב להתאים לשדה `sw_cache_key`
+// ב-`release-manifest.json` (המקור היחיד לזהות השחרור), בדיוק כמו `version.js`
+// ומחרוזת ה-`?v=` שבכל הקבצים. שלושתם אינם נקראים מכאן באופן אוטומטי —
+// עובד Service Worker אינו מייבא מודולים ולכן אינו יכול לקרוא JSON בעוד הרישום
+// (הערה המקורית שכבר מופיעה למעלה לגבי firebase-config.js). הערך נשמר כאן בכוונה,
+// ו-`tests/version-release.mjs` נופל אם הערך צופה מ-`release-manifest.json`.
+const CACHE = 'resq-v42h20-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -36,7 +42,7 @@ const SHELL = [
   './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
-  './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css',
+  './hr-month-archive.js', './hr-month-archive-ui.js', './hr-workforce-ui.js', './hr-workforce-ui.css', './hr-over-hours-alert-ui.js',
   './hr-local-export.js', './hr-local-export-ui.js',
   './hr-requests.html', './hr-requests-client.js', './hr-requests-ui.js', './hr-requests-ui.css',
   './hr-documents.html', './hr-documents-client.js', './hr-documents-ui.js', './hr-documents-ui.css',
@@ -52,9 +58,10 @@ const SHELL = [
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
   // הם מייבאים אותם, וייבוא שנכשל עוצר את כל המודול.
   './signature.js', './signflow.js', './docpdf.js',
-  './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './home-faults.js', './home-command.js', './appcheck.js',
+  './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './alerts-feed.js', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
+  './join-ui.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
   './manifest.json', './resq-192.png', './favicon.ico'
 ];

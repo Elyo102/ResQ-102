@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -28,7 +28,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body{ margin:0; background:var(--bg); color:var(--txt);
         font-family:"Segoe UI",Arial,sans-serif; min-height:100vh;
         display:flex; align-items:center; justify-content:center;
-        padding:16px; direction:rtl }
+        padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right))
+                max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+        direction:rtl }
   .card{ background:var(--card); border:1px solid var(--line);
          border-radius:14px; padding:30px; width:100%; max-width:420px;
          text-align:center }
@@ -37,9 +39,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .icon{ font-size:42px; margin-bottom:12px }
   .ttl{ font-size:18px; font-weight:600; margin-bottom:10px }
   .txt{ color:var(--muted); font-size:14px; line-height:1.8 }
-  a.btn{ display:inline-block; background:var(--accent); color:var(--on-accent);
+  a.btn{ display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:var(--accent-on);
          text-decoration:none; padding:12px 24px; border-radius:8px;
-         font-size:15px; margin-top:22px }
+         font-size:15px; margin-top:22px; min-height:44px; box-sizing:border-box }
 </style>
 </head>
 <body>
@@ -54,14 +56,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 
 const app = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const fns = getFunctions(app, 'europe-west1');
 

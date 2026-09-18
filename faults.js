@@ -99,7 +99,7 @@ export function faultKind(id) {
 // עד שראש המשמרת נוגע, התקלה נמצאת ב-'unset' — ממתינה
 // להערכה, ומוצגת ראשונה כדי שלא תישכח.
 export const SEVERITIES = [
-  { id: 'blocking', he: 'משבית',  color: 'var(--bad)', rank: 1,
+  { id: 'blocking', he: 'משבית',  color: 'var(--bad-txt)', rank: 1,
     note: 'הרכב, הציוד או המקום אינם בטוחים או כשירים לשימוש', staffOnly: true },
   { id: 'limiting', he: 'מגביל',  color: 'var(--warn)', rank: 2,
     note: 'אפשר להשתמש, עם מגבלה', staffOnly: true },
@@ -128,13 +128,23 @@ export function sevColor(id) {
   const s = allSeverities().filter(function (x) { return x.id === id; })[0];
   return s ? s.color : UNSET.color;
 }
+// sevColor() נועד לטקסט חזית - --bad-txt לחומרה 'blocking' (בטוח בשתי
+// הערכות; זו הסיבה ש-42H.20 הפנה אליו). כמה קריאות ב-vehicle.html
+// משתמשות באותו ערך כרקע רווי במקום זאת (עיגול המספר על כרטיס תקלה,
+// רקע כלי הרכב עצמו) - שם --bad-txt נכשל במצב כהה (ef5350 עם טקסט
+// לבן, 3.49:1). sevBgColor() הוא הגרסה לרקע: אותם צבעים, חוץ מ-
+// 'blocking' שמקבל בחזרה את --bad הגולמי, הבטוח כרקע בשתי הערכות.
+export function sevBgColor(id) {
+  const c = sevColor(id);
+  return c === 'var(--bad-txt)' ? 'var(--bad)' : c;
+}
 export function sevRank(id) {
   const s = allSeverities().filter(function (x) { return x.id === id; })[0];
   return s ? s.rank : UNSET.rank;
 }
 
 export const FAULT_STATES = [
-  { id: 'open',      he: 'פתוחה',     color: 'var(--bad)' },
+  { id: 'open',      he: 'פתוחה',     color: 'var(--bad-txt)' },
   { id: 'in_repair', he: 'בטיפול',    color: 'var(--warn)' },
   { id: 'fixed',     he: 'טופלה',     color: 'var(--good)' }
 ];
@@ -224,7 +234,7 @@ export function vehicleState(faults, vehicleId) {
              faults: open };
   }
   if (worst.severity === 'blocking') {
-    return { id: 'blocked', he: 'משבית', color: 'var(--bad)', faults: open };
+    return { id: 'blocked', he: 'משבית', color: 'var(--bad-txt)', faults: open };
   }
   if (worst.severity === 'limiting') {
     return { id: 'limited', he: 'מגביל', color: 'var(--warn)', faults: open };

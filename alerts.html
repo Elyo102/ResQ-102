@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,7 +30,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .wrap{ max-width:760px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
@@ -38,16 +38,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:14px }
+        font-family:inherit; font-weight:600; margin-top:14px; min-height:44px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0; min-height:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+        font-size:15px; font-family:inherit; min-height:44px }
   textarea{ min-height:84px; resize:vertical }
 
   .state{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
@@ -59,13 +59,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .state .big{ font-size:15px; font-weight:800 }
   .state.on .big{ color:var(--good) }
   .state.off .big{ color:var(--warn) }
-  .state.no .big{ color:var(--bad) }
+  .state.no .big{ color:var(--bad-txt) }
   .state .why{ font-size:12.5px; color:var(--muted); line-height:1.7; flex:1 1 220px }
 
-  .pref{ display:flex; align-items:flex-start; gap:11px; padding:11px 0;
+  .pref{ display:flex; align-items:center; gap:11px; padding:11px 0;
          border-bottom:1px solid var(--line-soft) }
   .pref:last-child{ border-bottom:0 }
-  .pref input{ width:auto; margin:2px 0 0 }
+  .pref input{ width:44px; height:44px; min-width:44px; min-height:44px; margin:0; flex-shrink:0 }
   .pref .t{ flex:1 }
   .pref .n{ font-size:14.5px; font-weight:600 }
   .pref .d{ font-size:12px; color:var(--muted); line-height:1.6; margin-top:2px }
@@ -89,7 +89,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .msg.info{ display:block; background:var(--chip); color:var(--dim) }
   .card.red{ border-color:var(--bad-bd); background:var(--bad-bg) }
   .btn.boom{ background:var(--bar-line); border-color:var(--bar-line); color:var(--on-accent) }
-  .btn.boom:hover{ background:var(--bad); border-color:var(--bad); color:var(--on-accent) }
+  .btn.boom:hover{ background:var(--bad); border-color:var(--bad); color:var(--bad-on) }
 
   .plist{ max-height:230px; overflow:auto; border:1px solid var(--line);
           border-radius:9px; margin-top:8px; background:var(--input) }
@@ -116,9 +116,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .hide{ display:none !important }
   .lab-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:12px }
   .lab-metric{ border:1px solid var(--line); border-radius:9px; padding:10px; background:var(--panel) }
-  .lab-metric b{ display:block; font-size:18px; color:var(--accent); direction:ltr; text-align:right }
+  .lab-metric b{ display:block; font-size:18px; color:var(--accent-txt); direction:ltr; text-align:right }
   .lab-metric span{ font-size:11.5px; color:var(--muted) }
   @media(max-width:430px){ .lab-grid{ grid-template-columns:1fr } }
+
+  .feed-tab{ border:1px solid var(--line); background:var(--panel); color:var(--muted);
+             border-radius:20px; padding:8px 14px; font-size:13px; cursor:pointer;
+             font-family:inherit; min-height:44px }
+  .feed-tab[aria-pressed="true"]{ border-color:var(--accent); color:var(--txt); background:var(--chip) }
+  .feed-item{ border:1px solid var(--line); border-radius:10px; padding:11px;
+              margin-bottom:8px; background:var(--panel) }
+  .feed-item[data-viewed="false"]{ border-inline-start:4px solid var(--accent) }
+  .feed-item .fi-head{ display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted) }
+  .feed-item .fi-kind{ border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px }
+  .feed-item .fi-text{ margin-top:6px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word }
 </style>
 </head>
 <body>
@@ -159,6 +170,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   </div>
 
   <div id="work" class="hide">
+
+    <div class="card" id="feedCard">
+      <h2>עדכונים</h2>
+      <div class="note" style="margin-bottom:10px">
+        לוח המודעות וקריאות הפתע שלך במקום אחד. "נצפה" כאן הוא אמיתי —
+        אותה קבלה שכבר נשמרת בלוח המודעות ובקריאת הפתע עצמה, לא סימון נפרד.
+      </div>
+      <div id="feedTabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <div id="feedList"></div>
+      <div class="msg" id="feedMsg"></div>
+    </div>
 
     <div class="card">
       <h2>המכשיר הזה</h2>
@@ -240,27 +262,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h19';
-import { CREW_HE } from './rotation.js?v=42h19';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
-         query, orderBy, limit, serverTimestamp, onSnapshot }
+         query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h20';
+import { markCalloutSeen } from './callout.js?v=42h20';
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -281,6 +305,13 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
+let feedItems = [], feedFilter = 'all';
+let feedEverLoaded = false;
+let lastFeedClaims = null;
+// 42H.20 · ביקורת Codex, חוסם 3 · המונה מגיע מהשרת (נספר על כל החלון,
+// לא על 30 הפריטים המוצגים), והצפייה נרשמת רק אחרי הצגה מוכחת.
+let feedUnreadCount = 0;
+let feedTracker = null;
 let prefs = defaultPrefs(), tokens = [], vapid = DEFAULT_VAPID, myToken = '';
 let messaging = null;
 
@@ -336,6 +367,7 @@ onAuthStateChanged(auth, async user => {
   renderPrefs();
   renderState();
   await loadBroadcasts();
+  await loadFeed(c);
   if (IS_SUPER) await loadLab();
 
   // התראה שמגיעה בזמן שהמסך פתוח.
@@ -707,6 +739,125 @@ async function loadBroadcasts(){
       (when ? ' · ' + esc(when) : '') + '</div>' + esc(m.text || '');
     box.appendChild(el);
   });
+}
+
+// ---------- עדכונים (42H.20 §5.4) ----------
+//
+// מאחד את הודעות לוח המודעות וקריאות פתע, דרך alerts-feed.js.
+// הקובץ הזה רק קורא ומציג; אין כאן מנגנון התראות מקביל, והסימון
+// "נצפה" הוא אותה הקבלה אמיתית שכבר נשמרת על ידי לוח המודעות/קריאת פתע עצמם.
+
+function feedItemKindHe(kind) { return kind === 'callout' ? 'קריאת פתע' : 'לוח מודעות'; }
+
+function feedTimeText(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  return new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms));
+}
+
+function renderFeedTabs() {
+  const box = $('feedTabs');
+  box.innerHTML = '';
+  ALERT_FEED_FILTERS.forEach(function (f) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'feed-tab';
+    button.setAttribute('aria-pressed', String(f.id === feedFilter));
+    const count = f.id === 'all' ? feedItems.length : applyFeedFilter(feedItems, f.id).length;
+    button.textContent = f.he + ' (' + count + ')';
+    button.onclick = function () { feedFilter = f.id; renderFeedTabs(); renderFeedList(); };
+    box.appendChild(button);
+  });
+}
+
+function renderFeedList() {
+  const box = $('feedList');
+  box.innerHTML = '';
+  const shown = applyFeedFilter(feedItems, feedFilter);
+  if (!shown.length) {
+    box.innerHTML = '<div class="note" style="padding-top:4px">אין פריטים להצגה בפילטר הזה.</div>';
+    return;
+  }
+  shown.forEach(function (item) {
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.dataset.viewed = String(!!item.viewed);
+    el.dataset.feedId = item.id;
+    el.dataset.feedKind = item.kind;
+    if (item.kind === 'bulletin') {
+      el.dataset.feedBoard = item.board_id;
+      el.dataset.feedMessage = item.id.slice(item.board_id.length + 1);
+    }
+    el.innerHTML = '<div class="fi-head"><span class="fi-kind">' + esc(feedItemKindHe(item.kind)) + '</span>' +
+      (item.by_name ? '<span>' + esc(item.by_name) + '</span>' : '') +
+      '<span>' + esc(feedTimeText(item.time_ms)) + '</span>' +
+      (!item.viewed ? '<span class="fi-unviewed">· טרם נצפה</span>' : '') + '</div>' +
+      '<div class="fi-text">' + esc(item.text || '') + '</div>';
+    box.appendChild(el);
+  });
+  // הקבלה נשלחת רק לפריט שהוצג בפועל (≥60% נראות, שנייה ברצף, לשונית
+  // גלויה) — לא לכל מה שרונדר. פעם אחת לכל פריט; רענון אינו מכפיל.
+  if (!feedTracker) {
+    feedTracker = createDisplayTracker({
+      markViewed: function (target) {
+        if (target.kind === 'bulletin') {
+          return httpsCallable(fns, 'markBulletinMessageViewed')({
+            sub_station_id: target.board_id, message_id: target.message_id
+          });
+        }
+        return markCalloutSeen(db, SID, target.id, ME.uid);
+      },
+      onConfirmed: function (key) {
+        const item = feedItems.find(function (entry) { return entry.id === key; });
+        if (item && !item.viewed) {
+          item.viewed = true;
+          feedUnreadCount = Math.max(0, feedUnreadCount - 1);
+          renderFeedTabs();
+          renderNav(lastFeedClaims, 'alerts.html', ME.full_name || ME.email || '', null, feedUnreadCount);
+        }
+      }
+    });
+  }
+  feedTracker.observe(box);
+}
+
+document.addEventListener('visibilitychange', function () {
+  // חזרה ללשונית: מה שהיה מוסתר לא נספר כמוצג; מתחילים לצפות מחדש.
+  if (feedTracker && document.visibilityState === 'visible') feedTracker.observe($('feedList'));
+  if (feedTracker && document.visibilityState === 'hidden') feedTracker.stop();
+});
+
+async function loadFeed(claims) {
+  lastFeedClaims = claims;
+  if (!feedEverLoaded) {
+    // רק בטעינה הראשונה — ברענון יש כבר מה להראות, ואין טעם
+    // להחליף אותו ב"טוען" ולגרום להבזק ריק.
+    $('feedList').innerHTML = '<div class="note" style="padding-top:4px">טוען עדכונים…</div>';
+    msg('', '', 'feedMsg');
+  }
+  try {
+    // קריאה שרתית אחת. מצב הצפייה מאומת בשרת מול הקבלה שלי בלבד;
+    // הדפדפן אינו קורא קבלות (firestore.rules חוסם, ובצדק).
+    const feed = await loadAlertsFeed(httpsCallable(fns, 'getAlertsFeed'));
+    feedItems = feed.items;
+    feedUnreadCount = feed.unread_count;
+    feedEverLoaded = true;
+    msg('', '', 'feedMsg');
+  } catch (e) {
+    console.error('feed load failed', e);
+    // כשל בריענון לא מוחק עדכונים שכבר נטענו בהצלחה — רק כשל
+    // בטעינה הראשונה משאיר רשימה ריקה, כי אין עדיין מה להראות.
+    if (!feedEverLoaded) feedItems = [];
+    $('feedMsg').innerHTML = 'טעינת העדכונים נכשלה כרגע' +
+      (feedEverLoaded ? '. הרשימה שמוצגת היא מהטעינה האחרונה שהצליחה.' : '.') +
+      ' <button type="button" class="btn sm" id="feedRetryBtn">נסה שוב</button>';
+    $('feedMsg').className = 'msg err';
+    const rb = document.getElementById('feedRetryBtn');
+    if (rb) rb.onclick = function () { rb.disabled = true; loadFeed(lastFeedClaims); };
+  }
+  renderFeedTabs();
+  renderFeedList();
+  // הפעמון מציג את unread_count של השרת — נספר על כל חלון המועמדים,
+  // לא על 30 הפריטים המוצגים; לשונית "לא נצפו" מסננת את מה שמוצג.
+  renderNav(claims, 'alerts.html', ME.full_name || ME.email || '', null, feedUnreadCount);
 }
 
 // ---------- מפתח ----------

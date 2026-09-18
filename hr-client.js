@@ -1,16 +1,17 @@
-import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h20';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, where, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
-import { initAppCheck } from './appcheck.js?v=42h19';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h19';
-import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h19';
-import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h19';
-import { createLocalExportUI } from './hr-local-export-ui.js?v=42h19';
-import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h19';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h20';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h20';
+import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h20';
+import { createLocalExportUI } from './hr-local-export-ui.js?v=42h20';
+import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h20';
+import { createHrOverHoursAlertUI } from './hr-over-hours-alert-ui.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
@@ -26,6 +27,7 @@ const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
 const listWorkforce = httpsCallable(functions, 'listHrWorkforceCases');
+const overHoursCallable = httpsCallable(functions, 'getHrOverHoursAlert');
 const createWorkforce = httpsCallable(functions, 'createHrWorkforceCase');
 const updateWorkforce = httpsCallable(functions, 'updateHrWorkforceCase');
 const remindWorkforce = httpsCallable(functions, 'queueHrWorkforceReminder');
@@ -148,6 +150,10 @@ createHrWorkforceUI(document.querySelector('[data-hr-workforce]'), {
   currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);}, searchPeople,
   listCases:data=>call(listWorkforce,data), createCase:data=>call(createWorkforce,data), updateCase:data=>call(updateWorkforce,data),
   queueReminder:data=>call(remindWorkforce,data)
+});
+createHrOverHoursAlertUI(document.querySelector('[data-hr-workforce]'), {
+  currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+  overHoursAlert: () => call(overHoursCallable, {})
 });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;

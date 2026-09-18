@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ResQ — מוכנות המכשיר</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון (כמו בשאר המסכים). */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;
+       padding:calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px;overflow-wrap:anywhere}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .note{color:var(--muted);font-size:13px;line-height:1.7}
+  .hide{display:none !important}
+  button{min-height:44px;width:100%;background:var(--accent);color:var(--accent-on);border:0;border-radius:8px;
+         padding:10px 16px;font-size:15px;cursor:pointer;margin-top:12px;font-family:inherit;white-space:normal}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  .msg{margin-top:12px;padding:11px;border-radius:6px;font-size:13px;line-height:1.6;display:none;overflow-wrap:anywhere}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
+  .msg.info{display:block;background:var(--chip);color:var(--dim)}
+  .steps{list-style:none;margin:0;padding:0}
+  .step{display:grid;grid-template-columns:36px 1fr;gap:10px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
+  .step:last-child{border-bottom:0}
+  .step .n{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;
+           background:var(--chip);color:var(--dim);font-size:15px}
+  .step.done .n{background:var(--ok-bg);color:var(--ok-fg)}
+  .step.now .n{background:var(--accent);color:var(--accent-on)}
+  .step.fail .n{background:var(--err-bg);color:var(--err-fg)}
+  .step h3{margin:6px 0 4px;font-size:15px}
+  .step p{margin:0;font-size:13px;color:var(--muted);line-height:1.6}
+  .overall{display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;background:var(--chip);margin-bottom:12px}
+  .overall .big{font-size:30px}
+  .overall b{display:block;font-size:15px}
+  .overall span{font-size:13px;color:var(--muted)}
+  .overall.ready{background:var(--ok-bg);color:var(--ok-fg)}
+  .overall.ready span{color:inherit}
+  details{border:1px solid var(--line);border-radius:8px;padding:0 12px;margin-top:10px}
+  summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;font-size:14px}
+  details p{font-size:13px;color:var(--muted);line-height:1.7}
+  a.back{display:inline-block;min-height:44px;line-height:44px;color:var(--accent);text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>מוכנות המכשיר להתראות</h1>
+  <div class="sub" id="whoSub">—</div>
+
+  <div class="card hide" id="denyCard">
+    <div class="note" id="denyWho"></div>
+    <div class="note" id="denyWhy">בדיקת המכשיר זמינה לעובד מאושר בלבד. אם הבקשה שלך עדיין ממתינה, חזור/י לכאן אחרי האישור.</div>
+    <a class="back" href="./login.html">לדף הבית</a>
+  </div>
+
+  <div id="work" class="hide">
+    <div class="overall" id="overall" role="status" aria-live="polite">
+      <span class="big" id="overallIcon">⏳</span>
+      <div><b id="overallTitle">בודק…</b><span id="overallText"></span></div>
+    </div>
+
+    <div class="card">
+      <ol class="steps" id="steps">
+        <li class="step" id="step1" data-step="1"><span class="n">1</span><div>
+          <h3>הפעלת התראות במכשיר הזה</h3>
+          <p id="step1Text">הדפדפן יבקש אישור פעם אחת. באייפון: קודם "הוסף למסך הבית" ואז לפתוח מהאייקון — רק כך אפשר לקבל התראות.</p>
+          <button type="button" id="btnEnable">הפעל התראות במכשיר הזה</button>
+        </div></li>
+        <li class="step" id="step2" data-step="2"><span class="n">2</span><div>
+          <h3>שליחת התראת בדיקה</h3>
+          <p id="step2Text">נשלח למכשיר הזה בלבד התראה אחת. אין לה צליל חירום, והיא לא נשלחת לאף אחד אחר.</p>
+          <button type="button" id="btnSend" disabled>שלח התראת בדיקה</button>
+        </div></li>
+        <li class="step" id="step3" data-step="3"><span class="n">3</span><div>
+          <h3>אישור קבלה</h3>
+          <p id="step3Text">כשההתראה מגיעה — פתח/י אותה. אם המסך פתוח, האישור נעשה אוטומטית.</p>
+          <button type="button" id="btnAck" class="ghost" disabled>אישרתי — בדוק שוב</button>
+        </div></li>
+      </ol>
+      <div class="msg" id="pMsg"></div>
+    </div>
+
+    <details>
+      <summary>לא מגיעה התראה?</summary>
+      <p><b>אייפון:</b> התראות עובדות רק כשהאתר מותקן על מסך הבית (שיתוף ← הוסף למסך הבית) ונפתח משם, ב-iOS 16.4 ומעלה. בדפדפן Safari הרגיל הן לא יגיעו — זו מגבלה של אפל, לא של המערכת.</p>
+      <p><b>אנדרואיד:</b> ודא/י שההתראות של Chrome מותרות בהגדרות המכשיר, ושמצב "נא לא להפריע" כבוי.</p>
+      <p>אפשר לשלוח עד 3 בדיקות ביום, בהפרש של דקה. כל בדיקה תקפה 10 דקות.</p>
+    </details>
+    <a class="back" href="./login.html">חזרה לדף הבית</a>
+  </div>
+</div>
+
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h20';
+import { blockerText } from './join-ui.js?v=42h20';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+
+const app = initializeApp(firebaseConfig);
+import { initAppCheck } from './appcheck.js?v=42h20';
+await initAppCheck(app);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const fns = getFunctions(app, 'europe-west1');
+const $ = id => document.getElementById(id);
+renderStuckNav('');
+initPWA({ offer: false });
+
+const callStatus = httpsCallable(fns, 'getMyReadiness');
+const callSend = httpsCallable(fns, 'sendReadinessTestPush');
+const callAck = httpsCallable(fns, 'ackReadinessTestPush');
+const callClaim = httpsCallable(fns, 'claimPushToken');
+
+let SID = '', ME = null, myToken = '', tokens = [], vapid = DEFAULT_VAPID, messaging = null, busy = false, pendingNonce = '';
+
+function msg(text, kind){ const m = $('pMsg'); m.textContent = text || ''; m.className = 'msg ' + (text ? (kind || '') : ''); }
+function newRequestId(){
+  const bytes = new Uint8Array(24); crypto.getRandomValues(bytes);
+  return 'rd_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+function readNonce(){
+  try { const n = new URLSearchParams(location.search).get('readiness_nonce') || ''; return /^[a-f0-9]{32}$/.test(n) ? n : ''; }
+  catch (ignore) { return ''; }
+}
+function stripNonce(){
+  try { const u = new URL(location.href); if (u.searchParams.has('readiness_nonce')) { u.searchParams.delete('readiness_nonce'); history.replaceState(null, '', u.pathname + (u.search || '')); } } catch (ignore) {}
+}
+function setStep(n, state, text){
+  const li = $('step' + n); li.classList.remove('done', 'now', 'fail'); if (state) li.classList.add(state);
+  if (text !== undefined) $('step' + n + 'Text').textContent = text;
+}
+function controls(){ ['btnEnable', 'btnSend', 'btnAck'].forEach(id => { $(id).disabled = busy; }); }
+
+function render(r){
+  const o = $('overall'); o.classList.toggle('ready', r.operational_ready === true);
+  if (r.operational_ready) { $('overallIcon').textContent = '✅'; $('overallTitle').textContent = 'המכשיר מוכן'; $('overallText').textContent = 'התראות מבצעיות יגיעו למכשיר הזה.'; }
+  else { $('overallIcon').textContent = '🔔'; $('overallTitle').textContent = 'המכשיר עדיין לא מוכן'; $('overallText').textContent = (r.blockers || []).map(blockerText).join(' · '); }
+  const d = r.device || {};
+  const tokenOk = d.token_present === true && (!myToken || tokens.some(t => t.token === myToken));
+  setStep(1, tokenOk ? 'done' : 'now');
+  $('btnEnable').textContent = tokenOk ? 'ההתראות מופעלות · בדוק שוב' : 'הפעל התראות במכשיר הזה';
+  const sent = d.status === 'test_sent' || d.status === 'ready';
+  setStep(2, !tokenOk ? '' : (d.status === 'ready' && d.token_fresh ? 'done' : d.status === 'failed' ? 'fail' : sent ? 'done' : 'now'),
+    d.status === 'failed' ? 'שליחת הבדיקה נכשלה אצל ספק ההתראות. נסה/י שוב בעוד דקה.' : undefined);
+  $('btnSend').disabled = !tokenOk || busy;
+  $('btnSend').textContent = d.status === 'ready' && !d.token_fresh ? 'מזהה המכשיר השתנה — שלח בדיקה חדשה' : 'שלח התראת בדיקה';
+  setStep(3, d.status === 'ready' && d.token_fresh ? 'done' : sent ? 'now' : '');
+  $('btnAck').disabled = !(d.status === 'test_sent') || busy;
+}
+
+async function refresh(){
+  try { const r = (await callStatus({})).data || {}; render(r); return r; }
+  catch (e) { msg('לא ניתן לקרוא את מצב המוכנות. ' + (e.message || e.code || ''), 'err'); return null; }
+}
+
+async function loadTokens(){
+  try {
+    const k = await getDoc(doc(db, 'stations', SID, 'config', 'push'));
+    if (k.exists()) { const saved = String((k.data() || {}).vapid_key || '').trim(); if (saved) vapid = saved; }
+  } catch (ignore) {}
+  try {
+    const t = await getDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid));
+    tokens = t.exists() && Array.isArray((t.data() || {}).tokens) ? t.data().tokens : [];
+  } catch (ignore) { tokens = []; }
+  // הטוקן של המכשיר הזה: מתקבל מחדש רק אחרי שהעובד אישר התראות (שלב 1).
+  if (messaging && Notification.permission === 'granted') {
+    try { const reg = await navigator.serviceWorker.ready; if (reg) myToken = await MSG.getToken(messaging, { vapidKey: vapid, serviceWorkerRegistration: reg }) || ''; }
+    catch (ignore) { myToken = ''; }
+  }
+}
+
+$('btnEnable').onclick = async () => {
+  if (busy) return; busy = true; controls(); msg('');
+  try {
+    const res = await enablePush(MSG, messaging, vapid);
+    if (!res.ok) { msg(res.why, 'err'); return; }
+    myToken = res.token;
+    if (!tokens.some(t => t.token === myToken)) tokens.push({ token: myToken, label: deviceLabel(), added: Date.now() });
+    await setDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid), { uid: ME.uid, tokens, updated_at: serverTimestamp() }, { merge: true });
+    try { await callClaim({ token: myToken }); } catch (ignore) {}
+    msg('ההתראות הופעלו במכשיר הזה.', 'ok');
+  } catch (e) { msg('ההפעלה נכשלה. ' + (e.message || e.code || ''), 'err'); }
+  finally { busy = false; controls(); await refresh(); }
+};
+
+$('btnSend').onclick = async () => {
+  if (busy || !myToken) { if (!myToken) msg('קודם הפעל/י התראות במכשיר הזה.', 'err'); return; }
+  busy = true; controls(); msg('שולח התראת בדיקה…', 'info');
+  try {
+    await callSend({ request_id: newRequestId(), token: myToken });
+    msg('ההתראה נשלחה. כשהיא מגיעה — פתח/י אותה, או השאר/י את המסך פתוח.', 'ok');
+  } catch (e) {
+    const reason = e && e.details && e.details.reason;
+    msg(reason === 'readiness-cooldown' ? 'המתן/י דקה בין ניסיונות.' : reason === 'readiness-quota' ? 'הגעת למכסת הבדיקות היומית (3). נסה/י מחר.'
+      : reason === 'readiness-provider' ? 'ספק ההתראות לא קיבל את ההודעה. נסה/י שוב מאוחר יותר.' : 'השליחה נכשלה. ' + (e.message || e.code || ''), 'err');
+  } finally { busy = false; controls(); await refresh(); }
+};
+
+async function ack(nonce){
+  if (!nonce || !myToken) return false;
+  try {
+    const r = (await callAck({ nonce, token: myToken })).data || {};
+    msg(r.already ? 'הבדיקה כבר אושרה.' : 'ההתראה התקבלה ואושרה. המכשיר מוכן.', 'ok');
+    pendingNonce = ''; stripNonce(); return true;
+  } catch (e) {
+    const reason = e && e.details && e.details.reason;
+    msg(reason === 'readiness-expired' ? 'הבדיקה פגה. שלח/י בדיקה חדשה.' : reason === 'readiness-nonce' ? 'קוד האישור אינו תואם לבדיקה האחרונה. שלח/י בדיקה חדשה.' : 'האישור נכשל. ' + (e.message || e.code || ''), 'err');
+    return false;
+  }
+}
+$('btnAck').onclick = async () => {
+  if (busy) return; busy = true; controls();
+  try { if (pendingNonce) await ack(pendingNonce); else msg('ההתראה עדיין לא נפתחה במכשיר הזה. פתח/י אותה מהמגש, או שלח/י שוב.', 'info'); }
+  finally { busy = false; controls(); await refresh(); }
+};
+
+onAuthStateChanged(auth, async user => {
+  if (!user) { location.replace('./login.html?next=device-readiness.html'); return; }
+  let c = {};
+  try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  SID = String(c.stationId || '');
+  if (!SID || !c.role || c.super === true) {
+    $('denyCard').classList.remove('hide'); $('denyWho').textContent = 'מחובר/ת כ־' + (user.email || '');
+    if (c.super === true) $('denyWhy').textContent = 'מנהל המערכת בודק מכשיר דרך מעבדת המכשיר במסך ההתראות.';
+    renderStuckNav(user.email || ''); return;
+  }
+  ME = { uid: user.uid, email: user.email || '' };
+  $('whoSub').textContent = 'מחובר/ת: ' + ME.email;
+  renderNav(c, 'device-readiness.html', user.email || '');
+  $('work').classList.remove('hide');
+  if (!pushSupported()) setStep(1, 'fail', 'הדפדפן הזה לא תומך בהתראות. באייפון: הוסף/י את האתר למסך הבית ופתח/י אותו משם.');
+  try { messaging = MSG.getMessaging(app); } catch (ignore) {}
+  await loadTokens();
+  pendingNonce = readNonce();
+  if (messaging) {
+    try {
+      MSG.onMessage(messaging, async p => {
+        const d = (p && p.data) || {};
+        if (d.type === 'readiness_test' && /^[a-f0-9]{32}$/.test(String(d.nonce || ''))) { pendingNonce = d.nonce; await ack(d.nonce); await refresh(); }
+      });
+    } catch (ignore) {}
+  }
+  const r = await refresh();
+  if (pendingNonce && r && r.device && r.device.status === 'test_sent') { await ack(pendingNonce); await refresh(); }
+});
+</script>
+</body>
+</html>

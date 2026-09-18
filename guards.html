@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,7 +30,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .wrap{ max-width:1100px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
@@ -54,7 +54,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
         font-family:inherit; font-weight:600; margin-top:14px }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
   .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
@@ -123,8 +123,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px }
   .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
-                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer }
-  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+                font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
+                min-height:44px; box-sizing:border-box }
+  .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   .hide{ display:none !important }
 </style>
@@ -288,29 +289,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { CREW_HE } from './rotation.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h20';
 import { parseEffectiveWorkdays, mergeEffectiveWorkdays, workdaysSourceLabel,
-         WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h19';
+         WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h20';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, unavailableWhy } from './guards.js?v=42h19';
+         autoPick, whyPicked, logRows, unavailableWhy } from './guards.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs,
          query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -929,7 +930,7 @@ function openEdit(g){
   // ו-textContent, כדי שכותרת או הערה שמכילים סימנים מיוחדים לא
   // ייכנסו ל-HTML של החלון.
   d.innerHTML =
-    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent);margin:0 0 3px"></h2>' +
+    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent-txt);margin:0 0 3px"></h2>' +
     '<div class="note" id="dlgWhen" style="margin-bottom:12px"></div>' +
     '<label for="eTitle">מה האירוע</label><input id="eTitle" maxlength="80">' +
     '<label for="eKind">סוג</label><select id="eKind"></select>' +
@@ -1008,7 +1009,7 @@ function openReschedule(g){
   if (!CAN_MANAGE) return;
   const d = $('dlg');
   d.innerHTML =
-    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent);margin:0 0 3px"></h2>' +
+    '<h2 id="dlgTitle" style="font-size:17px;color:var(--accent-txt);margin:0 0 3px"></h2>' +
     '<div class="note" id="dlgWhen" style="margin-bottom:12px"></div>' +
     '<label for="rDate">תאריך חדש</label><input id="rDate" type="date">' +
     '<div id="dlgMsg" class="msg" role="status" aria-live="polite"></div>' +
@@ -1426,7 +1427,7 @@ function openAssign(g){
 
   const d = $('dlg');
   d.innerHTML =
-    '<h2 style="font-size:17px;color:var(--accent);margin:0 0 3px">' +
+    '<h2 style="font-size:17px;color:var(--accent-txt);margin:0 0 3px">' +
       esc(g.title || '') + '</h2>' +
     '<div class="note" style="margin-bottom:12px">' +
       esc(dmy(g.date)) + ' · ' + esc(g.start) + '–' + esc(g.end) +

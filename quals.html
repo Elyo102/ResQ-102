@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -29,7 +29,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-family:"Segoe UI",Arial,sans-serif; padding:20px }
   .wrap{ max-width:900px; margin:0 auto }
   h1{ font-size:22px; margin:0 0 4px }
-  h2{ font-size:16px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:16px; margin:0 0 4px; color:var(--accent-txt) }
   .sub{ color:var(--muted); font-size:13px; margin-bottom:22px }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7; margin-bottom:14px }
 
@@ -39,15 +39,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{ display:block; font-size:13px; color:var(--muted); margin:12px 0 4px }
   input{ width:100%; padding:11px; background:var(--input); color:var(--txt);
         border:1px solid var(--line); border-radius:6px; font-size:15px;
-        font-family:inherit }
+        font-family:inherit; min-height:44px; box-sizing:border-box }
   input.num{ width:84px; text-align:center; font-variant-numeric:tabular-nums }
-  button{ background:var(--accent); color:var(--on-accent); border:0; border-radius:6px;
+  button{ background:var(--accent); color:var(--accent-on); border:0; border-radius:6px;
         padding:11px 20px; font-size:15px; cursor:pointer; margin-top:16px;
-        font-family:inherit }
+        font-family:inherit; min-height:44px; box-sizing:border-box }
   button:disabled{ opacity:.5; cursor:not-allowed }
   input:disabled{ opacity:.55; cursor:not-allowed }
   button.link{ background:none; border:1px solid var(--line); color:var(--muted) }
-  button.small{ padding:6px 12px; font-size:13px; margin-top:0 }
+  button.small{ padding:6px 12px; font-size:13px; margin-top:0; min-height:44px }
 
   .msg{ margin-top:14px; padding:11px; border-radius:6px; font-size:13px;
         line-height:1.6; display:none }
@@ -81,8 +81,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
          padding:2px 10px; font-size:12px; color:var(--muted); margin:2px 0 2px 4px }
   .crew{ display:inline-block; border-radius:4px; padding:1px 8px; font-size:12px;
          font-weight:700; color:var(--on-accent) }
-  .crew.A{ background:var(--crewA) } .crew.B{ background:var(--crewB) }
-  .crew.C{ background:var(--crewC) }
+  .crew.A{ background:var(--crewA); color:var(--crewA-on) } .crew.B{ background:var(--crewB); color:var(--crewB-on) }
+  .crew.C{ background:var(--crewC); color:var(--crewC-on) }
 
   .rl{ border:1px solid var(--line); border-radius:10px; padding:14px;
        margin-bottom:10px }
@@ -90,7 +90,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .rl.okline{ border-color:var(--good-bd) }
   .rl h3{ margin:0 0 8px; font-size:15px; display:flex; align-items:center; gap:9px }
   .verdict{ font-size:13px; font-weight:700 }
-  .verdict.below{ color:var(--bad) } .verdict.okline{ color:var(--good) }
+  .verdict.below{ color:var(--bad-txt) } .verdict.okline{ color:var(--good) }
   .lack{ font-size:13px; line-height:1.9; color:var(--soft-bad) }
   .lack b{ color:var(--on-soft) }
   .counts{ font-size:12.5px; color:var(--muted); line-height:1.8 }
@@ -210,12 +210,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { redlineState, visibleCrews } from './readiness.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
+import { redlineState, visibleCrews } from './readiness.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -225,7 +225,7 @@ import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -262,6 +262,11 @@ let quals   = [];   // [{id,name,order}]
 let people  = [];   // [{uid,full_name,crew}]
 let held    = {};   // uid -> [qid]
 let redline = { min_headcount: 0, min_quals: {} };
+// דגלי כשל שקט: שתי שאילתות אלה קריטיות לחישוב הקו האדום. כשל
+// שקט בהן לא יביא ל'אין כשירויות' אמיתי אלא לתמונה כוזבת של
+// 'כולם לא כשירים' — ולכן הן חייבות באזהרה גלויה, לא ב-catch(ignore).
+let memberQualsFailed = false;
+let redlineFailed = false;
 
 // ---------- הרשאה ----------
 
@@ -364,14 +369,21 @@ async function loadAll(){
         (e.code || e.message) + ')', 'err');
   }
 
+  memberQualsFailed = false;
   try {
     const ms = await getDocs(collection(db, 'stations', SID, 'member_quals'));
     ms.forEach(d => {
       const v = d.data() || {};
       held[d.id] = Array.isArray(v.quals) ? v.quals : [];
     });
-  } catch (ignore) {}
+  } catch (e) {
+    // כשל כאן משאיר held ריק — בלי הדגל, שאר המסך ממשיך כאילו
+    // באמת אין לאף אחד כשירות, וזו טעות בטיחותית שקטה.
+    memberQualsFailed = true;
+    console.error('member_quals load failed', e);
+  }
 
+  redlineFailed = false;
   try {
     const rl = await getDoc(doc(db, 'stations', SID, 'config', 'redline'));
     if (rl.exists()) {
@@ -381,7 +393,17 @@ async function loadAll(){
         min_quals: (v.min_quals && typeof v.min_quals === 'object') ? v.min_quals : {}
       };
     }
-  } catch (ignore) {}
+  } catch (e) {
+    redlineFailed = true;
+    console.error('redline load failed', e);
+  }
+
+  if (memberQualsFailed) {
+    // עמודת הכשירויות בטבלת האנשים תיראה ריקה לגמרי בלי האזהרה
+    // הזו — ריק אמיתי ו'לא הצלחנו לטעון' נראים אותו הדבר בלעדיה.
+    $('peopleNote').textContent = 'לא ניתן היה לטעון את הכשירויות שכל אדם מחזיק כרגע. ' +
+      'העמודה למטה עלולה להיראות ריקה גם אצל מי שכן כשיר.';
+  }
 
   renderCatalog();
   renderRedlineForm();
@@ -741,6 +763,19 @@ function refreshChips(p){
 function renderStatus(){
   const box = $('rlBoxes');
   box.innerHTML = '';
+
+  // כשל בקריאת מי-מחזיק-מה או הקו האדום עצמו הופך כל חישוב
+  // כאן לספרות שנראות תקינות אך אינן — הצגתן כ'הצלחה' מלאה
+  // מסוכנת ממש כמו לוח ריק. עוצרים כאן, לא מחשבים על נתונים חסרים.
+  if (memberQualsFailed || redlineFailed) {
+    box.innerHTML = '<div class="msg err" style="display:block">לא ניתן היה לטעון את ' +
+      (memberQualsFailed ? 'נתוני הכשירויות שכל אדם מחזיק' : 'הקו האדום') +
+      '. מצב המשמרות מול הקו האדום אינו מוצג כדי לא להראות תמונה שגויה. ' +
+      '<button type="button" class="link" id="rlRetryBtn">נסה שוב</button></div>';
+    const rb = document.getElementById('rlRetryBtn');
+    if (rb) rb.onclick = function () { rb.disabled = true; loadAll(); };
+    return;
+  }
 
   const minHead = Number(redline.min_headcount || 0);
   const mins    = redline.min_quals || {};

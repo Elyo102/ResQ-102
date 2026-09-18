@@ -4,8 +4,8 @@
 // ובחלון של 30 הודעות. כתיבה והסתרה אינן נעשות מהדפדפן: הן
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
-import { subStationAvailable } from './stations.js?v=42h19';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h19';
+import { subStationAvailable } from './stations.js?v=42h20';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h20';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
@@ -1308,6 +1308,12 @@ function subscribeToActive(keepFeed) {
     state.lastLoadFromCache = !!(snapshot.metadata && snapshot.metadata.fromCache);
     renderFeed();
     updateUnread();
+    // 42H.20 §5.5 · הוק לצרכן חיצוני (פעמון הבית) שרוצה לדעת אילו
+    // הודעות נטענו בפועל בלוח הפעיל — בלי לפתוח שאילתה שנייה על
+    // אותו נתיב. לא נכתב כאן שום דבר, ולא נוצר מנוי נוסף.
+    if (typeof state.onMessages === 'function') {
+      try { state.onMessages(boardId, nextLive.slice()); } catch (ignore) {}
+    }
   }, function () {
     if (state !== owner || generation !== state.generation || state.activeBoard !== boardId) return;
     byId('bulletinFeed').setAttribute('aria-busy', 'false');
@@ -1758,6 +1764,9 @@ export function initBulletin(options) {
     replyMessage: null,
     hideMessage: null,
     hideReply: null,
+    // 42H.20 §5.5 · ראה subscribeToActive: נקרא עם (boardId, docs) בכל
+    // עדכון live של הלוח הפעיל, בלי שאילתה נוספת.
+    onMessages: typeof opts.onMessages === 'function' ? opts.onMessages : null,
     markViewed: null,
     listViewers: null,
     abort: new AbortController()

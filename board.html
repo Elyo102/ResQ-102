@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -37,7 +37,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs{ display:flex; gap:4px; flex-wrap:wrap }
   .tabs a{ padding:9px 16px; font-size:14px; color:var(--muted);
            text-decoration:none; border-bottom:2px solid transparent;
-           white-space:nowrap }
+           white-space:nowrap; display:inline-flex; align-items:center; min-height:44px }
   .tabs a.on{ color:var(--txt); border-bottom-color:var(--accent); font-weight:600 }
 
   .bar{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
@@ -46,14 +46,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .lbl{ font-size:12.5px; color:var(--muted) }
   .sw{ border:1px solid var(--line); background:transparent; color:var(--muted);
        border-radius:8px; padding:7px 17px; font-size:15px; font-weight:700;
-       cursor:pointer; font-family:inherit }
-  .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:var(--on-accent) }
+       cursor:pointer; font-family:inherit; min-height:44px }
+  .sw.on.A{ background:var(--crewA); border-color:var(--crewA); color:var(--crewA-on) }
   .sw.on.B{ background:var(--crewB); border-color:var(--crewB); color:var(--crewB-on) }
-  .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:var(--on-accent) }
+  .sw.on.C{ background:var(--crewC); border-color:var(--crewC); color:var(--crewC-on) }
   .sep{ width:1px; align-self:stretch; background:var(--line); margin:0 2px }
   .verdict{ font-size:15px; font-weight:800; border-radius:8px; padding:6px 14px;
             white-space:nowrap }
-  .verdict.bad{ color:var(--bad); border:1px solid var(--bad); background:var(--bad-bg) }
+  .verdict.bad{ color:var(--bad-txt); border:1px solid var(--bad); background:var(--bad-bg) }
   .verdict.ok{ color:var(--good); border:1px solid var(--good-bd); background:var(--good-bg) }
   .why{ font-size:13px; color:var(--soft-bad); line-height:1.7 }
   .why b{ color:var(--on-soft) }
@@ -62,9 +62,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .spacer{ flex:1 }
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer;
-        font-family:inherit; white-space:nowrap }
+        font-family:inherit; white-space:nowrap; min-height:44px; min-width:44px; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   .chain{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
@@ -129,7 +129,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .veh .role{ font-size:11.5px; color:var(--muted); border:1px solid var(--line);
               border-radius:20px; padding:1px 9px }
   .veh .cnt{ font-size:11.5px; color:var(--muted) }
-  .veh .cnt.bad{ color:var(--bad) }
+  .veh .cnt.bad{ color:var(--bad-txt) }
   .veh .tools{ margin-inline-start:auto; display:flex; gap:6px }
   .veh .tools .btn{ padding:4px 9px; font-size:11.5px }
 
@@ -147,17 +147,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .who .none{ color:var(--warn); font-weight:600 }
   .who .cw{ font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 6px;
             color:var(--on-accent); margin-inline-start:7px; vertical-align:middle }
-  .cw.A{ background:var(--crewA) } .cw.B{ background:var(--crewB); color:var(--crewB-on) }
-  .cw.C{ background:var(--crewC) }
+  .cw.A{ background:var(--crewA); color:var(--crewA-on) } .cw.B{ background:var(--crewB); color:var(--crewB-on) }
+  .cw.C{ background:var(--crewC); color:var(--crewC-on) }
   .req{ font-size:11px; font-weight:600; border:1px solid var(--line);
         border-radius:20px; padding:1px 9px; color:var(--muted);
         white-space:nowrap; flex:none; max-width:150px; overflow:hidden;
         text-overflow:ellipsis }
   .req.hit{ border-color:var(--good-bd); color:var(--good) }
-  .req.miss{ border-color:var(--bad); color:var(--bad) }
+  .req.miss{ border-color:var(--bad); color:var(--bad-txt) }
   .x{ flex:none; color:var(--muted); font-size:15px; cursor:pointer;
       padding:0 4px; line-height:1 }
-  .x:hover{ color:var(--bad) }
+  .x:hover{ color:var(--bad-txt) }
 
   .foot{ color:var(--muted); font-size:12px; margin-top:12px; line-height:1.8 }
   .msg{ margin-top:12px; padding:11px; border-radius:6px; font-size:13px;
@@ -197,7 +197,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .pit .tag{ font-size:11px; border:1px solid var(--line); border-radius:20px;
              padding:1px 9px; color:var(--muted); white-space:nowrap }
   .pit .tag.hit{ border-color:var(--good-bd); color:var(--good) }
-  .pit .tag.miss{ border-color:var(--bad); color:var(--bad) }
+  .pit .tag.miss{ border-color:var(--bad); color:var(--bad-txt) }
   .pit .tag.busy{ border-color:var(--warn); color:var(--warn) }
   .empty{ padding:16px; color:var(--muted); font-size:13px; text-align:center }
 </style>
@@ -285,19 +285,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { stationName, subStationAvailable } from './stations.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { stationName, subStationAvailable } from './stations.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h19';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h20';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=42h19';
-import { SITE_SEED } from './hours.js?v=42h19';
-import { plural } from './rotation.js?v=42h19';
+  from './faults.js?v=42h20';
+import { SITE_SEED } from './hours.js?v=42h20';
+import { plural } from './rotation.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -307,7 +307,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

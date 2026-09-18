@@ -21,7 +21,7 @@
 //
 // טעות זו היא הטעות המתבקשת כאן, ולכן היא כתובה במפורש.
 
-import { worksOn } from './effective-workdays.js?v=42h19';
+import { worksOn } from './effective-workdays.js?v=42h20';
 
 // ------------------------------------------------------------------
 //  מצבים
@@ -40,7 +40,7 @@ export const GUARD_STATES = [
   { id: 'open',      he: 'פתוחה להרשמה', color: 'var(--note)' },
   { id: 'staffed',   he: 'משובצת',        color: 'var(--good)' },
   { id: 'done',      he: 'התקיימה',       color: 'var(--muted)' },
-  { id: 'cancelled', he: 'בוטלה',         color: 'var(--bad)' }
+  { id: 'cancelled', he: 'בוטלה',         color: 'var(--bad-txt)' }
 ];
 
 export function stateHe(id) {

@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h19';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h19';
-import { initAppCheck } from './appcheck.js?v=42h19';
-import { readScheduleFile } from './schedule-file-import.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h20';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { readScheduleFile } from './schedule-file-import.js?v=42h20';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h19';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h19';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h20';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -110,6 +110,9 @@ const DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', '
 // ארבעה צבעים, במחזור. תחנה חמישית תקבל שוב את הראשון — וזה
 // מוצהר, ולא תקלה שמישהו יגלה כשתיפתח תחנת קצה נוספת.
 const SUB_CLASS = ['s1', 's2', 's3', 's4'];
+// גובה תצוגה לתחנה שאין לה שורה בתבנית השנתית — למשל תחנה שנוצרה
+// בייבוא ונושאת מזהה דינמי. שם נוסף תמיד מוצג ולעולם אינו נחתך.
+const DEFAULT_MIN_VISUAL_SLOTS = 5;
 const FIXED_STATIONS = Object.freeze([
   // גובה השורות נלקח מתבנית הסידור השנתית של תחנת אילת. זו רצפת
   // תצוגה בלבד, לא תקרת כוח אדם: שם נוסף תמיד מוצג ולעולם אינו נחתך.
@@ -118,6 +121,44 @@ const FIXED_STATIONS = Object.freeze([
   Object.freeze({ id:'timna', label:'תמנע', minimum:null, minVisualSlots:5 }),
   Object.freeze({ id:'yotvata', label:'יטבתה', minimum:null, minVisualSlots:2 })
 ]);
+
+/* ⭐ 42H.20 · ביקורת Codex, חוסם 2 · ארבעה חריצי תצוגה, לא שמונה שורות.
+ * הסידור המיובא מהגיליון חתום בשרת עם מזהי ישות דינמיים
+ * (is_<sha256(station_id, label)>, ראה stationKey() ב-
+ * functions/schedule-import-layout.js). הלוח הציג את ארבע השורות הקבועות
+ * (eilat/shahmon/timna/yotvata) ריקות, ואז עוד ארבע שורות is_… מאוכלסות.
+ *
+ * ההפרדה כאן: **מזהה הישות** נשאר מה שהשרת חתם (אין שינוי בנתונים, אין
+ * מיזוג לפי שם), ו**חריץ התצוגה** הוא אחד מארבעת הקבועים. חריץ מקבל
+ * בדיוק שני מזהים: המזהה הוותיק שלו, והמזהה שהייבוא מפיק עבור השם
+ * הקנוני שלו בטווח התחנה הזו — מחושב כאן באותה נוסחה בדיוק (sha256 של
+ * JSON יציב של [station_id, label מנורמל], 40 hex). זו השוואת מפתחות
+ * חתומים, לא התאמת תוויות: שם תצוגה שהשרת החזיר אינו משמש להתאמה כלל.
+ * מזהה is_… שאינו אחד מארבעת המפתחות האלה הוא תחנה נוספת באמת, ומוצג
+ * כשורה נוספת — בלי למחוק תמיכה בזהויות דינמיות. */
+function importIdentityLabel(label) {
+  return String(label).normalize('NFC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('he-IL');
+}
+async function importStationKey(stationId, label) {
+  const stable = '[' + JSON.stringify(String(stationId)) + ',' + JSON.stringify(importIdentityLabel(label)) + ']';
+  const bytes = new TextEncoder().encode(stable);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return 'is_' + Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
+async function computeBoardSlotKeys(stationId) {
+  const scoped = typeof stationId === 'string' ? stationId.trim() : '';
+  if (!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(scoped)) return new Map();
+  const entries = await Promise.all(FIXED_STATIONS.map(async (station) =>
+    [station.id, await importStationKey(scoped, station.label)]));
+  return new Map(entries);
+}
+async function refreshBoardSlotKeys(claims) {
+  const stationId = claims && (claims.stationId || claims.station_id);
+  const scoped = typeof stationId === 'string' ? stationId.trim() : '';
+  if (state.boardSlotStation === scoped && state.boardSlotKeys) return;
+  state.boardSlotKeys = await computeBoardSlotKeys(scoped);
+  state.boardSlotStation = scoped;
+}
 
 function localDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -382,6 +423,13 @@ function updateManagerWorkflow() {
   workflowAction('rollback').disabled = $('rollback').disabled;
   $('editDrawerOpen').disabled = !canEditSchedule();
   workflowAction('publish').textContent = mode === 'shadow' ? 'פרסום לניסוי' : 'פרסום לעובדים';
+  // 42H.20 · אותה פעולת פרסום, כפתור נגיש בתוך כרטיס הסקירה עצמו —
+  // בלי לגלול בחזרה למעלה. אין נתיב שרת שני; זה proxy-click בדיוק
+  // כמו workflowAction('publish') למעלה.
+  if ($('publishFromReview')) {
+    $('publishFromReview').disabled = $('publish').disabled;
+    $('publishFromReview').textContent = mode === 'shadow' ? 'אישור ופרסום לניסוי' : 'אישור ופרסום הסידור';
+  }
   $('managerWorkflowHint').textContent = !canRun
     ? 'המנוע כבוי. ההגדרות נשמרות, אך יצירת טיוטה ופרסום נעולות.'
     : state.draft && state.draftPreview
@@ -438,6 +486,7 @@ workflowAction('draft').addEventListener('click', () => {
 });
 workflowAction('review').addEventListener('click', () => showWorkflowTarget('draftPreviewCard'));
 workflowAction('publish').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
+if ($('publishFromReview')) $('publishFromReview').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 workflowAction('rollback').addEventListener('click', () => { if (!$('rollback').disabled) $('rollback').click(); });
 $('editDrawerOpen').addEventListener('click', openEditDrawer);
 $('editDrawerClose').addEventListener('click', () => closeEditDrawer(false));
@@ -935,13 +984,16 @@ function renderModeCard() {
   /* ⭐ מועמד מוכן — הפיקוד חייב לדעת שהוא קיים. בלי השורה הזאת,
    * מפקד שאינו אחראי סידור לא היה יכול לגלות שיש סידור שמחכה
    * לאישורו; הוא היה תלוי במצב מקומי במסך של מישהו אחר. */
-  const candidate = view && view.candidate;
+  const candidate = view && view.authority_mode !== 'monthly' && view.candidate;
   if (candidate) {
     const line = 'יש סידור מוכן למעבר: מהדורה ' + candidate.revision
       + ' · ' + (candidate.from || '') + ' עד ' + (candidate.to || '')
       + (candidate.preflight && candidate.preflight.blocked
         ? ' · הבדיקה האחרונה מצאה פערים' : '');
     box.appendChild(node('div', 'sub', line));
+  } else if (view.authority_mode === 'monthly' && Number.isInteger(view.expected_authority_generation)) {
+    box.appendChild(node('div', 'sub', 'סמכות חודשית פעילה · דור ' + view.expected_authority_generation
+      + '. המעבר לחי יחול על פרסומים עתידיים בלבד.'));
   }
 
   const form = $('modeForm');
@@ -949,8 +1001,10 @@ function renderModeCard() {
   if (state.modeTarget) {
     const toNew = state.modeTarget === 'new';
     $('modeConfirmHint').textContent = toNew
-      ? 'מעבר לסידור המוכן נבדק מול הסידור הקיים לפני האישור. '
-        + 'אם מישהו שמשובץ היום ייעלם — המעבר ייחסם.'
+      ? (view.authority_mode === 'monthly'
+        ? 'השרת יחתום את תמונת הבעלות החודשית המלאה לפני האישור. פרסומים עתידיים יעברו לחי; הודעות ניסוי קודמות לא יישלחו.'
+        : 'מעבר לסידור המוכן נבדק מול הסידור הקיים לפני האישור. '
+          + 'אם מישהו שמשובץ היום ייעלם — המעבר ייחסם.')
       : 'כדי לאשר, הקלד/י בדיוק: ' + state.modeTarget
         + ' — ההקלדה נשמרת ביומן יחד עם מי ביקש/ה, מתי ומאיזה מצב.';
     // שדות האישור וההקלדה אינם רלוונטיים למעבר, שנשען על הבדיקה.
@@ -972,13 +1026,16 @@ function updateModeApply() {
    * אומר את זה במקום להיות פעיל ולהיכשל בשרת. */
   if (state.modeTarget === 'new') {
     const candidate = usableCandidate();
+    const monthly = monthlyAuthorityView();
     const raw = state.modeView && state.modeView.candidate;
     const pending = state.pendingCutover;
-    $('modeApply').disabled = state.modeBusy || (!candidate && !pending);
+    $('modeApply').disabled = state.modeBusy || (!monthly && !candidate && !pending);
     if (pending) {
       /* ⭐ 386.3 · הניסיון החוזר מוצג גם כשהמועמד כבר אינו „מוכן" —
        * למשל אחרי commit שהתשובה שלו אבדה. */
       $('modeApply').textContent = 'נסה שוב את המעבר שלא קיבל תשובה';
+    } else if (monthly) {
+      $('modeApply').textContent = 'בדוק ואשר מעבר לפרסום חי';
     } else if (candidate) {
       $('modeApply').textContent = 'בדוק ואשר מעבר לסידור המוכן';
     } else if (raw && raw.ambiguous) {
@@ -1030,6 +1087,31 @@ function usableCandidate() {
   return candidate;
 }
 
+/* בסמכות החודשית אין פרסום singleton שצריך לבחור כמועמד. תמונת
+ * הבעלות המלאה נחתמת בשרת, והמעבר משנה רק את מדיניות המסירה של
+ * פרסומים עתידיים. */
+function monthlyAuthorityView() {
+  return !!(state.modeView && state.modeView.authority_mode === 'monthly');
+}
+
+function verifiedMonthlyPreflight(raw) {
+  const report = raw && typeof raw === 'object' ? raw : null;
+  const summary = report && report.summary;
+  if (!report || report.schema !== 'schedule-month-cutover-preflight-v1'
+      || report.authority_mode !== 'monthly' || report.mode !== 'shadow'
+      || report.target !== 'new' || typeof report.preflight_signature !== 'string'
+      || !report.preflight_signature || !Number.isInteger(report.expected_generation)
+      || report.expected_generation < 0 || !summary || typeof summary !== 'object'
+      || !Number.isInteger(summary.months) || summary.months < 0
+      || !Number.isInteger(summary.publications) || summary.publications < 0
+      || !Number.isInteger(summary.unavailable_months) || summary.unavailable_months < 0) {
+    const error = new Error('השרת החזיר דוח מעבר חודשי שאינו תקין. לא בוצע שינוי.');
+    error.code = 'cutover-preflight-invalid';
+    throw error;
+  }
+  return report;
+}
+
 /* ⭐ 378.1 · ניסיון חוזר אחרי תשובה שאבדה. ה-commit אולי הצליח; המצב
  * כבר `new`; preview חדש ייכשל — ולא יגיע ל-replay. לכן קודם שולחים
  * **בדיוק** את מה שנשלח קודם (אותו request_id, אותה חתימה, אותו
@@ -1039,6 +1121,17 @@ function usableCandidate() {
  * את מה שחוזה ההצלחה מבטיח — ועל **אותו** פרסום שביקשנו. */
 function verifiedCutoverResult(pending, raw) {
   const result = raw && typeof raw === 'object' ? raw : null;
+  if (pending && pending.authority_mode === 'monthly') {
+    if (!result || result.mode !== 'new' || result.authority_mode !== 'monthly'
+        || !Number.isInteger(result.authority_generation)
+        || result.authority_generation !== pending.expected_generation
+        || typeof result.duplicate !== 'boolean') {
+      const error = new Error('השרת החזיר תשובה שאינה תואמת לבקשת המעבר החודשי. הבקשה נשמרה לניסיון חוזר.');
+      error.code = 'cutover-response-invalid';
+      throw error;
+    }
+    return result;
+  }
   if (!result || result.mode !== 'new'
       || result.publication_id !== pending.candidate_publication_id
       || !Number.isInteger(result.revision) || result.revision < 1
@@ -1053,7 +1146,14 @@ function verifiedCutoverResult(pending, raw) {
 async function promotePending(task = authTask()) {
   if (!scheduleMutationAllowed()) return;
   const pending = state.pendingCutover;
-  const result = verifiedCutoverResult(pending, (await call.cutoverPromote(pending)).data);
+  /* authority_mode הוא discriminator מקומי בלבד. חוזה השרת החודשי
+   * מקבל שלושה שדות מדויקים ונכשל סגור על כל שדה נוסף. */
+  const payload = pending && pending.authority_mode === 'monthly' ? {
+    request_id: pending.request_id,
+    preflight_signature: pending.preflight_signature,
+    expected_generation: pending.expected_generation
+  } : pending;
+  const result = verifiedCutoverResult(pending, (await call.cutoverPromote(payload)).data);
   if (!authTaskCurrent(task)) return null;
   state.pendingCutover = null;
   state.cutoverRequestId = null;
@@ -1061,6 +1161,10 @@ async function promotePending(task = authTask()) {
 }
 
 function cutoverSuccessText(result) {
+  if (result && result.authority_mode === 'monthly') {
+    return 'התחנה עברה לפרסום חי. פרסומים עתידיים יישלחו כרגיל; הודעות ניסוי קודמות נשארו מושתקות.'
+      + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '');
+  }
   return 'התחנה עברה לסידור החדש (מהדורה ' + result.revision + ').'
     + (result.duplicate ? ' (הבקשה הזאת כבר בוצעה קודם.)' : '');
 }
@@ -1069,10 +1173,11 @@ async function promoteToNew() {
   if (state.modeBusy) return;
   const task = authTask();
   const pending = state.pendingCutover;
+  const monthly = monthlyAuthorityView();
   const candidate = usableCandidate();
   /* ⭐ 386.3 · בקשה ממתינה קודמת למועמד: אחרי commit אמיתי הרענון
    * מחזיר `new` בלי מועמד מוכן — והניסיון החוזר חייב להישאר נגיש. */
-  if (!pending && !candidate) return;
+  if (!pending && !monthly && !candidate) return;
   state.modeBusy = true;
   updateModeApply();
   let result = null;
@@ -1082,12 +1187,14 @@ async function promoteToNew() {
       result = await promotePending(task);
       if (!authTaskCurrent(task)) return;
     } else {
-      message('modeMessage', 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
-      const report = (await call.cutoverPreview({
-        candidate_publication_id: candidate.publication_id
-      })).data;
+      message('modeMessage', monthly
+        ? 'בודק את תמונת הסידור החודשית לפני מעבר לפרסום חי…'
+        : 'בודק את הסידור המוכן מול הסידור הקיים…', 'info');
+      const report = monthly
+        ? verifiedMonthlyPreflight((await call.cutoverPreview({})).data)
+        : (await call.cutoverPreview({ candidate_publication_id: candidate.publication_id })).data;
       if (!authTaskCurrent(task)) return;
-      if (report.blocked) {
+      if (!monthly && report.blocked) {
         const why = Object.keys(report.by_reason || {})
           .filter((key) => report.by_reason[key] > 0)
           .map((key) => (REASON_TEXT[key] || key) + ' ' + report.by_reason[key])
@@ -1104,7 +1211,7 @@ async function promoteToNew() {
       const changed = Number(changes.count || 0);
       const missing = Number((report.by_reason || {})['preflight-missing'] || 0);
       let accept = null;
-      if (changed > 0) {
+      if (!monthly && changed > 0) {
         const days = (changes.days || []).length;
         if (!confirm('הסידור החדש משנה ' + changed + ' שיבוצים לעומת הסידור הקיים'
           + (days ? ', על פני ' + days + ' ימים' : '') + '.'
@@ -1113,12 +1220,22 @@ async function promoteToNew() {
           + '\n\nלהמשיך?')) return;
         accept = report.signature;
       }
-      if (!confirm('להעביר את התחנה לסידור המוכן? '
+      if (monthly) {
+        const summary = report.summary;
+        if (!confirm('להעביר את התחנה לפרסום חי? '
+          + 'נבדקו ' + summary.months + ' חודשים ו-' + summary.publications + ' פרסומים. '
+          + 'רק פרסומים עתידיים יישלחו; הודעות שנוצרו במצב ניסוי יישארו מושתקות.')) return;
+      } else if (!confirm('להעביר את התחנה לסידור המוכן? '
         + 'מרגע האישור כל התחנה רואה את הסידור החדש, וההודעות שהמתינו נשלחות.')) return;
 
       /* ⭐ אותו `request_id` נשמר לניסיון חוזר, יחד עם מלוא הכוונה. */
       if (!state.cutoverRequestId) state.cutoverRequestId = requestId('cutover');
-      state.pendingCutover = {
+      state.pendingCutover = monthly ? {
+        request_id: state.cutoverRequestId,
+        authority_mode: 'monthly',
+        preflight_signature: report.preflight_signature,
+        expected_generation: report.expected_generation
+      } : {
         request_id: state.cutoverRequestId,
         candidate_publication_id: candidate.publication_id,
         /* ⭐ החתימה של הדוח ש**הוצג בשורה שלמעלה**, ולא זו שהשרת
@@ -1486,35 +1603,110 @@ function isWeekend(iso) {
   return dow === 5 || dow === 6;
 }
 
-// סדר תחנות הקצה נקבע ממדיניות התחנה כשהיא קיימת, כדי שהצבע של
-// „תמנע" לא יתחלף בין יום ליום רק מפני שביום אחד לא היה שם איש.
+// תחנות הקצה של הלוח מגיעות מהשורות ה**חתומות** שהשרת החזיר — מהטיוטה
+// או מהפרסום — ולא מרשימה קבועה בקוד.
+//
+// עד כאן הפונקציה אספה את המזהים מהשורות ואז זרקה אותם והחזירה תמיד את
+// FIXED_STATIONS. תחנה שנוצרה בייבוא נושאת מזהה דינמי (is_…), ורשימה
+// קבועה לעולם לא תתאים לו — ולכן הלוח הציג ארבע תחנות ריקות ואיבד את
+// כל מה שבאמת נחתם.
+//
+// שלושה כללים שנשמרים כאן במפורש:
+//   * ההתאמה היא לפי **מזהה בלבד**. שם תצוגה אינו מזהה ואינו משמש להתאמה.
+//   * שני מזהים שונים נשארים שתי תחנות נפרדות, גם כששם התצוגה זהה.
+//   * המדיניות ה**חיה** אינה מוסיפה תחנות ללוח — היא עשויה להשתנות אחרי
+//     החתימה. היא משמשת רק כמקור-גיבוי לשם תצוגה של מזהה שכבר חתום.
+//
+// FIXED_STATIONS נשארת בתפקיד אחד בלבד: גובה התצוגה וסדר ההצגה של
+// התחנות הוותיקות, לפי מזהה. היא אינה קובעת עוד מי מוצג.
 function subOrder(days) {
+  const seen = [];
   const labels = new Map();
-  (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!labels.has(sub.sub_station)) labels.set(sub.sub_station, sub.label || sub.sub_station);
-  }));
-  if (state.policy) {
-    Object.keys(state.policy.sub_stations).forEach((id) => {
-      if (!labels.has(id)) labels.set(id, state.policy.sub_stations[id].label || id);
-    });
-  }
-  // הקו של כל תחנה מגיע רק מהשורות שהשרת החזיר. הוא נחתם יחד עם
-  // הטיוטה/הפרסום, ולכן אסור לערבב כאן מדיניות חיה שאולי השתנתה מאז.
-  // קו 0 = אין קו.
   const minimums = new Map();
   (days || []).forEach((day) => (day.sub_stations || []).forEach((sub) => {
-    if (!minimums.has(sub.sub_station) && Number.isInteger(sub.minimum)) minimums.set(sub.sub_station, sub.minimum);
+    const id = typeof sub.sub_station === 'string' ? sub.sub_station.trim() : '';
+    if (!id) return;
+    const label = typeof sub.label === 'string' ? sub.label.trim() : '';
+    if (!labels.has(id)) {
+      seen.push(id);
+      labels.set(id, label);
+    } else if (!labels.get(id) && label) {
+      labels.set(id, label);
+    }
+    // הקו של כל תחנה מגיע רק מהשורות שהשרת החזיר. הוא נחתם יחד עם
+    // הטיוטה/הפרסום. קו 0 = אין קו.
+    if (!minimums.has(id) && Number.isInteger(sub.minimum)) minimums.set(id, sub.minimum);
   }));
+
+  const fixedById = new Map(FIXED_STATIONS.map((station) => [station.id, station]));
+  const policySubs = state.policy && state.policy.sub_stations ? state.policy.sub_stations : null;
+  const policyLabel = (id) => {
+    if (!policySubs || !Object.prototype.hasOwnProperty.call(policySubs, id)) return '';
+    const entry = policySubs[id];
+    return entry && typeof entry.label === 'string' ? entry.label.trim() : '';
+  };
+
   const lineOf = (id) => {
     const value = minimums.has(id) ? minimums.get(id) : null;
     return Number.isInteger(value) && value > 0 ? value : null;
   };
-  return FIXED_STATIONS.map((station) => ({
-    id: station.id,
-    label: station.label,
-    minimum: lineOf(station.id),
-    minVisualSlots: station.minVisualSlots
-  }));
+  // לתחנה ותיקה מוכרת (מזהה קבוע) יש שם קבוע ומהימן — לעולם לא סומכים
+  // על תווית מהשורה החתומה או מהמדיניות עבורה (יכולה להיות שגויה או
+  // מוזרקת). התווית מהשורה/מהמדיניות משמשת רק למזהה דינמי חדש שאין לו
+  // שם קבוע בקוד.
+  const labelOf = (id) => (fixedById.has(id) ? fixedById.get(id).label : '')
+    || labels.get(id)
+    || policyLabel(id)
+    || id;
+  const slotsOf = (id) => (fixedById.has(id)
+    ? fixedById.get(id).minVisualSlots : DEFAULT_MIN_VISUAL_SLOTS);
+
+  // ארבע התחנות הוותיקות מוצגות תמיד כתבנית קבועה — גם ביום שאין בו
+  // לאף אחת מהן שורה חתומה (חוזה קיים: „בכל יום מוצגות כל ארבע
+  // התחנות"). מה שהבאג הישן פספס לגמרי הוא **תחנה חדשה מייבוא, עם
+  // מזהה דינמי**: היא לא הייתה ברשימה הקבועה אז לא הוצגה בכלל, אף
+  // שהשורה שלה נחתמה כדין. כאן היא מתווספת בסוף, לפי סדר הופעתה
+  // הראשון — בלי להחליף ובלי לדחוק אף אחת מארבע הוותיקות.
+  // רק מזהה תחנה אמיתי מהייבוא (הפורמט שמפיק stationKey() ב-
+  // functions/schedule-import-layout.js: is_ + 40 תווי hex) מתווסף
+  // כתחנה חמישית ומעלה. מזהה היסטורי אחר (למשל legacy_A ממשמרת בלי
+  // תחנת קצה, „off mode") אינו תחנה קיימת — הצגתו כעמודה תמציא שיבוץ
+  // שלא היה בגיליון, בניגוד מפורש לחוזה „תבנית ריקה בלי המצאות".
+  const IMPORT_STATION_ID_RE = /^is_[0-9a-f]{40}$/;
+  // חריץ תצוגה ← המזהים החתומים שהוא מקבל: הוותיק שלו והמזהה שהייבוא
+  // מפיק לשם הקנוני שלו (ראה computeBoardSlotKeys). השוואה לפי מפתח בלבד.
+  const slotKeys = state.boardSlotKeys instanceof Map ? state.boardSlotKeys : new Map();
+  const slotOf = new Map();
+  FIXED_STATIONS.forEach((station) => {
+    slotOf.set(station.id, station.id);
+    const imported = slotKeys.get(station.id);
+    if (imported) slotOf.set(imported, station.id);
+  });
+  const slotIds = (slot) => {
+    const imported = slotKeys.get(slot);
+    // המזהה החתום מהייבוא קודם: כשיש לאותו יום גם שורה ותיקה וגם שורה
+    // מיובאת, מוצגת המיובאת — לא מיזוג אנשים משתי ישויות.
+    return imported ? [imported, slot] : [slot];
+  };
+  const legacy = FIXED_STATIONS.map((station) => station.id);
+  const rest = seen.filter((id) => !slotOf.has(id) && IMPORT_STATION_ID_RE.test(id));
+  const lineOfAny = (ids) => {
+    for (const id of ids) { const line = lineOf(id); if (line !== null) return line; }
+    return null;
+  };
+  return legacy.map((slot) => ({
+    id: slot,
+    ids: slotIds(slot),
+    label: labelOf(slot),
+    minimum: lineOfAny(slotIds(slot)),
+    minVisualSlots: slotsOf(slot)
+  })).concat(rest.map((id) => ({
+    id,
+    ids: [id],
+    label: labelOf(id),
+    minimum: lineOf(id),
+    minVisualSlots: slotsOf(id)
+  })));
 }
 
 function cellContent(cell, block, minVisualSlots) {
@@ -1562,6 +1754,15 @@ function cellContent(cell, block, minVisualSlots) {
     const personLabel = person.person || person.uid || '—';
     row.textContent = personLabel;
     if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
+    /* ⭐ 42H.20 §1 · עובד ללא חשבון נשאר גלוי ומשובץ בלוח, מסומן
+     * בבירור, ואינו חוסם דבר — הוא לא מקבל פוש (נאכף בשרת, ראה
+     * schedule-publication-recipients.js), וזה כל מה שהתג הזה אומר. */
+    if (person.unlinked === true) {
+      row.classList.add('unlinked-slot');
+      const noAccount = node('span', 'flag unlinked', 'ללא חשבון');
+      noAccount.title = 'אין לאדם הזה חשבון מקושר — הוא לא יקבל התראות פוש. זה לא חוסם את השיבוץ או הפרסום.';
+      row.appendChild(noAccount);
+    }
     if (warningCodes.length) {
       row.classList.add('manual-warning-slot');
       const badge = node('span', 'flag manual-warning', '⚠ אזהרה');
@@ -1570,6 +1771,7 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const ariaParts = [personLabel];
     if (person.is_me) ariaParts.push('אני');
+    if (person.unlinked === true) ariaParts.push('ללא חשבון, לא מקבל פוש');
     if (warningLabel) ariaParts.push('שיבוץ ידני עם אזהרה', warningLabel);
     row.setAttribute('aria-label', ariaParts.join(' · '));
     cell.appendChild(row);
@@ -1615,7 +1817,7 @@ function renderBoard(target, days, options) {
     return;
   }
   const subs = (opts.subs || subOrder(days)).filter((sub) =>
-    !opts.onlySub || sub.id === opts.onlySub);
+    !opts.onlySub || sub.id === opts.onlySub || (Array.isArray(sub.ids) && sub.ids.includes(opts.onlySub)));
   if (!subs.length && opts.showAbsences !== true) {
     target.appendChild(node('div', 'empty', 'אין תחנות קצה להצגה.'));
     return;
@@ -1673,7 +1875,12 @@ function renderBoard(target, days, options) {
       cell.setAttribute('role', 'gridcell');
       cell.dataset.station = sub.id;
       cell.dataset.date = day.date;
-      const block = (day.sub_stations || []).find((item) => item.sub_station === sub.id);
+      const ids = Array.isArray(sub.ids) && sub.ids.length ? sub.ids : [sub.id];
+      let block = null;
+      for (const id of ids) {
+        block = (day.sub_stations || []).find((item) => item.sub_station === id) || null;
+        if (block) break;
+      }
       cellContent(cell, block, sub.minVisualSlots);
       ariaRow.appendChild(cell);
     });
@@ -1787,6 +1994,10 @@ async function loadStationRange(ym) {
         || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
+    const retry = node('button', 'btn sm', 'נסה שוב');
+    retry.type = 'button';
+    retry.addEventListener('click', () => loadStationRange(requestedMonth));
+    box.appendChild(retry);
   }
 }
 
@@ -1976,6 +2187,10 @@ async function loadMineRange(ym) {
         || state.month !== requestedMonth) return;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
+    const retry = node('button', 'btn sm', 'נסה שוב');
+    retry.type = 'button';
+    retry.addEventListener('click', () => loadMineRange(requestedMonth));
+    box.appendChild(retry);
   }
 }
 
@@ -2374,11 +2589,24 @@ function canonicalPolicyReady() {
     Object.prototype.hasOwnProperty.call(state.policy.sub_stations || {}, station.id)));
 }
 
+function workbookManagedImport() {
+  // Mirror sheetImportBasis only after setup was successfully loaded. Missing
+  // optional configuration is supported; a failed setup request is not evidence
+  // of missing configuration. Keep legacy custom station mapping intact.
+  const setup = state.setup;
+  if (!setup) return false;
+  if (setup.configured === false && Array.isArray(setup.missing)
+      && setup.missing.some((key) => key === 'policy' || key === 'source')) return true;
+  return setup.configured === true
+    && String(setup.policy && (setup.policy.active_policy_id || setup.policy.id) || '').startsWith('ip_')
+    && String(setup.source && setup.source.id || '').startsWith('si_');
+}
+
 function renderImportStationMap() {
   const wrap = $('importStationMap');
   const grid = $('importStationMapGrid');
   clear(grid);
-  if (!state.policy || canonicalPolicyReady()) {
+  if (workbookManagedImport() || !state.policy || canonicalPolicyReady()) {
     wrap.hidden = true;
     state.importStationMap = null;
     $('importStationMapConfirm').checked = false;
@@ -2420,7 +2648,7 @@ function renderImportStationMap() {
 }
 
 function importStationMap() {
-  if (canonicalPolicyReady()) return null;
+  if (workbookManagedImport() || canonicalPolicyReady()) return null;
   if (!state.policy) throw new Error('חסרים חוקי תחנה פעילים.');
   const mapping = state.importStationMap || {};
   if (FIXED_STATIONS.some((station) => !Object.prototype.hasOwnProperty.call(mapping, station.id))) {
@@ -2545,11 +2773,26 @@ function renderImportReport(report) {
       return (kind ? kind[1] : absence.kind) + (location ? ' · ' + location : '');
     }).join(', ');
     dups.appendChild(node('div', 'change weak', item.name + ' מופיע ב-' + dateLabel(item.date)
-      + ' גם בשיבוץ (' + stations + ') וגם בהיעדרות (' + absences + ') — יש לבחור אחד מהם בגיליון.'));
+      + ' גם בשיבוץ (' + stations + ') וגם בהיעדרות (' + absences + ')'
+      + ((report.warnings || []).some(w => w.code === 'assignment-absence-conflict')
+        ? ' — שני הרישומים נשמרים לבדיקה של אחראי הסידור; האזהרה אינה חוסמת פרסום.'
+        : ' — יש לבחור אחד מהם בגיליון.')));
   });
+  /* ⭐ 42H.20 Scope 2.5 · קודים גולמיים כמו unlinked-people/ignored-content
+   * אינם קריאים למנהל תחנה. מה שכבר מוצג במפורש במקום אחר (כפילויות,
+   * התנגשות שיבוץ/היעדרות, בלוק שנדחה, ימים מתחת למינימום, שמות שהודחו)
+   * מוסתר כאן כדי לא לכפול; מה שאין לו תצוגה ייעודית מתורגם לעברית ברורה. */
+  const WARNING_HE = {
+    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא חשבון" ולא יקבלו התראות פוש; הם אינם חוסמים פרסום.'
+  };
   (report.warnings || []).forEach((warning) => {
-    if (warning.code === 'block-ignored') return;   // כבר מוצג כתגית מחוקה
-    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), warning.detail || warning.code));
+    if (warning.code === 'assignment-absence-conflict') return; // Named findings above.
+    if (warning.code === 'block-ignored') return;              // כבר מוצג כתגית מחוקה
+    if (warning.code === 'duplicate-assignment') return;        // כבר מוצג לפי אדם למעלה
+    if (warning.code === 'ignored-content') return;             // כבר מוצג כאישור נפרד למטה
+    if (warning.code === 'below-minimum') return;                // כבר מוצג בטבלת הסיכום
+    const text = warning.detail || (WARNING_HE[warning.code] ? WARNING_HE[warning.code](warning) : warning.code);
+    dups.appendChild(node('div', 'change ' + (warning.code === 'cell-too-many-names' ? 'weak' : 'warn'), text));
   });
   // חסר אינו ריק: תחנה בלי בלוק, ובלוק עם שמות שלא יובא — דורשים אישור מפורש.
   const missing = report.missing_stations || [];
@@ -2981,6 +3224,28 @@ async function runPlanner() {
   }
 }
 
+/* ⭐ 42H.20 §1 · CLAUDE-TASK Scope 2.2 · דיאלוג האישור לפני פרסום חייב
+ * לומר כמה שיבוצים מתפרסמים, כמה מהם לא יקבלו פוש (ללא חשבון) וכמה
+ * אזהרות לא-חוסמות ממתינות — לא רק "לפרסם?" גנרי. כל מספר כאן מגיע
+ * ממה שכבר נטען למסך; אין ניחוש — מספר שאין לו מקור פשוט לא מוצג. */
+function publishConfirmationText(trial) {
+  const lines = [trial
+    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
+    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.'];
+  const filled = state.draft && state.draft.summary && Number.isFinite(state.draft.summary.filled)
+    ? state.draft.summary.filled : null;
+  if (filled !== null) lines.push('שיבוצים בטיוטה: ' + filled + '.');
+  const unlinked = state.importReport && state.importReport.counts
+    && Number.isFinite(state.importReport.counts.unlinked) ? state.importReport.counts.unlinked : null;
+  if (unlinked) lines.push(unlinked + ' מהם ללא חשבון מקושר — לא יקבלו התראת פוש.');
+  const gaps = state.draftPreview && state.draftPreview.gaps;
+  const warningCount = gaps ? (gaps.blocking || []).length + (gaps.acknowledgeable || []).length : 0;
+  lines.push(warningCount
+    ? warningCount + ' אזהרות מקצועיות (מינימום/כשירות) ממתינות לבדיקה — הן אינן חוסמות פרסום.'
+    : 'אין אזהרות מינימום או כשירות פתוחות.');
+  return lines.join('\n');
+}
+
 async function publishDraft() {
   if (!scheduleMutationAllowed()) return;
   if (!state.status || ['shadow', 'new'].indexOf(state.status.mode) === -1 || state.busy ||
@@ -2988,9 +3253,7 @@ async function publishDraft() {
   const task = authTask();
   const trial = state.status.mode === 'shadow';
   const gapReport = state.draftPreview.gaps;
-  const confirmation = trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
-    : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.';
+  const confirmation = publishConfirmationText(trial);
   if (!confirm(confirmation)) return;
   state.busy = true; $('publish').disabled = true;
   message('publishMessage', trial
@@ -3061,6 +3324,27 @@ function setRollbackAvailability() {
   updateManagerWorkflow();
 }
 
+// סיכום גרסה אמיתי לאישור חזרה לאחור, לא רק "לגרסה הקודמת" — הכרעת
+// אלדד/Gemini: אישור חזרה חייב לכלול פרטים שמאפשרים למשתמש לדעת בדיוק
+// לאן הוא חוזר, כדי שזו לא תהיה פעולה הרסנית בלחיצה אחת בלי מידע. פונקציה
+// טהורה (בלי DOM/confirm) כדי שאפשר לבדוק אותה ישירות ב-node, בלי דפדפן.
+function rollbackConfirmText(active, mode) {
+  const targetLabel = Number.isInteger(active.previous_revision)
+    ? 'לגרסה ' + active.previous_revision
+      + (active.previous_from && active.previous_to
+        ? ' (' + active.previous_from + ' עד ' + active.previous_to + ')'
+        : '')
+      + (active.previous_edited ? ' — נערכה ידנית' : '')
+    : 'לגרסה הקודמת';
+  return 'לחזור מגרסה ' + active.revision
+    + (active.from && active.to ? ' (' + active.from + ' עד ' + active.to + ')' : '')
+    + ' ' + targetLabel + '? '
+    + (mode === 'shadow'
+      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
+      : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
+}
+if (typeof module !== 'undefined' && module.exports) module.exports.rollbackConfirmText = rollbackConfirmText;
+
 async function rollbackSchedule() {
   if (!scheduleMutationAllowed()) return;
   if (state.busy || $('rollback').disabled) return;
@@ -3068,11 +3352,7 @@ async function rollbackSchedule() {
   const pending = state.rollbackPending;
   const active = state.status.active;
   if (!pending) {
-    const text = 'לחזור מגרסה ' + active.revision + ' לגרסה הקודמת? '
-      + (state.status.mode === 'shadow'
-        ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
-        : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
-    if (!confirm(text)) return;
+    if (!confirm(rollbackConfirmText(active, state.status.mode))) return;
   }
   state.busy = true; setRollbackAvailability();
   message('rollbackMessage', pending
@@ -3211,7 +3491,11 @@ function renderDraftManualWarnings(preview) {
         codes
       });
     })));
-  panel.hidden = findings.length === 0;
+  const importConflicts = Array.isArray(preview.import_conflicts) ? preview.import_conflicts : [];
+  panel.hidden = findings.length === 0 && importConflicts.length === 0;
+  importConflicts.forEach((item) => list.appendChild(node('div', 'change warn',
+    item.name + ' · ' + dateLabel(item.date)
+      + ' — מופיע גם בשיבוץ וגם בהיעדרות. שני הרישומים נשמרו; יש לסקור לפני הפרסום.')));
   findings.forEach((finding) => list.appendChild(node('div', 'change warn',
     finding.person + ' · ' + dateLabel(finding.date) + ' · ' + finding.station
       + ' — ' + manualWarningLabel(finding.codes))));
@@ -3981,6 +4265,7 @@ async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration || state.user !== user) return;
   applyPageRoleView(user, claims);
   state.claims = claims;
+  await refreshBoardSlotKeys(claims);
   state.authScope = authScopeKey(user, claims);
   renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
@@ -4357,6 +4642,7 @@ async function handleIdToken(user) {
   if (interruptedOperation) {
     state.user = user;
     state.claims = claims;
+    await refreshBoardSlotKeys(claims);
     state.authScope = nextScope;
     state.status = status;
     renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);

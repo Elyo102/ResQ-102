@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,7 +30,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .wrap{ max-width:1180px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
@@ -39,8 +39,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .win{ display:flex; gap:7px; flex-wrap:wrap; margin-bottom:16px }
   .win button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                color:var(--muted); border-radius:9px; padding:8px 15px;
-               font-family:inherit; font-size:13.5px; font-weight:600; cursor:pointer }
-  .win button.on{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+               font-family:inherit; font-size:13.5px; font-weight:600; cursor:pointer;
+               min-height:44px; box-sizing:border-box }
+  .win button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   /* ---------- כותרת מסקנה ---------- */
   .lead{ border:1px solid var(--line); border-inline-start:4px solid var(--accent);
@@ -53,7 +54,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
      לבן על בהיר — השם פשוט נעלם, ומי שקרא את המשפט לא ידע
      על איזה רכב מדובר. */
   .lead b{ color:var(--txt) }
-  .lead.bad b{ color:var(--bad) }
+  .lead.bad b{ color:var(--bad-txt) }
   .lead.ok  b{ color:var(--good) }
   .lead.bad{ border-inline-start-color:var(--bad); background:var(--bad-bg) }
   .lead.ok{ border-inline-start-color:var(--good); background:var(--good-bg) }
@@ -199,26 +200,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { CREW_HE } from './rotation.js?v=42h19';
-import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h19';
-import { mergeFleet } from './faults.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h20';
+import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h20';
+import { mergeFleet } from './faults.js?v=42h20';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h19';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

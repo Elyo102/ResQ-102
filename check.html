@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -44,12 +44,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .ok{color:var(--good)} .bad{color:var(--err-fg)} .warn{color:var(--warn)}
   input{width:100%;padding:10px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:6px;font-size:14px;
-        font-family:inherit;margin-top:6px}
-  button{background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;
+        font-family:inherit;margin-top:6px;min-height:44px;box-sizing:border-box}
+  button{background:var(--accent);color:var(--accent-on);border:0;border-radius:6px;
          padding:10px 18px;font-size:14px;cursor:pointer;margin-top:12px;
-         font-family:inherit}
+         font-family:inherit;min-height:44px;box-sizing:border-box}
   button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
-  h2{font-size:15px;margin:0 0 10px;color:var(--accent)}
+  h2{font-size:15px;margin:0 0 10px;color:var(--accent-txt)}
 </style>
 </head>
 <body>
@@ -194,7 +194,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h19';
+import { firebaseConfig } from './firebase-config.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -202,14 +202,14 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          deleteDoc, query, where, orderBy, limit, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
-import { renderStuckNav, renderNav } from './nav.js?v=42h19';
-import * as SEED from './seed.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
+import { renderStuckNav, renderNav } from './nav.js?v=42h20';
+import * as SEED from './seed.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -754,7 +754,7 @@ function head(box, text){
   d.style.borderTop = '1px solid var(--line)';
   d.style.marginTop = '10px';
   d.style.paddingTop = '10px';
-  d.innerHTML = '<div class="k" style="font-weight:800;color:var(--accent)">' +
+  d.innerHTML = '<div class="k" style="font-weight:800;color:var(--accent-txt)">' +
                 esc(text) + '</div><div class="v"></div>';
   $(box).appendChild(d);
 }
@@ -767,7 +767,7 @@ async function checkWho(user){
     const d = document.createElement('div');
     d.className = 'row';
     d.innerHTML = '<a href="./login.html?next=check.html" ' +
-                  'style="display:inline-block;background:var(--accent);color:var(--on-accent);' +
+                  'style="display:inline-block;background:var(--accent);color:var(--accent-on);' +
                   'text-decoration:none;border-radius:6px;padding:11px 20px;' +
                   'font-size:15px;margin-top:6px">כניסה למערכת</a>';
     $('who').appendChild(d);

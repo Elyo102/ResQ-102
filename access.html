@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -37,10 +37,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{ display:block; font-size:13px; color:var(--muted); margin:12px 0 4px }
   input, select{ width:100%; padding:11px; background:var(--input); color:var(--txt);
         border:1px solid var(--line); border-radius:6px; font-size:15px;
-        font-family:inherit }
-  button{ background:var(--accent); color:var(--on-accent); border:0; border-radius:6px;
+        font-family:inherit; min-height:44px; box-sizing:border-box }
+  button{ background:var(--accent); color:var(--accent-on); border:0; border-radius:6px;
         padding:11px 20px; font-size:15px; cursor:pointer; margin-top:16px;
-        font-family:inherit }
+        font-family:inherit; min-height:44px; box-sizing:border-box }
   button:disabled{ opacity:.5; cursor:not-allowed }
   .link{ background:none; border:1px solid var(--line); color:var(--muted) }
 
@@ -161,12 +161,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { STATIONS, stationName } from './stations.js?v=42h19';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h19';
-import { ROLE_HE as ROLES_HE } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { STATIONS, stationName } from './stations.js?v=42h20';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h20';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          signOut, onAuthStateChanged }
@@ -174,11 +174,11 @@ import { getAuth, signInWithEmailAndPassword,
 import { getFirestore, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -348,10 +348,16 @@ async function load(){
     return;
   }
 
+  let presenceFailed = false;
   try {
     const ps = await getDocs(collection(db, 'stations', sid, 'presence'));
     ps.forEach(d => { presence[d.id] = d.data(); });
-  } catch (ignore) {}
+  } catch (e) {
+    // בלי הדגל, כשל כאן נראה בדיוק כמו שכולם "מעולם לא נכנסו" —
+    // וזה בדיוק ההפך: זו בקרת גישה, וטענה כזו כשגויה מסוכנת.
+    presenceFailed = true;
+    console.error('presence load failed', e);
+  }
 
   if (!users.length) {
     msg('msg', 'אין כבאים רשומים בתחנה הזו.', 'info');
@@ -367,11 +373,13 @@ async function load(){
     const p  = presence[u.uid] || {};
     const ts = p.last_login;
 
-    if (!ts) never++;
+    if (!ts && !presenceFailed) never++;
 
-    const when = ts
-      ? '<span class="num">' + fmt(ts) + '</span>'
-      : '<span class="never">מעולם לא</span>';
+    const when = presenceFailed
+      ? '<span class="num">לא ידוע כרגע</span>'
+      : (ts
+          ? '<span class="num">' + fmt(ts) + '</span>'
+          : '<span class="never">מעולם לא</span>');
 
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -385,12 +393,15 @@ async function load(){
     $('rows').appendChild(tr);
   });
 
-  $('summary').innerHTML =
-    '<div><b>' + users.length + '</b>רשומים</div>' +
-    '<div><b>' + never + '</b>מעולם לא נכנסו</div>';
+  $('summary').innerHTML = presenceFailed
+    ? '<div><b>' + users.length + '</b>רשומים</div>'
+    : ('<div><b>' + users.length + '</b>רשומים</div>' +
+       '<div><b>' + never + '</b>מעולם לא נכנסו</div>');
 
   $('tbl').classList.remove('hide');
-  msg('msg', '', '');
+  msg('msg', presenceFailed
+    ? 'הרשימה נטענה, אבל נתוני הכניסה האחרונה לא זמינים כרגע — עמודת "כניסה אחרונה" אינה מהימנה בטעינה הזו.'
+    : '', presenceFailed ? 'err' : '');
   btn.disabled = false;
 }
 </script>

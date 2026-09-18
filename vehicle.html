@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -26,7 +26,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-family:"Segoe UI",Arial,sans-serif; padding:18px }
   .wrap{ max-width:900px; margin:0 auto }
   h1{ font-size:21px; margin:0 0 3px }
-  h2{ font-size:15px; margin:0 0 4px; color:var(--accent) }
+  h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
@@ -36,17 +36,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
         color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+        font-size:15px; font-family:inherit; min-height:44px; box-sizing:border-box }
   textarea{ min-height:74px; resize:vertical }
   input[type=file]{ padding:8px; font-size:13px }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:12px; width:auto }
+        font-family:inherit; font-weight:600; margin-top:12px; width:auto; min-height:44px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
-  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
+  .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0; min-height:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   /* ---------- בוררים ---------- */
@@ -55,9 +55,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                  border:1px solid var(--line); color:var(--muted);
                  border-radius:9px; padding:9px 15px; font-family:inherit;
                  font-size:14px; font-weight:600; cursor:pointer;
-                 display:inline-flex; align-items:center; gap:8px }
+                 display:inline-flex; align-items:center; gap:8px; min-height:44px; box-sizing:border-box }
   .chips button.on{ background:var(--accent); border-color:var(--accent);
-                    color:var(--on-accent) }
+                    color:var(--accent-on) }
   .chips button i{ width:8px; height:8px; border-radius:50%; flex:none }
   .chips button .n{ font-weight:800; font-variant-numeric:tabular-nums }
 
@@ -191,18 +191,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
-import { renderNav, renderStuckNav } from './nav.js?v=42h19';
-import { MEMBER_ROLES } from './roles.js?v=42h19';
-import { initPWA } from './pwa.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { MEMBER_ROLES } from './roles.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=42h19';
-import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, UNSET,
+  from './vmap.js?v=42h20';
+import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, sevBgColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
-  from './faults.js?v=42h19';
+  from './faults.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -219,7 +219,7 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -402,7 +402,7 @@ function renderVehicles(){
 // **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
 // פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
 // פתיחה של המסך, לכולם, לנצח.
-const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h19' };
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h20' };
 
 function renderImport(){
   const box = $('importRow');
@@ -460,7 +460,7 @@ function renderSides(){
     if (s.id === side) b.className = 'on';
     b.innerHTML = esc(s.he) +
       (n[s.id] ? ' <span class="n" style="color:' +
-        (s.id === side ? 'inherit' : 'var(--bad)') + '">' + n[s.id] + '</span>' : '');
+        (s.id === side ? 'inherit' : 'var(--bad-txt)') + '">' + n[s.id] + '</span>' : '');
     b.onclick = function () { side = s.id; render(); };
     box.appendChild(b);
   });
@@ -522,7 +522,7 @@ function renderStage(){
     p.style.insetInlineStart = '';
     p.style.left = (f.x * 100) + '%';
     p.style.top  = (f.y * 100) + '%';
-    p.style.background = isOpen(f) ? sevColor(f.severity) : 'var(--good)';
+    p.style.background = isOpen(f) ? sevBgColor(f.severity) : 'var(--good)';
     p.textContent = String(i + 1);
     p.title = f.title || '';
     p.setAttribute('aria-label', (i + 1) + '. ' + (f.title || ''));
@@ -741,16 +741,25 @@ function openFault(f, n){
 function faultCard(f, n){
   const target = captureFaultTarget(f);
   const open = isOpen(f);
-  const col = open ? sevColor(f.severity) : 'var(--good)';
+  // בג'ר לרקע רווי (עיגול המספר, פס הצבע בצד הכרטיס) לעומת בג'ר
+  // לטקסט חזית (התגית) - לא אותו ערך: --bad-txt (מה ש-sevColor
+  // מחזיר לחומרה חוסמת) בטוח כטקסט בשתי הערכות, אבל לא כרקע רווי
+  // במצב כהה (ef5350, 3.49:1 עם לבן). ראו ההערה על sevBgColor ב-faults.js.
+  const bgCol = open ? sevBgColor(f.severity) : 'var(--good)';
+  const txtCol = open ? sevColor(f.severity) : 'var(--good)';
+  // .num הבסיסי (בקובץ ה-CSS) הוא #fff קבוע - נכון לרוב הרקעים
+  // (warn/note/good), אבל לא ל--bad במצב כהה (ef5350, 3.49:1
+  // עם לבן). דריסה נקודתית רק כשהרקע הוא --bad עצמו.
+  const numTxt = bgCol === 'var(--bad)' ? 'var(--bad-on)' : '#fff';
   const el = document.createElement('div');
   el.className = 'f' + (open ? '' : ' done');
-  el.style.borderInlineStartColor = col;
+  el.style.borderInlineStartColor = bgCol;
 
   el.innerHTML =
     '<div class="top">' +
-      '<span class="num" style="background:' + col + '">' + n + '</span>' +
+      '<span class="num" style="background:' + bgCol + ';color:' + numTxt + '">' + n + '</span>' +
       '<span class="ttl">' + esc(f.title || '') + '</span>' +
-      '<span class="tag" style="color:' + col + ';border-color:' + col + '">' +
+      '<span class="tag" style="color:' + txtCol + ';border-color:' + bgCol + '">' +
         esc(open ? sevHe(f.severity) : 'טופלה') + '</span>' +
     '</div>' +
     (f.desc ? '<div class="desc">' + esc(f.desc) + '</div>' : '') +

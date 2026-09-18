@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h19">
-<link rel="stylesheet" href="./bulletin.css?v=42h19">
+<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./bulletin.css?v=42h20">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -40,13 +40,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs{display:flex;gap:6px;margin-bottom:22px;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
   .tab{flex:1;min-height:44px;width:auto;margin:0;padding:9px 12px;text-align:center;font-size:14px;font-weight:700;cursor:pointer;
        background:transparent;border:0;border-radius:9px;color:var(--muted)}
-  .tab.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
   label{display:block;font-size:14px;font-weight:650;color:var(--dim);margin:14px 0 6px}
   input,select{width:100%;min-height:46px;padding:11px 12px;background:var(--input);color:var(--txt);
         border:1px solid var(--line);border-radius:10px;font-size:16px;
         font-family:inherit}
   input:focus-visible,select:focus-visible,.tab:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-  button{width:100%;min-height:46px;background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;
+  button{width:100%;min-height:46px;background:var(--accent);color:var(--accent-on);border:0;border-radius:10px;
         padding:12px 16px;font-size:15px;font-weight:700;cursor:pointer;margin-top:20px;font-family:inherit}
   button:hover{filter:brightness(1.1)}
   button:disabled{opacity:.5;cursor:not-allowed}
@@ -61,7 +61,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                 font-variant-numeric:tabular-nums }
   .ver .note{ font-size:12px; color:var(--muted); line-height:1.6;
               margin-top:7px }
-  .ver .note.new{ color:var(--accent); font-weight:700 }
+  .ver .note.new{ color:var(--accent-txt); font-weight:700 }
   .ver button{ margin-top:9px }
   .link{background:none;border:0;color:var(--dim);font-size:14px;
         cursor:pointer;margin-top:10px;text-decoration:underline;font-family:inherit}
@@ -91,6 +91,38 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     h1{font-size:28px}
     body.with-nav .card{margin-top:0}
   }
+#invitationPanel{border:1px solid var(--line);border-radius:14px;padding:14px;margin-block:14px;text-align:right}
+#invitationPanel summary{min-height:44px;cursor:pointer;font-weight:700;display:list-item;padding-block:10px}
+#invitationPanel input{font-size:16px;min-height:44px}
+#invitationPanel button{min-height:44px;white-space:normal}
+#invitationPanel p{line-height:1.6;overflow-wrap:anywhere}
+/* קליטה בקישור קבוצתי (42H.21) */
+#joinPanel{border:1px solid var(--line);border-radius:14px;padding:14px;margin-block:14px;text-align:right}
+#joinPanel .join-head{text-align:center;margin-bottom:8px}
+#joinPanel .join-icon{font-size:40px;line-height:1}
+#joinPanel .join-title{font-size:19px;margin:8px 0 4px}
+#joinPanel .join-text,#joinPanel .join-hint{color:var(--muted);font-size:13px;line-height:1.6;margin:4px 0}
+#joinPanel .join-step{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}
+#joinPanel .join-step h3{font-size:15px;margin:0 0 6px}
+#joinPanel input,#joinPanel textarea{font-size:16px;min-height:44px;width:100%}
+#joinPanel textarea{min-height:64px;resize:vertical}
+#joinPanel button{min-height:44px;white-space:normal;width:100%}
+#joinPanel button.link{background:transparent;border:0;color:var(--accent)}
+#joinPanel button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+#joinPanel .join-row{display:grid;gap:8px;grid-template-columns:1fr}
+@media (min-width:380px){#joinPanel .join-row{grid-template-columns:1fr 1fr}}
+#joinPanel fieldset{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:10px 0}
+#joinPanel legend{font-size:13px;color:var(--muted);padding:0 6px}
+#joinPanel .join-choice{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;font-size:15px}
+#joinPanel .join-choice input{width:44px;height:44px;min-height:44px;margin:0;flex:0 0 auto}
+#joinPanel .join-qual-extra{padding:0 54px 8px 0;display:grid;gap:6px}
+#joinPanel .join-ack{align-items:flex-start;line-height:1.5;padding-top:6px}
+#joinPanel .join-ok{color:var(--ok-fg);font-weight:600}
+#joinStatusBox .join-status{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;font-size:14px;line-height:1.7;text-align:right}
+#joinStatusBox .join-status-title{font-weight:700}
+#joinStatusBox .join-status-returned{background:var(--err-bg);color:var(--err-fg);border-radius:8px;padding:8px;margin-top:6px;overflow-wrap:anywhere}
+#readinessBanner .join-readiness-banner{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 12px;margin:0 0 12px;border-radius:10px;background:var(--info-bg,var(--chip));color:var(--info-fg,var(--txt));text-decoration:none;font-size:14px;line-height:1.5}
+#readinessBanner .join-readiness-icon{font-size:22px}
 </style>
 <style>
   .pw-rules{ font-size:12px; color:var(--muted); line-height:1.9; margin-top:8px }
@@ -241,6 +273,27 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <!-- ברירת המחדל היא המסך הזה ולא טופס הכניסה. עד עכשיו הטופס
        היה מצויר תמיד ונעלם כשהתברר שהמשתמש כבר מחובר — ולכן כל
        מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
+  <section id="joinPanel" class="hide" aria-labelledby="joinTitle"></section>
+  <details id="invitationPanel" class="hide">
+    <summary>הצטרפות באמצעות הזמנה</summary>
+    <p>קיבלת הזמנה ממנהל־על? אין צורך למלא בקשת הרשמה רגילה. הזן את שני הפרטים בערוץ פרטי בלבד; הם אינם נשמרים בדפדפן.</p>
+    <label for="invitationId">מזהה הזמנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
+    <label for="invitationSecret">סוד הזמנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    <div id="invitationAccount">
+      <label for="invitationEmail">המייל שאליו נשלחה ההזמנה</label><input id="invitationEmail" type="email" dir="ltr" autocomplete="username">
+      <label for="invitationPassword">סיסמה</label><input id="invitationPassword" type="password" autocomplete="current-password">
+      <p>לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.</p>
+      <button type="button" id="invitationSignIn">כניסה לחשבון קיים</button>
+      <button type="button" id="invitationCreate">יצירת חשבון למימוש הזמנה</button>
+    </div>
+    <div id="invitationVerified" class="hide">
+      <p id="invitationWho"></p>
+      <button type="button" id="invitationVerify">שלח מייל אימות</button>
+      <button type="button" id="invitationRedeem">אימתתי את המייל — ממש הזמנה</button>
+    </div>
+    <button type="button" id="invitationReset">נקה פרטי הזמנה</button>
+    <p id="invitationStatus" class="msg" role="status" aria-live="polite"></p>
+  </details>
   <div id="bootView">
     <div class="wait">
       <div class="icon">⏳</div>
@@ -337,6 +390,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <b>אחרי שתאושר — התנתק והתחבר מחדש.</b>
       </div>
       <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
+      <div id="joinStatusBox" class="hide"></div>
     </div>
     <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
@@ -359,6 +413,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <p>כלי תצוגה למנהל־על בלבד. ההרשאות האמיתיות אינן משתנות.</p>
     </section>
     <div id="roleViewBanner" class="role-view-banner hide" role="status"></div>
+    <div id="readinessBanner" class="hide"></div>
     <section id="bulletinBoard" class="bulletin-board" data-testid="bulletin-board"
              aria-labelledby="pageTitle">
       <section id="homeUrgent" class="home-urgent hide" role="alert" aria-labelledby="homeUrgentTitle">
@@ -513,7 +568,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <button class="link" id="btnUpdate">בדוק עדכון</button>
         </div>
         <a id="lnkAdmin" class="hide" href="./admin.html"
-           style="display:block;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px">
+           style="display:flex;align-items:center;justify-content:center;text-align:center;margin-top:10px;color:var(--accent-txt);font-size:14px;min-height:46px;box-sizing:border-box">
            ניהול המערכת ואישור בקשות ←</a>
         <button class="link" id="btnChangePw">שינוי סיסמה</button>
         <button class="link" id="btnLogout">התנתק</button>
@@ -549,37 +604,39 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h19';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h19';
+         subStationsForStation } from './stations.js?v=42h20';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h19';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h19';
+  from './nav.js?v=42h20';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h20';
 import {
   initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h19';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h19';
-import { watchCallouts } from './callout.js?v=42h19';
-import { initBulletin, destroyBulletin, setBulletinReadOnly } from './bulletin.js?v=42h19';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h19';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h19';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h19';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h19';
+} from './pwa.js?v=42h20';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h20';
+import { watchCallouts } from './callout.js?v=42h20';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h20';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h20';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h20';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h20';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h20';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
-         EmailAuthProvider, setPersistence, browserLocalPersistence }
+         EmailAuthProvider, setPersistence, browserLocalPersistence, sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h19';
+  from './monitored-functions.js?v=42h20';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h19';
+import { initAppCheck } from './appcheck.js?v=42h20';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -590,6 +647,12 @@ const ROLE_VIEW_STORAGE = 'resq_role_view_v1';
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
 let activeHomeContext = null;
+// 42H.20 §5.5 · פעמון הבית — unread אמיתי מהזרם הקיים, לא שאילתה
+// מקבילה. ראה refreshHomeUnread למטה.
+let homeUnreadCount = 0;
+let homeUnreadTimer = 0;
+let homeUnreadGeneration = 0;
+let homeActiveBoard = { id: '', messages: [] };
 
 function destroyHomeRuntime(){
   try { stopCallouts(); } catch (ignore) {}
@@ -597,6 +660,11 @@ function destroyHomeRuntime(){
   destroyHomeFaults();
   destroyHomeCommand();
   activeHomeContext = null;
+  clearTimeout(homeUnreadTimer);
+  homeUnreadTimer = 0;
+  homeUnreadGeneration++;
+  homeUnreadCount = 0;
+  homeActiveBoard = { id: '', messages: [] };
   destroyBulletin();
   $('roleViewControl').classList.add('hide');
   $('roleViewBanner').classList.add('hide');
@@ -623,6 +691,46 @@ const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
 const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
 const callWho   = httpsCallable(fns, 'whoAmI');
+const callRedeemInvitation = httpsCallable(fns, 'redeemInvitation');
+// קליטה בקישור קבוצתי (42H.21)
+const callInspectJoin = httpsCallable(fns, 'inspectJoinCampaign');
+const callRedeemJoin = httpsCallable(fns, 'redeemJoinCampaign');
+const callMyJoinStatus = httpsCallable(fns, 'getMyJoinStatus');
+const callMyReadiness = httpsCallable(fns, 'getMyReadiness');
+const JOIN_TOKEN = readJoinToken(location.search);
+let joinPanel = null, joinRegistered = false;
+function ensureJoinPanel(){
+  if (!JOIN_TOKEN || joinPanel) return joinPanel;
+  joinPanel = createJoinPanel($('joinPanel'), {
+    token: JOIN_TOKEN,
+    inspect: async data => (await callInspectJoin(data)).data,
+    redeem: async data => (await callRedeemJoin(data)).data,
+    currentUser: () => auth.currentUser,
+    createAccount: async (email, password) => { onboarding = true; try { const c = await createUserWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    signIn: async (email, password) => { onboarding = true; try { const c = await signInWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    sendVerification: () => sendEmailVerification(auth.currentUser),
+    refreshUser: async () => { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } },
+    claims: async () => auth.currentUser ? ((await auth.currentUser.getIdTokenResult()).claims || {}) : {},
+    hasAssignment: hasServerAssignment,
+    pwOk: pwOk,
+    onRedeemed: async () => { joinRegistered = true; if (auth.currentUser) await startRoute(auth.currentUser); }
+  });
+  return joinPanel;
+}
+let readinessCheckedForUid = '';
+async function refreshReadinessBanner(user, claims){
+  // רק לעובד מאושר; פעם אחת לכל כניסה (לא בכל רענון מסך).
+  if (!user || claims.super === true || !claims.stationId || !claims.role) { renderReadinessBanner($('readinessBanner'), null); return; }
+  if (readinessCheckedForUid === user.uid) return;
+  readinessCheckedForUid = user.uid;
+  try { renderReadinessBanner($('readinessBanner'), (await callMyReadiness({})).data || null); }
+  catch (ignore) { renderReadinessBanner($('readinessBanner'), null); }
+}
+async function refreshJoinStatus(user){
+  if (!user) { renderJoinStatus($('joinStatusBox'), null); return; }
+  try { renderJoinStatus($('joinStatusBox'), (await callMyJoinStatus({})).data || null); }
+  catch (ignore) { renderJoinStatus($('joinStatusBox'), null); }
+}
 
 // חשבון ההקמה. רק ממנו אפשר להפעיל את מנהל המערכת הראשון,
 // וגם השרת בודק את זה בעצמו — הבדיקה כאן היא רק להצגת הכפתור.
@@ -701,6 +809,80 @@ $('fDistrict').onchange = function () { fillStations(this.value); };
 let onboarding = false;
 let loginTransitionPending = false;
 let resubmitUser = null;
+let invitationEpoch=0, invitationUid='', invitationBusy=false, invitationIntent=null;
+function invitationMessage(text, bad=false){
+  $('invitationStatus').textContent=text;
+  $('invitationStatus').className='msg '+(bad?'err':'ok');
+}
+function clearInvitation(){
+  invitationEpoch++; invitationIntent=null; invitationBusy=false;
+  $('invitationId').value=''; $('invitationSecret').value=''; $('invitationPassword').value='';
+  $('invitationStatus').textContent=''; $('invitationStatus').className='msg';
+  invitationControls();
+}
+function invitationControls(){
+  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  ['invitationId','invitationSecret'].forEach(id=>$(id).disabled=invitationBusy||!!invitationIntent);
+  $('invitationAccount').classList.toggle('hide',!!auth.currentUser);
+  $('invitationVerified').classList.toggle('hide',!auth.currentUser);
+  $('invitationWho').textContent=auth.currentUser?'מחובר: '+(auth.currentUser.email||''):'';
+}
+async function invitationAction(action){
+  if(invitationBusy)return;
+  const epoch=invitationEpoch, initialUid=auth.currentUser?.uid||'';
+  let expectedUid=initialUid;
+  const current=()=>epoch===invitationEpoch && (auth.currentUser?.uid||'')===expectedUid;
+  invitationBusy=true; invitationControls();
+  try{
+    if(action==='create'||action==='signin'){
+      if(auth.currentUser)throw new Error('כבר מחובר חשבון. התנתק כדי להשתמש בחשבון אחר.');
+      const email=$('invitationEmail').value.trim().toLowerCase(), password=$('invitationPassword').value;
+      if(!email||!password)throw new Error('יש להזין מייל וסיסמה.');
+      if(action==='create'&&!pwOk(password))throw new Error('הסיסמה אינה עומדת בכללים המוצגים.');
+      onboarding=true;
+      const credential=await (action==='create'?createUserWithEmailAndPassword(auth,email,password):signInWithEmailAndPassword(auth,email,password));
+      expectedUid=credential.user.uid;
+      if(!current())return;
+      invitationUid=expectedUid; $('invitationPassword').value='';
+      invitationMessage('החשבון מחובר. יש לאמת את המייל ואז לממש את ההזמנה. לא נשלחה בקשת הרשמה רגילה.');
+    }else{
+      const user=auth.currentUser;
+      if(!user)throw new Error('נדרשת כניסה לחשבון.');
+      if(action==='verify'){
+        await sendEmailVerification(user);
+        if(current())invitationMessage('מייל אימות נשלח. פתח את הקישור וחזור לכפתור מימוש ההזמנה.');
+      }else{
+        await reload(user); await user.getIdToken(true);
+        if(!current())return;
+        if(!user.emailVerified)throw new Error('כתובת המייל עדיין לא אומתה.');
+        const claims=(await user.getIdTokenResult()).claims||{};
+        if(!current())return;
+        if(hasServerAssignment(claims))throw new Error('החשבון כבר משויך למערכת. אין לממש הזמנה נוספת.');
+        if(!invitationIntent){
+          const invite_id=$('invitationId').value.trim(),secret=$('invitationSecret').value.trim();
+          if(!invite_id||!secret)throw new Error('יש להזין מזהה הזמנה וסוד הזמנה.');
+          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret});
+        }
+        const result=(await callRedeemInvitation(invitationIntent)).data;
+        if(!current())return;
+        if(!result||result.ok!==true)throw new Error('לא התקבל אישור מימוש מהשרת.');
+        invitationIntent=null; $('invitationSecret').value=''; $('invitationId').value='';
+        invitationMessage('ההזמנה מומשה והבקשה ממתינה לאישור מנהל־על. עדיין לא הוענקו הרשאות.');
+        await startRoute(user);
+      }
+    }
+  }catch(error){if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
+  finally{
+    if(action==='create'||action==='signin')onboarding=false;
+    if(current()){invitationBusy=false;invitationControls();if(action==='create'||action==='signin'){if(auth.currentUser)await startRoute(auth.currentUser);}}
+  }
+}
+$('invitationSignIn').onclick=()=>invitationAction('signin');
+$('invitationCreate').onclick=()=>invitationAction('create');
+$('invitationVerify').onclick=()=>invitationAction('verify');
+$('invitationRedeem').onclick=()=>invitationAction('redeem');
+$('invitationReset').onclick=()=>{if(!invitationBusy)clearInvitation();};
+window.addEventListener('pagehide',clearInvitation);
 
 function show(text, kind){
   const m = $('msg'); m.textContent = text; m.className = 'msg ' + kind;
@@ -731,6 +913,14 @@ function hasCompleteServerAssignment(claims){
 }
 
 function showView(name){
+  // בקישור קבוצתי הפאנל מחליף את הכניסה הרגילה ואת ההזמנה האישית.
+  const joinMode = !!JOIN_TOKEN && !joinRegistered && (name==='auth'||name==='wait');
+  $('joinPanel').classList.toggle('hide', !joinMode);
+  if (joinMode) { const p = ensureJoinPanel(); if (p && !$('joinPanel').dataset.joinState) p.load(); else if (p) p.rerender(); }
+  $('invitationPanel').classList.toggle('hide',joinMode||(name!=='auth'&&name!=='wait'));
+  $('authTabs').classList.toggle('hide', joinMode && name==='auth');
+  $('paneLogin').classList.toggle('hide', joinMode && name==='auth');
+  invitationControls();
   ['bootView','authView','waitView','homeView','pwView']
     .forEach(function(v){
       $(v).classList.toggle('hide', v !== name + 'View');
@@ -1061,6 +1251,8 @@ let nativeBackArrival = (function () {
 let nativeBackRecoveryAttempted = false;
 
 onIdTokenChanged(auth, user => {
+  if(invitationUid && invitationUid!==(user?.uid||''))clearInvitation();
+  invitationUid=user?.uid||'';
   authSettled = true;
   if (!user) {
     try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}
@@ -1167,7 +1359,52 @@ function navFor(claims, user, name, presentation){
   // למי שמסתכל על המסך; «אלדד יונה · מס׳ 1» כן.
   const who = (name || (user && user.email) || '') +
               (claims.emp ? ' · מס׳ ' + claims.emp : '');
-  renderNav(claims, 'login.html', who, presentation || null);
+  renderNav(claims, 'login.html', who, presentation || null, homeUnreadCount);
+}
+
+// 42H.20 · ביקורת Codex, חוסם 3 · פעמון הבית. עד כאן: כל 90 שניות
+// שרשרת קריאות מסמכים מהדפדפן (הודעה-הודעה, קריאה-קריאה — N+1), קריאת
+// קבלות בנתיב שה-Rules חוסמים (השגיאה נבלעה ל"לא נצפה"), ומונה שנגזר
+// מ-30 פריטים בלבד. עכשיו: קריאה שרתית אחת (getAlertsFeed) שמחזירה
+// unread_count שנספר בשרת על כל חלון המועמדים, מול הקבלה שלי בלבד.
+// הודעת לוח חדשה (onMessages של bulletin.js, מנוי חי שכבר קיים) מבקשת
+// רענון — מרוסן לקריאה אחת לכל HOME_UNREAD_MIN_GAP_MS לכל היותר.
+const HOME_UNREAD_MIN_GAP_MS = 15000;
+const HOME_UNREAD_PERIOD_MS = 90000;
+let homeUnreadLastAt = 0;
+function onHomeBulletinMessages(boardId, messages){
+  homeActiveBoard = { id: boardId, messages: messages };
+  const wait = Math.max(0, homeUnreadLastAt + HOME_UNREAD_MIN_GAP_MS - Date.now());
+  scheduleHomeUnreadRefresh(wait);
+}
+
+function scheduleHomeUnreadRefresh(delayMs){
+  clearTimeout(homeUnreadTimer);
+  homeUnreadTimer = setTimeout(refreshHomeUnread, Number.isFinite(delayMs) ? delayMs : 400);
+}
+
+async function refreshHomeUnread(){
+  const context = activeHomeContext;
+  if (!context || !routeIsCurrent(context.user, context.epoch)) return;
+  const generation = ++homeUnreadGeneration;
+  homeUnreadLastAt = Date.now();
+  let feed;
+  try {
+    feed = await loadAlertsFeed(httpsCallable(fns, 'getAlertsFeed'));
+  } catch (ignore) {
+    // כשל אינו מומר ל-"0 לא נצפו" ואינו מפיל את מסך הבית: התג הקודם
+    // נשאר, והרענון הבא ינסה שוב.
+    if (generation === homeUnreadGeneration && activeHomeContext === context) {
+      homeUnreadTimer = setTimeout(refreshHomeUnread, HOME_UNREAD_PERIOD_MS);
+    }
+    return;
+  }
+  if (generation !== homeUnreadGeneration || activeHomeContext !== context) return;
+  homeUnreadCount = feed.unread_count;
+  navFor(context.claims, context.user, context.name, context.view && context.view.preview ? context.view.presentation : null);
+  // רשת ביטחון: גם בלי הודעת לוח חדשה, מצב "נצפה" יכול להשתנות
+  // (המשתמש קרא במסך ההתראות במקום כאן) — רענון תקופתי שקט, אחד.
+  homeUnreadTimer = setTimeout(refreshHomeUnread, HOME_UNREAD_PERIOD_MS);
 }
 
 function readRoleViewStorage(){
@@ -1250,7 +1487,8 @@ function showNotLinked(user){
   // חשבון ההקמה בלבד: כפתור הפעלה חד-פעמי.
   const isBoot = user && String(user.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
   $('btnBootstrap').classList.toggle('hide', !isBoot);
-  $('btnResubmit').classList.toggle('hide', isBoot);
+  $('btnResubmit').classList.toggle('hide', isBoot || !!JOIN_TOKEN);
+  if (JOIN_TOKEN && !isBoot) $('waitTxt').textContent = 'החשבון מחובר. השלם/י את פרטי ההצטרפות בטופס שלמעלה.';
   if (isBoot) {
     $('waitTxt').innerHTML = 'זהו חשבון ההקמה של המערכת, והוא עדיין לא הופעל.<br>' +
                              'לחץ על הכפתור למטה כדי להפוך אותו למנהל מערכת.';
@@ -1261,6 +1499,7 @@ function showNotLinked(user){
 
 function showWaiting(user, request){
   loginTransitionPending = false;
+  if (request) joinRegistered = true;
   const status = String((request || {}).status || 'pending');
   $('waitIcon').textContent = '⏳';
   if (status === 'processing') {
@@ -1283,6 +1522,7 @@ function showWaiting(user, request){
   $('btnBootstrap').classList.add('hide');
   $('btnResubmit').classList.add('hide');
   showView('wait');
+  void refreshJoinStatus(user);
 }
 
 function showRegistrationRecovery(user){
@@ -1431,7 +1671,7 @@ async function loadProfile(user, claims, epoch){
   });
   writeRoleViewStorage(initialView.storageRecord);
   activeHomeContext = {
-    user:user, claims:claims, epoch:epoch,
+    user:user, claims:claims, epoch:epoch, sid:sid,
     name:u ? u.full_name : '', view:initialView
   };
   navFor(claims, user, u ? u.full_name : '', initialView.presentation);
@@ -1443,6 +1683,7 @@ async function loadProfile(user, claims, epoch){
   $('pageSub').textContent = contextParts.length ? contextParts.join(' · ') : ('ResQ · ' + (stationName(sid) || sid));
 
   renderHomeCommandFor(activeHomeContext, initialView);
+  void refreshReadinessBanner(user, claims);
 
   initBulletin({
     db: db,
@@ -1459,9 +1700,11 @@ async function loadProfile(user, claims, epoch){
       collection: collection, getDocs: getDocs, query: query, where: where,
       orderBy: orderBy, limit: limit, onSnapshot: onSnapshot,
       startAfter: startAfter, httpsCallable: httpsCallable
-    }
+    },
+    onMessages: onHomeBulletinMessages
   });
   renderRoleViewChrome(activeHomeContext, initialView);
+  scheduleHomeUnreadRefresh(200);
   const canSeeFaults = isMember(claims);
   $('homeFaults').classList.toggle('hide', !canSeeFaults);
   if (canSeeFaults) {
