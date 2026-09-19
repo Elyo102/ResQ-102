@@ -56,6 +56,10 @@ const PAGE_SIZE = 25;
 const CURSOR = /^([1-9][0-9]{0,14})\|([a-f0-9]{64})$/;
 
 const disconnected = { currentSession: () => null, subscribeIdentity: () => () => {} };
+/* הניסוח נקבע במפורש: הוא אומר מה קורה — הסתרה וחסימת הורדה —
+ * ואינו מבטיח מחיקה שאינה מתרחשת. */
+const REMOVE_QUESTION = 'להסיר את הקובץ מהפנייה? הקובץ יוסתר ולא יהיה ניתן להורדה דרך המערכת.';
+
 const el = (tag, value, className) => { const node = document.createElement(tag); if (value != null) node.textContent = String(value); if (className) node.className = className; return node; };
 const errorCode = error => String(error?.code || '').replace(/^functions\//, '');
 const errorMessage = code => ({ 'permission-denied': 'אין הרשאה לפעולה הזאת. ייתכן שההרשאה השתנתה בזמן שהמסך היה פתוח.',
@@ -122,7 +126,10 @@ const validEpoch = e => !!e && text(e.uid, 400) && text(e.station_id, 400)
   && Number.isSafeInteger(e.auth_time) && e.auth_time >= 0 && KEY.test(e.claims_digest || '');
 const validRow = row => !!row && KEY.test(row.attachment_id || '') && text(row.display_name, MAX_NAME)
   && Object.hasOwn(TYPE_LABEL, row.declared_type) && count(row.byte_length) && row.byte_length <= MAX_BYTES
-  && count(row.revision) && Number.isSafeInteger(row.created_at_ms);
+  && count(row.revision) && Number.isSafeInteger(row.created_at_ms)
+  // `uploaded_by_me` הוא בוליאני או חסר. ערך אחר הוא תשובה שאיננה
+  // מה שהחוזה מבטיח, ושורה כזו אינה מוצגת חלקית.
+  && (!Object.hasOwn(row, 'uploaded_by_me') || typeof row.uploaded_by_me === 'boolean');
 
 // The host promises one stable session object. Reference equality is the
 // check, so a rebuilt object with identical fields is a different session.
@@ -180,6 +187,11 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
   const pulling = new Map();
   const pullProblem = new Map();
   let pullRun = 0;
+  // הסרה מתנהגת כמו הורדה מבחינת מצב: מזהה אחד, ריצה אחת, ותשובה
+  // מאוחרת של ריצה שהוחלפה אינה מנקה את המצב של זו שתפסה את מקומה.
+  const removing = new Map();
+  const removeProblem = new Map();
+  let removeRun = 0;
 
   const removers = [];
   const on = (target, event, fn) => { target.addEventListener(event, fn); removers.push(() => target.removeEventListener(event, fn)); };
@@ -386,8 +398,22 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
       button.disabled = busy;
       button.dataset.pull = row.attachment_id;
       head.append(button);
+      /* ⭐ כפתור ההסרה מופיע רק כששלוש העובדות מתקיימות יחד: המסך
+       * הזה הוא של בעל הפנייה (`canRemove` מהמארח), הקובץ הועלה על
+       * ידי המשתמש (`uploaded_by_me` מהשרת), והקובץ עדיין מקושר —
+       * קובץ שהוסר אינו מופיע ברשימה הזו כלל. זו תצוגה בלבד;
+       * ההרשאה נאכפת בשרת בכל מקרה. */
+      if (context?.canRemove === true && row.uploaded_by_me === true) {
+        const dropping = removing.has(row.attachment_id);
+        const drop = el('button', dropping ? 'מסיר…' : 'הסרה', 'hra-drop');
+        drop.type = 'button';
+        drop.disabled = dropping || busy;
+        drop.dataset.drop = row.attachment_id;
+        drop.setAttribute('aria-label', 'הסרת הקובץ ' + row.display_name + ' מהפנייה');
+        head.append(drop);
+      }
       li.append(head);
-      const problem = pullProblem.get(row.attachment_id);
+      const problem = pullProblem.get(row.attachment_id) || removeProblem.get(row.attachment_id);
       if (problem) li.append(el('p', problem, 'hra-problem'));
       return li;
     }));
@@ -472,6 +498,53 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
   }
 
   /* ---------- download ---------- */
+
+  /**
+   * הסרת קובץ שהמשתמש עצמו העלה.
+   *
+   * שלושה דברים שנאמרו במפורש ומיושמים כאן: אישור לפני הפעולה,
+   * ריענון הכרטיס בלבד ולא של הדף, ואפס נגיעה ב-Storage מהלקוח —
+   * הלקוח קורא ל-callable ותו לא. הבייטים נשארים; זו הסתרה.
+   */
+  async function drop(row) {
+    const id = row.attachment_id;
+    if (removing.has(id) || pulling.has(id)) return;
+    if (typeof adapter.remove !== 'function') return;
+    /* האישור עובר דרך המארח כשהוא סיפק אותו, ואחרת דרך `confirm`
+     * של הדפדפן. אין כאן דיאלוג משלנו: המסך הזה נטען בתוך מסכים
+     * שונים, ודיאלוג שמנהל מיקוד בעצמו היה שובר את מלכודת המיקוד
+     * של המארח. */
+    const ask = typeof adapter.confirmRemoval === 'function'
+      ? adapter.confirmRemoval
+      : (question) => window.confirm(question);
+    let approved = false;
+    try { approved = ask(REMOVE_QUESTION) === true; } catch (_) { approved = false; }
+    if (!approved) return;
+    const f = stamp(false);
+    const run = (removeRun += 1);
+    removing.set(id, run);
+    removeProblem.delete(id);
+    draw();
+    try {
+      const out = await adapter.remove({ attachment_id: id });
+      if (!live(f) || removing.get(id) !== run) return;
+      if (!out || out.removed_attachment_id !== id) {
+        throw Object.assign(new Error('malformed'), { code: 'internal' });
+      }
+      removing.delete(id);
+      announce('הקובץ הוסר מהפנייה.');
+      // רק הרשימה נטענת מחדש, לא הדף.
+      await load(true);
+      if (typeof adapter.onRemoved === 'function') { try { adapter.onRemoved(id); } catch (_) {} }
+    } catch (error) {
+      if (!live(f) || removing.get(id) !== run) return;
+      removing.delete(id);
+      const verdict = classify(error);
+      if (verdict.clears) return refused(verdict.text);
+      removeProblem.set(id, verdict.text || 'ההסרה לא הושלמה. אפשר לנסות שוב.');
+      draw();
+    }
+  }
 
   async function pull(row) {
     const id = row.attachment_id;
@@ -829,7 +902,15 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
   on(refreshBtn, 'click', () => { void load(true); });
   on(moreBtn, 'click', () => { void load(false); });
   on(listBody, 'click', event => {
-    const id = event.target instanceof Element ? event.target.dataset.pull : null;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const dropId = target.dataset.drop;
+    if (dropId) {
+      const row = rows.find(r => r.attachment_id === dropId);
+      if (row) void drop(row);
+      return;
+    }
+    const id = target.dataset.pull;
     if (!id) return;
     const row = rows.find(r => r.attachment_id === id);
     if (row) void pull(row);
@@ -854,10 +935,14 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
         throw new TypeError('parent_kind, parent_id and parent_revision are required');
       }
       const same = context && context.parent_kind === next.parent_kind && context.parent_id === next.parent_id
-        && context.parent_revision === next.parent_revision && context.canUpload === (next.canUpload !== false);
+        && context.parent_revision === next.parent_revision && context.canUpload === (next.canUpload !== false)
+        && context.canRemove === (next.canRemove === true);
       if (same) return;
+      /* `canRemove` הוא opt-in מפורש: מארח שאינו מצהיר עליו אינו מקבל
+       * כפתור הסרה. נוהל תחנה, למשל, אינו מצהיר עליו לעולם. */
       context = { parent_kind: next.parent_kind, parent_id: next.parent_id,
-        parent_revision: next.parent_revision, canUpload: next.canUpload !== false };
+        parent_revision: next.parent_revision, canUpload: next.canUpload !== false,
+        canRemove: next.canRemove === true };
       invalidate();
       draw();
       if (owner) void load(true);

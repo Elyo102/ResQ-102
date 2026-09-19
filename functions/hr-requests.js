@@ -68,7 +68,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
     return value;
   }
   const summary = c => ({ case_id: c.case_id, owner_uid: c.owner_uid, subject: c.subject,
-    status: c.status, revision: c.revision, created_at_ms: c.created_at_ms, updated_at_ms: c.updated_at_ms });
+    status: c.status, revision: c.revision, created_at_ms: c.created_at_ms, updated_at_ms: c.updated_at_ms,
+    removed_attachment_ids: attachmentIds(c.removed_attachment_ids) });
   async function beforeWrites(stage) { if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ stage }); }
   async function runtime(tx) {
     const snap = await tx.get(db.doc('config/runtime')), value = snap.exists ? snap.data() : null;
@@ -336,17 +337,27 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       let q = ref.collection('events').orderBy('revision').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
+      /* ⭐ קובץ שהוסר יצא מ-`attachment_ids` ונכנס ל-`removed_attachment_ids`.
+       * שורת ה-„צורף" ההיסטורית שלו נשארת ביומן, ולכן בדיקת החברות
+       * חייבת להכיר בשתי הרשימות. בלי זה, הסרה אחת הייתה שוברת את
+       * כל קריאת הפנייה — ההיסטוריה הייתה נפסלת כלא תקינה. */
+      const known = attachmentIds(c.attachment_ids).concat(attachmentIds(c.removed_attachment_ids));
+      const fileEvent = (e) => e.kind === 'attachment' || e.kind === 'removeAttachment';
       const events = docs.map(s => {
         const e = s.data();
         if (e.schema !== 'hr-request-event-v1' || e.case_id !== c.case_id || e.station_id !== r.ctx.sid
           || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > c.revision
-          || (e.kind === 'attachment' && (e.event_id !== s.id || !access.validUid(e.actor_uid)
+          || (fileEvent(e) && (e.event_id !== s.id || !access.validUid(e.actor_uid)
             || typeof e.attachment_id !== 'string' || !KEY.test(e.attachment_id)
-            || !attachmentIds(c.attachment_ids).includes(e.attachment_id)
+            || !known.includes(e.attachment_id)
             || own(e, 'text') || own(e, 'from_status') || own(e, 'to_status')))) throw error('failed-precondition', 'Invalid request history.');
         return { event_id: s.id, actor_uid: e.actor_uid, kind: e.kind, revision: e.revision,
           created_at_ms: e.created_at_ms, ...(own(e, 'text') ? { text: e.text } : {}),
-          ...(e.kind === 'attachment' ? { attachment_id: e.attachment_id } : {}),
+          ...(fileEvent(e) ? { attachment_id: e.attachment_id } : {}),
+          // שם הקובץ שהוסר נשמר בשורת היומן כדי שהמסך יוכל להציג
+          // „הוסר" עם שם, בלי לגשת לרשומת קובץ שכבר אינה מקושרת.
+          ...(e.kind === 'removeAttachment' && typeof e.attachment_display_name === 'string'
+            ? { attachment_display_name: e.attachment_display_name } : {}),
           ...(own(e, 'from_status') ? { from_status: e.from_status, to_status: e.to_status } : {}) };
       });
       return { ...summary(c), events, next_cursor: page.size > PAGE_SIZE ? events[events.length - 1].revision : null };

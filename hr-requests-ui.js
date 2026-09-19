@@ -59,14 +59,21 @@ export function createHrRequestsUI(root, adapter = disconnected) {
       if (attachmentOrigin) clearAttachments();
       return;
     }
+    /* ⭐ `canRemove` — רק בעל הפנייה. אין כאן תנאי סטטוס בכוונה:
+     * השרת אינו אוכף אחד, ומסך שמוסיף כלל שאין בשרת הוא כלל שקוף
+     * שאיש לא יידע עליו. הכפתור עצמו מופיע רק לקובץ שהמשתמש העלה,
+     * וההרשאה נאכפת בשרת בכל מקרה. */
     const next = { session: owner, generation, detailGeneration, id: selected.case_id, revision: selected.revision,
-      canUpload: selected.status !== 'closed' };
+      canUpload: selected.status !== 'closed',
+      canRemove: !!owner && selected.owner_uid === owner.uid };
     if (attachmentOrigin && attachmentOrigin.session === next.session && attachmentOrigin.generation === next.generation
       && attachmentOrigin.detailGeneration === next.detailGeneration && attachmentOrigin.id === next.id
-      && attachmentOrigin.revision === next.revision && attachmentOrigin.canUpload === next.canUpload) return;
+      && attachmentOrigin.revision === next.revision && attachmentOrigin.canUpload === next.canUpload
+      && attachmentOrigin.canRemove === next.canRemove) return;
     attachmentOrigin = next; attachmentHost.hidden = false;
     attachmentSyncing = true;
-    try { attachments.setContext({ parent_kind: 'request', parent_id: next.id, parent_revision: next.revision, canUpload: next.canUpload }); }
+    try { attachments.setContext({ parent_kind: 'request', parent_id: next.id, parent_revision: next.revision,
+      canUpload: next.canUpload, canRemove: next.canRemove }); }
     finally { attachmentSyncing = false; }
   }
   async function attachmentPublished(result) {
@@ -271,7 +278,20 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   if (attachmentHost && typeof adapter.mountAttachments === 'function') {
     attachments = adapter.mountAttachments(attachmentHost, {
       onLockChange(value) { attachmentLocked = value === true; if (!disposed) controls(); },
-      onPublished: attachmentPublished
+      onPublished: attachmentPublished,
+      /* הרכיב יודע רק את מזהה הקובץ. הפנייה והגרסה מגיעות מכאן,
+       * בזמן הקריאה ולא בזמן ההרכבה, כדי שההסרה תיקשר לגרסה
+       * שהמסך באמת מציג. */
+      async remove(data) {
+        const origin = selected;
+        if (!origin || !owner) throw Object.assign(new Error('no case'), { code: 'failed-precondition' });
+        const out = await adapter.removeAttachment({
+          request_id: crypto.randomUUID(), case_id: origin.case_id,
+          expected_revision: origin.revision, attachment_id: data.attachment_id
+        });
+        return { removed_attachment_id: out?.removed_attachment_id };
+      },
+      onRemoved() { if (!disposed && selected) void openCase(selected.case_id); }
     });
   }
   resetIdentity();

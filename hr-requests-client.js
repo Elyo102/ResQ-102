@@ -15,7 +15,11 @@ const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app), functions = getFunctions(app, 'europe-west1');
 const names = { create: 'createHrRequest', list: 'listMyHrRequests', listInbox: 'listHrRequestsInbox',
-  get: 'getHrRequest', reply: 'replyHrRequest', setStatus: 'setHrRequestStatus', nudge: 'nudgeHrRequest' };
+  get: 'getHrRequest', reply: 'replyHrRequest', setStatus: 'setHrRequestStatus', nudge: 'nudgeHrRequest',
+  /* הסרת קובץ היא פעולה על **הפנייה**, ולכן היא עוברת כאן ולא דרך
+   * `attachmentCall`: זה מאמת `epoch` בתשובה, ותשובת מודול הפניות
+   * אינה נושאת `epoch`. ניתוב דרכו היה מפיל כל הסרה תקינה. */
+  removeAttachment: 'removeMyHrAttachment' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;

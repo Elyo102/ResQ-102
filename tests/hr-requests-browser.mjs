@@ -46,6 +46,22 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
       if (name === 'listMyHrRequests' || name === 'listHrRequestsInbox') {
         const cases = name === 'listMyHrRequests' ? t.cases.filter(c => c.owner_uid === t.auth.currentUser.uid) : t.cases;
         result = { items: cases.map(({ events, ...c }) => c), next_cursor: null };
+      } else if (name === 'removeMyHrAttachment') {
+        const c = t.cases.find(c => c.case_id === data.case_id);
+        const a = t.attachments[data.attachment_id];
+        if (!c || !a) throw Object.assign(new Error('Missing'), { code: 'functions/not-found' });
+        // הכפיל אוכף את אותו כלל שהשרת אוכף: רק המעלה.
+        if (a.uploader !== t.auth.currentUser.uid) throw Object.assign(new Error('Not yours'), { code: 'functions/permission-denied' });
+        a.removed = true;
+        c.removed_attachment_ids = (c.removed_attachment_ids || []).concat(a.id);
+        ++c.revision;
+        c.events.push({ event_id: ('r' + c.revision).padStart(64, '0'), revision: c.revision,
+          actor_uid: t.auth.currentUser.uid, kind: 'removeAttachment', attachment_id: a.id,
+          attachment_display_name: a.input.display_name, created_at_ms: 1788220800000 });
+        result = { case_id: c.case_id, revision: c.revision, status: c.status, outcome: 'saved',
+          event_id: c.events[c.events.length - 1].event_id, notification_status: 'no_other_recipient',
+          removed_attachment_id: a.id };
+        t.receipts[data.request_id] = { data: structuredClone(data), result: structuredClone(result) };
       } else if (name === 'getHrRequest') {
         if (t.failGet) { t.failGet = false; throw Object.assign(new Error('Synthetic refresh failure'), { code: 'functions/unavailable' }); }
         const c = t.cases.find(c => c.case_id === data.case_id);
@@ -56,15 +72,17 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
         const epoch = await t.attachmentEpoch();
         if (t.badAttachmentEpoch) { Object.assign(epoch, t.badAttachmentEpoch); t.badAttachmentEpoch = null; }
         const row = a => ({ attachment_id: a.id, display_name: a.input.display_name, declared_type: a.input.declared_type,
-          byte_length: a.input.byte_length, revision: a.revision, created_at_ms: 1788220800000 });
+          byte_length: a.input.byte_length, revision: a.revision, created_at_ms: 1788220800000,
+          // המעלה נרשם בכפיל בדיוק כמו `actor_uid` ברשומה האמיתית.
+          uploaded_by_me: a.uploader === t.auth.currentUser.uid });
         const ready = a => ({ attachment_id: a.id, state: 'ready', revision: a.revision, notification_status: 'policy_pending', duplicate: false, epoch });
         let a = Object.values(t.attachments).find(a => data.attachment_id ? a.id === data.attachment_id : a.input.request_id === data.request_id);
         if (name === 'listHrAttachments') {
           const c = t.cases.find(c => c.case_id === data.parent_id);
-          result = { items: Object.values(t.attachments).filter(a => a.revision && a.input.parent_id === data.parent_id).map(row), next_cursor: null, revision: c.revision, epoch };
+          result = { items: Object.values(t.attachments).filter(a => a.revision && !a.removed && a.input.parent_id === data.parent_id).map(row), next_cursor: null, revision: c.revision, epoch };
         } else if (name === 'reserveHrAttachment') {
           if (a) assertSame(a.input, data);
-          else { a = { id: (++t.attachmentCounter).toString(16).padStart(64, '0'), input: structuredClone(data) }; t.attachments[a.id] = a; }
+          else { a = { id: (++t.attachmentCounter).toString(16).padStart(64, '0'), input: structuredClone(data), uploader: t.auth.currentUser.uid }; t.attachments[a.id] = a; }
           result = a.revision ? { ...ready(a), duplicate: true, reserve_expires_ms: 1788221700000 }
             : { attachment_id: a.id, state: 'reserved', duplicate: false, reserve_expires_ms: 1788221700000, epoch };
         } else if (name === 'uploadHrAttachment') {
@@ -322,5 +340,110 @@ try {
       await q(f.page, 'reply').focus(); assert.equal(await q(f.page, 'reply').evaluate(e => getComputedStyle(e).outlineStyle !== 'none'), true); await f.close();
     }
   });
+  /* ======================================================================
+   *  הסרת קובץ אישי — מה שרואים, ומה שנשלח
+   * ====================================================================== */
+
+  /** מעלה קובץ דרך המסלול האמיתי, ומחזיר את מזהה הקובץ. */
+  async function uploadOne(page) {
+    await chooseAttachment(page);
+    await q(page, 'attachments').locator('button:has-text("העלו את הקובץ")').click();
+    await q(page, 'attachments').locator('.hra-row').first().waitFor();
+    return page.evaluate(() => document.querySelector('[data-r="attachments"] .hra-row').dataset.id);
+  }
+
+  await check('the remove button appears only beside a file this person uploaded', async () => {
+    const f = await fixture(); await open(f.page);
+    const mine = await uploadOne(f.page);
+    assert.equal(await f.page.locator('[data-drop="' + mine + '"]').count(), 1,
+      'my own upload offers removal');
+    // אותו קובץ בדיוק, רק עם מעלה אחר — הכפתור נעלם.
+    await f.page.evaluate((id) => { window.__requests.attachments[id].uploader = 'hr-person'; }, mine);
+    await q(f.page, 'attachments').locator('button:has-text("רענון")').click();
+    await f.page.waitForFunction((id) => !document.querySelector('[data-drop="' + id + '"]'), mine);
+    assert.equal(await f.page.locator('[data-drop="' + mine + '"]').count(), 0,
+      'a file uploaded by HR offers no removal to the employee');
+    assert.equal(await f.page.locator('[data-pull="' + mine + '"]').count(), 1,
+      'but it is still there to download — nothing was hidden by mistake');
+    await f.close();
+  });
+
+  await check('removing a file calls the request callable, never Storage, and hides the file', async () => {
+    const f = await fixture(); await open(f.page);
+    const mine = await uploadOne(f.page);
+    await f.page.locator('[data-drop="' + mine + '"]').click();
+    await f.page.waitForFunction((id) => !document.querySelector('[data-pull="' + id + '"]'), mine);
+    const sent = await f.page.evaluate(() => window.__requests.calls.filter(c => c.name === 'removeMyHrAttachment'));
+    assert.equal(sent.length, 1, 'exactly one removal call');
+    assert.equal(sent[0].data.attachment_id, mine);
+    assert.equal(typeof sent[0].data.case_id, 'string');
+    assert.equal(Number.isSafeInteger(sent[0].data.expected_revision), true,
+      'the removal is bound to the revision the screen was showing');
+    // ⭐ הלקוח אינו נוגע ב-Storage. לא בקריאה הזו ולא בשום קריאה אחרת.
+    const names = await f.page.evaluate(() => window.__requests.calls.map(c => c.name));
+    assert.equal(names.some(n => /storage|delete/i.test(n)), false,
+      'no client-side storage or delete call exists at all');
+    assert.equal(await f.page.locator('[data-pull="' + mine + '"]').count(), 0, 'the file can no longer be downloaded');
+    assert.equal(await f.page.locator('[data-drop="' + mine + '"]').count(), 0, 'and it can no longer be removed again');
+    await f.close();
+  });
+
+  await check('the removed file is reported as removed in the request history', async () => {
+    const f = await fixture(); await open(f.page);
+    const mine = await uploadOne(f.page);
+    await f.page.locator('[data-drop="' + mine + '"]').click();
+    await f.page.waitForFunction((id) => !document.querySelector('[data-pull="' + id + '"]'), mine);
+    // המסך נטען מחדש מהשרת אחרי ההסרה — לא רענון של כל הדף.
+    await f.page.waitForFunction(() => window.__requests.calls.filter(c => c.name === 'getHrRequest').length >= 2);
+    const state = await f.page.evaluate(() => {
+      const c = window.__requests.cases.find(x => x.case_id === 'a'.repeat(64));
+      return { removed: c.removed_attachment_ids || [], kinds: c.events.map(e => e.kind) };
+    });
+    assert.equal(state.removed.length, 1, 'the case records what was removed');
+    assert.equal(state.kinds.includes('removeAttachment'), true, 'and the history carries the removal');
+    assert.equal(state.kinds.includes('attachment'), true, 'the original attachment row survives it');
+    await f.close();
+  });
+
+  await check('a viewer who does not own the request is offered no removal, even for a file they uploaded', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    /* ⭐ הבדיקה מכוונת אל כלל הבעלות ואל שום דבר אחר: הקובץ מוצג,
+     * הוא ניתן להורדה, ו-`uploaded_by_me` שלו **אמת** — המעלה הוא
+     * הצופה עצמו. הדבר היחיד שחסר הוא הבעלות על הפנייה. */
+    await f.page.evaluate(() => {
+      const t = window.__requests;
+      t.addCase('c', 'פנייה של עובד אחר', 'someone-else');
+      const id = 'f'.repeat(64);
+      t.attachments[id] = { id, uploader: t.auth.currentUser.uid, revision: 1,
+        input: { display_name: 'x.pdf', declared_type: 'application/pdf', byte_length: 10,
+          parent_id: 'c'.repeat(64) } };
+    });
+    await q(f.page, 'inbox').click();
+    await f.page.locator('[data-case="' + 'c'.repeat(64) + '"]').click();
+    await q(f.page, 'attachments').locator('.hra-row').first().waitFor();
+    const row = await f.page.evaluate(() => {
+      const el = document.querySelector('[data-r="attachments"] .hra-row');
+      return { id: el.dataset.id, pull: !!el.querySelector('[data-pull]'), drop: !!el.querySelector('[data-drop]') };
+    });
+    assert.equal(row.id, 'f'.repeat(64), 'the file really is on screen');
+    assert.equal(row.pull, true, 'and it really is downloadable — the row is not empty');
+    assert.equal(row.drop, false, 'but ownership of the request is missing, so there is no removal');
+    await f.close();
+  });
+
+  await check('the confirmation says what removal actually does, and says nothing about deleting', async () => {
+    const f = await fixture(); await open(f.page);
+    const mine = await uploadOne(f.page);
+    const asked = [];
+    f.page.on('dialog', d => { asked.push(d.message()); });
+    await f.page.locator('[data-drop="' + mine + '"]').click();
+    await f.page.waitForFunction((id) => !document.querySelector('[data-pull="' + id + '"]'), mine);
+    assert.equal(asked.length >= 1, true, 'the person is asked first');
+    assert.equal(asked[0], 'להסיר את הקובץ מהפנייה? הקובץ יוסתר ולא יהיה ניתן להורדה דרך המערכת.');
+    assert.equal(/נמחק|מחיקה לצמיתות/.test(asked[0]), false,
+      'the wording never promises a deletion that does not happen');
+    await f.close();
+  });
+
   assert.deepEqual(hashes(), before); console.log('HR requests browser: ' + passed + '/' + passed + ' passed.');
 } finally { for (const context of contexts) await context.close(); await browser.close(); }

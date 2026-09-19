@@ -234,6 +234,34 @@ async function caseWithFile(w, ownerUid, uploaderUid, attachmentId) {
     assert.equal(receipt.document_id, published.document_id, 'which procedure');
   });
 
+  /* ---------- 8 ---------- */
+  await test('reading the request still works after a removal, and says what was removed', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    const file = id('history');
+    const c = await caseWithFile(w, worker, worker, file);
+    // שורת „צורף" היסטורית, כפי שהמסלול האמיתי כותב אותה.
+    const attachEventId = hash(['attach-event', file]);
+    w.db._put('stations/' + SID + '/hr_requests/' + c.case_id + '/events/' + attachEventId, {
+      schema: 'hr-request-event-v1', event_id: attachEventId, case_id: c.case_id, station_id: SID,
+      actor_uid: worker, kind: 'attachment', revision: 1, created_at_ms: Date.now(), attachment_id: file
+    });
+    await w.requests.removeAttachment(w.who.req(worker, {
+      request_id: 'req-remove-history-1', case_id: c.case_id,
+      expected_revision: c.revision, attachment_id: file
+    }));
+    // ⭐ בלי הכרה בשתי הרשימות, הסרה אחת הייתה פוסלת את כל ההיסטוריה
+    // והקריאה הייתה נכשלת ב-'Invalid request history.'
+    const view = await w.requests.get(w.who.req(worker, { case_id: c.case_id }));
+    assert.deepEqual(view.removed_attachment_ids, [file], 'the case reports what was removed');
+    const removal = view.events.find((e) => e.kind === 'removeAttachment');
+    assert.ok(removal, 'the removal is in the history');
+    assert.equal(removal.attachment_display_name, 'אישור.pdf', 'with a name the screen can show');
+    assert.equal(removal.actor_uid, worker);
+    const attached = view.events.find((e) => e.kind === 'attachment');
+    assert.ok(attached, 'and the original "attached" row survives the removal');
+  });
+
   console.log('');
   console.log('NOT RUN here — Firestore rules (emulator), the upload pipeline itself, and any physical');
   console.log('deletion from Storage, which does not exist by decision: removal is a soft delete.');

@@ -914,7 +914,12 @@ function createHrAttachments(deps) {
       items: page.map(v => ({
         attachment_id: v.attachment_id, display_name: v.display_name,
         declared_type: v.declared_type, byte_length: v.byte_length,
-        revision: v.published_revision, created_at_ms: v.ready_at_ms
+        revision: v.published_revision, created_at_ms: v.ready_at_ms,
+        /* ⭐ עובדה אחת בלבד, ולא זהות: „האם אני העליתי את הקובץ הזה".
+         * המסך צריך אותה כדי להציג כפתור הסרה רק למי שרשאי, ואין סיבה
+         * לחשוף את ה-uid של המעלה לכל מי שרואה את הרשימה. ההרשאה
+         * עצמה נאכפת בשרת בכל מקרה; זו תצוגה, לא שער. */
+        uploaded_by_me: v.actor_uid === r.ctx.uid
       })),
       next_cursor: more && last ? last.published_revision + '|' + last.attachment_id : null,
       revision: parent.revision,
