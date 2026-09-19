@@ -11,13 +11,14 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\
 const sha = value => createHash('sha256').update(value).digest('hex');
 /* הטביעות האלה הן החלטה, לא תחזוקה. שינוי בהן אומר „נגענו במודול
  * HR רגיש ואנחנו יודעים בדיוק במה". שתי הטביעות שהתעדכנו כאן:
- *   · hr-requests.js — פעולת `removeAttachment` והכרת `get` בשתי
- *     רשימות הקבצים (מקושרים ומוסרים).
+ *   · hr-requests.js — פעולת `removeAttachment`, הכרת `get` בשתי רשימות
+ *     הקבצים (מקושרים ומוסרים), וסוג הפנייה עם טווח תאריכים והכרעה
+ *     (`setDecision`) לדיווחי מחלה ומילואים.
  *   · hr-documents.js — פעולת `archive` לנהלי תחנה ו-`procedureAuthority`.
  * שאר הקבצים לא נגענו בהם, וטביעותיהם נשארו כפי שהיו. */
 const pins = {
   'functions/hr-domain-dispatch.js': '526ae68168c7e7e042477b05cb71886ff94dd06f4d0250c2c18cc568d0bae357',
-  'functions/hr-requests.js': 'b27db72c40148a403c5114867105cabf97f784a7874c861d81059f811f8fe766',
+  'functions/hr-requests.js': '2da9c472c98777ce9444d7b25567cc0708435ab4b1fa195e5a24ed9de97d5cc4',
   'functions/hr-documents.js': '63aa7a8f9f1372768fb243598ecb2caec83ed3c81ad11a8d421e4e4697dde3d7',
   'functions/hr-notification-policy.js': '1f463af5e307dc96fec5da330673260ac9a8a0a4aadae7c5892ccc769c3e2668',
   'functions/hr-hours-dispatch.js': '612cc9453f914e13538ea80b8f447c6b61e7ffc17ad16a03322883a74253f4ed',

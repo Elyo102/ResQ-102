@@ -64,7 +64,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',
   'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',
   'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
-  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest', 'removeMyRequestFile',
+  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest', 'removeMyRequestFile', 'decideMyStationReport',
   'publishHrDocument', 'reviseHrDocument', 'listMyHrDocuments', 'listHrProcedures',
   'listManagedHrDocuments', 'getHrDocument', 'markHrDocumentOpened', 'acknowledgeHrDocument',
   'listHrDocumentReceipts', 'markBulletinMessageViewed', 'nudgeHrDocument', 'archiveHrProcedure',

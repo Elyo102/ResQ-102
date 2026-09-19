@@ -8,6 +8,25 @@ const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { decideNotification } = require('./hr-notification-policy');
 const PAGE_SIZE = 25, QUOTA_MAX = 10, QUOTA_WINDOW_MS = 60000, CONSENT_MS = 3600000;
 const STATES = Object.freeze(['open', 'in_progress', 'waiting_employee', 'closed']);
+/* ⭐ סוג הפנייה.
+ *
+ * `general` הוא כל מה שהיה עד היום — פנייה חופשית למשאבי אנוש, בלי
+ * תאריכים ובלי הכרעה. `sick` ו-`reserve` הם דיווח על תקופה, ולכן הם
+ * **מחייבים** טווח תאריכים ומקבלים הכרעה.
+ *
+ * למה כאן ולא באוסף חדש: זו אותה ישות בדיוק — פנייה שהעובד פותח,
+ * שמשאבי אנוש רואים, שיש לה היסטוריה וצרופות. אוסף שני היה מכפיל
+ * את ההרשאות, את הצרופות ואת היומן בלי להוסיף דבר. */
+const KINDS = Object.freeze(['general', 'sick', 'reserve']);
+const DATED_KINDS = Object.freeze(['sick', 'reserve']);
+/* ההכרעה נפרדת מ-`status` בכוונה. `status` הוא מצב הטיפול
+ * (פתוח/בטיפול/ממתין לעובד/סגור); ההכרעה היא התשובה עצמה. פנייה
+ * יכולה להיסגר בלי שאושרה, ואישור אינו אומר שהטיפול הסתיים. */
+const DECISIONS = Object.freeze(['pending', 'approved', 'rejected']);
+const FINAL_DECISIONS = Object.freeze(['approved', 'rejected']);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const validDate = (value) => typeof value === 'string' && DATE.test(value)
+  && Number.isFinite(Date.parse(value + 'T00:00:00Z'));
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,120}$/, KEY = /^[a-f0-9]{64}$/;
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
@@ -64,12 +83,30 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
     if (!plain(value) || value.schema !== 'hr-request-v1' || value.station_id !== ctx.sid
       || value.case_id !== snap.id || !access.validUid(value.owner_uid) || !STATES.includes(value.status)
       || !Number.isSafeInteger(value.revision) || value.revision < 1) throw error('failed-precondition', 'Request data is invalid.');
+    /* פניות שנוצרו לפני שהסוג קיים נקראות כ-`general`. מה שכן קיים
+     * חייב להיות תקין — נתון פגום לא נבלע בשקט. */
+    const kind = own(value, 'kind') ? value.kind : 'general';
+    if (!KINDS.includes(kind)) throw error('failed-precondition', 'Request data is invalid.');
+    if (DATED_KINDS.includes(kind)) {
+      if (!validDate(value.from_date) || !validDate(value.to_date) || value.to_date < value.from_date
+        || !DECISIONS.includes(value.decision)) throw error('failed-precondition', 'Request data is invalid.');
+      if (FINAL_DECISIONS.includes(value.decision)
+        && (!access.validUid(value.decided_by) || !Number.isSafeInteger(value.decided_at_ms))) throw error('failed-precondition', 'Request data is invalid.');
+    } else if (own(value, 'from_date') || own(value, 'to_date') || own(value, 'decision')) {
+      throw error('failed-precondition', 'Request data is invalid.');
+    }
     if (value.owner_uid !== ctx.uid && !manager(ctx)) throw error('permission-denied', 'This request is private.');
     return value;
   }
   const summary = c => ({ case_id: c.case_id, owner_uid: c.owner_uid, subject: c.subject,
     status: c.status, revision: c.revision, created_at_ms: c.created_at_ms, updated_at_ms: c.updated_at_ms,
-    removed_attachment_ids: attachmentIds(c.removed_attachment_ids) });
+    removed_attachment_ids: attachmentIds(c.removed_attachment_ids),
+    kind: own(c, 'kind') ? c.kind : 'general',
+    ...(DATED_KINDS.includes(own(c, 'kind') ? c.kind : 'general')
+      ? { from_date: c.from_date, to_date: c.to_date, decision: c.decision,
+          ...(FINAL_DECISIONS.includes(c.decision)
+            ? { decided_by: c.decided_by, decided_at_ms: c.decided_at_ms } : {}) }
+      : {}) });
   async function beforeWrites(stage) { if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ stage }); }
   async function runtime(tx) {
     const snap = await tx.get(db.doc('config/runtime')), value = snap.exists ? snap.data() : null;
@@ -79,9 +116,10 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   function mutationInput(req, op) {
     // הסרת קובץ אינה שולחת הודעה לאיש: היא פעולה של הבעלים על מה
     // שהוא עצמו העלה, ולכן אין לה `send_now` ואין לה נמען.
-    const keys = op === 'create' ? ['request_id', 'subject', 'text', 'send_now']
+    const keys = op === 'create' ? ['request_id', 'subject', 'text', 'send_now', 'kind', 'from_date', 'to_date']
       : op === 'removeAttachment' ? ['request_id', 'case_id', 'expected_revision', 'attachment_id']
-        : ['request_id', 'case_id', 'expected_revision', 'send_now', ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : [])];
+        : ['request_id', 'case_id', 'expected_revision', 'send_now',
+          ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : op === 'setDecision' ? ['decision'] : [])];
     const r = request(req, keys), d = r.data;
     const silentOp = op === 'removeAttachment';
     if (typeof d.request_id !== 'string' || !REQUEST_ID.test(d.request_id)
@@ -91,7 +129,21 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (typeof d.attachment_id !== 'string' || !KEY.test(d.attachment_id)) throw error('invalid-argument', 'Invalid attachment identity.');
       p.attachment_id = d.attachment_id;
     }
-    if (op === 'create') p.subject = text(d.subject, 80);
+    if (op === 'create') {
+      p.subject = text(d.subject, 80);
+      /* סוג אינו חובה: פנייה חופשית נשארת בדיוק כפי שהייתה. אבל אם
+       * נאמר סוג, הוא חייב להיות מוכר, ומחלה/מילואים חייבים טווח. */
+      const kind = own(d, 'kind') ? d.kind : 'general';
+      if (!KINDS.includes(kind)) throw error('invalid-argument', 'Invalid request kind.');
+      p.kind = kind;
+      if (DATED_KINDS.includes(kind)) {
+        if (!validDate(d.from_date) || !validDate(d.to_date)) throw error('invalid-argument', 'A sickness or reserve report needs a start and an end date.');
+        if (d.to_date < d.from_date) throw error('invalid-argument', 'The end date cannot precede the start date.');
+        p.from_date = d.from_date; p.to_date = d.to_date;
+      } else if (own(d, 'from_date') || own(d, 'to_date')) {
+        throw error('invalid-argument', 'Only a sickness or reserve report carries dates.');
+      }
+    }
     else {
       if (typeof d.case_id !== 'string' || !KEY.test(d.case_id) || !Number.isSafeInteger(d.expected_revision) || d.expected_revision < 1) throw error('invalid-argument', 'Invalid request revision.');
       p.case_id = d.case_id; p.expected_revision = d.expected_revision;
@@ -101,11 +153,19 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (!STATES.includes(d.status)) throw error('invalid-argument', 'Invalid status.');
       p.status = d.status;
     }
+    if (op === 'setDecision') {
+      // רק הכרעה סופית נשלחת. „ממתין" הוא מצב ההתחלה, לא פעולה.
+      if (!FINAL_DECISIONS.includes(d.decision)) throw error('invalid-argument', 'A decision is either approved or rejected.');
+      p.decision = d.decision;
+    }
     return { ...r, plan: p };
   }
   async function mutate(req, op) {
     const r = mutationInput(req, op), { ctx, plan: p } = r;
     if (op === 'setStatus' && !manager(ctx)) throw error('permission-denied', 'HR authority required.');
+    /* ⭐ העובד אינו מכריע בעניין של עצמו, וגם לא בעניין של אחר.
+     * ההכרעה היא סמכות משאבי אנוש בלבד, בדיוק כמו שינוי סטטוס. */
+    if (op === 'setDecision' && !manager(ctx)) throw error('permission-denied', 'HR authority required.');
     const operationId = hash(['hr-request-operation-v1', ctx.uid, p.request_id]);
     const fingerprint = hash(['hr-request-payload-v1', ctx.sid, ctx.uid, p]);
     const ref = caseRef(ctx.sid, op === 'create' ? hash(['hr-request-v1', ctx.uid, p.request_id]) : p.case_id);
@@ -126,6 +186,14 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (op === 'create' && current) throw error('already-exists', 'Request already exists.');
       if (current && current.revision !== p.expected_revision) throw error('aborted', 'The request changed. Refresh before saving.');
       const ownerSide = op === 'create' || current.owner_uid === ctx.uid;
+      let decisionPlan = null;
+      if (op === 'setDecision') {
+        const kind = own(current, 'kind') ? current.kind : 'general';
+        if (!DATED_KINDS.includes(kind)) throw error('failed-precondition', 'Only a sickness or reserve report carries a decision.');
+        // הכרעה על עצמך אינה אפשרית גם למי שהוא משאבי אנוש.
+        if (current.owner_uid === ctx.uid) throw error('permission-denied', 'You cannot decide your own report.');
+        decisionPlan = { decision: p.decision, noChange: current.decision === p.decision };
+      }
       if (op === 'reply' && current.status === 'closed') throw error('failed-precondition', 'The request is closed.');
       if (op === 'nudge' && !(ownerSide ? ['open', 'in_progress'].includes(current.status) : current.status === 'waiting_employee')) throw error('failed-precondition', 'No outstanding action for the other side.');
       /* ⭐ הסרת קובץ — רק מה שהאדם עצמו העלה, ורק בפנייה שלו.
@@ -163,7 +231,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       const at = now(), old = quota.exists ? quota.data().requests_at_ms : [];
       if (!Array.isArray(old) || old.some(v => !Number.isSafeInteger(v) || v > at)) throw error('failed-precondition', 'Quota data is invalid.');
       const recent = old.filter(v => v > at - QUOTA_WINDOW_MS);
-      const noChange = op === 'setStatus' && current.status === p.status;
+      const noChange = (op === 'setStatus' && current.status === p.status)
+        || (decisionPlan !== null && decisionPlan.noChange);
       if (!noChange && recent.length >= QUOTA_MAX) throw error('resource-exhausted', 'Too many new actions. Try again shortly.');
       let nudgePolicy = null;
       if (rt) nudgePolicy = decideNotification({ now_ms: at, mode: 'manual', silent: rt.silent ? 'on' : 'off', send_now: p.send_now });
@@ -179,13 +248,23 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
           : op === 'reply' && ownerSide && current.status === 'waiting_employee' ? 'open' : current.status;
         const next = current ? { ...current, revision, status, updated_at_ms: at,
           ...(removalPlan ? { attachment_ids: removalPlan.attachment_ids,
-            removed_attachment_ids: removalPlan.removed_attachment_ids } : {}) } : {
+            removed_attachment_ids: removalPlan.removed_attachment_ids } : {}),
+          ...(decisionPlan ? { decision: decisionPlan.decision, decided_by: ctx.uid, decided_at_ms: at } : {}) } : {
           schema: 'hr-request-v1', case_id: ref.id, station_id: ctx.sid, owner_uid: ctx.uid,
-          subject: p.subject, status, revision, created_at_ms: at, updated_at_ms: at
+          subject: p.subject, status, revision, created_at_ms: at, updated_at_ms: at,
+          kind: p.kind,
+          /* ⭐ דיווח מחלה/מילואים נולד `pending`. אין מסלול שבו עובד
+           * יוצר דיווח שכבר מאושר: ההכרעה נכתבת רק ב-`setDecision`,
+           * שדורש סמכות משאבי אנוש ואוסר הכרעה על עצמך. */
+          ...(DATED_KINDS.includes(p.kind)
+            ? { from_date: p.from_date, to_date: p.to_date, decision: 'pending' } : {})
         };
         const eventId = hash(['hr-request-event-v1', operationId]);
         const event = { schema: 'hr-request-event-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
           actor_uid: ctx.uid, kind: op, revision, created_at_ms: at,
+          ...(decisionPlan ? { decision: decisionPlan.decision, from_decision: current.decision } : {}),
+          ...(op === 'create' && DATED_KINDS.includes(p.kind)
+            ? { request_kind: p.kind, from_date: p.from_date, to_date: p.to_date } : {}),
           ...(own(p, 'text') ? { text: p.text } : {}),
           ...(op === 'setStatus' ? { from_status: current.status, to_status: status } : {}),
           /* ⭐ זהו יומן הביקורת של המחיקה: מי, מתי, איזה קובץ ובאיזו
@@ -194,7 +273,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
           ...(removalPlan ? { attachment_id: p.attachment_id,
             attachment_display_name: removalPlan.display_name } : {}) };
         // Status changes by an HR owner should not send back to the actor.
-        const ownerNotification = op === 'setStatus' || !ownerSide;
+        const ownerNotification = op === 'setStatus' || op === 'setDecision' || !ownerSide;
         const notifySelf = ownerNotification && next.owner_uid === ctx.uid;
         // הסרת קובץ של עצמך אינה אירוע שמישהו צריך לקבל עליו פוש.
         const notificationStatus = op === 'removeAttachment' ? 'no_other_recipient'
@@ -367,6 +446,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   return Object.freeze({ create: req => mutate(req, 'create'), reply: req => mutate(req, 'reply'),
     setStatus: req => mutate(req, 'setStatus'), nudge: req => mutate(req, 'nudge'),
     removeAttachment: req => mutate(req, 'removeAttachment'),
+    setDecision: req => mutate(req, 'setDecision'),
     list: req => list(req), listInbox: req => list(req, true), get, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES });

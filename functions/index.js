@@ -280,6 +280,10 @@ exports.nudgeHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequ
  * מודול הקבצים — וזה אינו אחד מהם: זו פעולה על הפנייה, שמסירה
  * קישור. השמורה נכונה, והשם התיישר אליה. */
 exports.removeMyRequestFile = onCall({ enforceAppCheck: true }, async (req) => hrRequests.removeAttachment(req));
+/* הכרעה על דיווח מחלה/מילואים — משאבי אנוש ומנהל-על בלבד, ולא על
+ * הדיווח של עצמם. העובד רואה את ההכרעה ואינו כותב אותה בשום מסלול:
+ * `hr_requests` סגור לחלוטין לכתיבה מהדפדפן. */
+exports.decideMyStationReport = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setDecision(req));
 const hrDocuments = hrDocumentsModule.createHrDocuments({ db, auth: admin.auth(), HttpsError });
 exports.publishHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.publish(req));
 exports.reviseHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.revise(req));
