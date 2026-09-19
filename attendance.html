@@ -47,6 +47,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px }
 
   .mo{ display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap }
+  /* קפיצה לתאריך + סימון דיווח רטרואקטיבי */
+  .jump{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 14px }
+  .jump label{ font-weight:700; font-size:14px }
+  .jump input[type="date"]{ min-height:44px; padding:0 10px; border:1px solid var(--line,#dfe5ec);
+    border-radius:8px; font:inherit; background:var(--card,#fff); color:inherit }
+  .jump button{ min-height:44px; padding:0 14px; border-radius:8px; font:inherit; font-weight:700;
+    border:1px solid var(--line,#dfe5ec); background:var(--card,#fff); color:inherit; cursor:pointer }
+  .jump .hint{ flex:1 1 100%; font-size:12.5px; color:var(--muted,#748091) }
+  .retro{ display:inline-block; font-size:12px; font-weight:700; line-height:1.5;
+    padding:1px 8px; border-radius:999px; margin-inline-end:6px;
+    color:var(--warn,#765500); background:var(--warn-bg,#fff7df); border:1px solid var(--warn,#e0a23c) }
+  .retro-note{ display:block; margin:8px 0 0 }
   .mo .lbl{ color:var(--txt); font-size:18px; font-weight:750; min-width:132px;
             text-align:center; margin:0 }
   .mo button{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
@@ -297,6 +309,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <span class="state" id="state" role="status" aria-live="polite">טיוטה</span>
       </div>
 
+      <!-- ⭐ קפיצה לתאריך.
+           עד כאן, כדי לדווח על יום מלפני שלושה שבועות היה צריך לנחש
+           באיזה חודש הוא נמצא, לדפדף אליו ואז לאתר את השורה. מי
+           שמדווח באיחור עושה את זה בדיוק כשהוא הכי פחות רוצה לחפש. -->
+      <div class="jump">
+        <label for="jumpDate">דיווח לתאריך</label>
+        <input type="date" id="jumpDate" aria-describedby="jumpNote">
+        <button type="button" id="jumpGo">פתחו את היום</button>
+        <span class="hint" id="jumpNote">אפשר לדווח גם על יום שכבר עבר. דיווח כזה מסומן „רטרואקטיבי".</span>
+      </div>
+
       <div class="tot">
         <div><div class="v" id="tHours">0</div><div class="k">שעות שנשמרו</div></div>
         <div><div class="v" id="tDays">0</div><div class="k">ימים שדווחו</div></div>
@@ -392,7 +415,8 @@ import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
-         SHAPES, shapeOf, shapeHe }
+         SHAPES, shapeOf, shapeHe,
+         reportedAtMs, retroDays, retroLabel }
   from './hours.js?v=42h20';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
@@ -539,6 +563,14 @@ function setSubjectWorkspaceVisible(visible) {
 // חותמת התיעוד. נדרשת על ידי כללי האבטחה בכל עריכה של רשומה
 // שאינה שלך, ו-edited_by חייב להיות ה-uid האמיתי — הכלל בודק
 // אותו מול request.auth.uid, כך שאי אפשר לערוך בשם אחר.
+/* „היום" לפי שעון ישראל, לא לפי שעון המכשיר. מי שנמצא בחו״ל או
+ * שהשעון שלו מוסט עדיין מדווח על אותו יום שהתחנה מדברת עליו. */
+function localToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 function stamp(body) {
   if (!onOther()) return body;
   return Object.assign({}, body, {
@@ -1289,10 +1321,15 @@ function renderRows(sug){
       //
       // שיוך אבטחה ממלא אותו לבד, ולכן העמודה הזו מסבירה
       // בשקט למה ליום מסוים יש יותר שעות.
-      '<td class="nt' + (view.notes ? '' : ' dash') + '" data-l="הערות">' +
+      // ⭐ הסימון יושב ליד ההערות ולא במקומן: „מתי דווח" הוא עובדה
+      // על הדיווח, לא תוכן היום, והוא צריך להיראות גם כשאין הערה.
+      '<td class="nt' + (view.notes || retroLabel(key, rec) ? '' : ' dash') + '" data-l="הערות">' +
+        (retroLabel(key, rec)
+          ? '<span class="retro" title="' + esc(retroLabel(key, rec)) + '">' + esc(retroLabel(key, rec)) + '</span>'
+          : '') +
         (view.notes
           ? '<span title="' + esc(view.notes) + '">' + esc(view.notes) + '</span>'
-          : '<span class="em">—</span>') + '</td>';
+          : (retroLabel(key, rec) ? '' : '<span class="em">—</span>')) + '</td>';
 
     const td = document.createElement('td');
     td.className = 'c-act';
@@ -1400,6 +1437,19 @@ async function saveRecord(key, rec, correctionReason){
   }
 
   body.updated_at = serverTimestamp();
+  /* ⭐ „מתי דווח" — נכתב פעם אחת, בשרת.
+   *
+   * `reported_at` נקבע ביצירה בלבד ונשמר כמו שהוא בכל עריכה. הכלל
+   * ב-firestore.rules דורש שביצירה הוא יהיה `request.time` בדיוק,
+   * ושבעריכה הוא לא ישתנה — ולכן הוא העובדה היחידה כאן שאי אפשר
+   * לזייף מהדפדפן.
+   *
+   * דגל „רטרואקטיבי" אינו נשמר. הוא נגזר: תאריך היום מול הזמן שבו
+   * הדיווח נוצר. דגל שהלקוח כותב הוא דגל שאפשר לשקר בו. */
+  const existing = records[key];
+  Object.assign(body, {
+    reported_at: existing && existing.reported_at ? existing.reported_at : serverTimestamp()
+  });
   requireMonthWrite(target, key);
   await setDoc(doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, key)), stamp(body));
   requireMonthWrite(target, key);
@@ -1752,6 +1802,10 @@ function editDay(key, rec){
 
   $('dlg').innerHTML =
     '<h3 id="dlgTitle">דיווח ליום ' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
+    // מי שפותח יום ישן צריך לדעת שזה מה שהוא עושה, לפני שהוא שומר.
+    (retroLabel(key, rec)
+      ? '<p class="retro retro-note">' + esc(retroLabel(key, rec)) + '</p>'
+      : (key < localToday() ? '<p class="retro retro-note">היום הזה כבר עבר. הדיווח יסומן כרטרואקטיבי.</p>' : '')) +
     '<div class="hint" id="dHint"></div>' +
     '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
 
@@ -2410,6 +2464,35 @@ async function loadApprovals(){
 }
 
 // ---------- ניווט חודשים ----------
+
+/* ⭐ קפיצה לתאריך — וגם, כשצריך, מעבר לחודש שבו הוא נמצא.
+ *
+ * אין כאן מסלול שמירה שני: היעד הוא אותו דיאלוג יום בדיוק, ולכן כל
+ * הכללים שחלים על דיווח רגיל חלים גם כאן. מה שהשתנה הוא הדרך אליו. */
+async function jumpToDate(key) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key || ''))) {
+    msg('צריך לבחור תאריך.', 'err');
+    return;
+  }
+  const year = Number(key.slice(0, 4)), month = Number(key.slice(5, 7)) - 1;
+  if (year !== viewYear || month !== viewMonth) {
+    viewYear = year; viewMonth = month;
+    msg('', ''); setMonthBusy(true);
+    if (!(await loadStatic())) return;
+    if (!(await loadMonth())) return;
+  }
+  if (locked()) {
+    // החודש אושר ונעול. זה לא כישלון של הקפיצה — זו מדיניות, והמסך
+    // כבר אומר אותה במקום אחד; כאן רק לא מעמידים פנים שנפתח משהו.
+    msg('החודש הזה אושר ונעול. פנה למפקד כדי לפתוח אותו לתיקון.', 'err');
+    return;
+  }
+  const row = document.querySelector('[data-date="' + key + '"]');
+  if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' });
+  editDay(key, records[key]);
+}
+$('jumpGo').onclick = () => { void jumpToDate($('jumpDate').value); };
+$('jumpDate').onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); void jumpToDate($('jumpDate').value); } };
 
 $('prev').onclick = async () => {
   viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }

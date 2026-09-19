@@ -1327,11 +1327,23 @@ service cloud.firestore {
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
+        // ---------- „מתי דווח" — עובדה של השרת ----------
+        //
+        // הדיווח העצמי נכתב ישירות מהדפדפן, ולכן כל חותמת זמן שהלקוח
+        // שולח היא טענה של הלקוח. `reported_at` חייב להיות **זמן
+        // הבקשה עצמו**: זו העובדה היחידה כאן שאי אפשר לזייף, והיא
+        // מה שהופך „דיווח רטרואקטיבי" לניתן להוכחה ולא להצהרה.
+        //
+        // מה בכוונה לא נשמר: דגל `retroactive` בוליאני. דגל שהלקוח
+        // כותב הוא דגל שהלקוח יכול לשקר בו. רטרואקטיביות נגזרת משתי
+        // עובדות אכיפות — תאריך היום שבמזהה הרשומה מול `reported_at` —
+        // וכל קורא מגיע לאותה מסקנה.
         allow create: if approvedLeaveAttendanceCreate(sid, docId)
                       || validHistoricalImportCreate(sid, docId)
                       || (member(sid)
                           && request.resource.data.get('emp_number', '') == myEmp()
-                          && request.resource.data.keys().hasAll(['status'])
+                          && request.resource.data.keys().hasAll(['status', 'reported_at'])
+                          && request.resource.data.reported_at == request.time
                           && request.resource.data.get('status', '') != 'approved');
 
         // ---------- עריכת נוכחות על ידי סגל ----------
@@ -1391,7 +1403,12 @@ service cloud.firestore {
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') != 'approved'
-                          && request.resource.data.get('status', '') != 'approved');
+                          && request.resource.data.get('status', '') != 'approved'
+                          // ⭐ „מתי דווח לראשונה" אינו משתנה בעריכה. בלי זה,
+                          // דיווח רטרואקטיבי היה נמחק בעריכה אחת, והרשומה
+                          // הייתה נראית כאילו דווחה בזמן.
+                          && request.resource.data.get('reported_at', resource.data.get('reported_at', null))
+                             == resource.data.get('reported_at', null));
 
         allow delete: if (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()
