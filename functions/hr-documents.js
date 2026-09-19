@@ -131,10 +131,15 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
   function mutation(req, op) {
     const keys = op === 'publish' ? ['request_id', 'kind', 'target_uid', 'title', 'text', 'requires_ack', 'send_now']
       : op === 'revise' ? ['request_id', 'document_id', 'expected_revision', 'title', 'text', 'requires_ack', 'send_now']
-        : ['request_id', 'document_id', 'revision', ...(op === 'nudge' ? ['target_uid', 'send_now'] : [])];
+        : op === 'archive' ? ['request_id', 'document_id', 'expected_revision']
+          : ['request_id', 'document_id', 'revision', ...(op === 'nudge' ? ['target_uid', 'send_now'] : [])];
     const r = request(req, keys), data = r.data, p = { op, request_id: data.request_id };
     if (typeof data.request_id !== 'string' || !REQUEST_ID.test(data.request_id)) throw error('invalid-argument', 'Invalid request identity.');
     if (['publish', 'revise', 'nudge'].includes(op) && !manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
+    /* הסרת נוהל תחנה — סמכות נפרדת ורחבה בשורה אחת בלבד: מפקד
+     * המשמרת מצטרף כאן, ורק כאן. פרסום ותיקון נשארו למעלה עם
+     * `manager` ולא זזו. */
+    if (op === 'archive' && !procedureAuthority(r.ctx)) throw error('permission-denied', 'Station procedure authority required.');
     if (op === 'publish') {
       if (!KINDS.includes(data.kind) || (data.kind === 'document' ? !access.validUid(data.target_uid) : own(data, 'target_uid'))) throw error('invalid-argument', 'Invalid publication audience.');
       p.kind = data.kind; if (data.kind === 'document') p.target_uid = data.target_uid;
@@ -142,7 +147,7 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
     } else {
       if (typeof data.document_id !== 'string' || !KEY.test(data.document_id)) throw error('invalid-argument', 'Invalid document identity.');
       p.document_id = data.document_id;
-      const key = op === 'revise' ? 'expected_revision' : 'revision';
+      const key = op === 'revise' || op === 'archive' ? 'expected_revision' : 'revision';
       if (!validRevision(data[key])) throw error('invalid-argument', 'Invalid revision.');
       p[key] = data[key];
       if (op === 'revise') publicationInput(data, p);
@@ -163,7 +168,7 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
     return db.runTransaction(async tx => {
       await live(tx, r);
       const [prior, parent] = await Promise.all([tx.get(operationRef), tx.get(ref)]);
-      let d = parent.exists ? metadata(parent, ctx) : null;
+      let d = parent.exists ? metadata(parent, ctx, { allowArchived: op === 'archive' }) : null;
       if (prior.exists && !d) throw error('failed-precondition', 'Recorded publication is missing.');
       if (op !== 'publish' && !d) throw error('not-found', 'Publication not found.');
       const recipientAction = op === 'markOpened' || op === 'acknowledge';
@@ -181,8 +186,21 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       if (op === 'publish' && d) throw error('already-exists', 'Publication already exists.');
       if (op === 'revise' && d.current_revision !== p.expected_revision) throw error('aborted', 'Publication changed. Review the current revision.');
       if ((op === 'acknowledge' || op === 'nudge') && d.current_revision !== p.revision) throw error('aborted', 'Only the current revision can be acknowledged or reminded.');
+      /* ⭐ הסרה חלה על נוהל תחנה בלבד.
+       *
+       * מסמך אישי אינו מוסר כאן בשום מקרה — לא על ידי העובד ולא על
+       * ידי בעל סמכות: הוא רשומה של משאבי אנוש מול אדם מסוים, ומחיקתו
+       * היא הכרעת שימור מידע שלא התקבלה. ההודעה מפורשת כדי שמי
+       * שמנסה יידע למה, ולא יחשוב שזו תקלה. */
+      const alreadyArchived = op === 'archive' && archivedAt(d) !== null;
+      if (op === 'archive') {
+        if (d.kind !== 'procedure') throw error('permission-denied', 'Only a station procedure can be removed this way.');
+        if (!alreadyArchived && d.current_revision !== p.expected_revision) throw error('aborted', 'Publication changed. Review the current revision.');
+      }
       let v = null, receipt = null, targetUid = null, targetReceiptRef = null;
-      if (d) {
+      // הסרה אינה נוגעת בגרסה ואינה קוראת אותה: אין מה לאמת שם, והקריאה
+      // הייתה נכשלת על `p.revision` שאינו קיים בפעולה הזאת.
+      if (d && op !== 'archive') {
         const number = op === 'revise' ? d.current_revision : p.revision;
         v = version(await tx.get(revisionRef(ref, number)), d, number);
       }
@@ -213,7 +231,8 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       if (!Array.isArray(oldQuota) || oldQuota.some(t => !Number.isSafeInteger(t) || t < 0 || t > at)) throw error('failed-precondition', 'Quota data is invalid.');
       const recent = oldQuota.filter(t => t > at - QUOTA_WINDOW_MS);
       if (recent.length >= QUOTA_MAX) throw error('resource-exhausted', 'Too many new actions. Try again shortly.');
-      const number = op === 'publish' ? 1 : op === 'revise' ? d.current_revision + 1 : p.revision;
+      const number = op === 'publish' ? 1 : op === 'revise' ? d.current_revision + 1
+        : op === 'archive' ? d.current_revision : p.revision;
       if (!validRevision(number)) throw error('failed-precondition', 'Revision overflow.');
       const eventId = hash(['hr-document-event-v1', opId]);
       let result = { document_id: ref.id, revision: number, current_revision: op === 'publish' || op === 'revise' ? number : d.current_revision,
@@ -231,6 +250,17 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
           attachment_ids: v ? attachmentIds(v.attachment_ids) : [] });
         tx.set(ref, next); d = next;
       }
+      if (op === 'archive') {
+        /* אידמפוטנטי: נוהל שכבר הוסר מחזיר `no_change` ואינו דורס את
+         * מי ומתי הסיר אותו בפעם הראשונה. */
+        if (alreadyArchived) result.outcome = 'no_change';
+        else {
+          const next = { ...d, archived_at_ms: at, archived_by_uid: ctx.uid, updated_at_ms: at };
+          tx.set(ref, next); d = next;
+        }
+        result.archived_at_ms = d.archived_at_ms;
+        result.archived_by_uid = d.archived_by_uid;
+      }
       if (recipientAction) {
         const next = receipt || { schema: 'hr-document-recipient-v1', document_id: ref.id, station_id: ctx.sid,
           revision: number, recipient_uid: ctx.uid, opened_at_ms: null, acknowledged_at_ms: null };
@@ -241,7 +271,7 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       }
       if (op === 'nudge' && policy.decision === 'confirmation_required') {
         result.outcome = 'confirmation_required'; result.not_before_ms = policy.not_before_ms;
-      } else if (!recipientAction) {
+      } else if (!recipientAction && op !== 'archive') {
         const personal = op === 'nudge' || d.kind === 'document';
         const uid = op === 'nudge' ? targetUid : personal ? d.target_uid : null;
         if (personal && uid === ctx.uid) result.notification_status = 'no_other_recipient';
@@ -421,6 +451,7 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
   }
   return Object.freeze({ publish: req => mutate(req, 'publish'), revise: req => mutate(req, 'revise'),
     markOpened: req => mutate(req, 'markOpened'), acknowledge: req => mutate(req, 'acknowledge'), nudge: req => mutate(req, 'nudge'),
+    archiveProcedure: req => mutate(req, 'archive'),
     listMine: req => list(req, 'mine'), listProcedures: req => list(req, 'procedures'), listManaged: req => list(req, 'managed'), get, listReceipts, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrDocuments, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, KINDS });

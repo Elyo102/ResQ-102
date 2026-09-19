@@ -286,6 +286,9 @@ exports.markHrDocumentOpened = onCall({ enforceAppCheck: true }, async (req) => 
 exports.acknowledgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.acknowledge(req));
 exports.listHrDocumentReceipts = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.listReceipts(req));
 exports.nudgeHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.nudge(req));
+// הסרת נוהל תחנה מהתצוגה. מפקד משמרת, רכזת כוח אדם ומנהל-על בלבד —
+// ובמפורש לא פרסום ולא תיקון, שנשארים לרכזת ולמנהל-על כמו היום.
+exports.archiveHrProcedure = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.archiveProcedure(req));
 // Private attachment infrastructure must be provisioned and verified before
 // deployment. Never fall back to the browser/default/deployment bucket.
 const HR_PRIVATE_BUCKET = 'station-102-hr-private-europe-west1';
