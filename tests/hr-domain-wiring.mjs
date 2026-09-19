@@ -9,10 +9,16 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const sha = value => createHash('sha256').update(value).digest('hex');
+/* הטביעות האלה הן החלטה, לא תחזוקה. שינוי בהן אומר „נגענו במודול
+ * HR רגיש ואנחנו יודעים בדיוק במה". שתי הטביעות שהתעדכנו כאן:
+ *   · hr-requests.js — פעולת `removeAttachment` והכרת `get` בשתי
+ *     רשימות הקבצים (מקושרים ומוסרים).
+ *   · hr-documents.js — פעולת `archive` לנהלי תחנה ו-`procedureAuthority`.
+ * שאר הקבצים לא נגענו בהם, וטביעותיהם נשארו כפי שהיו. */
 const pins = {
   'functions/hr-domain-dispatch.js': '526ae68168c7e7e042477b05cb71886ff94dd06f4d0250c2c18cc568d0bae357',
-  'functions/hr-requests.js': '16abae222216908cc8090ec1cfe8904920e8bdc75c5bf11b103d11dabccdfe2d',
-  'functions/hr-documents.js': '14640985ff4de88377fbdbd8b12af5325fd78ba699cd8a1eb0f2a9679af84a0e',
+  'functions/hr-requests.js': 'b27db72c40148a403c5114867105cabf97f784a7874c861d81059f811f8fe766',
+  'functions/hr-documents.js': '63aa7a8f9f1372768fb243598ecb2caec83ed3c81ad11a8d421e4e4697dde3d7',
   'functions/hr-notification-policy.js': '1f463af5e307dc96fec5da330673260ac9a8a0a4aadae7c5892ccc769c3e2668',
   'functions/hr-hours-dispatch.js': '612cc9453f914e13538ea80b8f447c6b61e7ffc17ad16a03322883a74253f4ed',
   'functions/hr-hours-nudges.js': 'fd572de3dae6563bb8f63dd2e7a7baf8699598ad80dcafc47d244f89029724d7'
