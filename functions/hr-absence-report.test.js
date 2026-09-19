@@ -284,6 +284,29 @@ function attach(w, caseId, uploaderUid, id) {
     assert.equal(stored.decision, undefined, 'an ordinary request carries no decision at all');
   });
 
+  await test('the note is optional on a report, and still required on an ordinary request', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    // דיווח בלי הערה כלל — התאריכים הם הדיווח.
+    const bare = await w.requests.create(w.who.req(worker,
+      { request_id: 'req-bare', subject: 'מחלה', send_now: false,
+        kind: 'sick', from_date: '2026-09-10', to_date: '2026-09-12' }));
+    const detail = await w.requests.get(w.who.req(worker, { case_id: bare.case_id }));
+    assert.equal(detail.events.length, 1);
+    assert.equal(Object.hasOwn(detail.events[0], 'text'), false,
+      'no empty note line is written into the history');
+    // והערה שהיא רווחים בלבד אינה הערה.
+    const blank = await w.requests.create(w.who.req(worker,
+      { request_id: 'req-blank', subject: 'מחלה', text: '   ', send_now: false,
+        kind: 'sick', from_date: '2026-09-10', to_date: '2026-09-12' }));
+    const blankDetail = await w.requests.get(w.who.req(worker, { case_id: blank.case_id }));
+    assert.equal(Object.hasOwn(blankDetail.events[0], 'text'), false);
+    // ⭐ אבל פנייה חופשית בלי טקסט היא פנייה ריקה, והיא נדחית.
+    await rejects(w.requests.create(w.who.req(worker,
+      { request_id: 'req-empty-general', subject: 'שאלה', text: '  ', send_now: false })),
+      'invalid-argument');
+  });
+
   await test('a report about days that already passed is accepted, and the dates say so', async () => {
     const w = world();
     const worker = w.who.add('worker', 'firefighter');
@@ -295,6 +318,115 @@ function attach(w, caseId, uploaderUid, id) {
     assert.equal(stored.from_date, '2026-08-03');
     assert.ok(stored.created_at_ms > Date.parse('2026-08-05T23:59:59+03:00'),
       'the report was created after the period ended — that is what makes it retroactive');
+  });
+
+  /* ======================================================================
+   *  תיבות העבודה של משאבי אנוש
+   *
+   *  הפרדה במסך שאינה הפרדה בשאילתה אינה הפרדה. אם השרת
+   *  מחזיר עמוד מעורב והדפדפן מסנן אותו, תיבת המחלה תיראה ריקה
+   *  כל עוד הדיווחים נמצאים בעמוד השני. לכן הסינון נבדק כאן.
+   * ====================================================================== */
+
+  const ABSENCE_KINDS = ['sick', 'reserve', 'vacation', 'extended_absence'];
+
+  await test('each absence kind is accepted, dated and born pending', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    for (const kind of ABSENCE_KINDS) {
+      const created = await w.requests.create(w.who.req(worker,
+        report({ request_id: 'req-' + kind, kind })));
+      const stored = w.db._get('stations/' + SID + '/hr_requests/' + created.case_id);
+      assert.equal(stored.kind, kind);
+      assert.equal(stored.decision, 'pending');
+      assert.equal(stored.from_date, '2026-09-10');
+      assert.equal(stored.to_date, '2026-09-12');
+    }
+  });
+
+  await test('a work box shows its own kind and nothing else', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    const hr = w.who.add('hr', 'hr_coordinator');
+    const ids = {};
+    for (const kind of ABSENCE_KINDS) {
+      ids[kind] = (await w.requests.create(w.who.req(worker,
+        report({ request_id: 'req-box-' + kind, kind })))).case_id;
+    }
+    // וגם פנייה חופשית אחת, שאינה שייכת לשום תיבת היעדרות.
+    ids.general = (await w.requests.create(w.who.req(worker,
+      { request_id: 'req-box-general', subject: 'שאלה', text: 'סתם', send_now: false }))).case_id;
+
+    for (const kind of ABSENCE_KINDS) {
+      const box = await w.requests.listInbox(w.who.req(hr, { kind }));
+      assert.deepEqual(box.items.map(c => c.case_id), [ids[kind]],
+        'the ' + kind + ' box holds exactly the ' + kind + ' report');
+      assert.ok(box.items.every(c => c.kind === kind));
+      // ⭐ והדבר החשוב באמת: מה שאינו שם.
+      for (const other of ABSENCE_KINDS.concat('general')) {
+        if (other === kind) continue;
+        assert.equal(box.items.some(c => c.case_id === ids[other]), false,
+          'a ' + other + ' report must never appear in the ' + kind + ' box');
+      }
+    }
+  });
+
+  await test('the unfiltered inbox still holds everything, including a case written before kinds existed', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    const hr = w.who.add('hr', 'hr_coordinator');
+    const sick = await w.requests.create(w.who.req(worker, report({ request_id: 'req-all-sick' })));
+    /* רשומה שנכתבה לפני שהשדה קיים — אין לה `kind` בכלל.
+     * היא חייבת להיראות בתיבה הכללית, אחרת פנייה נעלמת בשקט. */
+    w.db._put('stations/' + SID + '/hr_requests/' + 'e'.repeat(64), {
+      schema: 'hr-request-v1', case_id: 'e'.repeat(64), station_id: SID, owner_uid: worker,
+      subject: 'פנייה ישנה', status: 'open', revision: 1,
+      created_at_ms: 1788220800000, updated_at_ms: 1788220800000
+    });
+    const all = await w.requests.listInbox(w.who.req(hr, {}));
+    const seen = all.items.map(c => c.case_id);
+    assert.ok(seen.includes(sick.case_id));
+    assert.ok(seen.includes('e'.repeat(64)), 'a legacy case is not hidden by the boxes');
+    assert.equal(all.items.find(c => c.case_id === 'e'.repeat(64)).kind, 'general',
+      'and it reads as a general request');
+    // והיא אינה מופיעה בשום תיבת יעדרות.
+    for (const kind of ABSENCE_KINDS) {
+      const box = await w.requests.listInbox(w.who.req(hr, { kind }));
+      assert.equal(box.items.some(c => c.case_id === 'e'.repeat(64)), false);
+    }
+  });
+
+  await test('the box filter is HR-only, closed, and not available on a personal list', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    const hr = w.who.add('hr', 'hr_coordinator');
+    await rejects(w.requests.listInbox(w.who.req(hr, { kind: 'hours' })), 'invalid-argument');
+    await rejects(w.requests.listInbox(w.who.req(hr, { kind: '' })), 'invalid-argument');
+    // עובד אינו נכנס לתיבות בכלל.
+    await rejects(w.requests.listInbox(w.who.req(worker, { kind: 'sick' })), 'permission-denied');
+    // ⭐ והרשימה האישית אינה מקבלת שדה שאינו בחוזה שלה.
+    await rejects(w.requests.list(w.who.req(worker, { kind: 'sick' })), 'invalid-argument');
+  });
+
+  await test('hours reports live in another collection entirely, and no box can reach them', async () => {
+    const w = world();
+    const worker = w.who.add('worker', 'firefighter');
+    const hr = w.who.add('hr', 'hr_coordinator');
+    await w.requests.create(w.who.req(worker, report({ request_id: 'req-separation' })));
+    /* דוח שעות אמיתי יושב ב-`monthly_reports`, לא ב-`hr_requests`.
+     * הבדיקה מניחה אותו במקומו ומוודאת שאף תיבה —
+     * גם לא הכללית — אינה נוגעת בו. */
+    w.db._put('stations/' + SID + '/monthly_reports/' + 'synthetic-worker_2026-08',
+      { emp: 'synthetic-worker', month: '2026-08', total_hours: 192, status: 'submitted' });
+    const boxes = [{}].concat(ABSENCE_KINDS.map(kind => ({ kind })));
+    for (const filter of boxes) {
+      const box = await w.requests.listInbox(w.who.req(hr, filter));
+      assert.equal(box.items.some(c => /monthly|hours/.test(c.case_id)), false);
+      assert.ok(box.items.every(c => Object.hasOwn(c, 'status') && !Object.hasOwn(c, 'total_hours')),
+        'no hours row can arrive through the requests inbox');
+    }
+    assert.ok(w.db._get('stations/' + SID + '/monthly_reports/synthetic-worker_2026-08'),
+      'the hours report is untouched where it lives');
   });
 
   console.log('');

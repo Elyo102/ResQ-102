@@ -1,16 +1,51 @@
 import { MEMBER_ROLES } from './roles.js?v=42h20';
 import { registerPwaUpdateGuard } from './pwa.js?v=42h20';
+import { retroLabel } from './hours.js?v=42h20';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
+/* אוצר הסוגים זהה לזה שבשרת. המסך אינו ממציא סוג משלו
+ * ואינו מקבל סוג שאינו מוכר. דוחות שעות אינם סוג כאן: הם אינם
+ * חיים ב-`hr_requests` בכלל, ולכן אין להם תיבה במסך הזה. */
+const KINDS = ['general', 'sick', 'reserve', 'vacation', 'extended_absence'];
+const DATED_KINDS = ['sick', 'reserve', 'vacation', 'extended_absence'];
+const DECISIONS = ['pending', 'approved', 'rejected'];
+const FINAL_DECISIONS = ['approved', 'rejected'];
+const KIND_LABELS = { general: 'פנייה כללית', sick: 'מחלה', reserve: 'מילואים',
+  vacation: 'חופשה', extended_absence: 'היעדרות ממושכת' };
+const DECISION_LABELS = { pending: 'ממתין להכרעה', approved: 'אושר', rejected: 'נדחה' };
+const BOXES = [['box-sick', 'sick'], ['box-reserve', 'reserve'], ['box-vacation', 'vacation'],
+  ['box-extended', 'extended_absence']];
+const BOX_KINDS = BOXES.map(([, kind]) => kind);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const kindOf = c => (c && c.kind === undefined ? 'general' : c && c.kind);
+const stamp = ms => new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
+  dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms));
 const KEY = /^[a-f0-9]{64}$/;
 const disconnected = { currentSession: () => null, subscribeIdentity: () => () => {} };
 const node = (tag, text, className) => { const e = document.createElement(tag); if (text != null) e.textContent = String(text); if (className) e.className = className; return e; };
 const manager = s => s?.super === true || s?.role === 'hr_coordinator';
 const member = s => s && typeof s.uid === 'string' && !!s.uid && typeof s.stationId === 'string' && !!s.stationId
   && (s.super === true || MEMBER_ROLES.includes(s.role));
+/* ⭐ מה שהמסך מציג על דיווח הוא הכרעה של מישהו על היעדרות של
+ * אדם. לכן הצורה נבדקת עד הסוף: סוג מוכר, טווח תקין, הכרעה
+ * מהאוצר, ומי הכריע ומתי רק כשיש הכרעה סופית. תשובה חלקית
+ * נדחית ולא מוצגת חצי — אישור שמוצג בלי מי ומתי גרוע מכלום. */
+const validReport = c => {
+  const kind = kindOf(c);
+  if (!KINDS.includes(kind)) return false;
+  if (!DATED_KINDS.includes(kind)) {
+    return !Object.hasOwn(c, 'from_date') && !Object.hasOwn(c, 'to_date') && !Object.hasOwn(c, 'decision');
+  }
+  if (typeof c.from_date !== 'string' || !DATE.test(c.from_date)
+    || typeof c.to_date !== 'string' || !DATE.test(c.to_date) || c.to_date < c.from_date) return false;
+  if (!DECISIONS.includes(c.decision)) return false;
+  return FINAL_DECISIONS.includes(c.decision)
+    ? typeof c.decided_by === 'string' && !!c.decided_by && Number.isSafeInteger(c.decided_at_ms) && c.decided_at_ms > 0
+    : !Object.hasOwn(c, 'decided_by') && !Object.hasOwn(c, 'decided_at_ms');
+};
 const validSummary = c => c && KEY.test(c.case_id) && typeof c.owner_uid === 'string' && !!c.owner_uid
   && typeof c.subject === 'string' && c.subject.length <= 80 && Object.hasOwn(LABELS, c.status)
-  && Number.isSafeInteger(c.revision) && c.revision > 0;
+  && Number.isSafeInteger(c.revision) && c.revision > 0 && validReport(c);
 const definite = new Set(['invalid-argument', 'already-exists', 'aborted', 'not-found', 'failed-precondition', 'resource-exhausted', 'permission-denied', 'unauthenticated']);
 const errorCode = error => String(error?.code || '').replace(/^functions\//, '');
 const errorMessage = code => ({ aborted: 'הפנייה השתנתה. רעננו אותה, בדקו את העדכון ואת הטיוטה, ואז שמרו שוב.',
@@ -37,8 +72,32 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     if (session() !== owner) { resetIdentity(); return false; }
     return !!s && s === owner && g === generation;
   }
-  function dirty() { return !!(q('subject').value || q('body').value || q('reply').value); }
-  function clearDrafts() { q('subject').value = ''; q('body').value = ''; q('reply').value = ''; q('send-now').checked = false; }
+  const draftKind = () => (KINDS.includes(q('kind').value) ? q('kind').value : 'general');
+  const draftDated = () => DATED_KINDS.includes(draftKind());
+  function dirty() {
+    return !!(q('subject').value || q('body').value || q('reply').value
+      || (draftDated() && (q('from-date').value || q('to-date').value)));
+  }
+  function clearDrafts() {
+    q('subject').value = ''; q('body').value = ''; q('reply').value = ''; q('send-now').checked = false;
+    q('kind').value = 'general'; q('from-date').value = ''; q('to-date').value = ''; syncKind();
+  }
+  /* הטופס משתנה לפי הסוג, ואיתו גם ה-`required`: שדה חובה
+   * מוסתר הוא טופס שלעולם לא נשלח, בלי שהמשתמש ידע למה.
+   * בדיווח הנושא נגזר מהסוג ומהתאריכים שהעובד מילא,
+   * וההערה אינה חובה — התאריכים הם הדיווח. */
+  function syncKind() {
+    const dated = draftDated();
+    q('dates').hidden = !dated;
+    q('subject-label').hidden = dated;
+    q('subject').required = !dated;
+    q('from-date').required = dated; q('to-date').required = dated;
+    q('body').required = !dated;
+    q('report-note').hidden = !dated;
+    q('create-title').textContent = dated ? 'דיווח חדש' : 'פנייה חדשה';
+    q('body-label').firstChild.textContent = dated ? 'הערה (לא חובה) ' : 'תוכן הפנייה ';
+    q('save').textContent = dated ? 'פתח דיווח' : 'שמירת הפנייה והמשך לצירוף קובץ';
+  }
   const childLocked = () => attachmentLocked || attachmentRefresh;
   const unregisterUpdateGuard = registerPwaUpdateGuard(() =>
     pending || busy || creating || childLocked() || dirty()
@@ -101,10 +160,17 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   function controls() {
     const locked = !owner || busy || !!pending || childLocked();
     q('workspace').hidden = !owner; q('login').hidden = !!owner;
-    q('inbox').hidden = !manager(owner);
+    /* תיבות העבודה של משאבי אנוש. „כל הפניות" נשארת כפי שהיתה,
+     * והיא גם המקום היחיד שבו פנייה שנכתבה לפני שהשדה קיים עדיין
+     * נראית. דוחות שעות אינם תיבה כאן ולא יהיו: הם במסך אחר ובאוסף אחר. */
+    const hr = manager(owner);
+    q('inbox').hidden = !hr;
     q('mine').setAttribute('aria-pressed', String(mode === 'mine')); q('inbox').setAttribute('aria-pressed', String(mode === 'inbox'));
-    q('list-title').textContent = mode === 'mine' ? 'הפניות שלי' : 'תיבת משאבי אנוש';
-    for (const key of ['mine', 'inbox', 'refresh', 'new', 'subject', 'body', 'reply', 'status', 'send-now', 'save']) q(key).disabled = locked;
+    for (const [key, kind] of BOXES) { q(key).hidden = !hr; q(key).setAttribute('aria-pressed', String(mode === kind)); }
+    q('list-title').textContent = mode === 'mine' ? 'הפניות שלי'
+      : mode === 'inbox' ? 'תיבת משאבי אנוש' : 'תיבת ' + KIND_LABELS[mode];
+    for (const key of ['mine', 'inbox', ...BOX_KINDS.map((_, i) => BOXES[i][0]), 'refresh', 'new',
+      'kind', 'from-date', 'to-date', 'subject', 'body', 'reply', 'status', 'send-now', 'save']) q(key).disabled = locked;
     q('more').hidden = !cursor; q('more').disabled = locked || listLoading;
     q('events-more').hidden = !eventCursor || creating; q('events-more').disabled = locked || detailLoading;
     q('create').hidden = !creating; q('detail').hidden = creating;
@@ -117,6 +183,15 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     const ownerSide = selected?.owner_uid === owner?.uid;
     const eligible = usable && (ownerSide ? ['open', 'in_progress'].includes(selected.status) : manager(owner) && selected.status === 'waiting_employee');
     q('nudge').hidden = !eligible; q('nudge').disabled = locked || !eligible;
+    /* ⭐ הכרעה היא סמכות משאבי אנוש בלבד, ואיש אינו מכריע
+     * בעניין של עצמו. השרת אוכף את שניהם; כאן הכפתור פשוט אינו
+     * מוצג, כדי שלא ייראה שאפשר ואז ייכשל. */
+    const decidable = usable && DATED_KINDS.includes(kindOf(selected));
+    const mayDecide = decidable && manager(owner) && selected.owner_uid !== owner.uid;
+    for (const [key, decision] of [['approve', 'approved'], ['reject', 'rejected']]) {
+      q(key).hidden = !mayDecide;
+      q(key).disabled = locked || !mayDecide || selected.decision === decision;
+    }
     q('notification').hidden = !owner || (!creating && !usable);
     q('pending').hidden = !pending || busy; q('retry').disabled = busy || !owner || childLocked();
     for (const button of q('list').querySelectorAll('button')) button.disabled = locked;
@@ -135,17 +210,47 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     if (!items.length) q('list').append(node('p', listLoading ? 'טוען פניות…' : 'אין פניות להצגה.'));
     controls();
   }
+  /* שורות הדיווח: סוג, טווח, מצב ההכרעה, מי הכריע ומתי.
+   *
+   * ⭐ „רטרואקטיבי" נגזר ואינו דגל: ההפרש בין תחילת הטווח
+   * לבין הרגע שהשרת חתם על פתיחת הדיווח. אותה גזירה בדיוק
+   * כמו בדיווח הנוכחות, ומאותה פונקציה. */
+  function reportLines() {
+    const lines = [node('p', KIND_LABELS[kindOf(selected)] + ' · ' + selected.from_date + ' — ' + selected.to_date, 'requests-tag')];
+    const retro = retroLabel(selected.from_date, { reported_at: new Date(selected.created_at_ms) });
+    if (retro) lines.push(node('p', retro, 'requests-note'));
+    lines.push(node('p', 'מצב הדיווח: ' + DECISION_LABELS[selected.decision], 'requests-note'));
+    if (FINAL_DECISIONS.includes(selected.decision)) {
+      const by = selected.decided_by === owner.uid ? 'אני' : 'משאבי אנוש';
+      lines.push(node('p', 'הכריע: ' + by + ' · ' + stamp(selected.decided_at_ms), 'requests-note'));
+    }
+    /* „אין קובץ" נאמר רק כשהוא ידוע בוודאות: כל היומן לפנינו
+     * (`eventCursor === null`). ביומן מעודף אנחנו פשוט לא יודעים,
+     * ועדיף לא לומר מאשר לומר משהו שאינו נכון. */
+    const removed = Array.isArray(selected.removed_attachment_ids) ? selected.removed_attachment_ids : [];
+    const hasFile = events.some(e => e.kind === 'attachment' && !removed.includes(e.attachment_id));
+    if (selected.owner_uid === owner.uid && eventCursor === null && !hasFile) {
+      lines.push(node('p', 'נפתח דיווח, ניתן לצרף קובץ עכשיו או בהמשך.', 'requests-note'));
+    }
+    return lines;
+  }
   function renderDetail() {
     const target = q('detail'); target.replaceChildren();
     if (!selected) { target.append(node('p', detailLoading ? 'טוען פנייה…' : 'בחרו פנייה או פתחו פנייה חדשה.')); controls(); return; }
     target.append(node('h2', selected.subject), node('span', LABELS[selected.status], 'requests-tag'));
+    if (DATED_KINDS.includes(kindOf(selected))) target.append(...reportLines());
     if (selected.status === 'closed') target.append(node('p', 'הפנייה סגורה. משאבי אנוש יכולים לפתוח אותה מחדש; אפשר גם ליצור פנייה חדשה.', 'requests-note'));
     for (const event of events) {
       const entry = node('article', null, 'requests-event');
       const by = event.actor_uid === owner.uid ? 'אני' : event.actor_uid === selected.owner_uid ? 'העובד שפנה' : 'משאבי אנוש';
-      const kind = { create: 'פתיחת פנייה', reply: 'תגובה', setStatus: 'עדכון מצב', nudge: 'בקשת תזכורת', attachment: 'נוסף קובץ לפנייה' }[event.kind];
+      const kind = { create: 'פתיחת פנייה', reply: 'תגובה', setStatus: 'עדכון מצב', nudge: 'בקשת תזכורת',
+        attachment: 'נוסף קובץ לפנייה', removeAttachment: 'הוסר קובץ מהפנייה',
+        setDecision: 'הכרעה בדיווח' }[event.kind];
       entry.append(node('small', by + ' · ' + kind));
       if (event.text !== undefined) entry.append(node('p', event.text));
+      if (event.kind === 'removeAttachment' && event.attachment_display_name !== undefined) {
+        entry.append(node('p', 'הקובץ: ' + event.attachment_display_name));
+      }
       if (event.to_status) entry.append(node('p', LABELS[event.from_status] + ' ← ' + LABELS[event.to_status]));
       target.append(entry);
     }
@@ -157,12 +262,18 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     if (!alive(g, s)) return;
     listLoading = true; controls();
     try {
-      const result = await adapter[originMode === 'mine' ? 'list' : 'listInbox'](append && cursor ? { cursor } : {});
+      const result = await adapter[originMode === 'mine' ? 'list' : 'listInbox']({
+        ...(append && cursor ? { cursor } : {}),
+        ...(BOX_KINDS.includes(originMode) ? { kind: originMode } : {}) });
       if (!alive(g, s) || l !== listGeneration || mode !== originMode) return;
       if (!result || !Array.isArray(result.items) || result.items.length > 25 ||
         !(result.next_cursor === null || (typeof result.next_cursor === 'string' && KEY.test(result.next_cursor)))) throw new Error('invalid list');
       const merged = append ? items.concat(result.items) : result.items;
-      if (merged.some(c => !validSummary(c) || (originMode === 'mine' && c.owner_uid !== s.uid)) ||
+      /* ⭐ המסך אינו מאמין לשרת על התיבה שהוא עצמו מציג: דיווח מחלה
+       * שיגיע לתיבת המילואים יפסול את העמוד, ולא יוצג תחת כותרת
+       * שאומרת משהו אחר. */
+      if (merged.some(c => !validSummary(c) || (originMode === 'mine' && c.owner_uid !== s.uid)
+        || (BOX_KINDS.includes(originMode) && kindOf(c) !== originMode)) ||
         new Set(merged.map(c => c.case_id)).size !== merged.length) throw new Error('invalid summaries');
       items = merged; cursor = result.next_cursor; renderList();
     } catch (_) {
@@ -175,8 +286,12 @@ export function createHrRequestsUI(root, adapter = disconnected) {
       !(result.next_cursor === null || (Number.isSafeInteger(result.next_cursor) && result.next_cursor > 0))) throw new Error('invalid detail');
     for (const e of result.events) {
       if (!e || !KEY.test(e.event_id) || typeof e.actor_uid !== 'string' ||
-        !['create', 'reply', 'setStatus', 'nudge', 'attachment'].includes(e.kind) || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > result.revision ||
-        (e.kind === 'attachment' && (typeof e.attachment_id !== 'string' || !KEY.test(e.attachment_id))) ||
+        /* ⭐ שתי שורות יומן נוספו בשרת: הסרת קובץ והכרעה בדיווח.
+       * כל עוד הן חסרות כאן, הסרה אחת היתה פוסלת את כל קריאת
+       * הפנייה ומשאירה את המסך עם „הפנייה אינה זמינה". */
+      !['create', 'reply', 'setStatus', 'nudge', 'attachment', 'removeAttachment', 'setDecision'].includes(e.kind) || !Number.isSafeInteger(e.revision) || e.revision < 1 || e.revision > result.revision ||
+        (['attachment', 'removeAttachment'].includes(e.kind) && (typeof e.attachment_id !== 'string' || !KEY.test(e.attachment_id))) ||
+        (e.attachment_display_name !== undefined && (typeof e.attachment_display_name !== 'string' || e.attachment_display_name.length > 200)) ||
         (e.text !== undefined && (typeof e.text !== 'string' || e.text.length > 1000)) ||
         (e.kind === 'setStatus' && (!Object.hasOwn(LABELS, e.from_status) || !Object.hasOwn(LABELS, e.to_status)))) throw new Error('invalid event');
     }
@@ -205,14 +320,24 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
     return 'hr-' + [...bytes].map(v => v.toString(16).padStart(2, '0')).join('');
   }
-  async function submit(method) {
+  /* בדיווח הנושא אינו שדה שהעובד ממלא — הוא נגזר משלושת
+   * השדות שהוא כן מילא. אין כאן המצאה של תוכן: זו אותה
+   * הצהרה בדיוק, כתובה בשורה אחת. */
+  const draftSubject = () => (draftDated()
+    ? KIND_LABELS[draftKind()] + ' · ' + q('from-date').value + ' — ' + q('to-date').value
+    : q('subject').value);
+  async function submit(method, value) {
     if (!alive(generation, owner) || busy || pending || childLocked()) return;
     if (method !== 'create' && (!selected || detailLoading)) return;
-    if (method === 'setStatus' && !manager(owner)) return;
+    if ((method === 'setStatus' || method === 'setDecision') && !manager(owner)) return;
+    if (method === 'setDecision' && (!FINAL_DECISIONS.includes(value) || selected.owner_uid === owner.uid
+      || !DATED_KINDS.includes(kindOf(selected)))) return;
     const payload = { request_id: newRequestId(), send_now: q('send-now').checked,
-      ...(method === 'create' ? { subject: q('subject').value, text: q('body').value }
+      ...(method === 'create' ? { subject: draftSubject(), text: q('body').value, kind: draftKind(),
+        ...(draftDated() ? { from_date: q('from-date').value, to_date: q('to-date').value } : {}) }
         : { case_id: selected.case_id, expected_revision: selected.revision,
-          ...(method === 'reply' ? { text: q('reply').value } : method === 'setStatus' ? { status: q('status').value } : {}) }) };
+          ...(method === 'reply' ? { text: q('reply').value } : method === 'setStatus' ? { status: q('status').value }
+            : method === 'setDecision' ? { decision: value } : {}) }) };
     pending = Object.freeze({ method, payload: Object.freeze(payload), session: owner, generation });
     await perform();
   }
@@ -230,13 +355,19 @@ export function createHrRequestsUI(root, adapter = disconnected) {
       if (result.outcome === 'confirmation_required') {
         message('לא נוצרה תזכורת. זו שעת לילה: סמנו בקשת התראה כעת ולחצו שוב אם ברצונכם לבקש תזכורת עכשיו.'); controls(); return;
       }
-      if (operation.method === 'create') { q('subject').value = ''; q('body').value = ''; }
+      const openedReport = operation.method === 'create' && DATED_KINDS.includes(operation.payload.kind);
+      if (operation.method === 'create') {
+        q('subject').value = ''; q('body').value = ''; q('from-date').value = ''; q('to-date').value = '';
+        q('kind').value = 'general'; syncKind();
+      }
       if (operation.method === 'reply') q('reply').value = '';
       const savedMessage = result.outcome === 'no_change' ? 'המצב כבר מעודכן; לא נוצרה התראה נוספת.'
         : result.notification_status === 'suppressed' ? 'הפעולה נשמרה. ההתראה דוכאה בשל מצב שקט.'
           : result.notification_status === 'no_other_recipient' ? 'הפעולה נשמרה. לא נדרשה התראה לעצמך.'
             : 'הפעולה נשמרה. בקשת ההתראה ממתינה לטיפול; אין אישור לשליחה או לקבלה.';
-      message(savedMessage);
+      /* ⭐ המשפט הזה קיים כדי שאיש לא יחשוב שהדיווח „לא נקלט" רק
+       * מפני שעדיין לא צירף אישור. הדיווח נפתח; הקובץ הוא המשך. */
+      message(openedReport ? 'נפתח דיווח, ניתן לצרף קובץ עכשיו או בהמשך.' : savedMessage);
       await Promise.all([loadList(), openCase(result.case_id, false, !['create', 'reply'].includes(operation.method))]);
       // Read failures keep their explicit message; no optimistic delivery claim.
     } catch (error) {
@@ -257,11 +388,13 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     if (owner && !disposed) void loadList();
   }
   const changeMode = next => {
-    if ((next === 'inbox' && !manager(owner)) || !mayNavigate()) return;
+    if ((next !== 'mine' && !manager(owner)) || !mayNavigate()) return;
     ++generation; ++detailGeneration; mode = next; items = []; cursor = null; selected = null; events = []; eventCursor = null; creating = false;
     renderList(); renderDetail(); message('טוען פניות…'); void loadList();
   };
   on(q('mine'), 'click', () => changeMode('mine')); on(q('inbox'), 'click', () => changeMode('inbox'));
+  for (const [key, kind] of BOXES) on(q(key), 'click', () => changeMode(kind));
+  on(q('kind'), 'change', () => { syncKind(); });
   on(q('new'), 'click', () => { if (!mayNavigate()) return; ++detailGeneration; selected = null; events = []; eventCursor = null; detailLoading = false; creating = true; renderList(); renderDetail(); q('subject').focus(); });
   on(q('refresh'), 'click', () => { if (!alive(generation, owner) || busy || pending || childLocked()) return; const id = selected?.case_id; void loadList(); if (id) void openCase(id, false, true); });
   on(q('more'), 'click', () => { if (!busy && !pending && !childLocked() && cursor) void loadList(true); });
@@ -270,6 +403,8 @@ export function createHrRequestsUI(root, adapter = disconnected) {
   on(q('reply-form'), 'submit', e => { e.preventDefault(); if (q('reply-form').reportValidity()) void submit('reply'); });
   on(q('status-save'), 'click', () => { void submit('setStatus'); });
   on(q('nudge'), 'click', () => { void submit('nudge'); });
+  on(q('approve'), 'click', () => { void submit('setDecision', 'approved'); });
+  on(q('reject'), 'click', () => { void submit('setDecision', 'rejected'); });
   on(q('retry'), 'click', () => { void perform(); });
   on(window, 'beforeunload', e => { if (pending || childLocked() || dirty()) { e.preventDefault(); e.returnValue = ''; } });
   on(window, 'pagehide', () => { suspended = true; resetIdentity(); });

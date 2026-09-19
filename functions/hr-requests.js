@@ -17,8 +17,16 @@ const STATES = Object.freeze(['open', 'in_progress', 'waiting_employee', 'closed
  * למה כאן ולא באוסף חדש: זו אותה ישות בדיוק — פנייה שהעובד פותח,
  * שמשאבי אנוש רואים, שיש לה היסטוריה וצרופות. אוסף שני היה מכפיל
  * את ההרשאות, את הצרופות ואת היומן בלי להוסיף דבר. */
-const KINDS = Object.freeze(['general', 'sick', 'reserve']);
-const DATED_KINDS = Object.freeze(['sick', 'reserve']);
+/* ⭐ אוצר הסוגים סגור, והוא הדבר היחיד שמפריד בין תיבות
+ * העבודה של משאבי אנוש. לא נפתח אוסף לכל סוג: הבעלות,
+ * הצרופות, היומן והכללים זהים לחלוטין, והפיצול היה מכפיל
+ * אותם בלי להוסיף דבר. מה שמפריד הוא שדה אחד.
+ *
+ * דוחות שעות אינם סוג כאן ולעולם לא יהיו: הם חיים ב-`attendance`
+ * וב-`monthly_reports`, באוסף אחר לגמרי. זו ההפרדה החזקה ביותר
+ * שיש — היא מבנית, ולא מסנן במסך. */
+const KINDS = Object.freeze(['general', 'sick', 'reserve', 'vacation', 'extended_absence']);
+const DATED_KINDS = Object.freeze(['sick', 'reserve', 'vacation', 'extended_absence']);
 /* ההכרעה נפרדת מ-`status` בכוונה. `status` הוא מצב הטיפול
  * (פתוח/בטיפול/ממתין לעובד/סגור); ההכרעה היא התשובה עצמה. פנייה
  * יכולה להיסגר בלי שאושרה, ואישור אינו אומר שהטיפול הסתיים. */
@@ -148,7 +156,13 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (typeof d.case_id !== 'string' || !KEY.test(d.case_id) || !Number.isSafeInteger(d.expected_revision) || d.expected_revision < 1) throw error('invalid-argument', 'Invalid request revision.');
       p.case_id = d.case_id; p.expected_revision = d.expected_revision;
     }
-    if (op === 'create' || op === 'reply') p.text = text(d.text, 1000);
+    /* ⭐ בדיווח מחלה/מילואים ההערה אופציונלית: הטווח הוא הדיווח
+     * עצמו, והקובץ הוא הראיה. בפנייה חופשית הטקסט הוא כל התוכן
+     * שיש, ולכן שם הוא נשאר חובה. הערה ריקה אינה נכתבת כלל —
+     * אין שורת טקסט ריקה ביומן. */
+    const optionalNote = op === 'create' && DATED_KINDS.includes(p.kind);
+    if (op === 'reply' || (op === 'create' && !optionalNote)) p.text = text(d.text, 1000);
+    else if (optionalNote && own(d, 'text') && String(d.text).trim() !== '') p.text = text(d.text, 1000);
     if (op === 'setStatus') {
       if (!STATES.includes(d.status)) throw error('invalid-argument', 'Invalid status.');
       p.status = d.status;
@@ -391,13 +405,18 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
     commit(tx, plan, options) { if (!plan || plan[attachmentBrand] !== true) throw error('failed-precondition', 'Invalid attachment plan.'); return plan.commit(tx, options); }
   });
   async function list(req, inbox = false) {
-    const r = request(req, ['cursor']);
+    const r = request(req, inbox ? ['cursor', 'kind'] : ['cursor']);
     if (inbox && !manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
     if (own(r.data, 'cursor') && (typeof r.data.cursor !== 'string' || !KEY.test(r.data.cursor))) throw error('invalid-argument', 'Invalid cursor.');
+    /* ⭐ הסינון נעשה בשאילתה ולא בדפדפן. סינון בדפדפן על עמוד
+     * של 25 היה מציג למשאבי אנוש תיבה ריקה כשיש דיווחים הממתינים
+     * לה, רק מעבר לעמוד הראשון. תיבה שמשקרת גרועה מאין תיבה. */
+    if (own(r.data, 'kind') && !KINDS.includes(r.data.kind)) throw error('invalid-argument', 'Invalid request kind.');
     const result = await db.runTransaction(async tx => {
       await live(tx, r);
       let q = root(r.ctx.sid).collection('hr_requests');
       if (!inbox) q = q.where('owner_uid', '==', r.ctx.uid);
+      if (inbox && own(r.data, 'kind')) q = q.where('kind', '==', r.data.kind);
       q = q.orderBy('__name__').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
