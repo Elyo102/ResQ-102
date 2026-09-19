@@ -1,10 +1,25 @@
 import { MEMBER_ROLES } from './roles.js?v=42h20';
 import { registerPwaUpdateGuard } from './pwa.js?v=42h20';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h20';
 
 const KEY = /^[a-f0-9]{64}$/;
 const uid = v => typeof v === 'string' && /^[^\u0000-\u001f\u007f/]{1,128}$/.test(v);
 const revision = n => Number.isSafeInteger(n) && n > 0;
 const manager = s => s?.super === true || s?.role === 'hr_coordinator';
+/* ⭐ הסרת נוהל תחנה — סמכות אחרת מ„ניהול".
+ *
+ * מפקד מקבל הסרה **ולא** מקבל פרסום או עדכון גרסה. זו לא הרחבה של
+ * `manager` אלא רשימה משלה, בדיוק כפי שהשרת אוכף ב-`procedureAuthority`.
+ * שתי הרשימות חייבות להישאר נפרדות: הרגע שבו הן יתמזגו הוא הרגע שבו
+ * מפקד יתחיל לפרסם נהלים.
+ *
+ * הרשימה כאן מעתיקה את השרת **מילה במילה**, כולל `commander` — שבאוצר
+ * התפקידים הוא „קצין / מפקד משמרת" ולא „מפקד תחנה" (`station_commander`).
+ * לא שיניתי את השרת ולא הרחבתי את המסך: מסך שמציע פעולה שהשרת ידחה
+ * הוא מסך שמלמד לא לסמוך עליו. אם הכוונה הייתה למפקד התחנה, זה שינוי
+ * בשרת ובמסך יחד — ולא החלטה שאקח לבד. */
+const procedureAuthority = s => s?.super === true || s?.role === 'hr_coordinator' || s?.role === 'commander';
+const REMOVE_QUESTION = 'להסיר את הנוהל מרשימת נהלי התחנה? הנוהל יוסתר ולא יופיע לעובדים. ההיסטוריה נשמרת ואינה נמחקת.';
 const member = s => s && uid(s.uid) && typeof s.stationId === 'string' && !!s.stationId && (s.super === true || MEMBER_ROLES.includes(s.role));
 const make = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = String(text); if (cls) e.className = cls; return e; };
 const empty = { currentSession: () => null, subscribeIdentity: () => () => {} };
@@ -14,7 +29,9 @@ const errText = c => ({ aborted: 'פורסמה גרסה חדשה. רעננו, ע
   'resource-exhausted': 'בוצעו פעולות רבות בזמן קצר. המתינו מעט לפני ניסיון נוסף.',
   'failed-precondition': 'הפעולה אינה מתאימה למצב הנוכחי. רעננו ובדקו את הגרסה או את רישומי הנמען.',
   'already-exists': 'הבקשה כבר שימשה לפעולה אחרת. רעננו ובדקו את התוצאה לפני פעולה חדשה.',
-  'not-found': 'הפרסום אינו זמין. רעננו את הרשימה.', 'invalid-argument': 'בדקו את השדות ואת אורך הטקסט.' })[c] || 'נדרש חיבור עדכני והרשאה מתאימה.';
+  'not-found': 'הפרסום אינו זמין. רעננו את הרשימה.', 'invalid-argument': 'בדקו את השדות ואת אורך הטקסט.' })[c]
+  // מה שאין לו ניסוח מקומי טוב יותר — מהמילון המשותף.
+  || null;
 function validSummary(d) {
   return d && typeof d.document_id === 'string' && KEY.test(d.document_id) && ['document', 'procedure'].includes(d.kind)
     && typeof d.title === 'string' && d.title.length <= 80 && revision(d.current_revision) && (d.kind !== 'document' || uid(d.target_uid));
@@ -122,6 +139,11 @@ export function createHrDocumentsUI(root, adapter = empty) {
     q('retry-open').disabled = lock;
     q('ack').hidden = !eligible || !selected.requires_ack || selected.receipt?.acknowledged_at_ms != null;
     q('ack').disabled = lock || !current() || selected?.receipt?.opened_at_ms == null;
+    /* הכפתור מוצג רק על נוהל תחנה, רק בגרסה הנוכחית, ורק למי שהשרת
+     * באמת יאשר לו. מסך שמציע פעולה ואז נכשל הוא מסך שמלמד לא לסמוך
+     * עליו. */
+    const mayArchive = active && selected.kind === 'procedure' && current() && procedureAuthority(owner);
+    q('archive').hidden = !mayArchive; q('archive').disabled = lock || !mayArchive;
     q('nudge').hidden = !hr || !active;
     const nudgeUid = selected?.kind === 'document' ? selected.target_uid : target?.uid;
     q('nudge').disabled = lock || !current() || !nudgeUid || nudgeUid === owner?.uid;
@@ -265,6 +287,10 @@ export function createHrDocumentsUI(root, adapter = empty) {
   async function submit(method) {
     if (!alive(generation, owner) || busy || pending || attachmentHolds()) return;
     if (['publish', 'revise', 'nudge'].includes(method) && !manager(owner)) return;
+    if (method === 'archive') {
+      if (!procedureAuthority(owner) || !selected || selected.kind !== 'procedure' || !current()) return;
+      if (!window.confirm(REMOVE_QUESTION)) return;
+    }
     if (method !== 'publish' && (!selected || detailLoading)) return;
     let data = { request_id: newId() };
     if (method === 'publish' || method === 'revise') {
@@ -273,7 +299,9 @@ export function createHrDocumentsUI(root, adapter = empty) {
       data = { ...data, ...(method === 'publish' ? { kind: q('kind').value, ...(q('kind').value === 'document' ? { target_uid: target.uid } : {}) } : editBase),
         title: q('title').value, text: q('text').value, requires_ack: q('requires-ack').checked, send_now: q('send-now').checked };
     } else {
-      data.document_id = selected.document_id; data.revision = selected.revision;
+      data.document_id = selected.document_id;
+      if (method === 'archive') data.expected_revision = selected.current_revision;
+      else data.revision = selected.revision;
       if (method === 'nudge') { const targetUid = selected.kind === 'document' ? selected.target_uid : target?.uid;
         if (!targetUid || !current() || targetUid === owner.uid) return;
         data.target_uid = targetUid; data.send_now = q('send-now').checked;
@@ -293,13 +321,22 @@ export function createHrDocumentsUI(root, adapter = empty) {
       if (!result || !KEY.test(result.document_id) || !revision(result.revision) || !revision(result.current_revision) || result.current_revision < result.revision
         || !['saved', 'no_change', 'confirmation_required'].includes(result.outcome) || !['not_queued', 'policy_pending', 'suppressed', 'no_other_recipient'].includes(result.notification_status)
         || (p.method !== 'publish' && result.document_id !== p.data.document_id)
-        || (['markOpened', 'acknowledge', 'nudge'].includes(p.method) && result.revision !== p.data.revision)) throw new Error('uncertain result');
+        || (['markOpened', 'acknowledge', 'nudge'].includes(p.method) && result.revision !== p.data.revision)
+        || (p.method === 'archive' && !(Number.isSafeInteger(result.archived_at_ms) && result.archived_at_ms > 0
+          && uid(result.archived_by_uid)))) throw new Error('uncertain result');
       if (['markOpened', 'acknowledge'].includes(p.method) && (!validReceipt(result.receipt, p.data.revision) || result.receipt.recipient_uid !== owner.uid)) throw new Error('uncertain receipt');
       pending = null; q('send-now').checked = false;
       if (p.method === 'markOpened' || p.method === 'acknowledge') {
         selected = { ...selected, receipt: result.receipt, current_revision: result.current_revision, is_current: selected.revision === result.current_revision };
         renderDetail(); message(p.method === 'acknowledge' ? 'נשמר אישור העיון שלך לגרסה ' + result.revision + '.' : 'נרשמה פתיחה. אישור עיון, אם נדרש, נעשה בכפתור נפרד.');
         if (!current()) message('נרשמה הפעולה לגרסה שהוצגה. קיימת גרסה חדשה; טענו אותה לפני אישור נוסף.');
+      } else if (p.method === 'archive') {
+        /* „הוסר", לא „נמחק": הרשומה נשארת, ההיסטוריה נשארת, והיא רק
+         * יוצאת מהרשימה. הניסוח אומר מה שקרה. */
+        clearEditor(); selected = null;
+        await loadList();
+        message(result.outcome === 'no_change' ? 'הנוהל כבר הוסר קודם לכן. לא בוצע שינוי נוסף.'
+          : 'הנוהל הוסר מרשימת נהלי התחנה. הוא אינו מוצג לעובדים; ההיסטוריה נשמרה.');
       } else if (result.outcome === 'confirmation_required') message('לא נוצרה תזכורת. בשעות הלילה יש לסמן בקשת התראה כעת וללחוץ שוב במפורש.');
       else {
         message(result.notification_status === 'suppressed' ? 'הפעולה נשמרה. ההתראה דוכאה בשל מצב שקט.'
@@ -308,7 +345,8 @@ export function createHrDocumentsUI(root, adapter = empty) {
       }
     } catch (e) {
       if (!alive(p.generation, p.session) || pending !== p) return;
-      if (definite.has(code(e))) { pending = null; q('send-now').checked = false; message(errText(code(e))); }
+      logError('hr document ' + p.method, e);
+      if (definite.has(code(e))) { pending = null; q('send-now').checked = false; message(errText(code(e)) || sharedErrorText(e)); }
       else message('תוצאת הפעולה אינה ידועה. לחצו ניסיון חוזר כדי לברר באותה בקשה בדיוק.');
     } finally { if (alive(p.generation, p.session)) { busy = false; if (!pending) ensureOpened(); syncAttachments(); controls(); } }
   }
@@ -348,6 +386,7 @@ export function createHrDocumentsUI(root, adapter = empty) {
   on(q('ack'), 'click', () => { void submit('acknowledge'); });
   on(q('retry-open'), 'click', () => { if (selected && !attachmentHolds()) { attempted.add(openKey(selected)); void submit('markOpened'); } });
   on(q('nudge'), 'click', () => { void submit('nudge'); });
+  on(q('archive'), 'click', () => { void submit('archive'); });
   on(q('show-receipts'), 'click', () => { void loadReceipts(); });
   on(q('receipts-more'), 'click', () => { if (receiptCursor && !receiptLoading) void loadReceipts(true); });
   on(q('retry'), 'click', () => { void perform(); });

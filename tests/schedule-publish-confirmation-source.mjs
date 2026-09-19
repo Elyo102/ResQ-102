@@ -43,7 +43,7 @@ check('publishConfirmationText reports the assignment count', () => {
 check('publishConfirmationText reports the no-push (unlinked) count when known', () => {
   const body = fnBody('publishConfirmationText');
   assert.match(body, /state\.importReport[\s\S]*counts[\s\S]*unlinked/);
-  assert.match(body, /ללא חשבון מקושר/);
+  assert.match(body, /ללא אפליקציה/);
   assert.match(body, /לא יקבלו התראת פוש/);
 });
 

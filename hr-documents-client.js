@@ -17,7 +17,9 @@ await initAppCheck(app);
 const auth = getAuth(app), db = getFirestore(app), functions = getFunctions(app, 'europe-west1');
 const names = { publish: 'publishHrDocument', revise: 'reviseHrDocument', listMine: 'listMyHrDocuments',
   listProcedures: 'listHrProcedures', listManaged: 'listManagedHrDocuments', get: 'getHrDocument',
-  markOpened: 'markHrDocumentOpened', acknowledge: 'acknowledgeHrDocument', listReceipts: 'listHrDocumentReceipts', nudge: 'nudgeHrDocument' };
+  markOpened: 'markHrDocumentOpened', acknowledge: 'acknowledgeHrDocument', listReceipts: 'listHrDocumentReceipts', nudge: 'nudgeHrDocument',
+  // הסרת נוהל תחנה — הפעולה נבנתה בפריט 7 ולא היה לה מסך.
+  archive: 'archiveHrProcedure' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;

@@ -4,6 +4,8 @@ import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h20';
 import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h20';
 import { initAppCheck } from './appcheck.js?v=42h20';
 import { readScheduleFile } from './schedule-file-import.js?v=42h20';
+import { renderModeBar } from './mode-bar.js?v=42h20';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h20';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
@@ -271,6 +273,28 @@ function message(target, text, kind) {
   box.appendChild(node('div', 'msg ' + (kind || 'info'), text));
 }
 
+/* ⭐ „עודכן ב־… ע״י …".
+ *
+ * שני השדות נכתבו לדיסק מאז ומתמיד ופשוט לא הוחזרו בקריאת הסטטוס.
+ * השם מוצג רק כשהוא קיים: פרסום ישן שנכתב לפני שהשדה נוסף יציג את
+ * הזמן בלבד, ולא „ע״י —". שורה שאינה יודעת את התשובה אינה ממציאה
+ * אותה, ושורה שאין לה אפילו זמן פשוט אינה מוצגת.
+ */
+function publishedLine(active) {
+  const at = active && Number.isFinite(active.published_at_ms) ? active.published_at_ms : null;
+  if (!at) return '';
+  let when;
+  try {
+    when = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
+      day: '2-digit', month: '2-digit' }).format(new Date(at))
+      + ' בשעה ' + new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
+        hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(at));
+  } catch (error) { return ''; }
+  const by = active && typeof active.published_by_name === 'string' && active.published_by_name.trim()
+    ? active.published_by_name.trim() : '';
+  return ' · עודכן ב־' + when + (by ? ' ע״י ' + by : '');
+}
+
 function dateLabel(iso) {
   try {
     return new Intl.DateTimeFormat('he-IL', {
@@ -334,7 +358,7 @@ function setMode(status) {
   box.className = 'mode';
   let text = 'לא ניתן לאמת את מצב מנוע הסידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב ניסוי: הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים בדיוק כמו במצב חי. פוש נשלח רק לחשבון הבדיקה של אלדד.';
+    text = 'מצב ניסוי: הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים בדיוק כמו במצב חי. פוש נשלח רק לחשבון הבדיקה של התחנה.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
@@ -410,7 +434,22 @@ function workflowAction(name) {
   return document.querySelector('[data-workflow-action="' + name + '"]');
 }
 
+/* ⭐ פס מצב האימון במסך הסידור.
+ *
+ * עד עכשיו המסך הזה הציג רק את מצב **מנוע הסידור** ולא את
+ * השקט הגלובלי של התחנה. רכזת יכלה לראות „מצב חי", לפרסם
+ * סידור, ולא להבין למה אף אחד לא קיבל התראה. המצב מגיע מהשרת
+ * (`notifications_mode`) ולא מ-Firestore, כדי שהמסך הזה לא יטען את
+ * כל ערכת ה-SDK רק כדי להציג פס. */
+function syncStationModeBar() {
+  const mode = state.status && state.status.notifications_mode;
+  // `null` = השרת לא ידע לומר. לא ממציאים ולא מרגיעים.
+  if (mode !== 'trial' && mode !== 'live') return;
+  renderModeBar(mode === 'trial' ? 'trial' : 'live');
+}
+
 function updateManagerWorkflow() {
+  syncStationModeBar();
   if (!$('managerWorkflow') || !$('publish') || !$('rollback')) return;
   const mode = state.status && state.status.mode;
   $('managerWorkflowMode').textContent = mode === 'shadow'
@@ -435,7 +474,7 @@ function updateManagerWorkflow() {
     : state.draft && state.draftPreview
       ? 'הטיוטה מוכנה לסקירה. פרסום יתאפשר רק לאחר סימון האישור המפורש.'
       : mode === 'shadow'
-        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; פוש נשלח רק לחשבון הבדיקה של אלדד.'
+        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; פוש נשלח רק לחשבון הבדיקה של התחנה.'
         : 'בחרו קובץ או צרו טיוטה. הודעות יישלחו רק אחרי סקירה ואישור.';
 }
 
@@ -927,7 +966,7 @@ function renderModeCard() {
     ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
       + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
     : (view.current === 'shadow'
-      ? 'מצב ניסוי. הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש נשלח רק לחשבון הבדיקה של אלדד.'
+      ? 'מצב ניסוי. הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש נשלח רק לחשבון הבדיקה של התחנה.'
       : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
 
   const box = $('modeTargets');
@@ -1251,7 +1290,13 @@ async function promoteToNew() {
     if (!authTaskCurrent(task)) return;
     /* ⭐ אין תשובה מאומתת — הכוונה נשארת ב-pendingCutover, והכפתור
      * הבא שולח אותה שוב לפני כל preview. */
-    message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. (' + (error.code || error.message) + ') '
+    logError('schedule cutover', error);
+    /* ⭐ שני הקודים האלה הם של המערכת עצמה ולא של Firebase, והם אומרים
+     * שני דברים שונים לגמרי: תשובה פגומה מול בדיקה מקדימה שנכשלה.
+     * הקוד עצמו אינו מוצג — המשפט הוא שמבדיל, והקוד יושב ב-console. */
+    const cutoverText = { 'cutover-response-invalid': 'תשובת השרת הגיעה פגומה ולא ניתן לקבוע ממנה את המצב.',
+      'cutover-preflight-invalid': 'הבדיקה המקדימה לא אושרה, והמעבר לא בוצע.' }[String((error && error.code) || '')];
+    message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. ' + (cutoverText || sharedErrorText(error)) + ' '
       + (state.pendingCutover ? 'אפשר לנסות שוב — אותה בקשה, לא מעבר חדש. ' : '')
       + 'המצב נטען מחדש מהשרת.', 'err');
     try { await refreshAfterModeChange(task); } catch (_) { /* הודעה כבר הוצגה */ }
@@ -1316,7 +1361,7 @@ async function applyModeChange() {
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
     : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
       + (target === 'new' ? 'מרגע זה פרסום יחליף את הסידור הפעיל וישלח עדכונים אישיים.'
-        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ופוש נשלח רק לחשבון הבדיקה של אלדד.');
+        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ופוש נשלח רק לחשבון הבדיקה של התחנה.');
   if (!confirm(text)) return;
   state.modeBusy = true;
   updateModeApply();
@@ -1759,8 +1804,8 @@ function cellContent(cell, block, minVisualSlots) {
      * schedule-publication-recipients.js), וזה כל מה שהתג הזה אומר. */
     if (person.unlinked === true) {
       row.classList.add('unlinked-slot');
-      const noAccount = node('span', 'flag unlinked', 'ללא חשבון');
-      noAccount.title = 'אין לאדם הזה חשבון מקושר — הוא לא יקבל התראות פוש. זה לא חוסם את השיבוץ או הפרסום.';
+      const noAccount = node('span', 'flag unlinked', 'ללא אפליקציה');
+      noAccount.title = 'משובץ בסידור — ללא אפליקציה. לא יקבל התראת פוש; נדרש עדכון טלפוני. זה אינו חוסם את השיבוץ או הפרסום.';
       row.appendChild(noAccount);
     }
     if (warningCodes.length) {
@@ -1771,7 +1816,7 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const ariaParts = [personLabel];
     if (person.is_me) ariaParts.push('אני');
-    if (person.unlinked === true) ariaParts.push('ללא חשבון, לא מקבל פוש');
+    if (person.unlinked === true) ariaParts.push('משובץ בסידור, ללא אפליקציה, לא מקבל פוש, נדרש עדכון טלפוני');
     if (warningLabel) ariaParts.push('שיבוץ ידני עם אזהרה', warningLabel);
     row.setAttribute('aria-label', ariaParts.join(' · '));
     cell.appendChild(row);
@@ -2036,7 +2081,8 @@ async function loadStationRange(ym) {
       ? 'הלוח מוצג מהסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון.'
       : view.source === 'imported-display'
         ? 'הלוח מוצג מקובץ הסידור שיובא. המנוע נשאר ' + view.mode + ' וחישובי המערכת לא הוחלפו.'
-        : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
+        : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.'
+        + publishedLine(state.status && state.status.active))
       + absenceNote(view.days) + guardsNotice(view.days);
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
@@ -2232,6 +2278,7 @@ async function loadMineRange(ym) {
       + (displayOnly ? ' זו תצוגת אימון מהקובץ המיובא; המנוע נשאר ' + view.mode + '.' : '')
       + (view.source === 'legacy'
         ? ' הסידור הקיים יודע את המשמרת אך לא את תחנת הקצה; יש לייבא את הקובץ כדי להציג שמות לפי תחנה.' : '')
+      + publishedLine(state.status && state.status.active)
       + absenceNote(days) + guardsNotice(days);
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
@@ -2834,7 +2881,7 @@ function renderImportReport(report) {
    * התנגשות שיבוץ/היעדרות, בלוק שנדחה, ימים מתחת למינימום, שמות שהודחו)
    * מוסתר כאן כדי לא לכפול; מה שאין לו תצוגה ייעודית מתורגם לעברית ברורה. */
   const WARNING_HE = {
-    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא חשבון" ולא יקבלו התראות פוש; הם אינם חוסמים פרסום.'
+    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא אפליקציה", לא יקבלו התראות פוש ויידרש עדכון טלפוני; הם אינם חוסמים פרסום.'
   };
   (report.warnings || []).forEach((warning) => {
     if (warning.code === 'assignment-absence-conflict') return; // Named findings above.
@@ -3281,14 +3328,14 @@ async function runPlanner() {
  * ממה שכבר נטען למסך; אין ניחוש — מספר שאין לו מקור פשוט לא מוצג. */
 function publishConfirmationText(trial) {
   const lines = [trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
+    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של התחנה.'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.'];
   const filled = state.draft && state.draft.summary && Number.isFinite(state.draft.summary.filled)
     ? state.draft.summary.filled : null;
   if (filled !== null) lines.push('שיבוצים בטיוטה: ' + filled + '.');
   const unlinked = state.importReport && state.importReport.counts
     && Number.isFinite(state.importReport.counts.unlinked) ? state.importReport.counts.unlinked : null;
-  if (unlinked) lines.push(unlinked + ' מהם ללא חשבון מקושר — לא יקבלו התראת פוש.');
+  if (unlinked) lines.push(unlinked + ' מהם ללא אפליקציה — לא יקבלו התראת פוש ויידרש עדכון טלפוני.');
   const gaps = state.draftPreview && state.draftPreview.gaps;
   const warningCount = gaps ? (gaps.blocking || []).length + (gaps.acknowledgeable || []).length : 0;
   lines.push(warningCount
@@ -3324,7 +3371,7 @@ async function publishDraft() {
       throw new Error('השרת לא אישר פרסום ניסוי פעיל. יש לרענן לפני ניסיון נוסף.');
     }
     const successText = trial
-      ? 'הסידור פורסם ופועל בסביבת הניסוי. הפוש הוגבל לחשבון הבדיקה של אלדד, ואפשר לבדוק או לחזור לגרסה הקודמת.'
+      ? 'הסידור פורסם ופועל בסביבת הניסוי. הפוש הוגבל לחשבון הבדיקה של התחנה, ואפשר לבדוק או לחזור לגרסה הקודמת.'
       : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.';
     message('publishMessage', successText, 'ok');
     resetPublishRequest();
@@ -3391,7 +3438,7 @@ function rollbackConfirmText(active, mode) {
     + (active.from && active.to ? ' (' + active.from + ' עד ' + active.to + ')' : '')
     + ' ' + targetLabel + '? '
     + (mode === 'shadow'
-      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
+      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של התחנה.'
       : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
 }
 if (typeof module !== 'undefined' && module.exports) module.exports.rollbackConfirmText = rollbackConfirmText;
@@ -4021,7 +4068,7 @@ async function applyEdit() {
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     const deliveryText = state.status && state.status.mode === 'shadow'
-      ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של אלדד.'
+      ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של התחנה.'
       : (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת.';
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
       + deliveryText + ' אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');

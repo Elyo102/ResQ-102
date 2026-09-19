@@ -1,6 +1,7 @@
 import { MEMBER_ROLES } from './roles.js?v=42h20';
 import { registerPwaUpdateGuard } from './pwa.js?v=42h20';
 import { retroLabel } from './hours.js?v=42h20';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h20';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 /* אוצר הסוגים זהה לזה שבשרת. המסך אינו ממציא סוג משלו
@@ -48,12 +49,16 @@ const validSummary = c => c && KEY.test(c.case_id) && typeof c.owner_uid === 'st
   && Number.isSafeInteger(c.revision) && c.revision > 0 && validReport(c);
 const definite = new Set(['invalid-argument', 'already-exists', 'aborted', 'not-found', 'failed-precondition', 'resource-exhausted', 'permission-denied', 'unauthenticated']);
 const errorCode = error => String(error?.code || '').replace(/^functions\//, '');
-const errorMessage = code => ({ aborted: 'הפנייה השתנתה. רעננו אותה, בדקו את העדכון ואת הטיוטה, ואז שמרו שוב.',
+const errorMessage = (code, error) => ({ aborted: 'הפנייה השתנתה. רעננו אותה, בדקו את העדכון ואת הטיוטה, ואז שמרו שוב.',
   'already-exists': 'מזהה הבקשה כבר שימש לפעולה אחרת. רעננו ובדקו את הפנייה לפני פעולה חדשה.',
   'resource-exhausted': 'בוצעו פעולות רבות בזמן קצר. המתינו מעט לפני ניסיון נוסף.',
   'failed-precondition': 'לא ניתן לבצע את הפעולה במצב הנוכחי. רעננו ובדקו את הפנייה.',
   'not-found': 'הפנייה אינה זמינה. רעננו את רשימת הפניות.',
-  'invalid-argument': 'בדקו את הנושא והתוכן ואת אורך הטקסט לפני שמירה.' })[code] || 'נדרש חיבור עדכני עם הרשאה מתאימה.';
+  'invalid-argument': 'בדקו את הנושא והתוכן ואת אורך הטקסט לפני שמירה.' })[code]
+  /* ⭐ מה שאין לו ניסוח מקומי טוב יותר יורד למילון המשותף. כך
+   * „פג תוקף ההתחברות" נאמר באותן מילים בכל מסך, ושום קוד אינו
+   * מגיע למסך רק מפני ששכחו להוסיף אותו למפה המקומית. */
+  || sharedErrorText(error);
 
 export function createHrRequestsUI(root, adapter = disconnected) {
   const q = key => root.querySelector('[data-r="' + key + '"]');
@@ -373,7 +378,8 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     } catch (error) {
       if (!alive(operation.generation, operation.session) || pending !== operation) return;
       const code = errorCode(error);
-      if (definite.has(code)) { pending = null; q('send-now').checked = false; message(errorMessage(code)); }
+      logError('hr request ' + operation.method, error);
+      if (definite.has(code)) { pending = null; q('send-now').checked = false; message(errorMessage(code, error)); }
       else message('תוצאת השמירה אינה ידועה. לחצו ניסיון חוזר כדי לברר באותה בקשה בדיוק.');
     } finally { if (alive(operation.generation, operation.session)) { busy = false; controls(); } }
   }

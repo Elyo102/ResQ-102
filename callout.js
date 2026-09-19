@@ -16,6 +16,8 @@
 import { collection, query, where, orderBy, limit, onSnapshot,
          doc, setDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { errorText, logError } from './error-text.js?v=42h20';
+import { renderModeBar, clearModeBarOffset } from './mode-bar.js?v=42h20';
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
 // אף אחד לא סגר אותה — קריאה מלפני שמונה שעות היא היסטוריה,
@@ -26,6 +28,24 @@ export const ACKS = [
   { id: 'coming', he: 'מגיע',    color: 'var(--good)' },
   { id: 'no',     he: 'לא זמין', color: 'var(--muted)' }
 ];
+
+/* ⭐ נימוקי דחייה מהירים.
+ *
+ * קודם לכן היה כאן שדה טקסט חופשי בלבד. כבאי שמקבל הזעקה
+ * בשתיים בלילה אינו מנסח משפט, והמפקד שקורא את התשובות
+ * צריך לספור כמה במילואים — לא לקרוא עשרים ניסוחים שונים
+ * לאותו דבר. הטקסט החופשי נשאר תחת „אחר", כדי שלא נאלץ
+ * אדם לבחור סיבה שאינה נכונה.
+ *
+ * אפס שינוי בשרת: השדה היה ונשאר מחרוזת חופשית, והכללים
+ * דורשים רק שלא תהיה ריקה. הבחירה נשלחת כטקסט שלה. */
+export const REJECT_REASONS = Object.freeze([
+  { id: 'sick',    he: 'מחלה מאושרת' },
+  { id: 'reserve', he: 'שירות מילואים' },
+  { id: 'exempt',  he: 'פטור מאושר' },
+  { id: 'away',    he: 'איני זמין בתחנה' },
+  { id: 'other',   he: 'אחר' }
+]);
 
 const seenWrites = new Map();
 
@@ -84,7 +104,20 @@ function styleOnce() {
     '#coBox .reason label{display:block;color:#ffccbc;font-size:13px;margin-bottom:6px}',
     '#coBox .reason textarea{box-sizing:border-box;width:100%;min-height:78px;',
     '  resize:vertical;border:1px solid #6d4548;border-radius:9px;padding:10px;',
-    '  background:#1a0e10;color:#fff;font:inherit}',
+    '  background:#1a0e10;color:#fff;font:inherit;margin-top:10px}',
+    '#coBox .reason textarea[hidden]{display:none!important}',
+    '#coBox .rlist{display:flex;flex-direction:column;gap:8px}',
+    '#coBox .rlist button{flex:none;width:100%;text-align:start;padding:13px 14px;',
+    '  font-size:15px;font-weight:600}',
+    '#coBox .rlist button[aria-pressed="true"]{background:#4a2a2c;border-color:#ef5350;',
+    '  color:#fff}',
+    '#coBox .reason .btns{margin-top:12px}',
+    /* מצב ההצלחה. ירוק וגדול דיו כדי שאפשר יהיה לראות אותו
+     * במבט אחד, כי זה כל הזמן שיש למי שכבר בדרך לרכב. */
+    '#coBox .done{margin-top:14px;padding:14px;border-radius:11px;',
+    '  background:#14301a;border:1px solid #2e7d32;color:#c8e6c9;',
+    '  font-size:17px;font-weight:800;text-align:center}',
+    '#coBox .done[hidden]{display:none!important}',
     '#coBox .err{color:#ef9a9a;font-size:13px;margin-top:10px;display:none}'
   ].join('');
   document.head.appendChild(st);
@@ -103,14 +136,21 @@ function box() {
       '<div class="from" id="coFrom"></div>' +
       '<div class="text" id="coText"></div>' +
       '<div class="ask">המפקד ממתין לתשובה שלך.</div>' +
-      '<div class="btns">' +
+      '<div class="btns" id="coBtns">' +
         '<button class="go" id="coYes">מגיע</button>' +
         '<button id="coNo">לא זמין</button>' +
       '</div>' +
       '<div class="reason" id="coReasonWrap" hidden>' +
-        '<label for="coReason">נימוק הדחייה (חובה)</label>' +
-        '<textarea id="coReason" maxlength="200" placeholder="כתוב בקצרה מדוע אינך יכול להגיע"></textarea>' +
+        '<label for="coReason" id="coReasonLabel">מה הסיבה? (חובה)</label>' +
+        '<div class="rlist" id="coReasons" role="group" aria-labelledby="coReasonLabel"></div>' +
+        '<textarea id="coReason" maxlength="200" hidden ' +
+          'placeholder="כתבו בקצרה מדוע אינכם יכולים להגיע"></textarea>' +
+        '<div class="btns">' +
+          '<button class="go" id="coSend" disabled>שלח דחייה</button>' +
+          '<button id="coBack">חזרה</button>' +
+        '</div>' +
       '</div>' +
+      '<div class="done" id="coDone" hidden></div>' +
       '<div class="more" id="coMore"></div>' +
       '<div class="err" id="coErr"></div>' +
     '</div>';
@@ -215,104 +255,92 @@ export function markCalloutSeen(db, sid, calloutId, uid) {
 //  עריכות שאחת מהן נשכחת — והמסך שנשכח הוא זה שמישהו יעבוד
 //  בו כשהוא ישכח שהמערכת שקטה.
 
-let modeStop = null;
-let modeResizeObserver = null;
 let activeOwner = null;
 let ownerSerial = 0;
 
-function clearModeBarOffset() {
-  if (modeResizeObserver) {
-    try { modeResizeObserver.disconnect(); } catch (ignore) {}
-    modeResizeObserver = null;
-  }
-  document.documentElement.style.removeProperty('--resq-mode-bar-height');
-}
-
-function trackModeBarHeight(el) {
-  clearModeBarOffset();
-  const update = function () {
-    if (!el || !el.isConnected) return;
-    const height = Math.ceil(el.getBoundingClientRect().height);
-    document.documentElement.style.setProperty('--resq-mode-bar-height', height + 'px');
-  };
-  update();
-  if (typeof ResizeObserver === 'function') {
-    modeResizeObserver = new ResizeObserver(update);
-    modeResizeObserver.observe(el);
-  }
-}
-
 function clearCalloutUi() {
+  releaseKeyboardWatch();
   const w = document.getElementById('coWrap');
   if (!w) return;
   w.classList.remove('on');
-  ['coText', 'coFrom', 'coMore', 'coErr', 'coReason'].forEach(function (id) {
+  ['coText', 'coFrom', 'coMore', 'coErr', 'coDone'].forEach(function (id) {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
+  const reason = document.getElementById('coReason');
+  if (reason) { reason.value = ''; reason.hidden = true; }
+  const reasons = document.getElementById('coReasons');
+  if (reasons) reasons.replaceChildren();
   const err = document.getElementById('coErr');
   if (err) err.style.display = 'none';
   const reasonWrap = document.getElementById('coReasonWrap');
   if (reasonWrap) reasonWrap.hidden = true;
-  const no = document.getElementById('coNo');
-  if (no) no.textContent = 'לא זמין';
-  ['coYes', 'coNo'].forEach(function (id) {
+  const done = document.getElementById('coDone');
+  if (done) done.hidden = true;
+  const btns = document.getElementById('coBtns');
+  if (btns) btns.hidden = false;
+  const yes = document.getElementById('coYes');
+  if (yes) yes.textContent = 'מגיע';
+  const send = document.getElementById('coSend');
+  if (send) send.textContent = 'שלח דחייה';
+  ['coYes', 'coNo', 'coSend', 'coBack'].forEach(function (id) {
     const btn = document.getElementById(id);
     if (!btn) return;
-    btn.disabled = false;
+    btn.disabled = id === 'coSend';
     btn.onclick = null;
   });
 }
 
-function modeBar(mode) {
-  const on = mode === 'trial';
-  let el = document.getElementById('modeBar');
+/* ⭐ המקלדת בטלפון.
+ *
+ * פתיחת שדה הטקסט מעלה מקלדת שתופסת כמחצית המסך. בלי
+ * הטיפול הזה, כפתור „שלח דחייה" נשאר מתחת למקלדת ב-320 ו-360,
+ * והמשתמש כותב נימוק ולא מוצא איך לשלוח אותו. `visualViewport`
+ * הוא הדבר היחיד שבאמת מדווח על המקלדת; אין אירוע אחר. */
+let keyboardStop = null;
 
-  if (!on) {
-    if (el) el.remove();
-    document.body.classList.remove('has-mode-bar');
-    clearModeBarOffset();
-    return;
-  }
-  document.body.classList.add('has-mode-bar');
-  if (el) {
-    trackModeBarHeight(el);
-    return;
-  }
+function releaseKeyboardWatch() {
+  if (!keyboardStop) return;
+  try { keyboardStop(); } catch (ignore) {}
+  keyboardStop = null;
+}
 
-  el = document.createElement('div');
-  el.id = 'modeBar';
-  el.setAttribute('role', 'status');
-  el.innerHTML = '<b>מצב ניסוי</b> · התראות ומיילים חסומים לכל התחנה. ' +
-                 'שום דבר לא יוצא החוצה.';
-  el.style.cssText = [
-    'position:sticky', 'top:var(--resq-safe-top-override,env(safe-area-inset-top,0px))', 'z-index:950',
-    'background:var(--warn-bg)', 'color:var(--warn)',
-    'border-bottom:2px solid var(--warn)',
-    'padding:9px 16px', 'box-sizing:border-box',
-    'width:100%', 'align-self:stretch',
-    'font-size:13px', 'font-weight:600',
-    'line-height:1.6', 'direction:rtl', 'text-align:center',
-    'font-family:"Segoe UI",Arial,sans-serif',
-    'margin:0'
-  ].join(';');
-  document.body.insertBefore(el, document.body.firstChild);
-  trackModeBarHeight(el);
+function keepSendVisible() {
+  const send = document.getElementById('coSend');
+  if (!send || send.hidden) return;
+  try { send.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (ignore) {}
+}
+
+function watchKeyboard() {
+  releaseKeyboardWatch();
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (!vv) return;
+  const onResize = function () { keepSendVisible(); };
+  vv.addEventListener('resize', onResize);
+  keyboardStop = function () { vv.removeEventListener('resize', onResize); };
+}
+
+/* המאזין נשאר כאן כי למסך הזה יש Firestore ביד. הציור עצמו
+ * עבר ל-`mode-bar.js`, כדי שמסך שאינו מחזיק Firestore — הסידור —
+ * יוכל להציג את אותו פס בדיוק ממקור אחר. */
+let modeStop = null;
+
+export function stopWatchingStationMode() {
+  if (!modeStop) return;
+  try { modeStop(); } catch (ignore) {}
+  modeStop = null;
 }
 
 export function watchMode(db, owner) {
   if (!db || !owner || owner.disposed) return;
-  if (modeStop) {
-    try { modeStop(); } catch (ignore) {}
-    modeStop = null;
-  }
+  stopWatchingStationMode();
   try {
     modeStop = onSnapshot(doc(db, 'config', 'mode'), function (d) {
       if (activeOwner !== owner || owner.disposed) return;
       const v = (d.exists() ? d.data() : {}) || {};
-      modeBar(v.mode || 'live');
+      renderModeBar(v.mode || 'live');
     }, function () {});
-  } catch (e) {}
+  } catch (e) { /* מאזין שלא עלה אינו סיבה להפיל את המסך שמתחתיו */ }
 }
 
 export function watchCallouts(db, sid, uid, opts) {
@@ -329,6 +357,7 @@ export function watchCallouts(db, sid, uid, opts) {
     answered: new Set(),
     legacyAnswered: new Set(),
     responseStops: new Map(),
+    doneTimer: null,
     latest: []
   };
   owner.dispose = function () {
@@ -339,13 +368,12 @@ export function watchCallouts(db, sid, uid, opts) {
       try { responseStop(); } catch (ignore) {}
     });
     owner.responseStops.clear();
+    if (owner.doneTimer) { clearTimeout(owner.doneTimer); owner.doneTimer = null; }
     if (activeOwner !== owner) return;
-    if (modeStop) {
-      try { modeStop(); } catch (ignore) {}
-      modeStop = null;
-    }
+    stopWatchingStationMode();
     activeOwner = null;
-    modeBar('live');
+    renderModeBar('live');
+    clearModeBarOffset();
     clearCalloutUi();
   };
   activeOwner = owner;
@@ -360,8 +388,12 @@ export function watchCallouts(db, sid, uid, opts) {
         !owner.answered.has(row.id) && !owner.legacyAnswered.has(row.id);
     });
     if (!list.length) {
-      const w = document.getElementById('coWrap');
-      if (w) w.classList.remove('on');
+      /* ⭐ המאזין מסיר את הקריאה ברגע שהתשובה נכתבה — מהר מכדי
+       * לקרוא את האישור. כל עוד שעון האישור רץ, הוא זה שיסגור. */
+      if (!owner.doneTimer) {
+        const w = document.getElementById('coWrap');
+        if (w) w.classList.remove('on');
+      }
       shownId = '';
       return;
     }
@@ -442,59 +474,157 @@ function show(owner, db, sid, uid, id, v, o, count) {
     .filter(Boolean).join(' · ');
   m.textContent = count > 1 ? 'יש עוד ' + (count - 1) + ' קריאות ממתינות.' : '';
   e.style.display = 'none';
+  e.textContent = '';
 
+  const btns = document.getElementById('coBtns');
   const yes = document.getElementById('coYes');
   const no  = document.getElementById('coNo');
   const reasonWrap = document.getElementById('coReasonWrap');
+  const reasonList = document.getElementById('coReasons');
   const reason = document.getElementById('coReason');
+  const send = document.getElementById('coSend');
+  const back = document.getElementById('coBack');
+  const done = document.getElementById('coDone');
+
+  let chosen = null;
+  let sending = false;
+
+  releaseKeyboardWatch();
+  btns.hidden = false;
   reasonWrap.hidden = true;
+  done.hidden = true;
+  done.textContent = '';
+  reason.hidden = true;
   reason.value = '';
-  no.textContent = 'לא זמין';
+  yes.textContent = 'מגיע';
+  send.textContent = 'שלח דחייה';
+  yes.disabled = false; no.disabled = false; back.disabled = false;
+
+  /* ⭐ הכפתור מנוטרל עד שיש נימוק, ולא „פעיל ואז נכשל".
+   * לפני כן הוא נראה לחיץ, והודעת השגיאה הגיעה רק אחרי לחיצה. */
+  function reasonText() {
+    if (!chosen) return '';
+    if (chosen.id === 'other') return String(reason.value || '').trim().slice(0, 200);
+    return chosen.he;
+  }
+  function updateSend() {
+    send.disabled = sending || !reasonText();
+  }
+
+  function renderReasons() {
+    reasonList.replaceChildren();
+    REJECT_REASONS.forEach(function (item) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = item.he;
+      b.dataset.reason = item.id;
+      b.setAttribute('aria-pressed', String(!!chosen && chosen.id === item.id));
+      b.onclick = function () {
+        if (sending) return;
+        chosen = item;
+        reason.hidden = item.id !== 'other';
+        e.style.display = 'none';
+        renderReasons();
+        updateSend();
+        if (item.id === 'other') {
+          watchKeyboard();
+          reason.focus();
+          keepSendVisible();
+        } else {
+          releaseKeyboardWatch();
+        }
+      };
+      reasonList.append(b);
+    });
+  }
+
+  function lock(on) {
+    sending = on;
+    yes.disabled = on; no.disabled = on; back.disabled = on;
+    reason.disabled = on;
+    reasonList.querySelectorAll('button').forEach(function (b) { b.disabled = on; });
+    updateSend();
+  }
+
+  /* מצב ההצלחה.
+   *
+   * קודם לכן החלון פשוט נעלם, וזה היה כל האישור שקיבל אדם
+   * שעונה להזעקה. מסך שהתרוקן נראה בדיוק כמו מסך שקרס,
+   * והדבר הבא שקורה הוא לחיצה שנייה. */
+  function succeed(which) {
+    if (activeOwner !== owner || owner.disposed) return;
+    releaseKeyboardWatch();
+    btns.hidden = true;
+    reasonWrap.hidden = true;
+    done.textContent = which === 'coming'
+      ? '✓ אישרת הגעה. התשובה נשמרה והמפקד רואה אותה.'
+      : '✓ הדחייה נשלחה. התשובה נשמרה והמפקד רואה אותה.';
+    done.hidden = false;
+    /* החלון נשאר רגע כדי שאפשר יהיה לקרוא את האישור. המאזין
+     * על התשובה יסיר את הקריאה מהרשימה בין כה ובין כך; השעון
+     * קיים למקרה שהמאזין אינו מגיע — לא משאירים אדם נעול מול חלון. */
+    if (owner.doneTimer) clearTimeout(owner.doneTimer);
+    owner.doneTimer = setTimeout(function () {
+      owner.doneTimer = null;
+      if (activeOwner !== owner || owner.disposed) return;
+      w.classList.remove('on');
+    }, 1800);
+  }
 
   function answer(which, why) {
-    if (activeOwner !== owner || owner.disposed) return;
-    yes.disabled = true; no.disabled = true;
+    if (activeOwner !== owner || owner.disposed || sending) return;
+    lock(true);
+    if (which === 'coming') yes.textContent = 'שולח…';
+    else send.textContent = 'שולח…';
+    e.style.display = 'none';
     ackCallout(db, sid, id, uid, o.name || '', which, why)
       .then(function () {
         if (activeOwner !== owner || owner.disposed) return;
-        yes.disabled = false; no.disabled = false;
-        w.classList.remove('on');
-        // shownId נשאר — ה-onSnapshot יסיר את הקריאה מהרשימה
-        // ואם יש עוד אחת, היא תקפוץ מיד.
+        succeed(which);
       })
       .catch(function (err) {
         if (activeOwner !== owner || owner.disposed) return;
-        yes.disabled = false; no.disabled = false;
-        e.textContent = 'התשובה לא נשמרה. ' +
-          '(' + ((err && (err.code || err.message)) || 'שגיאה') + ') נסה שוב.';
+        lock(false);
+        yes.textContent = 'מגיע';
+        send.textContent = 'שלח דחייה';
+        logError('callout answer', err);
+        // המשתמש רואה עברית. הקוד הטכני הלך ל-console.
+        e.textContent = 'התשובה לא נשמרה. ' + errorText(err);
         e.style.display = 'block';
       });
   }
 
   yes.onclick = function () { answer('coming', ''); };
   no.onclick  = function () {
-    if (reasonWrap.hidden) {
-      reasonWrap.hidden = false;
-      no.textContent = 'שלח דחייה';
-      reason.focus();
-      return;
-    }
-    const why = String(reason.value || '').trim();
-    if (!why) {
-      e.textContent = 'כדי לדחות את הקריאה צריך לכתוב נימוק.';
-      e.style.display = 'block';
-      reason.focus();
-      return;
-    }
+    if (sending) return;
+    btns.hidden = true;
+    reasonWrap.hidden = false;
+    e.style.display = 'none';
+    renderReasons();
+    updateSend();
+  };
+  back.onclick = function () {
+    if (sending) return;
+    releaseKeyboardWatch();
+    chosen = null;
+    reason.value = ''; reason.hidden = true;
+    reasonWrap.hidden = true;
+    btns.hidden = false;
+    e.style.display = 'none';
+  };
+  send.onclick = function () {
+    const why = reasonText();
+    if (!why) { updateSend(); return; }
     answer('no', why);
   };
+  reason.oninput = function () { updateSend(); };
 
   w.classList.add('on');
   // הצפייה אינה תשובה ולכן אינה סוגרת או מסתירה את הקריאה.
   // אם הכתיבה נכשלת, הקריאה נשארת פתוחה והמשתמש עדיין יכול
   // לענות; מאזין עתידי ינסה שוב בעת ההצגה הבאה.
   markCalloutSeen(db, sid, id, uid).catch(function (err) {
-    console.warn('callout seen: ' + (err && (err.code || err.message) || 'error'));
+    logError('callout seen', err);
   });
   alarm();
 }

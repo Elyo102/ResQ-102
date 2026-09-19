@@ -172,20 +172,116 @@ check(await page.locator('#coWrap').evaluate(el => el.classList.contains('on')),
 await page.locator('#coNo').click();
 check(await page.locator('#coReasonWrap').isVisible(),
       'rejecting a callout opens a mandatory reason field');
-await page.locator('#coNo').click();
+check(await page.locator('#coBtns').isHidden(),
+      'and the two first answers step aside so the reason is the only question on screen');
+
+// חמשת הנימוקים המהירים, בדיוק כפי שהוכרעו.
+const offered = await page.$$eval('#coReasons button', els => els.map(el => el.textContent));
+check(JSON.stringify(offered) === JSON.stringify(
+        ['מחלה מאושרת', 'שירות מילואים', 'פטור מאושר', 'איני זמין בתחנה', 'אחר']),
+      'the five agreed quick reasons are offered, in order', JSON.stringify(offered));
+
+/* ⭐ הכפתור מנוטרל — לא „פעיל ואז נכשל". לחיצה עליו אינה
+ * כותבת כלום, וזה מה שנבדק כאן ולא רק ה-attribute. */
+check(await page.locator('#coSend').isDisabled(),
+      'the send button is disabled until a reason is chosen');
+await page.locator('#coSend').click({ force:true });
 check((await page.evaluate(() => window.__FIRESTORE_WRITES || [])).length === 1,
       'an empty rejection reason writes nothing');
-await page.locator('#coReason').fill('מחלה מאושרת');
-await page.locator('#coNo').click();
+
+// „אחר" הוא היחיד שפותח טקסט חופשי, והוא עדיין דורש תוכן.
+await page.locator('#coReasons button[data-reason="other"]').click();
+check(await page.locator('#coReason').isVisible(),
+      'choosing "other" opens the free-text field');
+check(await page.locator('#coSend').isDisabled(),
+      'and an empty "other" still cannot be sent');
+await page.locator('#coReasons button[data-reason="sick"]').click();
+check(await page.locator('#coReason').isHidden(),
+      'choosing a listed reason closes the free-text field again');
+check(!(await page.locator('#coSend').isDisabled()),
+      'a chosen reason enables sending');
+await page.locator('#coSend').click();
 await page.waitForFunction(() => (window.__FIRESTORE_WRITES || []).length === 2);
 const rejection = await page.evaluate(() => window.__FIRESTORE_WRITES[1]);
 check(rejection.value.resp === 'no' && rejection.value.reason === 'מחלה מאושרת',
       'a rejection stores the required bounded reason', JSON.stringify(rejection));
+
+// והאדם רואה שזה קרה. זה כל ההבדל בין מסך שענה למסך שקרס.
+await page.locator('#coDone').waitFor({ state:'visible' });
+check((await page.locator('#coDone').innerText()).includes('הדחייה נשלחה'),
+      'the rejection is confirmed on screen and not merely by the dialog vanishing',
+      await page.locator('#coDone').innerText());
+check(await page.locator('#coBtns').isHidden() && await page.locator('#coReasonWrap').isHidden(),
+      'and nothing is left to press twice');
 check(rejection.options?.merge === true,
       'the final answer merges into and preserves the original seen receipt');
 check(rejection.path.endsWith('/callouts/reason-callout/responses/identity-a'),
       'a response is isolated in its own recipient document', rejection.path);
 await page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []));
+
+/* ======================================================================
+ *  אישור הגעה — שולח, הצליח, נכשל
+ * ====================================================================== */
+await page.evaluate(() => { window.__FIRESTORE_WRITES = []; });
+await page.evaluate(row => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', [row]), {
+  id:'accept-callout',
+  data:{ active:true, uids:['identity-a'], text:'קריאה לבדיקת אישור',
+    by_name:'מפקד', created_key:new Date().toISOString(), acks:{} }
+});
+await page.locator('#coWrap.on').waitFor({ state:'visible' });
+
+/* ⭐ מצב „שולח…". הכתיבה מוחזקת כדי שאפשר יהיה לראות את הרגע
+ * שבין הלחיצה לתשובה — הרגע שבו אדם לוחץ פעם שנייה. */
+await page.evaluate(() => { window.__FIRESTORE_HOLD_UPDATES = true; });
+await page.locator('#coYes').click();
+await page.waitForFunction(() => (window.__FIRESTORE_PENDING_UPDATES || []).length >= 1);
+check((await page.locator('#coYes').innerText()).includes('שולח'),
+      'the accept button says it is sending', await page.locator('#coYes').innerText());
+check(await page.locator('#coYes').isDisabled() && await page.locator('#coNo').isDisabled(),
+      'and both answers are locked while it is in flight');
+const writesDuringFlight = await page.evaluate(() => window.__FIRESTORE_WRITES.length);
+await page.locator('#coYes').click({ force:true });
+await page.locator('#coNo').click({ force:true });
+check(await page.evaluate(() => window.__FIRESTORE_WRITES.length) === writesDuringFlight,
+      'a second press while sending writes nothing at all');
+
+await page.evaluate(() => {
+  window.__FIRESTORE_HOLD_UPDATES = false;
+  (window.__FIRESTORE_PENDING_UPDATES || []).splice(0).forEach(p => p.resolve());
+});
+await page.locator('#coDone').waitFor({ state:'visible' });
+check((await page.locator('#coDone').innerText()).includes('אישרת הגעה'),
+      'accepting confirms on screen instead of only closing the dialog',
+      await page.locator('#coDone').innerText());
+await page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []));
+await page.waitForTimeout(2100);
+check(!(await page.locator('#coWrap').evaluate(el => el.classList.contains('on'))),
+      'and the dialog releases the screen on its own afterwards');
+
+/* כשל: המשתמש רואה עברית, ולעולם לא קוד. */
+await page.evaluate(() => {
+  window.__FIRESTORE_WRITES = [];
+  window.__FIRESTORE_WRITE_FAIL_PATHS = ['/responses/'];
+});
+await page.evaluate(row => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', [row]), {
+  id:'failing-callout',
+  data:{ active:true, uids:['identity-a'], text:'קריאה שתיכשל',
+    by_name:'מפקד', created_key:new Date().toISOString(), acks:{} }
+});
+await page.locator('#coWrap.on').waitFor({ state:'visible' });
+await page.locator('#coYes').click();
+await page.locator('#coErr').waitFor({ state:'visible' });
+const failureText = await page.locator('#coErr').innerText();
+check(!/firestore\/|functions\/|permission-denied|unavailable|[a-z]+\/[a-z-]+/.test(failureText),
+      'the failure message carries no technical error code at all', failureText);
+check(failureText.includes('התשובה לא נשמרה') && failureText.includes('אינו זמין'),
+      'and it says in Hebrew what happened', failureText);
+check(!(await page.locator('#coYes').isDisabled()),
+      'a failed answer leaves the buttons usable for a real retry');
+await page.evaluate(() => {
+  window.__FIRESTORE_WRITE_FAIL_PATHS = [];
+  window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []);
+});
 
 const callout = {
   id:'held-callout',

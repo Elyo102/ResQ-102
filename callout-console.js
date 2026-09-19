@@ -1,6 +1,7 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { CREW_HE } from './rotation.js?v=42h20';
+import { errorText, logError } from './error-text.js?v=42h20';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 let active = null;
@@ -102,7 +103,7 @@ function renderLive(session, list) {
         } catch (error) {
           close.disabled = false;
           setMessage(session.elements.message,
-            'סגירת הקריאה נכשלה. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+            (logError('callout close', error), 'סגירת הקריאה נכשלה. ' + errorText(error)), 'err');
         }
       };
       card.appendChild(close);
@@ -162,7 +163,7 @@ function watchOwnCallouts(session) {
   }, error => {
     if (active === session) {
       setMessage(session.elements.message,
-        'מעקב התגובות אינו זמין כרגע. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+        'מעקב התגובות אינו זמין כרגע. ' + errorText(error), 'err');
     }
   });
 }
@@ -181,7 +182,7 @@ function watchResponses(session, calloutId) {
     renderLive(session, rows);
   }, error => {
     if (active === session) setMessage(session.elements.message,
-      'תגובות הקריאה אינן זמינות כרגע. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+      'תגובות הקריאה אינן זמינות כרגע. ' + errorText(error), 'err');
   });
   session.responseStops.set(calloutId, stop);
 }
@@ -288,7 +289,7 @@ export async function initCalloutConsole(options = {}) {
       session.resumeStarted = false;
     } catch (error) {
       if (active === session) setMessage(session.elements.message,
-        'שליחת הקריאה נכשלה. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+        (logError('callout send', error), 'שליחת הקריאה נכשלה. ' + errorText(error)), 'err');
     } finally {
       if (active === session) session.elements.send.disabled = false;
     }

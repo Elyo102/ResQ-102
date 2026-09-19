@@ -638,7 +638,9 @@ async function publishReply(event, item) {
     return;
   }
   if (navigator.onLine === false) {
-    thread.status = 'אין כרגע חיבור. התגובה נשמרה במסך ואפשר לנסות שוב.';
+    /* אין תור שליחה במערכת הזו. הטקסט יושב במסך ולא יישלח מעצמו
+     * כשהרשת תחזור. הניסוח אומר בדיוק את זה. */
+    thread.status = 'אין כרגע חיבור. התגובה לא נשלחה ואינה ממתינה ברקע; הטקסט נשאר במסך ואפשר לשלוח שוב כשהרשת תחזור.';
     thread.statusKind = 'error';
     renderFeed();
     return;
@@ -1137,7 +1139,7 @@ function renderFeed(preferredFocus) {
   restoreFeedFocus(feed, focus);
 
   if (state.lastLoadFromCache || navigator.onLine === false) {
-    setStatus('מציג מידע שמור. ייתכן שיש הודעות חדשות שטרם הגיעו.', 'offline', false);
+    setStatus('המידע שעל המסך אינו טרי. ייתכן שיש הודעות חדשות שטרם הגיעו.', 'offline', false);
   } else {
     setStatus('', '', false);
   }
@@ -1488,7 +1490,7 @@ async function publishMessage(event) {
   }
   if (navigator.onLine === false) {
     persistDraft();
-    setFormStatus('אין כרגע חיבור. הטיוטה נשמרה ואפשר לנסות שוב כשהרשת תחזור.', 'error');
+    setFormStatus('אין כרגע חיבור. ההודעה לא נשלחה ואינה ממתינה ברקע; הטיוטה נשארת במסך ואפשר לשלוח שוב כשהרשת תחזור.', 'error');
     return;
   }
 
@@ -1622,7 +1624,7 @@ function handleVisibility() {
 
 function handleOffline() {
   if (!state) return;
-  setStatus('אין חיבור לרשת. מוצג המידע האחרון שהגיע למכשיר.', 'offline', false);
+  setStatus('אין חיבור לרשת. מוצג מה שהתקבל במסך הזה עד עכשיו; רענון בלי רשת לא יביא מידע.', 'offline', false);
 }
 
 function handleOnline() {

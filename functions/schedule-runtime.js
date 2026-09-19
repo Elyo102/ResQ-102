@@ -1357,6 +1357,27 @@ function createScheduleRuntime(deps) {
     return value;
   }
 
+  /* ⭐ מצב ההתראות של התחנה, מהמסמך הציבורי `config/mode` בלבד.
+   *
+   * למה זה כאן ולא בדפדפן: מסך הסידור אינו מחזיק Firestore כלל — הוא
+   * עובד רק דרך callables. בלי השדה הזה הוא היה מציג „מצב חי" בזמן
+   * שהתחנה בשקט מלא, וזה בדיוק המצב שבו רכזת מפרסמת סידור, לא רואה
+   * אף התראה יוצאת, ומסיקה שהמערכת שבורה.
+   *
+   * `config/runtime` — שבו יושבת רשימת הפטורים — לא נקרא כאן ולא
+   * נחשף. מי שמקבל בכל זאת התראה הוא מידע פרטי. */
+  async function notificationsMode() {
+    try {
+      const snap = await db.doc('config/mode').get();
+      const value = snap.exists ? (snap.data() || {}) : {};
+      return value.mode === 'trial' ? 'trial' : 'live';
+    } catch (error) {
+      // מצב שלא נקרא אינו סיבה להפיל קריאת סטטוס. `null` אומר „לא ידוע",
+      // והמסך לא יטען דבר שאינו יודע.
+      return null;
+    }
+  }
+
   function timeMillis(value) {
     if (value && typeof value.toMillis === 'function') return Number(value.toMillis());
     if (value instanceof Date) return value.getTime();
@@ -1767,6 +1788,14 @@ function createScheduleRuntime(deps) {
         activeView.from = nonEmpty(pubData.from) ? pubData.from : null;
         activeView.to = nonEmpty(pubData.to) ? pubData.to : null;
         activeView.edited = pubData.edited === true;
+        /* ⭐ „מי פרסם ומתי" — שני שדות שכבר נכתבים לדיסק בכל מסלול פרסום
+         * ופשוט לא הוחזרו. אין כאן קריאה נוספת: מסמך הפרסום כבר נקרא
+         * שתי שורות מעל. `published_by` (ה-uid) אינו מוחזר — למסך די
+         * בשם, ולזהות אין מה לעשות בדפדפן. */
+        activeView.published_at_ms = pubData.published_at ? timeMillis(pubData.published_at)
+          : (pubData.created_at ? timeMillis(pubData.created_at) : null);
+        activeView.published_by_name = nonEmpty(pubData.published_by_name)
+          ? String(pubData.published_by_name).slice(0, 120) : null;
       }
       if (nonEmpty(activeView.publication_id)) {
         const delivery = await stationRef(ctx.sid).collection('schedule_publications')
@@ -1792,6 +1821,7 @@ function createScheduleRuntime(deps) {
     }
     return {
       mode: config.mode,
+      notifications_mode: await notificationsMode(),
       configured: Boolean(config.active_policy_id && config.active_source_id),
       manager: ctx.manager,
       active: activeView
@@ -4209,7 +4239,10 @@ function createScheduleRuntime(deps) {
           let canRollback=false;
           if(operation.receipt){const current=await monthAuthority.readBaseline(ctx.sid,Object.keys(operation.receipt.after));canRollback=stable(current.owners)===stable(operation.receipt.after);}
           const previousPublicationId=operation.receipt && operation.receipt.before[segment.owner.month] && operation.receipt.before[segment.owner.month].publication_id || null;
-          Object.assign(value,{content_digest:segment.owner.content_digest,from:segment.snapshot.from,to:segment.snapshot.to,edited:segment.snapshot.meta.edited===true,
+          const meta=segment.snapshot.meta||{};
+          Object.assign(value,{content_digest:segment.owner.content_digest,from:segment.snapshot.from,to:segment.snapshot.to,edited:meta.edited===true,
+            published_at_ms:meta.published_at?timeMillis(meta.published_at):(meta.created_at?timeMillis(meta.created_at):null),
+            published_by_name:nonEmpty(meta.published_by_name)?String(meta.published_by_name).slice(0,120):null,
             can_rollback:canRollback,rollback_operation_id:canRollback?operation.receipt.operation_id:null,
             previous_publication_id:previousPublicationId,
             delivery_alerts:alerts.size,delivery_alerts_capped:alerts.size>100});
@@ -4227,7 +4260,8 @@ function createScheduleRuntime(deps) {
         }
         return value;
       });
-      return {mode:config.mode,configured:Boolean(config.active_policy_id && config.active_source_id),manager:ctx.manager,
+      return {mode:config.mode,notifications_mode:await notificationsMode(),
+        configured:Boolean(config.active_policy_id && config.active_source_id),manager:ctx.manager,
         authority_mode:'monthly',expected_authority_generation:resolved.generation,
         authority_generation:resolved.generation,active:result.segments[0].value,available:result.segments[0].available};
   }

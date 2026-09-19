@@ -141,9 +141,10 @@ for (const role of Object.keys(EXPECT)) {
 
   const dismissCallout = async () => {
     if (!(await pg.isVisible('#coNo').catch(()=>false))) return;
+    // הדחייה עוברת עכשיו דרך נימוק מהיר וכפתור שליחה נפרד.
     await pg.click('#coNo');
-    await pg.fill('#coReason', 'בדיקת הרשאות אוטומטית');
-    await pg.click('#coNo');
+    await pg.click('#coReasons button[data-reason="away"]');
+    await pg.click('#coSend');
     await pg.waitForTimeout(250);
   };
 

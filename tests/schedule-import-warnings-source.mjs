@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
  * בלי שדה detail. בדיקה זו בודקת קוד מקור בלבד (בלי דפדפן, שאינו זמין
  * בסביבת הבדיקה הזאת) שהלולאה בשדה הכללי בקובץ schedule-management.js:
  * (1) לא מציגה עוד את המחרוזת הגולמית unlinked-people,
- * (2) מתרגמת אותה לעברית ברורה שמזכירה "ללא חשבון" ו"פוש",
+ * (2) מתרגמת אותה לעברית ברורה שמזכירה "ללא אפליקציה" ו"פוש",
  * (3) לא מכפילה תצוגה של אזהרות שכבר מוצגות במפורש במקום אחר. */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,7 +29,7 @@ function warningsBlock(text) {
 check('unlinked-people is translated, not shown as a raw code', () => {
   const block = warningsBlock(ui);
   assert.match(block, /'unlinked-people':/);
-  assert.match(block, /ללא חשבון/);
+  assert.match(block, /ללא אפליקציה/);
   assert.match(block, /פוש/);
 });
 

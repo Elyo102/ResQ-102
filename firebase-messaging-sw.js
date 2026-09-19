@@ -61,6 +61,8 @@ const SHELL = [
   './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './alerts-feed.js', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
+  // שני מודולים משותפים שכל מסך עם פעולה נשען עליהם.
+  './error-text.js', './mode-bar.js',
   './join-ui.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
   './manifest.json', './resq-192.png', './favicon.ico'

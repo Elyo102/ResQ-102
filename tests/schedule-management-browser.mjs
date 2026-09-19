@@ -1218,7 +1218,7 @@ try {
     await shadowManagerPage.locator('#publishMessage .ok').waitFor();
     const text = await shadowManagerPage.locator('#publishMessage').textContent();
     assert.match(text, /פורסם ופועל בסביבת הניסוי/);
-    assert.match(text, /הפוש הוגבל לחשבון הבדיקה של אלדד/);
+    assert.match(text, /הפוש הוגבל לחשבון הבדיקה של התחנה/);
     assert.match(text, /לחזור לגרסה הקודמת/);
 
     const calls = await shadowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
@@ -1710,7 +1710,10 @@ try {
     await lostPage.locator('#modeForm:not([hidden])').waitFor();
     await lostPage.locator('#modeApply').click();
     await lostPage.locator('#modeMessage .err').waitFor();
-    assert.match(await lostPage.locator('#modeMessage').textContent(), /cutover-response-invalid/);
+    /* ⭐ ההבחנה נשמרה — אבל במשפט ולא בקוד. „תשובה פגומה" ו„בדיקה
+     * מקדימה שנכשלה" הם שני מצבים שונים, והמסך אומר איזה מהם. */
+    assert.match(await lostPage.locator('#modeMessage').textContent(), /תשובת השרת הגיעה פגומה/);
+    assert.doesNotMatch(await lostPage.locator('#modeMessage').textContent(), /cutover-|functions\//);
     assert.match(await lostPage.locator('#modeMessage').textContent(), /אותה בקשה, לא מעבר חדש/);
     // הרענון החזיר new בלי מועמד ובלי יעד `new` — ובכל זאת יש דרך לנסות שוב.
     await lostPage.locator('#cutoverRetry').waitFor();

@@ -104,9 +104,26 @@ async function fixture({ connected = true, role = 'firefighter', superUser = fal
             if (data.expected_revision !== d.current_revision) throw Object.assign(new Error('stale'), { code: 'functions/aborted' });
             ++d.current_revision; d.title = data.title; d.versions[d.current_revision] = { title: data.title, text: data.text, requires_ack: data.requires_ack };
           }
+          if (name === 'archiveHrProcedure') {
+            // הכפיל אוכף את אותם שני כללים שהשרת אוכף, ולא יותר.
+            if (d.kind !== 'procedure') throw Object.assign(new Error('not a procedure'), { code: 'functions/failed-precondition' });
+            const claims = t.auth.currentUser.claims;
+            if (!(claims.super === true || claims.role === 'hr_coordinator' || claims.role === 'commander')) {
+              throw Object.assign(new Error('authority'), { code: 'functions/permission-denied' });
+            }
+            if (data.expected_revision !== d.current_revision) throw Object.assign(new Error('stale'), { code: 'functions/aborted' });
+          }
           const n = data.revision || d.current_revision;
           if (['acknowledgeHrDocument', 'nudgeHrDocument'].includes(name) && n !== d.current_revision) throw Object.assign(new Error('stale'), { code: 'functions/aborted' });
           result = { document_id: d.document_id, revision: n, current_revision: d.current_revision, outcome: 'saved', notification_status: 'policy_pending', duplicate: false };
+          if (name === 'archiveHrProcedure') {
+            // הסרה רכה: הרשומה נשארת, היא רק יוצאת מהרשימה.
+            if (d.archived_at_ms) result.outcome = 'no_change';
+            else { d.archived_at_ms = 1788220800000; d.archived_by_uid = user; }
+            t.publications = t.publications.filter(x => !x.archived_at_ms);
+            result.archived_at_ms = d.archived_at_ms; result.archived_by_uid = d.archived_by_uid;
+            result.notification_status = 'not_queued';
+          }
           if (name === 'markHrDocumentOpened' || name === 'acknowledgeHrDocument') {
             const key = rkey(d.document_id, n, user), r = t.receipts[key] || { recipient_uid: user, revision: n, opened_at_ms: null, acknowledged_at_ms: null };
             if (name === 'markHrDocumentOpened') r.opened_at_ms ??= 100;
@@ -363,5 +380,76 @@ try {
       assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true); await q(f.page, 'text').focus();
       assert.equal(await q(f.page, 'text').evaluate(e => getComputedStyle(e).outlineStyle !== 'none'), true); await f.close(); }
   });
+  /* ======================================================================
+   *  הסרת נוהל תחנה
+   *
+   *  הפעולה נבנתה בפריט 7 עם שבע הוכחות בשרת — ולא היה לה
+   *  מסך. הקריאה היתה רשומה ב-`incident-client.js` ואף שורה בדפדפן
+   *  לא קראה לה.
+   * ====================================================================== */
+
+  await check('only the three authorities are offered the removal, and never on a personal document', async () => {
+    for (const [options, expected] of [
+      [{ role: 'hr_coordinator' }, true],
+      [{ superUser: true }, true],
+      [{ role: 'commander' }, true],
+      [{ role: 'firefighter' }, false],
+      [{ role: 'deputy' }, false],
+      // ⭐ „מפקד תחנה" אינו ברשימה של השרת, ולכן אינו ברשימה של המסך.
+      [{ role: 'station_commander' }, false]
+    ]) {
+      const f = await fixture(options);
+      await q(f.page, 'procedures').click(); await open(f.page, 'b');
+      assert.equal(await q(f.page, 'archive').isVisible(), expected,
+        JSON.stringify(options) + ' → expected ' + expected);
+      await f.close();
+    }
+    /* ⭐ ועל מסמך אישי — לעולם לא, גם למנהל-על. זו הפעולה
+     * היחידה שהשרת מסרב לה על סוג הפרסום ולא על הזהות. */
+    const f = await fixture({ superUser: true });
+    await open(f.page, 'a');
+    assert.equal(await q(f.page, 'archive').isHidden(), true,
+      'a personal document is never removable from this screen');
+    await f.close();
+  });
+
+  await check('a commander removes a procedure, and the wording never says it was deleted', async () => {
+    const f = await fixture({ role: 'commander' });
+    const asked = [];
+    f.page.on('dialog', d => { asked.push(d.message()); });
+    await q(f.page, 'procedures').click(); await open(f.page, 'b');
+    await q(f.page, 'archive').click();
+    await f.page.waitForFunction(() => __docs.calls.some(c => c.name === 'archiveHrProcedure'));
+    assert.equal(asked.length, 1, 'the person is asked first');
+    /* „אינה נמחקת" הוא ההפך מהבטחת מחיקה, ולכן הבדיקה מכוונת אל
+     * הטענה ולא אל המילה: „הנוהל נמחק" אסור, „אינה נמחקת" רצוי. */
+    assert.equal(/הנוהל נמחק|מחיקת הנוהל|לצמיתות/.test(asked[0]), false,
+      'the question never promises a deletion that does not happen: ' + asked[0]);
+    assert.ok(asked[0].includes('יוסתר'), asked[0]);
+    const call = await f.page.evaluate(() => __docs.calls.find(c => c.name === 'archiveHrProcedure'));
+    assert.equal(call.data.expected_revision, 1, 'bound to the revision the screen was showing');
+    assert.equal(Object.hasOwn(call.data, 'kind'), false, 'the browser does not restate what it is removing');
+    await f.page.waitForFunction(() =>
+      document.querySelector('[data-d="message"]').textContent.includes('הוסר'));
+    const said = await q(f.page, 'message').innerText();
+    assert.equal(/הנוהל נמחק|מחיקת הנוהל/.test(said), false, said);
+    assert.ok(said.includes('הוסר'), said);
+    assert.ok(said.includes('ההיסטוריה נשמרה'), said);
+    // והנוהל יצא מהרשימה בלי רענון של כל הדף.
+    assert.equal(await f.page.locator('[data-document="' + 'b'.repeat(64) + '"]').count(), 0);
+    await f.close();
+  });
+
+  await check('a commander is still offered no publishing and no new version', async () => {
+    /* ⭐ זו ההכרעה שלך: מפקד מקבל הסרה — ושום דבר אחר.
+     * הרגע ששתי הרשימות יתמזגו הוא הרגע שבו מפקד יפרסם נהלים. */
+    const f = await fixture({ role: 'commander' });
+    await q(f.page, 'procedures').click(); await open(f.page, 'b');
+    assert.equal(await q(f.page, 'archive').isVisible(), true);
+    assert.equal(await q(f.page, 'revise').isHidden(), true, 'no new version for a commander');
+    assert.equal(await q(f.page, 'new').isHidden(), true, 'and no publishing at all');
+    await f.close();
+  });
+
   assert.deepEqual(hashes(), before); console.log('HR documents browser: ' + passed + '/' + passed + ' passed.');
 } finally { for (const c of contexts) await c.close(); await browser.close(); }
