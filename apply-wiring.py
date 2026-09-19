@@ -297,8 +297,18 @@ if 'saas-isolation' not in rt['scripts'].get('test', ''):
 # ---------- 10. firebase.json hosting.ignore ----------
 fb = json.loads(read('firebase.json'))
 ign = fb['hosting']['ignore']
+changed = False
 if 'apps/**' not in ign:
     ign.insert(ign.index('functions/**') + 1 if 'functions/**' in ign else len(ign), 'apps/**')
+    changed = True
+# הקובץ הזה עצמו הוא .py, ו-hosting.public הוא ".". בלי שתי התבניות
+# האלה הוא נכלל בארטיפקט של Hosting ומוגש לציבור. זה נתפס בשער
+# pages:preview, ולא בשום מקום מוקדם יותר.
+for pattern in ('*.py', '**/*.py'):
+    if pattern not in ign:
+        ign.insert(ign.index('**/*.ps1') + 1 if '**/*.ps1' in ign else len(ign), pattern)
+        changed = True
+if changed:
     write('firebase.json', json.dumps(fb, ensure_ascii=False, indent=2) + '\n')
 
 # ---------- 11. .gitignore ----------

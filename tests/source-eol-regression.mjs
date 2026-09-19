@@ -69,7 +69,11 @@ const PROBES = [
   // בדיוק סוג הבדיקה שנשבר על CRLF. היא אטית (כל מוטציה מעתיקה עץ
   // ומריצה תת-תהליך), ולכן אחרונה; שלוש הבדיקות שהיא מריצה הן node
   // טהור ואינן דורשות node_modules.
-  'security-mutations.mjs'
+  'security-mutations.mjs',
+  // hosting-privacy קוראת את firebase.json ואת עץ הקבצים ובונה מהם
+  // התאמות — בדיקה שקוראת טקסט, ולכן שייכת לכאן. היא מרימה שרת על
+  // פורט 0 ואינה דורשת node_modules.
+  'hosting-privacy.mjs'
 ];
 
 /* המקורות שה-probes קוראים. ההמרה עצמה היא על כל העץ; הרשימה הזו
@@ -118,7 +122,9 @@ const SOURCES = [
   'tests/security-boundaries.mjs',
   'tests/security-mutations.mjs',
   'tests/ops-disaster-restore.test.mjs',
-  'tests/eol-guard.mjs'
+  'tests/eol-guard.mjs',
+  'tests/hosting-privacy.mjs',
+  'firebase.json'
 ];
 
 /* מריץ probe ומחזיר { code, out }. אינו זורק על כשל — הכשל הוא הנתון. */
