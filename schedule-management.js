@@ -1840,10 +1840,14 @@ function renderBoard(target, days, options) {
   // מהסבב הישן או מהצבע. בלי צוות חתום וידוע — עמודה ניטרלית.
   const dayCrew = (day) => (['A', 'B', 'C'].includes(day.crew) ? day.crew : null);
   days.forEach((day, index) => {
+    const isToday = day.date === localDate();
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
-      + (day.date === localDate() ? ' today' : '')
+      + (isToday ? ' today' : '')
       + (index % 7 === 0 ? ' snap' : ''));
     head.setAttribute('role', 'columnheader');
+    // ⭐ היום הנוכחי מסומן גם לקורא מסך, לא רק בצבע. זה גם העוגן
+    // שאליו הלוח נפתח, ולכן הוא חייב להיות מזוהה בלי להסתמך על class.
+    if (isToday) head.setAttribute('aria-current', 'date');
     head.appendChild(node('div', 'dw', DOW[new Date(day.date + 'T00:00:00.000Z').getUTCDay()]));
     head.appendChild(node('div', 'dd',
       Number(day.date.slice(8, 10)) + '/' + Number(day.date.slice(5, 7))));
@@ -1944,8 +1948,50 @@ function renderBoardHead(target, ym, onMonth, boardId, weekLabelId) {
   };
   prev.addEventListener('click', () => step(-1));
   next.addEventListener('click', () => step(1));
-  jump.append(prev, label, next);
+  const today = node('button', 'today-jump', 'היום');
+  today.type = 'button';
+  today.id = weekLabelId + 'Today';
+  today.setAttribute('aria-label', 'מעבר ליום הנוכחי בלוח');
+  today.hidden = true;
+  today.disabled = true;
+  today.addEventListener('click', () => focusTodayColumn(boardId, 'smooth'));
+  jump.append(prev, label, next, today);
   target.appendChild(jump);
+}
+
+/* ⭐ הלוח נפתח על היום ולא על תחילת החודש.
+ *
+ * הלוח הוא גריד חודשי שנגלל לרוחב, ועד כאן הוא נפתח תמיד ב-1 בחודש:
+ * כבאי שנכנס ב-23 בחודש ראה שבוע שאינו רלוונטי לו וצריך היה לגלול.
+ * זו נקודת האמון הראשונה של משתמש חדש, ולכן היא לא נשארת ידנית.
+ *
+ * הפונקציה מחזירה false כשהחודש המוצג אינו החודש הנוכחי — אין „היום"
+ * בלוח, ואז לא זזים בכלל ולא מתחזים למיקוד. הקריאה עצמה נעשית דרך
+ * scrollIntoView ולא בחישוב scrollLeft ידני, כי הלוח הוא RTL וסמנטיקת
+ * scrollLeft ב-RTL נבדלת בין דפדפנים; block:'nearest' מונע קפיצה
+ * אנכית של העמוד. */
+function focusTodayColumn(boardId, behavior) {
+  const board = $(boardId);
+  if (!board) return false;
+  const head = board.querySelector('.hcell.today');
+  if (!head) return false;
+  try {
+    head.scrollIntoView({ inline: 'center', block: 'nearest', behavior: behavior || 'auto' });
+  } catch (ignore) {
+    // דפדפן ישן בלי תמיכה ב-options: מיקוד הוא שיפור, לא תנאי לתצוגה.
+    try { head.scrollIntoView(); } catch (alsoIgnore) {}
+  }
+  return true;
+}
+
+/* כפתור „היום" נשאר זמין רק כשיש יום כזה בלוח המוצג. */
+function syncTodayButton(boardId, weekLabelId) {
+  const button = $(weekLabelId + 'Today');
+  if (!button) return;
+  const board = $(boardId);
+  const has = !!(board && board.querySelector('.hcell.today'));
+  button.disabled = !has;
+  button.hidden = !has;
 }
 
 function watchWeekLabel(boardId, weekLabelId, dayCount) {
@@ -1983,6 +2029,9 @@ async function loadStationRange(ym) {
     }
     renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
+    // הלוח נפתח על היום, ורק אחר כך תווית השבוע מתעדכנת מהגלילה בפועל.
+    focusTodayColumn('stationBoard');
+    syncTodayButton('stationBoard', 'stationWeek');
     $('stationNote').textContent = (view.source === 'legacy'
       ? 'הלוח מוצג מהסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון.'
       : view.source === 'imported-display'
@@ -2177,6 +2226,8 @@ async function loadMineRange(ym) {
       showAbsences: true,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
+    focusTodayColumn('mineBoard');
+    syncTodayButton('mineBoard', 'mineWeek');
     $('mineNote').textContent = 'מוצגים רק הימים שבהם שובצת לעבודה בפועל. בכל יום מוצגות כל ארבע התחנות.'
       + (displayOnly ? ' זו תצוגת אימון מהקובץ המיובא; המנוע נשאר ' + view.mode + '.' : '')
       + (view.source === 'legacy'

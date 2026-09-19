@@ -76,11 +76,20 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
     return value;
   }
   function mutationInput(req, op) {
+    // הסרת קובץ אינה שולחת הודעה לאיש: היא פעולה של הבעלים על מה
+    // שהוא עצמו העלה, ולכן אין לה `send_now` ואין לה נמען.
     const keys = op === 'create' ? ['request_id', 'subject', 'text', 'send_now']
-      : ['request_id', 'case_id', 'expected_revision', 'send_now', ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : [])];
+      : op === 'removeAttachment' ? ['request_id', 'case_id', 'expected_revision', 'attachment_id']
+        : ['request_id', 'case_id', 'expected_revision', 'send_now', ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : [])];
     const r = request(req, keys), d = r.data;
-    if (typeof d.request_id !== 'string' || !REQUEST_ID.test(d.request_id) || typeof d.send_now !== 'boolean') throw error('invalid-argument', 'Invalid action identity or notification choice.');
-    const p = { op, request_id: d.request_id, send_now: d.send_now };
+    const silentOp = op === 'removeAttachment';
+    if (typeof d.request_id !== 'string' || !REQUEST_ID.test(d.request_id)
+      || (!silentOp && typeof d.send_now !== 'boolean')) throw error('invalid-argument', 'Invalid action identity or notification choice.');
+    const p = { op, request_id: d.request_id, ...(silentOp ? {} : { send_now: d.send_now }) };
+    if (silentOp) {
+      if (typeof d.attachment_id !== 'string' || !KEY.test(d.attachment_id)) throw error('invalid-argument', 'Invalid attachment identity.');
+      p.attachment_id = d.attachment_id;
+    }
     if (op === 'create') p.subject = text(d.subject, 80);
     else {
       if (typeof d.case_id !== 'string' || !KEY.test(d.case_id) || !Number.isSafeInteger(d.expected_revision) || d.expected_revision < 1) throw error('invalid-argument', 'Invalid request revision.');
@@ -118,6 +127,33 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       const ownerSide = op === 'create' || current.owner_uid === ctx.uid;
       if (op === 'reply' && current.status === 'closed') throw error('failed-precondition', 'The request is closed.');
       if (op === 'nudge' && !(ownerSide ? ['open', 'in_progress'].includes(current.status) : current.status === 'waiting_employee')) throw error('failed-precondition', 'No outstanding action for the other side.');
+      /* ⭐ הסרת קובץ — רק מה שהאדם עצמו העלה, ורק בפנייה שלו.
+       *
+       * שלוש העובדות נקראות מהשרת ולא מהבקשה: שהפנייה היא של הפונה,
+       * שהקובץ באמת מקושר אליה, ושהמעלה הוא המבקש. `actor_uid`
+       * ברשומת הקובץ הוא המעלה — לא הבעלים של הפנייה — ולכן קובץ
+       * שמשאבי אנוש צירפו לפנייה אינו נמחק על ידי העובד. */
+      let removalPlan = null;
+      if (op === 'removeAttachment') {
+        if (!current) throw error('not-found', 'Request not found.');
+        if (current.owner_uid !== ctx.uid) throw error('permission-denied', 'Only the person who opened this request may remove a file from it.');
+        const linked = Array.isArray(current.attachment_ids) ? current.attachment_ids.slice() : [];
+        if (!linked.every(v => typeof v === 'string' && KEY.test(v))) throw error('failed-precondition', 'Attachment links are invalid.');
+        const snapAttachment = await tx.get(root(ctx.sid).collection('hr_attachments').doc(p.attachment_id));
+        if (!snapAttachment.exists) throw error('not-found', 'File not found.');
+        const a = snapAttachment.data();
+        if (!plain(a) || a.station_id !== ctx.sid || a.attachment_id !== p.attachment_id
+          || a.parent_kind !== 'request' || a.parent_id !== ref.id) throw error('failed-precondition', 'File data is invalid.');
+        if (a.actor_uid !== ctx.uid) throw error('permission-denied', 'Only the person who uploaded this file may remove it.');
+        if (!linked.includes(p.attachment_id)) throw error('failed-precondition', 'This file was already removed.');
+        const removed = Array.isArray(current.removed_attachment_ids) ? current.removed_attachment_ids.slice() : [];
+        if (!removed.every(v => typeof v === 'string' && KEY.test(v))) throw error('failed-precondition', 'Removal data is invalid.');
+        removalPlan = {
+          attachment_ids: linked.filter(v => v !== p.attachment_id),
+          removed_attachment_ids: removed.includes(p.attachment_id) ? removed : removed.concat(p.attachment_id),
+          display_name: typeof a.display_name === 'string' ? a.display_name : null
+        };
+      }
       const quota = await tx.get(quotaRef);
       // Business text/status survives quiet/silent and receives durable pending
       // notification work. Standalone nudges need immediate policy evaluation.
@@ -140,7 +176,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         if (!Number.isSafeInteger(revision)) throw error('failed-precondition', 'Revision overflow.');
         const status = op === 'create' ? 'open' : op === 'setStatus' ? p.status
           : op === 'reply' && ownerSide && current.status === 'waiting_employee' ? 'open' : current.status;
-        const next = current ? { ...current, revision, status, updated_at_ms: at } : {
+        const next = current ? { ...current, revision, status, updated_at_ms: at,
+          ...(removalPlan ? { attachment_ids: removalPlan.attachment_ids,
+            removed_attachment_ids: removalPlan.removed_attachment_ids } : {}) } : {
           schema: 'hr-request-v1', case_id: ref.id, station_id: ctx.sid, owner_uid: ctx.uid,
           subject: p.subject, status, revision, created_at_ms: at, updated_at_ms: at
         };
@@ -148,12 +186,19 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         const event = { schema: 'hr-request-event-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
           actor_uid: ctx.uid, kind: op, revision, created_at_ms: at,
           ...(own(p, 'text') ? { text: p.text } : {}),
-          ...(op === 'setStatus' ? { from_status: current.status, to_status: status } : {}) };
+          ...(op === 'setStatus' ? { from_status: current.status, to_status: status } : {}),
+          /* ⭐ זהו יומן הביקורת של המחיקה: מי, מתי, איזה קובץ ובאיזו
+           * גרסה. שם הקובץ נשמר כאן כדי שהשורה תישאר קריאה גם אחרי
+           * שהקישור עצמו הוסר. */
+          ...(removalPlan ? { attachment_id: p.attachment_id,
+            attachment_display_name: removalPlan.display_name } : {}) };
         // Status changes by an HR owner should not send back to the actor.
         const ownerNotification = op === 'setStatus' || !ownerSide;
         const notifySelf = ownerNotification && next.owner_uid === ctx.uid;
-        const notificationStatus = notifySelf ? 'no_other_recipient'
-          : nudgePolicy && nudgePolicy.decision === 'suppressed' ? 'suppressed' : 'policy_pending';
+        // הסרת קובץ של עצמך אינה אירוע שמישהו צריך לקבל עליו פוש.
+        const notificationStatus = op === 'removeAttachment' ? 'no_other_recipient'
+          : notifySelf ? 'no_other_recipient'
+            : nudgePolicy && nudgePolicy.decision === 'suppressed' ? 'suppressed' : 'policy_pending';
         if (notificationStatus !== 'no_other_recipient') {
           const job = { schema: 'hr-request-notification-v1', event_id: eventId, case_id: ref.id,
             station_id: ctx.sid, actor_uid: ctx.uid, actor_auth_time: r.authTime,
@@ -167,7 +212,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         }
         tx.create(ref.collection('events').doc(eventId), event);
         tx.set(ref, next);
-        result = { case_id: ref.id, revision, status, outcome: 'saved', event_id: eventId, notification_status: notificationStatus };
+        result = { case_id: ref.id, revision, status, outcome: 'saved', event_id: eventId, notification_status: notificationStatus,
+          ...(removalPlan ? { removed_attachment_id: p.attachment_id } : {}) };
       }
       if (!noChange) tx.set(quotaRef, { requests_at_ms: recent.concat(at) });
       tx.create(receiptRef, { schema: 'hr-request-operation-v1', case_id: ref.id, actor_uid: ctx.uid,
@@ -309,6 +355,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   }
   return Object.freeze({ create: req => mutate(req, 'create'), reply: req => mutate(req, 'reply'),
     setStatus: req => mutate(req, 'setStatus'), nudge: req => mutate(req, 'nudge'),
+    removeAttachment: req => mutate(req, 'removeAttachment'),
     list: req => list(req), listInbox: req => list(req, true), get, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES });

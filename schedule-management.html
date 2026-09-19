@@ -186,6 +186,11 @@
     .wkjump button{font-size:13px;font-weight:800;width:44px;height:44px;min-height:44px;
       border-radius:8px;border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#748091);padding:0}
     .wkjump b{font-size:12px;font-weight:700;color:var(--muted,#748091);min-width:62px;text-align:center}
+    /* „היום" — חזרה לעמודת היום הנוכחי אחרי גלילה. רוחב אוטומטי כי
+       הוא נושא מילה ולא חץ, וגובה 44 כמו שאר יעדי המגע בסרגל. */
+    .wkjump button.today-jump{width:auto;min-width:44px;padding:0 10px;
+      color:var(--ink,#1d2530);border-color:var(--brand,#c62828)}
+    .wkjump button.today-jump[disabled]{opacity:.45;border-color:var(--line,#dfe5ec)}
     /* ==================================================================
        הלוח · עיצוב 5.9 (מוקאפ מאושר) — עיצוב בלבד, אותו DOM ואותה לוגיקה.
        עמודת התחנות מימין, ימים משמאל, שמות בשבבים בצבע התחנה בטור יורד,

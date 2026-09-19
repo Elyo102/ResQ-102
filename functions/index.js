@@ -272,6 +272,9 @@ exports.getHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrReques
 exports.replyHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.reply(req));
 exports.setHrRequestStatus = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setStatus(req));
 exports.nudgeHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.nudge(req));
+// הסרת קובץ שהעובד עצמו העלה לפנייה שלו. נוהל תחנה אינו עובר כאן
+// בכלל — הוא אינו קובץ בפנייה אלא פרסום תחנתי, ומנוהל בנתיב אחר.
+exports.removeMyHrAttachment = onCall({ enforceAppCheck: true }, async (req) => hrRequests.removeAttachment(req));
 const hrDocuments = hrDocumentsModule.createHrDocuments({ db, auth: admin.auth(), HttpsError });
 exports.publishHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.publish(req));
 exports.reviseHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.revise(req));

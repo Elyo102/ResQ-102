@@ -3407,10 +3407,94 @@ try {
     assert.equal(await realImportPage.locator('#stationBoard .hcell').count(), 30);
   });
   await realImportCtx.close();
+
+  /* ⭐ הלוח נפתח על היום הנוכחי.
+   *
+   * עד כאן הלוח נפתח תמיד ב-1 בחודש, וכבאי שנכנס באמצע החודש ראה
+   * שבוע שאינו שלו. הבדיקה אינה מסתפקת ב-class: היא דורשת שהעמודה
+   * של היום תהיה **בתוך אזור הגלילה הנראה** של הלוח, ושכאשר היום
+   * רחוק מתחילת החודש הלוח באמת זז — כלומר לא „עבר" רק כי הכול נכנס
+   * למסך. רוחב 390 כדי שהלוח יגלוש כמו בטלפון. */
+  const todayCtx = await browser.newContext({ viewport:{ width:390, height:780 }, locale:'he-IL' });
+  await prepare(todayCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const todayPage = await todayCtx.newPage();
+  await todayPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await todayPage.waitForSelector('#stationBoard .hcell');
+  await test('the station board marks today for a screen reader, not only by colour', async () => {
+    assert.equal(await todayPage.locator('#stationBoard .hcell.today[aria-current="date"]').count(), 1,
+      'exactly one column is the current day and it carries aria-current');
+  });
+  await test('the station board opens on today instead of the first of the month', async () => {
+    const seen = await todayPage.evaluate(() => {
+      const board = document.getElementById('stationBoard');
+      const head = board.querySelector('.hcell.today');
+      const cells = Array.from(board.querySelectorAll('.hcell'));
+      const boardBox = board.getBoundingClientRect();
+      const headBox = head.getBoundingClientRect();
+      return {
+        index: cells.indexOf(head),
+        total: cells.length,
+        inside: headBox.left >= boardBox.left - 1 && headBox.right <= boardBox.right + 1,
+        moved: Math.abs(board.scrollLeft) > 1,
+        overflows: board.scrollWidth > board.clientWidth + 1
+      };
+    });
+    assert.equal(seen.overflows, true, 'the board really scrolls at this width — otherwise the test proves nothing');
+    assert.equal(seen.inside, true, "today's column is inside the visible area of the board");
+    // ⭐ אם היום אינו בשבוע הראשון, לוח שלא זז הוא לוח שלא התמקד.
+    if (seen.index > 7) {
+      assert.equal(seen.moved, true, 'the board actually scrolled away from the first of the month');
+    }
+  });
+  await test('the היום button is offered and returns to the current day after scrolling away', async () => {
+    const button = todayPage.locator('#stationWeekToday');
+    assert.equal(await button.count(), 1);
+    assert.equal(await button.isVisible(), true, 'the button is offered while the board holds today');
+    await todayPage.evaluate(() => { document.getElementById('stationBoard').scrollLeft = 0; });
+    await button.click();
+    await todayPage.waitForTimeout(600);
+    const back = await todayPage.evaluate(() => {
+      const board = document.getElementById('stationBoard');
+      const head = board.querySelector('.hcell.today');
+      const boardBox = board.getBoundingClientRect();
+      const headBox = head.getBoundingClientRect();
+      return headBox.left >= boardBox.left - 1 && headBox.right <= boardBox.right + 1;
+    });
+    assert.equal(back, true, 'the button brings today back into view');
+  });
+  await todayCtx.close();
+
+  /* חודש שאינו החודש הנוכחי: אין „היום" בלוח, ולכן אין מיקוד ואין
+   * כפתור. בלי זה, „נפתח על היום" היה הופך לקפיצה שרירותית. */
+  const otherMonthCtx = await browser.newContext({ viewport:{ width:390, height:780 }, locale:'he-IL' });
+  const otherAnchor = shiftDay(monthRange(today).to, 40);
+  const otherRange = {
+    mode:'new', active:true, source:'v2', publication_id:'p_other', revision:4,
+    from:monthRange(otherAnchor).from, to:monthRange(otherAnchor).to,
+    days:rangeDays(otherAnchor, (date) => day(date, '', false))
+  };
+  await prepare(otherMonthCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }],
+    getMyScheduleV2:[{ data:mine }],
+    getStationScheduleRange:[{ data:otherRange }]
+  });
+  const otherPage = await otherMonthCtx.newPage();
+  await otherPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await otherPage.waitForSelector('#stationBoard .hcell');
+  await test('a month without today neither focuses nor offers the button', async () => {
+    assert.equal(await otherPage.locator('#stationBoard .hcell.today').count(), 0);
+    assert.equal(await otherPage.locator('#stationWeekToday').isVisible(), false,
+      'no current day in this month — the button stays out of the way');
+  });
+  await otherMonthCtx.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 83);
+assert.equal(passed, 87);
 console.log('\n' + passed + ' schedule management browser checks passed.');

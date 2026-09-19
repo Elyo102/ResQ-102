@@ -70,13 +70,27 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       || (claims.super !== true && claims.role !== p.role)) throw error('permission-denied', 'The recipient is not a current local member.');
     return uid;
   }
-  function metadata(snap, ctx) {
+  /* ⭐ סמכות על נהלי תחנה.
+   *
+   * מכוונת: היא **אינה** `manager`. פרסום ותיקון של מסמכים נשארים
+   * למשאבי אנוש ולמנהל-על בדיוק כמו היום; מה שנוסף כאן הוא סמכות
+   * להסיר נוהל תחנה מהתצוגה, ולה בלבד מצטרף מפקד המשמרת. הרחבה של
+   * `manager` הייתה נותנת למפקד גם פרסום ותיקון — וזה לא מה שהוכרע. */
+  const procedureAuthority = ctx => ctx.super || ctx.role === 'hr_coordinator' || ctx.role === 'commander';
+  const archivedAt = d => (d && d.archived_at_ms !== undefined && d.archived_at_ms !== null ? d.archived_at_ms : null);
+  function metadata(snap, ctx, options) {
     if (!snap.exists) throw error('not-found', 'Publication not found.');
     const d = snap.data();
     if (!plain(d) || d.schema !== 'hr-document-v1' || d.station_id !== ctx.sid || d.document_id !== snap.id
       || !KINDS.includes(d.kind) || !validRevision(d.current_revision) || typeof d.title !== 'string'
       || (d.kind === 'document' ? !access.validUid(d.target_uid) : own(d, 'target_uid'))) throw error('failed-precondition', 'Publication data is invalid.');
+    const archived = archivedAt(d);
+    if (archived !== null && (!Number.isSafeInteger(archived) || archived < 0 || !access.validUid(d.archived_by_uid))) throw error('failed-precondition', 'Publication data is invalid.');
     if (!manager(ctx) && d.kind === 'document' && d.target_uid !== ctx.uid) throw error('permission-denied', 'This document is private.');
+    /* ⭐ נוהל שהוסר יוצא מכל מסלול בקורא אחד: קריאה, רשימה, תיקון,
+     * אישור קריאה ותזכורת. זה עדיף על שער נפרד בכל מסלול, שבו די
+     * במסלול אחד שנשכח כדי שהנוהל יחזור לצוץ. */
+    if (archived !== null && !(options && options.allowArchived === true)) throw error('not-found', 'Publication not found.');
     return d;
   }
   function version(snap, d, number) {
@@ -352,7 +366,12 @@ function createHrDocuments({ db, auth, HttpsError, clock = Date.now, hooks = {} 
       q = q.orderBy('__name__').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
-      return { items: docs.map(s => summary(metadata(s, r.ctx))), next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null };
+      /* נוהל שהוסר **מסונן** ואינו מפיל את הרשימה. `allowArchived`
+       * כאן הוא מכוון: הקורא צריך להחזיר את הרשומה כדי שנוכל לדלג
+       * עליה, ולא לזרוק not-found שישבור עמוד שלם בגלל שורה אחת. */
+      const visible = docs.map(s => metadata(s, r.ctx, { allowArchived: true }))
+        .filter(d => archivedAt(d) === null);
+      return { items: visible.map(summary), next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null };
     });
     await finalRead(r); return result;
   }
