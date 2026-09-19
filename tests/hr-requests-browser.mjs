@@ -46,7 +46,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
       if (name === 'listMyHrRequests' || name === 'listHrRequestsInbox') {
         const cases = name === 'listMyHrRequests' ? t.cases.filter(c => c.owner_uid === t.auth.currentUser.uid) : t.cases;
         result = { items: cases.map(({ events, ...c }) => c), next_cursor: null };
-      } else if (name === 'removeMyHrAttachment') {
+      } else if (name === 'removeMyRequestFile') {
         const c = t.cases.find(c => c.case_id === data.case_id);
         const a = t.attachments[data.attachment_id];
         if (!c || !a) throw Object.assign(new Error('Missing'), { code: 'functions/not-found' });
@@ -373,7 +373,7 @@ try {
     const mine = await uploadOne(f.page);
     await f.page.locator('[data-drop="' + mine + '"]').click();
     await f.page.waitForFunction((id) => !document.querySelector('[data-pull="' + id + '"]'), mine);
-    const sent = await f.page.evaluate(() => window.__requests.calls.filter(c => c.name === 'removeMyHrAttachment'));
+    const sent = await f.page.evaluate(() => window.__requests.calls.filter(c => c.name === 'removeMyRequestFile'));
     assert.equal(sent.length, 1, 'exactly one removal call');
     assert.equal(sent[0].data.attachment_id, mine);
     assert.equal(typeof sent[0].data.case_id, 'string');

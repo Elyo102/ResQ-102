@@ -19,7 +19,7 @@ const names = { create: 'createHrRequest', list: 'listMyHrRequests', listInbox: 
   /* הסרת קובץ היא פעולה על **הפנייה**, ולכן היא עוברת כאן ולא דרך
    * `attachmentCall`: זה מאמת `epoch` בתשובה, ותשובת מודול הפניות
    * אינה נושאת `epoch`. ניתוב דרכו היה מפיל כל הסרה תקינה. */
-  removeAttachment: 'removeMyHrAttachment' };
+  removeAttachment: 'removeMyRequestFile' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;
