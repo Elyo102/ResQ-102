@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+  <title>ResQ · מדדים תפעוליים</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <script>
+  /* המצב הנבחר מוחל לפני הציור הראשון, כמו בשאר המסכים. */
+  (function(){try{var t=localStorage.getItem('resq_theme');
+  if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}})();
+  </script>
+  <link rel="stylesheet" href="./theme.css?v=42h20">
+  <link rel="manifest" href="./manifest.json">
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+    @media(max-width:620px){body{padding:12px}}
+    .metrics-shell{max-width:860px;margin:0 auto}
+    .metrics-hidden{display:none !important}
+    .metrics-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:14px}
+    .metrics-title{font-size:21px;margin:0 0 4px}
+    .metrics-sub{color:var(--muted);font-size:13px;margin:0;line-height:1.6}
+    .metrics-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .metrics-toolbar select,.metrics-toolbar button{min-height:44px;min-width:44px;font-size:14px;font-family:inherit;border-radius:var(--radius-sm,8px);padding:8px 14px}
+    .metrics-toolbar select{background:var(--input);color:var(--txt);border:1px solid var(--line)}
+    .metrics-toolbar button{background:var(--accent);color:var(--on-accent,#fff);border:0;cursor:pointer}
+    .metrics-toolbar button:disabled,.metrics-toolbar select:disabled{opacity:.5;cursor:not-allowed}
+    .metrics-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg,14px);padding:16px;margin-bottom:14px}
+    .metrics-section-title{font-size:16px;margin:0 0 10px}
+    .metrics-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .metrics-fact{background:var(--panel);border:1px solid var(--line-soft,var(--line));border-radius:var(--radius-sm,8px);padding:10px;min-width:0}
+    .metrics-fact span{display:block;font-size:12px;color:var(--muted)}
+    .metrics-fact strong{display:block;font-size:14px;margin-top:4px;overflow-wrap:anywhere}
+    .metrics-flags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+    .metrics-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+    .metrics-row{background:var(--panel);border:1px solid var(--line-soft,var(--line));border-radius:var(--radius-sm,8px);padding:12px;min-width:0}
+    .metrics-row[data-available="false"] .metrics-value{color:var(--muted);font-weight:500}
+    .metrics-row-head{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;align-items:center}
+    .metrics-label{font-size:13px;color:var(--muted)}
+    .metrics-value{display:block;font-size:22px;margin:6px 0 2px;overflow-wrap:anywhere}
+    .metrics-meta{font-size:12px;color:var(--muted);min-height:1em;overflow-wrap:anywhere}
+    .metrics-badges{display:inline-flex;flex-wrap:wrap;gap:4px}
+    .metrics-badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--chip);color:var(--txt)}
+    .metrics-badge.partial,.metrics-badge.stale,.metrics-badge.unkeyed{background:var(--warn-bg);color:var(--warn);border-color:var(--warn)}
+    .metrics-badge.unavailable{background:var(--chip);color:var(--muted)}
+    .metrics-badge.reason{background:transparent;color:var(--muted)}
+    .metrics-note{margin-top:12px;padding:10px;border-radius:var(--radius-sm,8px);font-size:13px;line-height:1.6;background:var(--panel);color:var(--muted)}
+    .metrics-note.safe{background:var(--ok-bg);color:var(--ok-fg)}
+    .metrics-note.warn{background:var(--warn-bg);color:var(--warn)}
+    .metrics-deny{text-align:center;padding:28px 16px}
+    .metrics-deny h1{font-size:18px;margin:0 0 8px}
+  </style>
+</head>
+<body>
+<main id="main" class="metrics-shell metrics-hidden">
+  <div class="metrics-head">
+    <div><h1 class="metrics-title">מדדים תפעוליים</h1><p class="metrics-sub">מונים יומיים בלבד: כניסות, קליטה, מוכנות מכשיר, פוש, סידור, קריאות ושגיאות. אין כאן זהות, טקסט חופשי או נתוני עובדים. מדד ללא מקור מוצג "לא זמין" — לעולם לא 0.</p></div>
+    <div class="metrics-toolbar">
+      <label class="metrics-sub" for="range">טווח</label>
+      <select id="range" aria-label="טווח ימים"><option value="1">יום אחרון</option><option value="7" selected>7 ימים</option><option value="14">14 ימים</option><option value="30">30 ימים</option></select>
+      <button id="btnRefresh" type="button">רענון</button>
+    </div>
+  </div>
+  <section class="metrics-card" aria-labelledby="scopeTitle">
+    <h2 id="scopeTitle" class="metrics-section-title">היקף ואמינות</h2>
+    <div class="metrics-facts">
+      <div class="metrics-fact"><span>טווח</span><strong id="rangeLabel">—</strong></div>
+      <div class="metrics-fact"><span>נתון אחרון מיום</span><strong id="asOf">—</strong></div>
+      <div class="metrics-fact"><span>מצב גיבוב תחנה/ארגון</span><strong id="hashMode">—</strong></div>
+    </div>
+    <div id="flags" class="metrics-flags"></div>
+    <div id="message" class="metrics-note">טוען את המדדים…</div>
+  </section>
+  <section class="metrics-card" aria-labelledby="derivedTitle">
+    <h2 id="derivedTitle" class="metrics-section-title">מדדים נגזרים</h2>
+    <div id="derived" class="metrics-list"></div>
+  </section>
+  <section class="metrics-card" aria-labelledby="eventsTitle">
+    <h2 id="eventsTitle" class="metrics-section-title">ספירת מאורעות לפי קוד</h2>
+    <div id="events" class="metrics-list"></div>
+  </section>
+  <section class="metrics-note">שמירה 90 יום. תחנה וארגון נשמרים כגיבוב בלבד; בלי מפתח גיבוב הערך הוא פסאודונים שניתן להפוך במנייה, ולכן המסך אינו מכריז על אנונימיות.</section>
+</main>
+<section id="deny" class="metrics-card metrics-deny metrics-hidden"><h1>אין הרשאה למסך</h1><p class="metrics-sub">לוח המדדים זמין למנהל־העל בלבד.</p></section>
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { createMetricsUi } from './metrics-ui.js?v=42h20';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+
+const app=initializeApp(firebaseConfig); await initAppCheck(app);
+const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
+let identity=null, epoch=0;
+renderStuckNav(''); initPWA({offer:false});
+const elements={refresh:$('btnRefresh'),range:$('range'),rangeLabel:$('rangeLabel'),asOf:$('asOf'),hashMode:$('hashMode'),flags:$('flags'),message:$('message'),derived:$('derived'),events:$('events')};
+const ui=createMetricsUi({
+  elements,
+  currentIdentity:()=>identity,
+  onIdentityLost:()=>location.replace('./login.html'),
+  call:async(name,data)=>(await httpsCallable(fns,name)(data||{})).data
+});
+elements.refresh.addEventListener('click',ui.refresh);
+elements.range.addEventListener('change',()=>{ui.setDays(elements.range.value);ui.refresh();});
+onIdTokenChanged(auth,async user=>{
+  const mine=++epoch;
+  identity=null;
+  ui.invalidate();
+  $('main').classList.add('metrics-hidden');
+  $('deny').classList.add('metrics-hidden');
+  if(!user){location.replace('./login.html');return;}
+  const token=await user.getIdTokenResult();
+  if(mine!==epoch||auth.currentUser!==user)return;
+  const claims=token.claims||{};
+  identity={uid:user.uid,epoch:mine,super:claims.super===true};
+  renderNav(claims,'metrics.html',user.email||'');
+  if(claims.super!==true){$('deny').classList.remove('metrics-hidden');return;}
+  $('main').classList.remove('metrics-hidden'); ui.refresh();
+});
+</script>
+</body>
+</html>

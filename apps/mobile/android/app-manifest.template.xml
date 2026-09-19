@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  תבנית — לא נוצר פרויקט; `npx cap add` לא הורץ; build NOT RUN.
+  AndroidManifest מינימלי למעטפת ResQ. הקובץ הזה אינו נקרא על ידי Gradle:
+  לאחר `npx cap add android` (מחוץ לריפו הזה, באישור) יש להעתיק את
+  ההרשאות ואת intent-filter לתוך android/app/src/main/AndroidManifest.xml.
+
+  הרשאות: INTERNET ו-POST_NOTIFICATIONS בלבד. אין מיקום, מצלמה, אנשי קשר,
+  מיקרופון או אחסון — ה-PWA אינה משתמשת בהם, ולכן גם המעטפת לא.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="il.resq.station102">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- App Links: שלושת המסלולים שב-deep-links.json בלבד. autoVerify דורש
+                 assetlinks.json חתום בטביעת אצבע אמיתית על המארח המאושר. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="station-102.web.app" android:path="/login.html" />
+                <data android:scheme="https" android:host="station-102.web.app" android:path="/device-readiness.html" />
+                <data android:scheme="https" android:host="station-102.web.app" android:path="/alerts.html" />
+            </intent-filter>
+
+            <!-- סכמה מותאמת: resq://join, resq://readiness, resq://alerts (ראה navigation-policy.js). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="resq" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

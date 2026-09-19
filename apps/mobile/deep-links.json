@@ -1,0 +1,36 @@
+{
+  "_הערה": "מקור יחיד לשלושת מסלולי הקישור העמוק של מעטפת החנות. התבניות (AndroidManifest, AASA, entitlements) ובדיקת navigation-policy קוראות מכאן. כל נתיב שאינו ברשימה נופל ל-start_url של ה-PWA.",
+  "approved_origin": "https://station-102.web.app",
+  "approved_host": "station-102.web.app",
+  "custom_scheme": "resq",
+  "start_url": "./login.html",
+  "routes": [
+    {
+      "id": "join",
+      "path": "/login.html",
+      "query_param": "join",
+      "value_pattern": "^[A-Za-z0-9_-]{16}\\.[A-Za-z0-9_-]{43}$",
+      "target": "./login.html?join=<token>",
+      "custom_scheme_host": "join",
+      "source": "join-ui.js — login.html?join=<token>; תבנית הטוקן זהה לזו שב-join-ui.js"
+    },
+    {
+      "id": "readiness",
+      "path": "/device-readiness.html",
+      "query_param": "readiness_nonce",
+      "value_pattern": "^[a-f0-9]{32}$",
+      "target": "./device-readiness.html?readiness_nonce=<nonce>",
+      "custom_scheme_host": "readiness",
+      "source": "functions/device-readiness-service.js + device-readiness.html"
+    },
+    {
+      "id": "alerts",
+      "path": "/alerts.html",
+      "query_param": null,
+      "value_pattern": null,
+      "target": "./alerts.html",
+      "custom_scheme_host": "alerts",
+      "source": "alerts.html (manifest shortcut-free, נפתח מהתראות)"
+    }
+  ]
+}

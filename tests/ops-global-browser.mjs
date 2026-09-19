@@ -327,9 +327,9 @@ try {
     } finally { await f.context.close(); }
   });
 
-  await test('all 27 Firebase screens bootstrap monitoring and all 19 factories use the facade', async () => {
+  await test('all 29 Firebase screens bootstrap monitoring and all 21 factories use the facade', async () => {
     const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html'].includes(n));
-    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html'];
+    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html','saas-admin.html','metrics.html'];
     assert.deepEqual(screens.sort(), expectedScreens.sort());
     const externalBootstrap = {
       'schedule-management.html': 'schedule-management.js',
@@ -346,8 +346,8 @@ try {
       }
       assert.equal((source.match(/await initAppCheck\(app\);/g) || []).length, 1, screen);
     }
-    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','callout.html','check.html','feedback.html','guards.html','import.html','login.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js','device-readiness.html'];
-    assert.equal(consumers.length, 19);
+    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','callout.html','check.html','feedback.html','guards.html','import.html','login.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js','device-readiness.html','saas-admin.html','metrics.html'];
+    assert.equal(consumers.length, 21);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
       assert.ok(source.includes("from './monitored-functions.js?v=42h20'"), file);

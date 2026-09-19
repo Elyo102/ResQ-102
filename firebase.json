@@ -8,7 +8,6 @@
       "source": "functions",
       "codebase": "default",
       "_הערה_predeploy": "השער המלא, לא רק static. הבדיקות אינן קוראות ל-firebase deploy ולכן אין רקורסיה. זה מאט את פריסת הפונקציות בכמה דקות — וזה בדיוק המחיר שאנחנו רוצים לשלם: פריסה שעוקפת את שער הדפדפן היא פריסה שלא נבדקה. בדיקות האמולטור נשארות שער נפרד ומפורש (test-rules.bat), כי הן דורשות Java ואינן חלק מ-npm.",
-
       "predeploy": [
         "npm --prefix tests run all"
       ],
@@ -33,18 +32,13 @@
   ],
   "hosting": {
     "public": ".",
-
     "predeploy": [
       "npm --prefix tests run pages:source",
       "node tests/hosting-privacy.mjs"
     ],
-
     "_הערה_ignore": "שלוש השורות .git/** .github/** .firebase/** אינן מיותרות. '**/.*' לבדו אינו גוזם תיקיות מוסתרות — הוא תפס את התיקייה .git עצמה אבל לא את 362 הקבצים שבתוכה, והפריסה הראשונה ב-25.8.2026 העלתה את כל היסטוריית הריפו לכתובת ציבורית. תיקיית .git על שרת אינטרנט היא יעד סריקה מוכר: מבקשים /.git/HEAD ומשם משחזרים את כל הריפו.",
-
     "_הערה_rules": "ארבע שורות לקובצי כללים, ובכוונה. '**/*.rules' ו-'*.rules' מגנים על כל קובץ כללים עתידי — הרשימה הקודמת נקבה בשני שמות, וקובץ שלישי שמישהו יוסיף היה עולה לאוויר. שני השמות המפורשים נשארים כי לא אימתתי איזו מהצורות תופסת קובץ בשורש: הרשימה הקיימת כבר נוקבת גם ב-'**/*.log' וגם ב-'firestore-debug.log', וזו עדות שמישהו כבר נתקל בשאלה הזאת. שכבה מיותרת כאן עולה שורה; שכבה חסרה מעלה את חוקי האבטחה לכתובת ציבורית.",
-
     "_הערה_secrets": "Hosting מפרסם מה-filesystem ואינו קורא את .gitignore. לכן קובצי סוד וחבילות מסירה נחסמים כאן במפורש גם כשהם untracked או ignored ב-Git.",
-
     "ignore": [
       "firebase.json",
       ".git/**",
@@ -53,6 +47,7 @@
       "**/.*",
       "**/node_modules/**",
       "functions/**",
+      "apps/**",
       "tests/**",
       "rules-test/**",
       "outputs/**",
@@ -113,31 +108,37 @@
       "*.mjs",
       "*.md"
     ],
-
     "_הערה_headers": "הסדר כאן אינו סגנון. Firebase Hosting מחיל את הכלל התואם האחרון, ולכן כלל ספציפי שיושב לפני כלל כללי יותר מפסיד לו. '**/*.@(html|js|css)' תופס גם את firebase-messaging-sw.js, ולכן העובד חייב לשבת אחריו — אחרת Production מחזיר no-cache במקום no-store, וזה בדיוק מה שנמדד. tests/headercheck.mjs מחשב את הכלל האחרון התואם בפועל ונופל אם מישהו יחזיר את הסדר.",
-
     "headers": [
       {
         "source": "**/*.@(html|js|css)",
         "headers": [
-          { "key": "Cache-Control", "value": "no-cache" }
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
         ]
       },
       {
         "source": "/version.json",
         "headers": [
-          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
         ]
       },
       {
         "source": "/firebase-messaging-sw.js",
         "headers": [
-          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
         ]
       }
     ]
   },
-
   "emulators": {
     "firestore": {
       "port": 8080

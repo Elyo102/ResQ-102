@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ResQ — ארגונים ומנויים</title>
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="./resq-180.png">
+<meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+<script>
+/* המצב הנבחר מוחל לפני הציור הראשון, כמו בשאר המסכים. */
+(function(){try{var t=localStorage.getItem('resq_theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+}catch(e){}})();
+</script>
+<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ResQ">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+  @media(max-width:620px){body{padding:12px}}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  h2{font-size:17px;margin:0 0 10px}
+  h3{font-size:15px;margin:16px 0 6px}
+  .sub,.note{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input,select{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  button{min-height:44px;background:var(--accent);color:var(--accent-on);border:0;border-radius:6px;padding:10px 16px;font-size:14px;cursor:pointer;margin-top:10px;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  .hide{display:none}
+  .msg{margin:0 0 12px;padding:11px;border-radius:6px;font-size:13px;display:none;line-height:1.5}
+  .msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}
+  .msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}
+  .saas-facts{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:6px 12px;margin:0 0 12px;font-size:14px}
+  .saas-facts dt{color:var(--muted)}
+  .saas-facts dd{margin:0;overflow-wrap:anywhere}
+  .saas-table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px}
+  .saas-table th,.saas-table td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;overflow-wrap:anywhere}
+  .saas-table tr.over td{background:var(--err-bg);color:var(--err-fg)}
+  .saas-sim{border:1px dashed var(--line);border-radius:8px;padding:12px;background:var(--panel);margin-top:14px}
+  .saas-sim h3{margin-top:0;color:var(--warn)}
+  .saas-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+  .saas-actions button{flex:1 1 120px;margin-top:0}
+  .saas-actions input,.saas-actions select{flex:2 1 160px}
+  .saas-audit{list-style:none;padding:0;margin:0;font-size:13px}
+  .saas-audit li{padding:8px 0;border-bottom:1px solid var(--line);line-height:1.6;overflow-wrap:anywhere}
+  .saas-audit li.empty{color:var(--muted)}
+  #deny{text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section id="loading" class="card"><p class="note">טוען…</p></section>
+  <section id="deny" class="card hide"><h1>אין הרשאה למסך</h1><p class="sub">ניהול ארגונים ומנויים זמין למנהל-העל בלבד.</p><p class="note" id="denyWho"></p></section>
+  <section id="disabled" class="card hide"><h1>השכבה כבויה בשרת</h1><p class="sub">ניהול ארגונים ומנויים אינו פעיל בסביבה הזו.</p><p class="note">השכבה נפתחת רק עם ספק חיוב מתמשך ובהחלטה מפורשת. אין כאן חיוב, אין מנוי פעיל ואין פעולה שניתן לבצע. הסירוב הוא בשרת — לא הסתרה של כפתור.</p></section>
+  <main id="saasRoot" class="hide"></main>
+</div>
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import { renderNav, renderStuckNav } from './nav.js?v=42h20';
+import { initPWA } from './pwa.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h20';
+import { createSaasAdmin } from './saas-admin-ui.js?v=42h20';
+
+const app = initializeApp(firebaseConfig);
+await initAppCheck(app);
+const auth = getAuth(app);
+// הפונקציות יושבות ב-europe-west1 כמו בשאר המסכים.
+const fns = getFunctions(app, 'europe-west1');
+const $ = (id) => document.getElementById(id);
+const call = (name) => async (data) => (await httpsCallable(fns, name)(data || {})).data;
+renderStuckNav(''); initPWA({ offer: false });
+let epoch = 0, admin = null;
+
+onIdTokenChanged(auth, async (user) => {
+  const mine = ++epoch;
+  $('loading').classList.add('hide'); $('deny').classList.add('hide'); $('disabled').classList.add('hide'); $('saasRoot').classList.add('hide');
+  if (!user) { location.replace('./login.html'); return; }
+  const token = await user.getIdTokenResult();
+  if (mine !== epoch || auth.currentUser !== user) return;
+  const claims = token.claims || {};
+  renderNav(claims, 'saas-admin.html', user.email || '');
+  if (claims.super !== true) {
+    // לא מנתקים: ניתוק כאן היה מפיל גם לשוניות אחרות של המערכת.
+    $('denyWho').textContent = 'מחובר כ־' + (user.email || '') + ' · אין הרשאת מנהל-על';
+    $('deny').classList.remove('hide');
+    return;
+  }
+  if (!admin) {
+    admin = createSaasAdmin($('saasRoot'), { calls: {
+      list: call('listOrganizations'), overview: call('getOrganizationOverview'), create: call('createOrganization'),
+      attach: call('attachStationToOrganization'), changePlan: call('changeSubscriptionPlan'),
+      setStatus: call('setSubscriptionStatus'), webhook: call('simulateBillingWebhook')
+    } });
+  }
+  /* השרת הוא המקור היחיד למצב השכבה: קריאה ראשונה, ואם היא מוחזרת
+     saas-disabled — מציגים הסבר במקום ממשק. אין דגל לקוח ואין ניחוש. */
+  try {
+    await admin.refresh();
+  } catch (error) {
+    const reason = error && error.details && error.details.reason;
+    if (reason === 'saas-disabled') { $('disabled').classList.remove('hide'); return; }
+    throw error;
+  }
+  $('saasRoot').classList.remove('hide');
+});
+</script>
+</body>
+</html>

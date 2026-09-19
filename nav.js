@@ -35,7 +35,9 @@ const ITEMS = [
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
   { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a', group: 'admin' },
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' },
-  { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' }
+  { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' },
+  { href: 'saas-admin.html', label: 'ארגונים ומנויים', who: 'super', dot: '#5c6bc0', group: 'admin' },
+  { href: 'metrics.html', label: 'מדדים תפעוליים', who: 'super', dot: '#7e57c2', group: 'admin' }
 ];
 
 // שלוש קבוצות תצוגה בלבד. ההרשאה נשארת בשדה who של כל פריט.

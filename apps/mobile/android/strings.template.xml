@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- תבנית — לא נוצר פרויקט; `npx cap add` לא הורץ; build NOT RUN. -->
+<resources>
+    <string name="app_name">ResQ</string>
+    <string name="title_activity_main">ResQ</string>
+    <string name="package_name">il.resq.station102</string>
+    <string name="custom_url_scheme">resq</string>
+</resources>

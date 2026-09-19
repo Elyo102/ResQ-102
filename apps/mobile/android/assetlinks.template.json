@@ -1,0 +1,11 @@
+[
+  {
+    "_הערה": "תבנית — לא נוצר פרויקט; build NOT RUN. טביעת האצבע כאן אינה תקינה בכוונה (אינה hex) כדי שלא תוכל להתפרסם בטעות. הקובץ האמיתי מוגש מ-https://station-102.web.app/.well-known/assetlinks.json ונוצר רק אחרי שיש מפתח חתימה בחזקת בעל החשבון — מחוץ לריפו.",
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "il.resq.station102",
+      "sha256_cert_fingerprints": ["REPLACE_ME:NOT_A_REAL_FINGERPRINT"]
+    }
+  }
+]

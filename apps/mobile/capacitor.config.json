@@ -1,0 +1,24 @@
+{
+  "_הערה_appId": "PLACEHOLDER — il.resq.station102 טרם נרשם בחנויות. שינוי appId אחרי פרסום ראשון אינו אפשרי; יש לאשר את המזהה מול בעל החשבון לפני `npx cap add`.",
+  "_הערה_server": "ה-PWA היא המוצר. המעטפת טוענת את מקור ה-Hosting המאושר בלבד ב-WebView; אין webDir מקומי ואין עותק שני של הקוד. allowNavigation מכיל את המארח הזה בלבד — כל מקור אחר נפתח בדפדפן המערכת לפי src/navigation-policy.js.",
+  "appId": "il.resq.station102",
+  "appName": "ResQ",
+  "webDir": "www-not-used",
+  "server": {
+    "url": "https://station-102.web.app",
+    "allowNavigation": ["station-102.web.app"],
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "limitsNavigationsToAppBoundDomains": true
+  },
+  "plugins": {
+    "_הערה_PushNotifications": "לא מוגדר בכוונה. גשר פוש נייטיב (createNativePushBridge) זורק not-implemented-requires-store-account עד שיש חשבון חנות, מפתחות APNs ו-google-services.json שאינם בריפו. עד אז ההתראות נשארות ב-firebase-messaging-sw.js של ה-PWA."
+  }
+}

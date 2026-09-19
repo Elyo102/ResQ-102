@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  תבנית — לא נוצר פרויקט; build NOT RUN.
+  aps-environment = development הוא placeholder; production נקבע רק בפרופיל
+  ההפצה של חשבון החנות, לא בריפו.
+-->
+<plist version="1.0">
+<dict>
+  <key>aps-environment</key>
+  <string>development</string>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:station-102.web.app</string>
+  </array>
+</dict>
+</plist>

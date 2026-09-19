@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  תבנית — לא נוצר פרויקט; `npx cap add` לא הורץ; build NOT RUN.
+  Info.plist מינימלי למעטפת ResQ. אין מפתחות NSLocation*, NSCamera*,
+  NSContacts*, NSMicrophone*, NSPhotoLibrary* — ה-PWA אינה משתמשת בהם.
+  NSAppTransportSecurity ללא חריגים: HTTPS בלבד.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>he</string>
+  <key>CFBundleDisplayName</key>
+  <string>ResQ</string>
+  <key>CFBundleExecutable</key>
+  <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>ResQ</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>REPLACE_ME_FROM_release-manifest.json</string>
+  <key>CFBundleVersion</key>
+  <string>REPLACE_ME_BUILD_NUMBER</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>il.resq.station102</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>resq</string>
+      </array>
+    </dict>
+  </array>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <false/>
+  </dict>
+  <key>UILaunchStoryboardName</key>
+  <string>LaunchScreen</string>
+  <key>UIRequiresFullScreen</key>
+  <true/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <key>UIViewControllerBasedStatusBarAppearance</key>
+  <true/>
+  <key>WKAppBoundDomains</key>
+  <array>
+    <string>station-102.web.app</string>
+  </array>
+</dict>
+</plist>

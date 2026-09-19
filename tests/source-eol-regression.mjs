@@ -32,7 +32,7 @@
  * ==================================================================== */
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
@@ -55,10 +55,25 @@ const PROBES = [
   'schedule-notice-text-probe.mjs',
   'schedule-hidden-authority-probe.mjs',
   'schedule-runtime-source.mjs',
-  'schedule-update-guard-wiring.mjs'
+  'schedule-update-guard-wiring.mjs',
+  // חבילת ההקשחה: אותה תקלה בדיוק — בדיקות שקוראות קבצים כטקסט.
+  // בדיקות דפדפן אינן כאן: העותק אינו מכיל node_modules, ולכן הן היו
+  // נכשלות על playwright חסר ולא על סוף-שורה. הניידות שלהן נאכפת
+  // סטטית ב-security-boundaries.mjs §11 (כולן עוברות דרך eol-guard).
+  'saas-source.mjs',
+  'metrics-source.mjs',
+  'mobile-shell.mjs',
+  'security-boundaries.mjs',
+  'ops-disaster-restore.test.mjs',
+  // security-mutations קוראת קבצים ומחפשת בהם עוגנים רב-שורתיים —
+  // בדיוק סוג הבדיקה שנשבר על CRLF. היא אטית (כל מוטציה מעתיקה עץ
+  // ומריצה תת-תהליך), ולכן אחרונה; שלוש הבדיקות שהיא מריצה הן node
+  // טהור ואינן דורשות node_modules.
+  'security-mutations.mjs'
 ];
 
-/* המקורות שה-probes קוראים. אלה הקבצים שיומרו ל-CRLF. */
+/* המקורות שה-probes קוראים. ההמרה עצמה היא על כל העץ; הרשימה הזו
+ * היא שער כיסוי: כל קובץ בה חייב להימצא בעותק ולהכיל CRLF בפועל. */
 const SOURCES = [
   'functions/schedule-runtime.js',
   'functions/schedule-policy-author.js',
@@ -69,7 +84,41 @@ const SOURCES = [
   'schedule-management.js',
   'schedule-update-guard.js',
   'schedule-management.html',
-  'firestore.rules'
+  'firestore.rules',
+  // הקבצים שהבדיקות החדשות קוראות כטקסט — כולל הבדיקות עצמן, כי
+  // חלקן קוראות את המקור של עצמן.
+  'functions/saas-contract.js',
+  'functions/saas-service.js',
+  'functions/saas-billing-provider.js',
+  'functions/metrics-catalog.js',
+  'functions/metrics-service.js',
+  'functions/metrics-sink.js',
+  'functions/device-readiness-service.js',
+  'functions/join-campaign-service.js',
+  'ops-disaster-restore.mjs',
+  'ops-disaster-restore.ps1',
+  'saas-admin.html',
+  'saas-admin-ui.js',
+  'metrics.html',
+  'metrics-ui.js',
+  'metrics-client.js',
+  'apps/mobile/src/navigation-policy.js',
+  'apps/mobile/src/push-bridge.js',
+  'apps/mobile/README.md',
+  'DISASTER-RECOVERY-RUNBOOK.md',
+  'DR-WIRING.md',
+  'SAAS-WIRING.md',
+  'METRICS-WIRING.md',
+  'MOBILE-WIRING.md',
+  'STORE-RELEASE-CHECKLIST.md',
+  'PRIVACY-DATA-MAP.md',
+  'tests/saas-source.mjs',
+  'tests/metrics-source.mjs',
+  'tests/mobile-shell.mjs',
+  'tests/security-boundaries.mjs',
+  'tests/security-mutations.mjs',
+  'tests/ops-disaster-restore.test.mjs',
+  'tests/eol-guard.mjs'
 ];
 
 /* מריץ probe ומחזיר { code, out }. אינו זורק על כשל — הכשל הוא הנתון. */
@@ -90,6 +139,9 @@ function runProbe(cwd, name) {
 function assertionCount(text) {
   const m = text.match(/(\d+)\s*\/\s*\d+\s*עברו/)
     || text.match(/(\d+)\s*\/\s*\d+\s*PASS/)
+    || text.match(/(\d+)\s+passed,\s*\d+\s+failed/)
+    || text.match(/:\s*(\d+)\s+PASS\b/)
+    || text.match(/\b(\d+)\s+PASS,\s*\d+\s+FAIL/)
     || text.match(/(\d+)\s+עברו/)
     || text.match(/^(\d+)\s+\w[\w\s-]*checks passed/m)
     || text.match(/(\d+)\s+schedule[\w\s-]*checks passed/);
@@ -124,15 +176,45 @@ try {
     filter: (src) => !/[\\/](\.git|node_modules|\.visual)$/.test(src)
   });
 
+  /* ⭐ ההמרה היא על **כל העץ**, לא על רשימה ידנית. checkout של Windows
+   * ממיר כל קובץ טקסט, ורשימה שנשכח לעדכן בה קובץ מייצרת בדיוק את
+   * הפער שהתגלה: קובץ שלא הומר → בדיקה שלא נבדקה. קבצים בינאריים
+   * מזוהים לפי בית אפס ומדולגים, כפי ש-Git מדלג עליהם. */
   let carriageReturns = 0;
-  for (const rel of SOURCES) {
-    const path = join(copy, rel);
-    if (!existsSync(path)) continue;
-    const lf = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-    const crlf = lf.replace(/\n/g, '\r\n');
-    writeFileSync(path, crlf, 'utf8');
-    carriageReturns += (crlf.match(/\r/g) || []).length;
+  let converted = 0;
+  const convertTree = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (/^(\.git|node_modules|\.visual)$/.test(entry.name)) continue;
+        convertTree(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const buf = readFileSync(full);
+      if (buf.includes(0)) continue;                 // בינארי — Git לא נוגע
+      const lf = buf.toString('utf8').replace(/\r\n/g, '\n');
+      if (!lf.includes('\n')) continue;               // שורה אחת — אין מה להמיר
+      const crlf = lf.replace(/\n/g, '\r\n');
+      writeFileSync(full, crlf, 'utf8');
+      converted++;
+      carriageReturns += (crlf.match(/\r/g) || []).length;
+    }
+  };
+  convertTree(copy);
+
+  /* ⭐ והשער שמונע חזרה של התקלה: כל קובץ ברשימת המקורות הידועה
+   * חייב להימצא בעותק **ולהכיל CRLF בפועל**. רשימה שנשארה מאחור
+   * נופלת כאן, לא אצל Codex. */
+  {
+    const missed = SOURCES.filter((rel) => {
+      const path = join(copy, rel);
+      if (!existsSync(path)) return true;
+      return !readFileSync(path, 'utf8').includes('\r\n');
+    });
+    ok('2.0 כל קובץ מקור ידוע הומר ל-CRLF בפועל', missed.length === 0, missed.join(', '));
   }
+  ok('2.0ב הומרו קבצים רבים, לא בודדים', converted > 100, 'הומרו ' + converted);
 
   // ⭐ בלי זה, עותק שנשאר LF היה גורם לכל הבדיקה לעבור בלי לבדוק דבר.
   ok('2.1 העותק באמת מכיל CRLF', carriageReturns > 10000,

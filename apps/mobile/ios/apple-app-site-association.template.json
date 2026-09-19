@@ -1,0 +1,15 @@
+{
+  "_הערה": "תבנית — build NOT RUN. TEAMID הוא REPLACE_ME עד שיש חשבון Apple Developer בבעלות הארגון. הקובץ האמיתי מוגש מ-https://station-102.web.app/.well-known/apple-app-site-association בלי סיומת, עם Content-Type application/json. הנתיבים זהים ל-deep-links.json.",
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["REPLACE_ME.il.resq.station102"],
+        "components": [
+          { "/": "/login.html", "?": { "join": "*" }, "comment": "קליטה בקישור קבוצתי — הטוקן נבדק ב-navigation-policy.js" },
+          { "/": "/device-readiness.html", "?": { "readiness_nonce": "*" }, "comment": "אישור מוכנות מכשיר" },
+          { "/": "/alerts.html", "comment": "התראות" }
+        ]
+      }
+    ]
+  }
+}

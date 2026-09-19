@@ -514,6 +514,48 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------- שכבת SaaS מסחרית ----------
+    //
+    // ארגון, מנוי, שימוש וביקורת ארגונית מנוהלים רק דרך Callables מאומתים
+    // (App Check + מנהל-על חי בשרת). הדפדפן — גם של מנהל-על — אינו קורא
+    // ואינו כותב אותם ישירות. האינדקס תחנה→ארגון ורשומות ה-replay סגורים
+    // מאותה סיבה. הארגון אינו מקור הרשאה בשום מסלול.
+    match /organizations/{organizationId} {
+      allow read, write: if false;
+      match /subscriptions/{subscriptionId} {
+        allow read, write: if false;
+      }
+      match /usage/{period} {
+        allow read, write: if false;
+      }
+      match /audit/{eventId} {
+        allow read, write: if false;
+      }
+    }
+    match /organization_station_index/{stationId} {
+      allow read, write: if false;
+    }
+    match /saas_operations/{operationId} {
+      allow read, write: if false;
+    }
+
+    // ---------- מדדים תפעוליים ----------
+    //
+    // מונים מצטברים בלבד, בלי מזהה אישי ובלי טקסט חופשי. הדיווח והקריאה
+    // עוברים callables; הדפדפן אינו נוגע במסמכים האלה.
+    match /metrics_daily/{id} {
+      allow read, write: if false;
+      match /shards/{shard} {
+        allow read, write: if false;
+      }
+    }
+    match /metrics_quota/{id} {
+      allow read, write: if false;
+    }
+    match /metrics_operations/{id} {
+      allow read, write: if false;
+    }
+
 
     // ---------- חיפוש עובד ----------
     //

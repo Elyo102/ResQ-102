@@ -83,3 +83,16 @@ _דיונים/
 _מסירות/
 _מסירה-*/
 tests/screenshots-out/
+
+# מעטפת חנות (apps/mobile) — תצורה סודית ותוצרי בנייה.
+# התבניות עצמן נשמרות בגיט; חומר חתימה ותוצרי בנייה — לעולם לא.
+apps/mobile/**/google-services.json
+apps/mobile/**/GoogleService-Info.plist
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+*.cer
+apps/mobile/android/app/build/
+apps/mobile/ios/App/Pods/
+apps/mobile/**/node_modules/

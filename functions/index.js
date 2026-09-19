@@ -66,6 +66,11 @@ const personalLiveLabModule = require('./personal-live-lab');
 const joinCampaignContract = require('./join-campaign');
 const joinCampaignServiceModule = require('./join-campaign-service');
 const deviceReadinessModule = require('./device-readiness-service');
+const saasContract = require('./saas-contract');
+const saasServiceModule = require('./saas-service');
+const saasBillingModule = require('./saas-billing-provider');
+const metricsSinkModule = require('./metrics-sink');
+const metricsServiceModule = require('./metrics-service');
 const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
@@ -537,6 +542,58 @@ exports.verifyQualificationDeclaration = onCall({ enforceAppCheck: true, timeout
 exports.sendReadinessTestPush = onCall({ enforceAppCheck: true, timeoutSeconds: 30 }, req => deviceReadinessService.sendReadinessTestPush(req));
 exports.ackReadinessTestPush = onCall({ enforceAppCheck: true }, req => deviceReadinessService.ackReadinessTestPush(req));
 exports.getMyReadiness = onCall({ enforceAppCheck: true }, req => deviceReadinessService.getMyReadiness(req));
+
+// ---------- שכבת SaaS מסחרית ----------
+//
+// ארגונים, מנויים, מכסות ושימוש. מנהל-על בלבד, לפי claims חיים. הארגון
+// מפנה לתחנות לפי מזהה בלבד ואינו מקור הרשאה: ההרשאות נשארות claims
+// ומסמכי stations/{sid}/users. ספק החיוב כאן **מזויף** — אין חיוב אמיתי,
+// אין ספק אמיתי, אין סוד ספק בקוד. מצב suspended חוסם יצירת משאב מסחרי
+// חדש בלבד; הוא אינו מוחק דבר ואינו נקרא משום מסלול תפעולי.
+// שער fail-closed. הספק היחיד כאן מזויף ושומר מצב בזיכרון התהליך, ולכן
+// cold start מאבד לקוחות ומנויים. כבוי = סירוב בשרת בכל קריאה, כולל
+// addUsage הפנימי, וללא מסך ניהול. נפתח רק בהחלטה מפורשת ועם ספק מתמשך.
+const SAAS_ENABLED = process.env.RESQ_SAAS_ENABLED === 'true';
+const saasBilling = saasBillingModule.createFakeBillingProvider();
+const saasService = saasServiceModule.createSaasService({
+  enabled: SAAS_ENABLED,
+  db, contract: saasContract, billing: saasBilling,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+  requireAuth,
+  getAuthUser: uid => admin.auth().getUser(uid),
+  openAudit, sealAudit,
+  now: Date.now,
+  hash: value => crypto.createHash('sha256').update(String(value)).digest('hex'),
+  serverTimestamp: () => FV.serverTimestamp(),
+  randomId: () => crypto.randomBytes(12).toString('hex')
+});
+exports.createOrganization = onCall({ enforceAppCheck: true }, req => saasService.createOrganization(req));
+exports.attachStationToOrganization = onCall({ enforceAppCheck: true }, req => saasService.attachStationToOrganization(req));
+exports.changeSubscriptionPlan = onCall({ enforceAppCheck: true }, req => saasService.changeSubscriptionPlan(req));
+exports.setSubscriptionStatus = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => saasService.setSubscriptionStatus(req));
+exports.getOrganizationOverview = onCall({ enforceAppCheck: true }, req => saasService.getOrganizationOverview(req));
+exports.simulateBillingWebhook = onCall({ enforceAppCheck: true }, req => saasService.simulateBillingWebhook(req));
+exports.listOrganizations = onCall({ enforceAppCheck: true }, req => saasService.listOrganizations(req));
+
+// ---------- מדדים תפעוליים ----------
+//
+// מונים יומיים בלבד, קטלוג אירועים סגור, בלי טקסט חופשי ובלי מזהה אישי.
+// תחנה/ארגון/UID נשמרים כגיבוב; בלי RESQ_METRICS_HASH_KEY הגיבוב הוא
+// sha256 רגיל, והלוח מסמן במפורש "פסאודונים, הפיך במנייה".
+const metricsSink = metricsSinkModule.createFirestoreMetricsSink({
+  db, fieldIncrement: n => FV.increment(n), serverTimestamp: () => FV.serverTimestamp()
+});
+const metricsService = metricsServiceModule.createMetricsService({
+  db, sink: metricsSink,
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+  requireAuth,
+  getAuthUser: uid => admin.auth().getUser(uid),
+  now: Date.now,
+  serverTimestamp: () => FV.serverTimestamp(),
+  hashKey: process.env.RESQ_METRICS_HASH_KEY || ''
+});
+exports.recordMetrics = onCall({ enforceAppCheck: true }, req => metricsService.recordMetrics(req));
+exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsService.getMetricsDashboard(req));
 
 // The browser catalogue currently contains one regional station.  Future
 // stations can be activated without trusting a client value by creating a
