@@ -141,11 +141,14 @@ for (const role of Object.keys(EXPECT)) {
 
   const dismissCallout = async () => {
     if (!(await pg.isVisible('#coNo').catch(()=>false))) return;
-    // הדחייה עוברת עכשיו דרך נימוק מהיר וכפתור שליחה נפרד.
-    await pg.click('#coNo');
-    await pg.click('#coReasons button[data-reason="away"]');
-    await pg.click('#coSend');
-    await pg.waitForTimeout(250);
+    // בחבילת אמון הפיילוט תשובה כבר אינה מעלימה את החלון בלי חיווי.
+    // מסלול "מגיע" מאשר על המסך ואז משחרר אותו אוטומטית; הבדיקה הזו
+    // צריכה רק לפנות את ה-overlay לפני שהיא לוחצת על לשוניות הדף.
+    await pg.click('#coYes');
+    await pg.waitForFunction(() => {
+      const wrap = document.getElementById('coWrap');
+      return !wrap || !wrap.classList.contains('on');
+    }, null, { timeout: 8000 });
   };
 
   await pg.goto('http://localhost:'+PORT+'/login.html', {waitUntil:'load'});
@@ -328,7 +331,7 @@ for (const role of Object.keys(EXPECT)) {
   // וקודם עונים לקריאת הפתע: היא חוסמת כל לחיצה בדף עד שעונים,
   // וזה בדיוק מה שהיא אמורה לעשות. גילינו את זה כאן.
   await dismissCallout();
-  await pg.click('#tabFleet').catch(()=>{});
+  if (xWork) await pg.click('#tabFleet');
   await pg.waitForTimeout(350);
   const xAnch = await pg.isVisible('#anchorCard').catch(()=>false);
   // חוזרים ללשונית התקלות. מה שנבדק כאן חי שם, ובלשונית

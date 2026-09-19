@@ -716,6 +716,7 @@ async function loadAll(){
   fleet = mergeFleet(boardVehicles, anchors);
 
   renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
+  $('anchorCard').classList.toggle('hide', !CAN_FLEET);
 }
 
 // ---------- לשוניות ----------
