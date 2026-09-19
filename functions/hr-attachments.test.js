@@ -1304,8 +1304,15 @@ test('הרשימה מציגה `ready` בלבד ואינה מדליפה נתיב 
   await h.api.reserve(req(base(PDF, { request_id: 'req-000000002', parent_revision: 2 })));
   const out = await h.api.list(req({ parent_kind: 'request', parent_id: PARENT, cursor: null }));
   assert.equal(out.items.length, 1, 'רק ה-ready');
+  /* ⭐ הרשימה היא שוויון מדויק ולא „מכילה". `uploaded_by_me` נוסף
+   * כאן במכוון: הוא בוליאני **נגזר** ואינו זהות, נתיב או דור —
+   * המסך צריך לדעת אם להציג כפתור הסרה, ואין סיבה לחשוף לשם כך את
+   * ה-uid של המעלה. כל שדה אחר שיתווסף בלי החלטה — ייפול כאן. */
   assert.deepEqual(Object.keys(out.items[0]).sort(),
-    ['attachment_id', 'byte_length', 'created_at_ms', 'declared_type', 'display_name', 'revision']);
+    ['attachment_id', 'byte_length', 'created_at_ms', 'declared_type', 'display_name', 'revision', 'uploaded_by_me']);
+  assert.equal(typeof out.items[0].uploaded_by_me, 'boolean');
+  assert.equal(Object.keys(out.items[0]).some(k => /uid|path|generation|actor/i.test(k)), false,
+    'no identity, object path or generation reaches the list');
 });
 
 test('**עמוד שני אינו מדלג ואינו חוזר**', async () => {
