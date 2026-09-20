@@ -135,6 +135,8 @@ try {
     assert.match(await peopleRun.page.locator('#calloutMessage').textContent(), /יש לבחור לפחות נמען אחד/);
     await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('input').check();
     assert.equal(await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).evaluate(row => row.classList.contains('is-picked')), true);
+    assert.equal(await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('.recipient-check').textContent(), '✓');
+    assert.notEqual(await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('.recipient-check').evaluate(el => getComputedStyle(el).color), 'rgba(0, 0, 0, 0)');
     assert.match(await peopleRun.page.locator('#recipientSummary').textContent(), /בחירה פרטנית פעילה/);
     await peopleRun.page.locator('#calloutText').fill('קריאה רק לדנה');
     await peopleRun.page.locator('#calloutSend').evaluate(button => button.click());

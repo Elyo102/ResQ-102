@@ -133,11 +133,15 @@ function renderRecipients(session) {
       else session.selectedRecipients.delete(person.uid);
       renderRecipients(session);
     };
+    const mark = document.createElement('span');
+    mark.className = 'recipient-check';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = '✓';
     const name = document.createElement('span');
     name.textContent = person.name || person.uid;
     const meta = document.createElement('small');
     meta.textContent = person.uid === session.uid ? 'אני' : (CREW_HE[person.crew] || person.crew || '');
-    label.append(input, name, meta);
+    label.append(input, mark, name, meta);
     list.appendChild(label);
   });
   const picked = selectedUids(session);

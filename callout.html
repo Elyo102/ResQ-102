@@ -21,6 +21,8 @@
   .recipient-item{display:flex;align-items:center;gap:8px;min-height:48px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--input)}
   .recipient-item.is-picked{border-color:var(--accent);background:var(--warn-bg)}
   .recipient-item input{width:auto;min-height:24px;min-width:24px;margin:0}
+  .recipient-check{display:grid;place-items:center;min-width:28px;height:28px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:transparent;font-weight:900}
+  .recipient-item.is-picked .recipient-check{border-color:var(--accent);background:var(--accent);color:var(--accent-on)}
   .recipient-item small{color:var(--muted)}
   .recipient-empty{min-height:44px;padding:10px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);background:var(--chip)}
   .recipient-summary{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
