@@ -42,6 +42,18 @@ function rosterLoadTimeoutMs() {
   return Number.isFinite(override) && override >= 10 ? override : ROSTER_LOAD_TIMEOUT_MS;
 }
 
+function firstSuccessful(promises) {
+  return new Promise((resolve, reject) => {
+    let left = promises.length;
+    const errors = [];
+    promises.forEach(promise => Promise.resolve(promise).then(resolve, error => {
+      errors.push(error);
+      left -= 1;
+      if (!left) reject(errors[0] || error);
+    }));
+  });
+}
+
 function rosterName(session, uid) {
   const person = session.roster.get(uid);
   return person && person.name ? person.name : 'לא בסגל';
@@ -259,16 +271,30 @@ async function loadRosterFromFirestore(session) {
 async function loadRoster(session) {
   // This function is reached only after initCalloutConsole has accepted the
   // signed claims. A denied role never starts a recipient read.
-  try {
-    await loadRosterFromServer(session);
-  } catch (primary) {
-    logError('callout recipients', primary);
-    await loadRosterFromFirestore(session);
-  }
-  if (active !== session) return;
-  session.rosterFailed = false;
-  session.rosterLoaded = true;
-  renderRecipients(session);
+  //
+  // The callable is the authoritative picker path, but a cold Cloud Function
+  // must not leave the commander staring at "טוען" while the roster is already
+  // readable. Start both safe reads together and paint the first successful
+  // answer; if the authoritative callable returns later it refreshes the same
+  // list. The send path still goes through `sendCallout`, which re-filters all
+  // selected uids server-side before delivery.
+  const source = async (label, loader) => {
+    try {
+      await loader(session);
+      if (active !== session) return label;
+      session.rosterFailed = false;
+      session.rosterLoaded = true;
+      renderRecipients(session);
+      return label;
+    } catch (error) {
+      logError('callout recipients ' + label, error);
+      throw error;
+    }
+  };
+  await firstSuccessful([
+    source('server', loadRosterFromServer),
+    source('firestore', loadRosterFromFirestore)
+  ]);
 }
 
 async function reloadRoster(session) {

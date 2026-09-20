@@ -147,6 +147,25 @@ try {
   });
   await peopleRun.context.close();
 
+  const fastFallback = await open(browser, 'commander', {}, {
+    callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
+  });
+  await fastFallback.page.locator('#work').waitFor({ state:'visible' });
+  await check('recipient list is usable immediately when the callable cold-starts', async () => {
+    await fastFallback.page.locator('.recipient-item').filter({ hasText:'דנה לוי' })
+      .waitFor({ state:'visible', timeout:1500 });
+    assert.doesNotMatch(await fastFallback.page.locator('#recipientSummary').textContent(), /טוען/);
+    await fastFallback.page.locator('#recipientNone').evaluate(button => button.click());
+    await fastFallback.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('input').check();
+    await fastFallback.page.locator('#calloutText').fill('קריאה זמינה מיד');
+    await fastFallback.page.locator('#calloutSend').evaluate(button => button.click());
+    await fastFallback.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'sendCallout'));
+    const call = await fastFallback.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(row => row.name === 'sendCallout'));
+    assert.equal(call.payload.target, 'people');
+    assert.deepEqual(call.payload.uids, ['u4']);
+  });
+  await fastFallback.context.close();
+
   const stuckRoster = await open(browser, 'commander', {}, {
     recipientTimeoutMs:30,
     rosterGetDocsHang:true,

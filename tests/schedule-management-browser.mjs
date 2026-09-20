@@ -2514,6 +2514,26 @@ try {
   const editPage = await editCtx.newPage();
   await editPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await editPage.locator('#appMain:not(.hide)').waitFor();
+  await test('station board name opens the edit drawer on the same person and day', async () => {
+    await editPage.locator('#stationTab').click();
+    const slot = editPage.locator('#stationContent .cell[data-date="' + today + '"] .quick-edit-slot').filter({ hasText:'טל חודרה' }).first();
+    await slot.waitFor({ state:'visible' });
+    const meta = await slot.evaluate(el => ({ tag:el.tagName, uid:el.dataset.uid || '', date:el.dataset.date || '', disabled:!!el.disabled }));
+    assert.deepEqual(meta, { tag:'BUTTON', uid:'crew_1', date:today, disabled:false });
+    const quickErrors = [];
+    editPage.on('pageerror', error => quickErrors.push(error.message));
+    await slot.evaluate(el => el.click());
+    await editPage.waitForTimeout(100);
+    assert.deepEqual(quickErrors, []);
+    await editPage.locator('#editCard').waitFor({ state:'visible' });
+    assert.match(await editPage.locator('#editPerson').textContent(), /טל חודרה/);
+    assert.equal(await editPage.locator('#editDate').inputValue(), today);
+    assert.equal(await editPage.locator('#editRange').inputValue(), 'day');
+    assert.equal(await editPage.locator('#editAction').inputValue(), 'assign');
+    assert.match(await editPage.locator('#editMessage').textContent(), /אפשר לשנות תחנה\/תפקיד/);
+    await editPage.locator('#editDrawerClose').click();
+    await editPage.locator('#editCard').waitFor({ state:'hidden' });
+  });
   await test('edit card: search a person, pick a week, add an assignment, check — the report is bound to the live publication', async () => {
     await editPage.locator('#editDrawerOpen').click();
     assert.equal(await editPage.locator('#editCard').isVisible(), true);
@@ -3499,5 +3519,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 87);
+assert.equal(passed, 88);
 console.log('\n' + passed + ' schedule management browser checks passed.');

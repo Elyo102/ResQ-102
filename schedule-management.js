@@ -483,8 +483,8 @@ function showWorkflowTarget(id) {
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function openEditDrawer() {
-  if (!canEditSchedule()) return;
+function openEditDrawer(force) {
+  if (!force && !canEditSchedule()) return;
   state.editDrawerOpen = true;
   state.editDrawerReturnFocus = document.activeElement;
   const drawer = $('editDrawer');
@@ -527,7 +527,7 @@ workflowAction('review').addEventListener('click', () => showWorkflowTarget('dra
 workflowAction('publish').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 if ($('publishFromReview')) $('publishFromReview').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 workflowAction('rollback').addEventListener('click', () => { if (!$('rollback').disabled) $('rollback').click(); });
-$('editDrawerOpen').addEventListener('click', openEditDrawer);
+$('editDrawerOpen').addEventListener('click', () => openEditDrawer(false));
 $('editDrawerClose').addEventListener('click', () => closeEditDrawer(false));
 $('editDrawer').addEventListener('click', (event) => {
   if (event.target === $('editDrawer')) closeEditDrawer(false);
@@ -538,6 +538,8 @@ addEventListener('keydown', (event) => {
 addEventListener('popstate', () => {
   if (state.editDrawerOpen) closeEditDrawer(true);
 });
+document.addEventListener('click', handleBoardQuickEdit, true);
+document.addEventListener('keydown', handleBoardQuickEdit, true);
 
 /* ==================================================================
  *  יבוא מקור כוח האדם
@@ -1754,7 +1756,7 @@ function subOrder(days) {
   })));
 }
 
-function cellContent(cell, block, minVisualSlots) {
+function cellContent(cell, block, minVisualSlots, context) {
   const people = (block && block.people) || [];
   const missing = !block || block.coverage === 'missing';
   // `block.minimum` הוא המינימום החתום של היום המוצג. `sub.minimum`
@@ -1773,6 +1775,7 @@ function cellContent(cell, block, minVisualSlots) {
     cell.appendChild(node('span', 'absence-empty', 'לא הוזן'));
   }
   people.forEach((person, index) => {
+    const editableSlot = !!(context && context.date && person.uid && canEditSchedule());
     // ⭐ הקו האדום מצויר במקום קו המינימום של תחנת הקצה. הוא אינו
     // ידית: הוא ההחלטה ששמורה ב-`schedule_policies`, ומשנים אותה
     // בכרטיס „חוקי התחנה" — במקום שבו היא באמת נשמרת.
@@ -1782,10 +1785,11 @@ function cellContent(cell, block, minVisualSlots) {
       bar.appendChild(node('span', 'ruleline'));
       cell.appendChild(bar);
     }
-    const row = node('div', 'nm name-slot'
+    const row = node(editableSlot ? 'button' : 'div', 'nm name-slot'
       + (index === 0 ? ' lead' : '')
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
+    if (editableSlot) row.type = 'button';
     row.dataset.slotIndex = String(index + 1);
     const warningCodes = manualWarningCodes(person.manual_warning_codes);
     const warningLabel = manualWarningLabel(warningCodes);
@@ -1798,6 +1802,18 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const personLabel = person.person || person.uid || '—';
     row.textContent = personLabel;
+    if (editableSlot) {
+      row.dataset.uid = String(person.uid);
+      row.dataset.name = personLabel;
+      row.dataset.date = context.date;
+      row.dataset.station = context.subStation || '';
+      row.classList.add('quick-edit-slot');
+      row.title = 'עריכת השיבוץ של ' + personLabel + ' ביום הזה';
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openQuickEditFromBoard(person, context.date, context.subStation);
+      });
+    }
     if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
     /* ⭐ 42H.20 §1 · עובד ללא חשבון נשאר גלוי ומשובץ בלוח, מסומן
      * בבירור, ואינו חוסם דבר — הוא לא מקבל פוש (נאכף בשרת, ראה
@@ -1930,7 +1946,7 @@ function renderBoard(target, days, options) {
         block = (day.sub_stations || []).find((item) => item.sub_station === id) || null;
         if (block) break;
       }
-      cellContent(cell, block, sub.minVisualSlots);
+      cellContent(cell, block, sub.minVisualSlots, { date: day.date, subStation: sub.id });
       ariaRow.appendChild(cell);
     });
     board.appendChild(ariaRow);
@@ -3864,6 +3880,62 @@ function renderEditSearch() {
     });
     box.appendChild(button);
   });
+}
+
+function selectEditPerson(person) {
+  if (!person) return false;
+  state.editPerson = person;
+  state.editPersonSub = person.sub_station || null;
+  state.editFormDirty = true;
+  $('editSearch').value = person.name || person.id || '';
+  $('editPerson').textContent = 'נבחר: ' + (person.name || person.id);
+  if (person.sub_station && $('editStation').querySelector('option[value="' + person.sub_station + '"]')) {
+    $('editStation').value = person.sub_station;
+  }
+  renderEditSearch();
+  renderEditControls();
+  return true;
+}
+
+function openQuickEditFromBoard(slot, date, subStation) {
+  if (!canManageSchedule()) return;
+  const people = (state.setup && state.setup.people) || [];
+  const uid = String(slot && slot.uid || '');
+  const label = String(slot && (slot.person || slot.uid) || '');
+  const person = people.find((item) => String(item.id) === uid)
+    || people.find((item) => item.name && item.name === label);
+  chooseTab('manage', false);
+  openEditDrawer(true);
+  if (!person) {
+    $('editSearch').value = label;
+    renderEditSearch();
+    message('editMessage', 'פתחתי את העריכה. בחר/י את העובד מהרשימה כדי לשנות את השיבוץ.', 'info');
+    return;
+  }
+  selectEditPerson(person);
+  $('editRange').value = 'day';
+  $('editDate').value = date || $('editDate').value;
+  $('editAction').value = 'assign';
+  if (subStation && $('editStation').querySelector('option[value="' + subStation + '"]')) {
+    $('editStation').value = subStation;
+  }
+  renderEditControls();
+  renderEditDates();
+  message('editMessage', 'נבחר ' + (person.name || label) + ' בתאריך ' + dateLabel(date)
+    + '. אפשר לשנות תחנה/תפקיד, להוסיף לרשימה, לבדוק ולפרסם.', 'info');
+  try { $('editAction').focus(); } catch (_) {}
+}
+
+function handleBoardQuickEdit(event) {
+  const target = event.target && event.target.closest ? event.target.closest('.quick-edit-slot') : null;
+  if (!target) return;
+  if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  openQuickEditFromBoard({
+    uid: target.dataset.uid || '',
+    person: target.dataset.name || ''
+  }, target.dataset.date || '', target.dataset.station || '');
 }
 
 function editItemText(item) {

@@ -251,6 +251,10 @@
     /* שם = שבב אחד בשורה משלו, בצבע התחנה. הצוות (כשידוע) נשאר בצבע הטקסט. */
     .nm{font-size:12.5px;font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
       padding:3px 8px;border-radius:7px;border:1px solid var(--line-soft,#eef2f7);background:var(--card,#fff)}
+    button.nm.quick-edit-slot{font:inherit;text-align:inherit}
+    .nm.quick-edit-slot{cursor:pointer;display:flex;align-items:center;gap:4px;width:100%}
+    .nm.quick-edit-slot::after{content:"✎";font-size:12px;opacity:.72;margin-inline-start:auto;color:var(--accent-txt)}
+    .nm.quick-edit-slot:hover,.nm.quick-edit-slot:focus-visible{outline:2px solid var(--accent);outline-offset:2px;background:var(--warn-bg)}
     .nm.empty-slot{color:transparent;user-select:none;min-height:24px}
     .cell .nm{color:var(--txt,#1c2532)}
     .cell.s1 .nm{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
