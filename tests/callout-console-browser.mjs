@@ -113,8 +113,19 @@ try {
   const peopleRun = await open(browser, 'commander');
   await peopleRun.page.locator('#work').waitFor({ state:'visible' });
   await check('commander can choose specific recipients instead of the full crew', async () => {
+    assert.match(await peopleRun.page.locator('#composeCard, .card.danger').first().textContent(), /לבחור לוחמים/);
+    await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).waitFor({ state:'visible' });
     await peopleRun.page.locator('#recipientNone').evaluate(button => button.click());
+    assert.equal(await peopleRun.page.locator('#recipientNone').getAttribute('aria-pressed'), 'true');
+    assert.match(await peopleRun.page.locator('#recipientSummary').textContent(), /לא נבחרו נמענים/);
+    await peopleRun.page.locator('#calloutText').fill('קריאה בלי נמענים');
+    await peopleRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await peopleRun.page.waitForTimeout(100);
+    assert.equal(await peopleRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(row => row.name === 'sendCallout').length), 0);
+    assert.match(await peopleRun.page.locator('#calloutMessage').textContent(), /יש לבחור לפחות נמען אחד/);
     await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('input').check();
+    assert.equal(await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).evaluate(row => row.classList.contains('is-picked')), true);
+    assert.match(await peopleRun.page.locator('#recipientSummary').textContent(), /בחירה פרטנית פעילה/);
     await peopleRun.page.locator('#calloutText').fill('קריאה רק לדנה');
     await peopleRun.page.locator('#calloutSend').evaluate(button => button.click());
     await peopleRun.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'sendCallout'));

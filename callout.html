@@ -13,13 +13,17 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px;margin-bottom:14px}
   .danger{border-color:var(--bad-bd);background:var(--bad-bg)}
   .sound-note{margin:10px 0;padding:10px;border-radius:10px;background:var(--chip);color:var(--dim);font-size:13px;line-height:1.6}
-  .recipient-tools{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-  .recipient-tools button{width:auto;margin-top:0;background:var(--chip);color:var(--txt);border:1px solid var(--line);font-weight:700}
+  .recipient-box{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--card)}
+  .recipient-tools{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+  .recipient-tools button{width:100%;min-height:44px;margin-top:0;background:var(--chip);color:var(--txt);border:1px solid var(--line);font-weight:800}
+  .recipient-tools button[aria-pressed="true"]{background:var(--warn-bg);border-color:var(--accent);color:var(--accent-txt)}
   .recipient-list{display:grid;gap:8px;margin-top:8px}
-  .recipient-item{display:flex;align-items:center;gap:8px;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--input)}
+  .recipient-item{display:flex;align-items:center;gap:8px;min-height:48px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--input)}
+  .recipient-item.is-picked{border-color:var(--accent);background:var(--warn-bg)}
   .recipient-item input{width:auto;min-height:24px;min-width:24px;margin:0}
   .recipient-item small{color:var(--muted)}
-  .recipient-summary{margin:8px 0 0;color:var(--muted);font-size:13px}
+  .recipient-empty{min-height:44px;padding:10px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);background:var(--chip)}
+  .recipient-summary{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
   textarea{box-sizing:border-box;width:100%;min-height:120px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
   input,select{box-sizing:border-box;width:100%;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
@@ -65,15 +69,15 @@
     </section>
     <section class="card danger" aria-labelledby="composeTitle">
       <h2 id="composeTitle">הזעקת <span id="calloutCrew">המשמרת שלי</span></h2>
-      <p>הקריאה תישלח לכל אנשי המשמרת ותדרוש מהם להשיב.</p>
+      <p>אפשר לשלוח לכל המשמרת או לבחור לוחמים מסוימים בלבד.</p>
       <p class="sound-note">🔔 כשהאפליקציה פתוחה יושמע צליל קריאת הפתע שנבחר. כשהיא ברקע, הצליל והעוצמה כפופים להגדרות ההתראות של המכשיר.</p>
-      <section aria-labelledby="recipientTitle">
+      <section class="recipient-box" aria-labelledby="recipientTitle">
         <h3 id="recipientTitle" style="font-size:16px;margin:12px 0 4px;color:var(--callout-heading)">נמענים</h3>
-        <p class="recipient-summary" id="recipientSummary">ברירת מחדל: כל אנשי המשמרת.</p>
+        <p class="recipient-summary" id="recipientSummary" aria-live="polite">טוען רשימת לוחמים…</p>
         <div class="recipient-tools">
-          <button type="button" id="recipientAll">כל המשמרת</button>
-          <button type="button" id="recipientNone">נקה בחירה</button>
-          <button type="button" id="recipientSelf">בדיקת עצמי</button>
+          <button type="button" id="recipientAll" aria-pressed="true">כל המשמרת</button>
+          <button type="button" id="recipientNone" aria-pressed="false">בחירה פרטנית</button>
+          <button type="button" id="recipientSelf" aria-pressed="false">בדיקת עצמי</button>
         </div>
         <div id="recipientList" class="recipient-list" aria-label="בחירת נמענים לקריאת פתע"></div>
       </section>
