@@ -93,6 +93,17 @@ check('and neither does the commander console',
   !/\(error\.code \|\| error\.message/.test(console_), 'still interpolating a code');
 check('both take their wording from the one dictionary',
   /from '\.\/error-text\.js/.test(callout) && /from '\.\/error-text\.js/.test(console_));
+for (const screen of ['swaps', 'forms', 'sign']) {
+  const html = read(screen + '.html');
+  check(screen + '.html imports the shared Hebrew error dictionary',
+    /from '\.\/error-text\.js\?v=42h24'/.test(html));
+  check(screen + '.html logs technical errors instead of showing them',
+    /logError\(/.test(html));
+  check(screen + '.html does not interpolate e.code/e.message into visible msg/say calls',
+    !/msg\([^;\n]*(?:e|err|error)\.(?:code|message)/.test(html)
+      && !/say\([^;\n]*(?:e|err|error)\.(?:code|message)/.test(html),
+    'visible raw error interpolation remains');
+}
 check('the five agreed quick reasons exist in the source, in order',
   /'מחלה מאושרת'[\s\S]{0,400}'שירות מילואים'[\s\S]{0,400}'פטור מאושר'[\s\S]{0,400}'איני זמין בתחנה'[\s\S]{0,400}'אחר'/.test(callout));
 check('the send button starts disabled and is driven by whether a reason exists',

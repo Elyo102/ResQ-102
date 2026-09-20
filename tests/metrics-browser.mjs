@@ -64,7 +64,7 @@ const FIXTURE = {
 try {
   const { page, html } = await pageFor('metrics.html');
   check('metrics.html is RTL Hebrew with theme.css, viewport and exactly one App Check init', /<html lang="he" dir="rtl">/.test(html) && /name="viewport"/.test(html)
-    && /theme\.css\?v=42h23/.test(html) && (html.match(/await initAppCheck\(app\);/g) || []).length === 1);
+    && /theme\.css\?v=42h24/.test(html) && (html.match(/await initAppCheck\(app\);/g) || []).length === 1);
   check('page gate: main and deny both start hidden, non-super reveals deny and returns before any call', /if\(claims\.super!==true\)\{\$\('deny'\)\.classList\.remove\('metrics-hidden'\);return;\}/.test(html)
     && await page.locator('#main').isHidden() && await page.locator('#deny').isHidden());
   await page.evaluate(() => document.getElementById('deny').classList.remove('metrics-hidden'));

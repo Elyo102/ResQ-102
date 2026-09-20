@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h23">
+<link rel="stylesheet" href="./theme.css?v=42h24">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -297,19 +297,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h23';
-import { stationName, subStationAvailable } from './stations.js?v=42h23';
-import { renderNav, renderStuckNav } from './nav.js?v=42h23';
-import { MEMBER_ROLES } from './roles.js?v=42h23';
-import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h23';
-import { initPWA } from './pwa.js?v=42h23';
-import { watchCallouts } from './callout.js?v=42h23';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
+import { stationName, subStationAvailable } from './stations.js?v=42h24';
+import { renderNav, renderStuckNav } from './nav.js?v=42h24';
+import { MEMBER_ROLES } from './roles.js?v=42h24';
+import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h24';
+import { initPWA } from './pwa.js?v=42h24';
+import { watchCallouts } from './callout.js?v=42h24';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h23';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h24';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=42h23';
-import { SITE_SEED } from './hours.js?v=42h23';
-import { plural } from './rotation.js?v=42h23';
+  from './faults.js?v=42h24';
+import { SITE_SEED } from './hours.js?v=42h24';
+import { plural } from './rotation.js?v=42h24';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -319,7 +319,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h23';
+import { initAppCheck } from './appcheck.js?v=42h24';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

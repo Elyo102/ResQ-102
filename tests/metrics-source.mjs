@@ -64,12 +64,12 @@ for (const file of ['metrics-ui.js', 'metrics.html', 'metrics-client.js']) {
 check('ui renders "לא זמין" for unavailable metrics and never coerces null to 0', /const UNAVAILABLE = 'לא זמין';/.test(read('metrics-ui.js')) && /metric\.available !== true \|\| metric\.value === null/.test(read('metrics-ui.js')) && !/\|\|\s*0\b/.test(read('metrics-ui.js')));
 check('ui labels the unkeyed hash mode as pseudonymous and reversible, never anonymous', /unkeyed: 'ללא מפתח — פסאודונים, הפיך במנייה'/.test(read('metrics-ui.js')) && !/אנונימי/.test(read('metrics-ui.js').replace(/^\s*\/\/.*$/gm, '')));
 const page = read('metrics.html');
-check('metrics.html follows admin.html head conventions (rtl, viewport, theme.css?v=42h23, one App Check init)', /<html lang="he" dir="rtl">/.test(page) && /<meta name="viewport"/.test(page)
-  && /href="\.\/theme\.css\?v=42h23"/.test(page) && (page.match(/await initAppCheck\(app\);/g) || []).length === 1);
-check('every local module import on metrics.html carries ?v=42h23', [...page.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h23$/.test(m[1])) && [...page.matchAll(/from '\.\/([^']+)'/g)].length >= 6);
+check('metrics.html follows admin.html head conventions (rtl, viewport, theme.css?v=42h24, one App Check init)', /<html lang="he" dir="rtl">/.test(page) && /<meta name="viewport"/.test(page)
+  && /href="\.\/theme\.css\?v=42h24"/.test(page) && (page.match(/await initAppCheck\(app\);/g) || []).length === 1);
+check('every local module import on metrics.html carries ?v=42h24', [...page.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h24$/.test(m[1])) && [...page.matchAll(/from '\.\/([^']+)'/g)].length >= 6);
 check('metrics.html gates on live claims: renderNav for metrics.html, deny for non-super, renderStuckNav first', /renderNav\(claims,'metrics\.html',user\.email\|\|''\)/.test(page) && /renderStuckNav\(''\)/.test(page)
   && /if\(claims\.super!==true\)\{\$\('deny'\)\.classList\.remove\('metrics-hidden'\);return;\}/.test(page) && /onIdTokenChanged\(auth,async user=>\{\s*const mine=\+\+epoch;\s*identity=null;\s*ui\.invalidate\(\);/.test(page));
-check('page calls only getMetricsDashboard through monitored-functions', /from '\.\/monitored-functions\.js\?v=42h23'/.test(page) && /call\('getMetricsDashboard', \{ days \}\)/.test(read('metrics-ui.js')) && !/recordMetrics/.test(page));
+check('page calls only getMetricsDashboard through monitored-functions', /from '\.\/monitored-functions\.js\?v=42h24'/.test(page) && /call\('getMetricsDashboard', \{ days \}\)/.test(read('metrics-ui.js')) && !/recordMetrics/.test(page));
 /* CRLF הוא סוף-שורה לגיטימי אחרי checkout עם core.autocrlf=true;
    CR בודד ותווי בקרה עדיין נדחים. ראו tests/eol-guard.mjs. */
 check('no lone CR or control characters in any delivered file (CRLF tolerated)',

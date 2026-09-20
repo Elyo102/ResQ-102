@@ -455,7 +455,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.23',
+  monthAuthorityReleaseId: '42H.24',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -6294,7 +6294,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.23', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.24', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

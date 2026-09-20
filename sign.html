@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h23">
+<link rel="stylesheet" href="./theme.css?v=42h24">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -191,7 +191,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h23';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -199,15 +199,16 @@ import {
   getFirestore, collection, query, where, getDocs, doc, updateDoc, getDoc
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-import { renderNav, renderStuckNav } from './nav.js?v=42h23';
-import { MEMBER_ROLES } from './roles.js?v=42h23';
-import { initAppCheck } from './appcheck.js?v=42h23';
+import { renderNav, renderStuckNav } from './nav.js?v=42h24';
+import { MEMBER_ROLES } from './roles.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h24';
 import {
   loadSignature, saveSignature, clearSignature, attachPad, readImageFile
-} from './signature.js?v=42h23';
+} from './signature.js?v=42h24';
 import {
   signState, canSign, signatureRecord, stepLabel
-} from './signflow.js?v=42h23';
+} from './signflow.js?v=42h24';
+import { errorText, logError } from './error-text.js?v=42h24';
 
 const app  = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -216,6 +217,10 @@ const db   = getFirestore(app);
 
 const $ = (id) => document.getElementById(id);
 const CREW_HE = { 'א':'א', 'ב':'ב', 'ג':'ג' };
+function showError(where, error, fallback, target){
+  logError(where, error);
+  say(target || 'mineMsg', fallback ? fallback + ' ' + errorText(error) : errorText(error), 'bad');
+}
 
 let SID = '', ME = null, PAD = null, MY_SIG = null;
 let QUEUE = [];
@@ -330,12 +335,12 @@ function setupPadControls(){
     try {
       const pad = ensurePad();
       if (!pad) throw new Error('לוח החתימה עדיין נטען. נסה שוב.');
-      const img = await readImageFile(f, 600);
-      await pad.load(img);
-      say('mineMsg', 'התמונה נטענה. לחץ "שמור חתימה".', 'ok');
-    } catch (err) {
-      say('mineMsg', err.message || 'טעינת התמונה נכשלה.', 'bad');
-    }
+    const img = await readImageFile(f, 600);
+    await pad.load(img);
+    say('mineMsg', 'התמונה נטענה. לחץ "שמור חתימה".', 'ok');
+  } catch (err) {
+    showError('sign.signature.file', err, 'טעינת התמונה נכשלה.', 'mineMsg');
+  }
     e.target.value = '';
   };
 
@@ -349,12 +354,12 @@ function setupPadControls(){
       await saveSignature(db, SID, ME.uid, img, {
         full_name: ME.full_name, emp_number: ME.emp_number
       });
-      say('mineMsg', 'החתימה נשמרה. מעכשיו תאשר בלחיצה.', 'ok');
-      await refreshSignature();
-    } catch (e) {
-      say('mineMsg', e.message || 'השמירה נכשלה.', 'bad');
-      $('btnSave').disabled = false;
-    }
+    say('mineMsg', 'החתימה נשמרה. מעכשיו תאשר בלחיצה.', 'ok');
+    await refreshSignature();
+  } catch (e) {
+    showError('sign.signature.save', e, 'השמירה נכשלה.', 'mineMsg');
+    $('btnSave').disabled = false;
+  }
   };
 
   $('btnReplace').onclick = () => {
@@ -383,7 +388,7 @@ function setupPadControls(){
       say('mineMsg', 'החתימה נמחקה.', 'ok');
       await refreshSignature();
     } catch (e) {
-      say('mineMsg', e.message || 'המחיקה נכשלה.', 'bad');
+      showError('sign.signature.delete', e, 'המחיקה נכשלה.', 'mineMsg');
     }
   };
 }
@@ -564,7 +569,7 @@ async function signOne(it, c, i){
     say(msg, 'נחתם.', 'ok');
     await loadQueue();
   } catch (e) {
-    say(msg, (e.code || '') + ' ' + (e.message || 'החתימה נכשלה.'), 'bad');
+    showError('sign.document.sign', e, 'החתימה לא הושלמה.', msg);
     $('sg' + i).disabled = false;
   }
 }
