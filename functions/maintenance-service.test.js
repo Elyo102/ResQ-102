@@ -153,5 +153,24 @@ function timestamp(iso) { return { toDate:() => new Date(iso) }; }
     assert.deepEqual([...new Set(f.writes.map((row) => row.path))], [path]);
     await assert.rejects(() => f.service.runAnalysis(f.request({})), (error) => error.code === 'resource-exhausted');
   });
+  await check('handoff preparation is blocked unless observe mode is explicit', async () => {
+    const path = 'stations/station_102/maintenance/config';
+    const f = fixture({ rows:{ [path]:{ mode:'OFF', revision:1 } } });
+    await assert.rejects(() => f.service.prepareHandoff(f.request({})), (error) => error.code === 'failed-precondition');
+    assert.equal(f.writes.length, 0);
+  });
+  await check('handoff preparation performs zero writes and never authorizes deployment', async () => {
+    const path = 'stations/station_102/maintenance/config';
+    const f = fixture({ rows:{ [path]:{ mode:'OBSERVE', revision:1 } },
+      incidents:[{ code:'functions/unavailable', kind:'callable-failed', count:4,
+        last_seen_iso:'2026-09-10T08:59:00.000Z', first_screen:'secret.html', last_version:'99Z.99' }] });
+    const handoff = await f.service.prepareHandoff(f.request({}));
+    assert.equal(handoff.kind, 'codex_maintenance_handoff');
+    assert.equal(handoff.writes_performed, 0);
+    assert.equal(handoff.deployment_authorized, false);
+    assert.equal(f.writes.length, 0);
+    assert.match(handoff.prompt, /CALLABLE_UNAVAILABLE/);
+    assert.doesNotMatch(handoff.prompt, /secret\.html|99Z\.99/);
+  });
   console.log('maintenance service: ' + passed + ' passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

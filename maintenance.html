@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#15171a">
   <title>ResQ · תחזוקה חכמה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h22">
-  <link rel="stylesheet" href="./maintenance.css?v=42h22">
+  <link rel="stylesheet" href="./theme.css?v=42h23">
+  <link rel="stylesheet" href="./maintenance.css?v=42h23">
   <style>body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px;box-sizing:border-box}@media(max-width:620px){body{padding:12px}}</style>
 </head>
 <body>
 <main id="main" class="maintenance-shell maintenance-hidden">
   <div class="maintenance-head">
     <div><h1 class="maintenance-title">מרכז תחזוקה חכם</h1><p class="maintenance-sub">המערכת מזהה תקלות טכניות, מאחדת כפילויות ומציעה דרך טיפול. היא אינה משנה סידור, שעות, הרשאות או נתוני עובדים.</p></div>
-    <div class="maintenance-toolbar"><span id="modeBadge" class="maintenance-mode">טוען…</span><button id="btnMode" type="button">—</button><button id="btnRefresh" type="button">רענון</button><button id="btnAnalyze" class="primary" type="button">אבחן עכשיו</button></div>
+    <div class="maintenance-toolbar"><span id="modeBadge" class="maintenance-mode">טוען…</span><button id="btnMode" type="button">—</button><button id="btnRefresh" type="button">רענון</button><button id="btnAnalyze" class="primary" type="button">אבחן עכשיו</button><button id="btnHandoff" type="button">הכן חבילת טיפול</button></div>
   </div>
   <section class="maintenance-card" aria-labelledby="overviewTitle">
     <h2 id="overviewTitle" class="maintenance-section-title">תמונת מצב ברורה</h2>
@@ -41,24 +41,30 @@
     <h2 id="queueTitle" class="maintenance-section-title">תור טיפול</h2>
     <div id="incidentList" class="maintenance-list"><div class="maintenance-empty">טוען…</div></div>
   </section>
+  <section id="handoffPanel" class="maintenance-card maintenance-hidden" aria-labelledby="handoffTitle">
+    <h2 id="handoffTitle" class="maintenance-section-title">חבילת טיפול ל‑Codex</h2>
+    <p class="maintenance-sub">החבילה מיועדת להעתקה למשימת קוד. היא אינה מפעילה תיקון, אינה כותבת לייצור ואינה מאשרת פריסה.</p>
+    <div id="handoffMeta" class="maintenance-note safe"></div>
+    <textarea id="handoffText" class="maintenance-handoff" readonly spellcheck="false" aria-label="חבילת טיפול להעתקה"></textarea>
+  </section>
   <section class="maintenance-note warn">בגרסה זו האבחון מבוסס כללים ובמצב תצפית בלבד. אין AI, אין תיקון אוטומטי ואין שינוי בסידור, בשעות, בהרשאות או בנתוני עובדים.</section>
 </main>
 <section id="deny" class="maintenance-card maintenance-deny maintenance-hidden"><h1>אין הרשאה למסך</h1><p class="maintenance-sub">מרכז התחזוקה זמין למנהל־העל בלבד.</p></section>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h22';
-import { renderNav, renderStuckNav } from './nav.js?v=42h22';
-import { initPWA } from './pwa.js?v=42h22';
-import { initAppCheck } from './appcheck.js?v=42h22';
-import { createMaintenanceUi } from './maintenance-client.js?v=42h22';
+import { firebaseConfig } from './firebase-config.js?v=42h23';
+import { renderNav, renderStuckNav } from './nav.js?v=42h23';
+import { initPWA } from './pwa.js?v=42h23';
+import { initAppCheck } from './appcheck.js?v=42h23';
+import { createMaintenanceUi } from './maintenance-client.js?v=42h23';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h22';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h23';
 
 const app=initializeApp(firebaseConfig); await initAppCheck(app);
 const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
 let identity=null, epoch=0;
 renderStuckNav(''); initPWA({offer:false});
-const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList'),operationalState:$('operationalState'),healthState:$('healthState'),freshnessState:$('freshnessState'),platformState:$('platformState'),operationalCard:$('operationalCard'),healthCard:$('healthCard'),freshnessCard:$('freshnessCard'),platformCard:$('platformCard')};
+const elements={modeBadge:$('modeBadge'),mode:$('btnMode'),refresh:$('btnRefresh'),analyze:$('btnAnalyze'),handoff:$('btnHandoff'),handoffPanel:$('handoffPanel'),handoffText:$('handoffText'),handoffMeta:$('handoffMeta'),message:$('message'),p0:$('p0'),p1:$('p1'),p2:$('p2'),open:$('open'),dropped:$('dropped'),heartbeat:$('heartbeat'),list:$('incidentList'),operationalState:$('operationalState'),healthState:$('healthState'),freshnessState:$('freshnessState'),platformState:$('platformState'),operationalCard:$('operationalCard'),healthCard:$('healthCard'),freshnessCard:$('freshnessCard'),platformCard:$('platformCard')};
 const ui=createMaintenanceUi({
   elements,
   currentIdentity:()=>identity,
@@ -67,6 +73,7 @@ const ui=createMaintenanceUi({
 });
 elements.refresh.addEventListener('click',ui.refresh);
 elements.analyze.addEventListener('click',ui.analyze);
+elements.handoff.addEventListener('click',ui.handoff);
 elements.mode.addEventListener('click',()=>ui.setMode(elements.modeBadge.classList.contains('observe')?'OFF':'OBSERVE'));
 onIdTokenChanged(auth,async user=>{
   const mine=++epoch;

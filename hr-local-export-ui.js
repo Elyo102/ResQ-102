@@ -1,5 +1,5 @@
-import { exportLocalFiles } from './hr-local-export.js?v=42h22';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h22';
+import { exportLocalFiles } from './hr-local-export.js?v=42h23';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h23';
 
 // Deliberately not mounted by any existing page. Adapter must provide freshly
 // authorized bytes; this UI is not a server authorization boundary.

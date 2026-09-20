@@ -16,8 +16,8 @@
 import { collection, query, where, orderBy, limit, onSnapshot,
          doc, setDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { errorText, logError } from './error-text.js?v=42h22';
-import { renderModeBar, clearModeBarOffset } from './mode-bar.js?v=42h22';
+import { errorText, logError } from './error-text.js?v=42h23';
+import { renderModeBar, clearModeBarOffset } from './mode-bar.js?v=42h23';
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
 // אף אחד לא סגר אותה — קריאה מלפני שמונה שעות היא היסטוריה,
@@ -193,7 +193,7 @@ function alarm() {
     } catch (ignore) {}
   };
   try {
-    const selected = new Audio('./callout-siren.mp3?v=42h22');
+    const selected = new Audio('./callout-siren.mp3?v=42h23');
     selected.preload = 'auto';
     selected.volume = 1;
     const playback = selected.play();

@@ -13,11 +13,11 @@ const policy = createRequire(import.meta.url)('../functions/backup-policy.js');
 let passed = 0;
 function check(name, run) { run(); passed += 1; console.log('PASS ' + name); }
 
-check('three maintenance callables use the same bounded App Check options', () => {
+check('four maintenance callables use the same bounded App Check options', () => {
   assert.match(index, /const MAINTENANCE_OPTIONS = Object\.freeze\(\{ region:'europe-west1', enforceAppCheck:true,/);
 });
-check('three maintenance callables are exported through the service only', () => {
-  for (const [name, method] of [['getMaintenanceDashboard','getDashboard'],['setMaintenanceMode','setMode'],['runMaintenanceAnalysis','runAnalysis']]) {
+check('four maintenance callables are exported through the service only', () => {
+  for (const [name, method] of [['getMaintenanceDashboard','getDashboard'],['setMaintenanceMode','setMode'],['runMaintenanceAnalysis','runAnalysis'],['prepareMaintenanceHandoff','prepareHandoff']]) {
     assert.match(index, new RegExp('exports\\.' + name + ' = onCall\\(MAINTENANCE_OPTIONS, req => maintenanceService\\.' + method + '\\(req\\)\\)'));
   }
 });
@@ -35,6 +35,12 @@ check('maintenance page reacts to token claim changes and clears the protected D
   assert.doesNotMatch(page, /getIdTokenResult\(true\)/);
   assert.match(page, /onIdTokenChanged\(auth,async user=>\{\s*const mine=\+\+epoch;\s*identity=null;\s*ui\.invalidate\(\);\s*\$\('main'\)\.classList\.add\('maintenance-hidden'\)/);
   assert.doesNotMatch(page, /onAuthStateChanged/);
+});
+check('maintenance handoff UI is copy-only and does not claim automatic repair', () => {
+  assert.match(page, /id="btnHandoff"[^>]*>הכן חבילת טיפול/);
+  assert.match(page, /id="handoffText"[^>]*readonly/);
+  assert.match(page, /אינה מפעילה תיקון, אינה כותבת לייצור ואינה מאשרת פריסה/);
+  assert.doesNotMatch(page, /תקן אוטומטית|פרוס תיקון|הפעל AI/);
 });
 check('maintenance config is explicitly classified for backup and restore', () => {
   const entry = policy.getPolicy('stations/{sid}/maintenance/config');

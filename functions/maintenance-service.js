@@ -165,7 +165,7 @@ function createMaintenanceService(deps) {
       itemByCode.set(key, {
         id:key, severity:rule.severity, title_code:titleCode(signal.code),
         runbook_code:rule.runbook_codes[0], count:Math.min(1_000_000, (old ? old.count : 0) + signal.count), screen:'server',
-        version:'42H.22', ai_state:'deterministic'
+        version:'42H.23', ai_state:'deterministic'
       });
     });
     const items = [...itemByCode.values()].sort((a,b) =>
@@ -231,7 +231,21 @@ function createMaintenanceService(deps) {
     });
     return Object.assign({}, view, { analyzed_at:now.toISOString() });
   }
-  return Object.freeze({ getDashboard, setMode, runAnalysis, requireSuper, load });
+  async function prepareHandoff(req) {
+    const ctx = await requireSuper(req);
+    const cfg = await config(ctx.sid);
+    if (cfg.mode !== 'OBSERVE') {
+      throw new HttpsError('failed-precondition', 'יש להפעיל מצב תצפית לפני הכנת חבילת טיפול.');
+    }
+    const view = await load(ctx);
+    return Object.assign({}, diagnosisCore.buildOperatorHandoffPackage(view), {
+      prepared_at: new Date(clock()).toISOString(),
+      station_scope: 'current-station',
+      writes_performed: 0,
+      deployment_authorized: false
+    });
+  }
+  return Object.freeze({ getDashboard, setMode, runAnalysis, prepareHandoff, requireSuper, load });
 }
 
 module.exports = Object.freeze({

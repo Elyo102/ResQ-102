@@ -205,6 +205,7 @@ const MAINTENANCE_OPTIONS = Object.freeze({ region:'europe-west1', enforceAppChe
 exports.getMaintenanceDashboard = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.getDashboard(req));
 exports.setMaintenanceMode = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.setMode(req));
 exports.runMaintenanceAnalysis = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.runAnalysis(req));
+exports.prepareMaintenanceHandoff = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.prepareHandoff(req));
 const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
@@ -454,7 +455,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.22',
+  monthAuthorityReleaseId: '42H.23',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -6293,7 +6294,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.22', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.23', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

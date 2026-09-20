@@ -18,12 +18,13 @@ async function check(name, run) { await run(); passed += 1; console.log('PASS ' 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
-  await page.setContent(`<div id="modeBadge"></div><button id="mode"></button><button id="refresh"></button><button id="analyze"></button><div id="message"></div><div id="operationalCard"><b id="operationalState"></b></div><div id="healthCard"><b id="healthState"></b></div><div id="freshnessCard"><b id="freshnessState"></b></div><div id="platformCard"><b id="platformState"></b></div><b id="p0"></b><b id="p1"></b><b id="p2"></b><b id="open"></b><b id="dropped"></b><b id="heartbeat"></b><div id="list"></div>`);
+  await page.setContent(`<div id="modeBadge"></div><button id="mode"></button><button id="refresh"></button><button id="analyze"></button><button id="handoff"></button><div id="message"></div><div id="handoffPanel" class="maintenance-hidden"><div id="handoffMeta"></div><textarea id="handoffText"></textarea></div><div id="operationalCard"><b id="operationalState"></b></div><div id="healthCard"><b id="healthState"></b></div><div id="freshnessCard"><b id="freshnessState"></b></div><div id="platformCard"><b id="platformState"></b></div><b id="p0"></b><b id="p1"></b><b id="p2"></b><b id="open"></b><b id="dropped"></b><b id="heartbeat"></b><div id="list"></div>`);
   await page.addScriptTag({ content:source });
   await page.evaluate(() => {
     const byId = (id) => document.getElementById(id);
     window.fixture = { calls:[], identity:{ uid:'super-a', epoch:1, super:true }, lost:0 };
     const elements = { modeBadge:byId('modeBadge'), mode:byId('mode'), refresh:byId('refresh'), analyze:byId('analyze'),
+      handoff:byId('handoff'), handoffPanel:byId('handoffPanel'), handoffText:byId('handoffText'), handoffMeta:byId('handoffMeta'),
       message:byId('message'), p0:byId('p0'), p1:byId('p1'), p2:byId('p2'), open:byId('open'),
       dropped:byId('dropped'), heartbeat:byId('heartbeat'), list:byId('list'),
       operationalState:byId('operationalState'), healthState:byId('healthState'), freshnessState:byId('freshnessState'),
@@ -117,6 +118,34 @@ try {
     await page.evaluate(() => window.pending);
     assert.equal(await page.locator('#p0').textContent(), '0');
     assert.equal(await page.evaluate(() => window.fixture.lost), 0);
+  });
+  await check('handoff call renders a copyable package without changing dashboard counts', async () => {
+    await page.evaluate(() => {
+      window.fixture.calls.length=0;
+      window.ui.render({ mode:'OBSERVE', counts:{P0:2,open:7,dropped:0}, items:[] });
+      window.fixture.next={ prompt:'משימת טיפול ל-Codex\nאין merge, push או deploy בלי אישור מפורש', severity:'P1',
+        item_count:2, writes_performed:0, deployment_authorized:false };
+      return window.ui.handoff();
+    });
+    assert.deepEqual(await page.evaluate(() => window.fixture.calls.at(-1)), {
+      name:'prepareMaintenanceHandoff', data:{}
+    });
+    assert.equal(await page.locator('#p0').textContent(), '2');
+    assert.equal(await page.locator('#handoffPanel').evaluate((el) => el.classList.contains('maintenance-hidden')), false);
+    assert.match(await page.locator('#handoffText').inputValue(), /אין merge, push או deploy/);
+    assert.match(await page.locator('#handoffMeta').textContent(), /כתיבות לייצור: 0/);
+    assert.match(await page.locator('#message').textContent(), /לא בוצע שינוי/);
+  });
+  await check('invalidate hides a previously prepared handoff package', async () => {
+    await page.evaluate(() => {
+      document.getElementById('handoffPanel').classList.remove('maintenance-hidden');
+      document.getElementById('handoffText').value='old';
+      document.getElementById('handoffMeta').textContent='old';
+      window.ui.invalidate();
+    });
+    assert.equal(await page.locator('#handoffPanel').evaluate((el) => el.classList.contains('maintenance-hidden')), true);
+    assert.equal(await page.locator('#handoffText').inputValue(), '');
+    assert.equal(await page.locator('#handoffMeta').textContent(), '');
   });
 } finally { await browser.close(); }
 console.log('maintenance browser: ' + passed + ' passed');

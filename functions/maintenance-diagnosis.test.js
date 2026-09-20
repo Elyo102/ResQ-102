@@ -215,6 +215,41 @@ test('a forged diagnosis fingerprint is rejected', () => {
   }), /invalid diagnosis fingerprint/);
 });
 
+test('operator handoff package is bounded, copyable and explicitly non-deploying', () => {
+  const diagnosis = maintenance.diagnoseMaintenance(sample());
+  const handoff = maintenance.buildOperatorHandoffPackage({
+    schema_version: 1,
+    diagnosis_fingerprint: diagnosis.fingerprint,
+    operational_state: 'LIVE',
+    health_state: 'DEGRADED',
+    health_freshness: 'FRESH',
+    platform_state: 'AVAILABLE',
+    items: [
+      { id:'CALLABLE_UNAVAILABLE', severity:'P2', runbook_code:'CHECK_SERVICE_AVAILABILITY', count:5,
+        screen:'admin.html', version:'42H.22', title_code:'שירות אינו זמין' },
+      { id:'health:MAIL_DELIVERY_FAILURES', severity:'P2', runbook_code:'REVIEW_MAIL_QUEUE', count:2 }
+    ]
+  });
+  assert.equal(handoff.kind, 'codex_maintenance_handoff');
+  assert.equal(handoff.severity, 'P2');
+  assert.equal(handoff.deployment_authorized, undefined);
+  assert.match(handoff.prompt, /אין merge, push או deploy בלי אישור מפורש/);
+  assert.match(handoff.prompt, /CALLABLE_UNAVAILABLE/);
+  assert.doesNotMatch(handoff.prompt, /admin\.html|42H\.22|שירות אינו זמין|@|https?:|powershell|uid/i);
+});
+
+test('operator handoff rejects non-finite incident identifiers', () => {
+  assert.throws(() => maintenance.buildOperatorHandoffPackage({
+    schema_version: 1,
+    diagnosis_fingerprint: 'a'.repeat(64),
+    operational_state: 'LIVE',
+    health_state: 'HEALTHY',
+    health_freshness: 'FRESH',
+    platform_state: 'AVAILABLE',
+    items: [{ id:'https://evil.test', severity:'P0', runbook_code:'WAIT_AND_RECHECK', count:1 }]
+  }), /invalid maintenance handoff item/);
+});
+
 test('calendar day validation rejects impossible dates', () => {
   const state = baseState();
   assert.throws(() => maintenance.planAiInvocation({ now_ms: 1, day: '2026-99-99', state }),

@@ -40,7 +40,7 @@ need(!/[?&#](?:role|persona|claims)=/.test(worker),
   'the service worker must never put a presentation role or claims in a URL');
 
 function requireEarlyConsumer(name, source, nextModule) {
-  const importAt = source.indexOf("import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h22'");
+  const importAt = source.indexOf("import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h23'");
   const callAt = source.indexOf('consumeActualRoleViewNavigation(location.href, sessionStorage)');
   const replaceAt = source.indexOf("history.replaceState(history.state, '', roleViewCleanUrl)");
   const nextAt = source.indexOf(nextModule);
@@ -49,7 +49,7 @@ function requireEarlyConsumer(name, source, nextModule) {
   need(replaceAt > callAt, name + ' must remove the marker from browser history');
   need(nextAt > replaceAt, name + ' must clear preview before Firebase or the page client initializes');
 }
-need(/import\s+['"]\.\/hr-client\.js\?v=42h22['"]/.test(hr),
+need(/import\s+['"]\.\/hr-client\.js\?v=42h23['"]/.test(hr),
   'hr.html must load the HR client that owns early preview cleanup');
 requireEarlyConsumer('hr-client.js', hrClient, 'const app = initializeApp(firebaseConfig)');
 requireEarlyConsumer('hr-requests-client.js', hrRequests, 'const app = initializeApp(firebaseConfig)');

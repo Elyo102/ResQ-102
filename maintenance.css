@@ -39,6 +39,7 @@
 .maintenance-note{border:1px solid var(--line);border-radius:11px;padding:11px 13px;color:var(--muted);line-height:1.6;font-size:13px}
 .maintenance-note.safe{border-color:var(--good-bd);background:var(--good-bg);color:var(--good)}
 .maintenance-note.warn{border-color:var(--warn);background:var(--warn-bg);color:var(--warn)}
+.maintenance-handoff{box-sizing:border-box;width:100%;min-height:280px;margin-top:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--txt);padding:14px;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical;direction:rtl;white-space:pre-wrap}
 .maintenance-empty{text-align:center;color:var(--muted);padding:28px 12px;line-height:1.7}
 .maintenance-deny{max-width:620px;margin:48px auto}
 .maintenance-hidden{display:none!important}

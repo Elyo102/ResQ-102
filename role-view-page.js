@@ -1,4 +1,4 @@
-import { resolveRoleView } from './role-view.js?v=42h22';
+import { resolveRoleView } from './role-view.js?v=42h23';
 
 export const ROLE_VIEW_STORAGE_KEY = 'resq_role_view_v1';
 export const ROLE_VIEW_ACTUAL_PARAM = 'resq_actual';
