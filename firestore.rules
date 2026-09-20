@@ -1407,8 +1407,8 @@ service cloud.firestore {
                           // ⭐ „מתי דווח לראשונה" אינו משתנה בעריכה. בלי זה,
                           // דיווח רטרואקטיבי היה נמחק בעריכה אחת, והרשומה
                           // הייתה נראית כאילו דווחה בזמן.
-                          && request.resource.data.get('reported_at', resource.data.get('reported_at', null))
-                             == resource.data.get('reported_at', null));
+                          && request.resource.data.keys().hasAll(['reported_at'])
+                          && request.resource.data.reported_at == resource.data.get('reported_at', null));
 
         allow delete: if (member(sid)
                           && resource.data.get('emp_number', '') == myEmp()

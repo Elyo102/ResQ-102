@@ -1,7 +1,7 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h20';
-import { errorText, logError } from './error-text.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h21';
+import { errorText, logError } from './error-text.js?v=42h21';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 let active = null;

@@ -87,7 +87,7 @@ check('the rules require reported_at to be the request time on create',
 check('the rules require it on every self-report create',
   /hasAll\(\['status', 'reported_at'\]\)/.test(rules));
 check('the rules refuse to let an edit change when it was first reported',
-  /request\.resource\.data\.get\('reported_at'[\s\S]{0,160}== resource\.data\.get\('reported_at', null\)/.test(rules));
+  /request\.resource\.data\.keys\(\)\.hasAll\(\['reported_at'\]\)[\s\S]{0,160}request\.resource\.data\.reported_at == resource\.data\.get\('reported_at', null\)/.test(rules));
 /* ⭐ הבדיקה שמונעת חזרה לדגל: אם מישהו יוסיף שדה בוליאני כזה, זה
  * ייפול כאן ולא יתגלה כשמישהו ישאל למה הדוח אומר משהו אחר. */
 check('no stored retroactive flag is written anywhere on the page',

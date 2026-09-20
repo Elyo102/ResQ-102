@@ -1,4 +1,4 @@
-import { registerPwaUpdateGuard } from './pwa.js?v=42h20';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h21';
 
 // DOM-only controller. The injected adapter owns authenticated transport;
 // no personal data is persisted or embedded into URLs.

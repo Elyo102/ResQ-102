@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, getDocFromServer, setDoc, updateDoc, serverTimestamp, Timestamp }
+import { deleteDoc, doc, getDocFromServer, setDoc, updateDoc, serverTimestamp, Timestamp, waitForPendingWrites }
   from 'firebase/firestore';
 
 const endpoint = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
@@ -56,8 +56,10 @@ const body = () => ({
 
 const env = await initializeTestEnvironment({ projectId: 'demo-resq', firestore: { host, port, rules } });
 let passed = 0;
+let activeDb = null;
 async function allowed(label, operation) {
   await operation();
+  await waitForPendingWrites(activeDb);
   ++passed; console.log('✓ ' + label);
 }
 async function refused(label, operation) {
@@ -77,6 +79,7 @@ try {
   });
 
   const db = env.authenticatedContext(uid, claims).firestore();
+  activeDb = db;
 
   await refused('a self report with no reported_at is refused',
     () => setDoc(doc(db, target), body()));
@@ -92,8 +95,7 @@ try {
   await allowed('a self report whose reported_at is the request time is accepted, on a day that already passed',
     () => setDoc(doc(db, target), { ...body(), reported_at: serverTimestamp() }));
 
-  const stored = await env.withSecurityRulesDisabled(async (context) =>
-    (await getDocFromServer(doc(context.firestore(), target))).data());
+  const stored = (await getDocFromServer(doc(db, target))).data();
   assert.ok(stored.reported_at, 'the stamp was stored');
   assert.ok(stored.reported_at.toMillis() > Date.parse(pastDay + 'T23:59:59+03:00'),
     'and it is later than the day being reported — which is what makes it retroactive');

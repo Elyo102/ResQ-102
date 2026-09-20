@@ -10,8 +10,8 @@
 // מחושבים בכל תצוגה: סיכום שנשמר מתיישן, ואף אחד לא שם לב
 // עד שמישהו מסתמך עליו.
 
-import { isOpen, isDamage, sevRank } from './faults.js?v=42h20';
-import { guardHours, assignedOf, dutyKind } from './guards.js?v=42h20';
+import { isOpen, isDamage, sevRank } from './faults.js?v=42h21';
+import { guardHours, assignedOf, dutyKind } from './guards.js?v=42h21';
 
 export function toKey(d) {
   if (typeof d === 'string') return d;
