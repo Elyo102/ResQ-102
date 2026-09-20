@@ -4203,7 +4203,7 @@ async function uidsInCrew(sid, crew) {
   return out;
 }
 
-async function calloutPeopleTarget(sid, requestedUids, allowedCrew) {
+async function calloutPeopleTarget(sid, requestedUids, allowedCrew, selfUid) {
   const clean = [];
   const seen = {};
   (Array.isArray(requestedUids) ? requestedUids : []).forEach(function (uid) {
@@ -4224,7 +4224,18 @@ async function calloutPeopleTarget(sid, requestedUids, allowedCrew) {
   const out = [], names = [], rejected = [];
   snaps.forEach(function (snap, index) {
     const uid = clean[index];
-    if (!snap.exists) { rejected.push(uid); return; }
+    if (!snap.exists) {
+      // בדיקת עצמי במצב אימון מיועדת גם לחשבון בקרה שאינו רשום
+      // כחבר סגל בתחנה. מצב חי מסיר בהמשך את השולח מהרשימה, ומצב
+      // אימון דורש personal_lab_control + silent_allow לפני שליחה.
+      if (selfUid && uid === selfUid) {
+        out.push(uid);
+        names.push('בדיקת עצמי');
+        return;
+      }
+      rejected.push(uid);
+      return;
+    }
     const value = snap.data() || {};
     if (value.is_active === false) { rejected.push(uid); return; }
     if (allowedCrew && String(value.crew || '') !== allowedCrew) { rejected.push(uid); return; }
@@ -4887,7 +4898,7 @@ exports.sendCallout = onCall(
     if (actor.isSuper && crew && !['A', 'B', 'C'].includes(crew)) {
       throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
     }
-    const picked = await calloutPeopleTarget(sid, d.uids, crew || '');
+    const picked = await calloutPeopleTarget(sid, d.uids, crew || '', auth.uid);
     uids = picked.uids;
     targetHe = (uids.length === 1 && uids[0] === auth.uid)
       ? 'בדיקת עצמי'

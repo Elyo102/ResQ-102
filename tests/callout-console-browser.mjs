@@ -35,7 +35,9 @@ assert.ok((sendSource.match(/await freshCalloutActor\(req\)/g) || []).length >= 
 assert.match(sendSource, /crew !== myCrew/);
 assert.match(serverSource, /async function calloutPeopleTarget/);
 assert.match(sendSource, /target === 'people'/);
-assert.match(sendSource, /calloutPeopleTarget\(sid, d\.uids/);
+assert.match(sendSource, /calloutPeopleTarget\(sid, d\.uids, crew \|\| '', auth\.uid\)/);
+assert.match(serverSource, /uid === selfUid/);
+assert.match(serverSource, /בדיקת עצמי/);
 assert.match(sendSource, /targetMode = 'people:' \+ uids\.slice\(\)\.sort\(\)\.join/);
 assert.doesNotMatch(sendSource, /target === 'people' \|\| target === 'station'/);
 assert.match(sendSource, /runtimeValue\.silent === true/);
