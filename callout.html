@@ -13,6 +13,9 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px;margin-bottom:14px}
   .danger{border-color:var(--bad-bd);background:var(--bad-bg)}
   .sound-note{margin:10px 0;padding:10px;border-radius:10px;background:var(--chip);color:var(--dim);font-size:13px;line-height:1.6}
+  .sound-preview{display:grid;gap:6px;margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--input)}
+  .sound-preview b{color:var(--callout-heading)}
+  .sound-preview audio{width:100%;min-height:44px}
   .recipient-box{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--card)}
   .recipient-tools{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
   .recipient-tools button{width:100%;min-height:44px;margin-top:0;background:var(--chip);color:var(--txt);border:1px solid var(--line);font-weight:800}
@@ -73,6 +76,11 @@
       <h2 id="composeTitle">הזעקת <span id="calloutCrew">המשמרת שלי</span></h2>
       <p>אפשר לשלוח לכל המשמרת או לבחור לוחמים מסוימים בלבד.</p>
       <p class="sound-note">🔔 כשהאפליקציה פתוחה יושמע צליל קריאת הפתע שנבחר. כשהיא ברקע, הצליל והעוצמה כפופים להגדרות ההתראות של המכשיר.</p>
+      <div class="sound-preview" aria-label="בדיקת צליל קריאת הפתע">
+        <b>בדיקת צליל לפני שיגור</b>
+        <span class="sub">השמעה מקומית בלבד — לא נשלחת קריאה ולא נרשם אירוע.</span>
+        <audio controls preload="none" src="./callout-siren.mp3?v=42h25"></audio>
+      </div>
       <section class="recipient-box" aria-labelledby="recipientTitle">
         <h3 id="recipientTitle" style="font-size:16px;margin:12px 0 4px;color:var(--callout-heading)">נמענים</h3>
         <p class="recipient-summary" id="recipientSummary" aria-live="polite">טוען רשימת לוחמים…</p>

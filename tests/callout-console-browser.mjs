@@ -124,6 +124,8 @@ try {
   await peopleRun.page.locator('#work').waitFor({ state:'visible' });
   await check('commander can choose specific recipients instead of the full crew', async () => {
     assert.match(await peopleRun.page.locator('#composeCard, .card.danger').first().textContent(), /לבחור לוחמים/);
+    assert.match(await peopleRun.page.locator('.sound-preview').textContent(), /השמעה מקומית בלבד/);
+    assert.match(await peopleRun.page.locator('.sound-preview audio').getAttribute('src'), /callout-siren\.mp3\?v=42h25/);
     await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).waitFor({ state:'visible' });
     await peopleRun.page.locator('#recipientNone').evaluate(button => button.click());
     assert.equal(await peopleRun.page.locator('#recipientNone').getAttribute('aria-pressed'), 'true');
