@@ -14,7 +14,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h21">
+<link rel="stylesheet" href="./theme.css?v=42h22">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -109,19 +109,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h21';
-import { renderNav, renderStuckNav } from './nav.js?v=42h21';
-import { initPWA } from './pwa.js?v=42h21';
-import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h21';
-import { blockerText } from './join-ui.js?v=42h21';
+import { firebaseConfig } from './firebase-config.js?v=42h22';
+import { renderNav, renderStuckNav } from './nav.js?v=42h22';
+import { initPWA } from './pwa.js?v=42h22';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h22';
+import { blockerText } from './join-ui.js?v=42h22';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h21';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h22';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h21';
+import { initAppCheck } from './appcheck.js?v=42h22';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
