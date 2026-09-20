@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h25">
+<link rel="stylesheet" href="./theme.css?v=42h26">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -314,32 +314,32 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h25';
-import { renderNav, renderStuckNav } from './nav.js?v=42h25';
-import { MEMBER_ROLES } from './roles.js?v=42h25';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h25';
-import { watchCallouts } from './callout.js?v=42h25';
-import { CREW_HE } from './rotation.js?v=42h25';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h26';
+import { renderNav, renderStuckNav } from './nav.js?v=42h26';
+import { MEMBER_ROLES } from './roles.js?v=42h26';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h26';
+import { watchCallouts } from './callout.js?v=42h26';
+import { CREW_HE } from './rotation.js?v=42h26';
 import { BUILTIN_FORMS, formById, FIELD_TYPES, validate, SUB_STATES,
          subHe, subColor, isPending, toKey, dmy, daysInRange, awayOn,
-         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42h25';
+         awayHe, callableWhileAway, summaryOf, signKind } from './forms.js?v=42h26';
 import { loadSignature, saveSignature, attachPad, readImageFile }
-  from './signature.js?v=42h25';
+  from './signature.js?v=42h26';
 import { canSign, signState, signatureRecord, stepLabel, STEP }
-  from './signflow.js?v=42h25';
-import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h25';
-import { errorText, errorCode, logError } from './error-text.js?v=42h25';
+  from './signflow.js?v=42h26';
+import { buildDocHtml, printHtml, submissionDoc } from './docpdf.js?v=42h26';
+import { errorText, errorCode, logError } from './error-text.js?v=42h26';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h25';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h26';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h25';
+import { initAppCheck } from './appcheck.js?v=42h26';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

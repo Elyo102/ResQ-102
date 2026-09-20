@@ -1,8 +1,8 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h25';
-import { errorText, logError } from './error-text.js?v=42h25';
-import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h25';
+import { CREW_HE } from './rotation.js?v=42h26';
+import { errorText, logError } from './error-text.js?v=42h26';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h26';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;
