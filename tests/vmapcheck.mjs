@@ -41,10 +41,15 @@ for (const role of ['commander','firefighter']) {
   // קריאת פתע מחייבת נימוק בדחייה. סוגרים אותה דרך הזרימה
   // האמיתית כדי שה-overlay לא יסתיר את בדיקות מפת הרכב.
   if (await pg.isVisible('#coNo').catch(()=>false)) {
-    // הדחייה עוברת עכשיו דרך נימוק מהיר וכפתור שליחה נפרד.
+    /* הדחייה עוברת עכשיו דרך נימוק מהיר וכפתור שליחה נפרד, ואחרי
+     * התשובה החלון נשאר רגע עם אישור מפורש — בכוונה. ממתינים לו
+     * להיסגר, אחרת הלחיצה הבאה בדף נחסמת על ידו. */
     await pg.click('#coNo');
     await pg.click('#coReasons button[data-reason="away"]');
     await pg.click('#coSend');
+    await pg.waitForFunction(
+      () => !document.getElementById('coWrap')?.classList.contains('on'),
+      { timeout: 6000 }).catch(() => {});
     await pg.waitForTimeout(300);
   }
 

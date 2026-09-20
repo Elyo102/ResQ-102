@@ -4,7 +4,7 @@ import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h21';
 import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h21';
 import { initAppCheck } from './appcheck.js?v=42h21';
 import { readScheduleFile } from './schedule-file-import.js?v=42h21';
-import { renderModeBar } from './mode-bar.js?v=42h21';
+import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h21';
 import { errorText as sharedErrorText, logError } from './error-text.js?v=42h21';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
@@ -3328,7 +3328,7 @@ async function runPlanner() {
  * ממה שכבר נטען למסך; אין ניחוש — מספר שאין לו מקור פשוט לא מוצג. */
 function publishConfirmationText(trial) {
   const lines = [trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של התחנה.'
+    ? TRIAL_PUBLISH_WARNING + ' הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של התחנה. לפרסם?'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.'];
   const filled = state.draft && state.draft.summary && Number.isFinite(state.draft.summary.filled)
     ? state.draft.summary.filled : null;

@@ -109,17 +109,50 @@ check('the siren promises nothing about overriding silent mode',
 /* ---------- 4 · מצב האימון ---------- */
 
 const modeBar = read('mode-bar.js');
-check('the trial bar lives in its own file, with no Firebase dependency',
+const schedule = read('schedule-management.js');
+check('the trial indicator lives in its own file, with no Firebase dependency',
   !/firebasejs/.test(modeBar) && /export function renderModeBar/.test(modeBar));
+
+/* ⭐ החיווי הוא תגית בכותרת, לא באנר רוחב-מסך.
+ *
+ * הבדיקה מכוונת אל מה שנעלם ולא רק אל מה שנוסף: `has-mode-bar` היה
+ * הסימן שדחף את כל התוכן למטה בכל מסך, והקיזוז שלו ב-`nav.js` הוא
+ * מה שהיה נשאר יתום אם מישהו יחזיר רק חצי מהשינוי. */
+const nav = read('nav.js');
+check('the wide banner and the offset it forced are both gone',
+  !/position:sticky[^']*width:100%/.test(modeBar)
+    && !/has-mode-bar #appNav/.test(nav)
+    && !/--resq-mode-bar-height/.test(nav));
+check('the chip is a real 44×44 control with an explicit aria-label',
+  /min-height:44px;min-width:44px/.test(modeBar)
+    && /aria-label/.test(modeBar)
+    && /TRIAL_ARIA = '\u05de\u05e6\u05d1 \u05d0\u05d9\u05de\u05d5\u05df \u05e4\u05e2\u05d9\u05dc'/.test(modeBar));
+check('pressing it is what opens the explanation, and Escape closes it',
+  /aria-expanded/.test(modeBar) && /'keydown'/.test(modeBar) && /Escape/.test(modeBar));
+check('the explanation says exactly what trial mode does',
+  /\u05e4\u05e2\u05d5\u05dc\u05d5\u05ea \u05e0\u05e9\u05de\u05e8\u05d5\u05ea \u05dc\u05d1\u05d3\u05d9\u05e7\u05d4 \u05d5\u05e0\u05e9\u05dc\u05d7\u05d5\u05ea \u05e8\u05e7 \u05dc\u05d7\u05e9\u05d1\u05d5\u05df \u05d4\u05d1\u05d3\u05d9\u05e7\u05d4 \u05d4\u05de\u05d0\u05d5\u05e9\u05e8/.test(modeBar));
+/* התגית נעלמת עם הסרגל בכל בנייה מחדש. בלי ההחזרה הזו המסך חוזר
+ * להיראות חי בדיוק ברגע שמישהו מתחלף. */
+check('and it is put back every time the header is rebuilt',
+  /^\s*attachModeChip\(\);\s*$/m.test(nav) && /export function attachModeChip/.test(modeBar));
+
+/* ⭐ החריג המחייב: לפני פעולה חיה הניסוח המלא עדיין מוצג. תגית
+ * מספיקה כדי לזכור; היא אינה מספיקה כדי לא לשדר לתחנה בטעות. */
+check('a live broadcast still asks with the full trial wording',
+  /TRIAL_BROADCAST_WARNING/.test(console_)
+    && /isTrial\(\) && !window\.confirm\(TRIAL_BROADCAST_WARNING\)/.test(console_)
+    && /\ud83e\uddea \u05e9\u05d9\u05d3\u05d5\u05e8 \u05d1\u05de\u05e6\u05d1 \u05d0\u05d9\u05de\u05d5\u05df/.test(modeBar));
+check('and so does publishing a schedule',
+  /TRIAL_PUBLISH_WARNING/.test(schedule)
+    && /\ud83e\uddea \u05e4\u05e8\u05e1\u05d5\u05dd \u05d1\u05de\u05e6\u05d1 \u05d0\u05d9\u05de\u05d5\u05df/.test(modeBar));
 /* ⭐ הניסוח הקודם אמר „שום דבר לא יוצא החוצה". זה לא נכון:
  * `setSilentMode` מקבל רשימת פטורים של עד 40 מזהים. */
 check('and it no longer claims that nothing leaves the station',
   [modeBar, callout].every(source =>
     visibleStrings(source).every(text => !/שום דבר לא יוצא החוצה/.test(text))));
 check('it says instead who does receive',
-  visibleStrings(modeBar).some(text => /חשבונות הבדיקה המאושרים/.test(text)));
+  visibleStrings(modeBar).some(text => /חשבון הבדיקה המאושר/.test(text)));
 
-const schedule = read('schedule-management.js');
 check('the schedule screen reads the station mode instead of assuming it is live',
   /notifications_mode/.test(schedule) && /renderModeBar/.test(schedule));
 check('and it gets that mode from the server, not from a second Firestore listener',

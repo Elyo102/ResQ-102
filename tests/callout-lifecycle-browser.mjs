@@ -80,10 +80,60 @@ check(await active('/callouts') === 1,
       'one callout listener exists after initial login');
 check(await active('config/mode') === 1,
       'one mode listener exists after initial login');
-check(await page.locator('body').evaluate(el => el.classList.contains('has-mode-bar')),
-      'trial mode marks the document for coordinated sticky offsets');
-check(await page.locator('#appNav').evaluate(el => getComputedStyle(el).paddingTop === '8px'),
-      'navigation does not count the top safe area again under the mode bar');
+/* ======================================================================
+ *  חיווי מצב האימון — תגית בכותרת, לא באנר רוחב-מסך
+ * ====================================================================== */
+
+check(!(await page.locator('body').evaluate(el => el.classList.contains('has-mode-bar'))),
+      'the wide banner is gone, and with it the offset it forced on every screen');
+check(await page.locator('#modeChip').isVisible(),
+      'a compact chip sits in the header instead');
+check(await page.locator('#appNav #modeChip').count() === 1,
+      'and it really is inside the header, not floating over the page');
+check(await page.locator('#modeChip').getAttribute('aria-label') === 'מצב אימון פעיל',
+      'its aria-label says what the mode is',
+      await page.locator('#modeChip').getAttribute('aria-label'));
+check((await page.locator('#modeChip').innerText()).includes('אימון'),
+      'and so does the visible label', await page.locator('#modeChip').innerText());
+
+/* ⭐ 44×44 הוא המינימום שאצבע פוגעת בו. תגית שאי אפשר ללחוץ עליה
+ * בטלפון היא תגית שההסבר שמאחוריה לא קיים. */
+const chipBox = await page.locator('#modeChip').boundingBox();
+check(chipBox.width >= 44 && chipBox.height >= 44,
+      'the chip is at least 44×44', JSON.stringify(chipBox));
+
+check(await page.locator('#modeChipNote').isHidden(),
+      'the explanation starts closed — the point was to reduce noise');
+await page.locator('#modeChip').click();
+await page.locator('#modeChipNote').waitFor({ state:'visible' });
+check((await page.locator('#modeChipNote').innerText())
+        .includes('פעולות נשמרות לבדיקה ונשלחות רק לחשבון הבדיקה המאושר'),
+      'pressing it explains what trial mode actually does',
+      await page.locator('#modeChipNote').innerText());
+check(await page.locator('#modeChip').getAttribute('aria-expanded') === 'true',
+      'and the control says it is expanded');
+await page.keyboard.press('Escape');
+await page.locator('#modeChipNote').waitFor({ state:'hidden' });
+check(await page.locator('#modeChip').getAttribute('aria-expanded') === 'false',
+      'Escape closes it again');
+
+// 320 · 360 · 390 — הכותרת לא נשברת ואין גלישה אופקית.
+for (const width of [320, 360, 390]) {
+  await page.setViewportSize({ width, height:844 });
+  await page.waitForTimeout(60);
+  const fit = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    chip: document.getElementById('modeChip').getBoundingClientRect(),
+    nav: document.getElementById('appNav').getBoundingClientRect()
+  }));
+  check(fit.overflow <= 1, 'header does not overflow at ' + width, JSON.stringify(fit));
+  check(fit.chip.width >= 44 && fit.chip.height >= 44,
+        'the chip keeps its touch target at ' + width, JSON.stringify(fit.chip));
+  check(fit.chip.left >= fit.nav.left - 1 && fit.chip.right <= fit.nav.right + 1,
+        'and stays inside the header at ' + width, JSON.stringify(fit));
+}
+await page.setViewportSize({ width:390, height:844 });
+await page.waitForTimeout(60);
 
 // Safari can emit pageshow from bfcache more than once around auth recovery.
 // Every route must replace the previous runtime instead of accumulating it.
@@ -129,15 +179,16 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(80);
 const stickyGeometry = await page.evaluate(() => {
-  const mode = document.getElementById('modeBar').getBoundingClientRect();
+  const chip = document.getElementById('modeChip').getBoundingClientRect();
   const nav = document.getElementById('appNav').getBoundingClientRect();
-  return { modeTop:mode.top, modeBottom:mode.bottom, navTop:nav.top };
+  return { modeTop:chip.top, modeBottom:chip.bottom, navTop:nav.top, navBottom:nav.bottom };
 });
-check(stickyGeometry.modeTop >= 46,
-      'the trial mode bar itself stays below a 47px safe inset',
+check(stickyGeometry.navTop >= 46,
+      'the header still stays below a 47px safe inset',
       JSON.stringify(stickyGeometry));
-check(stickyGeometry.navTop + 1 >= stickyGeometry.modeBottom,
-      'trial mode bar and navigation do not overlap after scroll',
+check(stickyGeometry.modeTop >= stickyGeometry.navTop - 1
+        && stickyGeometry.modeBottom <= stickyGeometry.navBottom + 1,
+      'and the chip rides inside it rather than stacking above it',
       JSON.stringify(stickyGeometry));
 
 // A shared phone changes identity while both unsubscribe functions throw.
@@ -374,8 +425,10 @@ const cleared = await page.evaluate(() => ({
 }));
 check(!cleared.open && !cleared.text && !cleared.from && !cleared.yes && !cleared.no,
       'logout clears the old identity overlay and button handlers');
-check(!(await page.locator('body').evaluate(el => el.classList.contains('has-mode-bar'))),
-      'logout releases mode-bar safe-area ownership');
+check(await page.locator('#modeChip').count() === 0,
+      'logout removes the mode chip with the rest of the identity');
+check(!(await page.locator('body').evaluate(el => el.classList.contains('has-trial-mode'))),
+      'and releases the trial marker on the document');
 check(errors.length === 0, 'no browser exception occurred', errors.join(' | '));
 
 await context.close();

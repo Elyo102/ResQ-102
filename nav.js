@@ -56,6 +56,7 @@ const GROUPS = [
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
 import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h21';
+import { attachModeChip } from './mode-bar.js?v=42h21';
 import { assertPresentationOnly } from './role-view.js?v=42h21';
 import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h21';
 
@@ -271,7 +272,6 @@ function styleOnce() {
     '  line-height:16px;text-align:center;padding:0 3px;pointer-events:none}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
-    'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
     // במסך רחב המכולה שקופה: הקישורים נשארים ילדים ישירים של
     // הסרגל, ומתנהגים בדיוק כמו קודם. שום שינוי במחשב.
     '#navLinks{display:contents}',
@@ -305,7 +305,6 @@ function styleOnce() {
     '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
     '    calc(10px + var(--resq-safe-right)) 8px',
     '    calc(10px + var(--resq-safe-left))}',
-    '  body.has-mode-bar #appNav{padding-top:8px}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',
@@ -385,6 +384,9 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   const nav = document.createElement('nav');
   nav.id = 'appNav';
   nav.setAttribute('aria-label', 'ניווט ראשי');
+  /* ⭐ הסרגל נבנה מחדש בכל שינוי זהות, והישן נמחק. תגית המצב יושבת
+   * בתוכו, ולכן היא מוחזרת למקומה בסוף הבנייה. בלי זה החיווי נעלם
+   * בדיוק ברגע שמישהו מתחלף — והמסך חוזר להיראות חי. */
 
   const brand = document.createElement('div');
   brand.className = 'brand';
@@ -559,6 +561,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   });
 
   document.body.insertBefore(nav, document.body.firstChild);
+  attachModeChip();
 
   const dock = document.createElement('nav');
   dock.id = 'resqDock';

@@ -1,99 +1,194 @@
 /* ======================================================================
- *  mode-bar — פס „מצב ניסוי", בקובץ אחד, לכל מסך.
+ *  mode-bar — חיווי מצב ההפעלה, בכותרת, בגודל של תגית.
  *
- *  **למה הפס קיים.** במצב ניסוי ההתראות נחסמות. בלי סימן על המסך,
+ *  **למה החיווי קיים.** במצב ניסוי ההתראות נחסמות. בלי סימן על המסך,
  *  מפקד שישלח קריאת פתע ולא יראה תגובה יסיק שההזעקה שבורה — ויתקשר
  *  לכולם בטלפון. „שקט" ו„שבור" נראים אותו דבר בדיוק, וזה ההבדל
  *  היחיד שאפשר להראות.
  *
- *  **למה הוא יצא מ-`callout.js`.** הוא היה שם כי `watchCallouts`
- *  נקראת מהרבה מסכים. אבל לא מכולם: מסך הסידור אינו קורא לה, ולכן
- *  רכזת יכלה להיות בשקט גלובלי מלא ולראות על המסך „מצב חי". פס
- *  שתלוי בפיצ'ר אחר הוא פס שנשכח בדיוק במסך שבו הוא נחוץ.
+ *  **ולמה הוא כבר לא פס.** פס רוחב-מסך קבוע בכל מסך הוא רעש: אחרי
+ *  יומיים אף אחד לא קורא אותו, והוא גם דוחף את כל התוכן למטה בטלפון,
+ *  שם כל פיקסל אנכי נספר. התגית אומרת את אותו דבר בפינה, ומי שרוצה
+ *  את המשפט המלא לוחץ ומקבל אותו.
  *
- *  **ולמה הניסוח השתנה.** הנוסח הקודם אמר „שום דבר לא יוצא החוצה".
- *  זה לא נכון: `setSilentMode` מקבל רשימת פטורים של עד 40 מזהים,
- *  ו-`allowedByRuntime` מעביר אותם. מי שקרא את המשפט ההוא והניח
- *  שאפשר לבדוק בשקט מוחלט — הניח לא נכון. הנוסח כאן אומר מה שקורה.
+ *  **מה לא השתנה:** לפני פעולה חיה — קריאת פתע, פרסום סידור, שליחת
+ *  פוש — הניסוח המלא עדיין מוצג בדיאלוג. תגית קטנה מספיקה כדי לזכור
+ *  שהמערכת בניסוי; היא אינה מספיקה כדי לשדר לתחנה בטעות. שני מצבי
+ *  התצוגה האלה הם החלטה מכוונת ולא חוסר עקביות.
+ *
+ *  **הניסוח.** הנוסח הקודם אמר „שום דבר לא יוצא החוצה". זה לא נכון:
+ *  `setSilentMode` מקבל רשימת פטורים של עד 40 מזהים, ו-`allowedByRuntime`
+ *  מעביר אותם. מי שקרא את המשפט ההוא והניח שאפשר לבדוק בשקט מוחלט —
+ *  הניח לא נכון.
  * ====================================================================== */
 
 /* ⭐ משפט אחד, במקום אחד. שני מסכים לא יאמרו דברים שונים על אותו
  * מצב, ותיקון ניסוח הוא תיקון בשורה אחת ולא בשבעה־עשר קבצים. */
-export const TRIAL_NOTE = 'התראות ומיילים אינם נשלחים לצוות. רק חשבונות הבדיקה המאושרים מקבלים.';
-export const TRIAL_TITLE = 'מצב ניסוי';
+export const TRIAL_LABEL = 'אימון';
+export const LIVE_LABEL = 'חי';
+export const TRIAL_ARIA = 'מצב אימון פעיל';
+export const LIVE_ARIA = 'מצב חי';
+export const TRIAL_NOTE =
+  'מצב אימון פעיל — פעולות נשמרות לבדיקה ונשלחות רק לחשבון הבדיקה המאושר.';
+export const LIVE_NOTE =
+  'מצב חי — פעולות נשלחות לנמענים האמיתיים שלהן.';
 
-let modeResizeObserver = null;
+/* הניסוחים המלאים לדיאלוגים שלפני פעולה חיה. הם יושבים כאן ולא
+ * במסכים, כדי שלא ייווצר מצב שבו מסך אחד עודכן והשני לא. */
+export const TRIAL_BROADCAST_WARNING =
+  '🧪 שידור במצב אימון: ההתראה תישלח לחשבון הבדיקה בלבד.';
+export const TRIAL_PUBLISH_WARNING =
+  '🧪 פרסום במצב אימון: הסידור יעודכן לבדיקה בלבד, ולא יישלחו התראות אמת לצוותים.';
 
-export function clearModeBarOffset() {
-  if (modeResizeObserver) {
-    try { modeResizeObserver.disconnect(); } catch (ignore) {}
-    modeResizeObserver = null;
-  }
-  document.documentElement.style.removeProperty('--resq-mode-bar-height');
+const CHIP_ID = 'modeChip';
+const NOTE_ID = 'modeChipNote';
+const WRAP_ID = 'modeChipWrap';
+
+/* `null` = לא ידוע. מסך שאין לו מקור מצב לא יציג תגית, ולא ימציא
+ * „חי" רק מפני שלא שאל. */
+let currentMode = null;
+let documentListener = null;
+
+export function stationMode() { return currentMode; }
+export const isTrial = () => currentMode === 'trial';
+
+function styleOnce() {
+  if (document.getElementById('modeChipStyle')) return;
+  const st = document.createElement('style');
+  st.id = 'modeChipStyle';
+  st.textContent = [
+    '#' + WRAP_ID + '{position:relative;display:inline-flex;flex:none;',
+    '  margin-inline-start:auto;direction:rtl}',
+    // 44×44 הוא המינימום שאצבע פוגעת בו באמינות על מסך טלפון.
+    '#' + CHIP_ID + '{display:inline-flex;align-items:center;gap:7px;',
+    '  min-height:44px;min-width:44px;box-sizing:border-box;',
+    '  padding:0 12px;border-radius:22px;cursor:pointer;',
+    '  font:inherit;font-size:13px;font-weight:800;line-height:1;',
+    '  border:1px solid var(--line);background:var(--panel);color:var(--txt)}',
+    '#' + CHIP_ID + ' .dot{width:9px;height:9px;border-radius:50%;flex:none;',
+    '  background:var(--good,#2e7d32)}',
+    '#' + CHIP_ID + '[data-mode="trial"]{border-color:var(--warn);',
+    '  background:var(--warn-bg);color:var(--warn)}',
+    '#' + CHIP_ID + '[data-mode="trial"] .dot{display:none}',
+    '#' + CHIP_ID + ':focus-visible{outline:3px solid var(--accent);outline-offset:2px}',
+    '#' + NOTE_ID + '{position:absolute;top:calc(100% + 6px);inset-inline-end:0;',
+    '  z-index:960;width:max-content;max-width:min(78vw,320px);',
+    '  padding:11px 13px;border-radius:11px;font-size:13px;line-height:1.6;',
+    '  font-weight:600;text-align:start;',
+    '  border:1px solid var(--line);background:var(--card);color:var(--txt);',
+    '  box-shadow:0 10px 30px rgba(0,0,0,.28)}',
+    '#' + NOTE_ID + '[hidden]{display:none!important}',
+    '@media(max-width:420px){#' + CHIP_ID + '{padding:0 10px;font-size:12px}}'
+  ].join('');
+  document.head.appendChild(st);
 }
 
-function trackModeBarHeight(el) {
-  clearModeBarOffset();
-  const update = function () {
-    if (!el || !el.isConnected) return;
-    const height = Math.ceil(el.getBoundingClientRect().height);
-    document.documentElement.style.setProperty('--resq-mode-bar-height', height + 'px');
-  };
-  update();
-  if (typeof ResizeObserver === 'function') {
-    modeResizeObserver = new ResizeObserver(update);
-    modeResizeObserver.observe(el);
+function closeNote() {
+  const note = document.getElementById(NOTE_ID);
+  const chip = document.getElementById(CHIP_ID);
+  if (note) note.hidden = true;
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+  if (documentListener) {
+    document.removeEventListener('click', documentListener, true);
+    document.removeEventListener('keydown', documentListener, true);
+    documentListener = null;
   }
+}
+
+function openNote() {
+  const note = document.getElementById(NOTE_ID);
+  const chip = document.getElementById(CHIP_ID);
+  if (!note || !chip) return;
+  note.hidden = false;
+  chip.setAttribute('aria-expanded', 'true');
+  /* סגירה בלחיצה בחוץ וב-Escape. בלי זה ההסבר נשאר פתוח מעל התוכן
+   * עד שמישהו ילחץ שוב בדיוק על התגית — וזה בדיוק מה שלא קורה. */
+  documentListener = function (event) {
+    if (event.type === 'keydown' && event.key !== 'Escape') return;
+    if (event.type === 'click' && (event.target === chip || chip.contains(event.target))) return;
+    closeNote();
+  };
+  document.addEventListener('click', documentListener, true);
+  document.addEventListener('keydown', documentListener, true);
+}
+
+function buildChip() {
+  styleOnce();
+  let wrap = document.getElementById(WRAP_ID);
+  if (wrap) return wrap;
+  wrap = document.createElement('div');
+  wrap.id = WRAP_ID;
+
+  const chip = document.createElement('button');
+  chip.id = CHIP_ID;
+  chip.type = 'button';
+  chip.setAttribute('aria-expanded', 'false');
+  chip.setAttribute('aria-controls', NOTE_ID);
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  const label = document.createElement('span');
+  label.className = 'label';
+  chip.append(dot, label);
+  chip.addEventListener('click', function (event) {
+    event.stopPropagation();
+    const note = document.getElementById(NOTE_ID);
+    if (note && note.hidden) openNote(); else closeNote();
+  });
+
+  const note = document.createElement('div');
+  note.id = NOTE_ID;
+  note.setAttribute('role', 'status');
+  note.hidden = true;
+
+  wrap.append(chip, note);
+  return wrap;
+}
+
+/** מכניס את התגית לכותרת. נקרא גם מ-`nav.js` אחרי בנייה מחדש של הסרגל. */
+export function attachModeChip() {
+  if (currentMode !== 'trial' && currentMode !== 'live') return;
+  const wrap = buildChip();
+  const host = document.getElementById('appNav') || document.body;
+  if (wrap.parentNode === host) return;
+  host.appendChild(wrap);
 }
 
 /**
- * מצייר או מסיר את הפס.
- * `mode` — 'trial' מדליק, כל ערך אחר מכבה.
- * `note` — משפט נוסף למסך שיודע משהו שהפס הכללי אינו יודע (מנוע
- *           הסידור, למשל). הוא **נוסף** לניסוח הקבוע ואינו מחליף אותו,
- *           כדי שאי אפשר יהיה להחליש את האזהרה ממסך מסוים.
+ * מצייר את החיווי.
+ * `mode` — 'trial' או 'live'. כל ערך אחר מסיר אותו, כי „לא ידוע"
+ *          אינו מצב שמותר להציג עליו תגית.
  */
-export function renderModeBar(mode, note) {
-  const on = mode === 'trial';
-  let el = document.getElementById('modeBar');
-
-  if (!on) {
-    if (el) el.remove();
-    document.body.classList.remove('has-mode-bar');
-    clearModeBarOffset();
+export function renderModeBar(mode) {
+  currentMode = mode === 'trial' ? 'trial' : mode === 'live' ? 'live' : null;
+  if (!currentMode) {
+    closeNote();
+    const wrap = document.getElementById(WRAP_ID);
+    if (wrap) wrap.remove();
+    document.body.classList.remove('has-mode-bar', 'has-trial-mode');
     return;
   }
-  document.body.classList.add('has-mode-bar');
-  const extra = typeof note === 'string' && note.trim() ? ' ' + note.trim() : '';
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'modeBar';
-    el.setAttribute('role', 'status');
-    el.style.cssText = [
-      'position:sticky', 'top:var(--resq-safe-top-override,env(safe-area-inset-top,0px))', 'z-index:950',
-      'background:var(--warn-bg)', 'color:var(--warn)',
-      'border-bottom:2px solid var(--warn)',
-      'padding:9px 16px', 'box-sizing:border-box',
-      'width:100%', 'align-self:stretch',
-      'font-size:13px', 'font-weight:600',
-      'line-height:1.6', 'direction:rtl', 'text-align:center',
-      'font-family:"Segoe UI",Arial,sans-serif',
-      'margin:0'
-    ].join(';');
-    document.body.insertBefore(el, document.body.firstChild);
-  }
-  // בלי innerHTML: הכותרת והמשפט נבנים כצמתים, ו-`note` מגיע מקוד
-  // המסך ולא מהשרת — אבל גם כך אין סיבה להשאיר פתח.
-  el.replaceChildren();
-  const title = document.createElement('b');
-  title.textContent = TRIAL_TITLE;
-  el.append(title, document.createTextNode(' · ' + TRIAL_NOTE + extra));
-  trackModeBarHeight(el);
+  const wrap = buildChip();
+  attachModeChip();
+  const chip = wrap.querySelector('#' + CHIP_ID);
+  const note = wrap.querySelector('#' + NOTE_ID);
+  const trial = currentMode === 'trial';
+  chip.dataset.mode = currentMode;
+  chip.querySelector('.label').textContent = trial ? '🧪 ' + TRIAL_LABEL : LIVE_LABEL;
+  chip.setAttribute('aria-label', trial ? TRIAL_ARIA : LIVE_ARIA);
+  note.textContent = trial ? TRIAL_NOTE : LIVE_NOTE;
+  // `has-trial-mode` נשאר ככלי עזר למסכים; הוא כבר אינו דוחף תוכן.
+  document.body.classList.toggle('has-trial-mode', trial);
+  document.body.classList.remove('has-mode-bar');
 }
 
-/* המקור למצב משתנה לפי המסך, ולכן הוא אינו כאן:
- * מסכי קריאת פתע מאזינים ל-`config/mode` ב-Firestore שכבר בידם,
- * ומסך הסידור — שאינו מחזיק Firestore כלל — מקבל את המצב
- * מתוך `getScheduleRuntimeStatus`. הקובץ הזה מצייר בלבד, ולכן אין לו
- * תלות ב-SDK של Firebase — מסך שאינו טוען אותו לא יטען אותו
- * רק כדי להציג פס אזהרה. */
+/* נשאר כדי שקוראים ותיקים לא יישברו: אין יותר פס שתופס גובה, ולכן
+ * אין גובה לשחרר. */
+export function clearModeBarOffset() {
+  closeNote();
+  document.documentElement.style.removeProperty('--resq-mode-bar-height');
+}
+
+/* המקור למצב משתנה לפי המסך, ולכן הוא אינו כאן: מסכי קריאת פתע
+ * מאזינים ל-`config/mode` ב-Firestore שכבר בידם, ומסך הסידור — שאינו
+ * מחזיק Firestore כלל — מקבל את המצב מתוך `getScheduleRuntimeStatus`.
+ * הקובץ הזה מצייר בלבד, ולכן אין לו תלות ב-SDK של Firebase. */

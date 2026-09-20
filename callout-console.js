@@ -2,6 +2,7 @@ import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { CREW_HE } from './rotation.js?v=42h21';
 import { errorText, logError } from './error-text.js?v=42h21';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h21';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 let active = null;
@@ -235,6 +236,13 @@ export async function initCalloutConsole(options = {}) {
       session.elements.input.value = session.pendingRequest.message;
       setMessage(session.elements.message,
         'קריאה קודמת עדיין ממתינה למסירה; ממשיכים אותה לפני יצירת קריאה חדשה.', 'info');
+      return;
+    }
+    /* ⭐ תגית קטנה בכותרת מספיקה כדי לזכור שהמערכת בניסוי. היא אינה
+     * מספיקה כדי לא לשדר לתחנה בטעות, ולכן לפני שידור הניסוח המלא
+     * עדיין מוצג — ודורש אישור מפורש. */
+    if (isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
+      setMessage(session.elements.message, 'השידור בוטל. לא נשלחה קריאה.', 'info');
       return;
     }
     if (!session.pendingRequest) {
