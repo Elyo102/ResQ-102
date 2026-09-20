@@ -14,6 +14,12 @@ const mime = {
 
 const fixture = `<!doctype html>
 <html lang="he" dir="rtl"><head><meta charset="utf-8">
+<!-- ⭐ הפלטה האמיתית, ולא עותק שלה.
+     עד כאן הקובץ הזה נשא תת-קבוצה מועתקת של המשתנים, ולכן טוקן חדש
+     ב-theme.css פשוט לא היה קיים בבדיקה — והיא הייתה עוברת על צבע
+     ברירת מחדל בזמן שבמסך האמיתי הצבע נכון (או להפך). הבלוק שמתחת
+     נשאר כדי לדרוס במפורש מה שהבדיקה רוצה לשלוט בו. -->
+<link rel="stylesheet" href="/theme.css">
 <style>
 :root{--card:#fff;--line:#ddd;--line-hover:#ccc;--txt:#182033;--dim:#556070;
 --muted:#788291;--accent:#e8590c;--accent-txt:#b64000;--on-accent:#fff;--accent-on:#000;--chip:#f6f7f9}
@@ -169,6 +175,125 @@ try {
     }));
     if (edges.left < 43 || edges.right > 347) throw new Error('landscape safe edges: ' + JSON.stringify(edges));
   });
+  /* ======================================================================
+   *  „סט A" — אייקון צבעוני מעל טקסט, בכל רוחב
+   * ====================================================================== */
+  await test('every dock slot carries its own icon with the label underneath', async () => {
+    const slots = await mobilePage.locator('#resqDock > *').evaluateAll(nodes => nodes.map(node => {
+      const icon = node.querySelector('svg.dockIco');
+      const label = node.querySelector('.dockLbl');
+      return {
+        label: label ? label.textContent : null,
+        paths: icon ? icon.querySelectorAll('path').length : 0,
+        hidden: icon ? icon.getAttribute('aria-hidden') : null,
+        stroke: icon ? icon.getAttribute('stroke') : null,
+        aria: node.getAttribute('aria-label'),
+        active: node.classList.contains('on'),
+        // האייקון מעל הטקסט, לא לידו — נבדק בגאומטריה ולא במחלקה.
+        below: icon && label
+          ? label.getBoundingClientRect().top >= icon.getBoundingClientRect().bottom - 1 : false,
+        colour: getComputedStyle(icon).color
+      };
+    }));
+    same(slots.map(slot => slot.label), ['בית', 'המשמרת', 'התחנה', 'עוד'],
+      'dock labels changed');
+    if (slots.some(slot => slot.paths < 1)) throw new Error('a dock slot has no icon: ' + JSON.stringify(slots));
+    if (slots.some(slot => slot.hidden !== 'true')) throw new Error('the decorative icon is exposed to screen readers');
+    if (slots.some(slot => slot.stroke !== 'currentColor')) throw new Error('an icon is not drawn in currentColor');
+    if (slots.some(slot => !slot.below)) throw new Error('a label is not under its icon: ' + JSON.stringify(slots));
+    slots.forEach((slot, index) => {
+      const expected = ['בית', 'המשמרת', 'התחנה', 'עוד'][index];
+      if (slot.aria !== expected) throw new Error('accessible name ' + slot.aria + ' != ' + expected);
+    });
+    /* ⭐ כל אייקון לא-פעיל נושא את צבע האזור שלו — לא אפור אחיד, ולא
+     * ארבעה שמות למשתנה אחד. הצבע נמשך מהטוקן עצמו ומושווה לחישוב
+     * בפועל, כדי שטוקן שלא הוגדר יפיל את הבדיקה במקום ליפול בשקט
+     * חזרה לצבע ברירת המחדל. (זה בדיוק מה שקרה כאן: `--dock-admin`
+     * נקרא בקוד ו-`--dock-more` הוגדר ב-CSS.) */
+    const expected = await mobilePage.evaluate(() => {
+      const style = getComputedStyle(document.documentElement);
+      const probe = document.createElement('span');
+      document.body.appendChild(probe);
+      const resolve = (value) => { probe.style.color = value; return getComputedStyle(probe).color; };
+      const out = {};
+      for (const id of ['home', 'mine', 'station', 'admin']) {
+        const token = style.getPropertyValue('--dock-' + id).trim();
+        out[id] = token ? resolve(token) : null;
+      }
+      probe.style.color = 'var(--accent-txt)';
+      out.accent = getComputedStyle(probe).color;
+      probe.remove();
+      return out;
+    });
+    if (['home', 'mine', 'station', 'admin'].some(id => !expected[id])) {
+      throw new Error('a dock colour token is undefined: ' + JSON.stringify(expected));
+    }
+    const areaColours = new Set(['home', 'mine', 'station', 'admin'].map(id => expected[id]));
+    if (areaColours.size !== 4) throw new Error('the four area colours are not distinct: ' + JSON.stringify(expected));
+    ['home', 'mine', 'station', 'admin'].forEach((id, index) => {
+      const slot = slots[index];
+      const want = slot.active ? expected.accent : expected[id];
+      if (slot.colour !== want) {
+        throw new Error('slot ' + slot.label + ' icon is ' + slot.colour + ', expected ' + want);
+      }
+    });
+  });
+
+  await test('the active slot is ResQ orange on soft orange, and drops its area colour', async () => {
+    const active = await mobilePage.locator('#resqDock .on').evaluateAll(nodes => nodes.map(node => ({
+      label: node.querySelector('.dockLbl')?.textContent,
+      background: getComputedStyle(node).backgroundColor,
+      text: getComputedStyle(node).color,
+      icon: getComputedStyle(node.querySelector('svg.dockIco')).color
+    })));
+    if (active.length !== 1) throw new Error('expected exactly one active slot, got ' + active.length);
+    const accent = await mobilePage.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--accent-txt)';
+      probe.style.backgroundColor = 'var(--accent-soft)';
+      document.body.appendChild(probe);
+      const style = getComputedStyle(probe);
+      const out = { text:style.color, soft:style.backgroundColor };
+      probe.remove();
+      return out;
+    });
+    if (active[0].background !== accent.soft) throw new Error('active background is not the soft accent: ' + JSON.stringify({ active:active[0], accent }));
+    if (active[0].text !== accent.text) throw new Error('active label is not the accent: ' + JSON.stringify({ active:active[0], accent }));
+    // האייקון הפעיל כתום כמו הטקסט, ולא בצבע האזור שלו.
+    if (active[0].icon !== accent.text) throw new Error('active icon kept its area colour: ' + JSON.stringify({ active:active[0], accent }));
+  });
+
+  await test('the dock holds its shape and touch target at 320, 360 and 390', async () => {
+    const original = mobilePage.viewportSize();
+    for (const width of [320, 360, 390]) {
+      await mobilePage.setViewportSize({ width, height:800 });
+      await mobilePage.waitForTimeout(60);
+      const shape = await mobilePage.evaluate(() => {
+        const slots = [...document.querySelectorAll('#resqDock > *')];
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          boxes: slots.map(node => node.getBoundingClientRect()).map(box => ({ w:box.width, h:box.height })),
+          stacked: slots.every(node => {
+            const icon = node.querySelector('svg.dockIco').getBoundingClientRect();
+            const label = node.querySelector('.dockLbl').getBoundingClientRect();
+            return label.top >= icon.bottom - 1;
+          }),
+          // הטקסט נשאר — לא נחתך לכלום ולא מוסתר ברוחב צר.
+          labelled: slots.every(node => (node.querySelector('.dockLbl').textContent || '').trim().length > 0
+            && node.querySelector('.dockLbl').getBoundingClientRect().height > 0)
+        };
+      });
+      if (shape.overflow > 1) throw new Error('horizontal overflow at ' + width + ': ' + shape.overflow);
+      if (!shape.stacked) throw new Error('labels stopped sitting under the icons at ' + width);
+      if (!shape.labelled) throw new Error('a label disappeared at ' + width);
+      if (shape.boxes.some(box => box.w < 43.5 || box.h < 43.5)) {
+        throw new Error('touch target shrank at ' + width + ': ' + JSON.stringify(shape.boxes));
+      }
+    }
+    if (original) await mobilePage.setViewportSize(original);
+    await mobilePage.waitForTimeout(60);
+  });
+
   await test('mobile dock drawer contains only the selected permitted group', async () => {
     await mobilePage.getByRole('button', { name:'המשמרת', exact:true }).click();
     const mine = await mobilePage.locator('#resqDockSheet a').evaluateAll(nodes =>

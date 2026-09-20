@@ -345,10 +345,24 @@ function styleOnce() {
     ' calc(8px + env(safe-area-inset-bottom,0px))',
     ' calc(10px + var(--resq-safe-left-override,env(safe-area-inset-left,0px)));',
     'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);direction:rtl}',
-    '#resqDock a,#resqDock button{display:flex;align-items:center;justify-content:center;min-width:0;',
-    'min-height:52px;margin:0;padding:6px 4px;border:0;border-radius:12px;background:transparent;',
+    /* הטקסט יושב מתחת לאייקון בכל רוחב. אייקון בלי מילה
+       הוא חידה — וכבאי בשתיים בלילה אינו פותר חידות. */
+    '#resqDock a,#resqDock button{display:flex;flex-direction:column;align-items:center;',
+    'justify-content:center;gap:3px;min-width:44px;min-height:52px;margin:0;padding:6px 2px;',
+    'border:0;border-radius:12px;background:transparent;overflow:hidden;',
     'color:var(--dim);font:700 12px/1.2 "Segoe UI",Arial,sans-serif;text-decoration:none}',
+    '#resqDock .dockIco{display:block;width:22px;height:22px;flex:none;',
+    // הצבע מגיע מהפריט דרך משתנה אחד, וה-SVG מצייר ב-currentColor.
+    '  color:var(--dock-ico,var(--dim))}',
+    '#resqDock .dockLbl{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;',
+    '  white-space:nowrap}',
+    /* ⭐ הפריט הפעיל אינו נושא צבע אזור. הוא כתום ResQ על רקע
+       כתום רך, וזו ההבחנה שחייבת להישאר החזקה ביותר בסרגל.
+       משטרת הצבע של האזור מבוטלת על ידו במפורש. */
     '#resqDock .on{background:var(--accent-soft);color:var(--accent-txt)}',
+    '#resqDock .on .dockIco{color:var(--accent-txt)}',
+    '#resqDock a:focus-visible,#resqDock button:focus-visible{outline:3px solid var(--accent);',
+    '  outline-offset:-3px}',
     '#resqDockPanel{position:fixed;display:flex;inset:0;z-index:980;align-items:flex-end;',
     'background:rgba(7,12,20,.46);padding:14px',
     ' calc(14px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
@@ -369,6 +383,69 @@ function styleOnce() {
 
 // current — שם הקובץ הנוכחי, למשל 'admin.html'.
 // who     — טקסט קצר שמזהה את המשתמש, מוצג בקצה הסרגל.
+/* ======================================================================
+ *  אייקוני התפריט התחתון — „סט A"
+ *
+ *  ארבעה אייקונים בקו אחד (lucide): בית, לוח־שנה־עם־שעון, בניין,
+ *  ושלוש נקודות. כולם מצוירים ב-`currentColor`, ולכן צבע האזור הוא
+ *  מאפיין CSS אחד ולא ארבעה קבצים.
+ *
+ *  למה inline ולא קובץ אייקונים: ארבעה אייקונים אינם שווים בקשת רשת
+ *  נוספת בסרגל שנטען בכל מסך, ובוודאי לא בטלפון ברשת של תחנה.
+ *  ולמה `createElementNS` ולא `innerHTML`: SVG חי במרחב שמות אחר,
+ *  ו-`innerHTML` על מחרוזת קבועה הוא הרגל שמישהו יעתיק מחר על
+ *  מחרוזת שאינה קבועה.
+ * ====================================================================== */
+const DOCK_ICONS = {
+  // home
+  home: ['m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M9 22V12h6v10'],
+  // calendar-clock
+  mine: ['M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5',
+    'M16 2v4', 'M8 2v4', 'M3 10h5', 'M16 14v2.5l1.5 1.5',
+    'M16 22a6 6 0 1 0 0-12 6 6 0 0 0 0 12z'],
+  // building-2
+  station: ['M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18',
+    'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2',
+    'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2',
+    'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'],
+  // more-horizontal
+  admin: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01']
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function dockIcon(id) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'dockIco');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  // האייקון הוא קישוט: השם הנגיש מגיע מהטקסט ומ-aria-label של הפריט.
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  (DOCK_ICONS[id] || []).forEach(function (d) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+/** בונה פריט סרגל: אייקון למעלה, טקסט מתחתיו, ושם נגיש מפורש. */
+function fillDockItem(element, id, label) {
+  element.replaceChildren();
+  element.appendChild(dockIcon(id));
+  const text = document.createElement('span');
+  text.className = 'dockLbl';
+  text.textContent = label;
+  element.appendChild(text);
+  element.setAttribute('aria-label', label);
+  element.style.setProperty('--dock-ico', 'var(--dock-' + id + ')');
+}
+
 export function renderNav(claims, current, who, presentation, unreadCount) {
   styleOnce();
   claims = claims || {};
@@ -620,7 +697,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
 
   const home = document.createElement('a');
   home.href = './login.html';
-  home.textContent = 'בית';
+  fillDockItem(home, 'home', 'בית');
   if (current === 'login.html') {
     home.className = 'on';
     home.setAttribute('aria-current', 'page');
@@ -638,7 +715,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
     if (!permitted.length && entry.id !== 'admin') return;
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = entry.label;
+    fillDockItem(button, entry.id, entry.label);
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'resqDockPanel');
     if (permitted.some(function (item) { return item.href === current; })) {
