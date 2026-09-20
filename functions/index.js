@@ -455,7 +455,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.24',
+  monthAuthorityReleaseId: '42H.25',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -4203,6 +4203,41 @@ async function uidsInCrew(sid, crew) {
   return out;
 }
 
+async function calloutPeopleTarget(sid, requestedUids, allowedCrew) {
+  const clean = [];
+  const seen = {};
+  (Array.isArray(requestedUids) ? requestedUids : []).forEach(function (uid) {
+    const value = String(uid || '').trim();
+    if (!/^[A-Za-z0-9_-]{2,128}$/.test(value)) return;
+    if (seen[value]) return;
+    seen[value] = true;
+    clean.push(value);
+  });
+  if (!clean.length) {
+    throw new HttpsError('invalid-argument', 'יש לבחור לפחות נמען אחד לקריאת פתע.');
+  }
+  if (clean.length > 50) {
+    throw new HttpsError('invalid-argument', 'אפשר לבחור עד 50 נמענים בקריאת פתע ממוקדת.');
+  }
+  const refs = clean.map(uid => db.doc('stations/' + sid + '/roster/' + uid));
+  const snaps = await Promise.all(refs.map(ref => ref.get()));
+  const out = [], names = [], rejected = [];
+  snaps.forEach(function (snap, index) {
+    const uid = clean[index];
+    if (!snap.exists) { rejected.push(uid); return; }
+    const value = snap.data() || {};
+    if (value.is_active === false) { rejected.push(uid); return; }
+    if (allowedCrew && String(value.crew || '') !== allowedCrew) { rejected.push(uid); return; }
+    out.push(uid);
+    names.push(String(value.full_name || uid).trim() || uid);
+  });
+  if (rejected.length) {
+    throw new HttpsError('permission-denied',
+      'אחד או יותר מהנמענים אינם שייכים למשמרת או אינם פעילים.');
+  }
+  return { uids:out, names };
+}
+
 async function commandersOf(sid, crew) {
   const out = [];
   try {
@@ -4828,7 +4863,7 @@ exports.sendCallout = onCall(
   if (!/^[A-Za-z0-9_-]{16,80}$/.test(requestId)) {
     throw new HttpsError('invalid-argument', 'מזהה השליחה אינו תקין. יש לרענן ולנסות שוב.');
   }
-  let uids = [], targetHe = '', crew = '';
+  let uids = [], targetHe = '', crew = '', targetMode = target;
 
   if (target.indexOf('crew:') === 0) {
     crew = target.slice(5);
@@ -4844,8 +4879,23 @@ exports.sendCallout = onCall(
     uids = await uidsInCrew(sid, crew);
     targetHe = 'משמרת ' + (CREW_HE_S[crew] || crew);
 
-  } else if (target === 'people' || target === 'station') {
-    throw new HttpsError('permission-denied', 'קריאת פתע נשלחת למשמרת שלך בלבד.');
+  } else if (target === 'people') {
+    crew = actor.isSuper ? String(d.crew || myCrew || '') : myCrew;
+    if (!actor.isSuper && !['A', 'B', 'C'].includes(crew)) {
+      throw new HttpsError('failed-precondition', 'לשולח אין שיוך למשמרת פעילה.');
+    }
+    if (actor.isSuper && crew && !['A', 'B', 'C'].includes(crew)) {
+      throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
+    }
+    const picked = await calloutPeopleTarget(sid, d.uids, crew || '');
+    uids = picked.uids;
+    targetHe = (uids.length === 1 && uids[0] === auth.uid)
+      ? 'בדיקת עצמי'
+      : 'נבחרו ' + uids.length + ' לוחמים';
+    targetMode = 'people:' + uids.slice().sort().join(',');
+
+  } else if (target === 'station') {
+    throw new HttpsError('permission-denied', 'קריאת פתע נשלחת למשמרת או לנמענים שנבחרו בלבד.');
   } else {
     throw new HttpsError('invalid-argument', 'יעד לא מוכר.');
   }
@@ -4924,7 +4974,7 @@ exports.sendCallout = onCall(
   const roleHe = CALLOUT_ROLE_HE[role] || '';
   const whenHe = hhmmIL(now);
   const intentFingerprint = crypto.createHash('sha256').update(JSON.stringify({
-    sid, uid:auth.uid, crew:myCrew, target, text
+    sid, uid:auth.uid, crew:myCrew, target:targetMode, text
   })).digest('hex');
   const calloutId = 'co_' + crypto.createHash('sha256')
     .update(sid + '\0' + auth.uid + '\0' + requestId).digest('hex').slice(0, 40);
@@ -6294,7 +6344,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.24', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.25', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

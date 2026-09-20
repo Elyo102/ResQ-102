@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h24">
+<link rel="stylesheet" href="./theme.css?v=42h25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -413,23 +413,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
-import { subStationAvailable } from './stations.js?v=42h24';
-import { renderNav, renderStuckNav } from './nav.js?v=42h24';
-import { MEMBER_ROLES } from './roles.js?v=42h24';
-import { initPWA } from './pwa.js?v=42h24';
-import { watchCallouts } from './callout.js?v=42h24';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h25';
+import { subStationAvailable } from './stations.js?v=42h25';
+import { renderNav, renderStuckNav } from './nav.js?v=42h25';
+import { MEMBER_ROLES } from './roles.js?v=42h25';
+import { initPWA } from './pwa.js?v=42h25';
+import { watchCallouts } from './callout.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h24';
+  from './rotation.js?v=42h25';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h24';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h25';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe,
          reportedAtMs, retroDays, retroLabel }
-  from './hours.js?v=42h24';
+  from './hours.js?v=42h25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -437,11 +438,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h24';
+  from './monitored-functions.js?v=42h25';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h25';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -559,7 +560,13 @@ async function callCorrection(callable, intent, kind){
 }
 function correctionErrorText(error, fallback){
   if (error && error.uncertain) return 'לא התקבל אישור סופי מהשרת. הפרטים נעולים; נסה שוב את אותה פעולה בדיוק.';
-  return fallback + ' (' + (error && (error.code || error.message) || 'unknown') + ')';
+  logError('attendance.correction', error);
+  return fallback + ' ' + errorText(error);
+}
+
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
 }
 
 // A verified super account is allowed to manage attendance without owning an
@@ -829,7 +836,7 @@ onAuthStateChanged(auth, async user => {
       if (!p) { msg('לא מצאתי את האדם הזה.', 'err', 'pickMsg'); return; }
       $('pickGo').disabled = true;
       try { await switchTo(p); msg('', '', 'pickMsg'); }
-      catch (e) { msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', 'pickMsg'); }
+      catch (e) { msg(userError('attendance.pick.switch', e, 'הפתיחה נכשלה.'), 'err', 'pickMsg'); }
       $('pickGo').disabled = false;
     };
     $('pickBack').onclick = async () => {
@@ -1540,7 +1547,7 @@ $('btnFill').onclick = async () => {
     await refreshAfterCreation(target, result);
   } catch (e) {
     if (!sameMonthWrite(target)) return;
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.createMissingDays', e, 'השמירה נכשלה.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -1560,7 +1567,7 @@ $('btnStart').onclick = async () => {
     msg('המשמרת התחילה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
-    msg('לא הצלחתי לפתוח משמרת. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.startShift', e, 'לא הצלחתי לפתוח משמרת.'), 'err');
   }
 };
 
@@ -1577,7 +1584,7 @@ $('btnStop').onclick = async () => {
     msg('המשמרת נסגרה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
-    msg('לא הצלחתי לסגור משמרת. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.stopShift', e, 'לא הצלחתי לסגור משמרת.'), 'err');
   }
 };
 
@@ -1658,7 +1665,7 @@ $('btnSync').onclick = async () => {
       ' ימים שדיווחת עליהם והסידור שונה: ' + extra.join(', ') + '. הם לא שונו.', 'info');
   } catch (e) {
     if (!sameMonthWrite(target)) return;
-    msg('התיקון נכשל. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.fixMissingDays', e, 'התיקון נכשל.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -1702,7 +1709,7 @@ $('btnRecalc').onclick = async () => {
     render();
   } catch (e) {
     msg(onOther() ? correctionErrorText(e, 'החישוב נכשל.')
-      : 'החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
+      : userError('attendance.recalc', e, 'החישוב נכשל.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -2006,7 +2013,7 @@ function editDay(key, rec){
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;
       msg(onOther() ? correctionErrorText(e, 'השמירה נכשלה.')
-        : 'השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+        : userError('attendance.saveDay', e, 'השמירה נכשלה.'), 'err');
     }
   };
 
@@ -2036,7 +2043,7 @@ function editDay(key, rec){
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;
       msg(onOther() ? correctionErrorText(e, 'המחיקה נכשלה.')
-        : 'המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err');
+        : userError('attendance.deleteDay', e, 'המחיקה נכשלה.'), 'err');
     }
   };
   $('dCancel').onclick = closeOv;
@@ -2148,7 +2155,7 @@ function submitPreview(){
       render(); focusAfterRender();
     } catch (e) {
       if (!sameMonthWrite(previewTarget)) return;
-      msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      msg(userError('attendance.submitReport', e, 'השליחה נכשלה.'), 'err');
       if (sameMonthWrite(previewTarget) && $('pSend')) $('pSend').disabled = false;
     }
   };
@@ -2165,7 +2172,7 @@ $('btnUnsubmit').onclick = async () => {
   try {
     await writeReport({ status: 'draft' });
     msg('השליחה בוטלה.', 'ok'); render();
-  } catch (e) { msg('הביטול נכשל. (' + (e.code || e.message) + ')', 'err'); }
+  } catch (e) { msg(userError('attendance.unsubmitReport', e, 'הביטול נכשל.'), 'err'); }
 };
 
 // אישור נועל את הרשומות עצמן, לא רק את מסמך הדוח. כללי האבטחה
@@ -2202,7 +2209,7 @@ async function approveMonth(emp, mk, days, box){
     if (emp === SUBJ.emp) await loadMonth();
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
-    msg('האישור נכשל. (' + (e.code || e.message) + ')', 'err', box);
+    msg(userError('attendance.approveMonth', e, 'האישור נכשל.'), 'err', box);
   }
 }
 
@@ -2236,7 +2243,7 @@ async function reopenMonth(emp, mk, days, box){
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
     msg(onOther() ? correctionErrorText(e, 'הפתיחה נכשלה.')
-      : 'הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+      : userError('attendance.reopenMonth', e, 'הפתיחה נכשלה.'), 'err', box);
   }
 }
 
@@ -2308,7 +2315,7 @@ async function loadCorrectionAudit(loadMore){
   } catch (e) {
     if (!sameAuditFence(fence)) return;
     box.textContent = 'לא ניתן לטעון את היסטוריית התיקונים.';
-    msg('טעינת ההיסטוריה נכשלה. (' + (e.code || e.message) + ')', 'err', 'correctionAuditMsg');
+    msg(userError('attendance.correctionAudit.list', e, 'טעינת ההיסטוריה נכשלה.'), 'err', 'correctionAuditMsg');
   }
 }
 $('btnLoadCorrectionAudit').onclick = () => loadCorrectionAudit(false);
@@ -2334,7 +2341,7 @@ $('correctionAuditList').onclick = async function (event) {
       '<div class="acts"><button type="button" class="btn" id="dCancel">סגור</button></div>';
     openOv(); $('dCancel').onclick = closeOv;
   } catch (e) {
-    if (sameAuditFence(fence)) msg('טעינת פרטי התיקון נכשלה. (' + (e.code || e.message) + ')', 'err', 'correctionAuditMsg');
+    if (sameAuditFence(fence)) msg(userError('attendance.correctionAudit.detail', e, 'טעינת פרטי התיקון נכשלה.'), 'err', 'correctionAuditMsg');
   } finally { if (sameAuditFence(fence)) button.disabled = false; }
 };
 
@@ -2437,7 +2444,7 @@ async function loadApprovals(){
     const qs = await getDocs(qref);
     qs.forEach(d => list.push(Object.assign({ id: d.id }, d.data() || {})));
   } catch (e) {
-    msg('לא הצלחתי לקרוא את רשימת הדוחות. (' + (e.code || e.message) + ')',
+    msg(userError('attendance.approvals.load', e, 'לא הצלחתי לקרוא את רשימת הדוחות.'),
         'err', 'apprMsg');
     return;
   }

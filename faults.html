@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h24">
+<link rel="stylesheet" href="./theme.css?v=42h25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -424,12 +424,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
-import { renderNav, renderStuckNav } from './nav.js?v=42h24';
-import { MEMBER_ROLES } from './roles.js?v=42h24';
-import { initPWA } from './pwa.js?v=42h24';
-import { watchCallouts } from './callout.js?v=42h24';
-import { CREW_HE, plural } from './rotation.js?v=42h24';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h25';
+import { renderNav, renderStuckNav } from './nav.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
+import { MEMBER_ROLES } from './roles.js?v=42h25';
+import { initPWA } from './pwa.js?v=42h25';
+import { watchCallouts } from './callout.js?v=42h25';
+import { CREW_HE, plural } from './rotation.js?v=42h25';
 import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -437,9 +438,9 @@ import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevCol
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage } from './faults.js?v=42h24';
+         shrinkImage } from './faults.js?v=42h25';
 import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
-         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h24';
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -448,7 +449,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h25';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -971,8 +972,7 @@ function showFleetIdentityChange(){
   closeVehicleEditor();
   // Also used after an await: the write outcome can be unknown, so do not
   // claim that an operation was cancelled or that nothing was saved.
-  msg('המשתמש או ההרשאות השתנו. רעננו ובדקו את המצב לפני פעולה נוספת. (identity-changed)',
-    'err', 'mainMsg');
+  msg(errorText({ code: 'identity-changed' }), 'err', 'mainMsg');
 }
 
 /* כמה תקלות פתוחות על הרכב — נאמר למי שמוריד אותו מהצי, כדי
@@ -1048,8 +1048,9 @@ async function saveVehicleEdit(){
     msg('הרכב עודכן.', 'ok', 'anchorMsg');
     await loadAll();
   } catch (e) {
+    logError('fleet.saveVehicle', e);
     if (e.code === 'identity-changed') showFleetIdentityChange();
-    else msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+    else msg('השמירה נכשלה. ' + errorText(e), 'err', 'vehMsg');
   }
   b.disabled = false;
 }
@@ -1082,8 +1083,9 @@ async function deactivateVehicle(){
     msg('הרכב ירד מהצי.', 'ok', 'anchorMsg');
     await loadAll();
   } catch (e) {
+    logError('fleet.deactivateVehicle', e);
     if (e.code === 'identity-changed') showFleetIdentityChange();
-    else msg('ההורדה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+    else msg('ההורדה נכשלה. ' + errorText(e), 'err', 'vehMsg');
   }
   b.disabled = false;
 }

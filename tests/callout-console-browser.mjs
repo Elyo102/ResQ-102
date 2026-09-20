@@ -33,7 +33,11 @@ for (const body of [sendSource, closeSource]) {
 assert.ok((sendSource.match(/await freshCalloutActor\(req\)/g) || []).length >= 2,
   'send re-verifies the delegated fresh actor after acquiring the delivery lease');
 assert.match(sendSource, /crew !== myCrew/);
-assert.match(sendSource, /target === 'people' \|\| target === 'station'/);
+assert.match(serverSource, /async function calloutPeopleTarget/);
+assert.match(sendSource, /target === 'people'/);
+assert.match(sendSource, /calloutPeopleTarget\(sid, d\.uids/);
+assert.match(sendSource, /targetMode = 'people:' \+ uids\.slice\(\)\.sort\(\)\.join/);
+assert.doesNotMatch(sendSource, /target === 'people' \|\| target === 'station'/);
 assert.match(sendSource, /runtimeValue\.silent === true/);
 assert.match(sendSource, /intent_fingerprint/);
 assert.match(consoleSource, /where\('by_uid', '==', session\.uid\)/);
@@ -103,6 +107,37 @@ try {
     });
     await run.context.close();
   }
+
+  const peopleRun = await open(browser, 'commander');
+  await peopleRun.page.locator('#work').waitFor({ state:'visible' });
+  await check('commander can choose specific recipients instead of the full crew', async () => {
+    await peopleRun.page.locator('#recipientNone').evaluate(button => button.click());
+    await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).locator('input').check();
+    await peopleRun.page.locator('#calloutText').fill('קריאה רק לדנה');
+    await peopleRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await peopleRun.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'sendCallout'));
+    const call = await peopleRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(row => row.name === 'sendCallout'));
+    assert.equal(call.payload.target, 'people');
+    assert.equal(call.payload.crew, 'B');
+    assert.deepEqual(call.payload.uids, ['u4']);
+    assert.equal(call.payload.text, 'קריאה רק לדנה');
+  });
+  await peopleRun.context.close();
+
+  const selfRun = await open(browser, 'commander');
+  await selfRun.page.locator('#work').waitFor({ state:'visible' });
+  await check('self-test targets only the signed user for trial siren checks', async () => {
+    await selfRun.page.locator('#recipientSelf').evaluate(button => button.click());
+    assert.match(await selfRun.page.locator('#recipientSummary').textContent(), /בדיקת עצמי|נבחרו 1/);
+    await selfRun.page.locator('#calloutText').fill('בדיקת צלצול לעצמי');
+    await selfRun.page.locator('#calloutSend').evaluate(button => button.click());
+    await selfRun.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'sendCallout'));
+    const call = await selfRun.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(row => row.name === 'sendCallout'));
+    assert.equal(call.payload.target, 'people');
+    assert.deepEqual(call.payload.uids, ['commander-callout']);
+    assert.equal(call.payload.text, 'בדיקת צלצול לעצמי');
+  });
+  await selfRun.context.close();
 
   const retry = await open(browser, 'commander');
   await retry.page.locator('#work').waitFor({ state:'visible' });

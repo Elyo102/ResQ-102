@@ -1,8 +1,8 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h24';
-import { errorText, logError } from './error-text.js?v=42h24';
-import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h24';
+import { CREW_HE } from './rotation.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h25';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 let active = null;
@@ -27,6 +27,59 @@ function setMessage(element, value, kind) {
 function rosterName(session, uid) {
   const person = session.roster.get(uid);
   return person && person.name ? person.name : 'לא בסגל';
+}
+
+function rosterRows(session) {
+  return Array.from(session.roster, ([uid, person]) => ({ uid, ...person }))
+    .filter(person => session.isSuper || person.crew === session.crew)
+    .filter(person => session.isSuper ? person.crew === session.crew : true)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+}
+
+function selectedUids(session) {
+  if (!session.selectedRecipients) return null;
+  return Array.from(session.selectedRecipients).filter(uid => uid === session.uid || session.roster.has(uid));
+}
+
+function selectionLabel(session, uids) {
+  if (!Array.isArray(uids)) return CREW_HE[session.crew] || ('משמרת ' + session.crew);
+  if (uids.length === 1 && uids[0] === session.uid) return 'בדיקת עצמי';
+  return 'נבחרו ' + uids.length + ' לוחמים';
+}
+
+function renderRecipients(session) {
+  const list = session.elements.recipientList;
+  if (!list || active !== session) return;
+  const rows = rosterRows(session);
+  list.replaceChildren();
+  rows.forEach(person => {
+    const label = document.createElement('label');
+    label.className = 'recipient-item';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = person.uid;
+    input.checked = !session.selectedRecipients || session.selectedRecipients.has(person.uid);
+    input.onchange = () => {
+      if (!session.selectedRecipients) {
+        session.selectedRecipients = new Set(rows.map(row => row.uid));
+      }
+      if (input.checked) session.selectedRecipients.add(person.uid);
+      else session.selectedRecipients.delete(person.uid);
+      renderRecipients(session);
+    };
+    const name = document.createElement('span');
+    name.textContent = person.name || person.uid;
+    const meta = document.createElement('small');
+    meta.textContent = person.uid === session.uid ? 'אני' : (CREW_HE[person.crew] || person.crew || '');
+    label.append(input, name, meta);
+    list.appendChild(label);
+  });
+  const picked = selectedUids(session);
+  if (session.elements.recipientSummary) {
+    session.elements.recipientSummary.textContent = picked
+      ? (picked.length ? 'הקריאה תישלח ל־' + selectionLabel(session, picked) + '.' : 'לא נבחרו נמענים.')
+      : 'ברירת מחדל: כל אנשי ' + (CREW_HE[session.crew] || ('משמרת ' + session.crew)) + '.';
+  }
 }
 
 function renderLive(session, list) {
@@ -121,8 +174,12 @@ async function loadRoster(session) {
   snap.forEach(doc => {
     const value = doc.data() || {};
     if (value.is_active === false) return;
-    session.roster.set(doc.id, { name:text(value.full_name, 120) });
+    const crew = text(value.crew, 1);
+    if (session.isSuper && crew !== session.crew) return;
+    if (!session.isSuper && crew !== session.crew) return;
+    session.roster.set(doc.id, { name:text(value.full_name, 120), crew });
   });
+  renderRecipients(session);
 }
 
 function watchOwnCallouts(session) {
@@ -138,12 +195,14 @@ function watchOwnCallouts(session) {
       session.callouts.set(doc.id, value);
       rows.push({ id:doc.id, value:{ ...value, responses:session.responses.get(doc.id) || {} } });
       watchResponses(session, doc.id);
-      if (value.by_uid === session.uid && value.target === 'crew:' + session.crew &&
+      if (value.by_uid === session.uid &&
+          (value.target === 'crew:' + session.crew || value.target === 'people') &&
           !session.pendingRequest && value.active !== false &&
           ['reserved','delivering','partial'].includes(String(value.delivery_state || '')) &&
           /^[A-Za-z0-9_-]{16,80}$/.test(String(value.request_id || '')) && text(value.text, 300)) {
         session.pendingRequest = {
-          id:String(value.request_id), message:text(value.text, 300), retries:0
+          id:String(value.request_id), message:text(value.text, 300), retries:0,
+          uids:value.target === 'people' && Array.isArray(value.uids) ? value.uids.slice() : null
         };
         session.elements.input.value = session.pendingRequest.message;
         session.elements.input.readOnly = true;
@@ -216,12 +275,40 @@ export async function initCalloutConsole(options = {}) {
   const session = {
     db:options.db, sid, crew, role, isSuper, uid:String(options.user.uid), elements:options.elements,
     roster:new Map(), callouts:new Map(), responses:new Map(), responseStops:new Map(), stop:() => {},
-    pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
+    selectedRecipients:null, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
     sendCallout:options.sdk.httpsCallable(options.functions, 'sendCallout'),
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
   };
   active = session;
   session.elements.crew.textContent = CREW_HE[crew] || ('משמרת ' + crew);
+  if (session.elements.recipientAll) session.elements.recipientAll.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = null;
+    renderRecipients(session);
+  };
+  if (session.elements.recipientNone) session.elements.recipientNone.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = new Set();
+    renderRecipients(session);
+  };
+  if (session.elements.recipientSelf) session.elements.recipientSelf.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = new Set([session.uid]);
+    renderRecipients(session);
+    setMessage(session.elements.message,
+      isTrial()
+        ? 'בדיקת עצמי מוכנה. שלח קריאה כדי לשמוע את צליל קריאת הפתע במכשיר הזה.'
+        : 'בדיקת עצמי מיועדת למצב אימון. במצב חי המזעיק אינו מקבל קריאה לעצמו.', 'info');
+  };
   const sendPending = async autoRetry => {
     if (active !== session) return;
     const typedMessage = text(session.elements.input.value, 300);
@@ -231,8 +318,19 @@ export async function initCalloutConsole(options = {}) {
       setMessage(session.elements.message, 'צריך לכתוב את הודעת הקריאה.', 'err');
       return;
     }
-    if (!autoRetry && !window.confirm('להזעיק את ' + (CREW_HE[crew] || crew) + ' בתחנה ' + sid + '?\n\n' + message)) return;
-    if (session.pendingRequest && session.pendingRequest.message !== message) {
+    const currentUids = autoRetry && session.pendingRequest
+      ? (Array.isArray(session.pendingRequest.uids) ? session.pendingRequest.uids.slice() : null)
+      : selectedUids(session);
+    if (Array.isArray(currentUids) && currentUids.length === 0) {
+      setMessage(session.elements.message, 'יש לבחור לפחות נמען אחד לקריאת פתע.', 'err');
+      return;
+    }
+    const targetName = selectionLabel(session, currentUids);
+    if (!autoRetry && !window.confirm('להזעיק את ' + targetName + ' בתחנה ' + sid + '?\n\n' + message)) return;
+    const priorUids = session.pendingRequest && Array.isArray(session.pendingRequest.uids)
+      ? session.pendingRequest.uids.slice().sort().join('\0') : null;
+    const nextUids = Array.isArray(currentUids) ? currentUids.slice().sort().join('\0') : null;
+    if (session.pendingRequest && (session.pendingRequest.message !== message || priorUids !== nextUids)) {
       session.elements.input.value = session.pendingRequest.message;
       setMessage(session.elements.message,
         'קריאה קודמת עדיין ממתינה למסירה; ממשיכים אותה לפני יצירת קריאה חדשה.', 'info');
@@ -248,14 +346,19 @@ export async function initCalloutConsole(options = {}) {
     if (!session.pendingRequest) {
       const raw = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
         ? globalThis.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
-      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_') };
+      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_'),
+        uids:Array.isArray(currentUids) ? currentUids.slice() : null };
     }
     session.elements.input.readOnly = true;
     session.elements.send.disabled = true;
     setMessage(session.elements.message, 'שולח קריאת פתע…', 'info');
     try {
-      const response = await session.sendCallout({ target:'crew:' + crew, text:message,
-        request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) });
+      const payload = Array.isArray(session.pendingRequest.uids)
+        ? { target:'people', crew, uids:session.pendingRequest.uids.slice(), text:message,
+            request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) }
+        : { target:'crew:' + crew, text:message,
+            request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) };
+      const response = await session.sendCallout(payload);
       if (active !== session) return;
       const data = response && response.data ? response.data : {};
       if (data.ok === false && data.retryable === true) {
@@ -290,7 +393,7 @@ export async function initCalloutConsole(options = {}) {
         return;
       }
       setMessage(session.elements.message,
-        'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' אנשי משמרת.', 'ok');
+        'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' נמענים.', 'ok');
       if (text(session.elements.input.value, 300) === message) session.elements.input.value = '';
       session.elements.input.readOnly = false;
       session.pendingRequest = null;

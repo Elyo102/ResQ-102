@@ -14,7 +14,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h24">
+<link rel="stylesheet" href="./theme.css?v=42h25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -109,19 +109,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h24';
-import { renderNav, renderStuckNav } from './nav.js?v=42h24';
-import { initPWA } from './pwa.js?v=42h24';
-import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h24';
-import { blockerText } from './join-ui.js?v=42h24';
+import { firebaseConfig } from './firebase-config.js?v=42h25';
+import { renderNav, renderStuckNav } from './nav.js?v=42h25';
+import { initPWA } from './pwa.js?v=42h25';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h25';
+import { blockerText } from './join-ui.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h24';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h25';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h25';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -138,6 +139,10 @@ const callClaim = httpsCallable(fns, 'claimPushToken');
 let SID = '', ME = null, myToken = '', tokens = [], vapid = DEFAULT_VAPID, messaging = null, busy = false, pendingNonce = '';
 
 function msg(text, kind){ const m = $('pMsg'); m.textContent = text || ''; m.className = 'msg ' + (text ? (kind || '') : ''); }
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
+}
 function newRequestId(){
   const bytes = new Uint8Array(24); crypto.getRandomValues(bytes);
   return 'rd_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
@@ -174,7 +179,7 @@ function render(r){
 
 async function refresh(){
   try { const r = (await callStatus({})).data || {}; render(r); return r; }
-  catch (e) { msg('לא ניתן לקרוא את מצב המוכנות. ' + (e.message || e.code || ''), 'err'); return null; }
+  catch (e) { msg(userError('readiness.status', e, 'לא ניתן לקרוא את מצב המוכנות.'), 'err'); return null; }
 }
 
 async function loadTokens(){
@@ -203,7 +208,7 @@ $('btnEnable').onclick = async () => {
     await setDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid), { uid: ME.uid, tokens, updated_at: serverTimestamp() }, { merge: true });
     try { await callClaim({ token: myToken }); } catch (ignore) {}
     msg('ההתראות הופעלו במכשיר הזה.', 'ok');
-  } catch (e) { msg('ההפעלה נכשלה. ' + (e.message || e.code || ''), 'err'); }
+  } catch (e) { msg(userError('readiness.push.enable', e, 'ההפעלה נכשלה.'), 'err'); }
   finally { busy = false; controls(); await refresh(); }
 };
 
@@ -216,7 +221,7 @@ $('btnSend').onclick = async () => {
   } catch (e) {
     const reason = e && e.details && e.details.reason;
     msg(reason === 'readiness-cooldown' ? 'המתן/י דקה בין ניסיונות.' : reason === 'readiness-quota' ? 'הגעת למכסת הבדיקות היומית (3). נסה/י מחר.'
-      : reason === 'readiness-provider' ? 'ספק ההתראות לא קיבל את ההודעה. נסה/י שוב מאוחר יותר.' : 'השליחה נכשלה. ' + (e.message || e.code || ''), 'err');
+      : reason === 'readiness-provider' ? 'ספק ההתראות לא קיבל את ההודעה. נסה/י שוב מאוחר יותר.' : userError('readiness.testPush', e, 'השליחה נכשלה.'), 'err');
   } finally { busy = false; controls(); await refresh(); }
 };
 
@@ -228,7 +233,7 @@ async function ack(nonce){
     pendingNonce = ''; stripNonce(); return true;
   } catch (e) {
     const reason = e && e.details && e.details.reason;
-    msg(reason === 'readiness-expired' ? 'הבדיקה פגה. שלח/י בדיקה חדשה.' : reason === 'readiness-nonce' ? 'קוד האישור אינו תואם לבדיקה האחרונה. שלח/י בדיקה חדשה.' : 'האישור נכשל. ' + (e.message || e.code || ''), 'err');
+    msg(reason === 'readiness-expired' ? 'הבדיקה פגה. שלח/י בדיקה חדשה.' : reason === 'readiness-nonce' ? 'קוד האישור אינו תואם לבדיקה האחרונה. שלח/י בדיקה חדשה.' : userError('readiness.ack', e, 'האישור נכשל.'), 'err');
     return false;
   }
 }

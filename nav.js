@@ -55,10 +55,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h24';
-import { attachModeChip } from './mode-bar.js?v=42h24';
-import { assertPresentationOnly } from './role-view.js?v=42h24';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h24';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h25';
+import { attachModeChip } from './mode-bar.js?v=42h25';
+import { assertPresentationOnly } from './role-view.js?v=42h25';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h25';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);

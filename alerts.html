@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h24">
+<link rel="stylesheet" href="./theme.css?v=42h25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -285,29 +285,30 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
-import { renderNav, renderStuckNav } from './nav.js?v=42h24';
-import { MEMBER_ROLES } from './roles.js?v=42h24';
-import { initPWA } from './pwa.js?v=42h24';
-import { watchCallouts } from './callout.js?v=42h24';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h25';
+import { renderNav, renderStuckNav } from './nav.js?v=42h25';
+import { MEMBER_ROLES } from './roles.js?v=42h25';
+import { initPWA } from './pwa.js?v=42h25';
+import { watchCallouts } from './callout.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h24';
-import { CREW_HE } from './rotation.js?v=42h24';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h25';
+import { CREW_HE } from './rotation.js?v=42h25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h24';
-import { markCalloutSeen } from './callout.js?v=42h24';
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h25';
+import { markCalloutSeen } from './callout.js?v=42h25';
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h24';
+  from './monitored-functions.js?v=42h25';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h25';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -325,6 +326,10 @@ function msg(text, kind, box){
   const m = $(box || 'pMsg');
   m.textContent = text || '';
   m.className = 'msg ' + (text ? (kind || '') : '');
+}
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
 }
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
@@ -442,7 +447,7 @@ async function loadLab(){
       history.replaceState(null, '', './alerts.html');
     }
   } catch (e) {
-    msg('בדיקת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg');
+    msg(userError('alerts.lab.status', e, 'בדיקת המעבדה נכשלה.'), 'err', 'labMsg');
   }
 }
 
@@ -460,7 +465,7 @@ $('btnLabMeasure').onclick = async () => {
     const elapsed = performance.now() - started;
     renderLabMetrics(elapsed);
     msg('המדידה הסתיימה. זו מדידת המכשיר והחיבור שלך, לא בדיקת עומס של כלל המערכת.', 'ok', 'labMsg');
-  } catch (e) { msg('המדידה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.measure', e, 'המדידה נכשלה.'), 'err', 'labMsg'); }
   b.disabled = false;
 };
 
@@ -470,7 +475,7 @@ $('btnLabEnable').onclick = async () => {
     await httpsCallable(fns, 'enablePersonalLiveLab')({});
     labActive = true; b.classList.add('hide'); $('btnLabPush').disabled = !myToken;
     msg('המעבדה פעילה ל־24 שעות. הפוש יישלח רק לאחר לחיצה מפורשת.', 'ok', 'labMsg');
-  } catch (e) { msg('הפעלת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.enable', e, 'הפעלת המעבדה נכשלה.'), 'err', 'labMsg'); }
   b.disabled = false;
 };
 
@@ -485,7 +490,7 @@ $('btnLabPush').onclick = async () => {
       ? 'Firebase קיבל את ההודעה. כעת יש לוודא שהיא הופיעה בטלפון וללחוץ עליה.'
       : 'תוצאת השליחה אינה ודאית; המערכת לא תשלח אותה שוב אוטומטית.',
       state === 'accepted' ? 'ok' : 'info', 'labMsg');
-  } catch (e) { msg('בדיקת הפוש נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.push', e, 'בדיקת הפוש נכשלה.'), 'err', 'labMsg'); }
   b.disabled = !labActive || !myToken;
 };
 
@@ -584,7 +589,7 @@ function renderDevices(){
     b.onclick = async () => {
       tokens.splice(i, 1);
       try { await saveTokens('המכשיר הוסר.'); renderState(); }
-      catch (e) { msg('ההסרה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+      catch (e) { msg(userError('alerts.token.remove', e, 'ההסרה נכשלה.'), 'err'); }
     };
     row.appendChild(b);
     box.appendChild(row);
@@ -628,7 +633,7 @@ $('btnOn').onclick = async () => {
 
     renderState();
   } catch (e) {
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('alerts.token.save', e, 'השמירה נכשלה.'), 'err');
   }
   b.disabled = false;
 };
@@ -636,7 +641,7 @@ $('btnOn').onclick = async () => {
 $('btnOff').onclick = async () => {
   tokens = tokens.filter(t => t.token !== myToken);
   try { await saveTokens('המכשיר הזה כבוי.'); renderState(); }
-  catch (e) { msg('הכיבוי נכשל. (' + (e.code || e.message) + ')', 'err'); }
+  catch (e) { msg(userError('alerts.token.disable', e, 'הכיבוי נכשל.'), 'err'); }
 };
 
 // ---------- העדפות ----------
@@ -675,7 +680,7 @@ $('btnSavePrefs').onclick = async () => {
     prefs[t.id] = t.must ? true : $('pf_' + t.id).checked;
   });
   try { await saveTokens(); msg('ההעדפות נשמרו.', 'ok', 'prefMsg'); }
-  catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'prefMsg'); }
+  catch (e) { msg(userError('alerts.preferences.save', e, 'השמירה נכשלה.'), 'err', 'prefMsg'); }
 };
 
 // ---------- שליחת הודעה ----------
@@ -735,7 +740,7 @@ async function send(){
     $('text').value = '';
     await loadBroadcasts();
   } catch (e) {
-    msg('השליחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+    msg(userError('alerts.broadcast.send', e, 'השליחה נכשלה.'),
         'err', 'sendMsg');
   }
   b.disabled = false;
@@ -897,7 +902,7 @@ $('btnKey').onclick = async () => {
     msg('המפתח נשמר. עכשיו אפשר להפעיל התראות.', 'ok', 'keyMsg');
     renderState();
   } catch (e) {
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'keyMsg');
+    msg(userError('alerts.key.save', e, 'השמירה נכשלה.'), 'err', 'keyMsg');
   }
 };
 </script>

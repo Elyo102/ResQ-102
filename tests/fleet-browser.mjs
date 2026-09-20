@@ -324,7 +324,10 @@ try {
     assert.equal(await page.locator('#veh.on').count(), 0, 'stale editor must close');
     assert.equal(await page.locator('#mainMsg').isVisible(), true, 'feedback must remain visible outside the closed editor');
     const shown = await page.locator('#mainMsg').textContent();
-    assert.ok(/identity-changed/.test(shown), 'והמשתמש רואה שהזהות התחלפה: ' + shown);
+    assert.match(shown, /נכשלה|רעננו|נסו שוב/,
+      'המשתמש מקבל הודעה עברית, לא קוד טכני: ' + shown);
+    assert.doesNotMatch(shown, /identity-changed/,
+      'קוד הזהות הטכני נשאר מחוץ למסך המשתמש');
   });
   await race.context.close();
 
@@ -436,7 +439,9 @@ try {
         'the new identity may write only its exact seen-only callout receipt');
         assert.equal(await p.locator('#veh.on').count(), 0);
         assert.equal(await p.locator('#mainMsg').isVisible(), true);
-        assert.match(await p.locator('#mainMsg').textContent(), /identity-changed/);
+        const staleMessage = await p.locator('#mainMsg').textContent();
+        assert.match(staleMessage, /נכשלה|רעננו|נסו שוב/);
+        assert.doesNotMatch(staleMessage, /identity-changed/);
         if (phase === 'held') {
           assert.equal(await p.locator('#work').isVisible(), false);
           assert.equal(await p.locator('[data-veh-edit], [data-veh-restore]').count(), 0);
@@ -484,7 +489,9 @@ try {
           window.__TX_RELEASE_READ();
         });
       }
-      await p.waitForFunction(() => document.getElementById('msg').textContent.includes('identity-changed'));
+      await p.waitForFunction(() => /נכשלה|רעננו|נסו שוב/.test(document.getElementById('msg').textContent));
+      const visible = await p.locator('#msg').textContent();
+      assert.doesNotMatch(visible, /identity-changed/);
       assert.deepEqual(await writes(p), [], 'neither tx attempt may write for the replacement user');
     });
     await item.context.close();

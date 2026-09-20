@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h24">
+<link rel="stylesheet" href="./theme.css?v=42h25">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -297,19 +297,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="ov"><div class="dlg" id="dlg"></div></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h24';
-import { stationName, subStationAvailable } from './stations.js?v=42h24';
-import { renderNav, renderStuckNav } from './nav.js?v=42h24';
-import { MEMBER_ROLES } from './roles.js?v=42h24';
-import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h24';
-import { initPWA } from './pwa.js?v=42h24';
-import { watchCallouts } from './callout.js?v=42h24';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h25';
+import { stationName, subStationAvailable } from './stations.js?v=42h25';
+import { renderNav, renderStuckNav } from './nav.js?v=42h25';
+import { MEMBER_ROLES } from './roles.js?v=42h25';
+import { managesFleet, applyToBoardVehicle, deactivationPatch, boardStamp } from './fleet.js?v=42h25';
+import { initPWA } from './pwa.js?v=42h25';
+import { watchCallouts } from './callout.js?v=42h25';
+import { errorText, logError } from './error-text.js?v=42h25';
 import { boardState, summaryText, visibleCrews,
-         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h24';
+         waiverId, waiverOn, waived, waiverLine } from './readiness.js?v=42h25';
 import { vehicleState, isOpen as faultOpen, reportedLine }
-  from './faults.js?v=42h24';
-import { SITE_SEED } from './hours.js?v=42h24';
-import { plural } from './rotation.js?v=42h24';
+  from './faults.js?v=42h25';
+import { SITE_SEED } from './hours.js?v=42h25';
+import { plural } from './rotation.js?v=42h25';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -319,7 +320,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h24';
+import { initAppCheck } from './appcheck.js?v=42h25';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -381,6 +382,10 @@ function msg(text, kind){
   const m = $('msg');
   m.textContent = text || '';
   m.className = 'msg ' + (text ? (kind || '') : '');
+}
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
 }
 function uid(p){
   return p + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
@@ -544,7 +549,7 @@ async function loadStatic(){
 
   if (rosterRead.error) {
     const e = rosterRead.error;
-    msg('לא הצלחתי לקרוא את רשימת אנשי התחנה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.roster.read', e, 'לא הצלחתי לקרוא את רשימת אנשי התחנה.'), 'err');
   } else try {
     people = [];
     rosterRead.value.forEach(d => {
@@ -554,7 +559,7 @@ async function loadStatic(){
     });
     people.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'he'));
   } catch (e) {
-    msg('לא הצלחתי לקרוא את רשימת אנשי התחנה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.roster.parse', e, 'לא הצלחתי לקרוא את רשימת אנשי התחנה.'), 'err');
   }
 
   if (!heldRead.error) try {
@@ -594,7 +599,7 @@ async function loadStatic(){
   assertBoardFence(fence);
   if (boardRead.error) {
     const e = boardRead.error;
-    msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.config.read', e, 'לא הצלחתי לקרוא את מבנה הציוות.'), 'err');
   } else try {
     const b = boardRead.value;
     if (b.exists()) {
@@ -612,7 +617,7 @@ async function loadStatic(){
       if (CAN_FLEET) await saveBoard('המבנה ההתחלתי נוצר. אפשר לשנות הכל.');
     }
   } catch (e) {
-    msg('לא הצלחתי לקרוא את מבנה הציוות. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.config.parse', e, 'לא הצלחתי לקרוא את מבנה הציוות.'), 'err');
   }
 }
 
@@ -631,8 +636,7 @@ async function loadCrew(){
   } catch (e) {
     assertBoardFence(fence);
     if (fence.crew !== CREW) return;
-    msg('לא הצלחתי לקרוא את השיבוץ של משמרת ' + CREW_HE[CREW] +
-        '. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.crew.load', e, 'לא הצלחתי לקרוא את השיבוץ של משמרת ' + CREW_HE[CREW] + '.'), 'err');
   }
   render();
 }
@@ -677,13 +681,12 @@ function boardSaveFailed(e){
         await loadCrew();   // loadCrew מסיים ב-render()
         render();
       } catch (error) {
-        msg('הטעינה מחדש נכשלה. רענן את הדף. (' +
-            ((error && (error.code || error.message)) || '') + ')', 'err');
+        msg(userError('board.reloadAfterConflict', error, 'הטעינה מחדש נכשלה. רענן את הדף.'), 'err');
       }
     })();
     return;
   }
-  msg('השמירה נכשלה. (' + ((e && (e.code || e.message)) || '') + ')', 'err');
+  msg(userError('board.save', e, 'השמירה נכשלה.'), 'err');
 }
 
 async function saveBoard(okText, fence = boardFence(true)){
@@ -1035,7 +1038,7 @@ async function askWaiver(today){
     });
     await loadStatic(); render();
   } catch (e) {
-    msg('הבקשה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.waiver.request', e, 'הבקשה נכשלה.'), 'err');
   }
 }
 
@@ -1048,7 +1051,7 @@ async function decideWaiver(wv, status){
     }, { merge: true });
     await loadStatic(); render();
   } catch (e) {
-    msg('העדכון נכשל. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('board.waiver.update', e, 'העדכון נכשל.'), 'err');
   }
 }
 
@@ -1237,7 +1240,7 @@ $('btnSites').onclick = () => {
       closeOv(); render();
       msg('תחנות הקצה נשמרו.', 'ok');
     } catch (e) {
-      msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      msg(userError('board.assignment.save', e, 'השמירה נכשלה.'), 'err');
     }
   };
   $('stCancel').onclick = closeOv;
