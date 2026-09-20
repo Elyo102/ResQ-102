@@ -4249,6 +4249,30 @@ async function calloutPeopleTarget(sid, requestedUids, allowedCrew, selfUid) {
   return { uids:out, names };
 }
 
+async function calloutRecipientRows(actor, requestedCrew) {
+  const crewFilter = actor.isSuper ? String(requestedCrew || '') : actor.crew;
+  if (!['A', 'B', 'C'].includes(crewFilter)) {
+    throw new HttpsError('invalid-argument', 'משמרת לא מוכרת.');
+  }
+  if (!actor.isSuper && crewFilter !== actor.crew) {
+    throw new HttpsError('permission-denied', 'אפשר לבחור רק לוחמים מהמשמרת שלך.');
+  }
+  const rows = [];
+  const rs = await db.collection('stations/' + actor.sid + '/roster').get();
+  rs.forEach(function (d) {
+    const value = d.data() || {};
+    if (value.is_active === false) return;
+    const crew = String(value.crew || '');
+    if (crew !== crewFilter) return;
+    const name = String(value.full_name || d.id).trim().slice(0, 120) || d.id;
+    rows.push({ uid:d.id, name, crew });
+  });
+  rows.sort(function (a, b) {
+    return String(a.name || '').localeCompare(String(b.name || ''), 'he');
+  });
+  return { crew:crewFilter, recipients:rows };
+}
+
 async function commandersOf(sid, crew) {
   const out = [];
   try {
@@ -5202,6 +5226,12 @@ exports.sendCallout = onCall(
            people: res.people, devices: res.devices,
            failed:Number(res.failed || 0),
            skipped_away: awayNames, trial };
+});
+
+exports.listCalloutRecipients = onCall(CALLOUT_OPTIONS, async (req) => {
+  const actor = await freshCalloutActor(req);
+  const result = await calloutRecipientRows(actor, (req.data || {}).crew);
+  return { ok:true, station_id:actor.sid, crew:result.crew, recipients:result.recipients };
 });
 
 

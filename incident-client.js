@@ -56,7 +56,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
   'rollbackSchedule', 'runAttendanceShadowNow', 'runReportNow',
   'runSchedulePlanner', 'saveQualification', 'saveScheduleGapPolicy', 'saveSchedulePolicy', 'saveScheduleSource',
-  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
+  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout', 'listCalloutRecipients',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport', 'getHrOverHoursAlert',

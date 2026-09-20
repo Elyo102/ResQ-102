@@ -907,6 +907,9 @@ export function getDocs(q){
     return delayed(listSnap(rows));
   }
   if (/\/quals$/.test(p))        return delayed(listSnap(qualRows(p)));
+  if (/\/roster$/.test(p) && typeof window !== 'undefined' && window.__ROSTER_GETDOCS_HANG) {
+    return new Promise(() => {});
+  }
   if (/\/roster$/.test(p))       return delayed(listSnap(ROSTER));
   if (/\/users$/.test(p))        return delayed(listSnap(USERS));
   if (/\/member_quals$/.test(p)) return delayed(listSnap(MEMBER_QUALS));

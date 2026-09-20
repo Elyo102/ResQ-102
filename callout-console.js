@@ -5,6 +5,7 @@ import { errorText, logError } from './error-text.js?v=42h25';
 import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h25';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
+const ROSTER_LOAD_TIMEOUT_MS = 7000;
 let active = null;
 
 function text(value, max) {
@@ -22,6 +23,23 @@ function validCrew(value) {
 function setMessage(element, value, kind) {
   element.textContent = value || '';
   element.className = 'msg ' + (value ? (kind || '') : '');
+}
+
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(label || 'timeout');
+      error.code = 'deadline-exceeded';
+      reject(error);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function rosterLoadTimeoutMs() {
+  const override = Number(globalThis.__CALLOUT_RECIPIENT_TIMEOUT_MS);
+  return Number.isFinite(override) && override >= 10 ? override : ROSTER_LOAD_TIMEOUT_MS;
 }
 
 function rosterName(session, uid) {
@@ -70,6 +88,16 @@ function renderRecipients(session) {
     const notice = document.createElement('div');
     notice.className = 'recipient-empty';
     notice.textContent = 'טוען רשימת לוחמים לבחירה פרטנית…';
+    list.appendChild(notice);
+  } else if (session.rosterFailed) {
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'secondary';
+    retry.textContent = 'טען רשימה שוב';
+    retry.onclick = () => reloadRoster(session);
+    notice.append('רשימת הלוחמים לא נטענה. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ', retry);
     list.appendChild(notice);
   } else if (!rows.length) {
     const notice = document.createElement('div');
@@ -197,21 +225,67 @@ function renderLive(session, list) {
   });
 }
 
-async function loadRoster(session) {
-  // This function is reached only after initCalloutConsole has accepted the
-  // signed claims. A denied role never starts a roster read.
-  const snap = await getDocs(collection(session.db, 'stations', session.sid, 'roster'));
-  if (active !== session) return;
+function applyRosterRows(session, rows) {
+  session.roster.clear();
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const uid = text(row && row.uid, 128);
+    const crew = text(row && row.crew, 1);
+    if (!uid || crew !== session.crew) return;
+    session.roster.set(uid, { name:text(row && row.name, 120), crew });
+  });
+}
+
+async function loadRosterFromServer(session) {
+  const payload = { crew:session.crew, ...(session.isSuper ? { target_station_id:session.sid } : {}) };
+  const response = await withTimeout(session.listCalloutRecipients(payload),
+    rosterLoadTimeoutMs(), 'callout-recipients-timeout');
+  const data = response && response.data ? response.data : {};
+  applyRosterRows(session, data.recipients);
+}
+
+async function loadRosterFromFirestore(session) {
+  // Fallback only. The authoritative picker path is the callable above; this
+  // keeps older deployments usable while functions and hosting roll forward.
+  const snap = await withTimeout(getDocs(collection(session.db, 'stations', session.sid, 'roster')),
+    rosterLoadTimeoutMs(), 'callout-roster-timeout');
+  const rows = [];
   snap.forEach(doc => {
     const value = doc.data() || {};
-    if (value.is_active === false) return;
-    const crew = text(value.crew, 1);
-    if (session.isSuper && crew !== session.crew) return;
-    if (!session.isSuper && crew !== session.crew) return;
-    session.roster.set(doc.id, { name:text(value.full_name, 120), crew });
+    rows.push({ uid:doc.id, name:value.full_name, crew:value.crew, is_active:value.is_active });
   });
+  applyRosterRows(session, rows.filter(row => row.is_active !== false));
+}
+
+async function loadRoster(session) {
+  // This function is reached only after initCalloutConsole has accepted the
+  // signed claims. A denied role never starts a recipient read.
+  try {
+    await loadRosterFromServer(session);
+  } catch (primary) {
+    logError('callout recipients', primary);
+    await loadRosterFromFirestore(session);
+  }
+  if (active !== session) return;
+  session.rosterFailed = false;
   session.rosterLoaded = true;
   renderRecipients(session);
+}
+
+async function reloadRoster(session) {
+  if (active !== session) return;
+  session.rosterFailed = false;
+  session.rosterLoaded = false;
+  renderRecipients(session);
+  try {
+    await loadRoster(session);
+  } catch (error) {
+    if (active !== session) return;
+    session.rosterFailed = true;
+    session.rosterLoaded = true;
+    renderRecipients(session);
+    setMessage(session.elements.message,
+      'רשימת השמות לא נטענה כרגע. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ' + errorText(error), 'err');
+  }
 }
 
 function watchOwnCallouts(session) {
@@ -307,8 +381,9 @@ export async function initCalloutConsole(options = {}) {
   const session = {
     db:options.db, sid, crew, role, isSuper, uid:String(options.user.uid), elements:options.elements,
     roster:new Map(), callouts:new Map(), responses:new Map(), responseStops:new Map(), stop:() => {},
-    selectedRecipients:null, rosterLoaded:false, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
+    selectedRecipients:null, rosterLoaded:false, rosterFailed:false, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
     sendCallout:options.sdk.httpsCallable(options.functions, 'sendCallout'),
+    listCalloutRecipients:options.sdk.httpsCallable(options.functions, 'listCalloutRecipients'),
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
   };
   active = session;
@@ -450,14 +525,7 @@ export async function initCalloutConsole(options = {}) {
     session.responseStops.clear();
   };
   renderRecipients(session);
-  try { await loadRoster(session); } catch (error) {
-    if (active === session) {
-      session.rosterLoaded = true;
-      renderRecipients(session);
-      setMessage(session.elements.message,
-        'רשימת השמות לא נטענה; אפשר לשלוח לכל המשמרת, אבל בחירה פרטנית אינה זמינה כרגע. ' + errorText(error), 'err');
-    }
-  }
+  await reloadRoster(session);
   return Object.freeze({ hasPending:() => active === session && !!session.pendingRequest,
     destroy:() => { if (active === session) destroyCalloutConsole(); } });
 }

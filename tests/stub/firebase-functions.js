@@ -47,6 +47,20 @@ async function stubAlertsFeed(){
     window:{ boards:boards.length, messages_per_board:10, callouts:25, feed_limit:30, candidates:items.length } } };
 }
 
+async function stubCalloutRecipients(payload){
+  const db = {};
+  const crew = String((payload && payload.crew) || 'B');
+  const snap = await getDocs(collection(db, 'stations', 'eilat_102', 'roster'));
+  const recipients = [];
+  snap.forEach(doc => {
+    const value = doc.data() || {};
+    if (value.is_active === false || String(value.crew || '') !== crew) return;
+    recipients.push({ uid:doc.id, name:String(value.full_name || doc.id), crew:String(value.crew || '') });
+  });
+  recipients.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+  return { data:{ ok:true, station_id:'eilat_102', crew, recipients } };
+}
+
 export function getFunctions(){ return {}; }
 
 // אותו סבב בדיוק כמו בתשובת התאימות למטה: A/B/C, עוגן 2026-01-01,
@@ -114,6 +128,7 @@ function stubWorkdays(payload){
 
 function defaultCallableStep(name, payload){
   if (name === 'getAlertsFeed') return { data:{ __async:stubAlertsFeed } };
+  if (name === 'listCalloutRecipients') return { data:{ __async:() => stubCalloutRecipients(payload) } };
   if (name === 'getPersonalLiveLabStatus') return { data:{ active:false, expires_at_ms:0 } };
   if (name === 'enablePersonalLiveLab') return { data:{ active:true, expires_at_ms:Date.now()+86400000 } };
   if (name === 'sendPersonalLiveLabPush') return { data:{ probe_id:String((payload || {}).request_id || ''), state:'accepted', duplicate:false } };

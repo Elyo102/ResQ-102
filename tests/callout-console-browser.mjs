@@ -21,6 +21,7 @@ function exported(name) {
 
 const sendSource = exported('sendCallout');
 const closeSource = exported('closeCallout');
+const listSource = exported('listCalloutRecipients');
 assert.match(navSource, /href:\s*'callout\.html',\s*label:\s*'קריאת פתע',\s*who:\s*'shift_command',[^\n]*group:\s*'mine'/);
 assert.match(navSource, /who === 'shift_command'[\s\S]*?display\.role === 'commander'\s*\|\|\s*display\.role === 'deputy'/);
 assert.doesNotMatch(alertsSource,
@@ -40,6 +41,12 @@ assert.match(serverSource, /uid === selfUid/);
 assert.match(serverSource, /בדיקת עצמי/);
 assert.match(sendSource, /targetMode = 'people:' \+ uids\.slice\(\)\.sort\(\)\.join/);
 assert.doesNotMatch(sendSource, /target === 'people' \|\| target === 'station'/);
+assert.match(listSource, /await freshCalloutActor\(req\)/);
+assert.match(listSource, /calloutRecipientRows\(actor, \(req\.data \|\| \{\}\)\.crew\)/);
+assert.match(serverSource, /async function calloutRecipientRows\(actor, requestedCrew\)/);
+assert.match(serverSource, /actor\.isSuper \? String\(requestedCrew \|\| ''\) : actor\.crew/);
+assert.match(consoleSource, /listCalloutRecipients/);
+assert.match(consoleSource, /withTimeout\(session\.listCalloutRecipients/);
 assert.match(sendSource, /runtimeValue\.silent === true/);
 assert.match(sendSource, /intent_fingerprint/);
 assert.match(consoleSource, /where\('by_uid', '==', session\.uid\)/);
@@ -54,18 +61,21 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const url = 'http://127.0.0.1:' + server.address().port + '/callout.html';
 
-async function open(browser, role, extra = {}) {
+async function open(browser, role, extra = {}, setup = {}) {
   const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await context.route('**/firebasejs/**', route => {
     const file = path.join(stub, route.request().url().split('/').pop().split('?')[0]);
     route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
   await context.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
-  await context.addInitScript(({ role, extra }) => {
+  await context.addInitScript(({ role, extra, setup }) => {
     window.__SMOKE_ROLE = role; window.__SMOKE_UID = role + '-callout';
     window.__SMOKE_EXTRA_CLAIMS = extra;
     window.confirm = () => true;
-  }, { role, extra });
+    if (setup && setup.recipientTimeoutMs) window.__CALLOUT_RECIPIENT_TIMEOUT_MS = setup.recipientTimeoutMs;
+    if (setup && setup.rosterGetDocsHang) window.__ROSTER_GETDOCS_HANG = true;
+    if (setup && setup.callablePlan) window.__CALLABLE_PLAN = setup.callablePlan;
+  }, { role, extra, setup });
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url, { waitUntil:'load' });
@@ -136,6 +146,27 @@ try {
     assert.equal(call.payload.text, 'קריאה רק לדנה');
   });
   await peopleRun.context.close();
+
+  const stuckRoster = await open(browser, 'commander', {}, {
+    recipientTimeoutMs:30,
+    rosterGetDocsHang:true,
+    callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
+  });
+  await stuckRoster.page.locator('#work').waitFor({ state:'visible' });
+  await check('recipient picker leaves loading state when both roster reads stall', async () => {
+    await stuckRoster.page.waitForFunction(() =>
+      !(document.querySelector('#recipientSummary')?.textContent || '').includes('טוען'),
+      null, { timeout:1500 });
+    assert.match(await stuckRoster.page.locator('#recipientSummary').textContent(), /כל אנשי|אפשר לבחור|ברירת מחדל/);
+    assert.match(await stuckRoster.page.locator('#calloutMessage').textContent(), /רשימת השמות לא נטענה/);
+    await stuckRoster.page.locator('#calloutText').fill('קריאה לכל המשמרת גם בלי רשימה');
+    await stuckRoster.page.locator('#calloutSend').evaluate(button => button.click());
+    await stuckRoster.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'sendCallout'));
+    const call = await stuckRoster.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(row => row.name === 'sendCallout'));
+    assert.equal(call.payload.target, 'crew:B');
+    assert.equal(Object.hasOwn(call.payload, 'uids'), false);
+  });
+  await stuckRoster.context.close();
 
   const selfRun = await open(browser, 'commander');
   await selfRun.page.locator('#work').waitFor({ state:'visible' });
