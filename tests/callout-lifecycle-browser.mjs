@@ -171,8 +171,9 @@ await page.waitForTimeout(330);
 check(await page.locator('#door-admin').count() === 1,
       'a delayed same-UID route cannot overwrite newer claims');
 
-// Simulate a large iPhone safe inset and scroll until both sticky surfaces
-// engage. The navigation must start at or below the mode bar's lower edge.
+// Simulate a large iPhone safe inset and scroll until the sticky header
+// engages. The mode chip now rides inside the header, so the header itself
+// may remain at top:0; the chip must sit below the safe inset.
 await page.evaluate(() => {
   document.documentElement.style.setProperty('--resq-safe-top-override', '47px');
   window.scrollTo(0, document.documentElement.scrollHeight);
@@ -183,8 +184,8 @@ const stickyGeometry = await page.evaluate(() => {
   const nav = document.getElementById('appNav').getBoundingClientRect();
   return { modeTop:chip.top, modeBottom:chip.bottom, navTop:nav.top, navBottom:nav.bottom };
 });
-check(stickyGeometry.navTop >= 46,
-      'the header still stays below a 47px safe inset',
+check(stickyGeometry.modeTop >= 46,
+      'the mode chip stays below a 47px safe inset',
       JSON.stringify(stickyGeometry));
 check(stickyGeometry.modeTop >= stickyGeometry.navTop - 1
         && stickyGeometry.modeBottom <= stickyGeometry.navBottom + 1,

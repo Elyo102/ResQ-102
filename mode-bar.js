@@ -144,13 +144,26 @@ function buildChip() {
   return wrap;
 }
 
+function syncChip(wrap) {
+  if (!wrap || (currentMode !== 'trial' && currentMode !== 'live')) return;
+  const chip = wrap.querySelector('#' + CHIP_ID);
+  const note = wrap.querySelector('#' + NOTE_ID);
+  if (!chip || !note) return;
+  const trial = currentMode === 'trial';
+  chip.dataset.mode = currentMode;
+  chip.querySelector('.label').textContent = trial ? '🧪 ' + TRIAL_LABEL : LIVE_LABEL;
+  chip.setAttribute('aria-label', trial ? TRIAL_ARIA : LIVE_ARIA);
+  note.textContent = trial ? TRIAL_NOTE : LIVE_NOTE;
+  document.body.classList.toggle('has-trial-mode', trial);
+}
+
 /** מכניס את התגית לכותרת. נקרא גם מ-`nav.js` אחרי בנייה מחדש של הסרגל. */
 export function attachModeChip() {
   if (currentMode !== 'trial' && currentMode !== 'live') return;
   const wrap = buildChip();
   const host = document.getElementById('appNav') || document.body;
-  if (wrap.parentNode === host) return;
-  host.appendChild(wrap);
+  if (wrap.parentNode !== host) host.appendChild(wrap);
+  syncChip(wrap);
 }
 
 /**
@@ -169,15 +182,8 @@ export function renderModeBar(mode) {
   }
   const wrap = buildChip();
   attachModeChip();
-  const chip = wrap.querySelector('#' + CHIP_ID);
-  const note = wrap.querySelector('#' + NOTE_ID);
-  const trial = currentMode === 'trial';
-  chip.dataset.mode = currentMode;
-  chip.querySelector('.label').textContent = trial ? '🧪 ' + TRIAL_LABEL : LIVE_LABEL;
-  chip.setAttribute('aria-label', trial ? TRIAL_ARIA : LIVE_ARIA);
-  note.textContent = trial ? TRIAL_NOTE : LIVE_NOTE;
+  syncChip(wrap);
   // `has-trial-mode` נשאר ככלי עזר למסכים; הוא כבר אינו דוחף תוכן.
-  document.body.classList.toggle('has-trial-mode', trial);
   document.body.classList.remove('has-mode-bar');
 }
 
