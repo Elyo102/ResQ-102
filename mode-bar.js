@@ -43,11 +43,14 @@ export const TRIAL_PUBLISH_WARNING =
 const CHIP_ID = 'modeChip';
 const NOTE_ID = 'modeChipNote';
 const WRAP_ID = 'modeChipWrap';
+const ACTION_ID = 'modeChipAction';
+const STATUS_ID = 'modeChipStatus';
 
 /* `null` = לא ידוע. מסך שאין לו מקור מצב לא יציג תגית, ולא ימציא
  * „חי" רק מפני שלא שאל. */
 let currentMode = null;
 let documentListener = null;
+let modeAction = null;
 
 export function stationMode() { return currentMode; }
 export const isTrial = () => currentMode === 'trial';
@@ -78,6 +81,14 @@ function styleOnce() {
     '  border:1px solid var(--line);background:var(--card);color:var(--txt);',
     '  box-shadow:0 10px 30px rgba(0,0,0,.28)}',
     '#' + NOTE_ID + '[hidden]{display:none!important}',
+    '#' + ACTION_ID + '{display:flex;width:100%;min-height:44px;margin-top:10px;',
+    '  align-items:center;justify-content:center;padding:8px 12px;border-radius:9px;',
+    '  border:1px solid var(--accent);background:var(--accent);color:var(--accent-on);',
+    '  font:inherit;font-weight:800;cursor:pointer}',
+    '#' + ACTION_ID + ':disabled{opacity:.62;cursor:wait}',
+    '#' + ACTION_ID + ':focus-visible{outline:3px solid var(--accent);outline-offset:2px}',
+    '#' + STATUS_ID + '{min-height:1.5em;margin-top:7px;color:var(--muted);font-size:12px}',
+    '#' + STATUS_ID + '[data-error="true"]{color:var(--bad-txt)}',
     '@media(max-width:420px){#' + CHIP_ID + '{padding:0 10px;font-size:12px}}'
   ].join('');
   document.head.appendChild(st);
@@ -105,7 +116,8 @@ function openNote() {
    * עד שמישהו ילחץ שוב בדיוק על התגית — וזה בדיוק מה שלא קורה. */
   documentListener = function (event) {
     if (event.type === 'keydown' && event.key !== 'Escape') return;
-    if (event.type === 'click' && (event.target === chip || chip.contains(event.target))) return;
+    const wrap = document.getElementById(WRAP_ID);
+    if (event.type === 'click' && wrap && wrap.contains(event.target)) return;
     closeNote();
   };
   document.addEventListener('click', documentListener, true);
@@ -153,8 +165,51 @@ function syncChip(wrap) {
   chip.dataset.mode = currentMode;
   chip.querySelector('.label').textContent = trial ? '🧪 ' + TRIAL_LABEL : LIVE_LABEL;
   chip.setAttribute('aria-label', trial ? TRIAL_ARIA : LIVE_ARIA);
-  note.textContent = trial ? TRIAL_NOTE : LIVE_NOTE;
+  note.replaceChildren();
+  const copy = document.createElement('div');
+  copy.textContent = trial ? TRIAL_NOTE : LIVE_NOTE;
+  note.appendChild(copy);
+  if (typeof modeAction === 'function') {
+    const action = document.createElement('button');
+    action.id = ACTION_ID;
+    action.type = 'button';
+    action.textContent = trial ? 'מעבר למצב חי' : 'מעבר למצב אימון';
+    const status = document.createElement('div');
+    status.id = STATUS_ID;
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    action.addEventListener('click', async function () {
+      if (action.disabled) return;
+      action.disabled = true;
+      action.setAttribute('aria-busy', 'true');
+      status.dataset.error = 'false';
+      status.textContent = 'מעדכן…';
+      try {
+        await modeAction(trial ? 'live' : 'trial');
+        status.textContent = 'מצב המערכת עודכן.';
+      } catch (error) {
+        status.dataset.error = 'true';
+        status.textContent = error && error.userMessage
+          ? error.userMessage : 'העדכון לא בוצע. נסה שוב.';
+      } finally {
+        action.disabled = false;
+        action.removeAttribute('aria-busy');
+      }
+    });
+    note.append(action, status);
+  }
   document.body.classList.toggle('has-trial-mode', trial);
+}
+
+/**
+ * Authorizes an action inside the chip. Passing null keeps the chip strictly
+ * informational. The controller decides authority; the server remains the
+ * enforcement boundary.
+ */
+export function configureModeAction(action) {
+  modeAction = typeof action === 'function' ? action : null;
+  const wrap = document.getElementById(WRAP_ID);
+  if (wrap) syncChip(wrap);
 }
 
 /** מכניס את התגית לכותרת. נקרא גם מ-`nav.js` אחרי בנייה מחדש של הסרגל. */

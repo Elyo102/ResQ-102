@@ -147,6 +147,12 @@ async function fixture(options = {}) {
       else if(name==='getHrMonthlyOverHours')value=h.overHours||{state:'not_built',month:null,hour_limit:null,coverage:null,over_employees:[]};
       else if(name==='buildHrMonthlySummaryNow'){h.builds=(h.builds||0)+1;h.overHours=h.afterBuild||h.overHours;value={generation_id:'a'.repeat(64),complete:true,activated:true,slices:1,written:1};}
       else if(name==='getHrMonthlySummary')value=h.monthly||{month:data.month,state:'not_built',rows:[],next_cursor:null};
+      else if(name==='countHrRequestBoxes')value=h.boxCounts||{drift:false,boxes:{
+        sick:{status:{open:2,in_progress:1,waiting_employee:0,closed:4},decision:{}},
+        reserve:{status:{open:1,in_progress:0,waiting_employee:1,closed:2},decision:{}},
+        vacation:{status:{open:0,in_progress:1,waiting_employee:0,closed:3},decision:{}},
+        extended_absence:{status:{open:1,in_progress:1,waiting_employee:1,closed:1},decision:{}}
+      }};
       else if(name==='saveHrEmployeeReview')value={review_id:'b'.repeat(64),reviewed_revision:data.expected_revision,current:true,duplicate:false};
       else throw new Error('Unexpected callable '+name);
       const result={data:value};
@@ -223,12 +229,13 @@ try {
   await check('HR list/detail use SDK region and implicit token station, never station data', async () => {
     const f = await fixture(); await openDetail(f.page);
     const state = await f.page.evaluate(() => ({ calls: __HR.calls, region: __HR.region, storage: [localStorage.length, sessionStorage.length], url: location.href }));
-    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 5);
+    assert.equal(state.region, 'europe-west1'); assert.equal(state.calls.length, 6);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthReports').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrHoursNudges').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrEmployeeReport').data).sort(), ['month', 'uid']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrWorkforceCases').data), []);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthlyOverHours').data), []);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='countHrRequestBoxes').data), []);
     // ה-callable הישן, שקורא אוסף שאין לו כותב חי, אינו נקרא מהמסך בכלל.
     assert.equal(state.calls.some(c=>c.name==='getHrOverHoursAlert'), false);
     // והדוח החודשי עצמו אינו נטען בפתיחת המסך: 3,000 שורות
@@ -282,7 +289,7 @@ try {
     await f.page.locator('.hr-person').click();await f.page.locator('[data-hr="detail-fresh"]').waitFor();
     await f.page.evaluate(code => { __HR.rejectNext = { name: 'getHrEmployeeReport', code }; }, code);
     await f.page.locator('[data-hr="detail-fresh"]').click(); await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 6); await f.close();
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 7); await f.close();
   });
   await check('old permission denial cannot clear a newer valid session and report', async () => {
     const f = await fixture(); await person(f.page);
@@ -304,7 +311,7 @@ try {
       __HR.heldCalls.shift().resolve();
     });
     await f.page.waitForFunction(() => document.querySelector('[data-hr="refresh"]').disabled);
-    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 5);
+    await privateEmpty(f.page); assert.equal(await f.page.evaluate(() => __HR.calls.length), 6);
     await f.page.evaluate(() => __HR.dispatch(__HR.auth.currentUser)); await person(f.page);
     assert.ok((await f.page.locator('.hr-person').innerText()).includes('second_station')); await f.close();
   });
@@ -315,6 +322,45 @@ try {
     await f.page.evaluate(() => { const u = __HR.auth.currentUser; u.hold = false; __HR.dispatch(u); }); await openDetail(f.page);
     await f.page.evaluate(() => __HR.errors.forEach(cb => cb(new Error('synthetic observer failure'))));
     await privateEmpty(f.page); await f.close();
+  });
+  await check('HR dashboard shows four existing server-counted inboxes without extra per-box calls', async () => {
+    const f = await fixture(); await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-hi="sick"]').textContent === '3');
+    assert.deepEqual(await f.page.evaluate(() => ['sick','reserve','vacation','extended_absence'].map(kind =>
+      document.querySelector(`[data-hi="${kind}"]`).textContent)), ['3','2','1','3']);
+    assert.equal(await f.page.evaluate(() => __HR.calls.filter(c => c.name === 'countHrRequestBoxes').length), 1);
+    assert.equal(await f.page.locator('.hr-inbox-tile').count(), 4);
+    assert.equal(await f.page.locator('.hr-inbox-tile').evaluateAll(nodes => nodes.every(node => node.getAttribute('href') === './hr-requests.html')), true);
+    await f.close();
+  });
+  await check('inbox counts fail closed, expose no technical error, and retry with one bounded request', async () => {
+    const f = await fixture(); await person(f.page);
+    await f.page.evaluate(() => { __HR.rejectNext = { name: 'countHrRequestBoxes', code: 'functions/unavailable' }; });
+    await f.page.locator('[data-hi="refresh"]').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-hi="message"]').textContent.includes('לא ניתן'));
+    const state = await f.page.evaluate(() => ({
+      values: ['sick','reserve','vacation','extended_absence'].map(kind => document.querySelector(`[data-hi="${kind}"]`).textContent),
+      text: document.querySelector('[data-hr-inbox]').innerText,
+      calls: __HR.calls.filter(c => c.name === 'countHrRequestBoxes').length
+    }));
+    assert.deepEqual(state.values, ['—','—','—','—']);
+    assert.equal(/functions\/|FirebaseError|unavailable/.test(state.text), false, state.text);
+    assert.equal(state.calls, 2);
+    await f.close();
+  });
+  await check('HR inbox tiles and controls stay accessible at 320, 360 and 390', async () => {
+    const f = await fixture(); await person(f.page);
+    for (const width of [320, 360, 390]) {
+      await f.page.setViewportSize({ width, height: 780 });
+      await f.page.waitForTimeout(30);
+      const overflow = await f.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, 'page overflow ' + overflow + ' at ' + width);
+      for (const selector of ['[data-hi="refresh"]', '.hr-inbox-tile']) {
+        const box = await f.page.locator(selector).first().boundingBox();
+        assert.ok(box && box.width >= 44 && box.height >= 44, selector + ' ' + JSON.stringify(box));
+      }
+    }
+    await f.close();
   });
   await check('actual bootstrap routes all three nudge transports through implicit current identity with immutable timeout retry',async()=>{
     const f=await fixture();await openDetail(f.page);

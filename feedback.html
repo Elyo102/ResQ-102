@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h27">
+<link rel="stylesheet" href="./theme.css?v=42h28">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -70,7 +70,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   #errBar code{ display:block; margin-top:6px; font-size:11px; white-space:pre-wrap; direction:ltr; text-align:left }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="feedback">
 
 <div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
   <b>המערכת נתקלה בשגיאה</b>
@@ -151,21 +151,21 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </main>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h27';
-import { renderNav, renderStuckNav } from './nav.js?v=42h27';
-import { initPWA } from './pwa.js?v=42h27';
-import { APP_VERSION } from './version.js?v=42h27';
-import { MEMBER_ROLES } from './roles.js?v=42h27';
+import { firebaseConfig } from './firebase-config.js?v=42h28';
+import { renderNav, renderStuckNav } from './nav.js?v=42h28';
+import { initPWA } from './pwa.js?v=42h28';
+import { APP_VERSION } from './version.js?v=42h28';
+import { MEMBER_ROLES } from './roles.js?v=42h28';
 import { CATEGORIES, TEXT_MAX, sourceScreen, validateLocal, createFeedbackSubmissionSession, errorText }
-  from './feedback.js?v=42h27';
+  from './feedback.js?v=42h28';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h27';
+  from './monitored-functions.js?v=42h28';
 
 const app  = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h27';
+import { initAppCheck } from './appcheck.js?v=42h28';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');

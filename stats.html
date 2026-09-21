@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h27">
+<link rel="stylesheet" href="./theme.css?v=42h28">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -133,7 +133,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .hide{ display:none !important }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="stats">
 
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
@@ -212,26 +212,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h27';
-import { renderNav, renderStuckNav } from './nav.js?v=42h27';
-import { initPWA } from './pwa.js?v=42h27';
-import { watchCallouts } from './callout.js?v=42h27';
-import { CREW_HE } from './rotation.js?v=42h27';
-import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h27';
-import { mergeFleet } from './faults.js?v=42h27';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h28';
+import { renderNav, renderStuckNav } from './nav.js?v=42h28';
+import { initPWA } from './pwa.js?v=42h28';
+import { watchCallouts } from './callout.js?v=42h28';
+import { CREW_HE } from './rotation.js?v=42h28';
+import { parseEffectiveWorkdays, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h28';
+import { mergeFleet } from './faults.js?v=42h28';
 import { WINDOWS, sinceKey, vehicleStats, vehicleWhy, loadStats,
-         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h27';
+         loadRank, fairness, SCORE_WHY, dmy, toKey } from './stats.js?v=42h28';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h27';
+  from './monitored-functions.js?v=42h28';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h27';
+import { initAppCheck } from './appcheck.js?v=42h28';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

@@ -77,6 +77,7 @@ const metricsServiceModule = require('./metrics-service');
 const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
+const runtimeModeModule = require('./runtime-mode-service');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -177,6 +178,12 @@ function isPolicySuppressedPush(value) {
     && (!Object.hasOwn(value, 'failed') || value.failed === false);
 }
 const FV = admin.firestore.FieldValue;
+const runtimeModeService = runtimeModeModule.createRuntimeModeService({
+  db,
+  serverTimestamp: () => FV.serverTimestamp(),
+  freshActor: req => freshOnboardingIdentity(req, true),
+  fail: (code, message, details) => { throw new HttpsError(code, message, details); }
+});
 const formSubmissions = formSubmissionsModule.createFormSubmissions({
   db, auth:admin.auth(), HttpsError,
   serverTimestamp:() => FV.serverTimestamp(), clock:() => Date.now()
@@ -467,7 +474,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.27',
+  monthAuthorityReleaseId: '42H.28',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -2985,42 +2992,37 @@ exports.bulkImport = onCall(
 //  נשמרת באותיות קטנות כי אימייל אינו תלוי־רישיות, ואי־התאמה
 //  כאן משמעה שאלדד מפסיק לקבל בלי להבין למה.
 
-exports.setSilentMode = onCall(async (req) => {
-  const auth = requireSuperAdmin(req);
-  const d = req.data || {};
-  const on = d.silent === true;
-  const allow = (Array.isArray(d.allow) ? d.allow : [])
-    .map(x => String(x || '').trim().toLowerCase()).filter(Boolean).slice(0, 40);
-
-  const audit = await openAudit(auth, 'set_silent_mode', null,
-                               { silent: on, allow: allow.length });
-
-  await db.doc(RUNTIME_DOC).set({
-    silent: on, silent_allow: allow,
-    updated_by: auth.uid, updated_at: FV.serverTimestamp()
-  }, { merge: true });
-
-  // מסמך שני, ציבורי, עם שדה אחד: ניסוי או חי.
-  //
-  // **למה בכלל שני מסמכים.** את המצב צריך לקרוא כל כבאי, כדי
-  // שפס "מצב ניסוי" יופיע לו על המסך. את רשימת הפטורים אסור
-  // שיקרא — היא מגלה מי כן מקבל התראות כשכולם חושבים שהמערכת
-  // שקטה. שדה בודד אי אפשר לחסום בכלל אבטחה: או שכל המסמך
-  // נקרא, או שלא. לכן שניים.
-  await db.doc('config/mode').set({
-    mode: on ? 'trial' : 'live',
-    since: FV.serverTimestamp()
-  }, { merge: true });
-
-  _rt = null;   // מאלץ קריאה מחדש, אחרת המטמון היה משהה את השינוי בחצי דקה
-  await sealAudit(audit, { silent: on });
-  return { ok: true, silent: on, allow: allow, mode: on ? 'trial' : 'live' };
+const RUNTIME_MODE_OPTIONS = Object.freeze({
+  region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60,
+  memory: '256MiB', maxInstances: 3, concurrency: 1
 });
 
-exports.getSilentMode = onCall(async (req) => {
-  requireSuperAdmin(req);
-  const d = await db.doc(RUNTIME_DOC).get().catch(() => null);
-  const v = (d && d.exists ? d.data() : {}) || {};
+exports.setSilentMode = onCall(RUNTIME_MODE_OPTIONS, async (req) => {
+  // Open the audit only after a fresh Auth read. The service performs another
+  // fresh read immediately before its transaction so a mid-request revocation
+  // still stops before either mode document changes.
+  const actor = await freshOnboardingIdentity(req, true);
+  const auditAuth = { uid: actor.uid, token: { email: actor.email } };
+  const d = req.data || {};
+  const audit = await openAudit(auditAuth, 'set_silent_mode', null, {
+    silent: d.silent === true,
+    expected_revision: d.expected_revision,
+    request_id: typeof d.request_id === 'string' ? d.request_id : null
+  });
+  const result = await runtimeModeService.set(req);
+  _rt = null; // invalidate only after the atomic Firestore commit succeeded
+  await sealAudit(audit, {
+    silent: result.silent,
+    revision: result.revision,
+    duplicate: result.duplicate,
+    changed: result.changed
+  });
+  return result;
+});
+
+exports.getSilentMode = onCall(RUNTIME_MODE_OPTIONS, async (req) => {
+  await freshOnboardingIdentity(req, true);
+  const current = await runtimeModeService.read();
   let blocked = 0;
   try {
     const c = await db.collection('silenced').count().get();
@@ -3041,9 +3043,10 @@ exports.getSilentMode = onCall(async (req) => {
     } while (pageToken);
   } catch (e) {}
 
-  return { silent: v.silent === true,
-           mode: v.silent === true ? 'trial' : 'live',
-           allow: Array.isArray(v.silent_allow) ? v.silent_allow : [],
+  return { silent: current.silent,
+           mode: current.mode,
+           revision: current.revision,
+           allow: current.allow,
            blocked: blocked,
            accounts: accounts, signed_in: signedIn };
 });
@@ -6562,7 +6565,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.27', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.28', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

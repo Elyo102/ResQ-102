@@ -40,7 +40,8 @@
     "pwa:coordinator": "node pwa-coordinator.mjs && node pwa-update.mjs",
     "forms:submit": "node ../functions/form-submissions.test.js && node form-submission-wiring.mjs && node forms-submit-browser.mjs",
     "saas:test": "node ../functions/saas-contract.test.js && node ../functions/saas-service.test.js && node saas-source.mjs && node saas-admin-browser.mjs",
-    "security:test": "node security-boundaries.mjs && node security-mutations.mjs",
+    "mode:control": "node mode-controller-browser.mjs",
+    "security:test": "node ../functions/runtime-mode-service.test.js && npm run mode:control && node security-boundaries.mjs && node security-mutations.mjs",
     "dr:test": "node ops-disaster-restore.test.mjs",
     "metrics:test": "node ../functions/metrics-catalog.test.js && node ../functions/metrics-service.test.js && node metrics-client.test.mjs && node metrics-source.mjs && node metrics-browser.mjs",
     "mobile:test": "node mobile-shell.mjs"

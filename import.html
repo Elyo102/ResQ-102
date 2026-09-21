@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h27">
+<link rel="stylesheet" href="./theme.css?v=42h28">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ResQ">
@@ -142,7 +142,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .sum .k{ font-size:11.5px; color:var(--muted); margin-top:3px }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="import">
 <div id="errBar"></div>
 <div class="wrap">
 
@@ -219,16 +219,16 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h27';
-import { renderNav, renderStuckNav } from './nav.js?v=42h27';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h28';
+import { renderNav, renderStuckNav } from './nav.js?v=42h28';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h27';
+  from './monitored-functions.js?v=42h28';
 import { getFirestore, collection, doc, getDocs, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { dryRun } from './histimport.js?v=42h27';
+import { dryRun } from './histimport.js?v=42h28';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
@@ -237,12 +237,11 @@ const esc = s => String(s == null ? '' : s)
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h27';
+import { initAppCheck } from './appcheck.js?v=42h28';
 await initAppCheck(app);
 const auth = getAuth(app);
 const fns  = getFunctions(app, 'europe-west1');
 
-let ME = { uid:'', email:'' };
 let HIST = null, histGeneration = 0, histBusy = false, histDryBusy = false, histAllowed = false;
 // A row may consume three Rules reads (user + report exists/get). Firestore
 // permits 20 document-access calls per transaction, so six is the safe cap.
@@ -275,8 +274,6 @@ onAuthStateChanged(auth, async user => {
   if (pageSuspended || generation !== authGeneration || auth.currentUser !== user) return;
   const isSuper = c.super === true;
 
-  ME = { uid: user.uid, email: String(user.email || '').toLowerCase() };
-
   if (!isSuper) {
     $('denyCard').classList.remove('hide');
     $('denyWho').textContent = 'מחובר כ־' + (user.email || '');
@@ -305,10 +302,13 @@ async function loadSilent(){
 }
 
 let SILENT = true;
+let MODE_REVISION = null;
 
 function paintSilent(v){
   const trial = v.silent === true;
   SILENT = trial;
+  MODE_REVISION = Number.isSafeInteger(Number(v.revision)) && Number(v.revision) >= 0
+    ? Number(v.revision) : 0;
 
   $('master').className = 'master ' + (trial ? 'trial' : 'live');
   $('knob').setAttribute('aria-checked', trial ? 'false' : 'true');
@@ -336,6 +336,15 @@ function paintSilent(v){
 
 $('knob').onclick = () => setSilent(!SILENT ? true : false);
 
+function runtimeRequestId(){
+  if (crypto && typeof crypto.randomUUID === 'function') {
+    return 'runtime_' + crypto.randomUUID().replace(/-/g, '');
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return 'runtime_' + Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+}
+
 async function setSilent(on){
   // האזהרה מפרטת מה בדיוק מתחיל לקרות, ולא "האם אתה בטוח".
   // "בטוח" זו שאלה שכולם עונים עליה כן בלי לקרוא.
@@ -348,20 +357,29 @@ async function setSilent(on){
       'לכל מי שנקלט, גם אם עוד לא נכנס למערכת פעם אחת.\n\n' +
       'להפעיל?')) return;
 
+  if (!Number.isSafeInteger(MODE_REVISION)) {
+    msg('מצב המערכת עדיין לא נטען. נסה שוב בעוד רגע.', 'err', 'swMsg');
+    return;
+  }
   $('knob').disabled = true;
   msg('שומר…', 'info', 'swMsg');
   try {
-    // הרשימה הפטורה: גם ה-uid וגם המייל. השליחות עובדות
-    // באחד מהשניים לפי המסלול — פוש לפי uid, מייל לפי כתובת —
-    // ומי שיציין רק אחד מהם יגלה שחצי מההתראות שלו נעלמו.
+    // השרת גוזר בעצמו את חשבון הבדיקה מתוך Auth החי. הדפדפן
+    // אינו רשאי לבחור מי עוקף את מצב האימון.
     const r = await httpsCallable(fns, 'setSilentMode')({
-      silent: on, allow: on ? [ME.uid, ME.email] : []
+      silent: on,
+      expected_revision: MODE_REVISION,
+      request_id: runtimeRequestId()
     });
     msg(on ? 'מצב ניסוי. רק אתה מקבל התראות.'
            : 'המערכת חיה. התראות יוצאות לכולם.', 'ok', 'swMsg');
     await loadSilent();
   } catch (e) {
-    msg('נכשל. (' + (e.code || e.message || '') + ')', 'err', 'swMsg');
+    const code = String(e && e.code || '').replace(/^functions\//, '');
+    msg(code === 'aborted'
+      ? 'המצב השתנה במקביל. רעננתי את הנתונים; בדוק לפני ניסיון נוסף.'
+      : 'העדכון לא בוצע. מצב המערכת נשאר ללא שינוי.', 'err', 'swMsg');
+    await loadSilent();
   }
   $('knob').disabled = false;
 }

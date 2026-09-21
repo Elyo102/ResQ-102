@@ -14,7 +14,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h27">
+<link rel="stylesheet" href="./theme.css?v=42h28">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -60,7 +60,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   a.back{display:inline-block;min-height:44px;line-height:44px;color:var(--accent);text-decoration:none;font-size:14px}
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="device-readiness">
 <div class="wrap">
   <h1>מוכנות המכשיר להתראות</h1>
   <div class="sub" id="whoSub">—</div>
@@ -109,20 +109,20 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h27';
-import { renderNav, renderStuckNav } from './nav.js?v=42h27';
-import { initPWA } from './pwa.js?v=42h27';
-import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h27';
-import { blockerText } from './join-ui.js?v=42h27';
-import { errorText, logError } from './error-text.js?v=42h27';
+import { firebaseConfig } from './firebase-config.js?v=42h28';
+import { renderNav, renderStuckNav } from './nav.js?v=42h28';
+import { initPWA } from './pwa.js?v=42h28';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h28';
+import { blockerText } from './join-ui.js?v=42h28';
+import { errorText, logError } from './error-text.js?v=42h28';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h27';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h28';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h27';
+import { initAppCheck } from './appcheck.js?v=42h28';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);

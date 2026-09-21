@@ -347,3 +347,137 @@
 :where(.ui-btn,.ui-control):focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.ui-skeleton{animation:none}}
 @media (max-width:560px){.ui-page{padding:var(--space-3)}.ui-card{padding:var(--space-4);border-radius:var(--radius-md)}.ui-cluster>.ui-btn{flex:1 1 140px}}
+
+/* ===================================================================
+   App shell v1 — שכבת גימור משותפת, opt-in בלבד
+   ===================================================================
+
+   כל דף מצטרף במפורש עם data-resq-shell="v1". הסלקטורים כאן
+   משתמשים ב-:where, ולכן ה-CSS הייעודי של המסך ממשיך לנצח. כך אפשר
+   לאחד טיפוגרפיה, focus, מגע ומצבי משטח בלי לשנות ids, מבנה DOM או
+   חוזי JavaScript של שלושים ואחד מסכים ותיקים.
+
+   אין כאן overflow:hidden/clip: שכבת עיצוב אינה רשאית להסתיר גלישה
+   שבדיקת הטלפון צריכה למצוא. אין גם !important או סלקטור גלובלי לא
+   מסויג; מסך שלא הצטרף אינו משתנה.
+   =================================================================== */
+
+body[data-resq-shell="v1"]{
+  --resq-safe-top:env(safe-area-inset-top,0px);
+  --resq-safe-right:env(safe-area-inset-right,0px);
+  --resq-safe-bottom:env(safe-area-inset-bottom,0px);
+  --resq-safe-left:env(safe-area-inset-left,0px);
+  min-height:100vh;
+  margin:0;
+  background:var(--bg);
+  color:var(--txt);
+  font-family:"Segoe UI",Arial,sans-serif;
+  font-size:var(--text-md);
+  line-height:1.55;
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+  accent-color:var(--accent);
+}
+@supports (min-height:100dvh){body[data-resq-shell="v1"]{min-height:100dvh}}
+
+body[data-resq-shell="v1"] :where(*, *::before, *::after){box-sizing:border-box}
+body[data-resq-shell="v1"] :where(h1,h2,h3){
+  color:var(--txt);line-height:1.2;text-wrap:balance
+}
+body[data-resq-shell="v1"] :where(p,li,dd){text-wrap:pretty}
+body[data-resq-shell="v1"] :where(img,svg,canvas,video){max-width:100%}
+body[data-resq-shell="v1"] :where(button,select,textarea,input){font:inherit}
+body[data-resq-shell="v1"] :where(button,a[href],select,textarea,
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])){
+  -webkit-tap-highlight-color:transparent;
+}
+body[data-resq-shell="v1"] :where(button,select,textarea,
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])){
+  min-height:var(--touch-min);
+  max-width:100%;
+}
+/* שתי אנימציות כניסה ותיקות מקטינות לרגע משטח ב-3%. 46px כאן
+   מבטיחים שגם בתוך האנימציה כפתור נשאר לפחות 44px בפועל. שני
+   מאפייני ה-data נותנים לחוזה המגע קדימות על CSS מסך ישן, בלי
+   !important ובלי להשפיע על דף שלא הצטרף לשכבה. */
+body[data-resq-shell="v1"][data-resq-page] :where(button,[role="button"]){
+  min-block-size:46px;min-inline-size:46px
+}
+body[data-resq-shell="v1"] :where(input,select,textarea){
+  background-color:var(--input);color:var(--txt);caret-color:var(--accent)
+}
+body[data-resq-shell="v1"] :where(input,textarea)::placeholder{color:var(--muted);opacity:.82}
+body[data-resq-shell="v1"] :where(button,a[href],input,select,textarea,[tabindex]):focus-visible{
+  outline:3px solid var(--accent);outline-offset:3px
+}
+body[data-resq-shell="v1"] :where(button,[role="button"]):not(:disabled){touch-action:manipulation}
+body[data-resq-shell="v1"] :where(button,input,select,textarea):disabled{
+  opacity:.58;cursor:not-allowed
+}
+body[data-resq-shell="v1"] :where(table){
+  max-width:100%;font-variant-numeric:tabular-nums;border-spacing:0
+}
+body[data-resq-shell="v1"] :where(th){font-weight:800;text-align:start}
+body[data-resq-shell="v1"] :where(td,th){overflow-wrap:anywhere}
+body[data-resq-shell="v1"] :where(hr){border:0;border-top:1px solid var(--line)}
+body[data-resq-shell="v1"] ::selection{background:var(--accent);color:var(--accent-on)}
+
+/* אבני בניין סמנטיות למסכים שמאמצים בהדרגה את אותה היררכיה. */
+body[data-resq-shell="v1"] .ui-shell{
+  width:min(1180px,100%);margin-inline:auto;
+  padding:var(--space-4) max(var(--space-4),var(--resq-safe-right))
+    calc(var(--space-6) + var(--resq-safe-bottom)) max(var(--space-4),var(--resq-safe-left))
+}
+body[data-resq-shell="v1"] .ui-page-head,
+body[data-resq-shell="v1"] .ui-section-head,
+body[data-resq-shell="v1"] .ui-toolbar,
+body[data-resq-shell="v1"] .ui-actions{
+  display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap
+}
+body[data-resq-shell="v1"] .ui-page-head{margin-block:0 var(--space-5)}
+body[data-resq-shell="v1"] .ui-page-head :where(h1,p),
+body[data-resq-shell="v1"] .ui-section-head :where(h2,h3,p){margin-block:0}
+body[data-resq-shell="v1"] .ui-section{
+  min-width:0;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--radius-lg);padding:var(--space-5);box-shadow:var(--shadow)
+}
+body[data-resq-shell="v1"] .ui-kpi-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:var(--space-3)
+}
+body[data-resq-shell="v1"] .ui-kpi{
+  min-width:0;padding:var(--space-4);border:1px solid var(--line);
+  border-radius:var(--radius-md);background:var(--panel);color:var(--txt)
+}
+body[data-resq-shell="v1"] .ui-kpi :where(strong,b){font-size:var(--text-xl);line-height:1}
+body[data-resq-shell="v1"] .ui-badge{
+  display:inline-flex;align-items:center;min-height:28px;padding:3px 10px;
+  border:1px solid var(--line);border-radius:999px;background:var(--chip);
+  color:var(--dim);font-size:var(--text-xs);font-weight:800
+}
+body[data-resq-shell="v1"] .ui-status{
+  min-height:var(--touch-min);padding:var(--space-3) var(--space-4);
+  border:1px solid var(--line);border-radius:var(--radius-md);
+  background:var(--info-bg);color:var(--info-fg)
+}
+body[data-resq-shell="v1"] .ui-status[data-tone="success"]{
+  background:var(--ok-bg);border-color:var(--good-bd);color:var(--ok-fg)
+}
+body[data-resq-shell="v1"] .ui-status[data-tone="danger"]{
+  background:var(--err-bg);border-color:var(--bad-bd);color:var(--err-fg)
+}
+
+@media (prefers-reduced-motion:no-preference){
+  body[data-resq-shell="v1"] :where(button,a[href],input,select,textarea){
+    transition:border-color .14s ease,background-color .14s ease,color .14s ease,box-shadow .14s ease
+  }
+}
+@media (prefers-reduced-motion:reduce){
+  body[data-resq-shell="v1"] :where(*, *::before, *::after){scroll-behavior:auto}
+}
+@media (max-width:560px){
+  body[data-resq-shell="v1"] .ui-shell{
+    padding-inline:max(var(--space-3),var(--resq-safe-right)) max(var(--space-3),var(--resq-safe-left))
+  }
+  body[data-resq-shell="v1"] .ui-section{padding:var(--space-4);border-radius:var(--radius-md)}
+  body[data-resq-shell="v1"] .ui-actions>:where(button,a){flex:1 1 140px}
+}

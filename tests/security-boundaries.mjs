@@ -52,11 +52,11 @@ function check(name, value) {
 const APPCHECK_EXEMPT = Object.freeze([
   'approveRegistration', 'backupToSheetNow', 'bootstrapSuperAdmin', 'broadcastBulletinMessage',
   'bulkImport', 'checkTestMail', 'claimPushToken', 'getAttendanceShadowStatus', 'getJoinCode',
-  'getSilentMode', 'hideBulletinMessage', 'hideBulletinReply', 'joinWithCode',
+  'hideBulletinMessage', 'hideBulletinReply', 'joinWithCode',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'postBulletinMessage', 'reindexDirectory',
   'rejectRegistration', 'replyToBulletinMessage', 'requestPasswordReset', 'resumeIdentityOperation',
   'runAttendanceShadowNow', 'runReportNow', 'sendBroadcast', 'sendTestMail',
-  'setAttendanceShadowMode', 'setJoinCode', 'setSilentMode', 'setUserRole', 'unlockAccount', 'whoAmI'
+  'setAttendanceShadowMode', 'setJoinCode', 'setUserRole', 'unlockAccount', 'whoAmI'
 ]);
 
 const indexSrc = read('functions/index.js');

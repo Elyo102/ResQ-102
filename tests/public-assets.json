@@ -69,6 +69,7 @@
   "metrics-ui.js",
   "metrics.html",
   "mode-bar.js",
+  "mode-controller.js",
   "monitored-functions.js",
   "monitoring-bootstrap.js",
   "nav.js",

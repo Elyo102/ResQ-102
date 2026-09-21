@@ -188,10 +188,12 @@ try {
         'אין הבטחת backfill ליום צילום חסר');
   const factories = await first.page.evaluate(() => window.__CALLABLE_FACTORIES || []);
   const paths = await first.page.evaluate(() => window.__DATA_PATHS || []);
-  check(JSON.stringify(factories) === JSON.stringify(['getAttendanceShadowStatus']),
-        'לא נוסף callable חדש', JSON.stringify(factories));
-  check(paths.length === 2 && paths.every(value => String(value).includes('attendance_shadow_')),
-        'לא נוספה קריאת Firestore', JSON.stringify(paths));
+  const shadowFactories = factories.filter(value => String(value).includes('AttendanceShadow'));
+  const shadowPaths = paths.filter(value => String(value).includes('attendance_shadow_'));
+  check(JSON.stringify(shadowFactories) === JSON.stringify(['getAttendanceShadowStatus']),
+        'לא נוסף callable חדש למסלול Shadow', JSON.stringify(factories));
+  check(shadowPaths.length === 2,
+        'לא נוספה קריאת Firestore למסלול Shadow', JSON.stringify(paths));
   check((await first.page.evaluate(() => window.__FIRESTORE_WRITES || [])).length === 0,
         'המסך לא ביצע כתיבת Firestore');
   check(first.errors.length === 0, 'התרחיש הראשי לא יצר שגיאת דפדפן', first.errors.join(' · '));
@@ -439,10 +441,12 @@ try {
   const deniedPage = await deniedContext.newPage();
   await deniedPage.goto('http://127.0.0.1:' + port + '/attendance-shadow.html', { waitUntil:'load' });
   await deniedPage.locator('#deny').waitFor({ state:'visible', timeout:10000 });
-  check((await deniedPage.evaluate(() => window.__CALLABLE_FACTORIES || [])).length === 0,
-        'כבאי חסום אינו יוצר callable');
-  check((await deniedPage.evaluate(() => window.__DATA_PATHS || [])).length === 0,
-        'כבאי חסום אינו קורא דוח Firestore');
+  const deniedFactories = await deniedPage.evaluate(() => window.__CALLABLE_FACTORIES || []);
+  const deniedPaths = await deniedPage.evaluate(() => window.__DATA_PATHS || []);
+  check(deniedFactories.filter(value => String(value).includes('AttendanceShadow')).length === 0,
+        'כבאי חסום אינו יוצר callable של Shadow');
+  check(deniedPaths.filter(value => String(value).includes('attendance_shadow_')).length === 0,
+        'כבאי חסום אינו קורא דוח Shadow מ-Firestore');
   await deniedContext.close();
 } finally {
   await browser.close();

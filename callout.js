@@ -16,8 +16,7 @@
 import { collection, query, where, orderBy, limit, onSnapshot,
          doc, setDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { errorText, logError } from './error-text.js?v=42h27';
-import { renderModeBar, clearModeBarOffset } from './mode-bar.js?v=42h27';
+import { errorText, logError } from './error-text.js?v=42h28';
 
 // כמה זמן קריאה נחשבת חיה. אחרי זה היא לא תקפוץ יותר גם אם
 // אף אחד לא סגר אותה — קריאה מלפני שמונה שעות היא היסטוריה,
@@ -193,7 +192,7 @@ function alarm() {
     } catch (ignore) {}
   };
   try {
-    const selected = new Audio('./callout-siren.mp3?v=42h27');
+    const selected = new Audio('./callout-siren.mp3?v=42h28');
     selected.preload = 'auto';
     selected.volume = 1;
     const playback = selected.play();
@@ -320,29 +319,6 @@ function watchKeyboard() {
   keyboardStop = function () { vv.removeEventListener('resize', onResize); };
 }
 
-/* המאזין נשאר כאן כי למסך הזה יש Firestore ביד. הציור עצמו
- * עבר ל-`mode-bar.js`, כדי שמסך שאינו מחזיק Firestore — הסידור —
- * יוכל להציג את אותו פס בדיוק ממקור אחר. */
-let modeStop = null;
-
-export function stopWatchingStationMode() {
-  if (!modeStop) return;
-  try { modeStop(); } catch (ignore) {}
-  modeStop = null;
-}
-
-export function watchMode(db, owner) {
-  if (!db || !owner || owner.disposed) return;
-  stopWatchingStationMode();
-  try {
-    modeStop = onSnapshot(doc(db, 'config', 'mode'), function (d) {
-      if (activeOwner !== owner || owner.disposed) return;
-      const v = (d.exists() ? d.data() : {}) || {};
-      renderModeBar(v.mode || 'live');
-    }, function () {});
-  } catch (e) { /* מאזין שלא עלה אינו סיבה להפיל את המסך שמתחתיו */ }
-}
-
 export function watchCallouts(db, sid, uid, opts) {
   if (!db || !sid || !uid) return function () {};
   if (activeOwner && typeof activeOwner.dispose === 'function') {
@@ -370,14 +346,10 @@ export function watchCallouts(db, sid, uid, opts) {
     owner.responseStops.clear();
     if (owner.doneTimer) { clearTimeout(owner.doneTimer); owner.doneTimer = null; }
     if (activeOwner !== owner) return;
-    stopWatchingStationMode();
     activeOwner = null;
-    renderModeBar('live');
-    clearModeBarOffset();
     clearCalloutUi();
   };
   activeOwner = owner;
-  watchMode(db, owner);
   const o = opts || {};
   let shownId = '';
 

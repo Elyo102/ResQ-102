@@ -11,16 +11,42 @@ const check = (value, message) => {
 };
 
 const pages = fs.readdirSync(root).filter(file => file.endsWith('.html'));
+const shellPageIds = new Set();
 for (const file of pages) {
   const html = read(file);
   check(/name=["']viewport["']/.test(html), file + ' has a viewport');
   check(/<html[^>]+(?:dir=["']rtl["'][^>]+lang=["']he["']|lang=["']he["'][^>]+dir=["']rtl["'])/.test(html), file + ' declares Hebrew RTL');
+  const shell = html.match(/<body\b[^>]*\bdata-resq-shell=["']v1["'][^>]*\bdata-resq-page=["']([a-z0-9-]+)["'][^>]*>/);
+  check(Boolean(shell), file + ' opts into the shared semantic app shell');
+  if (shell) {
+    check(!shellPageIds.has(shell[1]), file + ' has a unique app-shell page id');
+    shellPageIds.add(shell[1]);
+  }
 }
 
 const theme = read('theme.css');
 for (const token of ['--touch-min:44px', '.ui-card', '.ui-btn', '.ui-control', '.ui-message', '.ui-skeleton']) {
   check(theme.includes(token), 'shared UI contains ' + token);
 }
+const shellMarker = theme.indexOf('App shell v1');
+const shellStart = shellMarker === -1 ? -1 : theme.lastIndexOf('/*', shellMarker);
+const shellTheme = shellStart === -1 ? '' : theme.slice(shellStart);
+const shellDeclarations = shellTheme.replace(/\/\*[\s\S]*?\*\//g, '');
+for (const token of ['body[data-resq-shell="v1"]', '.ui-shell', '.ui-page-head',
+                     '.ui-section', '.ui-kpi-grid', '.ui-status', '--resq-safe-bottom']) {
+  check(shellTheme.includes(token), 'app shell contains ' + token);
+}
+check(!/body\[data-resq-shell=[^\]]+\][^{]*\{[^}]*overflow-x\s*:\s*(?:hidden|clip)/s.test(shellDeclarations),
+      'app shell never hides horizontal overflow from visual QA');
+check(!/!important/.test(shellDeclarations),
+      'app shell stays overridable and contains no important declaration');
+const phoneSweep = read('tests/phonesweep.mjs');
+check(/PAGES=fs\.readdirSync\(ROOT\)\.filter\(f=>f\.endsWith\('\.html'\)\)/.test(phoneSweep) &&
+      /for \(const width of \[320, 360, 390\]\)/.test(phoneSweep),
+      'mobile visual gate discovers every root page at 320, 360 and 390');
+const contrastGate = read('tests/contrast.mjs');
+check(/runTheme\('light',/.test(contrastGate) && /runTheme\('dark',/.test(contrastGate),
+      'contrast gate covers both explicit light and dark themes');
 const nav = read('nav.js');
 for (const token of ["aria-label', 'ניווט ראשי", "aria-current', 'page", "event.key !== 'Escape'", 'min-height:44px']) {
   check(nav.includes(token), 'navigation contains ' + token);
