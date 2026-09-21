@@ -256,20 +256,22 @@ async function loadRosterFromServer(session) {
   const response = await withTimeout(session.listCalloutRecipients(payload),
     rosterLoadTimeoutMs(), 'callout-recipients-timeout');
   const data = response && response.data ? response.data : {};
-  applyRosterRows(session, data.recipients);
+  return Array.isArray(data.recipients) ? data.recipients : [];
 }
 
 async function loadRosterFromFirestore(session) {
   // Fallback only. The authoritative picker path is the callable above; this
   // keeps older deployments usable while functions and hosting roll forward.
-  const snap = await withTimeout(getDocs(collection(session.db, 'stations', session.sid, 'roster')),
+  const rosterQuery = query(collection(session.db, 'stations', session.sid, 'roster'),
+    where('crew', '==', session.crew));
+  const snap = await withTimeout(getDocs(rosterQuery),
     rosterLoadTimeoutMs(), 'callout-roster-timeout');
   const rows = [];
   snap.forEach(doc => {
     const value = doc.data() || {};
     rows.push({ uid:doc.id, name:value.full_name, crew:value.crew, is_active:value.is_active });
   });
-  applyRosterRows(session, rows.filter(row => row.is_active !== false));
+  return rows.filter(row => row.is_active !== false);
 }
 
 async function loadRoster(session) {
@@ -282,10 +284,20 @@ async function loadRoster(session) {
   // answer; if the authoritative callable returns later it refreshes the same
   // list. The send path still goes through `sendCallout`, which re-filters all
   // selected uids server-side before delivery.
+  const loadId = Number(session.rosterLoadId || 0) + 1;
+  session.rosterLoadId = loadId;
+  session.rosterSource = '';
   const source = async (label, loader) => {
     try {
-      await loader(session);
-      if (active !== session) return label;
+      const rows = await loader(session);
+      if (active !== session || session.rosterLoadId !== loadId) return label;
+      // Firestore is a quick availability fallback. Once the callable has
+      // returned, a slower/stale fallback must never replace its authoritative
+      // answer. If fallback wins the race it may paint immediately; the
+      // callable is still allowed to refresh it when it arrives.
+      if (label === 'firestore' && session.rosterSource === 'server') return label;
+      applyRosterRows(session, rows);
+      session.rosterSource = label;
       session.rosterFailed = false;
       session.rosterLoaded = true;
       renderRecipients(session);

@@ -45,6 +45,8 @@ assert.match(listSource, /await freshCalloutActor\(req\)/);
 assert.match(listSource, /calloutRecipientRows\(actor, \(req\.data \|\| \{\}\)\.crew\)/);
 assert.match(serverSource, /async function calloutRecipientRows\(actor, requestedCrew\)/);
 assert.match(serverSource, /actor\.isSuper \? String\(requestedCrew \|\| ''\) : actor\.crew/);
+assert.match(serverSource, /\.where\('crew', '==', crewFilter\)\.get\(\)/,
+  'recipient listing is bounded to the requested crew in Firestore');
 assert.match(consoleSource, /listCalloutRecipients/);
 assert.match(consoleSource, /withTimeout\(session\.listCalloutRecipients/);
 assert.match(sendSource, /runtimeValue\.silent === true/);
@@ -74,6 +76,7 @@ async function open(browser, role, extra = {}, setup = {}) {
     window.confirm = () => true;
     if (setup && setup.recipientTimeoutMs) window.__CALLOUT_RECIPIENT_TIMEOUT_MS = setup.recipientTimeoutMs;
     if (setup && setup.rosterGetDocsHang) window.__ROSTER_GETDOCS_HANG = true;
+    if (setup && setup.rosterPlan) window.__ROSTER_PLAN = setup.rosterPlan;
     if (setup && setup.callablePlan) window.__CALLABLE_PLAN = setup.callablePlan;
   }, { role, extra, setup });
   const page = await context.newPage(), errors = [];
@@ -169,6 +172,51 @@ try {
     assert.deepEqual(call.payload.uids, ['u4']);
   });
   await fastFallback.context.close();
+
+  const authoritativeFirst = await open(browser, 'commander', {}, {
+    callablePlan:{ listCalloutRecipients:[{ data:{ recipients:[
+      { uid:'u4', name:'דנה סמכותית', crew:'B' }
+    ] } }] },
+    rosterPlan:[{ delay:180, data:[
+      ['u4', { full_name:'דנה ישנה', crew:'B', is_active:true }]
+    ] }]
+  });
+  await authoritativeFirst.page.locator('#work').waitFor({ state:'visible' });
+  await check('a slower Firestore fallback never overwrites the authoritative roster', async () => {
+    await authoritativeFirst.page.locator('.recipient-item').filter({ hasText:'דנה סמכותית' })
+      .waitFor({ state:'visible' });
+    await authoritativeFirst.page.waitForTimeout(260);
+    assert.equal(await authoritativeFirst.page.locator('.recipient-item').filter({ hasText:'דנה סמכותית' }).count(), 1);
+    assert.equal(await authoritativeFirst.page.locator('.recipient-item').filter({ hasText:'דנה ישנה' }).count(), 0);
+    const queries = await authoritativeFirst.page.evaluate(() => window.__FIRESTORE_QUERIES || []);
+    const rosterQuery = queries.find(item => String(item.path || '').endsWith('/roster'));
+    assert.ok(rosterQuery, 'the fallback records its bounded roster query');
+    assert.ok((rosterQuery.constraints || []).some(item =>
+      item.kind === 'where' && item.field === 'crew' && item.op === '==' && item.value === 'B'));
+  });
+  await authoritativeFirst.context.close();
+
+  const fallbackFirst = await open(browser, 'commander', {}, {
+    callablePlan:{ listCalloutRecipients:[{ delay:180, data:{ recipients:[
+      { uid:'u4', name:'דנה מעודכנת', crew:'B' }
+    ] } }] },
+    rosterPlan:[{ data:[
+      ['u4', { full_name:'דנה זמנית', crew:'B', is_active:true }],
+      ['u5', { full_name:'עזב מזמן', crew:'B', is_active:false }],
+      ['u2', { full_name:'איש משמרת א', crew:'A', is_active:true }]
+    ] }]
+  });
+  await fallbackFirst.page.locator('#work').waitFor({ state:'visible' });
+  await check('fast fallback is usable and later refreshed by the authoritative roster', async () => {
+    await fallbackFirst.page.locator('.recipient-item').filter({ hasText:'דנה זמנית' })
+      .waitFor({ state:'visible' });
+    assert.equal(await fallbackFirst.page.locator('.recipient-item').filter({ hasText:'עזב מזמן' }).count(), 0);
+    assert.equal(await fallbackFirst.page.locator('.recipient-item').filter({ hasText:'איש משמרת א' }).count(), 0);
+    await fallbackFirst.page.locator('.recipient-item').filter({ hasText:'דנה מעודכנת' })
+      .waitFor({ state:'visible' });
+    assert.equal(await fallbackFirst.page.locator('.recipient-item').filter({ hasText:'דנה זמנית' }).count(), 0);
+  });
+  await fallbackFirst.context.close();
 
   const stuckRoster = await open(browser, 'commander', {}, {
     recipientTimeoutMs:30,

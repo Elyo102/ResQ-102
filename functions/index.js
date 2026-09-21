@@ -4258,7 +4258,11 @@ async function calloutRecipientRows(actor, requestedCrew) {
     throw new HttpsError('permission-denied', 'אפשר לבחור רק לוחמים מהמשמרת שלך.');
   }
   const rows = [];
-  const rs = await db.collection('stations/' + actor.sid + '/roster').get();
+  // Filter by crew in Firestore so opening the picker does not read the whole
+  // station roster. Keep the active check below for legacy rows that predate
+  // `is_active` and are intentionally treated as active.
+  const rs = await db.collection('stations/' + actor.sid + '/roster')
+    .where('crew', '==', crewFilter).get();
   rs.forEach(function (d) {
     const value = d.data() || {};
     if (value.is_active === false) return;

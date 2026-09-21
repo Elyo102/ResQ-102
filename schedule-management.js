@@ -3902,13 +3902,20 @@ function openQuickEditFromBoard(slot, date, subStation) {
   const people = (state.setup && state.setup.people) || [];
   const uid = String(slot && slot.uid || '');
   const label = String(slot && (slot.person || slot.uid) || '');
-  const person = people.find((item) => String(item.id) === uid)
-    || people.find((item) => item.name && item.name === label);
+  // A display name is not an identity. Duplicate names are valid, and an
+  // imported/unlinked slot may share a name with an active account. Only an
+  // exact uid may preselect a person; otherwise require an explicit choice.
+  const person = people.find((item) => String(item.id) === uid);
   chooseTab('manage', false);
   openEditDrawer(true);
   if (!person) {
+    state.editPerson = null;
+    state.editPersonSub = null;
+    state.editFormDirty = true;
     $('editSearch').value = label;
+    $('editPerson').textContent = 'לא נבחר עובד';
     renderEditSearch();
+    renderEditControls();
     message('editMessage', 'פתחתי את העריכה. בחר/י את העובד מהרשימה כדי לשנות את השיבוץ.', 'info');
     return;
   }

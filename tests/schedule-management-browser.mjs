@@ -2534,6 +2534,19 @@ try {
     await editPage.locator('#editDrawerClose').click();
     await editPage.locator('#editCard').waitFor({ state:'hidden' });
   });
+  await test('quick edit never selects a different person merely because the display name matches', async () => {
+    await editPage.locator('#stationTab').click();
+    const slot = editPage.locator('#stationContent .cell[data-date="' + today + '"] .quick-edit-slot').filter({ hasText:'טל חודרה' }).first();
+    await slot.evaluate((element) => { element.dataset.uid = 'unlinked_same_name'; });
+    await slot.evaluate((element) => element.click());
+    await editPage.locator('#editCard').waitFor({ state:'visible' });
+    assert.match(await editPage.locator('#editPerson').textContent(), /לא נבחר עובד/);
+    assert.match(await editPage.locator('#editMessage').textContent(), /בחר\/י את העובד/);
+    assert.equal(await editPage.locator('#editCheck').isEnabled(), false);
+    assert.ok(await editPage.locator('#editSearchResults button').count() >= 1,
+      'matching names remain available for an explicit choice');
+    await editPage.locator('#editDrawerClose').click();
+  });
   await test('edit card: search a person, pick a week, add an assignment, check — the report is bound to the live publication', async () => {
     await editPage.locator('#editDrawerOpen').click();
     assert.equal(await editPage.locator('#editCard').isVisible(), true);
@@ -3519,5 +3532,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 88);
+assert.equal(passed, 89);
 console.log('\n' + passed + ' schedule management browser checks passed.');

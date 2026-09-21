@@ -907,10 +907,23 @@ export function getDocs(q){
     return delayed(listSnap(rows));
   }
   if (/\/quals$/.test(p))        return delayed(listSnap(qualRows(p)));
+  if (/\/roster$/.test(p) && typeof window !== 'undefined' &&
+      Array.isArray(window.__ROSTER_PLAN) && window.__ROSTER_PLAN.length) {
+    const step = window.__ROSTER_PLAN.shift() || {};
+    const wait = Math.max(0, Number(step.delay) || 0);
+    return new Promise((resolve, reject) => setTimeout(() => {
+      if (step.reject) {
+        reject({ code:step.code || 'firestore/unavailable', message:'roster stub failure' });
+        return;
+      }
+      const source = Array.isArray(step.data) ? step.data : ROSTER;
+      resolve(listSnap(constrainedRows(source, (q && q.constraints) || [])));
+    }, wait));
+  }
   if (/\/roster$/.test(p) && typeof window !== 'undefined' && window.__ROSTER_GETDOCS_HANG) {
     return new Promise(() => {});
   }
-  if (/\/roster$/.test(p))       return delayed(listSnap(ROSTER));
+  if (/\/roster$/.test(p))       return delayed(listSnap(constrainedRows(ROSTER, (q && q.constraints) || [])));
   if (/\/users$/.test(p))        return delayed(listSnap(USERS));
   if (/\/member_quals$/.test(p)) return delayed(listSnap(MEMBER_QUALS));
   if (/\/rotations$/.test(p))    return delayed(listSnap(ROTATIONS));
