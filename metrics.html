@@ -13,7 +13,7 @@
   if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
   }catch(e){}})();
   </script>
-  <link rel="stylesheet" href="./theme.css?v=42h26">
+  <link rel="stylesheet" href="./theme.css?v=42h27">
   <link rel="manifest" href="./manifest.json">
   <style>
     *{box-sizing:border-box}
@@ -87,14 +87,14 @@
 </main>
 <section id="deny" class="metrics-card metrics-deny metrics-hidden"><h1>אין הרשאה למסך</h1><p class="metrics-sub">לוח המדדים זמין למנהל־העל בלבד.</p></section>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h26';
-import { renderNav, renderStuckNav } from './nav.js?v=42h26';
-import { initPWA } from './pwa.js?v=42h26';
-import { initAppCheck } from './appcheck.js?v=42h26';
-import { createMetricsUi } from './metrics-ui.js?v=42h26';
+import { firebaseConfig } from './firebase-config.js?v=42h27';
+import { renderNav, renderStuckNav } from './nav.js?v=42h27';
+import { initPWA } from './pwa.js?v=42h27';
+import { initAppCheck } from './appcheck.js?v=42h27';
+import { createMetricsUi } from './metrics-ui.js?v=42h27';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h26';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h27';
 
 const app=initializeApp(firebaseConfig); await initAppCheck(app);
 const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
