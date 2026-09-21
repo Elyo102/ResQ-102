@@ -1,8 +1,8 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h28';
-import { errorText, logError } from './error-text.js?v=42h28';
-import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h28';
+import { CREW_HE } from './rotation.js?v=42h29';
+import { errorText, logError } from './error-text.js?v=42h29';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h29';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;
@@ -95,6 +95,10 @@ function renderRecipients(session) {
   const list = session.elements.recipientList;
   if (!list || active !== session) return;
   const rows = rosterRows(session);
+  list.setAttribute('aria-busy', session.rosterLoaded ? 'false' : 'true');
+  if (session.elements.recipientNone) {
+    session.elements.recipientNone.disabled = !session.rosterLoaded || session.rosterFailed || !rows.length;
+  }
   list.replaceChildren();
   if (!session.rosterLoaded) {
     const notice = document.createElement('div');
@@ -147,7 +151,9 @@ function renderRecipients(session) {
   const picked = selectedUids(session);
   syncRecipientMode(session, picked);
   if (session.elements.recipientSummary) {
-    session.elements.recipientSummary.textContent = picked
+    session.elements.recipientSummary.textContent = session.rosterFailed
+      ? 'רשימת הלוחמים לא זמינה כרגע. אפשר לנסות שוב, לשלוח לכל המשמרת או לבצע בדיקת עצמי.'
+      : picked
       ? (picked.length
         ? 'בחירה פרטנית פעילה: הקריאה תישלח ל־' + selectionLabel(session, picked) + '.'
         : 'בחירה פרטנית פעילה: לא נבחרו נמענים.')
@@ -567,7 +573,12 @@ export async function initCalloutConsole(options = {}) {
     session.responseStops.clear();
   };
   renderRecipients(session);
-  await reloadRoster(session);
+  // The callout console is operational before the optional name list arrives.
+  // Full-crew dispatch and trial self-test stay available, while individual
+  // selection is enabled only after a bounded roster read paints real rows.
+  // This prevents a cold function or a stale Firestore connection from
+  // holding the whole screen behind an indefinite loading state.
+  void reloadRoster(session);
   return Object.freeze({ hasPending:() => active === session && !!session.pendingRequest,
     destroy:() => { if (active === session) destroyCalloutConsole(); } });
 }

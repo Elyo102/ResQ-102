@@ -303,6 +303,50 @@ try {
     await mobilePage.waitForTimeout(60);
   });
 
+  await test('the dock remains pinned once while a long mobile page scrolls', async () => {
+    const layer = await mobilePage.locator('#resqDock').evaluate(node => {
+      const style = getComputedStyle(node);
+      return { position:style.position, top:style.top, right:style.right,
+        bottom:style.bottom, left:style.left, boxSizing:style.boxSizing,
+        transform:style.transform, backface:style.backfaceVisibility,
+        willChange:style.willChange };
+    });
+    if (layer.position !== 'fixed' || layer.bottom !== '0px' || layer.left !== '0px' || layer.right !== '0px') {
+      throw new Error('dock is not explicitly fixed to all mobile edges: ' + JSON.stringify(layer));
+    }
+    if (layer.boxSizing !== 'border-box' || layer.transform === 'none' ||
+        layer.backface !== 'hidden' || !layer.willChange.includes('transform')) {
+      throw new Error('dock lost its iOS compositor guard: ' + JSON.stringify(layer));
+    }
+    await mobilePage.evaluate(() => {
+      const filler = document.createElement('div');
+      filler.id = 'dock-scroll-fixture';
+      filler.style.height = '3200px';
+      document.body.insertBefore(filler, document.getElementById('resqDock'));
+    });
+    for (const ratio of [0, 0.25, 0.5, 0.75, 1]) {
+      const geometry = await mobilePage.evaluate(value => {
+        const max = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+        scrollTo(0, Math.round(max * value));
+        const docks = document.querySelectorAll('#resqDock');
+        const box = docks[0].getBoundingClientRect();
+        const viewportBottom = window.visualViewport
+          ? window.visualViewport.offsetTop + window.visualViewport.height
+          : innerHeight;
+        return { count:docks.length, top:box.top, bottom:box.bottom,
+          viewportBottom, left:box.left, right:box.right, width:innerWidth };
+      }, ratio);
+      if (geometry.count !== 1) throw new Error('dock duplicated while scrolling: ' + JSON.stringify(geometry));
+      if (Math.abs(geometry.bottom - geometry.viewportBottom) > 1.5) {
+        throw new Error('dock detached from viewport at ' + ratio + ': ' + JSON.stringify(geometry));
+      }
+      if (geometry.left < -1 || geometry.right > geometry.width + 1) {
+        throw new Error('dock drifted horizontally at ' + ratio + ': ' + JSON.stringify(geometry));
+      }
+    }
+    await mobilePage.evaluate(() => document.getElementById('dock-scroll-fixture')?.remove());
+  });
+
   await test('mobile more drawer preserves remaining personal and administrative destinations', async () => {
     await mobilePage.getByRole('button', { name:'עוד', exact:true }).click();
     const more = await mobilePage.locator('#resqDockSheet a').evaluateAll(nodes =>

@@ -55,10 +55,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h28';
-import { attachModeChip } from './mode-bar.js?v=42h28';
-import { assertPresentationOnly } from './role-view.js?v=42h28';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h28';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h29';
+import { attachModeChip } from './mode-bar.js?v=42h29';
+import { assertPresentationOnly } from './role-view.js?v=42h29';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h29';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -340,11 +340,12 @@ function styleOnce() {
     '@media (max-width:620px){',
     'body.has-resq-dock{padding-bottom:calc(82px + env(safe-area-inset-bottom,0px))!important}',
     '#resqDock{position:fixed;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;',
-    'inset:auto 0 0;z-index:970;padding:8px',
+    'top:auto;right:0;bottom:0;left:0;width:100%;box-sizing:border-box;z-index:970;padding:8px',
     ' calc(10px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
     ' calc(8px + env(safe-area-inset-bottom,0px))',
     ' calc(10px + var(--resq-safe-left-override,env(safe-area-inset-left,0px)));',
-    'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);direction:rtl}',
+    'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);',
+    'direction:rtl;transform:translate3d(0,0,0);backface-visibility:hidden;will-change:transform}',
     /* הטקסט יושב מתחת לאייקון בכל רוחב. אייקון בלי מילה
        הוא חידה — וכבאי בשתיים בלילה אינו פותר חידות. */
     '#resqDock a,#resqDock button{display:flex;flex-direction:column;align-items:center;',
@@ -647,7 +648,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h28')
+  import('./mode-controller.js?v=42h29')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -853,7 +854,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h28')
+  import('./mode-controller.js?v=42h29')
     .then(module => module.stopModeController())
     .catch(() => {});
 }

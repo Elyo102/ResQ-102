@@ -128,7 +128,7 @@ try {
   await check('commander can choose specific recipients instead of the full crew', async () => {
     assert.match(await peopleRun.page.locator('#composeCard, .card.danger').first().textContent(), /לבחור לוחמים/);
     assert.match(await peopleRun.page.locator('.sound-preview').textContent(), /השמעה מקומית בלבד/);
-    assert.match(await peopleRun.page.locator('.sound-preview audio').getAttribute('src'), /callout-siren\.mp3\?v=42h28/);
+    assert.match(await peopleRun.page.locator('.sound-preview audio').getAttribute('src'), /callout-siren\.mp3\?v=42h29/);
     await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).waitFor({ state:'visible' });
     await peopleRun.page.locator('#recipientNone').evaluate(button => button.click());
     assert.equal(await peopleRun.page.locator('#recipientNone').getAttribute('aria-pressed'), 'true');
@@ -228,7 +228,8 @@ try {
     await stuckRoster.page.waitForFunction(() =>
       !(document.querySelector('#recipientSummary')?.textContent || '').includes('טוען'),
       null, { timeout:1500 });
-    assert.match(await stuckRoster.page.locator('#recipientSummary').textContent(), /כל אנשי|אפשר לבחור|ברירת מחדל/);
+    assert.match(await stuckRoster.page.locator('#recipientSummary').textContent(), /לא זמינה כרגע/);
+    assert.doesNotMatch(await stuckRoster.page.locator('#recipientSummary').textContent(), /טוען/);
     assert.match(await stuckRoster.page.locator('#calloutMessage').textContent(), /רשימת השמות לא נטענה/);
     await stuckRoster.page.locator('#calloutText').fill('קריאה לכל המשמרת גם בלי רשימה');
     await stuckRoster.page.locator('#calloutSend').evaluate(button => button.click());
@@ -238,6 +239,20 @@ try {
     assert.equal(Object.hasOwn(call.payload, 'uids'), false);
   });
   await stuckRoster.context.close();
+
+  const backgroundRoster = await open(browser, 'commander', {}, {
+    recipientTimeoutMs:60000,
+    rosterGetDocsHang:true,
+    callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
+  });
+  await check('the callout screen opens immediately while recipient names load in the background', async () => {
+    await backgroundRoster.page.locator('#work').waitFor({ state:'visible', timeout:750 });
+    assert.equal(await backgroundRoster.page.locator('#recipientList').getAttribute('aria-busy'), 'true');
+    assert.equal(await backgroundRoster.page.locator('#recipientNone').isDisabled(), true);
+    assert.equal(await backgroundRoster.page.locator('#recipientAll').isDisabled(), false);
+    assert.equal(await backgroundRoster.page.locator('#recipientSelf').isDisabled(), false);
+  });
+  await backgroundRoster.context.close();
 
   const selfRun = await open(browser, 'commander');
   await selfRun.page.locator('#work').waitFor({ state:'visible' });

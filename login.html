@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h28">
-<link rel="stylesheet" href="./bulletin.css?v=42h28">
+<link rel="stylesheet" href="./theme.css?v=42h29">
+<link rel="stylesheet" href="./bulletin.css?v=42h29">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -617,24 +617,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h28';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h29';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h28';
+         subStationsForStation } from './stations.js?v=42h29';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h28';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h28';
+  from './nav.js?v=42h29';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h29';
 import {
   initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h28';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h28';
-import { watchCallouts } from './callout.js?v=42h28';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h28';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h28';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h28';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h28';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h28';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h28';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h28';
+} from './pwa.js?v=42h29';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h29';
+import { watchCallouts } from './callout.js?v=42h29';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h29';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h29';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h29';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h29';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h29';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h29';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h29';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -645,11 +645,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h28';
+  from './monitored-functions.js?v=42h29';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h28';
+import { initAppCheck } from './appcheck.js?v=42h29';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

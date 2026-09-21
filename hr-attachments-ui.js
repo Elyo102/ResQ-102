@@ -1,4 +1,4 @@
-import { registerPwaUpdateGuard } from './pwa.js?v=42h28';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h29';
 
 // Isolated private-attachment UI. It owns no transport, no callable name and
 // no Firebase import: the host adapter carries all five service methods and
