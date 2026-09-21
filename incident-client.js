@@ -71,6 +71,13 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment',
   'requestHrHoursNudge', 'getHrHoursNudgeStatus', 'listHrHoursNudges',
   'createHrWorkforceCase', 'updateHrWorkforceCase', 'listHrWorkforceCases', 'queueHrWorkforceReminder',
+  /* חבילת ה-HR לפילוט: מוני התיבות, הדוח החודשי המאוחד וכלי ה-backfill.
+   * הרשימה הזו אינה רשות: `tests/ops-source.mjs` אוכף שהיא שווה בדיוק
+   * לרשימת ה-onCall הציבוריים, ולכן callable חדש שאינו כאן מפיל את השער.
+   * מה שנכנס לכאן הוא השם בלבד — הדוח עצמו נשאר חמישה שדות
+   * טכניים וללא שום תוכן פרטי. */
+  'countHrRequestBoxes', 'getHrMonthlySummary', 'getHrMonthlyOverHours',
+  'buildHrMonthlySummaryNow', 'backfillHrRequestMonths', 'getHrRequestMonthsBackfillStatus',
   'getMaintenanceDashboard', 'setMaintenanceMode', 'runMaintenanceAnalysis', 'prepareMaintenanceHandoff',
   'whoAmI'
 ]);
