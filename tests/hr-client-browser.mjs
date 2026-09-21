@@ -77,6 +77,10 @@ async function fixture(options = {}) {
       window.showDirectoryPicker=()=>Promise.resolve(h.directoryRoot);
     }
     h.detailVersion = 0; h.detailText = '';
+    // ערכי כפיל שצריכים להיות במקום לפני שהמודולים של הדף רצים:
+    // הקריאה הראשונה קורה לפני ש-`evaluate` מגיע, ולכן ערך שנקבע
+    // אחריה אינו נבדק באמת.
+    if (config.preset) Object.assign(h, config.preset);
     h.makeUser = (uid, claims, hold = false) => ({ uid, claims, hold,
       getIdTokenResult() {
         ++h.claimStarted;
@@ -115,7 +119,12 @@ async function fixture(options = {}) {
         value=Object.fromEntries(Object.entries(record).filter(([key])=>!['recipient_uid','updated_at_ms','status_scope','actor','request_id'].includes(key)));
       }else if(name==='listHrHoursNudges')value={month:data.month,items:h.nudgeActions.filter(r=>r.actor===identity.uid&&r.station_id===identity.stationId&&r.month===data.month),next_cursor:null};
       else if(name==='getHrHoursNudgeStatus')value={action:h.nudgeActions.find(r=>r.action_id===data.action_id&&r.actor===identity.uid&&r.station_id===identity.stationId),items:[],next_cursor:null,outcomes_scope:'this_page_only'};
-      else if(name==='getHrOverHoursAlert')value={month:null,hour_limit:null,over_employees:[]};
+      /* ⭐ שלושת המצבים של חריגת השעות, מהדור הפעיל של הדוח
+       * החודשי החדש. ברירת המחדל היא `not_built` — מצב שהיה
+       * קודם בלתי-ניתן להבדלה מ‎-`clear`, וזו התקלה שתוקנה. */
+      else if(name==='getHrMonthlyOverHours')value=h.overHours||{state:'not_built',month:null,hour_limit:null,coverage:null,over_employees:[]};
+      else if(name==='buildHrMonthlySummaryNow'){h.builds=(h.builds||0)+1;h.overHours=h.afterBuild||h.overHours;value={generation_id:'a'.repeat(64),complete:true,activated:true,slices:1,written:1};}
+      else if(name==='getHrMonthlySummary')value=h.monthly||{month:data.month,state:'not_built',rows:[],next_cursor:null};
       else if(name==='saveHrEmployeeReview')value={review_id:'b'.repeat(64),reviewed_revision:data.expected_revision,current:true,duplicate:false};
       else throw new Error('Unexpected callable '+name);
       const result={data:value};
@@ -197,7 +206,12 @@ try {
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrHoursNudges').data), ['month']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrEmployeeReport').data).sort(), ['month', 'uid']);
     assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='listHrWorkforceCases').data), []);
-    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrOverHoursAlert').data), []);
+    assert.deepEqual(Object.keys(state.calls.find(c=>c.name==='getHrMonthlyOverHours').data), []);
+    // ה-callable הישן, שקורא אוסף שאין לו כותב חי, אינו נקרא מהמסך בכלל.
+    assert.equal(state.calls.some(c=>c.name==='getHrOverHoursAlert'), false);
+    // והדוח החודשי עצמו אינו נטען בפתיחת המסך: 3,000 שורות
+    // אינן מחיר שמשלמים כדי לראות אריח חריגות.
+    assert.equal(state.calls.some(c=>c.name==='getHrMonthlySummary'), false);
     state.calls.forEach(c => assert.equal(c.identity.stationId, 'fixture_station'));
     assert.deepEqual(state.storage, [0, 0]); assert.equal(state.url, origin + '/hr.html'); await f.close();
   });
@@ -460,6 +474,170 @@ try {
     assert.equal((await f.page.evaluate(()=>__HR.directoryPaths())).some(p=>p.endsWith('/manifest.json')),false);
     await privateEmpty(f.page);await f.close();
   });
+  /* ----------------------------------------------------------------------
+   *  חריגת השעות — שלושה מצבים, ולא שניים
+   *
+   *  ⭐ התקלה שתוקנה: פאנל ריק נקרא „אין חורגים", בעוד
+   *  בפועל לא היה לו מקור נתונים בכלל. שתי הבדיקות הבאות
+   *  מראות שהמצבים נראים שונה — מקף מול אפס, ושתי אמירות שונות.
+   * -------------------------------------------------------------------- */
+
+  await check('with no monthly report the tile shows a dash and the text refuses to say nobody is over', async () => {
+    const f = await fixture({ preset: { overHours: { state: 'not_built', month: null, hour_limit: null, coverage: null, over_employees: [] } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="count"]').textContent === '—');
+    const text = await f.page.locator('[data-oh="alert"]').innerText();
+    assert.ok(text.includes('טרם הופק'), text);
+    assert.equal(/אין עובדים מעל הסף/.test(text), false, text);
+    // וההפקה הידנית מוצגת במצב הזה בלבד.
+    assert.equal(await f.page.locator('[data-oh="build"]').isHidden(), false);
+    await f.close();
+  });
+
+  await check('with a report and nobody over, the tile shows zero and says so in words', async () => {
+    const f = await fixture({ preset: { overHours: { state: 'clear', month: '2026-09', hour_limit: 265, coverage: 'complete', over_employees: [] } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="count"]').textContent === '0');
+    const text = await f.page.locator('[data-oh="alert"]').innerText();
+    assert.ok(text.includes('אין עובדים מעל הסף'), text);
+    assert.ok(text.includes('אינו חוסם סידור'), text);
+    assert.equal(await f.page.locator('[data-oh="build"]').isHidden(), true);
+    await f.close();
+  });
+
+  await check('with somebody over the threshold the list names them and never shows a uid', async () => {
+    const f = await fixture({ preset: { overHours: { state: 'over', month: '2026-09', hour_limit: 265, coverage: 'complete',
+      over_employees: [{ employee_number: '4410', full_name: 'דנה לוי', crew: 'משמרת ב', total_hours: 301 }] } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="count"]').textContent === '1');
+    const text = await f.page.locator('[data-oh="alert"]').innerText();
+    assert.ok(text.includes('דנה לוי'), text);
+    assert.ok(text.includes('4410'), text);
+    assert.ok(text.includes('301'), text);
+    await f.close();
+  });
+
+  await check('a partial classification is stated on the alert instead of being hidden', async () => {
+    const f = await fixture({ preset: { overHours: { state: 'clear', month: '2026-09', hour_limit: 265, coverage: 'legacy_pending', over_employees: [] } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="alert"]').innerText.includes('אינו מוצג כשלם'));
+    await f.close();
+  });
+
+  await check('a failed status call says the state is unavailable, not that nobody is over', async () => {
+    const f = await fixture({ preset: { overHours: { state: 'nonsense' } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="meta"]').textContent.includes('אינו זמין'));
+    assert.equal(await f.page.locator('[data-oh="count"]').innerText(), '—');
+    const text = await f.page.locator('[data-oh="alert"]').innerText();
+    assert.equal(/אין עובדים מעל הסף/.test(text), false, text);
+    assert.equal(await f.page.locator('[data-oh="retry"]').isHidden(), false);
+    await f.close();
+  });
+
+  await check('the manual build runs once, then the alert reloads from the new generation', async () => {
+    const f = await fixture({ preset: {
+      overHours: { state: 'not_built', month: null, hour_limit: null, coverage: null, over_employees: [] },
+      afterBuild: { state: 'clear', month: '2026-09', hour_limit: 265, coverage: 'complete', over_employees: [] } } });
+    await person(f.page);
+    await f.page.waitForFunction(() => !document.querySelector('[data-oh="build"]').hidden);
+    await f.page.locator('[data-oh="build"]').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-oh="count"]').textContent === '0');
+    assert.equal(await f.page.evaluate(() => __HR.builds), 1);
+    assert.equal(await f.page.evaluate(() => __HR.calls.filter(c => c.name === 'buildHrMonthlySummaryNow').length), 1);
+    await f.close();
+  });
+
+  /* ----------------------------------------------------------------------
+   *  הדוח החודשי המאוחד במסך
+   * -------------------------------------------------------------------- */
+
+  await check('the monthly report loads on demand, pages, and states that it is in-app only', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => {
+      const row = (uid, over) => ({ uid, employee_number: 'E' + uid, full_name: 'עובד ' + uid,
+        crew: 'משמרת א', total_hours: over ? 301 : 120, hours_state: 'approved',
+        approved_sick_days: 3, approved_reserve_days: 0, approved_vacation_days: 1,
+        approved_extended_absence_days: 0, pending_sick_days: 2, pending_reserve_days: 0,
+        pending_vacation_days: 0, pending_extended_absence_days: 0, long_absence: null,
+        over_hour_limit: !!over, hour_limit: 265 });
+      __HR.monthly = { month: '2026-09', state: 'ready', generated_at_ms: 1789000000000,
+        generation_id: 'a'.repeat(64), hour_limit: 265, coverage: 'complete',
+        source_digest: 'b'.repeat(64), sources: { hr_requests: 4 }, total_rows: 2,
+        delivery: 'in_app_only', rows: [row('u1', false), row('u2', true)], next_cursor: null };
+    });
+    await person(f.page);
+    assert.equal(await f.page.locator('[data-mr="table"]').isHidden(), true, 'nothing is loaded until asked');
+    await f.page.locator('[data-mr="load"]').click();
+    await f.page.waitForFunction(() => !document.querySelector('[data-mr="table"]').hidden);
+    const head = await f.page.locator('[data-mr="head"]').innerText();
+    assert.ok(head.includes('2026-09'), head);
+    assert.ok(head.includes('במערכת בלבד'), head);
+    const table = await f.page.locator('[data-mr="table"]').innerText();
+    assert.ok(table.includes('עובד u1'), table);
+    assert.ok(table.includes('מעל הסף'), table);
+    // השורה שחורגת מסומנת גם במבנה ולא רק בצבע.
+    assert.equal(await f.page.locator('[data-mr="rows"] tr[data-over="true"]').count(), 1);
+    assert.equal(await f.page.locator('[data-mr="more"]').isHidden(), true);
+    assert.equal(await f.page.locator('[data-mr="coverage"]').isHidden(), true);
+    await f.close();
+  });
+
+  await check('a report that was never built says so in the report section too', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => { __HR.monthly = { month: '2026-09', state: 'not_built', rows: [], next_cursor: null }; });
+    await person(f.page);
+    await f.page.locator('[data-mr="load"]').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-mr="message"]').textContent.includes('טרם הופק'));
+    assert.equal(await f.page.locator('[data-mr="table"]').isHidden(), true);
+    await f.close();
+  });
+
+  await check('a malformed report row is refused whole rather than rendered in part', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => {
+      __HR.monthly = { month: '2026-09', state: 'ready', rows: [{ uid: 'u1', employee_number: 'E1',
+        full_name: 'עובד', crew: 'א', total_hours: 'many', approved_sick_days: 1 }], next_cursor: null };
+    });
+    await person(f.page);
+    await f.page.locator('[data-mr="load"]').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-mr="message"]').textContent.includes('אינו זמין'));
+    assert.equal(await f.page.locator('[data-mr="rows"] tr').count(), 0);
+    await f.close();
+  });
+
+  await check('the report section stays inside 320, 360 and 390 without scrolling the page sideways', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => {
+      __HR.monthly = { month: '2026-09', state: 'ready', hour_limit: 265, coverage: 'complete',
+        total_rows: 1, delivery: 'in_app_only', next_cursor: null,
+        rows: [{ uid: 'u1', employee_number: 'E1', full_name: 'עובד ארוך מאוד לצורך הבדיקה',
+          crew: 'משמרת א', total_hours: 301, hours_state: 'approved',
+          approved_sick_days: 3, approved_reserve_days: 2, approved_vacation_days: 1,
+          approved_extended_absence_days: 0, pending_sick_days: 0, pending_reserve_days: 0,
+          pending_vacation_days: 0, pending_extended_absence_days: 0, long_absence: null,
+          over_hour_limit: true, hour_limit: 265 }] };
+    });
+    await person(f.page);
+    await f.page.locator('[data-mr="load"]').click();
+    await f.page.waitForFunction(() => !document.querySelector('[data-mr="table"]').hidden);
+    for (const width of [320, 360, 390]) {
+      await f.page.setViewportSize({ width, height: 780 });
+      await f.page.waitForTimeout(40);
+      const overflow = await f.page.evaluate(() =>
+        document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, 'page overflow ' + overflow + ' at ' + width);
+      /* יעד המגע הוא הכפתור או הקישור עצמו, ולא ה-`strong`
+       * שבתוכו — אצבע פוגעת באריח, לא במספר. */
+      for (const selector of ['[data-mr="load"]', '[data-mr="more"], [data-mr="load"]', '[data-oh="tile"]']) {
+        const box = await f.page.locator(selector).first().boundingBox();
+        assert.ok(box && box.height >= 44, selector + ' ' + JSON.stringify(box) + ' at ' + width);
+        assert.ok(box.width >= 44, selector + ' is narrower than 44 at ' + width);
+      }
+    }
+    await f.close();
+  });
+
   assert.deepEqual(sourceHashes(), before, 'actual product sources remain unchanged during suite');
   console.log('SOURCE_HASHES ' + JSON.stringify(before));
   console.log('HR client bootstrap: ' + passed + '/' + passed + ' passed');

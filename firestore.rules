@@ -643,6 +643,22 @@ service cloud.firestore {
       match /hr_request_counters/{countersId} {
         allow read, write: if false;
       }
+      // The unified monthly report: a small month header, one generation per
+      // build, one row per employee. Server-only at every level, like the rest
+      // of the hr_* family. The only read path is getHrMonthlySummary, which
+      // gates on hr(sid), serves the active generation only, and pages with a
+      // hard limit. A direct Rules read would hand out every employee's
+      // approved sick, reserve and vacation days in one uncapped sweep, and a
+      // half-built generation along with it.
+      match /hr_monthly_summaries/{monthKey} {
+        allow read, write: if false;
+        match /hr_monthly_generations/{generationId} {
+          allow read, write: if false;
+          match /hr_monthly_rows/{uid} {
+            allow read, write: if false;
+          }
+        }
+      }
       match /hr_hours_review_events/{reviewId} {
         allow read, write: if false;
       }

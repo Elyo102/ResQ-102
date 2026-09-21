@@ -15,7 +15,12 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
   const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width, height: 900 }, colorScheme: theme }); contexts.add(context);
   await context.addInitScript(options => {
     const t = window.__requests = { calls: [], held: [], claimsHeld: [], observers: [], hold: null, reject: null, nextFailure: null,
-      cases: [], receipts: {}, committed: 0, region: null, appCheck: false, attachments: {}, attachmentCounter: 0, badAttachmentEpoch: null, failGet: false };
+      cases: [], receipts: {}, committed: 0, region: null, appCheck: false, attachments: {}, attachmentCounter: 0, badAttachmentEpoch: null, failGet: false,
+      /* שם ומשמרת חיים ברשומת התחנה, לא על הפנייה — והכפיל
+       * שולח אותם רק לתיבת משאבי אנוש, כמו השרת. */
+      people: { p1: { owner_name: '\u05d3\u05e0\u05d4 \u05dc\u05d5\u05d9', owner_crew: '\u05de\u05e9\u05de\u05e8\u05ea \u05d1' },
+        p2: { owner_name: '\u05d0\u05d1\u05d9 \u05db\u05d4\u05df', owner_crew: '\u05de\u05e9\u05de\u05e8\u05ea \u05d0' } },
+      countsFailure: null, countsOverride: null };
     t.makeUser = (uid, role = 'firefighter', superUser = false) => {
       const claims = { stationId: 'synthetic_station', role, super: superUser, auth_time: 1788220800 };
       return { uid, claims, getIdTokenResult: async () => ({ claims }) };
@@ -48,7 +53,28 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
         let cases = name === 'listMyHrRequests' ? t.cases.filter(c => c.owner_uid === t.auth.currentUser.uid) : t.cases;
         // הכפיל מסנן במקום שהשרת מסנן — בשאילתה, לא בדפדפן.
         if (name === 'listHrRequestsInbox' && data.kind && !t.mixBoxes) cases = cases.filter(c => (c.kind || 'general') === data.kind);
-        result = { items: cases.map(({ events, ...c }) => c), next_cursor: null };
+        result = { items: cases.map(({ events, ...c }) => ({
+          ...c,
+          has_attachment: c.has_attachment === true,
+          ...(name === 'listHrRequestsInbox' && t.people[c.owner_uid] ? t.people[c.owner_uid] : {})
+        })), next_cursor: null };
+      } else if (name === 'countHrRequestBoxes') {
+        if (t.countsFailure) throw Object.assign(new Error('Synthetic counts failure'), { code: 'functions/' + t.countsFailure });
+        if (t.countsOverride) { result = structuredClone(t.countsOverride); }
+        else {
+          const kinds = ['sick', 'reserve', 'vacation', 'extended_absence'];
+          const states = ['open', 'in_progress', 'waiting_employee', 'closed'];
+          const decisions = ['pending', 'approved', 'rejected'];
+          const boxes = {};
+          for (const kind of kinds) {
+            const rows = t.cases.filter(c => (c.kind || 'general') === kind);
+            const row = { status: {}, decision: {} };
+            for (const state of states) row.status[state] = rows.filter(c => c.status === state).length;
+            for (const value of decisions) row.decision[value] = rows.filter(c => c.decision === value).length;
+            boxes[kind] = row;
+          }
+          result = { boxes, drift: false, updated_at_ms: 1788220800000 };
+        }
       } else if (name === 'removeMyRequestFile') {
         const c = t.cases.find(c => c.case_id === data.case_id);
         const a = t.attachments[data.attachment_id];
@@ -525,15 +551,21 @@ try {
     await f.close();
   });
 
-  await check('after opening a report the screen says the file can still come later', async () => {
+  /* הניסוח עודכן למשפט שהוכרע: „הדיווח התקבל במשאבי
+   * אנוש וממתין לטיפול." מה שהבדיקה באמת שומרת עליו אינו
+   * הניסוח אלא הגבול: אף משפט במסך אינו אומר שהסידור
+   * עודכן, כי אין שום כתיבה לסידור במסלול הזה. */
+  await check('the receipt says HR has it and never says the schedule moved', async () => {
     const f = await fixture(); await openReport(f.page);
     await f.page.waitForFunction(() => document.querySelector('[data-r="message"]').textContent
-      .includes('נפתח דיווח, ניתן לצרף קובץ עכשיו או בהמשך'));
+      .includes('הדיווח התקבל במשאבי אנוש וממתין לטיפול'));
     // ואזור הקבצים באמת פתוח עכשיו, ולא רק מובטח.
     await q(f.page, 'attachments').locator('input[type=file]').waitFor();
-    assert.ok((await q(f.page, 'detail').innerText())
-      .includes('נפתח דיווח, ניתן לצרף קובץ'),
+    const detail = await q(f.page, 'detail').innerText();
+    assert.ok(detail.includes('הדיווח התקבל במשאבי אנוש וממתין לטיפול'),
       'and the detail itself says it, not only the passing status line');
+    const body = await f.page.locator('body').innerText();
+    assert.equal(/הסידור עודכן|עודכן בסידור|הוסר מהסידור|שובצת|שיבוץ עודכן/.test(body), false, body.slice(0, 400));
     await f.close();
   });
 
@@ -604,9 +636,11 @@ try {
     await open(f.page, 'c');
     assert.equal(await q(f.page, 'approve').isHidden(), true);
     assert.equal(await q(f.page, 'reject').isHidden(), true);
-    for (const key of ['inbox', 'box-sick', 'box-reserve', 'box-vacation', 'box-extended']) {
+    for (const key of ['inbox', 'box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-hours']) {
       assert.equal(await q(f.page, key).isHidden(), true, key + ' is not for a firefighter');
     }
+    assert.equal(await f.page.evaluate(() => __requests.calls.some(c => c.name === 'countHrRequestBoxes')), false,
+      'and the counters are never asked for on behalf of someone who has no boxes');
     await f.close();
   });
 
@@ -679,6 +713,198 @@ try {
     const names = await f.page.evaluate(() => __requests.calls.map(c => c.name));
     assert.equal(names.some(n => /monthly|hours|attendance/i.test(n)), false,
       'this screen never calls the hours side at all');
+    await f.close();
+  });
+
+  /* ----------------------------------------------------------------------
+   *  מוני התיבות, שם ומשמרת, והסיכום בטופס
+   * -------------------------------------------------------------------- */
+
+  await check('each box carries its open count, and both axes in the accessible name', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    await f.page.evaluate(() => {
+      const t = __requests, at = Date.parse('2026-09-19T08:00:00+03:00');
+      const base = { from_date: '2026-09-10', to_date: '2026-09-12', created_at_ms: at };
+      t.addCase('c', 'דיווח מחלה', 'p1', { ...base, kind: 'sick', decision: 'pending' });
+      t.addCase('d', 'דיווח שני', 'p2', { ...base, kind: 'sick', decision: 'pending', status: 'in_progress' });
+      t.addCase('e', 'דיווח סגור', 'p1', { ...base, kind: 'sick', decision: 'approved', status: 'closed',
+        decided_by: 'hr', decided_at_ms: at });
+      t.addCase('f', 'מילואים', 'p2', { ...base, kind: 'reserve', decision: 'pending' });
+    });
+    await q(f.page, 'refresh').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-r="count-sick"]').textContent === '2');
+    // שתיים פתוחות, לא שלוש: סגורה אינה על שולחן אף אחד.
+    assert.equal(await q(f.page, 'count-sick').innerText(), '2');
+    assert.equal(await q(f.page, 'count-reserve').innerText(), '1');
+    assert.equal(await q(f.page, 'count-vacation').innerText(), '0');
+    const label = await q(f.page, 'box-sick').getAttribute('aria-label');
+    // שני הצירים נפרדים בשם הנגיש, ולא מאוחדים למספר אחד.
+    assert.ok(label.includes('ממתינים להכרעה 2'), label);
+    assert.ok(label.includes('פתוחות 1'), label);
+    assert.ok(label.includes('בטיפול 1'), label);
+    assert.ok(label.includes('אושרו 1'), label);
+    assert.ok(label.includes('נסגרו 1'), label);
+    await f.close();
+  });
+
+  await check('a drifting tally says so instead of presenting the number as a fact', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    await f.page.evaluate(() => {
+      __requests.countsOverride = { drift: true, updated_at_ms: 1, boxes: Object.fromEntries(
+        ['sick', 'reserve', 'vacation', 'extended_absence'].map(k => [k, {
+          status: { open: 4, in_progress: 0, waiting_employee: 0, closed: 0 },
+          decision: { pending: 4, approved: 0, rejected: 0 } }])) };
+    });
+    await q(f.page, 'refresh').click();
+    await f.page.waitForFunction(() => !document.querySelector('[data-r="counts-note"]').hidden);
+    assert.ok((await q(f.page, 'counts-note').innerText()).includes('משוערים'));
+    assert.ok((await q(f.page, 'box-sick').getAttribute('aria-label')).includes('המונים משוערים'));
+    await f.close();
+  });
+
+  await check('a malformed or failed tally leaves no number at all, never a wrong one', async () => {
+    for (const patch of [{ countsFailure: 'unavailable' },
+      { countsOverride: { boxes: { sick: { status: {}, decision: {} } }, drift: false } },
+      { countsOverride: { boxes: null, drift: false } }]) {
+      const f = await fixture({ role: 'hr_coordinator' });
+      await f.page.evaluate(value => Object.assign(__requests, value), patch);
+      await q(f.page, 'refresh').click();
+      await f.page.waitForFunction(() => __requests.calls.filter(c => c.name === 'countHrRequestBoxes').length >= 2);
+      await f.page.waitForTimeout(80);
+      assert.equal(await q(f.page, 'count-sick').innerText(), '');
+      assert.equal(await q(f.page, 'counts-note').isHidden(), true);
+      // והמסך עצמו עוד עובד: מונה שנכשל אינו מפיל רשימה.
+      assert.equal(await q(f.page, 'inbox').isHidden(), false);
+      await f.close();
+    }
+  });
+
+  await check('an HR row carries who, which crew, which range and whether an approval is attached', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    await f.page.evaluate(() => {
+      __requests.addCase('c', 'דיווח מחלה', 'p1', { kind: 'sick', from_date: '2026-09-10',
+        to_date: '2026-09-12', decision: 'pending', has_attachment: true,
+        created_at_ms: Date.parse('2026-09-19T08:00:00+03:00') });
+    });
+    await q(f.page, 'box-sick').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-case="' + 'c'.repeat(64) + '"]'));
+    const row = await f.page.locator('[data-case="' + 'c'.repeat(64) + '"]').innerText();
+    assert.ok(row.includes('דנה לוי'), row);
+    assert.ok(row.includes('משמרת ב'), row);
+    assert.ok(row.includes('2026-09-10 — 2026-09-12'), row);
+    assert.ok(row.includes('3 ימים'), row);
+    assert.ok(row.includes('אישור מצורף'), row);
+    assert.ok(row.includes('ממתין להכרעה'), row);
+    // ו-uid של אף אדם אינו על המסך.
+    assert.equal((await f.page.locator('body').innerText()).includes('p1'), false);
+    await f.close();
+  });
+
+  await check('the employee sees no name or crew on their own rows, because the server sends none', async () => {
+    const f = await fixture();
+    await q(f.page, 'refresh').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-case="' + 'a'.repeat(64) + '"]'));
+    const row = await f.page.locator('[data-case="' + 'a'.repeat(64) + '"]').innerText();
+    assert.equal(/דנה לוי|אבי כהן/.test(row), false, row);
+    const inbox = await f.page.evaluate(() => __requests.calls.filter(c => c.name === 'listHrRequestsInbox').length);
+    assert.equal(inbox, 0, 'an employee never reaches the inbox path that carries names');
+    await f.close();
+  });
+
+  await check('status is colour AND text: the label is the exact stored word, the tone is an attribute', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    await f.page.evaluate(() => {
+      const at = Date.parse('2026-09-19T08:00:00+03:00');
+      const base = { kind: 'sick', from_date: '2026-09-10', to_date: '2026-09-12', decision: 'pending', created_at_ms: at };
+      __requests.addCase('c', 'א', 'p1', { ...base, status: 'open' });
+      __requests.addCase('d', 'ב', 'p1', { ...base, status: 'in_progress' });
+      __requests.addCase('e', 'ג', 'p1', { ...base, status: 'waiting_employee' });
+      __requests.addCase('f', 'ד', 'p1', { ...base, status: 'closed', decision: 'rejected',
+        decided_by: 'hr', decided_at_ms: at });
+    });
+    await q(f.page, 'box-sick').click();
+    await f.page.waitForFunction(() => document.querySelectorAll('[data-r="list"] .requests-tag').length === 4);
+    const seen = await f.page.evaluate(() => [...document.querySelectorAll('[data-r="list"] .requests-tag')]
+      .map(e => [e.dataset.state, e.textContent, getComputedStyle(e).color]));
+    assert.deepEqual(seen.map(([state, text]) => [state, text]), [
+      ['open', 'פתוחה'], ['in_progress', 'בטיפול'],
+      ['waiting_employee', 'ממתינה לעובד'], ['closed', 'סגורה']]);
+    // ארבעה גוונים שונים — וגם ארבע מילים שונות.
+    assert.equal(new Set(seen.map(([, , color]) => color)).size, 4, JSON.stringify(seen));
+    const decisions = await f.page.evaluate(() => [...document.querySelectorAll('[data-r="list"] .requests-decision')]
+      .map(e => [e.dataset.decision, e.textContent]));
+    assert.deepEqual(decisions, [['pending', 'ממתין להכרעה'], ['pending', 'ממתין להכרעה'],
+      ['pending', 'ממתין להכרעה'], ['rejected', 'נדחה']]);
+    await f.close();
+  });
+
+  await check('the summary sits inside the form, follows the dates, and one press sends', async () => {
+    const f = await fixture();
+    await q(f.page, 'new').click();
+    assert.equal(await q(f.page, 'summary').isHidden(), true, 'an ordinary request gets no absence summary');
+    await q(f.page, 'kind').selectOption('sick');
+    await f.page.waitForFunction(() => !document.querySelector('[data-r="summary"]').hidden);
+    assert.ok((await q(f.page, 'summary').innerText()).includes('טרם הוזן'));
+    await q(f.page, 'from-date').fill('2026-09-10');
+    await q(f.page, 'to-date').fill('2026-09-12');
+    await f.page.waitForFunction(() => document.querySelector('[data-r="summary"]').innerText.includes('3 ימים'));
+    let summary = await q(f.page, 'summary').innerText();
+    assert.ok(summary.includes('מחלה'), summary);
+    assert.ok(summary.includes('2026-09-10 — 2026-09-12'), summary);
+    assert.ok(summary.includes('ללא הערה'), summary);
+    await q(f.page, 'body').fill('מצורף אישור.');
+    await f.page.waitForFunction(() => document.querySelector('[data-r="summary"]').innerText.includes('צורפה הערה'));
+    // טווח הפוך נאמר במפורש לפני השליחה, ולא מתגלה בתשובת השרת.
+    await q(f.page, 'to-date').fill('2026-09-01');
+    await f.page.waitForFunction(() => document.querySelector('[data-r="summary"]').innerText.includes('הטווח אינו תקין'));
+    await q(f.page, 'to-date').fill('2026-09-12');
+    await f.page.waitForFunction(() => document.querySelector('[data-r="summary"]').innerText.includes('3 ימים'));
+    const before = await f.page.evaluate(() => __requests.calls.length);
+    await q(f.page, 'save').click();
+    await f.page.waitForFunction(() => __requests.calls.some(c => c.name === 'createHrRequest'));
+    // לחיצה אחת: אין דיאלוג בינה לבין השליחה.
+    assert.equal(await f.page.evaluate(() => __requests.calls.filter(c => c.name === 'createHrRequest').length), 1);
+    assert.ok(await f.page.evaluate(n => __requests.calls.length > n, before));
+    await f.close();
+  });
+
+  await check('while sending, the button says so, reports aria-busy, and a second press writes nothing', async () => {
+    const f = await fixture();
+    await f.page.evaluate(() => { __requests.hold = 'createHrRequest'; });
+    await q(f.page, 'new').click();
+    await q(f.page, 'kind').selectOption('sick');
+    await q(f.page, 'from-date').fill('2026-09-10');
+    await q(f.page, 'to-date').fill('2026-09-12');
+    await q(f.page, 'save').click();
+    await f.page.waitForFunction(() => __requests.held.length === 1);
+    assert.equal(await q(f.page, 'save').innerText(), 'שולח…');
+    assert.equal(await q(f.page, 'save').getAttribute('aria-busy'), 'true');
+    assert.equal(await q(f.page, 'save').isDisabled(), true);
+    await q(f.page, 'save').dispatchEvent('click');
+    await q(f.page, 'save').dispatchEvent('click');
+    assert.equal(await f.page.evaluate(() => __requests.calls.filter(c => c.name === 'createHrRequest').length), 1);
+    await f.page.evaluate(() => __requests.release());
+    await f.page.waitForFunction(() => document.querySelector('[data-r="save"]').getAttribute('aria-busy') === 'false');
+    assert.notEqual(await q(f.page, 'save').innerText(), 'שולח…');
+    await f.close();
+  });
+
+  await check('the box row survives 320, 360 and 390 with 44 pixel targets and no sideways scroll', async () => {
+    const f = await fixture({ role: 'hr_coordinator' });
+    await q(f.page, 'refresh').click();
+    await f.page.waitForFunction(() => document.querySelector('[data-r="count-sick"]').textContent !== '');
+    for (const width of [320, 360, 390]) {
+      await f.page.setViewportSize({ width, height: 780 });
+      await f.page.waitForTimeout(40);
+      const overflow = await f.page.evaluate(() =>
+        document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, 'horizontal overflow ' + overflow + ' at ' + width);
+      for (const key of ['box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-hours']) {
+        const box = await q(f.page, key).boundingBox();
+        assert.ok(box && box.height >= 44, key + ' is ' + JSON.stringify(box) + ' at ' + width);
+        assert.ok(box.width >= 44, key + ' is narrower than 44 at ' + width);
+      }
+    }
     await f.close();
   });
 

@@ -58,6 +58,9 @@ const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
 const hrDomainDispatchModule = require('./hr-domain-dispatch');
 const hrWorkforceModule = require('./hr-workforce');
+const hrMonthlyModule = require('./hr-monthly-summary');
+const opsMemberIdentityModule = require('./ops-member-identity');
+const hrMonthsBackfillModule = require('./hr-months-backfill');
 const attendanceCorrectionsModule = require('./attendance-corrections');
 const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
@@ -4023,6 +4026,158 @@ exports.runReportNow = onCall(
   }
 
   throw new HttpsError('failed-precondition', 'דוחות השעות זמינים כעת במסך משאבי אנוש (hr.html); הדוח במייל הופסק.');
+});
+
+
+// =====================================================================
+//  הדוח החודשי המאוחד — שעות והיעדרויות מאושרות
+// =====================================================================
+//
+// הרישום יושב כאן ולא ליד שאר ה-HR משתי סיבות מדויקות:
+// `onSchedule` מיובא מעליו ולא בראש הקובץ, והבלוקים של
+// `hoursReminder` ו-`onReportChange` נעוצים ב-hash לפי ה-`exports.` הבא
+// אחריהם — ייצוא חדש צמוד אליהם היה משנה את הטביעה בלי
+// לגעת בהם.
+//
+// `monthlyHrReport` נשאר פורש ולא נוגעים בו. זו אינה זהירות —
+// `tests/hr-legacy-mail-retirement.mjs` **נופלת** אם מחזירים את
+// שליחת הדוח במייל. הדוח החדש נשמר ומוצג במערכת בלבד,
+// כי אין במסלול הזה ספק דואר מאומת.
+const hrMonthly = hrMonthlyModule.createHrMonthlySummary({ db, HttpsError });
+const hrMonthlyIdentity = opsMemberIdentityModule.createOpsMemberIdentity({ db, HttpsError });
+const HR_MONTHLY_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
+  timeoutSeconds: 120, memory: '256MiB', maxInstances: 3, concurrency: 1 });
+
+// התחנה והתפקיד מה-claims החתומים, לא מגוף הבקשה.
+function hrMonthlyContext(req) {
+  const ctx = hrMonthlyIdentity.context(req);
+  if (!(ctx.super === true || ctx.role === 'hr_coordinator')) {
+    throw new HttpsError('permission-denied', 'נדרשת סמכות משאבי אנוש.');
+  }
+  return ctx;
+}
+function hrMonthlyMonth(value) {
+  if (value === undefined) return prevMonthKey(new Date());
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+    throw new HttpsError('invalid-argument', 'חודש לא תקין.');
+  }
+  return value;
+}
+function hrMonthlyFields(req, keys) {
+  const data = req && req.data;
+  if (data !== undefined && data !== null) {
+    if (typeof data !== 'object' || Array.isArray(data)
+      || Object.keys(data).some(key => !keys.includes(key))) {
+      throw new HttpsError('invalid-argument', 'שדות הבקשה אינם תקינים.');
+    }
+    return data;
+  }
+  return {};
+}
+
+exports.getHrMonthlySummary = onCall(HR_MONTHLY_OPTIONS, async (req) => {
+  const ctx = hrMonthlyContext(req);
+  const data = hrMonthlyFields(req, ['month', 'cursor']);
+  return hrMonthly.read({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
+    ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }) });
+});
+
+// שלושת המצבים של חריגת השעות. „אין דוח" אינו „אין חורגים".
+exports.getHrMonthlyOverHours = onCall(HR_MONTHLY_OPTIONS, async (req) => {
+  const ctx = hrMonthlyContext(req);
+  const data = hrMonthlyFields(req, ['month']);
+  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(data.month) });
+});
+
+// הרצה ידנית מורשת, לתחנה של הקורא בלבד, לצורכי בדיקה
+// ושחזור. אותה כוונה = אותו דור; כוונה אחרת = דור חדש שמוחלף
+// רק כשהוא שלם.
+exports.buildHrMonthlySummaryNow = onCall({ ...HR_MONTHLY_OPTIONS, timeoutSeconds: 540, memory: '1GiB' },
+  async (req) => {
+    const ctx = hrMonthlyContext(req);
+    const data = hrMonthlyFields(req, ['month', 'intent_id']);
+    const intent = data.intent_id === undefined ? undefined : String(data.intent_id).slice(0, 120);
+    return hrMonthly.build({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
+      intent_id: intent, budget_ms: 420000 });
+  });
+
+/* רשימת התחנות להרצה המתוזמנת. חסומה ב-250, וכוללת את
+ * התחנה הקיימת גם אם אין לה `active: true` — כדי שמה שעובד היום
+ * לא יישאר בלי דוח בגלל דגל שחסר. זה אינו „תחנה אחת קשיחה":
+ * הלולאה רב-תחנתית, והקבוע הוא רשת ביטחון בלבד. */
+async function hrMonthlyStations() {
+  const page = await db.collection('stations').where('active', '==', true).limit(250).get();
+  const ids = new Set(page.docs.map(snap => snap.id));
+  ids.add(STATION_ID);
+  return [...ids].filter(id => STATION_ID_RE.test(id));
+}
+
+async function runHrMonthlySummaries(month, budgetMs) {
+  const stations = await hrMonthlyStations();
+  const deadline = Date.now() + budgetMs;
+  const summary = { month, stations: stations.length, built: 0, incomplete: 0, failed: 0, skipped: 0 };
+  for (const stationId of stations) {
+    if (Date.now() >= deadline) { summary.skipped += 1; continue; }
+    try {
+      const out = await hrMonthly.build({ station_id: stationId, month, intent_id: month,
+        budget_ms: Math.max(20000, deadline - Date.now()) });
+      if (out.complete) summary.built += 1; else summary.incomplete += 1;
+    } catch (error) {
+      // תחנה שנכשלה אינה עוצרת את השאר, ואינה נבלעת בשקט.
+      summary.failed += 1;
+      console.error('hrMonthlySummary failed', stationId, month, error && error.code);
+    }
+  }
+  console.log('hrMonthlySummary', JSON.stringify(summary));
+  return summary;
+}
+
+// ה-1 בכל חודש, שעון ישראל, עבור החודש שהסתיים.
+exports.hrMonthlySummaryMonthly = onSchedule({
+  timeoutSeconds: 540, memory: '1GiB', schedule: '0 6 1 * *',
+  timeZone: 'Asia/Jerusalem', region: 'europe-west1', retryCount: 0
+}, async () => runHrMonthlySummaries(prevMonthKey(new Date()), 480000));
+
+/* מה שלא הסתיים ב-1 בחודש נמשך בימים שלאחריו. ריצה על חודש
+ * שכבר מופעל יוצאת מיד בקריאה אחת, כי מזהה הדור נגזר מהכוונה
+ * ולא מהזמן. */
+exports.resumeHrMonthlySummaries = onSchedule({
+  timeoutSeconds: 540, memory: '1GiB', schedule: '0 7 2-7 * *',
+  timeZone: 'Asia/Jerusalem', region: 'europe-west1', retryCount: 0
+}, async () => runHrMonthlySummaries(prevMonthKey(new Date()), 480000));
+
+/* כלי ה-backfill של שיוך החודשים. מנהל-על בלבד, ולתחנה שב-claims
+ * בלבד. אין כאן מסלול שמקבל תחנה מגוף הבקשה.
+ *
+ * ⭐ ברירת המחדל היא ריצת יובש. כתיבה דורשת `dry_run: false`
+ * מפורש, והכלי **לא הורץ על שום פרויקט Firebase**. הרצה על
+ * ייצור היא פעולת ייצור שדורשת אישור נפרד ומפורש. */
+const hrMonthsBackfill = hrMonthsBackfillModule.createHrMonthsBackfill({ db, HttpsError });
+function hrBackfillSuper(req) {
+  const auth = req && req.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
+  if (!isSuperAdmin(auth)) throw new HttpsError('permission-denied', 'למנהל מערכת בלבד.');
+  const sid = auth.token && auth.token.stationId;
+  if (typeof sid !== 'string' || !STATION_ID_RE.test(sid)) {
+    throw new HttpsError('failed-precondition', 'לחשבון אין שיוך תקין לתחנה.');
+  }
+  return { sid, uid: auth.uid };
+}
+exports.backfillHrRequestMonths = onCall({ ...HR_MONTHLY_OPTIONS, timeoutSeconds: 540 }, async (req) => {
+  const ctx = hrBackfillSuper(req);
+  const data = hrMonthlyFields(req, ['dry_run', 'cursor', 'limit']);
+  if (Object.prototype.hasOwnProperty.call(data, 'dry_run') && typeof data.dry_run !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'ריצת יובש היא בוליאני.');
+  }
+  return hrMonthsBackfill.run({ station_id: ctx.sid, actor_uid: ctx.uid,
+    dry_run: data.dry_run === false ? false : true,
+    ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }),
+    ...(data.limit === undefined ? {} : { limit: Number(data.limit) }) });
+});
+exports.getHrRequestMonthsBackfillStatus = onCall(HR_MONTHLY_OPTIONS, async (req) => {
+  const ctx = hrBackfillSuper(req);
+  hrMonthlyFields(req, []);
+  return hrMonthsBackfill.status({ station_id: ctx.sid });
 });
 
 

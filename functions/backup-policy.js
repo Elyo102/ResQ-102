@@ -619,6 +619,25 @@ const DATA_POLICIES = Object.freeze([
     'restricted_identity', 'policy_required_before_wiring',
     'Per-box tallies derived from hr_requests in the same transaction; excluded from export and never restored independently of the requests that produce them.',
     { humanReadable:'forbidden' }),
+  // The monthly report is derived from monthly_reports, hr_requests and
+  // hr_workforce_cases. Restoring a report beside restored sources could
+  // publish a month that disagrees with the records it claims to summarize, so
+  // it is rebuilt rather than restored; the build is idempotent by design.
+  policy('stations/{sid}/hr_monthly_summaries/{monthKey}', 'station',
+    'derived', 'none', 'exclude', 'do_not_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'Per-station month header pointing at one published generation; rebuilt from its sources rather than restored.',
+    { humanReadable:'forbidden' }),
+  policy('stations/{sid}/hr_monthly_summaries/{monthKey}/hr_monthly_generations/{generationId}', 'station',
+    'derived', 'none', 'exclude', 'do_not_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'One build of one month; never readable until the month header points at it, and rebuilt rather than restored.',
+    { humanReadable:'forbidden' }),
+  policy('stations/{sid}/hr_monthly_summaries/{monthKey}/hr_monthly_generations/{generationId}/hr_monthly_rows/{uid}', 'station',
+    'derived', 'none', 'exclude', 'do_not_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'One employee row of a monthly report, including approved absence day counts; rebuilt from its sources, never exported or restored.',
+    { humanReadable:'forbidden' }),
   policy('stations/{sid}/hr_documents/{documentId}', 'station',
     'source_of_truth', 'count_drop', 'managed_export', 'restore',
     'restricted_identity', 'policy_required_before_wiring',

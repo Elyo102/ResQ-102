@@ -21,7 +21,10 @@ const names = { create: 'createHrRequest', list: 'listMyHrRequests', listInbox: 
    * אינה נושאת `epoch`. ניתוב דרכו היה מפיל כל הסרה תקינה. */
   removeAttachment: 'removeMyRequestFile',
   // הכרעה בדיווח מחלה/מילואים/חופשה/היעדרות ממושכת.
-  setDecision: 'decideMyStationReport' };
+  setDecision: 'decideMyStationReport',
+  /* מוני תיבות העבודה. קריאה בלבד, לסמכות משאבי אנוש בלבד, ולמסמך
+   * מונים אחד — לא שאילתה על הפניות ולא ספירה בדפדפן. */
+  counts: 'countHrRequestBoxes' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;

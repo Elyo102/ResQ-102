@@ -9,7 +9,7 @@ import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h26';
 import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h26';
 import { createLocalExportUI } from './hr-local-export-ui.js?v=42h26';
 import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h26';
-import { createHrOverHoursAlertUI } from './hr-over-hours-alert-ui.js?v=42h26';
+import { createHrOverHoursAlertUI, createHrMonthlyReportUI } from './hr-over-hours-alert-ui.js?v=42h26';
 import { MEMBER_ROLES } from './roles.js?v=42h26';
 import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h26';
 
@@ -27,7 +27,14 @@ const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
 const listWorkforce = httpsCallable(functions, 'listHrWorkforceCases');
-const overHoursCallable = httpsCallable(functions, 'getHrOverHoursAlert');
+/* ⭐ ההתראה עברה לדור הפעיל של הדוח החודשי החדש.
+ * `getHrOverHoursAlert` קורא את `hr_reports`, שאין לו כותב חי —
+ * ולכן הוא היה מציג או חודש ישן כאילו הוא עכשוו, או ריק
+ * שנקרא „אין חורגים". ה-callable הישן נשאר רשום בשרת
+ * ואינו נקרא מכאן בשום מסלול. */
+const overHoursStatusCallable = httpsCallable(functions, 'getHrMonthlyOverHours');
+const monthlySummaryCallable = httpsCallable(functions, 'getHrMonthlySummary');
+const buildMonthlyCallable = httpsCallable(functions, 'buildHrMonthlySummaryNow');
 const createWorkforce = httpsCallable(functions, 'createHrWorkforceCase');
 const updateWorkforce = httpsCallable(functions, 'updateHrWorkforceCase');
 const remindWorkforce = httpsCallable(functions, 'queueHrWorkforceReminder');
@@ -153,8 +160,13 @@ createHrWorkforceUI(document.querySelector('[data-hr-workforce]'), {
 });
 createHrOverHoursAlertUI(document.querySelector('[data-hr-workforce]'), {
   currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
-  overHoursAlert: () => call(overHoursCallable, {})
+  overHoursStatus: () => call(overHoursStatusCallable, {}),
+  buildMonthly: () => call(buildMonthlyCallable, {})
 });
+createHrMonthlyReportUI(document.querySelector('[data-hr-monthly]'), {
+  currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+  monthlySummary: data => call(monthlySummaryCallable, data)
+}, { monthElement: document.querySelector('[data-hr="month"]') });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;
   user = null;

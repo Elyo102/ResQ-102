@@ -331,8 +331,27 @@ async function main() {
     assert.equal(page.items[0].owner_crew, 'משמרת ב');
   });
 
-  /* ⭐ זו הבדיקה שמונעת הדלפה: מסלול העובד אינו נוגע ברשומות של אף
-   * אחד, ולכן אינו יכול להחזיר שם של אף אחד — גם לא את שלו. */
+  /* ⭐ הבדיקה הזו נוספה אחרי שבדיקת המוטציה גילתה שהיא חסרה:
+   * הסרת סינון הבעלות מהשאילתה לא הפילה אף בדיקה, כי באף עולם
+   * בדיקה לא הייתה פנייה של אדם אחר באותה תחנה. בדיקה שעוברת
+   * מפני שאין מה להדליף אינה שומרת על שום דבר. */
+  await test('an employee list never contains another employee request', async () => {
+    const w = world();
+    const mine = w.who.add('u-mine', 'firefighter', { full_name: 'שלי', crew: 'א' });
+    const other = w.who.add('u-other', 'firefighter', { full_name: 'של אחר', crew: 'ב' });
+    await w.requests.create(w.who.req(mine, report({ request_id: 'req-mine-one' })));
+    await w.requests.create(w.who.req(other, report({ request_id: 'req-other-one' })));
+    const page = await w.requests.list(w.who.req(mine, {}));
+    assert.equal(page.items.length, 1, JSON.stringify(page.items.map(c => c.owner_uid)));
+    assert.equal(page.items[0].owner_uid, mine);
+    // והתיבה של משאבי אנוש דווקא רואה את שתיהן.
+    const hr = w.who.add('u-hr', 'hr_coordinator');
+    const inbox = await w.requests.listInbox(w.who.req(hr, { kind: 'sick' }));
+    assert.equal(inbox.items.length, 2);
+  });
+
+  /* ⭐ זו הבדיקה שמונעת הדלפת שם: מסלול העובד אינו נוגע ברשומות
+   * של אף אחד, ולכן אינו יכול להחזיר שם — גם לא את שלו. */
   await test('the employee list carries no name field at all', async () => {
     const w = world();
     const uid = w.who.add('u-owner', 'firefighter', { full_name: 'דנה לוי', crew: 'משמרת ב' });

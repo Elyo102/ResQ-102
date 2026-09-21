@@ -322,7 +322,10 @@ const hrReviewPaths = [
 // export, never restored on their own. Counted in the private-path total so a
 // new hr_* collection cannot appear without passing this gate.
 const hrDerivedPaths = [
-  'stations/{sid}/hr_request_counters/{countersId}'
+  'stations/{sid}/hr_request_counters/{countersId}',
+  'stations/{sid}/hr_monthly_summaries/{monthKey}',
+  'stations/{sid}/hr_monthly_summaries/{monthKey}/hr_monthly_generations/{generationId}',
+  'stations/{sid}/hr_monthly_summaries/{monthKey}/hr_monthly_generations/{generationId}/hr_monthly_rows/{uid}'
 ];
 const hrReviewJobPath = 'stations/{sid}/hr_hours_review_notification_jobs/{jobId}';
 const correctionPaths = [
@@ -332,10 +335,10 @@ const correctionPaths = [
 ];
 const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, hrDerivedPaths, correctionPaths);
 
-test('exact thirty-three private HR/correction paths are classified with no readable or automatic-retention permission', () => {
+test('exact thirty-six private HR/correction paths are classified with no readable or automatic-retention permission', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
-  assert.equal(hrPaths.length, 33);
+  assert.equal(hrPaths.length, 36);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);
@@ -394,7 +397,7 @@ test('inspection receipts, summary and quota have separate prospective restore c
 
 test('ten durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {
   assert.equal(hrDurablePaths.length, 10);
-  assert.equal(hrDerivedPaths.length, 1);
+  assert.equal(hrDerivedPaths.length, 4);
   for (const path of hrDerivedPaths) {
     const item = backupPolicy.getPolicy(path);
     assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
