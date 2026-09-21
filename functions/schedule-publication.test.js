@@ -608,6 +608,43 @@ t('היעדרויות בחתימת התוכן: אותן שורות, היעדרו
   const b = mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }] }), previous: null, publication_id: 'p5', actor: 'a' }));
   assert.notEqual(a.publication.content_hash, b.publication.content_hash);
 });
+t('הערת סידור שולחת התראת מסך נעילה כללית רק לאדם שנבחר, בלי תוכן ההערה', () => {
+  const privateText = 'להגיע ב-06:30 עם ציוד אישי';
+  const note = event({
+    id: 'schedule_note:2026-09-02:גל', kind: 'schedule_note', title: privateText,
+    date: '2026-09-02', people: ['גל']
+  });
+  const r = mk().planPublication(publicationInput({
+    next: P1, previous: P1, next_events: [note], previous_events: [],
+    publication_id: 'note_add', actor: 'manager'
+  }));
+  assert.deepEqual(r.notifications.map((n) => n.person), ['גל']);
+  assert.equal(r.notifications[0].detail[0].kind, CHANGE.NOTE_MENTIONED);
+  assert.match(r.notifications[0].push.body, /נוספה עבורך הערת סידור/);
+  assert.match(r.notifications[0].push.body, /2\/9/);
+  assert.equal(JSON.stringify(r.notifications[0].push).includes(privateText), false,
+    'private note text leaked to the lock-screen payload');
+});
+t('עדכון והסרת הערת סידור מפיקים שינוי אחד, ופרסום חוזר זהה אינו שולח שוב', () => {
+  const oldNote = event({ id: 'schedule_note:2026-09-02:גל', kind: 'schedule_note', title: 'ישן', date: '2026-09-02', people: ['גל'] });
+  const newNote = event({ id: oldNote.id, kind: 'schedule_note', title: 'חדש', date: oldNote.date, people: ['גל'] });
+  const changed = mk().planPublication(publicationInput({
+    next: P1, previous: P1, next_events: [newNote], previous_events: [oldNote],
+    publication_id: 'note_change', actor: 'manager'
+  }));
+  assert.deepEqual(changed.notifications[0].detail.map((x) => x.kind), [CHANGE.NOTE_CHANGED]);
+  assert.match(changed.notifications[0].push.body, /הערת הסידור שלך עודכנה/);
+  const removed = mk().planPublication(publicationInput({
+    next: P1, previous: P1, next_events: [], previous_events: [newNote],
+    publication_id: 'note_remove', actor: 'manager'
+  }));
+  assert.deepEqual(removed.notifications[0].detail.map((x) => x.kind), [CHANGE.NOTE_REMOVED]);
+  const same = mk().planPublication(publicationInput({
+    next: P1, previous: P1, next_events: [newNote], previous_events: [newNote],
+    publication_id: 'note_same', actor: 'manager'
+  }));
+  assert.equal(same.notifications.length, 0);
+});
 t('היעדרות כפולה או פגומה — סירוב', () => {
   throwsCode(() => mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל', kind: 'sick' }, { date: '2026-09-02', uid: 'גל', kind: 'leave' }] }), previous: null, publication_id: 'p6', actor: 'a' })), 'duplicate-absence');
   throwsCode(() => mk().planPublication(publicationInput({ next: Object.assign({}, P1, { absences: [{ date: '2026-09-02', uid: 'גל' }] }), previous: null, publication_id: 'p7', actor: 'a' })), 'plan-absences');

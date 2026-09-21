@@ -4329,7 +4329,7 @@ function createScheduleRuntime(deps) {
     try {
       edits = scheduleEdit.normalizeEdits(data.edits, { from: active.plan.from, to: active.plan.to });
       applied = scheduleEdit.applyEdits({
-        plan: active.plan, edits, people: editablePeople, policy: editPolicy.value,
+        plan: active.plan, events: active.events, edits, people: editablePeople, policy: editPolicy.value,
         station_id: ctx.sid, rebase_policy: policyChanged
       });
     } catch (error) { scheduleEditError(error); }
@@ -4341,7 +4341,7 @@ function createScheduleRuntime(deps) {
       version: active.plan.source_version,
       revision: active.plan.source_revision,
       digest: active.plan.source_digest,
-      events: active.events,
+      events: applied.events,
       roster: active.roster
     };
     const plan = Object.assign({}, applied.plan, {

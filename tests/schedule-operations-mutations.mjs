@@ -41,7 +41,7 @@ const MUTATIONS = [
   ['עריכה: תאריך קלנדרי בלתי אפשרי מתקבל', 'edit',
     "    if (!validIsoDate(date)) {", "    if (!DATE_RE.test(date)) {", ['editUnit']],
   ['עריכה: אדם שאינו במקור מתקבל להוספה', 'edit',
-    "    if (!people.has(edit.uid) && !(removal && inPlan)) {", "    if (false) {", ['editUnit']],
+    "    if (!people.has(edit.uid) && !(removal && (inPlan || existingNote))) {", "    if (false) {", ['editUnit']],
   ['עריכה: התוכנית המקורית משתנה במקום עותק', 'edit',
     "  const rows = clone(plan.rows);", "  const rows = plan.rows;", ['editUnit']],
   ['עריכה: הבסיס לא נבדק בדוח (CAS)', 'runtime',

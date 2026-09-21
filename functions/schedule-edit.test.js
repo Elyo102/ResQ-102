@@ -311,4 +311,65 @@ test('seq457 §1 a uid containing | (or any separator) keeps its own before/afte
   assert.equal(out.counts.dates, 3);
 });
 
+test('schedule note targets the selected active uid, updates in place and never puts its text in the audit change', () => {
+  const plan = Object.assign(basePlan(), { source_snapshot: 'snap_1', source_version: 'v1' });
+  const first = edit.applyEdits({
+    plan, events: [], people, policy,
+    edits: [{ kind: 'note', uid: 'u1', dates: ['2026-09-02'], text: '  להגיע   לתדריך  ' }]
+  });
+  assert.deepEqual(first.events, [{
+    id: 'schedule_note:2026-09-02:u1', kind: 'schedule_note', title: 'להגיע לתדריך',
+    date: '2026-09-02', people: ['u1'], station_id: SID,
+    source_snapshot: 'snap_1', source_version: 'v1'
+  }]);
+  assert.deepEqual(first.changes, [{
+    kind: 'note', uid: 'u1', date: '2026-09-02', before: { note: false },
+    after: { note: true }, text_changed: false
+  }]);
+  assert.equal(JSON.stringify(first.changes).includes('להגיע'), false, 'note text leaked into the audit change');
+
+  const second = edit.applyEdits({
+    plan, events: first.events, people, policy,
+    edits: [{ kind: 'note', uid: 'u1', dates: ['2026-09-02'], text: 'להגיע עם ציוד' }]
+  });
+  assert.equal(second.events.length, 1);
+  assert.equal(second.events[0].title, 'להגיע עם ציוד');
+  assert.equal(second.changes[0].text_changed, true);
+});
+
+test('schedule note removal is explicit; inactive or unknown people cannot be newly mentioned', () => {
+  const plan = Object.assign(basePlan(), { source_snapshot: 'snap_1', source_version: 'v1' });
+  const existing = [{
+    id: 'schedule_note:2026-09-02:u1', kind: 'schedule_note', title: 'תדריך',
+    date: '2026-09-02', people: ['u1'], station_id: SID,
+    source_snapshot: 'snap_1', source_version: 'v1'
+  }];
+  const out = edit.applyEdits({
+    plan, events: existing, people, policy,
+    edits: [{ kind: 'note', uid: 'u1', dates: ['2026-09-02'], remove: true }]
+  });
+  assert.deepEqual(out.events, []);
+  assert.deepEqual(out.changes[0], {
+    kind: 'note', uid: 'u1', date: '2026-09-02', before: { note: true },
+    after: { note: false }, text_changed: false
+  });
+  throwsCode(() => edit.applyEdits({ plan, events: [], people, policy,
+    edits: [{ kind: 'note', uid: 'u9', dates: ['2026-09-02'], text: 'לא תקין' }] }), 'edit-person-unknown');
+  throwsCode(() => edit.applyEdits({ plan, events: [], people, policy,
+    edits: [{ kind: 'note', uid: 'missing', dates: ['2026-09-02'], text: 'לא תקין' }] }), 'edit-person-unknown');
+});
+
+test('schedule note validation rejects empty, control characters and overlong text', () => {
+  const range = { from: '2026-09-01', to: '2026-09-03' };
+  ['', '   ', 'שורה\nשנייה', 'א'.repeat(edit.MAX_NOTE_CHARS + 1)].forEach((text) => {
+    throwsCode(() => edit.normalizeEdits([
+      { kind: 'note', uid: 'u1', dates: ['2026-09-02'], text }
+    ], range), 'edit-note');
+  });
+  const removal = edit.normalizeEdits([
+    { kind: 'note', uid: 'u1', dates: ['2026-09-02'], remove: true }
+  ], range)[0];
+  assert.deepEqual(removal, { kind: 'note', uid: 'u1', dates: ['2026-09-02'], remove: true, text: null });
+});
+
 console.log('\n' + passed + ' schedule-edit unit checks passed.');

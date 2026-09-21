@@ -258,11 +258,12 @@ function createScheduleService(deps) {
 
     const myEvents = events.filter((e) => isPlainObject(e) && Array.isArray(e.people) && e.people.indexOf(person) > -1)
       .map((e) => ({
-        id: e.id, title: e.title, date: e.date, hours: e.hours || null,
+        id: e.id, kind: e.kind === 'schedule_note' ? 'schedule_note' : 'event',
+        title: e.title, date: e.date, hours: e.hours || null,
         cancelled: e.cancelled === true,
         change: changes[e.id] || null,
         answer: answers[e.id] || null,
-        requires_answer: e.cancelled !== true && !!changes[e.id] && !answers[e.id]
+        requires_answer: e.kind !== 'schedule_note' && e.cancelled !== true && !!changes[e.id] && !answers[e.id]
       }));
 
     days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -315,7 +316,8 @@ function createScheduleService(deps) {
     }
     const dayEvents = (events || []).filter((e) => isPlainObject(e) && e.date === date)
       .map((e) => ({
-        id: e.id, title: e.title, hours: e.hours || null,
+        id: e.id, kind: e.kind === 'schedule_note' ? 'schedule_note' : 'event',
+        title: e.title, hours: e.hours || null,
         cancelled: e.cancelled === true,
         people: Array.isArray(e.people) ? e.people.map((id) => ({
           uid: id,

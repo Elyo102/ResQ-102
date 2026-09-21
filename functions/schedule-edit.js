@@ -29,10 +29,11 @@ const UID_RE = /^[^\s/\u0000-\u001f\u007f]{1,128}$/;
 const MAX_EDITS = 200;
 const MAX_DATES_PER_EDIT = 62;
 const MAX_ROLE_CHARS = 40;
+const MAX_NOTE_CHARS = 300;
 /* ⭐ תקרה קשיחה לאזהרות: 200 עריכות × 62 תאריכים = 12,400 אזהרות אפשריות,
  * ורשומת הטיוטה חייבת להישאר הרחק ממגבלת 1 MiB של Firestore. */
 const MAX_WARNINGS = 200;
-const KINDS = Object.freeze(['assign', 'unassign', 'role', 'absence']);
+const KINDS = Object.freeze(['assign', 'unassign', 'role', 'absence', 'note']);
 const ABSENCE_KINDS = Object.freeze(['sick', 'reserve', 'course', 'leave']);
 const LOCATIONS = Object.freeze(['abroad', 'north', 'eilat']);
 const SLOT_SOURCE = 'manual';
@@ -144,6 +145,18 @@ function normalizeAbsence(raw, index) {
   return out;
 }
 
+function normalizeNote(raw, remove, index) {
+  if (remove === true) return null;
+  if (typeof raw !== 'string') fail('edit-note', 'עריכה ' + index + ': חסר מלל להערת הסידור.');
+  const text = raw.replace(/\s+/g, ' ').trim();
+  if (!text.length || text.length > MAX_NOTE_CHARS || /[\u0000-\u001f\u007f]/.test(raw)) {
+    fail('edit-note', 'עריכה ' + index + ': הערת הסידור אינה תקינה.');
+  }
+  return text;
+}
+
+function noteId(uid, date) { return 'schedule_note:' + date + ':' + uid; }
+
 /**
  * מנרמל את רשימת העריכות לצורה קנונית (ממוינת, בלי כפילויות בתאריכים),
  * בלי לדעת עדיין מי האנשים ומה במדיניות. הצורה הקנונית היא מה שנחתם.
@@ -173,6 +186,9 @@ function normalizeEdits(raw, range) {
     } else if (item.kind === 'absence') {
       if (!hasOwn(item, 'absence')) fail('edit-absence', 'עריכה ' + index + ': חסר שדה absence (null = ביטול).');
       out.absence = normalizeAbsence(item.absence, index);
+    } else if (item.kind === 'note') {
+      out.remove = item.remove === true;
+      out.text = normalizeNote(item.text, out.remove, index);
     }
     return out;
   });
@@ -235,7 +251,7 @@ function sameState(a, b) {
 
 /**
  * applyEdits({ plan, edits, people, policy, station_id })
- *   → { plan, changes, warnings, counts }
+ *   → { plan, events, changes, warnings, counts }
  *
  * `plan`    — תוכנית הפרסום הפעיל (rows, absences, absence_coverage, from, to …). לא משתנה.
  * `edits`   — רשימה קנונית מ-normalizeEdits (או גולמית; מנורמלת כאן).
@@ -300,6 +316,7 @@ function applyEdits(input) {
     });
   }
   const absences = clone(Array.isArray(plan.absences) ? plan.absences : []);
+  const events = clone(Array.isArray(inp.events) ? inp.events : []);
   const coverage = plain(plan.absence_coverage) ? clone(plan.absence_coverage) : null;
   const touched = new Map();   // uid → Map(date → before)
   const warnings = rebaseWarnings.slice();
@@ -341,10 +358,14 @@ function applyEdits(input) {
     const index = i + 1;
     // הסרה (ביטול שיבוץ / ביטול היעדרות) מותרת גם למי שכבר אינו במקור —
     // כדי שאפשר יהיה להוציא מהסידור אדם שעזב. הוספה — רק לאדם פעיל במקור.
-    const removal = edit.kind === 'unassign' || (edit.kind === 'absence' && edit.absence === null);
+    const removal = edit.kind === 'unassign' || (edit.kind === 'absence' && edit.absence === null)
+      || (edit.kind === 'note' && edit.remove === true);
+    const existingNote = edit.kind === 'note' && edit.dates.some((date) =>
+      events.some((event) => event && event.id === noteId(edit.uid, date)
+        && Array.isArray(event.people) && event.people.indexOf(edit.uid) !== -1));
     const inPlan = plan.rows.some((r) => (r.slots || []).some((s) => s && s.person === edit.uid))
       || (Array.isArray(plan.absences) && plan.absences.some((a) => a && a.uid === edit.uid));
-    if (!people.has(edit.uid) && !(removal && inPlan)) {
+    if (!people.has(edit.uid) && !(removal && (inPlan || existingNote))) {
       fail('edit-person-unknown', 'עריכה ' + index + ': האדם אינו במקור כוח האדם הפעיל.');
     }
     /* ⭐ תחנת קצה — רק מפתח שהוא own-property של המדיניות **האפקטיבית**
@@ -393,6 +414,33 @@ function applyEdits(input) {
           if (coverage && coverage[edit.absence.kind] === 'missing') coverage[edit.absence.kind] = 'ready';
           if (findSlot(rows, edit.uid, date)) warn({ code: 'absent-while-assigned', uid: edit.uid, date });
         }
+      } else if (edit.kind === 'note') {
+        const id = noteId(edit.uid, date);
+        const existingIndex = events.findIndex((event) => event && event.id === id);
+        const before = existingIndex === -1 ? null : events[existingIndex];
+        if (edit.remove) {
+          if (existingIndex !== -1) events.splice(existingIndex, 1);
+        } else {
+          const next = {
+            id, kind: 'schedule_note', title: edit.text, date, people: [edit.uid],
+            station_id: stationId, source_snapshot: plan.source_snapshot,
+            source_version: plan.source_version
+          };
+          if (existingIndex === -1) events.push(next);
+          else events[existingIndex] = next;
+        }
+        const after = edit.remove ? null : events.find((event) => event && event.id === id);
+        if ((!before && after) || (before && !after) || (before && after && before.title !== after.title)) {
+          if (!touched.has(edit.uid)) touched.set(edit.uid, new Map());
+          const marker = touched.get(edit.uid);
+          const changeKey = date + '\u0000note';
+          marker.set(changeKey, {
+            __note: true, date,
+            before: before ? { note: true } : { note: false },
+            after: after ? { note: true } : { note: false },
+            text_changed: !!(before && after && before.title !== after.title)
+          });
+        }
       }
     });
   });
@@ -423,8 +471,17 @@ function applyEdits(input) {
   const changes = [];
   Array.from(touched.keys()).sort(compareText).forEach((uid) => {
     const byDate = touched.get(uid);
-    Array.from(byDate.keys()).sort().forEach((date) => {
-      const before = byDate.get(date);
+    Array.from(byDate.keys()).sort().forEach((key) => {
+      const before = byDate.get(key);
+      if (before && before.__note === true) {
+        changes.push({
+          kind: 'note', uid, date: before.date,
+          before: before.before, after: before.after,
+          text_changed: before.text_changed === true
+        });
+        return;
+      }
+      const date = key;
       const after = stateOf(kept, absences, uid, date);
       if (sameState(before, after)) return;
       changes.push({ uid, date, before, after });
@@ -448,6 +505,7 @@ function applyEdits(input) {
   const people_changed = Array.from(new Set(changes.map((c) => c.uid))).sort();
   return {
     plan: nextPlan,
+    events: events.sort((a, b) => compareText(String(a.date || '') + '|' + String(a.id || ''), String(b.date || '') + '|' + String(b.id || ''))),
     changes,
     warnings,
     warnings_total: warningsTotal,
@@ -497,5 +555,6 @@ function searchPeople(people, query, limit) {
 
 module.exports = Object.freeze({
   ScheduleEditError, normalizeEdits, applyEdits, searchPeople, roleLabelFor, allowedRoles,
-  KINDS, ABSENCE_KINDS, LOCATIONS, MAX_EDITS, MAX_DATES_PER_EDIT, MAX_WARNINGS, SLOT_SOURCE, UID_RE
+  KINDS, ABSENCE_KINDS, LOCATIONS, MAX_EDITS, MAX_DATES_PER_EDIT, MAX_WARNINGS, MAX_NOTE_CHARS,
+  SLOT_SOURCE, UID_RE
 });

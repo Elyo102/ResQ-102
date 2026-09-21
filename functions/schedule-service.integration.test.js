@@ -521,6 +521,27 @@ t('„סידור התחנה" מציג אירועים ומסמן אם אני בה
   assert.strictEqual(v.day.events[0].includes_me, true);
 });
 
+t('הערת סידור מוצגת רק לעובד שנבחר ואינה דורשת אישור נוסף', () => {
+  const { service, engine } = build();
+  const plan = engine.planPeriod(REQ);
+  const note = {
+    id: 'schedule_note:2026-09-01:גדי', kind: 'schedule_note', title: 'להגיע לתדריך',
+    date: '2026-09-01', people: ['גדי'], station_id: STATION,
+    source_snapshot: 'snap_1', source_version: VERSION
+  };
+  const mine = service.buildMySchedule({
+    actor: FIREFIGHTER, plan, roster: ROSTER, events: [note],
+    changes_by_date: { [note.id]: { kind:'note_mentioned' } }
+  });
+  assert.deepStrictEqual(mine.events.map((event) => ({ kind:event.kind, title:event.title, requires:event.requires_answer })), [
+    { kind:'schedule_note', title:'להגיע לתדריך', requires:false }
+  ]);
+  assert.strictEqual(mine.pending_answers, 0);
+  const station = service.buildStationSchedule({ actor: FIREFIGHTER, plan, date:'2026-09-01', roster:ROSTER, events:[note] });
+  assert.strictEqual(station.day.events[0].kind, 'schedule_note');
+  assert.strictEqual(station.day.events[0].includes_me, true);
+});
+
 t('אירוע מתחנה אחרת אינו דולף לתצוגות', () => {
   const { service, engine } = build();
   const plan = engine.planPeriod(REQ);

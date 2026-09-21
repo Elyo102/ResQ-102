@@ -159,13 +159,23 @@ try {
     const direction = await mobilePage.locator('#appNav').evaluate(el => getComputedStyle(el).direction);
     if (direction !== 'rtl') throw new Error('direction is ' + direction);
   });
-  await test('mobile dock exposes the four approved permission-aware groups', async () => {
+  await test('mobile dock exposes direct schedule and hours links plus the permitted groups', async () => {
     await mobilePage.evaluate(() => {
       document.documentElement.style.setProperty('--resq-safe-left-override', '44px');
       document.documentElement.style.setProperty('--resq-safe-right-override', '44px');
     });
-    const labels = await mobilePage.locator('#resqDock > *').allTextContents();
-    same(labels, ['בית', 'המשמרת', 'התחנה', 'עוד'], 'mobile dock slots changed');
+    const slots = await mobilePage.locator('#resqDock > *').evaluateAll(nodes => nodes.map(node => ({
+      id:node.dataset.dockId, label:node.querySelector('.dockLbl')?.textContent,
+      href:node.tagName === 'A' ? new URL(node.href).pathname.split('/').pop() + new URL(node.href).search : null,
+      aria:node.getAttribute('aria-label')
+    })));
+    same(slots.map(slot => slot.id), ['home', 'schedule', 'hours', 'station', 'more'], 'mobile dock slots changed');
+    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'התחנה', 'עוד'], 'mobile dock labels changed');
+    same(slots.slice(0, 3).map(slot => slot.href),
+      ['login.html', 'schedule-management.html?tab=mine', 'attendance.html'],
+      'direct dock destinations changed');
+    same(slots.map(slot => slot.aria), ['בית', 'סידור עבודה', 'דיווח שעות', 'התחנה', 'עוד'],
+      'direct dock accessible names changed');
     if (!await mobilePage.locator('#resqDock').isVisible()) throw new Error('dock is hidden');
     const bodyPadding = await mobilePage.locator('body').evaluate(el => parseFloat(getComputedStyle(el).paddingBottom));
     if (bodyPadding < 81) throw new Error('content is not protected from dock: ' + bodyPadding);
@@ -195,28 +205,27 @@ try {
         colour: getComputedStyle(icon).color
       };
     }));
-    same(slots.map(slot => slot.label), ['בית', 'המשמרת', 'התחנה', 'עוד'],
+    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'התחנה', 'עוד'],
       'dock labels changed');
     if (slots.some(slot => slot.paths < 1)) throw new Error('a dock slot has no icon: ' + JSON.stringify(slots));
     if (slots.some(slot => slot.hidden !== 'true')) throw new Error('the decorative icon is exposed to screen readers');
     if (slots.some(slot => slot.stroke !== 'currentColor')) throw new Error('an icon is not drawn in currentColor');
     if (slots.some(slot => !slot.below)) throw new Error('a label is not under its icon: ' + JSON.stringify(slots));
     slots.forEach((slot, index) => {
-      const expected = ['בית', 'המשמרת', 'התחנה', 'עוד'][index];
+      const expected = ['בית', 'סידור עבודה', 'דיווח שעות', 'התחנה', 'עוד'][index];
       if (slot.aria !== expected) throw new Error('accessible name ' + slot.aria + ' != ' + expected);
     });
     /* ⭐ כל אייקון לא-פעיל נושא את צבע האזור שלו — לא אפור אחיד, ולא
-     * ארבעה שמות למשתנה אחד. הצבע נמשך מהטוקן עצמו ומושווה לחישוב
+     * חמישה שמות למשתנה אחד. הצבע נמשך מהטוקן עצמו ומושווה לחישוב
      * בפועל, כדי שטוקן שלא הוגדר יפיל את הבדיקה במקום ליפול בשקט
-     * חזרה לצבע ברירת המחדל. (זה בדיוק מה שקרה כאן: `--dock-admin`
-     * נקרא בקוד ו-`--dock-more` הוגדר ב-CSS.) */
+     * חזרה לצבע ברירת המחדל. */
     const expected = await mobilePage.evaluate(() => {
       const style = getComputedStyle(document.documentElement);
       const probe = document.createElement('span');
       document.body.appendChild(probe);
       const resolve = (value) => { probe.style.color = value; return getComputedStyle(probe).color; };
       const out = {};
-      for (const id of ['home', 'mine', 'station', 'admin']) {
+      for (const id of ['home', 'schedule', 'hours', 'station', 'more']) {
         const token = style.getPropertyValue('--dock-' + id).trim();
         out[id] = token ? resolve(token) : null;
       }
@@ -225,12 +234,12 @@ try {
       probe.remove();
       return out;
     });
-    if (['home', 'mine', 'station', 'admin'].some(id => !expected[id])) {
+    if (['home', 'schedule', 'hours', 'station', 'more'].some(id => !expected[id])) {
       throw new Error('a dock colour token is undefined: ' + JSON.stringify(expected));
     }
-    const areaColours = new Set(['home', 'mine', 'station', 'admin'].map(id => expected[id]));
-    if (areaColours.size !== 4) throw new Error('the four area colours are not distinct: ' + JSON.stringify(expected));
-    ['home', 'mine', 'station', 'admin'].forEach((id, index) => {
+    const areaColours = new Set(['home', 'schedule', 'hours', 'station', 'more'].map(id => expected[id]));
+    if (areaColours.size !== 5) throw new Error('the five area colours are not distinct: ' + JSON.stringify(expected));
+    ['home', 'schedule', 'hours', 'station', 'more'].forEach((id, index) => {
       const slot = slots[index];
       const want = slot.active ? expected.accent : expected[id];
       if (slot.colour !== want) {
@@ -294,12 +303,14 @@ try {
     await mobilePage.waitForTimeout(60);
   });
 
-  await test('mobile dock drawer contains only the selected permitted group', async () => {
-    await mobilePage.getByRole('button', { name:'המשמרת', exact:true }).click();
-    const mine = await mobilePage.locator('#resqDockSheet a').evaluateAll(nodes =>
+  await test('mobile more drawer preserves remaining personal and administrative destinations', async () => {
+    await mobilePage.getByRole('button', { name:'עוד', exact:true }).click();
+    const more = await mobilePage.locator('#resqDockSheet a').evaluateAll(nodes =>
       nodes.map(node => new URL(node.href).pathname.split('/').pop()));
-    same(mine, member.filter(href => ['login.html','board.html','guards.html','sign.html','quals.html','alerts.html','people.html'].indexOf(href) === -1),
-      'mine drawer destination set changed');
+    same(more, member.filter(href => [
+      'login.html','schedule-management.html','attendance.html',
+      'board.html','guards.html','sign.html','quals.html','alerts.html','people.html'
+    ].indexOf(href) === -1), 'more drawer destination set changed');
     if (await mobilePage.locator('#resqDockSheet').getAttribute('aria-labelledby') !== 'resqDockTitle') {
       throw new Error('drawer has no accessible name');
     }
@@ -318,7 +329,7 @@ try {
       throw new Error('reverse Tab escaped the dialog');
     }
     await mobilePage.keyboard.press('Escape');
-    if (!await mobilePage.getByRole('button', { name:'המשמרת', exact:true })
+    if (!await mobilePage.getByRole('button', { name:'עוד', exact:true })
       .evaluate(el => document.activeElement === el)) throw new Error('dock focus was not restored');
   });
   await test('mobile opens one group at a time and Escape closes in two stages', async () => {
@@ -378,7 +389,7 @@ try {
     const here = desktopPage.locator('button.door.here');
     if (await here.count() !== 1 || !/המשמרת שלי/.test(await here.textContent())) throw new Error('current group is not marked');
     await here.click();
-    const current = desktopPage.locator('a[aria-current="page"]');
+    const current = desktopPage.locator('#appNav a[aria-current="page"]');
     if (await current.count() !== 1 || await current.textContent() !== 'נוכחות') throw new Error('current page link changed');
   });
   await test('desktop has no horizontal overflow', async () => {

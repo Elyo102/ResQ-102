@@ -1499,7 +1499,7 @@ function appendNotesRow(board, days) {
     if (!ready) cell.title = 'חלק ממידע ההערות אינו זמין';
 
     if (eventsReady) (day.events || []).forEach((event) => {
-      const row = node('div', 'note-item event-note', noteLabel('אירוע', event));
+      const row = node('div', 'note-item event-note', noteLabel(event.kind === 'schedule_note' ? 'הערה' : 'אירוע', event));
       if (event.cancelled === true) {
         row.classList.add('cancelled');
         row.appendChild(node('span', 'note-status', 'בוטל'));
@@ -3759,7 +3759,7 @@ $('editPolicyAck').addEventListener('change', () => { if (state.editReport) $('e
  *  שהמסך ראה (publication_id + revision + חתימה). כל שינוי ברשימה מבטל
  *  את הדוח. תשובה שאבדה — אותה בקשה נשלחת שוב (כמו בייבוא).
  * ================================================================== */
-const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות' };
+const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות', note: 'הערת סידור' };
 const EDIT_ABSENCE_HE = { sick: 'מחלה', reserve: 'מילואים', course: 'קורס', leave: 'חופש' };
 const EDIT_WARN_HE = {
   'assigned-while-absent': 'משובץ ביום שבו רשומה לו היעדרות',
@@ -3838,6 +3838,8 @@ function renderEditControls() {
   $('editRoleWrap').hidden = action !== 'assign' && action !== 'role';
   $('editAbsenceWrap').hidden = action !== 'absence';
   $('editLocationWrap').hidden = action !== 'absence' || $('editAbsence').value !== 'leave';
+  $('editNoteWrap').hidden = action !== 'note';
+  if (action === 'note') $('editNote').disabled = $('editNoteRemove').checked;
   const stationSelect = $('editStation');
   if (!stationSelect.options.length) {
     editStations().forEach((station) => {
@@ -3951,6 +3953,7 @@ function editItemText(item) {
   if (item.kind === 'assign') return name + ' · שיבוץ ל' + editStationLabel(item.sub_station) + (item.role ? ' כ' + (item.role_label || item.role) : '') + ' · ' + when;
   if (item.kind === 'unassign') return name + ' · הסרה מהסידור · ' + when;
   if (item.kind === 'role') return name + ' · תפקיד: ' + (item.role ? (item.role_label || item.role) : 'ללא') + ' · ' + when;
+  if (item.kind === 'note') return name + ' · ' + (item.remove ? 'הסרת הערת סידור' : 'הערת סידור: ' + item.text) + ' · ' + when;
   if (item.absence === null) return name + ' · ביטול היעדרות · ' + when;
   return name + ' · ' + EDIT_ABSENCE_HE[item.absence.kind] + (item.absence.location ? ' (' + ABSENCE_LOCATIONS.get(item.absence.location) + ')' : '') + ' · ' + when;
 }
@@ -3976,6 +3979,7 @@ function editPayload() {
       if (item.kind === 'assign') { out.sub_station = item.sub_station; out.role = item.role || null; }
       if (item.kind === 'role') out.role = item.role || null;
       if (item.kind === 'absence') out.absence = item.absence;
+      if (item.kind === 'note') { out.text = item.text || null; out.remove = item.remove === true; }
       return out;
     })
   };
@@ -4010,6 +4014,10 @@ function addEditItem() {
   } else if (action === 'absence') {
     const kind = $('editAbsence').value;
     item.absence = kind ? Object.assign({ kind }, kind === 'leave' && $('editLocation').value ? { location: $('editLocation').value } : {}) : null;
+  } else if (action === 'note') {
+    item.remove = $('editNoteRemove').checked;
+    item.text = $('editNote').value.replace(/\s+/g, ' ').trim();
+    if (!item.remove && !item.text) { message('editMessage', 'יש לכתוב הערה או לבחור בהסרת ההערה הקיימת.', 'err'); return; }
   }
   if (item.role) {
     const requirement = editStations().flatMap((s) => s.requirements || []).find((r) => r.role === item.role);
@@ -4017,6 +4025,7 @@ function addEditItem() {
   }
   state.editList = state.editList || [];
   state.editList.push(item);
+  if (action === 'note') { $('editNote').value = ''; $('editNoteRemove').checked = false; $('editNote').disabled = false; }
   state.editFormDirty = false;
   message('editMessage', '', 'info');
   invalidateEditReport();
@@ -4039,7 +4048,10 @@ function renderEditReport(report) {
   (report.changes || []).forEach((change) => {
     const row = node('div', 'editchange');
     row.appendChild(node('b', '', change.name + ' · ' + dateLabel(change.date)));
-    row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
+    if (change.kind === 'note') {
+      row.appendChild(node('span', '', change.before.note && !change.after.note ? 'הערת הסידור תוסר'
+        : (change.before.note ? 'הערת הסידור תעודכן' : 'תתווסף הערת סידור')));
+    } else row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
     changes.appendChild(row);
   });
   if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
@@ -4206,6 +4218,8 @@ $('editAction').addEventListener('change', () => { state.editFormDirty = true; r
 $('editStation').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
 $('editRole').addEventListener('change', () => { state.editFormDirty = true; });
 $('editAbsence').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editNoteRemove').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editNote').addEventListener('input', () => { state.editFormDirty = true; });
 $('editAdd').addEventListener('click', managerAction(addEditItem));
 $('editCheck').addEventListener('click', managerAction(checkEdit));
 $('editApply').addEventListener('click', managerAction(applyEdit));

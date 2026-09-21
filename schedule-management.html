@@ -732,6 +732,7 @@
             <option value="unassign">הסרה מהסידור</option>
             <option value="role">שינוי תפקיד</option>
             <option value="absence">היעדרות</option>
+            <option value="note">הערת סידור לעובד</option>
           </select></div>
         <div id="editStationWrap"><label for="editStation">תחנה</label><select id="editStation"></select></div>
         <div id="editRoleWrap"><label for="editRole">תפקיד</label><select id="editRole"><option value="">ללא תפקיד</option></select></div>
@@ -742,6 +743,12 @@
           </select></div>
         <div id="editLocationWrap" hidden><label for="editLocation">מיקום החופש</label>
           <select id="editLocation"><option value="">לא צוין</option><option value="abroad">חו"ל</option><option value="north">צפון</option><option value="eilat">אילת</option></select></div>
+        <div id="editNoteWrap" hidden style="grid-column:1/-1">
+          <label for="editNote">הערה שתופיע בסידור</label>
+          <textarea id="editNote" maxlength="300" rows="3" placeholder="לדוגמה: להגיע לתדריך בשעה 07:30"></textarea>
+          <div class="sub">העובד שנבחר יקבל התראה שהוזכר בהערת סידור. תוכן ההערה יוצג רק בתוך האפליקציה — אין להזין מידע רפואי או פרטי.</div>
+          <label class="req-flag"><input id="editNoteRemove" type="checkbox"> הסר את הערת הסידור של העובד בתאריך שנבחר</label>
+        </div>
       </div>
       <div class="editdates" id="editDates"></div>
       <div class="btns"><button class="btn" id="editAdd" type="button">+ הוסף לרשימת השינויים</button></div>

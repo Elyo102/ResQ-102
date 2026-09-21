@@ -2497,13 +2497,23 @@ try {
     warnings:[{ code:'assigned-while-absent', uid:'crew_1', date: today, name:'טל חודרה' }],
     notifications:1, below_minimum:[], next_revision:5, edit_digest:'ed_1'
   };
+  const noteReport = {
+    base:{ publication_id:'p_live', revision:4, content_digest:'digest_live_4' },
+    from: today.slice(0, 8) + '01', to: shiftDay(today, 20),
+    counts:{ edits:1, changes:1, people:1, dates:1, no_ops:0, below_minimum:0 },
+    changes:[{ kind:'note', uid:'crew_1', date:today, name:'טל חודרה',
+      before:{ note:false }, after:{ note:true }, text_changed:false }],
+    changes_truncated:false,
+    people_changed:[{ uid:'crew_1', name:'טל חודרה', changes:1 }],
+    warnings:[], notifications:1, below_minimum:[], next_revision:5, edit_digest:'ed_note'
+  };
   const editCtx = await browser.newContext({ viewport:{ width:1200, height:1000 }, locale:'he-IL' });
   await prepare(editCtx, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusEditable }, { data:statusEdited }],
     getScheduleManagerSetup:[{ data:setup }],
     getMyScheduleV2:[{ data:mine }, { data:mine }],
     getStationScheduleRange:[{ data:stationRange }, { data:stationRange }, { data:stationRange }, { data:stationRange }],
-    previewScheduleEdit:[{ data:editReport }],
+    previewScheduleEdit:[{ data:noteReport }, { data:editReport }],
     applyScheduleEdit:[
       /* ⭐ ביקורת §7 · תשובה שהגיעה אבל אינה קבלה (בלי publication_id/revision) — עמומה, לא הצלחה. */
       { data:{ ok:true } },
@@ -2547,6 +2557,30 @@ try {
       'matching names remain available for an explicit choice');
     await editPage.locator('#editDrawerClose').click();
   });
+  await test('schedule note requires an explicitly selected person id and sends that uid, not a display-name guess', async () => {
+    await editPage.locator('#editDrawerOpen').click();
+    await editPage.fill('#editSearch', 'טל');
+    await editPage.locator('#editSearchResults button').first().click();
+    await editPage.selectOption('#editRange', 'day');
+    await editPage.fill('#editDate', today);
+    await editPage.locator('#editDate').dispatchEvent('change');
+    await editPage.selectOption('#editAction', 'note');
+    assert.equal(await editPage.locator('#editNoteWrap').isVisible(), true);
+    await editPage.fill('#editNote', 'להגיע לתדריך בשעה 07:30');
+    await editPage.locator('#editAdd').click();
+    assert.match(await editPage.locator('#editList .row b').textContent(), /טל חודרה · הערת סידור/);
+    await editPage.locator('#editCheck').click();
+    await editPage.locator('#editMessage .ok').waitFor();
+    const calls = await editPage.evaluate(() => window.__CALLABLE_CALLS);
+    const preview = calls.filter((entry) => entry.name === 'previewScheduleEdit').at(-1);
+    assert.deepEqual(preview.payload.edits, [{
+      kind:'note', uid:'crew_1', dates:[today], text:'להגיע לתדריך בשעה 07:30', remove:false
+    }]);
+    assert.equal(Object.hasOwn(preview.payload.edits[0], 'name'), false, 'display name must never be the note identity');
+    assert.match(await editPage.locator('#editChanges').textContent(), /תתווסף הערת סידור/);
+    await editPage.locator('#editList .row button').click();
+    await editPage.locator('#editDrawerClose').click();
+  });
   await test('edit card: search a person, pick a week, add an assignment, check — the report is bound to the live publication', async () => {
     await editPage.locator('#editDrawerOpen').click();
     assert.equal(await editPage.locator('#editCard').isVisible(), true);
@@ -2568,7 +2602,7 @@ try {
     await editPage.locator('#editCheck').click();
     await editPage.locator('#editMessage .ok').waitFor();
     const calls = await editPage.evaluate(() => window.__CALLABLE_CALLS);
-    const preview = calls.find((entry) => entry.name === 'previewScheduleEdit');
+    const preview = calls.filter((entry) => entry.name === 'previewScheduleEdit').at(-1);
     assert.deepEqual(preview.payload.expected, { publication_id:'p_live', revision:4, content_digest:'digest_live_4' });
     assert.equal(preview.payload.edits.length, 1);
     assert.deepEqual([preview.payload.edits[0].kind, preview.payload.edits[0].uid, preview.payload.edits[0].sub_station, preview.payload.edits[0].role], ['assign', 'crew_1', 'main', 'firefighter']);
@@ -2605,7 +2639,7 @@ try {
     assert.equal(applies[0].payload.expected_edit_digest, 'ed_1');
     assert.ok(applies[0].payload.request_id);
     assert.deepEqual(applies[0].payload.expected, { publication_id:'p_live', revision:4, content_digest:'digest_live_4' });
-    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleEdit').length, 1, 'no second report was requested');
+    assert.equal(calls.filter((entry) => entry.name === 'previewScheduleEdit').length, 2, 'the apply retry does not request another report');
     assert.equal(await editPage.locator('#editList .row').count(), 0, 'the list is cleared after a verified answer');
     assert.equal(await editPage.locator('#editApply').isEnabled(), false);
     assert.equal(calls.filter((entry) => entry.name === 'getScheduleRuntimeStatus').length, 2, 'status refreshed after the edit');
@@ -3532,5 +3566,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 89);
+assert.equal(passed, 90);
 console.log('\n' + passed + ' schedule management browser checks passed.');

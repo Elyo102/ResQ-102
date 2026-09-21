@@ -9,7 +9,7 @@
 // ההסתרה כאן היא נוחות, לא הגנה.
 
 // נקודת הצבע היא זיהוי מהיר של מדור, לא קישוט. כפתור צבעוני
-// שלם לכל מדור היה גורם לארבעה כפתורים להתחרות זה בזה, ואז
+// שלם לכל מדור היה גורם לכפתורים להתחרות זה בזה, ואז
 // אף אחד לא בולט.
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
@@ -386,11 +386,11 @@ function styleOnce() {
 /* ======================================================================
  *  אייקוני התפריט התחתון — „סט A"
  *
- *  ארבעה אייקונים בקו אחד (lucide): בית, לוח־שנה־עם־שעון, בניין,
+ *  חמישה אייקונים בקו אחד (lucide): בית, סידור, דיווח שעות, בניין,
  *  ושלוש נקודות. כולם מצוירים ב-`currentColor`, ולכן צבע האזור הוא
- *  מאפיין CSS אחד ולא ארבעה קבצים.
+ *  מאפיין CSS אחד ולא חמישה קבצים.
  *
- *  למה inline ולא קובץ אייקונים: ארבעה אייקונים אינם שווים בקשת רשת
+ *  למה inline ולא קובץ אייקונים: חמישה אייקונים אינם שווים בקשת רשת
  *  נוספת בסרגל שנטען בכל מסך, ובוודאי לא בטלפון ברשת של תחנה.
  *  ולמה `createElementNS` ולא `innerHTML`: SVG חי במרחב שמות אחר,
  *  ו-`innerHTML` על מחרוזת קבועה הוא הרגל שמישהו יעתיק מחר על
@@ -399,8 +399,11 @@ function styleOnce() {
 const DOCK_ICONS = {
   // home
   home: ['m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M9 22V12h6v10'],
+  // calendar-days
+  schedule: ['M8 2v4', 'M16 2v4', 'M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+    'M8 14h.01', 'M12 14h.01', 'M16 14h.01', 'M8 18h.01', 'M12 18h.01'],
   // calendar-clock
-  mine: ['M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5',
+  hours: ['M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5',
     'M16 2v4', 'M8 2v4', 'M3 10h5', 'M16 14v2.5l1.5 1.5',
     'M16 22a6 6 0 1 0 0-12 6 6 0 0 0 0 12z'],
   // building-2
@@ -409,7 +412,7 @@ const DOCK_ICONS = {
     'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2',
     'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'],
   // more-horizontal
-  admin: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01']
+  more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01']
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -443,6 +446,7 @@ function fillDockItem(element, id, label) {
   text.textContent = label;
   element.appendChild(text);
   element.setAttribute('aria-label', label);
+  element.dataset.dockId = id;
   element.style.setProperty('--dock-ico', 'var(--dock-' + id + ')');
 }
 
@@ -663,20 +667,29 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
     if (restore) restore.focus();
   }
 
+  const directDockPages = new Set(['schedule-management.html', 'attendance.html']);
+  function dockMoreItems(){
+    return ITEMS.filter(function (item) {
+      if (item.href === 'login.html' || directDockPages.has(item.href)) return false;
+      return (item.group === 'mine' || item.group === 'admin')
+        && allowed(item.who, claims, presentation);
+    });
+  }
+
   function openDockPanel(groupId, trigger){
     const group = GROUPS.find(function (item) { return item.id === groupId; });
-    const items = ITEMS.filter(function (item) {
+    const items = groupId === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
       return item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims, presentation);
     });
     dockSheet.replaceChildren();
     const title = document.createElement('h2');
     title.id = 'resqDockTitle';
-    title.textContent = group ? group.label : 'עוד';
+    title.textContent = groupId === 'more' ? 'עוד פעולות' : (group ? group.label : 'עוד');
     dockSheet.appendChild(title);
     const grid = document.createElement('div');
     grid.className = 'dockGrid';
     items.forEach(function (item) { grid.appendChild(linkFor(item)); });
-    if (groupId === 'admin') {
+    if (groupId === 'more') {
       const theme = themeButton('dockThemeBtn');
       theme.classList.add('dockTheme');
       grid.appendChild(theme);
@@ -704,15 +717,32 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   }
   dock.appendChild(home);
 
+  function directDockLink(href, id, label, accessibleLabel, targetHref) {
+    const item = ITEMS.find(function (candidate) { return candidate.href === href; });
+    if (!item || !allowed(item.who, claims, presentation)) return;
+    const link = linkFor(item);
+    if (link.getAttribute('aria-disabled') !== 'true') link.href = './' + (targetHref || href);
+    fillDockItem(link, id, label);
+    link.setAttribute('aria-label', accessibleLabel || label);
+    if (current === href) {
+      link.className = 'on';
+      link.setAttribute('aria-current', 'page');
+    }
+    dock.appendChild(link);
+  }
+
+  directDockLink('schedule-management.html', 'schedule', 'סידור', 'סידור עבודה',
+    'schedule-management.html?tab=mine');
+  directDockLink('attendance.html', 'hours', 'שעות', 'דיווח שעות');
+
   [
-    { id:'mine', label:'המשמרת' },
     { id:'station', label:'התחנה' },
-    { id:'admin', label:'עוד' }
+    { id:'more', label:'עוד' }
   ].forEach(function (entry) {
-    const permitted = ITEMS.filter(function (item) {
+    const permitted = entry.id === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
       return item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims, presentation);
     });
-    if (!permitted.length && entry.id !== 'admin') return;
+    if (!permitted.length && entry.id !== 'more') return;
     const button = document.createElement('button');
     button.type = 'button';
     fillDockItem(button, entry.id, entry.label);

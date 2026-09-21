@@ -41,6 +41,9 @@ const CHANGE = Object.freeze({
   EVENT_ASSIGNED: 'event_assigned',
   EVENT_CHANGED: 'event_changed',
   EVENT_CANCELLED: 'event_cancelled',
+  NOTE_MENTIONED: 'note_mentioned',
+  NOTE_CHANGED: 'note_changed',
+  NOTE_REMOVED: 'note_removed',
   /* ⭐ 42H.2 · היעדרות היא חלק מהסידור של האדם: נרשמה, הוסרה או השתנתה
    * — הוא מקבל הודעה כמו על שיבוץ. **הסיבה לעולם אינה בהודעה**
    * (מחלה/מילואים/קורס/חופש ומיקום נשארים באפליקציה בלבד). */
@@ -236,6 +239,7 @@ function createPublication(deps) {
         if (!view.has(p)) view.set(p, new Map());
         view.get(p).set(e.id, {
           id: e.id,
+          kind: e.kind === 'schedule_note' ? 'schedule_note' : 'event',
           title: e.title,
           date: e.date,
           hours: isNonEmptyString(e.hours) ? e.hours : null,
@@ -375,11 +379,19 @@ function createPublication(deps) {
     for (const id of Array.from(ids).sort()) {
       const a = prev ? prev.get(id) : undefined;
       const b = next ? next.get(id) : undefined;
+      const note = (a && a.kind === 'schedule_note') || (b && b.kind === 'schedule_note');
       if (!a && b) {
-        out.push({ kind: b.cancelled ? CHANGE.EVENT_CANCELLED : CHANGE.EVENT_ASSIGNED, date: b.date, to: b });
+        out.push({ kind: note ? CHANGE.NOTE_MENTIONED
+          : (b.cancelled ? CHANGE.EVENT_CANCELLED : CHANGE.EVENT_ASSIGNED), date: b.date, to: b });
         continue;
       }
-      if (a && !b) { out.push({ kind: CHANGE.EVENT_CANCELLED, date: a.date, from: a }); continue; }
+      if (a && !b) { out.push({ kind: note ? CHANGE.NOTE_REMOVED : CHANGE.EVENT_CANCELLED, date: a.date, from: a }); continue; }
+      if (note) {
+        if (a.date !== b.date || a.title !== b.title || a.cancelled !== b.cancelled) {
+          out.push({ kind: CHANGE.NOTE_CHANGED, date: b.date, from: a, to: b });
+        }
+        continue;
+      }
       if (!a.cancelled && b.cancelled) { out.push({ kind: CHANGE.EVENT_CANCELLED, date: b.date, from: a, to: b }); continue; }
       if (a.cancelled && !b.cancelled) { out.push({ kind: CHANGE.EVENT_ASSIGNED, date: b.date, from: a, to: b }); continue; }
       if (a.date !== b.date || a.hours !== b.hours || a.title !== b.title) {
@@ -510,6 +522,9 @@ function createPublication(deps) {
     event_assigned: 'שובצת לאירוע',
     event_changed: 'אירוע עודכן',
     event_cancelled: 'אירוע ירד',
+    note_mentioned: 'נוספה עבורך הערת סידור',
+    note_changed: 'הערת הסידור שלך עודכנה',
+    note_removed: 'הערת הסידור שלך הוסרה',
     // ⭐ היעדרות — בלי הסיבה. „נרשמה היעדרות · 4/9" ותו לא.
     absence_added: 'נרשמה היעדרות',
     absence_removed: 'הוסרה היעדרות',
