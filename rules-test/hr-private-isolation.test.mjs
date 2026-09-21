@@ -30,6 +30,10 @@ actors.push({ label: 'signed-super-without-local-profile', uid: run + '_super', 
   { label: 'string-super', uid: run + '_string', role: 'firefighter', emp: '8101', stationId: sid, super: 'true', member: true },
   { label: 'other-station-HR', uid: run + '_other', role: 'hr_coordinator', emp: '8102', stationId: otherSid, member: true },
   { label: 'unauthenticated', uid: run + '_anon', unauthenticated: true });
+const EXPECTED_ACTOR_COUNT = 13;
+const EXPECTED_PRIVATE_PATH_COUNT = 37;
+const EXPECTED_OPERATION_COUNT = 6;
+assert.equal(actors.length, EXPECTED_ACTOR_COUNT, 'the denial matrix has every expected actor');
 
 function paths(uid) {
   const id = hash(uid), base = 'stations/' + sid;
@@ -73,7 +77,8 @@ for (const actor of actors) {
   if (actor.stationId) seed('stations/' + actor.stationId + '/users/' + actor.uid, {
     uid: actor.uid, role: actor.role, stationId: actor.stationId, employee_number: actor.emp,
     crew: 'A', active: true, is_active: true, full_name: 'Synthetic fixture' });
-  assert.equal(paths(actor.uid).length, 37);
+  assert.equal(paths(actor.uid).length, EXPECTED_PRIVATE_PATH_COUNT,
+    'every actor exercises all private HR paths, including the four monthly-report paths');
   for (const target of paths(actor.uid)) {
     seed(target, { uid: actor.uid, owner_uid: actor.uid, recipient_uid: actor.uid, target_uid: actor.uid,
       actor_uid: actor.uid, by_uid: actor.uid, station_id: sid, stationId: sid, status: 'open',
@@ -124,9 +129,12 @@ try {
       const results = await Promise.allSettled(checks.map(([kind, action]) => exactDenied(actor.label + ' ' + kind + ' ' + target, action)));
       const failure = results.find(value => value.status === 'rejected'); if (failure) throw failure.reason;
     }
-    console.log('PASS ' + actor.label + ': all33 private paths deny get, list, own-filtered list, create, update and delete');
+    console.log('PASS ' + actor.label + ': all' + EXPECTED_PRIVATE_PATH_COUNT
+      + ' private paths deny get, list, own-filtered list, create, update and delete');
   }
-  assert.equal(denied, actors.length * 33 * 6);
+  assert.equal(denied,
+    EXPECTED_ACTOR_COUNT * EXPECTED_PRIVATE_PATH_COUNT * EXPECTED_OPERATION_COUNT,
+    'actor count × private path count × operation count must all be represented');
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     for (const [target, value] of seeded) assert.deepEqual((await getDocFromServer(doc(db, target))).data(), value, 'denials preserve data');

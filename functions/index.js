@@ -212,7 +212,9 @@ exports.prepareMaintenanceHandoff = onCall(MAINTENANCE_OPTIONS, req => maintenan
 const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
-exports.getHrOverHoursAlert = onCall({ enforceAppCheck: true }, async (req) => hrHours.overHoursAlert(req));
+// Compatibility name for cached clients. The implementation is deliberately
+// backed by the current monthly summary, never by the retired hr_reports feed.
+exports.getHrOverHoursAlert = onCall({ enforceAppCheck: true }, async (req) => getHrOverHoursCompatibility(req));
 exports.saveHrEmployeeReview = onCall({ region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60, memory: '256MiB', maxInstances: 3, concurrency: 1 }, async (req) => hrHours.reviewEmployeeMonth(req));
 const hrWorkforce = hrWorkforceModule.createHrWorkforce({ db, auth: admin.auth(), HttpsError });
 const HR_WORKFORCE_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
@@ -4088,6 +4090,15 @@ exports.getHrMonthlyOverHours = onCall(HR_MONTHLY_OPTIONS, async (req) => {
   const data = hrMonthlyFields(req, ['month']);
   return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(data.month) });
 });
+
+// Old app builds call this name with no body. Preserve that transport contract,
+// but return the same three-state truth as the current HR screen. In particular,
+// a missing monthly build is `not_built`, never a misleading empty alert.
+async function getHrOverHoursCompatibility(req) {
+  const ctx = hrMonthlyContext(req);
+  hrMonthlyFields(req, []);
+  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(undefined) });
+}
 
 // הרצה ידנית מורשת, לתחנה של הקורא בלבד, לצורכי בדיקה
 // ושחזור. אותה כוונה = אותו דור; כוונה אחרת = דור חדש שמוחלף

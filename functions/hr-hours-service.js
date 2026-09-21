@@ -194,11 +194,13 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
     await finalize(requestContext, fences);
     return response;
   }
-  // 42H.20 §8.1 · HR 265-hour visibility, information/follow-up only.
+  // Retired internal reader retained for isolated legacy service tests only.
+  // There is no live writer for `hr_reports`; no public callable may use this
+  // method. The compatibility callable in index.js is backed by hrMonthly and
+  // preserves the honest not_built / clear / over distinction.
   //
   // Reads only the latest already-built stations/{sid}/hr_reports/{month}
-  // document (written monthly by the existing report job) - never scans the
-  // roster or attendance itself, so this never grows with employee count.
+  // document and never scans the roster or attendance itself.
   // over_employees on that document is already bounded to at most 200
   // entries at write time. No approve/reject, no per-person decision, no
   // schedule/publication effect: this only returns what to show HR.

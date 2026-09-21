@@ -30,9 +30,10 @@ vm.runInNewContext(registration, { db, HttpsError, exports, FV:{serverTimestamp(
     assert.equal(deps.auth, injectedAuth);
     assert.equal(deps.db, db); assert.equal(deps.HttpsError, HttpsError);
     received.push(deps);
-    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }), overHoursAlert: req => ({ method: 'overHours', req }), reviewEmployeeMonth: req => reviewCall(req) };
+    return { listMonth: req => ({ method: 'list', req }), getEmployeeMonth: req => ({ method: 'detail', req }), overHoursAlert: req => ({ method: 'retired-overHours', req }), reviewEmployeeMonth: req => reviewCall(req) };
   } },
-  onCall(options, handler) { registered.push(options); return handler; }
+  onCall(options, handler) { registered.push(options); return handler; },
+  getHrOverHoursCompatibility(req) { return { method: 'overHoursCompatibility', req }; }
 });
 await check('actual export block creates one service with exact db Auth and HttpsError', async () => {
   assert.equal(received.length, 1);
@@ -45,8 +46,29 @@ await check('three actual read-only callables enforce AppCheck and forward origi
   registered.slice(0,3).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
   const request = { auth: { uid: 'synthetic-reviewer' }, data: { month: '2026-09' } };
   const list = await exports.getHrMonthReports(request), detail = await exports.getHrEmployeeReport(request), overHours = await exports.getHrOverHoursAlert(request);
-  assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail'); assert.equal(overHours.method, 'overHours');
+  assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail'); assert.equal(overHours.method, 'overHoursCompatibility');
   assert.equal(list.req, request); assert.equal(detail.req, request); assert.equal(overHours.req, request);
+});
+await check('legacy alert export is wired to the current monthly truth, never the retired reader', async () => {
+  assert.match(registration, /exports\.getHrOverHoursAlert\s*=\s*onCall\([^\n]+getHrOverHoursCompatibility\(req\)/);
+  assert.doesNotMatch(registration, /exports\.getHrOverHoursAlert\s*=.*hrHours\.overHoursAlert/);
+});
+await check('legacy alert compatibility keeps an empty body and returns current monthly truth', async () => {
+  const source = index.match(/async function getHrOverHoursCompatibility\(req\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(source, 'compatibility function exists');
+  const capture = {}, calls = [], request = Object.freeze({ auth: Object.freeze({ uid: 'legacy-client' }) });
+  vm.runInNewContext(source + '\ncapture.fn = getHrOverHoursCompatibility;', {
+    capture,
+    hrMonthlyContext(req) { assert.equal(req, request); return { sid: 'fixture_station' }; },
+    hrMonthlyFields(req, keys) { assert.equal(req, request); assert.deepEqual([...keys], []); return {}; },
+    hrMonthlyMonth(value) { assert.equal(value, undefined); return '2026-08'; },
+    hrMonthly: { overHours(input) { calls.push(input); return { state: 'not_built', month: input.month,
+      hour_limit: null, coverage: null, over_employees: [] }; } }
+  });
+  const value = await capture.fn(request);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ station_id: 'fixture_station', month: '2026-08' }]);
+  assert.equal(value.state, 'not_built');
+  assert.equal(value.month, '2026-08');
 });
 await check('review callable has exact bounded options and preserves completion and rejection',async()=>{
   assert.deepEqual(Object.keys(exports).sort(),['getHrEmployeeReport','getHrMonthReports','getHrOverHoursAlert','saveHrEmployeeReview']);
