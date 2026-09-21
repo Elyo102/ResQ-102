@@ -49,7 +49,7 @@ const SHELL = [
   './hr-attachments-ui.js', './hr-attachments-ui.css',
   './maintenance.html', './maintenance-client.js', './maintenance.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
-  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-siren.mp3', './stats.html', './people.html',
+  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-roster-cache.js', './callout-siren.mp3', './stats.html', './people.html',
   './vehicle.html', './sign.html',
   './index.html',
   './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',

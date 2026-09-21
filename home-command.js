@@ -1,4 +1,5 @@
 import { assertPresentationOnly } from './role-view.js?v=42h29';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h29';
 
 const ACTION_HREF = Object.freeze({
   open_document:'./hr.html', open_schedule_review:'./schedule-management.html',
@@ -137,6 +138,17 @@ function loadHomeCommand(session) {
   });
 }
 
+function prefetchCalloutRoster(session) {
+  if (session.readOnly || !['commander','deputy'].includes(session.role) ||
+      !/^[a-z0-9_-]{2,80}$/.test(session.sid) || !['A','B','C'].includes(session.crew) ||
+      readCalloutRosterCache(session).length) return;
+  Promise.resolve(session.listRecipients({ crew:session.crew })).then(response => {
+    if (active !== session) return;
+    const data = response && response.data && typeof response.data === 'object' ? response.data : {};
+    if (Array.isArray(data.recipients)) writeCalloutRosterCache(session, data.recipients);
+  }).catch(() => {});
+}
+
 export function destroyHomeCommand() {
   const prior = active; active = null;
   if (!prior) return;
@@ -154,12 +166,15 @@ export function initHomeCommand(options) {
   const displayRole = claims && claims.super === true && assertPresentationOnly(presentation)
     ? presentation.role_id : roleOf(claims);
   const session = { uid:user.uid, role:displayRole, readOnly:assertPresentationOnly(presentation), elements,
-    call:sdk.httpsCallable(functions, 'getHomeCommandCenter'), loadId:0 };
+    sid:text(claims && claims.stationId, 80), crew:text(claims && claims.shift, 1),
+    call:sdk.httpsCallable(functions, 'getHomeCommandCenter'),
+    listRecipients:sdk.httpsCallable(functions, 'listCalloutRecipients'), loadId:0 };
   session.retry = () => { if (active === session) loadHomeCommand(session); };
   active = session;
   applyRoleCopy(session);
   elements.retry.addEventListener('click', session.retry);
   loadHomeCommand(session);
+  prefetchCalloutRoster(session);
   return Object.freeze({ destroy:() => { if (active === session) destroyHomeCommand(); } });
 }
 export const HOME_COMMAND_ACTION_HREF = ACTION_HREF;

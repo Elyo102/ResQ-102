@@ -11,6 +11,7 @@ const serverSource = fs.readFileSync(path.join(root, 'functions', 'index.js'), '
 const navSource = fs.readFileSync(path.join(root, 'nav.js'), 'utf8');
 const alertsSource = fs.readFileSync(path.join(root, 'alerts.html'), 'utf8');
 const consoleSource = fs.readFileSync(path.join(root, 'callout-console.js'), 'utf8');
+const cacheSource = fs.readFileSync(path.join(root, 'callout-roster-cache.js'), 'utf8');
 
 function exported(name) {
   const start = serverSource.indexOf('exports.' + name + ' =');
@@ -49,6 +50,12 @@ assert.match(serverSource, /\.where\('crew', '==', crewFilter\)\.get\(\)/,
   'recipient listing is bounded to the requested crew in Firestore');
 assert.match(consoleSource, /listCalloutRecipients/);
 assert.match(consoleSource, /withTimeout\(session\.listCalloutRecipients/);
+assert.match(cacheSource, /\[scope && scope\.uid, scope && scope\.sid, scope && scope\.crew\]/,
+  'roster cache is isolated by signed identity, station and crew');
+assert.match(cacheSource, /storage\.setItem\(calloutRosterCacheKey\(scope\)/,
+  'short-lived roster cache stays inside the current app session');
+assert.doesNotMatch(cacheSource, /localStorage\.(?:getItem|setItem)[\s\S]{0,80}callout_roster/,
+  'station roster must not become a long-lived browser cache');
 assert.match(sendSource, /runtimeValue\.silent === true/);
 assert.match(sendSource, /intent_fingerprint/);
 assert.match(consoleSource, /where\('by_uid', '==', session\.uid\)/);
@@ -78,6 +85,16 @@ async function open(browser, role, extra = {}, setup = {}) {
     if (setup && setup.rosterGetDocsHang) window.__ROSTER_GETDOCS_HANG = true;
     if (setup && setup.rosterPlan) window.__ROSTER_PLAN = setup.rosterPlan;
     if (setup && setup.callablePlan) window.__CALLABLE_PLAN = setup.callablePlan;
+    if (setup && setup.rosterCache) {
+      const cache = setup.rosterCache;
+      const key = 'resq_callout_roster_v1:' + [role + '-callout', cache.sid || 'eilat_102', cache.crew || 'B']
+        .map(value => encodeURIComponent(String(value))).join(':');
+      sessionStorage.setItem(key, JSON.stringify({
+        schema:1,
+        saved_at_ms:Date.now() - Number(cache.ageMs || 0),
+        rows:cache.rows || []
+      }));
+    }
   }, { role, extra, setup });
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -172,6 +189,52 @@ try {
     assert.deepEqual(call.payload.uids, ['u4']);
   });
   await fastFallback.context.close();
+
+  const warmCache = await open(browser, 'commander', {}, {
+    recipientTimeoutMs:60000,
+    rosterGetDocsHang:true,
+    rosterCache:{ rows:[{ uid:'u4', name:'דנה מהמטמון', crew:'B' }] },
+    callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
+  });
+  await check('a warm scoped cache paints recipient checkboxes before the network returns', async () => {
+    await warmCache.page.locator('.recipient-item').filter({ hasText:'דנה מהמטמון' })
+      .waitFor({ state:'visible', timeout:750 });
+    assert.equal(await warmCache.page.locator('#recipientList').getAttribute('aria-busy'), 'false');
+    assert.equal(await warmCache.page.locator('#recipientNone').isDisabled(), false);
+    assert.match(await warmCache.page.locator('#recipientSummary').textContent(), /רשימה השמורה מתעדכנת/);
+  });
+  await warmCache.context.close();
+
+  const refreshedCache = await open(browser, 'commander', {}, {
+    rosterGetDocsHang:true,
+    rosterCache:{ rows:[{ uid:'u4', name:'דנה ישנה במטמון', crew:'B' }] },
+    callablePlan:{ listCalloutRecipients:[{ delay:120, data:{ recipients:[
+      { uid:'u4', name:'דנה מעודכנת מהשרת', crew:'B' }
+    ] } }] }
+  });
+  await check('authoritative refresh replaces a stale cached display row', async () => {
+    await refreshedCache.page.locator('.recipient-item').filter({ hasText:'דנה ישנה במטמון' })
+      .waitFor({ state:'visible', timeout:750 });
+    await refreshedCache.page.locator('.recipient-item').filter({ hasText:'דנה מעודכנת מהשרת' })
+      .waitFor({ state:'visible', timeout:1500 });
+    assert.equal(await refreshedCache.page.locator('.recipient-item').filter({ hasText:'דנה ישנה במטמון' }).count(), 0);
+  });
+  await refreshedCache.context.close();
+
+  const wrongScopeCache = await open(browser, 'commander', {}, {
+    recipientTimeoutMs:30,
+    rosterGetDocsHang:true,
+    rosterCache:{ sid:'other_station', rows:[{ uid:'u4', name:'אסור להציג', crew:'B' }] },
+    callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
+  });
+  await check('a cache from another station is ignored', async () => {
+    await wrongScopeCache.page.waitForFunction(() =>
+      !(document.querySelector('#recipientSummary')?.textContent || '').includes('טוען'),
+      null, { timeout:1500 });
+    assert.equal(await wrongScopeCache.page.getByText('אסור להציג', { exact:true }).count(), 0);
+    assert.match(await wrongScopeCache.page.locator('#recipientSummary').textContent(), /לא זמינה כרגע/);
+  });
+  await wrongScopeCache.context.close();
 
   const authoritativeFirst = await open(browser, 'commander', {}, {
     callablePlan:{ listCalloutRecipients:[{ data:{ recipients:[
@@ -387,16 +450,21 @@ try {
     window.__FIRESTORE_DELIVER_CAPTURED('/callouts/status-callout/responses', [
       { id:'u2', data:{ seen_at:'2026-09-14T10:00:00.000Z', resp:'coming' } },
       { id:'u3', data:{ seen_at:'2026-09-14T10:00:00.000Z', resp:'no', reason:'מחלה' } },
-      { id:'u4', data:{ seen_at:'2026-09-14T10:00:00.000Z' } }
+      { id:'u4', data:{ seen_at:'2026-09-14T10:00:00.000Z' } },
+      { id:'rogue', data:{ seen_at:'2026-09-14T10:00:00.000Z', resp:'coming' } }
     ], { oldest:true }));
   assert.equal(responsesDelivered, true);
   await check('console separates unseen, seen-only, accepted and rejected recipients', async () => {
     const value = await statuses.page.locator('#calloutLive').textContent();
     assert.match(value, /טרם הוצג 1/);
     assert.match(value, /הוצג, טרם ענה 1/);
-    assert.match(value, /אישר הגעה 1/);
-    assert.match(value, /דחה 1/);
+    assert.match(value, /אישרו הגעה:/);
+    assert.match(value, /דחו הגעה:/);
     assert.match(value, /מחלה/);
+    assert.match(value, /נשלח אל4/);
+    assert.match(value, /נצפה3/);
+    assert.match(value, /אישרו \/ בדרך1/);
+    assert.doesNotMatch(value, /rogue/);
   });
   await statuses.context.close();
 

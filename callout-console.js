@@ -3,6 +3,7 @@ import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
 import { CREW_HE } from './rotation.js?v=42h29';
 import { errorText, logError } from './error-text.js?v=42h29';
 import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h29';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h29';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;
@@ -160,6 +161,9 @@ function renderRecipients(session) {
       : (session.rosterLoaded
         ? 'ברירת מחדל: כל אנשי ' + (CREW_HE[session.crew] || ('משמרת ' + session.crew)) + '. אפשר לבחור לוחמים ספציפיים מהרשימה.'
         : 'טוען רשימת לוחמים לבחירה פרטנית…');
+    if (session.rosterSource === 'cache' && session.rosterLoaded) {
+      session.elements.recipientSummary.textContent += ' הרשימה השמורה מתעדכנת כעת ברקע.';
+    }
   }
 }
 
@@ -174,8 +178,13 @@ function renderLive(session, list) {
     const legacy = value.acks && typeof value.acks === 'object' ? value.acks : {};
     const modern = value.responses && typeof value.responses === 'object' ? value.responses : {};
     const acks = { ...legacy, ...modern };
+    // A response is evidence for this callout only when its uid belongs to the
+    // immutable dispatch audience. Old/corrupt response rows must not inflate
+    // a commander's live totals. Legacy rows without uids keep their historical
+    // behaviour until they are closed.
+    const canonical = uids.length ? new Set(uids) : null;
     const coming = [], unavailable = [], seenOnly = [];
-    Object.keys(acks).forEach(uid => {
+    Object.keys(acks).filter(uid => !canonical || canonical.has(uid)).forEach(uid => {
       const answer = acks[uid] || {};
       if (answer.resp === 'coming') {
         coming.push(rosterName(session, uid));
@@ -190,6 +199,8 @@ function renderLive(session, list) {
       return answer.resp === 'coming' || answer.resp === 'no' || Boolean(answer.seen_at);
     }));
     const pendingNames = uids.filter(uid => !answered.has(uid)).map(uid => rosterName(session, uid));
+    const sentNames = uids.map(uid => rosterName(session, uid));
+    const viewedCount = coming.length + unavailable.length + seenOnly.length;
 
     const card = document.createElement('article');
     card.className = 'callout-row';
@@ -200,9 +211,33 @@ function renderLive(session, list) {
     body.textContent = text(value.text, 300);
     const tally = document.createElement('div');
     tally.className = 'tally';
-    tally.textContent = 'טרם הוצג ' + pendingNames.length + ' · הוצג, טרם ענה ' + seenOnly.length +
-      ' · אישר הגעה ' + coming.length + ' · דחה ' + unavailable.length;
-    card.append(heading, body, tally);
+    tally.textContent = 'טרם הוצג ' + pendingNames.length + ' · הוצג, טרם ענה ' + seenOnly.length;
+    const metrics = document.createElement('div');
+    metrics.className = 'callout-metrics';
+    [
+      ['נשלח אל', uids.length],
+      ['נצפה', viewedCount],
+      ['אישרו / בדרך', coming.length],
+      ['דחו', unavailable.length]
+    ].forEach(([label, count]) => {
+      const metric = document.createElement('div');
+      const number = document.createElement('strong');
+      const caption = document.createElement('span');
+      number.textContent = String(count);
+      caption.textContent = label;
+      // Label precedes the number in DOM order so screen readers announce
+      // the meaning before the value; CSS still gives the number emphasis.
+      metric.append(caption, number);
+      metrics.appendChild(metric);
+    });
+    card.append(heading, body, metrics, tally);
+
+    if (sentNames.length) {
+      const row = document.createElement('small');
+      row.className = 'callout-sent-to';
+      row.textContent = 'נשלח אל: ' + sentNames.join(', ');
+      card.appendChild(row);
+    }
 
     if (coming.length) {
       const row = document.createElement('small');
@@ -306,6 +341,7 @@ async function loadRoster(session) {
       session.rosterSource = label;
       session.rosterFailed = false;
       session.rosterLoaded = true;
+      writeCalloutRosterCache(session, rows);
       renderRecipients(session);
       return label;
     } catch (error) {
@@ -321,18 +357,22 @@ async function loadRoster(session) {
 
 async function reloadRoster(session) {
   if (active !== session) return;
+  const hasCachedRows = session.rosterSource === 'cache' && session.roster.size > 0;
   session.rosterFailed = false;
-  session.rosterLoaded = false;
+  session.rosterLoaded = hasCachedRows;
   renderRecipients(session);
   try {
     await loadRoster(session);
   } catch (error) {
     if (active !== session) return;
-    session.rosterFailed = true;
+    session.rosterFailed = !hasCachedRows;
     session.rosterLoaded = true;
     renderRecipients(session);
     setMessage(session.elements.message,
-      'רשימת השמות לא נטענה כרגע. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ' + errorText(error), 'err');
+      hasCachedRows
+        ? 'מוצגת רשימה שמורה. הרענון נכשל, והשרת יאמת מחדש כל נמען בזמן השליחה. ' + errorText(error)
+        : 'רשימת השמות לא נטענה כרגע. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ' + errorText(error),
+      hasCachedRows ? 'info' : 'err');
   }
 }
 
@@ -435,6 +475,12 @@ export async function initCalloutConsole(options = {}) {
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
   };
   active = session;
+  const cachedRows = readCalloutRosterCache(session);
+  if (cachedRows.length) {
+    applyRosterRows(session, cachedRows);
+    session.rosterSource = 'cache';
+    session.rosterLoaded = true;
+  }
   session.elements.crew.textContent = CREW_HE[crew] || ('משמרת ' + crew);
   if (session.elements.recipientAll) session.elements.recipientAll.onclick = () => {
     if (session.pendingRequest) {

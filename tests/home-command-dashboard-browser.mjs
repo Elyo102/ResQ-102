@@ -194,6 +194,27 @@ try {
         .filter(entry => entry.name === 'getHomeCommandCenter'));
       assert.equal(calls.length, 1);
     });
+    if (role === 'commander' || role === 'deputy') {
+      await check('release · ' + role + ' home preloads a scoped callout roster cache', async () => {
+        await home.page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+          .some(entry => entry.name === 'listCalloutRecipients'));
+        const saved = await home.page.evaluate((roleName) => {
+          const uid = 'home-command-' + roleName;
+          const key = 'resq_callout_roster_v1:' + [uid, 'eilat_102', 'B']
+            .map(value => encodeURIComponent(value)).join(':');
+          return JSON.parse(sessionStorage.getItem(key) || 'null');
+        }, role);
+        assert.equal(saved.schema, 1);
+        assert.ok(Array.isArray(saved.rows) && saved.rows.length > 0);
+        assert.ok(saved.rows.every(row => row.crew === 'B'));
+      });
+    } else {
+      await check('security · ' + role + ' home does not preload command roster data', async () => {
+        const calls = await home.page.evaluate(() => (window.__CALLABLE_CALLS || [])
+          .filter(entry => entry.name === 'listCalloutRecipients'));
+        assert.equal(calls.length, 0);
+      });
+    }
     await check('release · ' + role + ' receives the approved role hierarchy', async () => {
       const expectedFamily = role === 'firefighter' ? 'member'
         : role === 'hr' ? 'hr' : role === 'super' ? 'admin' : 'command';

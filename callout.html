@@ -36,6 +36,11 @@
   button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--txt);border:1px solid var(--line);padding:8px 12px}
   .msg{display:none;margin-top:10px;border-radius:9px;padding:10px}.msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}.msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}.msg.info{display:block;background:var(--chip);color:var(--dim)}
   .hide{display:none!important}.callout-row{border-top:1px solid var(--line);padding:13px 0}.callout-row:first-child{border-top:0}.callout-row p{white-space:pre-wrap;word-break:break-word}.callout-row small{display:block;color:var(--muted);margin-top:5px}.tally{font-weight:700;color:var(--accent-txt)}
+  .callout-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+  .callout-metrics>div{display:grid;place-items:center;gap:2px;min-height:64px;padding:8px 4px;border:1px solid var(--line);border-radius:10px;background:var(--chip);text-align:center}
+  .callout-metrics strong{font-size:20px;color:var(--callout-heading)}
+  .callout-metrics span{font-size:11px;color:var(--muted);font-weight:700}
+  .callout-sent-to{padding:8px;border-radius:8px;background:var(--input);border:1px solid var(--line);line-height:1.55}
   /* Approved Gemini visual language; existing console and authorization stay intact. */
   /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה
      בהירה תמיד ב-theme.css. אלה ערכי-על מקומיים לעמוד הזה בלבד
@@ -54,6 +59,7 @@
   .wrap #calloutSend{width:100%}
   .wrap :is(button,input,select,textarea):focus-visible{outline:3px solid #347dbd;outline-offset:3px}
   .wrap .callout-row{overflow-wrap:anywhere}
+  @media(max-width:390px){.callout-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
 <body data-resq-shell="v1" data-resq-page="callout">
