@@ -208,11 +208,27 @@ try {
     check(hasWaiting, 'גרסה חדשה נכנסת ל-installing/waiting ולא מחליפה מיד את הקיימת');
 
     // שולחים בדיוק את ההודעה ש-pwa.js שולח בפועל (RESQ_SKIP_WAITING).
-    await page.evaluate(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300)); // ל-installing מספיק זמן להגיע ל-waiting
+    /* ⭐ כאן היה `setTimeout(300)` ואחריו `if (r.waiting)`.
+     *
+     * מה שנמצא: זו הייתה תחרות שקטה. `install` מביא את כל קבצי
+     * המעטפת, וכשהמעטפת גדלה — מסך HR שקיבל דוח חודשי, מסך הפניות
+     * שקיבל מוני תיבות — ההתקנה חצתה 300 מילישניות, העובד עדיין היה
+     * ב-`installing`, `r.waiting` היה null, וההודעה **לא נשלחה
+     * בכלל**. העובד החדש נשאר ממתין לנצח, ה-`activate` שלו לא רץ,
+     * והמטמון הישן לא נוקה. הבדיקה נכשלה על תזמון והאשימה את המוצר.
+     *
+     * ההמתנה עצמה אינה התיקון — `check(posted)` הוא. בלעדיו הבדיקה
+     * יכולה לדלג בשקט על הצעד היחיד שהיא קיימת בשבילו ולהיכשל
+     * מאוחר יותר, על משהו אחר. */
+    const posted = await page.evaluate(async () => {
       const r = await navigator.serviceWorker.getRegistration();
-      if (r.waiting) r.waiting.postMessage({ type: 'RESQ_SKIP_WAITING' });
+      for (let i = 0; i < 150 && !r.waiting; i++) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!r.waiting) return false;
+      r.waiting.postMessage({ type: 'RESQ_SKIP_WAITING' });
+      return true;
     });
+    check(posted, 'הגרסה החדשה באמת הגיעה ל-waiting וקיבלה את RESQ_SKIP_WAITING',
+      'העובד החדש לא הגיע ל-waiting בזמן, ולכן ההודעה לא נשלחה — הבדיקה שמתחתיה חסרת משמעות');
     await page.waitForFunction((prevUrl) => {
       const c = navigator.serviceWorker.controller;
       return c && true; // controllerchange כבר קרה אם השתלט עובד חדש
