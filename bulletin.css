@@ -56,6 +56,11 @@
 .home-command-brand small{font-size:12px;font-weight:800;letter-spacing:.04em}
 .home-command-header h2{margin:0;color:var(--txt);font-size:20px;line-height:1.35}
 .home-command-header p{max-width:560px;margin:5px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
+.bulletin-board[data-home-role-family="member"] .home-command-header{border-inline-start:4px solid var(--dock-shift)}
+.bulletin-board[data-home-role-family="command"] .home-command-header{border-inline-start:4px solid var(--accent)}
+.bulletin-board[data-home-role-family="hr"] .home-command-header{border-inline-start:4px solid var(--dock-station)}
+.bulletin-board[data-home-role-family="admin"] .home-command-header{border-inline-start:4px solid var(--dock-more)}
+.home-tasks[aria-busy="true"]{opacity:.72}
 
 .bulletin-board{
   --cat-general:#21a6d8;

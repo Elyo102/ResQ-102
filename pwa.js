@@ -210,7 +210,24 @@ function updateOutcomeMessage(outcome) {
   if (outcome && outcome.blocked) {
     return outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
   }
-  return 'העדכון לא הושלם. אפשר לנסות שוב כשיש חיבור יציב.';
+  if (outcome && outcome.reason === 'version-unavailable') {
+    return 'לא הצלחתי לבדוק את הגרסה בשרת. בדוק את החיבור ונסה שוב.';
+  }
+  if (outcome && outcome.reason === 'candidate-missing') {
+    return 'רכיב העדכון עדיין מתכונן. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+  }
+  return 'הגרסה נמצאה, אך הפעלת העדכון לא הושלמה. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+}
+
+export function dismissUpdateReady(options) {
+  const o = options || {};
+  const documentLike = o.document || (typeof document !== 'undefined' ? document : null);
+  updateReadyInfo = null;
+  if (!documentLike || typeof documentLike.getElementById !== 'function') return false;
+  const bar = documentLike.getElementById('pwaUpdateBar');
+  if (!bar) return false;
+  bar.remove();
+  return true;
 }
 
 function showUpdateReady(info, message) {
@@ -253,6 +270,10 @@ function showUpdateReady(info, message) {
       document,
       candidate:updateReadyInfo && updateReadyInfo.worker
     });
+    if (outcome.reason === 'version-not-advanced') {
+      dismissUpdateReady({ document });
+      return;
+    }
     if (!outcome.updated) {
       button.disabled = false;
       note.textContent = updateOutcomeMessage(outcome);
@@ -313,7 +334,10 @@ export function createUpdateReadyHandler(options) {
         refreshOptions:o.refreshOptions
       });
     }).then(function (outcome) {
-      if (!outcome.updated && outcome.reason !== 'version-not-advanced') {
+      if (outcome.reason === 'version-not-advanced') {
+        const dismiss = typeof o.dismiss === 'function' ? o.dismiss : dismissUpdateReady;
+        dismiss({ document:documentLike });
+      } else if (!outcome.updated) {
         show(info, updateOutcomeMessage(outcome));
       }
       return outcome;

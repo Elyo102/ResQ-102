@@ -415,8 +415,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <header class="home-command-header" aria-labelledby="homeCommandTitle">
       <div class="home-command-brand" aria-hidden="true"><b>Res<span>Q</span></b><small>102</small></div>
       <div>
-        <h2 id="homeCommandTitle">כל מה שחשוב בתחנה, במקום אחד</h2>
-        <p>הודעות ועדכונים לפני תחילת המשמרת, ואחריהם התקלות הפתוחות שחשוב להכיר.</p>
+        <h2 id="homeCommandTitle">המשמרת שלי</h2>
+        <p id="homeCommandIntro">מה דורש ממך טיפול, עדכוני התחנה ותקלות שחשוב להכיר.</p>
       </div>
     </header>
     <section id="roleViewControl" class="role-view-control hide" aria-labelledby="roleViewLabel">
@@ -434,13 +434,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <a id="homeUrgentLink">פתח</a>
       </section>
 
-      <section id="homeTasks" class="home-panel home-tasks" aria-labelledby="homeTasksTitle">
+      <section id="homeTasks" class="home-panel home-tasks" aria-labelledby="homeTasksTitle" aria-busy="true">
         <header class="home-panel-head"><div>
-          <p class="home-eyebrow">לפני תחילת המשמרת</p>
+          <p id="homeTasksEyebrow" class="home-eyebrow">בשבילי היום</p>
           <h2 id="homeTasksTitle">דורש ממני</h2>
-          <p>משימות ופעולות שממתינות לטיפול שלך.</p>
+          <p id="homeTasksText">משימות ופעולות אישיות שממתינות לך.</p>
         </div></header>
         <div id="homeCommandStatus" class="home-command-status" aria-live="polite"></div>
+        <button type="button" id="homeCommandRetry" class="bulletin-retry hide">נסה שוב</button>
         <div id="homeTaskList" class="home-task-list"></div>
         <div id="homeTaskEmpty" class="home-task-empty hide">אין כרגע פעולות שממתינות לך.</div>
       </section>
@@ -558,9 +559,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <p id="homeShiftLabel">המשמרת הנוכחית</p>
         </div></header>
         <div class="home-shift-metrics">
-          <div data-shift-metric="on_duty"><b>0</b><span>במשמרת</span></div>
-          <div data-shift-metric="open_faults"><b>0</b><span>תקלות פתוחות</span></div>
-          <div data-shift-metric="missing"><b>0</b><span>חסרים</span></div>
+          <div data-shift-metric="on_duty"><b>—</b><span>במשמרת</span></div>
+          <div data-shift-metric="open_faults"><b>—</b><span>תקלות פתוחות</span></div>
+          <div data-shift-metric="missing"><b>—</b><span>חסרים</span></div>
         </div>
       </section>
 
@@ -623,7 +624,7 @@ import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
   from './nav.js?v=42h26';
 import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h26';
 import {
-  initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
+  initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
 } from './pwa.js?v=42h26';
 import { APP_VERSION, APP_DATE } from './version.js?v=42h26';
 import { watchCallouts } from './callout.js?v=42h26';
@@ -1433,9 +1434,11 @@ function writeRoleViewStorage(record){
 
 function homeCommandElements(){
   return {
+    root:$('bulletinBoard'), title:$('homeCommandTitle'), intro:$('homeCommandIntro'),
     urgent:$('homeUrgent'), urgentTitle:$('homeUrgentTitle'), urgentText:$('homeUrgentText'), urgentLink:$('homeUrgentLink'),
-    status:$('homeCommandStatus'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
-    shiftLabel:$('homeShiftLabel'),
+    tasks:$('homeTasks'), tasksEyebrow:$('homeTasksEyebrow'), tasksTitle:$('homeTasksTitle'), tasksText:$('homeTasksText'),
+    status:$('homeCommandStatus'), retry:$('homeCommandRetry'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
+    shiftTitle:$('homeShiftTitle'), shiftLabel:$('homeShiftLabel'),
     shiftMetrics:{
       on_duty:document.querySelector('[data-shift-metric="on_duty"] b'),
       open_faults:document.querySelector('[data-shift-metric="open_faults"] b'),
@@ -1777,6 +1780,7 @@ $('btnUpdate').onclick = async function () {
       return;
     }
     if (outcome.reason === 'version-not-advanced') {
+      dismissUpdateReady({ document });
       m.textContent = 'אתה על הגרסה האחרונה.';
     } else if (outcome.blocked) {
       m.textContent = outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';

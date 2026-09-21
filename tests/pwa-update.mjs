@@ -6,6 +6,7 @@ import {
   applyDetectedUpdate,
   applyReadyUpdate,
   createUpdateReadyHandler,
+  dismissUpdateReady,
   fetchLatestReleaseVersion,
   refreshInstalledApp,
   registerPwaUpdateGuard
@@ -145,6 +146,33 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
 }
 
 {
+  let dismissed = 0;
+  let shown = 0;
+  const handler = createUpdateReadyHandler({
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    apply:async () => ({ updated:false, reason:'version-not-advanced', version:release.v }),
+    show:() => { shown += 1; },
+    dismiss:() => { dismissed += 1; }
+  });
+  const result = await handler({ worker:{ state:'activated' } });
+  assert.equal(result.reason, 'version-not-advanced',
+    'an already-current page identifies a stale lifecycle suggestion');
+  assert.equal(dismissed, 1,
+    'an already-current page removes the stale update suggestion');
+  assert.equal(shown, 0,
+    'an already-current page never replaces the stale suggestion with a false network warning');
+}
+
+{
+  let removed = 0;
+  const bar = { remove() { removed += 1; } };
+  assert.equal(dismissUpdateReady({
+    document:{ getElementById:id => id === 'pwaUpdateBar' ? bar : null }
+  }), true, 'the visible stale suggestion can be dismissed');
+  assert.equal(removed, 1, 'dismissal removes the visible update bar exactly once');
+}
+
+{
   const calls = [];
   const version = await fetchLatestReleaseVersion({
     now: () => 777,
@@ -240,6 +268,8 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     'login installs its lifecycle guard before service-worker discovery');
   assert.ok(loginSource.includes('void retryPendingPwaUpdate();'),
     'the stable home lifecycle retries a previously blocked candidate');
+  assert.ok(loginSource.includes("dismissUpdateReady({ document });\n      m.textContent = 'אתה על הגרסה האחרונה.';"),
+    'the manual version check removes a stale update suggestion when already current');
 }
 
 {
@@ -371,4 +401,4 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   assert.deepEqual(replaced, [], 'an unproven update cannot reload the page');
 }
 
-console.log('PWA update lifecycle: 24/24 PASS');
+console.log('PWA update lifecycle: 27/27 PASS');

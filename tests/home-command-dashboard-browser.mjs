@@ -80,7 +80,7 @@ async function check(name, run) {
   }
 }
 
-async function contextFor(role, width = 390) {
+async function contextFor(role, width = 390, plan = null) {
   const context = await browser.newContext({
     viewport:{ width, height:844 }, locale:'he-IL', isMobile:true, hasTouch:true
   });
@@ -92,16 +92,16 @@ async function contextFor(role, width = 390) {
   });
   await context.route('**://fonts.googleapis.com/**', route =>
     route.fulfill({ status:200, contentType:'text/css', body:'' }));
-  await context.addInitScript(({ role, data }) => {
+  await context.addInitScript(({ role, data, plan }) => {
     window.__SMOKE_ROLE = role;
     window.__SMOKE_UID = 'home-command-' + role;
-    window.__CALLABLE_PLAN = { getHomeCommandCenter:[{ data }] };
-  }, { role, data:snapshot() });
+    window.__CALLABLE_PLAN = { getHomeCommandCenter:plan || [{ data }] };
+  }, { role, data:snapshot(), plan });
   return context;
 }
 
-async function openHome(role, width = 390) {
-  const context = await contextFor(role, width);
+async function openHome(role, width = 390, plan = null) {
+  const context = await contextFor(role, width, plan);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -160,6 +160,12 @@ try {
     }
   });
 
+  await check('release · firefighter receives personal hierarchy and honest empty wording', async () => {
+    assert.equal(await release.page.locator('#homeCommandTitle').textContent(), 'המשמרת שלי');
+    assert.equal(await release.page.locator('#bulletinBoard').getAttribute('data-home-role-family'), 'member');
+    assert.match(await release.page.locator('#homeTaskEmpty').textContent(), /משמרת קלה/);
+  });
+
   await check('mutation · same-UID claims refresh cannot duplicate bulletin or fault listeners', async () => {
     await release.page.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'home-command-firefighter'));
     await release.page.waitForTimeout(150);
@@ -188,9 +194,45 @@ try {
         .filter(entry => entry.name === 'getHomeCommandCenter'));
       assert.equal(calls.length, 1);
     });
+    await check('release · ' + role + ' receives the approved role hierarchy', async () => {
+      const expectedFamily = role === 'firefighter' ? 'member'
+        : role === 'hr' ? 'hr' : role === 'super' ? 'admin' : 'command';
+      assert.equal(await home.page.locator('#bulletinBoard').getAttribute('data-home-role-family'), expectedFamily);
+      assert.notEqual((await home.page.locator('#homeCommandTitle').textContent()).trim(), '');
+    });
     assert.deepEqual(home.errors, [], role + ' page errors');
     await home.context.close();
   }
+
+
+  const missing = snapshot();
+  missing.shift = { label:'משמרת ג׳', open_faults:1 };
+  const honest = await openHome('firefighter', 390, [{ data:missing }]);
+  await check('mutation · missing shift metrics render dash, never a misleading zero', async () => {
+    assert.equal((await honest.page.locator('[data-shift-metric="on_duty"] b').textContent()).trim(), '—');
+    assert.equal((await honest.page.locator('[data-shift-metric="open_faults"] b').textContent()).trim(), '1');
+    assert.equal((await honest.page.locator('[data-shift-metric="missing"] b').textContent()).trim(), '—');
+  });
+  await honest.context.close();
+
+  const retry = await openHome('firefighter', 390, [
+    { reject:true, code:'functions/unavailable' }, { data:snapshot() }
+  ]);
+  await check('release · home error is plain Hebrew and Retry performs one fresh read', async () => {
+    await retry.page.locator('#homeCommandRetry').waitFor({ state:'visible', timeout:3000 });
+    const errorText = await retry.page.locator('#homeCommandStatus').textContent();
+    assert.match(errorText, /לא הצלחנו/);
+    assert.doesNotMatch(errorText, /functions\/|FirebaseError|permission-denied/);
+    assert.equal(await retry.page.locator('#homeTasks').getAttribute('aria-busy'), 'false');
+    await retry.page.locator('#homeCommandRetry').click();
+    await retry.page.locator('#homeCommandRetry').waitFor({ state:'hidden', timeout:3000 });
+    await retry.page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter(item => item.name === 'getHomeCommandCenter').length === 2
+      && document.getElementById('homeTasks').getAttribute('aria-busy') === 'false');
+    assert.equal(await retry.page.locator('#homeTasks').getAttribute('aria-busy'), 'false');
+    assert.equal((await retry.page.locator('[data-shift-metric="on_duty"] b').textContent()).trim(), '8');
+  });
+  await retry.context.close();
 
   for (const width of [320, 360, 390]) {
     const home = await openHome('firefighter', width);
