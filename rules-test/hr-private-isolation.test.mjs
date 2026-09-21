@@ -54,6 +54,13 @@ function paths(uid) {
     base + '/hr_workforce_reminder_locks/' + id,
     base + '/hr_workforce_notification_jobs/' + id,
     'hr_workforce_actor_quotas/' + id,
+    // המונים והדוח החודשי המאוחד: server-only בכל רמה.
+    // הדור והשורות שבתוכו נבדקים במפורש, כי כלל על האב
+    // אינו יורד לבנים ב-Firestore.
+    base + '/hr_request_counters/hr-request-counters-v1',
+    base + '/hr_monthly_summaries/2026-09',
+    base + '/hr_monthly_summaries/2026-09/hr_monthly_generations/' + id,
+    base + '/hr_monthly_summaries/2026-09/hr_monthly_generations/' + id + '/hr_monthly_rows/' + uid,
     base + '/bulletin_view_receipts/' + id + '/bulletin_view_recipients/' + uid];
 }
 const knownPaths = new Set(), seeded = new Map();
@@ -66,7 +73,7 @@ for (const actor of actors) {
   if (actor.stationId) seed('stations/' + actor.stationId + '/users/' + actor.uid, {
     uid: actor.uid, role: actor.role, stationId: actor.stationId, employee_number: actor.emp,
     crew: 'A', active: true, is_active: true, full_name: 'Synthetic fixture' });
-  assert.equal(paths(actor.uid).length, 33);
+  assert.equal(paths(actor.uid).length, 37);
   for (const target of paths(actor.uid)) {
     seed(target, { uid: actor.uid, owner_uid: actor.uid, recipient_uid: actor.uid, target_uid: actor.uid,
       actor_uid: actor.uid, by_uid: actor.uid, station_id: sid, stationId: sid, status: 'open',
