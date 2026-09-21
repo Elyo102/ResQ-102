@@ -17,6 +17,23 @@
  *  המבנה מבוסס על `saas-test-harness.js` שכבר במאגר, עם תוספת אחת
  *  שחסרה שם: אוסף-בתוך-מסמך (`docRef().collection()`), שבלעדיו אי
  *  אפשר להגיע ל-`stations/{sid}/hr_documents/{id}`.
+ *
+ *  ----------------------------------------------------------------
+ *  ⭐ שלושת המפעילים שהיו חסרים, וזו לא הייתה חוסר-נוחות
+ *  ----------------------------------------------------------------
+ *  הגרסה הראשונה סיננה `==` בלבד, ו**כל מפעיל אחר החזיר את כל
+ *  השורות**: `rows.filter(([, v]) => (op === '==' ? v[f] === val : true))`.
+ *  כלומר בדיקה שכותבת `where('from_date', '<=', x)` הייתה עוברת בלי
+ *  לסנן דבר — לא כי הקוד נכון, אלא כי הכפיל אמר „כן" לכל שורה.
+ *  בדיקה כזו לא נכשלת גם על קוד שבור לגמרי, וזו הצורה הגרועה ביותר
+ *  של בדיקה: אחת שמדווחת PASS ואינה בודקת כלום.
+ *
+ *  עכשיו כל מפעיל מסונן באמת, ומפעיל שאינו מוכר **זורק** במקום
+ *  להתעלם. `hr-pilot-harness-fidelity.test.js` מוכיח את שני הדברים:
+ *  שהגרסה הקודמת עברה על ריק, ושהנוכחית נופלת.
+ *
+ *  `getAll` נוסף מאותה סיבה: קריאה מקובצת שאין לה כפיל אינה נבדקת,
+ *  והחלופה הייתה להשאיר את N+1 בלי הוכחה שהוא נעלם.
  * ====================================================================== */
 
 const { createHash } = require('node:crypto');
@@ -46,6 +63,21 @@ function fakeDb() {
     } else if (kind === 'delete') store.delete(path);
     bump(path);
   }
+  /* מפעיל שאינו מוכר זורק. כפיל ששותק על מפעיל שהוא אינו מבין הוא
+   * כפיל שמאשר שאילתות שלא נבדקו. */
+  function matches(field, op, value) {
+    if (op === '==') return field === value;
+    if (op === '!=') return field !== value;
+    if (op === '<') return field !== undefined && field < value;
+    if (op === '<=') return field !== undefined && field <= value;
+    if (op === '>') return field !== undefined && field > value;
+    if (op === '>=') return field !== undefined && field >= value;
+    if (op === 'array-contains') return Array.isArray(field) && field.includes(value);
+    if (op === 'array-contains-any') return Array.isArray(field) && Array.isArray(value) && value.some((v) => field.includes(v));
+    if (op === 'in') return Array.isArray(value) && value.includes(field);
+    if (op === 'not-in') return Array.isArray(value) && !value.includes(field);
+    throw new Error('unsupported query operator in harness: ' + String(op));
+  }
   function query(collection) {
     const q = { _c: collection, _w: [], _o: null, _l: Infinity, _after: undefined, _isQuery: true };
     q.where = (f, op, v) => { q._w.push([f, op, v]); return q; };
@@ -58,7 +90,7 @@ function fakeDb() {
       for (const [p, v] of store) {
         if (p.startsWith(prefix) && p.slice(prefix.length).indexOf('/') === -1) rows.push([p, v]);
       }
-      for (const [f, op, val] of q._w) rows = rows.filter(([, v]) => (op === '==' ? v[f] === val : true));
+      for (const [f, op, val] of q._w) rows = rows.filter(([, v]) => matches(v[f], op, val));
       // `orderBy('__name__')` ממיין לפי מזהה המסמך, כמו ב-Firestore.
       const keyOf = ([p, v]) => (q._o && q._o[0] === '__name__' ? p.split('/').pop() : v[q._o[0]]);
       if (q._o) rows.sort((a, b) => (keyOf(a) > keyOf(b) ? 1 : keyOf(a) < keyOf(b) ? -1 : 0) * (q._o[1] === 'desc' ? -1 : 1));
@@ -90,6 +122,7 @@ function fakeDb() {
     _get(p) { const v = store.get(p); return v === undefined ? undefined : structuredClone(v); },
     doc: docRef,
     collection: collectionRef,
+    async getAll(...refs) { return refs.map((ref) => snapOf(ref.path)); },
     async runTransaction(fn) {
       for (let attempt = 0; attempt < 6; attempt++) {
         const reads = new Map();
@@ -103,6 +136,10 @@ function fakeDb() {
             }
             reads.set(ref.path, versions.get(ref.path) || 0);
             return snapOf(ref.path);
+          },
+          async getAll(...refs) {
+            for (const ref of refs) reads.set(ref.path, versions.get(ref.path) || 0);
+            return refs.map((ref) => snapOf(ref.path));
           },
           create: (ref, v) => staged.push([ref.path, 'create', v]),
           set: (ref, v, o) => staged.push([ref.path, 'set', v, o]),
@@ -138,14 +175,21 @@ function people(db, sid) {
       return structuredClone(value);
     }
   };
-  function add(uid, role, superUser = false) {
+  /* הארגומנט השלישי נשאר בוליאני כדי שקוראים קיימים לא יישברו, אבל
+   * מקבל גם אובייקט: שם ומשמרת נדרשים עכשיו כדי לבדוק את תיבת משאבי
+   * האנוש, ושם שאינו נכתב אינו שם שאפשר לבדוק שהוחזר. */
+  function add(uid, role, options = false) {
+    const opts = options && typeof options === 'object' ? options : { super: options === true };
+    const superUser = opts.super === true;
     const claims = { stationId: sid, ...(superUser ? { super: true } : { role }) };
     records.set(uid, {
       uid, disabled: false, customClaims: claims,
       tokensValidAfterTime: new Date(AUTH_TIME * 1000).toUTCString()
     });
     db._put('stations/' + sid + '/users/' + uid,
-      { stationId: sid, role, active: true, employee_number: 'synthetic-' + uid });
+      { stationId: sid, role, active: true, employee_number: 'synthetic-' + uid,
+        ...(typeof opts.full_name === 'string' ? { full_name: opts.full_name } : {}),
+        ...(typeof opts.crew === 'string' ? { crew: opts.crew } : {}) });
     return uid;
   }
   const req = (uid, data) => {

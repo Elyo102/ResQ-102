@@ -636,6 +636,13 @@ service cloud.firestore {
       match /hr_request_operations/{operationId} {
         allow read, write: if false;
       }
+      // Transactional per-box tallies for the HR work boxes. Server-only like
+      // every other hr_* path: the counts are served by countHrRequestBoxes,
+      // which gates on hr(sid) and returns a drift flag with them. A direct
+      // Rules read would hand out the same aggregate with no gate and no flag.
+      match /hr_request_counters/{countersId} {
+        allow read, write: if false;
+      }
       match /hr_hours_review_events/{reviewId} {
         allow read, write: if false;
       }

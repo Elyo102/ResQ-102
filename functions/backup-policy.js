@@ -610,6 +610,15 @@ const DATA_POLICIES = Object.freeze([
     'restricted_identity', 'policy_required_before_wiring',
     'Idempotency receipts require a coherent same-snapshot request restore; that procedure remains unresolved. No export, restore or deletion activated.',
     { humanReadable:'forbidden' }),
+  // Derived bookkeeping over hr_requests, not an independent record. Restoring
+  // a stale tally beside restored requests would reintroduce exactly the drift
+  // the transactional counter exists to prevent, so it is never restored: it is
+  // rebuilt by the requests it counts.
+  policy('stations/{sid}/hr_request_counters/{countersId}', 'station',
+    'derived', 'none', 'exclude', 'do_not_restore',
+    'restricted_identity', 'policy_required_before_wiring',
+    'Per-box tallies derived from hr_requests in the same transaction; excluded from export and never restored independently of the requests that produce them.',
+    { humanReadable:'forbidden' }),
   policy('stations/{sid}/hr_documents/{documentId}', 'station',
     'source_of_truth', 'count_drop', 'managed_export', 'restore',
     'restricted_identity', 'policy_required_before_wiring',

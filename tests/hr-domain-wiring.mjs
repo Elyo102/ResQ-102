@@ -16,10 +16,21 @@ const sha = value => createHash('sha256').update(value).digest('hex');
  *     (`setDecision`) לדיווחי היעדרות, הערה אופציונלית בדיווח,
  *     וסינון תיבת משאבי אנוש לפי סוג — בשאילתה, לא בדפדפן.
  *   · hr-documents.js — פעולת `archive` לנהלי תחנה ו-`procedureAuthority`.
+ *
+ * עדכון חבילת ה-HR לפילוט — ארבעה שינויים ב-hr-requests.js, ולא
+ * אחד מהם מרחיב מי רואה מה:
+ *   · `months` — רשימת החודשים שהיעדרות נוגעת בהם, מחושבת
+ *     בשרת מהטווח המאומת ונבדקת מחדש בכל קריאה. הלקוח
+ *     אינו יכול לשלוח אותה, וטווח שחורג מ-400 יום נדחה במפורש.
+ *   · `has_attachment` — בוליאני נגזר ב-`summary`, בלי קריאה נוספת.
+ *   · מוני תיבות טרנזקציונליים ב-`hr_request_counters`, ו-`counts`
+ *     שקורא אותם בסמכות משאבי אנוש בלבד.
+ *   · `owner_name` ו-`owner_crew` לתיבת משאבי אנוש בלבד, ב-`getAll`
+ *     מקובץ אחד. במסלול „הפניות שלי" הענף אינו רץ כלל.
  * שאר הקבצים לא נגענו בהם, וטביעותיהם נשארו כפי שהיו. */
 const pins = {
   'functions/hr-domain-dispatch.js': '526ae68168c7e7e042477b05cb71886ff94dd06f4d0250c2c18cc568d0bae357',
-  'functions/hr-requests.js': '6074f52885e0772a1c8d64b98cdc143e7b5a48c7b05269679b0b59c30293c110',
+  'functions/hr-requests.js': '5b01689cc228f45a3aae5e59a25aa043f21a97e45bc4469b41ccb760a4881c63',
   'functions/hr-documents.js': '63aa7a8f9f1372768fb243598ecb2caec83ed3c81ad11a8d421e4e4697dde3d7',
   'functions/hr-notification-policy.js': '1f463af5e307dc96fec5da330673260ac9a8a0a4aadae7c5892ccc769c3e2668',
   'functions/hr-hours-dispatch.js': '612cc9453f914e13538ea80b8f447c6b61e7ffc17ad16a03322883a74253f4ed',

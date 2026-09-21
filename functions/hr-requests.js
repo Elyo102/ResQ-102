@@ -35,6 +35,79 @@ const FINAL_DECISIONS = Object.freeze(['approved', 'rejected']);
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const validDate = (value) => typeof value === 'string' && DATE.test(value)
   && Number.isFinite(Date.parse(value + 'T00:00:00Z'));
+/* ⭐ שיוך היעדרות לחודש — מחושב בשרת, לעולם לא מהלקוח.
+ *
+ * הדוח החודשי צריך לשאול „אילו היעדרויות נגעו בספטמבר". חפיפה
+ * היא שני אי-שוויונות על שני שדות, ו-Firestore דורש את שניהם
+ * באינדקס מורכב — ול-`hr_requests` אין אף אינדקס מורכב. לכן הטווח
+ * מתורגם פעם אחת, בפתיחת הדיווח, לרשימת החודשים שהוא נוגע
+ * בהם, והשאילתה היא `array-contains` אחד: שוויון בודד שהאינדקס
+ * האוטומטי של שדה בודד מכסה בלי להוסיף דבר.
+ *
+ * `months` אינו שדה שהלקוח יכול לשלוח: רשימת המפתחות של
+ * `create` סגורה ושדה עודף נדחה. והוא גם אינו שדה שאפשר
+ * לזייף אחרי הכתיבה: `caseData` גוזר אותו מחדש מהטווח בכל
+ * קריאה, ודוחה מסמך שבו השניים אינם זהים.
+ *
+ * **התקרה.** היעדרות פתוחה או ארוכת שנים אינה מקבלת מערך
+ * חודשים אינסופי — היא שייכת ל-`hr_workforce_cases`, שיש לו מסלול
+ * משלו וגבולות משלו. 400 יום הן לכל היותר 15 חודשים, וזה
+ * הגבול המוצהר. חריגה מקבלת תשובה שאומרת לאן היא שייכת,
+ * ולא נחתכת בשקט. */
+const MAX_ABSENCE_DAYS = 400;
+const MAX_ABSENCE_MONTHS = 15;
+const DAY_MS = 86400000;
+function absenceMonths(from, to) {
+  if (!validDate(from) || !validDate(to)) return null;
+  const start = Date.parse(from + 'T00:00:00Z'), end = Date.parse(to + 'T00:00:00Z');
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  if (Math.round((end - start) / DAY_MS) + 1 > MAX_ABSENCE_DAYS) return null;
+  const months = [], last = to.slice(0, 7);
+  let year = Number(from.slice(0, 4)), month = Number(from.slice(5, 7));
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  for (let guard = 0; guard <= MAX_ABSENCE_MONTHS; guard += 1) {
+    const key = String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0');
+    months.push(key);
+    if (key === last) return months;
+    month += 1; if (month > 12) { month = 1; year += 1; }
+  }
+  return null;
+}
+function sameMonths(value, from, to) {
+  const expected = absenceMonths(from, to);
+  return !!expected && Array.isArray(value) && value.length === expected.length
+    && value.every((v, i) => v === expected[i]);
+}
+/* ⭐ המונים של תיבות העבודה, באותה עסקה של הפנייה עצמה.
+ *
+ * למה לא לספור בשאילתה: ספירה לפי (סוג, מצב) היא שני
+ * שוויונות, וזה אינדקס מורכב שאינו קיים. למה לא לספור
+ * בדפדפן: עמוד של 25 היה מציג „3" כשיש 40. מונה טרנזקציוני
+ * הוא מדויק בהגדרה — הוא זז בדיוק כשהמסמך זז, ואינו יכול
+ * להיות לא-מסונכרן איתו.
+ *
+ * הדלתא נגזרת מהמצב לפני ואחרי, ולא לפי שם הפעולה:
+ * פעולה חדשה שתזיז סטטוס תיספר נכון גם בלי שמישהו יזכור
+ * לעדכן את הספירה. ואם מונה בכל זאת ירד מתחת לאפס — זה
+ * באג בספרים, ולא סיבה להפיל פעולה של עובד: הערך נחתך
+ * באפס, `drift_at_ms` נרשם, וה-callable מחזיר את הדגל כדי שהמסך
+ * יאמר שהמספר משוער. מונה שמשקר בשקט גרוע ממונה שמודה. */
+const COUNTER_DOC = 'hr-request-counters-v1';
+function counterKeys(value) {
+  if (!value) return [];
+  const kind = own(value, 'kind') ? value.kind : 'general';
+  const keys = [kind + '|status|' + value.status];
+  if (DATED_KINDS.includes(kind)) keys.push(kind + '|decision|' + value.decision);
+  return keys;
+}
+function counterDelta(before, after) {
+  const delta = Object.create(null);
+  for (const key of counterKeys(before)) delta[key] = (delta[key] || 0) - 1;
+  for (const key of counterKeys(after)) delta[key] = (delta[key] || 0) + 1;
+  for (const key of Object.keys(delta)) if (delta[key] === 0) delete delta[key];
+  return delta;
+}
+const counterValue = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,120}$/, KEY = /^[a-f0-9]{64}$/;
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
@@ -47,6 +120,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   const error = (code, message) => new HttpsError(code, message);
   const root = sid => db.collection('stations').doc(sid);
   const caseRef = (sid, id) => root(sid).collection('hr_requests').doc(id);
+  const countersRef = sid => root(sid).collection('hr_request_counters').doc(COUNTER_DOC);
   function now() {
     const value = clock();
     if (!Number.isSafeInteger(value) || !Number.isFinite(new Date(value).getTime())) throw error('internal', 'Invalid clock.');
@@ -100,7 +174,15 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         || !DECISIONS.includes(value.decision)) throw error('failed-precondition', 'Request data is invalid.');
       if (FINAL_DECISIONS.includes(value.decision)
         && (!access.validUid(value.decided_by) || !Number.isSafeInteger(value.decided_at_ms))) throw error('failed-precondition', 'Request data is invalid.');
-    } else if (own(value, 'from_date') || own(value, 'to_date') || own(value, 'decision')) {
+      /* דיווח שנכתב לפני שהשדה קיים נקרא בלי `months` — הוא
+       * פשוט אינו מסווג, והדוח החודשי אומר זאת במפורש במקום
+       * להציג כיסוי שלם. אבל `months` שכן קיים חייב להיות בדיוק
+       * מה שהטווח גוזר. ערך שאינו תואם הוא נתון פגום, לא „קירוב". */
+      if (own(value, 'months') && !sameMonths(value.months, value.from_date, value.to_date)) {
+        throw error('failed-precondition', 'Request data is invalid.');
+      }
+    } else if (own(value, 'from_date') || own(value, 'to_date') || own(value, 'decision')
+      || own(value, 'months')) {
       throw error('failed-precondition', 'Request data is invalid.');
     }
     if (value.owner_uid !== ctx.uid && !manager(ctx)) throw error('permission-denied', 'This request is private.');
@@ -109,6 +191,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
   const summary = c => ({ case_id: c.case_id, owner_uid: c.owner_uid, subject: c.subject,
     status: c.status, revision: c.revision, created_at_ms: c.created_at_ms, updated_at_ms: c.updated_at_ms,
     removed_attachment_ids: attachmentIds(c.removed_attachment_ids),
+    /* בוליאני ממש ולא „קיים/לא קיים": פנייה שלא היה לה
+       קובץ מעולם אינה נושאת `attachment_ids` בכלל. */
+    has_attachment: Array.isArray(c.attachment_ids) && c.attachment_ids.length > 0,
     kind: own(c, 'kind') ? c.kind : 'general',
     ...(DATED_KINDS.includes(own(c, 'kind') ? c.kind : 'general')
       ? { from_date: c.from_date, to_date: c.to_date, decision: c.decision,
@@ -147,7 +232,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       if (DATED_KINDS.includes(kind)) {
         if (!validDate(d.from_date) || !validDate(d.to_date)) throw error('invalid-argument', 'A sickness or reserve report needs a start and an end date.');
         if (d.to_date < d.from_date) throw error('invalid-argument', 'The end date cannot precede the start date.');
-        p.from_date = d.from_date; p.to_date = d.to_date;
+        const months = absenceMonths(d.from_date, d.to_date);
+        if (!months) throw error('invalid-argument', 'This absence is too long for a dated report. An open or multi-year absence is recorded as a workforce case instead.');
+        p.from_date = d.from_date; p.to_date = d.to_date; p.months = months;
       } else if (own(d, 'from_date') || own(d, 'to_date')) {
         throw error('invalid-argument', 'Only a sickness or reserve report carries dates.');
       }
@@ -237,7 +324,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
           display_name: typeof a.display_name === 'string' ? a.display_name : null
         };
       }
-      const quota = await tx.get(quotaRef);
+      const [quota, countersSnap] = await Promise.all([tx.get(quotaRef), tx.get(countersRef(ctx.sid))]);
       // Business text/status survives quiet/silent and receives durable pending
       // notification work. Standalone nudges need immediate policy evaluation.
       const rt = op === 'nudge' ? await runtime(tx) : null;
@@ -271,7 +358,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
            * יוצר דיווח שכבר מאושר: ההכרעה נכתבת רק ב-`setDecision`,
            * שדורש סמכות משאבי אנוש ואוסר הכרעה על עצמך. */
           ...(DATED_KINDS.includes(p.kind)
-            ? { from_date: p.from_date, to_date: p.to_date, decision: 'pending' } : {})
+            ? { from_date: p.from_date, to_date: p.to_date, months: p.months, decision: 'pending' } : {})
         };
         const eventId = hash(['hr-request-event-v1', operationId]);
         const event = { schema: 'hr-request-event-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
@@ -306,6 +393,22 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         }
         tx.create(ref.collection('events').doc(eventId), event);
         tx.set(ref, next);
+        const delta = counterDelta(current, next);
+        if (Object.keys(delta).length) {
+          const prior = countersSnap.exists ? countersSnap.data() : null;
+          const stored = plain(prior) && plain(prior.buckets) ? prior.buckets : {};
+          const buckets = { ...stored };
+          let drift = plain(prior) && Number.isSafeInteger(prior.drift_at_ms) && prior.drift_at_ms > 0 ? prior.drift_at_ms : 0;
+          for (const [key, change] of Object.entries(delta)) {
+            const base = counterValue(buckets[key]);
+            if (base === null && own(buckets, key)) drift = at;
+            const value = (base === null ? 0 : base) + change;
+            if (value < 0) drift = at;
+            buckets[key] = value < 0 ? 0 : value;
+          }
+          tx.set(countersRef(ctx.sid), { schema: 'hr-request-counters-v1', station_id: ctx.sid,
+            updated_at_ms: at, buckets, ...(drift ? { drift_at_ms: drift } : {}) });
+        }
         result = { case_id: ref.id, revision, status, outcome: 'saved', event_id: eventId, notification_status: notificationStatus,
           ...(removalPlan ? { removed_attachment_id: p.attachment_id } : {}) };
       }
@@ -420,7 +523,71 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       q = q.orderBy('__name__').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
-      return { items: docs.map(s => summary(caseData(s, r.ctx))), next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null };
+      const items = docs.map(s => summary(caseData(s, r.ctx)));
+      /* ⭐ שם ומשמרת לתיבת משאבי אנוש — קריאה מקובצת אחת,
+       * לא אחת לשורה. 25 קריאות סדרתיות בתוך עסקה הן N+1 בסבבי
+       * רשת; `getAll` הופך אותן לאחת.
+       *
+       * העובד אינו מקבל שם של אף אדם: במסלול „הפניות שלי"
+       * הענף הזה אינו רץ בכלל, והשאילתה שם מסוננת ל-uid שלו.
+       *
+       * מה שמוחזר הוא „השם הרשום כרגע בתחנה" ולא צילום
+       * היסטורי: שם ומשמרת משתנים בלי שהפנייה תיגע. לכן הם
+       * אינם נכתבים על מסמך הפנייה — עותק שהתיישן שקרן יותר
+       * מקריאה חיה, והספרייה אינה מסתנכרנת אחורנית. */
+      if (inbox && items.length && typeof tx.getAll === 'function') {
+        const uids = [...new Set(items.map(c => c.owner_uid))];
+        const snaps = await tx.getAll(...uids.map(uid => root(r.ctx.sid).collection('users').doc(uid)));
+        const people = new Map();
+        for (const person of snaps) {
+          const v = person && person.exists ? person.data() : null;
+          if (!plain(v)) continue;
+          people.set(person.id, {
+            owner_name: typeof v.full_name === 'string'
+              ? v.full_name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 160) : '',
+            owner_crew: typeof v.crew === 'string' ? v.crew.trim().slice(0, 16)
+              : typeof v.shift === 'string' ? v.shift.trim().slice(0, 16) : ''
+          });
+        }
+        for (const c of items) {
+          const person = people.get(c.owner_uid);
+          c.owner_name = person ? person.owner_name : '';
+          c.owner_crew = person ? person.owner_crew : '';
+        }
+      }
+      return { items, next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null };
+    });
+    await finalRead(r); return result;
+  }
+  /* מוני תיבות העבודה. קריאה אחת למסמך אחד, בלי סריקה
+   * ובלי אינדקס חדש. שני הצירים מוחזרים בנפרד ואינם מאוחדים:
+   * מצב הטיפול וההכרעה הם שתי שאלות שונות על אותה פנייה. */
+  async function counts(req) {
+    const r = request(req, []);
+    if (!manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
+    const result = await db.runTransaction(async tx => {
+      await live(tx, r);
+      const snap = await tx.get(countersRef(r.ctx.sid));
+      const value = snap.exists ? snap.data() : null;
+      const stored = plain(value) && plain(value.buckets) ? value.buckets : {};
+      let drift = plain(value) && Number.isSafeInteger(value.drift_at_ms) && value.drift_at_ms > 0;
+      const boxes = {};
+      for (const kind of DATED_KINDS) {
+        const row = { status: {}, decision: {} };
+        for (const state of STATES) {
+          const v = counterValue(stored[kind + '|status|' + state]);
+          if (v === null && own(stored, kind + '|status|' + state)) drift = true;
+          row.status[state] = v === null ? 0 : v;
+        }
+        for (const decision of DECISIONS) {
+          const v = counterValue(stored[kind + '|decision|' + decision]);
+          if (v === null && own(stored, kind + '|decision|' + decision)) drift = true;
+          row.decision[decision] = v === null ? 0 : v;
+        }
+        boxes[kind] = row;
+      }
+      return { boxes, drift: !!drift,
+        updated_at_ms: plain(value) && Number.isSafeInteger(value.updated_at_ms) ? value.updated_at_ms : null };
     });
     await finalRead(r); return result;
   }
@@ -466,6 +633,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
     setStatus: req => mutate(req, 'setStatus'), nudge: req => mutate(req, 'nudge'),
     removeAttachment: req => mutate(req, 'removeAttachment'),
     setDecision: req => mutate(req, 'setDecision'),
-    list: req => list(req), listInbox: req => list(req, true), get, attachmentPorts });
+    list: req => list(req), listInbox: req => list(req, true), counts, get, attachmentPorts });
 }
-module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES });
+module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES,
+  KINDS, DATED_KINDS, DECISIONS, MAX_ABSENCE_DAYS, MAX_ABSENCE_MONTHS, absenceMonths, COUNTER_DOC });

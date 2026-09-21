@@ -318,18 +318,24 @@ const hrReviewPaths = [
   'stations/{sid}/hr_hours_reviews/{summaryId}',
   'hr_hours_review_actor_quotas/{quotaId}'
 ];
+// Derived tallies: classified like the rest of the HR family, excluded from
+// export, never restored on their own. Counted in the private-path total so a
+// new hr_* collection cannot appear without passing this gate.
+const hrDerivedPaths = [
+  'stations/{sid}/hr_request_counters/{countersId}'
+];
 const hrReviewJobPath = 'stations/{sid}/hr_hours_review_notification_jobs/{jobId}';
 const correctionPaths = [
   'stations/{sid}/attendance_correction_events/{correctionId}',
   'stations/{sid}/attendance_correction_receipts/{correctionId}',
   'stations/{sid}/attendance_correction_notification_jobs/{jobId}'
 ];
-const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, correctionPaths);
+const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, hrDerivedPaths, correctionPaths);
 
-test('exact thirty-two private HR/correction paths are classified with no readable or automatic-retention permission', () => {
+test('exact thirty-three private HR/correction paths are classified with no readable or automatic-retention permission', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
-  assert.equal(hrPaths.length, 32);
+  assert.equal(hrPaths.length, 33);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);
@@ -388,6 +394,12 @@ test('inspection receipts, summary and quota have separate prospective restore c
 
 test('ten durable HR entries are prospective parent-dependent classifications, not an implemented restore', () => {
   assert.equal(hrDurablePaths.length, 10);
+  assert.equal(hrDerivedPaths.length, 1);
+  for (const path of hrDerivedPaths) {
+    const item = backupPolicy.getPolicy(path);
+    assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],
+      ['derived', 'none', 'exclude', 'do_not_restore'], path);
+  }
   for (const [path, classification, monitor, restore] of hrDurablePaths) {
     const item = backupPolicy.getPolicy(path);
     assert.deepEqual([item.classification, item.monitorPolicy, item.backupPolicy, item.restorePolicy],

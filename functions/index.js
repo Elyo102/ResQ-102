@@ -285,6 +285,13 @@ exports.removeMyRequestFile = onCall({ enforceAppCheck: true }, async (req) => h
  * הדיווח של עצמם. העובד רואה את ההכרעה ואינו כותב אותה בשום מסלול:
  * `hr_requests` סגור לחלוטין לכתיבה מהדפדפן. */
 exports.decideMyStationReport = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setDecision(req));
+/* מוני תיבות העבודה של משאבי אנוש. קריאה בלבד, למסמך
+ * מונים אחד שהשרת מתחזק באותה עסקה של הפנייה עצמה.
+ *
+ * הרישום נמצא מחוץ לבלוק שבעת הייצואים החסום מלמעלה,
+ * בדיוק כמו `removeMyRequestFile` ו-`decideMyStationReport`:
+ * `hr-requests-wiring.mjs` אוכף שהבלוק ההוא מכיל שבעה בלבד. */
+exports.countHrRequestBoxes = onCall({ enforceAppCheck: true }, async (req) => hrRequests.counts(req));
 const hrDocuments = hrDocumentsModule.createHrDocuments({ db, auth: admin.auth(), HttpsError });
 exports.publishHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.publish(req));
 exports.reviseHrDocument = onCall({ enforceAppCheck: true }, async (req) => hrDocuments.revise(req));
