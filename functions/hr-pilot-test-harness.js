@@ -41,6 +41,10 @@ const { createHash } = require('node:crypto');
 function fakeDb() {
   const store = new Map();
   const versions = new Map();
+  /* ⭐ מוני קריאות. „אין N+1" היא טענה על מספר קריאות, ולכן
+   * אפשר לבדוק אותה רק אם סופרים אותן. בלי המונים הבדיקה הייתה
+   * אומרת „התוצאה נכונה" — וזה נכון גם עם 25 קריאות סדרתיות. */
+  const counts = { get: 0, query: 0, getAll: 0, getAllRefs: 0 };
   const clone = (v) => structuredClone(v);
   const bump = (p) => versions.set(p, (versions.get(p) || 0) + 1);
   const snapOf = (path) => ({
@@ -85,6 +89,7 @@ function fakeDb() {
     q.limit = (n) => { q._l = n; return q; };
     q.startAfter = (v) => { q._after = v; return q; };
     q.get = async () => {
+      counts.query += 1;
       const prefix = collection + '/';
       let rows = [];
       for (const [p, v] of store) {
@@ -110,7 +115,7 @@ function fakeDb() {
       // כמזהה המסמך. בלעדיו כל בדיקה כאן הייתה נכשלת על „מזהה לא תקין"
       // בגלל הכפיל, ולא בגלל הקוד הנבדק.
       id: path.split('/').pop(),
-      get: async () => snapOf(path),
+      get: async () => { counts.get += 1; return snapOf(path); },
       set: async (v, o) => apply(path, 'set', v, o),
       update: async (v) => apply(path, 'update', v),
       collection: (name) => collectionRef(path + '/' + name)
@@ -118,11 +123,16 @@ function fakeDb() {
   }
   return {
     _store: store,
+    _counts: counts,
+    _resetCounts() { for (const key of Object.keys(counts)) counts[key] = 0; },
     _put(p, v) { store.set(p, structuredClone(v)); bump(p); },
     _get(p) { const v = store.get(p); return v === undefined ? undefined : structuredClone(v); },
     doc: docRef,
     collection: collectionRef,
-    async getAll(...refs) { return refs.map((ref) => snapOf(ref.path)); },
+    async getAll(...refs) {
+      counts.getAll += 1; counts.getAllRefs += refs.length;
+      return refs.map((ref) => snapOf(ref.path));
+    },
     async runTransaction(fn) {
       for (let attempt = 0; attempt < 6; attempt++) {
         const reads = new Map();
@@ -134,10 +144,12 @@ function fakeDb() {
               r.docs.forEach((s) => reads.set(s.ref.path, versions.get(s.ref.path) || 0));
               return r;
             }
+            counts.get += 1;
             reads.set(ref.path, versions.get(ref.path) || 0);
             return snapOf(ref.path);
           },
           async getAll(...refs) {
+            counts.getAll += 1; counts.getAllRefs += refs.length;
             for (const ref of refs) reads.set(ref.path, versions.get(ref.path) || 0);
             return refs.map((ref) => snapOf(ref.path));
           },

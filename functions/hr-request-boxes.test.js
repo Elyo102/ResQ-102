@@ -398,6 +398,99 @@ async function main() {
     assert.equal(page.items[0].owner_name, 'דנהלוי');
   });
 
+  /* ---------- 6b · אין N+1, ואין מידע רפואי בפוש ---------- */
+
+  /* ⭐ „אין N+1" היא טענה על מספר קריאות, ולא על נכונות
+   * התוצאה. עמוד של 25 שרות היה מחזיר בדיוק אותם שמות גם
+   * עם 25 קריאות סדרתיות, והבדיקה הייתה עוברת. לכן סופרים. */
+  await test('an inbox page of 25 rows resolves every name in exactly one batched read', async () => {
+    const w = world();
+    const hr = w.who.add('u-hr', 'hr_coordinator');
+    for (let index = 0; index < 25; index += 1) {
+      const uid = w.who.add('u-' + String(index).padStart(3, '0'), 'firefighter',
+        { full_name: 'עובד ' + index, crew: 'משמרת א' });
+      await w.requests.create(w.who.req(uid, report({ request_id: 'req-bulk-' + String(index).padStart(3, '0') })));
+    }
+    w.db._resetCounts();
+    const page = await w.requests.listInbox(w.who.req(hr, { kind: 'sick' }));
+    assert.equal(page.items.length, 25);
+    assert.equal(page.items.every(c => !!c.owner_name), true);
+    // קריאה מקובצת אחת לכל העמוד, עם 25 הפניות בתוכה.
+    assert.equal(w.db._counts.getAll, 1, JSON.stringify(w.db._counts));
+    assert.equal(w.db._counts.getAllRefs, 25, JSON.stringify(w.db._counts));
+    /* וקריאות המסמכים הבודדים נשארות במספר קבוע — זהות הקורא
+     * והוודאות הסופית — ואינן גדלות עם מספר השורות. */
+    assert.ok(w.db._counts.get <= 4, 'single-document reads: ' + JSON.stringify(w.db._counts));
+  });
+
+  await test('the employee path costs the same whether it holds one row or twenty-five', async () => {
+    /* מכסת הפעולות היא 10 בדקה לאדם, וכאן אדם אחד פותח 25.
+     * שעון שמתקדם עשר שניות בכל קריאה מגלגל את חלון המכסה —
+     * כלומר המכסה עובדת כמתוכנן, ולא נעקפה כדי לעבור. */
+    const db = fakeDb();
+    const who = people(db, SID);
+    let clock = Date.parse('2026-09-19T08:00:00Z');
+    const requests = createHrRequests({ db, auth: who.auth, HttpsError: FakeHttpsError,
+      clock: () => (clock += 10000) });
+    db._put('config/runtime', { silent: false });
+    const w = { db, who, requests, sid: SID };
+    const uid = w.who.add('u-mine', 'firefighter', { full_name: 'שלי', crew: 'א' });
+    for (let index = 0; index < 25; index += 1) {
+      await w.requests.create(w.who.req(uid, report({ request_id: 'req-mine-' + String(index).padStart(3, '0') })));
+    }
+    w.db._resetCounts();
+    const page = await w.requests.list(w.who.req(uid, {}));
+    assert.equal(page.items.length, 25);
+    // מסלול העובד אינו קורא רשומות אנשים בכלל.
+    assert.equal(w.db._counts.getAll, 0, JSON.stringify(w.db._counts));
+    assert.ok(w.db._counts.get <= 4, JSON.stringify(w.db._counts));
+  });
+
+  /* ⭐ דיווח מחלה הוא מידע רפואי. עבודת הפוש נושאת מזהים
+   * וסוג נמען בלבד — לא את הסוג, לא את התאריכים ולא את
+   * ההערה. זו הבדיקה שתיפול אם מי שיוסיף „כדי שההתראה
+   * תהיה מובנת יותר" יצרף את סוג הדיווח לעבודה. */
+  await test('the push job for a sickness report carries no kind, no dates and no note', async () => {
+    const w = world();
+    const uid = w.who.add('u-owner', 'firefighter');
+    w.who.add('u-hr', 'hr_coordinator');
+    const out = await w.requests.create(w.who.req(uid, report({
+      request_id: 'req-medical-one', text: 'אושפזתי במחלקה פלונית' })));
+    const jobs = [...w.db._store.entries()]
+      .filter(([path]) => path.includes('/hr_request_notification_jobs/'));
+    assert.equal(jobs.length, 1, jobs.map(([p]) => p).join('\n'));
+    const [, job] = jobs[0];
+    const text = JSON.stringify(job);
+    for (const leak of ['sick', '2026-09-10', '2026-09-12', 'אושפזתי', 'מחלה']) {
+      assert.equal(text.includes(leak), false, leak + ' reached the push job: ' + text);
+    }
+    assert.equal(job.type, 'hr_request');
+    assert.equal(job.audience, 'station_hr');
+    assert.equal(job.delivery_status, 'intent_only');
+    assert.equal(Object.hasOwn(job, 'kind'), false);
+    assert.equal(Object.hasOwn(job, 'from_date'), false);
+    assert.equal(Object.hasOwn(job, 'text'), false);
+    assert.equal(out.notification_status, 'policy_pending');
+  });
+
+  await test('a decision creates a push job that names neither the kind nor the outcome', async () => {
+    const w = world();
+    const uid = w.who.add('u-owner', 'firefighter');
+    const hr = w.who.add('u-hr', 'hr_coordinator');
+    const out = await w.requests.create(w.who.req(uid, report({ request_id: 'req-medical-two' })));
+    await w.requests.setDecision(w.who.req(hr, { request_id: 'req-decide-medical',
+      case_id: out.case_id, expected_revision: 1, decision: 'approved', send_now: false }));
+    const jobs = [...w.db._store.entries()]
+      .filter(([path]) => path.includes('/hr_request_notification_jobs/'))
+      .map(([, value]) => JSON.stringify(value));
+    assert.equal(jobs.length, 2);
+    for (const text of jobs) {
+      for (const leak of ['sick', 'approved', 'מחלה', '2026-09-10']) {
+        assert.equal(text.includes(leak), false, leak + ' reached a push job: ' + text);
+      }
+    }
+  });
+
   /* ---------- 7 · בידוד תחנות ---------- */
 
   await test('counters are per station: one station never sees the other station tally', async () => {

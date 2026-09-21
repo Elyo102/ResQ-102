@@ -40,6 +40,7 @@ const MONTHLY = 'hr-monthly-summary.test.js';
 const BACKFILL = 'hr-months-backfill.test.js';
 const REMOVAL = 'hr-removal-authority.test.js';
 const FIDELITY = 'hr-pilot-harness-fidelity.test.js';
+const SCALE = 'hr-monthly-scale.test.js';
 
 const mutations = [
   {
@@ -131,6 +132,24 @@ const mutations = [
     file: 'hr-months-backfill.js', test: BACKFILL,
     find: "      if (own(value, 'months')) {\n        if (sameMonths(value.months, value.from_date, value.to_date)) counts.already += 1;\n        else counts.conflicting += 1;\n        continue;\n      }",
     replace: "      if (own(value, 'months') && sameMonths(value.months, value.from_date, value.to_date)) {\n        counts.already += 1;\n        continue;\n      }"
+  },
+  {
+    name: 'the inbox goes back to one read per row instead of one batched read',
+    file: 'hr-requests.js', test: BOXES,
+    find: '        const snaps = await tx.getAll(...uids.map(uid => root(r.ctx.sid).collection(\'users\').doc(uid)));',
+    replace: '        const snaps = await Promise.all(uids.map(uid => tx.get(root(r.ctx.sid).collection(\'users\').doc(uid))));'
+  },
+  {
+    name: 'the push job starts carrying the kind of the report',
+    file: 'hr-requests.js', test: BOXES,
+    find: "            type: op === 'nudge' ? 'hr_nudge' : ownerNotification ? 'hr_reply' : 'hr_request',",
+    replace: "            type: op === 'nudge' ? 'hr_nudge' : ownerNotification ? 'hr_reply' : 'hr_request',\n            ...(own(p, 'kind') ? { request_kind: p.kind } : {}),"
+  },
+  {
+    name: 'the monthly build goes back to one hours read per employee',
+    file: 'hr-monthly-summary.js', test: SCALE,
+    find: "    const reports = reportRefs.length && typeof db.getAll === 'function'\n      ? await db.getAll(...reportRefs) : [];",
+    replace: '    const reports = await Promise.all(reportRefs.map((ref) => ref.get()));'
   },
   {
     name: 'the test double goes back to passing every row for every operator but ==',
