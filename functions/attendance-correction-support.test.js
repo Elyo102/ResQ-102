@@ -170,7 +170,7 @@ async function noWrites(f, fn, code) {
 test('factory requires safe injected ports and performs no reads or writes at construction', () => {
   const f = fixture();
   for (const name of ['db', 'auth', 'HttpsError', 'serverTimestamp', 'clock', 'monthAt']) assert.throws(() => createAttendanceCorrectionSupport({ ...f.ports, [name]: null }), TypeError);
-  assert.deepEqual(Object.keys(f.api()), ['getContext', 'reopen', 'listAudit', 'getAudit']);
+  assert.deepEqual(Object.keys(f.api()), ['getContext', 'reopen', 'approve', 'listAudit', 'getAudit']);
   assert.equal(f.db.metrics.reads.length, 0); assert.equal(f.db.metrics.writes, 0);
 });
 test('context binds actual preimage and exact nanosecond version; no legacy secrets or writes', async () => {
@@ -190,6 +190,60 @@ test('context data remains coherent old snapshot if content changes before final
   assert.equal(context.days[0].record.hours, 8); assert.equal(f.db.value(f.path(f.month + '-01')).hours, 9);
   const q = f.reopenReq({ days: context.days.map(({ date, expected_version }) => ({ date, expected_version })) });
   await noWrites(f, () => f.api().reopen(q), 'aborted');
+});
+test('month approval atomically locks every row and the submitted report in one commit', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'submitted',
+    full_name:'Local Name', crew:'A', days:[f.month + '-01'], total_hours:8 });
+  f.row(undefined, { status:'draft' });
+  const before = f.db.metrics.commits;
+  const result = await f.api().approve(f.req({ request_id:'approve_month_0001' }));
+  assert.equal(result.outcome, 'approved'); assert.equal(result.duplicate, false);
+  assert.equal(result.attendance_changed_count, 1); assert.equal(f.db.metrics.commits, before + 1);
+  const report = f.db.value(f.reportPath), row = f.db.value(f.path(f.month + '-01'));
+  assert.equal(report.status, 'approved'); assert.equal(row.status, 'approved');
+  assert.equal(report.approved_by, f.actor); assert.equal(row.edited_by, f.actor);
+  assert.equal(report.approval_operation.request_id, 'approve_month_0001');
+  assert.deepEqual(report.approved_at, row.edited_at);
+});
+test('a mid-approval write failure leaves both report and attendance unchanged', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'submitted',
+    full_name:'Local Name', crew:'A', days:[f.month + '-01'], total_hours:8 });
+  f.row(undefined, { status:'draft' });
+  f.db.failWrite = path => path === f.reportPath;
+  await noWrites(f, () => f.api().approve(f.req({ request_id:'approve_failure_0001' })), 'unavailable');
+});
+test('approval replay is exact and a different operation cannot reuse an approved month', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'submitted',
+    full_name:'Local Name', crew:'A', days:[f.month + '-01'], total_hours:8 });
+  f.row(undefined, { status:'draft' });
+  const request = f.req({ request_id:'approve_replay_0001' });
+  await f.api().approve(request); const snapshot = f.db.dump();
+  const replay = await f.api().approve(copy(request));
+  assert.equal(replay.duplicate, true); assert.deepEqual(f.db.dump(), snapshot);
+  await noWrites(f, () => f.api().approve(f.req({ request_id:'approve_other_0002' })), 'failed-precondition');
+});
+test('shift command approval is scoped to its live crew while HR remains station-wide', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'submitted',
+    full_name:'Local Name', crew:'A', days:[f.month + '-01'], total_hours:8 });
+  f.row(undefined, { status:'draft' });
+  f.records.get(f.actor).customClaims = { stationId:f.sid, role:'commander' };
+  f.db.seed(f.root + '/users/' + f.actor, { stationId:f.sid, role:'commander', active:true,
+    employee_number:'9001', full_name:'Commander', crew:'B' });
+  await noWrites(f, () => f.api().approve(f.req({ request_id:'approve_wrong_crew_01' })), 'permission-denied');
+  f.db.seed(f.root + '/users/' + f.actor, { stationId:f.sid, role:'commander', active:true,
+    employee_number:'9001', full_name:'Commander', crew:'A' });
+  assert.equal((await f.api().approve(f.req({ request_id:'approve_right_crew_02' }))).outcome, 'approved');
+});
+test('approval refuses a report whose declared days differ from the atomic row set', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'submitted',
+    full_name:'Local Name', crew:'A', days:[], total_hours:8 });
+  f.row(undefined, { status:'draft' });
+  await noWrites(f, () => f.api().approve(f.req({ request_id:'approve_mismatch_0001' })), 'failed-precondition');
 });
 test('context rejects duplicate/noncanonical IDs, overflow and malformed identity instead of returning create authority', async () => {
   for (const kind of ['alias', 'uid', 'month', 'overflow']) {

@@ -1391,28 +1391,11 @@ service cloud.firestore {
         //     שהופך את התיעוד לאמין: אי אפשר לערוך בשם אחר.
         //     עריכה של הרשומה של עצמך פטורה — שם ממילא ידוע
         //     מי כתב.
+        // Month approval is server-only. The callable validates fresh Auth,
+        // shift scope and the complete row set, then locks the report and all
+        // attendance rows in one transaction. Browser-side two-step approval
+        // is deliberately impossible here.
         allow update: if (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', ''))
-                          && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
-                          && request.resource.data.get('crew', '') == resource.data.get('crew', '')
-                          && resource.data.get('status', '') in ['', 'draft', 'submitted', 'imported']
-                          && request.resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('edited_by', '') == request.auth.uid
-                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                               'status', 'updated_at', 'edited_by',
-                               'edited_by_name', 'edited_at'
-                             ]))
-                      || (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', ''))
-                          && resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('edited_by', '') == resource.data.get('edited_by', '')
-                          && request.resource.data.get('edited_by', '') == request.auth.uid
-                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                               'status', 'updated_at', 'edited_by',
-                               'edited_by_name', 'edited_at'
-                             ]))
-                      || (staff(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') == 'approved'
@@ -2116,26 +2099,9 @@ service cloud.firestore {
                           && request.resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('status', '') != 'approved';
 
+        // submitted -> approved is committed only by approveAttendanceMonth,
+        // together with every row lock. Client Rules keep no partial path.
         allow update: if (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', ''))
-                          && resource.data.get('status', '') == 'submitted'
-                          && request.resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('approved_by', '') == request.auth.uid
-                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                               'status', 'approved_by', 'approved_by_name',
-                               'approved_at'
-                              ]))
-                      || (staff(sid)
-                          && seesCrewData(sid, resource.data.get('crew', ''))
-                          && resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('status', '') == 'approved'
-                          && request.resource.data.get('approved_by', '') == resource.data.get('approved_by', '')
-                          && request.resource.data.get('approved_by', '') == request.auth.uid
-                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                               'status', 'approved_by', 'approved_by_name',
-                               'approved_at'
-                             ]))
-                      || (staff(sid)
                           && resource.data.get('emp_number', '') == myEmp()
                           && request.resource.data.get('emp_number', '') == resource.data.get('emp_number', '')
                           && resource.data.get('status', '') == 'approved'

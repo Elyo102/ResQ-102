@@ -455,6 +455,7 @@ const callCorrectionContext = httpsCallable(fns, 'getAttendanceCorrectionContext
 const callCorrectAttendanceDay = httpsCallable(fns, 'correctAttendanceDay');
 const callCorrectAttendanceMonth = httpsCallable(fns, 'correctAttendanceMonth');
 const callReopenAttendanceMonth = httpsCallable(fns, 'reopenAttendanceMonthForCorrection');
+const callApproveAttendanceMonth = httpsCallable(fns, 'approveAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
 
@@ -492,6 +493,7 @@ let monthDataReady = false;
 let guardLoadGeneration = 0;
 let correctionContext = null;
 let pendingCorrectionOperation = null;
+const pendingMonthApprovals = new Map();
 let correctionAuditCursor = null;
 let correctionAuditItems = [];
 
@@ -2193,23 +2195,47 @@ async function setMonthStatus(emp, mk, days, status){
   await batch.commit();
 }
 
-$('btnApprove').onclick = () => approveMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
-                                            Object.keys(records).sort(), 'msg');
+$('btnApprove').onclick = () => approveMonth(SUBJ.uid, SUBJ.emp, monthKey(viewYear, viewMonth),
+                                            'msg', $('btnApprove'));
 $('btnReopen').onclick  = () => reopenMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
                                             Object.keys(records).sort(), 'msg');
 
-async function approveMonth(emp, mk, days, box){
+async function approveMonth(targetUid, emp, mk, box, button){
+  const key = String(targetUid || '') + '|' + String(emp || '') + '|' + String(mk || '');
+  let pending = pendingMonthApprovals.get(key);
+  if (pending && pending.inFlight) return;
+  if (!pending) {
+    pending = { requestId: newCorrectionRequestId(), inFlight: false };
+    pendingMonthApprovals.set(key, pending);
+  }
+  pending.inFlight = true;
+  if (button) button.disabled = true;
   try {
-    await setMonthStatus(emp, mk, days, 'approved');
-    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
-    await setDoc(ref, { status: 'approved', approved_by: ME.uid,
-                        approved_by_name: ME.full_name,
-                        approved_at: serverTimestamp() }, { merge: true });
+    const response = await callApproveAttendanceMonth({
+      target_uid: targetUid, employee_number: String(emp), month: mk,
+      request_id: pending.requestId
+    });
+    const data = response && response.data;
+    if (!data || data.outcome !== 'approved' || !/^[a-f0-9]{64}$/.test(String(data.approval_id || ''))
+        || !Number.isInteger(data.attendance_changed_count) || data.attendance_changed_count < 0
+        || typeof data.duplicate !== 'boolean') {
+      const malformed = new Error('השרת לא החזיר אישור מלא. אפשר לנסות שוב את אותה הפעולה.');
+      malformed.uncertain = true; throw malformed;
+    }
+    pendingMonthApprovals.delete(key);
     msg('החודש אושר ונעול.', 'ok', box);
     if (emp === SUBJ.emp) await loadMonth();
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
-    msg(userError('attendance.approveMonth', e, 'האישור נכשל.'), 'err', box);
+    if (definiteCorrectionRejection(e)) pendingMonthApprovals.delete(key);
+    else pending.inFlight = false;
+    msg(e && e.uncertain
+      ? 'לא התקבל אישור סופי מהשרת. אפשר לנסות שוב; אותה פעולה לא תאושר פעמיים.'
+      : userError('attendance.approveMonth', e, 'האישור נכשל.'), 'err', box);
+  } finally {
+    const current = pendingMonthApprovals.get(key);
+    if (current) current.inFlight = false;
+    if (button && button.isConnected) button.disabled = false;
   }
 }
 
@@ -2475,7 +2501,7 @@ async function loadApprovals(){
     b.textContent = 'אשר';
     b.setAttribute('aria-label', 'אישור הדוח של ' + (r.full_name || r.emp_number) +
       ' לחודש ' + (r.month || ''));
-    b.onclick = () => approveMonth(r.emp_number, r.month, r.days || [], 'apprMsg');
+    b.onclick = () => approveMonth(r.uid, r.emp_number, r.month, 'apprMsg', b);
     td.appendChild(b);
     tr.appendChild(td);
     body.appendChild(tr);

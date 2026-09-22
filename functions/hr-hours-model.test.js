@@ -116,9 +116,11 @@ test('reserved uid values do not modify object prototype', () => {
   const value = project(input({ employee: person, report: null, attendance: [] }));
   assert.equal(targets([value])[0].uid, '__proto__'); assert.equal(Object.prototype.action, undefined);
 });
-test('source contract pins date key shape and persisted status names', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'attendance.html'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(source, /const saved = Object\.keys\(records\)\.sort\(\)/);
-  assert.match(source, /days: saved/);
-  for (const status of ['draft', 'submitted', 'approved']) assert.ok(source.includes("status: '" + status + "'"));
+test('source contract pins date key shape and persisted status ownership', () => {
+  const client = fs.readFileSync(path.join(__dirname, '..', 'attendance.html'), 'utf8').replace(/\r\n/g, '\n');
+  const approvalService = fs.readFileSync(path.join(__dirname, 'attendance-correction-support.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(client, /const saved = Object\.keys\(records\)\.sort\(\)/);
+  assert.match(client, /days: saved/);
+  for (const status of ['draft', 'submitted']) assert.ok(client.includes("status: '" + status + "'"));
+  assert.ok(approvalService.includes("status: 'approved'"), 'approved is persisted only by the atomic server service');
 });

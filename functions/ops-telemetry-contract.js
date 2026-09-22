@@ -61,7 +61,7 @@ const CALLABLES = Object.freeze([
   'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport', 'getHrOverHoursAlert',
   'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
-  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',
+  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection', 'approveAttendanceMonth',
   'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',
   'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
   'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest', 'removeMyRequestFile', 'decideMyStationReport',

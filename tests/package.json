@@ -11,7 +11,7 @@
     "mail:guard": "node ../functions/mail-delivery-guard.test.js && node mail-delivery-wiring.mjs",
     "bulletin:receipts": "node ../functions/bulletin-receipts.test.js",
     "test:inventory": "node test-inventory.mjs && npm run onboarding:wiring",
-    "attendance:corrections": "node attendance-create-only.mjs && node ../functions/attendance-hours-calculator.test.js && node ../functions/attendance-correction-config.test.js && node ../functions/attendance-corrections.test.js && node ../functions/attendance-correction-support.test.js",
+    "attendance:corrections": "node attendance-create-only.mjs && node attendance-approval-source.mjs && node attendance-corrections-wiring.mjs && node ../functions/attendance-hours-calculator.test.js && node ../functions/attendance-correction-config.test.js && node ../functions/attendance-corrections.test.js && node ../functions/attendance-correction-support.test.js",
     "hr:attachments:core": "node hr-attachment-wiring.mjs && node ../functions/hr-attachments.test.js && node ../functions/hr-attachments-storage.test.js && node ../functions/hr-attachment-service.test.js",
     "hr:month:boundaries": "node hr-month-boundaries.mjs && node ../functions/hr-month-revision.test.js",
     "hr:archive": "node hr-month-archive.mjs && node hr-local-export.mjs",

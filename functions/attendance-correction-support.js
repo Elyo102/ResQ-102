@@ -12,6 +12,7 @@ const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
 const { COLLECTIONS, EDITABLE, DERIVED, TARGET_ROLES } = require('./attendance-corrections');
 const LIMITS = Object.freeze({ days: 31, page: 25, bytes: 128 * 1024, text: 4000 });
+const APPROVER_ROLES = Object.freeze(['deputy', 'commander', 'station_commander', 'hr_coordinator']);
 const FIELDS = Object.freeze([...EDITABLE, ...DERIVED, 'status']);
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -77,20 +78,31 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
   function request(req, mode) {
     const ctx = identity.context(req), hr = ctx.super || ctx.role === 'hr_coordinator';
     if (!hr && ['context', 'reopen'].includes(mode)) fail('permission-denied', 'HR authority required');
+    if (mode === 'approve' && !ctx.super && !APPROVER_ROLES.includes(ctx.role)) {
+      fail('permission-denied', 'Attendance approval authority required');
+    }
     const required = ['target_uid', 'employee_number', 'month'];
     const extra = mode === 'reopen' ? ['expected_report_version', 'days', 'reason', 'request_id']
+      : mode === 'approve' ? ['request_id']
       : mode === 'list' ? ['cursor'] : mode === 'get' ? ['event_id'] : [];
     shape(req.data, [...required, ...extra], [...required, ...(mode === 'list' ? [] : extra)]);
     const d = req.data;
     if (!access.validUid(d.target_uid)) fail('invalid-argument', 'Invalid target');
     employee(d.employee_number);
     try { monthKey(d.month); } catch (_) { fail('invalid-argument', 'Invalid month'); }
-    if (!hr && ctx.uid !== d.target_uid) fail('permission-denied', 'Only your own correction history is available');
+    if (!hr && mode !== 'approve' && ctx.uid !== d.target_uid) fail('permission-denied', 'Only your own correction history is available');
     const authTime = req.auth.token.auth_time;
     if (!Number.isSafeInteger(authTime) || authTime < 0 || !Number.isSafeInteger(authTime * 1000)) fail('unauthenticated', 'Refresh sign-in');
     if (mode === 'list' && own(d, 'cursor') && (typeof d.cursor !== 'string' || !EVENT_ID.test(d.cursor))) fail('invalid-argument', 'Invalid cursor');
     if (mode === 'get' && (typeof d.event_id !== 'string' || !EVENT_ID.test(d.event_id))) fail('invalid-argument', 'Invalid event id');
     const r = { ctx, hr, authTime, target: d.target_uid, emp: d.employee_number, month: d.month, data: d };
+    if (mode === 'approve') {
+      if (typeof d.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,120}$/.test(d.request_id)) fail('invalid-argument', 'Invalid request id');
+      r.intent = { station_id: ctx.sid, actor_uid: ctx.uid, target_uid: r.target,
+        employee_number: r.emp, month: r.month, operation: 'approve' };
+      r.id = hash(['attendance-approval-v1', ctx.sid, ctx.uid, d.request_id]);
+      r.fingerprint = hash(r.intent);
+    }
     if (mode === 'reopen') {
       if (typeof d.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,120}$/.test(d.request_id)) fail('invalid-argument', 'Invalid request id');
       if (!Array.isArray(d.days) || d.days.length > LIMITS.days) fail('invalid-argument', 'At most 31 rows are allowed');
@@ -116,8 +128,11 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
       if (!Number.isFinite(at)) fail('unavailable', 'Revocation state invalid');
       if (r.authTime * 1000 < at) fail('permission-denied', 'Sign-in revoked');
     }
-    await identity.requireLive(tx, r.ctx);
-    return typeof user.displayName === 'string' && user.displayName.length <= 500 ? user.displayName : r.ctx.uid;
+    const profile = await identity.requireLive(tx, r.ctx);
+    return {
+      name: typeof user.displayName === 'string' && user.displayName.length <= 500 ? user.displayName : r.ctx.uid,
+      crew: profile && typeof profile.crew === 'string' ? profile.crew : ''
+    };
   }
   async function target(tx, r) {
     const s = await tx.get(db.collection('stations').doc(r.ctx.sid).collection('users').doc(r.target));
@@ -266,7 +281,7 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
       if (!same(token(m.report), r.intent.expected_report_version)
           || !same(m.rows.map(row => ({ date: row.date, expected_version: row.expected_version })), r.intent.days)) fail('aborted', 'Month changed; reload before reopening');
       if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ stage: 'reopen' });
-      const actorName = await live(tx, r), finalPerson = await target(tx, r), at = now();
+      const actorName = (await live(tx, r)).name, finalPerson = await target(tx, r), at = now();
       if (!same(person, finalPerson)) fail('aborted', 'Employee changed before reopening');
       if (!eligibility(m, person, at, r).can_reopen) corrupt('Report does not have a valid reopening route');
       const beforeReport = m.report.exists ? m.report.data() : null;
@@ -302,6 +317,56 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
         target_uid: r.target, employee_number: r.emp, month: r.month, request_id: r.data.request_id, fingerprint: r.fingerprint,
         attendance_changed_count: result.attendance_changed_count, created_report: result.created_report });
       return result;
+    });
+  }
+  function approvalScope(r, actor, person) {
+    if (r.ctx.super || ['hr_coordinator', 'station_commander'].includes(r.ctx.role)) return;
+    if (!['deputy', 'commander'].includes(r.ctx.role)) fail('permission-denied', 'Attendance approval authority required');
+    if (actor.crew && person.crew && actor.crew !== person.crew) fail('permission-denied', 'The employee is outside your shift scope');
+  }
+  async function approve(req) {
+    const r = request(req, 'approve');
+    return db.runTransaction(async tx => {
+      const actor = await live(tx, r), person = await target(tx, r);
+      approvalScope(r, actor, person);
+      const m = await month(tx, r);
+      if (!m.report.exists) corrupt('Submitted report unavailable');
+      const report = m.report.data();
+      const operation = report.approval_operation;
+      if (report.status === 'approved') {
+        if (!plain(operation) || operation.schema !== 'attendance-approval-operation-v1'
+            || operation.approval_id !== r.id || operation.request_id !== r.data.request_id
+            || operation.fingerprint !== r.fingerprint || operation.actor_uid !== r.ctx.uid) {
+          fail('failed-precondition', 'The report was already approved by another operation');
+        }
+        await live(tx, r);
+        if (!same(person, await target(tx, r))) fail('aborted', 'Employee changed during approval replay');
+        return { approval_id: r.id, outcome: 'approved', attendance_changed_count: m.rows.length, duplicate: true };
+      }
+      if (report.status !== 'submitted') corrupt('Only a submitted report can be approved');
+      if (!Array.isArray(report.days) || report.days.length !== m.rows.length
+          || !same([...report.days].sort(), m.rows.map(row => row.date))) {
+        corrupt('Submitted report does not match its attendance rows');
+      }
+      if (m.rows.some(row => own(row.value, 'status')
+          && !['', 'draft', 'submitted', 'imported'].includes(row.value.status))) {
+        corrupt('Attendance row is not eligible for approval');
+      }
+      if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ stage: 'approve' });
+      const finalActor = await live(tx, r), finalPerson = await target(tx, r);
+      approvalScope(r, finalActor, finalPerson);
+      if (!same(person, finalPerson)) fail('aborted', 'Employee changed before approval');
+      const commit = serverTimestamp();
+      if (commit === null || commit === undefined || (typeof commit !== 'object' && typeof commit !== 'function')) corrupt('Commit timestamp unavailable');
+      const approvalOperation = { schema: 'attendance-approval-operation-v1', approval_id: r.id,
+        request_id: r.data.request_id, fingerprint: r.fingerprint, actor_uid: r.ctx.uid };
+      const approvedReport = { ...report, status: 'approved', approved_by: r.ctx.uid,
+        approved_by_name: finalActor.name, approved_at: commit, approval_operation: approvalOperation };
+      const approvedRows = m.rows.map(row => ({ row, value: { ...row.value, status: 'approved',
+        edited_by: r.ctx.uid, edited_by_name: finalActor.name, edited_at: commit, updated_at: commit } }));
+      approvedRows.forEach(({ row, value }) => tx.set(row.snap.ref, value));
+      tx.set(m.report.ref, approvedReport);
+      return { approval_id: r.id, outcome: 'approved', attendance_changed_count: approvedRows.length, duplicate: false };
     });
   }
   function eventHeader(snap, r) {
@@ -371,7 +436,7 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
       return result;
     });
   }
-  return Object.freeze({ getContext, reopen, listAudit, getAudit });
+  return Object.freeze({ getContext, reopen, approve, listAudit, getAudit });
 }
 
-module.exports = Object.freeze({ createAttendanceCorrectionSupport, LIMITS, FIELDS });
+module.exports = Object.freeze({ createAttendanceCorrectionSupport, LIMITS, FIELDS, APPROVER_ROLES });

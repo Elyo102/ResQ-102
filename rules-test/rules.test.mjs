@@ -684,13 +684,13 @@ await blocked('🔒 סגל אינו עוקף את יומן התיקונים בש
 await blocked('🔒 סגל אינו מוחק דיווח של עובד מחוץ ל-callable המתועד',
   deleteDoc(doc(hrUser, `stations/${SID}/attendance/att_staff_guard`)));
 
-await ok('סגל מאשר דיווח במעבר צר וחתום בלבד',
+await blocked('🔒 סגל אינו מאשר רשומת יום ישירות — רק callable אטומי',
   updateDoc(doc(cmdB, `stations/${SID}/attendance/att_staff_guard`), {
     status: 'approved', updated_at: new Date(), edited_by: 'u_cmdb',
     edited_by_name: 'מפקד ב', edited_at: new Date()
   }));
 
-await ok('ניסיון חוזר של אותו מאשר לדיווח נשאר אידמפוטנטי',
+await blocked('🔒 גם ניסיון חוזר לא עוקף את נתיב האישור השרתִי',
   updateDoc(doc(cmdB, `stations/${SID}/attendance/att_staff_guard`), {
     status: 'approved', updated_at: new Date(), edited_by: 'u_cmdb',
     edited_by_name: 'מפקד ב', edited_at: new Date()
@@ -806,13 +806,13 @@ await blocked('🔒 סגל אינו משנה תוכן של דוח חודשי',
 await blocked('🔒 סגל אינו מוחק דוח חודשי',
   deleteDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`)));
 
-await ok('אישור דוח חודשי הוא מעבר צר וחתום',
+await blocked('🔒 דוח חודשי אינו מאושר ישירות — רק callable אטומי',
   updateDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`), {
     status: 'approved', approved_by: 'u_st', approved_by_name: 'מפקד תחנה',
     approved_at: new Date()
   }));
 
-await ok('ניסיון חוזר של אותו מאשר נשאר אידמפוטנטי',
+await blocked('🔒 ניסיון חוזר ישיר אינו עוקף את נתיב האישור השרתִי',
   updateDoc(doc(stCmd, `stations/${SID}/monthly_reports/102_2026-09`), {
     status: 'approved', approved_by: 'u_st', approved_by_name: 'מפקד תחנה',
     approved_at: new Date()

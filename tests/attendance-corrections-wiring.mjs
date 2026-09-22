@@ -51,6 +51,7 @@ const modules = {
     return {
       getContext(req) { calls.push(['context', req]); return Promise.resolve(result); },
       reopen(req) { calls.push(['reopen', req]); return Promise.resolve(result); },
+      approve(req) { calls.push(['approve', req]); return Promise.resolve(result); },
       listAudit(req) { calls.push(['list-audit', req]); return Promise.resolve(result); },
       getAudit(req) { calls.push(['get-audit', req]); return Promise.resolve(result); }
     };
@@ -73,9 +74,10 @@ assert.equal(await exported.correctAttendanceDay(request), result);
 assert.equal(await exported.correctAttendanceMonth(request), result);
 assert.equal(await exported.getAttendanceCorrectionContext(request), result);
 assert.equal(await exported.reopenAttendanceMonthForCorrection(request), result);
+assert.equal(await exported.approveAttendanceMonth(request), result);
 assert.equal(await exported.listAttendanceCorrectionAudit(request), result);
 assert.equal(await exported.getAttendanceCorrectionAudit(request), result);
-assert.deepEqual(calls, [['day', request], ['month', request], ['context', request], ['reopen', request],
+assert.deepEqual(calls, [['day', request], ['month', request], ['context', request], ['reopen', request], ['approve', request],
   ['list-audit', request], ['get-audit', request]]);
 assert.equal(factories.filter(([name]) => name === 'service').length, 1);
 assert.equal(factories.filter(([name]) => name === 'support').length, 1);
@@ -87,9 +89,9 @@ const supportDeps = factories.find(([name]) => name === 'support')[1];
 assert.equal(supportDeps.db, db); assert.equal(supportDeps.auth, auth); assert.equal(supportDeps.HttpsError, HttpsError);
 assert.equal(typeof supportDeps.monthAt, 'function'); assert.equal(typeof supportDeps.serverTimestamp, 'function');
 assert.deepEqual(Object.keys(exported).sort(), ['correctAttendanceDay', 'correctAttendanceMonth',
-  'getAttendanceCorrectionAudit', 'getAttendanceCorrectionContext', 'listAttendanceCorrectionAudit',
+  'approveAttendanceMonth', 'getAttendanceCorrectionAudit', 'getAttendanceCorrectionContext', 'listAttendanceCorrectionAudit',
   'reopenAttendanceMonthForCorrection'].sort());
-assert.equal(registrations.length, 6);
+assert.equal(registrations.length, 7);
 for (const callOptions of registrations) assert.deepEqual(JSON.parse(JSON.stringify(callOptions)), {
   region: 'europe-west1', enforceAppCheck: true, timeoutSeconds: 60,
   memory: '256MiB', maxInstances: 3, concurrency: 1
