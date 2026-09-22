@@ -21,7 +21,7 @@
 //
 // טעות זו היא הטעות המתבקשת כאן, ולכן היא כתובה במפורש.
 
-import { worksOn } from './effective-workdays.js?v=42h29';
+import { worksOn } from './effective-workdays.js?v=42h30';
 
 // ------------------------------------------------------------------
 //  מצבים

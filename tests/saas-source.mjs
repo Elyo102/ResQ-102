@@ -51,7 +51,7 @@ check('service: never references callout/push/schedule/login/messaging code', !/
 check('service: webhook status from server mapping only; payload plan/limits never written', /contract\.webhookStatusFor\(event\.type, sub\.status\)/.test(service) && !/event\.plan_id|event\.limits|payload\.plan|payload\.limits/.test(service));
 check('provider: only a fake implementation, constant-time signature check, failNext supported', /createFakeBillingProvider/.test(provider) && /timingSafeEqual/.test(provider) && /failNext/.test(provider) && !/https?:\/\/|fetch\(|require\('https'\)/.test(provider));
 const html = read('saas-admin.html'), ui = read('saas-admin-ui.js');
-check('saas-admin.html: super gate, single App Check init, release query, nav', /claims\.super !== true/.test(html) && (html.match(/await initAppCheck\(app\);/g) || []).length === 1 && /renderNav\(claims, 'saas-admin\.html'/.test(html) && html.includes("from './saas-admin-ui.js?v=42h29'"));
+check('saas-admin.html: super gate, single App Check init, release query, nav', /claims\.super !== true/.test(html) && (html.match(/await initAppCheck\(app\);/g) || []).length === 1 && /renderNav\(claims, 'saas-admin\.html'/.test(html) && html.includes("from './saas-admin-ui.js?v=42h30'"));
 check('saas-admin-ui.js: no innerHTML/outerHTML/insertAdjacentHTML/document.write and no "שלם"', !/\.(?:innerHTML|outerHTML)\s*[=+]|insertAdjacentHTML\(|document\.write\(/.test(ui) && !/שלם/.test(ui) && !/שלם/.test(html));
 check('saas-admin-ui.js: simulation label and no price fields sent', /SIMULATION_LABEL = 'סימולציה מקומית — לא חיוב'/.test(ui) && !/price|amount|currency|discount/.test(ui));
 const wiring = read('SAAS-WIRING.md');

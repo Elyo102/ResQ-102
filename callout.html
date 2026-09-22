@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ResQ — קריאת פתע</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
-<link rel="stylesheet" href="./theme.css?v=42h29">
+<link rel="stylesheet" href="./theme.css?v=42h30">
 <style>
   body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
   .wrap{max-width:760px;margin:0 auto;padding:18px 14px 70px}
@@ -90,7 +90,7 @@
       <div class="sound-preview" aria-label="בדיקת צליל קריאת הפתע">
         <b>בדיקת צליל לפני שיגור</b>
         <span class="sub">השמעה מקומית בלבד — לא נשלחת קריאה ולא נרשם אירוע.</span>
-        <audio controls preload="none" src="./callout-siren.mp3?v=42h29"></audio>
+        <audio controls preload="none" src="./callout-siren.mp3?v=42h30"></audio>
       </div>
       <section class="recipient-box" aria-labelledby="recipientTitle">
         <h3 id="recipientTitle" style="font-size:16px;margin:12px 0 4px;color:var(--callout-heading)">נמענים</h3>
@@ -119,17 +119,17 @@
   </main>
 </div>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h29';
+import { firebaseConfig } from './firebase-config.js?v=42h30';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h29';
-import { initAppCheck } from './appcheck.js?v=42h29';
-import { renderNav, renderStuckNav } from './nav.js?v=42h29';
-import { initPWA } from './pwa.js?v=42h29';
-import { watchCallouts } from './callout.js?v=42h29';
-import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h29';
-import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h29';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h30';
+import { initAppCheck } from './appcheck.js?v=42h30';
+import { renderNav, renderStuckNav } from './nav.js?v=42h30';
+import { initPWA } from './pwa.js?v=42h30';
+import { watchCallouts } from './callout.js?v=42h30';
+import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h30';
+import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h30';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

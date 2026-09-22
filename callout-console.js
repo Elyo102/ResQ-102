@@ -1,9 +1,9 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h29';
-import { errorText, logError } from './error-text.js?v=42h29';
-import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h29';
-import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h29';
+import { CREW_HE } from './rotation.js?v=42h30';
+import { errorText, logError } from './error-text.js?v=42h30';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h30';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h30';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;

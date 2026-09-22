@@ -4,8 +4,8 @@
 // ובחלון של 30 הודעות. כתיבה והסתרה אינן נעשות מהדפדפן: הן
 // עוברות דרך Cloud Functions שמאמתות זהות, תפקיד ותוכן בצד השרת.
 
-import { subStationAvailable } from './stations.js?v=42h29';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h29';
+import { subStationAvailable } from './stations.js?v=42h30';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h30';
 export { subStationAvailable };
 
 const PAGE_SIZE = 30;
