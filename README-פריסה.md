@@ -152,15 +152,18 @@ Assert-ResQNative 'Playwright install'
 ### שער א' — שער האפליקציה
 
 ```powershell
-npm --prefix tests run all
+npm --prefix tests run release:validate
 Assert-ResQNative 'application gate'
 ```
 
-`static` + `browser` + `browser:mobile`. חייב לצאת **0**.
+`static` + `browser` + `browser:mobile`. חייב לצאת **0**. בסיום נכתבת
+קבלה קצרת־חיים מחוץ לריפו, הקשורה ל־Git tree הנקי, ל־Node 22 ולקובצי
+התלויות והפריסה שנבדקו.
 
-> זהו גם ה-`predeploy` של הפונקציות, כלומר `firebase deploy --only
-> functions` יריץ אותו שוב מעצמו. זה מכוון וזה מאט את הפריסה בכמה
-> דקות. פריסה שעוקפת את השער היא פריסה שלא נבדקה.
+> `firebase.json` נשאר fail-closed: פקודת Firebase ידנית עדיין תריץ את
+> השער המלא. רק `release-functions-once.mjs` רשאי להשתמש בקבלה התקפה
+> ולהסיר את ה-hook מתוך config זמני שזהה בכל שאר השדות. קבלה חסרה,
+> ישנה, עץ מלוכלך, Node שאינו 22 או שינוי בקובץ קשור — עוצרים לפני ייצור.
 
 ### שער ב' — כללי האבטחה
 
@@ -358,14 +361,18 @@ Assert-ResQNative 'wait for raw Firestore callout index states'
 node tests/firebase-release-state.mjs functions station-102
 Assert-ResQNative 'assert no active Cloud Functions rollout'
 $resqFunctionsAttempted = $true
-Invoke-ResQDeployWith429Backoff 'functions' 'deploy functions' 'functions'
+node release-functions-once.mjs --candidate $resqMergeSha --project station-102 --execute
+Assert-ResQNative 'deploy validated functions once'
 ```
 
 מספר ה־Functions אינו מקובע במסמך: שער המצב הגולמי שלמעלה מונה את כולן
 ודורש שכל אחת תהיה `ACTIVE` לפני הפריסה. סביבת הריצה הנתמכת היא Node 22.
 
-הפקודה מריצה קודם את שער האפליקציה (`predeploy`). אם השער נכשל —
-**הפריסה לא יוצאת לדרך.** זה תקין, ואין לעקוף אותו.
+הפקודה מאמתת שוב את קבלת שער האפליקציה ואת אותו Git tree לפני ואחרי
+יצירת ה-config הזמני. היא אינה מריצה את השער המלא פעם שנייה. פקודת
+`firebase deploy` רגילה ממשיכה להריץ `predeploy` מלא ואינה מסלול מקוצר.
+אם ניסיון הפריסה נפל על 429, אפשר להריץ שוב את אותה פקודה כל עוד הקבלה
+בתוקף והעץ לא השתנה; אין צורך להפעיל שוב את כל בדיקות הדפדפן.
 
 בפריסה הראשונה של שירות חדש גוגל מבקשת אישור להפעלת API. אשר.
 

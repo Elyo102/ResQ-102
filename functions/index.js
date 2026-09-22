@@ -15,7 +15,9 @@
 // =====================================================================
 
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
-const { setGlobalOptions } = require('firebase-functions/v2');
+// Use the narrow options entry point. firebase-functions v7 removed the
+// legacy config API that the broad v2 barrel used to re-export.
+const { setGlobalOptions } = require('firebase-functions/v2/options');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bulletin = require('./bulletin');

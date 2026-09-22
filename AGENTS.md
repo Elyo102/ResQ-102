@@ -45,6 +45,10 @@ Approval is single-use and limited to the complete workflow and steps described.
 
 ## Validation
 
-- Application checks: `cd tests && npm run all`
+- Application/release checks: `cd tests && npm run release:validate`. This runs
+  the full `all` gate and writes a short-lived attestation bound to the exact
+  clean Git tree, Node 22 runtime, and release dependency/configuration files.
+  Ordinary development checks may still use `npm run all`; a production
+  Functions release must not reuse an attestation for a different tree.
 - Firestore rules: `firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"`
 - Prefer a demo project ID for emulator-only checks so validation cannot target production accidentally.

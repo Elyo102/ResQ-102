@@ -311,7 +311,7 @@ function between(src, start, end) {
 
 const expectedDeployLines = [
   "Invoke-ResQDeployWith429Backoff 'firestore:rules,firestore:indexes' 'deploy rules and indexes' 'rules_indexes'",
-  "Invoke-ResQDeployWith429Backoff 'functions' 'deploy functions' 'functions'",
+  'node release-functions-once.mjs --candidate $resqMergeSha --project station-102 --execute',
   'npx --yes firebase-tools@15.28.1 hosting:clone ("station-102@" + $resqPreviewVersionId) station-102:live --project station-102',
 ];
 const expectedEmulatorLines = [
@@ -360,7 +360,7 @@ function analyseReleaseDoc(src) {
   const approvalSection = between(src, "## 4 ·", "## 5 ·");
   const versionSection = between(src, "## 6 ·", "\n---");
   const deploys = commandLines(deploySection,
-    /^(?:Invoke-ResQDeployWith429Backoff\b|npx\s+--yes\s+firebase-tools@15\.28\.1\s+hosting:clone\b)/);
+    /^(?:Invoke-ResQDeployWith429Backoff\b|node\s+release-functions-once\.mjs\b|npx\s+--yes\s+firebase-tools@15\.28\.1\s+hosting:clone\b)/);
   const emulators = commandLines(gateSection,
     /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+emulators:exec\b/);
   const installs = commandLines(setupSection, /^(?:npm\s+ci\s+--prefix|npm\s+--prefix\s+tests\s+exec\b)/);
@@ -394,7 +394,7 @@ function analyseReleaseDoc(src) {
       /hosting:channel:deploy\s+\$resqPreviewChannel[\s\S]*\$resqPreviewVersionName[\s\S]*npm\s+--prefix\s+tests\s+run\s+pages:preview[\s\S]*re-read hosting preview before promotion[\s\S]*preview channel changed after verification[\s\S]*hosting:clone\s+\("station-102@"\s*\+\s*\$resqPreviewVersionId\)\s+station-102:live/.test(deploySection) &&
       deploySection.indexOf('hosting:channel:deploy $resqPreviewChannel') < deploySection.indexOf(expectedDeployLines[0]) &&
       commandLines(deploySection, /^npx\s+--yes\s+firebase-tools@15\.28\.1\s+deploy\s+--only\s+hosting\b/).length === 0,
-    rootAppGate: /npm\s+--prefix\s+tests\s+run\s+all\b/.test(gateSection) &&
+    rootAppGate: /npm\s+--prefix\s+tests\s+run\s+release:validate\b/.test(gateSection) &&
       !/^\s*cd\s+tests\s*$/im.test(gateSection),
     installsInsideReleaseTree: JSON.stringify(installs) === JSON.stringify(expectedInstallLines) &&
       setupSection.indexOf('Set-Location -LiteralPath $resqReleaseDir') !== -1 &&
@@ -478,7 +478,7 @@ for (const l of deployLines) {
 
 /* ארבעת היעדים. אינדקסים היו חסרים בגרסה הקודמת של המסמך — אינדקס
  * חסר אינו שגיאת פריסה אלא שאילתה שנופלת למשתמש בשדה. */
-for (const target of ['firestore:rules', 'firestore:indexes', 'functions', 'hosting:clone']) {
+for (const target of ['firestore:rules', 'firestore:indexes', 'release-functions-once.mjs', 'hosting:clone']) {
   ok('6.2 „' + target + '" נפרס',
     deployLines.some((l) => l.indexOf(target) !== -1));
 }
@@ -567,7 +567,7 @@ ok('6.14 השער מפיל בדיקת כותרות חיה חסרה',
 ok('6.15 השער מפיל שדה חסר בחוזה האישור',
   !analyseReleaseDoc(doc.replace('**תוכנית חזרה לאחור**', '**חזרה**')).exactApprovalContract);
 ok('6.16 השער מפיל cd tests ששובר את פקודות ההמשך',
-  !analyseReleaseDoc(doc.replace('npm --prefix tests run all', 'cd tests\nnpm run all')).rootAppGate);
+  !analyseReleaseDoc(doc.replace('npm --prefix tests run release:validate', 'cd tests\nnpm run release:validate')).rootAppGate);
 const installBeforeWorktree = doc
   .replace('npm ci --prefix functions', '__INSTALL_FUNCTIONS__')
   .replace('Set-Location -LiteralPath $resqReleaseDir',
