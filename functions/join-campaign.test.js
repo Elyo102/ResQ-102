@@ -119,6 +119,7 @@ test('redemption input: exact keys, forbidden assignment fields rejected by name
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { full_name: '' }), doc, CATALOG, NOW), 'full-name');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: false, terms_version: 'v1', privacy_version: 'v1' } }), doc, CATALOG, NOW), 'ack');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: 'v1' } }), doc, CATALOG, NOW), 'ack');
+  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: 'made-up', privacy_version: 'made-up' } }), doc, CATALOG, NOW), 'ack-version');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { qualifications: [{ key: 'nope' }] }), doc, CATALOG, NOW), 'qualification-unknown');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { qualifications: [{ key: 'driver' }, { key: 'driver' }] }), doc, CATALOG, NOW), 'qualification-duplicate');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { qualifications: [{ key: 'driver', valid_until_ms: NOW - 1 }] }), doc, CATALOG, NOW), 'qualification-expired');

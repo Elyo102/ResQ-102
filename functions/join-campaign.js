@@ -243,6 +243,12 @@ const REDEEM_KEYS = Object.freeze(['request_id', 'token', 'full_name', 'phone', 
 const REDEEM_OPTIONAL = Object.freeze(['note']);
 const REDEEM_FORBIDDEN = Object.freeze(['role', 'station_id', 'stationId', 'district_id', 'districtId', 'invite_id',
   'secret', 'source', 'uid', 'email', 'plan', 'invite', 'assignment_ref', 'campaign_id']);
+const ACTIVE_TERMS_VERSION = '2026-09';
+const ACTIVE_PRIVACY_VERSION = '2026-09';
+// v1 is the only historical onboarding version supported by the test/pilot
+// migration. The server, not the browser, owns this finite allow-list.
+const ACCEPTED_TERMS_VERSIONS = Object.freeze(new Set([ACTIVE_TERMS_VERSION, 'v1']));
+const ACCEPTED_PRIVACY_VERSIONS = Object.freeze(new Set([ACTIVE_PRIVACY_VERSION, 'v1']));
 
 function normalizeDeclarations(raw, catalog, nowMs) {
   if (!Array.isArray(raw)) fail('qualifications', 'רשימת הכשירויות אינה מערך.', 'invalid-argument');
@@ -271,6 +277,9 @@ function normalizeAck(raw) {
   if (raw.correctness !== true) fail('ack', 'יש לאשר את נכונות הפרטים.', 'invalid-argument');
   const terms = String(raw.terms_version || ''), privacy = String(raw.privacy_version || '');
   if (!VERSION_RE.test(terms) || !VERSION_RE.test(privacy)) fail('ack', 'גרסת תנאי השימוש חסרה.', 'invalid-argument');
+  if (!ACCEPTED_TERMS_VERSIONS.has(terms) || !ACCEPTED_PRIVACY_VERSIONS.has(privacy)) {
+    fail('ack-version', 'מסמכי ההצטרפות עודכנו. יש לרענן את המסך ולעיין בגרסה הנוכחית.', 'failed-precondition');
+  }
   return Object.freeze({ correctness: true, terms_version: terms, privacy_version: privacy });
 }
 
@@ -549,6 +558,7 @@ module.exports = Object.freeze({
   DECLARATION_STATUSES, REVIEW_STATES, READINESS_STATUSES, MAX_REGISTRATIONS, MAX_CAMPAIGN_DAYS, MAX_DECLARATIONS,
   INSPECT_PER_HOUR, READINESS_PER_DAY, READINESS_COOLDOWN_MS, READINESS_CHALLENGE_MS,
   REDEEM_KEYS, REDEEM_OPTIONAL, REDEEM_FORBIDDEN, CAMPAIGN_ID_RE, TOKEN_RE,
+  ACTIVE_TERMS_VERSION, ACTIVE_PRIVACY_VERSION,
   newCampaignToken, parseToken, tokenMatches, normalizeCreateInput, buildCampaignDoc, deriveState, publicView,
   applyStatusAction, adminView, normalizeRedemptionInput, normalizeDeclarations, buildRegistrant, replayMatches,
   normalizeReviewAction, applyReviewAction, normalizeVerifyInput, effectiveDeclarationStatus, planDeclarationUpdate,
