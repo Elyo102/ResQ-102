@@ -182,9 +182,27 @@ export function createJoinPanel(root, deps) {
     });
     form.appendChild(quals);
     form.appendChild(labeled('joinNote', 'הערה לתחנה (לא חובה)', el('textarea', { maxlength: '300', rows: '2' })));
+    const legal = el('div', { class: 'join-legal', 'aria-label': 'מסמכי ההצטרפות' });
+    const terms = el('details', { class: 'join-legal-doc' });
+    terms.append(
+      el('summary', {}, 'תנאי שימוש · גרסה ' + TERMS_VERSION),
+      el('p', {}, 'ResQ היא מערכת תפעולית לתחנה. יש למסור פרטים נכונים, לשמור על סודיות החשבון ולהשתמש במערכת רק לצורכי התפקיד.'),
+      el('p', {}, 'דיווחי שעות ודוחות חודשיים שהוגשו נשמרים בשרת ללא מחיקה אוטומטית לצורכי ביקורת. ביטול טיוטה נשמר בקבלת ביקורת שרתית.'),
+      el('p', {}, 'אין מערכת חסינה לחלוטין. יש לנעול את המכשיר, לא למסור סיסמה ולדווח לתחנה על אובדן מכשיר או חשד לשימוש לא מורשה.')
+    );
+    const privacy = el('details', { class: 'join-legal-doc' });
+    privacy.append(
+      el('summary', {}, 'מדיניות פרטיות · גרסה ' + PRIVACY_VERSION),
+      el('p', {}, 'המערכת מעבדת פרטי זהות, תחנה, תפקיד, משמרות, שעות, מסמכי HR, מידע רפואי שנמסר ביוזמת המשתמש, הרשאות מכשיר וטוקן פוש לצורך הפעלת השירות.'),
+      el('p', {}, 'השרת הוא מקור האמת. האפליקציה אינה יוצרת עותק קבוע בדפדפן של שעות, מידע רפואי, הסכמות, נימוקי דחייה או טוקני פוש; Firebase והדפדפן מנהלים פרטי התחברות ופוש הנחוצים לשירות.'),
+      el('p', {}, 'Firebase משמש כספק תשתית מטעם מפעיל המערכת. אין מכירת מידע, פרסום ממוקד או שימוש במידע רפואי ו-HR לשיווק. הסכמה שיווקית עתידית, אם תוצע, תהיה נפרדת, אופציונלית וניתנת לביטול.'),
+      el('p', {}, 'ייצוא מקומי מיועד למחשב ארגוני מנוהל ומוצפן בלבד. קובץ שיוצא מהמערכת אינו ניתן למחיקה מרחוק, והאחריות התפעולית לשמירתו היא של התחנה.')
+    );
+    legal.append(terms, privacy);
+    form.appendChild(legal);
     const ackLab = el('label', { class: 'join-choice join-ack', for: 'joinAck' });
     const ack = el('input', { type: 'checkbox', id: 'joinAck' }); fields.joinAck = ack;
-    ackLab.append(ack, el('span', {}, 'הפרטים נכונים, ואני מאשר/ת את תנאי השימוש ומדיניות הפרטיות (גרסה ' + TERMS_VERSION + ').'));
+    ackLab.append(ack, el('span', {}, 'קראתי את תנאי השימוש ומדיניות הפרטיות, הפרטים נכונים ואני מאשר/ת את גרסה ' + TERMS_VERSION + '.'));
     form.appendChild(ackLab);
     const submit = el('button', { type: 'submit', id: 'joinSubmit' }, 'שלח/י בקשת הצטרפות');
     submit.disabled = !(user && user.emailVerified);

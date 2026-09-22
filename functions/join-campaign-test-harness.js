@@ -168,7 +168,7 @@ function seedHr(db) {
 }
 const createInput = (over) => Object.assign({ label: 'קליטה ספטמבר', allowed_shifts: ['A', 'B'], max_registrations: 2, expires_at_ms: NOW + 7 * 86400000 }, over || {});
 const redeemInput = (token, over) => Object.assign({ request_id: 'req_' + crypto.randomBytes(8).toString('hex'), token, full_name: 'בודק דמה', phone: '0501234567', shift: 'A',
-  qualifications: [{ key: 'driver', valid_until_ms: NOW + 86400000 * 30 }], ack: { correctness: true, terms_version: 'v1', privacy_version: 'v1' } }, over || {});
+  qualifications: [{ key: 'driver', valid_until_ms: NOW + 86400000 * 30 }], ack: { correctness: true, terms_version: '2026-09', privacy_version: '2026-09' } }, over || {});
 
 
 /* ---------- מוכנות מכשיר ---------- */

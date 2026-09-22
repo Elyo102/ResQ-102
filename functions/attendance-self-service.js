@@ -15,6 +15,10 @@ const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+const RETAINED_DAY_FIELDS = Object.freeze([
+  'uid', 'emp_number', 'full_name', 'crew', 'date', 'month', 'status',
+  ...EDITABLE, ...DERIVED
+]);
 
 function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
   clock = Date.now, monthAt, readConfig, calculate }) {
@@ -109,6 +113,12 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         || typeof out.reason_required !== 'boolean') fail('failed-precondition', 'Attendance calculation is invalid');
     return out;
   }
+  function retainedDay(record) {
+    if (!plain(record)) return null;
+    const out = {};
+    for (const key of RETAINED_DAY_FIELDS) if (own(record, key)) out[key] = structuredClone(record[key]);
+    return out;
+  }
   async function mutateDay(req) {
     const r = request(req), root = db.collection('stations').doc(r.ctx.sid);
     return db.runTransaction(async tx => {
@@ -142,7 +152,13 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       }
       const commit = serverTimestamp();
       if (!commit || typeof commit !== 'object') fail('failed-precondition', 'Server timestamp unavailable');
-      if (r.intent.operation === 'delete') tx.delete(rowRef);
+      if (r.intent.operation === 'delete') {
+        // A cancelled draft disappears from the active month, but its bounded
+        // before-image remains in the server-only durable receipt. This keeps
+        // the hours audit trail without exposing deleted content to the client.
+        await live(tx, r);
+        tx.delete(rowRef);
+      }
       else {
         const base = before || { uid: r.ctx.uid, emp_number: person.employee_number, full_name: person.full_name,
           crew: person.crew, date: r.intent.date, month: r.intent.month, status: 'draft', reported_at: commit };
@@ -158,7 +174,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       tx.create(receiptRef, { schema: 'attendance-self-receipt-v1', operation_id: r.id,
         station_id: r.ctx.sid, actor_uid: r.ctx.uid, employee_number: person.employee_number,
         date: r.intent.date, month: r.intent.month, operation: r.intent.operation,
-        request_id: r.data.request_id, fingerprint: r.fingerprint, committed_at: commit });
+        request_id: r.data.request_id, fingerprint: r.fingerprint, committed_at: commit,
+        ...(r.intent.operation === 'delete' ? { deleted_before: retainedDay(before) } : {}) });
       return { operation_id: r.id, outcome: 'recorded', duplicate: false, operation: r.intent.operation };
     });
   }
@@ -195,7 +212,144 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       return { station_id: ctx.sid, employee_number: person.employee_number, month, days, report: reportValue };
     });
   }
-  return Object.freeze({ mutateDay, readMonth });
+  function monthRequest(req) {
+    const ctx = identity.context(req);
+    if (ctx.super) fail('permission-denied', 'A station employee profile is required');
+    const d = req.data;
+    if (!plain(d) || !['fill', 'recalculate', 'submit', 'unsubmit'].includes(d.operation)) {
+      fail('invalid-argument', 'Invalid attendance month operation');
+    }
+    const common = ['month', 'operation', 'request_id'];
+    const allowed = d.operation === 'fill' ? [...common, 'entries']
+      : d.operation === 'recalculate' ? [...common, 'days']
+      : d.operation === 'submit' ? [...common, 'days', 'expected_report_version']
+      : [...common, 'expected_report_version'];
+    shape(d, allowed);
+    let month;
+    try { month = monthKey(d.month); } catch (_) { fail('invalid-argument', 'Invalid attendance month'); }
+    if (typeof d.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,120}$/.test(d.request_id)) fail('invalid-argument', 'Invalid request id');
+    let entries, days, reportVersion;
+    if (d.operation === 'fill') {
+      if (!Array.isArray(d.entries) || !d.entries.length || d.entries.length > 31) fail('invalid-argument', 'Invalid attendance entries');
+      entries = d.entries.map(v => { shape(v, ['date', 'patch']); const day = date(v.date);
+        if (day.slice(0, 7) !== month) fail('invalid-argument', 'Attendance entry is outside month');
+        return { date: day, patch: editable(v.patch) }; });
+    } else if (['recalculate', 'submit'].includes(d.operation)) {
+      if (!Array.isArray(d.days) || !d.days.length || d.days.length > 31) fail('invalid-argument', 'Invalid attendance days');
+      days = d.days.map(v => { shape(v, ['date', 'expected_version']); const day = date(v.date);
+        if (day.slice(0, 7) !== month) fail('invalid-argument', 'Attendance day is outside month');
+        return { date: day, expected_version: version(v.expected_version, false) }; });
+    }
+    const list = entries || days || [];
+    if (new Set(list.map(v => v.date)).size !== list.length
+        || list.some((v, i) => i && list[i - 1].date >= v.date)) fail('invalid-argument', 'Attendance days must be unique and sorted');
+    if (['submit', 'unsubmit'].includes(d.operation)) reportVersion = version(d.expected_report_version, d.operation === 'submit');
+    const intent = { station_id: ctx.sid, actor_uid: ctx.uid, month, operation: d.operation,
+      ...(entries ? { entries } : {}), ...(days ? { days } : {}),
+      ...(reportVersion ? { expected_report_version: reportVersion } : {}) };
+    return { ctx, data: d, intent, fingerprint: hash(intent),
+      id: hash(['attendance-self-month-v1', ctx.sid, ctx.uid, d.request_id]) };
+  }
+  async function mutateMonth(req) {
+    const r = monthRequest(req), root = db.collection('stations').doc(r.ctx.sid);
+    return db.runTransaction(async tx => {
+      const person = await live(tx, r);
+      const reportRef = root.collection('monthly_reports').doc(person.employee_number + '_' + r.intent.month);
+      const receiptRef = root.collection(COLLECTIONS.receipts).doc(r.id);
+      const query = root.collection('attendance').where('emp_number', '==', person.employee_number)
+        .where('month', '==', r.intent.month).limit(32);
+      const [receipt, rows, report] = await Promise.all([tx.get(receiptRef), tx.get(query), tx.get(reportRef)]);
+      if (receipt.exists) {
+        const v = receipt.data();
+        if (!plain(v) || v.schema !== 'attendance-self-month-receipt-v1' || v.fingerprint !== r.fingerprint
+            || v.actor_uid !== r.ctx.uid || v.request_id !== r.data.request_id) fail('already-exists', 'Request id belongs to another attendance action');
+        await live(tx, r);
+        return { operation_id: r.id, outcome: 'recorded', duplicate: true,
+          operation: v.operation, changed_count: v.changed_count, status: v.status || null };
+      }
+      if (!rows || !Array.isArray(rows.docs) || rows.docs.length > 31) fail('failed-precondition', 'Attendance month is invalid');
+      const byDate = new Map();
+      for (const s of rows.docs) {
+        const value = s.data();
+        if (!plain(value) || String(value.emp_number) !== person.employee_number
+            || (own(value, 'uid') && value.uid !== r.ctx.uid) || value.month !== r.intent.month
+            || date(value.date) !== value.date || byDate.has(value.date)) fail('failed-precondition', 'Attendance row identity is invalid');
+        byDate.set(value.date, { snap: s, value });
+      }
+      const reportValue = report.exists ? report.data() : null;
+      if (reportValue && (!plain(reportValue) || String(reportValue.emp_number) !== person.employee_number
+          || reportValue.month !== r.intent.month || (own(reportValue, 'uid') && reportValue.uid !== r.ctx.uid))) {
+        fail('failed-precondition', 'Monthly report identity is invalid');
+      }
+      const reportState = reportValue && own(reportValue, 'status') ? reportValue.status : 'draft';
+      const commit = serverTimestamp();
+      if (!commit || typeof commit !== 'object') fail('failed-precondition', 'Server timestamp unavailable');
+      let changed = 0, status = null;
+      if (r.intent.operation === 'fill') {
+        if (reportState !== 'draft') fail('failed-precondition', 'Monthly report is locked');
+        const sites = [...new Set(r.intent.entries.map(v => v.patch.sub_station).filter(Boolean))];
+        const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
+        await live(tx, r);
+        for (const entry of r.intent.entries) if (!byDate.has(entry.date)) {
+          const candidate = { uid: r.ctx.uid, emp_number: person.employee_number, full_name: person.full_name,
+            crew: person.crew, date: entry.date, month: r.intent.month, status: 'draft', reported_at: commit,
+            updated_at: commit, ...entry.patch };
+          tx.create(root.collection('attendance').doc(person.employee_number + '_' + entry.date),
+            { ...candidate, ...derived(candidate, config) }); changed++;
+        }
+      } else if (r.intent.operation === 'recalculate') {
+        if (reportState !== 'draft' || r.intent.days.length !== byDate.size) fail('failed-precondition', 'Monthly report is locked or incomplete');
+        const sites = [...new Set([...byDate.values()].map(v => v.value.sub_station).filter(Boolean))];
+        const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
+        await live(tx, r);
+        for (const day of r.intent.days) {
+          const row = byDate.get(day.date);
+          if (!row || !same(snapVersion(row.snap), day.expected_version) || row.value.status !== 'draft') fail('aborted', 'Attendance changed; reload before recalculating');
+          const output = derived(row.value, config);
+          if (DERIVED.some(k => !same(row.value[k], output[k]))) {
+            tx.set(row.snap.ref, { ...row.value, ...output, updated_at: commit }); changed++;
+          }
+        }
+      } else if (r.intent.operation === 'submit') {
+        if (!same(snapVersion(report), r.intent.expected_report_version) || reportState !== 'draft'
+            || r.intent.days.length !== byDate.size) fail('aborted', 'Monthly report changed; reload before submitting');
+        const sites = [...new Set([...byDate.values()].map(v => v.value.sub_station).filter(Boolean))];
+        const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
+        let total = 0;
+        const updates = [];
+        for (const day of r.intent.days) {
+          const row = byDate.get(day.date);
+          if (!row || !same(snapVersion(row.snap), day.expected_version) || row.value.status !== 'draft'
+              || !Number.isFinite(Number(row.value.hours))) fail('aborted', 'Attendance changed; reload before submitting');
+          const output = derived(row.value, config);
+          total += output.hours;
+          if (DERIVED.some(k => !same(row.value[k], output[k]))) {
+            updates.push({ ref: row.snap.ref, value: { ...row.value, ...output, updated_at: commit } });
+          }
+        }
+        status = 'submitted';
+        await live(tx, r);
+        for (const update of updates) tx.set(update.ref, update.value);
+        tx.set(reportRef, { ...(reportValue || {}), uid: r.ctx.uid, emp_number: person.employee_number,
+          full_name: person.full_name, crew: person.crew, month: r.intent.month, status,
+          days: r.intent.days.map(v => v.date), total_hours: Math.round(total * 100) / 100,
+          submitted_at: commit, updated_at: commit }); changed = 1;
+      } else {
+        if (!report.exists || !same(snapVersion(report), r.intent.expected_report_version)
+            || reportState !== 'submitted') fail('aborted', 'Monthly report changed; reload before reopening');
+        status = 'draft';
+        await live(tx, r);
+        tx.set(reportRef, { ...reportValue, status, updated_at: commit }); changed = 1;
+      }
+      tx.create(receiptRef, { schema: 'attendance-self-month-receipt-v1', operation_id: r.id,
+        station_id: r.ctx.sid, actor_uid: r.ctx.uid, employee_number: person.employee_number,
+        month: r.intent.month, operation: r.intent.operation, changed_count: changed, status,
+        request_id: r.data.request_id, fingerprint: r.fingerprint, committed_at: commit });
+      return { operation_id: r.id, outcome: 'recorded', duplicate: false,
+        operation: r.intent.operation, changed_count: changed, status };
+    });
+  }
+  return Object.freeze({ mutateDay, readMonth, mutateMonth });
 }
 
 module.exports = Object.freeze({ createAttendanceSelfService });

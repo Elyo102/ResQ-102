@@ -22,6 +22,7 @@
 // ============================================================
 
 import assert from 'node:assert/strict';
+import './sensitive-persistence-boundary.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';

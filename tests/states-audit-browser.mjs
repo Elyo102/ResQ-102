@@ -33,7 +33,7 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const browser = await chromium.launch();
 
-async function newPage(role, failPaths) {
+async function newPage(role, failPaths, callablePlan) {
   const ctx = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await ctx.route('**/firebasejs/**', route => {
     const name = route.request().url().split('/').pop().split('?')[0];
@@ -41,12 +41,16 @@ async function newPage(role, failPaths) {
     route.fulfill({ status:200, contentType:'text/javascript',
       body: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
-  await ctx.addInitScript(({ role, failPaths }) => {
+  await ctx.addInitScript(({ role, failPaths, callablePlan }) => {
     window.__SMOKE_ROLE = role;
     window.__SMOKE_FAIL_PATHS = failPaths || [];
-  }, { role, failPaths });
+    window.__CALLABLE_PLAN = callablePlan || {};
+  }, { role, failPaths, callablePlan });
   const pg = await ctx.newPage();
-  pg.setDefaultTimeout(4_000);
+  // The attendance retry now crosses the callable boundary and rebuilds the
+  // month from a fresh server-shaped response. Four seconds was a race on a
+  // busy full-suite runner, not a product deadline.
+  pg.setDefaultTimeout(10_000);
   return { ctx, pg };
 }
 
@@ -155,7 +159,9 @@ try {
 
   // ---------- attendance.html: retry אמיתי לא יוצר טעינות כפולות ----------
   {
-    const { ctx, pg } = await newPage('super', ['/monthly_reports/']);
+    const { ctx, pg } = await newPage('super', [], {
+      getMyAttendanceMonth:[{ reject:true, code:'functions/unavailable' }]
+    });
     await pg.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
     await hideCallout(pg);
     await pg.waitForFunction(() => document.querySelector('#state')?.textContent === 'הדוח לא נטען');
@@ -165,8 +171,19 @@ try {
     }
     await pg.evaluate(() => { window.__SMOKE_FAIL_PATHS = []; });
     await pg.locator('#monthRetryBtn').click();
-    await pg.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
-      document.querySelector('#tHours')?.textContent !== '—');
+    try {
+      await pg.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false' &&
+        document.querySelector('#tHours')?.textContent !== '—');
+    } catch (error) {
+      const state = await pg.evaluate(() => ({
+        busy:document.querySelector('#work')?.getAttribute('aria-busy'),
+        hours:document.querySelector('#tHours')?.textContent,
+        status:document.querySelector('#state')?.textContent,
+        message:document.querySelector('#msg')?.textContent,
+        calls:window.__CALLABLE_CALLS
+      }));
+      throw new Error('attendance retry state: ' + JSON.stringify(state), { cause:error });
+    }
     check(true, 'attendance.html: לחיצה על כפתור הכשל עצמו (לא רק ניווט חודש) מחזירה טעינה תקינה');
     await ctx.close();
   }

@@ -293,6 +293,8 @@ exports.mutateMyAttendanceDay = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceSelfService().mutateDay(req));
 exports.getMyAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceSelfService().readMonth(req));
+exports.mutateMyAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceSelfService().mutateMonth(req));
 const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
 exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
 exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));

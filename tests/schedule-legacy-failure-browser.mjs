@@ -70,7 +70,8 @@ try {
     await page.locator('#dSave').waitFor({state:'visible'});
     await page.evaluate(fail => {
       window.__retainedSave = document.querySelector('#dSave').onclick;
-      if (fail) window.__SMOKE_FAIL_PATHS = ['/monthly_reports/'];
+      if (fail) window.__CALLABLE_PLAN.getMyAttendanceMonth = [{ reject:true,
+        code:'functions/unavailable' }];
       document.querySelector('#next').click();
     }, failReload);
     await page.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false');
@@ -89,9 +90,10 @@ try {
     await context.close();
     console.log('✓ retained edit callback rejected after month navigation; failed reload='+failReload);
   }
-  for (const failedPath of ['/monthly_reports/', '/attendance']) {
-    const context = await contextWithPlan({});
-    await context.addInitScript(value => { window.__SMOKE_FAIL_PATHS = [value]; }, failedPath);
+  for (const failedPath of ['getMyAttendanceMonth']) {
+    const context = await contextWithPlan({
+      getMyAttendanceMonth:[{ reject:true, code:'functions/unavailable' }]
+    });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
     await page.waitForFunction(() => document.querySelector('#state')?.textContent === 'הדוח לא נטען');
@@ -101,7 +103,7 @@ try {
       assert.equal(await page.locator('#'+id).isDisabled(), true);
     }
     assertOnlyCalloutSeenWrites(await page.evaluate(() => window.__FIRESTORE_WRITES || []));
-    await page.evaluate(() => { window.__SMOKE_FAIL_PATHS = []; });
+    await page.evaluate(() => { window.__CALLABLE_PLAN.getMyAttendanceMonth = []; });
     await page.addStyleTag({content:'#coWrap{display:none!important}'});
     await page.locator('#next').click();
     await page.waitForFunction(() => document.querySelector('#work')?.getAttribute('aria-busy') === 'false' && document.querySelector('#tHours')?.textContent !== '—');

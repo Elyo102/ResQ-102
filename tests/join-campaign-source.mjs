@@ -58,7 +58,12 @@ check('join draft has a bounded 30-minute TTL and is removed on expiry/success',
 const service = read('functions/join-campaign-service.js'), contract = read('functions/join-campaign.js');
 check('server pins the finite legal document versions instead of trusting browser labels',
   /ACTIVE_TERMS_VERSION = '2026-09'/.test(contract) && /ACTIVE_PRIVACY_VERSION = '2026-09'/.test(contract) &&
+  /new Set\(\[ACTIVE_TERMS_VERSION\]\)/.test(contract) && /new Set\(\[ACTIVE_PRIVACY_VERSION\]\)/.test(contract) &&
   /ACCEPTED_TERMS_VERSIONS\.has\(terms\)/.test(contract) && /ACCEPTED_PRIVACY_VERSIONS\.has\(privacy\)/.test(contract));
+check('join screen presents the versioned terms and privacy text before acknowledgement',
+  /תנאי שימוש · גרסה/.test(joinUi) && /מדיניות פרטיות · גרסה/.test(joinUi) &&
+  /אין מכירת מידע, פרסום ממוקד או שימוש במידע רפואי ו-HR לשיווק/.test(joinUi) &&
+  /קראתי את תנאי השימוש ומדיניות הפרטיות/.test(joinUi));
 check('campaign document stores token_hash only (no raw secret field written)', /token_hash/.test(contract) && !/\bsecret:\s*token\.secret|secret:\s*secret\b/.test(service));
 check('redeem writes the invitation exactly as issued plus redemption fields', /tx\.create\(inviteRef\(candidate\.invite_id\), Object\.assign\(\{\}, candidate\.doc,\s*\{ redeemed_by: uid, redeemed_at: serverTimestamp\(\), redeemed_request_id: requestId \}\)\)/.test(service));
 check('registry document keeps the exact six-key shape', /schema_version: OPERATION_SCHEMA, uid, station_id: sid, request_id: requestId,\s*invite_id: candidate\.invite_id, operation_fingerprint: split\.operation_fingerprint \}/.test(service));

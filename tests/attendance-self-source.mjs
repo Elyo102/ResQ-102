@@ -18,8 +18,10 @@ function section(source, start, end) {
 
 assert.match(index, /exports\.mutateMyAttendanceDay = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
 assert.match(index, /exports\.getMyAttendanceMonth = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
+assert.match(index, /exports\.mutateMyAttendanceMonth = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
 assert.match(client, /httpsCallable\(fns, 'mutateMyAttendanceDay'\)/);
 assert.match(client, /httpsCallable\(fns, 'getMyAttendanceMonth'\)/);
+assert.match(client, /httpsCallable\(fns, 'mutateMyAttendanceMonth'\)/);
 const save = section(client, 'async function saveRecord(', 'async function createMissingDays(');
 assert.match(save, /callMutateMyAttendanceDay/);
 assert.doesNotMatch(save, /\b(?:setDoc|deleteDoc|serverTimestamp)\b/,
@@ -38,5 +40,13 @@ const ownLoad = section(client, "\]) : await Promise.all([", '  ]);');
 assert.match(ownLoad, /callGetMyAttendanceMonth/);
 assert.doesNotMatch(ownLoad, /getDocs\(|getDoc\(/,
   'the employee month must receive server-issued optimistic versions');
+const fill = section(client, 'async function createMissingDays(', 'async function refreshAfterCreation(');
+const recalc = section(client, "$ ('btnRecalc').onclick".replace(' ', ''), '// ---------- חלונית עריכה ----------');
+const report = section(client, 'async function writeReport(', '// לפני שליחה');
+assert.match(fill, /operation: 'fill'/); assert.doesNotMatch(fill, /runTransaction|\bsetDoc\b|\bwriteBatch\b/);
+assert.match(recalc, /operation: 'recalculate'/); assert.doesNotMatch(recalc, /\bsetDoc\b|\bwriteBatch\b/);
+assert.match(report, /callMutateMyAttendanceMonth/); assert.doesNotMatch(report, /\bsetDoc\b|serverTimestamp/);
+assert.match(service, /async function mutateMonth\(req\)/);
+assert.match(service, /\['fill', 'recalculate', 'submit', 'unsubmit'\]/);
 
-console.log('Attendance self-write source: month reads and day save/delete use the trusted server boundary.');
+console.log('Attendance self-write source: every employee month/day read and write uses the trusted server boundary.');

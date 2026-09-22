@@ -83,12 +83,10 @@ const rules = read('firestore.rules');
 const page = read('attendance.html');
 const selfService = read('functions/attendance-self-service.js');
 
-check('the rules require reported_at to be the request time on create',
-  /request\.resource\.data\.reported_at == request\.time/.test(rules));
-check('the rules require it on every self-report create',
-  /hasAll\(\['status', 'reported_at'\]\)/.test(rules));
-check('the rules refuse to let an edit change when it was first reported',
-  /request\.resource\.data\.keys\(\)\.hasAll\(\['reported_at'\]\)[\s\S]{0,160}request\.resource\.data\.reported_at == resource\.data\.get\('reported_at', null\)/.test(rules));
+check('the rules close direct employee attendance updates and deletes',
+  /match \/attendance\/\{docId\}[\s\S]{0,2600}?allow update, delete: if false;/.test(rules));
+check('the rules close every direct monthly report mutation',
+  /match \/monthly_reports\/\{docId\}[\s\S]{0,700}?allow create, update, delete: if false;/.test(rules));
 /* ⭐ הבדיקה שמונעת חזרה לדגל: אם מישהו יוסיף שדה בוליאני כזה, זה
  * ייפול כאן ולא יתגלה כשמישהו ישאל למה הדוח אומר משהו אחר. */
 check('no stored retroactive flag is written anywhere on the page',
@@ -109,7 +107,7 @@ check('and says plainly that a past day is allowed and will be marked',
 
 console.log('');
 console.log('NOT RUN here — the rules themselves (emulator). This file checks the derivation');
-console.log('and the source; rules-test/attendance-retro.test.mjs checks the enforcement.');
+console.log('and source contract; rules-test/attendance-retro.test.mjs checks direct denial.');
 console.log('');
 if (failures.length) {
   console.error(failures.length + ' retroactive reporting checks failed.');

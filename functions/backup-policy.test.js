@@ -350,7 +350,7 @@ const correctionPaths = [
 ];
 const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, hrDerivedPaths, correctionPaths);
 
-test('exact thirty-six private HR/correction paths are classified with no readable or automatic-retention permission', () => {
+test('exact thirty-six private HR/correction paths are classified, unreadable, and retention-explicit', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
   assert.equal(hrPaths.length, 36);
@@ -361,7 +361,8 @@ test('exact thirty-six private HR/correction paths are classified with no readab
     assert.equal(item.scope, path.startsWith('stations/') ? 'station' : 'root', path);
     assert.equal(item.sensitivity, 'restricted_identity', path);
     assert.equal(item.humanReadable, 'forbidden', path);
-    assert.equal(item.retention, 'policy_required_before_wiring', path);
+    assert.equal(item.retention, correctionPaths.slice(0, 2).includes(path)
+      ? 'retain_indefinitely_no_automatic_deletion' : 'policy_required_before_wiring', path);
     const collectionGroup = path.split('/').at(-2);
     assert.equal(firestoreIndexes.fieldOverrides.some(override =>
       override.collectionGroup === collectionGroup && override.ttl === true), false, path + ' must not gain TTL');

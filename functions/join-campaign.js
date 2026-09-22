@@ -245,10 +245,11 @@ const REDEEM_FORBIDDEN = Object.freeze(['role', 'station_id', 'stationId', 'dist
   'secret', 'source', 'uid', 'email', 'plan', 'invite', 'assignment_ref', 'campaign_id']);
 const ACTIVE_TERMS_VERSION = '2026-09';
 const ACTIVE_PRIVACY_VERSION = '2026-09';
-// v1 is the only historical onboarding version supported by the test/pilot
-// migration. The server, not the browser, owns this finite allow-list.
-const ACCEPTED_TERMS_VERSIONS = Object.freeze(new Set([ACTIVE_TERMS_VERSION, 'v1']));
-const ACCEPTED_PRIVACY_VERSIONS = Object.freeze(new Set([ACTIVE_PRIVACY_VERSION, 'v1']));
+// A fresh redemption must accept the active documents exactly. Historical v1
+// operations still replay before normalization in the service, but cannot be
+// selected by a new client request.
+const ACCEPTED_TERMS_VERSIONS = Object.freeze(new Set([ACTIVE_TERMS_VERSION]));
+const ACCEPTED_PRIVACY_VERSIONS = Object.freeze(new Set([ACTIVE_PRIVACY_VERSION]));
 
 function normalizeDeclarations(raw, catalog, nowMs) {
   if (!Array.isArray(raw)) fail('qualifications', 'רשימת הכשירויות אינה מערך.', 'invalid-argument');

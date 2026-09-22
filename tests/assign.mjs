@@ -178,8 +178,8 @@ console.log('מסך תיקון השעות');
 
 // כל נתיב נתונים חייב SUBJ. מותר ME רק בהקשרי זהות מוצהרים.
 const dataPaths = [
-  ["where('emp_number', '==', snapshot.emp)", 'טעינת החודש'],
-  ['recordId(SUBJ.emp, key)',             'כתיבת יום'],
+  ["callGetMyAttendanceMonth({ month: mk })", 'טעינת החודש'],
+  ['callMutateMyAttendanceDay',           'כתיבת יום'],
   ['emp_number: SUBJ.emp',                'מספר עובד ברשומה'],
   ['crew: SUBJ.crew',                     'משמרת ברשומה'],
   ["'shifts', snapshot.crew)",            'לוח המשמרת'],
@@ -287,9 +287,9 @@ function writePins(source) {
       save.includes("expected_version: existing ? existing._expected_version : 'absent',") &&
       save.includes("}, 'self');") &&
       !/\b(?:setDoc|deleteDoc|serverTimestamp)\b/.test(save),
-    create: create.includes('const body = stamp(Object.assign({}, entry));') &&
-      create.includes("ref: doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, date))") &&
-      create.includes('if (!existing[i].exists()) { tx.set(item.ref, item.body); created++; }'),
+    create: create.includes('callMutateMyAttendanceMonth') &&
+      create.includes("operation: 'fill'") && create.includes('patch: correctionPatch(entry)') &&
+      !/\b(?:runTransaction|tx\.|setDoc|writeBatch|serverTimestamp)\b/.test(create),
     fill: fill.includes('const target = captureMonthWrite();') && fill.includes('const result = await createMissingDays(target, entries);'),
     sync: sync.includes('const target = captureMonthWrite();') && sync.includes('const result = await createMissingDays(target, entries);')
   };
@@ -297,17 +297,15 @@ function writePins(source) {
 const pins = writePins(att);
 ok('הנושא נלכד בנפרד מהעורך', pins.subject);
 ok('שמירת יום עוברת בשער השרת החתום', pins.save);
-ok('מילוי אצווה נחתם', pins.create && pins.fill);
-ok('הוספה אוטומטית נחתמת', pins.create && pins.sync);
+ok('מילוי אצווה עובר בשער השרת', pins.create && pins.fill);
+ok('הוספה אוטומטית עוברת בשער השרת', pins.create && pins.sync);
 const mutations = [
   ['capture uid', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: ME.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'subject'],
   ['capture employee', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: SUBJ.uid, emp: String(ME.emp), viewer: ME.uid,', 'subject'],
   ['save server route', "await callCorrection(callMutateMyAttendanceDay, {\n    date: key,\n    operation: 'save',", "await callCorrection(callCorrectAttendanceDay, {\n    date: key,\n    operation: 'save',", 'save'],
   ['save optimistic lock', "expected_version: existing ? existing._expected_version : 'absent',", "expected_version: 'absent',", 'save'],
-  ['create stamp', 'const body = stamp(Object.assign({}, entry));', 'const body = Object.assign({}, entry);', 'create'],
-  ['create recipient', 'recordId(target.emp, date))', 'recordId(ME.emp, date))', 'create'],
-  ['create body', 'tx.set(item.ref, item.body)', 'tx.set(item.ref, {})', 'create'],
-  ['create overwrite', 'if (!existing[i].exists()) { tx.set', 'if (true) { tx.set', 'create']
+  ['create server route', "callCorrection(callMutateMyAttendanceMonth, { month: target.month, operation: 'fill',", "callCorrection(callMutateMyAttendanceDay, { month: target.month, operation: 'fill',", 'create'],
+  ['create closed patches', 'patch: correctionPatch(entry)', 'patch: entry', 'create']
 ];
 for (const [name, before, after, pin] of mutations) {
   is('mutation target unique: ' + name, att.split(before).length - 1, 1);
@@ -322,8 +320,8 @@ for (const [pin, start, end] of [
   const broken = att.replace(original, original.replace(route, 'await unsafeCreate(entries)'));
   ok('mutation route rejected: ' + pin, !writePins(broken)[pin]);
 }
-ok('תיקון שעות נחתם',         /stamp\(\{ hours: h/.test(att));
-ok('אישור חודש נחתם',         /body\.edited_by      = ME\.uid/.test(att));
+ok('תיקון שעות עובר בשער השרת', /operation: 'recalculate'[\s\S]{0,180}?expected_version: records\[key\]\._expected_version/.test(att));
+ok('אישור חודש עובר בשער האטומי', /callApproveAttendanceMonth\(\{[\s\S]{0,180}?target_uid: targetUid/.test(att));
 
 console.log('גבולות המסך');
 ok('הבורר לרכזת ולמנהל-על בלבד',

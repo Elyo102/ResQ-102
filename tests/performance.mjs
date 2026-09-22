@@ -69,6 +69,9 @@ const result = await page.evaluate(() => ({
     .map(call => call.payload),
   guardCalls: (window.__CALLABLE_CALLS || [])
     .filter(call => call && call.name === 'getMyGuardAttendance')
+    .map(call => call.payload),
+  attendanceCalls: (window.__CALLABLE_CALLS || [])
+    .filter(call => call && call.name === 'getMyAttendanceMonth')
     .map(call => call.payload)
 }));
 
@@ -79,7 +82,7 @@ console.log('data requests started:', result.dataRequests);
 console.log('all data work span:', result.dataSpanMs + 'ms');
 
 const criticalPaths = ['/users/stub-uid', '/config/board',
-  '/shifts/C','/swaps','/sub_stations','/attendance','/monthly_reports/1_'];
+  '/shifts/C','/swaps','/sub_stations'];
 const criticalEvents = result.dataEvents.filter(event =>
   criticalPaths.some(suffix => event.path.includes(suffix)));
 const criticalStart = Math.min(...criticalEvents.map(event => event.started));
@@ -87,9 +90,6 @@ const criticalFinish = Math.max(...criticalEvents.map(event => event.finished));
 const criticalDataSpanMs = criticalFinish - criticalStart;
 const staticEvents = criticalEvents.filter(event =>
   ['/config/board','/shifts/C','/swaps','/sub_stations']
-    .some(suffix => event.path.includes(suffix)));
-const monthEvents = criticalEvents.filter(event =>
-  ['/attendance','/monthly_reports/1_']
     .some(suffix => event.path.includes(suffix)));
 const startSpread = events => Math.max(...events.map(event => event.started)) -
   Math.min(...events.map(event => event.started));
@@ -116,8 +116,8 @@ criticalPaths.forEach(suffix => {
 });
 check(staticEvents.length === 4 && startSpread(staticEvents) <= 50,
       'board, shift, swaps and sub-stations start in parallel');
-check(monthEvents.length === 2 && startSpread(monthEvents) <= 50,
-      'attendance and its monthly report start in parallel');
+check(result.attendanceCalls.length === 1,
+      'attendance month is loaded by one trusted server call, not two browser queries');
 const initialRange = await page.evaluate(() => {
   const now = new Date();
   const year = now.getFullYear(), month = now.getMonth();
@@ -136,6 +136,9 @@ check(result.compatibilityCalls.length === 1 &&
 check(result.guardCalls.length === 1 &&
       JSON.stringify(result.guardCalls[0]) === JSON.stringify(initialRange),
       'attendance asks the server for exactly the displayed month');
+check(result.attendanceCalls.length === 1 &&
+      JSON.stringify(result.attendanceCalls[0]) === JSON.stringify({ month:initialRange.from.slice(0, 7) }),
+      'attendance sends only the displayed month to the trusted attendance service');
 
 // שתי טעינות חודש בכוונה יוצאות יחד: הראשונה איטית והשנייה
 // מהירה. אחרי שהאיטית חוזרת, הכותרת חייבת להישאר של האחרונה.
@@ -290,7 +293,10 @@ check(guardAutoFill !== null && !guardAutoFill.includes('SECRET PLACE'),
 
 // אותו תרחיש על אדם: מעבר לאדם אחר מתחיל לאט, וחזרה לעצמי
 // מתחילה מהר. ההרצה הישנה אינה רשאית לפרסם או לפתוח loadMonth.
-const beforeSubjectRace = await page.evaluate(() => window.__N || 0);
+const beforeSubjectRace = await page.evaluate(() => ({
+  reads:window.__N || 0,
+  attendance:(window.__CALLABLE_CALLS || []).filter(c => c?.name === 'getMyAttendanceMonth').length
+}));
 await page.evaluate(() => {
   window.__SMOKE_LAG_PLAN = [
     700,700,700,700,
@@ -305,17 +311,16 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(950);
 const subjectRace = await page.evaluate(before => {
-  const paths = (window.__DATA_PATHS || []).slice(before);
   return {
-    delta: (window.__N || 0) - before,
-    monthReads: paths.filter(p => /\/attendance$|\/monthly_reports\//.test(p)).length,
+    delta: (window.__N || 0) - before.reads,
+    monthReads:(window.__CALLABLE_CALLS || []).filter(c => c?.name === 'getMyAttendanceMonth').length - before.attendance,
     otherHidden: document.getElementById('otherBar').classList.contains('hide'),
     backHidden: document.getElementById('pickBack').classList.contains('hide'),
     busy: document.getElementById('work').getAttribute('aria-busy'),
     siteText: (document.querySelector('#rows tr.sug') || {}).textContent || ''
   };
 }, beforeSubjectRace);
-check(subjectRace.delta === 10 && subjectRace.monthReads === 2,
+check(subjectRace.delta === 8 && subjectRace.monthReads === 1,
       'a stale subject load is discarded before starting a month load');
 check(subjectRace.otherHidden && subjectRace.backHidden && subjectRace.busy === 'false',
       'the latest subject remains active after the stale load returns');

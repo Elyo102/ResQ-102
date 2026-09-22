@@ -61,6 +61,20 @@ async function stubCalloutRecipients(payload){
   return { data:{ ok:true, station_id:'eilat_102', crew, recipients } };
 }
 
+function stubMyAttendanceMonth(payload){
+  const month = String((payload && payload.month) || '');
+  const byDate = new Map();
+  const local = (typeof window !== 'undefined' && window.__STUB_SELF_ATTENDANCE) || {};
+  Object.keys(local).filter(date => date.slice(0, 7) === month).forEach(date => {
+    const record = local[date];
+    if (record) byDate.set(date, { record_id:'1_'+date,
+      expected_version:{ seconds:1800000001, nanoseconds:7 }, record });
+    else byDate.delete(date);
+  });
+  return { station_id:'eilat_102', employee_number:'1', month,
+    days:Array.from(byDate.values()).sort((a,b)=>a.record.date.localeCompare(b.record.date)), report:null };
+}
+
 export function getFunctions(){ return {}; }
 
 // אותו סבב בדיוק כמו בתשובת התאימות למטה: A/B/C, עוגן 2026-01-01,
@@ -134,6 +148,18 @@ function defaultCallableStep(name, payload){
   if (name === 'sendPersonalLiveLabPush') return { data:{ probe_id:String((payload || {}).request_id || ''), state:'accepted', duplicate:false } };
   if (name === 'ackPersonalLiveLabPush') return { data:{ ok:true } };
   if (name === 'getEffectiveWorkdays') return stubWorkdays(payload);
+  if (name === 'getMyAttendanceMonth') return { data:stubMyAttendanceMonth(payload) };
+  if (name === 'mutateMyAttendanceDay') {
+    const data = payload || {}, date = String(data.date || '');
+    if (typeof window !== 'undefined') {
+      window.__STUB_SELF_ATTENDANCE = window.__STUB_SELF_ATTENDANCE || {};
+      if (data.operation === 'delete') window.__STUB_SELF_ATTENDANCE[date] = null;
+      else window.__STUB_SELF_ATTENDANCE[date] = Object.assign({ uid:'stub-uid', emp_number:'1',
+        full_name:'אלדד יונה', crew:'C', date, month:date.slice(0,7), status:'draft' }, data.patch || {});
+    }
+    return { data:{ operation_id:'a'.repeat(64), outcome:'recorded', duplicate:false,
+      operation:String(data.operation || '') } };
+  }
   if (name === 'getAttendanceCorrectionContext') {
     const data = payload || {};
     return { data:{

@@ -1,14 +1,15 @@
 import { exportLocalFiles } from './hr-local-export.js?v=42h29';
 import { registerPwaUpdateGuard } from './pwa.js?v=42h29';
 
-// Deliberately not mounted by any existing page. Adapter must provide freshly
-// authorized bytes; this UI is not a server authorization boundary.
+// Mounted by hr-client.js. Adapter must provide freshly authorized bytes;
+// this UI is not a server authorization boundary and cannot attest that the
+// selected device or folder is organization-managed or encrypted.
 export function createLocalExportUI(root, adapter, { monthElement } = {}) {
   const button = document.createElement('button'); button.type = 'button'; button.textContent = 'ייצוא לתיקייה מקומית';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'עצירת הייצוא'; cancel.hidden = true;
   const status = document.createElement('p'); status.setAttribute('role', 'status');
   const note = document.createElement('p');
-  note.textContent = 'ייצוא ידני לתיקיית ריצה חדשה. אין לערוך את התיקייה בזמן הכתיבה. קבצים שנשמרו אינם נמחקים ביציאה ואינם ניתנים לביטול מרחוק. הורדת ZIP הקיימת נשארת זמינה.';
+  note.textContent = 'ייצוא ידני למחשב ארגוני מנוהל ומוצפן בלבד. המערכת אינה יכולה לבדוק שהכונן מוצפן. אין לערוך את התיקייה בזמן הכתיבה. קבצים שנשמרו אינם נמחקים ביציאה ואינם ניתנים לביטול מרחוק. הורדת ZIP הקיימת נשארת זמינה.';
   root.append(button, cancel, status, note);
   let generation = 0, busy = false, dead = false, suspended = false;
   const unregisterUpdateGuard = registerPwaUpdateGuard(() => busy

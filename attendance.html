@@ -458,6 +458,7 @@ const callReopenAttendanceMonth = httpsCallable(fns, 'reopenAttendanceMonthForCo
 const callApproveAttendanceMonth = httpsCallable(fns, 'approveAttendanceMonth');
 const callMutateMyAttendanceDay = httpsCallable(fns, 'mutateMyAttendanceDay');
 const callGetMyAttendanceMonth = httpsCallable(fns, 'getMyAttendanceMonth');
+const callMutateMyAttendanceMonth = httpsCallable(fns, 'mutateMyAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
 
@@ -527,6 +528,9 @@ function validCorrectionReceipt(kind, data){
     && Number.isInteger(data.attendance_changed_count) && data.attendance_changed_count >= 0;
   if (kind === 'self') return /^[a-f0-9]{64}$/.test(String(data.operation_id || ''))
     && ['save','delete'].includes(data.operation);
+  if (kind === 'self-month') return /^[a-f0-9]{64}$/.test(String(data.operation_id || ''))
+    && ['fill','recalculate','submit','unsubmit'].includes(data.operation)
+    && Number.isInteger(data.changed_count) && data.changed_count >= 0;
   return /^[a-f0-9]{64}$/.test(String(data.correction_id || ''))
     && Number.isInteger(data.changed_count) && data.changed_count >= 0;
 }
@@ -1233,8 +1237,8 @@ function render(){
     onOther() || st !== 'draft' || !saved.length);
   $('btnUnsubmit').classList.toggle('hide', onOther() || st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
-  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && (st === 'approved' ||
-    (onOther() && correctionContext && correctionContext.eligibility && correctionContext.eligibility.can_reopen))));
+  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && onOther() &&
+    correctionContext && correctionContext.eligibility && correctionContext.eligibility.can_reopen));
   $('timerCard').classList.toggle('hide', onOther());
 
   renderTimer();
@@ -1461,34 +1465,11 @@ async function createMissingDays(target, entries){
   requireMonthWrite(target);
   if (!entries.length) return { created: 0, skipped: 0 };
   if (entries.length > 31 || new Set(entries.map(x => x.date)).size !== entries.length) throw new Error('רשימת ימים לא תקינה.');
-  const prepared = entries.map(entry => {
-    const body = stamp(Object.assign({}, entry));
-    const date = String(body.date || '');
-    const parsed = new Date(date + 'T12:00:00Z');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) ||
-        parsed.toISOString().slice(0,10) !== date || date.slice(0,7) !== target.month ||
-        String(body.emp_number) !== target.emp || body.uid !== target.uid || body.month !== target.month) throw new Error('זהות היום אינה תואמת לדוח.');
-    return { body, ref: doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, date)) };
-  });
-  const reportRef = doc(db, 'stations', target.sid, 'monthly_reports', target.emp + '_' + target.month);
-  return runTransaction(db, async tx => {
-    requireMonthWrite(target);
-    const monthly = await tx.get(reportRef);
-    const existing = await Promise.all(prepared.map(item => tx.get(item.ref)));
-    requireMonthWrite(target);
-    if (monthly.exists()) {
-      const value = monthly.data();
-      if (!value || String(value.emp_number) !== target.emp || value.month !== target.month ||
-          (Object.prototype.hasOwnProperty.call(value, 'uid') && value.uid !== target.uid)) {
-        throw new Error('פרטי הדוח החודשי אינם תואמים לעובד ולחודש.');
-      }
-      const state = Object.prototype.hasOwnProperty.call(value, 'status') ? value.status : 'draft';
-      if (state !== 'draft') throw new Error('הדוח הוגש, אושר או דורש בדיקה. לא נוספו ימים.');
-    }
-    let created = 0;
-    prepared.forEach((item, i) => { if (!existing[i].exists()) { tx.set(item.ref, item.body); created++; } });
-    return { created, skipped: prepared.length - created };
-  });
+  const response = await callCorrection(callMutateMyAttendanceMonth, { month: target.month, operation: 'fill',
+    entries: entries.slice().sort((a, b) => a.date.localeCompare(b.date))
+      .map(entry => ({ date: entry.date, patch: correctionPatch(entry) })) }, 'self-month');
+  requireMonthWrite(target);
+  return { created: response.changed_count, skipped: entries.length - response.changed_count };
 }
 async function refreshAfterCreation(target, result){
   if (!sameMonthWrite(target)) return false;
@@ -1515,13 +1496,6 @@ $('btnFill').onclick = async () => {
     const entries = sug.map(function (key) {
       const rec = newRecord(key, { day_type: 'regular', start: bt.start,
                                    end: bt.end, sub_station: mySite });
-      const fx = siteHoursOf(mySite);
-      const site0 = sites.filter(s => s.id === mySite)[0];
-      rec.hours           = calcHours(rec, fx);
-      rec.day_type_he     = dayTypeHe(rec.day_type);
-      rec.site_name       = site0 ? site0.name : '';
-      rec.reason_required = reasonWhy(rec, fx, shiftHoursFor()) !== '';
-      rec.updated_at = serverTimestamp();
       return rec;
     });
     const result = await createMissingDays(target, entries);
@@ -1673,23 +1647,14 @@ $('btnRecalc').onclick = async () => {
       if (sameCorrectionOrigin(target) && !refreshed) msg('החישוב נרשם, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       return;
     }
-    const batch = writeBatch(db);
-    let fixed = 0;
-
-    keys.forEach(function (key) {
-      const r = records[key];
-      const h = calcHours(r, siteHoursOf(r.sub_station));
-      if (Number(r.hours) !== Number(h)) {
-        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)),
-                  stamp({ hours: h, updated_at: serverTimestamp() }), { merge: true });
-        r.hours = h; fixed++;
-      }
-    });
-
-    if (fixed) await batch.commit();
+    const result = await callCorrection(callMutateMyAttendanceMonth, { month: target.month,
+      operation: 'recalculate', days: keys.slice().sort().map(key => ({ date: key,
+        expected_version: records[key]._expected_version })) }, 'self-month');
+    requireMonthWrite(target);
+    const fixed = result.changed_count;
     msg(fixed ? fixed + ' ימים תוקנו.'
               : 'אין פער. השעות השמורות תואמות לחישוב.', 'ok');
-    render();
+    await loadMonth();
   } catch (e) {
     msg(onOther() ? correctionErrorText(e, 'החישוב נכשל.')
       : userError('attendance.recalc', e, 'החישוב נכשל.'), 'err');
@@ -1849,7 +1814,7 @@ function editDay(key, rec){
       'placeholder="כתוב מה תוקן ולמה (20 תווים לפחות)"></textarea>' : '') +
     '<div class="acts">' +
       '<button type="button" class="btn go" id="dSave">שמור</button>' +
-      (rec ? '<button type="button" class="btn" id="dDel">מחק את היום</button>' : '') +
+      (rec ? '<button type="button" class="btn" id="dDel">בטל דיווח טיוטה</button>' : '') +
       '<button type="button" class="btn" id="dCancel">ביטול</button>' +
     '</div>';
   openOv();
@@ -2011,7 +1976,7 @@ function editDay(key, rec){
       if (onOther()) {
         const correctionReason = $('dCorrectionReason').value.normalize('NFC').trim();
         if (correctionReason.length < 20 || correctionReason.length > 500) {
-          msg('כדי למחוק יום יש לכתוב סיבה ברורה של 20–500 תווים.', 'err');
+          msg('כדי לבטל דיווח יש לכתוב סיבה ברורה של 20–500 תווים.', 'err');
           $('dCorrectionReason').focus(); return;
         }
         await callCorrection(callCorrectAttendanceDay, Object.assign(correctionBase(editTarget), { date: key,
@@ -2023,18 +1988,18 @@ function editDay(key, rec){
       requireMonthWrite(editTarget, key);
       closeOv(false);
       if (onOther()) {
-        msg('המחיקה נרשמה ביומן הביקורת.', 'ok');
+        msg('ביטול הדיווח נרשם ביומן הביקורת.', 'ok');
         const refreshed = await loadMonth();
         if (!refreshed) msg('המחיקה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       } else {
         const refreshed = await loadMonth();
-        msg(refreshed ? 'היום הוסר.' : 'היום הוסר, אך הרענון נכשל. טען מחדש.', refreshed ? 'ok' : 'info');
+        msg(refreshed ? 'טיוטת היום בוטלה ונשמרה בקבלת ביקורת.' : 'טיוטת היום בוטלה, אך הרענון נכשל. טען מחדש.', refreshed ? 'ok' : 'info');
         if (refreshed) focusAfterRender(key);
       }
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;
-      msg(onOther() ? correctionErrorText(e, 'המחיקה נכשלה.')
-        : userError('attendance.deleteDay', e, 'המחיקה נכשלה.'), 'err');
+      msg(onOther() ? correctionErrorText(e, 'ביטול הדיווח נכשל.')
+        : userError('attendance.deleteDay', e, 'ביטול הדיווח נכשל.'), 'err');
     }
   };
   $('dCancel').onclick = closeOv;
@@ -2043,22 +2008,19 @@ function editDay(key, rec){
 
 // ---------- שליחה ואישור ----------
 
-async function writeReport(patch){
+async function writeReport(status){
   if (onOther()) throw new Error('רק העובד עצמו רשאי לשלוח או לבטל את הצהרת הדוח שלו.');
   const target = captureMonthWrite();
-  const mk = target.month;
   const saved = Object.keys(records).sort();
-  const body = Object.assign({
-    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
-    crew: SUBJ.crew, month: mk,
-    days: saved,
-    total_hours: monthTotal(saved.map(k => records[k]), siteHoursOf),
-    updated_at: serverTimestamp()
-  }, patch);
+  const operation = status === 'submitted' ? 'submit' : 'unsubmit';
+  const intent = { month: target.month, operation,
+    expected_report_version: report ? report._expected_version : 'absent' };
+  if (operation === 'submit') intent.days = saved.map(key => ({ date: key,
+    expected_version: records[key]._expected_version }));
   requireMonthWrite(target);
-  await setDoc(doc(db, 'stations', target.sid, 'monthly_reports', target.emp + '_' + mk), stamp(body));
+  await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
   requireMonthWrite(target);
-  report = body;
+  await loadMonth();
 }
 
 // לפני שליחה — סיכום על המסך. הכבאי מאשר מה שהוא רואה, ולא
@@ -2139,7 +2101,7 @@ function submitPreview(){
     if (!sameMonthWrite(previewTarget)) return;
     $('pSend').disabled = true;
     try {
-      await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
+      await writeReport('submitted');
       if (!sameMonthWrite(previewTarget)) return;
       closeOv(false);
       msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
@@ -2161,28 +2123,10 @@ $('btnView').onclick = submitPreview;
 $('btnUnsubmit').onclick = async () => {
   if (onOther()) { msg('רק העובד עצמו רשאי לבטל את שליחת הדוח.', 'err'); return; }
   try {
-    await writeReport({ status: 'draft' });
+    await writeReport('draft');
     msg('השליחה בוטלה.', 'ok'); render();
   } catch (e) { msg(userError('attendance.unsubmitReport', e, 'הביטול נכשל.'), 'err'); }
 };
-
-// אישור נועל את הרשומות עצמן, לא רק את מסמך הדוח. כללי האבטחה
-// אינם קוראים מסמך אחר כדי להחליט — אין בהם אף get() — ולכן
-// הנעילה חייבת לשבת על כל רשומה.
-async function setMonthStatus(emp, mk, days, status){
-  const batch = writeBatch(db);
-  (days || []).forEach(function (key) {
-    // אישור נוגע ברשומות של אדם אחר, ולכן הוא נחתם כמו כל
-    // עריכה. בלי החתימה כלל האבטחה החדש ידחה את האצווה כולה.
-    const body = { status: status, updated_at: serverTimestamp() };
-    body.edited_by      = ME.uid;
-    body.edited_by_name = ME.full_name || '';
-    body.edited_at      = serverTimestamp();
-    batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
-              body, { merge: true });
-  });
-  await batch.commit();
-}
 
 $('btnApprove').onclick = () => approveMonth(SUBJ.uid, SUBJ.emp, monthKey(viewYear, viewMonth),
                                             'msg', $('btnApprove'));
@@ -2231,34 +2175,22 @@ async function approveMonth(targetUid, emp, mk, box, button){
 async function reopenMonth(emp, mk, days, box){
   const target = captureMonthWrite();
   try {
-    if (onOther()) {
-      if (!correctionContext || String(emp) !== String(SUBJ.emp) || mk !== correctionContext.month) {
-        throw new Error('יש לרענן את החודש לפני פתיחה מחדש.');
-      }
-      const reason = String(prompt('כתוב סיבה לפתיחת החודש מחדש (20–500 תווים):', '') || '').normalize('NFC').trim();
-      if (reason.length < 20 || reason.length > 500) throw new Error('נדרשת סיבה ברורה של 20–500 תווים.');
-      await callCorrection(callReopenAttendanceMonth, Object.assign(correctionBase(target), {
-        expected_report_version: correctionContext.report.expected_version,
-        days: correctionContext.days.map(row => ({ date: row.date, expected_version: row.expected_version })),
-        reason
-      }), 'reopen');
-      requireMonthWrite(target);
-      msg('החודש נפתח מחדש והפעולה נרשמה ביומן הביקורת.', 'ok', box);
-      const refreshed = await loadMonth();
-      if (sameCorrectionOrigin(target) && !refreshed) msg('הפתיחה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info', box);
-      return;
+    if (!onOther() || !correctionContext || String(emp) !== String(SUBJ.emp) || mk !== correctionContext.month) {
+      throw new Error('פתיחה מחדש מבוצעת על ידי גורם מוסמך אחר ומתועדת ביומן הביקורת.');
     }
-    await setMonthStatus(emp, mk, days, 'draft');
-    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
-    await setDoc(ref, { status: 'draft', reopened_by: ME.uid,
-                        reopened_by_name: ME.full_name,
-                        reopened_at: serverTimestamp() }, { merge: true });
-    msg('החודש נפתח מחדש.', 'ok', box);
-    if (emp === SUBJ.emp) await loadMonth();
-    if (CAN_APPROVE) loadApprovals();
+    const reason = String(prompt('כתוב סיבה לפתיחת החודש מחדש (20–500 תווים):', '') || '').normalize('NFC').trim();
+    if (reason.length < 20 || reason.length > 500) throw new Error('נדרשת סיבה ברורה של 20–500 תווים.');
+    await callCorrection(callReopenAttendanceMonth, Object.assign(correctionBase(target), {
+      expected_report_version: correctionContext.report.expected_version,
+      days: correctionContext.days.map(row => ({ date: row.date, expected_version: row.expected_version })),
+      reason
+    }), 'reopen');
+    requireMonthWrite(target);
+    msg('החודש נפתח מחדש והפעולה נרשמה ביומן הביקורת.', 'ok', box);
+    const refreshed = await loadMonth();
+    if (sameCorrectionOrigin(target) && !refreshed) msg('הפתיחה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info', box);
   } catch (e) {
-    msg(onOther() ? correctionErrorText(e, 'הפתיחה נכשלה.')
-      : userError('attendance.reopenMonth', e, 'הפתיחה נכשלה.'), 'err', box);
+    msg(correctionErrorText(e, 'הפתיחה נכשלה.'), 'err', box);
   }
 }
 

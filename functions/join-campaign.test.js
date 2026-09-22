@@ -102,7 +102,7 @@ test('status actions: revision check, revoke irreversible, transitions', () => {
 const goodInput = (t, over) => Object.assign({
   request_id: 'req_0123456789abcdef', token: t.token, full_name: 'בודק דמה', phone: '050-1234567', shift: 'A',
   qualifications: [{ key: 'driver', valid_until_ms: NOW + 1000000, reference: 'רישיון C' }, { key: 'hazmat' }],
-  ack: { correctness: true, terms_version: 'v1', privacy_version: 'v1' }, note: 'הערה'
+  ack: { correctness: true, terms_version: '2026-09', privacy_version: '2026-09' }, note: 'הערה'
 }, over || {});
 
 test('redemption input: exact keys, forbidden assignment fields rejected by name', () => {
@@ -117,8 +117,9 @@ test('redemption input: exact keys, forbidden assignment fields rejected by name
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { token: 'bad' }), doc, CATALOG, NOW), 'campaign-token');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { phone: 'abc' }), doc, CATALOG, NOW), 'phone');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { full_name: '' }), doc, CATALOG, NOW), 'full-name');
-  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: false, terms_version: 'v1', privacy_version: 'v1' } }), doc, CATALOG, NOW), 'ack');
-  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: 'v1' } }), doc, CATALOG, NOW), 'ack');
+  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: false, terms_version: '2026-09', privacy_version: '2026-09' } }), doc, CATALOG, NOW), 'ack');
+  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: '2026-09' } }), doc, CATALOG, NOW), 'ack');
+  throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: 'v1', privacy_version: 'v1' } }), doc, CATALOG, NOW), 'ack-version');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { ack: { correctness: true, terms_version: 'made-up', privacy_version: 'made-up' } }), doc, CATALOG, NOW), 'ack-version');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { qualifications: [{ key: 'nope' }] }), doc, CATALOG, NOW), 'qualification-unknown');
   throwsCode(() => c.normalizeRedemptionInput(goodInput(t, { qualifications: [{ key: 'driver' }, { key: 'driver' }] }), doc, CATALOG, NOW), 'qualification-duplicate');

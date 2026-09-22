@@ -61,7 +61,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport', 'getHrOverHoursAlert',
   'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
-  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection', 'approveAttendanceMonth', 'mutateMyAttendanceDay', 'getMyAttendanceMonth',
+  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection', 'approveAttendanceMonth', 'mutateMyAttendanceDay', 'getMyAttendanceMonth', 'mutateMyAttendanceMonth',
   'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',
   'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
   'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest', 'removeMyRequestFile', 'decideMyStationReport',

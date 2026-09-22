@@ -116,11 +116,14 @@ test('reserved uid values do not modify object prototype', () => {
   const value = project(input({ employee: person, report: null, attendance: [] }));
   assert.equal(targets([value])[0].uid, '__proto__'); assert.equal(Object.prototype.action, undefined);
 });
-test('source contract pins date key shape and persisted status ownership', () => {
+test('source contract keeps date keys and persisted status ownership on the server boundary', () => {
   const client = fs.readFileSync(path.join(__dirname, '..', 'attendance.html'), 'utf8').replace(/\r\n/g, '\n');
+  const selfService = fs.readFileSync(path.join(__dirname, 'attendance-self-service.js'), 'utf8').replace(/\r\n/g, '\n');
   const approvalService = fs.readFileSync(path.join(__dirname, 'attendance-correction-support.js'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(client, /const saved = Object\.keys\(records\)\.sort\(\)/);
-  assert.match(client, /days: saved/);
-  for (const status of ['draft', 'submitted']) assert.ok(client.includes("status: '" + status + "'"));
+  assert.match(client, /callMutateMyAttendanceMonth/);
+  assert.doesNotMatch(client, /days:\s*saved/);
+  assert.match(selfService, /r\.intent\.days\.length !== byDate\.size/);
+  assert.match(selfService, /days: r\.intent\.days\.map\(v => v\.date\), total_hours: Math\.round\(total \* 100\) \/ 100/);
+  assert.match(selfService, /status: 'draft'/);
   assert.ok(approvalService.includes("status: 'approved'"), 'approved is persisted only by the atomic server service');
 });

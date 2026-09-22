@@ -545,6 +545,50 @@ test('employee month read returns exact server versions and never trusts a clien
   assert.equal(result.days[0].record.notes, 'existing notes');
   assert.ok(f.db.metrics.reads.some(r => r.query && r.filters.some(([k, v]) => k === 'emp_number' && v === f.emp)));
 });
+test('employee fill derives rows server-side and exact replay creates nothing twice', async () => {
+  const f = fixture(), day = f.month + '-02';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  f.row(undefined, { status: 'draft' });
+  const data = { month: f.month, operation: 'fill', request_id: 'self_month_fill_0001',
+    entries: [{ date: day, patch: { day_type: 'regular', start: '08:00', end: '16:00', end_day: 0, sub_station: '' } }] };
+  const first = await f.selfApi().mutateMonth(f.selfReq(data));
+  assert.equal(first.changed_count, 1); assert.equal(f.db.value(f.path(day)).hours, 8);
+  const writes = f.db.metrics.writes, replay = await f.selfApi().mutateMonth(f.selfReq(data));
+  assert.equal(replay.duplicate, true); assert.equal(f.db.metrics.writes, writes);
+});
+test('employee recalculate submit and unsubmit are CAS-bound atomic month actions', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  f.row(undefined, { status: 'draft', hours: 99 });
+  let read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  let result = await f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'recalculate',
+    days: [{ date: day, expected_version: read.days[0].expected_version }], request_id: 'self_month_recalc_01' }));
+  assert.equal(result.changed_count, 1); assert.equal(f.db.value(f.path(day)).hours, 8);
+  read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  result = await f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'submit',
+    expected_report_version: read.report.expected_version,
+    days: [{ date: day, expected_version: read.days[0].expected_version }], request_id: 'self_month_submit_01' }));
+  assert.equal(result.status, 'submitted'); assert.equal(f.db.value(f.reportPath).total_hours, 8);
+  read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  result = await f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'unsubmit',
+    expected_report_version: read.report.expected_version, request_id: 'self_month_unsubmit_01' }));
+  assert.equal(result.status, 'draft'); assert.equal(f.db.value(f.reportPath).status, 'draft');
+});
+
+test('employee submit recalculates stored hours from the current trusted configuration', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  f.row(undefined, { status: 'draft', sub_station: 'fixed', hours: 8 });
+  const api = createAttendanceSelfService({ ...f.ports,
+    readConfig: async () => ({ siteById: { fixed: { name: 'Fixed', fixed_hours: 25 } }, shiftHours: 24 }),
+    calculate: calculateAttendanceDerived });
+  const read = await api.readMonth(f.selfReq({ month: f.month }));
+  await api.mutateMonth(f.selfReq({ month: f.month, operation: 'submit',
+    expected_report_version: read.report.expected_version,
+    days: [{ date: day, expected_version: read.days[0].expected_version }], request_id: 'self_month_submit_live_config_01' }));
+  assert.equal(f.db.value(f.path(day)).hours, 25);
+  assert.equal(f.db.value(f.reportPath).total_hours, 25);
+});
 
 test('employee save replay is exact and a changed intent cannot reuse its id', async () => {
   const f = fixture(), day = f.month + '-02';
@@ -572,5 +616,67 @@ test('employee delete is atomic and preserves an exact replay receipt', async ()
   f.row(day, { status: 'draft' });
   const data = { date: day, operation: 'delete', expected_version: f.db.version(f.path(day)), request_id: 'self_delete_01' };
   await f.selfApi().mutateDay(f.selfReq(data)); assert.equal(f.db.value(f.path(day)), null);
+  const receipt = f.receipts().find(({ value }) => value.request_id === data.request_id).value;
+  assert.equal(receipt.deleted_before.hours, 8); assert.equal(receipt.deleted_before.notes, 'existing notes');
+  assert.equal(Object.hasOwn(receipt.deleted_before, 'legacy_secret'), false);
   assert.equal((await f.selfApi().mutateDay(f.selfReq(data))).duplicate, true);
+});
+
+test('employee delete rechecks live authorization immediately before removing the draft', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  f.row(day, { status: 'draft' });
+  const original = f.ports.auth.getUser.bind(f.ports.auth); let calls = 0;
+  f.ports.auth.getUser = async id => { const value = await original(id); if (++calls === 2) value.disabled = true; return value; };
+  await noWrites(f, () => f.selfApi().mutateDay(f.selfReq({ date: day, operation: 'delete',
+    expected_version: f.db.version(f.path(day)), request_id: 'self_delete_revoked_01' })), 'permission-denied');
+  assert.equal(f.db.value(f.path(day)).hours, 8);
+});
+
+test('employee month mutations reject extra fields, duplicate order, overflow and nonemployee authority', async () => {
+  const f = fixture();
+  const bad = [
+    { month: f.month, operation: 'fill', entries: [{ date: f.month + '-02', patch: { day_type: 'sick' } }], request_id: 'month_bad_extra_01', station_id: f.sid },
+    { month: f.month, operation: 'recalculate', days: [
+      { date: f.month + '-02', expected_version: { seconds: 1, nanoseconds: 0 } },
+      { date: f.month + '-01', expected_version: { seconds: 1, nanoseconds: 0 } }
+    ], request_id: 'month_bad_order_01' },
+    { month: f.month, operation: 'fill', entries: Array.from({ length: 32 }, (_, i) => ({
+      date: f.month + '-' + String((i % 30) + 1).padStart(2, '0'), patch: { day_type: 'sick' }
+    })), request_id: 'month_bad_overflow_01' }
+  ];
+  for (const data of bad) await noWrites(f, () => f.selfApi().mutateMonth(f.selfReq(data)), 'invalid-argument');
+  const req = f.selfReq({ month: f.month, operation: 'fill', entries: [{ date: f.month + '-02', patch: { day_type: 'sick' } }], request_id: 'month_super_denied_01' });
+  req.auth.token.super = true;
+  await noWrites(f, () => f.selfApi().mutateMonth(req), 'permission-denied');
+});
+
+test('employee month mutation rejects locked and changed row sets without partial writes', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'submitted' });
+  f.row(day, { status: 'draft' });
+  await noWrites(f, () => f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'fill',
+    entries: [{ date: f.month + '-02', patch: { day_type: 'sick' } }], request_id: 'month_locked_fill_01' })), 'failed-precondition');
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  const read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  f.row(f.month + '-02', { status: 'draft' });
+  await noWrites(f, () => f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'submit',
+    expected_report_version: read.report.expected_version,
+    days: [{ date: day, expected_version: read.days[0].expected_version }], request_id: 'month_changed_rows_01' })), 'aborted');
+});
+
+test('employee month recalculation and receipt failures roll back the whole transaction', async () => {
+  for (const mode of ['calculation', 'receipt']) {
+    const f = fixture(), day = f.month + '-01';
+    f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+    f.row(day, { status: 'draft', hours: 99 });
+    const read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+    const api = mode === 'calculation' ? createAttendanceSelfService({ ...f.ports,
+      readConfig: async () => ({ siteById: {}, shiftHours: 24 }), calculate: () => { throw Error('synthetic'); } }) : f.selfApi();
+    if (mode === 'receipt') f.db.failWrite = path => path.includes('/' + COLLECTIONS.receipts + '/');
+    await noWrites(f, () => api.mutateMonth(f.selfReq({ month: f.month, operation: 'recalculate',
+      days: [{ date: day, expected_version: read.days[0].expected_version }], request_id: 'month_rollback_' + mode })),
+    mode === 'calculation' ? 'failed-precondition' : 'unavailable');
+    assert.equal(f.db.value(f.path(day)).hours, 99);
+  }
 });

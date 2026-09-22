@@ -73,6 +73,9 @@ function validateDetailedReport(p, month, message) {
   const dates=new Set(),days=new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();
   for(const r of p.rows){const day=Number(r.date.slice(8));if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||day<1||day>days||dates.has(r.date))throw Error('תאריך נוכחות לא תקין');dates.add(r.date);}
 }
+// A local export is an hours ledger, not a copy of the employee's HR or
+// medical record. Keep the detailed source on the server and deliberately
+// omit day classification, free text, reasons and site labels here.
 function reportLines(p){
   const lines=['שם: '+p.full_name+' | מספר עובד: '+p.employee_number+' | משמרת: '+p.crew,
     p.historical?'רשומת עבר של עובד שאינו פעיל בתחנה.':'רשומת עובד פעיל בתחנה.',
@@ -80,9 +83,8 @@ function reportLines(p){
     'פירוט נוכחות נוכחי — אינו צילום היסטורי ממועד האישור.',
     ...(p.warnings.length?['אזהרות נתונים: '+p.warnings.join(', ')]:[])];
   if(p.state==='missing')lines.push('לא הוגש דוח לחודש זה. רשומות נוכחות, אם קיימות, אינן אישור הגשה.');
-  for(const r of p.rows){lines.push(r.date+' | '+r.day_type_he+' | '+r.start+' עד '+r.end+(r.end_day?' (יום +'+r.end_day+')':'')+' | '+r.site_name+' | שעות: '+num(r.hours));
+  for(const r of p.rows){lines.push(r.date+' | '+r.start+' עד '+r.end+(r.end_day?' (יום +'+r.end_day+')':'')+' | שעות: '+num(r.hours));
     if(r.start2||r.end2)lines.push('מקטע נוסף: '+r.start2+' עד '+r.end2+(r.end_day2?' (יום +'+r.end_day2+')':''));
-    for(const k of ['notes','overtime_reason','reason'])if(r[k])lines.push(r[k]);
   }return lines;
 }
 const csvCell=v=>'"'+String(v??'').replace(/^[\s]*[=+\-@]/,m=>"'"+m).replace(/"/g,'""')+'"';

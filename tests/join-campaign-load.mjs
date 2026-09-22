@@ -46,7 +46,7 @@ const ms = (t0) => Number((process.hrtime.bigint() - t0) / 1000000n);
     const uid = 'page_w' + i; uids.push(uid); authUser(uid, { emailVerified: i % 7 !== 0 });
     db._put('join_campaigns/' + created.campaign_id + '/registrants/' + uid, {
       schema: 'join-registrant-v1', uid, campaign_id: created.campaign_id, campaign_revision: 1, station_id: 'eilat', request_id: 'req_' + String(i).padStart(14, '0'),
-      invite_id: 'inv_' + i, shift: ['A', 'B', 'C'][i % 3], note: '', ack: { correctness: true, terms_version: 'v1', privacy_version: 'v1', at_ms: 1 },
+      invite_id: 'inv_' + i, shift: ['A', 'B', 'C'][i % 3], note: '', ack: { correctness: true, terms_version: '2026-09', privacy_version: '2026-09', at_ms: 1 },
       declarations: [{ key: 'driver', declared_at_ms: 1, valid_until_ms: null, reference: null, status: 'declared', verified_by: null, verified_at_ms: null, reject_reason: null, revision: 1 }],
       review_state: i % 11 === 0 ? 'returned' : 'none', review_note: '', review_at_ms: null, revision: 1, created_at_ms: 1_800_000_000_000 + i, updated_at_ms: 1
     });

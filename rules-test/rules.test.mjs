@@ -818,13 +818,13 @@ await blocked('🔒 ניסיון חוזר ישיר אינו עוקף את נתי
     approved_at: new Date()
   }));
 
-await ok('בעל הרשאת HR פותח מחדש רשומת חודש מאושר של עצמו',
+await blocked('🔒 גם בעל הרשאת HR פותח מחדש רשומה רק דרך callable מתועד',
   updateDoc(doc(hrUser, `stations/${SID}/attendance/401_2026-07-01`), {
     status: 'draft', updated_at: new Date(), edited_by: 'u_hr',
     edited_by_name: 'רכזת כוח אדם', edited_at: new Date()
   }));
 
-await ok('בעל הרשאת HR פותח מחדש גם את מסמך החודש של עצמו',
+await blocked('🔒 גם בעל הרשאת HR פותח מחדש מסמך חודש רק דרך callable מתועד',
   updateDoc(doc(hrUser, `stations/${SID}/monthly_reports/401_2026-07`), {
     status: 'draft', reopened_by: 'u_hr', reopened_by_name: 'רכזת כוח אדם',
     reopened_at: new Date()
