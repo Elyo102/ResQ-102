@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h30">
-<link rel="stylesheet" href="./bulletin.css?v=42h30">
+<link rel="stylesheet" href="./theme.css?v=42h31">
+<link rel="stylesheet" href="./bulletin.css?v=42h31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -621,24 +621,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h31';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h30';
+         subStationsForStation } from './stations.js?v=42h31';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h30';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h30';
+  from './nav.js?v=42h31';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h31';
 import {
   initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h30';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h30';
-import { watchCallouts } from './callout.js?v=42h30';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h30';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h30';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h30';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h30';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h30';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h30';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h30';
+} from './pwa.js?v=42h31';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h31';
+import { watchCallouts } from './callout.js?v=42h31';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h31';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h31';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h31';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h31';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h31';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h31';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -649,11 +649,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h30';
+  from './monitored-functions.js?v=42h31';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h30';
+import { initAppCheck } from './appcheck.js?v=42h31';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -948,6 +948,10 @@ function showView(name){
 // רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
 // מול "רגע..." לנצח. אחרי שש שניות נופלים חזרה לטופס הכניסה.
 let authSettled = false;
+const HOME_NAVIGATION = (function () {
+  try { return new URLSearchParams(location.search).get('home') === '1'; }
+  catch (ignore) { return false; }
+})();
 registerPwaUpdateGuard(function () {
   if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
   if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
@@ -958,7 +962,9 @@ registerPwaUpdateGuard(function () {
   return true;
 });
 initPWA({ offer: true });
-setTimeout(function(){ if (!authSettled) showView('auth'); }, 6000);
+// בניווט מתוך האפליקציה לא מציגים טופס כניסה בזמן ש-Firebase משחזר
+// את ההתחברות. אם אין משתמש, onIdTokenChanged יציג אותו מיד ובאופן אמין.
+setTimeout(function(){ if (!authSettled && !HOME_NAVIGATION) showView('auth'); }, 6000);
 
 function esc(s){
   return String(s == null ? '' : s)

@@ -84,9 +84,9 @@ const member = [
   'faults.html', 'forms.html', 'sign.html', 'swaps.html', 'feedback.html', 'quals.html',
   'alerts.html', 'people.html', 'hr-requests.html', 'hr-documents.html'
 ];
-const staff = member.concat(['access.html', 'admin.html', 'stats.html']);
+const staff = member.concat(['access.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
-const all = audit.concat(['hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html', 'saas-admin.html', 'metrics.html']);
+const all = audit.concat(['admin.html', 'hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html', 'saas-admin.html', 'metrics.html']);
 const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
@@ -172,7 +172,7 @@ try {
     same(slots.map(slot => slot.id), ['home', 'schedule', 'hours', 'station', 'more'], 'mobile dock slots changed');
     same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'התחנה', 'עוד'], 'mobile dock labels changed');
     same(slots.slice(0, 3).map(slot => slot.href),
-      ['login.html', 'schedule-management.html?tab=mine', 'attendance.html'],
+      ['login.html?home=1', 'schedule-management.html?tab=mine', 'attendance.html'],
       'direct dock destinations changed');
     same(slots.map(slot => slot.aria), ['בית', 'סידור עבודה', 'דיווח שעות', 'התחנה', 'עוד'],
       'direct dock accessible names changed');

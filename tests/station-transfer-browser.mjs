@@ -160,7 +160,7 @@ async function test(name, fn) {
 const browser = await chromium.launch();
 try {
   const hr = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-  await prepare(hr, 'hr', {
+  await prepare(hr, 'super', {
     getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:false } }],
     getScheduleManagerAccess:[{ data:{ members:[] } }],
     listStationTransfers:[
@@ -294,8 +294,8 @@ try {
     await page.goto(base, { waitUntil:'load' });
     await page.locator('#work:not(.hide)').waitFor();
     await waitForCall(page, 'listStationTransfers');
-    assert.equal(await page.locator('#transferSourcePanel').isVisible(), false);
-    assert.equal(await page.locator('#transferOutgoingPanel').isVisible(), false);
+    assert.equal(await page.locator('#transferSourcePanel').isVisible(), true);
+    assert.equal(await page.locator('#transferOutgoingPanel').isVisible(), true);
     await page.waitForFunction((id) =>
       (document.getElementById('transferIncoming')?.textContent || '').includes(id), request.full_name);
     assert.equal(await page.locator(
@@ -325,16 +325,16 @@ try {
     await context.close();
   }
 
-  await test('a live target-station commander can approve an incoming pending request only', async () => {
-    await runDecision('stcmd', incomingApprove, 'approve', 'approved');
+  await test('the system administrator can approve an incoming pending request only', async () => {
+    await runDecision('super', incomingApprove, 'approve', 'approved');
   });
-  await test('a live target-station commander can reject an incoming pending request', async () => {
-    await runDecision('stcmd', incomingReject, 'reject', 'rejected');
+  await test('the system administrator can reject an incoming pending request', async () => {
+    await runDecision('super', incomingReject, 'reject', 'rejected');
   });
 
   await test('target recovery retries once, refreshes, and terminal states expose no actions', async () => {
     const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-    await prepare(context, 'stcmd', {
+    await prepare(context, 'super', {
       getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:false } }],
       listStationTransfers:[
         { data:{ ok:true, direction:'incoming',
@@ -383,7 +383,7 @@ try {
 
   await test('a stale recovery response cannot update or refresh after identity changes', async () => {
     const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-    await prepare(context, 'stcmd', {
+    await prepare(context, 'super', {
       getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:false } }],
       listStationTransfers:[{ data:{ ok:true, direction:'incoming',
         transfers:[incomingRecovery], targets } }],
@@ -406,7 +406,7 @@ try {
     await page.waitForTimeout(220);
     const calls = await page.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.filter((entry) => entry.name === 'decideStationTransfer').length, 1);
-    assert.equal(calls.filter((entry) => entry.name === 'listStationTransfers').length, 1,
+    assert.equal(calls.filter((entry) => entry.name === 'listStationTransfers').length, 2,
       'stale response refreshed data for the new identity');
     assert.equal(await page.locator('#transferIncomingMsg').textContent(), '');
     assert.equal(await page.locator(
@@ -515,7 +515,7 @@ try {
 
   await test('an explicit empty server target catalog fails closed without a static fallback', async () => {
     const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
-    await prepare(context, 'hr', {
+    await prepare(context, 'super', {
       getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:false } }],
       getScheduleManagerAccess:[{ data:{ members:[] } }],
       listStationTransfers:[

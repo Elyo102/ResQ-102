@@ -173,7 +173,7 @@ try {
       const campaign = { campaign_id: 'AAAAAAAAAAAAAAAA', station_id: 'eilat', district_id: 'south', label: 'קליטת ספטמבר', allowed_shifts: ['A', 'B', 'C'], max_registrations: 50, accepted_count: 30, status: 'active', state: 'active', expires_at_ms: Date.now() + 864000000, revision: 1, created_by_role: 'super', created_at_ms: 1, updated_at_ms: 1 };
       window.campaign = campaign;
       window.admin = JoinAdmin.createJoinAdmin(document.getElementById('joinAdminCard'), {
-        isSuper, stationId: 'eilat', stations: [{ id: 'eilat', name: 'אילת' }, { id: 'haifa', name: 'חיפה' }], stationName: (id) => ({ eilat: 'אילת', haifa: 'חיפה' })[id] || id, base: 'https://example.test/app/admin.html',
+        isSuper, canApprove:true, stationId: 'eilat', stations: [{ id: 'eilat', name: 'אילת' }, { id: 'haifa', name: 'חיפה' }], stationName: (id) => ({ eilat: 'אילת', haifa: 'חיפה' })[id] || id, base: 'https://example.test/app/admin.html',
         calls: {
           create: async (d) => { calls.push(['create', d]); return { ok: true, campaign_id: 'AAAAAAAAAAAAAAAA', token: 'AAAAAAAAAAAAAAAA.' + 'B'.repeat(43), revision: 1, station_id: d.station_id || 'eilat', station_name: 'אילת', expires_at_ms: d.expires_at_ms, allowed_shifts: d.allowed_shifts }; },
           setStatus: async (d) => { calls.push(['setStatus', d]); campaign.status = d.action === 'pause' ? 'paused' : d.action === 'resume' ? 'active' : 'revoked'; campaign.state = campaign.status; campaign.revision++; return { ok: true }; },
@@ -243,7 +243,7 @@ try {
       await page.waitForFunction(() => calls.some((c) => c[0] === 'reject'));
       check('reject stores the reason on the registrant first, then goes through the existing rejectRegistration path', await page.evaluate(() => { const i = calls.findIndex((c) => c[0] === 'review' && c[1].action === 'reject_note'); const j = calls.findIndex((c) => c[0] === 'reject'); return i !== -1 && j > i && calls[i][1].reason === 'טלפון שגוי'; }));
     } else {
-      check('hr sees no approve/reject/verify buttons', await page.locator('#joinRegistrants button', { hasText: 'אשר' }).count() === 0 && await page.locator('#joinRegistrants button', { hasText: 'אמת' }).count() === 0 && await page.locator('#jrBulkApprove').count() === 0);
+      check('hr can approve/reject station registrants but cannot verify qualifications', await page.locator('#joinRegistrants button', { hasText: 'אשר' }).count() > 0 && await page.locator('#joinRegistrants button', { hasText: 'דחה' }).count() > 0 && await page.locator('#joinRegistrants button', { hasText: 'אמת' }).count() === 0 && await page.locator('#jrBulkApprove').count() === 1);
       await page.locator('#joinRegistrants button', { hasText: 'החזר לתיקון' }).first().click();
       await page.waitForFunction(() => calls.some((c) => c[0] === 'review'));
       check('hr can return a registrant for correction with a reason', await page.evaluate(() => { const c = calls.find((x) => x[0] === 'review')[1]; return c.action === 'return' && c.reason === 'טלפון שגוי' && c.expected_revision === 1; }));

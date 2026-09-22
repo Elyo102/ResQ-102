@@ -1,4 +1,4 @@
-import { registerPwaUpdateGuard } from './pwa.js?v=42h30';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h31';
 
 const disconnected = { currentSession: () => null, subscribeIdentity: () => () => {} };
 const KEY = /^[a-f0-9]{64}$/;

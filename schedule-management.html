@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h30">
+  <link rel="stylesheet" href="./theme.css?v=42h31">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -220,10 +220,11 @@
     .hcell.we .dw{color:var(--sched-blue)}
     .hcell.today{background:var(--sb-today);border-color:var(--sb-today-e)}
     .hcell.today .dd,.hcell.today .dw{color:var(--sb-ember)}
-    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--panel,#f5f7fa)}
-    .stub{position:sticky;inset-inline-start:0;z-index:2;background:var(--card,#fff);
+    .corner{position:sticky;inset-inline-start:0;right:0;left:auto;top:0;z-index:6;background:var(--panel,#f5f7fa)}
+    .stub{position:sticky;inset-inline-start:0;right:0;left:auto;z-index:5;background:var(--card,#fff);
       display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
-      border:1px solid var(--line,#dfe5ec);border-radius:11px;box-shadow:var(--sb-shadow)}
+      border:1px solid var(--line,#dfe5ec);border-radius:11px;
+      box-shadow:-7px 0 10px -10px rgba(15,35,55,.55),var(--sb-shadow)}
     .stub b{font-size:13.5px;font-weight:600;line-height:1.2}
     .stub small{font-size:10.5px;font-weight:600;opacity:.75}
     .stub.s1{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
@@ -867,6 +868,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h30"></script>
+<script type="module" src="./schedule-management.js?v=42h31"></script>
 </body>
 </html>

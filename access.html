@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h30">
+<link rel="stylesheet" href="./theme.css?v=42h31">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -43,6 +43,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-family:inherit; min-height:44px; box-sizing:border-box }
   button:disabled{ opacity:.5; cursor:not-allowed }
   .link{ background:none; border:1px solid var(--line); color:var(--muted) }
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button.ok{background:var(--ok)}
+  button.no{background:transparent;border:1px solid var(--bad-bd);color:var(--err-fg)}
+  .req{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;background:var(--panel)}
+  .req .nm{font-size:16px;font-weight:600;margin-bottom:8px}
+  .req .ln,.note{font-size:13px;color:var(--muted);line-height:1.7}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:24px 0}
 
   .state{ color:var(--muted); font-size:13px; line-height:1.8 }
   .msg{ margin-top:14px; padding:11px; border-radius:6px; font-size:13px;
@@ -69,6 +76,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         font-size:13px; color:var(--muted) }
   .sum b{ color:var(--txt); font-size:16px; display:block;
           font-variant-numeric:tabular-nums }
+  #joinAdminCard select,#joinAdminCard textarea{width:100%;min-height:44px;padding:10px;background:var(--input);color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
+  #joinAdminCard .join-row{display:flex;flex-wrap:wrap;gap:8px}
+  #joinAdminCard .join-row button{margin-top:8px;flex:1 1 140px}
+  #joinAdminCard .join-admin-shifts{display:flex;flex-wrap:wrap;gap:12px}
+  #joinAdminCard .join-choice{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+  #joinAdminCard .join-choice input,#joinAdminCard .join-table input[type=checkbox]{width:44px;height:44px;min-height:44px;margin:0}
+  #joinAdminCard .join-token-box{margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:8px}
+  #joinAdminCard .join-token-box input{direction:ltr;font-size:13px}
+  #joinAdminCard .join-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--chip);color:var(--dim)}
+  #joinAdminCard .join-badge-active{background:var(--ok-bg);color:var(--ok-fg)}
+  #joinAdminCard .join-badge-revoked,#joinAdminCard .join-badge-expired{background:var(--err-bg);color:var(--err-fg)}
+  #joinAdminCard .join-filters{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin:10px 0}
+  #joinAdminCard .join-table{width:100%;border-collapse:collapse;font-size:13px}
+  #joinAdminCard .join-table th,#joinAdminCard .join-table td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right;vertical-align:top}
+  #joinAdminCard .join-table tr.join-exception td{background:color-mix(in srgb,var(--err-bg) 35%,transparent)}
+  #joinAdminCard .join-mini{min-height:44px;padding:6px 10px;font-size:12px;margin:4px 4px 0 0}
+  #joinAdminCard .join-warn{color:var(--err-fg);font-size:12px}
+  #joinAdminCard .join-ok{color:var(--ok-fg);font-size:12px}
+  #joinAdminCard .join-decl{margin-bottom:4px}
+  #joinAdminCard .join-actions button{display:inline-block}
+  #joinAdminCard .join-bulk-result{border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;font-size:13px;line-height:1.7}
+  @media (min-width:600px){#joinAdminCard .join-filters{grid-template-columns:repeat(4,1fr)}}
+  @media (max-width:599px){#joinAdminCard .join-table thead{display:none}#joinAdminCard .join-table tr{display:block;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;padding:6px}#joinAdminCard .join-table td{display:block;border:0;padding:4px 6px}#joinAdminCard .join-table td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}}
 </style>
 </head>
 <body data-resq-shell="v1" data-resq-page="access">
@@ -138,6 +168,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   <!-- הטבלה -->
   <div id="work" class="hide">
+    <section class="card hide" id="joinAdminCard" aria-label="הזמנה ואישור משתמשי התחנה"></section>
     <div class="card">
       <div class="state" id="whoAmI"></div>
 
@@ -173,12 +204,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h30';
-import { STATIONS, stationName } from './stations.js?v=42h30';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h30';
-import { ROLE_HE as ROLES_HE } from './roles.js?v=42h30';
-import { initPWA } from './pwa.js?v=42h30';
-import { watchCallouts } from './callout.js?v=42h30';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h31';
+import { STATIONS, stationName } from './stations.js?v=42h31';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h31';
+import { ROLE_HE as ROLES_HE } from './roles.js?v=42h31';
+import { initPWA } from './pwa.js?v=42h31';
+import { watchCallouts } from './callout.js?v=42h31';
+import { createJoinAdmin } from './join-admin-ui.js?v=42h31';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          signOut, onAuthStateChanged }
@@ -186,16 +218,61 @@ import { getAuth, signInWithEmailAndPassword,
 import { getFirestore, collection, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h30';
+  from './monitored-functions.js?v=42h31';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h30';
+import { initAppCheck } from './appcheck.js?v=42h31';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const fns  = getFunctions(app, 'europe-west1');
 const callLogin = httpsCallable(fns, 'loginWithEmployeeNumber');
+const callApprove = httpsCallable(fns, 'approveRegistration');
+const callReject = httpsCallable(fns, 'rejectRegistration');
+let joinAdmin = null;
+
+async function approveJoinRow(row, campaign){
+  const payload = { uid:row.uid, request_id:String(row.request_id || ''),
+    request_generation:String(row.request_generation || ''), role:'firefighter',
+    shift:row.shift || '', emp:'', stationId:campaign.station_id,
+    districtId:campaign.district_id };
+  try { return (await callApprove(payload)).data || {}; }
+  catch (e) {
+    if (!(e.details && e.details.request_refreshed === true)) throw e;
+    const page = await httpsCallable(fns, 'getJoinCampaignRegistrants')({ campaign_id:campaign.campaign_id, limit:50 });
+    const fresh = ((page.data || {}).rows || []).find(r => r.uid === row.uid);
+    if (!fresh || !fresh.request_generation) throw e;
+    payload.request_id = String(fresh.request_id || '');
+    payload.request_generation = String(fresh.request_generation || '');
+    return (await callApprove(payload)).data || {};
+  }
+}
+async function rejectJoinRow(row){
+  return (await callReject({ uid:row.uid, request_id:String(row.request_id || ''),
+    request_generation:String(row.request_generation || '') })).data || {};
+}
+function initJoinAdmin(claims){
+  const isSuper = claims.super === true;
+  const isHr = claims.role === 'hr_coordinator' && !!claims.stationId;
+  if (!isSuper && !isHr) { $('joinAdminCard').classList.add('hide'); return; }
+  $('joinAdminCard').classList.remove('hide');
+  if (joinAdmin) { joinAdmin.loadList(); return; }
+  joinAdmin = createJoinAdmin($('joinAdminCard'), {
+    isSuper, canApprove:isSuper || isHr, stationId:claims.stationId || '',
+    stations:STATIONS.map(s => ({ id:s.id, name:s.name })),
+    stationName:id => stationName(id) || id, base:location.href,
+    calls:{
+      create:async data => (await httpsCallable(fns, 'createJoinCampaign')(data)).data,
+      setStatus:async data => (await httpsCallable(fns, 'setJoinCampaignStatus')(data)).data,
+      list:async data => (await httpsCallable(fns, 'listJoinCampaigns')(data)).data,
+      registrants:async data => (await httpsCallable(fns, 'getJoinCampaignRegistrants')(data)).data,
+      review:async data => (await httpsCallable(fns, 'reviewJoinRegistrant')(data)).data,
+      verify:async data => (await httpsCallable(fns, 'verifyQualificationDeclaration')(data)).data
+    }, approveOne:approveJoinRow, rejectOne:rejectJoinRow
+  });
+  joinAdmin.loadList();
+}
 
 // אין מסך כניסה בכל דף. יש אחד, והוא login.html.
 //
@@ -294,6 +371,7 @@ onAuthStateChanged(auth, async user => {
   $('work').classList.remove('hide');
 
   renderNav(c, 'access.html', user.email || '');
+  initJoinAdmin(c);
   watchCallouts(db, c.stationId || STATION_ID, user.uid, { name: user.email || '' });
 
   $('whoAmI').textContent = 'מחובר: ' +
@@ -305,7 +383,7 @@ onAuthStateChanged(auth, async user => {
   const want = c.stationId || STATION_ID;
   let html = '';
   let found = false;
-  STATIONS.forEach(function (st) {
+  STATIONS.filter(function (st) { return isSuper || st.id === want; }).forEach(function (st) {
     const on = st.id === want;
     if (on) found = true;
     html += '<option value="' + esc(st.id) + '"' + (on ? ' selected' : '') +
@@ -316,6 +394,7 @@ onAuthStateChanged(auth, async user => {
             ' — לא ברשימה</option>';
   }
   $('sid').innerHTML = html;
+  $('sid').disabled = !isSuper;
   load();
 });
 

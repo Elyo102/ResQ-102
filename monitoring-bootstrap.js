@@ -1,7 +1,7 @@
 // Shared, best-effort telemetry only. No business request waits for this module.
-import { createIncidentReporter } from './incident-client.js?v=42h30';
-import { MEMBER_ROLES } from './roles.js?v=42h30';
-import { APP_VERSION } from './version.js?v=42h30';
+import { createIncidentReporter } from './incident-client.js?v=42h31';
+import { MEMBER_ROLES } from './roles.js?v=42h31';
+import { APP_VERSION } from './version.js?v=42h31';
 
 let reporter = null;
 let auth = null;

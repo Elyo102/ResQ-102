@@ -492,7 +492,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.30',
+  monthAuthorityReleaseId: '42H.31',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -564,6 +564,50 @@ const joinCampaignService = joinCampaignServiceModule.createJoinCampaignService(
   knownDistricts: KNOWN_DISTRICTS,
   hrCap: ASSIGN_MAX_RANK.hr_coordinator
 });
+
+// HR רשאית לאשר או לדחות רק עובד שהגיע מקמפיין ההצטרפות של התחנה
+// שלה. זו אינה הרחבה של סמכות הניהול הכללית: התחנה והקמפיין נגזרים
+// ממסמכי השרת, והתפקיד נכפה לכבאי בהמשך.
+async function requireFreshRegistrationReviewer(req, input) {
+  if (req && req.auth && req.auth.token && req.auth.token.super === true) {
+    return Object.freeze({ auth: await requireFreshOnboardingSuper(req), hr: false, authority: null });
+  }
+  const actor = await joinCampaignService._managementActor(req);
+  if (!actor || actor.role !== 'hr_coordinator') {
+    throw new HttpsError('permission-denied', 'אישור משתמשים מותר למנהל המערכת או למשאבי אנוש של התחנה.');
+  }
+  const uid = String(input && input.uid || '');
+  const requestId = String(input && input.request_id || '');
+  if (!uid || !requestId) throw new HttpsError('invalid-argument', 'חסרים פרטי בקשת ההצטרפות.');
+  const indexSnap = await db.doc('join_registrant_index/' + uid).get();
+  const index = indexSnap.exists ? (indexSnap.data() || {}) : null;
+  if (!index || index.station_id !== actor.station_id || index.request_id !== requestId ||
+      !JOIN_CAMPAIGN_ID_RE.test(String(index.campaign_id || ''))) {
+    throw new HttpsError('permission-denied', 'הבקשה אינה שייכת לקמפיין ההצטרפות של התחנה.');
+  }
+  const campaignId = String(index.campaign_id);
+  const [campaignSnap, registrantSnap, requestSnap, operationSnap] = await Promise.all([
+    db.doc('join_campaigns/' + campaignId).get(),
+    db.doc('join_campaigns/' + campaignId + '/registrants/' + uid).get(),
+    db.doc('registration_requests/' + uid).get(),
+    db.doc('stations/' + actor.station_id + '/onboarding_operations/' + requestId).get()
+  ]);
+  const campaign = campaignSnap.exists ? (campaignSnap.data() || {}) : null;
+  const registrant = registrantSnap.exists ? (registrantSnap.data() || {}) : null;
+  const request = requestSnap.exists ? (requestSnap.data() || {}) : null;
+  const operation = operationSnap.exists ? (operationSnap.data() || {}) : null;
+  const provenance = operation && operation.provenance;
+  if (!campaign || campaign.schema !== joinCampaignContract.SCHEMA || campaign.status === 'revoked' ||
+      campaign.station_id !== actor.station_id || !registrant || registrant.uid !== uid ||
+      registrant.request_id !== requestId || !request || request.request_id !== requestId ||
+      !provenance || provenance.kind !== 'join_campaign' || provenance.campaign_id !== campaignId) {
+    throw new HttpsError('permission-denied', 'לא ניתן לאמת שהבקשה שייכת לתחנה ולקמפיין הפעיל.');
+  }
+  return Object.freeze({ auth: actor.auth, hr: true, authority: Object.freeze({
+    stationId: campaign.station_id, districtId: campaign.district_id,
+    role: 'firefighter', shift: registrant.shift || ''
+  }) });
+}
 const deviceReadinessService = deviceReadinessModule.createDeviceReadinessService({
   db, contract: joinCampaignContract,
   fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
@@ -1419,11 +1463,15 @@ exports.bootstrapSuperAdmin = onCall({ timeoutSeconds: 120 }, async (req) => {
 // ---------------------------------------------------------------------
 
 exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
-  const auth = await requireFreshOnboardingSuper(req);
-  const d = req.data || {};
+  let d = req.data || {};
 
   const uid = String(d.uid || '');
   if (!uid) throw new HttpsError('invalid-argument', 'חסר מזהה משתמש.');
+  const reviewer = await requireFreshRegistrationReviewer(req, d);
+  const auth = reviewer.auth;
+  if (reviewer.hr) {
+    d = Object.assign({}, d, reviewer.authority, { emp: '', full_name: '' });
+  }
   const requestId = String(d.request_id || '');
   const requestGeneration = String(d.request_generation || '');
   const wanted = String(d.emp || '').trim();
@@ -1554,12 +1602,13 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
 // דחייה עוברת בשרת ונקשרת למזהה הבקשה שהמנהל ראה. מחיקה
 // ישירה מהדפדפן הייתה יכולה למחוק בקשה חדשה מכרטיס ישן.
 exports.rejectRegistration = onCall({ timeoutSeconds: 60 }, async (req) => {
-  const auth = requireSuperAdmin(req);
   const d = req.data || {};
   const uid = String(d.uid || '');
   const requestId = String(d.request_id || '');
   const requestGeneration = String(d.request_generation || '');
   if (!uid) throw new HttpsError('invalid-argument', 'חסר מזהה משתמש.');
+  const reviewer = await requireFreshRegistrationReviewer(req, d);
+  const auth = reviewer.auth;
 
   const rejected = await identityCoordinator.rejectRequest({
     uid: uid,
@@ -6596,7 +6645,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.30', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.31', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

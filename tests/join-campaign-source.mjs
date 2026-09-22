@@ -40,8 +40,8 @@ for (const name of NEW_CALLABLES) check('telemetry vocabulary lists ' + name + '
 const sw = read('firebase-messaging-sw.js');
 check('service worker SHELL carries join-ui.js for the login page', /'\.\/join-ui\.js'/.test(sw));
 const login = read('login.html'), admin = read('admin.html'), readinessPage = read('device-readiness.html');
-check('login.html imports join-ui with the release query', login.includes("from './join-ui.js?v=42h30'"));
-check('admin.html imports join-admin-ui with the release query', admin.includes("from './join-admin-ui.js?v=42h30'"));
+check('login.html imports join-ui with the release query', login.includes("from './join-ui.js?v=42h31'"));
+check('admin.html imports join-admin-ui with the release query', admin.includes("from './join-admin-ui.js?v=42h31'"));
 check('device-readiness.html initializes App Check once and is RTL Hebrew', (readinessPage.match(/await initAppCheck\(app\);/g) || []).length === 1 && /<html lang="he" dir="rtl">/.test(readinessPage));
 for (const file of ['join-ui.js', 'join-admin-ui.js']) {
   const src = read(file);

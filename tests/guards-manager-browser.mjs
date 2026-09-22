@@ -492,14 +492,22 @@ await test('an ordinary firefighter without an appointment sees guards but no ma
         });
       }
       const creation = await geometry('#newCard .row3');
-      assert.equal(creation.equal, true, 'creation columns have equal width');
+      if (width <= 340) assert.equal(creation.equal, true, 'creation fields stack at 320px');
+      else {
+        assert.ok(Math.abs(creation.widths[0] - creation.widths[1]) <= 0.5,
+          'start and end keep equal width');
+        assert.ok(creation.widths[2] > creation.widths[0] * 1.8,
+          'people count receives a readable full row');
+      }
       assert.equal(creation.inside, true, 'creation row does not overflow');
 
       const card = narrowPage.locator('#openList .g', { hasText:'הופעה בפארק' });
       await card.getByRole('button', { name:'ערוך' }).click();
       await narrowPage.locator('#eSlots').waitFor();
       const editing = await geometry('#dlg .row3');
-      assert.equal(editing.equal, true, 'editing columns have equal width');
+      if (width <= 340) assert.equal(editing.equal, true, 'editing fields stack at 320px');
+      else assert.ok(editing.widths[2] > editing.widths[0] * 1.8,
+        'editing people count receives a readable full row');
       assert.equal(editing.inside, true, 'editing row does not overflow');
       assert.deepEqual(await narrowPage.locator('#dlg .row3 input').evaluateAll((inputs) =>
         inputs.map((input) => input.id)), ['eStart', 'eEnd', 'eSlots'],

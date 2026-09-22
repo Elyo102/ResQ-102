@@ -26,7 +26,7 @@ function fixture({protectedRequest=true,actorChange={},assignmentChange={}}={}){
   VALID_ROLES:['firefighter','commander'],VALID_SHIFTS:['A','B','C',''],KNOWN_DISTRICTS:['south','north'],EMP_START:1,
   validEmp:v=>/^[1-9][0-9]{0,5}$/.test(v),namePrefixes:v=>[v],identityCoordinatorModule:{stableHash:v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex')},
   identityCoordinator:{async acquireAssignment(params){state.acquisitions++;state.plan=params.makePlan('601',request,authority);return{type:'acquired',operation:{op_id:'op_1',desired_claims:state.plan.desiredClaims,desired_emp:'601'}};},async runAssignment(...args){state.runArgs=args;return args[2];}}};
- vm.createContext(context);vm.runInContext(fresh+'\n'+handler('approveRegistration'),context);
+ vm.createContext(context);vm.runInContext(fresh+'\nthis.requireFreshRegistrationReviewer=async function(req){return {auth:await requireFreshOnboardingSuper(req),hr:false,authority:null};};\n'+handler('approveRegistration'),context);
  const input={auth:{uid:'actor_1',token:{super:true,email:'stale@example.test'}},data:{uid:'member_1',request_id:'request_20260915_001',request_generation:'generation_1',role:'commander',shift:'C',stationId:'station_evil',districtId:'north',full_name:'Client Override',phone:'clientphone',super:true}};
  return{state,input,request,context,run:()=>context.exports.approveRegistration(input)};
 }

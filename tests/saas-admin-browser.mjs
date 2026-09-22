@@ -55,8 +55,8 @@ try {
   const html = read('saas-admin.html'), ui = read('saas-admin-ui.js');
   /* ---- מקור ---- */
   check('page head follows admin/maintenance conventions (rtl, viewport, theme.css, one initAppCheck, module script)',
-    /<html lang="he" dir="rtl">/.test(html) && /name="viewport"/.test(html) && html.includes('./theme.css?v=42h30') && (html.match(/await initAppCheck\(app\);/g) || []).length === 1 && /<script type="module">/.test(html));
-  check('every local import carries the release query', [...html.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h30$/.test(m[1])));
+    /<html lang="he" dir="rtl">/.test(html) && /name="viewport"/.test(html) && html.includes('./theme.css?v=42h31') && (html.match(/await initAppCheck\(app\);/g) || []).length === 1 && /<script type="module">/.test(html));
+  check('every local import carries the release query', [...html.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h31$/.test(m[1])));
   check('page gates on claims.super === true, renders nav with its own name, never signs out', /claims\.super !== true/.test(html) && html.includes("renderNav(claims, 'saas-admin.html', user.email || '')") && /renderStuckNav\(''\)/.test(html) && !/signOut/.test(html));
   check('UI module never assigns innerHTML/outerHTML or uses insertAdjacentHTML/document.write', !/\.(?:innerHTML|outerHTML)\s*[=+]|insertAdjacentHTML\(|document\.write\(/.test(ui));
   check('no "שלם" anywhere and no charge claim', !/שלם/.test(html) && !/שלם/.test(ui) && !/חויב|בוצע חיוב/.test(ui));

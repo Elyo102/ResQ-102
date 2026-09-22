@@ -1,9 +1,9 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h30';
-import { errorText, logError } from './error-text.js?v=42h30';
-import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h30';
-import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h30';
+import { CREW_HE } from './rotation.js?v=42h31';
+import { errorText, logError } from './error-text.js?v=42h31';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h31';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h31';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;
@@ -624,20 +624,31 @@ export async function initCalloutConsole(options = {}) {
 
   // Both reads begin only after the actual signed role, station and crew have
   // passed the fail-closed gate above.
-  const stopCallouts = watchOwnCallouts(session);
+  // בורר הנמענים הוא הפעולה הראשית. כשל סינכרוני בהפעלת המעקב
+  // לא רשאי לעצור את ציור הרשימה ולהשאיר "טוען" לנצח.
+  renderRecipients(session);
+  void reloadRoster(session);
+  let stopCallouts = () => {};
+  try {
+    stopCallouts = watchOwnCallouts(session) || stopCallouts;
+  } catch (error) {
+    logError('callout tracking start', error);
+    if (session.elements.tracking) {
+      setMessage(session.elements.tracking,
+        'מעקב הקריאות אינו זמין כרגע. בחירת נמענים ושיגור עדיין זמינים.', 'err');
+    }
+  }
   session.stop = () => {
     try { stopCallouts(); } catch (_) {}
     clearTimeout(session.retryTimer);
     session.responseStops.forEach(stop => { try { stop(); } catch (_) {} });
     session.responseStops.clear();
   };
-  renderRecipients(session);
   // The callout console is operational before the optional name list arrives.
   // Full-crew dispatch and trial self-test stay available, while individual
   // selection is enabled only after a bounded roster read paints real rows.
   // This prevents a cold function or a stale Firestore connection from
   // holding the whole screen behind an indefinite loading state.
-  void reloadRoster(session);
   return Object.freeze({ hasPending:() => active === session && !!session.pendingRequest,
     destroy:() => { if (active === session) destroyCalloutConsole(); } });
 }

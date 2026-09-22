@@ -6,7 +6,7 @@
 // transaction. Durable receipts make retries exact without duplicating work.
 const { createHash } = require('node:crypto');
 const access = require('./schedule-access');
-const { createOpsMemberIdentity } = require('./ops-member-identity');
+const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
 
@@ -76,7 +76,6 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
   }
   function request(req) {
     const ctx = identity.context(req);
-    if (ctx.super) fail('permission-denied', 'A station employee profile is required');
     shape(req.data, ['date', 'operation', 'expected_version', 'patch', 'request_id'],
       ['date', 'operation', 'expected_version', 'request_id']);
     const d = req.data, operation = d.operation;
@@ -98,8 +97,28 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
     try { user = await auth.getUser(r.ctx.uid); } catch (_) { fail('unavailable', 'Current authentication unavailable'); }
     const claims = user && user.customClaims;
     if (!user || user.disabled === true || !plain(claims) || claims.stationId !== r.ctx.sid
-        || claims.role !== r.ctx.role) fail('permission-denied', 'Current attendance authority changed');
-    const profile = await identity.requireLive(tx, r.ctx);
+        || (r.ctx.super ? claims.super !== true : claims.role !== r.ctx.role)) {
+      fail('permission-denied', 'Current attendance authority changed');
+    }
+    let profile;
+    if (r.ctx.super) {
+      // מנהל מערכת יכול להיות גם עובד תחנה. סמכות super לבדה אינה
+      // מייצרת דוח אישי: נדרש פרופיל עובד חי באותה תחנה, עם מספר עובד
+      // ותפקיד עובד תקין. הפעולה נשארת על ה-UID שלו בלבד.
+      const ref = db.collection('stations').doc(r.ctx.sid).collection('users').doc(r.ctx.uid);
+      const snap = await tx.get(ref), member = snap.exists ? snap.data() : null;
+      if (!access.activeMember(member, r.ctx.sid) || !MEMBER_ROLES.includes(member.role)) {
+        fail('failed-precondition', 'Employee attendance identity unavailable');
+      }
+      const emp = member.employee_number;
+      profile = Object.freeze({ uid:r.ctx.uid, sid:r.ctx.sid, role:member.role,
+        employee_number:typeof emp === 'string' || typeof emp === 'number' ? String(emp).slice(0, 20) : '',
+        full_name:typeof member.full_name === 'string' ? member.full_name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 160) : '',
+        crew:typeof member.crew === 'string' ? member.crew.trim().slice(0, 16) :
+          typeof member.shift === 'string' ? member.shift.trim().slice(0, 16) : '' });
+    } else {
+      profile = await identity.requireLive(tx, r.ctx);
+    }
     if (!profile.employee_number || !TARGET_ROLES.includes(profile.role)) fail('failed-precondition', 'Employee attendance identity unavailable');
     return profile;
   }
@@ -181,7 +200,6 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
   }
   async function readMonth(req) {
     const ctx = identity.context(req);
-    if (ctx.super) fail('permission-denied', 'A station employee profile is required');
     shape(req.data, ['month']);
     let month;
     try { month = monthKey(req.data.month); } catch (_) { fail('invalid-argument', 'Invalid attendance month'); }
@@ -214,7 +232,6 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
   }
   function monthRequest(req) {
     const ctx = identity.context(req);
-    if (ctx.super) fail('permission-denied', 'A station employee profile is required');
     const d = req.data;
     if (!plain(d) || !['fill', 'recalculate', 'submit', 'unsubmit'].includes(d.operation)) {
       fail('invalid-argument', 'Invalid attendance month operation');

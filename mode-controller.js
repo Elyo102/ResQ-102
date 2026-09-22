@@ -9,8 +9,8 @@ import { getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fire
 import { getAuth } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, doc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h30';
-import { configureModeAction, renderModeBar, stationMode } from './mode-bar.js?v=42h30';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h31';
+import { configureModeAction, renderModeBar, stationMode } from './mode-bar.js?v=42h31';
 
 let unsubscribe = null;
 let actorKey = '';

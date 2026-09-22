@@ -132,58 +132,15 @@ try {
   });
   const hrPage = await hr.newPage();
   await hrPage.goto(base, { waitUntil:'load' });
-  await hrPage.locator('#scheduleAccessCard:not(.hide)').waitFor();
+  await hrPage.locator('#denyCard:not(.hide)').waitFor();
 
-  await test('HR sees the separate appointment card without redundant schedule cards', async () => {
-    assert.equal(await hrPage.locator('#scheduleAccessCard').isVisible(), true);
-    assert.equal(await hrPage.locator('#btnRot').count(), 0);
-    assert.equal(await hrPage.locator('#legacyRotationCard').count(), 0);
-    assert.equal(await hrPage.locator('#scheduleManagementCard').count(), 0);
-    assert.equal(await hrPage.locator('#scheduleManagementLink').count(), 0);
-    assert.equal(await hrPage.locator('#legacyRotationManageLink').count(), 0);
-  });
-
-  await test('the appointment card shows only its minimal safe fields with text nodes', async () => {
-    const text = await hrPage.locator('#scheduleAccessCard').textContent();
-    assert.match(text, /דנה לוי/);
-    assert.match(text, /לוחם אש/);
-    assert.equal(text.includes('secret@example.test'), false);
-    assert.equal(text.includes('050-1234567'), false);
-    assert.equal(text.includes('37'), false);
-    assert.equal(text.includes('south'), false);
-    assert.equal(await hrPage.locator('#scheduleAccessCard img').count(), 0);
-    assert.match(await hrPage.locator('#scheduleAccessPick option[value="u_fire"]').textContent(), /רות <img src=x>/);
-  });
-
-  await test('HR grants and revokes only through the two server callables without station data', async () => {
-    await hrPage.evaluate(() => {
-      const select = document.getElementById('scheduleAccessPick');
-      select.value = 'u_fire';
-      select.dispatchEvent(new Event('change', { bubbles:true }));
-    });
-    assert.equal(await hrPage.locator('#btnScheduleAccessEnable').isEnabled(), true);
-    await hrPage.locator('#btnScheduleAccessEnable').dispatchEvent('click');
-    await hrPage.locator('#scheduleAccessMsg.ok').waitFor();
-    await hrPage.evaluate(() => {
-      const select = document.getElementById('scheduleAccessPick');
-      select.value = 'u_fire';
-      select.dispatchEvent(new Event('change', { bubbles:true }));
-    });
-    assert.equal(await hrPage.locator('#btnScheduleAccessDisable').isEnabled(), true);
-    await hrPage.locator('#btnScheduleAccessDisable').dispatchEvent('click');
-    await hrPage.locator('#scheduleAccessMsg.ok').waitFor();
-
+  await test('HR is denied the system-management page and no management callable is invoked', async () => {
+    assert.equal(await hrPage.locator('#scheduleAccessCard').isVisible(), false);
+    assert.match(await hrPage.locator('#denyWho').textContent(), /אין הרשאת ניהול/);
     const calls = await hrPage.evaluate(() => window.__CALLABLE_CALLS || []);
     const appointmentCalls = calls.filter((entry) =>
       ['getScheduleManagerAccess', 'setScheduleManagerAccess'].includes(entry.name));
-    assert.equal(appointmentCalls.length, 5);
-    const gets = appointmentCalls.filter((entry) => entry.name === 'getScheduleManagerAccess');
-    assert.ok(gets.length >= 3);
-    assert.ok(gets.every((entry) => Object.keys(entry.payload || {}).length === 0));
-    const writes = appointmentCalls.filter((entry) => entry.name === 'setScheduleManagerAccess');
-    assert.deepEqual(writes.map((entry) => entry.payload), [
-      { uid:'u_fire', enabled:true }, { uid:'u_fire', enabled:false }
-    ]);
+    assert.equal(appointmentCalls.length, 0);
     const firestoreWrites = await hrPage.evaluate(() => window.__FIRESTORE_WRITES || []);
     assert.equal(firestoreWrites.some((entry) => String(entry.path).includes('schedule_access')), false);
   });
@@ -193,12 +150,10 @@ try {
   await prepare(commander, 'commander', { getScheduleRuntimeStatus:[{ data:{ mode:'off', manager:false } }] });
   const commanderPage = await commander.newPage();
   await commanderPage.goto(base, { waitUntil:'load' });
-  await commanderPage.locator('#work:not(.hide)').waitFor();
-  await test('a commander sees no appointment or redundant schedule controls', async () => {
+  await commanderPage.locator('#denyCard:not(.hide)').waitFor();
+  await test('a commander is denied the system-management page', async () => {
     assert.equal(await commanderPage.locator('#scheduleAccessCard').isVisible(), false);
-    assert.equal(await commanderPage.locator('#btnRot').count(), 0);
-    assert.equal(await commanderPage.locator('#legacyRotationCard').count(), 0);
-    assert.equal(await commanderPage.locator('#scheduleManagementCard').count(), 0);
+    assert.match(await commanderPage.locator('#denyWho').textContent(), /אין הרשאת ניהול/);
     const calls = await commanderPage.evaluate(() => window.__CALLABLE_CALLS || []);
     assert.equal(calls.some((entry) => entry.name === 'getScheduleManagerAccess'), false);
     assert.equal(calls.some((entry) => entry.name === 'setScheduleManagerAccess'), false);
@@ -271,14 +226,10 @@ try {
   });
   const appointedPage = await appointed.newPage();
   await appointedPage.goto(base, { waitUntil:'load' });
-  await appointedPage.locator('#work:not(.hide)').waitFor();
-  await test('a live appointment keeps access without redundant schedule cards', async () => {
+  await appointedPage.locator('#denyCard:not(.hide)').waitFor();
+  await test('a live schedule appointment does not grant the system-management page', async () => {
     assert.equal(await appointedPage.locator('#scheduleAccessCard').isVisible(), false);
-    assert.equal(await appointedPage.locator('#btnRot').count(), 0);
-    assert.equal(await appointedPage.locator('#legacyRotationCard').count(), 0);
-    assert.equal(await appointedPage.locator('#scheduleManagementCard').count(), 0);
-    assert.equal(await appointedPage.locator('#scheduleManagementLink').count(), 0);
-    assert.equal(await appointedPage.locator('#legacyRotationManageLink').count(), 0);
+    assert.match(await appointedPage.locator('#denyWho').textContent(), /אין הרשאת ניהול/);
     const calls = await appointedPage.evaluate(() => window.__CALLABLE_CALLS || []);
     const status = calls.find((entry) => entry.name === 'getScheduleRuntimeStatus');
     assert.deepEqual(status && status.payload, {});
@@ -361,5 +312,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 8);
-console.log('\n8 admin schedule-access browser checks passed.');
+assert.equal(passed, 6);
+console.log('\n6 admin schedule-access browser checks passed.');

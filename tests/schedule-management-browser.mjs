@@ -3536,6 +3536,22 @@ try {
     });
     assert.equal(back, true, 'the button brings today back into view');
   });
+  await test('station row labels stay visible after horizontal month scrolling', async () => {
+    const sticky = await todayPage.evaluate(async () => {
+      const board = document.getElementById('stationBoard');
+      board.scrollLeft = -board.scrollWidth;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const frame = board.getBoundingClientRect();
+      const rows = Array.from(board.querySelectorAll('.stub[data-station]')).map(node => {
+        const box = node.getBoundingClientRect();
+        return { text:node.textContent.trim(), left:box.left, right:box.right };
+      });
+      return { frame:{ left:frame.left, right:frame.right }, rows };
+    });
+    assert.equal(sticky.rows.length, 4);
+    assert.ok(sticky.rows.every(row => row.text && row.left >= sticky.frame.left - 1 && row.right <= sticky.frame.right + 1),
+      'every station label remains inside the visible board frame');
+  });
   await todayCtx.close();
 
   /* חודש שאינו החודש הנוכחי: אין „היום" בלוח, ולכן אין מיקוד ואין
@@ -3566,5 +3582,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 90);
+assert.equal(passed, 91);
 console.log('\n' + passed + ' schedule management browser checks passed.');

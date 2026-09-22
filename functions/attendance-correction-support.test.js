@@ -633,7 +633,7 @@ test('employee delete rechecks live authorization immediately before removing th
   assert.equal(f.db.value(f.path(day)).hours, 8);
 });
 
-test('employee month mutations reject extra fields, duplicate order, overflow and nonemployee authority', async () => {
+test('employee month mutations reject extra fields, duplicate order and overflow', async () => {
   const f = fixture();
   const bad = [
     { month: f.month, operation: 'fill', entries: [{ date: f.month + '-02', patch: { day_type: 'sick' } }], request_id: 'month_bad_extra_01', station_id: f.sid },
@@ -646,9 +646,23 @@ test('employee month mutations reject extra fields, duplicate order, overflow an
     })), request_id: 'month_bad_overflow_01' }
   ];
   for (const data of bad) await noWrites(f, () => f.selfApi().mutateMonth(f.selfReq(data)), 'invalid-argument');
-  const req = f.selfReq({ month: f.month, operation: 'fill', entries: [{ date: f.month + '-02', patch: { day_type: 'sick' } }], request_id: 'month_super_denied_01' });
-  req.auth.token.super = true;
-  await noWrites(f, () => f.selfApi().mutateMonth(req), 'permission-denied');
+});
+
+test('a super account with a live employee profile can read its own attendance, but super alone cannot invent one', async () => {
+  const f = fixture();
+  f.records.get(f.uid).customClaims.super = true;
+  const dual = f.selfReq({ month:f.month });
+  const value = await f.selfApi().readMonth(dual);
+  assert.equal(value.employee_number, f.emp);
+  assert.equal(value.days.length, 1);
+  assert.equal(value.days[0].record.hours, 8);
+
+  const pureUid = 'super_without_employee_profile';
+  f.records.set(pureUid, { uid:pureUid, disabled:false, displayName:'Pure Super',
+    tokensValidAfterTime:new Date(0).toISOString(),
+    customClaims:{ stationId:f.sid, super:true } });
+  await noWrites(f, () => f.selfApi().readMonth({ auth:{ uid:pureUid,
+    token:{ stationId:f.sid, super:true } }, data:{ month:f.month } }), 'failed-precondition');
 });
 
 test('employee month mutation rejects locked and changed row sets without partial writes', async () => {
