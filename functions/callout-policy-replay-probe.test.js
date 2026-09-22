@@ -1,4 +1,5 @@
 'use strict';
+require('./callout-rehearsal.test.js');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),crypto=require('node:crypto'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..'),source=fs.readFileSync(path.join(root,'functions/index.js'),'utf8');
 const body=source.slice(source.indexOf('exports.sendCallout ='),source.indexOf('exports.closeCallout ='));

@@ -58,6 +58,14 @@ assert.doesNotMatch(cacheSource, /localStorage\.(?:getItem|setItem)[\s\S]{0,80}c
   'station roster must not become a long-lived browser cache');
 assert.match(sendSource, /runtimeValue\.silent === true/);
 assert.match(sendSource, /intent_fingerprint/);
+assert.match(sendSource, /rehearsal \? \[\] : uids/,
+  'rehearsal recipients never enter the recipient-visible uids field');
+assert.match(sendSource, /active: !rehearsal/,
+  'rehearsal is never an active recipient callout');
+assert.match(sendSource, /delivery_state:rehearsal \? 'rehearsal' : 'reserved'/);
+assert.ok(sendSource.indexOf('if (rehearsal) {') < sendSource.indexOf('pushToUsers('),
+  'the server terminates rehearsal before the provider delivery path');
+assert.match(consoleSource, /לא נשלחה התראה לאף עובד/);
 assert.match(consoleSource, /where\('by_uid', '==', session\.uid\)/);
 const types = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.png':'image/png', '.ico':'image/x-icon' };
 const server = http.createServer((request, response) => {
@@ -465,6 +473,23 @@ try {
     assert.match(value, /נצפה3/);
     assert.match(value, /אישרו \/ בדרך1/);
     assert.doesNotMatch(value, /rogue/);
+  });
+
+  await check('rehearsal validates the selected people but never requests a broadcast', async () => {
+    const rehearsal = await open(browser, 'commander', {}, { callablePlan:{ sendCallout:[{
+      data:{ ok:true, id:'rehearsal-callout', rehearsal:true, selected:1, sent:0, people:0, devices:0 }
+    }] } });
+    await rehearsal.page.locator('#recipientNone').click();
+    await rehearsal.page.locator('input[value="u4"]').check();
+    await rehearsal.page.locator('#calloutText').fill('תרגול בחירת נמענים');
+    await rehearsal.page.locator('#calloutRehearse').click();
+    await rehearsal.page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(x => x.name === 'sendCallout'));
+    const call = await rehearsal.page.evaluate(() => (window.__CALLABLE_CALLS || []).find(x => x.name === 'sendCallout'));
+    assert.equal(call.payload.rehearsal, true);
+    assert.equal(call.payload.target, 'people');
+    assert.deepEqual(call.payload.uids, ['u4']);
+    assert.match(await rehearsal.page.locator('#calloutMessage').textContent(), /לא נשלחה התראה לאף עובד/);
+    await rehearsal.context.close();
   });
   await statuses.context.close();
 

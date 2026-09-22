@@ -5066,6 +5066,10 @@ exports.sendCallout = onCall(
   const myCrew = actor.crew;
 
   const d = req.data || {};
+  if (Object.prototype.hasOwnProperty.call(d, 'rehearsal') && d.rehearsal !== true) {
+    throw new HttpsError('invalid-argument', 'מצב התרגול אינו תקין.');
+  }
+  const rehearsal = d.rehearsal === true;
   const text = String(d.text || '').trim();
   if (!text) throw new HttpsError('invalid-argument', 'צריך לכתוב מה הקריאה.');
   if (text.length > 300) {
@@ -5188,9 +5192,9 @@ exports.sendCallout = onCall(
   const now = new Date();
   const roleHe = CALLOUT_ROLE_HE[role] || '';
   const whenHe = hhmmIL(now);
-  const intentFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+  const intentFingerprint = crypto.createHash('sha256').update(JSON.stringify(Object.assign({
     sid, uid:auth.uid, crew:myCrew, target:targetMode, text
-  })).digest('hex');
+  }, rehearsal ? { rehearsal:true } : {}))).digest('hex');
   const calloutId = 'co_' + crypto.createHash('sha256')
     .update(sid + '\0' + auth.uid + '\0' + requestId).digest('hex').slice(0, 40);
 
@@ -5212,9 +5216,11 @@ exports.sendCallout = onCall(
       by_uid: auth.uid, by_name: name, by_role: role,
       by_role_he: roleHe, by_crew: myCrew,
       target: target, target_he: targetHe, crew: crew,
-      text: text, uids: uids, active: true, trial,
+      text: text, uids: rehearsal ? [] : uids,
+      ...(rehearsal ? { rehearsal:true, rehearsal_uids:uids, rehearsal_count:uids.length } : {}),
+      active: !rehearsal, trial,
       legacy_ack_compat:true, acks:{},
-      delivery_state:'reserved', delivery_failed_uids:[],
+      delivery_state:rehearsal ? 'rehearsal' : 'reserved', delivery_failed_uids:[],
       when_he:whenHe,
       created_key: now.toISOString(), created_at: FV.serverTimestamp()
     });
@@ -5225,6 +5231,13 @@ exports.sendCallout = onCall(
     // ריטריי ממשיך את הכוונה המקורית; שינוי בסגל בזמן שהתגובה
     // אבדה אינו רשאי לשנות בדיעבד את רשימת הנמענים.
     uids = Array.isArray(reservation.value.uids) ? reservation.value.uids.slice() : [];
+  }
+
+  if (rehearsal) {
+    const selected = reservation.duplicate && Array.isArray(reservation.value.rehearsal_uids)
+      ? reservation.value.rehearsal_uids.length : uids.length;
+    return { ok:true, id:ref.id, duplicate:reservation.duplicate,
+      rehearsal:true, selected, sent:0, people:0, devices:0, trial };
   }
 
   // רכישת lease נפרדת הופכת קריסה אחרי השמירה לניתנת לחידוש. ניסיון

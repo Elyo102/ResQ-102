@@ -174,7 +174,9 @@ function renderLive(session, list) {
   box.replaceChildren();
 
   list.forEach(({ id, value }) => {
-    const uids = Array.isArray(value.uids) ? value.uids : [];
+    const rehearsal = value.rehearsal === true;
+    const uids = rehearsal && Array.isArray(value.rehearsal_uids)
+      ? value.rehearsal_uids : (Array.isArray(value.uids) ? value.uids : []);
     const legacy = value.acks && typeof value.acks === 'object' ? value.acks : {};
     const modern = value.responses && typeof value.responses === 'object' ? value.responses : {};
     const acks = { ...legacy, ...modern };
@@ -203,10 +205,10 @@ function renderLive(session, list) {
     const viewedCount = coming.length + unavailable.length + seenOnly.length;
 
     const card = document.createElement('article');
-    card.className = 'callout-row';
+    card.className = 'callout-row' + (rehearsal ? ' rehearsal' : '');
     const heading = document.createElement('strong');
     heading.textContent = (value.target_he || ('משמרת ' + session.crew)) +
-      (value.active === false ? ' · סגורה' : '');
+      (rehearsal ? ' · תרגול ללא שידור' : (value.active === false ? ' · סגורה' : ''));
     const body = document.createElement('p');
     body.textContent = text(value.text, 300);
     const tally = document.createElement('div');
@@ -215,7 +217,7 @@ function renderLive(session, list) {
     const metrics = document.createElement('div');
     metrics.className = 'callout-metrics';
     [
-      ['נשלח אל', uids.length],
+      [rehearsal ? 'נבחרו לתרגול' : 'נשלח אל', uids.length],
       ['נצפה', viewedCount],
       ['אישרו / בדרך', coming.length],
       ['דחו', unavailable.length]
@@ -235,7 +237,7 @@ function renderLive(session, list) {
     if (sentNames.length) {
       const row = document.createElement('small');
       row.className = 'callout-sent-to';
-      row.textContent = 'נשלח אל: ' + sentNames.join(', ');
+      row.textContent = (rehearsal ? 'נבחרו לתרגול: ' : 'נשלח אל: ') + sentNames.join(', ');
       card.appendChild(row);
     }
 
@@ -510,7 +512,7 @@ export async function initCalloutConsole(options = {}) {
         ? 'בדיקת עצמי מוכנה. שלח קריאה כדי לשמוע את צליל קריאת הפתע במכשיר הזה.'
         : 'בדיקת עצמי מיועדת למצב אימון. במצב חי המזעיק אינו מקבל קריאה לעצמו.', 'info');
   };
-  const sendPending = async autoRetry => {
+  const sendPending = async (autoRetry, rehearsalRequested) => {
     if (active !== session) return;
     const typedMessage = text(session.elements.input.value, 300);
     const message = autoRetry && session.pendingRequest
@@ -527,7 +529,11 @@ export async function initCalloutConsole(options = {}) {
       return;
     }
     const targetName = selectionLabel(session, currentUids);
-    if (!autoRetry && !window.confirm('להזעיק את ' + targetName + ' בתחנה ' + sid + '?\n\n' + message)) return;
+    const rehearsal = autoRetry && session.pendingRequest
+      ? session.pendingRequest.rehearsal === true : rehearsalRequested === true;
+    if (!autoRetry && !window.confirm(rehearsal
+      ? 'לשמור תרגול עבור ' + targetName + '?\n\nלא תישלח התראה, לא יושמע צליל והעובדים לא יראו את התרגול.\n\n' + message
+      : 'להזעיק את ' + targetName + ' בתחנה ' + sid + '?\n\n' + message)) return;
     const priorUids = session.pendingRequest && Array.isArray(session.pendingRequest.uids)
       ? session.pendingRequest.uids.slice().sort().join('\0') : null;
     const nextUids = Array.isArray(currentUids) ? currentUids.slice().sort().join('\0') : null;
@@ -540,25 +546,27 @@ export async function initCalloutConsole(options = {}) {
     /* ⭐ תגית קטנה בכותרת מספיקה כדי לזכור שהמערכת בניסוי. היא אינה
      * מספיקה כדי לא לשדר לתחנה בטעות, ולכן לפני שידור הניסוח המלא
      * עדיין מוצג — ודורש אישור מפורש. */
-    if (isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
+    if (!rehearsal && isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
       setMessage(session.elements.message, 'השידור בוטל. לא נשלחה קריאה.', 'info');
       return;
     }
     if (!session.pendingRequest) {
       const raw = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
         ? globalThis.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
-      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_'),
+      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_'), rehearsal,
         uids:Array.isArray(currentUids) ? currentUids.slice() : null };
     }
     session.elements.input.readOnly = true;
     session.elements.send.disabled = true;
-    setMessage(session.elements.message, 'שולח קריאת פתע…', 'info');
+    if (session.elements.rehearse) session.elements.rehearse.disabled = true;
+    setMessage(session.elements.message, rehearsal ? 'שומר תרגול ללא שידור…' : 'שולח קריאת פתע…', 'info');
     try {
       const payload = Array.isArray(session.pendingRequest.uids)
         ? { target:'people', crew, uids:session.pendingRequest.uids.slice(), text:message,
             request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) }
         : { target:'crew:' + crew, text:message,
             request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) };
+      if (rehearsal) payload.rehearsal = true;
       const response = await session.sendCallout(payload);
       if (active !== session) return;
       const data = response && response.data ? response.data : {};
@@ -593,8 +601,9 @@ export async function initCalloutConsole(options = {}) {
             : 'הקריאה לא נשלחה. נסה שוב.', 'err');
         return;
       }
-      setMessage(session.elements.message,
-        'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' נמענים.', 'ok');
+      setMessage(session.elements.message, data.rehearsal === true
+        ? 'התרגול נשמר. לא נשלחה התראה לאף עובד.'
+        : 'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' נמענים.', 'ok');
       if (text(session.elements.input.value, 300) === message) session.elements.input.value = '';
       session.elements.input.readOnly = false;
       session.pendingRequest = null;
@@ -603,11 +612,15 @@ export async function initCalloutConsole(options = {}) {
       if (active === session) setMessage(session.elements.message,
         (logError('callout send', error), 'שליחת הקריאה נכשלה. ' + errorText(error)), 'err');
     } finally {
-      if (active === session) session.elements.send.disabled = false;
+      if (active === session) {
+        session.elements.send.disabled = false;
+        if (session.elements.rehearse) session.elements.rehearse.disabled = false;
+      }
     }
   };
-  session.resumeDelivery = () => sendPending(true);
-  session.elements.send.onclick = () => sendPending(false);
+  session.resumeDelivery = () => sendPending(true, false);
+  session.elements.send.onclick = () => sendPending(false, false);
+  if (session.elements.rehearse) session.elements.rehearse.onclick = () => sendPending(false, true);
 
   // Both reads begin only after the actual signed role, station and crew have
   // passed the fail-closed gate above.

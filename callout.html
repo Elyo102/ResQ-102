@@ -57,6 +57,11 @@
   .wrap button{min-width:44px;min-height:44px}
   .wrap #calloutSend,.wrap #targetApply{background:#c2410c;color:#fff;border:1px solid #d9531e}
   .wrap #calloutSend{width:100%}
+  .callout-actions{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px}
+  .callout-actions #calloutSend{width:auto}
+  .callout-rehearsal-note{display:block;margin-top:8px;color:var(--muted);line-height:1.5}
+  .callout-row.rehearsal{border-inline-start:4px solid #64748b;padding-inline-start:10px}
+  @media(max-width:390px){.callout-actions{grid-template-columns:1fr}}
   .wrap :is(button,input,select,textarea):focus-visible{outline:3px solid #347dbd;outline-offset:3px}
   .wrap .callout-row{overflow-wrap:anywhere}
   @media(max-width:390px){.callout-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -99,7 +104,11 @@
       </section>
       <label for="calloutText">הודעת הקריאה</label>
       <textarea id="calloutText" maxlength="300" placeholder="התייצבות מיידית בתחנה."></textarea>
-      <button type="button" id="calloutSend">הזעק</button>
+      <div class="callout-actions">
+        <button type="button" id="calloutSend">הזעק</button>
+        <button type="button" id="calloutRehearse" class="secondary">תרגול ללא שידור</button>
+      </div>
+      <small class="callout-rehearsal-note">תרגול בודק את הבחירה וההרשאות בלבד. לא נשלחת התראה, אין צלצול והעובדים אינם רואים את התרגול.</small>
       <div class="msg" id="calloutMessage" aria-live="polite"></div>
     </section>
     <section class="card hide" id="calloutLiveCard" aria-labelledby="liveTitle">
@@ -140,7 +149,7 @@ function deny(user, message) {
   $('whoSub').textContent = user && user.email ? user.email : '';
 }
 function elements() {
-  return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'),
+  return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'), rehearse:$('calloutRehearse'),
     message:$('calloutMessage'), liveCard:$('calloutLiveCard'), live:$('calloutLive'),
     recipientList:$('recipientList'), recipientSummary:$('recipientSummary'),
     recipientAll:$('recipientAll'), recipientNone:$('recipientNone'), recipientSelf:$('recipientSelf') };
