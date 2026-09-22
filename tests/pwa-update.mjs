@@ -261,7 +261,7 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
 }
 
 {
-  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8').replace(/\r\n/g, '\n');
   const guardAt = loginSource.indexOf('registerPwaUpdateGuard(function ()');
   const initAt = loginSource.indexOf('initPWA({ offer: true })');
   assert.ok(guardAt !== -1 && initAt > guardAt,
