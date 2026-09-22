@@ -47,6 +47,14 @@ for (const file of ['join-ui.js', 'join-admin-ui.js']) {
   const src = read(file);
   check(file + ' never assigns innerHTML/outerHTML or uses insertAdjacentHTML', !/\.(?:innerHTML|outerHTML)\s*[=+]|insertAdjacentHTML\(|document\.write\(/.test(src));
 }
+const joinUi = read('join-ui.js');
+check('join draft is campaign and identity scoped, session-only and versioned',
+  /resq_join_draft_v2:/.test(joinUi) && /token\.slice\(0, 16\)/.test(joinUi) &&
+  /session\.set\(draftKeys\(\)\[0\]/.test(joinUi) && !/localStorage/.test(joinUi));
+check('join draft has a bounded 30-minute TTL and is removed on expiry/success',
+  /DRAFT_TTL_MS = 30 \* 60 \* 1000/.test(joinUi) &&
+  /data\.saved_at_ms < Date\.now\(\) - DRAFT_TTL_MS/.test(joinUi) &&
+  /draftKeys\(\)\.forEach\(key => session\.remove\(key\)\)/.test(joinUi));
 const service = read('functions/join-campaign-service.js'), contract = read('functions/join-campaign.js');
 check('campaign document stores token_hash only (no raw secret field written)', /token_hash/.test(contract) && !/\bsecret:\s*token\.secret|secret:\s*secret\b/.test(service));
 check('redeem writes the invitation exactly as issued plus redemption fields', /tx\.create\(inviteRef\(candidate\.invite_id\), Object\.assign\(\{\}, candidate\.doc,\s*\{ redeemed_by: uid, redeemed_at: serverTimestamp\(\), redeemed_request_id: requestId \}\)\)/.test(service));

@@ -196,20 +196,44 @@ export function createJoinPanel(root, deps) {
     controls();
   }
   function controls() { root.querySelectorAll('button, input, select, textarea').forEach((n) => { n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified)); }); }
-  const draftKey = 'resq_join_draft';
+  const DRAFT_TTL_MS = 30 * 60 * 1000;
+  function draftKey(uid) {
+    return 'resq_join_draft_v2:' + token.slice(0, 16) + ':' + (uid || 'guest');
+  }
+  function draftKeys() {
+    const user = d.currentUser();
+    const uid = user && String(user.uid || '');
+    return uid ? [draftKey(uid), draftKey('')] : [draftKey('')];
+  }
   function saveDraft() {
     try {
-      const data = { name: fields.joinName ? fields.joinName.value : '', phone: fields.joinPhone ? fields.joinPhone.value : '', note: fields.joinNote ? fields.joinNote.value : '' };
-      session.set(draftKey, JSON.stringify(data));
+      const data = { schema_version:2, saved_at_ms:Date.now(),
+        name: fields.joinName ? fields.joinName.value : '',
+        phone: fields.joinPhone ? fields.joinPhone.value : '',
+        note: fields.joinNote ? fields.joinNote.value : '' };
+      session.set(draftKeys()[0], JSON.stringify(data));
     } catch (ignore) {}
   }
   function restoreDraft() {
     try {
-      const data = JSON.parse(session.get(draftKey) || 'null');
+      const keys = draftKeys();
+      let data = null, sourceKey = '';
+      for (const key of keys) {
+        const value = JSON.parse(session.get(key) || 'null');
+        if (value) { data = value; sourceKey = key; break; }
+      }
       if (!data) return;
+      if (data.schema_version !== 2 || !Number.isFinite(data.saved_at_ms) ||
+          data.saved_at_ms < Date.now() - DRAFT_TTL_MS || data.saved_at_ms > Date.now() + 60000) {
+        keys.forEach(key => session.remove(key)); return;
+      }
       if (fields.joinName) fields.joinName.value = data.name || '';
       if (fields.joinPhone) fields.joinPhone.value = data.phone || '';
       if (fields.joinNote) fields.joinNote.value = data.note || '';
+      if (sourceKey !== keys[0]) {
+        session.set(keys[0], JSON.stringify(data));
+        session.remove(sourceKey);
+      }
     } catch (ignore) {}
   }
 
@@ -278,7 +302,8 @@ export function createJoinPanel(root, deps) {
       payload.request_id = state.requestId;
       const result = await d.redeem(payload);
       if (!result || result.ok !== true) throw new Error('לא התקבל אישור מהשרת.');
-      requestStore.clear(token); session.remove(draftKey);
+      requestStore.clear(token); draftKeys().forEach(key => session.remove(key));
+      session.remove(draftKey(''));
       stripJoinFromUrl(window);
       message(result.replayed ? 'הבקשה כבר נקלטה קודם. היא ממתינה לאישור התחנה; עדיין לא הוענקו הרשאות.' : 'הבקשה נשלחה וממתינה לאישור התחנה. עדיין לא הוענקו הרשאות.');
       await d.onRedeemed(result);
