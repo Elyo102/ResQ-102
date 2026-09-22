@@ -282,7 +282,11 @@ function writePins(source) {
   return {
     subject: capture.includes('uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,') &&
       capture.includes('target.uid === SUBJ.uid && target.emp === String(SUBJ.emp) && target.viewer === ME.uid &&'),
-    save: save.includes("await setDoc(doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, key)), stamp(body));"),
+    save: save.includes("await callCorrection(callMutateMyAttendanceDay, {") &&
+      save.includes("operation: 'save',") &&
+      save.includes("expected_version: existing ? existing._expected_version : 'absent',") &&
+      save.includes("}, 'self');") &&
+      !/\b(?:setDoc|deleteDoc|serverTimestamp)\b/.test(save),
     create: create.includes('const body = stamp(Object.assign({}, entry));') &&
       create.includes("ref: doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, date))") &&
       create.includes('if (!existing[i].exists()) { tx.set(item.ref, item.body); created++; }'),
@@ -292,14 +296,14 @@ function writePins(source) {
 }
 const pins = writePins(att);
 ok('הנושא נלכד בנפרד מהעורך', pins.subject);
-ok('שמירת יום נחתמת', pins.save);
+ok('שמירת יום עוברת בשער השרת החתום', pins.save);
 ok('מילוי אצווה נחתם', pins.create && pins.fill);
 ok('הוספה אוטומטית נחתמת', pins.create && pins.sync);
 const mutations = [
   ['capture uid', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: ME.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'subject'],
   ['capture employee', 'uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,', 'uid: SUBJ.uid, emp: String(ME.emp), viewer: ME.uid,', 'subject'],
-  ['save recipient', 'recordId(target.emp, key)), stamp(body)', 'recordId(ME.emp, key)), stamp(body)', 'save'],
-  ['save stamp', 'recordId(target.emp, key)), stamp(body)', 'recordId(target.emp, key)), body', 'save'],
+  ['save server route', "await callCorrection(callMutateMyAttendanceDay, {\n    date: key,\n    operation: 'save',", "await callCorrection(callCorrectAttendanceDay, {\n    date: key,\n    operation: 'save',", 'save'],
+  ['save optimistic lock', "expected_version: existing ? existing._expected_version : 'absent',", "expected_version: 'absent',", 'save'],
   ['create stamp', 'const body = stamp(Object.assign({}, entry));', 'const body = Object.assign({}, entry);', 'create'],
   ['create recipient', 'recordId(target.emp, date))', 'recordId(ME.emp, date))', 'create'],
   ['create body', 'tx.set(item.ref, item.body)', 'tx.set(item.ref, {})', 'create'],

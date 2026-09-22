@@ -456,6 +456,7 @@ const callCorrectAttendanceDay = httpsCallable(fns, 'correctAttendanceDay');
 const callCorrectAttendanceMonth = httpsCallable(fns, 'correctAttendanceMonth');
 const callReopenAttendanceMonth = httpsCallable(fns, 'reopenAttendanceMonthForCorrection');
 const callApproveAttendanceMonth = httpsCallable(fns, 'approveAttendanceMonth');
+const callMutateMyAttendanceDay = httpsCallable(fns, 'mutateMyAttendanceDay');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
 
@@ -523,6 +524,8 @@ function validCorrectionReceipt(kind, data){
   if (!data || data.outcome !== 'recorded' || typeof data.duplicate !== 'boolean') return false;
   if (kind === 'reopen') return /^[a-f0-9]{64}$/.test(String(data.reopen_id || ''))
     && Number.isInteger(data.attendance_changed_count) && data.attendance_changed_count >= 0;
+  if (kind === 'self') return /^[a-f0-9]{64}$/.test(String(data.operation_id || ''))
+    && ['save','delete'].includes(data.operation);
   return /^[a-f0-9]{64}$/.test(String(data.correction_id || ''))
     && Number.isInteger(data.changed_count) && data.changed_count >= 0;
 }
@@ -1433,19 +1436,13 @@ async function saveRecord(key, rec, correctionReason){
   body.month = key.slice(0, 7);
   body.uid = target.uid;
 
-  const fix = siteHoursOf(body.sub_station);
-  body.hours = calcHours(body, fix);
-
-  // שדות שהשרת קורא ואינו מחשב: הסיכום החודשי והריצה הלילית
-  // צריכים לדעת מה סוג היום בעברית, איפה זה היה, והאם היום
-  // דורש נימוק — בלי להריץ שוב את כללי החישוב בצד השרת.
-  // חישוב שני היה יוצר אפשרות שהמייל אומר מספר אחד והמסך אחר.
-  const site = sites.filter(s => s.id === body.sub_station)[0];
-  body.day_type_he     = dayTypeHe(body.day_type);
-  body.site_name       = site ? site.name : '';
-  body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
-
   if (onOther()) {
+    const fix = siteHoursOf(body.sub_station);
+    body.hours = calcHours(body, fix);
+    const site = sites.filter(s => s.id === body.sub_station)[0];
+    body.day_type_he = dayTypeHe(body.day_type);
+    body.site_name = site ? site.name : '';
+    body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
     const previous = records[key];
     const intent = Object.assign(correctionBase(target), {
       date: key, operation: previous ? 'update' : 'create',
@@ -1457,24 +1454,15 @@ async function saveRecord(key, rec, correctionReason){
     return { corrected: true };
   }
 
-  body.updated_at = serverTimestamp();
-  /* ⭐ „מתי דווח" — נכתב פעם אחת, בשרת.
-   *
-   * `reported_at` נקבע ביצירה בלבד ונשמר כמו שהוא בכל עריכה. הכלל
-   * ב-firestore.rules דורש שביצירה הוא יהיה `request.time` בדיוק,
-   * ושבעריכה הוא לא ישתנה — ולכן הוא העובדה היחידה כאן שאי אפשר
-   * לזייף מהדפדפן.
-   *
-   * דגל „רטרואקטיבי" אינו נשמר. הוא נגזר: תאריך היום מול הזמן שבו
-   * הדיווח נוצר. דגל שהלקוח כותב הוא דגל שאפשר לשקר בו. */
   const existing = records[key];
-  Object.assign(body, {
-    reported_at: existing && existing.reported_at ? existing.reported_at : serverTimestamp()
-  });
+  await callCorrection(callMutateMyAttendanceDay, {
+    date: key,
+    operation: 'save',
+    expected_version: existing ? existing._expected_version : 'absent',
+    patch: correctionPatch(body)
+  }, 'self');
   requireMonthWrite(target, key);
-  await setDoc(doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, key)), stamp(body));
-  requireMonthWrite(target, key);
-  records[key] = Object.assign({ id: recordId(target.emp, key) }, body);
+  return { selfSaved: true };
 }
 
 async function createMissingDays(target, entries){
@@ -1566,6 +1554,7 @@ $('btnStart').onclick = async () => {
       ? Object.assign({}, records[key], { start: hh, end: '' })
       : newRecord(key, { start: hh, end: '' });
     await saveRecord(key, rec);
+    await loadMonth();
     msg('המשמרת התחילה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
@@ -1583,6 +1572,7 @@ $('btnStop').onclick = async () => {
              String(now.getMinutes()).padStart(2, '0');
   try {
     await saveRecord(key, Object.assign({}, rec, { end: hh }));
+    await loadMonth();
     msg('המשמרת נסגרה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
@@ -2009,6 +1999,11 @@ function editDay(key, rec){
         msg('התיקון נרשם ביומן הביקורת.', 'ok');
         const refreshed = await loadMonth();
         if (!refreshed) msg('התיקון נרשם, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
+      } else if (outcome && outcome.selfSaved) {
+        msg('היום נשמר.', 'ok');
+        const refreshed = await loadMonth();
+        if (!refreshed) msg('היום נשמר, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
+        else focusAfterRender(key);
       } else {
         msg('היום נשמר.', 'ok'); render(); focusAfterRender(key);
       }
@@ -2031,7 +2026,8 @@ function editDay(key, rec){
         await callCorrection(callCorrectAttendanceDay, Object.assign(correctionBase(editTarget), { date: key,
           operation: 'delete', expected_version: rec._expected_version, reason: correctionReason }), 'day');
       } else {
-        await deleteDoc(doc(db, 'stations', editTarget.sid, 'attendance', recordId(editTarget.emp, key)));
+        await callCorrection(callMutateMyAttendanceDay, { date: key, operation: 'delete',
+          expected_version: rec._expected_version }, 'self');
       }
       requireMonthWrite(editTarget, key);
       closeOv(false);
@@ -2040,7 +2036,9 @@ function editDay(key, rec){
         const refreshed = await loadMonth();
         if (!refreshed) msg('המחיקה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       } else {
-        delete records[key]; msg('היום נמחק.', 'ok'); render(); focusAfterRender(key);
+        const refreshed = await loadMonth();
+        msg(refreshed ? 'היום הוסר.' : 'היום הוסר, אך הרענון נכשל. טען מחדש.', refreshed ? 'ok' : 'info');
+        if (refreshed) focusAfterRender(key);
       }
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;

@@ -3,11 +3,11 @@
  *
  *  מה נבדק כאן: הגזירה עצמה, וההבטחה שאין דגל שמור שאפשר לשקר בו.
  *
- *  למה זו בדיקה ולא הערה: הדיווח העצמי נכתב **ישירות מהדפדפן**
- *  ל-Firestore. כל שדה שהלקוח כותב הוא טענה של הלקוח, ולכן
- *  רטרואקטיביות אינה יכולה להיות בוליאני שנשמר — היא נגזרת משתי
- *  עובדות שהכללים אוכפים: התאריך שבמזהה הרשומה, ו-`reported_at`
- *  שחייב להיות `request.time` ביצירה ואינו משתנה בעריכה.
+ *  למה זו בדיקה ולא הערה: דיווח ידני רגיל עובר כעת דרך גבול שרת
+ *  שמפיק את `reported_at` מחותמת זמן שרת. רטרואקטיביות עדיין אינה
+ *  יכולה להיות בוליאני שנשמר — היא נגזרת מהתאריך הקנוני ומהחותמת.
+ *  כללי Firestore נשארים הגנת עומק למסלולי הלקוח ההיסטוריים עד
+ *  שגם הם יועברו לגבול השרת.
  *
  *  מה **אינו** נבדק כאן: אכיפת הכללים עצמה. היא דורשת אמולטור
  *  Firestore ורצה ב-rules-test. כאן נבדקים הגזירה והמקור.
@@ -81,6 +81,7 @@ check('a report on time carries no label at all',
 
 const rules = read('firestore.rules');
 const page = read('attendance.html');
+const selfService = read('functions/attendance-self-service.js');
 
 check('the rules require reported_at to be the request time on create',
   /request\.resource\.data\.reported_at == request\.time/.test(rules));
@@ -92,8 +93,15 @@ check('the rules refuse to let an edit change when it was first reported',
  * ייפול כאן ולא יתגלה כשמישהו ישאל למה הדוח אומר משהו אחר. */
 check('no stored retroactive flag is written anywhere on the page',
   !/\bretroactive\s*:/.test(page) && !/['"]retroactive['"]\s*:/.test(page));
-check('the page writes reported_at only as a server timestamp or the existing one',
-  /reported_at: existing && existing\.reported_at \? existing\.reported_at : serverTimestamp\(\)/.test(page));
+check('the trusted service writes reported_at from a server timestamp on create',
+  /const commit = serverTimestamp\(\)/.test(selfService)
+  && /reported_at: commit/.test(selfService));
+check('ordinary browser save sends no reported_at claim', (() => {
+  const start = page.indexOf('async function saveRecord(');
+  const end = page.indexOf('async function createMissingDays(', start);
+  const save = start >= 0 && end > start ? page.slice(start, end) : '';
+  return /callMutateMyAttendanceDay/.test(save) && !/reported_at|serverTimestamp|\bsetDoc\b/.test(save);
+})());
 check('the page offers a date field for reporting any day',
   /id="jumpDate"/.test(page) && /type="date"/.test(page));
 check('and says plainly that a past day is allowed and will be marked',

@@ -65,6 +65,7 @@ const attendanceCorrectionsModule = require('./attendance-corrections');
 const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
+const attendanceSelfServiceModule = require('./attendance-self-service');
 const personalLiveLabModule = require('./personal-live-lab');
 const joinCampaignContract = require('./join-campaign');
 const joinCampaignServiceModule = require('./join-campaign-service');
@@ -246,6 +247,7 @@ function jerusalemMonth(milliseconds) {
 }
 let attendanceCorrections;
 let attendanceCorrectionSupport;
+let attendanceSelfService;
 const readAttendanceCorrectionConfig = attendanceCorrectionConfigModule
   .createAttendanceCorrectionConfigReader({ db, HttpsError });
 function getAttendanceCorrections() {
@@ -279,6 +281,16 @@ exports.listAttendanceCorrectionAudit = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceCorrectionSupport().listAudit(req));
 exports.getAttendanceCorrectionAudit = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceCorrectionSupport().getAudit(req));
+function getAttendanceSelfService() {
+  if (!attendanceSelfService) attendanceSelfService = attendanceSelfServiceModule.createAttendanceSelfService({
+    db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
+    monthAt: jerusalemMonth, readConfig: readAttendanceCorrectionConfig,
+    calculate: attendanceHoursCalculator.calculateAttendanceDerived
+  });
+  return attendanceSelfService;
+}
+exports.mutateMyAttendanceDay = onCall(ATTENDANCE_CORRECTION_OPTIONS,
+  async req => getAttendanceSelfService().mutateDay(req));
 const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
 exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
 exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));

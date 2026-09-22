@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createAttendanceCorrectionSupport, LIMITS, FIELDS } = require('./attendance-correction-support');
 const { createAttendanceCorrections, COLLECTIONS } = require('./attendance-corrections');
+const { createAttendanceSelfService } = require('./attendance-self-service');
 const { calculateAttendanceDerived } = require('./attendance-hours-calculator');
 const { projectEmployeeHours } = require('./hr-hours-model');
 class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
@@ -152,13 +153,21 @@ function fixture() {
   function correctionApi() {
     return createAttendanceCorrections({ ...ports, readConfig: async () => ({ siteById: {}, shiftHours: 24 }), calculate: calculateAttendanceDerived });
   }
+  function selfApi() {
+    return createAttendanceSelfService({ ...ports,
+      readConfig: async () => ({ siteById: {}, shiftHours: 24 }),
+      calculate: calculateAttendanceDerived });
+  }
+  function selfReq(data) {
+    return { auth: { uid, token: { ...records.get(uid).customClaims, auth_time: NOW / 1000 - 100 } }, data };
+  }
   async function correct(operation = 'delete', requestId = 'correction_0001') {
     const q = req({ operation, date: month + '-01', expected_version: db.version(path(month + '-01')),
       reason: 'The authorized content correction reason', request_id: requestId,
       ...(operation === 'delete' ? {} : { patch: { end: '17:00' } }) });
     return correctionApi().correctOneDay(q);
   }
-  return { db, sid, actor, uid, emp, month, root, path, reportPath, records, ports, api, req, reopenReq, row, inactive, correct, correctionApi,
+  return { db, sid, actor, uid, emp, month, root, path, reportPath, records, ports, api, req, reopenReq, row, inactive, correct, correctionApi, selfApi, selfReq,
     time: v => { time = v; }, events: () => db.entries(COLLECTIONS.events), receipts: () => db.entries(COLLECTIONS.receipts), jobs: () => db.entries(COLLECTIONS.jobs) };
 }
 async function noWrites(f, fn, code) {
@@ -510,4 +519,46 @@ test('new imported/inactive historical draft is readable by actual HR projection
     for (const k of ['submitted_at', 'approved_at', 'approved_by', 'declaration']) assert.equal(own(report, k), false);
     assert.equal(f.jobs().length, 0, 'Reopening adds no competing notification producer');
   }
+});
+
+test('employee save derives identity hours and timestamps on the server', async () => {
+  const f = fixture(), day = f.month + '-02';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  const result = await f.selfApi().mutateDay(f.selfReq({ date: day, operation: 'save', expected_version: 'absent',
+    patch: { day_type: 'regular', shape: 'regular', start: '08:00', end: '16:00', end_day: 0,
+      start2: '', end2: '', end_day2: 0, sub_station: '', overtime_reason: '', notes: '', reason: '' },
+    request_id: 'self_save_0001' }));
+  const saved = f.db.value(f.path(day));
+  assert.equal(result.outcome, 'recorded'); assert.equal(saved.uid, f.uid); assert.equal(saved.emp_number, f.emp);
+  assert.equal(saved.hours, 8); assert.equal(saved.day_type_he, 'רגיל'); assert.equal(saved.status, 'draft');
+  assert.ok(saved.reported_at instanceof Timestamp); assert.ok(saved.updated_at instanceof Timestamp);
+});
+
+test('employee save replay is exact and a changed intent cannot reuse its id', async () => {
+  const f = fixture(), day = f.month + '-02';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  const data = { date: day, operation: 'save', expected_version: 'absent', patch: { day_type: 'sick' }, request_id: 'self_save_0002' };
+  const first = await f.selfApi().mutateDay(f.selfReq(data));
+  const writes = f.db.metrics.writes, replay = await f.selfApi().mutateDay(f.selfReq(data));
+  assert.equal(first.duplicate, false); assert.equal(replay.duplicate, true); assert.equal(f.db.metrics.writes, writes);
+  await assert.rejects(f.selfApi().mutateDay(f.selfReq({ ...data, patch: { day_type: 'reserve' } })), e => e.code === 'already-exists');
+});
+
+test('employee cannot save after submission or overwrite a changed row', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'submitted' });
+  await noWrites(f, () => f.selfApi().mutateDay(f.selfReq({ date: day, operation: 'save',
+    expected_version: f.db.version(f.path(day)), patch: { day_type: 'sick' }, request_id: 'self_locked_01' })), 'failed-precondition');
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  await noWrites(f, () => f.selfApi().mutateDay(f.selfReq({ date: day, operation: 'save', expected_version: 'absent',
+    patch: { day_type: 'sick' }, request_id: 'self_stale_001' })), 'aborted');
+});
+
+test('employee delete is atomic and preserves an exact replay receipt', async () => {
+  const f = fixture(), day = f.month + '-01';
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });
+  f.row(day, { status: 'draft' });
+  const data = { date: day, operation: 'delete', expected_version: f.db.version(f.path(day)), request_id: 'self_delete_01' };
+  await f.selfApi().mutateDay(f.selfReq(data)); assert.equal(f.db.value(f.path(day)), null);
+  assert.equal((await f.selfApi().mutateDay(f.selfReq(data))).duplicate, true);
 });
