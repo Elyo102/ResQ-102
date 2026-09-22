@@ -26,6 +26,21 @@ test('root config and station config are distinct policies', () => {
   assert.equal(station.scope, 'station');
 });
 
+test('canonical attendance and monthly reports have explicit indefinite retention without automatic deletion', () => {
+  for (const path of [
+    'stations/{sid}/attendance/{docId}',
+    'stations/{sid}/monthly_reports/{docId}'
+  ]) {
+    const item = backupPolicy.getPolicy(path);
+    assert.ok(item, path);
+    assert.equal(item.classification, 'source_of_truth');
+    assert.equal(item.backupPolicy, 'managed_export');
+    assert.equal(item.restorePolicy, 'restore');
+    assert.equal(item.retention, 'retain_indefinitely_no_automatic_deletion');
+    assert.equal(item.humanReadable, 'forbidden');
+  }
+});
+
 test('bulletin display receipts expire and are never restored from backup', () => {
   const receipt = backupPolicy.getPolicy(
     'stations/{sid}/bulletin_view_receipts/{messageId}/bulletin_view_recipients/{uid}'

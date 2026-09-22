@@ -470,7 +470,8 @@ const DATA_POLICIES = Object.freeze([
     { humanReadable:'redacted' }),
   policy('stations/{sid}/attendance/{docId}', 'station', 'source_of_truth',
     'count_drop', 'managed_export', 'restore', 'restricted_identity',
-    'legal_retention_policy_required', 'Attendance and work-hour records.',
+    'retain_indefinitely_no_automatic_deletion',
+    'Attendance and work-hour records remain available by historical month; correction uses audited events, not automatic deletion.',
     { humanReadable:'forbidden' }),
   policy('stations/{sid}/push_tokens/{uid}', 'station', 'secret_token',
     'none', 'exclude', 'do_not_restore', 'secret', 'ttl_policy_required',
@@ -586,8 +587,9 @@ const DATA_POLICIES = Object.freeze([
     'Closed legacy shadow path.', { humanReadable:'forbidden' }),
   policy('stations/{sid}/monthly_reports/{docId}', 'station',
     'source_of_truth', 'count_drop', 'managed_export', 'restore',
-    'restricted_identity', 'legal_retention_policy_required',
-    'Signed monthly work reports.', { humanReadable:'forbidden' }),
+    'restricted_identity', 'retain_indefinitely_no_automatic_deletion',
+    'Signed monthly work reports remain available by historical month; backup recovery is limited to the configured backup window.',
+    { humanReadable:'forbidden' }),
 
   // Private HR metadata only. These prospective classifications activate no
   // export, paid backup, restore, retention timer or deletion. A coherent
