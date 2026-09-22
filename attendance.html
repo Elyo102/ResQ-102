@@ -457,6 +457,7 @@ const callCorrectAttendanceMonth = httpsCallable(fns, 'correctAttendanceMonth');
 const callReopenAttendanceMonth = httpsCallable(fns, 'reopenAttendanceMonthForCorrection');
 const callApproveAttendanceMonth = httpsCallable(fns, 'approveAttendanceMonth');
 const callMutateMyAttendanceDay = httpsCallable(fns, 'mutateMyAttendanceDay');
+const callGetMyAttendanceMonth = httpsCallable(fns, 'getMyAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
 
@@ -1096,31 +1097,21 @@ async function loadMonth(){
     })(), Promise.resolve(), guardRequest
   ]) : await Promise.all([
     (async function () {
-      // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
-      // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
-      // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
       try {
-        const qs = await getDocs(query(
-          collection(db, 'stations', snapshot.sid, 'attendance'),
-          where('emp_number', '==', snapshot.emp),
-          where('month', '==', mk)
-        ));
-        qs.forEach(function (d) {
-          const v = d.data() || {};
-          nextRecords[v.date] = Object.assign({ id: d.id }, v);
+        const response = await callGetMyAttendanceMonth({ month: mk });
+        const value = response && response.data;
+        if (!value || value.station_id !== snapshot.sid || String(value.employee_number) !== snapshot.emp
+            || value.month !== mk || !Array.isArray(value.days) || value.days.length > 31) {
+          throw new Error('attendance-month-mismatch');
+        }
+        value.days.forEach(function (row) {
+          if (!row || !row.record || row.record.date.slice(0, 7) !== mk) throw new Error('attendance-day-mismatch');
+          nextRecords[row.record.date] = Object.assign({ id: row.record_id,
+            _expected_version: row.expected_version }, row.record);
         });
-      } catch (e) {
-        attendanceError = e;
-      }
-    })(),
-    (async function () {
-      try {
-        const r = await getDoc(doc(db, 'stations', snapshot.sid, 'monthly_reports',
-                                   snapshot.emp + '_' + mk));
-        if (r.exists()) nextReport = r.data();
-      } catch (e) { reportError = e; }
-    })(),
-    guardRequest
+        if (value.report) nextReport = Object.assign({ _expected_version: value.report.expected_version }, value.report.record || {});
+      } catch (e) { attendanceError = e; reportError = e; }
+    })(), Promise.resolve(), guardRequest
   ]);
   const guardResult = loaded[2];
 

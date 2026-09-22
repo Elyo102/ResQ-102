@@ -162,7 +162,40 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       return { operation_id: r.id, outcome: 'recorded', duplicate: false, operation: r.intent.operation };
     });
   }
-  return Object.freeze({ mutateDay });
+  async function readMonth(req) {
+    const ctx = identity.context(req);
+    if (ctx.super) fail('permission-denied', 'A station employee profile is required');
+    shape(req.data, ['month']);
+    let month;
+    try { month = monthKey(req.data.month); } catch (_) { fail('invalid-argument', 'Invalid attendance month'); }
+    const r = { ctx };
+    const root = db.collection('stations').doc(ctx.sid);
+    return db.runTransaction(async tx => {
+      const person = await live(tx, r);
+      const query = root.collection('attendance').where('emp_number', '==', person.employee_number)
+        .where('month', '==', month).limit(32);
+      const reportRef = root.collection('monthly_reports').doc(person.employee_number + '_' + month);
+      const [rows, report] = await Promise.all([tx.get(query), tx.get(reportRef)]);
+      if (!rows || !Array.isArray(rows.docs) || rows.docs.length > 31) fail('failed-precondition', 'Attendance month is invalid');
+      const days = rows.docs.map(s => {
+        const value = s.data();
+        if (!plain(value) || String(value.emp_number) !== person.employee_number
+            || (own(value, 'uid') && value.uid !== ctx.uid) || value.month !== month
+            || date(value.date) !== value.date) fail('failed-precondition', 'Attendance row identity is invalid');
+        return { record_id: s.id, expected_version: snapVersion(s), record: value };
+      }).sort((a, b) => String(a.record.date).localeCompare(String(b.record.date)));
+      let reportValue = null;
+      if (report.exists) {
+        const value = report.data();
+        if (!plain(value) || String(value.emp_number) !== person.employee_number || value.month !== month
+            || (own(value, 'uid') && value.uid !== ctx.uid)) fail('failed-precondition', 'Monthly report identity is invalid');
+        reportValue = { expected_version: snapVersion(report), record: value };
+      }
+      await live(tx, r);
+      return { station_id: ctx.sid, employee_number: person.employee_number, month, days, report: reportValue };
+    });
+  }
+  return Object.freeze({ mutateDay, readMonth });
 }
 
 module.exports = Object.freeze({ createAttendanceSelfService });

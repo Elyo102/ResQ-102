@@ -17,7 +17,9 @@ function section(source, start, end) {
 }
 
 assert.match(index, /exports\.mutateMyAttendanceDay = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
+assert.match(index, /exports\.getMyAttendanceMonth = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
 assert.match(client, /httpsCallable\(fns, 'mutateMyAttendanceDay'\)/);
+assert.match(client, /httpsCallable\(fns, 'getMyAttendanceMonth'\)/);
 const save = section(client, 'async function saveRecord(', 'async function createMissingDays(');
 assert.match(save, /callMutateMyAttendanceDay/);
 assert.doesNotMatch(save, /\b(?:setDoc|deleteDoc|serverTimestamp)\b/,
@@ -29,5 +31,12 @@ assert.match(service, /expected_version/);
 assert.match(service, /attendance-self-receipt-v1/);
 assert.doesNotMatch(service, /req\.data\.(?:station|station_id|uid|employee_number|hours|full_name|crew)/,
   'identity and derived values must never come from the browser request');
+assert.match(service, /async function readMonth\(req\)/);
+assert.match(service, /where\('emp_number', '==', person\.employee_number\)[\s\S]*where\('month', '==', month\)\.limit\(32\)/);
+assert.match(service, /expected_version: snapVersion\(s\)/);
+const ownLoad = section(client, "\]) : await Promise.all([", '  ]);');
+assert.match(ownLoad, /callGetMyAttendanceMonth/);
+assert.doesNotMatch(ownLoad, /getDocs\(|getDoc\(/,
+  'the employee month must receive server-issued optimistic versions');
 
-console.log('Attendance self-write source: day save/delete use the trusted idempotent server boundary.');
+console.log('Attendance self-write source: month reads and day save/delete use the trusted server boundary.');

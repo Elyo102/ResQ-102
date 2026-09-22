@@ -533,6 +533,18 @@ test('employee save derives identity hours and timestamps on the server', async 
   assert.equal(saved.hours, 8); assert.equal(saved.day_type_he, 'רגיל'); assert.equal(saved.status, 'draft');
   assert.ok(saved.reported_at instanceof Timestamp); assert.ok(saved.updated_at instanceof Timestamp);
 });
+test('employee month read returns exact server versions and never trusts a client identity', async () => {
+  const f = fixture();
+  f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft', days: [f.month + '-01'] });
+  f.row(undefined, { status: 'draft' });
+  const result = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  assert.equal(result.station_id, f.sid); assert.equal(result.employee_number, f.emp);
+  assert.equal(result.days.length, 1); assert.equal(result.days[0].record_id, f.emp + '_' + f.month + '-01');
+  assert.deepEqual(result.days[0].expected_version, f.db.version(f.path(f.month + '-01')));
+  assert.deepEqual(result.report.expected_version, f.db.version(f.reportPath));
+  assert.equal(result.days[0].record.notes, 'existing notes');
+  assert.ok(f.db.metrics.reads.some(r => r.query && r.filters.some(([k, v]) => k === 'emp_number' && v === f.emp)));
+});
 
 test('employee save replay is exact and a changed intent cannot reuse its id', async () => {
   const f = fixture(), day = f.month + '-02';
