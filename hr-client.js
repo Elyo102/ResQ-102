@@ -1,17 +1,17 @@
-import { firebaseConfig } from './firebase-config.js?v=42h32';
+import { firebaseConfig } from './firebase-config.js?v=42h33';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, where, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h32';
-import { initAppCheck } from './appcheck.js?v=42h32';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h32';
-import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h32';
-import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h32';
-import { createLocalExportUI } from './hr-local-export-ui.js?v=42h32';
-import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h32';
-import { createHrOverHoursAlertUI, createHrMonthlyReportUI } from './hr-over-hours-alert-ui.js?v=42h32';
-import { MEMBER_ROLES } from './roles.js?v=42h32';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h32';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h33';
+import { initAppCheck } from './appcheck.js?v=42h33';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h33';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h33';
+import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h33';
+import { createLocalExportUI } from './hr-local-export-ui.js?v=42h33';
+import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h33';
+import { createHrOverHoursAlertUI, createHrMonthlyReportUI } from './hr-over-hours-alert-ui.js?v=42h33';
+import { MEMBER_ROLES } from './roles.js?v=42h33';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h33';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
