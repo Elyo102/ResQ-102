@@ -60,11 +60,22 @@ function rosterName(session, uid) {
   return person && person.name ? person.name : 'לא בסגל';
 }
 
-function rosterRows(session) {
+function crewRosterRows(session) {
   return Array.from(session.roster, ([uid, person]) => ({ uid, ...person }))
     .filter(person => session.isSuper || person.crew === session.crew)
     .filter(person => session.isSuper ? person.crew === session.crew : true)
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+}
+
+function rosterRows(session) {
+  const query = text(session.recipientQuery, 80).toLocaleLowerCase('he');
+  const rows = crewRosterRows(session);
+  if (!query) return rows;
+  return rows.filter(person => {
+    const name = String(person.name || '').toLocaleLowerCase('he');
+    const uid = String(person.uid || '').toLocaleLowerCase('he');
+    return name.includes(query) || uid.includes(query);
+  });
 }
 
 function selectedUids(session) {
@@ -95,10 +106,14 @@ function selectionLabel(session, uids) {
 function renderRecipients(session) {
   const list = session.elements.recipientList;
   if (!list || active !== session) return;
+  const crewRows = crewRosterRows(session);
   const rows = rosterRows(session);
   list.setAttribute('aria-busy', session.rosterLoaded ? 'false' : 'true');
   if (session.elements.recipientNone) {
-    session.elements.recipientNone.disabled = !session.rosterLoaded || session.rosterFailed || !rows.length;
+    session.elements.recipientNone.disabled = !session.rosterLoaded || session.rosterFailed || !crewRows.length;
+  }
+  if (session.elements.recipientSearch) {
+    session.elements.recipientSearch.disabled = !session.rosterLoaded || session.rosterFailed || !crewRows.length;
   }
   list.replaceChildren();
   if (!session.rosterLoaded) {
@@ -119,7 +134,10 @@ function renderRecipients(session) {
   } else if (!rows.length) {
     const notice = document.createElement('div');
     notice.className = 'recipient-empty';
-    notice.textContent = 'לא נמצאו לוחמים פעילים במשמרת זו. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי במצב אימון.';
+    const hasQuery = !!text(session.recipientQuery, 80);
+    notice.textContent = hasQuery
+      ? 'אין לוחמים שתואמים לחיפוש. נסו שם אחר או נקו את השדה.'
+      : 'לא נמצאו לוחמים פעילים במשמרת זו. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי במצב אימון.';
     list.appendChild(notice);
   }
   rows.forEach(person => {
@@ -132,7 +150,8 @@ function renderRecipients(session) {
     label.classList.toggle('is-picked', input.checked);
     input.onchange = () => {
       if (!session.selectedRecipients) {
-        session.selectedRecipients = new Set(rows.map(row => row.uid));
+        // Preserve full-crew selection when leaving "all" while a search filter is active.
+        session.selectedRecipients = new Set(crewRosterRows(session).map(row => row.uid));
       }
       if (input.checked) session.selectedRecipients.add(person.uid);
       else session.selectedRecipients.delete(person.uid);
@@ -448,8 +467,24 @@ export function destroyCalloutConsole() {
   active = null;
   if (!prior) return;
   try { prior.stop(); } catch (_) {}
-  prior.elements.send.onclick = null;
-  prior.elements.live.replaceChildren();
+  try { clearTimeout(prior.retryTimer); } catch (_) {}
+  const els = prior.elements || {};
+  if (els.send) els.send.onclick = null;
+  if (els.rehearse) els.rehearse.onclick = null;
+  if (els.recipientAll) els.recipientAll.onclick = null;
+  if (els.recipientNone) els.recipientNone.onclick = null;
+  if (els.recipientSelf) els.recipientSelf.onclick = null;
+  if (els.recipientSearch) {
+    els.recipientSearch.oninput = null;
+    els.recipientSearch.value = '';
+  }
+  if (els.recipientList) {
+    els.recipientList.replaceChildren();
+    els.recipientList.setAttribute('aria-busy', 'false');
+  }
+  if (els.recipientSummary) els.recipientSummary.textContent = '';
+  if (els.live) els.live.replaceChildren();
+  if (els.liveCard) els.liveCard.classList.add('hide');
 }
 
 export async function initCalloutConsole(options = {}) {
@@ -471,7 +506,7 @@ export async function initCalloutConsole(options = {}) {
   const session = {
     db:options.db, sid, crew, role, isSuper, uid:String(options.user.uid), elements:options.elements,
     roster:new Map(), callouts:new Map(), responses:new Map(), responseStops:new Map(), stop:() => {},
-    selectedRecipients:null, rosterLoaded:false, rosterFailed:false, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
+    selectedRecipients:null, recipientQuery:'', rosterLoaded:false, rosterFailed:false, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
     sendCallout:options.sdk.httpsCallable(options.functions, 'sendCallout'),
     listCalloutRecipients:options.sdk.httpsCallable(options.functions, 'listCalloutRecipients'),
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
@@ -484,6 +519,14 @@ export async function initCalloutConsole(options = {}) {
     session.rosterLoaded = true;
   }
   session.elements.crew.textContent = CREW_HE[crew] || ('משמרת ' + crew);
+  if (session.elements.recipientSearch) {
+    session.elements.recipientSearch.value = '';
+    session.elements.recipientSearch.oninput = () => {
+      if (active !== session) return;
+      session.recipientQuery = session.elements.recipientSearch.value || '';
+      renderRecipients(session);
+    };
+  }
   if (session.elements.recipientAll) session.elements.recipientAll.onclick = () => {
     if (session.pendingRequest) {
       setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');

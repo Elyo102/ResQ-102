@@ -29,6 +29,8 @@
   .recipient-item small{color:var(--muted)}
   .recipient-empty{min-height:44px;padding:10px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);background:var(--chip)}
   .recipient-summary{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
+.recipient-search-label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+#recipientSearch{width:100%;min-height:44px;margin:0;box-sizing:border-box}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
   textarea{box-sizing:border-box;width:100%;min-height:120px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
   input,select{box-sizing:border-box;width:100%;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
@@ -94,12 +96,14 @@
       </div>
       <section class="recipient-box" aria-labelledby="recipientTitle">
         <h3 id="recipientTitle" style="font-size:16px;margin:12px 0 4px;color:var(--callout-heading)">נמענים</h3>
-        <p class="recipient-summary" id="recipientSummary" aria-live="polite">טוען רשימת לוחמים…</p>
+        <p class="recipient-summary" id="recipientSummary" aria-live="polite">ממתין לטעינת רשימת לוחמים…</p>
         <div class="recipient-tools">
           <button type="button" id="recipientAll" aria-pressed="true">כל המשמרת</button>
           <button type="button" id="recipientNone" aria-pressed="false">בחירה פרטנית</button>
           <button type="button" id="recipientSelf" aria-pressed="false">בדיקת עצמי</button>
         </div>
+        <label for="recipientSearch" class="recipient-search-label">חיפוש ברשימה</label>
+        <input type="search" id="recipientSearch" maxlength="80" placeholder="שם לוחם…" autocomplete="off" enterkeyhint="search">
         <div id="recipientList" class="recipient-list" aria-label="בחירת נמענים לקריאת פתע"></div>
       </section>
       <label for="calloutText">הודעת הקריאה</label>
@@ -152,7 +156,28 @@ function elements() {
   return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'), rehearse:$('calloutRehearse'),
     message:$('calloutMessage'), liveCard:$('calloutLiveCard'), live:$('calloutLive'),
     recipientList:$('recipientList'), recipientSummary:$('recipientSummary'),
-    recipientAll:$('recipientAll'), recipientNone:$('recipientNone'), recipientSelf:$('recipientSelf') };
+    recipientAll:$('recipientAll'), recipientNone:$('recipientNone'), recipientSelf:$('recipientSelf'),
+    recipientSearch:$('recipientSearch') };
+}
+function showRecipientInitError(retryFn) {
+  const list = $('recipientList'), summary = $('recipientSummary');
+  if (list) {
+    list.setAttribute('aria-busy', 'false');
+    list.replaceChildren();
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'secondary';
+    retry.textContent = 'נסה שוב';
+    retry.style.minHeight = '44px';
+    retry.onclick = () => retryFn();
+    notice.append('לא ניתן לטעון את רשימת הלוחמים. ', retry);
+    list.appendChild(notice);
+  }
+  if (summary) {
+    summary.textContent = 'טעינת הרשימה נכשלה. לחצו „נסה שוב" או רעננו את הדף.';
+  }
 }
 
 onIdTokenChanged(auth, async user => {
@@ -201,8 +226,13 @@ onIdTokenChanged(auth, async user => {
       $('targetMessage').textContent = 'יעד נבחר: ' + targetStationId + ' · משמרת ' + targetCrew;
       $('calloutSend').disabled = false;
     } catch (_) {
+      controller = null;
       $('calloutSend').disabled = true;
-      $('targetMessage').textContent = 'לא ניתן לפתוח את מסוף הקריאה ליעד שנבחר.';
+      if (isSuper) {
+        $('targetMessage').textContent = 'לא ניתן לפתוח את מסוף הקריאה ליעד שנבחר.';
+      }
+      // Work may already be visible — never leave "טוען…" forever.
+      showRecipientInitError(() => { void startConsole(); });
     } finally { $('targetApply').disabled = false; }
   };
   $('targetApply').onclick = startConsole;
@@ -210,6 +240,9 @@ onIdTokenChanged(auth, async user => {
     $('targetStation').value = sid; $('targetCrew').value = '';
     $('calloutSend').disabled = true;
     $('targetMessage').textContent = 'בחר תחנה ומשמרת ואשר את היעד לפני שליחה.';
+    $('recipientList').replaceChildren();
+    $('recipientList').setAttribute('aria-busy', 'false');
+    $('recipientSummary').textContent = 'בחרו תחנה ומשמרת ואשרו יעד כדי לטעון נמענים.';
   } else { await startConsole(); }
   if (turn !== generation) return;
   stopIncoming = watchCallouts(db, sid, user.uid, { name:name || user.email || '' });

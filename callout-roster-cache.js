@@ -3,6 +3,8 @@
 // The cache is deliberately narrow: uid, display name and crew only. Callout
 // text, delivery state, responses, rejection reasons and push tokens never
 // enter browser storage.
+// Recipient search filters this already station/crew-scoped cache in the
+// console — it must not widen isolation or persist query text.
 const CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 const CACHE_PREFIX = 'resq_callout_roster_v2:';
 
