@@ -7,7 +7,7 @@ import {
   SCHEMA, DEFAULT_BUCKET, DEFAULT_PREFIX, parseArgs,
   refuseProdStorageBucket, runBackup, runVerify,
   runRestore, refuseRestoreTarget, denyTargets, isValidObjectName, objectKey,
-  readManifest, mapListedFilesToObjects, listMetaMissingRequired, SEAL_PASSPHRASE_ENV
+  readManifest, readState, mapListedFilesToObjects, listMetaMissingRequired, selectNewestGenerationPerName, SEAL_PASSPHRASE_ENV
 } from '../ops-storage-backup.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -312,6 +312,91 @@ await check('mapListedFilesToObjects: no N+1 getMetadata when list metadata pres
   });
   assert.equal(mapped2.fetchCalls, 1);
   assert.equal(mapped2.objects[0].generation, '9');
+});
+
+
+await check('mid-page stop/resume: sibling on same page is backed up; COMPLETE only when all copied', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-midpage-'));
+  // Fake adapter pages size 2 → page1=[o1,o2], page2=[o3]
+  const api = createFakeStorage({
+    [o1]: { generation: '1', size: 2, contentType: 'application/pdf', md5Hash: 'a', crc32c: 'b', bytes: 'p1' },
+    [o2]: { generation: '2', size: 2, contentType: 'application/pdf', md5Hash: 'c', crc32c: 'd', bytes: 'p2' },
+    [o3]: { generation: '3', size: 2, contentType: 'application/pdf', md5Hash: 'e', crc32c: 'f', bytes: 'p3' }
+  });
+  let abortsLeft = 1;
+  await assert.rejects(
+    runBackup(parseArgs(['backup', '--out', dir, '--execute']), {
+      storageApi: api,
+      env: SEAL_ENV,
+      afterObjectHook: ({ skipped }) => {
+        if (skipped) return;
+        if (abortsLeft > 0) {
+          abortsLeft -= 1;
+          throw new Error('injected mid-page abort');
+        }
+      }
+    }),
+    /injected mid-page abort/
+  );
+  const midState = readState(dir);
+  assert.equal(midState.status, 'IN_PROGRESS');
+  // Cursor must still be the page-start token (null for first page), NOT advanced past the page.
+  // Old bug wrote nextPageToken here and skipped o2 forever while later marking COMPLETE.
+  assert.equal(midState.cursor, null);
+  assert.equal(midState.completed.length, 1);
+  // First listed object depends on sort (document before request); only one should be done.
+  assert.ok([o1, o2, o3].some((n) => midState.completed[0].startsWith(n + '#')));
+
+  const resumed = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), {
+    storageApi: api,
+    env: SEAL_ENV
+  });
+  assert.equal(resumed.status, 'COMPLETE');
+  assert.equal(resumed.ok, true);
+  const manifest = readManifest(dir);
+  const names = manifest.objects.map((o) => o.name).sort();
+  assert.deepEqual(names, [o1, o2, o3].sort());
+  assert.equal(manifest.objects.length, 3);
+  assert.equal(manifest.counts.failed, 0);
+});
+
+await check('restore prefers newest generation per object name (not old-first)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-gens-'));
+  const api = createFakeStorage({
+    [o1]: { generation: '1', size: 3, contentType: 'application/pdf', md5Hash: 'm1', crc32c: 'c1', bytes: 'old' }
+  });
+  api.store.set(objectKey(o1, '2'), {
+    name: o1,
+    generation: '2',
+    size: 3,
+    contentType: 'application/pdf',
+    md5Hash: 'm2',
+    crc32c: 'c2',
+    bytes: Buffer.from('new')
+  });
+  const backup = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), {
+    storageApi: api,
+    env: SEAL_ENV
+  });
+  assert.equal(backup.status, 'COMPLETE');
+  const manifest = readManifest(dir);
+  assert.equal(manifest.objects.length, 2);
+  assert.deepEqual(
+    selectNewestGenerationPerName(manifest.objects).map((o) => o.generation),
+    ['2']
+  );
+
+  const dest = createFakeStorage();
+  const restored = await runRestore(
+    parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
+    { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
+  );
+  assert.equal(restored.ok, true);
+  assert.equal(restored.written, 1);
+  const byName = [...dest.store.values()].filter((o) => o.name === o1);
+  assert.equal(byName.length, 1);
+  assert.equal(Buffer.from(byName[0].bytes).toString(), 'new');
+  assert.equal(String(byName[0].generation), '2');
 });
 
 console.log('ops-storage-backup: ' + passed + '/' + passed + ' PASS (fake adapter; no real files/medical data)');

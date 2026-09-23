@@ -716,7 +716,48 @@ try {
   });
 
 
-  console.log('ops-disaster-restore: ' + passed + '/' + passed + ' PASS (fake in-memory firestoreApi; no Firebase, no network, no production data)');
+  
+  await check('identity gate skip with docs present → ok false (execute fail-closed)', async () => {
+    const api = createFakeApi();
+    delete api.commitAtomic;
+    const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+    assert.equal(result.identity_group.status, 'skipped');
+    assert.notEqual(result.identity_group.status, 'restored');
+    assert.ok(result.identity_group.count > 0);
+    assert.equal(result.ok, false, 'execute must not report ok when identity group was not restored');
+    assert.ok(result.errors.some((e) => /קבוצת הזהות|identity/i.test(String(e))), 'errors must explain identity was not restored');
+  });
+
+  await check('encryption/seal failure leaves no plaintext documents.jsonl in snapshot stage', async () => {
+    const seal = await import(pathToFileURL(sealPath).href);
+    const srcText = fs.readFileSync(scriptPath, 'utf8');
+    assert.equal(srcText.includes('durable(path.join(stage, PLAIN_FILE_NAME), jsonl)'), false);
+    assert.match(srcText, /sealFn\(stage|sealDocumentsBuffer\(stage/);
+
+    await assert.rejects(
+      dr.runBackup(backupArgs, backupOpts({
+        firestoreApi: createFakeApi(seed),
+        now: fixedNow,
+        sealDocumentsBuffer: (stageDir) => {
+          assert.equal(fs.existsSync(path.join(stageDir, seal.PLAIN_FILE_NAME)), false, 'plaintext must not exist before seal');
+          throw new Error('injected seal failure');
+        }
+      })),
+      /injected seal failure/
+    );
+    function walk(d) {
+      if (!fs.existsSync(d)) return;
+      for (const name of fs.readdirSync(d)) {
+        const p = path.join(d, name);
+        assert.notEqual(name, seal.PLAIN_FILE_NAME, 'plaintext leaked at ' + p);
+        if (fs.statSync(p).isDirectory()) walk(p);
+      }
+    }
+    walk(fixture);
+  });
+
+console.log('ops-disaster-restore: ' + passed + '/' + passed + ' PASS (fake in-memory firestoreApi; no Firebase, no network, no production data)');
 } finally {
   if (path.dirname(fixture) !== fs.realpathSync(os.tmpdir()) || !path.basename(fixture).startsWith('resq-dr-test-')) throw new Error('Unsafe fixture cleanup');
   fs.rmSync(fixture, { recursive: true, force: true });

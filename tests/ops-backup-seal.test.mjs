@@ -68,4 +68,18 @@ await check('decrypt failure cleans temp and leaves no plaintext beside the seal
   }
 });
 
+
+await check('sealDocumentsBuffer writes only .enc via temp+rename; never plaintext', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-seal-buf-'));
+  try {
+    const meta = seal.sealDocumentsBuffer(dir, '{"x":1}\n', PASS);
+    assert.equal(meta.sealed, true);
+    assert.equal(fs.existsSync(path.join(dir, seal.PLAIN_FILE_NAME)), false);
+    assert.equal(fs.existsSync(path.join(dir, seal.SEALED_FILE_NAME)), true);
+    assert.throws(() => seal.sealDocumentsBuffer(dir, 'y', PASS), /כבר קיים/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 console.log('ops-backup-seal: ' + passed + '/' + passed + ' PASS');

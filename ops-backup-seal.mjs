@@ -89,23 +89,75 @@ export function sealedFileStats(encBytes) {
  * Seal documents.jsonl in place: write documents.jsonl.enc, remove plaintext.
  * Returns seal metadata for the snapshot manifest (no passphrase).
  */
+
+/**
+ * Seal documents from an in-memory buffer: write ONLY documents.jsonl.enc
+ * via temp+rename. Never writes plaintext into the snapshot directory.
+ */
+export function sealDocumentsBuffer(dir, plainUtf8OrBuffer, passphrase) {
+  const encPath = path.join(dir, SEALED_FILE_NAME);
+  const plainPath = path.join(dir, PLAIN_FILE_NAME);
+  if (fs.existsSync(encPath)) throw new Error(SEALED_FILE_NAME + ' כבר קיים');
+  if (fs.existsSync(plainPath)) {
+    throw new Error(PLAIN_FILE_NAME + ' לא אמור להתקיים לפני sealDocumentsBuffer');
+  }
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const plain = Buffer.isBuffer(plainUtf8OrBuffer)
+    ? plainUtf8OrBuffer
+    : Buffer.from(String(plainUtf8OrBuffer), 'utf8');
+  const box = sealBuffer(plain, passphrase);
+  const encBytes = Buffer.from(JSON.stringify(box));
+  const stats = sealedFileStats(encBytes);
+  const tmp = encPath + '.tmp-' + process.pid + '-' + Date.now();
+  try {
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, encBytes);
+      if (typeof fs.fsyncSync === 'function') fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, encPath);
+  } catch (error) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* best-effort */ }
+    try { if (fs.existsSync(encPath)) fs.unlinkSync(encPath); } catch { /* best-effort */ }
+    throw error;
+  }
+  return {
+    sealed: true,
+    sealed_file: SEALED_FILE_NAME,
+    seal_schema: SEAL_SCHEMA,
+    enc_bytes: stats.enc_bytes,
+    enc_sha256: stats.enc_sha256,
+    plain_bytes: box.plain_bytes,
+    plain_sha256: box.plain_sha256
+  };
+}
+
 export function sealDocumentsFile(dir, passphrase) {
   const plainPath = path.join(dir, PLAIN_FILE_NAME);
   const encPath = path.join(dir, SEALED_FILE_NAME);
   if (!fs.existsSync(plainPath)) throw new Error(PLAIN_FILE_NAME + ' חסר לפני חתימה');
   if (fs.existsSync(encPath)) throw new Error(SEALED_FILE_NAME + ' כבר קיים');
   const plain = fs.readFileSync(plainPath);
-  const box = sealBuffer(plain, passphrase);
-  const encBytes = Buffer.from(JSON.stringify(box));
-  const stats = sealedFileStats(encBytes);
-  const fd = fs.openSync(encPath, 'wx', 0o600);
+  let box;
+  let encBytes;
+  let stats;
   try {
-    fs.writeFileSync(fd, encBytes);
-    if (typeof fs.fsyncSync === 'function') fs.fsyncSync(fd);
+    box = sealBuffer(plain, passphrase);
+    encBytes = Buffer.from(JSON.stringify(box));
+    stats = sealedFileStats(encBytes);
+    const fd = fs.openSync(encPath, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, encBytes);
+      if (typeof fs.fsyncSync === 'function') fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   } finally {
-    fs.closeSync(fd);
+    // Fail-closed: never leave plaintext in the snapshot dir after we have read it.
+    try { if (fs.existsSync(plainPath)) fs.unlinkSync(plainPath); } catch { /* best-effort */ }
   }
-  fs.unlinkSync(plainPath);
   if (fs.existsSync(plainPath)) throw new Error('מחיקת plaintext נכשלה אחרי חתימה');
   return {
     sealed: true,

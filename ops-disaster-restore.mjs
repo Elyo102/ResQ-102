@@ -50,6 +50,7 @@ import {
   PLAIN_FILE_NAME,
   requireSealPassphrase,
   sealDocumentsFile,
+  sealDocumentsBuffer,
   verifySealedFile,
   unsealDocumentsToTemp,
   cleanupUnsealTemp
@@ -592,10 +593,11 @@ export async function runBackup(args, options = {}) {
       throw new Error('גיבוי נחסם (fail-closed): נתיבים/אוספים ללא סיווג במדיניות: ' + names);
     }
     const jsonl = lines.length ? lines.join('\n') + '\n' : '';
-    durable(path.join(stage, PLAIN_FILE_NAME), jsonl);
     const bytes = Buffer.byteLength(jsonl, 'utf8');
     const plainSha = sha256Hex(jsonl);
-    const sealMeta = sealDocumentsFile(stage, sealPassphrase);
+    // Seal from memory — never write plaintext documents.jsonl into the snapshot stage.
+    const sealFn = typeof options.sealDocumentsBuffer === 'function' ? options.sealDocumentsBuffer : sealDocumentsBuffer;
+    const sealMeta = sealFn(stage, jsonl, sealPassphrase);
     const manifest = {
       schema: SNAPSHOT_SCHEMA,
       state: 'complete',
@@ -997,6 +999,7 @@ export async function runRestore(args, options = {}) {
         if (typeof api.commitAtomic !== 'function') gate.push('adapter_has_no_atomic_commit');
         if (gate.length) {
           report.identity_group = { status: 'skipped', reason: 'gate_failed: ' + gate.join(', '), count: identityDocs.length };
+          report.errors.push('קבוצת הזהות לא שוחזרה: שער נכשל (' + gate.join(', ') + ')');
         } else {
           const writes = identityDocs.map((doc) => ({
             path: doc.path, data: set.documents.find((d) => d.path === doc.path).data
@@ -1020,7 +1023,12 @@ export async function runRestore(args, options = {}) {
       }
     } catch (error) {
       if (!error.__identityHandled) report.errors.push('השחזור נעצר: ' + error.message);
-      if (report.identity_group.status === 'pending') report.identity_group = { status: 'skipped', reason: 'run_aborted_before_identity_group', count: plan.identity_group.documents.length };
+      if (report.identity_group.status === 'pending') {
+        report.identity_group = { status: 'skipped', reason: 'run_aborted_before_identity_group', count: plan.identity_group.documents.length };
+        if (plan.identity_group.documents.length > 0) {
+          report.errors.push('קבוצת הזהות לא שוחזרה: הריצה נעצרה לפני שחזור הזהות');
+        }
+      }
     }
   }
   return finishRun(report, plan, runDir, startedAt, now, env, false);
@@ -1042,6 +1050,18 @@ function finishRun(report, plan, runDir, startedAt, now, env, aborted) {
   }
   report.aborted = aborted;
   report.ok = !report.errors.length && !report.mismatch_after_readback.length && !aborted;
+  // Execute must fail closed when identity documents were expected but not restored.
+  // skipped with no_identity_documents_in_set (count 0) remains OK.
+  if (report.mode === 'execute') {
+    const ig = report.identity_group;
+    if (ig && Number(ig.count) > 0 && ig.status !== 'restored') {
+      report.ok = false;
+      const hint = 'קבוצת הזהות לא שוחזרה';
+      if (!report.errors.some((e) => String(e).includes(hint) || /identity/i.test(String(e)))) {
+        report.errors.push(hint + ': status=' + ig.status + (ig.reason ? ' (' + ig.reason + ')' : ''));
+      }
+    }
+  }
   const signature = signReport(report, env);
   const manifest = Object.assign({
     schema: RESTORE_MANIFEST_SCHEMA,

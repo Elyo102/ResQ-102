@@ -270,77 +270,110 @@ export async function runBackup(args, options = {}) {
   const completed = new Set(Array.isArray(state.completed) ? state.completed : []);
   const entries = Array.isArray(state.entries) ? state.entries.slice() : [];
   const nowIso = (options.now ? options.now() : new Date()).toISOString();
+  // cursor is the pageToken used to FETCH the page currently being processed
+  // (page-start token). It advances to nextPageToken only after the whole page
+  // has been attempted — so a mid-page crash resumes the same page and skips
+  // via the completed Set, instead of silently dropping remaining siblings.
   let pageToken = state.cursor || null;
+  let pageStartToken = pageToken;
   let listed = 0;
   let copied = 0;
   let skipped = 0;
   let failed = 0;
   const errors = [];
 
-  do {
-    const page = await api.listObjects({ prefix: args.prefix, pageToken });
-    const objects = Array.isArray(page.objects) ? page.objects : [];
-    for (const obj of objects) {
-      listed += 1;
-      if (!isValidObjectName(obj.name, args.prefix)) {
-        failed += 1;
-        errors.push('נתיב לא תואם לתבנית hr-private: ' + String(obj.name));
-        continue;
-      }
-      const key = objectKey(obj.name, obj.generation);
-      if (completed.has(key)) { skipped += 1; continue; }
-      try {
-        // Content opened only on execute path with adapter; tests may stub download.
-        const bytes = await api.downloadObject({ name: obj.name, generation: obj.generation });
-        if (!Buffer.isBuffer(bytes)) throw new Error('downloadObject חייב להחזיר Buffer');
-        if (Number.isFinite(Number(obj.size)) && bytes.length !== Number(obj.size)) {
-          throw new Error('גודל הבייטים אינו תואם למטא-דאטה');
-        }
-        const stored = durableObjectFile(dest, obj.name, obj.generation, bytes, passphrase);
-        const entry = {
-          name: obj.name,
-          generation: String(obj.generation),
-          size: stored.plain_bytes,
-          contentType: obj.contentType || null,
-          md5Hash: obj.md5Hash || null,
-          crc32c: obj.crc32c || null,
-          backup_time: nowIso,
-          backup_destination: stored.relative,
-          encrypted: true,
-          seal_schema: stored.seal_schema,
-          content_sha256: stored.enc_sha256,
-          enc_bytes: stored.enc_bytes,
-          plain_sha256: stored.plain_sha256,
-          firestore_link: {
-            // Preserve link between Firestore attachment metadata and object generation.
-            object_path: obj.name,
-            object_generation: String(obj.generation),
-            station_id: obj.name.split('/')[1] || null,
-            parent_kind: obj.name.split('/')[2] || null,
-            parent_id: obj.name.split('/')[3] || null,
-            attachment_id: obj.name.split('/')[4] || null
+  const persistProgress = (status, cursor) => {
+    writeState(dest, {
+      schema: SCHEMA,
+      status,
+      bucket: args.bucket,
+      prefix: args.prefix,
+      cursor,
+      completed: [...completed],
+      entries,
+      updated_at: nowIso
+    });
+  };
+
+  try {
+    do {
+      pageStartToken = pageToken;
+      const page = await api.listObjects({ prefix: args.prefix, pageToken });
+      const objects = Array.isArray(page.objects) ? page.objects : [];
+      for (const obj of objects) {
+        listed += 1;
+        if (!isValidObjectName(obj.name, args.prefix)) {
+          failed += 1;
+          errors.push('נתיב לא תואם לתבנית hr-private: ' + String(obj.name));
+          persistProgress('IN_PROGRESS', pageStartToken);
+          if (typeof options.afterObjectHook === 'function') {
+            options.afterObjectHook({ obj, key: null, pageStartToken, failed: true });
           }
-        };
-        entries.push(entry);
-        completed.add(key);
-        copied += 1;
-        writeState(dest, {
-          schema: SCHEMA,
-          status: 'IN_PROGRESS',
-          bucket: args.bucket,
-          prefix: args.prefix,
-          cursor: page.nextPageToken || null,
-          completed: [...completed],
-          entries,
-          updated_at: nowIso
-        });
-      } catch (error) {
-        failed += 1;
-        errors.push(obj.name + '#' + obj.generation + ': ' + error.message);
+          continue;
+        }
+        const key = objectKey(obj.name, obj.generation);
+        if (completed.has(key)) {
+          skipped += 1;
+          if (typeof options.afterObjectHook === 'function') {
+            options.afterObjectHook({ obj, key, pageStartToken, skipped: true });
+          }
+          continue;
+        }
+        try {
+          // Content opened only on execute path with adapter; tests may stub download.
+          const bytes = await api.downloadObject({ name: obj.name, generation: obj.generation });
+          if (!Buffer.isBuffer(bytes)) throw new Error('downloadObject חייב להחזיר Buffer');
+          if (Number.isFinite(Number(obj.size)) && bytes.length !== Number(obj.size)) {
+            throw new Error('גודל הבייטים אינו תואם למטא-דאטה');
+          }
+          const stored = durableObjectFile(dest, obj.name, obj.generation, bytes, passphrase);
+          const entry = {
+            name: obj.name,
+            generation: String(obj.generation),
+            size: stored.plain_bytes,
+            contentType: obj.contentType || null,
+            md5Hash: obj.md5Hash || null,
+            crc32c: obj.crc32c || null,
+            backup_time: nowIso,
+            backup_destination: stored.relative,
+            encrypted: true,
+            seal_schema: stored.seal_schema,
+            content_sha256: stored.enc_sha256,
+            enc_bytes: stored.enc_bytes,
+            plain_sha256: stored.plain_sha256,
+            firestore_link: {
+              // Preserve link between Firestore attachment metadata and object generation.
+              object_path: obj.name,
+              object_generation: String(obj.generation),
+              station_id: obj.name.split('/')[1] || null,
+              parent_kind: obj.name.split('/')[2] || null,
+              parent_id: obj.name.split('/')[3] || null,
+              attachment_id: obj.name.split('/')[4] || null
+            }
+          };
+          entries.push(entry);
+          completed.add(key);
+          copied += 1;
+          // Keep page-start token until every object on this page is attempted.
+          persistProgress('IN_PROGRESS', pageStartToken);
+        } catch (error) {
+          failed += 1;
+          errors.push(obj.name + '#' + obj.generation + ': ' + error.message);
+          persistProgress('IN_PROGRESS', pageStartToken);
+        }
+        if (typeof options.afterObjectHook === 'function') {
+          options.afterObjectHook({ obj, key, pageStartToken });
+        }
       }
-    }
-    pageToken = page.nextPageToken || null;
-  } while (pageToken);
+      // Advance cursor only after the entire page has been attempted.
+      pageToken = page.nextPageToken || null;
+      persistProgress('IN_PROGRESS', pageToken);
+    } while (pageToken);
+  } catch (error) {
+    // Interrupted before finishing the listing loop: leave IN_PROGRESS (not COMPLETE).
+    persistProgress('IN_PROGRESS', pageStartToken);
+    throw error;
+  }
 
   const status = failed > 0 ? (copied > 0 || skipped > 0 ? 'PARTIAL' : 'FAILED') : 'COMPLETE';
   if (status !== 'COMPLETE') {
@@ -451,6 +484,41 @@ export async function runVerify(args, options = {}) {
   return { ok: !errors.length, status: manifest.status, errors, objects: (manifest.objects || []).length };
 }
 
+
+/** Compare GCS generation ids numerically when possible (BigInt), else lexicographically. */
+export function compareGeneration(a, b) {
+  try {
+    const ba = BigInt(a);
+    const bb = BigInt(b);
+    if (ba === bb) return 0;
+    return ba > bb ? 1 : -1;
+  } catch {
+    return String(a).localeCompare(String(b));
+  }
+}
+
+/**
+ * Restore must write the newest generation per object name only.
+ * Multiple generations may exist in the archive; ifGenerationMatch:0 would
+ * skip newer ones if an older generation was uploaded first.
+ */
+export function selectNewestGenerationPerName(objects) {
+  const list = Array.isArray(objects) ? objects.slice() : [];
+  list.sort((a, b) => {
+    const byName = String(a.name).localeCompare(String(b.name));
+    if (byName !== 0) return byName;
+    return -compareGeneration(a.generation, b.generation); // generation desc
+  });
+  const seen = new Set();
+  const out = [];
+  for (const obj of list) {
+    if (seen.has(obj.name)) continue;
+    seen.add(obj.name);
+    out.push(obj);
+  }
+  return out;
+}
+
 export async function runRestore(args, options = {}) {
   refuseRestoreTarget(args.target, options);
   if (args.dryRun) {
@@ -480,7 +548,9 @@ export async function runRestore(args, options = {}) {
   const written = [];
   const skipped_exists = [];
   const errors = [];
-  for (const obj of manifest.objects || []) {
+  // Newest generation per name only — older gens stay in archive but are not restored first.
+  const restoreObjects = selectNewestGenerationPerName(manifest.objects || []);
+  for (const obj of restoreObjects) {
     const encPath = path.join(dir, obj.backup_destination);
     let plain = null;
     let tempFile = null;
