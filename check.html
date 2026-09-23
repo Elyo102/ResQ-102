@@ -126,7 +126,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       (לא חשבון ברירת המחדל של Compute Engine). ראה BACKUP-ACTIVATION-PLAN.md.
     </div>
     <div style="margin-top:12px">
-      <button id="btnBk">הרץ גיבוי עכשיו</button>
+      <button id="btnBk">בדוק סטטוס גיבוי לגיליון (לא פעיל)</button>
     </div>
     <div id="bkOut"></div>
   </div>
@@ -1038,25 +1038,26 @@ $('btnMailCheck').onclick = async () => {
 $('btnBk').onclick = async () => {
   const b = $('btnBk'); b.disabled = true;
   $('bkOut').innerHTML = '';
-  line('bkOut', 'רץ', 'עד דקה. אל תסגור את הדף.', 'warn');
+  line('bkOut', 'בודק', 'גיבוי הגיליון אינו מוגדר כהגנה פעילה. ממתין לתשובת השרת…', 'warn');
   try {
     const res = await httpsCallable(fns, 'backupToSheetNow')({});
     const d = res.data || {};
     $('bkOut').innerHTML = '';
-    if (d.skipped) {
-      line('bkOut', 'דולג', d.reason, 'warn');
-      line('bkOut', 'מה לעשות',
-           'קבע את BACKUP_SHEET_ID בראש הפונקציה ב-functions/index.js, ' +
-           'ושתף את הגיליון עם חשבון השירות. הפרטים בהערות שם.', 'warn');
-    } else {
-      line('bkOut', 'אוספים שגובו', String(d.collections), 'ok');
-      line('bkOut', 'שורות', String(d.rows), 'ok');
+    if (d.ok === false || d.retired || d.success === false || d.skipped) {
+      line('bkOut', 'הגיבוי אינו פעיל/נכשל', d.reason || 'BACKUP_SHEET_ID ריק או הגיבוי נכשל', 'bad');
+      line('bkOut', 'סטטוס', 'אין לסמוך על גיבוי לגיליון כהגנה. ראה BACKUP-ACTIVATION-PLAN.md', 'bad');
+    } else if (d.ok === true) {
+      line('bkOut', 'הורץ', 'השרת דיווח ok=true — ודא OWNER שאישר הפעלה', 'warn');
+      line('bkOut', 'אוספים', String(d.collections == null ? '?' : d.collections), 'warn');
+      line('bkOut', 'שורות', String(d.rows == null ? '?' : d.rows), 'warn');
       const f = (d.failed || []);
-      line('bkOut', 'נכשלו', f.length ? f.join(' | ') : 'אין', f.length ? 'bad' : 'ok');
+      if (f.length) line('bkOut', 'נכשלו', f.join(' | '), 'bad');
+    } else {
+      line('bkOut', 'הגיבוי אינו פעיל/נכשל', 'תשובה לא צפויה מהשרת', 'bad');
     }
   } catch (e) {
     $('bkOut').innerHTML = '';
-    line('bkOut', 'הגיבוי נכשל', (e.code || '') + ' ' + (e.message || ''), 'bad');
+    line('bkOut', 'הגיבוי אינו פעיל/נכשל', (e.code || '') + ' ' + (e.message || ''), 'bad');
   }
   b.disabled = false;
 };

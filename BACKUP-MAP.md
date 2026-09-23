@@ -1,12 +1,12 @@
 # ResQ · BACKUP-MAP (authoritative)
 
-Updated: 2026-09-23 · Branch: `grok/backup-recovery-hardening`  
+Updated: 2026-09-23 · Branch: `grok/backup-recovery-hardening`
 Policy source: `functions/backup-policy.js` · Ops: `ops-disaster-restore.mjs`, `ops-auth-backup.mjs`, `ops-backup.mjs`
 
-> **Status legend (never present DOCUMENTED_ONLY as active):**  
-> `IMPLEMENTED` = code path exists and is fail-closed where claimed.  
-> `DOCUMENTED_ONLY` = described here / in runbooks; **not** an active backup.  
-> `BLOCKED` = refused by code (e.g. restore to `station-102`).  
+> **Status legend (never present DOCUMENTED_ONLY as active):**
+> `IMPLEMENTED` = code path exists and is fail-closed where claimed.
+> `DOCUMENTED_ONLY` = described here / in runbooks; **not** an active backup.
+> `BLOCKED` = refused by code (e.g. restore to `station-102`).
 > `OWNER_DECISION` = retention / enablement not decided by owner.
 
 This map does **not** authorize production PITR, Storage backup jobs, or restore to `station-102`.
@@ -59,4 +59,3 @@ node ops-backup.mjs --dry-run
 | Full DR drill `ops-dr-full-drill.mjs` + `FULL-DR-DRILL-RUNBOOK.md` | Offline/emulator procedure | **IMPLEMENTED** procedure; live Rules/emulator steps may be **NOT RUN** |
 | Sheet export `nightlySheetBackup` | Scheduled callable helper | **RETIRED / FAIL-CLOSED** while `BACKUP_SHEET_ID` empty — not an active control |
 | Policy count | `DATA_POLICIES.length` in `functions/backup-policy.js` | **158** rows (metrics rows included; `metrics-backup-policies.js` kept as wiring helper — do not delete) |
-

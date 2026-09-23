@@ -3,7 +3,7 @@
  * ops-storage-backup — incremental Cloud Storage backup for ResQ HR private
  * objects (generation-aware). Default is dry-run (no SDK, no network).
  *
- * Known production bucket (from functions/index.js): 
+ * Known production bucket (from functions/index.js):
  *   station-102-hr-private-europe-west1
  * Path template (from functions/hr-attachments.js):
  *   hr-private/{station_id}/{parent_kind}/{parent_id}/{attachment_id}
@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -424,12 +425,115 @@ export async function runPlan(args, options = {}) {
   return { dryRun: false, bucket: args.bucket, prefix: args.prefix, objects: count, sample };
 }
 
+
+/** Refuse the known production HR private bucket unless explicitly allowed. */
+export function refuseProdStorageBucket(bucket, options = {}) {
+  const env = options.env || process.env;
+  if (bucket !== DEFAULT_BUCKET) return;
+  if (String(env.RESQ_STORAGE_ALLOW_PROD_BUCKET || '') === '1') return;
+  throw new Error(
+    'סירוב: דלי הייצור ' + DEFAULT_BUCKET +
+    ' אסור בגיבוי/שחזור execute. השתמש בדלי demo או הגדר RESQ_STORAGE_ALLOW_PROD_BUCKET=1 במודע (לא מומלץ).'
+  );
+}
+
+/**
+ * Lazy Admin Storage adapter — dynamic import only. Call only on --execute.
+ * Contract matches injectable storageApi used by tests.
+ */
+export async function loadStorageApi(bucketName, options = {}) {
+  const root = options.root || HERE;
+  const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
+  let resolved;
+  try {
+    resolved = require.resolve('firebase-admin');
+  } catch {
+    throw new Error('firebase-admin אינו מותקן תחת functions/ — הרץ npm install ב-functions');
+  }
+  const imported = await import(pathToFileURL(resolved).href);
+  const admin = imported.default || imported;
+  const projectId = options.projectId || undefined;
+  if (!admin.apps.length) {
+    admin.initializeApp(projectId ? { projectId, storageBucket: bucketName } : { storageBucket: bucketName });
+  }
+  const bucket = admin.storage().bucket(bucketName);
+  const PAGE = 200;
+  return {
+    async listObjects({ prefix, pageToken }) {
+      const query = { prefix: prefix || '', autoPaginate: false, maxResults: PAGE };
+      if (pageToken) query.pageToken = pageToken;
+      const [files, , apiResponse] = await bucket.getFiles(query);
+      const objects = [];
+      for (const file of files) {
+        const [meta] = await file.getMetadata();
+        objects.push({
+          name: file.name,
+          generation: String(meta.generation || ''),
+          size: Number(meta.size || 0),
+          contentType: meta.contentType || 'application/octet-stream',
+          md5Hash: meta.md5Hash || '',
+          crc32c: meta.crc32c || '',
+          updated: meta.updated || '',
+          metadata: meta.metadata || {}
+        });
+      }
+      const nextPageToken = (apiResponse && apiResponse.nextPageToken) || null;
+      return { objects, nextPageToken };
+    },
+    async downloadObject({ name, generation }) {
+      const file = bucket.file(name, generation ? { generation } : undefined);
+      const [buf] = await file.download();
+      return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+    },
+    async getMetadata({ name, generation }) {
+      const file = bucket.file(name, generation ? { generation } : undefined);
+      const [meta] = await file.getMetadata();
+      return {
+        name,
+        generation: String(meta.generation || ''),
+        size: Number(meta.size || 0),
+        contentType: meta.contentType || 'application/octet-stream',
+        md5Hash: meta.md5Hash || '',
+        crc32c: meta.crc32c || '',
+        updated: meta.updated || '',
+        metadata: meta.metadata || {}
+      };
+    },
+    async uploadObject({ name, generation, bytes, contentType, metadata, ifGenerationMatch }) {
+      const file = bucket.file(name);
+      const opts = {
+        contentType: contentType || 'application/octet-stream',
+        metadata: metadata || {},
+        resumable: false,
+        validation: 'md5'
+      };
+      if (ifGenerationMatch === 0 || ifGenerationMatch === '0') {
+        opts.preconditionOpts = { ifGenerationMatch: 0 };
+      } else if (ifGenerationMatch != null) {
+        opts.preconditionOpts = { ifGenerationMatch: Number(ifGenerationMatch) };
+      }
+      await file.save(bytes, opts);
+      return { name, generation: generation || null };
+    }
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
-    case 'backup':
-      console.log(JSON.stringify(await runBackup(args)));
+    case 'backup': {
+      if (args.dryRun) {
+        console.log(JSON.stringify(await runBackup(args)));
+        return;
+      }
+      refuseProdStorageBucket(args.bucket);
+      if (args.project && denyTargets().has(args.project)) {
+        throw new Error('סירוב: פרויקט ייצור אסור כמקור גיבוי Storage: ' + args.project);
+      }
+      const storageApi = await loadStorageApi(args.bucket, { projectId: args.project || undefined });
+      console.log(JSON.stringify(await runBackup(args, { storageApi })));
       return;
+    }
     case 'verify': {
       const result = await runVerify(args);
       console.log(JSON.stringify(result));
@@ -437,14 +541,35 @@ async function main() {
       return;
     }
     case 'restore': {
-      const result = await runRestore(args);
+      if (args.dryRun) {
+        const result = await runRestore(args);
+        console.log(JSON.stringify(result));
+        if (!result.ok) process.exitCode = 1;
+        return;
+      }
+      refuseRestoreTarget(args.target);
+      refuseProdStorageBucket(args.bucket);
+      const allow = String(process.env.RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST || '')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      if (!allow.includes(args.target)) {
+        throw new Error('יעד השחזור אינו ב-RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST');
+      }
+      const storageApi = await loadStorageApi(args.bucket, { projectId: args.target });
+      const result = await runRestore(args, { storageApi });
       console.log(JSON.stringify(result));
       if (!result.ok) process.exitCode = 1;
       return;
     }
-    case 'plan':
-      console.log(JSON.stringify(await runPlan(args)));
+    case 'plan': {
+      if (args.dryRun) {
+        console.log(JSON.stringify(await runPlan(args)));
+        return;
+      }
+      refuseProdStorageBucket(args.bucket);
+      const storageApi = await loadStorageApi(args.bucket, { projectId: args.project || undefined });
+      console.log(JSON.stringify(await runPlan(args, { storageApi })));
       return;
+    }
     default:
       throw new Error('פקודה לא מוכרת');
   }

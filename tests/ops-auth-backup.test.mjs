@@ -146,6 +146,18 @@ await checkAsync('execute export via injected adapter embeds claims and leaves n
   }
 });
 
+await checkAsync('execute export without claimsProvider fails closed', async () => {
+  const outside = path.join(os.tmpdir(), 'resq-auth-noclaims-' + process.pid);
+  await assert.rejects(
+    runExport(
+      plan('export', { project: 'demo-resq', out: outside, execute: true }),
+      { env: hashEnv },
+      { authExportFn: async () => JSON.stringify({ users: [{ localId: 'u1' }] }) }
+    ),
+    /claimsProvider|custom claims|מסורב/
+  );
+});
+
 await checkAsync('export refuses unrestorable backup when rounds missing', async () => {
   const outside = path.join(os.tmpdir(), 'resq-auth-bad-' + process.pid);
   await assert.rejects(

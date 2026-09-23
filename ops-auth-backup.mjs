@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -335,6 +336,12 @@ export async function runExport(action, options = {}, deps = {}) {
   if (!action.execute) {
     return { ok: true, dry_run: true, action, network: 'not contacted', sdk: 'not loaded' };
   }
+  if (typeof deps.claimsProvider !== 'function') {
+    throw new Error(
+      'export --execute מסורב: חסר claimsProvider — אין לדווח על גיבוי Auth מלא בלי custom claims. ' +
+      'הזרק claimsProvider או השתמש ב-CLI שמחובר ל-Admin.'
+    );
+  }
   const authExportFn = deps.authExportFn;
   if (typeof authExportFn !== 'function' && !deps.allowFirebaseCli) {
     throw new Error('export אמיתי דורש authExportFn מוזרק או allowFirebaseCli מפורש');
@@ -360,12 +367,16 @@ export async function runExport(action, options = {}, deps = {}) {
       : {};
     const claimsPolicy = deps.claimsPolicy || {};
     const customClaims = selectClaimsForBackup(users, claimsByUid || {}, claimsPolicy);
+    const claimsSource = deps.claimsSource || 'provider';
     const payload = buildAuthPayload({
       authExportJson: { users },
       hashConfig,
       customClaims,
-      claimsSource: deps.claimsProvider ? (deps.claimsSource || 'provider') : 'none'
+      claimsSource
     });
+    if (users.length > 0 && claimsSource === 'none') {
+      throw new Error('export --execute מסורב: claims_source=none עם משתמשים — גיבוי Auth חלקי אסור');
+    }
     const encrypted = encryptAuthJson(JSON.stringify(payload), passphrase);
     fs.writeFileSync(encryptedFile, encrypted, { flag: 'wx' });
     const manifest = backupManifest(action.project, encrypted, payload, (options.now ? options.now() : new Date()).toISOString());
@@ -477,6 +488,43 @@ export async function runImport(action, options = {}, deps = {}) {
   }
 }
 
+
+/**
+ * Admin SDK claims reader — dynamic import only. Safe for execute path.
+ * Reads customClaims per uid via auth.getUser (never logs claim bodies).
+ */
+export async function createAdminClaimsProvider(projectId, options = {}) {
+  const root = options.root || ROOT;
+  const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
+  const resolved = require.resolve('firebase-admin');
+  const imported = await import(pathToFileURL(resolved).href);
+  const admin = imported.default || imported;
+  if (!admin.apps.length) admin.initializeApp(projectId ? { projectId } : undefined);
+  const auth = admin.auth();
+  return async function claimsProvider(users) {
+    const out = {};
+    const list = Array.isArray(users) ? users : [];
+    for (const user of list) {
+      const uid = user && (user.localId || user.uid);
+      if (!uid) continue;
+      try {
+        const record = await auth.getUser(uid);
+        out[uid] = record.customClaims && typeof record.customClaims === 'object'
+          ? record.customClaims
+          : {};
+      } catch (error) {
+        const code = error && error.code;
+        if (code === 'auth/user-not-found') {
+          out[uid] = {};
+          continue;
+        }
+        throw error;
+      }
+    }
+    return out;
+  };
+}
+
 async function main() {
   const command = process.argv[2] || '';
   const options = argMap(process.argv.slice(3));
@@ -486,7 +534,13 @@ async function main() {
     return;
   }
   if (command === 'export') {
-    console.log(JSON.stringify(await runExport(action, { env: process.env }, { allowFirebaseCli: true })));
+    const claimsProvider = await createAdminClaimsProvider(action.project);
+    console.log(JSON.stringify(await runExport(action, { env: process.env }, {
+      allowFirebaseCli: true,
+      claimsProvider,
+      claimsSource: 'admin.getUser',
+      splitClaimsFile: true
+    })));
     return;
   }
   if (command === 'verify') {

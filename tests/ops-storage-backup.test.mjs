@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  SCHEMA, DEFAULT_BUCKET, DEFAULT_PREFIX, parseArgs, runBackup, runVerify,
+  SCHEMA, DEFAULT_BUCKET, DEFAULT_PREFIX, parseArgs,
+  refuseProdStorageBucket, runBackup, runVerify,
   runRestore, refuseRestoreTarget, denyTargets, isValidObjectName, objectKey,
   readManifest
 } from '../ops-storage-backup.mjs';
@@ -219,6 +220,13 @@ await check('invalid object path fails closed during backup', async () => {
   const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api });
   assert.equal(result.ok, false);
   assert.ok(['FAILED', 'PARTIAL'].includes(result.status));
+});
+
+
+await check('refuseProdStorageBucket blocks default production bucket', () => {
+  assert.throws(() => refuseProdStorageBucket('station-102-hr-private-europe-west1', { env: {} }), /סירוב|ייצור|production/i);
+  assert.doesNotThrow(() => refuseProdStorageBucket('demo-resq-hr-private', { env: {} }));
+  assert.doesNotThrow(() => refuseProdStorageBucket('station-102-hr-private-europe-west1', { env: { RESQ_STORAGE_ALLOW_PROD_BUCKET: '1' } }));
 });
 
 console.log('ops-storage-backup: ' + passed + '/' + passed + ' PASS (fake adapter; no real files/medical data)');

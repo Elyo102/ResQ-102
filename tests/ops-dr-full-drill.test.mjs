@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -81,8 +80,29 @@ await check('verify-only drill marks emulator Rules NOT RUN without faking PASS'
   assert.match(rules.detail, /FIRESTORE_EMULATOR_HOST|not faked PASS/i);
   const fsStep = report.steps.find((s) => s.name === 'firestore_emulator_restore');
   assert.equal(fsStep.status, 'NOT_RUN');
+  const counts = report.steps.find((s) => s.name === 'compare_counts');
+  assert.equal(counts.status, 'NOT_RUN');
+  const sums = report.steps.find((s) => s.name === 'compare_checksums');
+  assert.equal(sums.status, 'NOT_RUN');
+  const local = report.steps.find((s) => s.name === 'local_bundle_restore_drill');
+  assert.equal(local.status, 'NOT_RUN');
   assert.ok(report.ok, 'offline verify-only should not FAIL hard-deny/artifact steps');
-  assert.ok(report.rtoMeasuredMs >= 0);
+  assert.equal(report.status, 'PASS');
+});
+
+await check('execute without emulator is INCOMPLETE and not ok', async () => {
+  const report = await runFullDrill(
+    parseArgs(['--target', 'resq-dr-demo', '--execute', '--confirm-target', 'resq-dr-demo']),
+    {
+      root: ROOT,
+      env: { RESQ_RESTORE_TARGET_ALLOWLIST: 'resq-dr-demo', RESQ_RESTORE_SIGNING_KEY: 'x'.repeat(32) },
+      writeReport: false
+    }
+  );
+  assert.equal(report.ok, false);
+  assert.equal(report.status, 'INCOMPLETE');
+  assert.ok(report.requiredNotRun.includes('firestore_emulator_restore'));
+  assert.ok(report.requiredNotRun.includes('rules_live_emulator'));
 });
 
 await check('execute without signing key fails signing step', async () => {
@@ -93,6 +113,31 @@ await check('execute without signing key fails signing step', async () => {
   const sign = report.steps.find((s) => s.name === 'restore_signing_key');
   assert.equal(sign.status, 'FAIL');
   assert.equal(report.ok, false);
+});
+
+await check('execute with emulator adapters can PASS required stages', async () => {
+  const report = await runFullDrill(
+    parseArgs(['--target', 'resq-dr-demo', '--execute', '--confirm-target', 'resq-dr-demo']),
+    {
+      root: ROOT,
+      env: {
+        FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+        RESQ_RESTORE_TARGET_ALLOWLIST: 'resq-dr-demo',
+        RESQ_RESTORE_SIGNING_KEY: 'x'.repeat(32)
+      },
+      writeReport: false,
+      expectedIntegrity: { count: 1, actualCount: 1, checksum: 'ab', actualChecksum: 'ab' },
+      firestoreApi: { restoreDemo: async () => ({ ok: true }) },
+      authApi: { importDemo: async () => ({ ok: true, claimsRestored: 0 }) },
+      storageApi: { restoreDemo: async () => ({ ok: true }) },
+      rulesRunner: async () => ({ ok: true, detail: 'fixture' })
+    }
+  );
+  assert.equal(report.ok, true);
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.steps.find((s) => s.name === 'firestore_emulator_restore').status, 'PASS');
+  assert.equal(report.steps.find((s) => s.name === 'rules_live_emulator').status, 'PASS');
+  assert.equal(report.steps.find((s) => s.name === 'compare_counts').status, 'PASS');
 });
 
 console.log('ops-dr-full-drill tests: ' + passed + ' PASS');

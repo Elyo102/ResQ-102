@@ -195,6 +195,15 @@ export async function runFullDrill(args, options = {}) {
   const steps = [];
   const emulator = detectEmulator(env);
   const verifyOnly = args.verifyOnly || !args.execute;
+  const executeRequested = !!args.execute && !verifyOnly;
+
+  // Required stages when --execute is requested (emulator drill).
+  const requiredOnExecute = [
+    'firestore_emulator_restore',
+    'auth_fixture_import',
+    'storage_fixture_restore',
+    'rules_live_emulator'
+  ];
 
   // 1. Hard deny + allowlist posture
   try {
@@ -204,7 +213,6 @@ export async function runFullDrill(args, options = {}) {
     steps.push(step('hard_deny_station_102', 'FAIL', String(error && error.message || error)));
   }
 
-  // Accidental allowlist probe — refuseTarget must still throw for station-102.
   try {
     refuseTarget('station-102', 'demo-resq', { root });
     steps.push(step('station_102_even_if_allowlisted', 'FAIL', 'refuseTarget did not throw for station-102'));
@@ -213,7 +221,7 @@ export async function runFullDrill(args, options = {}) {
   }
 
   // 2. Signing key required for execute
-  if (args.execute) {
+  if (executeRequested) {
     try {
       requireSigningKey(env);
       steps.push(step('restore_signing_key', 'PASS', 'RESQ_RESTORE_SIGNING_KEY present (>=' + SIGNING_KEY_MIN_LENGTH + ')'));
@@ -224,7 +232,7 @@ export async function runFullDrill(args, options = {}) {
     steps.push(step('restore_signing_key', 'PASS', 'verify-only / dry path — signing key not required'));
   }
 
-  // 3. Repo artifacts: rules, indexes, hosting/config
+  // 3. Repo artifacts
   const artifacts = inventoryRepoArtifacts(root);
   if (artifacts.missing.length) {
     steps.push(step('repo_artifacts', 'FAIL', 'missing: ' + artifacts.missing.join(', '), artifacts));
@@ -239,7 +247,7 @@ export async function runFullDrill(args, options = {}) {
     steps.push(step('storage_rules_not_invented', 'PASS', 'storage.rules remains BLOCKED / not in firebase.json'));
   }
 
-  // 4. Static rules source gate (never a live Rules PASS without emulator)
+  // 4. Static rules source gate
   const rulecheckPath = path.join(root, 'tests', 'rulecheck.mjs');
   if (fs.existsSync(rulecheckPath)) {
     steps.push(step('rules_static_gate', 'PASS', 'tests/rulecheck.mjs present (static; not a live Rules engine run)'));
@@ -248,6 +256,11 @@ export async function runFullDrill(args, options = {}) {
   }
 
   // 5. Emulator / live Rules
+  let firestoreApi = options.firestoreApi || null;
+  let authApi = options.authApi || null;
+  let storageApi = options.storageApi || null;
+  let rulesRunner = options.rulesRunner || null;
+
   if (!emulator.available) {
     steps.push(step('firestore_emulator_restore', 'NOT_RUN', emulator.reason));
     steps.push(step('rules_live_emulator', 'NOT_RUN', emulator.reason + ' — Rules live evaluation NOT RUN; not faked PASS'));
@@ -259,16 +272,27 @@ export async function runFullDrill(args, options = {}) {
     steps.push(step('auth_fixture_import', 'NOT_RUN', 'verify-only mode'));
     steps.push(step('storage_fixture_restore', 'NOT_RUN', 'verify-only mode'));
   } else {
-    // Execute path against emulator — call injectable adapters only.
-    const firestoreApi = options.firestoreApi;
-    const authApi = options.authApi;
-    const storageApi = options.storageApi;
+    // Execute against emulator only — never cloud fallback.
+    if ((!firestoreApi || !authApi || !storageApi) && typeof options.loadEmulatorAdapters === 'function') {
+      try {
+        const loaded = await options.loadEmulatorAdapters({
+          target: args.target, root, env, host: emulator.host
+        });
+        firestoreApi = firestoreApi || (loaded && loaded.firestoreApi);
+        authApi = authApi || (loaded && loaded.authApi);
+        storageApi = storageApi || (loaded && loaded.storageApi);
+        rulesRunner = rulesRunner || (loaded && loaded.rulesRunner);
+      } catch (error) {
+        steps.push(step('emulator_adapter_load', 'FAIL', String(error && error.message || error)));
+      }
+    }
     if (!firestoreApi || !authApi || !storageApi) {
       steps.push(step('firestore_emulator_restore', 'NOT_RUN',
-        'emulator host set but no injectable firestoreApi/authApi/storageApi provided — refusing cloud SDK auto-connect'));
-      steps.push(step('rules_live_emulator', 'NOT_RUN', 'no injectable Rules runner provided — not faked PASS'));
-      steps.push(step('auth_fixture_import', 'NOT_RUN', 'no injectable authApi'));
-      steps.push(step('storage_fixture_restore', 'NOT_RUN', 'no injectable storageApi'));
+        'emulator host set but firestoreApi/authApi/storageApi not available — no cloud fallback'));
+      steps.push(step('auth_fixture_import', 'NOT_RUN', 'authApi not available'));
+      steps.push(step('storage_fixture_restore', 'NOT_RUN', 'storageApi not available'));
+      steps.push(step('rules_live_emulator', 'NOT_RUN',
+        rulesRunner ? 'deferred' : 'no rulesRunner — not faked PASS'));
     } else {
       try {
         const fsResult = await firestoreApi.restoreDemo({
@@ -287,29 +311,43 @@ export async function runFullDrill(args, options = {}) {
           steps.push(step('custom_claims', 'PASS', 'claims restored=' + authResult.claimsRestored));
         }
       } catch (error) {
-        steps.push(step('auth_fixture_import', 'FAIL', String(error && error.message || error)));
+        const msg = String(error && error.message || error);
+        if (error && error.code === 'NOT_RUN') {
+          steps.push(step('auth_fixture_import', 'NOT_RUN', msg));
+        } else {
+          steps.push(step('auth_fixture_import', 'FAIL', msg));
+        }
       }
       try {
         const stResult = await storageApi.restoreDemo({ target: args.target, createOnly: true });
         steps.push(step('storage_fixture_restore', 'PASS', 'storage fixture restore', stResult));
       } catch (error) {
-        steps.push(step('storage_fixture_restore', 'FAIL', String(error && error.message || error)));
+        const msg = String(error && error.message || error);
+        if (error && error.code === 'NOT_RUN') {
+          steps.push(step('storage_fixture_restore', 'NOT_RUN', msg));
+        } else {
+          steps.push(step('storage_fixture_restore', 'FAIL', msg));
+        }
       }
-      if (options.rulesRunner) {
+      if (rulesRunner) {
         try {
-          const rulesResult = await options.rulesRunner({ host: emulator.host });
-          steps.push(step('rules_live_emulator', rulesResult && rulesResult.ok ? 'PASS' : 'FAIL',
-            (rulesResult && rulesResult.detail) || '', rulesResult));
+          const rulesResult = await rulesRunner({ host: emulator.host, root, env });
+          if (rulesResult && rulesResult.notRun) {
+            steps.push(step('rules_live_emulator', 'NOT_RUN', rulesResult.detail || 'rulesRunner NOT_RUN'));
+          } else {
+            steps.push(step('rules_live_emulator', rulesResult && rulesResult.ok ? 'PASS' : 'FAIL',
+              (rulesResult && rulesResult.detail) || '', rulesResult));
+          }
         } catch (error) {
           steps.push(step('rules_live_emulator', 'FAIL', String(error && error.message || error)));
         }
       } else {
-        steps.push(step('rules_live_emulator', 'NOT_RUN', 'no rulesRunner injected — not faked PASS'));
+        steps.push(step('rules_live_emulator', 'NOT_RUN', 'no rulesRunner — not faked PASS'));
       }
     }
   }
 
-  // 6. Integrity helpers (fixture compare)
+  // 6. Integrity helpers — NOT_RUN without payload (never fake PASS)
   const expected = options.expectedIntegrity || null;
   if (expected) {
     const counts = compareIdentityCounts(expected.count, expected.actualCount);
@@ -317,38 +355,38 @@ export async function runFullDrill(args, options = {}) {
     const sums = compareChecksums(expected.checksum, expected.actualChecksum);
     steps.push(step('compare_checksums', sums.ok ? 'PASS' : 'FAIL', JSON.stringify(sums)));
   } else {
-    steps.push(step('compare_counts', 'PASS', 'helper available; no fixture payload in this run'));
-    steps.push(step('compare_checksums', 'PASS', 'helper available; no fixture payload in this run'));
+    steps.push(step('compare_counts', 'NOT_RUN', 'no integrity payload provided'));
+    steps.push(step('compare_checksums', 'NOT_RUN', 'no integrity payload provided'));
   }
 
-  // 7. Local bundle restore drill (real adapter, offline)
+  // 7. Local bundle restore drill — only PASS if actually run
   try {
-    const require = createRequire(path.join(root, 'package.json'));
-    // Dynamic import of ops-restore-drill for local git/documents drill when a set exists.
-    const drillMod = await import(pathToFileURL(path.join(root, 'ops-restore-drill.mjs')).href);
     const backupRoot = path.join(root, '_גיבוי');
-    if (fs.existsSync(backupRoot) && fs.readdirSync(backupRoot).some((n) => /^set-|^20/.test(n) || n.startsWith('20'))) {
-      // Only run if a completed set is likely; otherwise NOT_RUN.
+    const hasSet = fs.existsSync(backupRoot) && fs.readdirSync(backupRoot).some((n) =>
+      /^resq-\d{8}T/.test(n) || /^set-/.test(n));
+    if (options.runLocalBundleDrill === true && hasSet) {
+      const drillMod = await import(pathToFileURL(path.join(root, 'ops-restore-drill.mjs')).href);
+      const local = drillMod.runRestoreDrill(drillMod.parseArgs([]), { root });
+      steps.push(step('local_bundle_restore_drill', local && local.ok ? 'PASS' : 'FAIL',
+        local ? ('set=' + local.set) : 'no result', local));
+    } else if (hasSet) {
       steps.push(step('local_bundle_restore_drill', 'NOT_RUN',
-        'local _גיבוי present but automated set selection deferred — use node ops-restore-drill.mjs explicitly'));
+        'local _גיבוי present but runLocalBundleDrill not enabled — use node ops-restore-drill.mjs'));
     } else {
       steps.push(step('local_bundle_restore_drill', 'NOT_RUN',
         'no local verified backup set under _גיבוי — use ops-restore-drill.mjs after ops-backup.mjs'));
     }
-    void drillMod;
-    void require;
   } catch (error) {
-    steps.push(step('local_bundle_restore_drill', 'NOT_RUN', String(error && error.message || error)));
+    steps.push(step('local_bundle_restore_drill', 'FAIL', String(error && error.message || error)));
   }
 
   // 8. Cleanup / rollback markers
   const workDir = path.join(os.tmpdir(), 'resq-dr-full-drill-' + sha256(String(started)).slice(0, 12));
-  let cleaned = false;
   try {
     fs.mkdirSync(workDir, { recursive: true });
     fs.writeFileSync(path.join(workDir, 'marker.txt'), 'demo-only\n', 'utf8');
     fs.rmSync(workDir, { recursive: true, force: true });
-    cleaned = !fs.existsSync(workDir);
+    const cleaned = !fs.existsSync(workDir);
     steps.push(step('cleanup_demo_workdir', cleaned ? 'PASS' : 'FAIL', workDir));
     steps.push(step('rollback_posture', 'PASS',
       'create-only=' + args.createOnly + ' skip-existing=' + args.skipExisting + ' verifyOnly=' + verifyOnly));
@@ -359,23 +397,36 @@ export async function runFullDrill(args, options = {}) {
   const elapsedMs = Date.now() - started;
   const failed = steps.filter((s) => s.status === 'FAIL');
   const notRun = steps.filter((s) => s.status === 'NOT_RUN');
+  const requiredNotRun = executeRequested
+    ? requiredOnExecute.filter((name) => {
+        const s = steps.find((x) => x.name === name);
+        return !s || s.status === 'NOT_RUN';
+      })
+    : [];
+  const incomplete = requiredNotRun.length > 0;
+  const ok = failed.length === 0 && !incomplete;
+
   const report = {
-    ok: failed.length === 0,
+    ok,
+    status: !ok ? (failed.length ? 'FAIL' : 'INCOMPLETE') : 'PASS',
     schema: 'resq-dr-full-drill-v1',
     target: args.target,
     verifyOnly,
     execute: !!args.execute,
+    executeRequested,
     demoProjectOnly: args.target !== 'station-102',
     rtoMeasuredMs: elapsedMs,
     rtoProven: false,
     rpoProven: false,
     note: 'RPO/RTO targets remain unproven until OWNER accepts a full execute drill report',
     emulator,
+    requiredNotRun,
     steps,
     summary: {
       pass: steps.filter((s) => s.status === 'PASS').length,
       fail: failed.length,
-      not_run: notRun.length
+      not_run: notRun.length,
+      incomplete: incomplete
     }
   };
 
@@ -391,12 +442,148 @@ export async function runFullDrill(args, options = {}) {
   return report;
 }
 
+/**
+ * Emulator-only drill adapters. No cloud fallback. Refuses station-102.
+ * Dynamic-imports firebase-admin only when called.
+ */
+export async function createEmulatorDrillAdapters({ target, root = HERE, env = process.env } = {}) {
+  if (!String(env.FIRESTORE_EMULATOR_HOST || '').trim()) {
+    throw new Error('createEmulatorDrillAdapters requires FIRESTORE_EMULATOR_HOST');
+  }
+  refuseTarget(target, 'fixture-source-not-equal', { root });
+  if (target === 'station-102' || denyTargets({ root }).has(target)) {
+    throw new Error('station-102 / production targets forbidden for emulator drill adapters');
+  }
+
+  const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
+  const resolved = require.resolve('firebase-admin');
+  const imported = await import(pathToFileURL(resolved).href);
+  const admin = imported.default || imported;
+  if (!admin.apps.length) {
+    admin.initializeApp({ projectId: target });
+  }
+  const db = admin.firestore();
+
+  const firestoreApi = {
+    async restoreDemo({ createOnly }) {
+      const ref = db.collection('_resq_dr_drill').doc('canary');
+      const payload = {
+        drilled_at: new Date().toISOString(),
+        target,
+        demo: true
+      };
+      try {
+        await ref.create(payload);
+        return { ok: true, path: ref.path, created: true };
+      } catch (error) {
+        if (createOnly && error && (error.code === 6 || /ALREADY_EXISTS/i.test(String(error.message)))) {
+          return { ok: true, path: ref.path, skippedExisting: true };
+        }
+        throw error;
+      }
+    }
+  };
+
+  const authApi = {
+    async importDemo() {
+      if (!String(env.FIREBASE_AUTH_EMULATOR_HOST || '').trim()) {
+        const err = new Error('FIREBASE_AUTH_EMULATOR_HOST unset — auth fixture import NOT_RUN');
+        err.code = 'NOT_RUN';
+        throw err;
+      }
+      const auth = admin.auth();
+      const email = 'dr-drill-' + Date.now() + '@example.invalid';
+      let user;
+      try {
+        user = await auth.createUser({ email, password: 'DrillTest!' + Date.now(), emailVerified: false });
+      } catch (error) {
+        throw error;
+      }
+      await auth.setCustomUserClaims(user.uid, { role: 'firefighter', stationId: 'drill_demo', drill: true });
+      return { ok: true, uid: user.uid, claimsRestored: 1 };
+    }
+  };
+
+  const storageApi = {
+    async restoreDemo() {
+      if (!String(env.FIREBASE_STORAGE_EMULATOR_HOST || env.STORAGE_EMULATOR_HOST || '').trim()) {
+        const err = new Error('STORAGE emulator host unset — storage fixture restore NOT_RUN');
+        err.code = 'NOT_RUN';
+        throw err;
+      }
+      const bucketName = target + '.appspot.com';
+      const bucket = admin.storage().bucket(bucketName);
+      const name = 'hr-private/drill_demo/fixture/drill/canary.txt';
+      const bytes = Buffer.from('resq-dr-drill-fixture\n', 'utf8');
+      try {
+        await bucket.file(name).save(bytes, {
+          resumable: false,
+          contentType: 'text/plain',
+          preconditionOpts: { ifGenerationMatch: 0 }
+        });
+      } catch (error) {
+        if (/condition|precondition|412/i.test(String(error && error.message))) {
+          return { ok: true, name, skippedExisting: true };
+        }
+        throw error;
+      }
+      return { ok: true, name, created: true };
+    }
+  };
+
+  const rulesRunner = async ({ host }) => {
+    // Prefer @firebase/rules-unit-testing from rules-test if installed; else NOT_RUN.
+    let rulesTestingPath;
+    try {
+      const rtRequire = createRequire(pathToFileURL(path.join(root, 'rules-test', 'package.json')).href);
+      rulesTestingPath = rtRequire.resolve('@firebase/rules-unit-testing');
+    } catch {
+      return {
+        notRun: true,
+        detail: '@firebase/rules-unit-testing not installed under rules-test — live Rules NOT_RUN (not faked PASS)'
+      };
+    }
+    const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+    const mod = await import(pathToFileURL(rulesTestingPath).href);
+    const hostPort = String(host).split(':');
+    const firestoreHost = hostPort[0] || '127.0.0.1';
+    const firestorePort = Number(hostPort[1] || 8080);
+    const testEnv = await mod.initializeTestEnvironment({
+      projectId: target,
+      firestore: { rules, host: firestoreHost, port: firestorePort }
+    });
+    try {
+      const unauth = testEnv.unauthenticatedContext();
+      await mod.assertFails(unauth.firestore().collection('_resq_dr_drill').doc('canary').get());
+      return { ok: true, detail: 'unauthenticated read denied against emulator rules' };
+    } finally {
+      await testEnv.cleanup();
+    }
+  };
+
+  return { firestoreApi, authApi, storageApi, rulesRunner };
+}
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runFullDrill(parseArgs(process.argv.slice(2)), { writeReport: true })
+  const args = parseArgs(process.argv.slice(2));
+  const options = { writeReport: true, root: HERE, env: process.env };
+  if (args.execute && !args.verifyOnly) {
+    const emu = detectEmulator(process.env);
+    if (emu.available) {
+      options.loadEmulatorAdapters = createEmulatorDrillAdapters;
+    }
+  }
+  runFullDrill(args, options)
     .then((report) => {
       console.log(JSON.stringify(report, null, 2));
       if (!report.ok) process.exitCode = 1;
+      if (report.status === 'INCOMPLETE') {
+        console.error('DRILL INCOMPLETE / NOT_RUN required stages:');
+        for (const name of report.requiredNotRun || []) {
+          const s = report.steps.find((x) => x.name === name);
+          console.error(' - ' + name + ': ' + (s && s.detail || 'missing'));
+        }
+      }
       const nr = report.steps.filter((s) => s.status === 'NOT_RUN');
       if (nr.length) {
         console.error('NOT RUN steps:');

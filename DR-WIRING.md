@@ -95,4 +95,3 @@
 ## RESQ_RESTORE_SIGNING_KEY (execute)
 
 `RESQ_RESTORE_SIGNING_KEY` is **required** for `restore --execute` (minimum 32 characters). Without it the restore adapter refuses before any canary write. Dry-run / verify-only may proceed unsigned (`unsigned: true`). Never commit the key.
-

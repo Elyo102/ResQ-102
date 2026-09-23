@@ -1,6 +1,6 @@
 # Backup activation plan — FUTURE ONLY (DO NOT RUN)
 
-This document lists **commands and decisions** for turning on paid/platform backup controls.  
+This document lists **commands and decisions** for turning on paid/platform backup controls.
 **Do not execute** any of these against `station-102` or billing accounts from an agent session. OWNER + Billing approval required.
 
 Qualitative cost: PITR + daily/weekly scheduled exports are usually modest vs. engineering time; encrypted monthly offsite and a second destination with retention lock dominate cost and ops load. Exact quotes belong in Billing console at decision time.
@@ -41,9 +41,9 @@ Qualitative cost: PITR + daily/weekly scheduled exports are usually modest vs. e
 
 ## OWNER / Billing approval checklist
 
-1. Written approval that cost and retention are accepted.  
-2. Named alert recipients and on-call.  
-3. Confirm second destination + retention lock.  
-4. Confirm IAM role separation.  
-5. Run **demo/emulator** drill before any prod schedule enablement.  
+1. Written approval that cost and retention are accepted.
+2. Named alert recipients and on-call.
+3. Confirm second destination + retention lock.
+4. Confirm IAM role separation.
+5. Run **demo/emulator** drill before any prod schedule enablement.
 6. Update `BACKUP-MAP.md` statuses from DOCUMENTED_ONLY → IMPLEMENTED only after evidence.
