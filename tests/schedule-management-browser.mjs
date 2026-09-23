@@ -3532,25 +3532,46 @@ try {
       const head = board.querySelector('.hcell.today');
       const boardBox = board.getBoundingClientRect();
       const headBox = head.getBoundingClientRect();
-      return headBox.left >= boardBox.left - 1 && headBox.right <= boardBox.right + 1;
+      return { inside:headBox.left >= boardBox.left - 1 && headBox.right <= boardBox.right + 1,
+        head:{ left:headBox.left, right:headBox.right },
+        board:{ left:boardBox.left, right:boardBox.right }, scrollLeft:board.scrollLeft };
     });
-    assert.equal(back, true, 'the button brings today back into view');
+    assert.equal(back.inside, true, 'the button brings today back into view: ' + JSON.stringify(back));
   });
-  await test('station row labels stay visible after horizontal month scrolling', async () => {
-    const sticky = await todayPage.evaluate(async () => {
-      const board = document.getElementById('stationBoard');
-      board.scrollLeft = -board.scrollWidth;
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const frame = board.getBoundingClientRect();
-      const rows = Array.from(board.querySelectorAll('.stub[data-station]')).map(node => {
-        const box = node.getBoundingClientRect();
-        return { text:node.textContent.trim(), left:box.left, right:box.right };
-      });
-      return { frame:{ left:frame.left, right:frame.right }, rows };
-    });
-    assert.equal(sticky.rows.length, 4);
-    assert.ok(sticky.rows.every(row => row.text && row.left >= sticky.frame.left - 1 && row.right <= sticky.frame.right + 1),
-      'every station label remains inside the visible board frame');
+  await test('station rail remains fixed and row-aligned across RTL swipes at phone widths', async () => {
+    for (const width of [320, 360, 390]) {
+      await todayPage.setViewportSize({ width, height:780 });
+      for (const fraction of [0, .3, .7, 1, .4, 0]) {
+        const state = await todayPage.evaluate(async (fraction) => {
+          const board = document.getElementById('stationBoard');
+          const rail = board.parentElement.querySelector('.board-rail');
+          const extent = board.scrollWidth - board.clientWidth;
+          board.scrollLeft = -extent * fraction;
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const frame = board.getBoundingClientRect();
+          const rows = Array.from(board.querySelectorAll('.stub[data-station]'));
+          const labels = Array.from(rail.querySelectorAll('.stub[data-station]'));
+          return {
+            extent, moved:board.scrollLeft,
+            frame:{ left:frame.left, right:frame.right },
+            rows:labels.map((label, index) => {
+              const box = label.getBoundingClientRect();
+              const row = rows[index].getBoundingClientRect();
+              return { text:label.textContent.trim(), left:box.left, right:box.right,
+                top:box.top, rowTop:row.top, opacity:getComputedStyle(label).opacity };
+            })
+          };
+        }, fraction);
+        assert.ok(state.extent > 300, 'the fixture must overflow at ' + width + 'px');
+        assert.equal(state.rows.length, 4);
+        assert.ok(state.rows.every(row => row.text && row.opacity === '1' &&
+          row.left >= state.frame.left - 1 && row.right <= state.frame.right - 4 &&
+          Math.abs(row.top - row.rowTop) <= 2),
+        'station labels must stay on-screen and aligned at ' + width + 'px/' + fraction);
+        if (fraction === 1) assert.ok(Math.abs(state.moved) > 300,
+          'the month actually moved before checking its fixed rail');
+      }
+    }
   });
   await todayCtx.close();
 

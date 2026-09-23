@@ -1872,6 +1872,9 @@ function cellContent(cell, block, minVisualSlots, context) {
 
 function renderBoard(target, days, options) {
   const opts = options || {};
+  target.querySelectorAll('.board').forEach((oldBoard) => {
+    if (oldBoard._railObserver) oldBoard._railObserver.disconnect();
+  });
   clear(target);
   if (!days || !days.length) {
     target.appendChild(node('div', 'empty', opts.empty || 'אין סידור להצגה בטווח הזה.'));
@@ -1956,8 +1959,32 @@ function renderBoard(target, days, options) {
     appendNotesRow(board, days);
     appendAbsenceRows(board, days);
   }
-  target.appendChild(board);
+  const shell = node('div', 'board-shell');
+  const rail = node('div', 'board-rail');
+  rail.setAttribute('aria-hidden', 'true');
+  const boardRows = Array.from(board.querySelectorAll(':scope > [role="row"]'));
+  const pinned = boardRows.map((row) => {
+    const original = row.firstElementChild;
+    const visual = original.cloneNode(true);
+    visual.removeAttribute('role');
+    visual.removeAttribute('aria-label');
+    rail.appendChild(visual);
+    return visual;
+  });
+  shell.appendChild(board);
+  shell.appendChild(rail);
+  target.appendChild(shell);
   fitColumns(board);
+  const alignRail = () => boardRows.forEach((row, index) => {
+    pinned[index].style.height = row.getBoundingClientRect().height + 'px';
+  });
+  board._alignRail = alignRail;
+  alignRail();
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(alignRail);
+    boardRows.forEach((row) => observer.observe(row));
+    board._railObserver = observer;
+  }
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
   // שם מעצמו, ו„החודש נפתח באמצע" נראה כמו תקלה.
   board.scrollLeft = 0;
@@ -1969,11 +1996,15 @@ function fitColumns(board) {
   const available = board.clientWidth - stub;
   // שבוע מלא כשהמסך מרשה; אחרת העמודה הצרה ביותר שעדיין קריאה,
   // והגלילה משלימה את השבוע.
-  // P0: --stub/--dayw are shared by every board-row grid so header and
-  // body stay column-aligned while the sticky station column stays fixed.
+  // Shared widths keep header/body cells aligned; the visual station rail
+  // remains outside the horizontal scroller while rowheaders remain in it.
   const width = Math.max(84, Math.floor(available / 7));
   board.style.setProperty('--dayw', width + 'px');
   board.style.setProperty('--stub', stub + 'px');
+  if (board.parentElement && board.parentElement.classList.contains('board-shell')) {
+    board.parentElement.style.setProperty('--stub', stub + 'px');
+  }
+  if (board._alignRail) board._alignRail();
 }
 
 function refitAll() {

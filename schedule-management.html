@@ -198,12 +198,11 @@
        הצבע של המשמרת (א׳/ב׳/ג׳ — הכרעת 4.9) נשאר: שטיפת עמודה עדינה
        ותג בכותרת היום; צבע התחנה יושב על השבב ועל תווית השורה.
        ================================================================== */
-    /* P0 sticky RTL: each board-row is its own grid so .stub/.corner can
-       stick inside the horizontal scroller. display:contents broke sticky in
-       Chromium RTL — labels scrolled away mid-month. Same DOM; synced
-       --stub/--dayw/--n keep header cells aligned with body cells. */
+    /* The station rail is outside the horizontal scroller. WebKit can stop
+       painting sticky descendants of wide RTL grid rows during a swipe. */
+    .board-shell{position:relative;width:100%;max-width:100%}
     .board{display:flex;flex-direction:column;gap:5px;padding:5px;direction:rtl;
-      overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
+      overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:none;
       /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
          הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
@@ -211,6 +210,12 @@
       border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--panel,#f5f7fa)}
     .board>[role="row"]{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
       gap:5px;width:max-content;min-width:100%;box-sizing:border-box}
+    .board-shell .board .corner,.board-shell .board .stub{opacity:0;pointer-events:none}
+    .board-rail{position:absolute;inset-block-start:6px;inset-inline-start:6px;
+      width:var(--stub,92px);display:flex;flex-direction:column;gap:5px;
+      z-index:7;pointer-events:none}
+    .board-rail .corner,.board-rail .stub{position:static;inset:auto;
+      width:100%;flex:none;min-height:0;box-sizing:border-box}
     .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:7px 4px 6px;
       text-align:center;border:1px solid var(--line,#dfe5ec);border-radius:11px;
       display:flex;flex-direction:column;align-items:center;gap:1px;box-shadow:var(--sb-shadow)}
@@ -491,7 +496,7 @@
     .shell .qualpeople .person .held label{min-height:44px;align-items:center}
     .shell .filestatus,.shell .head .who{overflow-wrap:anywhere;min-width:0}
   
-    /* P0: keep sticky stub readable on common phone widths without duplicating labels */
+    /* Keep rail labels readable on common phone widths. */
     @media(max-width:390px){
       .board{scroll-padding-inline-start:calc(var(--stub) + 4px)}
       .stub{padding:7px 8px}
