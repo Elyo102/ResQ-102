@@ -42,15 +42,11 @@
 
 ## 2 · `.gitignore`
 
-אין שינוי נדרש: הסטים נכתבים תחת `_גיבוי/`, שכבר מוחרג (`_גיבוי/`). תוצרי הריצות
-(`restore-runs/`) נמצאים בתוך הסט. אין קובץ מפתח: החתימה קוראת `RESQ_RESTORE_SIGNING_KEY`
-מהסביבה בלבד.
+הסטים נכתבים תחת `_גיבוי/` (כבר מוחרג). נוספו גם `resq-fs-*/`, `documents.jsonl(.enc)`,
+ותבניות יעד Storage מוצעות — ראו `.gitignore`. תוצרי הריצות (`restore-runs/`) בתוך הסט.
+אין קובץ מפתח במאגר: `RESQ_RESTORE_SIGNING_KEY` ו-`RESQ_BACKUP_SEAL_PASSPHRASE` מהסביבה בלבד.
 
-אופציונלי, כהגנה כפולה אם מישהו יריץ עם `--out` לא סטנדרטי (הקוד מסרב ממילא):
-
-```
-resq-fs-*/
-```
+מפת גיבוי אחידה: `BACKUP-MAP.md`.
 
 ---
 
@@ -82,7 +78,9 @@ resq-fs-*/
 | משתנה | מתי נדרש | משמעות |
 |---|---|---|
 | `RESQ_RESTORE_TARGET_ALLOWLIST` | `restore --execute` בלבד | יעדים מותרים, מופרדים בפסיקים |
-| `RESQ_RESTORE_SIGNING_KEY` | אופציונלי | מפתח HMAC לחתימת `restore-manifest.json`; בלעדיו הדוח מסומן `unsigned: true` |
+| `RESQ_RESTORE_SIGNING_KEY` | חובה ב-`restore --execute` (≥32); אופציונלי ב-dry-run | מפתח HMAC לחתימת `restore-manifest.json`; ב-execute בלעדיו — סירוב לפני קנרית. dry-run בלי מפתח מסומן `unsigned: true` |
+| `RESQ_BACKUP_SEAL_PASSPHRASE` | חובה ב-`backup --execute` (≥20) | מפתח חותם AES-256-GCM; לעולם לא בקומיט/מניפסט/לוג |
+| `RESQ_BACKUP_ALLOW_PROD_SOURCE` | ריצה ידנית מאושרת בלבד (`=1`) | מתיר מקור `station-102`/default לגיבוי אמיתי; בדיקות אוטומטיות לא מגדירות |
 | `RESQ_REPO_ROOT` | רק כשהסקריפט אינו בשורש המאגר | מיקום `functions/backup-policy.js` ו-`.firebaserc` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ריצה אמיתית | כמו `ops-export.mjs` |
 

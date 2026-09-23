@@ -46,7 +46,8 @@ backup → verify → restore-plan → dry-run → isolated-restore → integrit
 
 | שלב | פקודה | מה קורה |
 |---|---|---|
-| backup | `backup --source <project>` | הולך על כל האוספים (כולל תת-אוספים מתחת למסמכי אב חסרים), מסווג כל נתיב לפי `backup-policy.js`, כותב סט |
+| backup (dry-run) | `backup --source <project>` | **ברירת המחדל.** אפס SDK, אפס רשת, אפס כתיבה |
+| backup (execute) | `backup --source <project> --execute` | סריקה מלאה, fail-closed על unclassified, חותם AES-256-GCM → `documents.jsonl.enc` (בלי plaintext) |
 | verify | `verify --set <dir>` | מחשב מחדש sha256 לכל מסמך, ספירה/בייטים/sha256 של הקובץ, טביעת מדיניות, טביעת קבוצת הזהות |
 | plan | `plan --set <dir> --target <project>` | סירובי יעד, אימות, תוכנית כתיבה מסודרת, RPO |
 | restore (dry-run) | `restore --set <dir> --target <project>` | **ברירת המחדל.** אפס כתיבות, אפס SDK, אפס רשת. מפיק תוכנית ודוח לא-נמדד |
@@ -56,8 +57,10 @@ backup → verify → restore-plan → dry-run → isolated-restore → integrit
 ### POSIX
 
 ```bash
-node ops-disaster-restore.mjs backup --source station-102 --dry-run
 node ops-disaster-restore.mjs backup --source station-102
+# ריצה אמיתית דורשת --execute + RESQ_BACKUP_SEAL_PASSPHRASE + RESQ_BACKUP_ALLOW_PROD_SOURCE=1
+# RESQ_BACKUP_ALLOW_PROD_SOURCE=1 RESQ_BACKUP_SEAL_PASSPHRASE='...' \
+#   node ops-disaster-restore.mjs backup --source station-102 --execute
 node ops-disaster-restore.mjs verify  --set "_גיבוי/resq-fs-20260918T100000000Z-0123456789abcdef"
 node ops-disaster-restore.mjs plan    --set "_גיבוי/resq-fs-..." --target resq-dr-sandbox
 node ops-disaster-restore.mjs restore --set "_גיבוי/resq-fs-..." --target resq-dr-sandbox
@@ -69,8 +72,8 @@ node ops-disaster-restore.mjs report  --set "_גיבוי/resq-fs-..."
 ### PowerShell (5.1 ו-7)
 
 ```powershell
-.\ops-disaster-restore.ps1 -Command backup -Source station-102 -DryRun
 .\ops-disaster-restore.ps1 -Command backup -Source station-102
+# ריצה אמיתית: -Execute + משתני סביבה (ראה למעלה)
 .\ops-disaster-restore.ps1 -Command verify -Set "_גיבוי\resq-fs-..."
 .\ops-disaster-restore.ps1 -Command plan -Set "_גיבוי\resq-fs-..." -Target resq-dr-sandbox
 .\ops-disaster-restore.ps1 -Command restore -Set "_גיבוי\resq-fs-..." -Target resq-dr-sandbox
@@ -86,7 +89,7 @@ $env:RESQ_RESTORE_SIGNING_KEY = '<key>'
 
 ## 3. כללי הסירוב (נאכפים בקוד, נבדקים בבדיקות)
 
-1. **ברירת מחדל dry-run.** `--execute` דורש `--confirm-target` שווה מחרוזתית ל-`--target`.
+1. **ברירת מחדל dry-run** ל-`backup` ול-`restore`. ריצה אמיתית דורשת `--execute`. ב-`restore`, `--execute` דורש גם `--confirm-target` שווה מחרוזתית ל-`--target`.
 2. **רשימת סירוב קשיחה:** `station-102`, וכל מזהה שמופיע כ-`projects.default` ב-`.firebaserc`.
    מסורב גם עם `--execute --confirm-target` וגם כשהוא ב-allowlist.
 3. **מקור ≠ יעד:** `source_project` במניפסט חייב להיות שונה מ-`--target`.
@@ -107,7 +110,7 @@ $env:RESQ_RESTORE_SIGNING_KEY = '<key>'
 |---|---|---|---|
 | `skipped_policy` | `backupPolicy: exclude` או `restorePolicy: do_not_restore` / `rebuild` | לא נצלם לסט (רק נספר ב-`paths_excluded`), לא מתוכנן, לא נכתב | `push_tokens`, `guard_outbox`, `device_readiness`, `login_attempts`, `unlock_tokens`, `*_actor_quotas`, `incidents`, `directory`, `health`, `scans`, `schedule_drafts` |
 | `manual_required` | `specialized_media_export` או `specialized_restore` | נצלם, מופיע בתוכנית ובדוח, **לעולם לא נכתב אוטומטית** | `signatures`, `documents`, `faults/*/photos`, `vehicle_views`, `hr_attachments`, `hr_workforce_cases`, `hr_hours_reviews`, `attendance_correction_*` |
-| `unclassified` | אין מדיניות | לא נצלם, לא נכתב. אוסף חדש בלי מדיניות הוא חוב שצריך לסגור ב-backup-policy.js | — |
+| `unclassified` | אין מדיניות | **fail-closed:** הגיבוי נחסם ולא מושלם עד שנוספת מדיניות ב-backup-policy.js | — |
 | `after_parent` | `restore_after_parent` | נכתב רק אם מסמך האב נמצא ביעד (נכתב בריצה זו או כבר היה שם); אחרת `skipped_parent_not_restored` | `join_campaigns/*/registrants`, `shifts/*/{document=**}`, `hr_documents/*/revisions` |
 | `identity` | `restore_with_identity_reconciliation` (= `IDENTITY_POLICY_PATHS`) | קבוצה אחת, הכול-או-כלום (§5) | `emp_index`, `meta`, `registration_requests`, `identity_operations`, `station_transfer_*`, `stations/*/users`, `roster`, `pending_users` |
 | `restore` | `managed_export` + `restore` | נכתב בסדר עומק (אב לפני צאצא) | `stations/{sid}`, `config`, `shifts`, `callouts`, `hr_reports` |
@@ -229,6 +232,6 @@ Node מובנה בלבד, `firestoreApi` מזויף בזיכרון. מכסה: פ
 1. פרויקט Firebase מבודד וחד-פעמי, לא `station-102`, לא פרויקט עם משתמשים.
 2. אישור אנושי מפורש הכולל: מזהה היעד, הסט, ה-commit, ותוכנית מחיקה של היעד אחרי התרגיל.
 3. `RESQ_RESTORE_TARGET_ALLOWLIST` ו-`RESQ_RESTORE_SIGNING_KEY` בסביבה בלבד.
-4. סדר: `backup --dry-run` → `backup` → `verify` → `plan` → `restore` (dry-run) → סקירת
+4. סדר: `backup` (dry-run) → `backup --execute` (עם חותם) → `verify` → `plan` → `restore` (dry-run) → סקירת
    התוכנית → `restore --execute --confirm-target` → `report` → בדיקת Auth ידנית.
 5. תוצאות התרגיל (RPO/RTO שנמדדו, ספירות, אי-התאמות) נמסרות עם SHA-256 של הדוח.
