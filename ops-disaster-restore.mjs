@@ -11,25 +11,31 @@
  *         → integrity-report
  *
  * שימוש:
- *   node ops-disaster-restore.mjs backup --source <project> [--out _גיבוי] [--dry-run]
+ *   node ops-disaster-restore.mjs backup --source <project> [--out _גיבוי]          # dry-run (ברירת מחדל)
+ *   node ops-disaster-restore.mjs backup --source <project> --execute               # ריצה אמיתית + חותם
  *   node ops-disaster-restore.mjs verify  --set <dir>
  *   node ops-disaster-restore.mjs plan    --set <dir> --target <project>
- *   node ops-disaster-restore.mjs restore --set <dir> --target <project> [--dry-run]
+ *   node ops-disaster-restore.mjs restore --set <dir> --target <project>            # dry-run
  *   node ops-disaster-restore.mjs restore --set <dir> --target <project> --execute --confirm-target <project>
  *   node ops-disaster-restore.mjs report  --set <dir>
  *
  * כללים מחייבים (נאכפים בקוד, לא רק בתיעוד):
- *   - ברירת המחדל היא dry-run. ‎--execute דורש ‎--confirm-target זהה ל-‎--target.
- *   - ‎station-102 (וכל מזהה שמופיע כ-default ב-.firebaserc) לעולם אינו יעד
- *     שחזור — בלי קשר לדגלים.
+ *   - ברירת המחדל היא dry-run גם ל-backup וגם ל-restore. ריצה אמיתית דורשת --execute.
+ *   - restore עם --execute דורש --confirm-target זהה ל---target.
+ *   - station-102 (וכל מזהה שמופיע כ-default ב-.firebaserc) לעולם אינו יעד
+ *     שחזור — בלי קשר לדגלים. כמקור גיבוי בריצה אמיתית הוא נחסם אלא אם
+ *     RESQ_BACKUP_ALLOW_PROD_SOURCE=1 (בדיקות אוטומטיות אינן מגדירות זאת).
  *   - מקור התמונה ויעד השחזור חייבים להיות שונים.
- *   - ביצוע אמיתי דורש שהיעד יופיע ב-RESQ_RESTORE_TARGET_ALLOWLIST.
+ *   - ביצוע שחזור אמיתי דורש שהיעד יופיע ב-RESQ_RESTORE_TARGET_ALLOWLIST.
+ *   - גיבוי אמיתי דורש RESQ_BACKUP_SEAL_PASSPHRASE (>=20) וחותם AES-256-GCM;
+ *     אחרי הצלחה לא נשאר documents.jsonl גלוי — רק documents.jsonl.enc.
  *   - אין מחיקה ואין דריסה: createDocument בלבד. מסמך קיים → skipped_exists.
  *   - החרגות מגיעות אך ורק מ-functions/backup-policy.js.
- *   - ‎--dry-run אינו טוען SDK, אינו פונה לרשת ואינו כותב אף מסמך.
+ *   - נתיב/אוסף ללא סיווג במדיניות → הגיבוי נחסם (fail-closed), לא אזהרה שקטה.
+ *   - --dry-run אינו טוען SDK, אינו פונה לרשת ואינו כותב אף מסמך / חותם.
  *
  * הסקריפט אינו טוען firebase-admin ברמת המודול. ה-SDK נטען בעצלנות רק
- * בריצה אמיתית (backup ללא ‎--dry-run, או restore עם ‎--execute).
+ * בריצה אמיתית (backup עם --execute, או restore עם --execute).
  * ====================================================================== */
 
 import fs from 'node:fs';
@@ -38,6 +44,16 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import {
+  SEAL_PASSPHRASE_ENV,
+  SEALED_FILE_NAME,
+  PLAIN_FILE_NAME,
+  requireSealPassphrase,
+  sealDocumentsFile,
+  verifySealedFile,
+  unsealDocumentsToTemp,
+  cleanupUnsealTemp
+} from './ops-backup-seal.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -66,7 +82,7 @@ export const MANUAL_BACKUP = Object.freeze(['specialized_media_export']);
 export const MANUAL_RESTORE = Object.freeze(['specialized_restore']);
 
 export const ALLOWED_ARGS = Object.freeze({
-  backup: ['--source', '--out', '--dry-run'],
+  backup: ['--source', '--out', '--dry-run', '--execute'],
   verify: ['--set'],
   plan: ['--set', '--target'],
   restore: ['--set', '--target', '--dry-run', '--execute', '--confirm-target'],
@@ -168,10 +184,19 @@ export function encodeValue(value) {
   if (typeof value !== 'object') return value;
   if (value instanceof Date) return { __ts: value.toISOString() };
   if (isTimestampLike(value)) {
-    const iso = value.toDate().toISOString();
-    const out = { __ts: iso };
-    const nanos = value.nanoseconds % 1000000;
-    if (nanos) out.__nanos = nanos;
+    let seconds = Number(value.seconds);
+    let nanoseconds = Number(value.nanoseconds);
+    if (!Number.isInteger(seconds) || !Number.isInteger(nanoseconds)) {
+      throw new Error('Timestamp עם seconds/nanoseconds לא שלמים');
+    }
+    if (nanoseconds >= 1000000000 || nanoseconds < 0) {
+      seconds += Math.floor(nanoseconds / 1000000000);
+      nanoseconds = ((nanoseconds % 1000000000) + 1000000000) % 1000000000;
+    }
+    const ms = seconds * 1000 + Math.floor(nanoseconds / 1000000);
+    const out = { __ts: new Date(ms).toISOString() };
+    const subMs = nanoseconds % 1000000;
+    if (subMs) out.__nanos = subMs;
     return out;
   }
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) return { __bytes: Buffer.from(value).toString('base64') };
@@ -193,9 +218,18 @@ export function decodeValue(value, types) {
     const date = new Date(value.__ts);
     if (!Number.isFinite(date.getTime())) throw new Error('חותמת זמן לא תקינה בתמונת-המצב');
     if (!types || !types.Timestamp) return date;
+    const extra = value.__nanos === undefined || value.__nanos === null ? 0 : Number(value.__nanos);
+    if (!Number.isInteger(extra) || extra < 0 || extra >= 1000000) {
+      throw new Error('__nanos מחוץ לתחום [0, 1e6)');
+    }
     const ts = types.Timestamp.fromDate(date);
-    if (value.__nanos) return new types.Timestamp(ts.seconds, ts.nanoseconds + value.__nanos);
-    return ts;
+    let seconds = ts.seconds;
+    let nanoseconds = ts.nanoseconds + extra;
+    if (nanoseconds >= 1000000000) {
+      seconds += Math.floor(nanoseconds / 1000000000);
+      nanoseconds = nanoseconds % 1000000000;
+    }
+    return new types.Timestamp(seconds, nanoseconds);
   }
   if (keys.length === 1 && keys[0] === '__geo' && value.__geo && typeof value.__geo === 'object') {
     if (!types || !types.GeoPoint) return { latitude: value.__geo.lat, longitude: value.__geo.lng };
@@ -328,21 +362,23 @@ export function parseArgs(argv) {
       default: throw new Error('פרמטר לא מוכר: ' + key);
     }
   }
+  if (seen.has('--dry-run') && seen.has('--execute')) throw new Error('--dry-run ו---execute סותרים זה את זה');
   if (command === 'backup') {
-    if (!PROJECT_ID.test(out.source)) throw new Error('backup דורש ‎--source עם מזהה פרויקט תקין');
-    out.dryRun = seen.has('--dry-run');
+    if (!PROJECT_ID.test(out.source)) throw new Error('backup דורש --source עם מזהה פרויקט תקין');
+    // ברירת מחדל: dry-run. ריצה אמיתית רק עם --execute מפורש.
+    if (out.execute) out.dryRun = false;
+    else out.dryRun = true;
   } else {
-    if (!out.set) throw new Error(command + ' דורש ‎--set <dir>');
+    if (!out.set) throw new Error(command + ' דורש --set <dir>');
   }
   if (command === 'plan' || command === 'restore') {
-    if (!PROJECT_ID.test(out.target)) throw new Error(command + ' דורש ‎--target עם מזהה פרויקט תקין');
+    if (!PROJECT_ID.test(out.target)) throw new Error(command + ' דורש --target עם מזהה פרויקט תקין');
   }
   if (command === 'restore') {
-    if (seen.has('--dry-run') && seen.has('--execute')) throw new Error('‎--dry-run ו-‎--execute סותרים זה את זה');
-    if (seen.has('--confirm-target') && !seen.has('--execute')) throw new Error('‎--confirm-target תקף רק עם ‎--execute');
+    if (seen.has('--confirm-target') && !seen.has('--execute')) throw new Error('--confirm-target תקף רק עם --execute');
     if (out.execute) {
-      if (!seen.has('--confirm-target')) throw new Error('‎--execute דורש ‎--confirm-target <project> זהה ל-‎--target');
-      if (out.confirmTarget !== out.target) throw new Error('‎--confirm-target אינו זהה ל-‎--target — הביצוע נדחה');
+      if (!seen.has('--confirm-target')) throw new Error('--execute דורש --confirm-target <project> זהה ל---target');
+      if (out.confirmTarget !== out.target) throw new Error('--confirm-target אינו זהה ל---target — הביצוע נדחה');
       out.dryRun = false;
     } else {
       out.dryRun = true;
@@ -363,6 +399,25 @@ export function refuseTarget(target, sourceProject, options = {}) {
   if (sourceProject && sourceProject === target) {
     throw new Error('מקור התמונה ויעד השחזור חייבים להיות שונים (' + target + ')');
   }
+}
+
+/** חוסם מקור ייצור לגיבוי אמיתי אלא אם אושר במפורש בסביבה. */
+export function refuseBackupSource(source, options = {}) {
+  const env = options.env || process.env;
+  if (!denyTargets(options).has(source)) return;
+  if (options.allowProdSource === true) return;
+  if (String(env.RESQ_BACKUP_ALLOW_PROD_SOURCE || '') === '1') return;
+  throw new Error('סירוב: ' + source + ' אינו מקור גיבוי לבדיקות/אוטומציה — הגדר RESQ_BACKUP_ALLOW_PROD_SOURCE=1 לריצה ידנית מאושרת בלבד');
+}
+
+/** דפדוף בטוח: page token לא מוכר → כשל ברור, לא חזרה לתחילת הרשימה. */
+export function resolvePageStart(sortedPaths, pageToken) {
+  if (!pageToken) return 0;
+  const idx = sortedPaths.indexOf(pageToken);
+  if (idx < 0) {
+    throw new Error('page token לא מוכר — הדפדוף נעצר (לא מתחיל מחדש): ' + pageToken);
+  }
+  return idx + 1;
 }
 
 /** גבול הקומיט האטומי של Firestore (batch/transaction). קבוצת זהות
@@ -428,6 +483,7 @@ export function renderSnapshotManifest(m) {
     'נוצר: ' + m.created_at,
     'Commit: ' + (m.head || 'לא זמין'),
     'טביעת מדיניות: ' + m.policy_digest,
+    'חותם: ' + (m.sealed ? ('כן · ' + (m.sealed_file || 'documents.jsonl.enc') + ' · enc SHA-256: ' + (m.documents && m.documents.enc_sha256 || '')) : 'לא'),
     'מסמכים: ' + m.documents.count + ' · בייטים: ' + m.documents.bytes + ' · SHA-256: ' + m.documents.sha256,
     'קבוצת זהות: ' + m.identity_group.count + ' מסמכים · SHA-256: ' + m.identity_group.sha256,
     '',
@@ -482,10 +538,14 @@ export async function runBackup(args, options = {}) {
   const out = privateBackupDir(root, args.out);
   const policy = loadPolicy(options);
   if (args.dryRun) {
-    return { dryRun: true, source: args.source, destination: out, network: 'not contacted', writes: 'none', sdk: 'not loaded' };
+    return { dryRun: true, source: args.source, destination: out, network: 'not contacted', writes: 'none', sdk: 'not loaded', sealed: false };
   }
+  refuseBackupSource(args.source, options);
   const api = options.firestoreApi;
   if (!api) throw new Error('backup אמיתי דורש firestoreApi (נטען בעצלנות ב-CLI בלבד)');
+  const env = options.env || process.env;
+  const sealPassphrase = options.sealPassphrase !== undefined ? options.sealPassphrase : env[SEAL_PASSPHRASE_ENV];
+  requireSealPassphrase(sealPassphrase);
   const now = options.now ? options.now : () => new Date();
   const created = now().toISOString();
   const id = 'resq-fs-' + created.replace(/[-:.]/g, '') + '-' + randomBytes(8).toString('hex');
@@ -527,29 +587,44 @@ export async function runBackup(args, options = {}) {
       entry.count++; included.set(cls.template, entry);
       if (cls.action === 'identity') identityHashes.push(sha256);
     });
+    if (unclassified.size) {
+      const names = [...unclassified.keys()].sort().join(', ');
+      throw new Error('גיבוי נחסם (fail-closed): נתיבים/אוספים ללא סיווג במדיניות: ' + names);
+    }
     const jsonl = lines.length ? lines.join('\n') + '\n' : '';
-    durable(path.join(stage, 'documents.jsonl'), jsonl);
+    durable(path.join(stage, PLAIN_FILE_NAME), jsonl);
     const bytes = Buffer.byteLength(jsonl, 'utf8');
+    const plainSha = sha256Hex(jsonl);
+    const sealMeta = sealDocumentsFile(stage, sealPassphrase);
     const manifest = {
       schema: SNAPSHOT_SCHEMA,
       state: 'complete',
+      sealed: true,
+      sealed_file: SEALED_FILE_NAME,
+      seal_schema: sealMeta.seal_schema,
       id,
       source_project: args.source,
       created_at: created,
       head: gitHead(root),
       policy_digest: policyDigest(policy),
-      documents: { count: lines.length, bytes, sha256: sha256Hex(jsonl) },
+      documents: {
+        count: lines.length,
+        bytes,
+        sha256: plainSha,
+        enc_bytes: sealMeta.enc_bytes,
+        enc_sha256: sealMeta.enc_sha256
+      },
       identity_group: { count: identityHashes.length, sha256: sha256Hex(identityHashes.sort().join('\n')) },
       paths_included: [...included.values()].sort((a, b) => a.template.localeCompare(b.template)),
       paths_excluded: [...excluded.values()].sort((a, b) => a.template.localeCompare(b.template)),
-      paths_unclassified: [...unclassified.values()].sort((a, b) => a.collection.localeCompare(b.collection))
+      paths_unclassified: []
     };
     durable(path.join(stage, 'snapshot-manifest.md'), renderSnapshotManifest(manifest));
     durable(path.join(stage, 'snapshot-manifest.json'), JSON.stringify(manifest, null, 2));
     fs.renameSync(stage, destination);
-    const verified = verifySet(destination, options);
+    const verified = verifySet(destination, Object.assign({}, options, { sealPassphrase }));
     if (!verified.ok) throw new Error('תמונת-המצב שנכתבה נכשלה באימות: ' + verified.errors.join('; '));
-    return { id, destination, documents: lines.length, excluded: manifest.paths_excluded.reduce((s, p) => s + p.count, 0), unclassified: manifest.paths_unclassified.reduce((s, p) => s + p.count, 0) };
+    return { id, destination, documents: lines.length, sealed: true, excluded: manifest.paths_excluded.reduce((sum, p) => sum + p.count, 0), unclassified: 0 };
   } finally {
     fs.closeSync(lockFd);
     fs.unlinkSync(lock);
@@ -560,27 +635,71 @@ export async function runBackup(args, options = {}) {
 //  שלב 2 · verify — כל מסמך, כל ספירה, כל טביעה
 // ----------------------------------------------------------------------
 
-export function readSet(setDir) {
+export function readSet(setDir, options = {}) {
   const dir = path.resolve(setDir);
   const manifestPath = path.join(dir, 'snapshot-manifest.json');
   if (!fs.existsSync(manifestPath)) throw new Error('snapshot-manifest.json חסר ב-' + dir);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const jsonl = fs.readFileSync(path.join(dir, 'documents.jsonl'), 'utf8');
-  const documents = jsonl ? jsonl.split('\n').filter((line) => line.length).map((line) => JSON.parse(line)) : [];
-  return { dir, manifest, jsonl, documents };
+  let jsonl;
+  let tempCleanup = null;
+  if (manifest.sealed) {
+    const env = options.env || process.env;
+    const passphrase = options.sealPassphrase !== undefined ? options.sealPassphrase : env[SEAL_PASSPHRASE_ENV];
+    requireSealPassphrase(passphrase);
+    const opened = unsealDocumentsToTemp(dir, passphrase);
+    tempCleanup = () => cleanupUnsealTemp(opened.tempDir, opened.tempFile);
+    try {
+      jsonl = fs.readFileSync(opened.tempFile, 'utf8');
+    } catch (error) {
+      tempCleanup();
+      throw error;
+    }
+  } else {
+    jsonl = fs.readFileSync(path.join(dir, PLAIN_FILE_NAME), 'utf8');
+  }
+  try {
+    const documents = jsonl ? jsonl.split('\n').filter((line) => line.length).map((line) => JSON.parse(line)) : [];
+    return { dir, manifest, jsonl, documents, _tempCleanup: tempCleanup };
+  } catch (error) {
+    if (tempCleanup) tempCleanup();
+    throw error;
+  }
 }
 
 export function verifySet(setDir, options = {}) {
   const errors = [];
-  let set;
-  try { set = readSet(setDir); }
-  catch (error) { return { ok: false, errors: ['לא ניתן לקרוא את הסט: ' + error.message] }; }
-  const { manifest, jsonl, documents, dir } = set;
+  const dir = path.resolve(setDir);
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(dir, 'snapshot-manifest.json'), 'utf8'));
+  } catch (error) {
+    return { ok: false, errors: ['לא ניתן לקרוא את הסט: ' + error.message] };
+  }
   if (manifest.schema !== SNAPSHOT_SCHEMA) errors.push('סכימה לא נתמכת: ' + manifest.schema);
   if (manifest.state !== 'complete') errors.push('state אינו complete');
   if (!SET.test(String(manifest.id)) || path.basename(dir) !== manifest.id) errors.push('מזהה הסט אינו תואם לשם התיקייה');
   if (!PROJECT_ID.test(String(manifest.source_project))) errors.push('source_project לא תקין');
   if (!Number.isFinite(Date.parse(manifest.created_at))) errors.push('created_at לא תקין');
+
+  // Sealed snapshots: always verify enc checksum/size without exposing content.
+  if (manifest.sealed) {
+    const sealedCheck = verifySealedFile(dir, manifest.documents);
+    if (!sealedCheck.ok) errors.push(...sealedCheck.errors);
+  }
+
+  const env = options.env || process.env;
+  const passphrase = options.sealPassphrase !== undefined ? options.sealPassphrase : env[SEAL_PASSPHRASE_ENV];
+  const canDecrypt = !manifest.sealed || (passphrase && String(passphrase).length >= 20);
+  if (!canDecrypt) {
+    // Enc-only verification path (no passphrase): document-level checks deferred.
+    return { ok: !errors.length, errors, set: manifest.id, documents: manifest.documents && manifest.documents.count, source_project: manifest.source_project, created_at: manifest.created_at, sealed: true, content_verified: false };
+  }
+
+  let set;
+  try { set = readSet(setDir, options); }
+  catch (error) { return { ok: false, errors: errors.concat(['לא ניתן לקרוא את הסט: ' + error.message]) }; }
+  const { jsonl, documents } = set;
+  try {
   if (!manifest.documents || manifest.documents.count !== documents.length) errors.push('ספירת המסמכים אינה תואמת למניפסט');
   if (!manifest.documents || manifest.documents.bytes !== Buffer.byteLength(jsonl, 'utf8')) errors.push('גודל documents.jsonl אינו תואם למניפסט');
   if (!manifest.documents || manifest.documents.sha256 !== sha256Hex(jsonl)) errors.push('SHA-256 של documents.jsonl אינו תואם למניפסט');
@@ -605,7 +724,10 @@ export function verifySet(setDir, options = {}) {
   if (!manifest.identity_group || manifest.identity_group.count !== identityHashes.length || manifest.identity_group.sha256 !== identityDigest) {
     errors.push('קבוצת הזהות אינה שלמה או אינה תואמת למניפסט');
   }
-  return { ok: !errors.length, errors, set: manifest.id, documents: documents.length, source_project: manifest.source_project, created_at: manifest.created_at };
+  return { ok: !errors.length, errors, set: manifest.id, documents: documents.length, source_project: manifest.source_project, created_at: manifest.created_at, sealed: !!manifest.sealed, content_verified: true };
+  } finally {
+    if (set && typeof set._tempCleanup === 'function') set._tempCleanup();
+  }
 }
 
 // ----------------------------------------------------------------------
@@ -746,7 +868,10 @@ export async function runRestore(args, options = {}) {
   const env = options.env || process.env;
   const now = options.now ? options.now : () => new Date();
   const startedAt = now();
-  const set = readSet(args.set);
+  let set;
+  try { set = readSet(args.set, options); }
+  catch (error) { throw new Error('הסט נכשל באימות לפני שחזור: ' + error.message); }
+  try {
   // סירובים לפני כל דבר אחר — גם לפני אימות הסט.
   refuseTarget(args.target, set.manifest.source_project, options);
   const mode = args.dryRun ? 'dry-run' : 'execute';
@@ -899,6 +1024,9 @@ export async function runRestore(args, options = {}) {
     }
   }
   return finishRun(report, plan, runDir, startedAt, now, env, false);
+  } finally {
+    if (set && typeof set._tempCleanup === 'function') set._tempCleanup();
+  }
 }
 
 function finishRun(report, plan, runDir, startedAt, now, env, aborted) {
@@ -942,7 +1070,7 @@ function finishRun(report, plan, runDir, startedAt, now, env, aborted) {
 
 export function runReport(args, options = {}) {
   const env = options.env || process.env;
-  const set = readSet(args.set);
+  const set = readSet(args.set, options);
   const runsDir = path.join(set.dir, RUNS_DIR);
   if (!fs.existsSync(runsDir)) return { set: set.manifest.id, runs: [] };
   const runs = fs.readdirSync(runsDir).filter((name) => /^run-\d{8}T\d{9}Z-[a-f0-9]{8}$/.test(name)).sort();
@@ -972,15 +1100,22 @@ async function loadAdminApi(projectId, options = {}) {
   const db = admin.firestore();
   const types = { Timestamp: admin.firestore.Timestamp, GeoPoint: admin.firestore.GeoPoint, Bytes: admin.firestore.Bytes, doc: (p) => db.doc(p) };
   const PAGE = 300;
-  return {
+  const api = {
     async listCollectionPaths(parent) {
       const collections = parent ? await db.doc(parent).listCollections() : await db.listCollections();
       return collections.map((c) => c.path);
     },
     async listDocuments(collectionPath, pageToken) {
       // listDocuments (ולא שאילתה) כדי לכלול גם מסמכי אב חסרים שיש להם תת-אוספים.
-      const refs = (await db.collection(collectionPath).listDocuments()).sort((a, b) => a.path.localeCompare(b.path));
-      const start = pageToken ? refs.findIndex((r) => r.path === pageToken) + 1 : 0;
+      // מטמון לפי אוסף: מונע סריקה חוזרת N² בכל עמוד.
+      if (!api._refsCache) api._refsCache = new Map();
+      let refs = api._refsCache.get(collectionPath);
+      if (!refs) {
+        refs = (await db.collection(collectionPath).listDocuments()).sort((a, b) => a.path.localeCompare(b.path));
+        api._refsCache.set(collectionPath, refs);
+      }
+      const paths = refs.map((r) => r.path);
+      const start = resolvePageStart(paths, pageToken);
       const page = refs.slice(start, start + PAGE);
       const snaps = page.length ? await db.getAll(...page) : [];
       const documents = snaps.map((d) => ({ path: d.ref.path, data: d.exists ? encodeValue(d.data()) : null }));
@@ -1004,6 +1139,7 @@ async function loadAdminApi(projectId, options = {}) {
       await batch.commit();
     }
   };
+  return api;
 }
 
 // ----------------------------------------------------------------------
@@ -1015,6 +1151,7 @@ async function main() {
   switch (args.command) {
     case 'backup': {
       if (args.dryRun) { console.log(JSON.stringify(await runBackup(args))); return; }
+      refuseBackupSource(args.source);
       const firestoreApi = await loadAdminApi(args.source);
       console.log(JSON.stringify(await runBackup(args, { firestoreApi })));
       return;

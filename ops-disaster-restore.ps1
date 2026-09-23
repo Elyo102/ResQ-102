@@ -26,10 +26,10 @@ $node = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $node) { throw 'node לא נמצא במסלול' }
 
 if ($DryRun -and $Execute) { throw '-DryRun ו--Execute סותרים זה את זה' }
-if ($Execute -and $Command -ne 'restore') { throw '-Execute תקף רק לפקודה restore' }
+if ($Execute -and $Command -ne 'restore' -and $Command -ne 'backup') { throw '-Execute תקף רק לפקודות backup או restore' }
 if ($ConfirmTarget -ne '' -and -not $Execute) { throw '-ConfirmTarget תקף רק עם -Execute' }
-if ($Execute) {
-  if ($ConfirmTarget -eq '') { throw '-Execute דורש -ConfirmTarget זהה ל--Target' }
+if ($Execute -and $Command -eq 'restore') {
+  if ($ConfirmTarget -eq '') { throw '-Execute (restore) דורש -ConfirmTarget זהה ל--Target' }
   if ($ConfirmTarget -cne $Target) { throw '-ConfirmTarget אינו זהה ל--Target - הביצוע נדחה' }
 }
 
@@ -39,7 +39,9 @@ switch ($Command) {
     if ($Source -eq '') { throw 'backup דורש -Source <project>' }
     $nodeArgs += @('--source', $Source)
     if ($Out -ne '') { $nodeArgs += @('--out', $Out) }
-    if ($DryRun) { $nodeArgs += '--dry-run' }
+    if ($Execute) { $nodeArgs += '--execute' }
+    elseif ($DryRun) { $nodeArgs += '--dry-run' }
+    # ברירת מחדל ב-Node: dry-run. -Execute בלבד מפעיל גיבוי אמיתי + חותם.
   }
   'verify' {
     if ($Set -eq '') { throw 'verify דורש -Set <dir>' }

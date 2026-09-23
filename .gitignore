@@ -96,3 +96,15 @@ apps/mobile/**/GoogleService-Info.plist
 apps/mobile/android/app/build/
 apps/mobile/ios/App/Pods/
 apps/mobile/**/node_modules/
+
+# Firestore sealed snapshots and seal/decrypt temp artifacts (Packages 2–3)
+resq-fs-*/
+**/documents.jsonl
+**/documents.jsonl.enc
+**/documents.jsonl.dec
+**/.resq-seal-*/
+**/.stage-resq-fs-*/
+# Proposed Storage backup destinations (Package 5; keep private if created early)
+_גיבוי-storage/
+**/resq-storage-backup-*/
+**/*-decrypted-*/

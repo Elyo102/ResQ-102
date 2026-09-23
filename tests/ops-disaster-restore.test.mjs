@@ -17,6 +17,7 @@ import { normalizeEol, eolProblems } from './eol-guard.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.resolve(here, '..', 'ops-disaster-restore.mjs');
+const sealPath = path.resolve(here, '..', 'ops-backup-seal.mjs');
 // backup-policy.js נטען מהמאגר: RESQ_REPO_ROOT, אחרת שורש המאגר שמעל tests/,
 // אחרת עותק הקריאה ב-/tmp/resq-join (סביבת הפיתוח של החבילה).
 const policyRoot = [process.env.RESQ_REPO_ROOT, path.resolve(here, '..'), '/tmp/resq-join']
@@ -59,7 +60,7 @@ function createFakeApi(seed = {}) {
       const depth = collectionPath.split('/').length + 1;
       // כמו Firestore listDocuments: כולל מסמכי אב חסרים (data: null) שיש להם תת-אוספים
       const all = [...new Set([...store.keys()].filter((p) => p.startsWith(collectionPath + '/') && p.split('/').length >= depth).map((p) => p.split('/').slice(0, depth).join('/')))].sort();
-      const start = pageToken ? all.indexOf(pageToken) + 1 : 0;
+      const start = dr.resolvePageStart(all, pageToken);
       const page = all.slice(start, start + 2); // עמודים קטנים בכוונה כדי לבדוק דפדוף
       return { documents: page.map((p) => ({ path: p, data: store.has(p) ? store.get(p) : null })), nextPageToken: start + 2 < all.length ? page[page.length - 1] : null };
     },
@@ -131,12 +132,10 @@ const seed = {
   [S + '/documents/d1']: { name: 'doc' },
   [S + '/faults/f1']: { open: true },
   [S + '/faults/f1/photos/p1']: { url: 'x' },
-  // unclassified
-  'mystery_collection/z1': { z: 1 },
   // קנרית ישנה במקור — לעולם אינה מועתקת
   '_resq_restore_canary/run-old': { run_id: 'old' }
 };
-const EXCLUDED = [S + '/push_tokens/u1', S + '/guard_outbox/o1', S + '/device_readiness/u1', 'hr_request_actor_quotas/q1', S + '/hr_nudge_actions/a1', 'login_attempts/1001', S + '/incidents/abc', 'directory/u1', S + '/health/2026-09-01', 'mystery_collection/z1', '_resq_restore_canary/run-old'];
+const EXCLUDED = [S + '/push_tokens/u1', S + '/guard_outbox/o1', S + '/device_readiness/u1', 'hr_request_actor_quotas/q1', S + '/hr_nudge_actions/a1', 'login_attempts/1001', S + '/incidents/abc', 'directory/u1', S + '/health/2026-09-01', '_resq_restore_canary/run-old'];
 const MANUAL = [S + '/signatures/u1', S + '/documents/d1', S + '/faults/f1/photos/p1'];
 const IDENTITY = ['emp_index/1001', 'registration_requests/u2', 'meta/counters', S + '/users/u1', S + '/roster/u1'];
 const RESTORABLE = [S, S + '/config/hrConfig', 'config/mode', 'config/other', S + '/shifts/crew_a', S + '/callouts/co1', S + '/callouts/co1/responses/u1', S + '/shifts/crew_a/days/2026-09-01', 'join_campaigns/camp1', 'join_campaigns/camp1/registrants/u9', S + '/faults/f1'];
@@ -146,8 +145,10 @@ const fixedNow = () => new Date('2026-09-18T10:00:00.000Z');
 /* מפתח חתימה תקף לבדיקות. שחזור שבוצע חייב חתימה, ולכן כל ריצת
  * execute כאן נושאת מפתח; המקרים חסרי-המפתח נבדקים במפורש ודורשים כשל. */
 const TEST_SIGNING_KEY = 'test-signing-key-'.padEnd(48, 'x');
-const envWith = (extra) => Object.assign({ RESQ_RESTORE_TARGET_ALLOWLIST: '', RESQ_RESTORE_SIGNING_KEY: TEST_SIGNING_KEY }, extra);
-const backupArgs = dr.parseArgs(['backup', '--source', 'station-102']);
+const TEST_SEAL_PASSPHRASE = 'test-seal-passphrase-'.padEnd(32, 'y');
+const envWith = (extra) => Object.assign({ RESQ_RESTORE_TARGET_ALLOWLIST: '', RESQ_RESTORE_SIGNING_KEY: TEST_SIGNING_KEY, RESQ_BACKUP_SEAL_PASSPHRASE: TEST_SEAL_PASSPHRASE }, extra);
+const backupArgs = dr.parseArgs(['backup', '--source', 'station-102', '--execute']);
+const backupOpts = (extra = {}) => Object.assign({ root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, allowProdSource: true, env: envWith({}) }, extra);
 let setDir;
 
 try {
@@ -203,8 +204,10 @@ try {
     assert.throws(() => dr.parseArgs(['backup']), /--source/);
     assert.throws(() => dr.parseArgs(['backup', '--source', 'demo-resq', '--source', 'demo-resq']), /כפול/);
     assert.throws(() => dr.parseArgs(['verify', '--set', 'x', '--target', 'y']), /לא מוכר/);
-    assert.equal(dr.parseArgs(['backup', '--source', 'demo-resq']).dryRun, false);
+    assert.equal(dr.parseArgs(['backup', '--source', 'demo-resq']).dryRun, true);
     assert.equal(dr.parseArgs(['backup', '--source', 'demo-resq', '--dry-run']).dryRun, true);
+    assert.equal(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']).dryRun, false);
+    assert.throws(() => dr.parseArgs(['backup', '--source', 'demo-resq', '--dry-run', '--execute']), /סותרים/);
     const restore = dr.parseArgs(['restore', '--set', 'x', '--target', 'demo-resq']);
     assert.equal(restore.dryRun, true); assert.equal(restore.execute, false);
     assert.throws(() => dr.parseArgs(['restore', '--set', 'x', '--target', 'demo-resq', '--execute']), /confirm-target/);
@@ -218,19 +221,22 @@ try {
     const result = await dr.runBackup(dr.parseArgs(['backup', '--source', 'station-102', '--dry-run']), { root: fixture });
     assert.equal(result.dryRun, true); assert.equal(result.sdk, 'not loaded');
     assert.equal(fs.existsSync(path.join(fixture, '_גיבוי')), false);
-    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--out', '_ניטור']), { root: fixture, firestoreApi: createFakeApi() }), /לא בטוח/);
-    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--out', '..']), { root: fixture, firestoreApi: createFakeApi() }), /שורש|לא בטוח/);
-    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq']), { root: fixture }), /firestoreApi/);
+    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute', '--out', '_ניטור']), { root: fixture, firestoreApi: createFakeApi(), sealPassphrase: TEST_SEAL_PASSPHRASE }), /לא בטוח/);
+    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute', '--out', '..']), { root: fixture, firestoreApi: createFakeApi(), sealPassphrase: TEST_SEAL_PASSPHRASE }), /שורש|לא בטוח/);
+    await assert.rejects(dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']), { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE }), /firestoreApi/);
     assert.equal(fs.existsSync(path.join(fixture, '_גיבוי')), false);
   });
 
   await check('backup writes a verified snapshot set; excluded classes are counted, never stored', async () => {
     const api = createFakeApi(seed);
-    const result = await dr.runBackup(backupArgs, { root: fixture, firestoreApi: api, now: fixedNow });
+    const result = await dr.runBackup(backupArgs, backupOpts({ firestoreApi: api, now: fixedNow }));
     setDir = result.destination;
+    assert.equal(result.sealed, true);
+    assert.equal(fs.existsSync(path.join(setDir, 'documents.jsonl')), false);
+    assert.equal(fs.existsSync(path.join(setDir, 'documents.jsonl.enc')), true);
     assert.match(path.basename(setDir), dr.SET);
     assert.equal(api.calls.create, 0);
-    const set = dr.readSet(setDir);
+    const set = dr.readSet(setDir, backupOpts());
     assert.equal(set.manifest.schema, 'resq-firestore-snapshot-v1');
     assert.equal(set.manifest.state, 'complete');
     assert.equal(set.manifest.source_project, 'station-102');
@@ -241,29 +247,33 @@ try {
     for (const p of [...RESTORABLE, ...IDENTITY, ...MANUAL, ORPHAN]) assert.ok(stored.includes(p), 'must be stored: ' + p);
     assert.equal(stored.includes('join_campaigns/orphan'), false, 'a missing parent document is never invented');
     assert.equal(stored.length, RESTORABLE.length + IDENTITY.length + MANUAL.length + 1);
-    assert.equal(fs.readFileSync(path.join(setDir, 'documents.jsonl'), 'utf8').includes('SECRET-TOKEN'), false);
+    assert.equal(fs.readFileSync(path.join(setDir, 'documents.jsonl.enc'), 'utf8').includes('SECRET-TOKEN'), false);
     const excludedCount = set.manifest.paths_excluded.reduce((s, p) => s + p.count, 0);
-    assert.equal(excludedCount, EXCLUDED.length - 1); // mystery_collection is unclassified, not excluded
-    assert.equal(set.manifest.paths_unclassified.length, 1);
+    assert.equal(excludedCount, EXCLUDED.length);
+    assert.equal(set.manifest.paths_unclassified.length, 0);
+    assert.equal(set.manifest.sealed, true);
     assert.equal(set.manifest.identity_group.count, IDENTITY.length);
     for (const d of set.documents) assert.equal(d.sha256, dr.documentHash(d.data));
     assert.ok(fs.existsSync(path.join(setDir, 'snapshot-manifest.md')));
     assert.equal(fs.existsSync(path.join(fixture, '_גיבוי', '.resq-fs-backup.lock')), false);
-    const verification = dr.verifySet(setDir, { root: fixture });
+    const verification = dr.verifySet(setDir, backupOpts());
     assert.deepEqual(verification.errors, []); assert.equal(verification.ok, true);
+    assert.equal(verification.content_verified, true);
+    const encOnly = dr.verifySet(setDir, { root: fixture, sealPassphrase: '' });
+    assert.equal(encOnly.ok, true); assert.equal(encOnly.content_verified, false);
   });
 
-  await check('tampered documents.jsonl / manifest fails verify and blocks restore before any write', async () => {
-    const file = path.join(setDir, 'documents.jsonl');
-    const original = fs.readFileSync(file, 'utf8');
+  await check('tampered documents.jsonl.enc / manifest fails verify and blocks restore before any write', async () => {
+    const file = path.join(setDir, 'documents.jsonl.enc');
+    const original = fs.readFileSync(file);
     try {
-      fs.writeFileSync(file, original.replace('"next_emp":1002', '"next_emp":9999'));
-      const v = dr.verifySet(setDir, { root: fixture });
+      fs.writeFileSync(file, Buffer.concat([original, Buffer.from('TAMPER')]));
+      const v = dr.verifySet(setDir, backupOpts());
       assert.equal(v.ok, false);
-      assert.ok(v.errors.some((e) => /SHA-256 של המסמך/.test(e)) && v.errors.some((e) => /documents\.jsonl/.test(e)));
+      assert.ok(v.errors.some((e) => /enc_sha256|enc_bytes|JSON תקין|חותם/.test(e)));
       const api = createFakeApi();
       await assert.rejects(dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-        { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /נכשל באימות/);
+        { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /נכשל באימות|לא ניתן לקרוא|auth|decipher|חותם|enc_|SyntaxError|JSON|Unexpected/i);
       assert.equal(api.calls.create, 0);
     } finally { fs.writeFileSync(file, original); }
     const manifestFile = path.join(setDir, 'snapshot-manifest.json');
@@ -271,15 +281,15 @@ try {
     try {
       const m = JSON.parse(manifestOriginal); m.documents.count += 1; m.identity_group.count -= 1;
       fs.writeFileSync(manifestFile, JSON.stringify(m));
-      const v = dr.verifySet(setDir, { root: fixture });
+      const v = dr.verifySet(setDir, backupOpts());
       assert.equal(v.ok, false);
       assert.ok(v.errors.some((e) => /ספירת המסמכים/.test(e)) && v.errors.some((e) => /קבוצת הזהות/.test(e)));
     } finally { fs.writeFileSync(manifestFile, manifestOriginal); }
-    assert.equal(dr.verifySet(setDir, { root: fixture }).ok, true);
+    assert.equal(dr.verifySet(setDir, backupOpts()).ok, true);
   });
 
   await check('plan excludes every exclude/rebuild/do_not_restore path, lists specialized as manual_required, orders after_parent after parent', async () => {
-    const set = dr.readSet(setDir);
+    const set = dr.readSet(setDir, backupOpts());
     const plan = dr.buildPlan(set, 'demo-resq', { root: fixture, now: () => new Date('2026-09-18T10:05:00.000Z') });
     const planned = plan.write_order.map((d) => d.path);
     for (const p of EXCLUDED) assert.equal(planned.includes(p), false, p);
@@ -303,16 +313,16 @@ try {
     const api = createFakeApi();
     // סט שמקורו demo-resq
     const api2 = createFakeApi({ 'config/mode': { mode: 'x' } });
-    const other = await dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq']), { root: fixture, firestoreApi: api2, now: fixedNow });
-    await assert.rejects(dr.runRestore(dr.parseArgs(['restore', '--set', other.destination, '--target', 'demo-resq']), { root: fixture, firestoreApi: api, env: envWith({}) }), /חייבים להיות שונים/);
+    const other = await dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']), backupOpts({ firestoreApi: api2, now: fixedNow }));
+    await assert.rejects(dr.runRestore(dr.parseArgs(['restore', '--set', other.destination, '--target', 'demo-resq']), { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({}) }), /חייבים להיות שונים/);
     assert.equal(api.calls.create, 0);
   });
 
   await check('production target station-102 is refused even with --execute --confirm-target and allowlist', async () => {
     const api = createFakeApi();
-    const set2 = (await dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq']), { root: fixture, firestoreApi: createFakeApi({ 'config/mode': { mode: 'x' } }), now: fixedNow })).destination;
+    const set2 = (await dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']), backupOpts({ firestoreApi: createFakeApi({ 'config/mode': { mode: 'x' } }), now: fixedNow }))).destination;
     for (const argv of [['restore', '--set', set2, '--target', 'station-102'], ['restore', '--set', set2, '--target', 'station-102', '--execute', '--confirm-target', 'station-102']]) {
-      await assert.rejects(dr.runRestore(dr.parseArgs(argv), { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'station-102,demo-resq' }) }), /סירוב קשיח/);
+      await assert.rejects(dr.runRestore(dr.parseArgs(argv), { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'station-102,demo-resq' }) }), /סירוב קשיח/);
     }
     assert.equal(api.calls.create, 0);
     // גם מזהה שמגיע מ-.firebaserc בלבד (לא מהרשימה הקשיחה)
@@ -330,17 +340,17 @@ try {
     assert.throws(() => dr.parseArgs([...base, '--execute']), /confirm-target/);
     assert.throws(() => dr.parseArgs([...base, '--execute', '--confirm-target', 'demo-resq-x']), /אינו זהה/);
     const args = dr.parseArgs([...base, '--execute', '--confirm-target', 'demo-resq']);
-    await assert.rejects(dr.runRestore(Object.assign({}, args, { confirmTarget: 'demo-resq-x' }), { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /confirm-target/);
-    await assert.rejects(dr.runRestore(args, { root: fixture, firestoreApi: api, env: envWith({}) }), /ALLOWLIST.*חסר/);
-    await assert.rejects(dr.runRestore(args, { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'other-project' }) }), /אינו מופיע/);
-    await assert.rejects(dr.runRestore(args, { root: fixture, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /firestoreApi/);
+    await assert.rejects(dr.runRestore(Object.assign({}, args, { confirmTarget: 'demo-resq-x' }), { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /confirm-target/);
+    await assert.rejects(dr.runRestore(args, { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({}) }), /ALLOWLIST.*חסר/);
+    await assert.rejects(dr.runRestore(args, { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'other-project' }) }), /אינו מופיע/);
+    await assert.rejects(dr.runRestore(args, { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) }), /firestoreApi/);
     assert.equal(api.calls.create, 0);
   });
 
   await check('dry-run writes zero documents, needs no allowlist, produces plan + unmeasured report', async () => {
     const api = createFakeApi();
     // dry-run ללא מפתח חתימה מותר — ומסומן unsigned במפורש.
-    const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq']), { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_SIGNING_KEY: '' }), now: fixedNow });
+    const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq']), { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_SIGNING_KEY: '' }), now: fixedNow });
     assert.equal(result.mode, 'dry-run'); assert.equal(result.ok, true);
     assert.equal(api.calls.create, 0); assert.equal(api.calls.get, 0);
     assert.equal(result.summary.written, 0);
@@ -353,10 +363,10 @@ try {
     assert.equal(manifest.signature, null); assert.equal(manifest.unsigned, true);
     assert.equal(manifest.rpo_seconds, null); assert.equal(manifest.measured, false);
     // ריצת dry-run אינה שוברת את אימות הסט
-    assert.equal(dr.verifySet(setDir, { root: fixture }).ok, true);
+    assert.equal(dr.verifySet(setDir, backupOpts()).ok, true);
     // אותו dry-run עם מפתח — נחתם. החתימה אינה תלויה במצב, רק במפתח.
     const signedDry = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq']),
-      { root: fixture, firestoreApi: createFakeApi(), env: envWith({}), now: fixedNow });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: createFakeApi(), env: envWith({}), now: fixedNow });
     assert.equal(signedDry.signed, true);
     assert.equal(JSON.parse(fs.readFileSync(path.join(signedDry.run_dir, 'restore-manifest.json'), 'utf8')).unsigned, false);
   });
@@ -367,7 +377,7 @@ try {
     let tick = 0;
     const now = () => new Date(Date.parse('2026-09-18T12:00:00.000Z') + (tick++ ? 7000 : 0));
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'staging-a, demo-resq', RESQ_RESTORE_SIGNING_KEY: TEST_SIGNING_KEY }), now });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'staging-a, demo-resq', RESQ_RESTORE_SIGNING_KEY: TEST_SIGNING_KEY }), now });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.equal(result.mode, 'execute');
     assert.ok(api.createdPaths[0].startsWith('_resq_restore_canary/run-'), 'canary must be the first write');
@@ -404,7 +414,7 @@ try {
     const api = createFakeApi();
     api.readbackOverride.set('config/mode', { mode: 'corrupted-on-readback' });
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.ok, false); assert.equal(result.mismatch_after_readback, 1);
     const report = JSON.parse(fs.readFileSync(path.join(result.run_dir, 'integrity-report.json'), 'utf8'));
     assert.equal(report.mismatch_after_readback[0].path, 'config/mode');
@@ -419,7 +429,7 @@ try {
   await check('identity group is all-or-nothing: partial identity state in target skips every identity write', async () => {
     const api = createFakeApi({ 'emp_index/1001': { uid: 'someone-else' } });
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.identity_group.status, 'skipped');
     assert.match(result.identity_group.reason, /target_has_partial_identity_state:emp_index\/1001/);
     for (const p of IDENTITY) assert.equal(api.createdPaths.includes(p), false, p);
@@ -431,10 +441,10 @@ try {
   await check('identity group checksum gate: a set whose identity digest disagrees is skipped before any identity write', async () => {
     // מזייפים סט: המניפסט מצביע על טביעת קבוצת זהות אחרת — verify מזהה, ואם
     // מישהו יעקוף את verify, השער של הקבוצה עדיין עוצר.
-    const set = dr.readSet(setDir);
+    const set = dr.readSet(setDir, backupOpts());
     const forged = Object.assign({}, set, { manifest: Object.assign({}, set.manifest, { identity_group: { count: IDENTITY.length, sha256: 'f'.repeat(64) } }) });
-    assert.equal(dr.verifySet(setDir, { root: fixture }).ok, true);
-    const v = Object.assign({}, dr.verifySet(setDir, { root: fixture }));
+    assert.equal(dr.verifySet(setDir, backupOpts()).ok, true);
+    const v = Object.assign({}, dr.verifySet(setDir, backupOpts()));
     assert.ok(v.ok);
     const plan = dr.buildPlan(forged, 'demo-resq', { root: fixture });
     const digest = dr.sha256Hex(plan.identity_group.documents.map((d) => d.sha256).sort().join('\n'));
@@ -447,7 +457,7 @@ try {
     const origCreate = api.createDocument;
     api.createDocument = async (p, d) => { if (p.startsWith('_resq_restore_canary/')) throw new Error('canary refused'); return origCreate(p, d); };
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.ok, false); assert.equal(result.canary.status, 'failed');
     assert.equal(api.createdPaths.length, 0); assert.equal(result.summary.written, 0);
     assert.ok(result.errors[0].includes('הקנרית'));
@@ -457,7 +467,7 @@ try {
     const api = createFakeApi();
     api.failCreateFor.add(S + '/shifts/crew_a');
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.ok, false);
     assert.equal(result.identity_group.status, 'skipped');
     assert.match(result.identity_group.reason, /run_aborted/);
@@ -476,8 +486,8 @@ try {
   });
 
   await check('CLI: verify / plan / report / dry-run restore work end-to-end via subprocess', async () => {
-    const env = Object.assign({}, process.env, { RESQ_REPO_ROOT: fixture });
-    delete env.RESQ_RESTORE_TARGET_ALLOWLIST; delete env.RESQ_RESTORE_SIGNING_KEY;
+    const env = Object.assign({}, process.env, { RESQ_REPO_ROOT: fixture, RESQ_BACKUP_SEAL_PASSPHRASE: TEST_SEAL_PASSPHRASE });
+    delete env.RESQ_RESTORE_TARGET_ALLOWLIST; delete env.RESQ_RESTORE_SIGNING_KEY; delete env.RESQ_BACKUP_ALLOW_PROD_SOURCE;
     const run = (argv) => execFileSync(process.execPath, [scriptPath, ...argv], { encoding: 'utf8', env, timeout: 20000, windowsHide: true, stdio: 'pipe' });
     assert.equal(JSON.parse(run(['verify', '--set', setDir]).trim()).ok, true);
     const planOut = run(['plan', '--set', setDir, '--target', 'demo-resq']);
@@ -506,7 +516,7 @@ try {
       'process.argv = [process.execPath, ' + JSON.stringify(scriptPath) + ', "restore", "--set", ' + JSON.stringify(setDir) + ', "--target", "demo-resq"];',
       'await import(' + JSON.stringify(pathToFileURL(scriptPath).href) + ');'
     ].join('\n');
-    const env = Object.assign({}, process.env, { RESQ_REPO_ROOT: fixture });
+    const env = Object.assign({}, process.env, { RESQ_REPO_ROOT: fixture, RESQ_BACKUP_SEAL_PASSPHRASE: TEST_SEAL_PASSPHRASE });
     const output = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8', env, timeout: 20000, windowsHide: true });
     const result = JSON.parse(output.trim());
     assert.equal(result.mode, 'dry-run'); assert.equal(result.summary.written, 0); assert.equal(result.measured, false);
@@ -547,7 +557,7 @@ try {
   });
 
   await check('no lone CR or control characters in the delivered sources (CRLF tolerated)', async () => {
-    for (const name of ['ops-disaster-restore.mjs', 'ops-disaster-restore.ps1', 'DISASTER-RECOVERY-RUNBOOK.md', 'DR-WIRING.md', path.join('tests', 'ops-disaster-restore.test.mjs')]) {
+    for (const name of ['ops-disaster-restore.mjs', 'ops-backup-seal.mjs', 'ops-disaster-restore.ps1', 'DISASTER-RECOVERY-RUNBOOK.md', 'DR-WIRING.md', 'BACKUP-MAP.md', path.join('tests', 'ops-disaster-restore.test.mjs')]) {
       const file = path.resolve(here, '..', name);
       if (!fs.existsSync(file)) continue;
       const text = fs.readFileSync(file, 'utf8');
@@ -561,7 +571,7 @@ try {
   await check('identity group is written in ONE atomic commit, never document by document', async () => {
     const api = createFakeApi();
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.identity_group.status, 'restored');
     assert.equal(result.identity_group.reason, 'atomic_commit_after_all_checksums_verified');
     assert.equal(api.calls.commitAtomic, 1, 'exactly one atomic commit for the whole identity group');
@@ -575,7 +585,7 @@ try {
     const api = createFakeApi();
     api.failCreateFor.add(second);
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.identity_group.status, 'skipped');
     assert.match(result.identity_group.reason, /atomic_commit_failed/);
     for (const p of IDENTITY) {
@@ -595,7 +605,7 @@ try {
   await check('an identity group larger than the atomic commit limit is refused, not split', async () => {
     const api = createFakeApi();
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }), atomicLimitOverride: 2 });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }), atomicLimitOverride: 2 });
     // הגבול נבדק מול ATOMIC_COMMIT_LIMIT האמיתי; כאן מוודאים שהקבוע קיים
     // ושהגדלים נבדקים מולו, ושהערך הוא גבול ה-batch של Firestore.
     assert.equal(dr.ATOMIC_COMMIT_LIMIT, 500);
@@ -610,7 +620,7 @@ try {
     const api = createFakeApi();
     delete api.commitAtomic;
     const result = await dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
+      { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq' }) });
     assert.equal(result.identity_group.status, 'skipped');
     assert.match(result.identity_group.reason, /adapter_has_no_atomic_commit/);
     for (const p of IDENTITY) assert.equal(api.store.has(p), false, p);
@@ -621,7 +631,7 @@ try {
       const api = createFakeApi();
       await assert.rejects(
         dr.runRestore(dr.parseArgs(['restore', '--set', setDir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-          { root: fixture, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq', RESQ_RESTORE_SIGNING_KEY: key }) }),
+          { root: fixture, sealPassphrase: TEST_SEAL_PASSPHRASE, firestoreApi: api, env: envWith({ RESQ_RESTORE_TARGET_ALLOWLIST: 'demo-resq', RESQ_RESTORE_SIGNING_KEY: key }) }),
         /RESQ_RESTORE_SIGNING_KEY/);
       assert.equal(api.calls.create, 0, 'no document was created (key: "' + key + '")');
       assert.equal(api.calls.commitAtomic, 0, 'no atomic commit was attempted');
@@ -635,6 +645,76 @@ try {
     assert.throws(() => dr.requireSigningKey({ RESQ_RESTORE_SIGNING_KEY: 'x'.repeat(dr.SIGNING_KEY_MIN_LENGTH - 1) }), /קצר/);
     assert.equal(dr.requireSigningKey({ RESQ_RESTORE_SIGNING_KEY: TEST_SIGNING_KEY }), TEST_SIGNING_KEY);
   });
+
+
+  await check('backup defaults to dry-run; --execute required; short seal passphrase refused', async () => {
+    assert.equal(dr.parseArgs(['backup', '--source', 'demo-resq']).dryRun, true);
+    await assert.rejects(
+      dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']), { root: fixture, firestoreApi: createFakeApi({ 'config/mode': { mode: 'x' } }), sealPassphrase: 'short', now: fixedNow }),
+      /RESQ_BACKUP_SEAL_PASSPHRASE|קצר/);
+  });
+
+  await check('station-102 refused as backup source without allowProdSource / env', async () => {
+    await assert.rejects(
+      dr.runBackup(dr.parseArgs(['backup', '--source', 'station-102', '--execute']), { root: fixture, firestoreApi: createFakeApi(seed), sealPassphrase: TEST_SEAL_PASSPHRASE, now: fixedNow, env: envWith({ RESQ_BACKUP_ALLOW_PROD_SOURCE: '' }) }),
+      /אינו מקור גיבוי/);
+    assert.throws(() => dr.refuseBackupSource('station-102', { root: fixture, env: {} }), /אינו מקור גיבוי/);
+  });
+
+  await check('unclassified collection fails closed (backup does not complete)', async () => {
+    const poisoned = Object.assign({}, seed, { 'mystery_collection/z1': { z: 1 } });
+    await assert.rejects(
+      dr.runBackup(dr.parseArgs(['backup', '--source', 'demo-resq', '--execute']), backupOpts({ firestoreApi: createFakeApi(poisoned), now: fixedNow })),
+      /fail-closed|ללא סיווג/);
+  });
+
+  await check('unknown page token fails clearly and does not restart pagination', async () => {
+    assert.equal(dr.resolvePageStart(['a', 'b', 'c'], null), 0);
+    assert.equal(dr.resolvePageStart(['a', 'b', 'c'], 'a'), 1);
+    assert.throws(() => dr.resolvePageStart(['a', 'b', 'c'], 'missing'), /page token לא מוכר/);
+    const api = createFakeApi(seed);
+    await assert.rejects(api.listDocuments('config', 'no-such-token'), /page token לא מוכר/);
+  });
+
+  await check('timestamp nanoseconds round-trip including billion-nanosecond boundary', async () => {
+    const FakeTs = class {
+      constructor(seconds, nanoseconds) { this.seconds = seconds; this.nanoseconds = nanoseconds; }
+      static fromDate(date) {
+        const ms = date.getTime();
+        return new FakeTs(Math.floor(ms / 1000), (ms % 1000) * 1e6);
+      }
+    };
+    const edge = { seconds: 1788220800, nanoseconds: 999999999, toDate() { return new Date(this.seconds * 1000 + Math.floor(this.nanoseconds / 1e6)); } };
+    const enc = dr.encodeValue({ t: edge });
+    assert.equal(enc.t.__ts, '2026-09-01T00:00:00.999Z');
+    assert.equal(enc.t.__nanos, 999999);
+    const dec = dr.decodeValue(enc, { Timestamp: FakeTs });
+    assert.equal(dec.t.seconds, 1788220800);
+    assert.equal(dec.t.nanoseconds, 999999999);
+    const over = { seconds: 10, nanoseconds: 1000000000, toDate() { return new Date(11 * 1000); } };
+    const enc2 = dr.encodeValue({ t: over });
+    assert.equal(enc2.t.__ts, new Date(11000).toISOString());
+    assert.equal(enc2.t.__nanos, undefined);
+    const crossed = dr.decodeValue({ t: { __ts: '1970-01-01T00:00:00.999Z', __nanos: 999999 } }, { Timestamp: FakeTs });
+    assert.equal(crossed.t.seconds, 0);
+    assert.equal(crossed.t.nanoseconds, 999999999);
+  });
+
+  await check('sealed snapshot verify without passphrase checks enc only; wrong passphrase leaves no plaintext', async () => {
+    const seal = await import(pathToFileURL(sealPath).href);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-seal-neg-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'documents.jsonl'), '{"path":"config/mode","data":{"mode":"x"},"sha256":"abc"}\n');
+      const meta = seal.sealDocumentsFile(tmp, TEST_SEAL_PASSPHRASE);
+      assert.equal(fs.existsSync(path.join(tmp, 'documents.jsonl')), false);
+      assert.ok(meta.enc_sha256);
+      assert.throws(() => seal.unsealDocumentsToTemp(tmp, 'wrong-passphrase-xxxxxxxx'), /./);
+      assert.equal(fs.existsSync(path.join(tmp, 'documents.jsonl')), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
 
   console.log('ops-disaster-restore: ' + passed + '/' + passed + ' PASS (fake in-memory firestoreApi; no Firebase, no network, no production data)');
 } finally {
