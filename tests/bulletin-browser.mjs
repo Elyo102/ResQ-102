@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const releaseVersion = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, '')).v;
+const releaseManifest = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
+const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.server_version : releaseVersion;
 const stub = path.join(here, 'stub');
 let port = 0;
 const types = {
@@ -871,7 +873,7 @@ try {
         failureReport.kind === 'callable-failed' &&
         failureReport.callable === 'postBulletinMessage' &&
         failureReport.code === 'functions/unavailable' &&
-        failureReport.screen === 'login.html' && failureReport.version === releaseVersion,
+        failureReport.screen === 'login.html' && failureReport.version === incidentVersion,
         'הניטור שולח רק חמש קטגוריות טכניות, ללא תוכן ההודעה או מזהה הבקשה');
   await page.locator('#boardTabs [data-board-id="shahmon"]').click();
   await page.getByText('תקלה במזגן בחדר התדריכים', { exact:true })
