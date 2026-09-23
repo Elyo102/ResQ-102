@@ -239,7 +239,7 @@ try {
   });
   await check('a cache from another station is ignored', async () => {
     await wrongScopeCache.page.waitForFunction(() =>
-      !(document.querySelector('#recipientSummary')?.textContent || '').includes('טוען'),
+      (document.querySelector('#recipientSummary')?.textContent || '').includes('לא זמינה כרגע'),
       null, { timeout:1500 });
     assert.equal(await wrongScopeCache.page.getByText('אסור להציג', { exact:true }).count(), 0);
     assert.match(await wrongScopeCache.page.locator('#recipientSummary').textContent(), /לא זמינה כרגע/);
