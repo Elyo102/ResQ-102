@@ -55,10 +55,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h31';
-import { attachModeChip } from './mode-bar.js?v=42h31';
-import { assertPresentationOnly } from './role-view.js?v=42h31';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h31';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h32';
+import { attachModeChip } from './mode-bar.js?v=42h32';
+import { assertPresentationOnly } from './role-view.js?v=42h32';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h32';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -648,7 +648,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h31')
+  import('./mode-controller.js?v=42h32')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -856,7 +856,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h31')
+  import('./mode-controller.js?v=42h32')
     .then(module => module.stopModeController())
     .catch(() => {});
 }

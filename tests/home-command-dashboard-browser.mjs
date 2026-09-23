@@ -200,11 +200,11 @@ try {
           .some(entry => entry.name === 'listCalloutRecipients'));
         const saved = await home.page.evaluate((roleName) => {
           const uid = 'home-command-' + roleName;
-          const key = 'resq_callout_roster_v1:' + [uid, 'eilat_102', 'B']
+          const key = 'resq_callout_roster_v2:' + [uid, 'eilat_102', 'B']
             .map(value => encodeURIComponent(value)).join(':');
-          return JSON.parse(sessionStorage.getItem(key) || 'null');
+          return JSON.parse(localStorage.getItem(key) || 'null');
         }, role);
-        assert.equal(saved.schema, 1);
+        assert.equal(saved.schema, 2);
         assert.ok(Array.isArray(saved.rows) && saved.rows.length > 0);
         assert.ok(saved.rows.every(row => row.crew === 'B'));
       });

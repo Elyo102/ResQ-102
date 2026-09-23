@@ -1,15 +1,15 @@
-import { firebaseConfig } from './firebase-config.js?v=42h31';
-import { renderNav, renderStuckNav } from './nav.js?v=42h31';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h31';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h31';
-import { initAppCheck } from './appcheck.js?v=42h31';
-import { readScheduleFile } from './schedule-file-import.js?v=42h31';
-import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h31';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h31';
+import { firebaseConfig } from './firebase-config.js?v=42h32';
+import { renderNav, renderStuckNav } from './nav.js?v=42h32';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h32';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h32';
+import { initAppCheck } from './appcheck.js?v=42h32';
+import { readScheduleFile } from './schedule-file-import.js?v=42h32';
+import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h32';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h32';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h31';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h31';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h32';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h32';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);

@@ -6,8 +6,10 @@ const SID = 'eilat_102';
 const endpoint = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 if (!/^(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('loopback emulator only');
 const [host, portText] = endpoint.split(':');
+const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'demo-resq';
+if (!/^demo-[a-z0-9-]+$/.test(projectId)) throw new Error('demo emulator project only');
 const env = await initializeTestEnvironment({
-  projectId:'resq-callout-privacy',
+  projectId,
   firestore:{ rules:readFileSync('../firestore.rules', 'utf8'), host, port:Number(portText) }
 });
 // This dedicated loopback-only test project must start empty: replacing a

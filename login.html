@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h31">
-<link rel="stylesheet" href="./bulletin.css?v=42h31">
+<link rel="stylesheet" href="./theme.css?v=42h32">
+<link rel="stylesheet" href="./bulletin.css?v=42h32">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -63,6 +63,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               margin-top:7px }
   .ver .note.new{ color:var(--accent-txt); font-weight:700 }
   .ver button{ margin-top:9px }
+  .preauth-update{margin-top:16px;border:1px solid var(--line);border-radius:12px;
+                  padding:12px 13px;background:var(--panel);text-align:start}
+  .preauth-update .vrow{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+  .preauth-update .vrow b{margin-inline-start:auto;color:var(--txt);font-variant-numeric:tabular-nums}
+  .preauth-update button{margin-top:10px;background:transparent;color:var(--accent-txt);
+                         border:1px solid var(--accent);min-height:46px}
+  .preauth-update .note{min-height:20px;margin-top:8px}
   .link{background:none;border:0;color:var(--dim);font-size:14px;
         cursor:pointer;margin-top:10px;text-decoration:underline;font-family:inherit}
   .msg{margin-top:16px;padding:12px 14px;border:1px solid transparent;border-radius:10px;font-size:14px;
@@ -392,6 +399,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="msg" id="msg" aria-live="polite"></div>
+    <section class="preauth-update" aria-labelledby="preAuthUpdateTitle">
+      <div class="vrow"><strong id="preAuthUpdateTitle">גרסת ResQ במכשיר</strong><b id="preAuthVersion">…</b></div>
+      <button type="button" id="preAuthUpdate">↻ עדכן את ResQ</button>
+      <div class="note" id="preAuthUpdateStatus" role="status" aria-live="polite">אפשר לבדוק ולעדכן גרסה לפני הכניסה.</div>
+    </section>
     <p class="login-credit">פיתוח וייצור: אלדד יונה</p>
   </div>
 
@@ -621,24 +633,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h31';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h32';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h31';
+         subStationsForStation } from './stations.js?v=42h32';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h31';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h31';
+  from './nav.js?v=42h32';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h32';
 import {
   initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h31';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h31';
-import { watchCallouts } from './callout.js?v=42h31';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h31';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h31';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h31';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h31';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h31';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h31';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h31';
+} from './pwa.js?v=42h32';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h32';
+import { watchCallouts } from './callout.js?v=42h32';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h32';
+import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h32';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h32';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h32';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h32';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h32';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h32';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h32';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -649,11 +662,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h31';
+  from './monitored-functions.js?v=42h32';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h31';
+import { initAppCheck } from './appcheck.js?v=42h32';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -955,11 +968,17 @@ const HOME_NAVIGATION = (function () {
 registerPwaUpdateGuard(function () {
   if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
   if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
-  const home = $('homeView');
-  if (!home || home.classList.contains('hide')) {
-    return 'השלם את הכניסה לפני הפעלת העדכון.';
+  const authView = $('authView');
+  if (authView && !authView.classList.contains('hide')) {
+    const protectedIds = ['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2'];
+    if (protectedIds.some(function (id) { const el = $(id); return el && String(el.value || '').trim(); })) {
+      return 'יש פרטים שמולאו במסך. נקה אותם לפני העדכון כדי שלא יאבדו.';
+    }
+    return true;
   }
-  return true;
+  const home = $('homeView');
+  return home && !home.classList.contains('hide')
+    ? true : 'המסך עדיין נטען. המתן רגע ונסה שוב.';
 });
 initPWA({ offer: true });
 // בניווט מתוך האפליקציה לא מציגים טופס כניסה בזמן ש-Firebase משחזר
@@ -1258,6 +1277,7 @@ function returnToCaller(){
 function logout(){
   destroyHomeRuntime();
   try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}
+  clearCalloutRosterCache();
   clearNavigationTrail();
   return signOut(auth);
 }
@@ -1776,9 +1796,10 @@ async function loadProfile(user, claims, epoch){
 // מקורות שונים.
 
 $('verNow').textContent = APP_VERSION + ' · ' + APP_DATE;
+$('preAuthVersion').textContent = APP_VERSION + ' · ' + APP_DATE;
 
-$('btnUpdate').onclick = async function () {
-  const b = $('btnUpdate'), m = $('verMsg');
+async function runVisibleUpdate(button, message) {
+  const b = button, m = message;
   b.disabled = true;
   m.className = 'note';
   m.textContent = 'בודק מול השרת…';
@@ -1795,15 +1816,18 @@ $('btnUpdate').onclick = async function () {
     } else if (outcome.blocked) {
       m.textContent = outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
     } else if (outcome.reason === 'version-unavailable') {
-      m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+      m.textContent = 'שרת הגרסאות אינו זמין כרגע. נסה שוב בעוד רגע.';
     } else {
-      m.textContent = 'הגרסה החדשה נמצאה אך עדיין לא הופעלה. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+      m.textContent = 'הגרסה החדשה נמצאה אך טרם קיבלה שליטה. סגור את ResQ לגמרי, פתח מחדש ולחץ שוב.';
     }
   } catch (e) {
-    m.textContent = 'העדכון לא הושלם. בדוק חיבור לאינטרנט ונסה שוב.';
+    m.textContent = 'העדכון לא הושלם. נסה שוב; אם זה חוזר, סגור את ResQ ופתח מחדש.';
   }
   b.disabled = false;
-};
+}
+
+$('btnUpdate').onclick = function () { return runVisibleUpdate($('btnUpdate'), $('verMsg')); };
+$('preAuthUpdate').onclick = function () { return runVisibleUpdate($('preAuthUpdate'), $('preAuthUpdateStatus')); };
 
 // ---------- שינוי סיסמה ----------
 

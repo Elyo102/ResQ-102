@@ -52,8 +52,10 @@ if (!/^(127\.0\.0\.1|localhost):\d+$/.test(emulatorEndpoint)) throw new Error('l
 const [emulatorHost, emulatorPortText] = emulatorEndpoint.split(':');
 const emulatorPort = Number(emulatorPortText);
 if (!Number.isInteger(emulatorPort) || emulatorPort < 1 || emulatorPort > 65535) throw new Error('invalid emulator port');
+const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'demo-resq';
+if (!/^demo-[a-z0-9-]+$/.test(projectId)) throw new Error('demo emulator project only');
 const env = await initializeTestEnvironment({
-  projectId: 'resq-fleet-rules',
+  projectId,
   firestore: {
     rules: readFileSync('../firestore.rules', 'utf8'),
     host: emulatorHost,

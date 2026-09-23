@@ -126,7 +126,7 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
 {
   const source = fs.readFileSync(path.join(root, 'firebase-messaging-sw.js'), 'utf8');
   const normalizedVersion = String(release.v).toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8');
+  const loginSource = fs.readFileSync(path.join(root, 'login.html'), 'utf8').replace(/\r\n/g, '\n');
   const assetKey = loginSource.match(/\.\/pwa\.js\?v=([a-z0-9]+)/i)?.[1] || '';
   assert.equal(assetKey, normalizedVersion,
     'the asset build key belongs exactly to the visible release');
@@ -143,6 +143,14 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   const pageSource = fs.readFileSync(path.join(root, 'pwa.js'), 'utf8');
   assert.equal(pageSource.includes('cacheStorage.keys'), false,
     'page code cannot regress into deleting service-worker caches');
+  assert.match(loginSource, /id="preAuthUpdate"[^>]*>↻ עדכן את ResQ<\/button>/,
+    'login exposes a physical update button before authentication');
+  assert.match(loginSource, /id="preAuthUpdateStatus"[^>]*role="status"[^>]*aria-live="polite"/,
+    'pre-auth update status is announced accessibly');
+  assert.match(loginSource, /\$\('preAuthUpdate'\)\.onclick = function \(\) \{ return runVisibleUpdate/,
+    'pre-auth and profile update buttons share one update flow');
+  assert.match(loginSource, /protectedIds = \['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2'\]/,
+    'update guard protects typed credentials, invitation secrets and registration data');
 }
 
 {

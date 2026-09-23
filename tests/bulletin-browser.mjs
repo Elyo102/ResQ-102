@@ -410,7 +410,7 @@ try {
   await commanderPage.waitForTimeout(200);
   await commanderPage.evaluate(async () => {
     window.__SET_TEST_VISIBILITY('hidden');
-    const module = await import('./bulletin.js?v=42h31');
+    const module = await import('./bulletin.js?v=42h32');
     module.setBulletinReadOnly(true);
   });
   await commanderPage.waitForTimeout(900);
@@ -419,7 +419,7 @@ try {
     'מצב hidden/read-only מבטל צפייה ממתינה ואינו שולח קבלה');
   await commanderPage.evaluate(async () => {
     window.__SET_TEST_VISIBILITY('visible');
-    const module = await import('./bulletin.js?v=42h31');
+    const module = await import('./bulletin.js?v=42h32');
     module.setBulletinReadOnly(false);
   });
   check(await commanderPage.locator('[data-message-id="br1"] .bulletin-broadcast-chip').isVisible(),

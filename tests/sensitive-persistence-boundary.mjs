@@ -39,12 +39,16 @@ check('HR domain payload stays in bounded memory and explicit files, not browser
   assert.match(exportUi, /המערכת אינה יכולה לבדוק שהכונן מוצפן/);
 });
 
-check('callout cache is session-only, bounded, and excludes response or rejection content', () => {
+check('callout roster cache is eight-hour scoped, bounded, and stores identity rows only', () => {
   const source = read('callout-roster-cache.js');
-  assert.match(source, /sessionStorage/);
-  assert.doesNotMatch(source, /localStorage/);
-  assert.doesNotMatch(source, /reason|note|response|rejection/i);
-  assert.match(source, /5\s*\*\s*60\s*\*\s*1000/);
+  assert.match(source, /globalThis\.localStorage/);
+  assert.doesNotMatch(source, /globalThis\.sessionStorage/);
+  assert.match(source, /8\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
+  assert.match(source, /\[scope && scope\.uid, scope && scope\.sid, scope && scope\.crew\]/);
+  assert.match(source, /safeRows[\s\S]*?uid:clean\([\s\S]*?name:clean\([\s\S]*?crew:clean\(/);
+  const persisted = source.slice(source.indexOf('const safeRows ='), source.indexOf('return true;', source.indexOf('const safeRows =')));
+  assert.doesNotMatch(persisted, /text|reason|note|response|rejection|token|medical|hours|report/i);
+  assert.match(source, /rows\.length > 200/);
 });
 
 check('join draft is session-only, expires, and never includes the acknowledgement', () => {

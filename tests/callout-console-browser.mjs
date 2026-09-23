@@ -53,9 +53,11 @@ assert.match(consoleSource, /withTimeout\(session\.listCalloutRecipients/);
 assert.match(cacheSource, /\[scope && scope\.uid, scope && scope\.sid, scope && scope\.crew\]/,
   'roster cache is isolated by signed identity, station and crew');
 assert.match(cacheSource, /storage\.setItem\(calloutRosterCacheKey\(scope\)/,
-  'short-lived roster cache stays inside the current app session');
-assert.doesNotMatch(cacheSource, /localStorage\.(?:getItem|setItem)[\s\S]{0,80}callout_roster/,
-  'station roster must not become a long-lived browser cache');
+  'scoped roster cache is written through the shared storage adapter');
+assert.match(cacheSource, /8 \* 60 \* 60 \* 1000/,
+  'roster cache is revalidated every eight hours');
+assert.doesNotMatch(cacheSource, /(?:text|reason|response|token)\s*:/,
+  'roster cache never persists callout content, responses, reasons or push tokens');
 assert.match(sendSource, /runtimeValue\.silent === true/);
 assert.match(sendSource, /intent_fingerprint/);
 assert.match(sendSource, /rehearsal \? \[\] : uids/,
@@ -95,10 +97,10 @@ async function open(browser, role, extra = {}, setup = {}) {
     if (setup && setup.callablePlan) window.__CALLABLE_PLAN = setup.callablePlan;
     if (setup && setup.rosterCache) {
       const cache = setup.rosterCache;
-      const key = 'resq_callout_roster_v1:' + [role + '-callout', cache.sid || 'eilat_102', cache.crew || 'B']
+      const key = 'resq_callout_roster_v2:' + [role + '-callout', cache.sid || 'eilat_102', cache.crew || 'B']
         .map(value => encodeURIComponent(String(value))).join(':');
-      sessionStorage.setItem(key, JSON.stringify({
-        schema:1,
+      localStorage.setItem(key, JSON.stringify({
+        schema:2,
         saved_at_ms:Date.now() - Number(cache.ageMs || 0),
         rows:cache.rows || []
       }));
@@ -153,7 +155,7 @@ try {
   await check('commander can choose specific recipients instead of the full crew', async () => {
     assert.match(await peopleRun.page.locator('#composeCard, .card.danger').first().textContent(), /לבחור לוחמים/);
     assert.match(await peopleRun.page.locator('.sound-preview').textContent(), /השמעה מקומית בלבד/);
-    assert.match(await peopleRun.page.locator('.sound-preview audio').getAttribute('src'), /callout-siren\.mp3\?v=42h31/);
+    assert.match(await peopleRun.page.locator('.sound-preview audio').getAttribute('src'), /callout-siren\.mp3\?v=42h32/);
     await peopleRun.page.locator('.recipient-item').filter({ hasText:'דנה לוי' }).waitFor({ state:'visible' });
     await peopleRun.page.locator('#recipientNone').evaluate(button => button.click());
     assert.equal(await peopleRun.page.locator('#recipientNone').getAttribute('aria-pressed'), 'true');
