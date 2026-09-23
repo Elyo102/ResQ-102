@@ -8,6 +8,8 @@ import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const releaseVersion = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, '')).v;
+const releaseManifest = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
+const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.server_version : releaseVersion;
 const origin = 'http://127.0.0.1:41998';
 const browser = await chromium.launch();
 let passed = 0;
@@ -124,9 +126,8 @@ try {
         await errorEvent(f.page); await settle(f.page);
         const calls = await reports(f.page);
         assert.equal(calls.length, 1);
-        // The current release is in the finite client/server telemetry catalog, so global
-        // errors retain the exact release instead of falling back to unknown.
-        assert.deepEqual(calls[0].payload, { kind:'client-error', screen:file, version:releaseVersion, code:'TypeError', callable:'unknown' });
+        // Hosting-only updates report the existing server-accepted telemetry version.
+        assert.deepEqual(calls[0].payload, { kind:'client-error', screen:file, version:incidentVersion, code:'TypeError', callable:'unknown' });
         assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         // These pages already have one local error-banner listener per kind.
         const expectedListeners = { error:2, unhandledrejection:2, 'resq:callable-start':1 };
