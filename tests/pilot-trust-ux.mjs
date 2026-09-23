@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { definite, errorText, retryAfterSeconds } from '../error-text.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8').replace(/\r\n/g, '\n');
@@ -60,6 +61,20 @@ check('every message is Hebrew, not a passed-through English string',
   messages.every(text => /[֐-׿]/.test(text)));
 check('the technical detail has somewhere to go, and it is the console',
   /console\.error/.test(dictionary) && /export function logError/.test(dictionary));
+check('structured retry seconds are shown without retrying the operation',
+  retryAfterSeconds({ details:{ retryAfterSeconds:2.1 } }) === 3
+    && errorText({ code:'functions/resource-exhausted', details:{ retryAfterSeconds:2.1 } })
+      === 'בוצעו פעולות רבות בזמן קצר. נסו שוב בעוד 3 שניות.');
+check('structured retry milliseconds are rounded up and capped safely',
+  retryAfterSeconds({ details:{ retry_after_ms:1501 } }) === 2
+    && retryAfterSeconds({ details:{ retry_after_ms:999999999 } }) === 3600);
+check('malformed retry metadata is ignored rather than parsed from text',
+  retryAfterSeconds({ details:{ retryAfterSeconds:-1, retry_after_ms:'bad' },
+    message:'retry after 12 seconds' }) === null
+    && retryAfterSeconds({ details:{ retryAfterSeconds:'12' } }) === null
+    && retryAfterSeconds({ details:{ retry_after_ms:true } }) === null);
+check('resource-exhausted remains final and never becomes an automatic retry signal',
+  definite({ code:'functions/resource-exhausted', details:{ retryAfterSeconds:2 } }) === true);
 
 /* ---------- 2 · פס הקריסה שב-13 מסכים ---------- */
 

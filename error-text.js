@@ -74,6 +74,25 @@ export function errorCode(error) {
 export const definite = error => DEFINITE_CODES.includes(errorCode(error));
 
 /**
+ * זמן המתנה שהשרת סיפק במפורש לשגיאת מכסה זמנית.
+ * אין כאן פענוח של טקסט חופשי ואין החלטה לנסות שוב אוטומטית: המספר
+ * משמש להצגת הנחיה בלבד. הערך מוגבל לשעה כדי שמטא-דאטה פגום לא
+ * ינעל את המסך או יציג זמן בלתי סביר.
+ */
+export function retryAfterSeconds(error) {
+  const details = error && typeof error === 'object' && error.details
+    && typeof error.details === 'object' ? error.details : null;
+  if (!details) return null;
+  let seconds = details.retryAfterSeconds;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+    const milliseconds = details.retry_after_ms;
+    if (typeof milliseconds !== 'number' || !Number.isFinite(milliseconds) || milliseconds <= 0) return null;
+    seconds = milliseconds / 1000;
+  }
+  return Math.min(3600, Math.max(1, Math.ceil(seconds)));
+}
+
+/**
  * משפט בעברית למשתמש. לעולם לא קוד, לעולם לא ריק.
  * `fallback` מחליף רק את ברירת המחדל של „לא ידוע" — קוד מוכר תמיד
  * מקבל את הניסוח שלו, כדי ששני מסכים לא יאמרו דברים שונים על אותה
@@ -81,6 +100,10 @@ export const definite = error => DEFINITE_CODES.includes(errorCode(error));
  */
 export function errorText(error, fallback) {
   const code = errorCode(error);
+  if (code === 'resource-exhausted') {
+    const wait = retryAfterSeconds(error);
+    if (wait !== null) return 'בוצעו פעולות רבות בזמן קצר. נסו שוב בעוד ' + wait + ' שניות.';
+  }
   if (code === 'unknown' && typeof fallback === 'string' && fallback.trim()) return fallback.trim();
   return TEXT[code];
 }
