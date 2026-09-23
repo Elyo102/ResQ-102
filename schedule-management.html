@@ -198,17 +198,19 @@
        הצבע של המשמרת (א׳/ב׳/ג׳ — הכרעת 4.9) נשאר: שטיפת עמודה עדינה
        ותג בכותרת היום; צבע התחנה יושב על השבב ועל תווית השורה.
        ================================================================== */
-    .board{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
-      gap:5px;padding:5px;
+    /* P0 sticky RTL: each board-row is its own grid so .stub/.corner can
+       stick inside the horizontal scroller. display:contents broke sticky in
+       Chromium RTL — labels scrolled away mid-month. Same DOM; synced
+       --stub/--dayw/--n keep header cells aligned with body cells. */
+    .board{display:flex;flex-direction:column;gap:5px;padding:5px;direction:rtl;
       overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
       /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
          הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
       scroll-padding-inline-start:calc(var(--stub) + 5px);
       border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--panel,#f5f7fa)}
-    /* ARIA grid hierarchy without an extra visual box: every logical row owns
-       its headers/cells, while the children remain the CSS-grid items. */
-    .board>[role="row"]{display:contents}
+    .board>[role="row"]{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
+      gap:5px;width:max-content;min-width:100%;box-sizing:border-box}
     .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:7px 4px 6px;
       text-align:center;border:1px solid var(--line,#dfe5ec);border-radius:11px;
       display:flex;flex-direction:column;align-items:center;gap:1px;box-shadow:var(--sb-shadow)}
@@ -220,11 +222,14 @@
     .hcell.we .dw{color:var(--sched-blue)}
     .hcell.today{background:var(--sb-today);border-color:var(--sb-today-e)}
     .hcell.today .dd,.hcell.today .dw{color:var(--sb-ember)}
-    .corner{position:sticky;inset-inline-start:0;right:0;left:auto;top:0;z-index:6;background:var(--panel,#f5f7fa)}
-    .stub{position:sticky;inset-inline-start:0;right:0;left:auto;z-index:5;background:var(--card,#fff);
-      display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
-      border:1px solid var(--line,#dfe5ec);border-radius:11px;
+    .corner,.stub{position:-webkit-sticky;position:sticky;inset-inline-start:0;inset-inline-end:auto;
+      right:0;left:auto;z-index:5;scroll-snap-align:none;background-clip:padding-box;
       box-shadow:-7px 0 10px -10px rgba(15,35,55,.55),var(--sb-shadow)}
+    .corner{top:0;z-index:6;background:var(--panel,#f5f7fa);border-radius:11px;
+      min-height:100%;border:1px solid transparent}
+    .stub{background:var(--card,#fff);
+      display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
+      border:1px solid var(--line,#dfe5ec);border-radius:11px}
     .stub b{font-size:13.5px;font-weight:600;line-height:1.2}
     .stub small{font-size:10.5px;font-weight:600;opacity:.75}
     .stub.s1{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
@@ -485,7 +490,21 @@
     .shell select,.shell textarea{font-size:16px;min-height:44px}
     .shell .qualpeople .person .held label{min-height:44px;align-items:center}
     .shell .filestatus,.shell .head .who{overflow-wrap:anywhere;min-width:0}
-  </style>
+  
+    /* P0: keep sticky stub readable on common phone widths without duplicating labels */
+    @media(max-width:390px){
+      .board{scroll-padding-inline-start:calc(var(--stub) + 4px)}
+      .stub{padding:7px 8px}
+      .stub b{font-size:12.5px}
+      .stub small{font-size:10px}
+    }
+    @media(max-width:360px){
+      .stub{padding:6px 7px}
+    }
+    @media(max-width:320px){
+      .stub b{font-size:12px}
+    }
+</style>
 </head>
 <body data-resq-shell="v1" data-resq-page="schedule-management">
 <main class="shell hide" id="appMain">

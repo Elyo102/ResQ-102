@@ -1969,6 +1969,8 @@ function fitColumns(board) {
   const available = board.clientWidth - stub;
   // שבוע מלא כשהמסך מרשה; אחרת העמודה הצרה ביותר שעדיין קריאה,
   // והגלילה משלימה את השבוע.
+  // P0: --stub/--dayw are shared by every board-row grid so header and
+  // body stay column-aligned while the sticky station column stays fixed.
   const width = Math.max(84, Math.floor(available / 7));
   board.style.setProperty('--dayw', width + 'px');
   board.style.setProperty('--stub', stub + 'px');
