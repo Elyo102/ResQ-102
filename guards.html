@@ -41,10 +41,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .cols{ display:grid; grid-template-columns:1fr; gap:14px }
   @media (min-width:900px){ .cols{ grid-template-columns:1.5fr 1fr } }
 
-  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
+  label{ display:block; font-size:13px; font-weight:600; color:var(--muted); margin:12px 0 5px }
   select, textarea, input{ width:100%; max-width:100%; min-width:0;
         padding:10px 12px; min-height:44px; background:var(--input);
-        color:var(--txt); border:1px solid var(--line); border-radius:7px;
+        color:var(--txt); border:1px solid var(--line); border-radius:9px;
         font-size:15px; font-family:inherit; box-sizing:border-box }
   textarea{ min-height:60px; resize:vertical }
   #newCard input, #newCard select, #newCard textarea,
@@ -122,6 +122,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
                color:var(--muted); margin-top:1px }
   .rec.blocked{ opacity:.5 }
   .rec .sg{ font-size:11px; color:var(--good); white-space:nowrap }
+  #dlgList{max-height:46vh;overflow-y:auto;overscroll-behavior:contain;
+           border:1px solid var(--line);border-radius:10px;padding:2px 12px;
+           background:var(--input)}
+  #dlgList .rec[hidden]{display:none}
+  #dlgSearch{margin-bottom:5px}
+  #dlgCount{margin:0 0 8px}
 
   /* ---------- לוג ---------- */
   .tblwrap{ overflow-x:auto; margin-top:10px; max-width:100%;
@@ -402,6 +408,7 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
 let people = [], guards = [], memberGuards = [], managerGuards = [], quals = [], held = {};
+let rosterFailed = false;
 let effective = null, swaps = [], busy = {}, scheduleCompatibilityMode = '';
 let loadMap = {}, ctx = {};
 let scheduleClassificationAvailable = false;
@@ -742,7 +749,7 @@ async function loadAll(){
     manager: CAN_MANAGE === true,
     wide: WIDE === true
   };
-  const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
+  const next = { people:[], quals:[], held:{}, swaps:[], busy:{}, rosterFailed:false };
   const jobs = [];
   const ranges = guardBoardRanges();
   // מסמכי הסגל והכשירויות משמשים רק להצעת שיבוץ ולעריכה. הרשאת
@@ -763,12 +770,17 @@ async function loadAll(){
   const guardBoards = loadGuardBoards(managerDataRequested, ranges);
 
   if (managerDataRequested) {
-    await grab('roster', s => s.forEach(d => {
-      const v = d.data() || {};
-      if (v.is_active === false) return;
-      next.people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
-                    emp: String(v.emp || v.emp_number || '') });
-    }));
+    jobs.push((async () => {
+      try {
+        const s = await getDocs(collection(db, 'stations', snapshot.sid, 'roster'));
+        s.forEach(d => {
+          const v = d.data() || {};
+          if (v.is_active === false) return;
+          next.people.push({ uid:d.id, name:v.full_name || '', crew:v.crew || '',
+            role:v.role || '', emp:String(v.emp || v.emp_number || '') });
+        });
+      } catch (ignore) { next.rosterFailed = true; }
+    })());
 
     await grab('quals', s => s.forEach(d =>
       next.quals.push(Object.assign({ id: d.id }, d.data() || {}))));
@@ -854,6 +866,7 @@ async function loadAll(){
     effective = compatibility.data;
   }
   people = next.people;
+  rosterFailed = managerDataRequested && next.rosterFailed;
   quals = next.quals;
   held = next.held;
   swaps = next.swaps;
@@ -868,6 +881,7 @@ async function loadAll(){
   // את נתוני הניהול בזיכרון רק מפני שהם יצאו רגע קודם לכן.
   if (!CAN_MANAGE) {
     people = [];
+    rosterFailed = false;
     quals = [];
     held = {};
     loadMap = {};
@@ -1443,23 +1457,30 @@ function assignmentRows(g){
     ? recommend(g, people, loadMap, ctx, busy,
         { needQuals: g.need_quals || [], memberQuals: held })
     : manualAssignmentRows(g, current);
+  // Keep the existing sign-up-first recommendation and automatic selection,
+  // while letting a manager manually search the full active station roster.
+  const suggestedUids = new Set(suggestedRows.map(row => String(row.uid)));
+  const manualRows = scheduleClassificationAvailable
+    ? manualAssignmentRows(g, current).filter(row => !suggestedUids.has(String(row.uid)))
+    : [];
   return { current: current, suggested: suggestedRows,
-           rows: assignedRows.concat(suggestedRows) };
+           rows: assignedRows.concat(suggestedRows, manualRows) };
 }
 
 function manualAssignmentRows(g, current){
   const signed = signupsOf(g).map(function (s) { return String(s.uid || ''); }).filter(Boolean);
-  const pool = signed.length ? signed : people.map(function (p) { return String(p.uid || ''); });
+  const pool = people.map(function (p) { return String(p.uid || ''); });
+  const peopleByUid = new Map(people.map(person => [String(person.uid), person]));
   const need = Array.isArray(g.need_quals) ? g.need_quals.filter(Boolean) : [];
   const rows = [];
   Array.from(new Set(pool)).forEach(function (uid) {
     if (!uid || current.indexOf(uid) !== -1) return;
-    const person = people.filter(function (p) { return String(p.uid) === uid; })[0];
+    const person = peopleByUid.get(uid);
     if (!person) return;
     const mine = Array.isArray(held[uid]) ? held[uid] : [];
     const why = unavailableWhy(g, uid, { guards:guards }, busy);
     rows.push({
-      uid:uid, name:person.name, crew:person.crew, emp:person.emp,
+      uid:uid, name:person.name, crew:person.crew, role:person.role, emp:person.emp,
       off:0, shift:0, total:0, last:'', signed:signed.indexOf(uid) !== -1,
       blocked:!!why, why:why,
       missingQuals:need.filter(function (q) { return mine.indexOf(q) === -1; }),
@@ -1467,6 +1488,7 @@ function manualAssignmentRows(g, current){
     });
   });
   rows.sort(function (a, b) {
+    if (a.signed !== b.signed) return a.signed ? -1 : 1;
     if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
     if (a.missingQuals.length !== b.missingQuals.length) {
       return a.missingQuals.length - b.missingQuals.length;
@@ -1476,8 +1498,40 @@ function manualAssignmentRows(g, current){
   return rows;
 }
 
+function guardRoleLabel(role){
+  return ({ firefighter:'לוחם אש', team_leader:'מפקד צוות',
+    deputy_team_leader:'סגן מפקד צוות', commander:'מפקד משמרת',
+    deputy:'סגן מפקד משמרת', station_commander:'מפקד תחנה',
+    hr_coordinator:'משאבי אנוש' })[String(role || '')] || '';
+}
+
+function guardNameKey(value){
+  return String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('he');
+}
+
+function showRosterFailure(g){
+  const d = $('dlg');
+  d.innerHTML = '<h2>רשימת אנשי התחנה אינה זמינה</h2>' +
+    '<p class="note">לא ניתן לבחור משובצים בלי רשימה מאומתת. אפשר לנסות לטעון אותה שוב.</p>' +
+    '<div id="dlgMsg" class="msg" role="status" aria-live="polite"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
+    '<button class="btn go" id="dlgRetry" type="button">טען רשימה שוב</button>' +
+    '<button class="btn" id="dlgClose" type="button">סגור</button></div>';
+  $('dlgClose').onclick = closeDlg;
+  $('dlgRetry').onclick = async function () {
+    const button = $('dlgRetry'); button.disabled = true;
+    const ok = await loadAll();
+    const refreshed = managerGuards.find(row => String(row.id) === String(g.id));
+    if (ok && !rosterFailed && refreshed) openAssign(refreshed);
+    else if (refreshed) showRosterFailure(refreshed);
+    else dialogMessage('האבטחה אינה זמינה כרגע. רענן את המסך ונסה שוב.', 'err');
+  };
+  $('ov').style.display = 'flex';
+}
+
 function openAssign(g){
   if (!CAN_MANAGE) return;
+  if (rosterFailed) { showRosterFailure(g); return; }
   dlgPick = Object.create(null);
   const assignment = assignmentRows(g);
   const cur = assignment.current;
@@ -1499,15 +1553,17 @@ function openAssign(g){
     '<div class="note" style="margin-bottom:6px">' +
       (signupsOf(g).length
         ? (scheduleClassificationAvailable
-            ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
-            : 'מתוך הנרשמים. הבחירה ידנית כי סיווג המשמרות אינו זמין.')
+            ? 'הנרשמים וההמלצות בראש הרשימה; שאר הסגל זמין לבחירה ידנית בחיפוש.'
+            : 'הנרשמים בראש הרשימה; שאר הסגל זמין לבחירה ידנית בחיפוש.')
         : (scheduleClassificationAvailable
             ? 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.'
             : 'אין נרשמים — כל הסגל מוצג לבחירה ידנית ללא דירוג עומס.')) +
       '<br>בלחיצה על שמירה נשלחת לשרת הרשימה המלאה והעדכנית.</div>' +
-    '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
-      'border:1px solid var(--line);border-radius:9px;padding:2px 12px;' +
-      'background:var(--input)"></div>' +
+    '<label for="dlgSearch">חיפוש לוחם או מפקד צוות לפי שם מלא</label>' +
+    '<input id="dlgSearch" type="search" maxlength="80" autocomplete="off" ' +
+      'placeholder="הקלד שם מלא">' +
+    '<p id="dlgCount" class="note" role="status" aria-live="polite"></p>' +
+    '<div id="dlgList" role="group" aria-label="בחירת אנשי תחנה לשיבוץ"></div>' +
     '<div id="dlgMsg" class="msg"></div>' +
     '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
       '<button class="btn go" id="dlgSave">שמור שיבוץ</button>' +
@@ -1515,6 +1571,7 @@ function openAssign(g){
     '</div>';
 
   const list = $('dlgList');
+  const rolesByUid = new Map(people.map(person => [String(person.uid), person.role]));
   assignment.rows.forEach(function (r) {
     const el = document.createElement('label');
     el.className = 'rec' + (r.blocked && !r.assigned ? ' blocked' : '');
@@ -1532,11 +1589,15 @@ function openAssign(g){
     el.appendChild(cb);
     const nm = document.createElement('span');
     nm.className = 'nm';
+    const role = rolesByUid.get(String(r.uid)) || r.role;
     nm.innerHTML = '<b>' + esc(r.name) + '</b>' +
       (r.crew ? ' <span class="note">' + esc(CREW_HE[r.crew] || r.crew) +
         '</span>' : '') +
+      (guardRoleLabel(role) ? ' <span class="note">· ' + esc(guardRoleLabel(role)) + '</span>' : '') +
       '<em>' + esc(r.assigned ? 'משובץ כעת — אפשר להסיר'
-        : (r.manual ? 'בחירה ידנית — סיווג משמרת לא זמין' : whyPicked(r))) + '</em>';
+        : (r.manual ? (scheduleClassificationAvailable
+            ? 'בחירה ידנית — בדוק התאמה לאבטחה' : 'בחירה ידנית — סיווג משמרת לא זמין')
+          : whyPicked(r))) + '</em>';
     el.appendChild(nm);
     if (r.assigned) {
       const s = document.createElement('span');
@@ -1560,8 +1621,24 @@ function openAssign(g){
   });
   if (!assignment.rows.length) {
     list.innerHTML = '<div class="note" style="padding:12px">' +
-      'אין אף אחד להציע.</div>';
+      'לא נמצאו אנשי סגל פעילים בתחנה.</div>';
   }
+
+  const search = $('dlgSearch');
+  const updateSearch = function () {
+    const term = guardNameKey(search.value);
+    let visible = 0;
+    Array.from(list.querySelectorAll('label.rec')).forEach(function (row, index) {
+      const show = !term || guardNameKey(assignment.rows[index].name).includes(term);
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    $('dlgCount').textContent = term
+      ? 'מוצגים ' + visible + ' מתוך ' + assignment.rows.length + ' אנשי סגל'
+      : 'מוצגים ' + assignment.rows.length + ' אנשי סגל';
+  };
+  search.addEventListener('input', updateSearch);
+  updateSearch();
 
   $('dlgClose').onclick = closeDlg;
   $('dlgSave').onclick = () => saveAssign(g);

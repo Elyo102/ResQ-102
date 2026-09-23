@@ -64,17 +64,19 @@ function defaultGuardPlans() {
   };
 }
 
-async function prepare(context, role, plans) {
+async function prepare(context, role, plans, rosterPlan) {
   await context.route('**/firebasejs/**', route => {
     const name = route.request().url().split('/').pop().split('?')[0];
     const file = path.join(stub, name);
     route.fulfill({ status:200, contentType:'text/javascript',
       body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
   });
-  await context.addInitScript(({ roleName, callablePlans }) => {
+  await context.addInitScript(({ roleName, callablePlans, rosterSteps }) => {
     window.__SMOKE_ROLE = roleName;
     window.__CALLABLE_PLAN = callablePlans;
-  }, { roleName:role, callablePlans:Object.assign(defaultGuardPlans(), plans || {}) });
+    if (rosterSteps) window.__ROSTER_PLAN = rosterSteps;
+  }, { roleName:role, callablePlans:Object.assign(defaultGuardPlans(), plans || {}),
+    rosterSteps:rosterPlan });
 }
 
 async function open(page) {
@@ -277,6 +279,31 @@ await test('an ordinary firefighter without an appointment sees guards but no ma
   const managerPage = await manager.newPage();
   await open(managerPage);
 
+  await test('assignment offers the active station roster beyond signups, with full-name search and retained selection', async () => {
+    const card = managerPage.locator('#openList .g', { hasText:'משחק ליגה' });
+    await card.getByRole('button', { name:'שבץ' }).click();
+    const list = managerPage.locator('#dlgList');
+    await list.locator('input[type=checkbox][value="u3"]').waitFor();
+    assert.equal(await list.locator('input[type=checkbox][value="u5"]').count(), 0,
+      'inactive employees must not be offered');
+    const search = managerPage.locator('#dlgSearch');
+    await search.fill('משה טויטו');
+    assert.equal(await list.locator('label.rec:visible').count(), 1);
+    const choice = list.locator('input[type=checkbox][value="u3"]');
+    await choice.check();
+    await search.fill('טל חודרה');
+    assert.equal(await choice.isChecked(), true,
+      'filtering the list must not erase an already selected recipient');
+    await search.fill('');
+    assert.equal(await choice.isChecked(), true);
+    const geometry = await list.evaluate(el => ({
+      overflow:getComputedStyle(el).overflowY, height:el.clientHeight, scroll:el.scrollHeight
+    }));
+    assert.equal(geometry.overflow, 'auto');
+    assert.ok(geometry.height > 0);
+    await managerPage.locator('#dlgClose').click();
+  });
+
   await test('a separately appointed firefighter can create a guard through the server callable only', async () => {
     assert.equal(await managerPage.locator('#newCard').isVisible(), true);
     await managerPage.locator('#nTitle').fill('אבטחת אירוע חדשה');
@@ -401,6 +428,34 @@ await test('an ordinary firefighter without an appointment sees guards but no ma
     assert.equal(Object.hasOwn(cancel.payload, 'station_id'), false);
   });
   await manager.close();
+
+  const rosterRetry = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(rosterRetry, 'firefighter', {
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }]
+  }, [
+    { reject:true },
+    { data:[
+      ['u2', { full_name:'טל חודרה', role:'firefighter', crew:'A', is_active:true }],
+      ['u3', { full_name:'משה טויטו', role:'team_leader', crew:'A', is_active:true }],
+      ['u4', { full_name:'דנה לוי', role:'firefighter', crew:'B', is_active:true }]
+    ] }
+  ]);
+  const rosterRetryPage = await rosterRetry.newPage();
+  await open(rosterRetryPage);
+  await test('roster failure is explicit and retry restores a searchable team leader', async () => {
+    const card = rosterRetryPage.locator('#openList .g', { hasText:'משחק ליגה' });
+    await card.getByRole('button', { name:'שבץ' }).click();
+    await rosterRetryPage.locator('#dlgRetry').waitFor();
+    assert.equal(await rosterRetryPage.locator('#dlgSave').count(), 0,
+      'a failed roster read must not silently turn into an empty assignment');
+    await rosterRetryPage.locator('#dlgRetry').click();
+    await rosterRetryPage.locator('#dlgSearch').waitFor();
+    await rosterRetryPage.locator('#dlgSearch').fill('משה טויטו');
+    const row = rosterRetryPage.locator('#dlgList label.rec:visible');
+    assert.equal(await row.count(), 1);
+    assert.match(await row.textContent(), /מפקד צוות/);
+  });
+  await rosterRetry.close();
 
   const revokedAssignment = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(revokedAssignment, 'firefighter', {

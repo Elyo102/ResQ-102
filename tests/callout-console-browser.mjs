@@ -181,6 +181,24 @@ try {
   });
   await peopleRun.context.close();
 
+  const longRoster = await open(browser, 'commander', {}, {
+    callablePlan:{ listCalloutRecipients:[{ data:{ recipients:Array.from({ length:45 }, (_, index) => ({
+      uid:'roster_' + index, name:'לוחם בדיקה ' + index, crew:'B'
+    })) } }] }
+  });
+  await longRoster.page.locator('.recipient-item').nth(44).waitFor({ state:'visible' });
+  await check('built-in recipient roster scrolls inside the page and remains searchable', async () => {
+    const geometry = await longRoster.page.locator('#recipientList').evaluate(el => ({
+      overflow:getComputedStyle(el).overflowY,
+      height:el.clientHeight, scroll:el.scrollHeight
+    }));
+    assert.equal(geometry.overflow, 'auto');
+    assert.ok(geometry.scroll > geometry.height, 'a long roster must have its own scroll area');
+    await longRoster.page.locator('#recipientSearch').fill('לוחם בדיקה 44');
+    assert.equal(await longRoster.page.locator('.recipient-item:visible').count(), 1);
+  });
+  await longRoster.context.close();
+
   const fastFallback = await open(browser, 'commander', {}, {
     callablePlan:{ listCalloutRecipients:[{ delay:60000 }] }
   });
