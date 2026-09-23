@@ -66,6 +66,25 @@ async function copy(text) {
   }
 }
 
+/** Client-only share: Web Share when available, else wa.me draft. Never claims sent. */
+async function openWhatsAppShare(text) {
+  const body = String(text || '');
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({ text: body });
+      return 'opened';
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return 'aborted';
+    }
+  }
+  try {
+    const url = 'https://wa.me/?text=' + encodeURIComponent(body);
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (win) return 'opened';
+  } catch (ignore) {}
+  return (await copy(body)) ? 'copied' : 'failed';
+}
+
 /** deps: { isSuper, canApprove, stationId, stations:[{id,name}], stationName(id), calls:{create,setStatus,list,registrants,review,verify}, approveOne(row,campaign), rejectOne(row), base } */
 export function createJoinAdmin(root, deps) {
   const d = deps || {};
@@ -159,7 +178,7 @@ export function createJoinAdmin(root, deps) {
         tokenBox.appendChild(input);
         const row = el('div', { class: 'join-row' });
         row.append(button('העתק קישור', '', async () => message((await copy(link)) ? 'הקישור הועתק.' : 'ההעתקה נכשלה — סמן/י והעתק/י ידנית.', false)),
-          button('העתק הודעת WhatsApp', 'ghost', async () => message((await copy(whatsappText(fresh.station_name, link, fresh.expires_at_ms))) ? 'ההודעה הועתקה. הדבק/י בקבוצה.' : 'ההעתקה נכשלה.', false)),
+          button('שתף ב-WhatsApp', 'ghost', async () => { const result = await openWhatsAppShare(whatsappText(fresh.station_name, link, fresh.expires_at_ms)); if (result === 'opened') message('WhatsApp נפתח — יש להשלים את השליחה', false); else if (result === 'copied') message('ההודעה הועתקה. הדבק/י בקבוצה.', false); else if (result === 'aborted') message(''); else message('לא ניתן לפתוח WhatsApp. העתיקו את ההודעה ידנית.', true); }),
           button('הסתר', 'ghost', () => { state.lastToken = null; renderList(); }));
         tokenBox.appendChild(row); box.appendChild(tokenBox);
       }
