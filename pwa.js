@@ -18,6 +18,7 @@ import { APP_VERSION } from './version.js?v=42h32';
 let deferred = null;
 let updateCoordinator = null;
 let updateReadyInfo = null;
+let refreshOperation = null;
 const updateGuards = new Set();
 
 export function registerPwaUpdateGuard(guard) {
@@ -393,11 +394,12 @@ export function registerSW() {
 // נרשמת לפני ההודעה כדי שגם מעבר מצב מהיר לא ילך לאיבוד.
 export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
   if (!worker || worker.state === 'activated') return Promise.resolve(true);
-  const limit = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 5000;
+  const limit = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 15000;
 
   return new Promise(function (resolve) {
     let done = false;
     let timer = null;
+    let activationRequested = false;
 
     function cleanup() {
       if (timer !== null) clearTimeout(timer);
@@ -413,8 +415,15 @@ export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
       resolve(Boolean(ok));
     }
     function onState() {
-      if (worker.state === 'activated') finish(true);
-      else if (worker.state === 'redundant') finish(false);
+      if (worker.state === 'activated') {
+        finish(true);
+      } else if (worker.state === 'redundant') {
+        finish(false);
+      } else if (worker.state === 'installed' && !activationRequested) {
+        activationRequested = true;
+        try { worker.postMessage({ type: 'RESQ_SKIP_WAITING' }); }
+        catch (ignore) { finish(false); }
+      }
     }
     function onController() {
       // A different tab can activate a different worker. Ownership changes are
@@ -428,16 +437,79 @@ export function activateAvailableWorker(worker, serviceWorker, timeoutMs) {
     }
     timer = setTimeout(function () { finish(worker.state === 'activated'); }, limit);
 
-    try { worker.postMessage({ type: 'RESQ_SKIP_WAITING' }); }
-    catch (ignore) { finish(false); }
     onState();
+  });
+}
+
+// registration.update() may resolve before the browser exposes the new worker
+// through registration.installing/waiting. On a phone the gap can be several
+// seconds while the release shell is downloaded. Listen before triggering the
+// check so a fast updatefound event cannot be missed, and keep the wait bounded.
+function updateAndFindCandidate(registration, timeoutMs) {
+  const limit = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 15000;
+  return new Promise(function (resolve) {
+    let done = false;
+    let timer = null;
+    let updateSucceeded = false;
+    let knownWorker = registration && (registration.waiting || registration.installing) || null;
+
+    function cleanup() {
+      if (timer !== null) clearTimeout(timer);
+      if (registration && registration.removeEventListener) {
+        registration.removeEventListener('updatefound', inspect);
+      }
+    }
+    function finish(worker, updateOk) {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve({ worker:worker || null, updateOk:Boolean(updateOk) });
+    }
+    function inspect() {
+      const worker = registration && (registration.waiting || registration.installing);
+      if (worker) {
+        knownWorker = worker;
+        finish(worker, true);
+      }
+    }
+
+    if (!registration || typeof registration.update !== 'function') {
+      finish(null, false);
+      return;
+    }
+    if (registration.addEventListener) registration.addEventListener('updatefound', inspect);
+    inspect();
+    if (done) return;
+    timer = setTimeout(function () {
+      const worker = registration.waiting || registration.installing || knownWorker;
+      finish(worker, updateSucceeded || Boolean(worker));
+    }, limit);
+
+    Promise.resolve().then(function () {
+      return registration.update();
+    }).then(function () {
+      updateSucceeded = true;
+      inspect();
+    }, function () {
+      finish(knownWorker, false);
+    });
   });
 }
 
 // רענון יזום מהפרופיל. ניקוי מטמוני ResQ שייך ל-Service Worker
 // בלבד, בזמן activate. כך הדף לעולם אינו מוחק בטעות את המטמון
 // של העובד החדש בגלל שם גרסה שאינו מסונכרן.
-export async function refreshInstalledApp(options) {
+export function refreshInstalledApp(options) {
+  if (refreshOperation) return refreshOperation;
+  const operation = refreshInstalledAppOnce(options);
+  const finalized = operation.finally(function () {
+    if (refreshOperation === finalized) refreshOperation = null;
+  });
+  refreshOperation = finalized;
+  return finalized;
+}
+
+async function refreshInstalledAppOnce(options) {
   const o = options || {};
   const serviceWorker = o.serviceWorker ||
     (typeof navigator !== 'undefined' ? navigator.serviceWorker : null);
@@ -458,15 +530,13 @@ export async function refreshInstalledApp(options) {
     catch (ignore) { workerActivated = false; }
 
     if (registration) {
-      let updateOk = true;
-      try { await registration.update(); }
-      catch (ignore) { updateOk = false; }
-      const candidate = registration.waiting || registration.installing;
+      const discovery = await updateAndFindCandidate(registration, o.timeoutMs);
+      const candidate = discovery.worker;
       if (candidate) {
         workerActivated = await activateAvailableWorker(
           candidate, serviceWorker, o.timeoutMs
         );
-      } else if (!o.requireCandidate && updateOk && String(o.version || '') === String(o.runningVersion || '')) {
+      } else if (!o.requireCandidate && discovery.updateOk && String(o.version || '') === String(o.runningVersion || '')) {
         workerActivated = true;
       }
     }

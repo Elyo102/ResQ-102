@@ -46,9 +46,18 @@ function makeWorker(state, serviceWorker, activate) {
   return worker;
 }
 
+function installWorker(worker, serviceWorker) {
+  worker.state = 'installed';
+  worker.emit('statechange');
+}
+
 async function scenario(kind, activate = true, updateFails = false) {
   const sw = new Events();
-  const worker = kind === 'active' ? null : makeWorker(kind, sw, activate);
+  const worker = kind === 'active' ? null
+    : makeWorker(kind === 'waiting' ? 'installed' : kind, sw, activate);
+  if (kind === 'installing' && activate) {
+    setTimeout(function () { installWorker(worker, sw); }, 0);
+  }
   let updates = 0;
   sw.getRegistration = async function () {
     return {
@@ -58,6 +67,7 @@ async function scenario(kind, activate = true, updateFails = false) {
       update: async function () {
         updates += 1;
         if (updateFails) throw new Error('offline');
+        if (worker && worker.state === 'installing' && activate) installWorker(worker, sw);
       }
     };
   };
@@ -89,7 +99,8 @@ async function scenario(kind, activate = true, updateFails = false) {
 
 for (const kind of ['waiting', 'installing', 'active']) {
   const got = await scenario(kind);
-  assert.equal(got.updates, 1, kind + ': update runs once');
+  assert.equal(got.updates, kind === 'active' ? 1 : 0,
+    kind + ': an existing candidate activates immediately; otherwise update runs once');
   assert.equal(got.result.workerActivated, true, kind + ': worker is active');
   assert.equal(got.cacheReads, 0,
     kind + ': the page never owns service-worker cache cleanup');
@@ -113,6 +124,87 @@ const updateFailed = await scenario('active', true, true);
 assert.equal(updateFailed.result.workerActivated, false, 'failed update is reported');
 assert.deepEqual(updateFailed.deleted, [], 'failed update preserves offline caches');
 assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes away an unsaved operation');
+
+const waitingDespiteCheckFailure = await scenario('waiting', true, true);
+assert.equal(waitingDespiteCheckFailure.result.workerActivated, true,
+  'a worker already waiting can activate even when the network update check fails');
+assert.equal(waitingDespiteCheckFailure.replaced.length, 1,
+  'the known waiting worker reloads exactly once after activation');
+
+{
+  const sw = new Events();
+  let updates = 0;
+  const worker = makeWorker('installed', sw, true);
+  sw.getRegistration = async () => ({
+    waiting:worker, installing:null, active:{},
+    update:async () => { updates += 1; }
+  });
+  const replaced = [];
+  const options = {
+    version:futureVersion, runningVersion:release.v, requireCandidate:true,
+    serviceWorker:sw, timeoutMs:50,
+    location:{ href:'https://station-102.web.app/login.html', replace:url => replaced.push(url) }
+  };
+  const automatic = refreshInstalledApp(options);
+  const manual = refreshInstalledApp(options);
+  assert.equal(automatic, manual,
+    'manual and automatic update paths share one global refresh operation');
+  const [first, second] = await Promise.all([automatic, manual]);
+  assert.equal(first.workerActivated, true);
+  assert.equal(second.workerActivated, true);
+  assert.equal(updates, 0, 'a known waiting worker needs no second network check');
+  assert.deepEqual(worker.messages, [{ type:'RESQ_SKIP_WAITING' }],
+    'concurrent paths request activation exactly once');
+  assert.equal(replaced.length, 1, 'concurrent paths reload exactly once');
+}
+
+{
+  const sw = new Events();
+  let registration;
+  const worker = makeWorker('installing', sw, true);
+  registration = new Events();
+  registration.waiting = null;
+  registration.installing = null;
+  registration.active = {};
+  registration.update = async function () {
+    setTimeout(function () {
+      registration.installing = worker;
+      registration.emit('updatefound');
+      setTimeout(function () { installWorker(worker, sw); }, 5);
+    }, 5);
+  };
+  sw.getRegistration = async () => registration;
+  const replaced = [];
+  const result = await refreshInstalledApp({
+    version:futureVersion, runningVersion:release.v, requireCandidate:true,
+    serviceWorker:sw, timeoutMs:50,
+    location:{ href:'https://station-102.web.app/login.html', replace:url => replaced.push(url) }
+  });
+  assert.equal(result.workerActivated, true,
+    'a candidate exposed after registration.update resolves is still discovered and activated');
+  assert.equal(replaced.length, 1, 'the delayed candidate reloads exactly once');
+  assert.deepEqual(worker.messages, [{ type:'RESQ_SKIP_WAITING' }],
+    'the delayed worker receives activation only after installation completes');
+}
+
+{
+  const sw = new Events();
+  const registration = new Events();
+  registration.waiting = null;
+  registration.installing = null;
+  registration.active = {};
+  registration.update = async function () {};
+  sw.getRegistration = async () => registration;
+  const replaced = [];
+  const result = await refreshInstalledApp({
+    version:futureVersion, runningVersion:release.v, requireCandidate:true,
+    serviceWorker:sw, timeoutMs:5,
+    location:{ href:'https://station-102.web.app/login.html', replace:url => replaced.push(url) }
+  });
+  assert.equal(result.workerActivated, false,
+    'candidate discovery remains bounded when no worker appears');
+  assert.deepEqual(replaced, [], 'a discovery timeout never reloads the page');
+}
 
 {
   const sw = new Events();
@@ -409,4 +501,4 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
   assert.deepEqual(replaced, [], 'an unproven update cannot reload the page');
 }
 
-console.log('PWA update lifecycle: 27/27 PASS');
+console.log('PWA update lifecycle: 30/30 PASS');
