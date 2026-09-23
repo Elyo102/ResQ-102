@@ -97,13 +97,14 @@ await check('client technical vocabularies agree with server vocabularies', () =
     }
   }
 });
-await check('current release incidents retain their exact version on client and server', () => {
+await check('current release incidents use a server-accepted version', () => {
   const current = read('version.js').match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1];
   // 42H.20 · ביקורת Codex, חוסם 4 · הציפייה נגזרת מ-release-manifest.json,
   // לא מקובעת ידנית; release-stamp.mjs מוסיף את הגרסה לשני אוצרות המילים.
   const manifest = JSON.parse(read('release-manifest.json'));
   assert.equal(current, manifest.version);
-  for (const supported of [...new Set(['42H.16', '42H.18', '42H.19', '42H.19.1', manifest.version])]) {
+  const reportedVersion = manifest.scope === 'hosting' ? manifest.server_version : manifest.version;
+  for (const supported of [...new Set(['42H.16', '42H.18', '42H.19', '42H.19.1', reportedVersion])]) {
     assert.ok(client.TELEMETRY_VERSIONS.includes(supported), supported + ' client rollout support');
     assert.ok(contract.VERSIONS.includes(supported), supported + ' server rollout support');
     assert.equal(client.buildReport('manual', { code:'Error' }, {
@@ -118,10 +119,10 @@ await check('current release incidents retain their exact version on client and 
     href:'/feedback.html', version:current, callable:'unknown'
   });
   const serverReport = contract.normalizeTelemetry({
-    kind:'manual', screen:'feedback.html', version:current, code:'Error', callable:'unknown'
+    kind:'manual', screen:'feedback.html', version:browserReport.version, code:'Error', callable:'unknown'
   });
-  assert.equal(browserReport.version, current);
-  assert.equal(serverReport.version, current);
+  assert.equal(browserReport.version, reportedVersion);
+  assert.equal(serverReport.version, reportedVersion);
   assert.equal(client.buildReport('manual', { code:'Error' }, {
     href:'/feedback.html', version:'unreleased-private-version', callable:'unknown'
   }).version, 'unknown');

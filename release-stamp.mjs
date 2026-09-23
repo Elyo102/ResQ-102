@@ -54,6 +54,10 @@ export function validateManifest(manifest) {
   if (!manifest.version) errors.push('manifest.version is set');
   if (!manifest.date) errors.push('manifest.date is set');
   if (!manifest.sw_cache_key) errors.push('manifest.sw_cache_key is set');
+  if (manifest.scope && manifest.scope !== 'hosting') errors.push('manifest.scope must be hosting when set');
+  if (manifest.scope === 'hosting' && (!manifest.server_version || manifest.server_version === manifest.version)) {
+    errors.push('hosting release requires a distinct server_version');
+  }
   if (manifest.version && manifest.asset_query !== releaseKey(manifest.version)) {
     errors.push('manifest.asset_query (' + manifest.asset_query + ') must equal releaseKey(version) (' + releaseKey(manifest.version || '') + ')');
   }
@@ -96,6 +100,15 @@ export function stampFiles(files, manifest) {
     'version.js APP_DATE'
   ));
 
+  if (manifest.scope === 'hosting') {
+    // Hosting-only hotfix: keep every Functions source and its provider receipt intact.
+    out.set('incident-client.js', replaceOnce(
+      out.get('incident-client.js') || '',
+      /const HOSTING_TELEMETRY_ALIAS = Object\.freeze\(\{ visible: '[^']*', server: '[^']*' \}\);/,
+      "const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + manifest.version + "', server: '" + manifest.server_version + "' });",
+      'incident-client.js hosting telemetry alias'
+    ));
+  } else {
   // functions/index.js — heartbeat
   out.set('functions/index.js', replaceOnce(
     out.get('functions/index.js') || '',
@@ -131,6 +144,7 @@ export function stampFiles(files, manifest) {
     /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/,
     manifest.version, 'incident-client.js TELEMETRY_VERSIONS'
   ));
+  }
 
   // firebase-messaging-sw.js — cache key
   out.set('firebase-messaging-sw.js', replaceOnce(

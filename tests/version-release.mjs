@@ -75,6 +75,7 @@ function localModuleImports(source) {
 
 export function audit(files, manifest = MANIFEST) {
   const EXPECTED_VERSION = manifest.version;
+  const SERVER_VERSION = manifest.scope === 'hosting' ? manifest.server_version : EXPECTED_VERSION;
   const EXPECTED_DATE = manifest.date;
   const EXPECTED_ASSET_KEY = manifest.asset_query;
   const errors = [];
@@ -97,26 +98,29 @@ export function audit(files, manifest = MANIFEST) {
   if (versionMatches.length !== 1 || versionMatches[0]?.[1] !== release.v) errors.push('version.js matches version.json exactly');
   if (dateMatches.length !== 1 || dateMatches[0]?.[1] !== release.d) errors.push('version.js date matches version.json exactly');
   const functionsIndex = files.get('functions/index.js') || '';
-  if (!functionsIndex.includes("state: 'ok', version: '" + EXPECTED_VERSION + "'")) {
-    errors.push('system heartbeat reports the visible release');
+  if (!functionsIndex.includes("state: 'ok', version: '" + SERVER_VERSION + "'")) {
+    errors.push('system heartbeat reports the server release');
   }
   const maintenanceService = files.get('functions/maintenance-service.js') || '';
-  if (!maintenanceService.includes("version:'" + EXPECTED_VERSION + "', ai_state:")) {
-    errors.push('maintenance health row reports the visible release');
+  if (!maintenanceService.includes("version:'" + SERVER_VERSION + "', ai_state:")) {
+    errors.push('maintenance health row reports the server release');
   }
   // 42H.20 · ביקורת Codex, חוסם 4 · עוד שלושה צרכני זהות שחרור שנשארו
   // ידניים: אוצר המילים של הטלמטריה (שרת + לקוח — גרסה שאינה ברשימה
   // מנורמלת ל-'unknown' ונעלמת מהדיווח), ומזהה השחרור של סמכות החודש.
-  if ((functionsIndex.match(/monthAuthorityReleaseId:\s*'([^']*)'/) || [])[1] !== EXPECTED_VERSION) {
-    errors.push('month-authority release id is the visible release');
+  if ((functionsIndex.match(/monthAuthorityReleaseId:\s*'([^']*)'/) || [])[1] !== SERVER_VERSION) {
+    errors.push('month-authority release id is the server release');
   }
   const telemetryContract = files.get('functions/ops-telemetry-contract.js') || '';
-  if (!versionVocabulary(telemetryContract, /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(EXPECTED_VERSION)) {
-    errors.push('server telemetry vocabulary (ops-telemetry-contract.js VERSIONS) accepts the visible release');
+  if (!versionVocabulary(telemetryContract, /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(SERVER_VERSION)) {
+    errors.push('server telemetry vocabulary (ops-telemetry-contract.js VERSIONS) accepts the server release');
   }
   const incidentClient = files.get('incident-client.js') || '';
-  if (!versionVocabulary(incidentClient, /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(EXPECTED_VERSION)) {
-    errors.push('client telemetry vocabulary (incident-client.js TELEMETRY_VERSIONS) accepts the visible release');
+  if (!versionVocabulary(incidentClient, /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(SERVER_VERSION)) {
+    errors.push('client telemetry vocabulary (incident-client.js TELEMETRY_VERSIONS) accepts the server release');
+  }
+  if (manifest.scope === 'hosting' && !incidentClient.includes("const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + EXPECTED_VERSION + "', server: '" + SERVER_VERSION + "' });")) {
+    errors.push('hosting telemetry alias maps visible version to accepted server version');
   }
 
   const worker = files.get('firebase-messaging-sw.js') || '';
@@ -207,6 +211,7 @@ if (isMain) {
   }
 
   const EXPECTED_VERSION = MANIFEST.version;
+  const SERVER_VERSION = MANIFEST.scope === 'hosting' ? MANIFEST.server_version : EXPECTED_VERSION;
   const EXPECTED_DATE = MANIFEST.date;
   const key = MANIFEST.asset_query;
   mustFail('version.json mutation', replaceExactlyOne(files, 'version.json', EXPECTED_VERSION, '42G.invalid'));
@@ -214,9 +219,9 @@ if (isMain) {
   mustFail('version.js mutation', replaceExactlyOne(files, 'version.js',
     "APP_VERSION = '" + EXPECTED_VERSION + "'", "APP_VERSION = '42G.invalid'"));
   mustFail('heartbeat version mutation', replaceExactlyOne(files, 'functions/index.js',
-    "state: 'ok', version: '" + EXPECTED_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
+    "state: 'ok', version: '" + SERVER_VERSION + "'", "state: 'ok', version: '42G.invalid'"));
   mustFail('maintenance version mutation', replaceExactlyOne(files, 'functions/maintenance-service.js',
-    "version:'" + EXPECTED_VERSION + "', ai_state:", "version:'42G.invalid', ai_state:"));
+    "version:'" + SERVER_VERSION + "', ai_state:", "version:'42G.invalid', ai_state:"));
   mustFail('service-worker cache mutation', replaceExactlyOne(files, 'firebase-messaging-sw.js',
     'resq-v' + key + '-release1', 'resq-vstale-release1'));
   mustFail('stale JavaScript query', replaceExactlyOne(files, 'schedule-management.js',
@@ -251,10 +256,10 @@ if (isMain) {
   }
   // 42H.20 · ביקורת Codex, חוסם 4 · שלושת הצרכנים שנוספו לחוזה.
   mustFail('month-authority release id mutation', replaceExactlyOne(files, 'functions/index.js',
-    "monthAuthorityReleaseId: '" + EXPECTED_VERSION + "'", "monthAuthorityReleaseId: '42G.invalid'"));
+    "monthAuthorityReleaseId: '" + SERVER_VERSION + "'", "monthAuthorityReleaseId: '42G.invalid'"));
   mustFail('server telemetry vocabulary mutation', replaceExactlyOne(files, 'functions/ops-telemetry-contract.js',
-    "'" + EXPECTED_VERSION + "'", "'42G.invalid'"));
+    "'" + SERVER_VERSION + "'", "'42G.invalid'"));
   mustFail('client telemetry vocabulary mutation', replaceExactlyOne(files, 'incident-client.js',
-    "'" + EXPECTED_VERSION + "'", "'42G.invalid'"));
+    "'" + SERVER_VERSION + "']);", "'42G.invalid']);"));
   console.log('Release version contract: ' + baseline.count + ' references; 19/19 mutations caught.');
 }
